@@ -5578,7 +5578,7 @@ pub mod rec {
         /// The number (`at`) of the first node of its group built with an equal shape: two nodes of
         /// one group are equal exactly when these are, so two domain bounds are compared in O(1)
         /// ([`same`]).
-        class: u32,
+        pub(in crate::types) class: u32,
         pub(in crate::types) e: Shape,
     }
 

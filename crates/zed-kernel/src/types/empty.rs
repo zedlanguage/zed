@@ -5817,74 +5817,14 @@ fn known_empty(k: &Type) -> bool {
 /// search does not decide it, its verdict is refused with its own message
 /// ([`Type::refusal_site`]). Time linear in the bodies, besides the emptiness of their closed
 /// parts.
-fn judge<'a>(env: &'a Arc<Env>) -> Judgment {
+fn judge(env: &Arc<Env>) -> Judgment {
     let bodies = &env.group().0.bodies;
-    let mut b = Bes::new();
-    // The definition and the expression each node stands for, by its number.
-    let mut origin: Vec<(usize, Arc<rec::Node>)> = Vec::new();
-    let mut stack: Vec<(u32, usize, &'a Arc<rec::Node>)> = Vec::new();
-    // The nodes of a meet or a difference, read by a type that holds more values.
-    let mut wider = Vec::new();
-    for (i, e) in bodies.iter().enumerate() {
-        stack.push((b.add(Kind::Bot, vec![]), i, e));
-        origin.push((i, Arc::clone(e)));
-    }
-    let mut leaves = Vec::new();
-    // A closed part is read by its verdict, never by `is_empty`, whose "inhabited" may be a
-    // check that gave up: a member judged on it could be judged empty when it is not.
-    while let Some((v, def, e)) = stack.pop() {
-        let mut kids = |xs: &mut dyn Iterator<Item = &'a Arc<rec::Node>>| {
-            kids(&mut b, &mut origin, &mut stack, def, xs)
-        };
-        let node = match &e.e {
-            _ if !e.recursive => match eval(e, env).verdict() {
-                Verdict::Empty => Some((Kind::Bot, vec![])),
-                Verdict::Inhabited => Some((Kind::Top, vec![])),
-                Verdict::Refused(_) => None,
-            },
-            rec::Shape::Ref(i, _) => Some((Kind::Or, vec![*i as u32])),
-            rec::Shape::Union(xs) => Some((Kind::Or, kids(&mut xs.iter()))),
-            rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) => {
-                Some((Kind::And, kids(&mut xs.iter())))
-            }
-            // Admitted only with equal bounds and a value type that is not empty.
-            rec::Shape::Morphism(l, u, val) if l.recursive || u.recursive => (!val.recursive
-                && eval(val, env).verdict() == Verdict::Inhabited)
-                .then(|| (Kind::Top, vec![])),
-            rec::Shape::Morphism(l, u, val) => {
-                let (l, u) = (eval(l, env), eval(u, env));
-                // A key promised and not permitted leaves no morphism; with no key promised the
-                // empty morphism is one.
-                match (l.subtype_verdict(&u), l.verdict()) {
-                    (Verdict::Refused(_), _) | (_, Verdict::Refused(_)) => None,
-                    (Verdict::Inhabited, _) => Some((Kind::Bot, vec![])),
-                    (Verdict::Empty, Verdict::Empty) => Some((Kind::Top, vec![])),
-                    (Verdict::Empty, Verdict::Inhabited) => {
-                        Some((Kind::Mor, kids(&mut std::iter::once(val))))
-                    }
-                }
-            }
-            rec::Shape::And(xs) => {
-                wider.push(v);
-                Some((Kind::And, kids(&mut xs.iter())))
-            }
-            rec::Shape::Diff(a, _) => {
-                wider.push(v);
-                Some((Kind::Or, kids(&mut std::iter::once(a))))
-            }
-            rec::Shape::Not(_) => {
-                unreachable!("admission keeps a recursive occurrence out of a complement")
-            }
-            rec::Shape::Param(_) | rec::Shape::Type(_) => {
-                unreachable!("a closed part is not recursive")
-            }
-        };
-        match node {
-            Some((kind, children)) => b.set(v, kind, children),
-            None => leaves.push(v),
-        }
-    }
-    b.seal();
+    let System {
+        mut b,
+        origin,
+        mut wider,
+        leaves,
+    } = system(env);
     // The nodes that reach a meet or a difference, by their parents, each node once.
     let mut wide = vec![false; b.len()];
     for &v in &wider {
@@ -5993,27 +5933,251 @@ impl Why {
     }
 }
 
-/// The node of each of `xs`, parts of definition `def`: a member's own for a recursive
-/// occurrence, so that the graph has the group's shape and the decider's refusals do not depend
-/// on how a body is written; else a new node, its origin noted, queued on `stack` to be set from
-/// its expression.
-fn kids<'a>(
-    b: &mut Bes,
-    origin: &mut Vec<(usize, Arc<rec::Node>)>,
-    stack: &mut Vec<(u32, usize, &'a Arc<rec::Node>)>,
-    def: usize,
-    xs: &mut dyn Iterator<Item = &'a Arc<rec::Node>>,
-) -> Vec<u32> {
-    xs.map(|x| {
-        if let rec::Shape::Ref(i, _) = x.e {
-            return i as u32;
+/// The decider's system of a group ([`judge`]), sealed: the definition and expression each
+/// node stands for, by its number (the members' bodies first), the nodes of meets and
+/// differences, and the leaves, the parts the decider does not take.
+struct System {
+    b: Bes,
+    origin: Vec<(usize, Arc<rec::Node>)>,
+    wider: Vec<u32>,
+    leaves: Vec<u32>,
+}
+
+/// What a node of the system is made of, within one definition; parts of one definition with
+/// one key get one node (item GROUP-cycle-dup).
+#[derive(PartialEq, Eq, Hash)]
+enum Made<'a> {
+    /// A union, by the set of its arms' nodes, an arm that is itself a union read as its arms.
+    Or(Vec<u32>),
+    Tuple(Vec<u32>),
+    Atom(&'a str, Vec<u32>),
+    Meet(Vec<u32>),
+    /// A difference, by its right operand's class and its left operand's node.
+    Diff(u32, u32),
+    /// A morphism type, by its bounds' classes and its value type's node.
+    Mor(u32, u32, u32),
+}
+
+impl Made<'_> {
+    /// The node's kind and children.
+    fn node(self) -> (Kind, Vec<u32>) {
+        match self {
+            Made::Or(xs) => (Kind::Or, xs),
+            Made::Tuple(xs) | Made::Atom(_, xs) | Made::Meet(xs) => (Kind::And, xs),
+            Made::Diff(_, a) => (Kind::Or, vec![a]),
+            Made::Mor(_, _, v) => (Kind::Mor, vec![v]),
         }
-        let c = b.add(Kind::Bot, vec![]);
-        origin.push((def, Arc::clone(x)));
-        stack.push((c, def, x));
-        c
-    })
-    .collect()
+    }
+}
+
+/// The system of `env`'s group, read from the members' bodies: a node for each member, and one
+/// for each part of a body that mentions the group, except that a recursive occurrence is the
+/// member's own node, so the graph has the group's shape.
+///
+/// Parts of one definition written alike up to the order, repetition and grouping of union arms
+/// are one node, and a union's arms are a set: `A | A` is `A`, `A | B` and `B | A` are one node,
+/// and `(A | B) | C` has the arms `A`, `B` and `C`. The decider's refusal counts the independent
+/// cycles of the graph as edges minus nodes plus one, and takes the exact path for a component
+/// with one morphism type in it, so a node made for each arm as written made the verdict depend
+/// on how a type is written: a decided group with an arm written twice could be refused (item
+/// GROUP-cycle-dup). Merging two nodes with equal children, or lifting the arms of a union with
+/// one parent into that parent, removes as many edges as nodes or more, so it never adds a cycle;
+/// the answers are those of the types, which the merging does not change. A reference to
+/// another definition stays that definition's node: a union written through a definition's name
+/// and the same union written out still differ in their counts when the named union's arms
+/// overlap the arms written beside it (follow-up GROUP-cycle-dup-names). Parts of two
+/// definitions are not merged, so each node's origin, which the refusal message reads, is in the
+/// definition that wrote it.
+///
+/// Each part is read once, from a stack; a part written like one met before in its definition
+/// is not read again. Expected time linear in the bodies, besides sorting each union's arms and
+/// the emptiness of the closed parts.
+fn system(env: &Arc<Env>) -> System {
+    enum Step<'a> {
+        /// A part to read.
+        Visit(&'a Arc<rec::Node>),
+        /// A part whose children's nodes, as many as given, are the last on `done`.
+        Make(&'a Arc<rec::Node>, usize),
+    }
+    let bodies = &env.group().0.bodies;
+    let mut b = Bes::new();
+    let mut origin = Vec::with_capacity(bodies.len());
+    for (i, e) in bodies.iter().enumerate() {
+        b.add(Kind::Bot, vec![]);
+        origin.push((i, Arc::clone(e)));
+    }
+    let (mut wider, mut leaves) = (Vec::new(), Vec::new());
+    // The node of each part read, by its definition and class.
+    let mut seen: HashMap<(usize, u32), u32> = HashMap::new();
+    // The nodes with children, by their definition and what they are made of; their children
+    // are set from the keys once every node is made.
+    let mut made: HashMap<(usize, Made<'_>), u32> = HashMap::new();
+    let (mut todo, mut done, mut arms) = (Vec::new(), Vec::new(), Vec::new());
+    for (def, body) in bodies.iter().enumerate() {
+        todo.push(Step::Visit(body));
+        while let Some(step) = todo.pop() {
+            let (e, parts) = match step {
+                Step::Visit(e) => {
+                    let root = Arc::ptr_eq(e, body);
+                    if let rec::Shape::Ref(i, _) = e.e {
+                        if root {
+                            b.set(def as u32, Kind::Or, vec![i as u32]);
+                        } else {
+                            done.push(i as u32);
+                        }
+                        continue;
+                    }
+                    if let Some(&v) = seen.get(&(def, e.class)) {
+                        done.push(v);
+                        continue;
+                    }
+                    // A closed part is read by its verdict, never by `is_empty`, whose
+                    // "inhabited" may be a check that gave up: a member judged on it could be
+                    // judged empty when it is not.
+                    let childless = match &e.e {
+                        _ if !e.recursive => match eval(e, env).verdict() {
+                            Verdict::Empty => Some(Some(Kind::Bot)),
+                            Verdict::Inhabited => Some(Some(Kind::Top)),
+                            Verdict::Refused(_) => Some(None),
+                        },
+                        // Admitted only with equal bounds and a value type that is not empty.
+                        rec::Shape::Morphism(l, u, val) if l.recursive || u.recursive => Some(
+                            (!val.recursive && eval(val, env).verdict() == Verdict::Inhabited)
+                                .then_some(Kind::Top),
+                        ),
+                        rec::Shape::Morphism(l, u, val) => {
+                            let (l, u) = (eval(l, env), eval(u, env));
+                            // A key promised and not permitted leaves no morphism; with no key
+                            // promised the empty morphism is one.
+                            match (l.subtype_verdict(&u), l.verdict()) {
+                                (Verdict::Refused(_), _) | (_, Verdict::Refused(_)) => Some(None),
+                                (Verdict::Inhabited, _) => Some(Some(Kind::Bot)),
+                                (Verdict::Empty, Verdict::Empty) => Some(Some(Kind::Top)),
+                                (Verdict::Empty, Verdict::Inhabited) => {
+                                    todo.push(Step::Make(e, 1));
+                                    todo.push(Step::Visit(val));
+                                    None
+                                }
+                            }
+                        }
+                        rec::Shape::Union(xs) => {
+                            // The arms, a union written as an arm read as its own arms.
+                            let at = todo.len() + 1;
+                            todo.push(Step::Make(e, 0));
+                            arms.extend(xs.iter().rev());
+                            while let Some(x) = arms.pop() {
+                                match &x.e {
+                                    rec::Shape::Union(ys) if x.recursive => {
+                                        arms.extend(ys.iter().rev());
+                                    }
+                                    _ => todo.push(Step::Visit(x)),
+                                }
+                            }
+                            let k = todo.len() - at;
+                            todo[at - 1] = Step::Make(e, k);
+                            None
+                        }
+                        rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) | rec::Shape::And(xs) => {
+                            todo.push(Step::Make(e, xs.len()));
+                            todo.extend(xs.iter().rev().map(Step::Visit));
+                            None
+                        }
+                        rec::Shape::Diff(a, _) => {
+                            todo.push(Step::Make(e, 1));
+                            todo.push(Step::Visit(a));
+                            None
+                        }
+                        rec::Shape::Not(_) => {
+                            unreachable!(
+                                "admission keeps a recursive occurrence out of a complement"
+                            )
+                        }
+                        rec::Shape::Param(_) | rec::Shape::Type(_) | rec::Shape::Ref(..) => {
+                            unreachable!("a closed part is not recursive")
+                        }
+                    };
+                    let Some(kind) = childless else {
+                        continue;
+                    };
+                    let v = if root {
+                        def as u32
+                    } else {
+                        origin.push((def, Arc::clone(e)));
+                        b.add(Kind::Bot, vec![])
+                    };
+                    match kind {
+                        Some(kind) => b.set(v, kind, vec![]),
+                        None => leaves.push(v),
+                    }
+                    if !root {
+                        seen.insert((def, e.class), v);
+                        done.push(v);
+                    }
+                    continue;
+                }
+                Step::Make(e, k) => (e, done.split_off(done.len() - k)),
+            };
+            let root = Arc::ptr_eq(e, body);
+            let (key, wide) = match &e.e {
+                rec::Shape::Union(_) => {
+                    let mut parts = parts;
+                    parts.sort_unstable();
+                    parts.dedup();
+                    if let [only] = parts[..]
+                        && !root
+                    {
+                        seen.insert((def, e.class), only);
+                        done.push(only);
+                        continue;
+                    }
+                    (Made::Or(parts), false)
+                }
+                rec::Shape::Tuple(_) => (Made::Tuple(parts), false),
+                rec::Shape::Atom(name, _) => (Made::Atom(name, parts), false),
+                rec::Shape::And(_) => (Made::Meet(parts), true),
+                rec::Shape::Diff(_, r) => (Made::Diff(r.class, parts[0]), true),
+                rec::Shape::Morphism(l, u, _) => (Made::Mor(l.class, u.class, parts[0]), false),
+                rec::Shape::Ref(..)
+                | rec::Shape::Not(_)
+                | rec::Shape::Param(_)
+                | rec::Shape::Type(_) => {
+                    unreachable!("only a part with children is made after them")
+                }
+            };
+            if root {
+                let (kind, children) = key.node();
+                b.set(def as u32, kind, children);
+                if wide {
+                    wider.push(def as u32);
+                }
+                continue;
+            }
+            let v = match made.entry((def, key)) {
+                Entry::Occupied(o) => *o.get(),
+                Entry::Vacant(slot) => {
+                    let v = b.add(Kind::Bot, vec![]);
+                    origin.push((def, Arc::clone(e)));
+                    if wide {
+                        wider.push(v);
+                    }
+                    *slot.insert(v)
+                }
+            };
+            seen.insert((def, e.class), v);
+            done.push(v);
+        }
+    }
+    for ((_, key), v) in made {
+        let (kind, children) = key.node();
+        b.set(v, kind, children);
+    }
+    b.seal();
+    System {
+        b,
+        origin,
+        wider,
+        leaves,
+    }
 }
 
 mod refused;

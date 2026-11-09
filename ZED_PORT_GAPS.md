@@ -2984,3 +2984,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `BTreeMap::entry(v).or_insert_with(Ty::empty)`, an insert in place only where the key is absent | `Ck::apply_one`, an argument of type `Never` | Mutation (gap 11) | a persistent map's insert-if-absent that gives the new map |
+
+## Entries from GROUP-cycle-dup (`crates/zed-kernel/src/types/empty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap` keyed by `(usize, Made<'a>)`, an enum whose `Atom` variant borrows the atom's name as `&'a str` from the group's bodies, filled through `Entry::Vacant` | `system` | Mutation (gap 11) | a persistent map keyed by the definition and the node's kind and children, the name held by value or by its interned number |
+| An explicit stack of `Step::Visit` and `Step::Make(node, k)` with `k` patched in place (`todo[at - 1]`) when a nested union's arms are read into its parent, and `Vec::split_off` of the last `k` finished nodes | `system` | Mutation (gap 11) | a fold over the parts in post-order that returns each part's node, a union returning the set of its arms' nodes |
+| Nodes added to the `Bes` as `Bot` placeholders and set to their kind and children once the whole group is read, by draining the map of made nodes | `system` | Mutation (gap 11) | the nodes built after the map is complete, in one pass over it |
