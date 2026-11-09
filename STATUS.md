@@ -1718,15 +1718,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CX-tradeoff-review | impl attempt 1 | 2026-11-09 15:11 | started; worktree made from origin/main 1aae48fb |
+| CX-tradeoff-krows | impl attempt 1 | 2026-11-09 15:42 | start: checking K rows and unlisted COMPLEXITY rows for tradeoff comments |
+| CX-tradeoff-review | impl attempt 1 | 2026-11-09 15:11 | ready wt/cx-tradeoff-review 1373f81f: 48 partial + 2 stale tradeoff comments fixed, comments only; K-row search for missing comments left; fmt, clippy, doc, s_0 |
 | GROUP-overlaps-unfold | running | 2026-11-09 12:48 | deletes: none run, tried or canceled in this task; files I want removed (scratchpad): old_overlaps.rs new_overlaps.rs new_overlaps2.rs overlaps_doc.txt overlaps |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | MSG-fresh-name-clash | running | 2026-11-09 13:30 | noted for batch 88 (DOCS-TODO 54 and COMPLEXITY F140 renumber); deletes: none |
 | MSG-growth-projection-cause | impl attempt 1 | 2026-11-09 12:41 | ready at 2e4d1da9 on wt/growth-cause; 491 test pieces pass, load 17 to 37; deletes: none |
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | repair ready b9a464bd: reference walk now same order as the walk, quadratic copy deleted after 8,000-seed agreement; walk's own superlinear forms (a)-(c) open f |
-| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | E (C4 + kernel/int/lattice/presburger/stage cgu4): 682M/963M/4136M/810M/886M; kernel one-line edit 81.9 s, revert 71.0 s (load 25-38); rejected |
+| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | F (C4 + #[inline] on Num is_zero/to_i128/From and kernel hash::mix): 696M/972M/4173M/828M/902M, 0.5% below C4; dropped as not worth the edits |
 | PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | negative control on merged 5fcc15f1: new test deep_let::the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block fails, 1000 blocks peak 6.53 MB left 6 |
-| PA-walk-nest-cost | impl attempt 1 | 2026-11-09 15:39 | started; worktree wt/walk-nest-cost from origin/main dfd7a00f + if-shortcut-diff 3 commits |
+| PA-walk-nest-cost | impl attempt 1 | 2026-11-09 15:39 | baseline Minstr: A d64/128/256/512 = 131/497/1931/7603; B d16/32/64 = 203/1208/8117; C d64/128/256/512 = 243/656/1995/6708 (load 19.6) |
 | PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | ready wt/model-keys 851e8143: not a soundness bug (linear); doc + seeded test model_keys 3/3; 499 pieces 0 failed; no code change, instruction counts unchanged; |
 | PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | deletes: none run, tried or canceled in this task; scratch files left for the orchestrator (listed in report) / load 23.14 |
 | PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | ready cf7cdd28 on wt/pres-small-cost (rebased on 5414631a); 490 pieces 0 failed, load 17-57; follow-ups PRES-small-front, PRES-model-keys queued |
@@ -1738,6 +1739,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | R2-frames-limit | impl attempt 1 | 2026-11-09 14:50 | started; worktrees wt/r2-frames and wt/r2-frames-spec made |
 | RENAME-orderedValues | impl attempt 1 | 2026-11-09 14:20 | deletes: none run (delete freeze); scratch files left for the orchestrator (listed in report) / load 21.25 |
 | STAR-anchor-orders | impl attempt 1 | 2026-11-09 13:40 | ready wt/anchor-orders e25eb59c: random-order needs test (<= 3(d+1), all seeds hold), random build 10.0x linear; controls repick-no-anchor and contribute-no-rea |
+| TEST-group-oracle-enum | impl attempt 1 | 2026-11-09 15:42 | started |
 | TEST-lazy-split | impl attempt 1 | 2026-11-09 13:40 | ready: wt/lazy-split dcdf84a6; lazy 1 piece of 44-47 s -> 16 pieces, slowest 11.7 s at load 40.6; l01_39 + s_01f with docs 68 pieces 0 failed (load 27.9-43.2);  |
 | TEST-runner-one-worktree | impl attempt 1 | 2026-11-09 14:39 | ready 5f1b4307 on wt/runner-one-worktree: flock refusal per log dir; old script reproduced false failures (8 rc=0 lines, failed: 2); fixed: 12/12 + 5/5 concurre |
 
