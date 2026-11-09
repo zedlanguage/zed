@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use zed_kernel::frames::{Deep, Stack};
-use zed_kernel::types::{Refusal, Type as KType, Verdict};
+use zed_kernel::types::{Refusal, TextPlace, Type as KType, Verdict};
 use zed_kernel::value::Digest;
 use zed_kernel::{Items, Universe, Value};
 
@@ -7670,12 +7670,14 @@ impl Ty {
         };
         if !set.is_empty() {
             first = false;
-            let text = match at {
-                PrintAt::Any | PrintAt::Listed | PrintAt::Result => set.surface(),
-                PrintAt::Key => set.surface_key(),
-                PrintAt::Bound => set.surface_bound(),
-                PrintAt::Union => set.surface_in_union(),
-            };
+            // Written as one expression: a definition `type T1 = …;` would stand inside the rest
+            // of the text, where the grammar has no place for it.
+            let text = set.surface_by_name(match at {
+                PrintAt::Any | PrintAt::Listed | PrintAt::Result => TextPlace::Any,
+                PrintAt::Key => TextPlace::Key,
+                PrintAt::Bound => TextPlace::Bound,
+                PrintAt::Union => TextPlace::Union,
+            });
             out.push_str(&text.to_string());
         }
         for (n, ss) in shaped {

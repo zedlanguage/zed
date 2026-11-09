@@ -149,3 +149,35 @@ fn a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values
     assert_eq!(value(&ok, "a"), "1");
     assert_eq!(value(&ok, "b"), "3");
 }
+
+/// Item PRINT-fmt-audit: the repair that tests the value with `is` writes the parameter's type
+/// as `is` reads it, a function type in parentheses. Before, it was
+/// `if v is (int) -> int { … }`, which reads as `(v is (int)) -> int`.
+#[test]
+fn the_is_repair_writes_a_function_type_in_parentheses() {
+    let t = "ap(positional g: (int) -> int) = g(1);\n";
+    let bad = format!("{t}k(positional a) = (ap(a), a);\nh(positional y: int | #nf) = k(y);\n");
+    let out = match zedc::run::load(bad.as_bytes()) {
+        Ok(_) => panic!("accepted:\n{bad}"),
+        Err(e) => e,
+    };
+    assert!(
+        out.contains(
+            "repair: test the value with `is` first, as `if v is ((int) -> int) { … }`, or \
+             handle the values that are not (int) -> int with `else` or `match`"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("repair: pass `ap` a value of (int) -> int"),
+        "{out}"
+    );
+    // The repair, applied, is accepted, and the type it names reads back as written.
+    let ok = format!(
+        "{t}k(positional a) = if a is ((int) -> int) {{ ap(a) }} else {{ 0 }};\n\
+         h(positional y: int | #nf) = k(y);\n"
+    );
+    assert!(type_errors(&ok).is_empty(), "{:?}", type_errors(&ok));
+    let back = zedc::check::read::parse_type("(int) -> int").unwrap();
+    assert_eq!(back.to_string(), "(int) -> int");
+}

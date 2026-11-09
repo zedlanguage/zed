@@ -8,6 +8,8 @@
 
 use zed_kernel::types::Type;
 use zed_kernel::types::rec::{Def, Expr, Group};
+use zedc::lex::lex_fence;
+use zedc::parse::{TOP, parse};
 
 fn r(i: usize) -> Expr {
     Expr::Ref(i, vec![])
@@ -336,4 +338,113 @@ fn a_refusal_through_a_long_path_scales() {
         let message = Group::new(groups[&n].clone()).unwrap_err().message;
         assert!(message.contains(&format!("`D{}` is named in `D{}`", n - 2, n - 1)));
     });
+}
+
+/// The one-definition group `name(a) = body` at the argument `arg`.
+fn instance(name: &str, body: Expr, arg: Type) -> Type {
+    let def = Def {
+        name: name.into(),
+        params: vec!["a".into()],
+        body,
+    };
+    Group::new(vec![def]).unwrap().instance(vec![arg]).remove(0)
+}
+
+/// `#nil | #c(a, N(a))`.
+fn list_body() -> Expr {
+    let tail = Expr::Ref(0, vec![Expr::Param(0)]);
+    Expr::Union(vec![
+        Expr::Type(Type::atom("nil")),
+        atom("c", vec![Expr::Param(0), tail]),
+    ])
+}
+
+/// `() | (a, N(a))`.
+fn seq_body() -> Expr {
+    let tail = Expr::Ref(0, vec![Expr::Param(0)]);
+    Expr::Union(vec![
+        Expr::Type(Type::tuple(vec![])),
+        pair(Expr::Param(0), tail),
+    ])
+}
+
+/// `#nil | #c(a, (a, N(a)))`: the pair is a part of the group, kept unevaluated.
+fn nested_body() -> Expr {
+    let tail = Expr::Ref(0, vec![Expr::Param(0)]);
+    Expr::Union(vec![
+        Expr::Type(Type::atom("nil")),
+        atom("c", vec![Expr::Param(0), pair(Expr::Param(0), tail)]),
+    ])
+}
+
+/// Item PRINT-fmt-audit: a refused group writes each type its definitions hold in the surface
+/// syntax, a recursive type by its group's name (`Type::surface_by_name`), its arguments and
+/// the parts of the group in the surface syntax too. Before, a type that needed a definition of
+/// its own was written in the kernel's internal prefix form, which no program can contain:
+///
+/// - `L(int | #x)` was `L((| int #x))`
+/// - `L(int ->? int)` was `L((->? int int))`
+/// - `(int | #x, int | #x)` was `(tuple (| int #x) (| int #x))`
+/// - `#c(int | #x, L(int | #x)) & #c(int, _)` was
+///   `(#c (& (tuple (| int #x) L((| int #x))) (tuple int _)))`
+/// - `#w() | #w(int, P(int))` was `(#w (| (tuple) (tuple int P(int))))`
+/// - `#c(int, _) & #c(int, M(int))` was `(#c (& (tuple int M(int)) (tuple int _)))`
+/// - `Q(int | #x)` was `Q((| int #x))`
+/// - `#c(int | #x, (int | #x, Q(int | #x))) & #c(int, _)` was
+///   `(#c (& (tuple (| int #x) ((| int #x), Q((| int #x)))) (tuple int _)))`
+///
+/// `int | (int ->? int)`, `M(int)` and `P(int)` were written so before too. Each text parses as
+/// a type; that the printer's text reads back as the same type is tested at the printer
+/// (l01_22 `surface`).
+#[test]
+fn a_refused_group_writes_the_types_it_holds_as_a_program_would() {
+    let int_or_x = &Type::int() | &Type::atom("x");
+    let partial = Type::morphism(Type::empty(), Type::int(), Type::int());
+    let l = instance("L", list_body(), int_or_x.clone());
+    let m = instance("M", list_body(), Type::int());
+    let p = instance("P", seq_body(), Type::int());
+    let q = instance("Q", nested_body(), int_or_x.clone());
+    let c_int = Type::atom_with("c", &Type::tuple(vec![Type::int(), Type::top()]));
+    // Each type, its text, and whether the text stands unparenthesized on the left of `\`.
+    for (t, text, primary) in [
+        (l.clone(), "L(int | #x)", true),
+        (
+            instance("L", list_body(), partial.clone()),
+            "L(int ->? int)",
+            true,
+        ),
+        (
+            Type::tuple(vec![int_or_x.clone(), int_or_x.clone()]),
+            "(int | #x, int | #x)",
+            true,
+        ),
+        (&l & &c_int, "#c(int | #x, L(int | #x)) & #c(int, _)", false),
+        (&Type::int() | &partial, "int | (int ->? int)", false),
+        (Type::atom_with("w", &p), "#w() | #w(int, P(int))", false),
+        (m.clone(), "M(int)", true),
+        (&m & &c_int, "#c(int, _) & #c(int, M(int))", false),
+        (p, "P(int)", true),
+        (q.clone(), "Q(int | #x)", true),
+        (
+            &q & &c_int,
+            "#c(int | #x, (int | #x, Q(int | #x))) & #c(int, _)",
+            false,
+        ),
+    ] {
+        let message = refusal(
+            &["N"],
+            &[],
+            vec![diff(Expr::Type(t), atom("b", vec![r(0)]))],
+        );
+        let left = match primary {
+            true => text.to_string(),
+            false => format!("({text})"),
+        };
+        assert!(
+            message.contains(&format!("in `{left} \\ #b(N)`")),
+            "{text}: {message}"
+        );
+        let tokens = lex_fence(text).unwrap();
+        parse(text, &tokens, "Type", TOP).unwrap_or_else(|e| panic!("{text}: {e:?}"));
+    }
 }

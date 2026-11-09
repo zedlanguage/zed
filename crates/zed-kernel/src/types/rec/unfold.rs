@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, PoisonError, Weak};
 
 use super::{At, Def, Env, Key, Node, Shape, same};
-use crate::types::print::{At as Place, Class};
-use crate::types::{self, Piece, Rope, Type};
+use crate::types::print::Class;
+use crate::types::{self, Piece, Rope, TextPlace as Place, Type};
 
 /// The units begun, over all threads.
 static UNITS: AtomicU64 = AtomicU64::new(0);
@@ -301,8 +301,9 @@ pub(super) struct Show<'a> {
     pub(super) args: Option<&'a [Type]>,
     pub(super) e: &'a Node,
     /// Whether a type that does not mention the group is written in the surface syntax (module
-    /// `print`), as a message writes it, rather than by its name ([`Type::rope`]). One that
-    /// needs definitions of its own, as a recursive type does, is written by its name.
+    /// `print`), as a message writes it, rather than by its name ([`Type::rope`]). A recursive
+    /// type in it is written by its name, with its arguments in the surface syntax too, as is a
+    /// parameter's argument.
     pub(super) surface: bool,
 }
 
@@ -323,16 +324,14 @@ impl Show<'_> {
             let r = match step {
                 Step::Visit(e, at) => match &e.e {
                     Shape::Param(i) => match self.args {
+                        Some(args) if self.surface => surface(&args[*i], at),
                         Some(args) => args[*i].rope(),
                         None => Rope::cat([Piece::from(self.params[*i].as_str())]),
                     },
                     Shape::Ref(i, args) if args.is_empty() => {
                         Rope::cat([Piece::from(self.defs[*i].name.as_str())])
                     }
-                    Shape::Type(t) if self.surface => match t.surface_at(at) {
-                        s if s.defs.is_empty() => Rope::cat([Piece::from(s.root)]),
-                        _ => t.rope(),
-                    },
+                    Shape::Type(t) if self.surface => surface(t, at),
                     Shape::Type(t) => t.rope(),
                     _ => {
                         todo.push(Step::Build(e, at));
@@ -395,6 +394,15 @@ impl Show<'_> {
             done.push(r);
         }
         done.pop().expect("the rope of the expression")
+    }
+}
+
+/// `t` in the surface syntax at `at`, a recursive type by its name ([`Type::surface_by_name`]).
+/// A text that would need a definition keeps its internal one.
+fn surface(t: &Type, at: Place) -> Rope {
+    match t.surface_by_name(at) {
+        s if s.defs.is_empty() => Rope::cat([Piece::from(s.root)]),
+        _ => t.rope(),
     }
 }
 

@@ -266,6 +266,55 @@ fn each_form_prints_as_written_and_reads_back_as_the_same_type() {
     }
 }
 
+/// Item PRINT-fmt-audit: the kernel set in a compiler type is written as one expression
+/// (`Type::surface_by_name`), at the place it stands in the compiler's text. Before, a part used
+/// twice got a definition, written in the middle of the compiler's text:
+///
+/// - `(int | #x, int | #x)` was `type T1 = int | #x; (T1, T1)`
+/// - `#y | (int | #x, int | #x)` was `type T1 = int | #x; #y | (T1, T1)`
+/// - `(int | #x, int | #x) | (bool, bool)` was `type T1 = int | #x; (T1, T1) | (bool, bool)`
+///
+/// `int | (int ->? int)` and `(int ->? int) | (bool, bool)` were written so before too. Each text
+/// parses; a set reads back as the same type, and a function, which the reader makes the
+/// checker's own function type, reads back as that type again from its own text.
+#[test]
+fn a_kernel_set_in_a_compiler_type_is_written_without_definitions() {
+    let int_or_x = &Type::int() | &Type::atom("x");
+    let shared = tuple(&[int_or_x.clone(), int_or_x.clone()]);
+    let partial = Type::partial(Type::int(), Type::int());
+    // Each type, its text, and whether it is a set of values with no function.
+    for (t, text, set) in [
+        (Ty::set(shared.clone()), "(int | #x, int | #x)", true),
+        (
+            Ty::set(&shared | &Type::atom("y")),
+            "#y | (int | #x, int | #x)",
+            true,
+        ),
+        (
+            ty("(bool, bool)").union(&Ty::set(shared.clone())),
+            "(int | #x, int | #x) | (bool, bool)",
+            true,
+        ),
+        (
+            Ty::set(&Type::int() | &partial),
+            "int | (int ->? int)",
+            false,
+        ),
+        (
+            ty("(bool, bool)").union(&Ty::set(partial.clone())),
+            "(int ->? int) | (bool, bool)",
+            false,
+        ),
+    ] {
+        assert_eq!(t.to_string(), text);
+        let back = ty(text);
+        match set {
+            true => assert!(back.subtype(&t) && t.subtype(&back), "{text}"),
+            false => assert_eq!(ty(&back.to_string()), back, "{text}"),
+        }
+    }
+}
+
 /// A union of `n` members, half kind-wide differences `(..) \ (i, i)` and `#_ \ #ai`, half
 /// exact `(i, i)` and `#ai`.
 fn mixed(n: usize) -> Type {

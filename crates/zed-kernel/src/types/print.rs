@@ -9,6 +9,9 @@
 //! a cycle prints as definitions that refer to each other. So the text is linear in the graph,
 //! however many paths its diagrams have.
 //!
+//! Written by name ([`Type::surface_by_name`]), a type is one expression instead: a recursive type
+//! is its group's name for it, as `L(int | #x)`, and a node used twice is written out at each use.
+//!
 //! A diagram node over the tuple type `a`, with `hi` and `lo`, is `a & hi | (lo \ a)`, and
 //! the cases where `hi` or `lo` is a leaf drop the parts that are empty. A part kept as its
 //! operands prints its connective. A type with every other atom, every tuple length not listed
@@ -21,6 +24,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use super::TextPlace as At;
 use super::bdd::{Bdd, Form, Part};
 use super::{Lits, Morphism, Node, Row, Surface, Tuples, Type};
 
@@ -66,8 +70,36 @@ impl Type {
     /// The type in the surface syntax at `at`, parenthesized where the text would not be read
     /// there as one operand.
     pub(crate) fn surface_at(&self, at: At) -> Surface {
-        let mut p = Printer::default();
-        let root = p.refer(Item::Ty(None, self.clone()));
+        Printer::default().print(self, at)
+    }
+
+    /// The type in the surface syntax at `at` as one expression: each recursive member is written
+    /// by the name its group gives it, as `L(int | #x)`, and a part used more than once is
+    /// written out at each use, so there are no definitions; a part of a definition kept
+    /// unevaluated, and an atom's payload that is a recursive type as a whole, are unfolded once.
+    /// A refused group's message writes the types its definitions hold so (`rec::Show`), inside
+    /// an expression of the definitions, and a compiler type writes its kernel part so, inside
+    /// the rest of its text. Time linear in the text, which repeats a part at each use, as the
+    /// type's internal text (`Type::rope`) does.
+    // Complexity tradeoff: written out at each use, a part shared at k levels is written 2^k
+    // times (`(T, T)` over `(U, U)` over …), where definitions keep the text linear in the
+    // graph ([`Type::surface`]). Type syntax has no definitions inside a type, and a printed
+    // type parses back as one `Type` (DESIGN.md "Printed types are syntax"); the compiler's own
+    // types write their tuples out at each use too (`Ty`'s `Display`). COMPLEXITY.md K90.
+    pub fn surface_by_name(&self, at: At) -> Surface {
+        Printer {
+            by_name: true,
+            ..Printer::default()
+        }
+        .print(self, at)
+    }
+}
+
+impl Printer {
+    /// The text of `t` at `at`.
+    fn print(mut self, t: &Type, at: At) -> Surface {
+        let p = &mut self;
+        let root = p.refer(Item::Ty(None, t.clone()));
         let Seg::Node(i, _) = root.segs[0] else {
             unreachable!("a reference is one node")
         };
@@ -92,18 +124,6 @@ pub(crate) enum Class {
     Prim,
     /// The class of the one node the text is.
     Of(usize),
-}
-
-/// Where a text stands, and so which classes it may have there unparenthesized.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) enum At {
-    Any,
-    Union,
-    And,
-    DiffLeft,
-    Prim,
-    Key,
-    Bound,
 }
 
 impl At {
@@ -378,6 +398,9 @@ struct Printer {
     /// Each node's item, until visited.
     items: Vec<Option<Item>>,
     exact: bool,
+    /// Whether a recursive type is written by its name and a node used twice is written out at
+    /// each use, rather than given a definition ([`Type::surface_by_name`]).
+    by_name: bool,
 }
 
 enum Step {
@@ -465,7 +488,7 @@ impl Printer {
     fn named(&self, i: usize) -> bool {
         let text = self.texts[i].as_ref().expect("visited");
         let token = matches!(&text.segs[..], [Seg::Str(s)] if !s.contains([' ', '(', ',']));
-        self.forced[i].is_some() || (self.uses[i] >= 2 && !token)
+        self.forced[i].is_some() || (!self.by_name && self.uses[i] >= 2 && !token)
     }
 
     /// Orders the elements of every group by their contents, so that the text does not depend
@@ -590,6 +613,37 @@ impl Printer {
 
     fn ty(&mut self, ctx: &Ctx, t: &Type) -> Text {
         if let Node::Rec(r) = &*t.0 {
+            // Written by name, a member is `name(args)`. A part kept unevaluated has no name, and
+            // an atom's payload that is a recursive type as a whole has none of its own to follow
+            // the atom's: each is unfolded once, as `#c(int, L(int))`, the recursive types inside
+            // by name. An unfolding that is itself a recursive node gets a definition, as without
+            // names.
+            if self.by_name {
+                match r.key.member_name() {
+                    Some((name, [])) if ctx.is_none() => return Text::word(name, Class::Prim),
+                    Some((name, args)) if ctx.is_none() => {
+                        let mut segs = vec![Seg::Str(format!("{name}("))];
+                        for (k, a) in args.iter().enumerate() {
+                            if k > 0 {
+                                segs.push(Seg::Str(", ".into()));
+                            }
+                            let a = self.refer(Item::Ty(None, a.clone()));
+                            put(&mut segs, a, At::Any);
+                        }
+                        segs.push(Seg::Str(")".into()));
+                        return Text {
+                            segs,
+                            class: Class::Prim,
+                        };
+                    }
+                    _ => {
+                        let body = r.unfolding();
+                        if !matches!(&*body.0, Node::Rec(_)) {
+                            return self.refer(Item::Ty(ctx.clone(), body));
+                        }
+                    }
+                }
+            }
             let i = self.index[&Key::Ty(ctx.clone(), t.clone())];
             let ctx_name = ctx.as_deref().unwrap_or("").to_string();
             self.forced[i] = Some((ctx_name, t.to_string(), t.clone()));

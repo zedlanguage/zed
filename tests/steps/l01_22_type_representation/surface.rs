@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_kernel::types::{Surface, Type, Universe};
+use zed_kernel::types::{Surface, TextPlace, Type, Universe};
 use zed_kernel::value::Value;
 use zed_tests::scaling;
 use zedc::lex::lex_fence;
@@ -529,6 +529,112 @@ fn the_text_of_a_type_shared_n_deep_scales() {
     });
 }
 
+/// The group `L(a) = #nil | #cons(a, L(a))` at the argument `arg`.
+fn list_of(arg: Type) -> Type {
+    let tail = Expr::Ref(0, vec![Expr::Param(0)]);
+    let body = Expr::Union(vec![
+        Expr::Type(Type::atom("nil")),
+        Expr::Atom("cons".into(), vec![Expr::Param(0), tail]),
+    ]);
+    let def = Def {
+        name: "L".into(),
+        params: vec!["a".into()],
+        body,
+    };
+    Group::new(vec![def]).unwrap().instance(vec![arg]).remove(0)
+}
+
+/// Item PRINT-fmt-audit: written by name (`Type::surface_by_name`), as a compiler type writes
+/// its kernel part inside the rest of its text, a type is one expression with no definitions,
+/// at the place it stands. Before, the compiler wrote the kernel text with its definitions in
+/// the middle of its own text: `(int | #x, int | #x)` alone was `type T1 = int | #x; (T1, T1)`,
+/// and in a union `#y | type T1 = int | #x; (T1, T1)`, which no parser reads.
+#[test]
+fn a_type_written_by_name_has_no_definitions() {
+    let int_or_x = &Type::int() | &Type::atom("x");
+    let partial = Type::partial(Type::int(), Type::int());
+    for (t, at, text) in [
+        (
+            tuple(&[int_or_x.clone(), int_or_x.clone()]),
+            TextPlace::Any,
+            "(int | #x, int | #x)",
+        ),
+        (
+            shared(3),
+            TextPlace::Any,
+            "(((0, 0), (0, 0)), ((0, 0), (0, 0)))",
+        ),
+        (partial.clone(), TextPlace::Any, "int ->? int"),
+        (partial.clone(), TextPlace::Union, "(int ->? int)"),
+        (partial.clone(), TextPlace::Key, "(int ->? int)"),
+        (partial.clone(), TextPlace::Bound, "(int ->? int)"),
+        (tuple(&[lit(1), lit(2)]), TextPlace::Key, "((1, 2))"),
+        (
+            &Type::int() | &partial,
+            TextPlace::Union,
+            "int | (int ->? int)",
+        ),
+    ] {
+        let s = t.surface_by_name(at);
+        assert!(s.exact && s.defs.is_empty(), "{s}");
+        assert_eq!(s.root, text);
+        accepts(&s.root, "Type").unwrap();
+        let back = read(&s);
+        assert!(
+            back.subtype(&t) && t.subtype(&back),
+            "{s} reads back as another type"
+        );
+    }
+    for n in [1, 2, 6] {
+        for t in [shared(n), words(n), xor(n)] {
+            let s = t.surface_by_name(TextPlace::Any);
+            assert!(s.defs.is_empty(), "{s}");
+            assert!(read(&s).subtype(&t) && t.subtype(&read(&s)), "{s}");
+        }
+    }
+    // A recursive type is its group's name for it, its arguments written by name too.
+    let inner = list_of(&Type::int() | &partial);
+    for (t, text) in [
+        (list(), "List"),
+        (inner.clone(), "L(int | (int ->? int))"),
+        (list_of(inner.clone()), "L(L(int | (int ->? int)))"),
+        (
+            tuple(&[inner.clone(), inner]),
+            "(L(int | (int ->? int)), L(int | (int ->? int)))",
+        ),
+    ] {
+        let s = t.surface_by_name(TextPlace::Any);
+        assert!(s.defs.is_empty(), "{s}");
+        assert_eq!(s.root, text);
+        accepts(&s.root, "Type").unwrap();
+    }
+}
+
+#[test]
+fn the_text_of_a_type_written_by_name_scales() {
+    // Linear in the text: a tuple nested n deep, and a recursive type whose argument is
+    // another, n deep.
+    let nested = scaling::inputs(1000, |n| {
+        (0..n as i64).fold(lit(-1), |t, i| tuple(&[lit(i), t]))
+    });
+    scaling::check(
+        "the text of a tuple nested n deep, written by name",
+        1000,
+        |n| {
+            let s = nested[&n].surface_by_name(TextPlace::Any);
+            assert!(s.defs.is_empty());
+        },
+    );
+    let lists = scaling::inputs(100, |n| (0..n).fold(Type::int(), |t, _| list_of(t)));
+    scaling::check(
+        "the text of a list type of lists n deep, written by name",
+        100,
+        |n| {
+            let s = lists[&n].surface_by_name(TextPlace::Any);
+            assert_eq!(s.root.matches("L(").count(), n);
+        },
+    );
+}
 /// The empty type prints as the prelude name `Never` (DESIGN.md, the L1 row of "Defined words
 /// by layer"), never `!_`: alone, as a function's result, as the lower bound of a domain, and
 /// not at all inside a union. Each text parses and reads back to its type.

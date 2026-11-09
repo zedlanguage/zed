@@ -5068,6 +5068,27 @@ pub struct Surface {
     pub exact: bool,
 }
 
+/// Where a text stands, and so which classes it may have there unparenthesized: anywhere, as an
+/// operand of `|`, of `&`, the left of `\`, an operand of any connective, the key of an arrow,
+/// or a bound of `L .. U -> V` ([`Type::surface_by_name`]).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum TextPlace {
+    /// Anywhere: the whole of a type.
+    Any,
+    /// An operand of `|`.
+    Union,
+    /// An operand of `&`.
+    And,
+    /// The left of `\`.
+    DiffLeft,
+    /// An operand of any connective.
+    Prim,
+    /// The key of an arrow, `K -> V`.
+    Key,
+    /// A bound of `L .. U -> V`.
+    Bound,
+}
+
 impl fmt::Display for Surface {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (name, body) in &self.defs {
@@ -5917,6 +5938,15 @@ pub mod rec {
         /// Whether the decider of the group (`judge`) has run, which a member's `judged` reads.
         pub(super) fn judged_known(&self) -> bool {
             self.env.judged.get().is_some()
+        }
+
+        /// The name of the member the key names and its instance's arguments, when it names a
+        /// member: a message writes it so, `name(args)` (`Type::surface_by_name`).
+        pub(in crate::types) fn member_name(&self) -> Option<(&str, &[Type])> {
+            match self.at {
+                At::Member(i) => Some((&self.env.group().0.defs[i].name, &self.env.args)),
+                At::Part(_) => None,
+            }
         }
 
         /// The instance and the index of the member the key names, when it names a member: the

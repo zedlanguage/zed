@@ -4538,11 +4538,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             if !ok {
                 let p = self.show(&piece.ty());
                 let why = on.of_piece(&piece).refused(ty);
+                // After `is` a type stands as a union operand: a function type is parenthesized.
+                let is_ty = self.text_in_union(ty);
                 let ty = self.text(ty);
                 let menu = [
                     format!("repair: pass {what} a value of {ty}"),
                     format!(
-                        "repair: test the value with `is` first, as `if v is {ty} {{ … }}`, or \
+                        "repair: test the value with `is` first, as `if v is {is_ty} {{ … }}`, or \
                          handle the values that are not {ty} with `else` or `match`"
                     ),
                 ];
