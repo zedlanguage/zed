@@ -1718,20 +1718,21 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CX-tradeoff-krows | impl attempt 1 | 2026-11-09 15:42 | start: checking K rows and unlisted COMPLEXITY rows for tradeoff comments |
+| CX-tradeoff-krows | impl attempt 1 | 2026-11-09 15:42 | worktree wt/cx-krows branched from wt/cx-tradeoff-review 1373f81f (review not on main; avoids a second copy of its table); 7 forks checking ~400 COMPLEXITY.md r |
 | CX-tradeoff-review | impl attempt 1 | 2026-11-09 15:11 | ready wt/cx-tradeoff-review 1373f81f: 48 partial + 2 stale tradeoff comments fixed, comments only; K-row search for missing comments left; fmt, clippy, doc, s_0 |
 | GROUP-overlaps-unfold | running | 2026-11-09 12:48 | deletes: none run, tried or canceled in this task; files I want removed (scratchpad): old_overlaps.rs new_overlaps.rs new_overlaps2.rs overlaps_doc.txt overlaps |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | MSG-fresh-name-clash | running | 2026-11-09 13:30 | noted for batch 88 (DOCS-TODO 54 and COMPLEXITY F140 renumber); deletes: none |
 | MSG-growth-projection-cause | impl attempt 1 | 2026-11-09 12:41 | ready at 2e4d1da9 on wt/growth-cause; 491 test pieces pass, load 17 to 37; deletes: none |
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | repair ready b9a464bd: reference walk now same order as the walk, quadratic copy deleted after 8,000-seed agreement; walk's own superlinear forms (a)-(c) open f |
-| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | F (C4 + #[inline] on Num is_zero/to_i128/From and kernel hash::mix): 696M/972M/4173M/828M/902M, 0.5% below C4; dropped as not worth the edits |
+| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | back to back: main profile preimage edit 11.4-13.6 s, kernel 33.5-47.5 s (load 21-32); C4 preimage 23.1-30.0 s, kernel 42.9-64.1 s (load 9-25); C4's extra 2.5-4 |
 | PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | negative control on merged 5fcc15f1: new test deep_let::the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block fails, 1000 blocks peak 6.53 MB left 6 |
 | PA-walk-nest-cost | impl attempt 1 | 2026-11-09 15:39 | baseline Minstr: A d64/128/256/512 = 131/497/1931/7603; B d16/32/64 = 203/1208/8117; C d64/128/256/512 = 243/656/1995/6708 (load 19.6) |
 | PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | ready wt/model-keys 851e8143: not a soundness bug (linear); doc + seeded test model_keys 3/3; 499 pieces 0 failed; no code change, instruction counts unchanged; |
+| PRES-product-parity | impl attempt 1 | 2026-11-09 15:51 | started; worktree wt/product-parity from origin/main 3ec05d03 |
 | PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | deletes: none run, tried or canceled in this task; scratch files left for the orchestrator (listed in report) / load 23.14 |
 | PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | ready cf7cdd28 on wt/pres-small-cost (rebased on 5414631a); 490 pieces 0 failed, load 17-57; follow-ups PRES-small-front, PRES-model-keys queued |
-| PRES-small-front | impl attempt 1 | 2026-11-09 14:43 | started on cf7cdd28 (stacked on wt/pres-small-cost), worktree small-front |
+| PRES-small-front | impl attempt 1 | 2026-11-09 14:43 | ready 4d29be86 on wt/small-front (stacked on wt/pres-small-cost): bounds in propagation + fast-path constant halved; point tried for decide dropped (changed ref |
 | PRINT-group-site-defs | impl attempt 1 | 2026-11-09 13:49 | first run of affected groups after the printer change (182 pieces), load 39.18 34.46 27.64 |
 | PRINT-is-pattern | impl attempt 1 | 2026-11-09 14:57 | ready c53d32f4 on wt/is-pattern (stacked on wt/group-site-defs a411cea5): kernel prints `is T`; 361 pieces pass with doc check, load 11.8 to 21.3; now 20.33 20. |
 | PROJECT-hull-credit-lower | impl attempt 1 | 2026-11-09 12:10 | ready: wt/hull-credit 9664b8b9 rebased on origin/main 98d5d23d, 493/493 pieces pass, load 15-51; ledger ready + TIGHTEN-each-whole |
