@@ -1194,6 +1194,132 @@ thread_local! {
     static OLD_PATH: Cell<bool> = const { Cell::new(false) };
 }
 
+/// `f` written one way whatever way an equal formula was written (item PROJECT-each-canon):
+/// each equation `t == 0` with the sign of `t` whose first coefficient is positive, or, with
+/// `both`, held with both signs ([`equation`]), and in each conjunction, `t >= 0` beside
+/// `-t >= 0` as `t == 0`, so that an equation written with either sign, twice with opposite
+/// signs, or as two inequalities is one constraint, and [`Formula::and`] holds it once. Each
+/// later step reads the signs of the rows (the colors of [`stable_colors`] and the order of
+/// [`canonical`] among them), and a question that one writing answered another refused with
+/// [`Refusal::Growth`]. In time O(n log n) in the size of `f`; a node that is written so
+/// already is kept, with its id.
+///
+/// Neither writing answers every question the other does: the solver refuses some systems with
+/// one sign of an equation and answers them with the other, and [`project_each`] asks with the
+/// second writing only where the first is refused.
+fn signed(f: &Formula, both: bool) -> Formula {
+    // Each node's writing, or `None` where it is written so already: an unchanged node is kept
+    // as it is, with its id, so that what later steps keep by id still finds it.
+    let changed = f.fold(
+        false,
+        |g, negated| negated != matches!(g, Formula::Not(_)),
+        |g, negated, parts: Vec<Option<Formula>>| match g {
+            Formula::Con(c) if c.rel == Rel::Eq => equation(c, negated, both),
+            Formula::Con(_) => None,
+            Formula::And(gs) => {
+                // Each `t >= 0` whose `-t >= 0` is a part too, as the equation, in its place,
+                // so that the parts keep their places ([`Formula::rebuild`]).
+                let paired = opposite_rows(gs);
+                if paired.is_empty() && parts.iter().all(Option::is_none) {
+                    return None;
+                }
+                let kids = (gs.iter().zip(parts).enumerate())
+                    .map(|(i, (k, p))| match k {
+                        Formula::Con(c) if paired.contains(&i) => {
+                            let eq = Con {
+                                lin: c.lin.clone(),
+                                rel: Rel::Eq,
+                            };
+                            equation(&eq, negated, both).unwrap_or(Formula::Con(eq))
+                        }
+                        k => p.unwrap_or_else(|| k.clone()),
+                    })
+                    .collect();
+                Some(g.rebuild(kids))
+            }
+            Formula::Not(_) | Formula::Or(_) => {
+                if parts.iter().all(Option::is_none) {
+                    return None;
+                }
+                let kids = (g.kids().iter().zip(parts))
+                    .map(|(k, p)| p.unwrap_or_else(|| k.clone()))
+                    .collect();
+                Some(g.rebuild(kids))
+            }
+        },
+    );
+    changed.unwrap_or_else(|| f.clone())
+}
+
+/// The places of the rows `t >= 0` among `gs` whose opposite `-t >= 0` is among them too, found
+/// by a hash that `t` and `-t` share, so that no row is copied.
+fn opposite_rows(gs: &[Formula]) -> BTreeSet<usize> {
+    use std::hash::{Hash, Hasher};
+    let mut by: HashMap<u64, Vec<usize>> = HashMap::new();
+    for (i, g) in gs.iter().enumerate() {
+        let Formula::Con(c) = g else { continue };
+        let Some((_, first)) = c.lin.terms.first_key_value() else {
+            continue;
+        };
+        if c.rel != Rel::Ge {
+            continue;
+        }
+        let flip = first.is_negative();
+        let mut h = std::hash::DefaultHasher::new();
+        for (a, k) in &c.lin.terms {
+            a.hash(&mut h);
+            if flip { -k } else { k.clone() }.hash(&mut h);
+        }
+        if flip {
+            -&c.lin.constant
+        } else {
+            c.lin.constant.clone()
+        }
+        .hash(&mut h);
+        by.entry(h.finish()).or_default().push(i);
+    }
+    let lin = |i: usize| match &gs[i] {
+        Formula::Con(c) => &c.lin,
+        _ => unreachable!("a row"),
+    };
+    let mut out = BTreeSet::new();
+    // Complexity tradeoff: the rows of one hash are compared pairwise. Why: they are `t` and
+    // `-t` for one `t`, two at most, since `Formula::and` holds equal rows once, unless two rows
+    // share a 64-bit hash by chance. Trigger: such a collision; the size plays no part. Test:
+    // `l01_39_reduced_product::pendants::rewritten_parts_give_one_answer_first_half`.
+    for rows in by.values().filter(|rows| rows.len() > 1) {
+        for (n, &i) in rows.iter().enumerate() {
+            for &j in &rows[n + 1..] {
+                if opposite_lins(lin(i), lin(j)) {
+                    out.extend([i, j]);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether `b` is `-a`.
+fn opposite_lins(a: &Lin, b: &Lin) -> bool {
+    a.constant == -&b.constant
+        && a.terms.len() == b.terms.len()
+        && (a.terms.iter().zip(&b.terms)).all(|((x, k), (y, m))| x == y && *k == -m)
+}
+
+/// The equation `c`, `t == 0`, with the sign of `t` whose first coefficient, in the order of
+/// the names, is positive (of a row with no names, whose constant is not negative), which no
+/// writing of the equation changes, or `None` when that is `c` as written. With `both`, and not
+/// under a negation (`negated`), `t == 0 && -t == 0`; under a negation, where
+/// `!(t == 0)` reads as `t - 1 >= 0 || -t - 1 >= 0` whichever sign `t` has, the one sign.
+fn equation(c: &Con, negated: bool, both: bool) -> Option<Formula> {
+    let eq = |lin: Lin| Formula::Con(Con { lin, rel: Rel::Eq });
+    if both && !negated {
+        return Some(Formula::and(vec![eq(c.lin.clone()), eq(c.lin.times(-1))]));
+    }
+    let lead = c.lin.terms.values().next().unwrap_or(&c.lin.constant);
+    lead.is_negative().then(|| eq(c.lin.times(-1)))
+}
+
 /// `run`, and when the solver refuses it, `run` again on the path before DISJ-diff-fast and
 /// DISJ-incremental ([`old_path`]), so that no question answered there is refused now. The
 /// new path changes which disjuncts a search reads and with which rows, and a different
@@ -7356,12 +7482,59 @@ pub type Each = (Vec<Result<IntervalSet, Refusal>>, Vec<Refusal>);
 /// [`project`] onto each of `syms`, removing disjuncts once: one result for each symbol, so
 /// that a symbol whose hull is refused leaves the others projected. With them, the causes for
 /// which a disjunction was left out, which leaves each hull wider but sound.
+///
+/// Whatever way an equal formula is written, the answer is the same: `f` is asked written one
+/// way (`signed`), and where that is refused, with each equation held with both signs.
+// Complexity tradeoff: a question refused in the first writing costs a second question of the
+// same size. Why: the solver chooses its order of elimination by the signs of the rows, so
+// which systems it refuses depends on them, and no check before the question tells which
+// writing it answers; asking both every time would double every question. Trigger: a question
+// the solver refuses with each equation in the sign of [`equation`]. Test:
+// `l01_39_reduced_product::pendants::refused_parts_projected_exactly_by_pendants_fourth_quarter_rest`.
+// COMPLEXITY.md row PROJECT-each-canon.
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    let first = project_each_signed(&signed(f, false), syms);
+    if matches!(&first, Ok(each) if !refused(each)) {
+        return first;
+    }
+    // The second writing where the first is refused; where both
+    // refuse something, the meet of the two (each sound, so the meet is), with the causes the
+    // first gives.
+    match (first, project_each_signed(&signed(f, true), syms)) {
+        (_, Ok(other)) if !refused(&other) => Ok(other),
+        (Ok((mut each, skipped)), Ok((others, _))) => {
+            meet_each(&mut each, others);
+            Ok((each, skipped))
+        }
+        (Ok(each), Err(_)) => Ok(each),
+        (Err(_), Ok(other)) => Ok(other),
+        (Err(e), Err(_)) => Err(e),
+    }
+}
+
+/// Each of `each` met with the same symbol's projection in `others`, both sound: a refused
+/// symbol takes the other, every other the meet of the two.
+fn meet_each(each: &mut [Result<IntervalSet, Refusal>], others: Vec<Result<IntervalSet, Refusal>>) {
+    for (s, o) in each.iter_mut().zip(others) {
+        match (&*s, o) {
+            (Ok(n), Ok(o)) => *s = Ok(n.meet(&o)),
+            (Err(_), o) => *s = o,
+            (Ok(_), Err(_)) => {}
+        }
+    }
+}
+
+/// Whether `each` refuses a symbol or leaves a disjunction out.
+fn refused(each: &Each) -> bool {
+    !each.1.is_empty() || each.0.iter().any(Result::is_err)
+}
+
+/// [`project_each`] of `f` written one way ([`signed`]).
+fn project_each_signed(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     // Where the new path refuses a symbol or leaves a disjunction out, the old path is asked
     // too ([`or_old`]): a refused symbol takes the old hull, every other the meet of the two
     // (each sound, so the meet is), and the causes given are the old path's, so that no
     // refusal or cause appears where the old path had none.
-    let refused = |e: &Each| !e.1.is_empty() || e.0.iter().any(Result::is_err);
     let new = or_old(|| project_each_named(f, syms));
     match new {
         Ok(mut each) if refused(&each) && !old_path() => {
@@ -7369,13 +7542,7 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
             let old = project_each_named(f, syms);
             OLD_PATH.with(|o| o.set(false));
             if let Ok((olds, skipped)) = old {
-                for (s, o) in each.0.iter_mut().zip(olds) {
-                    match (&*s, o) {
-                        (Ok(n), Ok(o)) => *s = Ok(n.meet(&o)),
-                        (Err(_), o) => *s = o,
-                        (Ok(_), Err(_)) => {}
-                    }
-                }
+                meet_each(&mut each.0, olds);
                 each.1 = skipped;
             }
             Ok(each)
@@ -7456,6 +7623,17 @@ fn project_parts(
 ) -> Result<Each, Refusal> {
     let none = || no_points(syms);
     let mut skipped: Vec<Refusal> = Vec::new();
+    // With two disjunctions or more, each disjunct that has no point with the base and the
+    // rows the other disjunctions imply is removed first ([`drop_jointly_empty`]), before the
+    // greedy search ([`pick`]) reads the disjuncts in their order: a disjunct removed so can
+    // no longer be taken first and fail the search, which [`probe`] would then answer by a
+    // question per disjunct. So which disjunct of `x == 3 || x == 7` comes first, which the
+    // sign the equations are written with decides, no longer decides the cost (item
+    // PROJECT-each-canon). With `sets`, the parts are projected as they are.
+    if !sets && p.ors.len() > 1 && !old_path() && drop_jointly_empty(&p.cons, &mut p.ors).is_none()
+    {
+        return Ok(none());
+    }
     if !sets && p.ors.len() > 1 && pick(&p, whole.is_some()).is_err() {
         let Some(q) = probe(p)? else {
             return Ok(none());
@@ -7476,9 +7654,10 @@ fn project_parts(
     let n_ors = ors.len();
     let linked = Linked::of(std::mem::take(&mut p.cons));
     // With two disjunctions or more, each disjunct that has no point with the base and the
-    // rows the other disjunctions imply is removed first ([`drop_jointly_empty`]), so that the
-    // implied rows read below for the hulls and for a point at each end are those of the
-    // disjuncts left. With `sets`, the parts are projected as they are.
+    // rows the other disjunctions imply is removed again ([`drop_jointly_empty`]), after the
+    // search, which [`probe`] may have changed the parts by, so that the implied rows read
+    // below for the hulls and for a point at each end are those of the disjuncts left. With
+    // `sets`, the parts are projected as they are.
     if !sets && n_ors > 1 && !old_path() && drop_jointly_empty(&linked.cons, &mut ors).is_none() {
         return Ok(none());
     }

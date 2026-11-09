@@ -1021,15 +1021,21 @@ const GUARDED: [Counts; 16] = [
     (1750, (0, 1, 49), (13, &[]), 0),
     (2000, (0, 1, 55), (17, &[]), 0),
     (2250, (0, 1, 42), (15, &[]), 0),
-    (2500, (0, 0, 53), (10, &[]), 0),
+    (2500, (0, 0, 52), (10, &[]), 0),
     (2750, (0, 0, 48), (5, &[]), 0),
-    (3000, (0, 0, 57), (10, &[]), 0),
-    (3250, (0, 0, 53), (7, &[]), 0),
-    (3500, (0, 0, 50), (5, &[]), 0),
+    (3000, (0, 0, 58), (10, &[]), 0),
+    (3250, (0, 0, 52), (7, &[]), 0),
+    (3500, (0, 0, 49), (5, &[]), 0),
     (
         3750,
-        (0, 2, 57),
-        (11, &["i [4..] before i [4..=5, 7..]"]),
+        (0, 2, 56),
+        (
+            11,
+            &[
+                "i [2..] before i [2..=2, 5..]",
+                "i [4..] before i [4..=5, 7..]",
+            ],
+        ),
         0,
     ),
 ];
@@ -1161,6 +1167,15 @@ guarded_ranges!(
 /// on its box. Each changed box holds every point that meets the demand and, where exact, no
 /// point that fails it, over `-60..=60`. Measured on main 5b0aee39 against the rebased branch
 /// over all 4000 cases.
+///
+/// Since PROJECT-each-canon, which writes each equation with its first coefficient positive
+/// before a projection, so that the answer does not depend on the sign it was written with,
+/// and removes the disjuncts with no point jointly before the greedy search, the transfer now
+/// gives the same result as on main in all 4000 cases; the transfer before, which shares the
+/// solver, differs in 18: 12 boxes narrower (6 of them now exact) and 6 wider (3 of them no
+/// longer exact), each sound. So the first half counts as many boxes made exact as on main
+/// (378), the second 3 fewer (412). Of cases 3750 to 4000, the box before of `i [2..]` is now
+/// `i [2..=2, 5..]` where it was `i [0..]`, so the split over many periods is listed as wider.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1184,7 +1199,17 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     assert_eq!(sum(&GUARDED[..8]), (0, 6, 378, 81, vec![], 0));
     assert_eq!(
         sum(&GUARDED[8..]),
-        (0, 4, 415, 80, vec!["i [4..] before i [4..=5, 7..]"], 0)
+        (
+            0,
+            4,
+            412,
+            80,
+            vec![
+                "i [2..] before i [2..=2, 5..]",
+                "i [4..] before i [4..=5, 7..]"
+            ],
+            0
+        )
     );
 }
 

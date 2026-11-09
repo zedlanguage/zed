@@ -1297,3 +1297,301 @@ fn leaves_of_ordered_hubs_with_upper_bounds_scale() {
         },
     );
 }
+
+/// `c` with each coefficient and its constant negated: for an equation, the same equation.
+fn negated(c: &Cmp) -> Cmp {
+    Cmp {
+        terms: c.terms.iter().map(|(n, k)| (n.clone(), -k)).collect(),
+        constant: -c.constant,
+        eq: c.eq,
+    }
+}
+
+/// The projections of `f` framed by the boxes of `s`, each met with its box or the refusal,
+/// and the causes for which a disjunction was left out, or the refusal of the whole.
+fn each_answer(s: &Scope, f: &Formula, syms: &[Atom]) -> String {
+    let mut parts: Vec<Formula> = syms
+        .iter()
+        .map(|a| match a {
+            Atom::Sym(n) => presburger::member(a, s.get(n).ints()),
+            _ => unreachable!("a name"),
+        })
+        .collect();
+    parts.push(f.clone());
+    match presburger::project_each(&Formula::and(parts), syms) {
+        Err(e) => format!("refused: {e:?}"),
+        Ok((each, skipped)) => {
+            let shown: Vec<String> = syms
+                .iter()
+                .zip(each)
+                .map(|(a, x)| {
+                    let Atom::Sym(n) = a else {
+                        unreachable!("a name")
+                    };
+                    match x {
+                        Ok(x) => format!("{n}={}", show(&s.get(n).ints().meet(&x))),
+                        Err(e) => format!("{n} refused: {e:?}"),
+                    }
+                })
+                .collect();
+            format!("{} left out: {skipped:?}", shown.join(" "))
+        }
+    }
+}
+
+/// `items` written another way with the same points: each equation negated or not, and held
+/// once or twice, the second time negated; each inequality held once or twice; with `split`,
+/// some equations `t == 0` written as `t >= 0 && -t >= 0`; and the items, the arms of each
+/// disjunction and the constraints of each arm in a random order.
+fn rewritten(r: &mut Rng, items: &[Item], split: bool) -> Formula {
+    let mut parts = Vec::new();
+    for i in items {
+        match i {
+            Item::Con(c) if c.eq => {
+                let c = if r.below(2) == 0 {
+                    c.clone()
+                } else {
+                    negated(c)
+                };
+                if split && r.below(2) == 0 {
+                    let ge = Cmp { eq: false, ..c };
+                    parts.push(con(&negated(&ge)));
+                    parts.push(con(&ge));
+                } else {
+                    if r.below(2) == 0 {
+                        parts.push(con(&negated(&c)));
+                    }
+                    parts.push(con(&c));
+                }
+            }
+            Item::Con(c) => {
+                for _ in 0..1 + r.below(2) {
+                    parts.push(con(c));
+                }
+            }
+            Item::Ne(c) => {
+                let c = if r.below(2) == 0 {
+                    c.clone()
+                } else {
+                    negated(c)
+                };
+                parts.push(Formula::Not(Shared::new(con(&c))));
+            }
+            Item::Or(arms) => {
+                let mut arms: Vec<Formula> = arms
+                    .iter()
+                    .map(|a| {
+                        let mut cs: Vec<Formula> = a.iter().map(con).collect();
+                        shuffle(r, &mut cs);
+                        Formula::and(cs)
+                    })
+                    .collect();
+                shuffle(r, &mut arms);
+                parts.push(Formula::or(arms));
+            }
+        }
+    }
+    shuffle(r, &mut parts);
+    Formula::and(parts)
+}
+
+/// `xs` in a random order.
+fn shuffle<T>(r: &mut Rng, xs: &mut [T]) {
+    for i in (1..xs.len()).rev() {
+        xs.swap(i, r.below(i + 1));
+    }
+}
+
+/// The names `items` mention, in order: those of a formula that is `false` as written too.
+fn item_names(items: &[Item]) -> Vec<Atom> {
+    let mut names = std::collections::BTreeSet::new();
+    let mut add = |c: &Cmp| names.extend(c.terms.keys().cloned());
+    for i in items {
+        match i {
+            Item::Con(c) | Item::Ne(c) => add(c),
+            Item::Or(arms) => arms.iter().flatten().for_each(&mut add),
+        }
+    }
+    names
+        .into_iter()
+        .map(|n| Atom::Sym(n.as_str().into()))
+        .collect()
+}
+
+/// `items` written four ways with the same points: as they are; each equation and each
+/// excluded equation negated; each equation held twice, the second time negated; and each
+/// equation `t == 0` split into `t >= 0 && -t >= 0`.
+fn four_ways(items: &[Item]) -> [(&'static str, Formula); 4] {
+    let mut negated_all = Vec::new();
+    let mut twice = Vec::new();
+    let mut split = Vec::new();
+    for i in items {
+        let as_is = formula(std::slice::from_ref(i));
+        match i {
+            Item::Con(c) if c.eq => {
+                let ge = Cmp {
+                    eq: false,
+                    ..c.clone()
+                };
+                negated_all.push(con(&negated(c)));
+                twice.extend([con(c), con(&negated(c))]);
+                split.extend([con(&ge), con(&negated(&ge))]);
+            }
+            Item::Ne(c) => {
+                negated_all.push(Formula::Not(Shared::new(con(&negated(c)))));
+                twice.push(as_is.clone());
+                split.push(as_is);
+            }
+            _ => {
+                negated_all.push(as_is.clone());
+                twice.push(as_is.clone());
+                split.push(as_is);
+            }
+        }
+    }
+    [
+        ("as written", formula(items)),
+        ("negated", Formula::and(negated_all)),
+        ("held twice", Formula::and(twice)),
+        ("split", Formula::and(split)),
+    ]
+}
+
+/// The projections of `part` within `bx`, both of the whole part and by pendants, for each
+/// of the four ways of writing it, each that differs from the first shown.
+fn written_four_ways(part: &str, bx: &str) -> (String, Option<BTreeMap<String, String>>) {
+    let items = parse(part);
+    let s = scope(&boxes(bx));
+    let syms = item_names(&items);
+    let [(_, base), rest @ ..] = four_ways(&items);
+    let want = (each_answer(&s, &base, &syms), hung(&s, &base));
+    for (how, g) in rest {
+        let got = (each_answer(&s, &g, &syms), hung(&s, &g));
+        assert_eq!(got, want, "{part}\n  {how}: {g}\n  boxes {bx}");
+    }
+    want
+}
+
+/// The part of seed 7 case 264 (item PROJECT-each-canon), whose equation `a + z1 == 2 * b +
+/// c + 1` was refused held once and answered held twice with opposite signs: held once, held
+/// twice, and held once negated, it is empty every way, by pendants and as a whole.
+#[test]
+fn an_equation_held_once_twice_or_negated_gives_one_answer() {
+    let (twice, bx, _) = REFUSED[7];
+    let eq = "a + z1 == 2 * b + c + 1 && ";
+    assert!(twice.contains(&format!("{eq}{eq}")));
+    let once = twice.replacen(eq, "", 1);
+    let opposite = twice.replacen(eq, "2 * b + c + 1 == a + z1 && ", 1);
+    let empty: BTreeMap<String, String> = bracketed("a=[] b=[] c=[] z1=[] z2=[] z3=[] z4=[] z5=[]")
+        .into_iter()
+        .map(|(n, x)| (n, format!("[{x}]")))
+        .collect();
+    let want = "a=[] b=[] c=[] z1=[] z2=[] z3=[] z4=[] z5=[] left out: []";
+    for text in [twice, &once, &opposite] {
+        let (each, by_pendants) = written_four_ways(text, bx);
+        assert_eq!(each, want, "{text}");
+        assert_eq!(by_pendants.as_ref(), Some(&empty), "{text}");
+    }
+}
+
+/// Parts on which the projection of the whole part answered differently as written, negated,
+/// held twice or split (seeds 12, 13, 16 and 17 of 400 random parts, before item
+/// PROJECT-each-canon), each with its boxes and the one answer of all four ways.
+const WRITTEN: &[(&str, &str, &str)] = &[
+    (
+        "a + b >= -2 && b + z2 <= 2 * c + 6 && !(a + 2 * b == z0 - 1) && !(a + z3 == 2 * c) && 2 * a + 2 * c >= b - 2 && 2 * a + 2 * b + c + z0 >= 5 && a + c >= -2 && b + c + z0 >= 3 && a + b + c + z3 == 0",
+        "a=[-1,16] b=[-inf,inf] c=[-10,inf] z0=[-10,inf] z1=[-1,8] z2=[-6,14] z3=[-5,15]",
+        "a=[-1,16] b=[-18,4] c=[-10,7] z0=[-3,inf] z2=[-6,14] z3=[-5,12] left out: []",
+    ),
+    (
+        "!(b + 2 * c == z1 + 8) && 2 * a + c + z1 == b - 3 && (a + c >= -2 || z0 <= -2) && 2 * b >= c + 4 && a + b >= c + z0 + 2 && a + b + z0 >= 7 && z0 <= z1 - 4 && !(b + c == z0 - 1)",
+        "a=[0,17] b=[-inf,7] c=[-inf,-10] z0=[-4,inf] z1=[2,19]",
+        "a=[2,17] b=[-8,7] c=[-64,-10] z0=[-4,-2] z1=[2,19] left out: []",
+    ),
+    (
+        "a >= b + z2 - 1 && !(2 * a + 2 * c == b + z2 - 9) && z0 <= z2 - 4 && a <= 2 * b + 2 * c + 2 && 2 * a + z0 == b + c - 8",
+        "a=[-2,18] b=[-inf,6] c=[-inf,9] z0=[-8,inf] z1=[-inf,7] z2=[-3,6]",
+        "a=[-2,7] b=[-11,6] c=[-4,9] z0=[-8,0] z2=[-3,6] left out: []",
+    ),
+    (
+        "a + 2 * c >= -4 && (2 * a + b >= 7 || z2 <= 8) && a + 2 * b + c + z1 >= 4 && a >= b + z1 - 6 && (b >= c - 11 || z2 <= 4) && a + b + c >= z1 + 2 && a + z1 <= b + c + 9 && a + c >= z0 - 12 && a + b + 2 * c == z2 + 5",
+        "a=[2,3] b=[-4,inf] c=[-inf,8] z0=[-6,-4] z1=[-7,13] z2=[-10,6]",
+        "a=[2,3] b refused: Growth c refused: Growth z0=[-6,-4] z1 refused: Growth z2 refused: Growth left out: [Growth]",
+    ),
+    (
+        "(2 * a >= b + 2 || z0 <= 4) && !(a + b + z0 == 2 * c - 8) && (2 * a + b + 2 * c >= -9 || z1 <= 6) && 2 * a + b == c + z0 - 1",
+        "a=[-9,inf] b=[4,12] c=[-8,3 5,11] z0=[-inf,8] z1=[4,18] z2=[-inf,0]",
+        r#"a=[-9,7] b=[4,12] c=[-8,3 5,11] z0=[-24,8] z1=[4,18] left out: [Tie(Tie { vars: ["c", "z0"], rows: ["-c - z0 + 2 * a + b + 1 >= 0", "c + z0 - 2 * a - b - 1 >= 0"] })]"#,
+    ),
+];
+
+/// Each of [`WRITTEN`] has one projection of the whole part, the one the table gives, and one
+/// by pendants, however its equations are written.
+#[test]
+fn parts_once_answered_by_how_they_were_written_give_one_answer() {
+    let wrong: Vec<String> = WRITTEN
+        .iter()
+        .filter_map(|(part, bx, want)| {
+            let (each, _) = written_four_ways(part, bx);
+            (each != *want).then(|| format!("{part}\n  boxes {bx}\n  want {want}\n  got  {each}"))
+        })
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "{} of {} wrong:\n{}",
+        wrong.len(),
+        WRITTEN.len(),
+        wrong.join("\n")
+    );
+}
+
+/// Random parts, each also written with its equations negated or held twice with opposite
+/// signs, its inequalities held twice, some equations split into two inequalities, and its
+/// items, arms and constraints in a random order: the projection of the whole part and the
+/// projection by pendants are the same as for the part as written (cases `from..to` of seed
+/// 0xca17).
+fn rewritten_parts_give_one_answer(from: usize, to: usize) {
+    let mut r = Rng::new(0xca17);
+    let mut wrong = Vec::new();
+    for case in 0..to {
+        let nz = 2 + r.below(5);
+        let items = random_part(&mut r, nz);
+        let bs = random_boxes(&mut r, nz);
+        let rewrites: Vec<Formula> = [false, false, true, true]
+            .into_iter()
+            .map(|split| rewritten(&mut r, &items, split))
+            .collect();
+        if case < from {
+            continue;
+        }
+        let s = scope(&bs);
+        let syms = item_names(&items);
+        let f = formula(&items);
+        let want = (each_answer(&s, &f, &syms), hung(&s, &f));
+        for g in rewrites {
+            let got = (each_answer(&s, &g, &syms), hung(&s, &g));
+            if got != want {
+                wrong.push(format!(
+                    "case {case}\n  {f}\n  {g}\n  boxes {bs:?}\n  want {want:?}\n  got  {got:?}"
+                ));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} of {} rewrites differ:\n{}",
+        wrong.len(),
+        4 * (to - from),
+        wrong.join("\n")
+    );
+}
+
+#[test]
+fn rewritten_parts_give_one_answer_first_half() {
+    rewritten_parts_give_one_answer(0, 150);
+}
+
+#[test]
+fn rewritten_parts_give_one_answer_second_half() {
+    rewritten_parts_give_one_answer(150, 300);
+}

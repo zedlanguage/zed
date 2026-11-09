@@ -195,8 +195,16 @@ fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_has_its_
 
 /// A chain of three-atom rows of `n` stages as [`general_chain`] with `x[n - 1] <= end`, and
 /// at every `every`-th stage `x[i + 1] - x[i] + y[i]` in `sums` and, unless `steps` is empty,
-/// `x[i + 1] - x[i]` in `steps`.
-fn small_chain(n: usize, every: usize, end: i128, sums: &[i128], steps: &[i128]) -> Formula {
+/// `x[i + 1] - x[i]` in `steps`. Each equation `l == v` of a disjunction is written `l - v ==
+/// 0`, or `v - l == 0` when `negated`.
+fn small_chain(
+    n: usize,
+    every: usize,
+    end: i128,
+    sums: &[i128],
+    steps: &[i128],
+    negated: bool,
+) -> Formula {
     let mut fs = vec![ge(x(0)), ge(Lin::constant(end).minus(&x(n - 1)))];
     for i in 0..n - 1 {
         fs.push(ge(step(i).minus(&y(i))));
@@ -204,7 +212,14 @@ fn small_chain(n: usize, every: usize, end: i128, sums: &[i128], steps: &[i128])
         fs.push(ge(Lin::constant(2).minus(&y(i))));
     }
     let any_of = |l: &Lin, vs: &[i128]| {
-        Formula::or(vs.iter().map(|v| eq(l.minus(&Lin::constant(*v)))).collect())
+        Formula::or(
+            vs.iter()
+                .map(|v| match negated {
+                    false => eq(l.minus(&Lin::constant(*v))),
+                    true => eq(Lin::constant(*v).minus(l)),
+                })
+                .collect(),
+        )
     };
     for i in (0..n - 1).step_by(every) {
         fs.push(any_of(&step(i).plus(&y(i)), sums));
@@ -219,18 +234,30 @@ fn small_chain(n: usize, every: usize, end: i128, sums: &[i128], steps: &[i128])
 /// `x[n - 1] <= 8n` and, at every fourth stage, two disjunctions that together leave one step
 /// where the rows each implies allow more: `x[i + 1] - x[i]` in {3, 7} and `x[i + 1] - x[i] +
 /// y[i]` in {6, 9}, with `1 <= y[i] <= 2`, force the step 7 (and `y[i] == 2`), where the
-/// implied rows allow 4. `flipped` lists each disjunction's values and all the parts in the
-/// reverse order, which must not change any answer.
-fn joint_chain(n: usize, flipped: bool) -> Formula {
+/// implied rows allow 4. How it is written must not change any answer or the cost.
+fn joint_chain(n: usize, written: Written) -> Formula {
     let end = 8 * n as i128;
-    if !flipped {
-        return small_chain(n, 4, end, &[6, 9], &[3, 7]);
+    match written {
+        Written::AsIs => small_chain(n, 4, end, &[6, 9], &[3, 7], false),
+        Written::Negated => small_chain(n, 4, end, &[6, 9], &[3, 7], true),
+        Written::Reversed => {
+            let f = small_chain(n, 4, end, &[9, 6], &[7, 3], false);
+            let Formula::And(fs) = &f else {
+                panic!("a conjunction");
+            };
+            Formula::and(fs.iter().rev().cloned().collect())
+        }
     }
-    let f = small_chain(n, 4, end, &[9, 6], &[7, 3]);
-    let Formula::And(fs) = &f else {
-        panic!("a conjunction");
-    };
-    Formula::and(fs.iter().rev().cloned().collect())
+}
+
+/// How [`joint_chain`] is written: as is, with each disjunction's values and all the parts in
+/// the reverse order, or with each equation of a disjunction negated (`v - l == 0`), which
+/// orders each disjunction's disjuncts the other way (item PROJECT-each-canon).
+#[derive(Clone, Copy, Debug)]
+enum Written {
+    AsIs,
+    Reversed,
+    Negated,
 }
 
 /// The exact hull of the middle of [`joint_chain`]: every step at least 1, and 7 at the 8
@@ -240,9 +267,24 @@ const JOINT_MIDDLE_64: (i64, i64) = (32 + 6 * 8, 8 * 64 - (31 + 6 * 8));
 
 #[test]
 fn the_middle_of_a_chain_whose_disjunctions_jointly_leave_one_step_is_projected_in_n_log_n() {
-    let inputs = scaling::inputs(16, |m| joint_chain(m, false));
+    joint_chain_scales(Written::AsIs);
+}
+
+/// [`joint_chain`] with its equations negated: before item PROJECT-each-canon the greedy
+/// search took `x[i + 1] - x[i] == 3` first, failed, and a question per disjunct followed,
+/// 122 times the bytes at 8n.
+#[test]
+fn the_middle_of_a_chain_whose_negated_disjunctions_jointly_leave_one_step_is_projected_in_n_log_n()
+{
+    joint_chain_scales(Written::Negated);
+}
+
+fn joint_chain_scales(written: Written) {
+    let inputs = scaling::inputs(16, |m| joint_chain(m, written));
     scaling::check_order(
-        "a chain whose disjunctions jointly leave one step, projected",
+        &format!(
+            "a chain whose disjunctions jointly leave one step, written {written:?}, projected"
+        ),
         16,
         1,
         |m| {
@@ -255,19 +297,13 @@ fn the_middle_of_a_chain_whose_disjunctions_jointly_leave_one_step_is_projected_
 #[test]
 fn the_middle_of_a_chain_whose_disjunctions_jointly_leave_one_step_has_its_exact_hull() {
     let n = 64;
-    for flipped in [false, true] {
-        let r = project_each(&joint_chain(n, flipped), &middle(n)).expect("a projection");
+    for written in [Written::AsIs, Written::Reversed, Written::Negated] {
+        let r = project_each(&joint_chain(n, written), &middle(n)).expect("a projection");
         let s = r.0[0].clone().expect("a hull");
         let (lo, hi) = JOINT_MIDDLE_64;
-        assert!(
-            s.contains(lo) && !s.contains(lo - 1),
-            "flipped {flipped}: {s:?}"
-        );
-        assert!(
-            s.contains(hi) && !s.contains(hi + 1),
-            "flipped {flipped}: {s:?}"
-        );
-        assert!(r.1.is_empty(), "flipped {flipped}: {:?}", r.1);
+        assert!(s.contains(lo) && !s.contains(lo - 1), "{written:?}: {s:?}");
+        assert!(s.contains(hi) && !s.contains(hi + 1), "{written:?}: {s:?}");
+        assert!(r.1.is_empty(), "{written:?}: {:?}", r.1);
     }
 }
 
@@ -338,7 +374,7 @@ fn hulls_of_small_chains_of_three_atom_rows_are_those_of_their_points() {
         (6, 4, 17, &[9, 6], &[7, 3]),
     ];
     for (n, every, end, sums, steps) in cases {
-        let f = small_chain(n, every, end, sums, steps);
+        let f = small_chain(n, every, end, sums, steps, false);
         let syms: Vec<Atom> = (0..n)
             .map(|i| Atom::Sym(format!("x{i:05}").into()))
             .collect();

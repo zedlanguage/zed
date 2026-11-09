@@ -4358,14 +4358,7 @@ impl Scope {
     // each combination of disjuncts with the pendants eliminated, exponential in the number
     // of disjunctions.
     pub fn project_by_pendants(&self, part: &Formula) -> Option<Vec<(Arc<str>, IntervalSet)>> {
-        let mut tops: Vec<&Formula> = Vec::new();
-        let mut stack = vec![part];
-        while let Some(f) = stack.pop() {
-            match f {
-                Formula::And(gs) => stack.extend(gs.iter().rev()),
-                f => tops.push(f),
-            }
-        }
+        let tops = distinct_conjuncts(part);
         let mut count: BTreeMap<Arc<str>, usize> = BTreeMap::new();
         for t in &tops {
             for n in conjuncts::names(t) {
@@ -4377,7 +4370,7 @@ impl Scope {
         for t in &tops {
             match self.pendant(t, |n| count.get(n).copied().unwrap_or(0)) {
                 Some(p) => hung.push(p),
-                None => rest.push((*t).clone()),
+                None => rest.push(t.clone()),
             }
         }
         if hung.is_empty() {
@@ -5869,6 +5862,59 @@ fn one_disjunction(t: &Formula) -> Option<usize> {
         }
         _ => None,
     }
+}
+
+/// The top-level conjuncts of `part`, each once and in an order of their own: an equation
+/// and its negation, `t == 0` and `-t == 0`, are one, written with the lesser of `t` and `-t`,
+/// and so inside a negation; `t >= 0` and `-t >= 0` together are `t == 0`; and a conjunct held
+/// twice is held once. So the conjuncts, which names are pendants and which disjunctions are
+/// counted ([`Scope::project_by_pendants`]) do not depend on how an equal set of them is
+/// written (item PROJECT-each-canon). In time O(n log n) for n conjuncts.
+fn distinct_conjuncts(part: &Formula) -> BTreeSet<Formula> {
+    let unsigned = |c: &Con| {
+        let neg = c.lin.times(-1);
+        Formula::Con(Con {
+            lin: if neg < c.lin { neg } else { c.lin.clone() },
+            rel: Rel::Eq,
+        })
+    };
+    let mut tops: BTreeSet<Formula> = BTreeSet::new();
+    let mut stack = vec![part];
+    while let Some(f) = stack.pop() {
+        match f {
+            Formula::And(gs) => stack.extend(gs.iter()),
+            Formula::Con(c) if c.rel == Rel::Eq => {
+                tops.insert(unsigned(c));
+            }
+            Formula::Not(n) if matches!(&**n, Formula::Con(c) if c.rel == Rel::Eq) => {
+                let Formula::Con(c) = &**n else {
+                    unreachable!("an equation")
+                };
+                tops.insert(Formula::Not(presburger::Shared::new(unsigned(c))));
+            }
+            f => {
+                tops.insert(f.clone());
+            }
+        }
+    }
+    // Each `t >= 0` whose `-t >= 0` is held too, as `t == 0`.
+    let mut out = BTreeSet::new();
+    for f in &tops {
+        if let Formula::Con(c) = f
+            && c.rel == Rel::Ge
+        {
+            let neg = Formula::Con(Con {
+                lin: c.lin.times(-1),
+                rel: Rel::Ge,
+            });
+            if tops.contains(&neg) {
+                out.insert(unsigned(c));
+                continue;
+            }
+        }
+        out.insert(f.clone());
+    }
+    out
 }
 
 /// Whether `n` is bounded below and above in `names`: a name not there is unbounded, and an
