@@ -6579,7 +6579,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut vars = Vars::default();
         p.vars_in(&mut vars);
         for v in vars.order.into_iter().filter(|v| !self.is_class(v)) {
-            binds.entry(v).or_insert_with(Ty::empty);
+            binds.or_insert_with(v, Ty::empty);
         }
     }
 

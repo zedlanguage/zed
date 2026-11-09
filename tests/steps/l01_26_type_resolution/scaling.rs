@@ -799,11 +799,13 @@ fn destructured_parameters_check_in_linear_time() {
 /// rows that each hold 300 names of their own, which cover the 64 bits, and replacements of
 /// names no row holds, `n / 2` of them. Each replacement walks the rows that may hold its
 /// variable, `O(n)`, so the family costs `O(n^2)`: 60.1 times the bytes at 320 rows against 40
-/// for classes, 59.6 times at 160 against 20 for names (2026-11-08, load 12 to 22). The rows kept
-/// exact sets before CK-data-memo and answered each replacement at `t`; those sets cost
-/// `O(n^2 log n)` on `rows_made_from_disjoint_variable_sets_scale` (question A8).
+/// for classes, 59.6 times at 160 against 20 for names (2026-11-08, load 12 to 22; classes 61.7
+/// times on 2026-11-09). The rows kept exact sets before CK-data-memo and answered each
+/// replacement at `t`; those sets cost `O(n^2 log n)` on
+/// `rows_made_from_disjoint_variable_sets_scale` (question A8). COMPLEXITY.md CK-every-bit, open
+/// for the hard-algorithm cross-review XR-algos.
 #[test]
-#[ignore = "O(n^2), open: an exact test after the bits conflicts with the answer to question A8; COMPLEXITY.md F93, CK-data-memo"]
+#[ignore = "O(n^2), open: COMPLEXITY.md CK-every-bit, for the hard-algorithm cross-review XR-algos (not an author question)"]
 fn replacing_variables_no_row_holds_in_rows_on_every_bit_scales() {
     use std::sync::Arc;
     use zedc::check::ty::Binds;

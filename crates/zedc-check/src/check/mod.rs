@@ -74,7 +74,7 @@ use zedc_syntax::lex::{Span, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
-    Arrow, Binds, Carrier, EVERY, IntDomain, Names, Narrow, Need, NeedKind, Node, OTHER, Piece,
+    Arrow, Binds, Carrier, EVERY, IntDomain, Names, Narrow, Need, NeedKind, NodeId, OTHER, Piece,
     SParam, Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, class_id, errs, fresh_name,
     mask_text,
 };
@@ -847,14 +847,14 @@ struct Ck<'t, 'a> {
     /// they hold at any depth had a data need from it, which the class keeps, so a later check
     /// of data that meets one again has nothing to add and does not enter it. Kept in the log
     /// while a repair is tried, since a trial undoes the classes' needs.
-    data_checked: HashSet<Node>,
+    data_checked: HashSet<NodeId>,
     /// The rows and payload shapes [`Self::bound`] found to hold only classes at any depth,
     /// each with the level it was at and that level's count of ends (`gens`): a class stays a
     /// class until the function of its level ends and names it, and a class's level only goes
     /// down, so the entry holds while that level has not ended since. A later replay that
     /// meets one has no variable in it to make unknown and does not enter it. Kept in the log
     /// while a repair is tried, since a trial undoes the classes it joined.
-    clean: HashMap<Node, (usize, u64)>,
+    clean: HashMap<NodeId, (usize, u64)>,
     /// For each level, the count of ends ([`Self::generalize`]) when it last ended, 0 for none.
     gens: Vec<u64>,
     /// The count of ends so far.
@@ -3917,9 +3917,9 @@ enum Undo {
     /// A class, while a repair is tried.
     Class(usize, Box<Class>),
     /// Whether a row or payload shape is among [`Ck::data_checked`], while a repair is tried.
-    DataChecked(Node, bool),
+    DataChecked(NodeId, bool),
     /// The entry of a row or payload shape in [`Ck::clean`], while a repair is tried.
-    Clean(Node, Option<(usize, u64)>),
+    Clean(NodeId, Option<(usize, u64)>),
 }
 
 /// How long the log and the errors were at a point.
@@ -5735,7 +5735,7 @@ impl<'t> Inner<'t> {
         rows.chain(shapes.filter(|s| s.holds_vars()).map(Inner::Shape))
     }
 
-    fn node(self) -> Node {
+    fn node(self) -> NodeId {
         match self {
             Inner::Row(r) => r.node(),
             Inner::Shape(s) => s.node(),
@@ -5797,7 +5797,7 @@ impl Ck<'_, '_> {
                 stack.extend(new.map(|q| (q, false)));
             }
         }
-        let mut found: HashMap<Node, bool> = HashMap::new();
+        let mut found: HashMap<NodeId, bool> = HashMap::new();
         for p in order {
             let mut clean = true;
             for c in p.tys() {
@@ -5829,7 +5829,7 @@ impl Ck<'_, '_> {
 
     /// Whether the row or shape `n` is known to hold only classes that last: it was found to
     /// at a level that has not ended since.
-    fn is_clean(&self, n: Node) -> bool {
+    fn is_clean(&self, n: NodeId) -> bool {
         self.clean
             .get(&n)
             .is_some_and(|&(l, g)| l <= self.level && self.gens.get(l) == Some(&g))
@@ -5897,7 +5897,7 @@ impl Ck<'_, '_> {
                 stack.extend(new.map(|q| (q, false)));
             }
         }
-        let mut found: HashMap<Node, bool> = HashMap::new();
+        let mut found: HashMap<NodeId, bool> = HashMap::new();
         let mut held = 0;
         for p in order {
             let mut clean = true;

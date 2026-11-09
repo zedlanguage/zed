@@ -64,8 +64,8 @@ pub struct Row(Arc<RowData>);
 
 struct RowData {
     cs: Vec<Ty>,
-    /// Its number, which no other row or shape made in this process has ([`Node`]).
-    id: Node,
+    /// Its number, which no other row or shape made in this process has ([`NodeId`]).
+    id: NodeId,
     /// The hash of the components.
     digest: u64,
     /// Whether a component holds a type variable or the unknown, outside functions, at any
@@ -191,7 +191,7 @@ impl Row {
         let void = cs.iter().any(Ty::lists_nothing);
         Row(Arc::new(RowData {
             cs,
-            id: Node::next(),
+            id: NodeId::next(),
             digest,
             open,
             dynamic,
@@ -262,7 +262,7 @@ impl Row {
     }
 
     /// Its number, the same for each path to a shared row and never another row's or shape's.
-    pub fn node(&self) -> Node {
+    pub fn node(&self) -> NodeId {
         self.0.id
     }
 
@@ -282,13 +282,13 @@ impl Row {
 /// its number on to a later one, as it may pass on its address. A memo that outlives one walk,
 /// and so may outlive a node it holds, is keyed by it (`Ck::data`, `Ck::bound`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Node(u64);
+pub struct NodeId(u64);
 
-impl Node {
+impl NodeId {
     /// The next number.
-    fn next() -> Node {
+    fn next() -> NodeId {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        Node(NEXT.fetch_add(1, Ordering::Relaxed))
+        NodeId(NEXT.fetch_add(1, Ordering::Relaxed))
     }
 }
 
@@ -1091,8 +1091,8 @@ pub struct ShapeData {
     pub items: Vec<Ty>,
     /// Its fields, by name.
     pub fields: BTreeMap<Arc<str>, Ty>,
-    /// Its number, which no other row or shape made in this process has ([`Node`]).
-    id: Node,
+    /// Its number, which no other row or shape made in this process has ([`NodeId`]).
+    id: NodeId,
     /// The hash of the components and fields.
     digest: u64,
     /// Whether a component or field holds a type variable or the unknown, outside functions,
@@ -1306,7 +1306,7 @@ impl Shape {
         Shape(Arc::new(ShapeData {
             items,
             fields,
-            id: Node::next(),
+            id: NodeId::next(),
             digest,
             held,
             unchecked,
@@ -1333,7 +1333,7 @@ impl Shape {
     }
 
     /// Its number, the same for each path to a shared shape and never another shape's or row's.
-    pub fn node(&self) -> Node {
+    pub fn node(&self) -> NodeId {
         self.0.id
     }
 
@@ -2139,7 +2139,7 @@ pub struct Sig {
 // Complexity tradeoff (COMPLEXITY.md row F77): the naive version works out a signature's
 // variables at each depth it is met, O(n^3) for n nested tuples (106M instructions per node at
 // n = 400) and O(n^2) for n nested lambdas. Used: a memo per signature, filled on first use,
-// so each signature is walked once, linear in all. Tradeoffs: three `OnceLock`s per signature;
+// so each signature is walked once, linear in all. Tradeoffs: four `OnceLock`s per signature;
 // a clone starts empty and works them out again, since it may be changed; equality and
 // hashing ignore the memo.
 #[derive(Default)]
@@ -2269,7 +2269,8 @@ impl VarFacts {
 // (l01_26); COMPLEXITY.md F93. Open: rows whose classes cover every bit and a wide range,
 // or whose names cover every bit, met by `n` replacements of variables they do not hold,
 // cost `O(n^2)` (test `replacing_variables_no_row_holds_in_rows_on_every_bit_scales`,
-// ignored, 60.1 times the bytes for 8 times the rows).
+// ignored, 61.7 times the bytes for 8 times the rows): COMPLEXITY.md CK-every-bit, open for
+// the hard-algorithm cross-review XR-algos.
 #[derive(Clone, Copy, Debug)]
 struct VarBits {
     /// The smallest `k` of a class variable `$k`, `usize::MAX` for none.
