@@ -94,7 +94,7 @@ fn many_units_importing_one_unit_are_pinned_in_linear_time() {
                     )
                 })
                 .collect();
-            fs.push(("base.zed".into(), "rate = 1.2;\n".into()));
+            fs.push(("base.zed".into(), "rate = 1.2f64;\n".into()));
             let imports: String = (0..k).map(|i| format!("import w{i};\n")).collect();
             fs.push((
                 "main.zed".into(),

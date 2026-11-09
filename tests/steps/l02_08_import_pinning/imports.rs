@@ -211,7 +211,7 @@ fn the_formatter_leaves_a_pinned_unit_as_the_build_wrote_it() {
 fn a_unit_that_does_not_compile_alone_is_neither_pinned_nor_checked() {
     // `pricing` imports `rates`, so until step L2.4 links units it has no address of its own:
     // `main`'s import of it is not pinned, and a pin written on it is not checked.
-    let rates = "rate = 1.2;\n";
+    let rates = "rate = 1.2f64;\n";
     let pricing = "import rates.{rate};\nnet(g: f64) = g / rate;\n";
     let p = package(&[
         ("main.zed", &main_with("import pricing;")),

@@ -256,8 +256,8 @@ fn rounding_near_a_boundary_is_refused_when_memory_is_short() {
     );
 }
 
-/// A float literal just below the point halfway between 1 and the next `f64`, `1 + 2^-53`
-/// less `10^-(54 + n)`: its digits to `...203124` and then `n = 2^22` nines, parsed, resolved
+/// An `f64` literal just below the point halfway between 1 and the next `f64`, `1 + 2^-53`
+/// less `10^-(54 + n)`: its digits to `...203124`, `n = 2^22` nines and `f64`, parsed, resolved
 /// and checked, then elaborated under a limit `margin` bytes above what the child holds.
 /// Returns the one error the elaborator reports, at the literal; it does not abort. Reading
 /// the digits (`Rat::decimal`) asks for 64 bits of memory a digit, about 32 MiB; rounding the
@@ -265,7 +265,7 @@ fn rounding_near_a_boundary_is_refused_when_memory_is_short() {
 /// and above about 64 MiB the literal rounds (COMPLEXITY.md K30).
 fn a_literal_near_a_boundary_refused_under(margin: u64) -> String {
     let literal = format!(
-        "1.00000000000000011102230246251565404236316680908203124{}",
+        "1.00000000000000011102230246251565404236316680908203124{}f64",
         "9".repeat(1 << 22)
     );
     let text = format!("x = {literal};\n");

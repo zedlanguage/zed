@@ -36,16 +36,13 @@ pub enum Tok {
         /// The digits.
         digits: Digits,
     },
-    /// A generic integer `kn` (step L1.26a): its base and its digits, without `_` and the
-    /// `n`. It is the exact integer k in any numeric carrier that holds k.
-    Generic {
-        /// The base.
-        radix: u32,
-        /// The digits.
+    /// A decimal literal (`1.5e-3`, `0.1f64`).
+    Float {
+        /// Its decimal text, without `_` and the suffix.
         digits: Digits,
+        /// Whether it is written with the suffix `f64`, which forces that format.
+        forced: bool,
     },
-    /// A float, as its decimal text without `_` (`1.5e-3`).
-    Float(Digits),
     /// An exact rational, as its decimal text without `_` and the `r` (`0.1`).
     Rat(Digits),
     /// A string: its text and its holes, in order, never two text parts in a row.

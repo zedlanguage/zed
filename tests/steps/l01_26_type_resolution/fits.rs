@@ -358,7 +358,7 @@ fn a_bounded_variable_bound_to_two_carriers_fits_only_at_one_place() {
         ]
     );
     // Near miss: one place, the result's alike, so each value takes the arrow at its carrier.
-    let text = "p(f: (x: int | f64) -> int | f64) = f(x: 1);\ninc(x) = x + 1n;\nz = p(f: inc);\n";
+    let text = "p(f: (x: int | f64) -> int | f64) = f(x: 1);\ninc(x) = x + 1;\nz = p(f: inc);\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
     assert_eq!(value(text, "z"), "2");
 }

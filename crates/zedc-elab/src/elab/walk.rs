@@ -617,7 +617,7 @@ impl<'a> Elab<'a> {
                 Ok(v) => Some(self.constant(e, v.expect("the lexer's digits"))),
                 Err(r) => self.error(e.span, unread_literal(&r)),
             },
-            ExprKind::Float(s) => match literal_f64(s) {
+            ExprKind::Float { digits: s, .. } => match literal_f64(s) {
                 Ok(x) => lit(Value::float(x)),
                 Err(LiteralRounding::Infinite) => self.error(
                     e.span,
@@ -1782,9 +1782,9 @@ impl<'a> Elab<'a> {
 
     /// The primitive `p` on `args`, of the operands `l` and `r`, when one operand is a literal
     /// that takes the carrier of a type variable (`Info::follows`): a literal compared by `==`
-    /// or `!=` (DESIGN.md L1.26) or a generic one `kn` (L1.26a). The other operand is bound
-    /// first, and the literal takes the carrier of its value, `x == 1` and `x + 1n` reading
-    /// `1.0` where `x` is an `f64`.
+    /// or `!=` (DESIGN.md L1.26) or a generic one, written without a suffix (L1.26a). The
+    /// other operand is bound first, and the literal takes the carrier of its value, `x == 1`
+    /// and `x + 1` reading `1.0` where `x` is an `f64`.
     /// The literal is a constant, so evaluating the other operand first changes nothing.
     fn follow(&mut self, l: &Expr, r: &Expr, p: Prim, mut args: Vec<Term>) -> Term {
         let follows = &self.info.follows;
@@ -1923,7 +1923,7 @@ fn lit_span(e: &Expr) -> Option<Span> {
         ExprKind::Unary("-", a) => &**a,
         _ => e,
     };
-    matches!(inner.kind, ExprKind::Int { .. } | ExprKind::Float(_)).then_some(inner.span)
+    matches!(inner.kind, ExprKind::Int { .. } | ExprKind::Float { .. }).then_some(inner.span)
 }
 
 fn if_(c: Term, a: Term, b: Term) -> Term {

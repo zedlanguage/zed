@@ -14,7 +14,7 @@ fn load_errors(src: &str) -> String {
 }
 
 const MAIN: &str =
-    "main() -> (stdout: Lines) {\n  stdout <- String(total(price: 3.0, qty: 2.0));\n}\n";
+    "main() -> (stdout: Lines) {\n  stdout <- String(total(price: 3.0f64, qty: 2.0f64));\n}\n";
 
 #[test]
 fn a_doc_block_attaches_to_the_declaration_after_it() {
@@ -23,7 +23,7 @@ fn a_doc_block_attaches_to_the_declaration_after_it() {
          /// See [String] for how [main] prints it.\n\
          total(price: f64, qty: f64) = price * qty;\n\
          /// The sales tax, as a fraction.\n\
-         tax = 0.08;\n{MAIN}"
+         tax = 0.08f64;\n{MAIN}"
     );
     assert_eq!(load_errors(&src), "");
 }
@@ -33,7 +33,7 @@ fn a_doc_block_inside_a_body_attaches_to_a_local_binding() {
     let src = "/// Writes the total.\n\
                main() -> (stdout: Lines) {\n  \
                /// Two items at 3.0 each.\n  \
-               t = 3.0 * 2.0;\n  \
+               t = 3.0f64 * 2.0f64;\n  \
                stdout <- String(t);\n}\n";
     assert_eq!(load_errors(src), "");
 }
@@ -50,7 +50,7 @@ fn a_doc_block_before_no_declaration_is_reported() {
     let src = "total(price: f64, qty: f64) = price * qty;\n\
                main() -> (stdout: Lines) {\n  \
                /// The receipt line.\n  \
-               stdout <- String(total(price: 3.0, qty: 2.0));\n}\n";
+               stdout <- String(total(price: 3.0f64, qty: 2.0f64));\n}\n";
     assert_eq!(
         load_errors(src),
         "3:3: this doc comment documents no declaration; a `///` block comes right before a \
@@ -97,7 +97,7 @@ fn doc_errors_join_the_elaboration_errors() {
     let src = format!(
         "/// See [nowhere].\n\
          total(price: f64, qty: f64) = price * qty;\n\
-         far = 1e400;\n{MAIN}"
+         far = 1e400f64;\n{MAIN}"
     );
     let e = load_errors(&src);
     assert_eq!(e.lines().count(), 2, "{e}");

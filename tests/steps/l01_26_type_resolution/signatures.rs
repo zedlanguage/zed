@@ -28,14 +28,20 @@ fn an_operator_with_one_carrier_fixes_it() {
         sig("both(a, b) = a && b;\n", "both"),
         "(a: bool, b: bool) -> bool"
     );
-    // `/` divides f64 and rat only: the literal `2.0` fixes f64, and `2n` leaves both.
-    assert_eq!(sig("half(x) = x / 2.0;\n", "half"), "(x: f64) -> f64");
+    // `/` divides f64 and rat only, and a decimal literal is never an `int`: `2.0` and `2`
+    // leave both (L1.26a, L1.26b).
     assert_eq!(
-        sig("avg(a, b) = (a + b) / 2.0;\n", "avg"),
-        "(a: f64, b: f64) -> f64"
+        sig("half(x) = x / 2.0;\n", "half"),
+        "(x: T) -> T for T in f64 | rat"
     );
     assert_eq!(
-        sig("half(x) = x / 2n;\n", "half"),
+        sig("avg(a, b) = (a + b) / 2.0;\n", "avg"),
+        "(a: T, b: T) -> T for T in f64 | rat"
+    );
+    // The suffix fixes the carrier.
+    assert_eq!(sig("half(x) = x / 2.0f64;\n", "half"), "(x: f64) -> f64");
+    assert_eq!(
+        sig("half(x) = x / 2;\n", "half"),
         "(x: T) -> T for T in f64 | rat"
     );
 }
@@ -112,13 +118,24 @@ fn a_declared_type_is_kept() {
 #[test]
 fn a_default_is_checked_at_its_parameters_type() {
     assert_eq!(
-        sig("tax(price, rate = 0.2) = price * rate;\n", "tax"),
+        sig("tax(price, rate = 0.2f64) = price * rate;\n", "tax"),
         "(price: f64, rate: f64) -> f64"
     );
+    // A default that reads a parameter is generic with it.
     assert_eq!(
         sig("tax(price, rate = price / 10.0) = price * rate;\n", "tax"),
-        "(price: f64, rate: f64) -> f64"
+        "(price: T, rate: T) -> T for T in f64 | rat"
     );
+    // A default that reads no parameter is bound to it as a value is to a name: nothing gives
+    // a decimal literal in it a carrier, as nothing does in `rate = 0.2;` (step L1.26b).
+    assert_eq!(
+        type_errors("tax(price, rate = 0.2) = price * rate;\n"),
+        [
+            "the literal `0.2` is a decimal, and nothing here gives it a carrier; a decimal literal takes the carrier of its use, never `int`, and Zed does not choose one for it; write `rate = 0.2f64`, `rate = 0.2r` or `rate: f64 = 0.2` [0.2]"
+        ]
+    );
+    assert_eq!(sig("f(x = 1) = x;\n", "f"), "(x: int) -> int");
+    assert_eq!(sig("f(x: f64 = 1 / 2) = x;\n", "f"), "(x: f64) -> f64");
 }
 
 #[test]
@@ -166,24 +183,10 @@ fn a_parameter_compared_with_a_tuple_may_be_a_tuple() {
 fn a_generic_literal_compared_for_equality_does_not_bound_a_parameter() {
     // `==` takes any two values, so the generic literal follows the class and leaves it every
     // carrier: `eq1("a")` is false, not an error.
-    let src = "eq1(positional x) = x == 1n;\nmain() = eq1(\"a\");\n";
+    let src = "eq1(positional x) = x == 1;\nmain() = eq1(\"a\");\n";
     let s = sig_of(src, "eq1");
     assert_eq!(s.to_string(), "(_) -> bool");
     assert!(s.bounds.is_empty());
     assert_eq!(s.own.len(), 1);
     assert!(type_errors(src).is_empty(), "{:?}", type_errors(src));
-}
-
-#[test]
-fn a_plain_literal_compared_for_equality_fixes_its_carrier() {
-    // A plain literal narrows the class as an operand does (DESIGN.md L1.26): `x == 1` makes
-    // `x` an int, so `eq1("a")` is rejected.
-    let src = "eq1(positional x) = x == 1;\nmain() = eq1(\"a\");\n";
-    assert_eq!(sig(src, "eq1"), "(int) -> bool");
-    assert_eq!(
-        type_errors(src),
-        [
-            "`eq1` does not take (\"a\"): these are the types of its arguments here, and `eq1` has no arrow that takes them all [eq1(\"a\")]"
-        ]
-    );
 }

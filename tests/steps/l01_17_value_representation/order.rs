@@ -16,9 +16,9 @@ fn values(src: &str, names: &[&str]) -> Vec<Value> {
 
 #[test]
 fn numbers_order_by_value_across_kinds() {
-    let src = "a = 1;\nb = 1r;\nc = 1.0;\nd = 3r / 2r;\ne = 1.25;\nf = 2;\n\
-               g = -100000000000000000000;\nh = 100000000000000000000;\ni = 0.0 / 0.0;\n\
-               j = 1.0 / 0.0;\nk = -1.0 / 0.0;\n";
+    let src = "a = 1;\nb = 1r;\nc = 1.0f64;\nd = 3r / 2r;\ne = 1.25f64;\nf = 2;\n\
+               g = -100000000000000000000;\nh = 100000000000000000000;\ni = 0.0f64 / 0.0f64;\n\
+               j = 1.0f64 / 0.0f64;\nk = -1.0f64 / 0.0f64;\n";
     let mut vs = values(
         src,
         &["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"],
@@ -67,7 +67,7 @@ fn kinds_order_atoms_bools_numbers_strings_tuples() {
 
 #[test]
 fn a_family_keyed_by_mixed_numbers_visits_them_by_value() {
-    let keys = ["10", "2r", "1.5", "100000000000000000000", "-3"];
+    let keys = ["10", "2r", "1.5f64", "100000000000000000000", "-3"];
     let src: String = keys
         .iter()
         .enumerate()

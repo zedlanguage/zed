@@ -113,7 +113,7 @@ fn the_smallest_word_divided_by_zero_is_div_by_zero() {
 // two floats".
 #[test]
 fn the_two_zeros_compare_equal_under_ieee() {
-    let src = "z = 0.0;\nm = -0.0;\nlt = m < z;\nle = m <= z;\ngt = z > m;\nge = z >= m;\n\
+    let src = "z = 0.0f64;\nm = -0.0f64;\nlt = m < z;\nle = m <= z;\ngt = z > m;\nge = z >= m;\n\
                eq = m == z;\nne = m != z;\nt = (m, 1) < (z, 0);\ntz = (m, 1) == (z, 1);\n\
                zs = String(z);\nms = String(m);\n";
     let cases = [
@@ -138,9 +138,9 @@ fn the_two_zeros_compare_equal_under_ieee() {
 // payload", and NaN prints `nan`; every IEEE comparison with NaN is false but `!=`.
 #[test]
 fn nan_is_unordered_and_its_negation_is_the_canonical_nan() {
-    let src = "nan = 0.0 / 0.0;\nneg = -nan;\nsq = (0.0 - 1.0) * nan;\none = 1.0;\n\
+    let src = "nan = 0.0f64 / 0.0f64;\nneg = -nan;\nsq = (0.0f64 - 1.0f64) * nan;\none = 1.0f64;\n\
                a = neg < one;\nb = neg > one;\nc = neg <= neg;\nd = neg == neg;\ne = neg != neg;\n\
-               f = nan >= -1.0 / 0.0;\nshown = String(neg);\n";
+               f = nan >= -1.0f64 / 0.0f64;\nshown = String(neg);\n";
     let cases = [
         ("neg", "nan"),
         ("a", "false"),
@@ -168,10 +168,10 @@ fn nan_is_unordered_and_its_negation_is_the_canonical_nan() {
 // zeros and the largest subnormal, which lies below the smallest normal.
 #[test]
 fn subnormals_order_between_zero_and_the_normals() {
-    let src = "z = 0.0;\nm = -0.0;\ntiny = 5.0e-324;\nnegTiny = -5.0e-324;\n\
-               topSub = 2.225073858507201e-308;\nnormal = 2.2250738585072014e-308;\n\
+    let src = "z = 0.0f64;\nm = -0.0f64;\ntiny = 5.0e-324f64;\nnegTiny = -5.0e-324f64;\n\
+               topSub = 2.225073858507201e-308f64;\nnormal = 2.2250738585072014e-308f64;\n\
                a = tiny > z;\nb = negTiny < m;\nc = tiny < topSub;\nd = topSub < normal;\n\
-               e = negTiny < z;\nf = tiny / 2.0 == z;\n";
+               e = negTiny < z;\nf = tiny / 2.0f64 == z;\n";
     for name in ["a", "b", "c", "d", "e", "f"] {
         assert_eq!(value(src, name), "true", "{name}");
     }
@@ -186,10 +186,10 @@ fn subnormals_order_between_zero_and_the_normals() {
 // `(-0.0, 1)` in either order".
 #[test]
 fn min_and_max_put_the_negative_zero_below_and_nan_absorbs() {
-    let src = "z = 0.0;\nm = -0.0;\nnan = 0.0 / 0.0;\n\
+    let src = "z = 0.0f64;\nm = -0.0f64;\nnan = 0.0f64 / 0.0f64;\n\
                a = min(m, z);\nb = min(z, m);\nc = max(m, z);\nd = max(z, m);\n\
-               e = min(nan, 1.0);\nf = max(1.0, nan);\ng = min(5.0e-324, m);\n\
-               h = min((2.0, 1), (nan, 0));\ni = max((2.0, 1), (nan, 0));\n\
+               e = min(nan, 1.0f64);\nf = max(1.0f64, nan);\ng = min(5.0e-324f64, m);\n\
+               h = min((2.0f64, 1), (nan, 0));\ni = max((2.0f64, 1), (nan, 0));\n\
                j = min((z, 1), (m, 1));\nk = min((m, 1), (z, 1));\n";
     let cases = [
         ("a", "-0.0"),
@@ -210,14 +210,15 @@ fn min_and_max_put_the_negative_zero_below_and_nan_absorbs() {
 }
 
 // DESIGN.md L1.17: "`<`, `<=`, `>`, `>=` ... compare only two numbers of one kind ...,
-// anything else being a type error".
+// anything else being a type error". The `int` zero is the name `i`, since a literal without a
+// suffix takes the carrier of the other side where it is exact (L1.26a).
 #[test]
 fn zeros_of_two_kinds_do_not_compare() {
     for src in [
-        "x = 0 < 0r;\n",
-        "x = 0r <= 0.0;\n",
-        "x = 0 > -0.0;\n",
-        "x = (0, 1) < (0r, 1);\n",
+        "i = 0;\nx = i < 0r;\n",
+        "x = 0r <= 0.0f64;\n",
+        "i = 0;\nx = i > -0.0f64;\n",
+        "i = 0;\nx = (i, 1) < (0r, 1);\n",
     ] {
         assert!(!errors(src).is_empty(), "{src}");
     }
@@ -225,10 +226,10 @@ fn zeros_of_two_kinds_do_not_compare() {
 
 /// The edge numbers of the natural-order tests, their names, and their printed forms in
 /// the natural order, with the two float zeros last so that a caller can check them apart.
-const ORDER_SRC: &str = "i = 0;\nr = 0r;\nz = 0.0;\nm = -0.0;\ntiny = 5.0e-324;\n\
-                         negTiny = -5.0e-324;\ntopSub = 2.225073858507201e-308;\n\
-                         normal = 2.2250738585072014e-308;\nnan = 0.0 / 0.0;\nneg = -nan;\n\
-                         inf = 1.0 / 0.0;\nninf = -1.0 / 0.0;\nnegOne = -1;\n";
+const ORDER_SRC: &str = "i = 0;\nr = 0r;\nz = 0.0f64;\nm = -0.0f64;\ntiny = 5.0e-324f64;\n\
+                         negTiny = -5.0e-324f64;\ntopSub = 2.225073858507201e-308f64;\n\
+                         normal = 2.2250738585072014e-308f64;\nnan = 0.0f64 / 0.0f64;\nneg = -nan;\n\
+                         inf = 1.0f64 / 0.0f64;\nninf = -1.0f64 / 0.0f64;\nnegOne = -1;\n";
 const ORDER_NAMES: [&str; 13] = [
     "nan", "tiny", "z", "r", "neg", "ninf", "i", "normal", "m", "inf", "negTiny", "topSub",
     "negOne",
@@ -279,7 +280,7 @@ fn the_natural_order_places_zeros_subnormals_and_nan() {
 #[test]
 #[ignore = "SPEC-zero-order: DESIGN gives the two zeros one place in the natural order; value.rs number_cmp puts -0.0 first by total_cmp, and Value's Eq tells them apart, so a tie breaks Ord's contract"]
 fn the_two_float_zeros_tie_in_the_natural_order() {
-    let vs = values("z = 0.0;\nm = -0.0;\n", &["z", "m"]);
+    let vs = values("z = 0.0f64;\nm = -0.0f64;\n", &["z", "m"]);
     assert_eq!(vs[1].cmp(&vs[0]), Ordering::Equal);
 }
 

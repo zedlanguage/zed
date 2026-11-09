@@ -1,6 +1,7 @@
-//! The ✗ fence variants of the spec (zed/fences/variants): what each gives at L1. None
-//! reaches its documented error yet: the forms it needs come in later layers, so each is
-//! pinned to the diagnostic it gives now, and the step that enables it changes the pin.
+//! The ✗ fence variants of the spec (zed/fences/variants): what each gives at L1. One,
+//! decimal-literal-at-int, reaches its documented error; the others need forms of later
+//! layers, so each is pinned to the diagnostic it gives now, and the step that enables it
+//! changes the pin.
 
 use zedc::testing::test;
 
@@ -32,15 +33,8 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             format!("8: {}", zed_tests::not_yet!("the declared result type `-> int`")),
         ),
         ("nullable-column-missing-none", none(36)),
-        // Rejected already, in the row of two carriers; plan row LIT-bare moves the rejection to
-        // its own row, and this pin with it.
-        (
-            "decimal-literal-at-int",
-            "4: the mark names the row \"Numeric literal at a carrier that cannot take it\", and \
-             the diagnostic is in the row \"Two numeric values with no common carrier\": `2.0` \
-             is an f64 where `int` is expected; a literal takes no other carrier"
-                .into(),
-        ),
+        // Rejected in the row its mark names (plan row LIT-bare).
+        ("decimal-literal-at-int", "pass".into()),
         ("numeric-is-not-binary-float", none(36)),
         (
             // The unit parses from step L2.2; resolution refuses its `type` declaration, which

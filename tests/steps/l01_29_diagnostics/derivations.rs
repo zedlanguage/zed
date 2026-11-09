@@ -117,7 +117,7 @@ fn a_rebinding_points_at_the_first_binding() {
 #[test]
 fn an_error_in_a_function_is_at_the_use_that_leaves_its_parameter_no_carrier() {
     let out = rejected(
-        "badge(positional x) = \"#\" ++ x * 2n;
+        "badge(positional x) = \"#\" ++ x * 2;
 main(stdin: Lines) -> (stdout: Lines) {
   stdout <- badge(3);
 }
@@ -132,7 +132,7 @@ main(stdin: Lines) -> (stdout: Lines) {
     for step in [
         "this `*` gives int | f64 | rat",
         "`x` is int | f64 | rat here",
-        "the literal 2n takes int | f64 | rat",
+        "the literal 2 takes int | f64 | rat",
         "`++` takes (String, String) -> String",
     ] {
         assert!(s.contains(&step), "{step}\n{out}");
@@ -168,7 +168,7 @@ main(stdin: Lines) -> (stdout: Lines) {
 #[test]
 fn a_function_whose_search_succeeded_shows_its_signature_not_the_abandoned_runs() {
     let out = rejected(
-        "twice(positional x) = x * 2;
+        "twice(positional x) = x * int(2);
 main(stdin: Lines) -> (stdout: Lines) {
   stdout <- \"a\" ++ twice(3);
 }
@@ -304,21 +304,21 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
     let out = rejected("inc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n");
     assert_eq!(
         out,
-        "3:8: `==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth
-  [1] 3:8: `boxed` is #box((int) -> int) here
+        "3:8: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth
+  [1] 3:8: `boxed` is #box((T) -> T for T in int | f64 | rat) here
       3 | same = boxed == boxed;
         |        ^^^^^ [1]
         |        ^^^^^^^^^^^^^^ [7, 8]
-  [2] 2:9: `boxed` is defined as this expression, #box((int) -> int)
+  [2] 2:9: `boxed` is defined as this expression, #box((T) -> T for T in int | f64 | rat)
       2 | boxed = #box(inc);
         |         ^^^^^^^^^ [2, 3]
         |              ^^^ [4]
-  [3] 2:9: this atom `#box` with its payload gives #box((int) -> int)
-  [4] 2:14: `inc` is (int) -> int here
-  [5] 1:7: `inc` is defined as this expression, (int) -> int
+  [3] 2:9: this atom `#box` with its payload gives #box((T) -> T for T in int | f64 | rat)
+  [4] 2:14: `inc` is (T) -> T for T in int | f64 | rat here
+  [5] 1:7: `inc` is defined as this expression, (T) -> T for T in int | f64 | rat
       1 | inc = x -> x + 1;
         |       ^^^^^^^^^^
-  [6] 1:7: this expression is (int) -> int
+  [6] 1:7: this expression is (T) -> T for T in int | f64 | rat
   [7] 3:8: repair: call the function before the value gets here, so that the value holds its result and not the function
   [8] 3:8: repair: keep the function under its own name, out of the value"
     );
@@ -338,7 +338,7 @@ s = g(h);
     );
     assert_eq!(
         out,
-        "4:5: `==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth
+        "4:5: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth
   [1] 3:36: `g` needs this of its argument here
       3 | g(positional x) { p = f(x); return p == p; }
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]

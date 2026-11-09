@@ -140,23 +140,42 @@ const NEAR_MISSES: &[NearMiss] = &[
              drops",
         ),
     ),
-    // Its menu is plan item MENU-linear's (`Refusal::repairs` in zedc-presburger).
+    // Its menu is plan item MENU-linear's (`Refusal::repairs` in zedc-presburger). Each
+    // parameter is declared `int`: the checker asks a linear question only of a function whose
+    // parameters are all `int`.
     (
         Row::NonLinearQuestion,
         "",
-        "ok(x, y, z, w) = 9 * x - 4 * y - 8 * w - 3 >= 0 && 5 * x + 11 * y + 9 * w - 9 >= 0 && \
-         -7 * x - 12 * y - 2 * z + 8 * w - 1 >= 0 && -9 * x + 8 * y + 7 * z >= 0;\n",
-        "ok(x, y, z, w) = 9 * x - 4 * y - 8 * w - 3 >= 0 && 5 * x + 11 * y + 9 * w - 9 >= 0 && \
-         -7 * x - 12 * y - 2 * z + 8 * w - 1 >= 0 && -9 * x + 8 * y + 7 * z >= 0 && \
-         -10 * x + 4 * y - 6 * z - 4 * w + 22 >= 0;\n",
+        "ok(x: int, y: int, z: int, w: int) = 9 * x - 4 * y - 8 * w - 3 >= 0 && \
+         5 * x + 11 * y + 9 * w - 9 >= 0 && -7 * x - 12 * y - 2 * z + 8 * w - 1 >= 0 && \
+         -9 * x + 8 * y + 7 * z >= 0;\n",
+        "ok(x: int, y: int, z: int, w: int) = 9 * x - 4 * y - 8 * w - 3 >= 0 && \
+         5 * x + 11 * y + 9 * w - 9 >= 0 && -7 * x - 12 * y - 2 * z + 8 * w - 1 >= 0 && \
+         -9 * x + 8 * y + 7 * z >= 0 && -10 * x + 4 * y - 6 * z - 4 * w + 22 >= 0;\n",
         "1:1",
         Some(
             "if `x` is meant to take only one value in `ok`, state that value, and the checker \
-             removes `x` from the question: `ok(x, y, z, w) = x == 0 && 9 * x - 4 * y - 8 * w - \
-             3 >= 0 && 5 * x + 11 * y + 9 * w - 9 >= 0 && -7 * x - 12 * y - 2 * z + 8 * w - 1 \
-             >= 0 && -9 * x + 8 * y + 7 * z >= 0 && -10 * x + 4 * y - 6 * z - 4 * w + 22 >= \
-             0;`, with the value in place of `0`",
+             removes `x` from the question: `ok(x: int, y: int, z: int, w: int) = x == 0 && \
+             9 * x - 4 * y - 8 * w - 3 >= 0 && 5 * x + 11 * y + 9 * w - 9 >= 0 && -7 * x - \
+             12 * y - 2 * z + 8 * w - 1 >= 0 && -9 * x + 8 * y + 7 * z >= 0 && -10 * x + 4 * y \
+             - 6 * z - 4 * w + 22 >= 0;`, with the value in place of `0`",
         ),
+    ),
+    (
+        Row::LiteralCarrier,
+        FEE,
+        "a = fee(2, rate: 3);\n",
+        "a = fee(2.0, rate: 3);\n",
+        "2:9",
+        None,
+    ),
+    (
+        Row::UnfixedDecimal,
+        "",
+        "p = 2.5f64;\n",
+        "p = 2.5;\n",
+        "1:5",
+        None,
     ),
 ];
 

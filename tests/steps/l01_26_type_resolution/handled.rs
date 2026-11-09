@@ -164,7 +164,7 @@ fn a_bounded_variable_takes_the_atoms_beside_it() {
         assert!(same(&a.params[0], &c.union(&loose())), "{}", a.params[0]);
         assert!(same(&a.params[1], &c), "{}", a.params[1]);
     }
-    for (call, want) in [("add(#notFound, 2)", "4"), ("add(1.5, 2.0)", "3.5")] {
+    for (call, want) in [("add(#notFound, 2)", "4"), ("add(1.5f64, 2.0f64)", "3.5")] {
         let p = format!("{text}y = {call};\n");
         assert_eq!(value(&p, "y"), want, "{call}");
     }
@@ -279,9 +279,15 @@ fn a_handler_on_a_computed_value_prints_its_atoms_on_the_parameter_only() {
             "trim(line) else #nf -> \"dflt\"",
             "(String | #nf | #nf(..)) -> String",
         ),
-        ("(line + 1) else 0", "(int | #_) -> int"),
+        (
+            "(line + 1) else 0",
+            "(#_ | T) -> 0 | T for T in int | f64 | rat",
+        ),
         ("line?.trim() else \"dflt\"", "(String | #_) -> String"),
-        ("\"${line + 1}\" else \"dflt\"", "(int | #_) -> String"),
+        (
+            "\"${line + 1}\" else \"dflt\"",
+            "(#_ | T) -> String for T in int | f64 | rat",
+        ),
         (
             "if trim(line) is #nf { \"dflt\" } else { \"s\" }",
             "(String | #nf) -> \"dflt\" | \"s\"",
@@ -511,7 +517,8 @@ fn a_function_whose_handled_atoms_also_reach_its_result_has_two_arrows() {
         (
             "r(positional n)",
             "{ d = n else 0; if n > 3 { \"big\" } else { \"small\" } }",
-            "((int) -> \"big\" | \"small\") & ((int | #_) -> \"big\" | \"small\" | #_)",
+            "((T) -> \"big\" | \"small\") & ((#_ | T) -> \"big\" | \"small\" | #_) \
+             for T in int | f64 | rat",
         ),
     ] {
         let text = format!("{head} = {body};\n");
@@ -582,13 +589,15 @@ fn an_equality_with_an_atom_narrows_the_name_in_each_branch() {
 }
 
 #[test]
-fn an_equality_with_a_number_handles_no_atom() {
-    // `x == 3` compares `x` with a plain literal, which narrows it to `int` "as an operand
-    // does" (DESIGN.md sec:type_resolution) and handles no atom; so `f(#nf)` passes `#nf` by
-    // (rule 6, the author's Q1 on bubbling) and the body does not run (part d).
+fn an_equality_with_a_number_compares_an_atom_as_data() {
+    // `x == 3` compares `x` with a literal without a suffix, which takes the carrier of `x`
+    // and fixes none (steps L1.26a, L1.26b), so `x` stays `_`. `==` compares an atom as data
+    // (DESIGN.md sec:type_resolution, A15: "a comparison with an atom or a failure ... stays
+    // legal"), so `f(#nf)` runs the body and gives "other". Before bare literals were
+    // generic, `3` narrowed `x` to `int` and `f(#nf)` passed `#nf` by (part d).
     let text = "f(positional x) = if x == 3 { \"three\" } else { \"other\" };\n";
-    assert_eq!(sig(text, "f"), "(int) -> \"other\" | \"three\"");
-    assert_eq!(value(&format!("{text}a = f(#nf);\n"), "a"), "#nf");
+    assert_eq!(sig(text, "f"), "(_) -> \"other\" | \"three\"");
+    assert_eq!(value(&format!("{text}a = f(#nf);\n"), "a"), "\"other\"");
     assert_eq!(value(&format!("{text}a = f(3);\n"), "a"), "\"three\"");
 }
 

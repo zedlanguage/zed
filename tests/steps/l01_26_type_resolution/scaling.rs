@@ -26,7 +26,7 @@ fn searching_the_signatures_of_many_functions_scales() {
     // what the unit has found is large beside the searches.
     let units = resolved(25, |n| {
         let mut text: String = (0..20 * n)
-            .map(|j| format!("k{j} = 0.5 + {j}n;\n"))
+            .map(|j| format!("k{j} = 0.5f64 + {j};\n"))
             .collect();
         text.extend((0..n).map(|i| format!("h{i}(x) = x / {}.0;\n", i + 1)));
         text
@@ -227,11 +227,14 @@ fn curried_lambdas_using_every_parameter_check_in_linear_time() {
     });
 }
 
-/// `g(positional a0) = (a1) -> … -> (an) -> (a0 + 1, a1 + 1, …, an + 1);`, `n` curried
-/// lambdas whose parameters each take the carrier int when their lambda ends.
+/// `g(positional a0) = (a1) -> … -> (an) -> (a0 + int(1), …, an + int(1));`, `n` curried
+/// lambdas whose parameters each take the carrier int when their lambda ends. The `1` is
+/// `int(1)`: a bare `1` takes the carrier of its operand (steps L1.26a, L1.26b) and leaves
+/// each parameter generic, and curried lambdas generic in their parameters check in time
+/// quadratic in `n`, on main too (follow-up GENERIC-nested-quadratic).
 fn curried_sums(n: usize) -> String {
     let lambdas: String = (1..=n).map(|i| format!("(a{i}) -> ")).collect();
-    let all: Vec<String> = (0..=n).map(|i| format!("a{i} + 1")).collect();
+    let all: Vec<String> = (0..=n).map(|i| format!("a{i} + int(1)")).collect();
     format!("g(positional a0) = {lambdas}({});\n", all.join(", "))
 }
 

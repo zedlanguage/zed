@@ -6,7 +6,7 @@
 use zed_tests::step_helpers::l01_16_elaboration::value;
 
 const READINGS: &str = "\
-calm = -0.0;
+calm = -0.0f64;
 eq = calm == 0.0;
 ne = calm != 0.0;
 lt = calm < 0.0;

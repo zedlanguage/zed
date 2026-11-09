@@ -64,9 +64,8 @@ rows! {
     EmissionDisjointness => "Emission-disjointness",
     Rebinding => "Rebinding in the same scope",
     BinderNamingType => "Binder naming a type",
-    // No diagnostic uses these two rows yet: plan row LIT-bare moves here the rejection of a
-    // numeric literal at a carrier it cannot take (as `x * 2.0` with `x: int`) and of a decimal
-    // literal, or a `/` of integer literals, that nothing gives a carrier (as `z = 7 / 2`).
+    // A numeric literal at a carrier it cannot take (as `x * 2.0` with `x: int`), and a decimal
+    // literal, or a `/` of integer literals, that nothing gives a carrier (as `half = 1 / 2`).
     LiteralCarrier => "Numeric literal at a carrier that cannot take it",
     UnfixedDecimal => "Decimal literal, or `/` of integer literals, that nothing gives a carrier",
     NoCommonCarrier => "Two numeric values with no common carrier",

@@ -46,12 +46,12 @@ fn writes_back(text: &str) {
 #[test]
 fn a_parameter_any_value_fits_is_printed_as_every_value() {
     // The finding: `(T) -> int` was printed, and `T` is no type a program can write.
-    let shown = declared("h(positional p) = p[0] + 1;\nm(positional n: int) = h(\"a\");\n");
+    let shown = declared("h(positional p) = p[0] + int(1);\nm(positional n: int) = h(\"a\");\n");
     assert_eq!(shown, "(_) -> int");
     writes_back(&shown);
     // The variable is still the signature's own, which each call binds: the need of `p[0]` is
     // checked again at the call.
-    let s = sig("h(positional p) = p[0] + 1;\n", "h");
+    let s = sig("h(positional p) = p[0] + int(1);\n", "h");
     assert_eq!(s.own.len(), 1);
     assert_eq!(s.needs.len(), 1);
     assert_eq!(s.to_string(), "(_) -> int");

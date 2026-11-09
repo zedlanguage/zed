@@ -8,8 +8,8 @@ use zed_tests::step_helpers::l01_16_elaboration::{errors, value};
 
 #[test]
 fn float_equality_and_comparison_follow_ieee() {
-    let src = "nan = 0.0 / 0.0;\na = nan == nan;\nb = nan != nan;\nc = 0.0 == -0.0;\n\
-               d = nan < 1.0;\ne = nan >= 1.0;\nf = -0.0 < 0.0;\ng = 1.0 <= 1.0;\n";
+    let src = "nan = 0.0f64 / 0.0f64;\na = nan == nan;\nb = nan != nan;\nc = 0.0f64 == -0.0f64;\n\
+               d = nan < 1.0f64;\ne = nan >= 1.0f64;\nf = -0.0f64 < 0.0f64;\ng = 1.0f64 <= 1.0f64;\n";
     assert_eq!(value(src, "a"), "false");
     assert_eq!(value(src, "b"), "true");
     assert_eq!(value(src, "c"), "true");
@@ -21,8 +21,8 @@ fn float_equality_and_comparison_follow_ieee() {
 
 #[test]
 fn ieee_equality_reaches_inside_tuples_and_atoms() {
-    let src = "nan = 0.0 / 0.0;\na = (1, nan) == (1, nan);\nb = (0.0, \"x\") == (-0.0, \"x\");\n\
-               c = #at(-0.0) == #at(0.0);\nd = #at(x: nan) == #at(x: nan);\n";
+    let src = "nan = 0.0f64 / 0.0f64;\na = (1, nan) == (1, nan);\nb = (0.0f64, \"x\") == (-0.0f64, \"x\");\n\
+               c = #at(-0.0f64) == #at(0.0f64);\nd = #at(x: nan) == #at(x: nan);\n";
     assert_eq!(value(src, "a"), "false");
     assert_eq!(value(src, "b"), "true");
     assert_eq!(value(src, "c"), "true");
@@ -46,7 +46,7 @@ fn functions_compare_only_over_an_enumerable_domain() {
     assert_eq!(
         errors(src),
         [
-            "`==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [inc == also]"
+            "`==` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth [inc == also]"
         ]
     );
     let id = || lam(&["x"], var("x"));
@@ -68,7 +68,7 @@ fn a_function_deep_in_a_tuple_is_reported_once_where_it_is_written() {
     assert_eq!(
         errors(src),
         [
-            "a tuple takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [inc]"
+            "a tuple takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth [inc]"
         ]
     );
 }
@@ -81,14 +81,14 @@ fn a_function_in_an_atom_s_payload_is_refused_by_equality() {
     assert_eq!(
         errors(src),
         [
-            "`==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [x == x]"
+            "`==` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth [x == x]"
         ]
     );
     let named = "h = x -> x + 1;\nx = #a(f: h, n: 1);\nsame = x != x;\n";
     assert_eq!(
         errors(named),
         [
-            "`!=` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [x != x]"
+            "`!=` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth [x != x]"
         ]
     );
 }
@@ -101,14 +101,14 @@ fn a_function_nested_in_payloads_and_tuples_is_refused() {
     assert_eq!(
         errors(src),
         [
-            "`==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [x == #c]"
+            "`==` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth [x == #c]"
         ]
     );
     let src = "h = x -> x + 1;\nx = #a((1, #b(f: h)));\nsame = x == #c;\n";
     assert_eq!(
         errors(src),
         [
-            "a tuple takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [#b(f: h)]"
+            "a tuple takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth [#b(f: h)]"
         ]
     );
 }
@@ -120,14 +120,14 @@ fn a_tuple_of_an_atom_whose_payload_holds_a_function_is_refused() {
     assert_eq!(
         errors(src),
         [
-            "a tuple takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [#a(h)]"
+            "a tuple takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth [#a(h)]"
         ]
     );
 }
 
 #[test]
 fn atoms_whose_payloads_are_data_still_compare() {
-    let src = "x = #a(1, #b(n: 2.5), (3, \"s\"));\ny = #a(1, #b(n: 2.5), (3, \"t\"));\n\
+    let src = "x = #a(1, #b(n: 2.5f64), (3, \"s\"));\ny = #a(1, #b(n: 2.5f64), (3, \"t\"));\n\
                same = x == x;\ndiffer = x == y;\n";
     assert_eq!(value(src, "same"), "true");
     assert_eq!(value(src, "differ"), "false");
@@ -151,7 +151,7 @@ fn a_function_reaching_a_payload_through_a_generic_call_is_refused_by_equality()
     // the tuple's.
     let refused = |what: &str| {
         [format!(
-            "{what} takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [use(scale)]"
+            "{what} takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth [use(scale)]"
         )]
     };
     for (body, what) in [

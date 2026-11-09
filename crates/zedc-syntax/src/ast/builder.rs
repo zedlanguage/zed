@@ -333,14 +333,11 @@ impl<'a, 's> Builder<'a, 's> {
             Tok::Int { radix, digits } => ExprKind::Int {
                 radix: *radix,
                 digits: Arc::clone(digits),
-                generic: false,
             },
-            Tok::Generic { radix, digits } => ExprKind::Int {
-                radix: *radix,
+            Tok::Float { digits, forced } => ExprKind::Float {
                 digits: Arc::clone(digits),
-                generic: true,
+                forced: *forced,
             },
-            Tok::Float(s) => ExprKind::Float(Arc::clone(s)),
             Tok::Rat(s) => ExprKind::Rat(Arc::clone(s)),
             Tok::Keyword(k) => ExprKind::Bool(*k == "true"),
             Tok::Str(parts) => {

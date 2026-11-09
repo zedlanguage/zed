@@ -10,7 +10,10 @@ use zedc::check::ty::Ty;
 
 use super::{Resolved, type_errors};
 
-const SCALE: &str = "scale(positional x) = x * 2;\n";
+/// `int(2)`, not `2`: a bare `2` takes the carrier of `x` (steps L1.26a, L1.26b), so `scale`
+/// would be generic, and a generic function held by `n` bindings checks in time quadratic in
+/// `n`, on main too (follow-up GENERIC-nested-quadratic).
+const SCALE: &str = "scale(positional x) = x * int(2);\n";
 
 /// The one error a tuple expression holding `scale` gives, at `at`.
 fn holds_scale(at: &str) -> String {
@@ -46,11 +49,12 @@ fn a_function_wrapped_in_tuples_by_calls_is_one_error() {
 
 #[test]
 fn two_functions_in_tuples_are_two_errors() {
-    // One error for each function, at the tuple that holds it; the tuple of both adds none.
+    // One error for each function, at the tuple that holds it; the tuple of both adds none. A
+    // bare `1` takes the carrier of `x`, so `shift` is generic.
     let text = format!(
         "{SCALE}shift(positional x) = x + 1;\na = (scale, 1);\nb = (shift, 1);\nc = (a, b);\n"
     );
-    let shift = "a tuple takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [shift]";
+    let shift = "a tuple takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth [shift]";
     assert_eq!(
         type_errors(&text),
         [holds_scale("scale"), shift.to_string()]

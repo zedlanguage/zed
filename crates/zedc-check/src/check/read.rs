@@ -130,7 +130,7 @@ fn leaves(text: &str, head: &str, tokens: &[lex::Token]) -> Result<(String, Bind
                 (Ty::lit(&int(*radix, digits, true, text)?), 2)
             }
             (Tok::Int { radix, digits }, _) => (Ty::lit(&int(*radix, digits, false, text)?), 1),
-            (Tok::Float(s), _) => (
+            (Tok::Float { digits: s, .. }, _) => (
                 Ty::lit(&Value::float(
                     s.parse()
                         .map_err(|_| format!("`{text}`: the float `{s}`"))?,

@@ -13,11 +13,11 @@ fn one_failure_flows_through_the_arithmetic() {
 #[test]
 fn two_failures_merge_into_a_set() {
     assert_eq!(
-        x("int(\"seven\") + int(2.5)"),
+        x("int(\"seven\") + int(2.5f64)"),
         "#errs({#inexact, #invalid})"
     );
     assert_eq!(
-        x("int(2.5) + int(\"seven\")"),
+        x("int(2.5f64) + int(\"seven\")"),
         "#errs({#inexact, #invalid})",
         "the set has no order to invent"
     );
@@ -30,7 +30,7 @@ fn two_failures_merge_into_a_set() {
 
 #[test]
 fn a_merge_flattens_and_else_replaces_it() {
-    let src = "price = int(\"n/a\");\nqty = int(1.5);\nfee = 10 div 0;\n\
+    let src = "price = int(\"n/a\");\nqty = int(1.5f64);\nfee = 10 div 0;\n\
                total = price * qty + fee;\nshown = total else 0;\n";
     let v = |n| zed_tests::step_helpers::l01_16_elaboration::value(src, n);
     assert_eq!(v("total"), "#errs({#divByZero, #inexact, #invalid})");
@@ -40,7 +40,7 @@ fn a_merge_flattens_and_else_replaces_it() {
 #[test]
 fn an_atom_compared_with_equals_is_data() {
     assert_eq!(x("int(\"x\") == int(\"y\")"), "true");
-    assert_eq!(x("int(\"x\") != int(2.5)"), "true");
+    assert_eq!(x("int(\"x\") != int(2.5f64)"), "true");
 }
 
 #[test]
@@ -66,19 +66,22 @@ fn mixed_kinds_select_no_arrow() {
             "`++` does not take (\"a\", 1): these are the types of its arguments here, and `++` has no arrow that takes them all [\"a\" ++ 1]"
         ]
     );
-    // A literal keeps its kind: `1.5` is no int, and no form of it is.
+    // A literal keeps its kind: `1.5` is no int, and no form of it is (DESIGN.md L1.26b).
     assert_eq!(
         errors("n = 1;\nx = n + 1.5;\n"),
-        ["`1.5` is an f64 where `int` is expected; a literal takes no other carrier [1.5]"]
+        [
+            "the literal `1.5` is a decimal, and `+` expects `int`, the carrier of `n`; a \
+             decimal literal is never an `int`; write `f64(n) + 1.5` [1.5]"
+        ]
     );
     assert_eq!(
-        errors("x = 1r/2r * 2;\n"),
+        errors("x = 1r/2r * 2.5f64;\n"),
         [
-            "`2` is an int where `rat` is expected; a literal takes no other carrier; write `2r` \
-          or `2n` [2]"
+            "the literal `2.5f64` is an `f64` by its suffix, and `rat` is expected here; a \
+             suffix fixes a literal's carrier; write `2.5r` [2.5f64]"
         ]
     );
     // A generic literal takes the other operand's kind (step L1.26a).
-    assert_eq!(x("1n + 1.0"), "2.0");
-    assert_eq!(x("1r/2r * 2n"), "1r");
+    assert_eq!(x("1 + 1.0f64"), "2.0");
+    assert_eq!(x("1r/2r * 2"), "1r");
 }

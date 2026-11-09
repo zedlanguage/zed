@@ -572,7 +572,7 @@ fn a_unit_reversed_and_rotated_gives_the_same_types_and_diagnostics() {
         "bad(x) = x + \"a\" * 2;",
         "shout(s) = upper(s) ++ \"!\";",
         "loud = shout(s: \"hi\") ++ \"?\";",
-        "half(x) = x / 2n;",
+        "half(x) = x / 2;",
     ];
     let text = |order: &[usize]| {
         order
@@ -588,7 +588,13 @@ fn a_unit_reversed_and_rotated_gives_the_same_types_and_diagnostics() {
             "`*` does not take (\"a\", 2): these are the types of its arguments here, and `*` has no arrow that takes them all [\"a\" * 2]"
         ]
     );
-    assert!(want.0.contains(&"bump: (x: int) -> int".to_string()));
+    // A bare literal takes the carrier of its use (L1.26a), so `bump` is generic.
+    assert!(
+        want.0
+            .contains(&"bump: (x: T) -> T for T in int | f64 | rat".to_string()),
+        "{:?}",
+        want.0
+    );
     assert!(want.0.contains(&"shout: (s: String) -> String".to_string()));
     assert!(want.0.contains(&"total = int".to_string()), "{:?}", want.0);
     assert!(

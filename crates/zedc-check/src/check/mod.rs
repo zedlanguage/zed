@@ -47,7 +47,7 @@ pub mod walk;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -339,7 +339,7 @@ pub struct Info {
     /// the product holds no `int` (step L25.8, the `*` to `/` mutant).
     pub quotients: HashMap<Span, bool>,
     /// Each literal compared by `==` or `!=` with a class that became a type variable, and each
-    /// generic literal `kn` operand of an operator in such a class (L1.26a), by its span: the
+    /// generic literal operand of an operator in such a class (L1.26a), by its span: the
     /// value it takes at each other numeric carrier of the variable's bound that it adopts
     /// exactly, after any `-`. The comparison adopts at run time the carrier of the
     /// other operand (DESIGN.md L1.26, "a literal compared by `==` with a class takes the
@@ -388,10 +388,10 @@ impl Operands {
 /// A numeric literal: its span, without a `-`, which keys what it adopts; its site, the span
 /// of the literal with its `-`, where every message about it points, and which is longer than
 /// the span exactly when a `-` is applied to it ([`Lit::neg`]); its value, its text, without
-/// the `-`, whether it is written with the suffix `n`, whether it is generic (step L1.26a):
-/// written `kn` where it joins a class other than under `==` and `!=`, and whether, generic,
+/// the `-`, whether it is written without a suffix, whether it is generic (step L1.26a):
+/// written without a suffix where it joins a class other than under `==` and `!=`, and whether, generic,
 /// it has no other operand to take its carrier from at run time and takes it from a parameter
-/// of its class ([`Info::witness`]). Where it joins no class, a `kn` is read as `k`.
+/// of its class ([`Info::witness`]). Where it joins no class, it keeps its own carrier.
 #[derive(Clone)]
 struct Lit {
     span: Span,
@@ -400,18 +400,18 @@ struct Lit {
     /// The literal as written, made in memory asked for first ([`shown`]) and shared by every
     /// copy of the literal, so a clone copies none of its digits.
     text: Rc<String>,
-    n: bool,
+    bare: bool,
     generic: bool,
     witness: bool,
 }
 
 impl Lit {
     /// The literal as it joins a class with no other operand: generic, taking its carrier
-    /// from a parameter of the class, if it is written `kn`.
+    /// from a parameter of the class, if it is written without a suffix.
     fn joining(&self) -> Lit {
         Lit {
-            generic: self.n,
-            witness: self.n,
+            generic: self.bare,
+            witness: self.bare,
             ..self.clone()
         }
     }
@@ -691,7 +691,7 @@ struct Class {
     /// its binder and the body it is in scope in; of a merged class, the outer one where one
     /// body holds the other.
     binder: Option<(usize, Span)>,
-    /// Whether its values are those of generic literals only, as of `1n + 1n`: of a merged
+    /// Whether its values are those of generic literals only, as of `1 + 1` inside a function: of a merged
     /// class, whether both were. An `if` merges it with the class of its other branch.
     generic: bool,
     /// Whether it is what a use of another class's values gives, as `args[k]` is in the body
@@ -719,6 +719,11 @@ struct Ck<'t, 'a> {
     log: Vec<Undo>,
     /// Each expression's type, by its span, as last found.
     seen: HashMap<Span, Seen<'a>>,
+    /// Each bare literal written as an operand of `==` or `!=`, by its site: the operator, the
+    /// span of the other operand, and whether the literal is the left one. A literal that a
+    /// class of strings follows is rejected when the class takes its type ([`Ck::texts`]);
+    /// the entry only names the comparison, so an entry a repair's trial wrote is harmless.
+    eq_sides: HashMap<Span, (&'static str, Option<Span>, bool)>,
     /// Each expression's loose atoms that reach its value unnamed, by its span, as last
     /// found: a superset of those no `else` default on their path writes. No entry is none.
     unnamed: HashMap<Span, KType>,
@@ -744,6 +749,9 @@ struct Ck<'t, 'a> {
     pub(super) unnarrowed: HashMap<usize, Ty>,
     /// Whether a repair is being tried, so its errors offer none.
     trying: bool,
+    /// Whether a repair's rewritten call is being tried ([`Ck::repaired`]), so a decimal
+    /// literal at `rat` takes the type `rat` and its digits are not read ([`adopted`]).
+    rough: bool,
     /// The output ports declared `Lines`.
     lines_out: HashSet<String>,
     /// The classes; class `k` is the type variable `$k`.
@@ -840,6 +848,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             info: Info::default(),
             log: Vec::new(),
             seen: HashMap::new(),
+            eq_sides: HashMap::new(),
             unnamed: HashMap::new(),
             made: HashMap::new(),
             alias: HashMap::new(),
@@ -850,6 +859,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             narrowed_at: HashMap::new(),
             unnarrowed: HashMap::new(),
             trying: false,
+            rough: false,
             lines_out: HashSet::new(),
             classes: Vec::new(),
             level: 0,
@@ -993,7 +1003,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// A class of its own, of generic literals only, that the literal `l`, written `kn`, joins
+    /// A class of its own, of generic literals only, that the literal `l`, written without a suffix, joins
     /// generic with no other operand (L1.26a); it takes int where it meets no carrier.
     fn generic_class(&mut self, l: &Lit) -> usize {
         let k = self.class();
@@ -2007,12 +2017,12 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The literal `l` joins class `k`; unless it follows, the class keeps only the carriers
     /// it may adopt, and false if none would be left. A generic literal keeps only those that
-    /// hold it exactly: `9007199254740993n` removes `f64`.
+    /// hold it exactly: `9007199254740993` removes `f64`.
     fn join(&mut self, k: usize, l: &Lit, follower: bool) -> bool {
         if !follower {
             let m = Carrier::ALL
                 .into_iter()
-                .filter(|&c| adoptable(l, c) && (!l.generic || adopt(l, c).is_ok()))
+                .filter(|&c| adoptable(l, c) && (!l.generic || fits(l, c)))
                 .fold(0, |m, c| m | c.bit());
             if !self.restrict(
                 k,
@@ -2031,14 +2041,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         true
     }
 
-    /// Gives class `r` its type: its numeric carrier if a plain literal joined it, which keeps
-    /// only the literal's own carrier (`f(x) = x * 2` takes int, as `2` is one), or a generic
-    /// one with no other operand and no parameter of the class in scope at it
-    /// ([`Info::witness`]), which takes the first of int, f64 and rat the class may take,
-    /// every literal adopting it; a type variable if it may take any value; its carrier if
-    /// one; a type variable bounded by its carriers if several; else the unknown. A function
-    /// meant for every carrier writes the generic literal (step L1.26a): `f(x) = x * 2n` takes
-    /// int, f64 and rat, its `2n` taking the carrier of `x` by one `match` at run time.
+    /// Gives class `r` its type: its numeric carrier if a literal with a suffix joined it,
+    /// which keeps only the literal's own carrier, or a literal with no other operand and no
+    /// parameter of the class in scope at it ([`Info::witness`]), which takes `int` where the
+    /// class may take it and is rejected where it may take two or more other carriers, every
+    /// literal adopting the carrier; a type variable if it may take any value; its carrier if
+    /// one; a type variable bounded by its carriers if several; else the unknown. So
+    /// `f(x) = x * 2` takes int, f64 and rat, its `2` taking the carrier of `x` by one `match`
+    /// at run time (step L1.26a), and `three() = 1 + 2` is `() -> int`.
     fn resolve(&mut self, r: usize) {
         let (mask, lits) = (self.classes[r].mask, self.classes[r].lits.clone());
         // A generic literal with no other operand takes the carrier from a parameter of the
@@ -2058,6 +2068,31 @@ impl<'t, 'a> Ck<'t, 'a> {
                     !follows && (!l.generic || (l.witness && witness(l).is_none()))
                 })
             });
+        // Literals that nothing gives a carrier: an integer literal is an `int` where the
+        // class may be one, and otherwise, as for a decimal literal or a `/` of integer
+        // literals, nothing chooses among the carriers left, and the first decimal literal,
+        // or else the first literal, is rejected (steps L1.26a and L1.26b).
+        let left: Vec<Carrier> = Carrier::of_mask(mask).filter(|c| c.numeric()).collect();
+        if numeric.is_some() && mask & Carrier::Int.bit() == 0 && left.len() > 1 {
+            let mut joined = lits.iter().filter(|(_, follows)| !follows).map(|(l, _)| l);
+            let first = joined.clone().next();
+            if let Some(l) = joined
+                .find(|l| lit_carrier(&l.value) == Carrier::F64)
+                .or(first)
+            {
+                let notes = self.derive(&[l.site]);
+                self.rejects_with(Row::UnfixedDecimal, l.site, unfixed(l, &left, None), notes);
+            }
+        }
+        // A bare literal compared with values of the class follows it without narrowing it, so
+        // whether the class holds strings and no number is known only now, whatever order the
+        // body's uses come in (A15).
+        let numbers = Carrier::Int.bit() | Carrier::Rat.bit() | Carrier::F64.bit();
+        if mask & (numbers | OTHER) == 0 && mask & Carrier::Str.bit() != 0 {
+            for (l, _) in lits.iter().filter(|(l, follows)| *follows && l.bare) {
+                self.texts(l);
+            }
+        }
         let ty = match numeric {
             Some(c) => Ty::carrier(c),
             None if mask == EVERY => Ty::var(format!("${r}").into()),
@@ -2121,6 +2156,20 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `t` shown with each class narrowed to some carriers shown as their union.
     fn show(&self, t: &Ty) -> String {
         let t = &self.settled(t);
+        // A class of generic literals alone is shown as its literals, as written: `(1, 2, 3)`,
+        // not `(_, _, _)`.
+        let lits: Binds = (t.var_facts().classes.into_iter())
+            .filter_map(|v| {
+                let r = self.find(class_id(&v).filter(|&k| k < self.classes.len())?);
+                let c = &self.classes[r];
+                (c.generic && c.resolved.is_none() && !c.lits.is_empty()).then(|| {
+                    let ty = (c.lits.iter())
+                        .fold(Ty::empty(), |t, (l, _)| t.union(&lit_ty(&l.value, l.neg())));
+                    (v, ty)
+                })
+            })
+            .collect();
+        let t = &t.replace(&lits);
         show_with(t, &self.masks(t))
     }
 
@@ -2421,7 +2470,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 t
             }
             Err(m) => {
-                self.error(l.site, m);
+                self.rejects_with(Row::LiteralCarrier, l.site, m, Vec::new());
                 lit_ty(&l.value, l.neg())
             }
         }
@@ -2577,11 +2626,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// `==` and `!=`: any two values; a literal meets the other side's type by the rule of a
-    /// parameter ([`Ck::follow`], [`expected`]), so `x == 1` with `x: f64` is rejected and
-    /// `x == 1n` is true at `1.0`; of two literals a generic one takes the other's carrier, and
-    /// two plain ones of two carriers are rejected (`1 == 1.0`). Two tuples of one length are
+    /// parameter ([`Ck::follow`], [`expected`]), so `x == 1` is true at `x = 1.0` and
+    /// `x == 1.5` with `x: int` is rejected; of two literals one without a suffix takes the
+    /// other's carrier, and two without one are rejected where one is a decimal (`1 == 1.0`),
+    /// since nothing gives it a carrier. Two tuples of one length are
     /// paired component by component, at any depth, across every tuple shape of that length a
-    /// side's type holds, as [`adopted`] pairs them: `p == (1n, 2n)` with
+    /// side's type holds, as [`adopted`] pairs them: `p == (1, 2)` with
     /// `p: (f64, f64) | (String, f64)` reads both literals at `f64`.
     ///
     /// The tuples nest as deep as the text, so the pairs wait on a stack, each with whether it
@@ -2597,8 +2647,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The derivation and repairs of the rejection, among the errors from the `from`th on, of
-    /// the plain literal `l` compared by `==` with the value `v` of other carriers in the row
-    /// of two numbers with no common carrier (`n == 1.0` with `n: int`): `v`'s derivation, the
+    /// the literal `l` compared by `==` with the value `v` of other carriers in the row of a
+    /// literal at a carrier it cannot take (`n == 1.5` with `n: int`): `v`'s derivation, the
     /// literal, and each cast of `v` with which the comparison checks, tried with the
     /// checker's state restored after, `f64(n)`. One trial per cast word.
     fn equal_repairs(&mut self, from: usize, l: &Arg, v: &Arg) {
@@ -2607,7 +2657,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let Some(k) = (from..self.info.errors.len()).find(|&k| {
             let e = &self.info.errors[k];
-            e.span == lit.site && e.row == Some(Row::NoCommonCarrier)
+            e.span == lit.site && e.row == Some(Row::LiteralCarrier)
         }) else {
             return;
         };
@@ -2657,33 +2707,29 @@ impl<'t, 'a> Ck<'t, 'a> {
             match (xl, yl) {
                 (Some(l), Some(m)) => {
                     let (lc, mc) = (lit_carrier(&l.value), lit_carrier(&m.value));
-                    // A generic literal takes the other's carrier; of two plain ones of two
-                    // carriers, the integer, or else the decimal, is rejected at the other's.
-                    let m_takes = match (l.n, m.n) {
-                        (_, true) => true,
-                        (true, false) => false,
-                        _ => mc == Carrier::Int || mc == Carrier::F64 && lc != Carrier::Int,
-                    };
-                    match (lc == mc, m_takes) {
-                        (true, _) => {}
-                        // Two plain literals of two carriers: two numbers with no common
-                        // carrier, the one rejected at the other's carrier.
-                        (false, takes) if !l.n && !m.n => {
-                            let (r, c) = if takes { (m, lc) } else { (l, mc) };
+                    // A literal with a suffix fixes the other's carrier. Of two without one,
+                    // two integers are `int`, and a decimal is given no carrier by the
+                    // other, which takes the carrier of its use too: it is rejected.
+                    match (l.bare, m.bare) {
+                        (true, true) if lc == Carrier::Int && mc == Carrier::Int => {}
+                        (true, true) => {
+                            let d = if lc == Carrier::F64 { l } else { m };
                             let notes = [l, m]
                                 .map(|l| Note {
                                     span: l.span,
                                     text: literal_note(l.written(), lit_ty(&l.value, l.neg())),
                                 })
                                 .to_vec();
-                            self.rejects_with(Row::NoCommonCarrier, r.site, menu(r, &[c]), notes);
+                            let message = unfixed(d, &[Carrier::F64, Carrier::Rat], None);
+                            self.rejects_with(Row::UnfixedDecimal, d.site, message, notes);
+                        }
+                        (true, false) => {
+                            self.adopt_to(l, mc);
                         }
                         (false, true) => {
                             self.adopt_to(m, lc);
                         }
-                        (false, false) => {
-                            self.adopt_to(l, mc);
-                        }
+                        (false, false) => {}
                     }
                 }
                 (Some(l), None) => self.follow(l, &yt, inner),
@@ -2710,7 +2756,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let [t] = ts
             && let Some(k) = self.class_of_ty(t)
         {
-            if !self.join(k, l, l.n && !inner) {
+            if !self.join(k, l, l.bare && !inner) {
                 let mask = self.classes[self.find(k)].mask;
                 let held: Vec<Carrier> = [Carrier::Int, Carrier::Rat, Carrier::F64]
                     .into_iter()
@@ -2751,17 +2797,80 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// Rejects the literal `l`, written without a suffix and compared by `==` or `!=` with a
+    /// value whose type holds strings and no number (author decision, 2026-11-09, A15): no
+    /// carrier of a number literal is a string, so the comparison is never true. The repairs
+    /// compare the text, `x == "1"`, or read the number the text holds, `int(x) == 1`; a
+    /// comparison with an atom stays legal and does not come here.
+    fn texts(&mut self, l: &Lit) {
+        let (op, at, left) = self
+            .eq_sides
+            .get(&l.site)
+            .copied()
+            .unwrap_or(("==", None, false));
+        let t = self.t;
+        let name = at.and_then(|at| match self.seen.get(&at) {
+            Some((_, Src::Name(id))) => Some(t.res.binders[*id].name.as_str()),
+            _ => None,
+        });
+        let lit = l.written();
+        let decimal = lit_carrier(&l.value) == Carrier::F64;
+        let casts: &[&str] = if decimal { &["f64", "rat"] } else { &["int"] };
+        let message = quoting(
+            &fmt::from_fn(|f| {
+                let Some(n) = name else {
+                    write!(
+                        f,
+                        "the literal `{lit}` is a number, compared by `{op}` with a `String`, \
+                         which no number equals; write the text `\"{lit}\"` to compare the text"
+                    )?;
+                    for (i, c) in casts.iter().enumerate() {
+                        f.write_str(if i + 1 == casts.len() { " or " } else { ", " })?;
+                        write!(f, "`{c}(…)` around the other operand")?;
+                    }
+                    return f.write_str(" to compare the number the text holds");
+                };
+                let pair =
+                    |f: &mut fmt::Formatter<'_>, a: &dyn fmt::Display, b: &dyn fmt::Display| {
+                        match left {
+                            true => write!(f, "`{b} {op} {a}`"),
+                            false => write!(f, "`{a} {op} {b}`"),
+                        }
+                    };
+                write!(
+                    f,
+                    "the literal `{lit}` is a number, and `{n}` is a `String` here, which no \
+                     number equals, so the comparison always gives the same answer; write "
+                )?;
+                pair(f, &n, &format_args!("\"{lit}\""))?;
+                f.write_str(" to compare the text")?;
+                for (i, c) in casts.iter().enumerate() {
+                    f.write_str(if i + 1 == casts.len() { " or " } else { ", " })?;
+                    pair(f, &format_args!("{c}({n})"), &lit)?;
+                }
+                f.write_str(" to compare the number the text holds")
+            }),
+            || {
+                format!(
+                    "this literal is a number, compared by `{op}` with a `String`, which no \
+                     number equals"
+                )
+            },
+        );
+        let notes = self.derive(&[at.unwrap_or(l.site)]);
+        self.rejects_with(Row::LiteralCarrier, l.site, message, notes);
+    }
+
     /// Reports the literal `l`, compared by `==` with a value of one of the types `ts`,
-    /// rejected with the message `m`: in the row of two numbers with no common carrier where
-    /// `l` is plain and every value of `ts` is a number of other carriers (`n == 1.0` with
-    /// `n: int`), whose derivation and repairs [`Self::equal_repairs`] adds; in no row
-    /// otherwise.
+    /// rejected with the message `m`: in the row of a literal at a carrier it cannot take
+    /// where `ts` holds numbers (`n == 1.5` with `n: int`), whose derivation and repairs
+    /// [`Self::equal_repairs`] adds; in no row otherwise.
     fn compared(&mut self, l: &Lit, ts: &[&Ty], m: String) {
         let numbers = (ts.iter()).try_fold(0, |acc, t| self.numbers_in(t).map(|m| acc | m));
         match numbers {
-            Some(n) if !l.n && n != 0 && n & lit_carrier(&l.value).bit() == 0 => {
+            Some(n) if n != 0 => {
                 let notes = self.derive(&[l.site]);
-                self.rejects_with(Row::NoCommonCarrier, l.site, m, notes)
+                self.rejects_with(Row::LiteralCarrier, l.site, m, notes)
             }
             _ => self.error(l.site, m),
         }
@@ -3018,7 +3127,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of a `rat` and an `f64`, `q + 1.5` of an `int` and an `f64` literal, `max(r, x)`. A
     /// bounded variable stands for one carrier at all its places (sec:type_resolution), so
     /// `f(a: T, b: T)` takes no `rat` and `f64` together. An argument whose values are not
-    /// all numbers of known carriers, a generic literal `kn` among them, decides nothing.
+    /// all numbers of known carriers, an integer literal without a suffix among them, decides
+    /// nothing.
     /// One pass over the arguments per arrow, and the pairs of the seven sets of numeric
     /// carriers, a constant.
     fn no_common_carrier(&self, sig: &Sig, args: &[Option<Arg>]) -> bool {
@@ -3061,10 +3171,14 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The numeric carriers a value of the argument `a` may be of, `None` unless every value
     /// is a number of a known carrier: a plain literal's own carrier, and otherwise those of
-    /// its type ([`Self::numbers_in`]); a generic literal `kn` may take any.
+    /// its type ([`Self::numbers_in`]). An integer literal without a suffix may take any, and
+    /// a decimal one any but `int`, which a decimal never is.
     fn numbers_of(&self, a: &Arg) -> Option<u8> {
         match &a.lit {
-            Some(l) if l.n => None,
+            Some(l) if l.bare && lit_carrier(&l.value) == Carrier::F64 => {
+                Some(Carrier::F64.bit() | Carrier::Rat.bit())
+            }
+            Some(l) if l.bare => None,
             Some(l) => Some(lit_carrier(&l.value).bit()),
             None => self.numbers_in(&a.ty),
         }
@@ -3244,9 +3358,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// it. Every other argument is checked piece by piece, a class taking the carriers its
     /// parameter allows.
     /// The literal `l` as it joins a class with no other operand, as a call's argument does:
-    /// generic if written `kn` ([`Lit::joining`]), except in a check of a generic function's
+    /// generic if written without a suffix ([`Lit::joining`]), except in a check of a generic function's
     /// needs at a call, where the literal is of the function's body, which elaborates once for
-    /// every call, and is read as `k`.
+    /// every call, and keeps its own carrier.
     fn joining(&self, l: &Lit) -> Lit {
         match self.replaying {
             0 => l.joining(),
@@ -3255,7 +3369,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The type of the tuple argument `a` at a parameter that is a type variable, with each
-    /// literal `kn` written as a component of it, at any depth, made a class of its own that
+    /// literal without a suffix written as a component of it, at any depth, made a class of its own that
     /// the literal joins, generic (L1.26a): the component joins the class of what it meets in
     /// the function's body, and takes int where it meets no carrier. `None` outside a
     /// function, and where no such literal is written.
@@ -3285,7 +3399,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let c = &open.comps[i];
             match &open.parts[i] {
-                Part::Lit(l) if l.n => {
+                Part::Lit(l) if l.bare => {
                     let k = self.generic_class(l);
                     made = true;
                     let open = stack.last_mut().expect("an open tuple");
@@ -3319,24 +3433,34 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut best: Option<Best> = None;
         let mut kept = Vec::new();
         let mut adopt_error = None;
+        // Per literal argument without a suffix: the carriers of its parameter on the arrows
+        // the other arguments fit, `None` once one of them is generic.
+        let mut takes: BTreeMap<usize, Option<u8>> = BTreeMap::new();
         for (k, arrow) in sig.arrows.iter().enumerate() {
             let mut need = Adoptions::new();
             let mut retyped = Vec::new();
-            let mut ok = true;
+            // An arrow no other argument can fit is no candidate, and its literals are not
+            // adopted: a decimal literal's adoption at `rat` reads its digits (COMPLEXITY.md
+            // K41), as at the `rat` arrow of `n + 0.5` with `n` an int.
+            let mut ok = (args.iter().zip(&arrow.params)).all(|(a, p)| match a {
+                Some(a) if a.lit.is_none() && a.parts.is_none() => a.ty.is_empty() || a.ty.meets(p),
+                _ => true,
+            });
+            if !ok {
+                continue;
+            }
             let mut error = None;
             for (i, (a, p)) in args.iter().zip(&arrow.params).enumerate() {
                 let Some(a) = a else {
                     continue;
                 };
-                // An arrow no other argument can fit is no candidate.
                 if a.lit.is_none() && a.parts.is_none() {
-                    ok &= a.ty.is_empty() || a.ty.meets(p);
                     continue;
                 }
                 if self.subtype(&a.ty, p) || p.dynamic {
                     continue;
                 }
-                match adopted(a, p) {
+                match adopted(a, p, self.rough) {
                     Ok(Some((t, ads))) if self.subtype(&t, p) => {
                         need.extend(ads);
                         retyped.push((i, t));
@@ -3375,6 +3499,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             if !ok {
                 continue;
             }
+            for (i, (a, p)) in args.iter().zip(&arrow.params).enumerate() {
+                if let Some(a) = a
+                    && a.lit.as_ref().is_some_and(|l| l.bare)
+                {
+                    let m = takes.entry(i).or_insert(Some(0));
+                    *m = m
+                        .filter(|_| !p.dynamic && p.vars.is_empty())
+                        .map(|m| m | mask_of(p));
+                }
+            }
             match &best {
                 Some((n, _)) if n.len() < need.len() => {}
                 Some((n, _)) if *n == need => kept.push(k),
@@ -3399,6 +3533,34 @@ impl<'t, 'a> Ck<'t, 'a> {
             let why = refused_among(sig, &all, &tys);
             return Err(self.rejected_because(what, args, &why));
         };
+        // A literal that two or more of the word's numeric carriers take, and that nothing
+        // else here gives one, as `abs(0.5)` or `String(0.5)`: an integer literal is `int`
+        // where `int` is among them, and otherwise it is rejected (steps L1.26a and L1.26b).
+        // One value gives one error: of two such operands, as in `0.5 * 2.0`, the first
+        // decimal literal, or else the first literal, is rejected.
+        let unfixed_lits = takes.iter().filter_map(|(&i, m)| {
+            let (Some(m), Some(Some(a))) = (m, args.get(i)) else {
+                return None;
+            };
+            let l = a.lit.as_ref()?;
+            let left: Vec<Carrier> = Carrier::of_mask(*m).filter(|c| c.numeric()).collect();
+            let int = lit_carrier(&l.value) == Carrier::Int && left.contains(&Carrier::Int);
+            (!int && left.len() > 1).then_some((l, left))
+        });
+        let mut first = None;
+        for (l, left) in unfixed_lits {
+            let decimal = lit_carrier(&l.value) == Carrier::F64;
+            if first.is_none() || decimal {
+                first = Some((l.clone(), left));
+            }
+            if decimal {
+                break;
+            }
+        }
+        if let Some((l, left)) = first {
+            let notes = self.derive(&[l.site]);
+            self.rejects_with(Row::UnfixedDecimal, l.site, unfixed(&l, &left, None), notes);
+        }
         for (i, t) in retyped {
             if let Some(a) = &mut args[i] {
                 a.ty = t;
@@ -3760,17 +3922,13 @@ fn read_literal(e: &Expr) -> Result<Option<Lit>, TooLarge> {
         ExprKind::Unary("-", a) => &**a,
         _ => e,
     };
-    let (value, n) = match &inner.kind {
-        ExprKind::Int {
-            radix,
-            digits,
-            generic,
-        } => match Value::int_text(digits, *radix)? {
-            Some(v) => (v, *generic),
+    let (value, bare) = match &inner.kind {
+        ExprKind::Int { radix, digits } => match Value::int_text(digits, *radix)? {
+            Some(v) => (v, true),
             None => return Ok(None),
         },
-        ExprKind::Float(s) => match s.parse() {
-            Ok(x) => (Value::float(x), false),
+        ExprKind::Float { digits: s, forced } => match s.parse() {
+            Ok(x) => (Value::float(x), !forced),
             Err(_) => return Ok(None),
         },
         _ => return Ok(None),
@@ -3780,7 +3938,7 @@ fn read_literal(e: &Expr) -> Result<Option<Lit>, TooLarge> {
         site: e.span,
         value,
         text: Rc::new(shown(inner)?),
-        n,
+        bare,
         generic: false,
         witness: false,
     }))
@@ -3894,24 +4052,36 @@ fn components<'a>(a: &Arg<'a>, n: usize) -> Option<Vec<Arg<'a>>> {
 /// expected: by span, the value each literal takes.
 type Adoptions = Vec<(Span, Value)>;
 
-/// `a` where a value of `p` is expected: a generic literal `kn` takes `p`'s one numeric
+/// `a` where a value of `p` is expected: a literal without a suffix takes `p`'s one numeric
 /// carrier, and one in a tuple the one carrier its component holds across `p`'s tuple shapes
-/// of that length, at any depth (DESIGN.md L1.26, sec:domains): `(1n, 2n)` at
-/// `(f64, f64) | (String, f64)` is `(1.0, 2.0)`. A plain literal takes no carrier, and where
-/// the expected type holds numbers but not its own carrier is rejected ([`expected`]): `(1, 2)`
-/// at `(f64, f64)`. This is the one place an expected type decides a literal's carrier. Gives
+/// of that length, at any depth (DESIGN.md L1.26, sec:domains): `(1, 2)` at
+/// `(f64, f64) | (String, f64)` is `(1.0, 2.0)`. A literal written with a suffix takes no
+/// other carrier, and where the expected type holds numbers but not its own carrier is
+/// rejected ([`expected`]): `(1.0f64, 2.0f64)` at `(rat, rat)`. This is the one place an expected type decides a literal's carrier. Gives
 /// `a`'s type with the adoptions and the adoptions, `None` when no literal adopts, and the
 /// first literal that is rejected or is not exactly a value of its carrier, with the message.
 ///
 /// The tuples nest as deep as the text, so the walk keeps its own stack: each open tuple's
 /// parts, the argument's components, the expected shapes there, and the types so far. The
 /// shapes are borrowed from `p`: no union of them is built.
-fn adopted(a: &Arg, p: &Ty) -> Result<Option<(Ty, Adoptions)>, (Span, String)> {
+///
+/// When `rough` holds, as while a repair is tried, a decimal literal at `rat` takes the type
+/// `rat`, and its adoption keeps the literal's own value: its digits are not read.
+fn adopted(a: &Arg, p: &Ty, rough: bool) -> Result<Option<(Ty, Adoptions)>, (Span, String)> {
     let mut ads = Adoptions::new();
     let lit = |l: &Lit, want: &[&Ty], ads: &mut Adoptions| {
         let Some(c) = expected(l, want).map_err(|m| (l.site, m))? else {
             return Ok(None);
         };
+        // Complexity tradeoff: reading a decimal's digits as a `rat` costs O(n^1.47) in its
+        // length (COMPLEXITY.md K41), and a tried repair, `rat(n) + 0.5` for `n + 0.5` with
+        // `n` an int, needs only whether the call checks. Typed `rat`, the literal is read in
+        // O(n) ([`fits`] read its syntax); a repair whose check needs the literal's value, as
+        // at a parameter that takes only positive numbers, is not offered.
+        if rough && c == Carrier::Rat && lit_carrier(&l.value) == Carrier::F64 {
+            ads.push((l.span, l.value.clone()));
+            return Ok(Some(Ty::carrier(c)));
+        }
         match adopt(l, c) {
             Ok(Some(v)) => {
                 let t = lit_ty(&v, l.neg());
@@ -4023,8 +4193,8 @@ fn lit_carrier(v: &Value) -> Carrier {
 }
 
 /// The literal `l` as a `c`: `None` when it is one already or `c` is not a number, an error
-/// when it is a plain literal, which takes no other carrier ([`menu`]), or is not exactly a
-/// `c`.
+/// ([`menu`]) when it cannot take `c`, being a decimal at `int` or written with a suffix, or is
+/// not exactly a `c`.
 fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, String> {
     if lit_carrier(&l.value) == c || !c.numeric() {
         return Ok(None);
@@ -4038,49 +4208,45 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, String> {
             .map(Value::rat),
         v => run(Prim::CastRat, v),
     };
-    let not = || {
-        let (a, name) = (article(c), c.name());
-        // Why, and the repair, after the literal or the words that stand for it.
-        let why = format!(
-            ": a literal written with `n` takes the carrier expected only when it is exactly a \
-             number of that carrier, and no {name} is exactly this number; write a literal that \
-             is exactly {a} {name}, or write the number followed by `r` if the exact rational \
-             is meant"
-        );
-        Err(quoting(
-            &format_args!("`{}` is not {a} {name}{why}", l.written()),
-            || format!("this literal is not {a} {name}{why}"),
-        ))
-    };
-    let Some(exact) = exact else {
-        return not();
-    };
-    let v = match c {
+    let v = exact.and_then(|exact| match c {
         Carrier::Int => run(Prim::CastInt, &exact),
         Carrier::Rat => Some(exact),
         Carrier::F64 => run(Prim::CastF64, &exact),
         _ => None,
-    };
+    });
     match v {
         Some(v) if !matches!(v, Value::Atom(_)) => Ok(Some(v)),
-        _ => not(),
+        _ => Err(menu(l, &[c])),
     }
 }
 
-/// Whether `l` may take the carrier `c`: a generic literal `kn` any numeric carrier, and a
-/// plain literal only its own, since a plain literal adopts no carrier (DESIGN.md
-/// sec:domains, L1.26: a plain integer literal is `int` and a decimal one `f64`, whatever
-/// is expected).
+/// Whether [`adopt`] takes `l` at `c`. A decimal literal without a suffix is exactly a
+/// `rat` whenever its text reads as a number, so that case scans the text and reads none of
+/// its digits: reading them is O(n^1.47) (COMPLEXITY.md K41), and a literal is tried at
+/// every arrow and repair that holds `rat`. The digits are read when the literal adopts.
+fn fits(l: &Lit, c: Carrier) -> bool {
+    match lit_carrier(&l.value) == Carrier::F64 && c == Carrier::Rat {
+        true => adoptable(l, c) && Rat::is_decimal(&l.text),
+        false => adopt(l, c).is_ok(),
+    }
+}
+
+/// Whether `l` may take the carrier `c`, leaving aside whether it is exactly a value of it: a
+/// literal with no suffix any numeric carrier, but a decimal one never `int`, and a literal
+/// written with a suffix only the carrier it names (DESIGN.md sec:domains, steps L1.26a and
+/// L1.26b).
 fn adoptable(l: &Lit, c: Carrier) -> bool {
-    c.numeric() && (l.n || c == lit_carrier(&l.value))
+    let own = lit_carrier(&l.value);
+    c.numeric() && (c == own || l.bare && !(own == Carrier::F64 && c == Carrier::Int))
 }
 
 /// The literal `l` where a value of one of the types `want` is expected: the carrier it
-/// takes there, `None` when it keeps its own, or the rejection. A plain literal keeps its
-/// own carrier and is rejected with a menu of the forms to write ([`menu`]) where the types
-/// hold numbers but none of its carrier; a generic literal `kn` takes the one numeric carrier
-/// they hold, and at two or more that are not `int` is rejected ([`no_one_carrier`]). A type
-/// that holds a variable or the unknown could stand for any number, and decides nothing.
+/// takes there, `None` when it keeps its own, or the rejection. Of the numeric carriers the
+/// types hold, it takes the ones it can be exactly: with none it is rejected with the forms
+/// to write ([`menu`]); with one it takes that one; with two or more an integer literal is an
+/// `int` where `int` is one of them, and is otherwise rejected, as a decimal one is, since
+/// nothing chooses among them ([`no_one_carrier`]). A type that holds a variable or the
+/// unknown could stand for any number, and decides nothing.
 fn expected(l: &Lit, want: &[&Ty]) -> Result<Option<Carrier>, String> {
     if want.iter().any(|w| !w.vars.is_empty() || w.dynamic) {
         return Ok(None);
@@ -4089,86 +4255,423 @@ fn expected(l: &Lit, want: &[&Ty]) -> Result<Option<Carrier>, String> {
         .into_iter()
         .filter(|&c| want.iter().any(|w| !(&w.set & &c.ty()).is_empty()))
         .collect();
+    if held.is_empty() {
+        return Ok(None);
+    }
+    let takes: Vec<Carrier> = (held.iter().copied()).filter(|&c| fits(l, c)).collect();
     let own = lit_carrier(&l.value);
-    match held[..] {
-        [] => Ok(None),
-        _ if held.contains(&own) && !(l.n && held.len() == 1) => Ok(None),
-        _ if !l.n => Err(menu(l, &held)),
-        [c] => Ok(Some(c)),
+    match takes[..] {
+        [] => Err(menu(l, &held)),
+        [c] => Ok((c != own).then_some(c)),
+        _ if own == Carrier::Int && takes.contains(&Carrier::Int) => Ok(None),
         _ => Err(no_one_carrier(
             l,
             &Ty::union_all(want.iter().copied()),
-            &held,
+            &takes,
         )),
     }
 }
 
-/// The message for the plain literal `l` where a number of one of the carriers `held` is
-/// expected, one or more, none of them the literal's own: Zed converts no value, so the
-/// literal is rejected, with the forms to write of those carriers, in the order `1.0`, `1r`,
-/// `1n` (DESIGN.md sec:domains). A form is offered only where it is the same number exactly:
-/// `1.0` and `1n` where the literal is exactly an `f64`; `1n` only at one carrier, since at
-/// two it takes neither; and of a literal written in another radix, which has no `.0` or `r`
-/// form, only `kn`.
-fn menu(l: &Lit, held: &[Carrier]) -> String {
-    let own = lit_carrier(&l.value);
-    let sign = if l.neg() { "-" } else { "" };
-    let names = held
-        .iter()
-        .map(|c| c.name())
-        .collect::<Vec<_>>()
-        .join(" | ");
-    let decimal = l.text.chars().all(|c| c.is_ascii_digit() || c == '_');
-    // The clone shares the literal's text, so it copies none of its digits.
-    let exact = |c: Carrier| {
-        let n = Lit {
-            n: true,
-            ..l.clone()
-        };
-        adopt(&n, c).is_ok()
-    };
-    let has = |c: Carrier| held.contains(&c);
-    // Each form is the literal followed by one of these, written into the message only.
-    let mut forms = Vec::new();
-    match own {
-        Carrier::Int => {
-            if decimal && has(Carrier::F64) && exact(Carrier::F64) {
-                forms.push(".0");
-            }
-            if decimal && has(Carrier::Rat) {
-                forms.push("r");
-            }
-            if let [c] = held
-                && exact(*c)
-            {
-                forms.push("n");
-            }
-        }
-        _ if has(Carrier::Rat) => forms.push("r"),
-        _ => {}
+/// Whether the declared type `t` holds strings and no number, tuple, function or variable,
+/// so a number literal compared with its values is never equal to one (A15); the atoms it
+/// holds beside the strings do not matter.
+fn holds_text_only(t: &Ty) -> bool {
+    if t.dynamic || !t.vars.is_empty() || !t.tuples.is_empty() || !t.fns.is_empty() {
+        return false;
     }
-    let (what, carrier) = (article(own), own.name());
-    let text = &l.text;
+    let numeric = [Carrier::Int, Carrier::Rat, Carrier::F64];
+    !(&t.set & &Carrier::Str.ty()).is_empty()
+        && numeric.iter().all(|c| (&t.set & &c.ty()).is_empty())
+}
+
+/// The digits of the literal `l` as written, without its `-` and without the suffix `f64`.
+fn lit_digits(l: &Lit) -> &str {
+    l.text.strip_suffix("f64").unwrap_or(&l.text)
+}
+
+/// The digits before the point of the decimal literal `l` when every digit after it is `0`
+/// and it has no exponent, as `2` for `2.0`: the integer literal of the same value.
+fn whole_part(l: &Lit) -> Option<&str> {
+    let (whole, frac) = lit_digits(l).split_once('.')?;
+    frac.bytes().all(|b| b == b'0').then_some(whole)
+}
+
+/// A literal to write in place of a rejected one: `before`, a number, and `after`, as `y = `,
+/// `0.1` and `f64`. The number is a slice of the literal's text, or the shorter text of a
+/// value it rounds to, so a form copies no digits of the literal outside the message.
+struct Form<'a> {
+    before: String,
+    number: Cow<'a, str>,
+    after: Cow<'static, str>,
+}
+
+impl<'a> Form<'a> {
+    /// The form `number` followed by `after`, with the `-` of `l` before it.
+    fn of(l: &Lit, number: impl Into<Cow<'a, str>>, after: impl Into<Cow<'static, str>>) -> Self {
+        Form {
+            before: if l.neg() { "-".into() } else { String::new() },
+            number: number.into(),
+            after: after.into(),
+        }
+    }
+}
+
+impl fmt::Display for Form<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "`{}{}{}`", self.before, self.number, self.after)
+    }
+}
+
+/// The message `head` about the literal `l`, then `why`, then the forms to write, `a`,
+/// `a or b` or `a, b or c`. `head` is given the words "the literal" and the literal as the
+/// program writes it, in memory the system gives first ([`quoting`]); when it refuses, the
+/// words "this literal" in their place and no forms, since each repeats the literal's digits.
+fn literal_message(
+    l: &Lit,
+    head: impl Fn(&mut dyn fmt::Write, &dyn fmt::Display) -> fmt::Result,
+    why: &str,
+    forms: &[Form],
+) -> String {
     quoting(
         &fmt::from_fn(|f| {
-            write!(
-                f,
-                "`{sign}{text}` is {what} {carrier} where `{names}` is expected; a literal takes \
-                 no other carrier"
-            )?;
-            write_forms(f, "; write ", &forms, |f, s| write!(f, "`{sign}{text}{s}`"))
+            head(f, &format_args!("the literal `{}`", l.written()))?;
+            f.write_str(why)?;
+            let Some((last, init)) = forms.split_last() else {
+                return Ok(());
+            };
+            f.write_str("; write ")?;
+            for (i, form) in init.iter().enumerate() {
+                let sep = if i == 0 { "" } else { ", " };
+                write!(f, "{sep}{form}")?;
+            }
+            let sep = if init.is_empty() { "" } else { " or " };
+            write!(f, "{sep}{last}")
         }),
         || {
-            let mut m = format!(
-                "this literal is {what} {carrier} where `{names}` is expected; a literal takes \
-                 no other carrier"
-            );
-            let _ = write_forms(&mut m, "; write it followed by ", &forms, |m, s| {
-                write!(m, "`{s}`")
-            });
-            m
+            let mut m = String::new();
+            let _ = head(&mut m, &"this literal");
+            m + why
         },
     )
+}
+
+/// The carriers `cs` written as a type, `int` or `f64 | rat`.
+fn carrier_names(cs: &[Carrier]) -> String {
+    cs.iter().map(|c| c.name()).collect::<Vec<_>>().join(" | ")
+}
+
+/// The message for the literal `l` where a number of one of the carriers `held` is expected,
+/// one or more, none of which it can take: a decimal literal at `int`, which a decimal never
+/// is; a literal written with the suffix `f64` at other carriers, since the suffix fixes its
+/// carrier; or an integer literal at a format that holds no value equal to it, as
+/// `9007199254740993` at `f64` (DESIGN.md sec:domains). Zed converts no value, so the literal
+/// is rejected, with the literals of the same number it may write instead: the integer
+/// literal where `int` is expected and the decimal has only zeros after its point, the `r`
+/// form where `rat` is, and at `f64`, for an integer, the nearest `f64` as an integer
+/// literal, by ties to even.
+fn menu(l: &Lit, held: &[Carrier]) -> String {
+    let names = carrier_names(held);
+    let has = |c: Carrier| held.contains(&c);
+    let mut forms = Vec::new();
+    if lit_carrier(&l.value) == Carrier::Int {
+        let nearest = Some(lit_digits(l))
+            .filter(|d| has(Carrier::F64) && d.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|d| Rat::decimal(d).ok().flatten()?.to_f64().ok());
+        if let Some(x) = nearest {
+            forms.push(Form::of(l, format!("{x:.0}"), ""));
+        }
+        let why = "; an integer literal takes a carrier only where it is exact";
+        return literal_message(
+            l,
+            |f, w| {
+                write!(
+                    f,
+                    "{w} has no exact `{names}`, and `{names}` is expected here"
+                )
+            },
+            why,
+            &forms,
+        );
+    }
+    if has(Carrier::Int)
+        && let Some(whole) = whole_part(l)
+    {
+        forms.push(Form::of(l, whole, ""));
+    }
+    if l.bare {
+        let why = match forms.is_empty() {
+            true => "; a decimal literal is never an `int`",
+            false => "; a decimal literal is never an `int`, even when its value is an integer",
+        };
+        return literal_message(
+            l,
+            |f, w| write!(f, "{w} is a decimal, and `{names}` is expected here"),
+            why,
+            &forms,
+        );
+    }
+    if has(Carrier::Rat) {
+        forms.push(Form::of(l, lit_digits(l), "r"));
+    }
+    literal_message(
+        l,
+        |f, w| {
+            write!(
+                f,
+                "{w} is an `f64` by its suffix, and `{names}` is expected here"
+            )
+        },
+        "; a suffix fixes a literal's carrier",
+        &forms,
+    )
+}
+
+/// The message for the decimal literal `l` beside an operand of carrier `int` of the operator
+/// `what`, named `name` where the operand is a name, as in `x * 2.0` with `x: int` (DESIGN.md
+/// sec:diagnostics, the worked example at an operator). Where the operand is a name and `op`
+/// gives the operator's symbol and whether the literal is its left operand, the forms are the
+/// operation rewritten, `x * 2` where the literal's value is an integer and the operator has
+/// an arrow at `int`, and `f64(x) * 2.0`; otherwise the integer literal alone, `2`.
+fn decimal_at_int(l: &Lit, what: &str, name: Option<&str>, op: Option<(&str, bool)>) -> String {
+    let mut forms = Vec::new();
+    match (name, op) {
+        (Some(n), Some((op, left))) => {
+            let around = |l: &Lit, number, other: &str| {
+                let mut form = Form::of(l, number, "");
+                match left {
+                    true => form.after = format!(" {op} {other}").into(),
+                    false => form.before.insert_str(0, &format!("{other} {op} ")),
+                }
+                form
+            };
+            if op != "/"
+                && let Some(w) = whole_part(l)
+            {
+                forms.push(around(l, w, n));
+            }
+            forms.push(around(l, lit_digits(l), &format!("f64({n})")));
+        }
+        _ => forms.extend(whole_part(l).map(|w| Form::of(l, w, ""))),
+    }
+    literal_message(
+        l,
+        |f, w| match name {
+            Some(n) => write!(
+                f,
+                "{w} is a decimal, and {what} expects `int`, the carrier of `{n}`"
+            ),
+            None => write!(f, "{w} is a decimal, and {what} expects `int`"),
+        },
+        "; a decimal literal is never an `int`",
+        &forms,
+    )
+}
+
+/// The message for the literal `l`, which nothing gives a carrier, of the carriers `cs` that
+/// what it meets takes, two or more and no `int`: a decimal literal alone (`y = 0.1`), a
+/// decimal or an integer literal in an operation on literals alone (`y = 0.5 * 2`,
+/// `half() = 1 / 2`), or a call of a generic function with literal arguments only
+/// (`y = inc(x: 2.5)`). With `bound`, the name the value is bound to, the forms are the
+/// binding rewritten: `y = 0.1f64`, `y = 0.1r` and `y: f64 = 0.1` (DESIGN.md sec:diagnostics);
+/// otherwise the literal with a suffix, `0.1f64` or `0.1r`, and for an integer `1.0f64` or
+/// `1r`. An integer literal in another base takes no suffix, so it is offered in a cast,
+/// `f64(0xFF)` or `rat(0xFF)`.
+fn unfixed(l: &Lit, cs: &[Carrier], bound: Option<&str>) -> String {
+    let d = lit_digits(l);
+    let decimal = lit_carrier(&l.value) == Carrier::F64;
+    let mut forms = Vec::new();
+    if decimal || d.bytes().all(|b| b.is_ascii_digit()) {
+        if cs.contains(&Carrier::F64) {
+            forms.push(Form {
+                after: if decimal { "f64" } else { ".0f64" }.into(),
+                ..Form::of(l, d, "")
+            });
+        }
+        if cs.contains(&Carrier::Rat) && (!decimal || l.bare) {
+            forms.push(Form::of(l, d, "r"));
+        }
+    } else {
+        for c in [Carrier::F64, Carrier::Rat]
+            .into_iter()
+            .filter(|c| cs.contains(c))
+        {
+            let mut form = Form::of(l, d, ")");
+            form.before.insert_str(0, &format!("{}(", c.name()));
+            forms.push(form);
+        }
+    }
+    if let Some(n) = bound {
+        for form in &mut forms {
+            form.before.insert_str(0, &format!("{n} = "));
+        }
+        if decimal {
+            let mut declared = Form::of(l, d, "");
+            declared.before.insert_str(0, &format!("{n}: f64 = "));
+            forms.push(declared);
+        }
+    }
+    let names = carrier_names(cs);
+    match decimal {
+        true => literal_message(
+            l,
+            |f, w| write!(f, "{w} is a decimal, and nothing here gives it a carrier"),
+            "; a decimal literal takes the carrier of its use, never `int`, and Zed does not \
+             choose one for it",
+            &forms,
+        ),
+        false => literal_message(
+            l,
+            |f, w| {
+                write!(
+                    f,
+                    "{w} takes the carrier of its use, and nothing here chooses one \
+                     of `{names}`, the carriers what it meets takes"
+                )
+            },
+            "",
+            &forms,
+        ),
+    }
+}
+
+/// The rejection of the value `e` bound to the name `n` outside a function when nothing gives
+/// its literals a carrier (DESIGN.md step L1.26b): `e` is literals with no suffix alone, under
+/// `+`, `-`, `*`, `/`, `^` and a `-`, with a decimal among them or a `/`; with a `^` among them
+/// the repairs offer `f64` alone, since `^` has no arrow at `rat`. A decimal literal alone,
+/// `y = 0.1`, is rejected with the binding rewritten ([`unfixed`]); a decimal among others at
+/// its first decimal literal; a `/` of integer literals at the `/`, with `half = f64(1) / 2`,
+/// `half = 1.0f64 / 2` and `half: f64 = 1 / 2` where it is one `/` of two literals. `None` for
+/// any other value. The walk keeps its own stack, since the operations nest as deep as the
+/// text; it costs the size of `e`.
+fn unfixed_binding(e: &Expr, n: &str) -> Option<(Span, String)> {
+    let mut stack = vec![e];
+    let mut lits = Vec::new();
+    let mut div = None;
+    let mut pow = false;
+    while let Some(x) = stack.pop() {
+        match &x.kind {
+            ExprKind::Binary(op @ ("+" | "-" | "*" | "/" | "^"), a, b) => {
+                if *op == "/" && div.is_none() {
+                    div = Some(x);
+                }
+                pow |= *op == "^";
+                stack.extend([&**b, &**a]);
+            }
+            ExprKind::Unary("-", a) if literal(x).is_none() => stack.push(a),
+            _ => {
+                let l = literal(x).filter(|l| l.bare)?;
+                lits.push(l);
+            }
+        }
+    }
+    // The one literal that, written with a carrier, gives the whole value that carrier.
+    let pick = carrier_leaf(e);
+    let picked = |l: &Lit| pick.as_ref().is_some_and(|p| p.site == l.site);
+    // The decimal on that path, or else the first.
+    let is_decimal = |l: &&Lit| lit_carrier(&l.value) == Carrier::F64;
+    let decimal = (lits.iter().filter(is_decimal).find(|l| picked(l)))
+        .or_else(|| lits.iter().find(is_decimal));
+    if let Some(l) = decimal {
+        let bound = literal(e).is_some().then_some(n);
+        // Each of these operations takes and gives one carrier, so the whole value has one;
+        // `^` has no arrow at `rat`, so with a `^` in it only `f64` checks. A suffix on a
+        // decimal off the path of [`carrier_leaf`] would not reach the rest, so none is
+        // offered.
+        let cs: &[Carrier] = match (picked(l), pow) {
+            (false, _) => &[],
+            (true, true) => &[Carrier::F64],
+            (true, false) => &[Carrier::F64, Carrier::Rat],
+        };
+        let m = unfixed(l, cs, bound);
+        return Some((l.site, m));
+    }
+    let d = div?;
+    let ExprKind::Binary(_, a, b) = &d.kind else {
+        unreachable!("a `/`")
+    };
+    let pair = (literal(a), literal(b));
+    // Whether the literal is written in decimal digits, so `.0f64` and `r` may follow it.
+    let digits = |l: &Lit| lit_digits(l).bytes().all(|b| b.is_ascii_digit());
+    let why = "nothing here gives them a carrier; `/` has no arrow at `int`, and Zed does not \
+               choose `f64` or `rat` for it";
+    let m = quoting(
+        &fmt::from_fn(|f| match &pair {
+            (Some(x), Some(y)) if lits.len() == 2 && !x.neg() && digits(x) => write!(
+                f,
+                "`{n} = {x} / {y}` divides two integer literals, and {why}; write \
+                 `{n} = f64({x}) / {y}`, `{n} = {x}.0f64 / {y}` or `{n}: f64 = {x} / {y}`",
+                x = x.written(),
+                y = y.written(),
+            ),
+            (Some(x), _) if digits(x) && picked(x) => {
+                let x = x.written();
+                write!(
+                    f,
+                    "the `/` in the value of `{n}` divides integer literals, and {why}; write its \
+                     left operand as `f64({x})`"
+                )?;
+                match pow {
+                    true => write!(f, " or `{x}.0f64`, since `^` has no arrow at `rat`"),
+                    false => write!(f, ", `{x}.0f64` or `{x}r`"),
+                }
+            }
+            // The left operand is no literal, one in another base, or one whose carrier would
+            // not reach the rest: the literal of [`carrier_leaf`] is offered with a carrier,
+            // and in another base only by the cast, since `0xFF.0f64` and `0xFFr` are no
+            // literals.
+            _ => {
+                write!(
+                    f,
+                    "the `/` in the value of `{n}` divides integer literals, and {why}"
+                )?;
+                let Some(l) = &pick else {
+                    return Ok(());
+                };
+                let x = l.written();
+                write!(f, "; write the literal `{x}` with a carrier, as `f64({x})`")?;
+                match (digits(l), pow) {
+                    (false, true) => write!(f, ", since `^` has no arrow at `rat`"),
+                    (false, false) => write!(f, " or `rat({x})`"),
+                    (true, true) => write!(f, " or `{x}.0f64`, since `^` has no arrow at `rat`"),
+                    (true, false) => write!(f, ", `{x}.0f64` or `{x}r`"),
+                }
+            }
+        }),
+        || format!("the `/` in the value of `{n}` divides integer literals, and {why}"),
+    );
+    Some((d.span, m))
+}
+
+/// The literal of `e`, an operation on literals alone, whose carrier, written on it, reaches
+/// every operation of `e`, since at the top level an operation on two literals that meets no
+/// carrier is typed `int` (DESIGN.md step L1.26a): from the root, each operation with one
+/// literal operand leads into the other operand; of two literals, into the decimal one, or
+/// else the left one; a `^` whose exponent is no literal into its base, whose carrier it
+/// gives. `None` where an operation has no literal operand, as `(1 + 2) / (3 + 4)`: there no
+/// one literal does it. The walk costs the depth of `e`.
+fn carrier_leaf(e: &Expr) -> Option<Lit> {
+    let mut x = e;
+    loop {
+        if let Some(l) = literal(x) {
+            return Some(l);
+        }
+        x = match &x.kind {
+            ExprKind::Unary("-", a) => a,
+            ExprKind::Binary("^", a, b) if literal(b).is_none() => a,
+            ExprKind::Binary(_, a, b) => match (literal(a), literal(b)) {
+                (Some(l), Some(r)) => match lit_carrier(&r.value) == Carrier::F64
+                    && lit_carrier(&l.value) != Carrier::F64
+                {
+                    true => b,
+                    false => a,
+                },
+                (Some(_), None) => b,
+                (None, Some(_)) => a,
+                (None, None) => return None,
+            },
+            _ => return None,
+        };
+    }
 }
 
 /// The literals of the other carriers that are exactly the number of `e` when `e` is a `rat`
@@ -4216,53 +4719,46 @@ fn rat_forms(e: &Expr) -> Option<Vec<(Ty, String)>> {
 }
 
 /// The message for the literal `l` where `want` holds numbers of the carriers `cs`, two or
-/// more, none of them the literal's own.
+/// more, each of which it can take and none of them `int`: nothing chooses one, so it is
+/// rejected with the literal of each written with its carrier, `1r` or `1.0f64`, `0.5r` or
+/// `0.5f64` (DESIGN.md step L1.26). A literal written in another radix takes no suffix, so it
+/// is offered in a cast to each carrier, `rat(0xFF)` or `f64(0xFF)`.
 fn no_one_carrier(l: &Lit, want: &Ty, cs: &[Carrier]) -> String {
+    let d = lit_digits(l);
+    let decimal = lit_carrier(&l.value) == Carrier::F64;
+    let mut forms = Vec::new();
+    if decimal || d.bytes().all(|b| b.is_ascii_digit()) {
+        if cs.contains(&Carrier::Rat) {
+            forms.push(Form::of(l, d, "r"));
+        }
+        if cs.contains(&Carrier::F64) {
+            forms.push(Form::of(l, d, if decimal { "f64" } else { ".0f64" }));
+        }
+    } else {
+        for c in [Carrier::Rat, Carrier::F64]
+            .into_iter()
+            .filter(|c| cs.contains(c))
+        {
+            let mut form = Form::of(l, d, ")");
+            form.before.insert_str(0, &format!("{}(", c.name()));
+            forms.push(form);
+        }
+    }
     let names = cs
         .iter()
-        .map(|c| c.name())
+        .map(|&c| format!("{} `{}`", article(c), c.name()))
         .collect::<Vec<_>>()
-        .join(" and ");
-    let sign = if l.neg() { "-" } else { "" };
-    // Only an integer literal reaches here, since a decimal one's own f64 or its one other
-    // carrier, rat, would be taken; a written radix has no `.0` or `r` form. The forms of
-    // `kn` are those of `k`.
-    let digits = l.text.strip_suffix('n').filter(|_| l.n).unwrap_or(&l.text);
-    let forms: Vec<&str> = match digits.chars().all(|c| c.is_ascii_digit()) {
-        true => cs
-            .iter()
-            .filter_map(|c| match c {
-                Carrier::F64 => Some(".0"),
-                Carrier::Rat => Some("r"),
-                _ => None,
-            })
-            .collect(),
-        false => Vec::new(),
-    };
-    let text = &l.text;
-    quoting(
-        &fmt::from_fn(|f| {
+        .join(" or ");
+    literal_message(
+        l,
+        |f, w| {
             write!(
                 f,
-                "`{sign}{text}` at `{want}` adopts no one carrier: the type holds numbers of \
-                 {names}"
-            )?;
-            or_forms(f, "; write the one meant, as ", &forms, |f, s| {
-                write!(f, "`{sign}{digits}{s}`")
-            })
-        }),
-        || {
-            let mut m = format!(
-                "this literal at `{want}` adopts no one carrier: the type holds numbers of {names}"
-            );
-            let _ = or_forms(
-                &mut m,
-                "; write the one meant, followed by ",
-                &forms,
-                |m, s| write!(m, "`{s}`"),
-            );
-            m
+                "{w} can be {names} at `{want}`, and nothing here chooses one"
+            )
         },
+        "",
+        &forms,
     )
 }
 
@@ -4279,51 +4775,6 @@ fn literal_note(text: impl fmt::Display, ty: impl fmt::Display) -> String {
 /// limit, and a message copied without asking would abort the checker on a long one.
 fn quoting(m: &impl fmt::Display, instead: impl FnOnce() -> String) -> String {
     shown(m).unwrap_or_else(|_| instead())
-}
-
-/// Writes `lead` and the forms `forms`, each by `form`, as a list `a`, `a or b` or
-/// `a, b or c`; nothing when there are none.
-fn write_forms<W: fmt::Write>(
-    w: &mut W,
-    lead: &str,
-    forms: &[&str],
-    form: impl Fn(&mut W, &str) -> fmt::Result,
-) -> fmt::Result {
-    let Some((last, init)) = forms.split_last() else {
-        return Ok(());
-    };
-    w.write_str(lead)?;
-    for (i, s) in init.iter().enumerate() {
-        if i > 0 {
-            w.write_str(", ")?;
-        }
-        form(w, s)?;
-    }
-    if !init.is_empty() {
-        w.write_str(" or ")?;
-    }
-    form(w, last)
-}
-
-/// Writes `lead` and the forms `forms`, each by `form`, joined by ` or `; nothing when there
-/// are none.
-fn or_forms<W: fmt::Write>(
-    w: &mut W,
-    lead: &str,
-    forms: &[&str],
-    form: impl Fn(&mut W, &str) -> fmt::Result,
-) -> fmt::Result {
-    if forms.is_empty() {
-        return Ok(());
-    }
-    w.write_str(lead)?;
-    for (i, s) in forms.iter().enumerate() {
-        if i > 0 {
-            w.write_str(" or ")?;
-        }
-        form(w, s)?;
-    }
-    Ok(())
 }
 
 fn article(c: Carrier) -> &'static str {

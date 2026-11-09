@@ -759,11 +759,12 @@ fn decide_scales_over_one_class_of_equalities() {
 }
 
 /// A unit whose `main` calls `ok(a, b, c, d) = -a + 3·b >= 10 && ...`, the cycle of four over
-/// the parameters named by `names`, and prints whether it held.
+/// the parameters named by `names`, each declared `int` (the checker asks a linear question only
+/// of a function whose parameters are all `int`), and prints whether it held.
 fn cycle_unit(names: [&str; 4]) -> Vec<u8> {
     let [a, b, c, d] = names;
     format!(
-        "ok({a}, {b}, {c}, {d}) = 3 * {b} - {a} >= 10 && 3 * {c} - {b} >= 10 && 3 * {d} - {c} >= 10 \
+        "ok({a}: int, {b}: int, {c}: int, {d}: int) = 3 * {b} - {a} >= 10 && 3 * {c} - {b} >= 10 && 3 * {d} - {c} >= 10 \
          && 3 * {a} - {d} >= 10;\nmain(stdin: Lines) -> (stdout: Lines) {{\n  x = int(stdin[0] else \
          \"0\") else 0;\n  held = if ok({a}: x, {b}: x, {c}: x, {d}: x) {{ \"in\" }} else {{ \"out\" }};\n  \
          stdout <- \"${{held}}\";\n}}\n"

@@ -233,8 +233,8 @@ fn top_level_definitions_are_read_in_any_order() {
 
 #[test]
 fn a_float_product_does_not_warn() {
-    // The generic integer literals take `f64`, so no integer operation is made.
-    let src = main_with("  f = 1.5 * 3037000500n * 3037000500n;\n", "f");
+    // The integer literals take `f64` from `1.5f64`, so no integer operation is made.
+    let src = main_with("  f = 1.5f64 * 3037000500 * 3037000500;\n", "f");
     assert_eq!(messages(&src), Vec::<String>::new());
 }
 

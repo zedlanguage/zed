@@ -25,21 +25,21 @@ fn reading_a_quantity_from_a_form_field() {
 
 #[test]
 fn a_float_to_int_must_be_whole() {
-    assert_eq!(x("int(3.0)"), "3");
-    assert_eq!(x("int(-2.5)"), "#inexact");
-    assert_eq!(x("int(1.0e20)"), "100000000000000000000");
-    assert_eq!(x("int(1.0 / 0.0)"), "#invalid");
-    assert_eq!(x("int(0.0 / 0.0)"), "#invalid");
+    assert_eq!(x("int(3.0f64)"), "3");
+    assert_eq!(x("int(-2.5f64)"), "#inexact");
+    assert_eq!(x("int(1.0e20f64)"), "100000000000000000000");
+    assert_eq!(x("int(1.0f64 / 0.0)"), "#invalid");
+    assert_eq!(x("int(0.0f64 / 0.0)"), "#invalid");
     assert_eq!(x("int(7r/2r)"), "#inexact");
     assert_eq!(x("int(rat(6) / rat(2))"), "3");
 }
 
 #[test]
 fn a_float_is_an_exact_rational() {
-    assert_eq!(x("rat(0.5)"), "1r/2r");
-    assert_eq!(x("rat(0.1)"), "3602879701896397r/36028797018963968r");
+    assert_eq!(x("rat(0.5f64)"), "1r/2r");
+    assert_eq!(x("rat(0.1f64)"), "3602879701896397r/36028797018963968r");
     assert_eq!(x("rat(-3)"), "-3r");
-    assert_eq!(x("rat(1.0 / 0.0)"), "#invalid");
+    assert_eq!(x("rat(1.0f64 / 0.0)"), "#invalid");
 }
 
 #[test]

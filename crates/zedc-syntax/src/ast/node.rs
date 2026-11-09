@@ -27,12 +27,15 @@ pub enum ExprKind {
         radix: u32,
         /// The digits, shared with the token.
         digits: Digits,
-        /// Written with the suffix `n` (step L1.26a): the integer in whichever numeric carrier
-        /// its use needs, counting toward no int default.
-        generic: bool,
     },
-    /// A float, as its decimal text, shared with the token.
-    Float(Digits),
+    /// A decimal literal.
+    Float {
+        /// Its decimal text, shared with the token.
+        digits: Digits,
+        /// Whether it is written with the suffix `f64`, which forces that format; without it,
+        /// the literal takes the carrier its use fixes (step L1.26b).
+        forced: bool,
+    },
     /// An exact rational, as its decimal text, shared with the token.
     Rat(Digits),
     /// A string: its text and its holes.

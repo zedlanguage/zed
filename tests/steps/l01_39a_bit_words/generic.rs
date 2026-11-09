@@ -126,14 +126,14 @@ fn a_chain_of_wrappers_names_every_call_in_order() {
 }
 
 #[test]
-fn f_of_3_gives_8_and_f_of_2_point_0_stays_rejected() {
+fn f_of_3_gives_8_and_f_of_2_point_0_gives_4_point_0() {
+    // The bare base `2` takes the carrier of `n` (L1.26a): an int at `f(3)`, an f64 at
+    // `f(2.0)`.
     let defs = "f(positional n) = 2^n;";
-    assert_eq!(prints("generic_pow", &printing(defs, "String(f(3))")), "8");
-    let out = rejected(&format!("{defs}\nx = f(2.0);\n"));
-    assert!(
-        out.contains("`2.0` is an f64 where `int` is expected"),
-        "{out}"
-    );
+    let src = printing(defs, "String(f(3)) ++ \" \" ++ String(f(2.0))");
+    assert_eq!(prints("generic_pow", &src), "8 4.0");
+    let out = rejected(&format!("{defs}\nx = f(true);\n"));
+    assert!(out.contains("`f` does not take (true)"), "{out}");
 }
 
 #[test]
@@ -190,7 +190,10 @@ fn an_expression_of_a_parameter_is_checked_at_the_wrapper() {
 
 #[test]
 fn a_guarded_use_gives_0_directly_and_through_a_helper() {
-    let defs = "e(positional n) = if n >= 0 { popCount(n) } else { 0 };\ng(positional m) = e(m);";
+    // `n` is declared `int`: a test narrows only a name whose values are all ints, and with
+    // `n` undeclared the bare `0` leaves it `int | f64 | rat` (follow-up GUARD-follow).
+    let defs =
+        "e(positional n: int) = if n >= 0 { popCount(n) } else { 0 };\ng(positional m) = e(m);";
     let src = printing(defs, "String(e(-1)) ++ \" \" ++ String(g(-1))");
     assert_eq!(prints("generic_guard", &src), "0 0");
     let src = format!(
@@ -305,15 +308,16 @@ fn each_kernel_type_error_has_a_rejected_generic_use() {
         ),
         // A kind: `f64Bits`, a bit word, a cast, operators and words, `sum`, `if`, a call,
         // a component.
+        // `f64Bits(x)` makes `x` an f64, so a bare `3` is one; an int value is not.
         (
-            "f(positional x) = f64Bits(x);",
-            "f(3)",
-            "where `f64` is expected",
+            "f(positional x) = f64Bits(x);\ni = 3 + 4;",
+            "f(i)",
+            "`f` does not take (int)",
         ),
         (
             "f(positional x) = popCount(x);",
             "f(2.0)",
-            "where `int` is expected",
+            "is a decimal, and `int` is expected here",
         ),
         (
             "f(positional x) = int(x);",
@@ -326,8 +330,8 @@ fn each_kernel_type_error_has_a_rejected_generic_use() {
             "`f` does not take (true)",
         ),
         (
-            "f(positional x, positional y) = x + y;",
-            "f(1, 2.0)",
+            "f(positional x, positional y) = x + y;\ni = 3 + 4;",
+            "f(i, 2.0f64)",
             "`f` does not take",
         ),
         (
@@ -382,7 +386,7 @@ fn a_generic_sum_of_numbers_runs() {
     let defs = "f(positional x) = sum(x);\ng(positional y) = f(y);";
     let src = printing(
         defs,
-        "String(f((1, 2, 3))) ++ \" \" ++ String(g((1.5, 2.0)))",
+        "String(f((1, 2, 3))) ++ \" \" ++ String(g((1.5f64, 2.0f64)))",
     );
     assert_eq!(prints("generic_sum", &src), "6 3.5");
 }

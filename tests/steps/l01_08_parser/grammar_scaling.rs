@@ -133,7 +133,7 @@ fn functions_nested_many_deep_are_linear() {
 #[test]
 fn a_sum_of_many_calls_with_literals_is_linear() {
     scales("a sum of n calls", 1_000, "Unit", |n| {
-        let calls: Vec<String> = (0..n).map(|i| format!("mul(x, {}n)", i + 1)).collect();
+        let calls: Vec<String> = (0..n).map(|i| format!("mul(x, {})", i + 1)).collect();
         format!(
             "mul(positional x, positional k) = x * k;\nf(positional x) = {};\n",
             calls.join(" + ")

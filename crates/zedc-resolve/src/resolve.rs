@@ -1832,7 +1832,7 @@ impl Resolver<'_> {
     fn expr<'a>(&mut self, e: &'a Expr, todo: &mut Vec<Task<'a>>) {
         match &e.kind {
             ExprKind::Int { .. }
-            | ExprKind::Float(_)
+            | ExprKind::Float { .. }
             | ExprKind::Rat(_)
             | ExprKind::Bool(_)
             | ExprKind::Atom(_) => {}
@@ -2161,13 +2161,21 @@ impl Resolver<'_> {
             // on its own.
             TypeKind::And(ts) => {
                 let ts = Type::and_operands(ts);
-                if let Err(message) = Type::overload(&ts) {
-                    self.errors.push(Error {
+                match Type::overload(&ts) {
+                    // The arrows of an overload are one function's, so a variable its bounds
+                    // clause binds stands in that one function type in each of them, as the
+                    // checker prints `((T) -> T) & ((#_ | T) -> #_ | T) for T in int | f64`.
+                    Ok(true) => {
+                        self.arrows.push(t.span);
+                        todo.push(Task::ArrowEnd);
+                    }
+                    Ok(false) => {}
+                    Err(message) => self.errors.push(Error {
                         row: None,
                         span: t.span,
                         message,
                         notes: Vec::new(),
-                    });
+                    }),
                 }
                 todo.extend(ts.into_iter().rev().map(Task::Ty));
             }

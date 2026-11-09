@@ -162,8 +162,10 @@ fn the_results_of_two_uses_under_one_bound_take_one_carrier() {
     let h = "h(positional t) = t[0] + t[1];";
     let k = format!("{h}\nk(positional t) = h(t);\nr(positional x: f64) = x;");
     let cat = "h(positional t) = t[0] ++ t[1];";
-    rejected(h, r#""${h((1, 2.5))}""#);
-    rejected(&k, r#""${k((1, r(2.5)))}""#);
+    rejected(h, r#""${h((int(1), 2.5f64))}""#);
+    rejected(&k, r#""${k((int(1), r(2.5)))}""#);
+    // A literal without a suffix takes the carrier of the other component (step L1.26a).
+    assert_eq!(runs(&k, r#""${k((1, r(2.5)))}""#, ""), "3.5\n");
     rejected(cat, r#""${h(("a", 2))}""#);
     assert_eq!(runs(h, r#""${h((1, 2))}""#, ""), "3\n");
     assert_eq!(runs(&k, r#""${k((r(1.5), r(2.5)))}""#, ""), "4.0\n");

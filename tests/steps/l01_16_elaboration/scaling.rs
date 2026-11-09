@@ -49,7 +49,7 @@ fn defaults_calling_functions_with_defaults_scale() {
 
 #[test]
 fn a_compound_default_reads_the_parameters_it_names() {
-    let src = "area(positional w, h = w + 1) = w * h;\na = area(3);\nb = area(3, h: 2);\n";
+    let src = "area(positional w: int, h = w + 1) = w * h;\na = area(3);\nb = area(3, h: 2);\n";
     assert_eq!(value(src, "a"), "12");
     assert_eq!(value(src, "b"), "6");
     assert_eq!(term(src, "a"), "{ w = 3; h = area$h(w); area(w, h) }");
@@ -227,7 +227,10 @@ fn checking_and_ordering_nested_functions_scales() {
                 assert!(u.defs.iter().any(|d| d.name == "main"));
             });
             assert_eq!(value(&nested(3), "main"), "3");
-            let want = (Some("int".to_string()), Some("(int) -> int".to_string()));
+            let want = (
+                Some("int".to_string()),
+                Some("(T) -> T for T in int | f64 | rat".to_string()),
+            );
             assert_eq!(found(&nested(3), 2), want);
             assert_eq!(found(&nested(100), 99), want);
         })
@@ -656,7 +659,7 @@ fn elaborating_from_the_checkers_findings_gives_what_elaborate_gives() {
         differences(3),
         else_patterns(3, false),
         else_patterns(3, true),
-        "f(positional x, positional k) = x * k + 1n;\ng = f(2.5, 2n);\n".to_string(),
+        "f(positional x, positional k) = x * k + 1;\ng = f(2.5f64, 2);\n".to_string(),
     ];
     for shape in [
         "nested blocks",

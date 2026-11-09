@@ -144,6 +144,7 @@ Expr ::: 1f64 ::: ERROR
 Expr ::: 0.1f8 ::: ERROR
 Expr ::: 0.1f64r ::: ERROR
 Expr ::: 0.1rf64 ::: ERROR
+Expr ::: 1n ::: ERROR
 Expr ::: 1nx ::: ERROR
 Expr ::: 1rn ::: ERROR
 Expr ::: if p with { x = 1 } == q { 1 } else { 2 } ::: (if ((p (with { (x = 1) })) == q) ({ 1 }) else ({ 2 }))

@@ -46,8 +46,8 @@ fn a_block_without_an_export_is_the_empty_tuple() {
 
 #[test]
 fn arithmetic_comparison_and_power() {
-    let src = "a = 2^3^2;\nb = -7 div 2;\nc = -7 mod 2;\nd = 1.5 * 4.0;\n\
-               e = 3 <= 3;\nf = !(2 > 3);\ng = 10.0 / 4.0;\n";
+    let src = "a = 2^3^2;\nb = -7 div 2;\nc = -7 mod 2;\nd = 1.5f64 * 4.0;\n\
+               e = 3 <= 3;\nf = !(2 > 3);\ng = 10.0f64 / 4.0;\n";
     assert_eq!(value(src, "a"), "512", "`^` is right-associative");
     assert_eq!(value(src, "b"), "-4", "Euclidean division");
     assert_eq!(value(src, "c"), "1", "Euclidean modulus");
@@ -148,7 +148,7 @@ fn lambdas_are_called_by_position_and_capture_their_scope() {
 
 #[test]
 fn a_name_bound_twice_gets_one_kernel_name_per_binder() {
-    let src = "x = 1;\nnext(positional x) = x + 1;\ny = next(x);\n";
+    let src = "x = 1;\nnext(positional x: int) = x + 1;\ny = next(x);\n";
     assert_eq!(term(src, "next"), "x@2 -> (x@2 + 1)");
     assert_eq!(term(src, "y"), "next(x@1)");
     assert_eq!(value(src, "y"), "2");

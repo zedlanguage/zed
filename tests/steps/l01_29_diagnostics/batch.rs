@@ -42,7 +42,7 @@ fn units() -> Vec<(String, Vec<u8>)> {
     ));
     out.push((
         "a generic literal at a union of two carriers it can adopt".into(),
-        b"f(positional x: f64 | rat) = x;\nmain() = f(1n);\n".to_vec(),
+        b"f(positional x: f64 | rat) = x;\nmain() = f(1);\n".to_vec(),
     ));
     out.push((
         "a plain literal at a union of two carriers".into(),
@@ -50,11 +50,11 @@ fn units() -> Vec<(String, Vec<u8>)> {
     ));
     out.push((
         "generic literals in a tuple at a union of tuple shapes".into(),
-        b"tu(positional p: (f64, f64) | (String, f64)) = p;\nmain() = tu((1n, 2n));\n".to_vec(),
+        b"tu(positional p: (f64, f64) | (String, f64)) = p;\nmain() = tu((1, 2));\n".to_vec(),
     ));
     out.push((
         "a generic literal compared with a union of two carriers it can adopt".into(),
-        b"f(positional x: f64 | rat) = x == 1n;\nmain() = f(1.0);\n".to_vec(),
+        b"f(positional x: f64 | rat) = x == 1;\nmain() = f(1.0);\n".to_vec(),
     ));
     out.push((
         "readings related to a hub, settled where read".into(),
@@ -117,8 +117,8 @@ fn batch_and_single_file_checking_agree() {
     assert_eq!(
         batch[at].as_deref(),
         Some(
-            "2:12: `1n` at `rat | f64` adopts no one carrier: the type holds numbers of rat and \
-             f64; write the one meant, as `1r` or `1.0`\n  \
+            "2:12: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
+             chooses one; write `1r` or `1.0f64`\n  \
              [1] 1:1: `f` is declared here, `(rat | f64) -> rat | f64`\n      \
              1 | f(positional x: f64 | rat) = x;\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
@@ -133,7 +133,10 @@ fn batch_and_single_file_checking_agree() {
         .expect("the unit");
     let answer = batch[at].as_deref().expect("a rejection");
     assert!(
-        answer.starts_with("1:35: `1n` at `rat | f64` adopts no one carrier"),
+        answer.starts_with(
+            "1:35: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
+             chooses one"
+        ),
         "{answer}"
     );
 }

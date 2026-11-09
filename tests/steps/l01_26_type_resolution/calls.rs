@@ -16,7 +16,7 @@ fn named_arguments_through_a_value() {
 fn a_closed_default_is_filled_through_a_value() {
     assert_eq!(
         value(
-            "tax(price, rate = 0.2) = price * rate;\nt = tax;\ny = t(price: 10.0);\n",
+            "tax(price, rate = 0.2f64) = price * rate;\nt = tax;\ny = t(price: 10.0f64);\n",
             "y"
         ),
         "2.0"

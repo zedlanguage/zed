@@ -239,8 +239,8 @@ fn kind(tok: &Tok) -> Kind {
     match tok {
         Tok::Name(_) => Kind::Ident,
         Tok::Wildcard => Kind::Wild,
-        Tok::Int { .. } | Tok::Generic { .. } => Kind::Int,
-        Tok::Float(_) => Kind::Float,
+        Tok::Int { .. } => Kind::Int,
+        Tok::Float { .. } => Kind::Float,
         Tok::Rat(_) => Kind::Rat,
         Tok::Str(_) => Kind::Str,
         Tok::Atom(_) => Kind::Atom,

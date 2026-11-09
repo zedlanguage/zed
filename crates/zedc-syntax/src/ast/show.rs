@@ -63,11 +63,7 @@ fn each<'a, T: 'a>(
 fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
     let at = |e: &'a Expr| Show::Expr(e);
     match &e.kind {
-        ExprKind::Int {
-            radix,
-            digits,
-            generic,
-        } => {
+        ExprKind::Int { radix, digits } => {
             let prefix = match radix {
                 2 => "0b",
                 8 => "0o",
@@ -75,11 +71,13 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
                 _ => "",
             };
             out.extend([Text(prefix), Text(digits)]);
-            if *generic {
-                out.push(Text("n"));
+        }
+        ExprKind::Float { digits, forced } => {
+            out.push(Text(digits));
+            if *forced {
+                out.push(Text("f64"));
             }
         }
-        ExprKind::Float(s) => out.push(Text(s)),
         ExprKind::Rat(s) => out.extend([Text(s), Text("r")]),
         ExprKind::Str(parts) => {
             out.push(Text("(str"));

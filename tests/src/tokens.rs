@@ -39,8 +39,7 @@ fn one(tok: &Tok) -> String {
         Tok::Atom(a) => format!("#{a}"),
         Tok::Annot(a) => format!("@{a}"),
         Tok::Int { radix, digits } => format!("{digits}₍{radix}₎"),
-        Tok::Generic { radix, digits } => format!("{digits}₍{radix}₎n"),
-        Tok::Float(f) => format!("{f}f"),
+        Tok::Float { digits, forced } => format!("{digits}f{}", if *forced { "64" } else { "" }),
         Tok::Rat(r) => format!("{r}r"),
         Tok::Str(parts) => {
             let inner: Vec<String> = parts

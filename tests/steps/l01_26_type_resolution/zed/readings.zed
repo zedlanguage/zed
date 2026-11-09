@@ -1,20 +1,20 @@
 // Sensor readings arrive as int, f64 or rat. A generic literal compared with a reading takes
 // the reading's carrier, so a calibrated sensor reads exactly one in any of them.
-isCalibrated(positional reading) = reading == 1n
-test { 1 -> true, 1.0 -> true, 1r -> true, 2 -> false, 0.5 -> false }
+isCalibrated(positional reading) = reading == 1
+test { 1 -> true, 1.0f64 -> true, 1r -> true, 2 -> false, 0.5f64 -> false }
 
 // A half-scale reading: twice it is one, which no int is.
-isHalfScale(positional reading) = reading * 2n == 1n
-test { 0.5 -> true, 1r / 2r -> true, 1 -> false }
+isHalfScale(positional reading) = reading * 2 == 1
+test { 0.5f64 -> true, 1r / 2r -> true, 1 -> false }
 
 // Twice a reading is two exactly when the reading is one.
-doublesToTwo(positional reading) = reading + reading == 2n
-test { 1 -> true, 1.0 -> true, 1r -> true, 1.5 -> false }
+doublesToTwo(positional reading) = reading + reading == 2
+test { 1 -> true, 1.0f64 -> true, 1r -> true, 1.5f64 -> false }
 
 // A price is a number or a label such as "on request"; a generic literal written at it takes
 // its one numeric carrier, f64.
 isNumeric(positional price: f64 | String) = price is f64;
-listPrice(positional n: int) = isNumeric(12n)
+listPrice(positional n: int) = isNumeric(12)
 test { 0 -> true }
 
 // A shipping cost: the weight charge plus a flat 2.0, an f64 as the weight is.
@@ -23,8 +23,8 @@ test { 4.0 -> 4.0, 1.0 -> 2.5 }
 
 // A point in the plane, and whether it is the origin; generic literals in a tuple take the
 // components' carriers, at any depth.
-isOrigin(positional p: (f64, f64)) = p == (0n, 0n)
+isOrigin(positional p: (f64, f64)) = p == (0, 0)
 test { (0.0, 0.0) -> true, (0.0, 1.5) -> false }
 isUnitBox(positional b: ((f64, f64), (f64, f64))) = b == ((0.0, 0.0), (1.0, 1.0));
-unitBox(positional n: int) = isUnitBox(((0n, 0n), (1n, 1n)))
+unitBox(positional n: int) = isUnitBox(((0, 0), (1, 1)))
 test { 0 -> true }

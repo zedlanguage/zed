@@ -22,7 +22,7 @@ impl Drop for Expr {
 fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
     match mem::replace(kind, ExprKind::Bool(false)) {
         ExprKind::Int { .. }
-        | ExprKind::Float(_)
+        | ExprKind::Float { .. }
         | ExprKind::Rat(_)
         | ExprKind::Bool(_)
         | ExprKind::Atom(_)

@@ -36,6 +36,9 @@ fn value(t: &Term) -> Value {
 /// Each source, elaborated and printed, prints as written and reads back as the same term.
 #[test]
 fn an_elaborated_term_reads_back_as_itself() {
+    // A power takes a parameter, not a literal, as its other operand: a literal without a
+    // suffix beside an operand of no fixed carrier takes that operand's carrier at run time,
+    // and its elaboration binds the operand to a name no program can write (steps L1.26a).
     let cases = [
         ("(a) -> -a", "a -> -a"),
         ("(c) -> !c", "c -> !c"),
@@ -43,14 +46,14 @@ fn an_elaborated_term_reads_back_as_itself() {
         ("(a, b) -> !(a < b)", "(a, b) -> !(a < b)"),
         ("(a) -> -(-a)", "a -> -(-a)"),
         ("(c) -> !(!c)", "c -> !(!c)"),
-        ("(a) -> (-a)^2", "a -> ((-a)^2)"),
-        ("(a) -> -a^2", "a -> -(a^2)"),
+        ("(a, k) -> (-a)^k", "(a, k) -> ((-a)^k)"),
+        ("(a, k) -> -a^k", "(a, k) -> -(a^k)"),
         ("(a, b, c) -> a^b^c", "(a, b, c) -> (a^(b^c))"),
         ("(a, b, c) -> (a^b)^c", "(a, b, c) -> ((a^b)^c)"),
         ("(a) -> 2.0^-a", "a -> ((2.0)^-a)"),
-        ("(a) -> (a + 1)^2", "a -> ((a + 1)^2)"),
-        ("(a, k) -> a * 2^k", "(a, k) -> (a * (2^k))"),
-        ("(a) -> a ^ 2", "a -> (a^2)"),
+        ("(a, b, k) -> (a + b)^k", "(a, b, k) -> ((a + b)^k)"),
+        ("(a, b, k) -> a * b^k", "(a, b, k) -> (a * (b^k))"),
+        ("(a, k) -> a ^ k", "(a, k) -> (a^k)"),
         ("(a, b) -> a - -b", "(a, b) -> (a - -b)"),
         ("(t) -> t[0]", "t -> t[0]"),
         ("(t) -> t[0][1]", "t -> t[0][1]"),

@@ -276,14 +276,16 @@ fn a_refusal_of_function_types_nested_8000_deep_is_linear() {
 }
 
 /// `p` expects a function of `d` curried arrows that take int, String at `at`, and return a pair
-/// of ints at the end; `g` has `d` curried parameters and returns the one at `uses` plus 1, and `last`.
+/// of ints at the end; `g` has `d` curried parameters and returns the one at `uses` plus `int(1)`,
+/// and `last`. The `int(1)` fixes the carrier: a curried function generic in its first
+/// parameter does not yet fit the curried type (follow-up CURRIED-generic-fit).
 fn curried_refusal(d: usize, uses: usize, at: usize, last: &str) -> String {
     let arrows: String = (0..d)
         .map(|i| if i == at { "(String) -> " } else { "(int) -> " })
         .collect();
     let lambdas: String = (1..d).map(|i| format!("(a{i}) -> ")).collect();
     format!(
-        "p(f: {arrows}(int, int)) = 0;\ng(positional a0) = {lambdas}(a{uses} + 1, {last});\ny = p(f: g);\n"
+        "p(f: {arrows}(int, int)) = 0;\ng(positional a0) = {lambdas}(a{uses} + int(1), {last});\ny = p(f: g);\n"
     )
 }
 

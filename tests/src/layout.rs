@@ -163,7 +163,7 @@ fn expr_kids<'a>(
 ) {
     match kind {
         ExprKind::Int { .. }
-        | ExprKind::Float(_)
+        | ExprKind::Float { .. }
         | ExprKind::Rat(_)
         | ExprKind::Bool(_)
         | ExprKind::Atom(_)

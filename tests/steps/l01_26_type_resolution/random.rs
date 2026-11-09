@@ -18,14 +18,8 @@ fn body(rng: &mut Rng, d: u32) -> String {
         return match rng.below(7) {
             0 | 1 => "x".into(),
             2 | 3 => "y".into(),
-            // A plain integer is an int; a generic one takes the carrier it meets.
-            4 => {
-                let k = rng.int(-3, 3);
-                match rng.below(2) {
-                    0 => k.to_string(),
-                    _ => format!("{k}n"),
-                }
-            }
+            // A literal takes the carrier it meets.
+            4 => rng.int(-3, 3).to_string(),
             5 => format!("{}.5", rng.int(-2, 2)),
             _ => "\"s\"".into(),
         };
@@ -49,7 +43,7 @@ fn body(rng: &mut Rng, d: u32) -> String {
 fn args(c: Carrier) -> &'static [&'static str] {
     match c {
         Carrier::Int => &["0", "2", "-3"],
-        Carrier::F64 => &["0.0", "1.5", "-2.25"],
+        Carrier::F64 => &["0.0f64", "1.5f64", "-2.25f64"],
         Carrier::Rat => &["0r", "3r/2r", "(0r - 2r)"],
         Carrier::Str => &["\"\"", "\"ab\""],
         Carrier::Bool => &["true", "false"],

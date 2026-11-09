@@ -1,10 +1,10 @@
 //! Number literals (steps L1.3 and L1.4):
 //!
 //! ```peg
-//! Number   = (Rational | Generic | Float | Integer) !XID_CONTINUE
-//! Rational = (Float | Decimal) 'r'
-//! Generic  = Integer 'n'
-//! Float    = Decimal '.' Decimal Exponent? | Decimal Exponent
+//! Number   = (Rational | Float | Integer) !XID_CONTINUE
+//! Rational = (Real | Decimal) 'r'
+//! Float    = Real 'f64'?
+//! Real     = Decimal '.' Decimal Exponent? | Decimal Exponent
 //! Exponent = [eE] [+\-]? Decimal
 //! Integer  = '0x' Hex ('_'? Hex)* | '0o' [0-7] ('_'? [0-7])* | '0b' [01] ('_'? [01])* | Decimal
 //! Decimal  = [0-9] ('_'? [0-9])*
@@ -17,10 +17,11 @@
 //! character that continues a name is one error over the number and that run, since no other
 //! rule reads a token starting with a digit: `200ms`, `1__000`, `1_000_`, `0b102`, `0x`.
 //!
-//! An integer followed by `n` is generic (step L1.26a): `1n` is the integer 1 in whichever
-//! numeric carrier its use needs. Only an integer takes the `n`, since it has the same value in
-//! every carrier, and a decimal does not (`0.1` in f64 is not one tenth), so `1.5n` and
-//! `1e3n` are errors that name `1.5` and `1.5r`.
+//! A literal is notation for a number, not a value of one carrier: its use fixes the carrier
+//! (steps L1.26a and L1.26b). So a literal takes no suffix but `r`, and `f64` after a decimal,
+//! which forces that format: `1n`, `1nx` and `1f64` are numbers running into a name. The
+//! grammar's other format suffixes, `f16`, `f32` and `bf16`, come with their formats (steps
+//! FLOAT-f32 and L1.18a) and run into a name until then.
 
 use std::sync::Arc;
 
@@ -56,8 +57,12 @@ pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Erro
         }
     }
     let rational = radix == 10 && b.get(end) == Some(&b'r');
-    let generic = end == int_end && b.get(end) == Some(&b'n');
-    let after = end + usize::from(rational || generic);
+    let forced = end > int_end && !rational && text[end..].starts_with("f64");
+    let after = match (rational, forced) {
+        (true, _) => end + 1,
+        (_, true) => end + 3,
+        _ => end,
+    };
     if text[after..].chars().next().is_some_and(is_xid_continue) {
         return Some(Err(run_on(text, pos, after, radix)));
     }
@@ -75,10 +80,8 @@ pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Erro
     };
     let tok = if rational {
         Tok::Rat(digits)
-    } else if generic {
-        Tok::Generic { radix, digits }
     } else if end > int_end {
-        Tok::Float(digits)
+        Tok::Float { digits, forced }
     } else {
         Tok::Int { radix, digits }
     };
@@ -132,12 +135,6 @@ fn run_on(text: &str, pos: usize, end: usize, radix: u32) -> Error {
              in decimal, as `16r` for the value of `0x10`. Write its value in decimal digits \
              before the `r`."
         )
-    } else if next == 'n' && radix == 10 && !d.ends_with('r') && d.contains(['.', 'e', 'E']) {
-        format!(
-            "the number `{d}n` puts the suffix `n` on a decimal, and only an integer takes `n`: \
-             an integer has the same value in every number type, while a decimal has one value \
-             in f64 and another in rat. Write `{d}` for a float or `{d}r` for an exact rational."
-        )
     } else if next == '_' {
         let whole = &text[pos..run];
         format!(
@@ -171,6 +168,14 @@ fn run_on(text: &str, pos: usize, end: usize, radix: u32) -> Error {
             "the number `{whole}` starts with `{prefix}`, whose digits are {digits}, and `{next}` \
              is not one of them. Write the number with those digits, or in decimal without \
              `{prefix}`."
+        )
+    } else if radix == 10 && ["f16", "bf16", "f32", "f64"].contains(&&text[end..run]) {
+        // An integer takes no format suffix (DESIGN.md L1.26b): `1f64`.
+        let name = &text[end..run];
+        format!(
+            "the number `{d}` runs into the name `{name}` with nothing between them, and an \
+             integer takes no format suffix. Write `{d}.0{name}` for an `{name}`, or `{d}`, which \
+             takes the carrier of its use."
         )
     } else {
         let name = &text[end..run];

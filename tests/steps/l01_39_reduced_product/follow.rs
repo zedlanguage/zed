@@ -1,10 +1,10 @@
 //! A generic literal compared by `==` or `!=` with a parameter whose carrier is inferred
-//! follows the parameter's carrier (DESIGN.md L1.26a): the elaborator writes `x == 3n` as a
+//! follows the parameter's carrier (DESIGN.md L1.26a): the elaborator writes `x == 3` as a
 //! match on `x` that gives `3.0`, `3r` or `3`. The scope reads that test as the plain `x == 3`
 //! where `x` is an integer, and the preimage catalog reads it so where `x` is any integer term.
 //! The value compared is found once: a chain of such tests, each comparing the `if` below with
 //! a literal, costs what the plain chain costs (repair of LIT-adopt; COMPLEXITY.md row F69). A
-//! plain literal follows nothing: `x == 3` makes `x` an int.
+//! parameter declared `int` takes the plain test, with no `match`.
 
 use std::sync::Arc;
 
@@ -19,7 +19,7 @@ use zedc::store::preimage::{
 };
 use zedc::store::product::{Product, Scope, arms};
 
-use super::{arm, arms_of, ints};
+use super::{arm, generic_arms_of as arms_of, ints};
 use zed_tests::step_helpers::l01_25_preimage_catalog::function;
 
 /// The test of each arm, the outcome, and the integers each named parameter holds there.
@@ -38,8 +38,8 @@ fn readings(src: &str, names: &[&str]) -> Vec<String> {
 
 #[test]
 fn a_retry_counter_compared_with_a_literal_is_narrowed_to_it() {
-    // `tries` is inferred: the function takes any number, and `3n` follows its carrier.
-    let src = "ok(positional tries) = if tries == 3n { 10 } else { 20 };";
+    // `tries` is inferred: the function takes any number, and `3` follows its carrier.
+    let src = "ok(positional tries) = if tries == 3 { 10 } else { 20 };";
     let (_, body, _) = arms_of(src);
     assert!(body.to_string().contains("(is f64) -> 3.0"), "{body}");
     assert_eq!(
@@ -47,7 +47,7 @@ fn a_retry_counter_compared_with_a_literal_is_narrowed_to_it() {
         ["true: tries [3..=3]", "false: tries [..=2, 4..]"]
     );
     // `!=` on either side.
-    let src = "ok(positional slot) = if slot != 3n && 4n != slot { 10 } else { 20 };";
+    let src = "ok(positional slot) = if slot != 3 && 4 != slot { 10 } else { 20 };";
     assert_eq!(
         readings(src, &["slot"]),
         ["true: slot [..=2, 5..]", "false: slot [3..=4]"]
@@ -58,12 +58,12 @@ fn a_retry_counter_compared_with_a_literal_is_narrowed_to_it() {
 fn a_difference_compared_with_a_literal_is_narrowed_by_its_preimage() {
     // The value compared is a term, not a name: the preimage catalog reads the match as the
     // literal itself, and the linear relation is the plain test's.
-    let src = "ok(positional a, positional b) = if a - b == 3n && a == 5n { 10 } else { 20 };";
+    let src = "ok(positional a, positional b) = if a - b == 3 && a == 5 { 10 } else { 20 };";
     assert_eq!(
         readings(src, &["a", "b"]),
         ["true: a [5..=5], b [2..=2]", "false: a [..], b [..]"]
     );
-    let src = "ok(positional debt) = if -debt == 3n { 10 } else { 20 };";
+    let src = "ok(positional debt) = if -debt == 3 { 10 } else { 20 };";
     assert_eq!(
         readings(src, &["debt"]),
         ["true: debt [-3..=-3]", "false: debt [..=-4, -2..]"]
@@ -74,7 +74,7 @@ fn a_difference_compared_with_a_literal_is_narrowed_by_its_preimage() {
 fn at_a_float_the_test_is_not_read_as_an_integer_equality() {
     // At an `f64` the literal is `3.0`: the true arm is reached, at `3.0`, though no integer
     // is in it.
-    let (ps, body) = function("ok(positional level) = if level == 3n { 10 } else { 20 };");
+    let (ps, body) = function("ok(positional level) = if level == 3 { 10 } else { 20 };");
     let floats = Scope::new(
         ps.iter()
             .map(|p| (p.clone(), Product::of_type(Type::f64()))),
@@ -85,11 +85,11 @@ fn at_a_float_the_test_is_not_read_as_an_integer_equality() {
     assert!(arm(&a, "3.0", false).reachable());
 }
 
-/// `ok(positional n) = if (if (… n …) == 1n { n } else { n + n }) == 1n { n } else { n + n }`,
-/// `d` deep; with `n: int` declared when `plain`, else `n` inferred, so each `1n` follows.
+/// `ok(positional n) = if (if (… n …) == 1 { n } else { n + n }) == 1 { n } else { n + n }`,
+/// `d` deep; with `n: int` declared when `plain`, else `n` inferred, so each `1` follows.
 fn chain(d: usize, plain: bool) -> String {
     let inner = (0..d).fold("n".to_string(), |x, _| {
-        format!("if ({x}) == 1n {{ n }} else {{ n + n }}")
+        format!("if ({x}) == 1 {{ n }} else {{ n + n }}")
     });
     let ty = if plain { ": int" } else { "" };
     format!("ok(positional n{ty}) = {inner};")
@@ -135,7 +135,7 @@ fn at(terms: &[(usize, Arc<Term>); 2], k: usize) -> &Term {
 
 /// `if slot != 0 && slot != 1 && … { 10 } else { 20 }`, `k` tests.
 fn excluded(k: usize) -> String {
-    let tests: Vec<String> = (0..k).map(|i| format!("slot != {i}n")).collect();
+    let tests: Vec<String> = (0..k).map(|i| format!("slot != {i}")).collect();
     format!(
         "ok(positional slot) = if {} {{ 10 }} else {{ 20 }};",
         tests.join(" && ")
@@ -145,7 +145,7 @@ fn excluded(k: usize) -> String {
 /// `{ b0 = a - b == 0; …; if b(k-1) { 10 } else { 20 } }`: each binding a following test of
 /// a difference, which the scope finds the value of.
 fn bound(k: usize) -> String {
-    let lets: String = (0..k).map(|i| format!("b{i} = a - b == {i}n; ")).collect();
+    let lets: String = (0..k).map(|i| format!("b{i} = a - b == {i}; ")).collect();
     format!(
         "ok(positional a, positional b) = {{ {lets}if b{} {{ 10 }} else {{ 20 }} }};",
         k - 1
@@ -155,7 +155,7 @@ fn bound(k: usize) -> String {
 /// `if a - b != 0 && a - b != 1 && … { 10 } else { 20 }`: following tests of a difference,
 /// each read by the preimage catalog.
 fn differences(k: usize) -> String {
-    let tests: Vec<String> = (0..k).map(|i| format!("a - b != {i}n")).collect();
+    let tests: Vec<String> = (0..k).map(|i| format!("a - b != {i}")).collect();
     format!(
         "ok(positional a, positional b) = if {} {{ 10 }} else {{ 20 }};",
         tests.join(" && ")

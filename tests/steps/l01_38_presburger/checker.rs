@@ -3,10 +3,15 @@
 //! the constraints.
 
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
+use zed_tests::step_helpers::l01_25_preimage_catalog::int_defs;
 
 /// A program whose `main` calls `ok`, defined by `def`, at `args`, and prints whether it held;
-/// `a` in `args` is the integer on the first line of the input (lines count from 1), or 0.
+/// `a` in `args` is the integer on the first line of the input (lines count from 1), or 0. Each
+/// parameter `def` writes without a type is declared `int` ([`int_defs`]): the checker asks a
+/// linear question only of a function whose parameters are all `int`, and a bare literal takes
+/// the carrier of its use (L1.26a), so it no longer makes a parameter `int`.
 fn program(def: &str, args: &str) -> String {
+    let def = int_defs(def);
     format!(
         "{def}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  a = int(stdin[1] else \"0\") else 0;\n  \
          r = if ok({args}) {{ \"in\" }} else {{ \"out\" }};\n  stdout <- \"${{r}}\";\n}}\n"
@@ -43,7 +48,7 @@ fn stated(printed: &str) -> String {
 fn head(rows: &str, params: &str) -> String {
     let condition = rows.split_whitespace().collect::<Vec<_>>().join(" ");
     let names = (params.split(", "))
-        .map(|p| format!("`{p}`"))
+        .map(|p| format!("`{}`", p.split(':').next().unwrap_or(p)))
         .collect::<Vec<_>>()
         .join(", ");
     format!(
@@ -162,12 +167,13 @@ const REFUSED: [Refused; 3] = [
 ];
 
 /// The menu a refused `ok(x, y, z, w)` with conditions `body` prints at L1, numbered after its
-/// note of constraints and placed, as that note is, at the body, which begins at column 18 of
-/// line 1: a value stated for `v`, the order `a <= b` when one is given, and the conditions
-/// split into `split` (DESIGN.md sec:diagnostics, row "Linear question outside the polynomial
-/// fragment").
+/// note of constraints and placed, as that note is, at the body, which begins at column 38 of
+/// line 1, after `ok(x: int, y: int, z: int, w: int) = ` ([`program`]): a value stated for
+/// `v`, the order `a <= b` when one is given, and the conditions split into `split` (DESIGN.md
+/// sec:diagnostics, row "Linear question outside the polynomial fragment").
 fn menu(v: &str, order: Option<(&str, &str)>, body: &str, split: [&str; 2]) -> String {
-    const HEAD: &str = "ok(x, y, z, w) = ";
+    const P: &str = "x: int, y: int, z: int, w: int";
+    const HEAD: &str = "ok(x: int, y: int, z: int, w: int) = ";
     let mut lines = vec![format!(
         "repair: if `{v}` is meant to take only one value in `ok`, state that value, and the \
          checker removes `{v}` from the question: `{HEAD}{v} == 0 && {body};`, with the value in \
@@ -183,17 +189,18 @@ fn menu(v: &str, order: Option<(&str, &str)>, body: &str, split: [&str; 2]) -> S
         "repair: split the conditions between two functions, `ok1` and `ok2`, and where `ok` \
          is called, call `ok1(…) && ok2(…)` with the same arguments; each asks a smaller \
          question, and a function whose body joins them asks the joined question again: \
-         `ok1(x, y, z, w) = {};` and `ok2(x, y, z, w) = {};`",
+         `ok1({P}) = {};` and `ok2({P}) = {};`",
         split[0], split[1]
     ));
     (lines.iter().enumerate())
-        .map(|(i, l)| format!("[{}] 1:18: {l}", i + 2))
+        .map(|(i, l)| format!("[{}] 1:38: {l}", i + 2))
         .collect::<Vec<_>>()
         .join("\n  ")
 }
 
 /// A program like [`program`]'s whose `main` tests `test` in place of a call of `ok`.
 fn program_testing(defs: &str, test: &str) -> String {
+    let defs = int_defs(defs);
     format!(
         "{defs}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  a = int(stdin[1] else \"0\") else 0;\n  \
          r = if {test} {{ \"in\" }} else {{ \"out\" }};\n  stdout <- \"${{r}}\";\n}}\n"
@@ -363,7 +370,7 @@ fn the_split_repair_names_functions_the_program_does_not_define() {
         let heads: Vec<&str> = (definitions(split).iter())
             .map(|d| d.split_once(" = ").expect("a definition").0)
             .collect();
-        let want = [a, b].map(|f| format!("{f}(x, y, z, w)"));
+        let want = [a, b].map(|f| format!("{f}(x: int, y: int, z: int, w: int)"));
         assert_eq!(heads, want, "{name}: {split}");
     }
 }
@@ -429,7 +436,7 @@ fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
              are left, and removing any one of them would leave more conditions than there are \
              now, so the work could grow without end. The checker stopped there, with no \
              values found and none ruled out.\n  \
-             [1] 1:18: the constraints: 12 * w + 10 * y + 12 * z <= 4 * x + 11 && 4 * w + 10 * \
+             [1] 1:38: the constraints: 12 * w + 10 * y + 12 * z <= 4 * x + 11 && 4 * w + 10 * \
              x >= 10 * y + 11 * z + 28 && 11 * w + 4 * x + 12 * z >= y + 28 && 8 * w + 5 * x + \
              z <= 12 * y + 31\n  {}",
             head_in(&src),
@@ -462,7 +469,7 @@ fn a_refused_question_names_the_parameters_as_written_when_other_functions_share
              `3 * z - y - 10 >= 0`, so only their names could order them, and the checker never \
              lets a name change an answer. The checker stopped there, with no values found and \
              none ruled out.\n  \
-             [1] 1:18: the constraints: x <= 3 * y - 10 && y <= 3 * z - 10 && 3 * w >= z + 10 \
+             [1] 1:38: the constraints: x <= 3 * y - 10 && y <= 3 * z - 10 && 3 * w >= z + 10 \
              && w <= 3 * x - 10\n  {}",
             head_in(&src),
             menu(
@@ -496,7 +503,7 @@ fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
              only values could lie in a case that would have to be split again with as many \
              variables left as before, so the splitting need not end. The checker stopped \
              there, with no values found and none ruled out.\n  \
-             [1] 1:18: the constraints: 8 * w + 4 * y <= 9 * x - 3 && 9 * w + 5 * x + 11 * y >= \
+             [1] 1:38: the constraints: 8 * w + 4 * y <= 9 * x - 3 && 9 * w + 5 * x + 11 * y >= \
              9 && 8 * w >= 7 * x + 12 * y + 2 * z + 1 && 9 * x <= 8 * y + 7 * z && 4 * w + 10 * \
              x + 6 * z <= 4 * y + 22\n  {}",
             head_in(&src),
@@ -546,7 +553,9 @@ fn the_linear_questions_of_a_unit_scale() {
     // `n` functions of two linear tests each, every one asked whether it can hold and fail.
     let unit = |n: usize| {
         let mut src: String = (0..n)
-            .map(|i| format!("ok{i}(x, y) = 0 <= 3 * x + 5 * y && 2 * x - 7 * y <= {i};\n"))
+            .map(|i| {
+                format!("ok{i}(x: int, y: int) = 0 <= 3 * x + 5 * y && 2 * x - 7 * y <= {i};\n")
+            })
             .collect();
         src.push_str(&program("", "x: a, y: a").replace("ok(", "ok0("));
         src
@@ -638,7 +647,7 @@ fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints
         }
         let called = stated(&rejection(&format!("{}-called", r.name), &called))
             .replace("2:1: ", "1:1: ")
-            .replace("2:18: ", "1:18: ");
+            .replace("2:38: ", "1:38: ");
         assert_eq!(
             unwritten(&called),
             unwritten(&stated(&rejection(
@@ -724,7 +733,8 @@ fn a_question_read_in_its_callees_coordinates_is_answered_and_printed_over_its_o
         for r in menu {
             let def = (r.split('`').skip(1).step_by(2))
                 .find(|c| {
-                    c.starts_with("ok(a, b, c, d) = ") && c.ends_with(&format!("{call_body};"))
+                    c.starts_with("ok(a: int, b: int, c: int, d: int) = ")
+                        && c.ends_with(&format!("{call_body};"))
                 })
                 .unwrap_or_else(|| panic!("no rewritten call in {r}"));
             let o = run(
@@ -793,7 +803,7 @@ fn a_question_refused_through_a_call_by_a_map_of_its_parameters_names_its_parame
             refused += 1;
             let called = stated(&rejection(&format!("{}-map-{i}-called", r.name), &called))
                 .replace("2:1: ", "1:1: ")
-                .replace("2:18: ", "1:18: ");
+                .replace("2:38: ", "1:38: ");
             assert!(called.contains("the condition of `ok`"), "{called}");
             assert!(!called.contains(['#', '@']), "{called}");
             assert_eq!(

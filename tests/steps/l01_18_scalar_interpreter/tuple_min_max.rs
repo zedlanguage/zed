@@ -22,7 +22,7 @@ fn the_nearest_pair_of_clusters_as_corpus_14_finds_it() {
     // Corpus 14 folds `(d2, label, label)` with `>< min`; the fold is step L3.2, the pairwise
     // `min` it folds with is here.
     assert_eq!(
-        x("min(min((2.0, 1, 3), (0.5, 2, 4)), (0.5, 1, 9))"),
+        x("min(min((2.0f64, 1, 3), (0.5f64, 2, 4)), (0.5f64, 1, 9))"),
         "(0.5, 1, 9)"
     );
     assert_eq!(
@@ -37,25 +37,28 @@ fn the_nearest_pair_of_clusters_as_corpus_14_finds_it() {
 #[test]
 fn a_float_part_is_ordered_as_ieee_minimum_and_maximum() {
     // A NaN in the first component that differs is taken by both, as at the top level.
-    assert_eq!(x("min((2.0, 1), (0.0 / 0.0, 0))"), "(nan, 0)");
-    assert_eq!(x("max((2.0, 1), (0.0 / 0.0, 0))"), "(nan, 0)");
-    assert_eq!(x("min((1, 0.0 / 0.0), (1, 2.0))"), "(1, nan)");
+    assert_eq!(x("min((2.0f64, 1), (0.0f64 / 0.0f64, 0))"), "(nan, 0)");
+    assert_eq!(x("max((2.0f64, 1), (0.0f64 / 0.0f64, 0))"), "(nan, 0)");
+    assert_eq!(x("min((1, 0.0f64 / 0.0f64), (1, 2.0f64))"), "(1, nan)");
     // `-0.0` is below `0.0` in either order, so `min` commutes.
-    assert_eq!(x("min((0.0, 1), (-0.0, 1))"), "(-0.0, 1)");
-    assert_eq!(x("min((-0.0, 1), (0.0, 1))"), "(-0.0, 1)");
-    assert_eq!(x("max((-0.0, 1), (0.0, 1))"), "(0.0, 1)");
+    assert_eq!(x("min((0.0f64, 1), (-0.0f64, 1))"), "(-0.0, 1)");
+    assert_eq!(x("min((-0.0f64, 1), (0.0f64, 1))"), "(-0.0, 1)");
+    assert_eq!(x("max((-0.0f64, 1), (0.0f64, 1))"), "(0.0, 1)");
 }
 
 #[test]
 fn min_of_a_number_and_infinity_is_the_number() {
     // An infinity made by arithmetic is a float; `f64(#inf)` is the cast of an atom, which
     // plan row NAN-cast-atoms implements, and until then evaluates to the atom `#inf`.
-    assert_eq!(x("min(2.0, 1.0 / 0.0)"), "2.0");
-    assert_eq!(x("max(2.0, 1.0 / 0.0)"), "inf");
-    assert_eq!(x("min(2.0, -1.0 / 0.0)"), "-inf");
+    assert_eq!(x("min(2.0f64, 1.0f64 / 0.0f64)"), "2.0");
+    assert_eq!(x("max(2.0f64, 1.0f64 / 0.0f64)"), "inf");
+    assert_eq!(x("min(2.0f64, -1.0f64 / 0.0f64)"), "-inf");
     // Through a parameter whose class meets the float.
     assert_eq!(
-        value("m(positional a) = min(a, 1.0 / 0.0);\nx = m(2.0);\n", "x"),
+        value(
+            "m(positional a) = min(a, 1.0f64 / 0.0f64);\nx = m(2.0f64);\n",
+            "x"
+        ),
         "2.0"
     );
 }
@@ -511,10 +514,12 @@ fn checking_a_chain_of_n_functions_whose_parameter_meets_a_literal_tuple_scales(
 fn a_call_joins_the_result_of_min_as_min_joins_it() {
     let g = "g(positional a) = min(a, (1, 2));\n";
     // The result of `g((0, 5))` is that of `min((0, 5), (1, 2))`, whose type joins the two
-    // tuples of length 2 component by component (DESIGN.md sec:reduction, item 5).
+    // tuples of length 2 component by component (DESIGN.md sec:reduction, item 5); each
+    // component is an operation on integer literals alone that nothing fixes, so `int`, as
+    // `three() = 1 + 2` is `() -> int` (L1.26a).
     assert_eq!(
         sig(&format!("{g}h() = g((0, 5));\n"), "h"),
-        "() -> (0 | 1, 2 | 5)"
+        "() -> (int, int)"
     );
     // Through a chain that passes the result on: one tuple, not one per link.
     let chain = "g0(positional a) = min(a, (0, 0));\n\
@@ -523,7 +528,7 @@ fn a_call_joins_the_result_of_min_as_min_joins_it() {
     assert_eq!(sig(chain, "g2"), "(_) -> _");
     assert_eq!(
         sig(&format!("{chain}h() = g2((5, 9));\n"), "h"),
-        "() -> (0 | 1 | 2 | 5, 0 | 9)"
+        "() -> (int, int)"
     );
     // The operands of a chain are still checked against the argument and each other.
     assert_eq!(
@@ -565,7 +570,7 @@ fn branches_of_an_if_stay_a_union_through_a_call() {
             &format!("{g}h(positional c) = if c {{ g((0, 5)) }} else {{ (7, 7) }};\n"),
             "h"
         ),
-        "(bool) -> (0 | 1, 2 | 5) | (7, 7)"
+        "(bool) -> (int, int) | (7, 7)"
     );
     // An argument that is a union of branches is joined only where `min` takes it.
     assert_eq!(

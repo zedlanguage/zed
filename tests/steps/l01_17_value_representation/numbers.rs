@@ -60,7 +60,7 @@ fn a_number_far_past_a_machine_word_is_exact() {
 
 #[test]
 fn rationals_are_exact() {
-    let src = "tenth = 0.1r;\nexact = tenth + 0.2r == 0.3r;\nfloaty = 0.1 + 0.2 == 0.3;\n\
+    let src = "tenth = 0.1r;\nexact = tenth + 0.2r == 0.3r;\nfloaty = 0.1f64 + 0.2f64 == 0.3f64;\n\
                third = 1r / 3r;\nwhole = third + third + third;\nneg = -third * 2r;\n\
                fee = 2.5e-3r;\nbig = 1e30r / 7r;\n";
     assert_eq!(value(src, "exact"), "true");
@@ -91,30 +91,30 @@ fn numbers_of_different_kinds_do_not_mix() {
             "`+` does not take (1r, f64): these are the types of its arguments here, and `+` has no arrow that takes them all [x + f64(1)]"
         ]
     );
-    // A plain literal keeps its kind too, and is rejected with the forms to write; a generic
-    // literal `1n` takes the kind the other side expects, exactly (steps L1.26, L1.26a).
+    // A name bound to an integer literal is an `int`, and does not mix with a `rat`.
     assert_eq!(
-        errors("a = 1r + 1;\n"),
+        errors("i = 1;\na = 1r + i;\n"),
         [
-            "`1` is an int where `rat` is expected; a literal takes no other carrier; write `1r` \
-          or `1n` [1]"
+            "`+` does not take (1r, 1): these are the types of its arguments here, and `+` has no arrow that takes them all [1r + i]"
         ]
     );
+    // A literal with a suffix keeps its carrier, and is rejected with the forms to write; a
+    // literal without one takes the carrier the other side expects, exactly (steps L1.26,
+    // L1.26a, L1.26b).
     assert_eq!(
-        errors("b = 1r < 2.0;\n"),
+        errors("b = 1r < 2.0f64;\n"),
         [
-            "`2.0` is an f64 where `rat` is expected; a literal takes no other carrier; write \
-          `2.0r` [2.0]"
+            "the literal `2.0f64` is an `f64` by its suffix, and `rat` is expected here; a suffix fixes a literal's carrier; write `2.0r` [2.0f64]"
         ]
     );
+    // Two literals without a suffix, one a decimal, have nothing to give them a carrier.
     assert_eq!(
         errors("c = 1 == 1.0;\n"),
         [
-            "`1` is an int where `f64` is expected; a literal takes no other carrier; write `1.0` \
-          or `1n` [1]"
+            "the literal `1.0` is a decimal, and nothing here gives it a carrier; a decimal literal takes the carrier of its use, never `int`, and Zed does not choose one for it; write `1.0f64` or `1.0r` [1.0]"
         ]
     );
-    assert_eq!(value("a = 1r + 1n;\n", "a"), "2r");
-    assert_eq!(value("b = 1r < 2n;\n", "b"), "true");
-    assert_eq!(value("c = 1n == 1.0;\n", "c"), "true");
+    assert_eq!(value("a = 1r + 1;\n", "a"), "2r");
+    assert_eq!(value("b = 1r < 2;\n", "b"), "true");
+    assert_eq!(value("c = 1 == 1.0f64;\n", "c"), "true");
 }

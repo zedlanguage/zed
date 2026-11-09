@@ -391,7 +391,7 @@ impl<'t, 'a> Walk<'t, 'a> {
                 Kind::Top
             }
             // Resolution rejects the forms of the later layers before this walk.
-            ExprKind::Float(_)
+            ExprKind::Float { .. }
             | ExprKind::Rat(_)
             | ExprKind::Bool(_)
             | ExprKind::Atom(_)

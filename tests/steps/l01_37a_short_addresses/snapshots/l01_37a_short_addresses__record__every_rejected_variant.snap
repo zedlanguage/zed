@@ -19,7 +19,7 @@ decimal-literal-at-int
     Diagnostic {
         line: 4,
         col: 11,
-        message: "`2.0` is an f64 where `int` is expected; a literal takes no other carrier",
+        message: "the literal `2.0` is a decimal, and `*` expects `int`, the carrier of `x`; a decimal literal is never an `int`; write `x * 2` or `f64(x) * 2.0`",
         steps: [
             Step {
                 line: 4,
@@ -73,17 +73,24 @@ decimal-literal-at-int
             Step {
                 line: 4,
                 col: 7,
+                text: "repair: write `rat(x)`; the checker accepts that",
+                source: "bad = x * 2.0;             // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0",
+                width: 1,
+            },
+            Step {
+                line: 4,
+                col: 7,
                 text: "repair: write `f64(x)`; the checker accepts that",
                 source: "bad = x * 2.0;             // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0",
                 width: 1,
             },
         ],
         row: Some(
-            NoCommonCarrier,
+            LiteralCarrier,
         ),
     },
 ]
-  checks: [Outcome { line: 4, col: 11, failure: Some("the mark names the row \"Numeric literal at a carrier that cannot take it\", and the diagnostic is in the row \"Two numeric values with no common carrier\": `2.0` is an f64 where `int` is expected; a literal takes no other carrier") }]
+  checks: [Outcome { line: 4, col: 11, failure: None }]
 
 dot-never-mutates
   rejected: [

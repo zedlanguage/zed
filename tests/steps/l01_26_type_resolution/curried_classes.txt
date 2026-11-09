@@ -102,7 +102,7 @@ sig take = (f: (int) -> (int) -> (int, int, int)) -> (int, int, int)
 top r = (int, int, int)
 call "f(1)" = (int) -> (int) -> (int, int, int)
 call "f(1)(2)" = (int) -> (int, int, int)
-=== "k(x: int) = (a) -> (b) -> (x + 1, a + 1, b + 1);\nm(f: (f64) -> (int) -> (int, int, int)) = 0;\nr = m(f: k(x: 1));\n"
+=== "k(x: int) = (a) -> (b) -> (x + 1, a div 1, b div 1);\nm(f: (f64) -> (int) -> (int, int, int)) = 0;\nr = m(f: k(x: 1));\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 sig k = (x: int) -> (int) -> (int) -> (int, int, int)
 sig m = (f: (f64) -> (int) -> (int, int, int)) -> 0
@@ -156,7 +156,7 @@ err this argument is passed by position, and the parameter it reaches, `x` of `p
   note `p` is declared here, `(x: T) -> (T) -> (T) -> T for T in int | f64 | rat`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
-=== "p(x) = (y) -> (z) -> (x + 1, y, z);\nq = p(1)(\"s\")(true);\nr = p(1)(2)(3) + 1;\n"
+=== "p(x) = (y) -> (z) -> (x div 1, y, z);\nq = p(1)(\"s\")(true);\nr = p(1)(2)(3) + 1;\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 sig p = (x: int) -> (_) -> (_) -> (int, _, _)
 top q = Never
@@ -169,7 +169,7 @@ err this argument is passed by position, and the parameter it reaches, `x` of `p
   note `p` is declared here, `(x: int) -> (_) -> (_) -> (int, _, _)`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
-=== "o(x) = (y) -> (z) -> x + 1;\nq = o(1)(2)(3) == 2;\nw = (o(1), 0);\n"
+=== "o(x) = (y) -> (z) -> x div 1;\nq = o(1)(2)(3) == 2;\nw = (o(1), 0);\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 sig o = (x: int) -> (_) -> (_) -> int
 top q = bool

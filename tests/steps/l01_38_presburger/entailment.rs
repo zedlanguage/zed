@@ -6,23 +6,24 @@ use zedc::store::presburger::{Atom, Entailment, entails};
 use zedc::store::preimage::relations;
 
 use super::{holds, point};
-use zed_tests::step_helpers::l01_25_preimage_catalog::function;
+use zed_tests::step_helpers::l01_25_preimage_catalog::{function, int_defs, int_ok};
 use zed_tests::step_helpers::l01_26_type_resolution::sig_of;
 
 /// What rung 2 concludes from the body of `ok` in `premise` to the body of `ok` in `goal`,
-/// the two translated in one call, so that their auxiliary variables are numbered apart.
+/// the two translated in one call, so that their auxiliary variables are numbered apart. Each
+/// parameter of `ok` written without a type is declared `int` ([`int_ok`]): a bare literal
+/// takes the carrier of its use (L1.26a), so it no longer makes a parameter `int`.
 pub(super) fn rung2(premise: &str, goal: &str) -> Entailment {
-    verdict(premise, goal)
+    verdict(&int_ok(premise), &int_ok(goal))
         .unwrap_or_else(|| panic!("{premise} to {goal}: outside the linear-relation domain"))
 }
 
-/// [`rung2`], or `None` where the premise or the goal is outside the linear-relation domain.
-/// Rung 2 reads arithmetic as integer arithmetic, so it is given only the parameters the
-/// checker gives only `int`s (`Sig::int_params`, RUNG2-carrier); a body that reads another is
-/// outside the domain. The premise and the goal stand for one obligation over one function, so
-/// a parameter is `int` when it is in either: one side without a literal on it, `ok(x, n) =
-/// true;`, leaves it generic, and the other gives it its type. The tests never give a
-/// parameter `int` on one side and another type on the other.
+/// [`rung2`] on `premise` and `goal` as written, or `None` where the premise or the goal is
+/// outside the linear-relation domain. Rung 2 reads arithmetic as integer arithmetic, so it is
+/// given only the parameters the checker gives only `int`s (`Sig::int_params`,
+/// RUNG2-carrier); a body that reads another is outside the domain. The premise and the goal
+/// stand for one obligation over one function, so a parameter is `int` when it is in either.
+/// The tests never give a parameter `int` on one side and another type on the other.
 pub(super) fn verdict(premise: &str, goal: &str) -> Option<Entailment> {
     let (ps, p) = function(premise);
     let (_, g) = function(goal);
@@ -237,6 +238,6 @@ fn the_flat_product_of_three_factors_is_not_taken_by_rung_2() {
     // `(z * h + y) * w` multiplies a sum by a symbol and `d * h * w` three symbols: a product
     // factor must be a symbol or an auxiliary variable (`Lin::product`), so the goal is outside the linear-relation
     // domain and rung 2 proves nothing; naming the inner level is what proves it.
-    let (ps, g) = function(FLAT);
+    let (ps, g) = function(&int_defs(FLAT));
     assert!(super::relations(&[&g], &ps, true).is_none());
 }

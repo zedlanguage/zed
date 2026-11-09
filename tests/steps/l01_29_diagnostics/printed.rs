@@ -367,6 +367,14 @@ fn an_intersection_of_function_types_reads_back_as_one_overload() {
         scale.fns[0].bounds,
         [("T".into(), both), ("U".into(), Carrier::F64.bit())].into()
     );
+    // One variable may stand in several arrows: they are one function's, which a call binds,
+    // as the checker prints a generic function that takes its parameter's atoms.
+    let text = "((T) -> \"big\" | \"small\") & ((#_ | T) -> \"big\" | \"small\" | #_) \
+                for T in int | f64 | rat";
+    let r = back(text);
+    assert_eq!(r.fns.len(), 1);
+    assert_eq!(r.fns[0].arrows.len(), 2);
+    assert_eq!(r.fns[0].to_string(), text);
     // An overload in a tuple reads as one too.
     let pair = back("(((x: int) -> int) & ((x: f64) -> f64), int)");
     assert_eq!(pair.tuples[0][0].fns[0].arrows.len(), 2);

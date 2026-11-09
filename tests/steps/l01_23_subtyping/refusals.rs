@@ -463,10 +463,12 @@ fn a_literal_argument_and_a_need_result_name_no_cause_when_decided() {
     );
     // What a use of an argument gives against what the use needs: decided here. The
     // checker's own types hold no difference of tuples (a written `\` of tuples is dropped
-    // from them), so no refused check reaches this path from a program.
+    // from them), so no refused check reaches this path from a program. The operand `n` is an
+    // `int`: a literal there would make `f` generic over the carriers (DESIGN.md L1.26a), and
+    // the call would be refused by each carrier's arrow instead.
     assert_eq!(
-        rejected("f(x) = x[1] + 1;\nmain() = f(x: (1, \"s\"));\n"),
-        "2:10: `f` gives \"s\" here, which is not int: the use requires a value of int"
+        rejected("n = 1;\nf(x) = x[1] + n;\nmain() = f(x: (1, \"s\"));\n"),
+        "3:10: `f` gives \"s\" here, which is not int: the use requires a value of int"
     );
 }
 

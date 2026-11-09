@@ -310,7 +310,7 @@ fn checking_a_long_literal_is_refused_when_memory_is_short() {
 #[test]
 fn checking_a_long_float_literal_costs_order_n() {
     let unit = |n: usize| {
-        let text = format!("x = 0.{};\n", "9".repeat(n));
+        let text = format!("x = 0.{}f64;\n", "9".repeat(n));
         let tokens = zedc::lex::lex_fence(&text).expect("the text lexes");
         let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
         let stmts = zedc::ast::unit(&text, &tokens, &tree).expect("it is a unit");
@@ -496,13 +496,13 @@ fn addressing_a_wide_constant_is_refused_when_memory_is_short() {
     }
 }
 
-/// `n = 1; x = n + 0.99…9;` with `n` nines after the point: an f64 literal where an int is
+/// `n = 1; x = n + 0.99…9;` with `n` nines after the point: a decimal literal where an int is
 /// expected.
 fn float_at_int(n: usize) -> String {
     format!("n = 1;\nx = n + 0.{};\n", "9".repeat(n))
 }
 
-/// Item RAT-asks-rest: the message for a long f64 literal where an int is expected quotes it
+/// Item RAT-asks-rest: the message for a long decimal literal where an int is expected quotes it
 /// only in memory asked first. At `n = 2^22` and `2^19` nines, under a limit one and a half
 /// times the literal above what the child holds, the checker's copy of the literal is given
 /// and the message's is refused, so the message names the literal without quoting it, where
@@ -530,7 +530,10 @@ fn the_message_for_a_long_literal_is_written_in_memory_asked_first() {
             .collect();
         assert_eq!(
             messages,
-            ["this literal is an f64 where `int` is expected; a literal takes no other carrier"],
+            [
+                "this literal is a decimal, and `+` expects `int`, the carrier of `n`; a decimal \
+              literal is never an `int`"
+            ],
             "n = {n}"
         );
     }
@@ -597,12 +600,13 @@ fn the_rest_of_k30_is_exact_when_its_ask_is_given() {
     assert_eq!(
         messages,
         [format!(
-            "`0.{nines}` is an f64 where `int` is expected; a literal takes no other carrier"
+            "the literal `0.{nines}` is a decimal, and `+` expects `int`, the carrier of `n`; a \
+             decimal literal is never an `int`; write `f64(n) + 0.{nines}`"
         )]
     );
 }
 
-/// The message for an f64 literal of `n` digits where an int is expected costs O(n): at
+/// The message for a decimal literal of `n` digits where an int is expected costs O(n): at
 /// `n = 2^16` and `8n`.
 #[test]
 fn the_message_for_a_long_literal_costs_order_n() {
@@ -616,7 +620,7 @@ fn the_message_for_a_long_literal_costs_order_n() {
     };
     let n = 1 << 16;
     let units = [unit(n), unit(8 * n)];
-    check_order("the message for an f64 literal of n digits", n, 1, |m| {
+    check_order("the message for a decimal literal of n digits", n, 1, |m| {
         let (_, stmts, res) = units
             .iter()
             .find(|(k, _, _)| *k == m)

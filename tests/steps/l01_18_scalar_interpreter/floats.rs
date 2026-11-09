@@ -7,10 +7,14 @@ use super::x;
 
 #[test]
 fn a_receipt_prints_floats_in_their_shortest_form() {
-    assert_eq!(x("String(0.1 + 0.2)"), "\"0.30000000000000004\"");
-    assert_eq!(x("\"total: ${19.99 * 3.0}\""), "\"total: 59.97\"");
-    assert_eq!(x("String(2.0)"), "\"2.0\"", "a whole float keeps its point");
-    assert_eq!(x("String(-0.0)"), "\"-0.0\"");
+    assert_eq!(x("String(0.1f64 + 0.2)"), "\"0.30000000000000004\"");
+    assert_eq!(x("\"total: ${19.99f64 * 3.0}\""), "\"total: 59.97\"");
+    assert_eq!(
+        x("String(2.0f64)"),
+        "\"2.0\"",
+        "a whole float keeps its point"
+    );
+    assert_eq!(x("String(-0.0f64)"), "\"-0.0\"");
 }
 
 #[test]
@@ -24,15 +28,25 @@ fn fixed_notation_runs_from_one_millionth_to_below_ten_to_the_21() {
         ("5.0e-324", "5.0e-324"),
     ];
     for (lit, want) in cases {
-        assert_eq!(x(&format!("String({lit})")), format!("\"{want}\""), "{lit}");
+        assert_eq!(
+            x(&format!("String({lit}f64)")),
+            format!("\"{want}\""),
+            "{lit}"
+        );
     }
 }
 
 #[test]
 fn of_two_equally_near_shortest_forms_the_larger_magnitude_prints() {
     // The double is exactly 1666666666666669.25; .2 and .3 both read back to it.
-    assert_eq!(x("String(1666666666666669.25)"), "\"1666666666666669.3\"");
-    assert_eq!(x("String(-1666666666666669.25)"), "\"-1666666666666669.3\"");
+    assert_eq!(
+        x("String(1666666666666669.25f64)"),
+        "\"1666666666666669.3\""
+    );
+    assert_eq!(
+        x("String(-1666666666666669.25f64)"),
+        "\"-1666666666666669.3\""
+    );
     assert_eq!(
         x("f64(\"1666666666666669.3\") == 1666666666666669.25"),
         "true"
@@ -215,9 +229,9 @@ fn every_sampled_tie_prints_the_larger_magnitude() {
 
 #[test]
 fn infinities_and_nan_have_names() {
-    assert_eq!(x("String(1.0 / 0.0)"), "\"inf\"");
-    assert_eq!(x("String(-1.0 / 0.0)"), "\"-inf\"");
-    assert_eq!(x("String(0.0 / 0.0)"), "\"nan\"");
+    assert_eq!(x("String(1.0f64 / 0.0)"), "\"inf\"");
+    assert_eq!(x("String(-1.0f64 / 0.0)"), "\"-inf\"");
+    assert_eq!(x("String(0.0f64 / 0.0)"), "\"nan\"");
     assert_eq!(x("f64(\"-inf\") < 0.0"), "true");
     assert_eq!(
         x("f64(\"nan\") == f64(\"nan\")"),

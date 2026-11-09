@@ -92,17 +92,17 @@ fn a_comparison_offers_the_same_casts() {
 
 #[test]
 fn parameters_without_declared_types_are_shown_with_the_uses_that_gave_their_carriers() {
-    let src = program("mix(positional a, positional b) = (a * 1r, b * 2.5, a + b);");
+    let src = program("mix(positional a, positional b) = (a * 1r, b * 2.5f64, a + b);");
     let out = rejected(&src);
     assert!(
-        out.starts_with("1:53: `+` does not take (rat, f64): these are the types of its arguments here, and `+` has no arrow that takes them all"),
+        out.starts_with("1:56: `+` does not take (rat, f64): these are the types of its arguments here, and `+` has no arrow that takes them all"),
         "{out}"
     );
     let s = steps(&out);
     for step in [
         "`a` has no declared type; its uses give it rat",
         "`b` has no declared type; its uses give it f64",
-        "the literal 2.5 takes f64",
+        "the literal 2.5f64 takes f64",
     ] {
         assert!(s.contains(&step), "{step}\n{out}");
     }
@@ -114,13 +114,13 @@ fn parameters_without_declared_types_are_shown_with_the_uses_that_gave_their_car
 
 #[test]
 fn values_joined_by_an_earlier_use_offer_the_cast_of_the_joined_one() {
-    // `a + b` gives `a` and `b` one carrier, `a * 1r` makes it rat, and `b * 2.5` meets f64.
-    let src = program("join(positional a, positional b) = (a + b, a * 1r, b * 2.5);");
+    // `a + b` gives `a` and `b` one carrier, `a * 1r` makes it rat, and `b * 2.5f64` meets f64.
+    let src = program("join(positional a, positional b) = (a + b, a * 1r, b * 2.5f64);");
     let out = rejected(&src);
     let s = steps(&out);
     assert!(s.contains(&"`+` gives these values one carrier"), "{out}");
     assert!(out.contains(&offered("f64(b)")), "{out}");
-    checks(&edited(&src, "b * 2.5", "f64(b) * 2.5"));
+    checks(&edited(&src, "b * 2.5f64", "f64(b) * 2.5f64"));
 }
 
 #[test]
@@ -278,22 +278,28 @@ fn entry(cast: &str) -> String {
 
 #[test]
 fn a_plain_literal_beside_a_value_of_another_carrier_is_a_case_of_the_row() {
-    // README.md's `bad = q + 1.5;` with `q` an `int`: the literal is refused, as it adopts no
-    // carrier, and the error is the row's, with the literal's other forms in its message and
-    // the cast of the operand in its menu.
+    // README.md's `bad = q + 1.5;` with `q` an `int`: a decimal literal is never an `int`, so
+    // the literal is refused in the row of a literal at a carrier it cannot take, with the
+    // operation rewritten in its message and each cast of the operand that checks in its menu.
     let src = program("half(q: int) = q + 1.5;");
-    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
+    assert_eq!(rows(&src), [Some(Row::LiteralCarrier)]);
     let out = rejected(&src);
     assert!(
-        out.starts_with("1:20: `1.5` is an f64 where `int` is expected"),
+        out.starts_with(
+            "1:20: the literal `1.5` is a decimal, and `+` expects `int`, the carrier of `q`; a \
+             decimal literal is never an `int`; write `f64(q) + 1.5`"
+        ),
         "{out}"
     );
     assert!(steps(&out).contains(&"`q` is declared `int`"), "{out}");
-    assert_eq!(menu(&src), [entry("f64(q)")]);
+    assert_eq!(menu(&src), [entry("rat(q)"), entry("f64(q)")]);
     checks(&edited(&src, "q + 1.5", "f64(q) + 1.5"));
-    // The same literal where `int` has no arrow is still a case of the row.
-    let src = program("half(r: rat) = r * 1.5;");
-    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
+    checks(&edited(&src, "q + 1.5", "rat(q) + 1.5"));
+    // Beside a `rat` a bare decimal takes `rat`; one with the suffix `f64` is a case of the
+    // row.
+    checks(&program("half(r: rat) = r * 1.5;"));
+    let src = program("half(r: rat) = r * 1.5f64;");
+    assert_eq!(rows(&src), [Some(Row::LiteralCarrier)]);
     assert_eq!(menu(&src), [entry("f64(r)")]);
 }
 
@@ -349,26 +355,33 @@ fn a_rat_literal_that_no_f64_holds_exactly_is_offered_no_literal() {
 #[test]
 fn a_comparison_with_a_literal_of_another_carrier_offers_the_cast_of_the_value() {
     let src = program("one(n: int) = n == 1.0;");
-    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
+    assert_eq!(rows(&src), [Some(Row::LiteralCarrier)]);
     let out = rejected(&src);
     let s = steps(&out);
     assert!(s.contains(&"`n` is declared `int`"), "{out}");
-    assert!(s.contains(&"this literal, 1.0, is 1.0"), "{out}");
-    assert_eq!(menu(&src), [entry("f64(n)")]);
+    assert_eq!(menu(&src), [entry("rat(n)"), entry("f64(n)")]);
     checks(&edited(&src, "n == 1.0", "f64(n) == 1.0"));
-    let src = program("one(r: rat) = r == 1.0;");
+    checks(&edited(&src, "n == 1.0", "rat(n) == 1.0"));
+    checks(&edited(&src, "n == 1.0", "n == 1"));
+    // Beside a `rat` a bare decimal takes `rat`; one with the suffix `f64` is refused.
+    checks(&program("one(r: rat) = r == 1.0;"));
+    let src = program("one(r: rat) = r == 1.0f64;");
     assert_eq!(menu(&src), [entry("f64(r)")]);
-    checks(&edited(&src, "r == 1.0", "f64(r) == 1.0"));
+    checks(&edited(&src, "r == 1.0f64", "f64(r) == 1.0f64"));
 }
 
 #[test]
 fn two_literals_of_different_carriers_compared_show_both() {
-    let src = program("same() = 1 == 1.0;");
-    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
+    // Each literal has a suffix, so neither takes the other's carrier.
+    let src = program("same() = 1r == 1.0f64;");
+    assert_eq!(rows(&src), [Some(Row::LiteralCarrier)]);
     let out = rejected(&src);
     let s = steps(&out);
-    assert!(s.contains(&"this literal, 1, is 1"), "{out}");
-    assert!(s.contains(&"this literal, 1.0, is 1.0"), "{out}");
+    // A `rat` literal is shown as the expression it is.
+    assert!(s.contains(&"this expression is 1r"), "{out}");
+    assert!(s.contains(&"this literal, 1.0f64, is 1.0"), "{out}");
+    // A bare `1` takes the carrier of a decimal with a suffix.
+    checks(&program("same() = 1 == 1.0f64;"));
 }
 
 #[test]

@@ -38,7 +38,7 @@ use zed_kernel::types::Type;
 use zedc::store::product::{Arm, Product, Scope, arms};
 
 use zed_tests::step_helpers::l01_16_elaboration::elab;
-use zed_tests::step_helpers::l01_25_preimage_catalog::function;
+use zed_tests::step_helpers::l01_25_preimage_catalog::{function, int_defs};
 
 /// The scope of integer parameters `ps`, known only when the program runs.
 fn ints(ps: &[Arc<str>]) -> Scope {
@@ -48,8 +48,16 @@ fn ints(ps: &[Arc<str>]) -> Scope {
     )
 }
 
-/// The arms of the function `ok` that `src` defines, its parameters integers.
+/// The arms of the function `ok` that `src` defines, its parameters integers: each written
+/// without a type is declared `int` ([`int_defs`]), as a bare literal no longer fixes it
+/// (L1.26a).
 fn arms_of(src: &str) -> (Vec<Arc<str>>, Term, Vec<Arm>) {
+    generic_arms_of(&int_defs(src))
+}
+
+/// [`arms_of`] with the parameters as written, integers in the scope: a literal compared with
+/// one whose type is not written follows its carrier, by a `match` on it (L1.26a).
+fn generic_arms_of(src: &str) -> (Vec<Arc<str>>, Term, Vec<Arm>) {
     let (ps, body) = function(src);
     let a = arms(&body, &ints(&ps));
     (ps, body, a)

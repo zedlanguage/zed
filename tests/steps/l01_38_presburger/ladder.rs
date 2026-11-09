@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use zed_kernel::Value;
 use zed_tests::scaling;
-use zed_tests::step_helpers::l01_25_preimage_catalog::function;
+use zed_tests::step_helpers::l01_25_preimage_catalog::int_ok;
 use zedc::store::preimage::relations;
 use zedc::store::presburger::{
     self, Atom, Con, Entailment, Factor, Formula, Lin, Relation, entails,
@@ -64,6 +64,13 @@ fn true_on_window(premise: &str, goal: &str) -> bool {
     window(ps.len(), -4, 4)
         .iter()
         .all(|w| !holds(&p, &ps, w) || holds(&g, &ps, w))
+}
+
+/// The parameters and body of `ok` in `src`, each of its parameters written without a type
+/// declared `int` ([`int_ok`]): rung 2 reads integers, and a bare literal no longer makes a
+/// parameter `int` (L1.26a).
+fn function(src: &str) -> (Vec<Arc<str>>, zed_kernel::Term) {
+    zed_tests::step_helpers::l01_25_preimage_catalog::function(&int_ok(src))
 }
 
 const TRUE: &str = "ok(x: int, y: int) = true;";
@@ -195,8 +202,9 @@ fn clamp_is_in_range_exactly_when_lo_is_at_most_hi() {
 fn a_helper_without_recursion_is_unfolded_at_each_call() {
     // "A call, reached by name or through a function value, is unfolded: its callee's body
     // with the arguments bound gives its value." The helper's binder is named apart from
-    // `ok`'s, so elaboration does not rename `x`.
-    let g = "g(positional u) = u + 1;\n";
+    // `ok`'s, so elaboration does not rename `x`. Its parameter is declared `int`: written
+    // without a type, `u + 1` would be generic (L1.26a), and rung 2 reads integers.
+    let g = "g(positional u: int) = u + 1;\n";
     assert_proved("ok(x) = true;", &format!("{g}ok(x) = g(x) > x;"));
     assert_proved("ok(x) = true;", &format!("{g}ok(x) = g(g(x)) == x + 2;"));
     let w = refuted_at("ok(x) = true;", &format!("{g}ok(x) = g(g(x)) == x + 1;"));
@@ -357,12 +365,23 @@ fn each_partial_operation_and_each_place_it_fails_in_agrees_with_the_interpreter
 fn a_call_with_an_argument_that_may_fail_is_read_at_its_place() {
     // `f((x mod n) * 0)` and `f(0)` pass arguments with the same linear term, `0`, but at
     // `n = 0` the first is `#divByZero`, so `f` gives `false` there and `true` for `0`. A call
-    // shared by the arguments' terms would prove the goal. Rung 2 does not yet translate a
-    // callee that reads an argument holding a quotient or remainder by a term, with or
-    // without the condition, so it takes nothing here; the call is shared only with calls
+    // shared by the arguments' terms would prove the goal; the call is shared only with calls
     // whose arguments have the same terms and the same conditions
-    // ([`Walk::shared_call_key`] in preimage.rs).
+    // ([`Walk::shared_call_key`] in preimage.rs). Written without a type, `a == 0` follows
+    // the carrier of `a` (L1.26a), the comparison of an atom with `0` is `false`, and rung 2
+    // refutes both goals at `n = 0`, a point the interpreter confirms ([`checked`]).
     let f = "f(positional a) = a == 0;\n";
+    for goal in [
+        format!("{f}ok(x, n) = f((x mod n) * 0) == f(0);"),
+        format!("{f}ok(x, n) = f(x mod n);"),
+    ] {
+        let e = checked("ok(x, n) = true;", &goal);
+        assert!(matches!(e, Entailment::Refuted(_)), "{goal}: {e}");
+    }
+    // With `a` declared `int`, an argument that fails bubbles out of the call, which rung 2
+    // does not yet translate where the argument holds a quotient or remainder by a term, with
+    // or without the condition, so it takes nothing here.
+    let f = "f(positional a: int) = a == 0;\n";
     for goal in [
         format!("{f}ok(x, n) = f((x mod n) * 0) == f(0);"),
         format!("{f}ok(x, n) = f(x mod n);"),

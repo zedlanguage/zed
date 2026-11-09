@@ -718,6 +718,8 @@ fn a_lambda_uses_its_bounded_parameters_as_a_declared_function_does() {
     // Each use is checked at each carrier of the bound: at int, and for `p_wide` at f64.
     let cases = [
         ("y = p(g: (x) -> x + 1);\n", "2"),
+        // A literal without a suffix takes the carrier of `x` (step L1.26a).
+        ("y = p_wide(g: (x) -> x + 1);\n", "2.5"),
         ("y = p_wide(g: (x) -> x + x);\n", "3.0"),
         ("y = p_wide(g: (x) -> -x);\n", "-1.5"),
         ("y = p_wide(g: (x) -> x - x);\n", "0.0"),
@@ -758,11 +760,11 @@ fn a_lambda_uses_its_bounded_parameters_as_a_declared_function_does() {
 #[test]
 fn a_lambda_whose_uses_the_bound_does_not_allow_is_an_error() {
     let cases = [
-        // The literal 1 makes `x` an int, and `p_wide` passes an f64 too.
+        // `int(1)` makes `x` an int, and `p_wide` passes an f64 too.
         (
-            "y = p_wide(g: (x) -> x + 1);\n",
+            "y = p_wide(g: (x) -> x + int(1));\n",
             "the lambda is `(x: int) -> int`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one \
-             [(x) -> x + 1]",
+             [(x) -> x + int(1)]",
         ),
         (
             "y = p_wide(g: (x, k = 2) -> x + k);\n",

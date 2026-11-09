@@ -120,8 +120,7 @@ fn number_kind(rule: &str) -> Option<Kind> {
     match rule {
         "Rational" => Some(Kind::Rat),
         "Float" => Some(Kind::Float),
-        // A generic integer, `1n`, parses as an integer (DESIGN.md L1.26a).
-        "Integer" | "Generic" => Some(Kind::Int),
+        "Integer" => Some(Kind::Int),
         _ => None,
     }
 }

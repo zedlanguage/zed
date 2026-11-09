@@ -275,7 +275,8 @@ pub(super) enum Frame<'a> {
     Tests(Box<ScopeF<'a>>),
     TestArgs(Box<TestF<'a>>),
     TestWant(Box<TestF<'a>>, Ty),
-    Bind(&'a Stmt),
+    /// A binding, with the number of errors before its value is checked.
+    Bind(&'a Stmt, usize),
     Declared(&'a Stmt),
     Pushed(&'a Stmt),
     InferGiven(Box<InferF<'a>>),
@@ -395,8 +396,8 @@ pub(super) struct InferF<'a> {
     i: usize,
     /// While a default is checked: the class of its parameter's type, if it is one.
     waiting: Option<Option<usize>>,
-    /// While a closed default is checked for `given`.
-    closed: bool,
+    /// While a closed default is checked for `given`: the number of errors before it.
+    closed: Option<usize>,
 }
 
 pub(super) struct AtomF<'a> {
@@ -979,9 +980,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let TestF { f, sig, case, .. } = *s;
                 self.test_case(m, f, sig, case + 1);
             }
-            Frame::Bind(s) => {
+            Frame::Bind(s, before) => {
                 let v = m.take_ty();
-                self.bind(s, v);
+                self.bind(s, v, before);
             }
             Frame::Declared(s) => {
                 let sig = m.take_sig();
@@ -1357,7 +1358,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 "name resolution rejects every mutable variable, indexed definition, while, until and expression statement before the checker reads the program"
             ),
             StmtKind::Bind { value, .. } => {
-                m.k(Frame::Bind(s));
+                m.k(Frame::Bind(s, self.info.errors.len()));
                 m.job(Job::Expr(value));
             }
             StmtKind::Function(f) => {
@@ -1372,13 +1373,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// The binding `s` of a value of `v`.
-    fn bind(&mut self, s: &'a Stmt, v: Ty) {
+    /// The binding `s` of a value of `v`, whose check found the errors after the first
+    /// `before`.
+    fn bind(&mut self, s: &'a Stmt, v: Ty, before: usize) {
         let StmtKind::Bind { targets, value, .. } = &s.kind else {
             unreachable!("a binding")
         };
         match &targets[..] {
             [Target::Name(n, _)] => {
+                if self.level == 0
+                    && let Some((at, message)) = unfixed_binding(value, n)
+                {
+                    self.rejects_unfixed(value, before, at, message);
+                }
                 let id = self.id(s.span, n);
                 self.origin(id, value.span, Why::Defined(v.clone()), Some(value.span));
                 self.alias.insert(id, value.span);
@@ -1460,17 +1467,37 @@ impl<'t, 'a> Ck<'t, 'a> {
             tys: Vec::new(),
             i: 0,
             waiting: None,
-            closed: false,
+            closed: None,
         };
         self.infer_given(m, Box::new(s));
+    }
+
+    /// Rejects `value`, bound to a name with nothing to give its literals a carrier, at `at`
+    /// with `message` (row UnfixedDecimal). The errors its check found, those after the first
+    /// `before`, are dropped where they lie in `value`: there an operator met an operation on
+    /// integer literals typed `int`, as `/` meets `1 + 2` in `y = (1 + 2) / 3`, which is
+    /// rejected as the value's `/`, not as its operands (step L1.26a).
+    fn rejects_unfixed(&mut self, value: &Expr, before: usize, at: Span, message: String) {
+        let found = self.info.errors.split_off(before);
+        let inside = |e: &Error| value.span.start <= e.span.start && e.span.end <= value.span.end;
+        (self.info.errors).extend(found.into_iter().filter(|e| !inside(e)));
+        let notes = self.derive(&[at]);
+        self.rejects_with(Row::UnfixedDecimal, at, message, notes);
     }
 
     /// The type each parameter's annotation or closed default gives it, in turn; then the
     /// parameters bound.
     fn infer_given(&mut self, m: &mut M<'a>, mut s: Box<InferF<'a>>) {
-        if s.closed {
-            s.closed = false;
+        if let Some(before) = s.closed.take() {
             let t = m.take_ty();
+            // A default that reads no parameter is bound to its parameter as a value is to a
+            // name, and nothing gives a decimal literal in it a carrier: `rate = 0.2` is
+            // rejected as `rate = 0.2;` is (step L1.26b).
+            let p = &s.f.params[s.given.len()];
+            let d = p.default.as_ref().expect("a closed default");
+            if let Some((at, message)) = unfixed_binding(d, &p.name) {
+                self.rejects_unfixed(d, before, at, message);
+            }
             let mut out = Ty::empty();
             for piece in t.pieces() {
                 out = out.union(&match piece.carrier() {
@@ -1493,7 +1520,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 s.given.push(None);
                 continue;
             }
-            s.closed = true;
+            s.closed = Some(self.info.errors.len());
             m.k(Frame::InferGiven(s));
             return m.job(Job::Expr(d));
         }
@@ -1717,7 +1744,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     m.ty(Ty::empty())
                 }
             },
-            ExprKind::Int { .. } | ExprKind::Float(_) => m.ty(Ty::empty()),
+            ExprKind::Int { .. } | ExprKind::Float { .. } => m.ty(Ty::empty()),
             ExprKind::Bool(b) => m.ty(Ty::lit(&Value::Bool(*b))),
             ExprKind::Atom(a) => m.ty(Ty::set(KType::atom(a))),
             ExprKind::Str(parts) => {
@@ -1811,6 +1838,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             match p {
                 StrPart::Text(t) => s.text.push_str(t),
                 StrPart::Hole(h) => {
+                    // A hole takes every carrier, as `String` does, so it gives a literal
+                    // none: `"${0.5}"` is rejected, and `"${1}"` is an `int` (step L1.26b).
+                    if let Some(l) = literal(h).filter(|l| l.bare)
+                        && lit_carrier(&l.value) != Carrier::Int
+                    {
+                        let notes = self.derive(&[l.site]);
+                        let message = unfixed(&l, &[Carrier::F64, Carrier::Rat], None);
+                        self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
+                    }
                     s.hole = Some(h);
                     m.k(Frame::Str(s));
                     return m.job(Job::Expr(h));
@@ -1875,8 +1911,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The type of an `if` whose branches `then` and `otherwise` have the types `a` and `b`:
-    /// their union; but where one branch is a literal `kn`, or of a class of generic literals
-    /// only, as `1n + 1n` is, and the other's type is one class, the literal joins the class,
+    /// their union; but where one branch is a literal without a suffix, or of a class of generic literals
+    /// only, as `1 + 1` is inside a function, and the other's type is one class, the literal joins the class,
     /// generic, or the classes merge, and the `if` has the class's type (L1.26a).
     fn branches(&mut self, then: &Expr, a: &Ty, otherwise: &Expr, b: &Ty) -> Ty {
         for (e, t, other) in [(then, a, b), (otherwise, b, a)] {
@@ -1887,7 +1923,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(g) if self.classes[g].generic => self.merge(k, g, "an `if`", e.span),
                 Some(_) => false,
                 None => literal(exported(e))
-                    .filter(|l| l.n)
+                    .filter(|l| l.bare)
                     .is_some_and(|l| self.join(k, &l.joining(), false)),
             };
             if joined {
@@ -1907,20 +1943,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         b: &'a Expr,
         span: Span,
     ) -> Ty {
-        // A `kn` operand is generic: it takes the carrier of the other operand, at run time
-        // where that is a type variable (step L1.26a). Under `==` it follows as any literal.
+        // An operand that is a literal without a suffix is generic: it takes the carrier of the
+        // other operand, at run time where that is a type variable (step L1.26a). Under `==`
+        // it follows as any literal.
         if !matches!(op, "==" | "!=") {
             for l in [&mut x.lit, &mut y.lit].into_iter().flatten() {
-                l.generic = l.n;
+                l.generic = l.bare;
             }
-            // Two generic operands, as in `1n + 1n`, make a class of their own inside a
+            // Two generic operands, as in `1 + 2`, make a class of their own inside a
             // function: generic, it takes the carrier of what it meets, the first operand
             // taking it from a parameter of the class and the second following the first; it
             // takes int where it meets no carrier.
             if self.level > 0
                 && let (Some(a), Some(b)) = (&x.lit, &y.lit)
-                && a.n
-                && b.n
+                && a.bare
+                && b.bare
             {
                 let k = self.generic_class(a);
                 x = Arg {
@@ -1935,6 +1972,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.data(&x.ty, &format!("`{op}`"), span, x.at.unwrap_or(span));
                 self.data(&y.ty, &format!("`{op}`"), span, y.at.unwrap_or(span));
                 self.equal(&x, &y);
+                let op = if op == "==" { "==" } else { "!=" };
+                for (l, v, left) in [(&x, &y, true), (&y, &x, false)] {
+                    if let (Some(lit), None) = (&l.lit, &v.lit)
+                        && lit.bare
+                    {
+                        self.eq_sides.insert(lit.site, (op, v.at, left));
+                        if self.class_of_ty(&v.ty).is_none() && holds_text_only(&v.ty) {
+                            self.texts(lit);
+                        }
+                    }
+                }
                 Ty::carrier(Carrier::Bool)
             }
             "<" | "<=" | ">" | ">=" => self.compare(op, x, y, span),
@@ -2083,6 +2131,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         if w == "String" {
             self.data(&x.ty, "`String`", span, x.at.unwrap_or(span));
+            // `String` takes every carrier, so it gives a literal none: an integer literal is
+            // `int`, and a decimal one, as in `String(0.5)`, is rejected (step L1.26b).
+            if let Some(l) = x.lit.as_ref().filter(|l| l.bare)
+                && lit_carrier(&l.value) != Carrier::Int
+            {
+                let notes = self.derive(&[l.site]);
+                let message = unfixed(l, &[Carrier::F64, Carrier::Rat], None);
+                self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
+            }
         }
         let sig = word_sig(w);
         self.apply(&format!("`{w}`"), &sig, vec![Some(x)], true, span)
@@ -3735,7 +3792,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 "this value is {}, not a tuple of {n}: it is taken apart into {n} \
                                  names, one for each component, so it must be a tuple of {n} \
                                  components",
-                                self.text(&p.ty())
+                                self.show(&p.ty())
                             ),
                             menu,
                         );
@@ -4448,25 +4505,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// closed type `ty`.
     fn into(&mut self, on: &Ty, ty: &Ty, what: &str, span: Span) {
         for piece in on.pieces() {
-            let ok = match self.class_of(&piece) {
-                _ if piece == Piece::Dyn => ty.dynamic,
-                _ if matches!(piece, Piece::Var(_)) && self.class_of(&piece).is_none() => true,
-                Some(k) => {
-                    let ok = self.restrict(k, mask_of(ty), what, span);
-                    let kind = NeedKind::Into {
-                        what: what.into(),
-                        ty: ty.clone(),
-                    };
-                    self.need(k, kind, false, span);
-                    ok
-                }
-                None => match &piece {
-                    Piece::Fn(s) if !s.needs.is_empty() => {
-                        self.fit_needs(s, ty, &mut Binds::new(), what, span)
-                    }
-                    _ => self.sub(&piece.ty(), ty, &mut Binds::new()),
-                },
-            };
+            let ok = self.piece_into(&piece, ty, what, span);
             if !ok {
                 let p = self.show(&piece.ty());
                 let why = on.of_piece(&piece).refused(ty);
@@ -4487,6 +4526,39 @@ impl<'t, 'a> Ck<'t, 'a> {
                     menu,
                 );
             }
+        }
+    }
+
+    /// Whether a value of the one piece `piece` may be passed, by `what` at `span`, at a
+    /// parameter of the closed type `ty`: a class is restricted to the carriers of `ty`, and a
+    /// tuple whose components hold classes, as `(1, 2)` of literals without a suffix, is
+    /// passed component by component where `ty` is one tuple shape of its length.
+    fn piece_into(&mut self, piece: &Piece, ty: &Ty, what: &str, span: Span) -> bool {
+        match self.class_of(piece) {
+            _ if *piece == Piece::Dyn => ty.dynamic,
+            _ if matches!(piece, Piece::Var(_)) && self.class_of(piece).is_none() => true,
+            Some(k) => {
+                let ok = self.restrict(k, mask_of(ty), what, span);
+                let kind = NeedKind::Into {
+                    what: what.into(),
+                    ty: ty.clone(),
+                };
+                self.need(k, kind, false, span);
+                ok
+            }
+            None => match piece {
+                Piece::Fn(s) if !s.needs.is_empty() => {
+                    self.fit_needs(s, ty, &mut Binds::new(), what, span)
+                }
+                Piece::Tuple(r) if r.open() => match &ty.pieces()[..] {
+                    [Piece::Tuple(q)] if q.len() == r.len() => r
+                        .iter()
+                        .zip(q.iter())
+                        .all(|(c, t)| c.pieces().iter().all(|p| self.piece_into(p, t, what, span))),
+                    _ => self.sub(&piece.ty(), ty, &mut Binds::new()),
+                },
+                _ => self.sub(&piece.ty(), ty, &mut Binds::new()),
+            },
         }
     }
 
@@ -5997,8 +6069,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         with[i] = Some(Arg { at, ..Arg::of(ty) });
         let saved = self.mark();
         self.trying = true;
+        self.rough = true;
         self.apply(what, sig, with, pass, span);
         let ok = self.info.errors.len() == saved.errors;
+        self.rough = false;
         self.trying = false;
         self.undo(&saved);
         ok
@@ -6123,19 +6197,65 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Reports a literal of `args` rejected at a parameter of `sig` with the message `m` at
     /// `s`: in the row of an operator with no arrow at its operands' carrier where that holds
-    /// (`7 / 2`); in the row of two numbers with no common carrier where that holds
-    /// (`q + 1.5` with `q: int`), with the application's derivation and the casts of the other
-    /// operands the checker accepts, `f64(q)`, where the message holds the literal's own
-    /// forms; and in no row otherwise.
+    /// (`x / 2` with `x: int`); in the row of a literal at a carrier it cannot take where the
+    /// operands have no common carrier (`q * 2.0` with `q: int`), with the application's
+    /// derivation and the casts of the other operands the checker accepts, `f64(q)`, where the
+    /// message holds the literal's own forms, and with the message naming the operator and
+    /// the operand of carrier `int` where a decimal literal meets one (DESIGN.md
+    /// sec:diagnostics, the worked example at an operator); and in no row otherwise.
     fn literal_refused(
         &mut self,
         what: &str,
         sig: &Sig,
         args: &[Option<Arg<'a>>],
-        (s, m): (Span, String),
+        (s, mut m): (Span, String),
         pass: bool,
         span: Span,
     ) {
+        // A decimal literal beside an operand that is an `int` gets the worked message of
+        // sec:diagnostics, which names the operand: an operand whose numbers are `int`s, as
+        // `n` bound to `1`, or of a class that holds `int` alone.
+        let lit = args
+            .iter()
+            .flatten()
+            .find_map(|a| a.lit.as_ref().filter(|l| l.site == s));
+        let int = |ck: &Self, t: &Ty| {
+            t.numeric_carrier() == Some(Carrier::Int)
+                || ck.class_of_ty(t).is_some_and(|r| {
+                    let r = ck.find(r);
+                    ck.classes[r].mask == Carrier::Int.bit()
+                })
+        };
+        let other = args
+            .iter()
+            .flatten()
+            .find(|a| a.lit.is_none() && int(self, &a.ty));
+        if let (Some(l), Some(o)) = (lit, other)
+            && l.bare
+            && lit_carrier(&l.value) == Carrier::F64
+        {
+            let t = self.t;
+            let name = match o.at.and_then(|at| self.seen.get(&at)) {
+                Some((_, Src::Name(id))) => Some(t.res.binders[*id].name.as_str()),
+                _ => None,
+            };
+            // The operator's symbol, and whether the literal is its left operand, where it is
+            // a binary arithmetic operator.
+            let op = what
+                .strip_prefix('`')
+                .and_then(|w| w.strip_suffix('`'))
+                .filter(|o| matches!(*o, "+" | "-" | "*" | "/") && args.len() == 2)
+                .map(|o| {
+                    (
+                        o,
+                        args[0]
+                            .as_ref()
+                            .and_then(|a| a.lit.as_ref())
+                            .is_some_and(|a| a.site == s),
+                    )
+                });
+            m = decimal_at_int(l, what, name, op);
+        }
         if self.no_arrow_at_carrier(what, sig, args) {
             let notes = self.derive(&[s]);
             self.rejects_with(Row::NoArrowAtCarrier, s, m, notes);
@@ -6153,9 +6273,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 notes.extend(self.repairs(what, sig, args, pass, span));
             }
-            self.rejects_with(Row::NoCommonCarrier, s, m, notes);
+            self.rejects_with(Row::LiteralCarrier, s, m, notes);
         } else {
-            self.error(s, m);
+            // A refused literal is a literal at a carrier it cannot take, whatever else the
+            // application holds.
+            let notes = self.derive(&[s]);
+            self.rejects_with(Row::LiteralCarrier, s, m, notes);
         }
     }
 
@@ -6244,23 +6367,53 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Ty::var(format!("${}", self.find(k)).into())
                 }
                 _ if !lits.is_empty() => {
-                    // The carrier of the bound its literals adopt fewest times to.
-                    let adoptions = |c: Carrier| {
-                        lits.iter()
-                            .all(|l| adoptable(l, c))
-                            .then(|| lits.iter().filter(|l| lit_carrier(&l.value) != c).count())
-                    };
-                    let Some(c) = Carrier::of_mask(m)
-                        .filter_map(|c| adoptions(c).map(|n| (n, c)))
-                        .min_by_key(|&(n, _)| n)
-                        .map(|(_, c)| c)
-                    else {
-                        return fail(self);
-                    };
-                    for l in &lits {
-                        self.adopt_to(l, c);
+                    // Literals alone, as in `inc(x: 2.5)`: the carriers of the bound that
+                    // every literal takes. Inside a function they make a class of their own,
+                    // which takes the carrier of what the result meets, and `int` or a
+                    // rejection where it meets none ([`Ck::resolve`]). Outside one nothing
+                    // else gives them a carrier: integer literals alone are `int` where the
+                    // bound holds it, one carrier left is taken, and with two or more the
+                    // first decimal literal, or else the first literal, is rejected.
+                    let takes: Vec<Carrier> = Carrier::of_mask(m)
+                        .filter(|&c| lits.iter().all(|l| fits(l, c)))
+                        .collect();
+                    let ints = lits.iter().all(|l| lit_carrier(&l.value) == Carrier::Int);
+                    match takes[..] {
+                        [] => return fail(self),
+                        _ if self.level > 0 && self.replaying == 0 => {
+                            let k = self.class();
+                            self.classes[k].generic = true;
+                            if !self.restrict(k, m, what, span) {
+                                return fail(self);
+                            }
+                            for l in &lits {
+                                if !self.join(k, &l.joining(), false) {
+                                    return fail(self);
+                                }
+                            }
+                            Ty::var(format!("${}", self.find(k)).into())
+                        }
+                        _ => {
+                            let c = match takes[..] {
+                                _ if ints && takes.contains(&Carrier::Int) => Carrier::Int,
+                                [c] => c,
+                                [c, ..] => {
+                                    let l = (lits.iter())
+                                        .find(|l| lit_carrier(&l.value) == Carrier::F64)
+                                        .unwrap_or(&lits[0]);
+                                    let notes = self.derive(&[l.site]);
+                                    let message = unfixed(l, &takes, None);
+                                    self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
+                                    c
+                                }
+                                [] => unreachable!("a carrier every literal takes"),
+                            };
+                            for l in &lits {
+                                self.adopt_to(l, c);
+                            }
+                            Ty::carrier(c)
+                        }
                     }
-                    Ty::carrier(c)
                 }
                 // Every value of the arguments here passed by under rule 6 (`add(w(n), w(n))`
                 // with `w` giving atoms only): the call never takes place, so the variable
@@ -6301,7 +6454,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 continue;
             }
-            let ty = match adopted(a, p) {
+            let ty = match adopted(a, p, self.rough) {
                 // A literal that cannot adopt is its own error, and the application's none.
                 Err((s, m)) => {
                     self.lit_refused.push((s, m));

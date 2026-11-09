@@ -12,7 +12,7 @@ use zed_kernel::{Shared, Term, Value, eval};
 use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::elab;
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
-use zed_tests::step_helpers::l01_25_preimage_catalog::function;
+use zed_tests::step_helpers::l01_25_preimage_catalog::{function, int_defs};
 use zed_tests::step_helpers::l01_26_type_resolution::sig_of;
 use zedc::store::presburger::Entailment;
 
@@ -91,11 +91,14 @@ fn integer_associativity_is_still_proved() {
     for law in [ADD_ASSOC, DISTRIB] {
         proved(&t, &ok("a, b, c", "int", law));
     }
-    // An unannotated function whose integer literal makes its parameters `int`.
-    proved(
+    // A bare literal takes the carrier of its use (L1.26a), so an unannotated function's
+    // parameters stay generic and are not read; declared `int`, they are.
+    let (p, g) = (
         "ok(a, b, c) = a >= 0;",
         "ok(a, b, c) = (a + b) + c + 0 == a + (b + c);",
     );
+    assert!(verdict(p, g).is_none());
+    proved(&int_defs(p), &int_defs(g));
 }
 
 #[test]
@@ -211,8 +214,8 @@ fn the_int_parameters_of_a_signature() {
         ("ok(a: bool, x: int) = a && x > 0;", vec![false, true]),
         // A type variable bounded by `int | f64 | rat`.
         ("ok(a, b) = a < b;", vec![false, false]),
-        // The literal makes both `int`.
-        ("ok(a, b) = a + 1 < b;", vec![true, true]),
+        // A bare literal takes the carrier of its use (L1.26a), so both stay generic.
+        ("ok(a, b) = a + 1 < b;", vec![false, false]),
         // A member atom: `#none + 1` is not an integer sum.
         ("ok(a: int | #none) = a == a;", vec![false]),
         // A parameter that is never read is generic and so not `int`.

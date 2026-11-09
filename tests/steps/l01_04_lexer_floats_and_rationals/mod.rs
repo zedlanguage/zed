@@ -13,7 +13,10 @@ fn toks(text: &str) -> Vec<Tok> {
 }
 
 fn float(s: &str) -> Tok {
-    Tok::Float(s.to_string().into())
+    Tok::Float {
+        digits: s.to_string().into(),
+        forced: false,
+    }
 }
 
 fn rat(s: &str) -> Tok {

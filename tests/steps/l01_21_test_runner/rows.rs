@@ -54,8 +54,10 @@ fn each_argument_rule_names_its_row() {
 #[test]
 fn a_linear_question_outside_the_fragment_names_its_row() {
     // Four variables: a splinter over three is now decided (LIVE3).
-    let unit = "ok(x, y, z, w) = 9 * x - 4 * y - 8 * w - 3 >= 0 && 5 * x + 11 * y + 9 * w - 9 >= \
-                0 && -7 * x - 12 * y - 2 * z + 8 * w - 1 >= 0 && -9 * x + 8 * y + 7 * z >= 0 && \
+    // Each parameter is declared `int`: the checker asks a linear question only of a function
+    // whose parameters are all `int`.
+    let unit = "ok(x: int, y: int, z: int, w: int) = 9 * x - 4 * y - 8 * w - 3 >= 0 && \
+                5 * x + 11 * y + 9 * w - 9 >= 0 && -7 * x - 12 * y - 2 * z + 8 * w - 1 >= 0 && -9 * x + 8 * y + 7 * z >= 0 && \
                 -10 * x + 4 * y - 6 * z - 4 * w + 22 >= 0;  // ✗ Linear question outside the \
                 polynomial fragment of the linear-relation domain: a splinter\n";
     assert_eq!(checks(unit), ["1:1: ok"]);

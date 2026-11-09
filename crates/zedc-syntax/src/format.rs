@@ -107,7 +107,7 @@ fn level(e: &Expr) -> u8 {
         | ExprKind::Spread { .. }
         | ExprKind::Read { .. } => POSTFIX,
         ExprKind::Int { .. }
-        | ExprKind::Float(_)
+        | ExprKind::Float { .. }
         | ExprKind::Rat(_)
         | ExprKind::Str(_)
         | ExprKind::Bool(_)
@@ -538,7 +538,7 @@ impl<'a> Formatter<'a> {
             }
             Job::Raw { e, ind } => self.raw(e, ind, stack),
             Job::Postfix { of, ind } => match of.kind {
-                ExprKind::Int { .. } | ExprKind::Float(_) | ExprKind::Rat(_) => {
+                ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Rat(_) => {
                     self.put("(");
                     stack.push(put(")"));
                     self.raw(of, ind, stack);
@@ -1145,7 +1145,7 @@ impl<'a> Formatter<'a> {
     fn raw(&mut self, e: &'a Expr, ind: usize, stack: &mut Vec<Job<'a>>) {
         let at = |e, min| Job::Expr { e, min, ind };
         match &e.kind {
-            ExprKind::Int { .. } | ExprKind::Float(_) | ExprKind::Rat(_) | ExprKind::Str(_) => {
+            ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Rat(_) | ExprKind::Str(_) => {
                 // A grouped literal's span holds its parentheses; a literal never starts with `(`.
                 let mut t = self.text[e.span.start..e.span.end].trim();
                 while let Some(inner) = t.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {

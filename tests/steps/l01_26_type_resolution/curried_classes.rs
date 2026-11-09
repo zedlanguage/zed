@@ -6,8 +6,9 @@
 
 use super::info;
 
-/// `g` returns two curried lambdas whose parameters take int when each ends.
-const G: &str = "g(positional a0) = (a1) -> (a2) -> (a0 + 1, a1 + 1, a2 + 1);\n";
+/// `g` returns two curried lambdas whose parameters take int when each ends: `div` takes only
+/// `int`, where `+ 1` would leave each generic (step L1.26a).
+const G: &str = "g(positional a0) = (a1) -> (a2) -> (a0 div 1, a1 div 1, a2 div 1);\n";
 
 const PROGRAMS: [&str; 25] = [
     "h = g(0);\nk = h(1);\nm = k(2);\n",
@@ -22,13 +23,13 @@ const PROGRAMS: [&str; 25] = [
     "c(x: int) = if x > 0 { g(0) } else { g(1) };\nd = c(x: 1)(2)(3);\n",
     "y(q) = g(q)(q);\nz = y(1)(2);\nzz = y(1.5)(2.5);\n",
     "take(f: (int) -> (int) -> (int, int, int)) = f(1)(2);\nr = take(f: (a1) -> (a2) -> (0 + 1, a1 + 1, a2 + 1));\n",
-    "k(x: int) = (a) -> (b) -> (x + 1, a + 1, b + 1);\nm(f: (f64) -> (int) -> (int, int, int)) = 0;\nr = m(f: k(x: 1));\n",
+    "k(x: int) = (a) -> (b) -> (x + 1, a div 1, b div 1);\nm(f: (f64) -> (int) -> (int, int, int)) = 0;\nr = m(f: k(x: 1));\n",
     "h = g(0)(1);\nq = h + 1;\n",
     "h = g;\nk = h(0)(\"a\");\n",
     "p(x) = (y) -> x + y;\nq = p(1)(2.5);\n",
     "p(x) = (y) -> (z) -> x + y + z;\nq = p(1)(2)(3);\nr = p(1.5)(2.5)(3.5);\n",
-    "p(x) = (y) -> (z) -> (x + 1, y, z);\nq = p(1)(\"s\")(true);\nr = p(1)(2)(3) + 1;\n",
-    "o(x) = (y) -> (z) -> x + 1;\nq = o(1)(2)(3) == 2;\nw = (o(1), 0);\n",
+    "p(x) = (y) -> (z) -> (x div 1, y, z);\nq = p(1)(\"s\")(true);\nr = p(1)(2)(3) + 1;\n",
+    "o(x) = (y) -> (z) -> x div 1;\nq = o(1)(2)(3) == 2;\nw = (o(1), 0);\n",
     // `is` and `is not` on a tuple that holds such a lambda: the test of the lambda reads
     // its classes as their types, so the branch that cannot be taken narrows to nothing.
     "h = g(0);\nt = (h, 1);\nr = if t is (((int) -> ((int) -> (int, int, int))), int) { 1 } else { t };\n",

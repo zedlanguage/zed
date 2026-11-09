@@ -33,7 +33,7 @@ fn calls_that_pass_each_parameter_in_its_form_are_accepted_and_run() {
         ("k = dbl;\ny = k(x: 4);", "8"),
         ("k = add;\ny = k(1, 2);", "3"),
         ("h = greet(\"Al\", ...);\ny = h(punct: \"?\");", "\"Al?\""),
-        ("t = tax;\ny = t(price: 10.0, rate: 0.5);", "5.0"),
+        ("t = tax;\ny = t(price: 10.0f64, rate: 0.5f64);", "5.0"),
         // A lambda with no expected type takes its parameters by position.
         ("inc = x -> x + 1;\ny = inc(3);", "4"),
     ];
@@ -122,7 +122,7 @@ fn the_checker_and_elaboration_reject_a_misplaced_argument_alike() {
         ),
         (
             "inc = x -> x + 1;\ny = inc(x: 3);",
-            vec![positional("x", "(int) -> int", "3")],
+            vec![positional("x", "(T) -> T for T in int | f64 | rat", "3")],
         ),
         (
             "k = sub;\ny = k(a: 1);",
