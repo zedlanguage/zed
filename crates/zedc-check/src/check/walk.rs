@@ -2726,16 +2726,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             );
             return m.ty(Ty::func(e));
         }
+        // Each parameter of `e` passed by name, by its name, the first where a name repeats: a
+        // search of `e`'s parameters for each of the lambda's cost `O(n^2)` for `n` of them.
+        let named: HashMap<&str, usize> = (e.params.iter().enumerate().rev())
+            .filter(|(_, q)| !q.positional)
+            .map(|(j, q)| (&*q.name, j))
+            .collect();
         for (i, p) in params.iter().enumerate() {
             if i < pos.len() {
                 order[pos[i]] = Some(i);
                 continue;
             }
-            match e
-                .params
-                .iter()
-                .position(|q| !q.positional && *q.name == *p.name)
-            {
+            match named.get(p.name.as_str()).copied() {
                 Some(j) if order[j].is_none() => order[j] = Some(i),
                 _ if p.default.is_some() => extra.push(i),
                 _ => {

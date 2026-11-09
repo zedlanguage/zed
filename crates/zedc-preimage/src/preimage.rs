@@ -10279,15 +10279,44 @@ fn join_treap(left: Tree, right: Tree) -> Tree {
 /// The inputs below `cut`, and the rest. A piece that holds `cut - 1` and `cut` is cut in
 /// two; both lie in `i128`, since `cut` is above the piece's lower end and at most its upper
 /// end, which [`in_range`] admitted.
+///
+/// The two halves have priorities of their own ([`prio_of`]), which may exceed those of the
+/// cut piece's ancestors, so they are joined to the two parts only after the split
+/// ([`split_around`]): placed where the piece was, they broke the heap order, and the treaps
+/// of a chain of `k` slices grew deeper than `O(log k)` (item SCALE-fix-preimage).
 fn split_at(root: Tree, cut: i128) -> (Tree, Tree) {
+    let (l, cut_piece, r) = split_around(root, cut);
+    match cut_piece {
+        None => (l, r),
+        Some((lo, hi, a, b)) => {
+            let (below, above) = (End::from(cut - 1), End::from(cut));
+            let l = join_treap(
+                l,
+                Some(make_node(lo, below, a.clone(), b.clone(), None, None)),
+            );
+            (
+                l,
+                join_treap(Some(make_node(above, hi, a, b, None, None)), r),
+            )
+        }
+    }
+}
+
+/// A piece of a treap taken out whole: its ends and its line `a * x + b`.
+type CutPiece = (End, End, Int, Int);
+
+/// The pieces below `cut`, the piece that holds `cut - 1` and `cut` if one does, with its
+/// line, and the pieces above: a split that makes no node of its own, so both parts keep the
+/// heap order.
+fn split_around(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
     let Some(node) = root else {
-        return (None, None);
+        return (None, None, None);
     };
     if cut <= key(&node.span.0) {
-        return (None, Some(node));
+        return (None, None, Some(node));
     }
     if cut > key(&node.span.1) {
-        return (Some(node), None);
+        return (Some(node), None, None);
     }
     let (left, right) = push_down(&node);
     let (lo, hi, a, b) = (
@@ -10297,19 +10326,13 @@ fn split_at(root: Tree, cut: i128) -> (Tree, Tree) {
         node.b.clone(),
     );
     if cut <= key(&lo) {
-        let (ll, lr) = split_at(left, cut);
-        (ll, Some(make_node(lo, hi, a, b, lr, right)))
+        let (ll, piece, lr) = split_around(left, cut);
+        (ll, piece, Some(make_node(lo, hi, a, b, lr, right)))
     } else if cut > key(&hi) {
-        let (rl, rr) = split_at(right, cut);
-        (Some(make_node(lo, hi, a, b, left, rl)), rr)
+        let (rl, piece, rr) = split_around(right, cut);
+        (Some(make_node(lo, hi, a, b, left, rl)), piece, rr)
     } else {
-        let (below, above) = (End::from(cut - 1), End::from(cut));
-        let l = join_treap(
-            left,
-            Some(make_node(lo, below, a.clone(), b.clone(), None, None)),
-        );
-        let r = join_treap(Some(make_node(above, hi, a, b, None, None)), right);
-        (l, r)
+        (left, Some((lo, hi, a, b)), right)
     }
 }
 

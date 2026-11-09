@@ -48,7 +48,7 @@ stein!(stein128, u128);
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum Repr {
     Small(i128),
-    Big(Box<BigInt>),
+    Big(Arc<BigInt>),
 }
 
 /// An unbounded integer.
@@ -89,7 +89,7 @@ impl From<BigInt> for Int {
     fn from(v: BigInt) -> Int {
         Int(match i128::try_from(&v) {
             Ok(s) => Repr::Small(s),
-            Err(_) => Repr::Big(Box::new(v)),
+            Err(_) => Repr::Big(Arc::new(v)),
         })
     }
 }
@@ -303,7 +303,7 @@ impl fmt::Display for Int {
 #[derive(Clone, Debug)]
 enum Word {
     Small(i64),
-    Big(Box<BigInt>),
+    Big(Arc<BigInt>),
     Kept(Box<Kept>),
 }
 
@@ -1825,7 +1825,7 @@ impl From<i128> for Num {
     fn from(v: i128) -> Num {
         Num(match i64::try_from(v) {
             Ok(s) => Word::Small(s),
-            Err(_) => Word::Big(Box::new(BigInt::from(v))),
+            Err(_) => Word::Big(Arc::new(BigInt::from(v))),
         })
     }
 }
@@ -1834,7 +1834,7 @@ impl From<&BigInt> for Num {
     fn from(v: &BigInt) -> Num {
         Num(match i64::try_from(v) {
             Ok(s) => Word::Small(s),
-            Err(_) => Word::Big(Box::new(v.clone())),
+            Err(_) => Word::Big(Arc::new(v.clone())),
         })
     }
 }
@@ -1843,7 +1843,7 @@ impl From<BigInt> for Num {
     fn from(v: BigInt) -> Num {
         Num(match i64::try_from(&v) {
             Ok(s) => Word::Small(s),
-            Err(_) => Word::Big(Box::new(v)),
+            Err(_) => Word::Big(Arc::new(v)),
         })
     }
 }
