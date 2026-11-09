@@ -1684,28 +1684,21 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CUBE-root-wide | impl attempt 1 | 2026-11-09 06:44 | ready 58cfc4a1e8ce5c7ea09f7c37950b859fd07d1fca: rem_uint; 2M->16M passes (instructions 9.50, bytes 9.92); 262144->2M bytes 10.71 > 10.27 open as CUBE-remtree-cr |
-| EMPTY-arg-needs | impl attempt 1 | 2026-11-09 08:28 | started; worktree /home/luke/Work/wt/empty-arg at f409e070 |
-| GROUP-cycle-dup | impl attempt 1 | 2026-11-09 05:04 | tests cycle_dup.rs: 8 green with fix; on main code 3 red (tuple twice, order-differing unions, regrouping) decided->refused; scaling 8.0x (limit 12.10) |
+| EMPTY-arg-needs | impl attempt 1 | 2026-11-09 08:28 | cause confirmed: apply_one binds variables only from argument pieces; Never has none, so replay's bound() read T as unknown _. Fixed (bind to Never); 148 pieces |
+| GROUP-cycle-dup | impl attempt 1 | 2026-11-09 05:04 | run 1: 90 pieces, 1 failed s_01f (new import cycle empty.rs<->rec/group.rs via the class() accessor); fixed by making rec::Node::class a pub(in crate::types) fi |
 | GROUP-refusal-fallback | running | 2026-11-09 05:23 |  |
 | GROUP-refusal-meet-witness | running | 2026-11-09 06:38 |  |
 | GROUP-refusal-meet-wording | running | 2026-11-09 06:38 |  |
 | GROUP-refusal-reach | running | 2026-11-09 05:23 |  |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
-| KERNEL-div-newton | impl attempt 1 | 2026-11-07 13:07 | ready 58cfc4a1e8ce5c7ea09f7c37950b859fd07d1fca on wt/div-newton: Newton division, equality odd-base test un-ignored at 9.3x; 942 passed, 0 failed; follow-up DIV |
 | LIT-bare | impl attempt 1 | 2026-11-09 05:01 | ready at wt/lit-bare 3bd85e3d: run30 505 pieces 1 failed (l25_08), fixed in ce2ff26b, run31 7/0; fmt and clippy clean; 19 follow-up ledger lines |
-| MSG-line-quote-cost | impl attempt 1 | 2026-11-09 07:57 | ready 03bd44d4 on wt/msg-line-quote, spec 11c6dbe on wt/msg-line-quote-spec; 226 pieces, 1 known zedc_preimage 60 s timeout (unrelated crate); follow-up MSG-lin |
 | MSG-never-expect | impl attempt 1 | 2026-11-09 07:57 | walk made total; 4 new unit tests pass; control with main's expect/unreachable/union-extend restored: all 4 stop (panic at tuple expect, atom expect, unreachabl |
-| NARROW-negated-star | impl attempt 1 | 2026-11-09 08:28 | started on wt/narrow-neg from f409e070 |
-| PRINT-fn-parens | impl attempt 1 | 2026-11-09 07:57 | ready cbdd73bd on wt/print-fn-parens: printers parenthesize by place; 176 pieces 0 failed; scaling 8.0x/7.9x |
 | PROJECT-canon-272 | running | 2026-11-09 09:27 |  |
 | PROJECT-canon-decide | running | 2026-11-09 09:27 |  |
 | PROJECT-canon-gcd | running | 2026-11-09 09:27 |  |
 | PROJECT-canon-precision | running | 2026-11-09 09:27 |  |
 | PROJECT-each-canon | impl attempt 1 | 2026-11-07 16:39 | ready at 01351ff1 on wt/project-canon; run 5 574 pieces 0 failed; ctl tree and scratch deleted; ledger ready + 4 follow-ups / load 10.13 |
-| S22-fwd-holes | repair attempt 1 | 2026-11-07 09:50 | ready 1599bba8: cycle broken (counter moved to shared_ints.rs), s_01f 18/18, 494 pieces 493 pass, 1 load timeout passes alone 47.3 s, load 9.5-33 |
-| TEST-split-slow | impl attempt 1 | 2026-11-09 08:09 | ready 60fc4680 on wt/test-split-slow (also PREIMAGE-unit-piece, KERNEL-xor-agree-slow); 87 pieces 0 failed; follow-ups PREIMAGE-slow-rounds, KERNEL-eval-memo-ha |
-| TY-row-class | impl attempt 1 | 2026-11-09 08:17 | started on wt/ty-row-class from origin/main |
+| TY-row-class | impl attempt 1 | 2026-11-09 08:17 | negative controls (not committed, reverted): Holders Point key without its value -> contains agreement test fails (ty.rs:9178); Parts::only without scalars_only |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
