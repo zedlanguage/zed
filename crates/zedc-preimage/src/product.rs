@@ -3029,6 +3029,7 @@ impl Scope {
                 && blocks
                     .gaps(t)
                     .is_some_and(|k| k > 0 || fallen.contains_key(&t) || holed.contains(&t));
+            let mut kept = false;
             if ends && !(solved.contains(&t) && from.is_empty()) {
                 match self.by_holes(&relation, t, b, shortest) {
                     Ends::Done(Shortest::Moved(ns)) => {
@@ -3045,7 +3046,10 @@ impl Scope {
                                 }
                             }
                         }
-                        continue;
+                        // The ends are exact, the values between them not always: the block's
+                        // own projection still runs, as before this item, and may leave out
+                        // more of them (CE-A's `a = 5`).
+                        kept = true;
                     }
                     Ends::Done(Shortest::Bottom(n)) => {
                         self.empty_at(&n);
@@ -3063,7 +3067,7 @@ impl Scope {
             } else if ends {
                 continue;
             }
-            if shortest && (blocks.gaps(t) == Some(0) || paths.contains(&t)) {
+            if !kept && shortest && (blocks.gaps(t) == Some(0) || paths.contains(&t)) {
                 let mut at = fresh.remove(&t).unwrap_or_default();
                 at.names.extend(from.iter().cloned());
                 at.changed.extend(from.iter().cloned());

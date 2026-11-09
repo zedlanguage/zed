@@ -124,7 +124,7 @@ fn heap_invariant_sets_are_exact_in_every_rotation() {
 
 /// CE-B: `a` in `{3, 5}` in all 120 orders. Main keeps `a = 4` (COMPLEXITY.md S25).
 #[test]
-#[ignore = "needs ST-holes-moves"]
+#[ignore = "needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn ce_b_sets_are_exact_in_every_order() {
     assert_eq!(ce_b().exact()[0], [3, 5]);
     check_named("CE-B", &ce_b(), true);
@@ -133,7 +133,7 @@ fn ce_b_sets_are_exact_in_every_order() {
 /// The collective example: `z` in `{0, 1, 2, 3, 5, 6}` in all 120 orders. Main keeps `z = 4`
 /// (COMPLEXITY.md S25).
 #[test]
-#[ignore = "needs ST-holes-moves"]
+#[ignore = "needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn collective_sets_are_exact_in_every_order() {
     assert_eq!(collective().exact()[2], [0, 1, 2, 3, 5, 6]);
     check_named("collective", &collective(), true);
@@ -306,7 +306,7 @@ fn random_systems_have_exact_ends() {
 /// Every system of [`corpus`]: every name's whole set is exact, its tests in order and as
 /// one conjunction (META4 result 1).
 #[test]
-#[ignore = "needs ST-holes-moves"]
+#[ignore = "needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn random_systems_have_exact_sets() {
     for inst in corpus() {
         let want = inst.exact();
@@ -662,7 +662,6 @@ fn family(what: &str, n: usize, make: impl Fn(usize) -> Inst + Sync) {
 /// round 4: laps with `r = 6n` at 16 and 128 names. Every name's ends are 0, found by
 /// composing the cycle once; main takes about 38 times the work for 8 times the size.
 #[test]
-#[ignore = "needs ST-holes-moves"]
 fn laps_have_exact_ends_in_near_linear_time() {
     family("laps, r = 6n", 16, |n| laps(n, 6 * n as i64));
 }
@@ -677,7 +676,6 @@ fn the_staircase_has_exact_ends_in_near_linear_time() {
 /// The mixed family, `r = 3n`, at 16 and 128 names. Main takes about 47 times the work for 8
 /// times the size.
 #[test]
-#[ignore = "needs ST-holes-moves"]
 fn the_mixed_family_has_exact_ends_in_near_linear_time() {
     family("mixed, r = 3n", 16, |n| mixed(n, 3 * n as i64));
 }
@@ -705,7 +703,7 @@ fn a_chain_of_collective_examples_has_exact_ends_in_near_linear_time() {
 /// collective example in a chain; every name's set is exact in order, reversed and as one
 /// conjunction.
 #[test]
-#[ignore = "needs ST-holes-moves"]
+#[ignore = "needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn a_chain_of_two_collective_examples_has_exact_sets() {
     let inst = collective_chain(2);
     let want = inst.exact();
@@ -778,13 +776,13 @@ fn check_exact_holes(collective: bool) {
 }
 
 #[test]
-#[ignore = "needs ST-holes-moves"]
+#[ignore = "needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn ce_b_with_each_bound_a_test_is_exact_in_every_rotation() {
     check_exact_holes(false);
 }
 
 #[test]
-#[ignore = "needs ST-holes-moves"]
+#[ignore = "needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn the_collective_example_with_each_bound_a_test_is_exact_in_every_rotation() {
     check_exact_holes(true);
 }
@@ -830,7 +828,7 @@ fn the_staircase_of_four_has_exact_sets() {
 /// simple cycle and has three names with holes, so META4 result 1 refuses it: a warning, and
 /// every exact value kept, in every rotation and as one conjunction.
 #[test]
-#[ignore = "needs ST-holes-moves"]
+#[ignore = "needs hole tests written in one `&&` kept out of the relation's other conjuncts; ST-holes-moves refuses in every order of separate tests"]
 fn two_cycles_through_three_names_with_holes_are_refused() {
     let inst = Inst {
         range: vec![(0, 6); 3],

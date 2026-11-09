@@ -2784,3 +2784,14 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A closure taking `&dyn Fn(&Ty, &KType) -> bool`, called with two predicates | `Ck::taking` | Function values | a function with a function-typed parameter |
 | `bool::then_some` building the `Option` of a struct of borrowed parts | `Sig::morphism` | None | `if … { … } else { #notFound }` |
 | An enum of borrowed parts (`Morphism<'a>`) that lives only while printing | `Sig::morphism`, `Morphism::parts` | Lifetimes | a union of the two shapes, holding the types by value |
+
+## Entries from ST-holes-moves (`crates/zedc-preimage/src/holes.rs`, `product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A union-find with offsets in two `Vec`s, `find` pointing every name of the path at the root in place | `holes::merge` (`find`) | Mutation (gap 11) | A persistent map from name to parent and offset, threaded through the merge's fold |
+| Tarjan's search over the components with an explicit call stack of `(name, next edge)` pairs, its counters and stack in `Vec`s changed in place | `holes::components` | Mutation (gap 11) | A fold over the names with the index, low link and stack as persistent values, or a recursive function once the Zed lowering manages the stack |
+| An ordered `BTreeMap` of pieces keyed by raw output and input, cut and flattened in place, with an offset added in O(1) | `holes::Map` (`insert`, `flatten`, `cap`, `snap`) | Mutation (gap 11) | A persistent ordered map returned by each step, the offset a field of the value |
+| A Dijkstra search on a `BinaryHeap<Reverse<..>>` and a breadth-first search on a `VecDeque`, both filling `Vec`s of labels | `holes::Run::paths`, `holes::Run::hull` | Mutation (gap 11) | A recursive function over a persistent heap or queue, the labels a persistent map |
+| `return Err(Stop::..)` and `?` out of the loops over components and cycles | `holes::Run::component`, `holes::greatest` | Early exit (gap 12) | A result value checked at each step of the fold |
+| `self.raise(..)` changing the scope's potential, inside `Iterator::all`, which stops at the first `false` | `Scope::by_holes`, `Scope::project` | Mutation (gap 11), Early exit (gap 12) | A recursive function over the names that returns the new potential and stops on the first failed raise |
