@@ -1,13 +1,15 @@
 //! Scaling at the rule of low complexity (DESIGN.md Part G) of what step L1.37a adds: the
 //! ordering by shape of the nodes of one key in the lowering (`canon::Shape`), and the
-//! numbering of a unit's definitions that keys the query database (`Db::cone`). Inputs are
-//! built before the runs are measured.
+//! numbering of a unit's definitions that keys the query database (`Db::cone`), and the
+//! thread's tables of live rows, morphism types and set nodes, whose buckets hold the nodes
+//! that tie in digest (step TABLE-short-scan). Inputs are built before the runs are measured.
 
 use std::collections::HashMap;
 
 use zed_kernel::term::build::{lam, var};
+use zed_kernel::types::Type;
 use zed_kernel::{Prim, Term, Value};
-use zed_tests::scaling::check_order;
+use zed_tests::scaling::{check_order, inputs};
 use zedc::zir::lower::lower;
 
 /// `(m) -> m + 0 + 1 + … + (n - 1)`, a lambda whose body holds `n` nodes.
@@ -89,4 +91,39 @@ fn numbering_the_definitions_of_a_unit_scales() {
         assert_eq!(out.len(), k, "{:?}", out.first());
         assert!(out.iter().all(|o| o.failure.is_none()));
     });
+}
+
+#[test]
+fn rows_and_morphism_types_that_tie_in_digest_are_found_and_dropped_in_log_time() {
+    // `n` tuple types `(aᵢ)` and morphism types `(aᵢ ⊆ dom ⊆ aᵢ) -> aᵢ` over distinct atoms,
+    // each made twice, the second found in the tables, then all dropped. With
+    // `short-addresses` the digests keep 8 bits, so each bucket of the tables of live rows,
+    // morphism types and set nodes holds about n/256 nodes, and a lookup or a drop that read
+    // its whole bucket made the run quadratic; in the full build each bucket holds one node.
+    let n = 2000;
+    let atoms = inputs(n, |k| {
+        (0..k)
+            .map(|i| Type::atom(&format!("a{i}")))
+            .collect::<Vec<_>>()
+    });
+    check_order(
+        "making n rows and n morphism types twice, then dropping them, by n",
+        n,
+        1,
+        |k| {
+            let make = || -> Vec<Type> {
+                atoms[&k]
+                    .iter()
+                    .flat_map(|a| {
+                        [
+                            Type::tuple(vec![a.clone()]),
+                            Type::morphism(a.clone(), a.clone(), a.clone()),
+                        ]
+                    })
+                    .collect()
+            };
+            let (first, second) = (make(), make());
+            assert_eq!(first, second);
+        },
+    );
 }

@@ -23,6 +23,7 @@
 
 mod bdd;
 pub mod bes;
+mod bucket;
 mod debug;
 mod empty;
 mod hash;
@@ -44,6 +45,7 @@ use crate::deep;
 use crate::num::Rat;
 use crate::value::{Id, Items, Value};
 use bdd::{Bdd, Form, Literal, Op, Owned, Part, Tables, Walk};
+use bucket::Bucket;
 
 /// A type: the set of values it denotes. Types are ordered by their digests first, so two
 /// types are ordered without reading their contents unless their digests are equal, and then by
@@ -439,19 +441,22 @@ impl Eq for Morphism {}
 /// morphism types of the morphism parts.
 struct Shared<K: Tabled> {
     digest: u64,
+    /// The node's slot in its bucket of the table (module `bucket`).
+    slot: u32,
     key: K,
 }
 
 /// The thread's live nodes of one kind, by digest; nodes of one digest that differ share a
-/// bucket.
-type Live<K> = RefCell<
-    HashMap<u64, Vec<std::sync::Weak<Shared<K>>>, std::hash::BuildHasherDefault<bdd::KeyHasher>>,
->;
+/// bucket, ordered by their keys (module `bucket`).
+type Live<K> =
+    RefCell<HashMap<u64, Bucket<Shared<K>>, std::hash::BuildHasherDefault<bdd::KeyHasher>>>;
 
 /// A kind of key kept in a table of live nodes, with the thread-local that holds the table.
 trait Tabled: PartialEq + Sized + 'static {
     /// The thread's table of the kind.
     fn live() -> &'static std::thread::LocalKey<Live<Self>>;
+    /// The order of keys, by their contents, that a bucket of the table keeps.
+    fn order(a: &Self, b: &Self) -> Ordering;
 }
 
 thread_local! {
@@ -465,17 +470,25 @@ impl Tabled for Vec<Type> {
     fn live() -> &'static std::thread::LocalKey<Live<Self>> {
         &ROWS
     }
+
+    fn order(a: &Self, b: &Self) -> Ordering {
+        order(Step::Items(a.iter(), b.iter()))
+    }
 }
 
 impl Tabled for Arrow {
     fn live() -> &'static std::thread::LocalKey<Live<Self>> {
         &ARROWS
     }
+
+    fn order(a: &Self, b: &Self) -> Ordering {
+        order(Step::Morphisms(a, b))
+    }
 }
 
-/// A node leaves its thread's table when dropped; one dropped on another thread leaves an entry
-/// that no longer upgrades, which the next node of its digest built here takes out. The key's
-/// types are freed in the loop of type parts (module `deep`), as every type is.
+/// A node leaves its thread's table when dropped, by its slot; one dropped on another thread
+/// leaves an entry that no longer upgrades, which the next lookup to meet it takes out. The
+/// key's types are freed in the loop of type parts (module `deep`), as every type is.
 impl<K: Tabled> Drop for Shared<K> {
     fn drop(&mut self) {
         let me: *const Shared<K> = self;
@@ -483,8 +496,7 @@ impl<K: Tabled> Drop for Shared<K> {
             if let Ok(mut t) = t.try_borrow_mut()
                 && let Some(bucket) = t.get_mut(&self.digest)
             {
-                let bucket: &mut Vec<std::sync::Weak<Shared<K>>> = bucket;
-                bucket.retain(|w| !std::ptr::eq(w.as_ptr(), me));
+                bucket.leave(self.slot, me);
                 if bucket.is_empty() {
                     t.remove(&self.digest);
                 }
@@ -496,24 +508,21 @@ impl<K: Tabled> Drop for Shared<K> {
 impl<K: Tabled> Shared<K> {
     /// The live node of the thread whose key equals `key`, or a new one put in the table.
     fn new(digest: u64, key: K) -> Arc<Shared<K>> {
-        // The live nodes of the digest are taken out of the table before they are compared, so
-        // that no comparison runs while the table is borrowed. A bucket nearly always holds one
-        // node at most, which is taken out without allocating.
-        let (first, rest): (_, Vec<Arc<Shared<K>>>) = K::live().with(|t| {
-            let mut t = t.borrow_mut();
-            let bucket = t.entry(digest).or_default();
-            bucket.retain(|w| w.strong_count() > 0);
-            let mut live = bucket.iter().filter_map(std::sync::Weak::upgrade);
-            (live.next(), live.collect())
-        });
-        if let Some(r) = first.into_iter().chain(rest).find(|r| r.key == key) {
-            return r;
+        let bucket = |f: &mut dyn FnMut(&mut Bucket<Shared<K>>)| {
+            K::live().with(|t| f(t.borrow_mut().entry(digest).or_default()));
+        };
+        match bucket::find(bucket, |r| K::order(&r.key, &key)) {
+            Ok(r) => r,
+            Err(place) => {
+                let r = Arc::new(Shared {
+                    digest,
+                    slot: place.slot(),
+                    key,
+                });
+                bucket(&mut |b| b.insert(&place, Arc::downgrade(&r)));
+                r
+            }
         }
-        let r = Arc::new(Shared { digest, key });
-        K::live().with(|t| {
-            (t.borrow_mut().entry(digest).or_default()).push(Arc::downgrade(&r));
-        });
-        r
     }
 }
 

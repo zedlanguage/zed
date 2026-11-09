@@ -2411,6 +2411,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A weak table of rows, each row removed by `Drop for RowNode` on a pointer match (since ATOM-intern the generic `Shared<K>`, below) | `Row::new`, `ROWS`, `Drop for RowNode` | Shared tables across pure calls (gap 2), identity (gap 1); Zed has no weak reference or finalizer | A row table in the unit's state struct, dropped whole at the end of a unit |
 | The form an expression was the complement of, kept so a freed source is made again alike | `Expr::source`, `Source`, `Connect::negate` | Lazy cells (gap 3) | Not needed when the unit's memo table keeps both sides for the unit |
 
+## Entries from TABLE-short-scan (`zed-kernel/src/types/bucket.rs`, `types.rs` `Shared`, `types/bdd/set.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A treap of `Weak` references in a `Vec` of slots with `u32` links, each node keeping its slot so its `Drop` takes its entry out by slot and a pointer match; a lookup passes closures that borrow the thread's table once per step and compares outside the borrow, restarting on a version count | `bucket::find`, `Bucket`, `Shared::new`, `Drop for Shared`, `set::make`, `Drop for Set` | Shared tables across pure calls (gap 2), identity (gap 1); Zed has no weak reference or finalizer | An ordered map from key to node in the unit's state struct, dropped whole at the end of a unit, as for the TABLE-life entries above |
+
 ## Entries from CHAIN-restrict-memo, CHOICE-both-chains, XOR-cross-thread (`zed-kernel/src/types/bdd.rs`, `bdd/list.rs`, `bdd/set.rs`)
 
 | Rust construct | Sites | Gap | At the port |

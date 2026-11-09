@@ -1176,7 +1176,7 @@ fn the_connectives_on_parts_scale_by_depth() {
 
 /// The entries of this thread's tables of tuple nodes, in all: sets, cells and exclusive ors.
 fn entries() -> usize {
-    Row::table(|t| t.sets.values().map(Vec::len).sum::<usize>() + t.cells.len() + t.xors.len())
+    Row::table(|t| t.sets.values().map(|b| b.len()).sum::<usize>() + t.cells.len() + t.xors.len())
 }
 
 /// The exclusive or of the atoms `base..base + k`.
@@ -1283,7 +1283,7 @@ fn equal_rows_alive_together_are_one_node_and_leave_the_table_when_freed() {
     assert!(std::ptr::eq(a.as_ptr(), b.as_ptr()));
     assert!(!std::ptr::eq(a.as_ptr(), atom(7901).as_ptr()));
     let digest = a.digest();
-    let live = || super::super::ROWS.with(|t| t.borrow().get(&digest).map_or(0, Vec::len));
+    let live = || super::super::ROWS.with(|t| t.borrow().get(&digest).map_or(0, |b| b.len()));
     assert_eq!(live(), 1);
     drop((a, b));
     assert_eq!(live(), 0);
@@ -1299,7 +1299,7 @@ fn equal_morphism_types_alive_together_are_one_node_and_leave_the_table_when_fre
     assert!(std::ptr::eq(&*a, &*b));
     assert!(!std::ptr::eq(&*a, &*arrow(7992)));
     let digest = a.digest();
-    let live = || super::super::ARROWS.with(|t| t.borrow().get(&digest).map_or(0, Vec::len));
+    let live = || super::super::ARROWS.with(|t| t.borrow().get(&digest).map_or(0, |b| b.len()));
     assert_eq!(live(), 1);
     drop((a, b));
     assert_eq!(live(), 0);

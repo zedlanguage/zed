@@ -140,3 +140,35 @@ fn types_that_tie_in_digest_level_after_level_are_ordered_on_a_small_stack() {
         run.unwrap().join().unwrap();
     });
 }
+
+#[test]
+fn rows_dropped_on_another_thread_leave_entries_that_lookups_pass_over() {
+    // Rows and morphism types made here and dropped on another thread leave entries in this
+    // thread's tables that no longer upgrade. With 8-bit digests they share buckets with live
+    // nodes; a lookup cannot compare them, so it takes them out on the way and starts again
+    // (step TABLE-short-scan), and the nodes found are those still alive.
+    let atoms: Vec<Type> = (0..3000).map(|i| Type::atom(&format!("d{i}"))).collect();
+    let make = |a: &Type| {
+        [
+            Type::tuple(vec![a.clone()]),
+            Type::morphism(a.clone(), a.clone(), a.clone()),
+        ]
+    };
+    let (kept, gone): (Vec<_>, Vec<_>) = atoms.iter().enumerate().partition(|(i, _)| i % 2 == 0);
+    let kept: Vec<[Type; 2]> = kept.into_iter().map(|(_, a)| make(a)).collect();
+    let gone: Vec<[Type; 2]> = gone.into_iter().map(|(_, a)| make(a)).collect();
+    std::thread::spawn(move || drop(gone)).join().unwrap();
+    for _ in 0..2 {
+        for (i, a) in atoms.iter().enumerate() {
+            let again = make(a);
+            if i % 2 == 0 {
+                assert_eq!(again, kept[i / 2]);
+            }
+            assert_eq!(again[0], Type::tuple(vec![a.clone()]));
+            assert_ne!(
+                again[0],
+                Type::tuple(vec![atoms[(i + 1) % atoms.len()].clone()])
+            );
+        }
+    }
+}

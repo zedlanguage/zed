@@ -10,9 +10,10 @@
 //! `O(log n)` nodes in expectation, each looked up in the table in `O(log N)`; the walks keep
 //! stacks of their own, so a set of any shape is walked on a small stack.
 
+use std::sync::Arc;
 use std::sync::atomic::Ordering as Atomic;
-use std::sync::{Arc, Weak};
 
+use crate::types::bucket::{self, Bucket};
 use crate::types::hash::mix;
 
 /// The atoms of sets, each kind with its thread's table of set nodes. Every atom of a diagram
@@ -44,6 +45,8 @@ pub(in crate::types) struct Set<A: Atom> {
     /// A hash of the set's literals, equal for equal sets.
     pub(in crate::types) digest: u64,
     prio: u64,
+    /// The node's slot in its bucket of the table (module `bucket`).
+    slot: u32,
     pub(in crate::types) key: Key<A>,
     len: usize,
     pub(in crate::types) left: Tree<A>,
@@ -54,15 +57,15 @@ pub(in crate::types) struct Set<A: Atom> {
 pub(in crate::types) type Tree<A> = Option<Arc<Set<A>>>;
 
 /// The live nodes of a thread's sets, by the hash of the atom, whether it is taken and the
-/// children's ids; nodes whose atoms differ but share a hash share a bucket, and a lookup tells
-/// them apart by the atoms' equality. Hashed rather than ordered by literal, since the table is
+/// children's ids; nodes whose atoms differ but share a hash share a bucket, ordered by their
+/// atoms (module `bucket`), and a lookup tells them apart by the atoms' order. Hashed rather than ordered by literal, since the table is
 /// never read in order: a lookup in a table ordered by literal compared its key with some
 /// `log N` others, each by the atoms' contents (three types read through their nodes for a
 /// morphism type), which had made half the cost of a search through nested morphism types
 /// (EMPTY-morphism-diff-cost).
 pub(in crate::types) type SetTable<A> = std::collections::HashMap<
     Slot,
-    Vec<Weak<Set<A>>>,
+    Bucket<Set<A>>,
     std::hash::BuildHasherDefault<crate::types::hash::KeyHasher>,
 >;
 
@@ -83,7 +86,7 @@ impl<A: Atom> Drop for Set<A> {
         A::unsets(|t: &mut SetTable<A>| {
             // The node has no entry when it was made on another thread.
             if let Some(bucket) = t.get_mut(&k) {
-                bucket.retain(|w| !std::ptr::eq(w.as_ptr(), self));
+                bucket.leave(self.slot, self);
                 if bucket.is_empty() {
                     t.remove(&k);
                 }
@@ -121,22 +124,13 @@ pub(super) fn len<A: Atom>(t: Option<&Arc<Set<A>>>) -> usize {
 /// The node of `key` over `left` and `right`, the one in the table if there is one.
 fn make<A: Atom>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
     let k = slot(&key, id(left.as_ref()), id(right.as_ref()));
-    // The live nodes of the bucket are taken out of the table before their atoms are compared,
-    // as in the tables of live rows and morphism types (`Shared::new`), so that no comparison
-    // or drop runs while the table is borrowed; a bucket nearly always holds one node at most,
-    // which is taken out without allocating. Entries left by nodes dropped on another thread
-    // leave the bucket here.
-    let (first, rest): (_, Vec<Arc<Set<A>>>) = A::sets(|t| {
-        let Some(bucket) = t.get_mut(&k) else {
-            return (None, Vec::new());
-        };
-        bucket.retain(|w| w.strong_count() > 0);
-        let mut live = bucket.iter().filter_map(Weak::upgrade);
-        (live.next(), live.collect())
-    });
-    if let Some(s) = first.into_iter().chain(rest).find(|s| s.key.0 == key.0) {
-        return s;
-    }
+    // No comparison or drop runs while the table is borrowed (module `bucket`); a bucket nearly
+    // always holds one node at most.
+    let bucket = |f: &mut dyn FnMut(&mut Bucket<Set<A>>)| A::sets(|t| f(t.entry(k).or_default()));
+    let place = match bucket::find(bucket, |s| s.key.0.cmp(&key.0)) {
+        Ok(s) => return s,
+        Err(place) => place,
+    };
     let s = Arc::new(Set {
         id: NEXT.fetch_add(1, Atomic::Relaxed),
         digest: mix(
@@ -144,12 +138,13 @@ fn make<A: Atom>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
             digest(right.as_ref()),
         ),
         prio: priority(&key),
+        slot: place.slot(),
         key,
         len: 1 + len(left.as_ref()) + len(right.as_ref()),
         left,
         right,
     });
-    A::sets(|t| t.entry(k).or_default().push(Arc::downgrade(&s)));
+    bucket(&mut |b| b.insert(&place, Arc::downgrade(&s)));
     s
 }
 
