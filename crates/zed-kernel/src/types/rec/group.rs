@@ -18,12 +18,21 @@ use crate::types::{Type, bytes, mix};
 /// Each group is held weakly and leaves the table when it is dropped (step TABLE-life).
 static GROUPS: LazyLock<Mutex<HashMap<u64, Vec<Weak<Checked>>>>> = LazyLock::new(Mutex::default);
 
-/// The live instances, by the thread that made them, the group's number and the arguments, each
-/// held weakly.
-type Instances = HashMap<(u64, u64, Vec<Type>), Weak<Env>>;
+/// The live instances of each thread that has any, by the thread that made them, then by the
+/// group's number and the arguments, each held weakly.
+type Instances = HashMap<u64, ThreadInstances, BuildHasherDefault<KeyHasher>>;
+
+/// One thread's live instances, by the group's number and the arguments.
+type ThreadInstances = HashMap<(u64, Vec<Type>), Weak<Env>, BuildHasherDefault<KeyHasher>>;
 
 /// The live instances, by the thread that made them (`Unit::thread`), the group's number and
-/// the arguments: one group at equal arguments gives one set of types on a thread while they
+/// the arguments. Each thread's instances are a table of their own, removed when its last
+/// instance leaves, so the table a thread adds to grows with that thread's instances only: one
+/// table for all threads made the thread whose insert grew it copy every thread's entries, so the
+/// bytes a run allocated depended on what tests ran beside it (`deep_types`
+/// `instantiating_a_group_scales`: in 2 of 12 runs of the whole binary the run at 8,000 also
+/// allocated 3,211,280 bytes, a table of 65,536 entries of 49 bytes and its 16 control bytes,
+/// 14.0 times the bytes of the run at 1,000 where 7.9 is usual). One group at equal arguments gives one set of types on a thread while they
 /// live, so that equal definitions meet as equal types, and a later unit finds an instance an
 /// earlier one made while something holds it, with the group's decided verdicts. Types of two
 /// threads are equal types too, by their keys (`Key::order`), but no thread finds another's
@@ -474,20 +483,24 @@ impl Group {
             self.0.defs[0].params.len(),
             "one argument per parameter"
         );
-        let key = (thread(), self.0.number, args);
+        let made_by = thread();
+        let key = (self.0.number, args);
         let lock = || {
             INSTANCES
                 .lock()
                 .expect("no thread panics holding the table")
         };
-        let live = lock().get(&key).and_then(Weak::upgrade);
+        let live = lock()
+            .get(&made_by)
+            .and_then(|mine| mine.get(&key))
+            .and_then(Weak::upgrade);
         if let Some(env) = live {
             return env.members();
         }
-        let args = key.2.clone();
+        let args = key.1.clone();
         let env = Arc::new(Env {
             id: ENVS.fetch_add(1, Ordering::Relaxed),
-            thread: key.0,
+            thread: made_by,
             registered: AtomicU64::new(u64::MAX),
             group: Some(self.clone()),
             digest: args
@@ -505,7 +518,7 @@ impl Group {
         }
         // Another thread may have made the instance meanwhile: the first kept is the one.
         let mut table = lock();
-        let kept = match table.entry(key) {
+        let kept = match table.entry(made_by).or_default().entry(key) {
             Entry::Occupied(mut o) => match o.get().upgrade() {
                 Some(first) => first,
                 None => {
@@ -780,13 +793,21 @@ impl Drop for Env {
         let Some(g) = &self.group else {
             return free_types(args);
         };
-        let key = (self.thread, g.0.number, args);
+        let key = (g.0.number, args);
         let removed = INSTANCES.lock().ok().and_then(|mut t| {
-            let mine = t.get(&key).is_some_and(|w| std::ptr::eq(w.as_ptr(), self));
-            mine.then(|| t.remove_entry(&key)).flatten()
+            let thread = t.get_mut(&self.thread)?;
+            let mine = thread
+                .get(&key)
+                .is_some_and(|w| std::ptr::eq(w.as_ptr(), self));
+            let removed = mine.then(|| thread.remove_entry(&key)).flatten();
+            // The thread's table, empty, holds no type, so it is dropped under the lock.
+            if thread.is_empty() {
+                t.remove(&self.thread);
+            }
+            removed
         });
-        free_types(key.2);
-        if let Some(((_, _, entry), _)) = removed {
+        free_types(key.1);
+        if let Some(((_, entry), _)) = removed {
             free_types(entry);
         }
     }
@@ -918,7 +939,8 @@ mod tests {
     /// Whether [`INSTANCES`] has a live instance of group `number` at no arguments.
     fn instanced(number: u64) -> bool {
         let t = INSTANCES.lock().expect("no panic under the lock");
-        t.get(&(thread(), number, vec![]))
+        t.get(&thread())
+            .and_then(|mine| mine.get(&(number, vec![])))
             .is_some_and(|w| w.strong_count() > 0)
     }
 
