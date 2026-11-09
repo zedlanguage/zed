@@ -1752,7 +1752,7 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
                 // Each disjunct not shown empty, and whether it is shown to have a point.
                 let (mut live, shown): (Vec<Rc<Parts>>, Vec<bool>) = (ds.into_iter())
                     .filter_map(|d| {
-                        if at_model && d.cons.iter().all(|c| c.holds(&model)) {
+                        if at_model && d.cons.iter().all(|c| c.holds_linear(&model)) {
                             return Some((d, true));
                         }
                         // Asked of the base projected onto the disjunction's atoms, which has
@@ -1792,7 +1792,7 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
             changed |= !alone.is_empty();
             stage = Vec::new();
             for d in &alone {
-                at_model &= d.cons.iter().all(|c| c.holds(&model));
+                at_model &= d.cons.iter().all(|c| c.holds_linear(&model));
                 d.cons.iter().for_each(|c| {
                     base.meet(c.clone());
                 });
@@ -1818,8 +1818,9 @@ fn stage_kernels(
     model: Option<&Model>,
 ) -> Vec<Option<Linked>> {
     let mut kernels: Vec<Option<Linked>> = stage.iter().map(|_| None).collect();
-    let asks =
-        model.is_some_and(|m| (stage.iter().flatten()).any(|d| !d.cons.iter().all(|c| c.holds(m))));
+    let asks = model.is_some_and(|m| {
+        (stage.iter().flatten()).any(|d| !d.cons.iter().all(|c| c.holds_linear(m)))
+    });
     if !asks || old_path() {
         return kernels;
     }
@@ -2119,7 +2120,7 @@ fn own_repair(near: &Near, model: &Model, extra: &[Con]) -> Option<Model> {
     for c in extra {
         match c.lin.terms.keys().any(|a| own.contains(a)) {
             true => local.push(specialize_con(c, &own, model)),
-            false if c.holds(model) => {}
+            false if c.holds_linear(model) => {}
             false => return None,
         }
     }
@@ -2256,9 +2257,10 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<Model, Refusal> {
     // Whether a disjunction may be asked of the solver: one with no disjunct holding at the
     // model, which only a taken disjunct changes.
     let asks = fast
-        && !batch
-            .iter()
-            .all(|ds| ds.iter().any(|d| d.cons.iter().all(|c| c.holds(&model))));
+        && !batch.iter().all(|ds| {
+            ds.iter()
+                .any(|d| d.cons.iter().all(|c| c.holds_linear(&model)))
+        });
     // Whether the model is a point of the constraints taken: not after a disjunct is taken on
     // the projection's word, until it is found again.
     let mut valid = true;
@@ -2302,7 +2304,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<Model, Refusal> {
                     d.witness(&model, stamp, &mut held)
                 } else {
                     held.push(d);
-                    d.cons.iter().all(|c| c.holds(&model))
+                    d.cons.iter().all(|c| c.holds_linear(&model))
                 };
                 if holds {
                     for h in &held {
@@ -2318,7 +2320,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<Model, Refusal> {
                 // A disjunct whose constraints hold at the model, though the disjunctions below
                 // it may not, is taken with the model unchanged, so that the parts found not to
                 // hold below it are not read again.
-                if d.cons.iter().all(|c| c.holds(&model)) {
+                if d.cons.iter().all(|c| c.holds_linear(&model)) {
                     taken = Some((d, Model::new()));
                     break;
                 }
@@ -3750,7 +3752,7 @@ fn point_with(
     }
     let m = pick(&q, true).ok()?;
     let meets = d.holds(&m)
-        && p.cons.iter().all(|c| c.holds(&m))
+        && p.cons.iter().all(|c| c.holds_linear(&m))
         && others().all(|(o, _)| o.iter().any(|e| e.holds(&m)));
     meets.then_some(m)
 }
@@ -3997,13 +3999,15 @@ impl Parts {
         self.ors.extend(d.ors.iter().cloned());
     }
 
-    /// Whether the parts hold at `values` ([`Formula::holds`]).
+    /// Whether the parts hold at `values`, read as the solver reads them: each atom, a product
+    /// included, a variable of its own ([`Con::holds_linear`]), not as [`Formula::holds`] reads a
+    /// product, through its factors (PRES-product-parity).
     fn holds(&self, values: &Model) -> bool {
         self.witness(values, fresh_stamp(), &mut Vec::new())
     }
 
-    /// Whether the parts hold at `values` ([`Formula::holds`]), and if so, in `out`, the parts
-    /// and, below them, the first disjunct of each disjunction that holds there, each before
+    /// Whether the parts hold at `values` (read as [`Parts::holds`] reads them), and if so, in
+    /// `out`, the parts and, below them, the first disjunct of each disjunction that holds there, each before
     /// the disjuncts taken below it and the disjunctions read last to first, the order in
     /// which [`pick`] reads them. A disjunction is read until a disjunct holds, and each part
     /// is entered at most once, so the cost is at most the size of the parts. A part found not
@@ -4013,7 +4017,7 @@ impl Parts {
         let fails = |p: &Parts| {
             let no = p.failed.get() == stamp || {
                 TESTED.set(TESTED.get() + 1);
-                !p.cons.iter().all(|c| c.holds(values))
+                !p.cons.iter().all(|c| c.holds_linear(values))
             };
             if no {
                 p.failed.set(stamp);
@@ -4402,7 +4406,7 @@ fn repair(m: &mut Model, gone: &[(Atom, Vec<Con>)]) {
         for c in rows {
             // `c` is `k·x + r >= 0`, `k` 1 or -1: `x >= -r` or `x <= r`.
             let k = &c.lin.terms[x];
-            let r = &c.lin.eval(m) - &(k * &at);
+            let r = &c.lin.eval_linear(m) - &(k * &at);
             if k.is_negative() {
                 hi = Some(match hi {
                     Some(h) => h.min(r),
@@ -4503,7 +4507,7 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
             let asks = !old_path()
                 && point.as_ref().is_some_and(|pt| {
                     todo[next..end].iter().any(|ds| {
-                        let holds = |d: &Rc<Parts>| d.cons.iter().all(|c| c.holds(pt));
+                        let holds = |d: &Rc<Parts>| d.cons.iter().all(|c| c.holds_linear(pt));
                         !(search && ds.iter().any(holds)) && !ds.iter().all(holds)
                     })
                 });
@@ -4530,8 +4534,9 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                 let n = ds.len();
                 // With `search`, whether a disjunct of this disjunction holds at the point.
                 let served = search
-                    && (point.as_ref())
-                        .is_some_and(|pt| ds.iter().any(|d| d.cons.iter().all(|c| c.holds(pt))));
+                    && (point.as_ref()).is_some_and(|pt| {
+                        ds.iter().any(|d| d.cons.iter().all(|c| c.holds_linear(pt)))
+                    });
                 // The projection is of a base with a point; one is known while `point` is.
                 let kernel = kernel.filter(|_| point.is_some()).map(Linked::of);
                 let mut live: Vec<Rc<Parts>> = ds
@@ -4541,7 +4546,7 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                         // answers it when they hold there, whatever holds below them; reading
                         // only them keeps a nest from being read once for each level above it.
                         if let Some(pt) = &point
-                            && (d.cons.iter().all(|c| c.holds(pt))
+                            && (d.cons.iter().all(|c| c.holds_linear(pt))
                                 || own_repair(&near, pt, &d.cons).is_some())
                         {
                             return true;
@@ -4586,7 +4591,7 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                     1 => {
                         let d = live.pop().expect("one");
                         let repaired = match &point {
-                            Some(pt) if d.cons.iter().all(|c| c.holds(pt)) => None,
+                            Some(pt) if d.cons.iter().all(|c| c.holds_linear(pt)) => None,
                             Some(pt) => Some(
                                 own_repair(&near, pt, &d.cons)
                                     .or_else(|| local_repair(&base.cons, &near, pt, &d.cons)),

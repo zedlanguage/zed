@@ -32,6 +32,7 @@ mod one_scope;
 mod oracle;
 mod preimage;
 mod probe;
+mod product_parity;
 mod q1_local;
 pub(crate) mod random;
 mod repair;

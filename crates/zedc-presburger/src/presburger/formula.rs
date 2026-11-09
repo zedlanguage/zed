@@ -423,6 +423,19 @@ impl Lin {
         }
         v
     }
+
+    /// The value at `values` with each atom, a product included, read as a variable of its own,
+    /// an atom absent from it zero: the linear reading, the one the solver decides, in which a
+    /// product is not tied to its factors (`entails` reads a countermodel back as products).
+    pub(super) fn eval_linear(&self, values: &Model) -> Int {
+        let mut v = self.constant.clone();
+        for (a, c) in &self.terms {
+            if let Some(x) = values.get(a) {
+                v = &v + &(c * x);
+            }
+        }
+        v
+    }
 }
 
 impl Lin {
@@ -516,7 +529,18 @@ impl Con {
 
     /// Whether the constraint holds at `values` ([`Formula::holds`]).
     pub(super) fn holds(&self, values: &Model) -> bool {
-        let v = self.lin.eval(values);
+        self.compares(self.lin.eval(values))
+    }
+
+    /// Whether the constraint holds at `values` as the solver reads it ([`Lin::eval_linear`]):
+    /// each atom, a product included, a variable of its own. The solver's search tests its
+    /// points with this reading, since they give a product a value of its own.
+    pub(super) fn holds_linear(&self, values: &Model) -> bool {
+        self.compares(self.lin.eval_linear(values))
+    }
+
+    /// Whether the value `v` of the constraint's term meets its comparison with zero.
+    fn compares(&self, v: Int) -> bool {
         if self.rel == Rel::Eq {
             v.is_zero()
         } else {
