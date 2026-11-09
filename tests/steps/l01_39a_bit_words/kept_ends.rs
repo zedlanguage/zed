@@ -36,17 +36,17 @@ fn values() -> Vec<(String, Num)> {
     let mut out: Vec<(String, Num)> = Vec::new();
     for k in [126, 127, 128, 129, 200, 1000, 4097] {
         let p = pow2(k);
-        out.push((format!("2 ^ {k}"), p.clone()));
-        out.push((format!("2 ^ {k} - 1"), &p - &one));
-        out.push((format!("2 ^ {k} + 1"), &p + &one));
-        out.push((format!("2 ^ {k} - 2 ^ {}", k - 1), &p - &pow2(k - 1)));
+        out.push((format!("2^{k}"), p.clone()));
+        out.push((format!("2^{k} - 1"), &p - &one));
+        out.push((format!("2^{k} + 1"), &p + &one));
+        out.push((format!("2^{k} - 2^{}", k - 1), &p - &pow2(k - 1)));
         out.push((
-            format!("3 * 2 ^ {k} + 5"),
+            format!("3 * 2^{k} + 5"),
             &(&p * &Num::from(3)) + &Num::from(5),
         ));
-        out.push((format!("2 ^ {k} + 2 ^ {}", k - 100), &p + &pow2(k - 100)));
+        out.push((format!("2^{k} + 2^{}", k - 100), &p + &pow2(k - 100)));
         out.push((
-            format!("(2 ^ {k} + 6) div 2"),
+            format!("(2^{k} + 6) div 2"),
             (&p + &Num::from(6)).div_floor(&Num::from(2)),
         ));
     }
@@ -54,16 +54,16 @@ fn values() -> Vec<(String, Num)> {
         let three = Num::from(3).pow(e);
         let five = Num::from(5).pow(e);
         let twelve = Num::from(12).pow(e);
-        out.push((format!("3 ^ {e}"), three.clone()));
-        out.push((format!("3 ^ {e} - 1"), &three - &one));
-        out.push((format!("12 ^ {e}"), twelve.clone()));
-        out.push((format!("3 ^ {e} + 5 ^ {e}"), &three + &five));
+        out.push((format!("3^{e}"), three.clone()));
+        out.push((format!("3^{e} - 1"), &three - &one));
+        out.push((format!("12^{e}"), twelve.clone()));
+        out.push((format!("3^{e} + 5^{e}"), &three + &five));
         out.push((
-            format!("3 ^ {e} - 2 ^ {}", e + 1),
+            format!("3^{e} - 2^{}", e + 1),
             &three - &pow2(i64::from(e) + 1),
         ));
         out.push((
-            format!("12 ^ {e} * 5 ^ {e} + 2 ^ {e}"),
+            format!("12^{e} * 5^{e} + 2^{e}"),
             &(&twelve * &Num::from(5).pow(e + 1)) + &pow2(i64::from(e)),
         ));
     }
@@ -119,7 +119,7 @@ fn a_shift_right_of_a_kept_end_keeps_its_form() {
             for k in [127, 128, 150, w - 1, w] {
                 let q = x.div_floor(&pow2(k));
                 let expected = written(x).div_floor(&(BigInt::from(1) << k));
-                assert_eq!(written(&q), expected, "floor(({x}) / 2 ^ {k})");
+                assert_eq!(written(&q), expected, "floor(({x}) / 2^{k})");
                 let out = bit_word(
                     Prim::Shr,
                     &[IntervalSet::point(x.clone()), IntervalSet::single(k)],

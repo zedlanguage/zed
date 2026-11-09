@@ -211,7 +211,7 @@ fn the_bound_of_a_large_power_is_built_and_compared_without_its_digits() {
     let took = start.elapsed();
     assert!(
         took < std::time::Duration::from_secs(1),
-        "the bound of x ^ 10^8 took {took:?}"
+        "the bound of x^10^8 took {took:?}"
     );
 }
 
@@ -346,7 +346,7 @@ fn kept_forms_compute_as_their_values_written_out() {
         assert_eq!(hash_of(a), hash_of(&Num::from(x)), "{x}");
         assert_eq!(a.to_string(), x.to_string());
         assert_eq!(-a, Num::from(-x), "-{x}");
-        assert_eq!(a.pow(3), Num::from(x.pow(3)), "{x} ^ 3");
+        assert_eq!(a.pow(3), Num::from(x.pow(3)), "{x}^3");
         for r in 2..=5u32 {
             let m = x.abs();
             let (lo, hi) = (a.abs().floor_root(r), a.abs().ceil_root(r));

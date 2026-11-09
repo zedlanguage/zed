@@ -20,13 +20,7 @@ fn a_surrogate_is_not_a_scalar_and_an_emoji_round_trips() {
 #[test]
 fn scalar_refuses_every_int_that_is_not_a_scalar_value() {
     for n in [
-        "-1",
-        "55296",
-        "56000",
-        "57343",
-        "1114112",
-        "2 ^ 64",
-        "-(2 ^ 70)",
+        "-1", "55296", "56000", "57343", "1114112", "2^64", "-(2^70)",
     ] {
         assert_eq!(x(&format!("scalar({n})")), "#notScalar", "{n}");
     }

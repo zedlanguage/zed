@@ -1035,10 +1035,10 @@ fn a_power_is_the_product_of_its_halves() {
     for (x, e) in cases {
         let whole = eval(&pow(&x, e)).unwrap();
         let halves = eval(&mul(pow(&x, e / 2), pow(&x, e - e / 2))).unwrap();
-        assert_eq!(whole, halves, "{x:?} ^ {e} and its halves differ");
+        assert_eq!(whole, halves, "{x:?}^{e} and its halves differ");
         let square = |e: i64| mul(pow(&x, e), pow(&x, e));
         let next = bin(Prim::Lt, square(e), square(e + 1));
-        assert_eq!(eval(&next).unwrap(), Value::Bool(true), "{x:?} ^ {e}");
+        assert_eq!(eval(&next).unwrap(), Value::Bool(true), "{x:?}^{e}");
     }
 }
 

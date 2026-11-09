@@ -338,8 +338,8 @@ fn an_exponent_of_any_size_is_read_by_its_parity() {
         ("2^64 + 1", big(two.pow(64) + 1), true),
         // `10 ^ 10 ^ 9` and `3 ^ 10 ^ 9`, which the kernel holds as unbuilt prime powers:
         // built, each would be over a billion bits.
-        ("10 ^ 10 ^ 9", power_of(&ten(), billion()), false),
-        ("3 ^ 10 ^ 9", power_of(&int(3), billion()), true),
+        ("10^10^9", power_of(&ten(), billion()), false),
+        ("3^10^9", power_of(&int(3), billion()), true),
     ];
     for (name, k, odd) in cases {
         let le0 = at_most(power_of(&var("i"), k.clone()), 0);
@@ -352,13 +352,13 @@ fn an_exponent_of_any_size_is_read_by_its_parity() {
             (_, false) => ("i [0..=0]; exact", "i [-1..=-1, 1..=1]; exact", 1, 2),
         };
         let p = pre(&le0, &ds);
-        assert_eq!(shown(&p), le0_want, "i ^ {name} <= 0");
+        assert_eq!(shown(&p), le0_want, "i^{name} <= 0");
         let met = check(&le0, &ds, &Demand::Bool(true), &p, (-1, 1));
-        assert_eq!(met, le0_met, "i ^ {name} <= 0");
+        assert_eq!(met, le0_met, "i^{name} <= 0");
         let p = pre(&eq1, &ds);
-        assert_eq!(shown(&p), eq1_want, "i ^ {name} == 1");
+        assert_eq!(shown(&p), eq1_want, "i^{name} == 1");
         let met = check(&eq1, &ds, &Demand::Bool(true), &p, (-1, 1));
-        assert_eq!(met, eq1_met, "i ^ {name} == 1");
+        assert_eq!(met, eq1_met, "i^{name} == 1");
     }
 }
 

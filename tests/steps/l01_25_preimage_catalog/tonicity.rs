@@ -182,7 +182,7 @@ fn each_power_with_a_constant_exponent_has_its_tonicity() {
                     Some(false) => pw(a) >= pw(b),
                     None => pw(a) == pw(b),
                 };
-                assert!(ok, "x ^ {k} {t:?}: {a}, {b}");
+                assert!(ok, "x^{k} {t:?}: {a}, {b}");
             }
         }
     }

@@ -366,7 +366,7 @@ fn a_type_error_on_a_wide_number_names_its_type_when_memory_is_short() {
         ),
         (
             prim(Prim::BitNot, vec![wide(), num(8)]),
-            "`bitNot` needs `x` in int[0..<2 ^ width], and it is at least 2 ^ width",
+            "`bitNot` needs `x` in int[0..<2^width], and it is at least 2^width",
         ),
     ];
     lower_limit();

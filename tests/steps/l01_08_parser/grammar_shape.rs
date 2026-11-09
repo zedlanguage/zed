@@ -146,3 +146,27 @@ fn a_chain_of_a_million_members_builds() {
     let parsed = parse(&text, &tokens, "Expr", TOP).unwrap();
     build(&text, &tokens, &parsed).unwrap();
 }
+
+/// `^` is written without spaces (`0..=2^48`), and spaces around it are accepted: each spaced
+/// form builds the same tree as the unspaced one.
+#[test]
+fn spaces_around_a_power_change_nothing() {
+    let cases = [
+        ("2 ^ 48", "2^48"),
+        ("x ^ 2", "x^2"),
+        ("(-2) ^ 2", "(-2)^2"),
+        ("-x ^ 2", "-x^2"),
+        ("2 ^ -1", "2^-1"),
+        ("a ^ b ^ c", "a^b^c"),
+        ("(a ^ b) ^ c", "(a^b)^c"),
+        ("(x + 1r) ^ 2", "(x + 1r)^2"),
+        ("x * 2 ^ k", "x * 2^k"),
+        ("data.len in 0..=2 ^ 48", "data.len in 0..=2^48"),
+    ];
+    for (spaced, unspaced) in cases {
+        assert_eq!(expr(spaced), expr(unspaced), "{spaced}");
+    }
+    assert_eq!(expr("-x^2"), "(- (^ x 2))");
+    assert_eq!(expr("2^-1"), "(^ 2 (- 1))");
+    assert_eq!(expr("a^b^c"), "(^ a (^ b c))");
+}

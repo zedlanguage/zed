@@ -11,7 +11,7 @@ fn check(text: &str, want: &str) {
 fn spacing_and_parentheses_are_normalized() {
     check(
         "area(w,h)=w*h;\nmean(a,b)=((a+b))/2;\nf(x)=-(-x)^2;\n",
-        "area(w, h) = w * h;\nmean(a, b) = (a + b) / 2;\nf(x) = -(-x) ^ 2;\n",
+        "area(w, h) = w * h;\nmean(a, b) = (a + b) / 2;\nf(x) = -(-x)^2;\n",
     );
     check(
         "g(x)=(x-1)-(x-2);\nh(x)=x-(1-2);\nok(x)=(x<1)==(x<2);\n",
@@ -250,4 +250,27 @@ fn printing_a_type_scales_with_its_size() {
     zed_tests::scaling::check("printing a union type, by atoms", 200, |n| {
         zedc::format::format_type(&types[&n]);
     });
+}
+
+/// `^` is written with no spaces, as in mathematics; spaces in the source change nothing.
+/// `fmt` checks that each result builds to the same statements and formats to itself.
+#[test]
+fn a_power_is_written_without_spaces() {
+    let cases = [
+        ("big = 2 ^ 48;", "big = 2^48;"),
+        ("sq(x) = x ^ 2;", "sq(x) = x^2;"),
+        ("f(x) = (-2) ^ 2 + -x ^ 2;", "f(x) = (-2)^2 + -x^2;"),
+        ("half = 2 ^ -1;", "half = 2^-1;"),
+        ("f(a, b, c) = a ^ b ^ c;", "f(a, b, c) = a^b^c;"),
+        ("f(a, b, c) = (a ^ b) ^ c;", "f(a, b, c) = (a^b)^c;"),
+        ("f(x) = (x + 1r) ^ 2;", "f(x) = (x + 1r)^2;"),
+        ("f(x, k) = x * 2 ^ k;", "f(x, k) = x * 2^k;"),
+        ("ok(n) = n in 0..=2 ^ 48;", "ok(n) = n in 0..=2^48;"),
+        ("f(x) = x.len ^ 2;", "f(x) = x.len^2;"),
+    ];
+    for (spaced, want) in cases {
+        let (spaced, want) = (format!("{spaced}\n"), format!("{want}\n"));
+        check(&spaced, &want);
+        check(&want, &want);
+    }
 }

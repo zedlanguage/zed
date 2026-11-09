@@ -76,7 +76,7 @@ const ROWS: &[(&str, &str, &str, &str)] = &[
     // Right recursion.
     ("Arrow", "Type", "A -> B -> C", "(A -> (B -> C))"),
     ("Prefix", "Expr", "- - x", "(- (- x))"),
-    ("Power", "Expr", "2 ^ 3 ^ 2", "(2 ^ (3 ^ 2))"),
+    ("Power", "Expr", "2^3^2", "(2 ^ (3 ^ 2))"),
     ("TypeNot", "Type", "!!A", "(! (! A))"),
     ("Lambda", "Expr", "x -> y -> x + y", "(x -> (y -> (x + y)))"),
     (

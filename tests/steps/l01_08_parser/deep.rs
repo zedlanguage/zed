@@ -29,7 +29,7 @@ fn negations(n: usize) -> String {
     nest("!", "ok", "", n)
 }
 fn powers(n: usize) -> String {
-    nest("2 ^ ", "2", "", n)
+    nest("2^", "2", "", n)
 }
 fn lambdas(n: usize) -> String {
     nest("x -> ", "x", "", n)
@@ -131,7 +131,7 @@ deep_forms! {
     deep_parentheses parentheses_scale parens "1", "f(c) = 1;\n";
     a_long_sum a_long_sum_scales sum "(+ (+ a a) b)", "f(c) = a + a + b;\n";
     deep_prefix_operators prefix_operators_scale negations "(! (! ok))", "f(c) = !(!ok);\n";
-    deep_powers powers_scale powers "(^ 2 (^ 2 2))", "f(c) = 2 ^ 2 ^ 2;\n";
+    deep_powers powers_scale powers "(^ 2 (^ 2 2))", "f(c) = 2^2^2;\n";
     deep_lambdas lambdas_scale lambdas "(fn (x) (fn (x) x))", "f(c) = x -> x -> x;\n";
     deep_calls calls_scale calls "(call f (call f 1))", "f(c) = f(f(1));\n";
     deep_named_arguments named_arguments_scale named_calls

@@ -144,7 +144,7 @@ hi = greet("Ann", ...);          // a function still waiting for punct
 
 <!-- README.md:775 layer L1: ring L1, word none, label none; section [Numbers] 1 -->
 ```zed
-big = 2 ^ 100;              // 2 to the power 100, the exact integer, with no overflow
+big = 2^100;                // 2 to the power 100, the exact integer, with no overflow
 third = 1r / 3r;             // an exact rational
 half = f64(1) / 2.0;         // 2.0 takes the format of f64(1); 1.0 / 2.0 alone would be rejected, since nothing gives it a format
 q = 7 div 2;                 // 3
@@ -393,7 +393,7 @@ after, was = start.bump(2);
 stats(positional data: [f64]) {
   n = f64(data::len);
   mean = data.sum / n;
-  sd = (data.map(x -> (x - mean) ^ 2).sum / n).sqrt;
+  sd = (data.map(x -> (x - mean)^2).sum / n).sqrt;
   return { mean:, sd: };      // short for { mean: mean, sd: sd }
 }
 
@@ -531,8 +531,8 @@ struct Chunk grammar {
 
 <!-- README.md:2315 layer L22: ring L3, word L22 (expand), label none; section [Symbolic math] 1 -->
 ```zed
-p = ((x: rat) -> (x + 1r) ^ 2)::source;
-e = expand(p);          // x ^ 2 + 2r * x + 1r
+p = ((x: rat) -> (x + 1r)^2)::source;
+e = expand(p);          // x^2 + 2r * x + 1r
 d = derivative(p);      // 2r * x + 2r
 ```
 

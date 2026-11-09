@@ -4499,11 +4499,11 @@ fn at_least_zero() -> IntervalSet {
     IntervalSet::range(End::of(0), PosInf)
 }
 
-/// The domain `d` as a type, `int[0..]` or `int[0..<2 ^ w]`.
+/// The domain `d` as a type, `int[0..]` or `int[0..<2^w]`.
 fn domain_text(d: &IntDomain) -> String {
     match &d.below_two_pow {
         None => "int[0..]".into(),
-        Some(w) => format!("int[0..<2 ^ {}]", w.0),
+        Some(w) => format!("int[0..<2^{}]", w.0),
     }
 }
 

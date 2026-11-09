@@ -46,7 +46,7 @@ fn a_block_without_an_export_is_the_empty_tuple() {
 
 #[test]
 fn arithmetic_comparison_and_power() {
-    let src = "a = 2 ^ 3 ^ 2;\nb = -7 div 2;\nc = -7 mod 2;\nd = 1.5 * 4.0;\n\
+    let src = "a = 2^3^2;\nb = -7 div 2;\nc = -7 mod 2;\nd = 1.5 * 4.0;\n\
                e = 3 <= 3;\nf = !(2 > 3);\ng = 10.0 / 4.0;\n";
     assert_eq!(value(src, "a"), "512", "`^` is right-associative");
     assert_eq!(value(src, "b"), "-4", "Euclidean division");
@@ -55,7 +55,7 @@ fn arithmetic_comparison_and_power() {
     assert_eq!(value(src, "e"), "true");
     assert_eq!(value(src, "f"), "true");
     assert_eq!(value(src, "g"), "2.5");
-    assert_eq!(term(src, "a"), "(2 ^ (3 ^ 2))");
+    assert_eq!(term(src, "a"), "(2^(3^2))");
 }
 
 #[test]

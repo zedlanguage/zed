@@ -81,7 +81,7 @@ fn a_port_pushed_twice_in_one_wave_is_an_error() {
 #[test]
 fn a_number_too_large_to_build_stops_the_run() {
     let src = "main() -> (stdout: Lines) {\n  stdout <- \"start\";\n  \
-               stdout <- String(2 ^ 2 ^ 100 + 1);\n}\n";
+               stdout <- String(2^2^100 + 1);\n}\n";
     let out = run("too_large", src, "", &[]);
     assert_eq!(out.status, 1, "{}", out.stderr);
     assert!(
@@ -99,7 +99,7 @@ fn a_number_too_large_to_build_stops_the_run() {
 /// that size, at once, and the process does not abort.
 #[test]
 fn printing_a_number_too_large_to_build_stops_the_run() {
-    let src = "main() -> (stdout: Lines) {\n  stdout <- String(2 ^ 2 ^ 100);\n}\n";
+    let src = "main() -> (stdout: Lines) {\n  stdout <- String(2^2^100);\n}\n";
     let out = run("print_too_large", src, "", &[]);
     assert_eq!(out.status, 1, "{}", out.stderr);
     assert!(

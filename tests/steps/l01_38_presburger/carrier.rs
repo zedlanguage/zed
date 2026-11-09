@@ -313,10 +313,10 @@ fn a_float_times_zero_and_a_float_power_are_not_read_as_integers() {
     // literal), so `^` was outside the domain at `f64` before the filter too.
     let t1 = ok("x", "f64", "true");
     not_read_at_floats(&t1, &ok("x", "f64", "x * 0.0 == 0.0"), &[f64::INFINITY]);
-    not_read_at_floats(&t1, &ok("x", "f64", "x ^ 2.0 >= 0.0"), &[f64::NAN]);
+    not_read_at_floats(&t1, &ok("x", "f64", "x^2.0 >= 0.0"), &[f64::NAN]);
     let t1 = ok("x", "int", "true");
     proved(&t1, &ok("x", "int", "x * 0 == 0"));
-    proved(&t1, &ok("x", "int", "x ^ 2 == x * x"));
+    proved(&t1, &ok("x", "int", "x^2 == x * x"));
 }
 
 #[test]

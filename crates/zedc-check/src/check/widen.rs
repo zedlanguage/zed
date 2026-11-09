@@ -7,7 +7,7 @@
 //! the names bound by `=` to one name, and the joins of `if`, `else` and a block's `return`.
 //! Anything else, a parameter or a call among them, is any `int`, and so is a value past the
 //! word: an operand already past the word was widened upstream or given, and only the
-//! operation that crosses is reported. The left operand of `mod 2 ^ k`, k at most 64, built
+//! operation that crosses is reported. The left operand of `mod 2^k`, k at most 64, built
 //! from `+`, `-`, `*` and unary `-`, is computed in wrapping arithmetic (sec:domains), and
 //! nothing in it, or in the modulus, is reported.
 //!
@@ -51,7 +51,7 @@ enum Kind {
     Div,
     /// `mod` by anything but a power of two up to `2 ^ 64`.
     Mod,
-    /// `mod 2 ^ k`, k at most 64: its left operand wraps.
+    /// `mod 2^k`, k at most 64: its left operand wraps.
     Wrap(u32),
     /// `^`.
     Pow,
@@ -79,7 +79,7 @@ struct Node<'a> {
     first: u32,
     /// The root expression it is part of: a binding's value, a pushed value, a body.
     root: u32,
-    /// Whether it is inside the wrapping left operand of `mod 2 ^ k`, or is that modulus.
+    /// Whether it is inside the wrapping left operand of `mod 2^k`, or is that modulus.
     wrap: bool,
 }
 
@@ -602,7 +602,7 @@ impl<'t, 'a> Walk<'t, 'a> {
         notes.push(Note {
             span: n.e.span,
             text: "repair: if wrapping arithmetic is meant, reduce the value with \
-                   `mod 2 ^ k`, k at most 64"
+                   `mod 2^k`, k at most 64"
                 .to_string(),
         });
         Error {
@@ -669,7 +669,7 @@ impl<'t, 'a> Walk<'t, 'a> {
 }
 
 /// Whether `e` is computed in wrapping arithmetic when it is inside the left operand of
-/// `mod 2 ^ k`: `+`, `-`, `*`, unary `-` and literals (sec:domains).
+/// `mod 2^k`: `+`, `-`, `*`, unary `-` and literals (sec:domains).
 fn wraps(e: &Expr) -> bool {
     matches!(
         e.kind,

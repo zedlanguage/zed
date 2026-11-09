@@ -22,7 +22,7 @@ fn holds(s: &IntervalSet, v: &Value) -> bool {
 }
 
 fn end(n: u128) -> End {
-    End::from(i128::try_from(n).expect("below 2 ^ 127"))
+    End::from(i128::try_from(n).expect("below 2^127"))
 }
 
 /// `[lo..=hi]`, at any size below `2 ^ 127`.

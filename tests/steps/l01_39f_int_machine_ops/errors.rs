@@ -52,35 +52,35 @@ fn a_funnel_shift_by_the_width_is_a_type_error_naming_k() {
 fn each_operand_read_as_width_digits_is_checked() {
     for (src, msg) in [
         (
-            "x = mulHi(2 ^ 64, 1, width: 64);\n",
-            "`mulHi` takes `a` in int[0..<2 ^ width], and this `a` is 18446744073709551616 \
+            "x = mulHi(2^64, 1, width: 64);\n",
+            "`mulHi` takes `a` in int[0..<2^width], and this `a` is 18446744073709551616 \
              with `width` 64",
         ),
         (
             "x = mulHi(1, 256, width: 8);\n",
-            "`mulHi` takes `b` in int[0..<2 ^ width], and this `b` is 256 with `width` 8",
+            "`mulHi` takes `b` in int[0..<2^width], and this `b` is 256 with `width` 8",
         ),
         (
             "x = bitReverse(256, width: 8);\n",
-            "`bitReverse` takes `x` in int[0..<2 ^ width]",
+            "`bitReverse` takes `x` in int[0..<2^width]",
         ),
         (
             "x = byteSwap(65536, width: 16);\n",
-            "`byteSwap` takes `x` in int[0..<2 ^ width]",
+            "`byteSwap` takes `x` in int[0..<2^width]",
         ),
         (
             "x = funnelShl(256, 0, 1, width: 8);\n",
-            "`funnelShl` takes `hi` in int[0..<2 ^ width]",
+            "`funnelShl` takes `hi` in int[0..<2^width]",
         ),
         (
             "x = funnelShr(0, 256, 1, width: 8);\n",
-            "`funnelShr` takes `lo` in int[0..<2 ^ width]",
+            "`funnelShr` takes `lo` in int[0..<2^width]",
         ),
     ] {
         let out = rejected(src);
         assert!(out.contains(msg), "{src}: {out}");
     }
-    assert!(accepted("x = mulHi(2 ^ 64 - 1, 2 ^ 64 - 1, width: 64);\n"));
+    assert!(accepted("x = mulHi(2^64 - 1, 2^64 - 1, width: 64);\n"));
     assert!(accepted("x = bitReverse(255, width: 8);\n"));
 }
 
@@ -143,7 +143,7 @@ fn the_kernel_rejects_the_same_values_at_run_time() {
     );
     assert_eq!(
         err(Prim::BitReverse, &[256, 8]),
-        "`bitReverse` needs `x` in int[0..<2 ^ width], and it is at least 2 ^ width"
+        "`bitReverse` needs `x` in int[0..<2^width], and it is at least 2^width"
     );
     assert_eq!(
         err(Prim::Pext, &[1, -1]),
@@ -153,7 +153,7 @@ fn the_kernel_rejects_the_same_values_at_run_time() {
     let big = Value::int(num_bigint::BigInt::from(1u128 << 64));
     let out = zed_kernel::bits::word(Prim::MulHi, &[big, Value::Int(1), Value::Int(64)]);
     assert!(
-        matches!(&out, Err(KernelError::Type(m)) if m.contains("`a` in int[0..<2 ^ width]")),
+        matches!(&out, Err(KernelError::Type(m)) if m.contains("`a` in int[0..<2^width]")),
         "{out:?}"
     );
 }

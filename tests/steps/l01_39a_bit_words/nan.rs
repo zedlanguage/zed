@@ -110,7 +110,7 @@ main(args: CommandLine) -> (stdout: Lines) {
     min ${f64Bits(min(nan, one))}
     max ${f64Bits(max(one, -nan))}
     abs ${f64Bits(abs(-nan))}
-    negative to the half ${f64Bits(m ^ 0.5)}
+    negative to the half ${f64Bits(m^0.5)}
     read ${f64Bits(r)}
     read negated ${f64Bits(-r)}
     read plus one ${f64Bits(r + one)}
@@ -175,7 +175,7 @@ main(args: CommandLine) -> (stdout: Lines) {
     inf minus inf ${f64Bits(1.0 / 0.0 - 1.0 / 0.0)}
     negated ${f64Bits(-(0.0 / 0.0))}
     nan plus one ${f64Bits(0.0 / 0.0 + 1.0)}
-    negative to the half ${f64Bits((-1.0) ^ 0.5)}
+    negative to the half ${f64Bits((-1.0)^0.5)}
     """;
 }
 "#;

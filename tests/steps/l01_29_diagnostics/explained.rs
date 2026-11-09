@@ -21,11 +21,11 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
             ],
         ),
         (
-            reading("  stdout <- String(2 ^ (n - 5));"),
+            reading("  stdout <- String(2^(n - 5));"),
             "3:20: `^` on an int needs an exponent of at least 0, and this one is int: an int \
              raised to a negative power is a fraction, not an int",
             vec![
-                "repair: test the exponent first, as `if n >= 0 { x ^ n } else { … }`",
+                "repair: test the exponent first, as `if n >= 0 { x^n } else { … }`",
                 "repair: declare the exponent with a type of no int below 0, as `n: int[0..]`",
             ],
         ),

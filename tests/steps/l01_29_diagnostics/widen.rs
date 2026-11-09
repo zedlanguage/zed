@@ -48,7 +48,7 @@ fn the_area_of_a_large_square_warns_with_its_derivation() {
   [5] 3:17: `side` is 3037000500 here
       3 |   area = side * side;
         |                 ^^^^
-  [6] 3:10: repair: if wrapping arithmetic is meant, reduce the value with `mod 2 ^ k`, k at most 64
+  [6] 3:10: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 64
       3 |   area = side * side;
         |          ^^^^^^^^^^^"
     );
@@ -99,7 +99,7 @@ fn the_exact_boundary_of_the_word() {
 #[test]
 fn each_operand_width_is_named() {
     let src = main_with(
-        "  a = 127 ^ 10;\n  b = 32767 ^ 5;\n  c = 2147483647 ^ 3;\n  \
+        "  a = 127^10;\n  b = 32767^5;\n  c = 2147483647^3;\n  \
          d = 4294967296 * 4294967296;\n  e = 128 * 72057594037927936;\n  \
          f = -128 * 72057594037927937;\n",
         "0",
@@ -127,7 +127,7 @@ fn wrapping_arithmetic_reduced_by_a_power_of_two_does_not_warn() {
     let src = main_with(
         "  h = (3037000500 * 3037000500 + 7) mod 18446744073709551616;\n  \
          low = (3037000500 * 3037000500) mod 4294967296;\n  \
-         k = ((3037000500 * 3037000500) mod 2 ^ 64) else 0;\n",
+         k = ((3037000500 * 3037000500) mod 2^64) else 0;\n",
         "low",
     );
     assert_eq!(messages(&src), Vec::<String>::new());
@@ -158,9 +158,9 @@ fn a_power_or_a_quotient_inside_a_wrapping_reduction_still_warns() {
     // Only `+`, `-`, `*`, unary `-` and literals wrap under `mod 2 ^ k`; a `^` or a `div`
     // there is computed exactly first, so its crossing is reported.
     let src = main_with(
-        "  a = (3 ^ 50 + 1) mod 2 ^ 64;\n  \
-         c = (3 ^ 50) mod 2 ^ 64;\n  \
-         b = ((-9223372036854775807 - 1) div -1) mod 2 ^ 64;\n",
+        "  a = (3^50 + 1) mod 2^64;\n  \
+         c = (3^50) mod 2^64;\n  \
+         b = ((-9223372036854775807 - 1) div -1) mod 2^64;\n",
         "0",
     );
     assert_eq!(
@@ -226,7 +226,7 @@ fn an_if_gives_the_interval_of_its_branches() {
   [9]  3:12: `n` is int[10..=3037000500] here
        3 |   sq = n * n;
          |            ^
-  [10] 3:8: repair: if wrapping arithmetic is meant, reduce the value with `mod 2 ^ k`, k at most 64
+  [10] 3:8: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 64
        3 |   sq = n * n;
          |        ^^^^^"
     );

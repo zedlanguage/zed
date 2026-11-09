@@ -34,7 +34,7 @@ fn units() -> Vec<(String, Vec<u8>)> {
     ));
     out.push((
         "a negative exponent".into(),
-        b"f(x: int, n: int[-2..3]) -> int = x ^ n;\n".to_vec(),
+        b"f(x: int, n: int[-2..3]) -> int = x^n;\n".to_vec(),
     ));
     out.push((
         "a parameter's morphism type outside its bound".into(),

@@ -768,12 +768,12 @@ Zed has exact integers, rational numbers (fractions of two integers) and floatin
 >
 > **`1.5`** is a decimal literal, which takes whichever of `f16`, `bf16`, `f32`, `f64` and `rat` its use needs, never `int`: at a float format it is the nearest value of that format, and at `rat` it is exact. A decimal that nothing gives a type is a compile error, since no format is the obvious one. A suffix names the format instead: **`0.1f64`**, `0.1f32`, `0.1f16` or `0.1bf16`. So `inc(x) = x + 1;` works on every number type, and `x * 0.5` on every type but `int`.
 >
-> **`a / b`** divides floats and `rat` values. **`a div b`** and **`a mod b`** are the integer quotient and remainder, and **`a ^ b`** is a power. **`f64(n)`** converts `n` to `f64`, and **`int(s)`** converts a string to an `int`; such conversions are checked and can fail.
+> **`a / b`** divides floats and `rat` values. **`a div b`** and **`a mod b`** are the integer quotient and remainder, and **`a^b`** is a power. **`f64(n)`** converts `n` to `f64`, and **`int(s)`** converts a string to an `int`; such conversions are checked and can fail.
 >
 > **`==`**, **`!=`**, **`<`**, **`<=`**, **`>`** and **`>=`** compare, giving a **`bool`**, true or false, and `==` compares structure, by value. **`&&`** and **`||`** are logical and and or.
 
 ```zed
-big = 2 ^ 100;              // 2 to the power 100, the exact integer, with no overflow
+big = 2^100;                // 2 to the power 100, the exact integer, with no overflow
 third = 1r / 3r;             // an exact rational
 half = f64(1) / 2.0;         // 2.0 takes the format of f64(1); 1.0 / 2.0 alone would be rejected, since nothing gives it a format
 q = 7 div 2;                 // 3
@@ -1930,7 +1930,7 @@ A value no result depends on doesn't have to be computed, so unused fields and u
 stats(positional data: [f64]) {
   n = f64(data::len);
   mean = data.sum / n;
-  sd = (data.map(x -> (x - mean) ^ 2).sum / n).sqrt;
+  sd = (data.map(x -> (x - mean)^2).sum / n).sqrt;
   return { mean:, sd: };      // short for { mean: mean, sd: sd }
 }
 
@@ -2313,13 +2313,13 @@ Programs can read a function, rewrite it and compile it again.
 > **`expand(e)`** multiplies out a formula held as source, and **`derivative(e)`** differentiates it. Here the function's parameter has a stated type: `(x: rat) -> ...`.
 
 ```zed
-p = ((x: rat) -> (x + 1r) ^ 2)::source;
-e = expand(p);          // x ^ 2 + 2r * x + 1r
+p = ((x: rat) -> (x + 1r)^2)::source;
+e = expand(p);          // x^2 + 2r * x + 1r
 d = derivative(p);      // 2r * x + 2r
 ```
 
 ```text
-e = x ^ 2 + 2r * x + 1r
+e = x^2 + 2r * x + 1r
 d = 2r * x + 2r
 ```
 

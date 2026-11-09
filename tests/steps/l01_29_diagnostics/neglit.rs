@@ -92,7 +92,7 @@ fn only_a_chain_on_a_numeric_literal_under_a_prefix_minus_is_rejected() {
         ("-1.clamp(0, 8)", true),
         ("-1[0]", true),
         ("f(-1.abs)", true),
-        ("2 ^ -1.abs", true),
+        ("2^-1.abs", true),
         ("--1.abs", true),
         // Accepted: no chain, a grouped base, a grouped chain, a name as base, binary minus,
         // `!`, and a power, whose `-` applies to `1.abs ^ 2` as `-x ^ 2` is `-(x ^ 2)`.
@@ -103,7 +103,7 @@ fn only_a_chain_on_a_numeric_literal_under_a_prefix_minus_is_rejected() {
         ("-x.abs", false),
         ("x - 1.abs", false),
         ("!1.abs", false),
-        ("-1.abs ^ 2", false),
+        ("-1.abs^2", false),
         ("-1 div 4", false),
     ];
     let wrong: Vec<String> = cases

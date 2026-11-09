@@ -5,9 +5,10 @@
 //! per line, its export last, so a block reads top-down to its result (DESIGN.md, "Blocks
 //! bind; `return` exports"). A function's body block is always on several lines, and its
 //! `test` cases are one table on one line, indented under it. An export of one value is the
-//! trailing expression, of several `return a, b;`. Binary operators have a space each side,
-//! `x: T` has none before the colon, a named argument `x: x` is written `x:`, and parentheses
-//! are written only where the grammar needs them. A literal is written as it was spelled.
+//! trailing expression, of several `return a, b;`. Binary operators have a space each side, but
+//! `^` has none (`2^48`, as in mathematics); `x: T` has none before the colon, a named argument
+//! `x: x` is written `x:`, and parentheses are written only where the grammar needs them.
+//! A literal is written as it was spelled.
 //!
 //! Comments are kept. A comment on its own line stays before the statement after it; one after
 //! a statement, on its line, stays after it; one inside a statement but in none of its blocks
@@ -1167,12 +1168,13 @@ impl<'a> Formatter<'a> {
             },
             ExprKind::Binary(op, a, b) => {
                 let l = binary_level(op);
-                let (lmin, rmin) = match l {
-                    POWER => (POSTFIX, PREFIX),
-                    EQUALITY | RELATION => (l + 1, l + 1),
-                    _ => (l, l + 1),
+                // `^` is written with no spaces, as in mathematics: `0..=2^48`, `x * 2^k`.
+                let (lmin, rmin, op) = match l {
+                    POWER => (POSTFIX, PREFIX, Cow::Borrowed(*op)),
+                    EQUALITY | RELATION => (l + 1, l + 1, Cow::Owned(format!(" {op} "))),
+                    _ => (l, l + 1, Cow::Owned(format!(" {op} "))),
                 };
-                then![stack; at(a, lmin), put(format!(" {op} ")), at(b, rmin)];
+                then![stack; at(a, lmin), put(op), at(b, rmin)];
             }
             ExprKind::Call {
                 callee,

@@ -27,13 +27,13 @@ fn an_exponent_under_a_test_is_accepted() {
     // the arm where its opposite fails, through `!`, and with the exponent computed from the
     // tested name.
     for src in [
-        "power(positional x: int, positional n: int) = if n >= 0 { x ^ n } else { 0 }\n\
+        "power(positional x: int, positional n: int) = if n >= 0 { x^n } else { 0 }\n\
          test { (2, 3) -> 8, (2, -1) -> 0 }\n",
-        "power(positional x: int, positional n: int) = if n > 0 { x ^ (n - 1) } else { 0 }\n\
+        "power(positional x: int, positional n: int) = if n > 0 { x^(n - 1) } else { 0 }\n\
          test { (2, 3) -> 4, (2, -1) -> 0 }\n",
-        "power(positional x: int, positional n: int) = if n < 0 { 1 } else { x ^ n }\n\
+        "power(positional x: int, positional n: int) = if n < 0 { 1 } else { x^n }\n\
          test { (2, 3) -> 8, (2, -1) -> 1 }\n",
-        "power(positional x: int, positional n: int) = if !(n < 0) { x ^ n } else { 0 }\n\
+        "power(positional x: int, positional n: int) = if !(n < 0) { x^n } else { 0 }\n\
          test { (2, 3) -> 8, (2, -1) -> 0 }\n",
     ] {
         assert!(rows_pass(src), "{src}");
@@ -143,7 +143,7 @@ fn a_name_bound_again_in_the_arm_is_rejected() {
 #[test]
 fn a_test_that_bounds_too_little_is_rejected_with_the_bound_it_gives() {
     let out =
-        rejected("power(positional x: int, positional n: int) = if n > -3 { x ^ n } else { 0 };\n");
+        rejected("power(positional x: int, positional n: int) = if n > -3 { x^n } else { 0 };\n");
     assert!(
         out.contains("`^` on an int needs an exponent of at least 0, and this one is int[-2..]"),
         "{out}"
@@ -312,7 +312,7 @@ fn a_test_of_a_name_bound_by_let_narrows_the_input_its_value_reads() {
          test { 5 -> 2, -3 -> 0 }\n",
         // An exponent under a test of the steps left: `left <= 10` holds where `n >= 0`.
         "power(positional x: int, positional n: int) =\n  \
-           { left = 10 - n; if left <= 10 { x ^ n } else { 0 } }\n\
+           { left = 10 - n; if left <= 10 { x^n } else { 0 } }\n\
          test { (2, 3) -> 8, (2, -1) -> 0 }\n",
         // A call's value named: the name is the input the next binding's summary reads.
         "g(positional n: int) = n - 3;\n\
@@ -378,7 +378,7 @@ fn a_name_its_tested_name_reads_is_narrowed_by_its_summary() {
         // The steps left of a budget, where the spent steps are tested.
         "power(positional x: int, positional used: int) =\n  \
            { left = 10 - used; spent = used + 0;\n    \
-             if spent >= 0 && spent <= 10 { x ^ left } else { 0 } }\n\
+             if spent >= 0 && spent <= 10 { x^left } else { 0 } }\n\
          test { (2, 7) -> 8, (2, 11) -> 0 }\n",
     ] {
         assert!(rows_pass(src), "{src}");

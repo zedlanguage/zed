@@ -386,7 +386,7 @@ fn power_bounds(k: usize) {
 fn power_bounds_scale_with_the_bits_of_the_exponent() {
     let n = 1_000_000;
     scaling::compare(
-        "the bound of x ^ k: k = 10^6 and 8 * 10^6",
+        "the bound of x^k: k = 10^6 and 8 * 10^6",
         "the work is of order the bits of k, which grow by 3 of about 20, so 3 times allows \
          for noise and fails for any work that grows with k itself",
         3.0,
@@ -466,8 +466,8 @@ fn kept_arithmetic_scales_with_the_bits_of_the_exponent() {
     // k and 8k must both be 1 or 2 mod 3, so both cube roots are irrational.
     let n = n + 1;
     scaling::compare(
-        "x ^ k + 1, k * x ^ k - 1, the cube root of 2 ^ k, 3 ^ k + 5 ^ k, 3 ^ (k + 1) - 3 ^ k and \
-         (2 ^ k + 1) ^ 3: k = 10^6 + 1 and 8 times it",
+        "x^k + 1, k * x^k - 1, the cube root of 2^k, 3^k + 5^k, 3^(k + 1) - 3^k and \
+         (2^k + 1)^3: k = 10^6 + 1 and 8 times it",
         "the work is of order the bits of k, which grow by 3 of about 20, so 3 times allows \
          for noise and fails for any work that grows with k itself",
         3.0,
@@ -494,8 +494,8 @@ fn equal_cores(e: usize) {
 fn equal_cores_scale_with_the_bits_of_the_exponent() {
     let n = 1_000_000;
     scaling::compare(
-        "3 ^ e * 9 ^ (e + 1) - 3 ^ (3e + 2) and 6 ^ e * 5 ^ (e + 1) - 2 ^ e * 3 ^ e * \
-         5 ^ (e + 1): e = 10^6 and 8 * 10^6",
+        "3^e * 9^(e + 1) - 3^(3e + 2) and 6^e * 5^(e + 1) - 2^e * 3^e * \
+         5^(e + 1): e = 10^6 and 8 * 10^6",
         "the work is of order the bits of e, which grow by 3 of about 20, so 3 times allows \
          for noise and fails for any work that grows with e itself",
         3.0,
@@ -525,7 +525,7 @@ fn the_cube_of_a_wide_end_scales_with_its_bits() {
         (num_bigint::BigInt::from(1) << (scaling::FACTOR * n)) + 3,
     );
     scaling::check(
-        "the cube of an end of 2^n + 3 and the image of x ^ 3 up to it: n bits",
+        "the cube of an end of 2^n + 3 and the image of x^3 up to it: n bits",
         n,
         |m| cube_of_a_wide_end(if m == n { &small } else { &large }),
     );
@@ -556,7 +556,7 @@ fn equality_over_a_wide_base_scales_with_its_bits() {
     let n = 65536;
     let (small, large) = (pair(n), pair(scaling::FACTOR * n));
     scaling::check(
-        "(2^n * 3) ^ 1000 against 2 ^ (1000 n) * 3 ^ 1000: n bits",
+        "(2^n * 3)^1000 against 2^(1000 n) * 3^1000: n bits",
         n,
         |m| equal_over_a_wide_base(if m == n { &small } else { &large }),
     );

@@ -36,7 +36,7 @@ step L6.13b) and gap 12 (early exit, which the quantifiers of step L3.15a cover 
 **ZED0.md is current** as of the audit of 2026-11-03: its Part B and "Gaps found" take their
 list from this file, and each gap above that the compiler meets before row S is now a step
 before its first use (DESIGN.md step S.1 lists them). The bit words are in the words table
-and built (gap 4); the content-address row writes `mod 2 ^ 32`, as the grammar has no `%`.
+and built (gap 4); the content-address row writes `mod 2^32`, as the grammar has no `%`.
 
 **The claim most likely to be wrong** is gap 11's: that primed receivers and `*.` cost O(1) per
 update on a compiler state struct. That rests on step L6.13, which is not built, so the claim
@@ -65,7 +65,7 @@ Library words the audit found missing, with no plan row adding them (PORT-catalo
 | `Ord::cmp` of each type, `partial_cmp`, `total_cmp`, `Iterator::cmp` and the `Ordering` methods (`reverse`, `then`, `then_with`, `is_*`) | 32 | a three-way comparison and its value | `a < b`, `a == b` and `by: le` for sorting |
 | `Hash::hash` of each type, `Hasher::write*`, `BuildHasher::hash_one`, `DefaultHasher` | 13 | a hash word for any value (row STD-blake3 covers byte sequences only) | the value as its key in a family |
 | `iter::repeat`, `iter::repeat_n` | 2 | a sequence of one value repeated, unbounded or `n` times | `xs[i] else d` for padding |
-| `TryFrom` narrowing (24), `checked_*` (21) | 45 | a narrowing conversion and checked fixed-width arithmetic as a value-level failure | `if a < 2 ^ w { … }` written out (author question) |
+| `TryFrom` narrowing (24), `checked_*` (21) | 45 | a narrowing conversion and checked fixed-width arithmetic as a value-level failure | `if a < 2^w { … }` written out (author question) |
 
 ## Method
 
@@ -257,14 +257,14 @@ Fix: add to the L1 row of the words table `shl` as line 612 specifies it, and se
 `bitAnd bitOr bitXor bitNot shr popCount leadingZeros trailingZeros` on `int[0..]`, so that a
 negative operand is a type error. `bitNot`, `leadingZeros` and `rotl` depend on a width, so each
 takes it as an argument. Shift counts stay domain-typed and are never masked (line 612), so a
-wrapping shift is written `shl(x, k) mod 2 ^ w`. `rotl` and `rotr` are new words.
+wrapping shift is written `shl(x, k) mod 2^w`. `rotl` and `rotr` are new words.
 
-Wrapping arithmetic is written `(a * b) mod 2 ^ 64`. Line 589 already permits computing that in
+Wrapping arithmetic is written `(a * b) mod 2^64`. Line 589 already permits computing that in
 wrapping `w`-bit arithmetic when the result domain is known statically and spans at most `2^w`
-integers (see also line 4088), and step L3.13 builds it, with a test at `mod 2 ^ 63`. What remains
+integers (see also line 4088), and step L3.13 builds it, with a test at `mod 2^63`. What remains
 is to confirm it for `mix` (`types.rs:77`), where each product is its own expression, since
 `bitXor` and `rotl` are not in line 612's list of operators. Also, line 612 lists the
-representations as i8…i64, else big-integer, and `int[0..<2 ^ 64]` does not fit `i64`, so a hash
+representations as i8…i64, else big-integer, and `int[0..<2^64]` does not fit `i64`, so a hash
 would be stored as a big integer. Fix: state that a domain spanning at most `2^w` integers is
 stored in one word. Both points are inferred; the test is a scaling run of `mix` at S.3. Carrier masks become sets of atoms. BLAKE3 in Zed
 is then ZED0.md's plan; if a stage build shows it too slow, a primitive is allowed by line 1075.
@@ -272,7 +272,7 @@ is then ZED0.md's plan; if a stage build shows it too slow, a primitive is allow
 Also float bits, no word: `to_bits`, `from_bits` 13 matches (`Out::value`, `canon/serial.rs:78`;
 `W::value`, `zir/binary.rs:122`; `Exact::float`, `num.rs:151`; `exact_sum`, `exact.rs:94`;
 `Width::holds`, `store/float.rs:39`). Content addresses hash float bits, so this cannot be avoided.
-Fix: L1 words `f64Bits : f64 -> int[0..<2 ^ 64]` and its inverse, NaN being canonical first.
+Fix: L1 words `f64Bits : f64 -> int[0..<2^64]` and its inverse, NaN being canonical first.
 
 ### Gap 5. Bytes (missing)
 
@@ -562,7 +562,7 @@ which 196 inside a loop body; `?` 1015, of which 276 in a loop; `continue` 110; 
   `store::int::Int`, unbounded with i128 while a value fits, and no coefficient refuses a
   question; in Zed this is `int`, and `store::int` goes at the port. `checked_*` remain elsewhere.
 - **Three live variables (LIVE3).** `store::live3` computes in `Int` and `linear::Q` and holds no state; its numbers of three (`[Q; 3]`, `[[Int; 3]; 3]`) are fixed-size tuples in Zed. The 64-bit fast paths added to `Int` (`div_floor`, `mod_floor`, `*`) go with `store::int` at the port.
-- **`as` casts** (272): most go, but a truncating cast must become `mod 2 ^ k`.
+- **`as` casts** (272): most go, but a truncating cast must become `mod 2^k`.
 
 ## Mechanical rewrites
 
@@ -1286,7 +1286,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `u128` products for a 64-bit product modulo a 64-bit number | `factor::mul_mod`, `factor::split` | None | `(a * b) mod m` on unbounded `int`, the operands' ranges `int[0..<2 ^ 64]` letting the plan use two words |
+| `u128` products for a 64-bit product modulo a 64-bit number | `factor::mul_mod`, `factor::split` | None | `(a * b) mod m` on unbounded `int`, the operands' ranges `int[0..<2^64]` letting the plan use two words |
 | `BigUint::bits`, `trailing_zeros`, `bit`, `<<` and `>>` on big integers, and `u64::leading_zeros` and `trailing_zeros` | `bound::Bound`, `Rat::small_integer`, `valuation`, `factor::factor` | Bit operations on `int` | Library words on `int` (`bits`, `trailing_zeros`, `shl`), as for the counts in the row of `count_ones` above |
 | `Cow<'_, Rat>`, an operand borrowed unless it must be rebuilt over more primes | `Rat::aligned`, `Value::as_integer` | None | Zed shares values, so the function returns the operand or the rebuilt one |
 | `&dyn Fn(&BigInt, &BigUint) -> bool`, the exact test of a near-tie passed into the rounding | `bound::round`, `Quotient::floor_scaled` | None | A function value |
@@ -1450,8 +1450,8 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| An enum of the solver's `Int`, the kernel's `Arc<Rat>` (an unbuilt prime power) and a parity alone for a count of factors past `u32::MAX`, read only by `is_zero`, `is_odd` and `to_u32` | `revision::Exponent` | None | Zed's `int` is one type, so the exponent is an `int` or a parity; a port must keep the kernel's unbuilt form or `10 ^ 10 ^ 9` is built |
-| `Option<u32>` with `checked_add` and `zip`, a count that is `None` past `u32::MAX` | `preimage::Count` | Fixed-width integers | `Option<u32>`, or an `int` compared with `2 ^ 32`, as it is O(1) only while bounded |
+| An enum of the solver's `Int`, the kernel's `Arc<Rat>` (an unbuilt prime power) and a parity alone for a count of factors past `u32::MAX`, read only by `is_zero`, `is_odd` and `to_u32` | `revision::Exponent` | None | Zed's `int` is one type, so the exponent is an `int` or a parity; a port must keep the kernel's unbuilt form or `10^10^9` is built |
+| `Option<u32>` with `checked_add` and `zip`, a count that is `None` past `u32::MAX` | `preimage::Count` | Fixed-width integers | `Option<u32>`, or an `int` compared with `2^32`, as it is O(1) only while bounded |
 | `Op` no longer `Copy`, passed as `&Op` to `tonicity`, `forward` and `backward` | `revision`, `preimage`, `preimage_ref`, `product`, `check` | None | Values are shared in Zed; the reference goes |
 
 ## Entries from CANON-stable (`zedc-presburger/src/presburger.rs`)
@@ -1465,7 +1465,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `u128` product reduced modulo the Mersenne prime `2^61 - 1` by a mask and a shift | `num::mul_mod` | Bit operations (gap 4) | `(a * b) mod (2 ^ 61 - 1)` on `int`, the operands' ranges `int[0..<2 ^ 61]` letting the plan use two words |
+| `u128` product reduced modulo the Mersenne prime `2^61 - 1` by a mask and a shift | `num::mul_mod` | Bit operations (gap 4) | `(a * b) mod (2^61 - 1)` on `int`, the operands' ranges `int[0..<2^61]` letting the plan use two words |
 | `[2, 5].map` with a closure that splits each prime off two captured coefficients through `std::mem::take` and reassigns them | `Rat::literal_text` | Mutation | A fold over the two primes with the coefficients as its state |
 
 ## Entries from S22e-quad (`zedc-preimage/src/preimage.rs`)
@@ -1491,7 +1491,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | The approximation of a kept root held in an `Arc<Mutex<Option<(u64, Approx)>>>` beside the root, shared by every copy of the atom, refined through `&self` and left out of the atom's order and equality (`Memo`) | `store::int::{Memo, Atom::approx}` | Lazy cells (gap 3) | A memo of root approximations keyed by the root's form, kept by the runtime, or the approximation passed along with the value |
 | `Int`, the same with an `i128` word, for the Presburger solver | `store::int::Int`, `presburger.rs` | Machine integers | Vanishes: an `int` |
 | `BigInt` from `num-bigint` behind both | `store::int` | External crate | Goes with `num-bigint` (see the external crates above) |
-| `u64` residues multiplied in `u128` and reduced (`pow_mod`), and big integers reduced modulo a power of 2 by a bit mask (`odd_root_mod_pow2`, `pow_mod_pow2`, `inverse_mod_pow2`) | `store::int::{pow_mod, odd_root_mod_pow2, pow_mod_pow2, inverse_mod_pow2}` | Machine integers; bit operations on `int` | `int` products and `%` (the runtime keeps them in a word while they fit), and a mask as `x % 2 ^ k` unless Zed gains bit operations on `int` |
+| `u64` residues multiplied in `u128` and reduced (`pow_mod`), and big integers reduced modulo a power of 2 by a bit mask (`odd_root_mod_pow2`, `pow_mod_pow2`, `inverse_mod_pow2`) | `store::int::{pow_mod, odd_root_mod_pow2, pow_mod_pow2, inverse_mod_pow2}` | Machine integers; bit operations on `int` | `int` products and `%` (the runtime keeps them in a word while they fit), and a mask as `x % 2^k` unless Zed gains bit operations on `int` |
 | The S22a summary's pieces as `i128` values with the ends of `i64` standing for the infinities, entered only when every finite end lies strictly inside `i64` (`in_i64`, `small`; since S22-WIDE `in_range`, the ends strictly inside `i128` and the infinities `i128::MIN` and `i128::MAX`), and nodes copied whole with `..(^node).clone()` now that an end is not `Copy` | `store::preimage::{in_range, small, key, input, apply_tag}` | Machine integers; struct update syntax | Vanishes: ends are `int` and the summary holds them as they are |
 
 ## Entries from TD-cong (`zedc-lattice/src/lattice.rs`, `canon/domain.rs`, `canon/serial.rs`, `store/affine.rs`, `store/int.rs`)
@@ -1659,7 +1659,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Two new `Law` variants, one holding a `Const` and one a `&'static str`, in a `const` table of `Axiom` | `axioms::Law::SelfInverse`, `PowerOfTwo`, `AXIOMS` | None | Atoms with a payload, `#selfInverse(0)` and `#powerOfTwo("*")`, as `zed/prelude/axioms.zed` already writes them |
 | An operator's table on 0..<2^w built once into a `Vec<usize>`, then read by index for each tuple | `check_word` (test) | None | A list built by `map` over a range and read by index; the reads are O(1) on a persistent vector |
 | `<[Term; 2]>::try_from(Vec<Term>)` to take the two arguments of a binary operator by value | `call` (test) | None | A list pattern `[a, b]` in a `match` |
-| `num_bigint::BigInt` for 2^63, 2^64 and 2^128 corner values | `word_corners`, `shift_values` (test) | None | `int` is unbounded: the literals `2 ^ 64` and so on |
+| `num_bigint::BigInt` for 2^63, 2^64 and 2^128 corner values | `word_corners`, `shift_values` (test) | None | `int` is unbounded: the literals `2^64` and so on |
 
 ## Entries from TERM-id (`zedc-stage/src/stage.rs`)
 
@@ -2045,7 +2045,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | An index loop over the line's bytes that finds the first `//` outside a string literal, a `Peekable<Chars>` scan of tags and entities, and `str::find` over the HTML of cells | `comment`, `text_of`, `cells` | None | A fold over the string's code points with the state in the accumulator |
 | `let … else { continue }` to skip a fence with no entry | `the_enabled_readme_fences_run_with_their_stated_results` | None | A `match` on the lookup's `#notFound` |
 ## Entries from DIAG-suppress (`zedc/src/suppress.rs`, `zedc/src/run.rs`, `zedc/src/unit.rs`)
-| `u128` products reduced modulo `2^61 - 1` for the prefix hashes of a text, and the hash of a span from two prefixes | `Content::new`, `Content::hash` | None | `(a * b) mod (2 ^ 61 - 1)` on `int`, the operands' ranges `int[0..<2 ^ 61]` letting the plan use two words (as `num::mul_mod`) |
+| `u128` products reduced modulo `2^61 - 1` for the prefix hashes of a text, and the hash of a span from two prefixes | `Content::new`, `Content::hash` | None | `(a * b) mod (2^61 - 1)` on `int`, the operands' ranges `int[0..<2^61]` letting the plan use two words (as `num::mul_mod`) |
 | An incremental `blake3::Hasher`, finalized once for the occurrence key and again after the count is added | `addresses` | Library | A hash word over a byte sequence built by appending, from the stdlib catalog of step L2.11; the key and the address as two hashes of two sequences |
 | `slice::partition_point` over the top-level statements in source order | `enclosing` | None | A binary search over a sequence by a predicate, from the L3 library (as `docs::check`) |
 | A `HashMap<ContentAddress, bool>` whose flags are set as warnings match, then read for the addresses that matched nothing | `Suppress::hides`, `unmatched`, `refused` | Mutation | A fold over the warnings that returns the set of matched addresses beside the printed ones; the unmatched are the named set minus it |
@@ -2067,7 +2067,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `perf_event_open` through `perf-event2`, and the global allocator of `zed-alloc-count` | `main.rs` `counter` | Missing (foreign calls) | Stays in Rust: the measurement belongs to the runtime the port runs on |
 | A flag set by the closure a query computes with, to tell a computed row from a cached one | `testing::counted_row` | Mutation of a captured variable | The query returns whether it computed, with its answer |
 ## Entries from NUM-subquad (`zed-kernel/src/num/fast.rs`, `num.rs`)
-| Number-theoretic transforms over `Vec<u64>` updated in place, with `u128` products, `wrapping_mul` and Shoup's precomputed quotients for the products modulo three 64-bit primes | `Field::convolve`, `forward`, `inverse`, `shoup` | Bit operations (gap 4), Machine integers, Mutation (gap 11) | These are the arithmetic of `int` itself, which belongs to the runtime (row "What stays in Rust"); a Zed port would write them on `int[0..<2 ^ 64]` words with gap 4's bit words and an array updated in place |
+| Number-theoretic transforms over `Vec<u64>` updated in place, with `u128` products, `wrapping_mul` and Shoup's precomputed quotients for the products modulo three 64-bit primes | `Field::convolve`, `forward`, `inverse`, `shoup` | Bit operations (gap 4), Machine integers, Mutation (gap 11) | These are the arithmetic of `int` itself, which belongs to the runtime (row "What stays in Rust"); a Zed port would write them on `int[0..<2^64]` words with gap 4's bit words and an array updated in place |
 | The half gcd's leaf steps on `i128` residues and matrix entries, chosen because they provably stay below `2^120` | `half_leaf` | Machine integers | Unbounded `int`, the ranges letting the plan use two words |
 | Leaf sizes that differ between the unit tests and the build (`#[cfg(test)]` constants), so the unit tests reach the transforms at small sizes | `MUL_LEAF`, `GCD_LEAF` | No conditional compilation | A parameter of the routine, or a build mode of the unit, as in the entry from SLABS-count |
 | Leaf sizes and cost constants set from timings of the Rust code, crossovers between methods with identical results (author decision 2026-11-06) | `MUL_LEAF`, `DIV_LEAF`, `RECIP_LEAF`, `GCD_LEAF`, `PRINT_LEAF`, `TRANSFORM_COST`, `SPARSE_WORD`, `SPARSE_STEP` | None | Measure each again on the Zed code by the procedure in COMPLEXITY.md section "Crossovers", compare with the curves recorded there, and explain the anomalies listed there; a method never slower than the other is used alone |

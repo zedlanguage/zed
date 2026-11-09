@@ -215,7 +215,7 @@ pub const CHANGES: &[Change] = &[
     },
     Change::Omits {
         fixture: "decimal-literal-at-int",
-        line: "big = 2 ^ 100;            // int has no width; ^ binds tighter than * and than \
+        line: "big = 2^100;              // int has no width; ^ binds tighter than * and than \
                unary minus, and associates to the right",
     },
     Change::Omits {
@@ -235,7 +235,7 @@ pub const CHANGES: &[Change] = &[
     },
     Change::Omits {
         fixture: "decimal-literal-at-int",
-        line: "y   = x ^ 2 + 2*x + 1;",
+        line: "y   = x^2 + 2*x + 1;",
     },
     Change::Omits {
         fixture: "decimal-literal-at-int",

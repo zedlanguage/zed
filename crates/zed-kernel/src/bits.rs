@@ -202,12 +202,7 @@ fn domain(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<(), KernelError> {
     let bound = two_pow(w).map_err(|e| too_large(p, e))?;
     for &i in below_two_pow_width(p) {
         if *ns[i] >= bound {
-            return Err(outside(
-                p,
-                names[i],
-                "int[0..<2 ^ width]",
-                "at least 2 ^ width",
-            ));
+            return Err(outside(p, names[i], "int[0..<2^width]", "at least 2^width"));
         }
     }
     if let Some(i) = below_width(p)
@@ -268,8 +263,8 @@ fn small(p: Prim, args: &[Value]) -> Result<Option<Value>, KernelError> {
                 return Err(outside(
                     p,
                     params(p)[i],
-                    "int[0..<2 ^ width]",
-                    "at least 2 ^ width",
+                    "int[0..<2^width]",
+                    "at least 2^width",
                 ));
             }
         }
@@ -648,11 +643,11 @@ mod tests {
         );
         assert_eq!(
             err(Prim::MulHi, &[1, 256, 8]),
-            "`mulHi` needs `b` in int[0..<2 ^ width], and it is at least 2 ^ width"
+            "`mulHi` needs `b` in int[0..<2^width], and it is at least 2^width"
         );
         assert_eq!(
             err(Prim::FunnelShr, &[256, 0, 0, 8]),
-            "`funnelShr` needs `hi` in int[0..<2 ^ width], and it is at least 2 ^ width"
+            "`funnelShr` needs `hi` in int[0..<2^width], and it is at least 2^width"
         );
         assert_eq!(
             err(Prim::Pdep, &[-1, 3]),

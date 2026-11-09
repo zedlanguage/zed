@@ -5257,7 +5257,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Checks each operand of the bit word or integer machine operation `w` against its domain
     /// (DESIGN.md sec:domains, sec:linalg): `int[0..]` for every one but the `x` of `shl` and
-    /// `shr`, `int[0..<2 ^ width]` for the operands read as `width` digits, `int[0..<width]`
+    /// `shr`, `int[0..<2^width]` for the operands read as `width` digits, `int[0..<width]`
     /// for the `k` of a funnel shift, and a multiple of 8 for the width of `byteSwap`. An operand
     /// is rejected when its int part is not shown to lie in the domain, from its listed values or
     /// the interval of its expression, as `^`'s exponent is.
@@ -5333,7 +5333,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let (name, at) = (names[i], a.at.unwrap_or(e.span));
             if let Some(s) = smallest.as_ref().filter(|_| two_pow.contains(&i)) {
                 let d = IntDomain {
-                    what: format!("`{w}` takes `{name}` in int[0..<2 ^ width]").into(),
+                    what: format!("`{w}` takes `{name}` in int[0..<2^width]").into(),
                     below_two_pow: Some(Width(s.clone())),
                 };
                 self.floor(&a.ty, e, d, span);
@@ -5348,7 +5348,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 span: at,
                 text: format!(
                     "repair: declare the type of `{name}` where it is bound, as \
-                     `{name}: int[0..<2 ^ 32]`"
+                     `{name}: int[0..<2^32]`"
                 ),
             });
             let checks = match i == last {
@@ -5418,7 +5418,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 });
             if !below {
                 let needs = if two_pow {
-                    "int[0..<2 ^ width]"
+                    "int[0..<2^width]"
                 } else {
                     "int[0..<width]"
                 };
@@ -6599,7 +6599,7 @@ fn default_repairs(name: &str, got: &str, want: &str, span: Span) -> Vec<Note> {
 /// The repairs of an int `^` whose exponent may be below 0, at `span`.
 fn exponent_repairs(span: Span) -> Vec<Note> {
     [
-        "repair: test the exponent first, as `if n >= 0 { x ^ n } else { … }`, so that inside \
+        "repair: test the exponent first, as `if n >= 0 { x^n } else { … }`, so that inside \
          the branch it is at least 0",
         "repair: declare the exponent with a type of no int below 0, as `n: int[0..]`",
     ]

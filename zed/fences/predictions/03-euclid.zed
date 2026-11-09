@@ -4,5 +4,5 @@
 // domain instead of overflowing".
 main(stdin: Lines) -> (stdout: Lines) {
   n = int(trim(stdin[1] else "")) else 0;
-  stdout <- "${(0 - 7) div 2} ${(0 - 7) mod 2} ${7 div (0 - 2)} ${7 mod (0 - 2)} ${n mod 3} ${-2 ^ 2} ${2 ^ 100}";
+  stdout <- "${(0 - 7) div 2} ${(0 - 7) mod 2} ${7 div (0 - 2)} ${7 mod (0 - 2)} ${n mod 3} ${-2^2} ${2^100}";
 }

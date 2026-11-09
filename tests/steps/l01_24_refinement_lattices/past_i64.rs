@@ -396,7 +396,7 @@ fn classes_affine_bounds_and_powers_past_i64_scale_linearly() {
         assert_eq!(a.times(n(i128::MIN)).terms.len(), count);
     });
     // `x ^ (2^32 + 1)` over n pieces, and the reduction of n pieces onto a class past `i64`.
-    scaling::check("x ^ (2^32 + 1) over n pieces", 400, |count| {
+    scaling::check("x^(2^32 + 1) over n pieces", 400, |count| {
         let x = IntervalSet::from_pieces(
             (0..count as i64)
                 .map(|i| (End::of(10 * i + 2), End::of(10 * i + 5)))
