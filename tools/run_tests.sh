@@ -160,6 +160,10 @@ fi
 # its generic chain takes 35 s alone and the int chain 11 s (2026-11-09, LIT-bare).
 # l01_39 pendants took 57 s whole at load 20 and ran past 60 s at load 25 once its tests of
 # rewritten parts joined it (2026-11-09, PROJECT-canon-gcd).
+# l01_39 lazy took 44 to 47 s whole once its check of leaves settled together (20 s alone at
+# load 30) joined it; its seed loops of stars and of satellites took 38 and 42 s alone. Each
+# loop is a module of parts over its seeds, and each part is a piece (2026-11-09,
+# TEST-lazy-split).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
@@ -171,7 +175,11 @@ split="
   l01_38_presburger::names l01_38_presburger::live3
   l01_38_presburger::shared l01_38_presburger::stages
   l01_39_reduced_product l01_39_reduced_product::random
-  l01_39_reduced_product::pendants
+  l01_39_reduced_product::pendants l01_39_reduced_product::lazy
+  l01_39_reduced_product::lazy::a_lazy_scope_settles_each_name_to_the_eager_product
+  l01_39_reduced_product::lazy::a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product
+  l01_39_reduced_product::lazy::a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_product
+  l01_39_reduced_product::lazy::leaves_of_one_class_settled_together_get_what_each_gets_alone
   l01_39a_bit_words l01_39a_bit_words::scaling
   l25_08_mutate l25_08_mutate::scaling
 "

@@ -167,12 +167,37 @@ fn run(
     (stale, two, related, kept)
 }
 
-#[test]
-fn a_lazy_scope_settles_each_name_to_the_eager_product() {
-    let start = boxed(&["n", "m", "a0", "a1", "a2", "a3", "a4"], 20);
-    let (stale, _, _, _) = run(&start, 0..300, test);
-    // The lazy scope did leave names unsettled, so the comparison is not of two eager scopes.
-    assert!(stale > 0, "the lazy scope settled every name at once");
+// The seed loops below took 16 to 42 s each alone at load 30, so each is a module of tests
+// over parts of its seeds, each part its own piece of tools/run_tests.sh, and each part
+// checks on its own seeds what the whole loop checked on all of them, which implies the
+// whole loop's check (TEST-lazy-split).
+
+/// Seeds 0 to 299 of [`test`], in three parts.
+mod a_lazy_scope_settles_each_name_to_the_eager_product {
+    use super::*;
+
+    fn part(seeds: std::ops::Range<u64>) {
+        let start = boxed(&["n", "m", "a0", "a1", "a2", "a3", "a4"], 20);
+        let (stale, _, _, _) = run(&start, seeds, test);
+        // The lazy scope did leave names unsettled, so the comparison is not of two eager
+        // scopes.
+        assert!(stale > 0, "the lazy scope settled every name at once");
+    }
+
+    #[test]
+    fn seeds_0_to_99() {
+        part(0..100);
+    }
+
+    #[test]
+    fn seeds_100_to_199() {
+        part(100..200);
+    }
+
+    #[test]
+    fn seeds_200_to_299() {
+        part(200..300);
+    }
 }
 
 /// Every name unbounded but the two hubs, each within [-20, 20].
@@ -191,16 +216,40 @@ fn bounded_hubs() -> Scope {
     ints(&all).assume(&hubs, true, &Premises::new())
 }
 
-#[test]
-fn a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product() {
-    let (stale, two, related, _) = run(&bounded_hubs(), 0..100, wide);
-    println!(
-        "{stale} unsettled names, {two} states with a star of two hubs, {related} with a \
-         conjunct of the two"
-    );
-    assert!(stale > 0, "the lazy scope settled every name at once");
-    assert!(two > 0, "no state held a star of two hubs");
-    assert!(related > 0, "no state held a star of two related hubs");
+/// Seeds 0 to 99 of [`wide`], in four parts.
+mod a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product {
+    use super::*;
+
+    fn part(seeds: std::ops::Range<u64>) {
+        let (stale, two, related, _) = run(&bounded_hubs(), seeds, wide);
+        println!(
+            "{stale} unsettled names, {two} states with a star of two hubs, {related} with a \
+             conjunct of the two"
+        );
+        assert!(stale > 0, "the lazy scope settled every name at once");
+        assert!(two > 0, "no state held a star of two hubs");
+        assert!(related > 0, "no state held a star of two related hubs");
+    }
+
+    #[test]
+    fn seeds_0_to_24() {
+        part(0..25);
+    }
+
+    #[test]
+    fn seeds_25_to_49() {
+        part(25..50);
+    }
+
+    #[test]
+    fn seeds_50_to_74() {
+        part(50..75);
+    }
+
+    #[test]
+    fn seeds_75_to_99() {
+        part(75..100);
+    }
 }
 
 #[test]
@@ -260,18 +309,44 @@ fn satellites(rng: &mut Rng, depth: usize) -> Term {
     }
 }
 
-#[test]
-fn a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_product() {
-    let (stale, two, _, kept) = run(&bounded_hubs(), 0..100, satellites);
-    println!(
-        "{stale} unsettled names, {two} states with a star of two hubs, {kept} with a \
-         satellite of its hubs"
-    );
-    assert!(stale > 0, "the lazy scope settled every name at once");
-    assert!(
-        kept > 0,
-        "no star of two hubs stood beside a satellite of them"
-    );
+/// Seeds 0 to 99 of [`satellites`], in four parts. A star of two hubs stood beside a
+/// satellite of them at seeds 18, 59, 75 and 99 only (2026-11-09), so the parts are cut
+/// between those seeds, and each finds one.
+mod a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_product {
+    use super::*;
+
+    fn part(seeds: std::ops::Range<u64>) {
+        let (stale, two, _, kept) = run(&bounded_hubs(), seeds, satellites);
+        println!(
+            "{stale} unsettled names, {two} states with a star of two hubs, {kept} with a \
+             satellite of its hubs"
+        );
+        assert!(stale > 0, "the lazy scope settled every name at once");
+        assert!(
+            kept > 0,
+            "no star of two hubs stood beside a satellite of them"
+        );
+    }
+
+    #[test]
+    fn seeds_0_to_29() {
+        part(0..30);
+    }
+
+    #[test]
+    fn seeds_30_to_59() {
+        part(30..60);
+    }
+
+    #[test]
+    fn seeds_60_to_75() {
+        part(60..76);
+    }
+
+    #[test]
+    fn seeds_76_to_99() {
+        part(76..100);
+    }
 }
 
 /// For each name of `all`, the values in `-3..=13` the scope holds of it.
@@ -373,94 +448,110 @@ fn stars_beside_a_satellite_or_a_sandwich_project_exactly() {
 /// one hub each; each leaf's own lower bound and hole drawn from two of each, so that some
 /// leaves share them and some do not; and the hubs with bounds, holes and a class. The last
 /// test moves a hub, so that every star is due at once. Each leaf is settled to the product
-/// it gets alone, and to the eager scope's.
-#[test]
-fn leaves_of_one_class_settled_together_get_what_each_gets_alone() {
-    const LEAVES: [&str; 6] = ["a0", "a1", "mm0", "mm1", "z0", "z1"];
-    let all = names(&["m", "n", "a0", "a1", "mm0", "mm1", "z0", "z1"]);
-    let leaves = names(&LEAVES);
-    let p = Premises::new();
-    let (mut reused, mut runs) = (0, 0);
-    for seed in 0..30 {
-        let mut rng = Rng::new(seed);
-        let form = rng.below(3);
-        let c = rng.int(-3, 3);
-        let star = |x: &str| -> Vec<Term> {
-            match form {
-                0 => vec![sum3(x, "n", "m", c, false)],
-                1 => vec![prim(
-                    Prim::Ge,
-                    prim(
-                        Prim::Sub,
-                        prim(Prim::Add, var(x), var(x)),
-                        prim(Prim::Add, var("n"), var("m")),
-                    ),
-                    int(c),
-                )],
-                _ => vec![diff_ge(x, "n", c), diff_ge(x, "m", -c)],
-            }
-        };
-        let mut t: Vec<Term> = Vec::new();
-        for h in ["n", "m"] {
-            t.push(prim(Prim::Ge, var(h), int(rng.int(-12, -2))));
-            t.push(prim(Prim::Le, var(h), int(rng.int(2, 12))));
-            t.push(prim(Prim::Ne, var(h), int(rng.int(-3, 3))));
-        }
-        if rng.below(2) == 0 {
-            // `n` even.
-            t.push(prim(Prim::Eq, prim(Prim::Mod, var("n"), int(2)), int(0)));
-        }
-        let lows = [rng.int(-20, 0), rng.int(-20, 0)];
-        let holes = [rng.int(-3, 6), rng.int(-3, 6)];
-        for x in LEAVES {
-            t.extend(star(x));
-            t.push(prim(Prim::Ge, var(x), int(rng.pick(&lows))));
-            t.push(prim(Prim::Ne, var(x), int(rng.pick(&holes))));
-        }
-        let (mut eager, mut lazy) = (ints(&all), ints(&all).lazy());
-        for t in &t {
-            eager = eager.assume(t, true, &p);
-            lazy = lazy.assume(t, true, &p);
-        }
-        let hub = prim(Prim::Ge, var("n"), int(rng.int(-4, 4)));
-        eager = eager.assume(&hub, true, &p);
-        lazy = lazy.assume(&hub, true, &p);
-        if eager.bottom {
-            assert!(
-                lazy.bottom,
-                "seed {seed}: the eager scope is empty, the lazy one not"
-            );
-            continue;
-        }
-        let classes: BTreeSet<_> = leaves
-            .iter()
-            .filter_map(|x| lazy.relation.class_of(x))
-            .collect();
-        let stars = leaves
-            .iter()
-            .filter(|x| lazy.relation.star(x).is_some())
-            .count();
-        let mut together = lazy.clone();
-        together.settle(&leaves);
-        for x in &leaves {
-            let mut alone = lazy.clone();
-            alone.settle([x]);
-            assert_eq!(together.get(x), alone.get(x), "seed {seed}: {x} with {t:?}");
-            assert_eq!(
-                together.get(x),
-                eager.get(x),
-                "seed {seed}: {x} eagerly, with {t:?}"
-            );
-        }
-        for h in names(&["m", "n"]) {
-            assert_eq!(together.get(&h), eager.get(&h), "seed {seed}: {h}");
-        }
-        runs += 1;
-        reused += usize::from(stars >= 2 && classes.len() == 1);
+/// it gets alone, and to the eager scope's. Seeds 0 to 29, in two parts: the leaves were
+/// in one class in 15 of the 28 runs (seeds 12 and 17 give an empty scope; 2026-11-09), 8 of
+/// 15 in the first part and 7 of 13 in the second, so each part has more than half, as the
+/// whole did. With 15 of 28, no split into three parts can give each more than half.
+mod leaves_of_one_class_settled_together_get_what_each_gets_alone {
+    use super::*;
+
+    #[test]
+    fn seeds_0_to_15() {
+        part(0..16);
     }
-    println!("{runs} runs, {reused} with two stars or more, all of one class");
-    assert!(
-        reused > runs / 2,
-        "{reused} of {runs} runs with the leaves in one class"
-    );
+
+    #[test]
+    fn seeds_16_to_29() {
+        part(16..30);
+    }
+
+    fn part(seeds: std::ops::Range<u64>) {
+        const LEAVES: [&str; 6] = ["a0", "a1", "mm0", "mm1", "z0", "z1"];
+        let all = names(&["m", "n", "a0", "a1", "mm0", "mm1", "z0", "z1"]);
+        let leaves = names(&LEAVES);
+        let p = Premises::new();
+        let (mut reused, mut runs) = (0, 0);
+        for seed in seeds {
+            let mut rng = Rng::new(seed);
+            let form = rng.below(3);
+            let c = rng.int(-3, 3);
+            let star = |x: &str| -> Vec<Term> {
+                match form {
+                    0 => vec![sum3(x, "n", "m", c, false)],
+                    1 => vec![prim(
+                        Prim::Ge,
+                        prim(
+                            Prim::Sub,
+                            prim(Prim::Add, var(x), var(x)),
+                            prim(Prim::Add, var("n"), var("m")),
+                        ),
+                        int(c),
+                    )],
+                    _ => vec![diff_ge(x, "n", c), diff_ge(x, "m", -c)],
+                }
+            };
+            let mut t: Vec<Term> = Vec::new();
+            for h in ["n", "m"] {
+                t.push(prim(Prim::Ge, var(h), int(rng.int(-12, -2))));
+                t.push(prim(Prim::Le, var(h), int(rng.int(2, 12))));
+                t.push(prim(Prim::Ne, var(h), int(rng.int(-3, 3))));
+            }
+            if rng.below(2) == 0 {
+                // `n` even.
+                t.push(prim(Prim::Eq, prim(Prim::Mod, var("n"), int(2)), int(0)));
+            }
+            let lows = [rng.int(-20, 0), rng.int(-20, 0)];
+            let holes = [rng.int(-3, 6), rng.int(-3, 6)];
+            for x in LEAVES {
+                t.extend(star(x));
+                t.push(prim(Prim::Ge, var(x), int(rng.pick(&lows))));
+                t.push(prim(Prim::Ne, var(x), int(rng.pick(&holes))));
+            }
+            let (mut eager, mut lazy) = (ints(&all), ints(&all).lazy());
+            for t in &t {
+                eager = eager.assume(t, true, &p);
+                lazy = lazy.assume(t, true, &p);
+            }
+            let hub = prim(Prim::Ge, var("n"), int(rng.int(-4, 4)));
+            eager = eager.assume(&hub, true, &p);
+            lazy = lazy.assume(&hub, true, &p);
+            if eager.bottom {
+                assert!(
+                    lazy.bottom,
+                    "seed {seed}: the eager scope is empty, the lazy one not"
+                );
+                continue;
+            }
+            let classes: BTreeSet<_> = leaves
+                .iter()
+                .filter_map(|x| lazy.relation.class_of(x))
+                .collect();
+            let stars = leaves
+                .iter()
+                .filter(|x| lazy.relation.star(x).is_some())
+                .count();
+            let mut together = lazy.clone();
+            together.settle(&leaves);
+            for x in &leaves {
+                let mut alone = lazy.clone();
+                alone.settle([x]);
+                assert_eq!(together.get(x), alone.get(x), "seed {seed}: {x} with {t:?}");
+                assert_eq!(
+                    together.get(x),
+                    eager.get(x),
+                    "seed {seed}: {x} eagerly, with {t:?}"
+                );
+            }
+            for h in names(&["m", "n"]) {
+                assert_eq!(together.get(&h), eager.get(&h), "seed {seed}: {h}");
+            }
+            runs += 1;
+            reused += usize::from(stars >= 2 && classes.len() == 1);
+        }
+        println!("{runs} runs, {reused} with two stars or more, all of one class");
+        assert!(
+            reused > runs / 2,
+            "{reused} of {runs} runs with the leaves in one class"
+        );
+    }
 }
