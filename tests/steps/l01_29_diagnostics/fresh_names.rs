@@ -37,7 +37,7 @@ fn writes_back_beside(defs: &str, text: &str) {
         "`{text}` as a written type:\n{out}"
     );
     assert!(
-        out.contains(&format!("`u` is declared here, `({text}) -> 1`")),
+        out.contains(&format!("the type the checker found for `u` is `({text}) -> 1`")),
         "`{text}` does not read back as itself:\n{out}"
     );
 }
