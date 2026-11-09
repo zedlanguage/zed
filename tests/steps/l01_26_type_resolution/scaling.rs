@@ -1050,3 +1050,31 @@ fn a_chain_of_tests_is_linear_in_its_length() {
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
+
+/// `g(positional x1, … positional xn) = (x1, … xn); f(positional n: Never) = g(n, … n)`: each
+/// argument of type `Never` binds its parameter's variable to `Never`, and each component's
+/// need that it holds no function is checked on `Never` (EMPTY-arg-needs).
+fn never_arguments(n: usize) -> String {
+    let params: Vec<String> = (1..=n).map(|i| format!("positional x{i}")).collect();
+    let comps: Vec<String> = (1..=n).map(|i| format!("x{i}")).collect();
+    let args = vec!["n"; n].join(", ");
+    format!(
+        "g({}) = ({});\nf(positional n: Never) = g({args});\n",
+        params.join(", "),
+        comps.join(", ")
+    )
+}
+
+#[test]
+fn never_arguments_check_in_linear_time() {
+    assert_eq!(sig(&never_arguments(3), "f"), "(Never) -> Never");
+    let units = resolved(250, never_arguments);
+    scaling::check_order(
+        "n arguments of type Never to a generic function",
+        250,
+        1,
+        |m| {
+            assert_eq!(units[&m].type_errors(), Vec::<String>::new());
+        },
+    );
+}

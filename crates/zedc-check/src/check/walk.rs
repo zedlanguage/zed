@@ -6475,6 +6475,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 continue;
             }
+            // An argument with no value, `Never`, is in every parameter type and gives each
+            // variable of its parameter no value: the variable is bound to `Never` unless
+            // another argument binds it, and a need on it is checked on `Never`, not on the
+            // unknown. Binding is a union, so this is the same in any order of the arguments.
+            if ty.is_empty() {
+                let mut vars = Vars::default();
+                p.vars_in(&mut vars);
+                for v in vars.order.into_iter().filter(|v| !self.is_class(v)) {
+                    binds.entry(v).or_insert_with(Ty::empty);
+                }
+                continue;
+            }
             for piece in ty.pieces() {
                 let ok = match self.class_of(&piece) {
                     _ if piece == Piece::Dyn => p.dynamic,

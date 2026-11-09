@@ -288,3 +288,94 @@ fn an_atom_with_a_payload_of_no_value_after_substitution_is_never() {
         assert_eq!(sig(&text, "f"), want, "{text}");
     }
 }
+
+/// An argument of type `Never` binds the variable of its parameter to `Never`: a need of the
+/// generic function on that variable is checked on `Never`, which every use takes, and the
+/// call, whose argument has no value, gives none. No message names a type the program did not
+/// write.
+#[test]
+fn an_argument_of_type_never_binds_its_variable_to_never() {
+    for (text, want) in [
+        // The finding: `(x, 1)` needs `x` to hold no function, and `Never` holds none.
+        (
+            "pair(positional x) = (x, 1);\nf(positional n: Never) = pair(n);\n",
+            "(Never) -> Never",
+        ),
+        // `Never` in one component of a tuple argument: the tuple is `Never`.
+        (
+            "pair(positional x) = (x, 1);\nf(positional n: Never) = pair((n, 2));\n",
+            "(Never) -> Never",
+        ),
+        (
+            "pair(positional x) = (x, 1);\nf(positional n: Never) = pair(pair(n));\n",
+            "(Never) -> Never",
+        ),
+        (
+            "sw(positional p) = { a, b = p; (b, a) };\nf(positional n: Never) = sw((n, 2));\n",
+            "(Never) -> Never",
+        ),
+        // A call of the argument, and a component of it.
+        (
+            "app(positional g) = g(1);\nf(positional n: Never) = app(n);\n",
+            "(Never) -> Never",
+        ),
+        (
+            "first(positional p) = p[0];\nf(positional n: Never) = first(n);\n",
+            "(Never) -> Never",
+        ),
+        (
+            "ap(positional g, positional y) = g(y);\nf(positional n: Never) = ap(n, 1);\n",
+            "(Never) -> Never",
+        ),
+        (
+            "ap(positional g, positional y) = g(y);\nf(positional h: (int) -> int, positional \
+             n: Never) = ap(h, n);\n",
+            "((int) -> int, Never) -> Never",
+        ),
+        // One argument of no value: the call is never made, though the other has values.
+        (
+            "two(positional x, positional y) = (x, y);\nf(positional n: Never) = two(n, 1);\n",
+            "(Never) -> Never",
+        ),
+        // An argument that has no value only after a call.
+        (
+            "pair(positional x) = (x, 1);\nf(positional g: (int) -> Never) = pair(g(1));\n",
+            "((int) -> Never) -> Never",
+        ),
+        // A parameter with a declared type takes `Never`, which is below every type.
+        (
+            "g(positional x: int) = x + 1;\nf(positional n: Never) = g(n);\n",
+            "(Never) -> Never",
+        ),
+        (
+            "g(positional x: (int, String)) = x;\nf(positional n: Never) = g(n);\n",
+            "(Never) -> Never",
+        ),
+        // `Never` in a union adds nothing: the variable is bound by the rest.
+        (
+            "pair(positional x) = (x, 1);\nf(positional n: int | Never) = pair(n);\n",
+            "(int) -> (int, 1)",
+        ),
+    ] {
+        assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
+        assert_eq!(sig(text, "f"), want, "{text}");
+    }
+}
+
+/// A generic function called with `Never` and with `int` in one program: each call binds its
+/// own variable, in either order, and the function's signature is as without the calls.
+#[test]
+fn calls_with_never_and_with_int_do_not_meet() {
+    let alone = "pair(positional x) = (x, 1);\n";
+    let never = "f(positional n: Never) = pair(n);\n";
+    let int = "h(positional m: int) = pair(m);\n";
+    for text in [
+        format!("{alone}{never}{int}"),
+        format!("{alone}{int}{never}"),
+    ] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+        assert_eq!(sig(&text, "f"), "(Never) -> Never", "{text}");
+        assert_eq!(sig(&text, "h"), "(int) -> (int, 1)", "{text}");
+        assert_eq!(sig(&text, "pair"), sig(alone, "pair"), "{text}");
+    }
+}

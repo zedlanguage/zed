@@ -2978,3 +2978,9 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `bool` field of the checker (`Ck.rough`) set before one call and cleared after it, read deep inside that call | `Ck::repaired`, `Ck::fewest`, `Ck::apply` | Mutation (gap 11) | a parameter of `adopted` passed down the calls of a tried repair |
+
+## Entries from EMPTY-arg-needs (`zedc-check/src/check/walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `BTreeMap::entry(v).or_insert_with(Ty::empty)`, an insert in place only where the key is absent | `Ck::apply_one`, an argument of type `Never` | Mutation (gap 11) | a persistent map's insert-if-absent that gives the new map |
