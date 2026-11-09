@@ -1679,14 +1679,23 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CUBE-root-wide | impl attempt 1 | 2026-11-09 06:44 | ready 58cfc4a1e8ce5c7ea09f7c37950b859fd07d1fca: rem_uint; 2M->16M passes (instructions 9.50, bytes 9.92); 262144->2M bytes 10.71 > 10.27 open as CUBE-remtree-cr |
+| EMPTY-arg-needs | impl attempt 1 | 2026-11-09 08:28 | started; worktree /home/luke/Work/wt/empty-arg at f409e070 |
+| GROUP-cycle-dup | impl attempt 1 | 2026-11-09 05:04 | reproduced: random 2-3 def X14 groups, seed 7, 200000 draws: 319 decided groups refused with one arm duplicated on main; after hash-consing the decider's nodes  |
+| GROUP-refusal-fallback | running | 2026-11-09 05:23 |  |
+| GROUP-refusal-meet-witness | running | 2026-11-09 06:38 |  |
+| GROUP-refusal-meet-wording | running | 2026-11-09 06:38 |  |
+| GROUP-refusal-reach | running | 2026-11-09 05:23 |  |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | KERNEL-div-newton | impl attempt 1 | 2026-11-07 13:07 | ready 58cfc4a1e8ce5c7ea09f7c37950b859fd07d1fca on wt/div-newton: Newton division, equality odd-base test un-ignored at 9.3x; 942 passed, 0 failed; follow-up DIV |
-| LIT-bare | impl attempt 1 | 2026-11-09 05:01 | committed b33236e6 689be61f ab27a755; final run over affected groups |
+| LIT-bare | impl attempt 1 | 2026-11-09 05:01 | ready at wt/lit-bare 3bd85e3d: run30 505 pieces 1 failed (l25_08), fixed in ce2ff26b, run31 7/0; fmt and clippy clean; 19 follow-up ledger lines |
 | MSG-line-quote-cost | impl attempt 1 | 2026-11-09 07:57 | ready 03bd44d4 on wt/msg-line-quote, spec 11c6dbe on wt/msg-line-quote-spec; 226 pieces, 1 known zedc_preimage 60 s timeout (unrelated crate); follow-up MSG-lin |
-| PRINT-fn-parens | impl attempt 1 | 2026-11-09 07:57 | expectations updated (parens only), scaling tests added, fmt+clippy clean; final affected run |
-| PROJECT-each-canon | impl attempt 1 | 2026-11-07 16:39 | disj_groups joint chain 122x bytes under the canonical sign (same 122.7x on main with the equations negated: greedy pick reads x==3 first); fix: drop jointly em |
-| S22-fwd-holes | impl attempt 1 | 2026-11-07 09:50 | ready cd72cdd5; follow-ups S22-split-holes, S22-shapes-linear queued |
+| MSG-never-expect | impl attempt 1 | 2026-11-09 07:57 | walk made total; 4 new unit tests pass; control with main's expect/unreachable/union-extend restored: all 4 stop (panic at tuple expect, atom expect, unreachabl |
+| NARROW-negated-star | impl attempt 1 | 2026-11-09 08:28 | started on wt/narrow-neg from f409e070 |
+| PRINT-fn-parens | impl attempt 1 | 2026-11-09 07:57 | ready cbdd73bd on wt/print-fn-parens: printers parenthesize by place; 176 pieces 0 failed; scaling 8.0x/7.9x |
+| PROJECT-each-canon | impl attempt 1 | 2026-11-07 16:39 | run 4: 574 pieces, 2 failed (s22 1250/2500 exact counts; early drop skips probe, 3 before-boxes back to main's coarser ones, sound); later drop restored to main |
+| S22-fwd-holes | repair attempt 1 | 2026-11-07 09:50 | ready 1599bba8: cycle broken (counter moved to shared_ints.rs), s_01f 18/18, 494 pieces 493 pass, 1 load timeout passes alone 47.3 s, load 9.5-33 |
 | TEST-split-slow | impl attempt 1 | 2026-11-09 08:09 | ready 60fc4680 on wt/test-split-slow (also PREIMAGE-unit-piece, KERNEL-xor-agree-slow); 87 pieces 0 failed; follow-ups PREIMAGE-slow-rounds, KERNEL-eval-memo-ha |
+| TY-row-class | impl attempt 1 | 2026-11-09 08:17 | started on wt/ty-row-class from origin/main |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
