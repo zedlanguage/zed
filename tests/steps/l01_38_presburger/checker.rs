@@ -641,7 +641,10 @@ fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints
             .replace("2:18: ", "1:18: ");
         assert_eq!(
             unwritten(&called),
-            unwritten(&stated(&rejection(&format!("{}-written", r.name), &written))),
+            unwritten(&stated(&rejection(
+                &format!("{}-written", r.name),
+                &written
+            ))),
             "{}",
             r.name
         );
@@ -702,7 +705,11 @@ fn a_question_read_in_its_callees_coordinates_is_answered_and_printed_over_its_o
             &format!("coordinates-alone-{i}"),
             &program(&format!("{tie}\n{alone}"), "a: a, b: a, c: a, d: a"),
         );
-        assert_eq!(unwritten(&stated(&through)), unwritten(&stated(&expected)), "{call}");
+        assert_eq!(
+            unwritten(&stated(&through)),
+            unwritten(&stated(&expected)),
+            "{call}"
+        );
         assert!(through.contains("the condition of `tie`"), "{through}");
         // Passed the parameters unchanged, `ok` asks `tie`'s question and is refused too; its
         // menu rewrites the call as written, and each repair ends `ok`'s refusal. Shifted,
@@ -791,7 +798,10 @@ fn a_question_refused_through_a_call_by_a_map_of_its_parameters_names_its_parame
             assert!(!called.contains(['#', '@']), "{called}");
             assert_eq!(
                 unwritten(&called),
-                unwritten(&stated(&rejection(&format!("{}-map-{i}-written", r.name), &written))),
+                unwritten(&stated(&rejection(
+                    &format!("{}-map-{i}-written", r.name),
+                    &written
+                ))),
                 "{} at {x}",
                 r.name
             );
