@@ -1712,13 +1712,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | BUILD-snapshot-stale | impl attempt 1 | 2026-11-09 12:14 | started (A doc+clippy refresh at publish, B stale-unit exclusion) |
-| EMPTY-operand-check | impl attempt 1 | 2026-11-09 11:03 | ready at 425a1980: max-of-Never shared-tuple scaling test 6.3x; control timed out 60 s; l01_26/s_01f 85 pieces pass; load 28.30 29.47 30.98 |
-| GROUP-closure-order | impl attempt 1 | 2026-11-09 10:11 | new pairs fixture (x9014) is Inhabited with defs in one order, Refused(Group) in two others: definition-order dependence remains in the value search; investigat |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
-| GROUP-search-hang | impl attempt 1 | 2026-11-09 10:11 | negative controls: without the inside set both hang tests time out at 60 s; with the base holds_known rule meets_agree fails (meets136, 2 orders), other order t |
-| MSG-type-defs-layout | impl attempt 1 | 2026-11-09 11:52 | ready: impl c7247192 on wt/type-defs-layout, spec 7d78b0e on wt/type-defs-layout-spec; final run with docs 287 pieces 0 failed (load 16.84 to 21.72); follow-up  |
-| PRINT-fmt-audit | impl attempt 1 | 2026-11-09 09:10 | ready at 1f63b8ec, ledger updated |
-| PROJECT-growth-box | impl attempt 1 | 2026-11-09 11:24 | ready 7638d735 on wt/growth-box (spec aa9f50f on wt/growth-box-spec): refused projections keep the box stage's bounds; 435/435 pieces with doc check, l01_07 1/1 |
 | STAR-hub-set | impl attempt 1 | 2026-11-09 09:36 | d2 fix: red counter test written (needs_held accessor), load 26.25 23.21 26.31 |
 | TEST-deep-let-size | impl attempt 1 | 2026-11-09 12:10 | shrunk to DEEP 10,000, ifs 4,000, arms scale 250/2,000: 39.7G instructions, ~11 s total (was 324G); stack control aborts all 5; per-bind count control fails val |
 
