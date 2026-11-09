@@ -1019,3 +1019,31 @@ fn sums_of_a_line_or_a_count_check_in_linear_time() {
         assert_eq!(units[&m].type_errors(), Vec::<String>::new());
     });
 }
+
+/// `f(positional x: int) = if x > 2n { 0 } else if x > 2n - 1 { 1 } … else if x > 0 && x < 0
+/// { n } else { n + 1 }`, with every other test made unreachable by those before it, nested `n`
+/// deep: each `if` with a comparison computes the scopes of its arms to find which no value
+/// reaches, where before only a read of an int under them did (EMPTY-bottom-arm).
+fn a_chain_of_tests(n: usize) -> String {
+    let mut text = String::from("f(positional x: int) = ");
+    for i in 0..n {
+        // The odd tests ask for more than the test before them failed to give.
+        let bound = if i % 2 == 0 { 2 * n - i } else { 2 * n + i };
+        text.push_str(&format!("if x > {bound} {{ {i} }} else "));
+    }
+    text.push_str(&format!(
+        "if x > 0 && x < 0 {{ {n} }} else {{ {} }};\n",
+        n + 1
+    ));
+    text
+}
+
+#[test]
+fn a_chain_of_tests_is_linear_in_its_length() {
+    assert_eq!(sig(&a_chain_of_tests(4), "f"), "(int) -> 0 | 2 | 5");
+    let units = resolved(64, a_chain_of_tests);
+    scaling::check("a chain of n tests on one int", 64, |m| {
+        let info = units[&m].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}

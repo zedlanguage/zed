@@ -2246,6 +2246,33 @@ impl Scope {
         s
     }
 
+    /// Whether some state may reach this scope where `test` gave `outcome`: false only when
+    /// [`Scope::assume_case`] would be bottom, and then not always, since the test's relation
+    /// taken whole is not kept. A test that splits into cases, as `!(a >= n && a >= m)`, stops
+    /// at the first case some state reaches and joins none: a join reads the relation of
+    /// both cases, which under `k` stars at a hub is `k` conjuncts.
+    pub fn reaches(&self, test: &Term, outcome: bool, premises: &Premises) -> bool {
+        if self.bottom {
+            return false;
+        }
+        let mut s = self.clone();
+        s.settle_test(test);
+        let plain = plain_test(test, &s);
+        let (tree, pol) = Tree::of(plain.as_ref().unwrap_or(test));
+        let value = outcome == pol;
+        match &tree.nodes[0].kind {
+            Kind::Nest(and, _) if *and != value => {
+                s.cases(&tree, 0, value, premises, true).is_some()
+            }
+            Kind::If(_) => s.cases(&tree, 0, value, premises, true).is_some(),
+            _ => {
+                s.narrow_node(&tree, 0, value, premises);
+                s.reduce_case();
+                !s.bottom
+            }
+        }
+    }
+
     /// Narrows by `test`, read by [`plain_test`], giving `outcome`. The test is read as a
     /// [`Tree`]; when it has cases, the linear relation of the whole test, taken before any
     /// narrowing, is kept with the join of the cases, which keeps only what the cases share.
@@ -2361,7 +2388,7 @@ impl Scope {
                     self.narrow_node(tree, k, value == p, prem);
                 }
             }
-            Kind::Nest(..) | Kind::If(_) => match self.cases(tree, n, value, prem) {
+            Kind::Nest(..) | Kind::If(_) => match self.cases(tree, n, value, prem, false) {
                 Some(s) => *self = s,
                 None => self.bottom = true,
             },
@@ -2374,8 +2401,16 @@ impl Scope {
     /// `if` has the case of each arm. A nest the value forces narrows by each side but the one
     /// of the most nodes that has cases, whose cases are the nest's: so a chain of nests is
     /// one list of cases, joined in pairs ([`join_cases`]), and only a side of at most half a
-    /// nest's nodes is narrowed by a call within this one.
-    fn cases(&self, tree: &Tree, n: usize, value: bool, prem: &Premises) -> Option<Scope> {
+    /// nest's nodes is narrowed by a call within this one. With `any`, the first case some
+    /// state reaches, unjoined ([`Scope::reaches`]).
+    fn cases(
+        &self,
+        tree: &Tree,
+        n: usize,
+        value: bool,
+        prem: &Premises,
+        any: bool,
+    ) -> Option<Scope> {
         let mut out = Vec::new();
         let mut work = vec![(self.clone(), n, value)];
         while let Some((mut s, n, v)) = work.pop() {
@@ -2406,6 +2441,7 @@ impl Scope {
                     s.reduce_case();
                     match heavy {
                         Some((k, p)) => work.push((s, k, v == p)),
+                        None if any && !s.bottom => return Some(s),
                         None => out.push(s),
                     }
                 }
@@ -2421,6 +2457,9 @@ impl Scope {
                 Kind::Lit(_) | Kind::Atom => {
                     s.narrow_node(tree, n, v, prem);
                     s.reduce_case();
+                    if any && !s.bottom {
+                        return Some(s);
+                    }
                     out.push(s);
                 }
             }

@@ -225,9 +225,9 @@ pub(super) enum Frame<'a> {
         otherwise: &'a Expr,
         out: Ty,
         no: Facts,
-        /// The node where the condition fails.
-        fails: usize,
-        /// Whether each branch is unreachable ([`unreachable()`]).
+        /// The node of the `if`, and the nodes where the condition holds and where it fails.
+        nodes: (usize, usize, usize),
+        /// Whether each branch is unreachable by its names' types ([`unreachable()`]).
         dead: (bool, bool),
     },
     If3 {
@@ -235,6 +235,7 @@ pub(super) enum Frame<'a> {
         otherwise: &'a Expr,
         out: Ty,
         a: Box<Ty>,
+        nodes: (usize, usize, usize),
         dead: (bool, bool),
     },
     /// Restores what a narrowing changed, and gives the result through.
@@ -748,7 +749,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     out,
                     dead: (unreachable(&yes), unreachable(&no)),
                     no,
-                    fails,
+                    nodes: (self.arms.here(), holds, fails),
                 });
                 self.under(m, &yes, holds, then);
             }
@@ -757,7 +758,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 otherwise,
                 out,
                 no,
-                fails,
+                nodes,
                 dead,
             } => {
                 let a = m.take_ty();
@@ -766,20 +767,28 @@ impl<'t, 'a> Ck<'t, 'a> {
                     otherwise,
                     out,
                     a: Box::new(a),
+                    nodes,
                     dead,
                 });
-                self.under(m, &no, fails, otherwise);
+                self.under(m, &no, nodes.2, otherwise);
             }
             Frame::If3 {
                 then,
                 otherwise,
                 out,
                 a,
+                nodes: (at, holds, fails),
                 dead,
             } => {
                 let b = m.take_ty();
                 // An unreachable branch is still checked, and adds nothing to the result
                 // (sec:constraints: an arm a narrowing test makes bottom adds nothing to the join).
+                // The reduced product is asked only of a branch whose type adds something to
+                // the other's: there alone its answer changes the result ([`Ck::no_state_reaches`]).
+                let dead = (
+                    dead.0 || (!a.subtype(&b) && self.no_state_reaches(at, holds)),
+                    dead.1 || (!b.subtype(&a) && self.no_state_reaches(at, fails)),
+                );
                 let t = match dead {
                     (true, true) => Ty::empty(),
                     (true, false) => b,
@@ -2957,15 +2966,19 @@ fn exported(e: &Expr) -> &Expr {
 }
 
 /// Whether the branch where `facts` hold is unreachable: a test narrows a name to a type with
-/// no value, as `x is Never`, or `x is bool` for an `int`. O(1) per fact.
+/// no value, as `x is Never`, or `x is bool` for an `int`. O(1) per fact. A branch no value
+/// reaches by the tests on ints, as `x > 0 && x < 0`, is found by [`Ck::no_state_reaches`].
 fn unreachable(facts: &Facts) -> bool {
     // Complexity tradeoff: a narrowed type counts as empty only when it lists no value
-    // (`Ty::lists_nothing`); one that only the kernel's search proves empty, as a tuple whose
-    // component is empty by a meet of tuple types, leaves its branch reachable and its type
-    // in the join, as before. Why: the search costs up to the size of the type per test.
-    // Trigger: an `is` against a type empty only by such a meet or by recursion. Tests:
-    // `l01_26_type_resolution::never::a_test_against_never_is_accepted`. COMPLEXITY.md C34.
-    // The complete solution asks `Ty::is_empty` with the kernel's memoized search.
+    // (`Ty::lists_nothing`); one that only the kernel's search proves empty leaves its branch
+    // reachable and its type in the join. A meet of tuple types empties at once (`Row::new`),
+    // so `x is (bool, int)` for `x: (int, int)` is unreachable; what is left is a type empty
+    // by recursion or by a meet in an atom's payload or a family, none of which a type an L1
+    // program writes holds. Why: the search costs up to the size of the type per test.
+    // Trigger: an `is` against such a type, from the layers that write them. Tests:
+    // `l01_26_type_resolution::never::a_test_against_never_is_accepted`,
+    // `a_branch_no_value_reaches_adds_nothing_to_the_result`. COMPLEXITY.md C34. The complete
+    // solution asks `Ty::is_empty` with the kernel's memoized search.
     facts.iter().any(|(_, t, _)| t.lists_nothing())
 }
 
@@ -3089,6 +3102,69 @@ impl<'a> Ck<'_, 'a> {
         out.sort_unstable();
         out.dedup();
         out
+    }
+
+    /// Whether no value reaches node `n`, an arm of a condition checked at node `here`, by the
+    /// tests on the ints of the names around it, as `x > 0 && x < 0` with `x: int`, though the
+    /// type of each name there lists values. Where no value reaches `here` either, as in an
+    /// arm already unreachable, it is not: there the arms are checked as usual. A condition
+    /// with no test the scopes read, as an `is` test, makes no node of its own.
+    fn no_state_reaches(&mut self, here: usize, n: usize) -> bool {
+        if n == here {
+            return false;
+        }
+        // Complexity tradeoff: an arm whose type adds something to the other arm's is asked
+        // whether some state of its parent's scope reaches its test ([`Scope::reaches`]): one
+        // copy of the parent's scope narrowed by the test, stopping at the first case some state
+        // reaches, with no join of the cases and no scope stored for the arm. An arm whose type
+        // adds nothing is not asked, since its answer changes no result: so `else { 0 }` under a
+        // nest of tests on hubs asks nothing. What is given up: when each arm's type lies within
+        // the other's, a scope no value reaches by either arm (which only a scope wider than its
+        // states gives) keeps the arms' type and is not `Never`. Why: the bottom is known only
+        // by narrowing, and narrowing by a negated test on a hub, `!(ai >= n && ai >= m)`, touches
+        // the stars at the hub. Trigger: a nest of tests on hubs whose `else` arms each add a
+        // type of their own, as `else { #s1 }`, `else { #s2 }`, ...: `k` = 24 and 192 took 16.6
+        // times the bytes for 8 times the size (2026-11-09, load 18; 0.97 s with the question
+        // switched off), above the limit of 14.5 but far below the 64 of a square; follow-up
+        // NARROW-negated-star, which also covers the read under such an arm that was already
+        // 20.1 times before this change (`else { popCount(ai) }`, `k` = 12 and 96). Asking every
+        // arm, without the subtype test, made
+        // `l01_39a_bit_words::scaling::two_hubs_on_one_block_settle_in_time_linear_in_the_tests`
+        // take 19.8 times the instructions. Test:
+        // `l01_26_type_resolution::scaling::a_chain_of_tests_is_linear_in_its_length`.
+        // COMPLEXITY.md C34.
+        self.settle(vec![Item::Scope(here)]);
+        if self.arms.scopes[here].as_ref().is_some_and(|s| s.bottom) {
+            return false;
+        }
+        // The arm's node is an assumption, or the join of the nodes of the ways a condition
+        // with `||` holds, or with `&&` fails, which share nodes: each is visited once.
+        let mut seen = HashSet::new();
+        let mut work = vec![n];
+        while let Some(k) = work.pop() {
+            if !seen.insert(k) {
+                continue;
+            }
+            if let Some(s) = &self.arms.scopes[k] {
+                if !s.bottom {
+                    return false;
+                }
+                continue;
+            }
+            match self.arms.nodes[k] {
+                Node::Root => return false,
+                Node::Join(a, b) => work.extend([a, b]),
+                Node::Assume { outcome, .. } => {
+                    let wanted = self.waits(Item::Scope(k));
+                    self.settle(wanted);
+                    let (p, t) = self.assumed(k);
+                    if p.reaches(&t.term, outcome, &Premises::new()) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 
     /// The ints `e` may be in the scope of the node the walk is in.
@@ -3432,27 +3508,8 @@ impl<'a> Ck<'_, 'a> {
             Item::Scope(n) => {
                 let s = match self.arms.nodes[n] {
                     Node::Root => Scope::new([]).lazy(),
-                    Node::Assume {
-                        parent,
-                        test,
-                        outcome,
-                        ..
-                    } => {
-                        let t = self.term(test);
-                        let p = self.scope_or_root(parent);
-                        // A bound name the scope has no product of is its value, and any other
-                        // name any value of its type where the test is checked. A scope no
-                        // state reaches is told of none: it stays unreachable.
-                        let mut p = self.with_bound(p, &t.binders);
-                        if let Node::Assume { fresh, .. } = &self.arms.nodes[n]
-                            && !p.bottom
-                        {
-                            for (x, q) in fresh.iter() {
-                                if !p.names.contains_key(x) {
-                                    p.bind(x, q.clone(), &Shared::new(Term::Var(x.clone())));
-                                }
-                            }
-                        }
+                    Node::Assume { outcome, .. } => {
+                        let (p, t) = self.assumed(n);
                         // Not shown, so a failing test leaves the names as they were
                         // (`assume_case`): emptying each costs the names in scope.
                         //
@@ -3530,6 +3587,30 @@ impl<'a> Ck<'_, 'a> {
                 self.arms.bound.insert(b, p);
             }
         }
+    }
+
+    /// The scope node `n`, an `Assume` whose items are computed ([`Ck::waits`]), narrows by its
+    /// test, and the test.
+    fn assumed(&mut self, n: usize) -> (Scope, Rc<Translated>) {
+        let Node::Assume { parent, test, .. } = self.arms.nodes[n] else {
+            unreachable!("an assumption")
+        };
+        let t = self.term(test);
+        let p = self.scope_or_root(parent);
+        // A bound name the scope has no product of is its value, and any other name any value
+        // of its type where the test is checked. A scope no state reaches is told of none: it
+        // stays unreachable.
+        let mut p = self.with_bound(p, &t.binders);
+        if let Node::Assume { fresh, .. } = &self.arms.nodes[n]
+            && !p.bottom
+        {
+            for (x, q) in fresh.iter() {
+                if !p.names.contains_key(x) {
+                    p.bind(x, q.clone(), &Shared::new(Term::Var(x.clone())));
+                }
+            }
+        }
+        (p, t)
     }
 
     fn scope_or_root(&self, n: usize) -> Scope {

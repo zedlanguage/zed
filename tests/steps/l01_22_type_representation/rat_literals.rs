@@ -13,7 +13,7 @@ use zed_tests::instances::Rng;
 use zed_tests::scaling::{check, check_order};
 use zedc::zir::text::parse_type;
 
-use zed_tests::step_helpers::l01_26_type_resolution::info;
+use zed_tests::step_helpers::l01_26_type_resolution::{info, sig};
 
 fn dec(text: &str) -> Value {
     Value::rat(
@@ -295,6 +295,7 @@ fn literals_of_equal_residues_are_different_types() {
         assert_ne!(both, ta);
         assert_eq!(both, Type::union_all([tb.clone(), ta.clone()]));
     }
+    // `1 < 2^61` always holds, so no value reaches the second branch and it adds nothing.
     assert_eq!(
         tops(&format!(
             "a = 1r;\nb = {two_61}r;\nc = if a < b {{ a }} else {{ b }};\n"
@@ -302,7 +303,17 @@ fn literals_of_equal_residues_are_different_types() {
         [
             "a: 1r".to_string(),
             format!("b: {two_61}r"),
-            format!("c: 1r | {two_61}r")
+            "c: 1r".to_string()
         ]
+    );
+    // A test that may go either way keeps both, as two types.
+    assert_eq!(
+        sig(
+            &format!(
+                "a = 1r;\nb = {two_61}r;\nc(positional p: bool) = if p {{ a }} else {{ b }};\n"
+            ),
+            "c"
+        ),
+        format!("(bool) -> 1r | {two_61}r")
     );
 }

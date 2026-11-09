@@ -1051,6 +1051,9 @@ pub struct ShapeData {
     /// Whether a component or field, at any depth outside functions, holds the atoms of every
     /// name it does not list ([`Ty::open_atoms`]).
     open_atoms: bool,
+    /// Whether a component or field lists no value ([`Ty::lists_nothing`]): no atom has this
+    /// payload, and [`Ty::atom_of`] and the rebuilding walk leave it out.
+    void: bool,
 }
 
 impl std::ops::Deref for Shape {
@@ -1223,6 +1226,7 @@ impl Shape {
         };
         let wide = cs().find_map(Ty::held_wide);
         let open_atoms = cs().any(Ty::open_atoms);
+        let void = cs().any(Ty::lists_nothing);
         Shape(Arc::new(ShapeData {
             items,
             fields,
@@ -1236,6 +1240,7 @@ impl Shape {
             exact,
             wide,
             open_atoms,
+            void,
         }))
     }
 
@@ -1513,18 +1518,40 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
                 let fns = out.sigs.split_off(out.sigs.len() - t.fns.len());
                 let from = out.shapes.len() - t.payload_shapes().count();
                 let mut shapes = out.shapes.drain(from..);
-                let payloads = t.map_payloads(|_| {
+                let mut payloads = t.map_payloads(|_| {
                     (shapes.next()).expect("a walk makes one shape of each payload shape")
                 });
-                // A variable replaced by the empty type leaves a row with no value.
+                // A variable replaced by the empty type leaves a row with no value, and a
+                // payload shape with none, as `#a(g(x), 1)` once `g`'s result is `Never`; a name
+                // left with no shape has no atom with a payload, which the type then drops (its
+                // bare atom stays). O(1) per shape, and one difference of the set when a name
+                // is dropped.
                 tuples.retain(|r| !r.0.void);
+                let mut gone = Vec::new();
+                payloads.retain(|n, ss| {
+                    let Some(ss) = ss else { return true };
+                    let had = !ss.is_empty();
+                    ss.retain(|s| !s.void);
+                    if had && ss.is_empty() {
+                        gone.push(KType::atom_with(n, &KType::top()));
+                        return false;
+                    }
+                    true
+                });
+                let (set, family) = match gone.is_empty() {
+                    true => (t.set.clone(), t.family.clone()),
+                    false => {
+                        let gone = KType::union_all(gone);
+                        (&t.set - &gone, &t.family - &gone)
+                    }
+                };
                 let mut made = Ty {
-                    set: t.set.clone(),
+                    set,
                     tuples,
                     fns,
                     vars: BTreeSet::new(),
                     dynamic: t.dynamic,
-                    family: t.family.clone(),
+                    family,
                     payloads,
                 };
                 for v in &t.vars {
@@ -4750,12 +4777,12 @@ impl Ty {
 
     /// The atom `#name(items, fields)`, or the empty type when a component lists no value.
     pub fn atom_of(name: &str, items: Vec<Ty>, fields: BTreeMap<Arc<str>, Ty>) -> Ty {
-        if items.iter().chain(fields.values()).any(Ty::lists_nothing) {
+        let shape = Shape::new(items, fields);
+        if shape.void {
             return Ty::empty();
         }
         let mut t = Ty::set(KType::atom_with(name, &KType::top()));
-        t.payloads
-            .insert(name.into(), Some(vec![Shape::new(items, fields)]));
+        t.payloads.insert(name.into(), Some(vec![shape]));
         t
     }
 

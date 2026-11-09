@@ -154,3 +154,137 @@ fn an_unreachable_branch_is_still_checked() {
         ]
     );
 }
+
+/// A branch whose tests contradict each other on the values of a name, so that no value of it
+/// passes them all, is unreachable and adds nothing to the result, though the type of each
+/// name there still lists values (DESIGN.md sec:constraints).
+#[test]
+fn a_branch_no_value_reaches_adds_nothing_to_the_result() {
+    for (text, want) in [
+        (
+            "f(positional x: int) = if x > 0 && x < 0 { 1 } else { 2 };\n",
+            "(int) -> 2",
+        ),
+        (
+            "f(positional x: int) = if x > 0 { if x < 0 { 1 } else { 2 } } else { 3 };\n",
+            "(int) -> 2 | 3",
+        ),
+        // The test holds of every value, so the second branch is the unreachable one.
+        (
+            "f(positional x: int) = if x >= 0 || x < 0 { 1 } else { 2 };\n",
+            "(int) -> 1",
+        ),
+        (
+            "f(positional x: int) = if !(x > 0 || x <= 0) { 1 } else { 2 };\n",
+            "(int) -> 2",
+        ),
+        (
+            "f(positional x: int) = if x > 5 { 1 } else if x > 3 { 2 } else if x > 4 { 3 } \
+             else { 4 };\n",
+            "(int) -> 1 | 2 | 4",
+        ),
+        (
+            "f(positional x: int, positional b: bool) = if b && x > 0 && x < 0 { 1 } else \
+             { 2 };\n",
+            "(int, bool) -> 2",
+        ),
+        (
+            "f(positional x: int) = if x > 0 && x < 0 { 1 } else if x == 3 { 2 } else \
+             { 3 };\n",
+            "(int) -> 2 | 3",
+        ),
+        // `x` is still `int` there, but the branch adds nothing.
+        (
+            "f(positional x: int) = if x > 0 && x < 0 { x } else { 2 };\n",
+            "(int) -> 2",
+        ),
+        // A test whose type meets the name's in a type with no value, though each lists
+        // values: the tuple types meet in components that do not.
+        (
+            "f(positional x: (int, int)) = if x is (bool, int) { 1 } else { 2 };\n",
+            "((int, int)) -> 2",
+        ),
+        (
+            "f(positional x: int) = if x is (int, int) & (bool, int) { 1 } else { 2 };\n",
+            "(int) -> 2",
+        ),
+        (
+            "f(positional x: ((bool, int), int)) = if x is ((int, int), int) { 1 } else \
+             { 2 };\n",
+            "(((bool, int), int)) -> 2",
+        ),
+        // Tests that may both hold keep both branches.
+        (
+            "f(positional x: int) = if x > 0 && x < 9 { 1 } else { 2 };\n",
+            "(int) -> 1 | 2",
+        ),
+        // Inside an unreachable branch nothing more is unreachable: it is all unreachable.
+        (
+            "f(positional x: int) = if x > 0 && x < 0 { if x > 1 { 1 } else { 2 } } else \
+             { 3 };\n",
+            "(int) -> 3",
+        ),
+    ] {
+        assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
+        assert_eq!(sig(text, "f"), want, "{text}");
+    }
+    // Such a branch is still checked: an error in it is reported.
+    let text = "f(positional x: int) = if x > 0 && x < 0 { x + true } else { 2 };\n";
+    assert_eq!(
+        type_errors(text),
+        [
+            "`+` does not take (int, true): these are the types of its arguments here, and `+` \
+             has no arrow that takes them all [x + true]"
+        ]
+    );
+}
+
+/// An atom whose payload has no value once a generic function's types are put in has no
+/// value either: it is `Never`, alone or in a union, as a tuple is.
+#[test]
+fn an_atom_with_a_payload_of_no_value_after_substitution_is_never() {
+    let call = |body: &str| {
+        format!(
+            "app(positional g, positional x) = {body};\nf(positional h: (int) -> Never) = \
+             app(h, 1);\n"
+        )
+    };
+    let bool_call = |body: &str| {
+        format!(
+            "app(positional g, positional x, positional b: bool) = {body};\nf(positional h: \
+             (int) -> Never, positional b: bool) = app(h, 1, b);\n"
+        )
+    };
+    for (text, want) in [
+        (call("#a(g(x), 1)"), "(((int) -> Never)) -> Never"),
+        (call("#a((g(x), 1), 2)"), "(((int) -> Never)) -> Never"),
+        (call("#a(k: g(x))"), "(((int) -> Never)) -> Never"),
+        (
+            bool_call("if b { #a(g(x)) } else { #a(2) }"),
+            "(((int) -> Never), bool) -> #a(2)",
+        ),
+        (
+            bool_call("if b { #a(g(x)) } else { #b }"),
+            "(((int) -> Never), bool) -> #b",
+        ),
+        (
+            bool_call("if b { #a } else { #a(g(x)) }"),
+            "(((int) -> Never), bool) -> #a",
+        ),
+        // In a function's result.
+        (
+            "app(positional g) = (positional x: int) -> #a(g(x), 1);\nf(positional h: (int) -> \
+             Never) = app(h);\n"
+                .to_string(),
+            "(((int) -> Never)) -> ((int) -> Never)",
+        ),
+        // A payload that keeps a value is kept.
+        (
+            call("#a(g, x)"),
+            "(((int) -> Never)) -> #a(((int) -> Never), 1)",
+        ),
+    ] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+        assert_eq!(sig(&text, "f"), want, "{text}");
+    }
+}

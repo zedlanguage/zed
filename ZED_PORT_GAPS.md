@@ -2932,3 +2932,16 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `imbl::OrdSet::ptr_eq` and `imbl::OrdMap::ptr_eq`, two persistent collections on one root compared equal before any entry is read | `Lits::cmp`, `atom_names` | Identity (gap 1) | an equality of persistent collections that answers at once for one shared root, in the runtime (the `==` shortcut of gap 1) |
 | `imbl::OrdMap::get_min`, the first entry of an ordered map read by one descent before range iterators are made | `atom_names` | none: a library call | the first entry of an ordered persistent map |
 | Arithmetic on `u8` by `wrapping_add` and `wrapping_mul`, and `>>` and `^` to fold a `u64` into a byte | `mix_byte`, `fold`, `spread` | Bit words (BIT-words) | the bit words and arithmetic modulo 2^8 |
+
+## Entries from EMPTY-normalize-subst (`zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `BTreeMap::retain` whose closure also filters each payload list in place and pushes the names it drops onto a captured `Vec` | `rebuild`, `Step::TyDone` | Mutation (gap 11) | a fold over the payload map that builds the kept map and the union of the dropped names' atoms together |
+
+## Entries from EMPTY-bottom-arm (`zedc-check/src/check/walk.rs`, `zedc-preimage/src/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A worklist over arm nodes with a `HashSet` of nodes seen, both updated in place, returning at the first node some state reaches | `Ck::no_state_reaches` | Mutation (gap 11), early exit (gap 12) | a fold over the nodes in order with a persistent set of those seen, whose state carries the first reached node as its result |
+| A loop over the cases of a test that returns the first case some state reaches (`cases` with `any`) | `Scope::reaches`, `Scope::cases` | Early exit (gap 12) | a fold over the cases whose state carries the first reached case |
