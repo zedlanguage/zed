@@ -1718,12 +1718,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BUILD-seed-dir-dates | impl attempt 1 | 2026-11-09 12:50 | started; measuring a fresh seed's first build (load 22.33) |
+| GROUP-overlaps-unfold | impl attempt 1 | 2026-11-09 12:48 | differential vs old walk: 301 pieces of l01_23-26/zed_kernel/s_01f pass with assert_eq in every call; l01_23 alone 481,187 calls (183k non-empty), 0 mismatches |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
-| MSG-fresh-name-clash | impl attempt 1 | 2026-11-09 13:30 | clippy clean; running groups l01_29 l01_26 l01_37a zedc_check zed_kernel zedc_types l01_07 s_01f with docs (load 24.88 21.69 21.93) |
-| PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | started on cefadb2a in wt/project-each; load 24.76 |
-| PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | negative control (known_var rescans every part, quadratic) run once, not committed: scaling test fails at 22.2x instructions (64 vs 512 defs, limit 13.2); real  |
-| PROJECT-hull-credit-lower | impl attempt 1 | 2026-11-09 12:10 | final test run with doc check (l01_07 l01_25 l01_38 l01_39* zedc_presburger zedc_preimage s_01f), load 26.85 20.85 21.67 |
+| MSG-fresh-name-clash | running | 2026-11-09 13:30 | noted for batch 88 (DOCS-TODO 54 and COMPLEXITY F140 renumber); deletes: none |
+| MSG-growth-projection-cause | impl attempt 1 | 2026-11-09 12:41 | negative control reverted; caught: case 272 + 26 mismatches in 8 random cases (13 shuffled, 8 reversed, 5 rewritten; 0 by the old writings) |
+| PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | differential vs main's tighten/hull_side test by test: 1,078,090 + 25,046 calls identical, 60 differ (all hull_side refusals Growth/Shadows on main now exact bo |
+| PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | deletes: one command, ran, rc=0 for both parts: (1) inside zrun, 'rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/cargo/profil |
+| PRINT-group-site-defs | impl attempt 1 | 2026-11-09 13:49 | first run of affected groups after the printer change (182 pieces), load 39.18 34.46 27.64 |
+| PROJECT-hull-credit-lower | impl attempt 1 | 2026-11-09 12:10 | ready: wt/hull-credit 9664b8b9 rebased on origin/main 98d5d23d, 493/493 pieces pass, load 15-51; ledger ready + TIGHTEN-each-whole |
+| RENAME-orderedValues | impl attempt 1 | 2026-11-09 14:20 | started: worktree wt/ordered-values from origin/main 5414631a |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
