@@ -250,8 +250,12 @@ pub(super) fn remove<A: Atom>(t: &Arc<Set<A>>, key: &Key<A>) -> Tree<A> {
         })
         .expect("the literal removed is in the set");
     }
-    // The two children merged, the higher root of the two first, down one spine.
-    let (mut a, mut b) = (n.left.as_ref(), n.right.as_ref());
+    rebuild(path, join(n.left.as_ref(), n.right.as_ref()))
+}
+
+/// The set of the literals of `a` and of `b`, every literal of `a` before every one of `b`:
+/// the two merged down one spine, the higher root of the two first.
+fn join<A: Atom>(mut a: Option<&Arc<Set<A>>>, mut b: Option<&Arc<Set<A>>>) -> Tree<A> {
     let mut spine: Vec<(&Arc<Set<A>>, bool)> = Vec::new();
     let bottom = loop {
         match (a, b) {
@@ -267,7 +271,56 @@ pub(super) fn remove<A: Atom>(t: &Arc<Set<A>>, key: &Key<A>) -> Tree<A> {
             }
         }
     };
-    rebuild(path, rebuild(spine, bottom))
+    rebuild(spine, bottom)
+}
+
+/// The set of the literals for which `keep`, called on each in order, is true. One walk, from
+/// a stack: a subtree that loses no literal is kept as it is, a node that stays is made again
+/// over its new children, and the children of one that goes are joined. So removing `r` of `m`
+/// literals makes nodes only on the paths to them and on the joins, `O(m)` in all, where
+/// removing them one at a time made `O(r log m)` (item SCALE-fix-kernel, COMPLEXITY.md K86).
+pub(super) fn retain<A: Atom>(t: &Arc<Set<A>>, mut keep: impl FnMut(&Key<A>) -> bool) -> Tree<A> {
+    /// What is left to do for a node: its left subtree, its own literal, or, with the
+    /// answer of `keep`, the node over its two new subtrees.
+    enum Stage {
+        Left,
+        Key,
+        Make(bool),
+    }
+    let mut todo = vec![(t, Stage::Left)];
+    let mut done: Vec<Tree<A>> = Vec::new();
+    while let Some((n, stage)) = todo.pop() {
+        match stage {
+            Stage::Left => {
+                todo.push((n, Stage::Key));
+                match &n.left {
+                    Some(l) => todo.push((l, Stage::Left)),
+                    None => done.push(None),
+                }
+            }
+            Stage::Key => {
+                todo.push((n, Stage::Make(keep(&n.key))));
+                match &n.right {
+                    Some(r) => todo.push((r, Stage::Left)),
+                    None => done.push(None),
+                }
+            }
+            Stage::Make(kept) => {
+                let r = done.pop().expect("the right subtree is walked");
+                let l = done.pop().expect("the left subtree is walked");
+                done.push(if !kept {
+                    join(l.as_ref(), r.as_ref())
+                } else if id(l.as_ref()) == id(n.left.as_ref())
+                    && id(r.as_ref()) == id(n.right.as_ref())
+                {
+                    Some(n.clone())
+                } else {
+                    Some(make(n.key.clone(), l, r))
+                });
+            }
+        }
+    }
+    done.pop().expect("the set is walked")
 }
 
 /// The literals in order, from a stack.

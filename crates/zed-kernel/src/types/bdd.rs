@@ -2700,27 +2700,35 @@ mod list {
                             memo.insert(key(c, w), left);
                             continue;
                         }
-                        let mut block = Some(c.block.clone());
+                        // Whether each literal of the block, in order, stays; the literals set
+                        // false leave in one walk of the block (`set::retain`), since removing
+                        // them one at a time cost `O(log m)` each and a split of `k` classes
+                        // removes each literal once on each of its `log k` levels (COMPLEXITY.md
+                        // K86).
+                        let mut stays = Vec::with_capacity(set::len(Some(&c.block)));
                         let mut cut = false;
                         for k in set::iter(Some(&c.block)) {
                             match fix(&k.0) {
-                                None => {}
+                                None => stays.push(true),
                                 Some(x) if x == k.1 => {
                                     cut = true;
                                     break;
                                 }
-                                Some(_) => {
-                                    let b = block
-                                        .as_ref()
-                                        .expect("a literal not yet removed is in its block");
-                                    block = set::remove(b, k);
-                                }
+                                Some(_) => stays.push(false),
                             }
                         }
                         if cut {
                             memo.insert(key(c, w), (left.0, Some(wb)));
                             continue;
                         }
+                        let block = if stays.iter().all(|&s| s) {
+                            Some(c.block.clone())
+                        } else {
+                            let mut stays = stays.into_iter();
+                            set::retain(&c.block, |_| {
+                                stays.next().expect("one answer for each literal")
+                            })
+                        };
                         stack.push((c, w, Stage::Right(block, left)));
                         if let Some(r) = &c.right {
                             stack.push((r, !wb, Stage::Left));
