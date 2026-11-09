@@ -30,6 +30,13 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     // The types the messages write put their definitions in one table, which `Ck::finish`
     // lays out message by message.
     let _defs = defs::collect();
+    // The type variables of the signatures and messages are named apart from every name the
+    // unit binds, in any scope: a field is not in scope, so its name is free.
+    let _names = ty::ProgramNames::hold(
+        (t.res.binders.iter())
+            .filter(|b| b.kind != zedc_resolve::resolve::Kind::Field)
+            .map(|b| b.name.as_str()),
+    );
     let mut ck = Ck::new(t);
     ck.bounds();
     ck.walk(unit);
@@ -3958,13 +3965,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut mine_seen = BTreeSet::new();
         for v in sig.first_seen(&mine) {
             let r = class_id(&v).expect("a class variable");
-            let name = loop {
-                let name = var_name(n);
-                n += 1;
-                if !facts.names.contains(&name) {
-                    break name;
-                }
-            };
+            let name = fresh_var_name(&mut n, |name| facts.names.contains(name));
             if self.classes[r].mask != EVERY {
                 sig.bounds.insert(v.clone(), self.classes[r].mask);
             }

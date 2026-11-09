@@ -75,7 +75,7 @@ use zedc_syntax::lex::{Span, unread_literal};
 use kernel_type::kernel_type;
 use ty::{
     Arrow, Binds, Carrier, EVERY, IntDomain, Narrow, Need, NeedKind, OTHER, Piece, SParam, Shape,
-    Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, class_id, errs, mask_text, var_name,
+    Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, class_id, errs, fresh_var_name, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -2475,13 +2475,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             let to = renamed
                 .entry(v.clone())
                 .or_insert_with(|| {
-                    loop {
-                        let name = var_name(n);
-                        n += 1;
-                        if used.insert(name.clone()) {
-                            break name;
-                        }
-                    }
+                    let name = fresh_var_name(&mut n, |name| used.contains(name));
+                    used.insert(name.clone());
+                    name
                 })
                 .clone();
             *t = t.subst(&[(v, Ty::var(to))].into());

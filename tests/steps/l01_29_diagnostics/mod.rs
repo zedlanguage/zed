@@ -12,6 +12,7 @@ mod declared;
 mod derivations;
 mod emptied;
 mod explained;
+mod fresh_names;
 mod group_site;
 mod kernel_names;
 mod layout;
