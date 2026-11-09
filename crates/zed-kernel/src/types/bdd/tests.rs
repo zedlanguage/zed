@@ -860,7 +860,50 @@ fn exclusive_ors_agree_with_their_values() {
 }
 
 #[test]
-#[ignore = "SCALE-log-offset: n log n with a negative constant term, 11.38 times the work at 1,024 and 8,192 literals under the limit 11.44 but 61 s; open"]
+fn the_halves_of_exclusive_ors_meet_as_zip_meets_them() {
+    // `xor::meet` builds the meets of an exclusive or's halves without the search of `zip`,
+    // for literals and exclusive ors over disjoint atoms; it must make the part `zip` makes.
+    // Random sets of 1 to 7 atoms, each built in a random order, are met with each other and
+    // their complements, both ways round.
+    let mut seed = 11u64;
+    let mut next = |below: u64| {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) % below
+    };
+    let mut first = 0u64;
+    let mut parts = Vec::new();
+    for _ in 0..60 {
+        let k = 1 + next(7);
+        let mut atoms: Vec<u64> = (first..first + k).collect();
+        first += k;
+        for i in (1..atoms.len()).rev() {
+            atoms.swap(i, next(i as u64 + 1) as usize);
+        }
+        let x = (atoms.iter()).fold(Part::leaf(false), |f, &a| {
+            xor_by_or(&f, &Part::literal(atom(a)))
+        });
+        assert!(x.xor_tag().is_some(), "{atoms:?}");
+        parts.push(x.not());
+        parts.push(x);
+    }
+    let mut exprs = 0;
+    for i in (0..parts.len()).step_by(2) {
+        for j in (i + 2..parts.len()).step_by(2) {
+            for (a, b) in [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)] {
+                for (p, q) in [(&parts[a], &parts[b]), (&parts[b], &parts[a])] {
+                    let made = xor::meet(p, q);
+                    assert!(made == p.zip(q, Op::And), "{p:?} & {q:?}");
+                    exprs += usize::from(made.expr_id().is_some());
+                }
+            }
+        }
+    }
+    assert!(exprs > 10_000, "{exprs}");
+}
+
+#[test]
 fn parity_built_a_literal_at_a_time_scales() {
     // Parity built a literal at a time, as the type operations build it: each step takes a
     // literal into the set of the one form in `O(log n)`, and makes the expressions of the
@@ -870,13 +913,17 @@ fn parity_built_a_literal_at_a_time_scales() {
     //
     // Measured (16 offsets, 2026-11-09): the tree nodes built per literal at 128 to 8,192
     // literals are 6.30, 7.99, 9.25, 10.48, 11.98, 13.18, 14.84, that is `2 H_n - 4.45`
-    // within 0.15, the depth of a treap built by random insertion, each node about 147,000
-    // instructions and 28 expressions at every size. So the work is `n log n`, but its
-    // constant term is negative, and its ratio at `n` and `8n` (1.39 per literal at 1,024)
-    // approaches the limit's `ln(8n)/ln(n) × 1.1` (1.43) from above as `n` falls: 11.38 times
-    // against 11.44 at 1,024, and the run takes 61 s, over the 60 s limit on one test. With
-    // the atoms in sorted order the nodes per literal are `H_n - 1.5`. Open: SCALE-log-offset.
-    let n = 1 << 10;
+    // within 0.15, the depth of a treap built by random insertion. So the work is `n log n`
+    // with a negative constant term, and its ratio at `n` and `8n` approaches the limit's
+    // `ln(8n)/ln(n) × 1.1` from above as `n` falls; at 2,048 and 16,384 the limit is 11.20.
+    // With the atoms in sorted order the nodes per literal are `H_n - 1.5`.
+    //
+    // Each node cost about 147,000 instructions while `xor::half` met its operands by `zip`,
+    // whose search for a simpler form (`choice_of`, `same_as_not`, `choice`, `negate`) never
+    // finds one for the halves of an exclusive or (see `xor::meet`). With `xor::meet` a node
+    // costs about 34,000: 6.51G and 66.12G instructions at 2,048 and 16,384 (10.2 times),
+    // 696M and 6.96G bytes (10.0 times), 25 s at load 6 (SCALE-log-offset).
+    let n = 1 << 11;
     let lits = scaling::inputs(n, |m| {
         (0..SHAPES)
             .map(|j| {

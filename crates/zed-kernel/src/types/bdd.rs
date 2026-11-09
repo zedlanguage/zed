@@ -1893,9 +1893,9 @@ mod xor {
     ) -> Part<A> {
         let (p, q) = (&pair.p, &pair.q);
         let (x, y) = if constant {
-            (p.zip(q, Op::And), np.zip(nq, Op::And))
+            (meet(p, q), meet(np, nq))
         } else {
-            (p.zip(nq, Op::And), np.zip(q, Op::And))
+            (meet(p, nq), meet(np, q))
         };
         let (x, y) = if x.before(&y) { (x, y) } else { (y, x) };
         let r = Part::expr_xor(Form::Or(x, y), Some((pair.clone(), constant)));
@@ -1904,6 +1904,28 @@ mod xor {
             A::table(|t| t.xors.insert((s.id, constant), Arc::downgrade(e)));
         }
         r
+    }
+
+    /// `a & b` for `a` and `b` each a literal or an exclusive or made by [`half`] (or the
+    /// complement of one), over disjoint sets of atoms: the halves of a pair, which [`node`]
+    /// takes from a tree node's subtrees and its own atom. It is the part `a.zip(b, Op::And)`
+    /// makes, without the search `Connect::zipped` runs, none of whose rules fits such operands:
+    /// they are not complements and not equal, since their atoms differ; only two literals are
+    /// two lists, joined as a chain; neither is an operand of `u&v | !u&!v` under `Or`, since the
+    /// halves of an exclusive or are meets, which are no exclusive or in their one form; an
+    /// exclusive or is no choice, since both of its halves' operands have their complements in
+    /// the other half (two conditions fit); and they are not `(!c|x) & (c|y)`, since the
+    /// complement of a meet made here is a union or `Not` of it, never a meet over other atoms.
+    /// So the meet is the expression of the two, ordered as `Connect::zipped` orders them.
+    /// The test `types::bdd::tests::the_halves_of_exclusive_ors_meet_as_zip_meets_them`
+    /// compares the two on random exclusive ors. The search took about three quarters of the work
+    /// of parity built a literal at a time (SCALE-log-offset, COMPLEXITY K87).
+    pub(super) fn meet<A: Literal>(a: &Part<A>, b: &Part<A>) -> Part<A> {
+        if let (Part::Bdd(_), Part::Bdd(_)) = (a, b) {
+            return a.zip(b, Op::And);
+        }
+        let (a, b) = if a.before(b) { (a, b) } else { (b, a) };
+        Part::expr(Form::And(a.clone(), b.clone()))
     }
 
     /// The exclusive or of `pair` with `constant`, the complement of the one with the other
