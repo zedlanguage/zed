@@ -784,23 +784,33 @@ impl Rat {
     pub fn div_euclid(&self, m: &Rat) -> Result<Rat, TooLarge> {
         if self.is_plain() && m.is_plain() {
             // Complexity tradeoff: the memory asked for is the quotient's width for a divisor
-            // of one word, which num-bigint divides into a single copy of the dividend, and
-            // sixteen times the dividend's width for a wider divisor. Sixteen is measured, not
-            // proved: the peak heap of `num::fast::div_euclid` by a divisor of two or more
-            // words (Newton's reciprocal and two products, or long division over a sparse
-            // divisor's nonzero words) was at most 7.94 times the dividend's width over
-            // dividends of 2^8 to 2^20 words, divisors of 2 words to the dividend's length and
-            // all four signs (2026-11-06, glibc's mmap threshold fixed at 128 KiB); sixteen
-            // keeps the earlier ask, which tests depend on. So a quotient by a wide divisor that
-            // needs less is refused when the free memory lies between the two, and none aborts.
-            // Tested by `dividing_a_wide_number_is_refused_when_memory_is_short` and
-            // `dividing_by_a_wide_divisor_answers_when_its_peak_is_given` (COMPLEXITY.md K30).
-            // A complete solution would be a division whose peak is known by construction:
-            // blocks of the divisor's length divided in place into a quotient allocated once.
+            // of one word, which num-bigint divides into a single copy of the dividend; for a
+            // quotient wider than a divisor whose transforms `fast::Divisor` keeps
+            // (`fast::reciprocal_points`), found block by block through it, `POINT_WORDS` words
+            // a point and twice the dividend's width, the quotient written once and copied once
+            // into its number; and sixteen times the dividend's width for any other divisor of
+            // two or more words. These are measured, not proved: the peak heap of
+            // `num::fast::div_euclid` (glibc's mmap threshold fixed at 128 KiB) was at most 14.5
+            // times the dividend's width for a quotient no wider than a dense divisor, and 25.5
+            // for `2w` words by a dense `w` just above a power of two (12.75 words a point),
+            // over divisors of 2^12 - 1 to 2^16 + 1 words (2026-11-09); 7.94 over
+            // dividends of 2^8 to 2^20 words with the earlier products (2026-11-06). So a
+            // quotient by a wide divisor that needs less is refused when the free memory lies
+            // between the two, and none aborts. Tested by
+            // `dividing_a_wide_number_is_refused_when_memory_is_short`,
+            // `dividing_by_a_wide_divisor_answers_when_its_peak_is_given` and
+            // `a_dense_divisor_asks_for_its_transforms` (COMPLEXITY.md K30). A complete
+            // solution would be a division whose peak is known by construction, each
+            // allocation asked for.
             let a = BigUint::from(self.num.bits());
-            room(match m.num.magnitude().to_u64() {
-                Some(_) => a,
-                None => a << 4u32,
+            let b = m.num.magnitude();
+            room(match (b.to_u64(), fast::reciprocal_points(b)) {
+                (Some(_), _) => a,
+                // `k > n`: the quotient has more bits than the divisor (`fast::div_rem`).
+                (None, Some(points)) if self.num.bits() >= 2 * b.bits() => {
+                    BigUint::from(points) * (64 * POINT_WORDS) + (a << 1u32)
+                }
+                (None, _) => a << 4u32,
             })?;
             return Ok(Rat::int(fast::div_euclid(&self.num, &m.num)));
         }
@@ -1027,6 +1037,12 @@ fn gcd(a: &BigInt, b: &BigInt) -> BigInt {
 /// integers held outside a [`Rat`].
 pub fn div_rem_uint(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     fast::div_rem(a, b)
+}
+
+/// `a mod b` for `b` not zero, the second of [`div_rem_uint`], with no quotient built when it
+/// would be wider than `b` (`num::fast::rem`).
+pub fn rem_uint(a: &BigUint, b: &BigUint) -> BigUint {
+    fast::rem(a, b)
 }
 
 /// The greatest common divisor of `a` and `b`, for integers held outside a [`Rat`].
@@ -1329,24 +1345,33 @@ fn divides(m: &BigUint, p: u64) -> bool {
     }
 }
 
-/// The memory of one block step of [`rem`] by a divisor wider than a word, in multiples of the
-/// divisor's width: the remainder so far, the block, their shifted sum, and its division by
-/// the divisor through `fast::Divisor` (the divisor's reciprocal, built once, and two
-/// transform products a step). The peak heap measured on 2026-11-06 over divisors of 2^8 to
-/// 2^20 words, dividends of one to two blocks, lengths just above and below powers of two and
-/// all-ones dividends, is at most 19.0 times the divisor's width (18.3 building the
-/// reciprocal, 14.9 a step) with glibc's mmap threshold fixed at 128 KiB, so that freed
-/// blocks go back to the system. With glibc's default threshold, which keeps freed blocks of
-/// up to 32 MiB on the heap, the measured peak reaches 26.9 at 380,000 words, a constant
-/// number of bytes retained rather than a share of the width; 24 leaves a fifth to spare over
-/// the algorithm's own peak.
+/// The memory of [`rem`] by a divisor wider than a word that `fast::Divisor` divides without
+/// transforms (by num-bigint, or by long division over its few nonzero words), in multiples of
+/// the divisor's width. The peak heap measured on 2026-11-06 over divisors of 2^8 to 2^20
+/// words, then all divided through num-bigint's products, was at most 19.0 times the
+/// divisor's width with glibc's mmap threshold fixed at 128 KiB, so that freed blocks go back
+/// to the system, and 26.9 at 380,000 words with glibc's default threshold, which keeps freed
+/// blocks of up to 32 MiB on the heap; 24 leaves a fifth to spare over the algorithm's own
+/// peak. A divisor divided by transforms asks [`POINT_WORDS`] words a point instead.
 const REM_STEP: u32 = 24;
+
+/// The memory of a division through `fast::Divisor` by a divisor whose transforms it keeps
+/// (`fast::reciprocal_points`), in words a point: the divisor, its reciprocal's and its own
+/// spectra and the roots, built once, and a step's dividend, estimate and cyclic products.
+/// The peak heap of [`rem`] measured on 2026-11-09 over dense and all-ones divisors of
+/// `2^k - 1`, `2^k` and `2^k + 1` words, `k` = 12, 16 and 18, and dividends of one, two and
+/// five blocks, was at most 13.5 words a point (27 times the divisor's width at a power of
+/// two, whose transforms have twice its words as points, and 50 times just above one, where
+/// they have four times), with glibc's mmap threshold fixed at 128 KiB; the cases at `k` = 20
+/// that ran within 60 s gave the same. 16 leaves a sixth to spare.
+const POINT_WORDS: u32 = 16;
 
 /// `a mod m` for an `m` that is not zero, read from the top of `a` with no copy of it, so its
 /// memory is that of `m` whatever the size of `a`. A one-word `m` folds the words of `a` into
 /// a two-word remainder; a wider `m` folds blocks of as many words as `m` has, each step
 /// dividing a number of twice `m`'s length by `m`. [`TooLarge`] when the system refuses the
-/// memory for a step, asked as [`REM_STEP`] times `m`'s width.
+/// memory for it, asked as [`POINT_WORDS`] words for each point of `m`'s transforms, or as
+/// [`REM_STEP`] times `m`'s width when it has none.
 fn rem(a: &BigUint, m: &BigUint) -> Result<BigUint, TooLarge> {
     if let Some(w) = m.to_u64() {
         let w = u128::from(w);
@@ -1356,38 +1381,17 @@ fn rem(a: &BigUint, m: &BigUint) -> Result<BigUint, TooLarge> {
             .fold(0u128, |r, d| ((r << 64) | u128::from(d)) % w);
         return Ok(BigUint::from(r));
     }
-    // Complexity tradeoff: a step's memory is asked as `REM_STEP` times `m`'s width, a measured
-    // bound on its peak (see `REM_STEP`), not a proved one, so a remainder whose step needs
-    // less is refused when the free memory lies between the two. Tested by `a_wide_number_
-    // modulo_a_wide_one_answers_when_its_peak_is_given` (COMPLEXITY.md K30). A complete
-    // solution would divide each block in place into a quotient allocated once, whose peak is
-    // known by construction.
-    room(BigUint::from(m.bits()) * REM_STEP)?;
-    let len = m.iter_u64_digits().len();
-    // Each step divides a number below `m 2^(64 len)` by `m`, as `fast::Divisor` allows.
-    let divisor = fast::Divisor::new(Cow::Borrowed(m));
-    let mut words = a.iter_u64_digits().rev();
-    let mut left = words.len();
-    let mut take = match left % len {
-        0 => len,
-        k => k,
-    };
-    let mut block: Vec<u32> = Vec::with_capacity(2 * len);
-    let mut r = BigUint::zero();
-    while left > 0 {
-        block.clear();
-        for d in words.by_ref().take(take) {
-            // Highest word first, so reversing the block gives the low half-word first.
-            block.extend([(d >> 32) as u32, d as u32]);
-        }
-        block.reverse();
-        r = divisor
-            .div_rem(&((r << (64 * take)) + BigUint::from_slice(&block)))
-            .1;
-        left -= take;
-        take = len;
-    }
-    Ok(r)
+    // Complexity tradeoff: the memory is asked as `POINT_WORDS` words a point of `m`'s
+    // transforms, or `REM_STEP` times `m`'s width, measured bounds on its peak (see each), not
+    // proved ones, so a remainder that needs less is refused when the free memory lies between
+    // the two. Tested by `a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given` and
+    // `a_dense_divisor_asks_for_its_transforms` (COMPLEXITY.md K30). A complete solution would
+    // ask each allocation of the division for its own memory.
+    room(match fast::reciprocal_points(m) {
+        Some(points) => BigUint::from(points) * (64 * POINT_WORDS),
+        None => BigUint::from(m.bits()) * REM_STEP,
+    })?;
+    Ok(fast::Divisor::new(Cow::Borrowed(m)).rem(a))
 }
 
 /// The Euclidean remainder from `r = |a| mod |m|`: `r` itself, or `|m| - r` for a negative

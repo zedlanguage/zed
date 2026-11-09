@@ -13,8 +13,8 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
 use zed_kernel::num::{
-    TooLarge, div_rem_uint, gcd_uint, is_prime, mul_int, mul_uint, pow_uint, read_digits, room,
-    to_decimal,
+    TooLarge, div_rem_uint, gcd_uint, is_prime, mul_int, mul_uint, pow_uint, read_digits, rem_uint,
+    room, to_decimal,
 };
 
 /// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
@@ -849,14 +849,14 @@ fn remainders(x: &BigUint, ms: &[u64]) -> Vec<u64> {
     let Some(top) = levels.pop() else {
         return Vec::new();
     };
-    let mut rems: Vec<BigUint> = top.iter().map(|t| div_rem_uint(x, t).1).collect();
+    let mut rems: Vec<BigUint> = top.iter().map(|t| rem_uint(x, t)).collect();
     while let Some(nodes) = levels.pop() {
         let mut down = Vec::with_capacity(2 * rems.len());
         for (i, r) in rems.into_iter().enumerate() {
             match nodes.get(2 * i..2 * i + 2) {
                 Some([a, b]) => {
-                    down.push(div_rem_uint(&r, a).1);
-                    down.push(div_rem_uint(&r, b).1);
+                    down.push(rem_uint(&r, a));
+                    down.push(rem_uint(&r, b));
                 }
                 // A product moved up from this level: `r` is already reduced modulo it.
                 _ => down.push(r),
@@ -1074,7 +1074,7 @@ fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
         // instructions from 2^19 to 2^22 digits, against 11.1 (2026-11-07).
         if top.bits() >= tested * tested && top.bits() * top.bits() <= rest.bits() {
             tested = top.bits();
-            let (_, r) = div_rem_uint(rest, top);
+            let r = rem_uint(rest, top);
             if !r.is_zero() {
                 pows.pop();
                 break Cow::Owned(r);

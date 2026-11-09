@@ -99,14 +99,12 @@ fn a_sparse_division_scales() {
 /// two products, O(n log n).
 #[test]
 fn dividing_a_wide_number_scales() {
-    // The reciprocal is built by Newton steps of halving widths, the narrow ones with
-    // num-bigint's products (at most `fast::MUL_LEAF` = 512 words, and above it where
-    // `toom_cost` is the least of `fast::mul`'s computed costs), so a smaller run with few
-    // steps by transforms counts the change of method as growth. Measured with a leaf of 6144
-    // words (SCALE-fix-crossover, 2026-11-07): from 8,192 words 13.9 times against a limit of
-    // 10.8, from 16,384 11.1 against 10.7, from 32,768 10.1 against 10.6; with the cost model,
-    // 10.05 from 32,768 (2026-11-09), in 9 s.
-    let n = 1 << 15;
+    // Until KERNEL-div-newton the narrow Newton steps used num-bigint's products, so a run of
+    // few steps by transforms counted the change of method as growth, and the test needed
+    // n = 32,768 (10.05 times against 10.6, 2026-11-09). Each step is now a cyclic product by
+    // transforms down to `RECIP_LEAF` bits: 9.6 times from 4,096 words against 11.0, in 0.3 s,
+    // and 63.8 times with long division forced in place of the reciprocal (2026-11-09, load 18).
+    let n = 1 << 12;
     let inputs = built(n, |m| (int(random(2 * m, 3)), int(random(m, 4))));
     let (a, d) = at(&inputs, n, n);
     let (q, r) = random(2 * n, 3).div_rem(&random(n, 4));

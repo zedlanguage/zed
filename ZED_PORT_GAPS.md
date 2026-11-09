@@ -2953,3 +2953,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | The display width of each character from the crate `unicode-width` (`UnicodeWidthChar::width`: 2 for wide East Asian characters, 0 for combining marks), a tab shown as four columns | `shown` | Code points and text tables (gap 7) | A width table in Zed, as for the other `unicode-*` tables, or a built-in for now; `codePoint` gives the key |
 | A `HashMap` from a source line to the numbers of its steps, built in one pass so each line is quoted once, at its first step | `Display for Diagnostic` | Mutation (gap 11) | A map built by one fold over the steps |
 | A `BinaryHeap<Reverse<(usize, usize)>>` of rows of underlines by their first free column, and the rows as `Vec`s pushed in place (interval partitioning) | `underlines` | Mutation (gap 11) | A persistent priority queue (a pairing or leftist heap) and a persistent list of rows threaded through a fold over the spans |
+
+## Entries from KERNEL-div-newton (`crates/zed-kernel/src/num/fast.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A divisor's transforms built once and kept in a struct (`Divisor`, `Level`, `By::Reciprocal(Box<Level>, Roots)`), each block of the dividend divided through them while a closure (`put`) writes the quotient's words into a buffer in place | `Divisor::new`, `Divisor::blocks`, `Divisor::div_rem`, `Divisor::rem` | Mutation (gap 11) | a record of the spectra, and a fold over the blocks whose state is the remainder so far and the quotient's blocks, joined once |
+| Residues and remainders in `Vec<u64>` written in place (`fold_words`, `sub_around`, `unfold`, `add_around`, the corrections of `Level::div_rem`) | `remainder`, `unfold`, `Level::div_rem`, `newton` | Mutation (gap 11) | arrays built by one fold each, the carries in its state |
+| Re-measure: two crossovers to num-bigint's division and the cost of the reciprocal, set from timings of the Rust code on 2026-11-09 (load 15 to 17), results identical | `DIV_LEAF` (64 words, below the measured crossing near 8192), `RECIP_LEAF`, `newton_cost`, `sparse_div_cost` | None | Measure each again on the Zed code by the procedure in COMPLEXITY.md section "Crossovers" (DIV-crossover-model); at the port num-bigint's division is replaced by Zed's own |

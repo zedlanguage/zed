@@ -578,10 +578,11 @@ fn equality_over_a_wide_base_scales_with_its_bits() {
 /// `strip` is a few divisions of `2w` by `w` words, and the kernel's division of `2w` by `w`
 /// costs 6.5, 9.0, 11.5 and 12.4 squarings of `w` words at `w` = 4096, 16384, 32768 and
 /// 131072, so it grows faster than n log n over these sizes. With `MUL_LEAF` at 1024 it took
-/// 10.7 at 2^20, and with `fast::mul`'s cost model 10.9 at 2^19 against 10.2 (2026-11-09). This
-/// test still fails, and n = 2^19 keeps it near 12 s.
+/// 10.7 at 2^20, and with `fast::mul`'s cost model 10.9 at 2^19 against 10.2 (2026-11-09).
+/// Division by a Newton reciprocal that keeps the divisor's transforms (KERNEL-div-newton)
+/// costs about 4.1 squarings at every `w` from 16384 to 131072 words, and this test took 9.3
+/// times the work at 2^19 (2026-11-09, load 17), in 7 s.
 #[test]
-#[ignore = "KERNEL-div-newton: 10.9 times the work at 524,288 and 4,194,304 digits, over the n log n limit 10.2 since SCALE-ratio; open"]
 fn equality_over_a_wide_odd_base_scales_with_its_bits() {
     use zedc::store::interval::Num;
     let pair = |n: usize| {

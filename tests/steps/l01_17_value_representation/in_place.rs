@@ -307,6 +307,43 @@ fn a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given() {
     assert_eq!((coef.bits(), coef.magnitude().count_ones()), (half, half));
 }
 
+/// A dense divisor `d = (2^(64 w) - 1) / 3`, every word nonzero, of `w = 2^18 + 1` words, just
+/// above a power of two, where its transforms take the most points for its width, `2^20`:
+/// `a mod d` and `a div d` for a dense `a = (2^(64 (3 w + 5)) - 1) / 7` ask 16 words a point,
+/// 128 MiB, and the quotient twice the dividend's width more, a measured bound above their
+/// peaks of 12.5 and 12.75 words a point (`num::POINT_WORDS`). Each answers with what it asks
+/// for given and 64 MiB more, checked by `q d + r = a` and `r < d` modulo 2^61 - 1, and each
+/// is refused, naming its ask, with half the remainder's ask given.
+#[test]
+fn a_dense_divisor_asks_for_its_transforms() {
+    if !in_child("a_dense_divisor_asks_for_its_transforms") {
+        return;
+    }
+    let w = (1u64 << 18) + 1;
+    let d = ((BigInt::one() << (64 * w)) - 1u32) / 3u32;
+    let a = ((BigInt::one() << (64 * (3 * w + 5))) - 1u32) / 7u32;
+    let modulo = bin(Prim::Mod, num(a.clone()), num(d.clone()));
+    let quotient = bin(Prim::IntDiv, num(a.clone()), num(d.clone()));
+    let (residue_a, residue_d) = (residue(&int(a.clone())), residue(&int(d.clone())));
+    let rem_ask = BigUint::from(1u64 << 20) << 10u32;
+    let div_ask = &rem_ask + (BigUint::from(a.bits()) << 1u32);
+    let bytes = |bits: &BigUint| u64::try_from(bits >> 3u32).expect("a few hundred MiB");
+    lower_limit_by(bytes(&div_ask) + (64 << 20));
+    let r = integer(&modulo);
+    assert!(
+        r.integer_factors().0 < &d,
+        "the remainder is below the divisor"
+    );
+    let q = integer(&quotient);
+    let m = u128::from(MERSENNE);
+    let qd_r = (u128::from(residue(&q)) * u128::from(residue_d) + u128::from(residue(&r))) % m;
+    assert_eq!(qd_r, u128::from(residue_a), "q d + r = a modulo 2^61 - 1");
+    drop((q, r));
+    lower_limit_by(bytes(&rem_ask) / 2);
+    assert_eq!(too_large(&modulo, "mod"), rem_ask);
+    assert_eq!(too_large(&quotient, "div"), div_ask);
+}
+
 /// A hash kept as a power, `3 ^ 2 ^ 27`, reduced modulo a wide number `2^(2^26)
 /// + 1`, under a margin of 28 times the divisor's width: the remainder of the coefficient
 /// asks for 24 times and is given, and the modular-power steps ask for 32 times, a measured

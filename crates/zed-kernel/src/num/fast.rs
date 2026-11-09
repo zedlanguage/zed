@@ -34,18 +34,21 @@
 //! three computed costs is lowest: rows over nonzero words, the transforms ([`transform_plan`])
 //! and num-bigint's product ([`TOOM_COST`]); at or below it, num-bigint's.
 //!
-//! **Division** ([`div_rem`], [`reciprocal`], [`settle`]). To divide by `b` of `k` bits, find
-//! `y = floor(2^2k / b)`, then `q = floor(a y / 2^2k)`: two products. `y` comes from Newton's
-//! iteration `y' = 2 y - b y^2 / 2^2k`, which doubles the correct bits: it starts from a
-//! reciprocal of a few words (num-bigint's division, at or below [`RECIP_LEAF`]) and doubles
-//! the precision each round, `k / 2^i`, ..., `k / 2`, `k`, so the total is `M(k) + M(k/2) + ...`
-//! = O(M(k)). Each estimate is at most a few units off, and [`settle`] makes it exact by
-//! computing `q b`, comparing with `a` and moving `q` by one or two. When the quotient has `k`
-//! bits and the divisor more, both operands are first shifted down until the divisor has `k`
-//! bits, so the reciprocal and both products are of `k` bits, not the divisor's width; the
-//! quotient of the shifted operands is at most two above the true one. A quotient wider than the divisor is found in blocks of the
-//! divisor's width ([`div_rem_blocks`]) with one reciprocal ([`Divisor`]) reused for every
-//! block. A divisor with few nonzero words is divided by long division over those words
+//! **Division** ([`div_rem`], [`Level`], [`approx_reciprocal`]). To divide by `d` of `n` bits
+//! a quotient of `k <= n` bits, take the top `k` bits `t` of `d` and an approximate reciprocal
+//! `X`, `t X < 2^2k <= t (X + 2)`, from Newton's iteration (Brent and Zimmermann, Modern
+//! Computer Arithmetic, Algorithm 3.5): from a reciprocal of [`RECIP_LEAF`] bits by
+//! num-bigint's division, each step goes from `h = ceil((p + 3) / 2)` bits to `p` with two
+//! cyclic products of `p / 2` bits that share one factor's transforms ([`newton`]), so the
+//! whole costs about 5/3 of a product of `k` bits. With `X` taken to `w = 64 ceil(k / 64)`
+//! bits, the estimate `q0 = xh + floor(xh (X - 2^w) / 2^w)`, `xh` the dividend's bits above
+//! the divisor's, is a product of `k` bits, at most four below the quotient (two above it when
+//! `k < n`), and the remainder `x - q0 d`, in `(-2d, 5d)`, is a cyclic product of `d`'s width
+//! modulo `2^(64 m) - 1` read back by its low word ([`unfold`]); at most four steps of `d`
+//! correct both. A quotient wider than the divisor is found in blocks
+//! of the divisor's width ([`div_rem_blocks`]) by one [`Divisor`], whose reciprocal and both
+//! factors' transforms are built once: about one product of the divisor's width a block. A
+//! divisor with few nonzero words is divided by long division over those words
 //! ([`sparse_div_rem`]), chosen by computed cost as for products.
 //!
 //! **Gcd** ([`gcd`], [`half`], [`step`], [`half_leaf`]). Euclid's algorithm takes O(n) steps of
@@ -83,17 +86,17 @@
 //! COMPLEXITY.md section "Crossovers"). A transform product costs three convolutions and the
 //! recombination, so num-bigint's product is faster up to about 1024 words a factor, and
 //! again just above each power of two of the transform's points, up to about 6144 words, where
-//! the padding nearly doubles the transform's time. Newton division costs several full
-//! products per quotient, and is slower than num-bigint's Burnikel and Ziegler division at
-//! every size measured, up to 8192 words (2026-11-06); printing, by the levels above, is slower
-//! than num-bigint's up to about 60,000 words (2026-11-08), where its fixed costs (the powers,
-//! one Newton reciprocal) outweigh num-bigint's `n^1.5`.
+//! the padding nearly doubles the transform's time. Division of `2w` by `w` words costs about
+//! 4.1 squarings of `w` words from 16,384 to 131,072 words (KERNEL-div-newton, 2026-11-09; it
+//! was 7.4 to 12.4 before), and takes 1.3 to 2.5 times num-bigint's Burnikel and Ziegler
+//! division's time from 96 to 4096 words, the same at 8192 and 0.76, 0.59 and 0.46 times at
+//! 16,384, 32,768 and 65,536 (load 15 to 17); printing, by the levels above, is slower than
+//! num-bigint's up to about 60,000 words (2026-11-08), where its fixed costs (the powers, one
+//! Newton reciprocal) outweigh num-bigint's `n^1.5`.
 //! The gcd gains from about 300 words, since num-bigint's is quadratic. Open for the port:
-//! why division costs 2.6 to 3.8 times num-bigint's from 2048 to 8192 words (candidates: the
-//! full product `a2 y` of which only the high half is used, the product `q b` in [`settle`],
-//! a reciprocal built at each call), and whether [`reciprocal`] costs more than it needs to:
-//! about three times a product and a cyclic product of its width (2026-11-08), which sets
-//! [`PRINT_WHOLE`].
+//! [`DIV_LEAF`] against the crossover near 8192 words measured above, by a computed cost as
+//! [`TOOM_COST`] is for products; and [`PRINT_WHOLE`], set when [`reciprocal`] cost about
+//! three products and is now [`approx_reciprocal`] and one cyclic product, not measured again.
 //!
 //! **At the port to Zed.** The results must stay those of num-bigint's operations, which the
 //! unit tests compare at every leaf setting. What depends on measurement and is to be measured
@@ -159,16 +162,22 @@ const TOOM_POWER: f64 = 0.465;
 
 /// The bits at or below which the divisor, or the quotient, goes to num-bigint's division,
 /// which then costs at most this many bits times the dividend's. The result does not depend
-/// on it. Not measured when it was set. On 2026-11-06 at load 1, Newton division of `2w` by
-/// `w` words takes 1.13 times num-bigint's time at `w` = 64, 1.00 at 96, 2.03 at 1024, 3.84
-/// at 2048 and 2.60 at 8192: never faster up to 8192 words. num-bigint's division is about
-/// `n^1.46` and Newton's O(n log n), so the curves cross higher up, above 100,000 words by
-/// extrapolation, not measured (COMPLEXITY.md, "Crossovers").
+/// on it. Not measured when it was set. On 2026-11-06 at load 1, the Newton division then used
+/// took 1.13 times num-bigint's time at `w` = 64, 1.00 at 96, 2.03 at 1024, 3.84 at 2048 and
+/// 2.60 at 8192 words, for `2w` by `w`. The division by [`Level`] (KERNEL-div-newton) took, on
+/// 2026-11-09 at load 15 to 17, 1.31 times at 96, 2.54 at 1024, 1.88 at 2048, 1.36 at 4096,
+/// 1.02 at 8192, 0.76 at 16,384 and 0.46 at 65,536: the curves cross near 8192 words, not
+/// moved here (COMPLEXITY.md, "Crossovers").
 const DIV_LEAF: u64 = 64 * 64;
 
 /// The bits at or below which a reciprocal is found by num-bigint's division. Not measured
-/// apart from [`DIV_LEAF`].
+/// apart from [`DIV_LEAF`]. The reciprocal does not depend on it; the unit tests use the
+/// least that Newton's step allows, 4 (a step to `p` bits starts from `ceil((p + 3) / 2)`,
+/// fewer only for `p >= 5`), so that every step is reached on small numbers.
+#[cfg(not(test))]
 const RECIP_LEAF: u64 = 64 * 32;
+#[cfg(test)]
+const RECIP_LEAF: u64 = 4;
 
 /// The bits at or below which the gcd of what is left goes to num-bigint's gcd: near the
 /// crossover measured on 2026-11-05, 2.2 ms against 1.7 ms at 256 words and 12 ms against
@@ -810,8 +819,10 @@ pub fn pow(b: &BigUint, mut e: u64) -> BigUint {
 
 /// `(a / b, a mod b)` for `b` not zero. A narrow divisor or quotient goes to num-bigint, and a
 /// quotient wider than the divisor goes block by block ([`div_rem_blocks`]). Otherwise the
-/// divisor is cut to the quotient's `k` bits, the quotient is the cut dividend times the
-/// reciprocal `2^2k / b`, at most two off, and the remainder corrects it. O(M(n)).
+/// quotient, of `k` bits, is estimated from the reciprocal of the divisor's top `k` bits, at
+/// most a few off, and the remainder, found by a cyclic product ([`Level::div_rem`]), corrects
+/// it. O(M(n)): about four squarings of the quotient's width (4.0 at 4096 to 65,536 words,
+/// 2026-11-09), and the same for `2w` by `w` words through [`div_rem_blocks`].
 pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     assert!(!b.is_zero(), "a division by zero");
     if a < b {
@@ -820,6 +831,14 @@ pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     let (m, n) = (a.bits(), b.bits());
     // The quotient has at most `k` bits.
     let k = m - n + 1;
+    // Complexity tradeoff: a timed crossover with identical results, nothing given up. A
+    // divisor or quotient of at most `DIV_LEAF` bits goes to num-bigint's division, which costs
+    // at most `DIV_LEAF` bits times the dividend's, O(n), and was measured faster there; the
+    // measured curves now cross near 8192 words, higher than this leaf (its doc comment).
+    // Both sides are tested by `tests::quotients_agree_with_num_bigint` and
+    // `tests::wide_quotients_agree_with_num_bigint`; the growth above it by
+    // `dividing_a_wide_number_scales` (COMPLEXITY.md K30, "Crossovers"; ZED_PORT_GAPS.md,
+    // "Entries from KERNEL-div-newton").
     if n.min(k) <= DIV_LEAF {
         return a.div_rem(b);
     }
@@ -835,17 +854,20 @@ pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     if k > n {
         return div_rem_blocks(a, b);
     }
-    // `a2` has `2k - 1` bits and `b2` has `k`: the divisor's low bits are dropped, and
-    // `a2 / b2` is at most two above `a / b`.
-    let (a2, b2) = (a >> (n - k), b >> (n - k));
-    let y = reciprocal(&b2, k);
-    drop(b2);
-    // `a2 / b2 - a2 y / 2^2k < a2 / 2^2k < 1/2`, so `q` is `a / b` or up to one below and two
-    // above it.
-    let q = mul(&a2, &y) >> (2 * k);
-    drop((a2, y));
-    let qb = mul(&q, b);
-    settle(a, b, q, qb)
+    let (linear, cyclic) = level_points(n, k);
+    let tw = roots(linear.max(cyclic));
+    let level = Level::new(b.to_u64_digits(), n, k, &tw);
+    let (q, r) = level.div_rem(&a.to_u64_digits(), &tw);
+    (from_words(q), from_words(r))
+}
+
+/// `a mod b` for `b` not zero, as [`div_rem`] finds it. A quotient wider than `b` is not built:
+/// [`Divisor::rem`] reads `a` block by block and keeps only the remainder.
+pub(crate) fn rem(a: &BigUint, b: &BigUint) -> BigUint {
+    if a.bits().saturating_sub(b.bits()) >= b.bits() {
+        return Divisor::new(Cow::Borrowed(b)).rem(a);
+    }
+    div_rem(a, b).1
 }
 
 /// [`div_rem`] of a quotient wider than the divisor `b`: `a` is read from the top in blocks of
@@ -853,33 +875,7 @@ pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
 /// below `b 2^(64 len)`, by `b` through one [`Divisor`], and the quotient's blocks are written
 /// into place. O((m / n) M(n)) for `m` bits by `n`, and the memory of a step is O(n).
 fn div_rem_blocks(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
-    let divisor = Divisor::new(Cow::Borrowed(b));
-    let len = words(b);
-    let mut digits = a.iter_u64_digits().rev();
-    let mut left = digits.len();
-    let mut quotient = vec![0u32; 2 * left];
-    let mut take = match left % len {
-        0 => len,
-        k => k,
-    };
-    let mut r = BigUint::zero();
-    let mut block: Vec<u32> = Vec::with_capacity(2 * len);
-    while left > 0 {
-        block.clear();
-        for d in digits.by_ref().take(take) {
-            // Highest word first, so reversing the block gives the low half-word first.
-            block.extend([(d >> 32) as u32, d as u32]);
-        }
-        block.reverse();
-        let (q, rest) = divisor.div_rem(&((r << (64 * take)) + BigUint::from_slice(&block)));
-        left -= take;
-        for (slot, d) in quotient[2 * left..].iter_mut().zip(q.iter_u32_digits()) {
-            *slot = d;
-        }
-        r = rest;
-        take = len;
-    }
-    (BigUint::new(quotient), r)
+    Divisor::new(Cow::Borrowed(b)).div_rem(a)
 }
 
 /// The cost of [`sparse_div_rem`] of a quotient of `qw` words by a divisor with `nonzero`
@@ -888,13 +884,16 @@ fn sparse_div_cost(qw: usize, nonzero: usize) -> u128 {
     (qw as u128 + 1) * (SPARSE_WORD * nonzero as u128 + SPARSE_STEP)
 }
 
-/// The cost of [`div_rem`] by a reciprocal of a quotient of `qw` words by a divisor of `bw`:
-/// about five products of the quotient's width for the reciprocal and the quotient, and one
-/// of the quotient by the divisor, or that of each block of [`div_rem_blocks`].
+/// The cost of [`div_rem`] by a reciprocal of a quotient of `qw` words by a divisor of `bw`,
+/// in products: [`approx_reciprocal`] costs about 5/3 of a product of the quotient's width,
+/// the estimate one, and the remainder a cyclic product of the divisor's width, which is one
+/// product's transforms on half the points. A quotient wider than the divisor
+/// ([`div_rem_blocks`]) builds that once, about three products of the divisor's width, and
+/// then costs about one product for each block, its two factors' transforms kept.
 fn newton_cost(qw: usize, bw: usize) -> u128 {
     match qw > bw {
-        true => (qw.div_ceil(bw) as u128 + 2) * 2 * transform_cost(2 * bw),
-        false => 5 * transform_cost(2 * qw) + transform_cost(qw + bw),
+        true => (qw.div_ceil(bw) as u128 + 3) * transform_cost(2 * bw),
+        false => 8 * transform_cost(2 * qw) / 3 + transform_cost(bw),
     }
 }
 
@@ -909,6 +908,17 @@ fn sparse_div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     if a < b {
         return (BigUint::zero(), a.clone());
     }
+    let (q, r) = sparse_div_rem_words(a.iter_u64_digits(), b);
+    (from_words(q), from_words(r))
+}
+
+/// [`sparse_div_rem`] of the words `a`, lowest first, at least `words(b) - 1` of them, as
+/// words with no zero on top.
+fn sparse_div_rem_words(
+    a: impl DoubleEndedIterator<Item = u64> + ExactSizeIterator,
+    b: &BigUint,
+) -> (Vec<u64>, Vec<u64>) {
+    let la = a.len();
     // Normalized: the top word of `b 2^sh` has its top bit set, so a quotient word estimated
     // from the window's top two words and the divisor's top word is at most two above.
     let sh = b
@@ -923,15 +933,12 @@ fn sparse_div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     let (b1, b2) = (u128::from(bs[lb - 1]), u128::from(bs[lb - 2]));
     // The words of `a 2^sh`, highest first, one more than `a` has.
     let mut prev = 0u64;
-    let mut shifted = a
-        .iter_u64_digits()
-        .rev()
-        .chain(std::iter::once(0))
-        .map(|d| {
-            let w = (((u128::from(prev) << 64) | u128::from(d)) >> (64 - sh)) as u64;
-            prev = d;
-            w
-        });
+    debug_assert!(la + 1 >= lb, "a has at least words(b) - 1 words");
+    let mut shifted = a.rev().chain(std::iter::once(0)).map(|d| {
+        let w = (((u128::from(prev) << 64) | u128::from(d)) >> (64 - sh)) as u64;
+        prev = d;
+        w
+    });
     // The remainder so far, `lb` words, lowest first, lies in `buf[start..start + lb]`; a step
     // writes the next word below it and leaves the top word zero, so the remainder moves down
     // a word, and when it reaches the bottom it is copied to the top, once every `lb + 2`
@@ -941,7 +948,7 @@ fn sparse_div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     for (i, w) in shifted.by_ref().take(lb - 1).enumerate() {
         buf[start + lb - 2 - i] = w;
     }
-    let mut quotient: Vec<u64> = Vec::with_capacity(words(a) + 2 - lb);
+    let mut quotient: Vec<u64> = Vec::with_capacity(la + 2 - lb);
     for w in shifted {
         if start == 0 {
             buf.copy_within(0..lb, lb + 2);
@@ -1001,10 +1008,10 @@ fn sparse_div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
         quotient.push(q);
     }
     quotient.reverse();
+    trim(&mut quotient);
     buf.truncate(start + lb);
     buf.drain(..start);
-    let r = from_words(buf) >> sh;
-    (from_words(quotient), r)
+    (quotient, shr_words(&buf, u64::from(sh)))
 }
 
 /// Subtracts `x` from `w` at word `i`, the borrow carried up; whether it passes the top.
@@ -1052,30 +1059,114 @@ fn settle(a: &BigUint, b: &BigUint, mut q: BigUint, mut qb: BigUint) -> (BigUint
     (q, r)
 }
 
-/// `2^2k / x`, floored, for `x` of exactly `k` bits, by Newton's iteration from the top bits:
-/// each precision `k'` comes from about half as many, `h = ceil(k'/2) + 2`, as
-/// `y' = 2 y 2^(k'-h) - x' y^2 / 2^2h` with `x'` the top `k'` bits of `x`, then made exact by
-/// its remainder. The relative error of `y` is about `2^-h`, so `y'` is a few off. O(M(k)).
+/// `2^2k / x`, floored, for `x` of exactly `k` bits: [`approx_reciprocal`], one below or
+/// exact, made exact by the sign of `2^2k - x y - x`, found by one cyclic product. O(M(k)).
 fn reciprocal(x: &BigUint, k: u64) -> BigUint {
-    debug_assert_eq!(x.bits(), k);
-    let mut sizes = vec![k];
-    while let Some(&s) = sizes.last().filter(|&&s| s > RECIP_LEAF) {
-        sizes.push(s.div_ceil(2) + 2);
-    }
-    let mut h = sizes.pop().expect("k is listed");
-    let mut y = (BigUint::one() << (2 * h)) / (x >> (k - h));
-    while let Some(kp) = sizes.pop() {
-        let xp = x >> (k - kp);
-        let t = mul(&xp, &mul(&y, &y)) >> (2 * h);
-        // `x' y^2 2^(2(k'-h)) / 2^2k' < 2 y 2^(k'-h)`, since `y <= 2^2h / x_h` and the top `h`
-        // bits `x_h` of `x'` are at least `x' / 2^(k'-h) - 1`.
-        let estimate = (y << (kp - h + 1)) - t;
-        let product = mul(&xp, &estimate);
-        let (q, _) = settle(&(BigUint::one() << (2 * kp)), &xp, estimate, product);
-        y = q;
-        h = kp;
+    let m = cyclic_points(k);
+    let tw = roots(m);
+    let mut y = approx_reciprocal(x, k, &tw);
+    // `e = 2^2k - x y` lies in `(0, 2x)`, below `2^(64 m + 61)`; the floor is `y + 1` when
+    // `e >= x`.
+    let (xw, yw) = (x.to_u64_digits(), y.to_u64_digits());
+    let (mut xy, carry) = cyclic_product(&folded(&xw, m), &spectra(&yw, m, &tw), &tw);
+    add_around(&mut xy, carry);
+    let e = sub_around(power_around(2 * k, m), &xy);
+    let low = low_power(2 * k).wrapping_sub(first(&xw).wrapping_mul(first(&yw)));
+    let (negative, e) = unfold(e, m, low);
+    debug_assert!(!negative, "the estimate is below the reciprocal");
+    if cmp_words(&e, &xw).is_ge() {
+        y += 1u32;
     }
     y
+}
+
+/// `X` with `a X < 2^2p <= a (X + 2)`, for `a` of exactly `p` bits, so that
+/// `2^p <= X < 2^(p + 1)`, by Newton's iteration on the top bits of `a`, each precision `p`
+/// from `h = ceil((p + 3) / 2)` ([`newton`]), from num-bigint's division at or below
+/// [`RECIP_LEAF`] bits. Each precision costs five transforms on the points of a product of
+/// `p / 2` bits by `p / 2`, so the whole about 5/3 of a product of `p` bits by `p`. `tw` as for
+/// [`Field::forward`], of at least [`cyclic_points`]`(p)` points. Brent and Zimmermann, Modern
+/// Computer Arithmetic (2010), Algorithm 3.5, in bits rather than words.
+fn approx_reciprocal(a: &BigUint, p: u64, tw: &Roots) -> BigUint {
+    debug_assert_eq!(a.bits(), p);
+    let mut sizes = vec![p];
+    // Complexity tradeoff: the precisions at or below `RECIP_LEAF` bits start from one
+    // division by num-bigint, O(RECIP_LEAF^2) once, in place of further Newton steps whose
+    // transforms cost more at that width; the reciprocal's bounds do not depend on it, which
+    // `tests::approximate_reciprocals_keep_their_bounds` checks with the leaf at 4 bits.
+    while let Some(&s) = sizes.last().filter(|&&s| s > RECIP_LEAF) {
+        sizes.push((s + 3).div_ceil(2));
+    }
+    let mut h = sizes.pop().expect("p is listed");
+    // `a_h X < 2^2h <= a_h (X + 1)` for `a_h` the top `h` bits.
+    let mut x = ((BigUint::one() << (2 * h)) - 1u32) / (a >> (p - h));
+    while let Some(q) = sizes.pop() {
+        let top = match q == p {
+            true => Cow::Borrowed(a),
+            false => Cow::Owned(a >> (p - q)),
+        };
+        x = newton(&top, q, x, h, tw);
+        h = q;
+    }
+    x
+}
+
+/// One step of [`approx_reciprocal`]: from `xh` for the top `h` bits `a_h` of `a`, which has
+/// `p` bits, `a_h xh < 2^2h <= a_h (xh + 2)`, the same for `a`, with `l = p - h <= h - 3`.
+///
+/// `T = a xh` lies in `(2^(p + h) - 2a, 2^(p + h) + 2^(p + 1))`: `a_h xh <= a / 2^l xh` and
+/// `xh < 2^(h + 1)` bound it above, and `a_h (xh + 2) >= 2^2h` with `a_h 2^l <= a` below. So
+/// `R = T - 2^(p + h)` is found modulo `M = 2^(64 m) - 1` by a cyclic product and [`unfold`],
+/// and taking `a` from it for each one taken from `xh` (at most four times) leaves
+/// `t = 2^(p + h) - a xh` in `(0, 2a)`. Then `2^2p / a = xh 2^l / (1 - d)` with
+/// `d = t / 2^(p + h)`, `= xh 2^l + xh t / 2^2h + Q`, `Q = (2^2p / a) d^2`, and the step returns
+/// `X = xh 2^l + floor(xh floor(t / 2^l) / 2^(2h - l))`. What it leaves out is positive, as
+/// `Q > 0`, so `a X < 2^2p`, and below 2: the floor less than 1, the low bits of `t` less than
+/// `2^(h + 1) 2^l / 2^2h <= 1/4`, and `Q < 4a / 2^2h < 2^(p + 2 - 2h) <= 1/2`.
+///
+/// Both products are cyclic on `m` points and share `xh`'s transforms: five transforms per
+/// prime, `m` the least power of two with `64 m >= p - 55`, so that `|R| < 2^(p + 1)` and
+/// `xh floor(t / 2^l) < 2^(2h + 2)` are both below `2^(64 m + 61)`.
+fn newton(a: &BigUint, p: u64, xh: BigUint, h: u64, tw: &Roots) -> BigUint {
+    let l = p - h;
+    debug_assert!(l + 3 <= h);
+    let m = cyclic_points(p);
+    let xw = xh.to_u64_digits();
+    let xs = spectra(&xw, m, tw);
+    let aw = a.to_u64_digits();
+    let (mut t, carry) = cyclic_product(&folded(&aw, m), &xs, tw);
+    add_around(&mut t, carry);
+    let r = sub_around(t, &power_around(p + h, m));
+    let low = first(&aw)
+        .wrapping_mul(first(&xw))
+        .wrapping_sub(low_power(p + h));
+    drop(aw);
+    let (negative, r) = unfold(r, m, low);
+    let mut r = from_words(r);
+    // `t = 2^(p + h) - a xh`, `xh` lowered by `taken`.
+    let mut taken = 0u32;
+    let t = match negative {
+        true => r,
+        false => loop {
+            taken += 1;
+            if r < *a {
+                break a - &r;
+            }
+            r -= a;
+        },
+    };
+    debug_assert!(taken <= 4, "R is below 2^(p + 1) and a at least 2^(p - 1)");
+    let tm = t >> l;
+    let tmw = tm.to_u64_digits();
+    // `xh tm`, `tm = floor(t / 2^l)`, for the `xh` before it was lowered, whose transforms are
+    // kept, then `taken tm` taken off.
+    let (mut u, carry) = cyclic_product(&folded(&tmw, m), &xs, tw);
+    add_around(&mut u, carry);
+    let (negative, u) = unfold(u, m, first(&tmw).wrapping_mul(first(&xw)));
+    debug_assert!(!negative, "a product of positive numbers");
+    drop((xs, xw, tmw));
+    let u = from_words(u) - &tm * taken;
+    ((xh - taken) << l) + (u >> (2 * h - l))
 }
 
 /// `a / g` for a `g` that divides `a`, positive, the sign of `a` kept.
@@ -1313,58 +1404,238 @@ pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
 // Decimal printing
 
 /// A divisor used many times, with how it is divided by: num-bigint's division when it has at
-/// most [`DIV_LEAF`] bits, long division over its nonzero words when that costs less, else
-/// its reciprocal, built once: the shift `s` that makes `d 2^s` a whole number of words, `w`
-/// bits, and `y = 2^2w / (d 2^s)`.
+/// most [`DIV_LEAF`] bits, long division over its nonzero words when that costs less, else a
+/// [`Level`]: its reciprocal and itself transformed once, with the roots for every product.
 pub(crate) struct Divisor<'a> {
     d: Cow<'a, BigUint>,
+    /// The words of `d`.
+    len: usize,
     by: By,
 }
 
 enum By {
     Leaf,
     Sparse,
-    Reciprocal(u64, BigUint),
+    Reciprocal(Box<Level>, Roots),
+}
+
+/// The points of the transforms a [`Divisor`] of `d` keeps, the most of its [`level_points`],
+/// or `None` when it divides without them: by num-bigint, for at most [`DIV_LEAF`] bits, or by
+/// long division over its nonzero words when that costs less. Its memory is a multiple of
+/// these points (`num::Rat::rem_euclid` and `num::Rat::div_euclid` ask for it).
+pub(crate) fn reciprocal_points(d: &BigUint) -> Option<usize> {
+    let (n, len) = (d.bits(), words(d));
+    // Complexity tradeoff: as in `div_rem`, the cheaper of long division over the nonzero
+    // words and the reciprocal, for a dividend of twice the divisor's words, by the computed
+    // costs and with no size constant (COMPLEXITY.md K30).
+    match n <= DIV_LEAF || sparse_div_cost(len, nonzero_words(d)) <= newton_cost(len, len) {
+        true => None,
+        false => {
+            let (linear, cyclic) = level_points(n, n);
+            Some(linear.max(cyclic))
+        }
+    }
 }
 
 impl<'a> Divisor<'a> {
     pub(crate) fn new(d: Cow<'a, BigUint>) -> Divisor<'a> {
         assert!(!d.is_zero(), "a division by zero");
         let n = d.bits();
-        let len = words(&d);
-        // Complexity tradeoff: as in `div_rem`, the cheaper of long division over the nonzero
-        // words and the reciprocal, for a dividend of twice the divisor's words, by the
-        // computed costs and with no size constant (COMPLEXITY.md K30).
-        let by = if n <= DIV_LEAF {
-            By::Leaf
-        } else if sparse_div_cost(len, nonzero_words(&d)) <= newton_cost(len, len) {
-            By::Sparse
-        } else {
-            let w = n.next_multiple_of(64);
-            By::Reciprocal(w - n, reciprocal(&(&*d << (w - n)), w))
+        let by = match reciprocal_points(&d) {
+            None if n <= DIV_LEAF => By::Leaf,
+            None => By::Sparse,
+            Some(points) => {
+                let tw = roots(points);
+                By::Reciprocal(Box::new(Level::new(d.to_u64_digits(), n, n, &tw)), tw)
+            }
         };
-        Divisor { d, by }
+        Divisor {
+            len: words(&d),
+            d,
+            by,
+        }
     }
 
-    /// `(x / d, x mod d)` for `x < 2^(n + w)`, `n` the bits of `d`, so for any `x` below `d`
-    /// times a whole number of words as wide as `d`. With `X = x 2^s < 2^2w`, `X y / 2^2w` is
-    /// `x / d` or one below, since `X / (d 2^s) - X y / 2^2w < X / 2^2w < 1`; the low `w` bits
-    /// of `X` are dropped, which takes off less than `2^w y / 2^2w <= 2` more, so that the
-    /// product is of `w` bits by `w + 2`, and its transform of as few points as `d`'s width
-    /// allows. O(M(n)).
-    pub(crate) fn div_rem(&self, x: &BigUint) -> (BigUint, BigUint) {
+    /// `(a / d, a mod d)`, by [`Divisor::blocks`].
+    pub(crate) fn div_rem(&self, a: &BigUint) -> (BigUint, BigUint) {
+        let mut quotient = vec![0u64; words(a)];
+        let r = self.blocks(a, |at, q| quotient[at..at + q.len()].copy_from_slice(q));
+        (from_words(quotient), from_words(r))
+    }
+
+    /// `a mod d`, by [`Divisor::blocks`], its memory that of `d` whatever the size of `a`.
+    pub(crate) fn rem(&self, a: &BigUint) -> BigUint {
+        from_words(self.blocks(a, |_, _| {}))
+    }
+
+    /// The words of `a mod d`, `a` read from the top in blocks of as many words as `d` has:
+    /// each step divides the remainder so far joined to the next block, below `d 2^(64 len)`,
+    /// by `d` ([`Divisor::step`]), and gives the words of its quotient to `put` with the place
+    /// of their lowest word in `a / d`. The words of each step are built in one buffer, so a
+    /// step copies nothing of `a` but its block. O((m / n) M(n)) for `m` bits by `n`.
+    fn blocks(&self, a: &BigUint, mut put: impl FnMut(usize, &[u64])) -> Vec<u64> {
+        let len = self.len;
+        let mut digits = a.iter_u64_digits();
+        let mut left = digits.len();
+        let take = match left % len {
+            0 => len.min(left),
+            k => k,
+        };
+        // The first block has at most `len` words, so its quotient is below `2^64` and
+        // num-bigint's long division finds it with O(n) word products, where the reciprocal
+        // would cost a product; every later step has a quotient as wide as `d`.
+        let mut x: Vec<u64> = digits.by_ref().rev().take(take).collect();
+        x.reverse();
+        left -= take;
+        let (q, r) = from_words(x).div_rem(&*self.d);
+        put(left, &q.to_u64_digits());
+        let mut r = r.to_u64_digits();
+        let mut x: Vec<u64> = Vec::with_capacity(2 * len);
+        while left > 0 {
+            // `x = r 2^(64 len) + block`, the block's words read from the top.
+            x.clear();
+            x.resize(len, 0);
+            for (slot, w) in x.iter_mut().rev().zip(digits.by_ref().rev()) {
+                *slot = w;
+            }
+            x.extend_from_slice(&r);
+            trim(&mut x);
+            left -= len;
+            let (q, rest) = self.step(&x);
+            put(left, &q);
+            r = rest;
+        }
+        r
+    }
+
+    /// `(x / d, x mod d)` as words with no zero on top, for the words `x`, with no zero on
+    /// top, below `d 2^(64 len)`: num-bigint's division, long division over `d`'s nonzero
+    /// words ([`sparse_div_rem`]), or a [`Level`] ([`Level::div_rem`]), O(M(n)), about one
+    /// product's transforms of `d`'s width.
+    fn step(&self, x: &[u64]) -> (Vec<u64>, Vec<u64>) {
         match &self.by {
-            By::Leaf => x.div_rem(&*self.d),
-            By::Sparse => sparse_div_rem(x, &self.d),
-            By::Reciprocal(s, y) => {
-                let w = self.d.bits() + s;
-                debug_assert!(x.bits() <= self.d.bits() + w);
-                let q = mul(&(x >> (w - s)), y) >> w;
-                let qd = mul(&q, &self.d);
-                settle(x, &self.d, q, qd)
+            By::Leaf => {
+                let (q, r) = from_words(x.to_vec()).div_rem(&*self.d);
+                (q.to_u64_digits(), r.to_u64_digits())
+            }
+            // Long division needs at least `len - 1` words; fewer are below `d`.
+            By::Sparse => match x.len() + 1 < self.len {
+                true => (Vec::new(), x.to_vec()),
+                false => sparse_div_rem_words(x.iter().copied(), &self.d),
+            },
+            By::Reciprocal(level, tw) => {
+                debug_assert!(
+                    x.len() <= level.d.len() + level.yw,
+                    "x is below d 2^(64 len)"
+                );
+                level.div_rem(x, tw)
             }
         }
     }
+}
+
+/// One table of roots for each prime of [`FIELDS`] (see [`Field::twiddles`]).
+type Roots = [Vec<(u64, u64)>; 3];
+
+/// The roots of [`FIELDS`] for transforms of up to `n` points, a power of two: those of two
+/// points for `n = 1`, whose transform is itself but whose table [`Field::forward`] checks.
+fn roots(n: usize) -> Roots {
+    FIELDS.each_ref().map(|f| f.twiddles(n.max(2)))
+}
+
+/// The [`Field::spectrum`] of the words `x` for each prime of [`FIELDS`], on `n` points, `x`
+/// folded modulo `2^(64 n) - 1` when it has more words.
+fn spectra(x: &[u64], n: usize, tw: &Roots) -> [Vec<u64>; 3] {
+    let x = folded(x, n);
+    [0, 1, 2].map(|k| FIELDS[k].spectrum(&x, n, &tw[k]))
+}
+
+/// `x` folded modulo `2^(64 m) - 1` ([`fold_words`]) when it has more than `m` words, else
+/// itself.
+fn folded(x: &[u64], m: usize) -> Cow<'_, [u64]> {
+    match x.len() > m {
+        true => Cow::Owned(fold_words(x, m)),
+        false => Cow::Borrowed(x),
+    }
+}
+
+/// The points of the cyclic products modulo `M = 2^(64 m) - 1` that find a number `v`,
+/// `|v| < 2^(bits + 6)`, from its residue modulo `M` and its low word ([`unfold`]): the least
+/// power of two `m` with `64 m >= bits - 55`, so that `|v|` is below `2^(64 m + 61)`. The
+/// widest use is [`newton`]'s `xh tm < 2^(2h + 2) <= 2^(p + 6)`.
+fn cyclic_points(bits: u64) -> usize {
+    let words = bits.saturating_sub(55).div_ceil(64).max(1);
+    usize::try_from(words)
+        .expect("a number whose words fit in memory")
+        .next_power_of_two()
+}
+
+/// The points of the two products of a [`Level`] for a divisor of `bits` bits whose top `k`
+/// bits give the reciprocal: the estimate's, on the `2 yw` words of a product of two numbers of
+/// `yw` words, `k` bits' words, and the remainder's ([`cyclic_points`]); the reciprocal's own
+/// need no more than the first.
+fn level_points(bits: u64, k: u64) -> (usize, usize) {
+    let yw = usize::try_from(k.div_ceil(64)).expect("a number whose words fit in memory");
+    ((2 * yw).next_power_of_two(), cyclic_points(bits))
+}
+
+/// `2^e mod (2^(64 m) - 1)`, as `m` words: one bit.
+fn power_around(e: u64, m: usize) -> Vec<u64> {
+    let mut power = vec![0u64; m];
+    let at = e % (64 * m as u64);
+    power[(at / 64) as usize] = 1 << (at % 64);
+    power
+}
+
+/// `2^e mod 2^64`.
+fn low_power(e: u64) -> u64 {
+    match e < 64 {
+        true => 1 << e,
+        false => 0,
+    }
+}
+
+/// The lowest word of `x`, zero for no words.
+fn first(x: &[u64]) -> u64 {
+    x.first().copied().unwrap_or(0)
+}
+
+/// The number `v`, as whether it is below zero and the words of `|v|`, from `r`, `v` modulo
+/// `M = 2^(64 m) - 1` in at most `m` words (`M` itself allowed), and `low`, `v` modulo `2^64`,
+/// for `|v| < 2^(64 m + 61)`. With `v = r + j M`, `M = -1` modulo `2^64` gives
+/// `j = r - low` modulo `2^64`, and `|j| <= |v| / M + 1 < 2^62`, so `j` is that residue read
+/// as signed. O(m).
+fn unfold(mut r: Vec<u64>, m: usize, low: u64) -> (bool, Vec<u64>) {
+    let j = first(&r).wrapping_sub(low) as i64;
+    let k = j.unsigned_abs();
+    r.resize(m + 1, 0);
+    let negative = j < 0;
+    if negative {
+        // `|v| = k M - r`, computed modulo `2^(64 (m + 1))`, which holds it: `-r`, then
+        // `k 2^(64 m) - k` added.
+        for v in r.iter_mut() {
+            *v = !*v;
+        }
+        add_at(&mut r, 0, 1);
+    }
+    // `v = r + k 2^(64 m) - k`, or `|v|` as above; the borrow past the top, if any, cancels
+    // the carry into the top word, both modulo `2^(64 (m + 1))`.
+    r[m] = r[m].wrapping_add(k);
+    sub_at(&mut r, 0, k);
+    trim(&mut r);
+    (negative && !r.is_empty(), r)
+}
+
+/// The remainder `x - q d`, as whether it is below zero and the words of its magnitude, from
+/// its residue modulo `M = 2^(64 m) - 1`, where `q d` is a cyclic product with `d`'s spectra
+/// `dc` on `m` points, and its low word ([`unfold`]), for `|x - q d| < 2^(64 m + 61)`.
+fn remainder(x: &[u64], d: &[u64], dc: &[Vec<u64>; 3], q: &[u64], tw: &Roots) -> (bool, Vec<u64>) {
+    let m = dc[0].len();
+    let (mut qd, carry) = cyclic_product(&folded(q, m), dc, tw);
+    add_around(&mut qd, carry);
+    let r = sub_around(fold_words(x, m), &qd);
+    let low = first(x).wrapping_sub(first(q).wrapping_mul(first(d)));
+    unfold(r, m, low)
 }
 
 /// The decimal digits of `x`, by halves: `x = high * 10^(L 2^i) + low`, `L` being 597, each
@@ -1461,16 +1732,103 @@ struct Printer {
     tw: [Vec<(u64, u64)>; 3],
 }
 
-/// A power of ten `d`, of `W` words and `n` bits, divided by many times, with what each
-/// division needs transformed once (per prime of [`FIELDS`], [`Field::spectrum`]):
-/// `y' = 2^2w / (d 2^s) - 2^w`, floored, `w = 64 W` and `s = w - n`, on `y[k].len()`
-/// points, enough for its product with a number of `W` words; and `d` on `dc[k].len()`
-/// points, the least power of two `m` at least `W` with `4d < 2^(64 m) - 1`.
+/// A divisor `d`, of `n` bits, divided by many times, with what each division needs
+/// transformed once (per prime of [`FIELDS`], [`Field::spectrum`]): `y`, the spectra of
+/// `X' = X - 2^w` on enough points for its product with a number of `yw` words, `X` the
+/// reciprocal of `t`, the top `k <= n` bits of `d`, shifted to `w = 64 yw` bits, with
+/// `T X <= 2^2w <= T (X + 2)`, `T = t 2^(w - k)` (the floor, or [`approx_reciprocal`]); and `dc`,
+/// the spectra of `d` on `m` points, `64 m >= n - 55` ([`cyclic_points`]), or more.
 struct Level {
     d: Vec<u64>,
     bits: u64,
+    yw: usize,
     y: [Vec<u64>; 3],
     dc: [Vec<u64>; 3],
+}
+
+impl Level {
+    /// The level of `d`, as words, of `bits` bits, its reciprocal from its top `k` bits, with
+    /// the points of [`level_points`] and `tw` as for [`Field::forward`] of at least that many.
+    fn new(d: Vec<u64>, bits: u64, k: u64, tw: &Roots) -> Level {
+        let (linear, cyclic) = level_points(bits, k);
+        let w = k.next_multiple_of(64);
+        let t = from_words(shr_words(&d, bits - k)) << (w - k);
+        let x = approx_reciprocal(&t, w, tw);
+        drop(t);
+        // `2^w <= X < 2^(w + 1)`: the top word is 1.
+        let mut low = x.to_u64_digits();
+        drop(x);
+        let top = low.pop();
+        debug_assert_eq!(top, Some(1), "the reciprocal has w + 1 bits");
+        trim(&mut low);
+        Level {
+            y: spectra(&low, linear, tw),
+            dc: spectra(&d, cyclic, tw),
+            yw: usize::try_from(w / 64).expect("a number whose words fit in memory"),
+            d,
+            bits,
+        }
+    }
+
+    /// `(x / d, x mod d)` as words, for `x < 2^(n + w)` when `k = n`, and `x < 2^(n + k - 1)`
+    /// when `k < n`. With `xh = x / 2^n`, floored, below `2^w`, the estimate
+    /// `q0 = xh X / 2^w`, floored, is `xh + xh X' / 2^w`, a product of `yw` words by `yw`, and
+    /// lies in `[q - 4, q]` for `k = n`: `xh X / 2^w > xh 2^k / t - 2`, `x / d < (xh + 1) 2^k /
+    /// t`, `2^k / t <= 2`, and the floor takes off less than 1 more. For `k < n` the top bits
+    /// `t` of `d` make the estimate up to 2 above as well (`x / d < 2^k`, so `(x / d) / t < 2`),
+    /// `[q - 4, q + 2]`. So the remainder `x - q0 d` lies in `[-2d, 5d)`, below
+    /// `2^(64 m + 61)` in size, and is found by a cyclic product on `d`'s `m` points
+    /// ([`remainder`]); at most four steps of one `d` correct it. O(M(n)).
+    fn div_rem(&self, x: &[u64], tw: &Roots) -> (Vec<u64>, Vec<u64>) {
+        // A high half often is below the power: its quotient is zero, with no transform.
+        if cmp_words(x, &self.d).is_lt() {
+            return (Vec::new(), x.to_vec());
+        }
+        let xh = shr_words(x, self.bits);
+        debug_assert!(xh.len() <= self.yw, "x / 2^n is below 2^w");
+        let (yx, carry) = cyclic_product(&xh, &self.y, tw);
+        debug_assert_eq!(carry, 0, "the product fits in its points");
+        let mut q = xh;
+        add_words(&mut q, yx.get(self.yw..).unwrap_or(&[]));
+        drop(yx);
+        trim(&mut q);
+        let (mut negative, mut r) = remainder(x, &self.d, &self.dc, &q, tw);
+        let mut steps = 0;
+        while negative {
+            // `-r + d`: below zero while `r > d`.
+            negative = cmp_words(&r, &self.d).is_gt();
+            r = match negative {
+                true => {
+                    sub_words(&mut r, &self.d);
+                    r
+                }
+                // `d - r` as `-(r - d)` modulo `2^(64 len(d))`, in place.
+                false => {
+                    r.resize(self.d.len(), 0);
+                    sub_words(&mut r, &self.d);
+                    for v in r.iter_mut() {
+                        *v = !*v;
+                    }
+                    add_at(&mut r, 0, 1);
+                    r
+                }
+            };
+            trim(&mut r);
+            let borrow = sub_at(&mut q, 0, 1);
+            debug_assert!(!borrow, "the estimate is above the quotient");
+            trim(&mut q);
+            steps += 1;
+        }
+        while cmp_words(&r, &self.d).is_ge() {
+            let borrow = sub_words(&mut r, &self.d);
+            debug_assert!(!borrow, "r is at least d");
+            trim(&mut r);
+            increment(&mut q);
+            steps += 1;
+        }
+        debug_assert!(steps <= 4, "the estimate is at most four off");
+        (q, r)
+    }
 }
 
 /// The coefficients of the product, cyclic on `s[k].len()` points, of the words `x` and the
@@ -1590,6 +1948,7 @@ impl Printer {
             levels.push(Level {
                 y: spectra(&low, linear),
                 dc,
+                yw: dw.len(),
                 d: dw,
                 bits,
             });
@@ -1597,47 +1956,6 @@ impl Printer {
         }
         levels.reverse();
         Printer { first, levels, tw }
-    }
-
-    /// `(x / d, x mod d)` for `x < d^2`, `d` the power of `level`, as words. With
-    /// `X = x 2^s < 2^2w` and `y = 2^w + y'`, the estimate `(X / 2^w) y / 2^w`, floored, is
-    /// at most `x / d` and at least `x / d - 3`: `X / (d 2^s) - X y / 2^2w < X / 2^2w < 1`,
-    /// the low `w` bits of `X` dropped take off less than `2^w y / 2^2w <= 2`, and the floor
-    /// at most one more. So the remainder `x - q d` lies in `[0, 4d)`, below
-    /// `M = 2^(64 m) - 1`, and is found modulo `M`, where `q d` is a cyclic product on `m`
-    /// points: half as many as `q d` whole, and `d`'s transform is reused. O(M(n)).
-    fn div_rem(&self, level: &Level, x: &[u64]) -> (Vec<u64>, Vec<u64>) {
-        // A high half often is below the power: its quotient is zero, with no transform.
-        if cmp_words(x, &level.d).is_lt() {
-            return (Vec::new(), x.to_vec());
-        }
-        let w = level.d.len();
-        // `X / 2^w` is `x / 2^n`, of at most `W` words since `x < 2^2n`.
-        let xh = shr_words(x, level.bits);
-        debug_assert!(xh.len() <= w, "x is below d^2");
-        let (yx, carry) = cyclic_product(&xh, &level.y, &self.tw);
-        debug_assert_eq!(carry, 0, "the product fits in its points");
-        let mut q = xh;
-        add_words(&mut q, yx.get(w..).unwrap_or(&[]));
-        drop(yx);
-        trim(&mut q);
-        // `q d mod M`, the carry out of the top added at the bottom, `2^(64 m)` being 1.
-        let (mut r, carry) = cyclic_product(&q, &level.dc, &self.tw);
-        add_around(&mut r, carry);
-        let mut r = sub_around(fold_words(x, r.len()), &r);
-        let mut steps = 0;
-        while cmp_words(&r, &level.d).is_ge() {
-            let borrow = sub_words(&mut r, &level.d);
-            debug_assert!(!borrow, "r is at least d");
-            trim(&mut r);
-            increment(&mut q);
-            steps += 1;
-        }
-        debug_assert!(
-            steps <= 3,
-            "the estimate is at most three below the quotient"
-        );
-        (q, r)
     }
 
     /// Writes `x < 10^(L 2^level)` to `out`, padded to `L 2^level` digits when `pad`.
@@ -1650,7 +1968,7 @@ impl Printer {
             out.push_str(&s);
             return;
         }
-        let (high, low) = self.div_rem(&self.levels[level - 1 - self.first], &x);
+        let (high, low) = self.levels[level - 1 - self.first].div_rem(&x, &self.tw);
         drop(x);
         if !pad && high.is_empty() {
             return self.write(low, level - 1, false, out);
@@ -1916,6 +2234,7 @@ mod tests {
                     .zip(forms(lb, 13 + lb as u64).iter())
                 {
                     assert_eq!(div_rem(x, y), x.div_rem(y), "{la} by {lb} words");
+                    assert_eq!(rem(x, y), x % y, "{la} by {lb} words, remainder only");
                     let z = x * y + (y - 1u32);
                     assert_eq!(div_rem(&z, y), (x.clone(), y - 1u32), "{la} by {lb} words");
                     let z = x * y;
@@ -1957,6 +2276,147 @@ mod tests {
         let m = BigInt::from(random(6, 120));
         for (a, m) in [(&a, &m), (&-&a, &m), (&a, &-&m), (&-&a, &-&m)] {
             assert_eq!(div_euclid(a, m), num_traits::Euclid::div_euclid(a, m));
+        }
+    }
+
+    /// [`approx_reciprocal`] keeps `a X < 2^2p <= a (X + 2)` for every `a` of 5 to 13 bits,
+    /// where the tests' leaf lets Newton's step start, and for edge and random `a` at
+    /// precisions next to a word, the production leaf and powers of two.
+    #[test]
+    fn approximate_reciprocals_keep_their_bounds() {
+        let one = BigUint::one();
+        let check = |a: &BigUint, p: u64| {
+            let tw = roots(cyclic_points(p));
+            let x = approx_reciprocal(a, p, &tw);
+            let power = &one << (2 * p);
+            assert!(a * &x < power, "{p} bits, a = {a}: a X is not below 2^2p");
+            assert!(
+                a * (&x + 2u32) >= power,
+                "{p} bits, a = {a}: a (X + 2) is below 2^2p"
+            );
+        };
+        for p in 5..=13u64 {
+            for a in (1u64 << (p - 1))..(1u64 << p) {
+                check(&BigUint::from(a), p);
+            }
+        }
+        for p in [
+            63u64, 64, 65, 127, 128, 129, 2047, 2048, 2049, 4096, 4097, 8191, 8192, 8193, 30001,
+        ] {
+            let w = p.div_ceil(64) as usize;
+            let top = &one << (p - 1);
+            for a in [
+                (&one << p) - 1u32,
+                (&one << p) - 2u32,
+                top.clone(),
+                &top + 1u32,
+                random(p, w) >> (64 * w as u64 - p) | &top,
+                edgy(p, w) >> (64 * w as u64 - p) | &top,
+            ] {
+                check(&a, p);
+            }
+        }
+    }
+
+    /// [`unfold`] recovers every value from its residue modulo `2^(64 m) - 1` and its low word,
+    /// below zero and above, at the ends of its range.
+    #[test]
+    fn values_unfold_from_their_residues() {
+        let one = BigInt::one();
+        for m in [1usize, 2, 4] {
+            let modulus: BigInt = (&one << (64 * m)) - 1;
+            let limit: BigInt = &one << (64 * m + 61);
+            let mut values = vec![BigInt::zero(), one.clone(), &modulus - 1, modulus.clone()];
+            values.extend([1u64, 3, 64].map(|s| BigInt::from(random(s, m + 1)) % &limit));
+            values.extend([&limit - 1, &modulus + 1, &modulus * 7 + 5]);
+            for v in values.clone() {
+                values.push(-v);
+            }
+            for v in values {
+                let r = v.mod_floor(&modulus).magnitude().to_u64_digits();
+                let low = v.mod_floor(&(&one << 64)).to_u64().expect("below 2^64");
+                let (negative, words) = unfold(r, m, low);
+                let back = BigInt::from_biguint(Sign::Plus, from_words(words));
+                assert_eq!(if negative { -back } else { back }, v, "{m} words");
+            }
+        }
+    }
+
+    /// [`Level::div_rem`], the division of [`div_rem`] and [`Divisor`] past their leaves, for
+    /// every divisor of 1 to 6 bits, every precision `k` of its reciprocal and every dividend
+    /// below `2^(n + k - 1)`, or below `2^2n` and at the top of its range `2^(n + 64)` for
+    /// `k = n`.
+    #[test]
+    fn levels_divide_like_num_bigint_exhaustively() {
+        for n in 1..=6u64 {
+            for d in (1u64 << (n - 1))..(1u64 << n) {
+                let big = BigUint::from(d);
+                for k in 1..=n {
+                    let (linear, cyclic) = level_points(n, k);
+                    let tw = roots(linear.max(cyclic));
+                    let level = Level::new(vec![d], n, k, &tw);
+                    let mut xs: Vec<BigUint> = match k == n {
+                        true => (0..1u64 << (2 * n)).map(BigUint::from).collect(),
+                        false => (0..1u64 << (n + k - 1)).map(BigUint::from).collect(),
+                    };
+                    if k == n {
+                        let top = BigUint::one() << (n + 64);
+                        xs.extend([&top - 1u32, (&big << 64u32) - 1u32, &top >> 1u32]);
+                        xs.extend((0..8).map(|s| random(s, 2) % &top));
+                    }
+                    for x in xs {
+                        let (q, r) = level.div_rem(&x.to_u64_digits(), &tw);
+                        assert_eq!(
+                            (from_words(q), from_words(r)),
+                            x.div_rem(&big),
+                            "{x} by {d}, k = {k}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// [`div_rem`] and [`Divisor`] next to the powers of two of their transforms' points, for
+    /// random, edge and long-carry operands, with quotients as wide as the divisor and
+    /// narrower.
+    #[test]
+    fn wide_quotients_agree_with_num_bigint() {
+        for (la, lb) in [
+            (130, 65),
+            (1023, 512),
+            (2048, 1024),
+            (2049, 1025),
+            (2047, 1024),
+            (1500, 1100),
+            (3000, 2000),
+            (4100, 2050),
+        ] {
+            for seed in 0..3 {
+                let pairs = [
+                    (random(seed, la), random(seed + 50, lb)),
+                    (edgy(seed, la), edgy(seed + 50, lb)),
+                ];
+                for (x, y) in pairs.iter().chain(
+                    forms(la, seed + 9)
+                        .iter()
+                        .zip(forms(lb, seed + 10).iter())
+                        .map(|(x, y)| (x.clone(), y.clone()))
+                        .collect::<Vec<_>>()
+                        .iter(),
+                ) {
+                    assert_eq!(div_rem(x, y), x.div_rem(y), "{la} by {lb} words");
+                    assert_eq!(rem(x, y), x % y, "{la} by {lb} words, remainder only");
+                    let q = x >> (64 * (la - lb) as u64);
+                    let z = &q * y + (y - 1u32);
+                    assert_eq!(div_rem(&z, y), (q.clone(), y - 1u32), "{la} by {lb} words");
+                    let div = Divisor::new(Cow::Borrowed(y));
+                    let top = (y << (64 * lb as u64)) - 1u32;
+                    for v in [&top, &(x % &top), &(&q * y)] {
+                        assert_eq!(div.div_rem(v), v.div_rem(y), "{la} by {lb} words, reused");
+                    }
+                }
+            }
         }
     }
 
