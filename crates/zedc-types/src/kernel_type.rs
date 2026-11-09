@@ -83,6 +83,7 @@ fn kernel_form(
             "f64" => KType::f64(),
             "bool" => KType::bool(),
             "String" => KType::string(),
+            "Never" => KType::empty(),
             _ => {
                 ports.push((
                     t.span,

@@ -589,7 +589,7 @@ impl Printer {
                     };
                 }
                 let items = self.items(ctx, t);
-                Text::joined(items, " | ", At::Union, Class::Union, "!_")
+                Text::joined(items, " | ", At::Union, Class::Union, "Never")
             }
             Some(a) => {
                 let all = Type::payloads();
@@ -606,7 +606,7 @@ impl Printer {
                     };
                 }
                 let items = self.items(ctx, t);
-                Text::joined(items, " | ", At::Union, Class::Union, "!_")
+                Text::joined(items, " | ", At::Union, Class::Union, "Never")
             }
         }
     }
@@ -772,7 +772,7 @@ impl Printer {
         // An operand: a leaf as text, otherwise a node of its own.
         let operand = |me: &mut Printer, q: &Part<A>| match q.is_leaf() {
             Some(true) => all(me),
-            Some(false) => Text::word("!_", Class::Prim),
+            Some(false) => Text::word("Never", Class::Prim),
             None => me.refer(item(q)),
         };
         match p.view() {
@@ -1066,7 +1066,7 @@ fn lits(items: &mut Vec<Text>, name: &str, l: &Lits) {
     match (l.cofinite, l.values.is_empty()) {
         (true, true) => items.push(Text::word(name, Class::Prim)),
         (true, false) => {
-            let taken = Text::joined(each().collect(), " | ", At::Union, Class::Union, "!_");
+            let taken = Text::joined(each().collect(), " | ", At::Union, Class::Union, "Never");
             items.push(minus(name, taken));
         }
         (false, _) => items.extend(each()),
@@ -1085,7 +1085,7 @@ fn minus(word: &str, t: Text) -> Text {
 
 /// Every morphism: no key promised, any key permitted, any value.
 fn every_morphism() -> Text {
-    Text::word("!_ .. _ -> _", Class::Arrow)
+    Text::word("Never .. _ -> _", Class::Arrow)
 }
 
 #[cfg(test)]

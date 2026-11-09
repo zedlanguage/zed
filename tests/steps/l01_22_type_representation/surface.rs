@@ -177,6 +177,7 @@ impl Reader<'_> {
             .fold(Type::universe(Universe::Scalar), |a, c| &a - c),
             "true" => Type::lit(&Value::Bool(true)).unwrap(),
             "false" => Type::lit(&Value::Bool(false)).unwrap(),
+            "Never" => Type::empty(),
             "bool" => Type::bool(),
             "int" => Type::int(),
             "rat" => Type::rat(),
@@ -252,7 +253,7 @@ fn the_types_of_everyday_values_print_as_written() {
     let small = Type::union_all((0..3).map(lit));
     for (t, text) in [
         (Type::top(), "_"),
-        (Type::empty(), "!_"),
+        (Type::empty(), "Never"),
         (Type::int(), "int"),
         (lit(-3), "-3"),
         (small.clone(), "0 | 1 | 2"),
@@ -499,4 +500,27 @@ fn the_text_of_a_type_shared_n_deep_scales() {
         let s = shared(n).surface();
         assert_eq!(s.defs.len(), n - 1);
     });
+}
+
+/// The empty type prints as the prelude name `Never` (DESIGN.md, the L1 row of "Defined words
+/// by layer"), never `!_`: alone, as a function's result, as the lower bound of a domain, and
+/// not at all inside a union. Each text parses and reads back to its type.
+#[test]
+fn the_empty_type_prints_as_never() {
+    let never = Type::empty();
+    for (t, text) in [
+        (never.clone(), "Never"),
+        (&Type::int() | &never, "int"),
+        (Type::exact(Type::int(), never.clone()), "int -> Never"),
+        (
+            Type::exact(tuple(&[Type::int()]), never.clone()),
+            "((int,)) -> Never",
+        ),
+        (Type::partial(Type::int(), never.clone()), "int ->? Never"),
+        (Type::universe(Universe::Morphism), "Never .. _ -> _"),
+    ] {
+        let s = round_trip(&t);
+        assert_eq!(s.to_string(), text);
+        assert!(!s.to_string().contains("!_"), "{s}");
+    }
 }

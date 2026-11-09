@@ -118,7 +118,7 @@ fn a_rejection_names_its_cause() {
         format!(
             "the type `R0` is outside the form the checker accepts: a recursive occurrence \
              stands in the guarantee of `(R1) -> int`, in `R0`, which is narrowed where it is \
-             named: `R0` is named in `R1`, under `&` in `R0 & ((!_) -> int)`{SUFFICIENT}"
+             named: `R0` is named in `R1`, under `&` in `R0 & ((Never) -> int)`{SUFFICIENT}"
         )
     );
 }
@@ -224,8 +224,8 @@ fn arms() -> Vec<(&'static str, String, String)> {
             refusal(&["M6"], &[], vec![m(m(r(0), r(0), int()), empty(), int())]),
             outside(
                 "M6",
-                "a recursive occurrence stands in the guarantee of `((M6) -> int) .. !_ -> \
-                 int`, whose guarantee `(M6) -> int` and permission `!_` differ",
+                "a recursive occurrence stands in the guarantee of `((M6) -> int) .. Never -> \
+                 int`, whose guarantee `(M6) -> int` and permission `Never` differ",
             ),
         ),
         (
@@ -243,7 +243,7 @@ fn arms() -> Vec<(&'static str, String, String)> {
             outside(
                 "W",
                 "a recursive occurrence stands in the guarantee of `(W) -> int`, which stands \
-                 in an operand of `\\` in `((W) -> int) \\ ((!_) -> int)`",
+                 in an operand of `\\` in `((W) -> int) \\ ((Never) -> int)`",
             ),
         ),
         (
@@ -252,7 +252,7 @@ fn arms() -> Vec<(&'static str, String, String)> {
             outside(
                 "M5",
                 "a recursive occurrence stands in the guarantee of `(M5) -> int`, which stands \
-                 in the domain bounds of `((!_) -> int) .. ((M5) -> int) -> int`, which differ",
+                 in the domain bounds of `((Never) -> int) .. ((M5) -> int) -> int`, which differ",
             ),
         ),
         (
@@ -266,7 +266,7 @@ fn arms() -> Vec<(&'static str, String, String)> {
                 "A",
                 "a recursive occurrence stands in the guarantee of `(B) -> int`, in `A`, which \
                  is narrowed where it is named: `A` is named in `B`; `B` is named in `C`, under \
-                 `&` in `B & ((!_) -> int)`",
+                 `&` in `B & ((Never) -> int)`",
             ),
         ),
     ]
@@ -321,7 +321,7 @@ fn a_refusal_names_the_whole_path() {
             "the type `D0` is outside the form the checker accepts: a recursive occurrence \
              stands in the guarantee of `(D1) -> int`, in `D0`, which is narrowed where it is \
              named: `D0` is named in `D1`; `D1` is named in `D2`; `D2` is named in `D3`, under \
-             `&` in `D2 & ((!_) -> int)`{SUFFICIENT}"
+             `&` in `D2 & ((Never) -> int)`{SUFFICIENT}"
         )
     );
 }

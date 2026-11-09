@@ -86,3 +86,27 @@ fn written_text_scales_with_the_term() {
         }
     });
 }
+
+/// A type test in a pattern writes its type as a program writes it, the empty type as `Never`
+/// (DESIGN.md, the L1 row of "Defined words by layer"), not in the kernel's prefix form.
+#[test]
+fn a_type_pattern_writes_its_type_in_type_syntax() {
+    use zed_kernel::Pattern;
+    use zed_kernel::types::Type;
+    let small = &Type::int() - &Type::lit(&zed_kernel::Value::Int(0)).expect("an int literal");
+    let t = Term::Match(
+        zed_tests::kernel::rc(var("v@1")),
+        vec![
+            (Pattern::Is(Type::empty()), lit("none")),
+            (Pattern::Is(small), lit("nonzero")),
+            (Pattern::Is(&Type::int() | &Type::bool()), lit("scalar")),
+        ],
+    );
+    let shown = written(&t, before_at);
+    assert_eq!(
+        shown,
+        "match v { (is Never) -> \"none\", (is (int \\ 0)) -> \"nonzero\", \
+         (is (bool | int)) -> \"scalar\" }"
+    );
+    assert!(!shown.contains("(|") && !shown.contains("(\\"), "{shown}");
+}

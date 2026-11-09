@@ -427,3 +427,21 @@ fn rejecting_many_binders_that_name_types_scales() {
         assert!(errors.iter().all(|e| e.row == Some(Row::BinderNamingType)));
     });
 }
+
+#[test]
+fn a_parameter_named_never_is_rejected_with_the_one_repair() {
+    // `Never`, the empty type, is a prelude type of L1 like `int`; it casts nothing, so the
+    // only repair is the new name.
+    let out = rejected("f(positional Never: int) = Never;\n");
+    assert_eq!(
+        out,
+        "1:14: the parameter `Never` names the type `Never`, which the prelude declares: a \
+binder may not name a type in scope
+  [1] 1:3: the parameter `Never`, which binds `Never` in this scope
+      1 | f(positional Never: int) = Never;
+        |   ^^^^^^^^^^^^^^^^^^^^^
+  [2] 1:14: repair: rename the binder
+      1 | f(positional Never: int) = Never;
+        |              ^^^^^"
+    );
+}

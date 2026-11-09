@@ -2,9 +2,10 @@
 //! `Type` and denoted, so a test can hold each printed type to type syntax (DESIGN.md
 //! "Diagnostics"). Besides the forms of layer L1, the checker prints an atom with its payload
 //! type, `#ioError(op: String, path: String, why: String)`, a form of layer L2 the checker builds
-//! from L1 on (L29-print), three leaves of layer L10, `_`, `!_` and a literal type, and after a
-//! signature whose type variables are bounded the clause `for T in int | f64 | rat` (DESIGN.md
-//! sec:type_resolution); this reads those too.
+//! from L1 on (L29-print), the leaves of layer L10 `_` and a literal type, and after a signature
+//! whose type variables are bounded the clause `for T in int | f64 | rat` (DESIGN.md
+//! sec:type_resolution); this reads those too. The empty type prints as `Never`, a prelude type
+//! name of L1; its L10 form `!_` is read as well.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;

@@ -5243,6 +5243,7 @@ impl<'a> Denote<'a> {
                 "f64" => Ty::carrier(Carrier::F64),
                 "bool" => Ty::carrier(Carrier::Bool),
                 "String" => Ty::carrier(Carrier::Str),
+                "Never" => Ty::empty(),
                 "Lines" => port(Carrier::Int, true),
                 "Files" => port(Carrier::Str, true),
                 "CommandLine" => port(Carrier::Int, false),

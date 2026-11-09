@@ -180,3 +180,14 @@ fn one_specializer_splits_many_functions_as_each_split_alone_does() {
         "no static call passes a value of the domain"
     );
 }
+
+/// The reason the Trick keeps a domain writes the domain in type syntax, not the kernel's
+/// prefix form.
+#[test]
+fn the_reason_writes_the_domain_in_type_syntax() {
+    let t = &Type::int() - &Type::lit(&Value::Int(0)).expect("an int literal");
+    assert_eq!(
+        trick(&Domain::Type(t), &ints(&[3])),
+        Choice::Keep("the domain `int \\ 0` is not known to be finite".into())
+    );
+}

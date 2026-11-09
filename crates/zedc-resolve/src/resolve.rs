@@ -552,6 +552,7 @@ const TYPES: &[&str] = &[
     "Lines",
     "Files",
     "CommandLine",
+    "Never",
 ];
 
 /// The type names of the prelude's later layers, each with its layer (DESIGN.md, "Defined words
@@ -563,6 +564,7 @@ pub const LATER_TYPES: &[(&str, u32)] = &[
     ("Seq", 5),
     ("Ast", 6),
     ("Facet", 6),
+    ("Reduction", 6),
     ("Rejection", 6),
     ("Interval", 6),
     ("Congruence", 6),

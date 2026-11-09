@@ -307,7 +307,7 @@ fn the_three_leaves_of_layer_l10_read_back() {
 
 /// Each set of carriers a class or a use can hold is printed as type syntax that reads back to
 /// it: a set that may take other values is `_`, since `int | _` is `_` (DESIGN.md L1.26), and
-/// the empty set is `!_` (BOUNDS-other).
+/// the empty set is `Never` (BOUNDS-other).
 #[test]
 fn every_set_of_carriers_prints_as_a_type_that_reads_back() {
     for m in 0..=EVERY {
@@ -320,7 +320,7 @@ fn every_set_of_carriers_prints_as_a_type_that_reads_back() {
         let text = mask_text(m);
         assert_eq!(back(&text), want, "mask {m:#08b} printed `{text}`");
     }
-    assert_eq!(mask_text(0), "!_");
+    assert_eq!(mask_text(0), "Never");
     assert_eq!(mask_text(OTHER | Carrier::Int.bit()), "_");
     assert_eq!(
         mask_text(Carrier::Int.bit() | Carrier::F64.bit()),
@@ -661,7 +661,7 @@ fn morphism_types_print_as_written_and_read_back_in_every_position() {
         ),
         ("#a .. #a | #b -> int", "(#a .. #a | #b -> int)"),
         ("int .. int -> bool", "((int) -> bool)"),
-        ("!_ .. int -> bool", "(int ->? bool)"),
+        ("Never .. int -> bool", "(int ->? bool)"),
         (
             "((int) -> bool) & ((int | String) -> bool | #notFound)",
             "(int .. int | String -> bool)",
@@ -686,5 +686,49 @@ fn morphism_types_print_as_written_and_read_back_in_every_position() {
         let t = back(text);
         assert_eq!(t.to_string(), shown, "{text}");
         assert_eq!(mismatch(&t, shown), None, "{text}");
+    }
+}
+
+/// The empty type prints as the prelude name `Never` (DESIGN.md, the L1 row of "Defined words
+/// by layer"), never as its L10 form `!_`, and reads back to itself: alone, as a function's
+/// result, and not at all inside a union, where it adds nothing.
+#[test]
+fn the_empty_type_prints_as_never_and_reads_back() {
+    assert_eq!(Ty::empty().to_string(), "Never");
+    assert_eq!(back("Never"), Ty::empty());
+    assert_eq!(back("Never"), back("!_"));
+    let union = back("int | Never");
+    assert_eq!(union, Ty::carrier(Carrier::Int));
+    assert_eq!(union.to_string(), "int");
+    let f = back("(int) -> Never");
+    let shown = f.to_string();
+    assert_eq!(shown, "((int) -> Never)");
+    assert_eq!(mismatch(&f, &shown), None, "{shown}");
+    assert_eq!(back(&shown), f);
+}
+
+/// A rejection whose types hold the empty type writes it `Never`, and each type it prints
+/// reads back to the type printed.
+#[test]
+fn a_rejection_writes_the_empty_type_as_never() {
+    let (seen, out) = printed_by("take(positional x: Never) = x;\nr = take(1);\n");
+    assert_eq!(
+        out,
+        "2:5: `take` does not take (1): these are the types of its arguments here, and `take` \
+has no arrow that takes them all
+  [1] 2:10: this literal, 1, is 1
+      2 | r = take(1);
+        |          ^
+  [2] 2:5: `take` takes (Never) -> Never
+      2 | r = take(1);
+        |     ^^^^^^^
+  [3] 1:1: `take` is declared here, `(Never) -> Never`
+      1 | take(positional x: Never) = x;
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+    );
+    assert!(!out.contains("!_"), "{out}");
+    assert!(seen.iter().any(|(_, s)| s.contains("Never")), "{seen:?}");
+    for (t, shown) in &seen {
+        assert_eq!(mismatch(t, shown), None, "{shown}");
     }
 }

@@ -623,7 +623,8 @@ impl<'a> Pieces<'a> {
                 .patterns(ps.iter().map(|p| (None, p)))
                 .text(")"),
             Pattern::AnyAtom => self.text("#_"),
-            Pattern::Is(t) => self.text(format!("(is {t})")),
+            // The type as a program writes it.
+            Pattern::Is(t) => self.text(format!("(is {})", t.surface_operand())),
         };
     }
 

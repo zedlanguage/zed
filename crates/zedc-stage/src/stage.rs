@@ -1350,7 +1350,10 @@ pub fn trick(d: &Domain, passed: &BTreeSet<Value>) -> Choice {
     let within: Vec<Value> = match d {
         Domain::Type(t) => {
             if !t.finite() {
-                return Choice::Keep(format!("the domain `{t}` is not known to be finite"));
+                return Choice::Keep(format!(
+                    "the domain `{}` is not known to be finite",
+                    t.surface()
+                ));
             }
             passed.iter().filter(|v| t.contains(v)).cloned().collect()
         }

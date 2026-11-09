@@ -2612,14 +2612,14 @@ pub fn undecided(why: &str) -> String {
 }
 
 /// The mask `m` as a type, in type syntax: `_` when it holds [`OTHER`], since `int | _` is `_`
-/// (DESIGN.md L1.26); otherwise its carriers joined by `|`, and `!_`, the empty type, when it
+/// (DESIGN.md L1.26); otherwise its carriers joined by `|`, and `Never`, the empty type, when it
 /// holds none.
 pub fn mask_text(m: u8) -> String {
     if m & OTHER != 0 {
         return "_".into();
     }
     if m == 0 {
-        return "!_".into();
+        return "Never".into();
     }
     let names: Vec<&str> = Carrier::of_mask(m).map(Carrier::name).collect();
     names.join(" | ")
@@ -7135,7 +7135,7 @@ impl Ty {
     }
 
     /// Writes the end of its text to `out`: the variables `scope` names, then `_` for the
-    /// others and the unknown, or `!_` if `first` says nothing is written yet and nothing is
+    /// others and the unknown, or `Never` if `first` says nothing is written yet and nothing is
     /// to be.
     fn write_vars(&self, mut first: bool, out: &mut String, scope: &Scope) {
         let mut free = false;
@@ -7153,7 +7153,7 @@ impl Ty {
             out.push('_');
         }
         if first {
-            out.push_str("!_");
+            out.push_str("Never");
         }
     }
 }

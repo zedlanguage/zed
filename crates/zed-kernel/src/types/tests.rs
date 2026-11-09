@@ -18,17 +18,23 @@ fn subsets_and_complements(lits: &[Type], within: &Type) -> Vec<Type> {
 /// `scalar_cell` decides a meet or a difference of two scalar-only types from their parts;
 /// each answer must be what the explicit set operation and `is_empty` give.
 fn agree(all: &[Type]) {
+    // A type as an operand in a failure message, in the surface syntax.
+    let op = |t: &Type| t.surface_operand();
     for a in all {
         for b in all {
             assert_eq!(
                 a.scalar_cell(b, true),
                 Some((a & b).is_empty()),
-                "{a} & {b}"
+                "{} & {}",
+                op(a),
+                op(b)
             );
             assert_eq!(
                 a.scalar_cell(b, false),
                 Some((a - b).is_empty()),
-                "{a} - {b}"
+                "{} \\ {}",
+                a.surface_in_union(),
+                op(b)
             );
         }
     }

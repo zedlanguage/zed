@@ -360,8 +360,9 @@ the gap was written):
   written stop that the compiler does not rule out.
 - Line 711: the only run-time tests are those the program writes, and "each one's failure is a
   member of the result type". The failure of `bug` is not.
-- Line 3710: "no program writes" the empty type. The type also has no spelling: `!_` appears
-  nowhere in DESIGN.md, and a message must print types as a user can write them.
+- Line 3710: "no program writes" the empty type. The type had no spelling then; it is now the
+  prelude type name `Never` of L1 (author decision A13, 2026-11-09), and every printer writes it
+  so (EMPTY-print).
 
 So the rule "failure is data" covers faults in the program itself as well as its input.
 
