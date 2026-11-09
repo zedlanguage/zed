@@ -165,6 +165,66 @@ fn scalar_is_the_one_value_of_a_literal_type() {
     }
 }
 
+/// `scalar`, read from the parts, is what comparing a type with the type of its first value
+/// gives, on random unions, meets and differences of booleans, literals, carriers, atoms and
+/// tuples, many of them one value.
+#[test]
+fn scalar_read_from_the_parts_is_that_of_comparing_types() {
+    let by_lit = |t: &Type| {
+        let p = t.p();
+        let first = |l: &&Lits| (!l.cofinite).then(|| l.values.iter().next().cloned())?;
+        let v = match p.bools {
+            1 => Some(Value::Bool(false)),
+            2 => Some(Value::Bool(true)),
+            _ => [&p.ints, &p.rats, &p.floats, &p.strings]
+                .iter()
+                .find_map(first),
+        }?;
+        (Type::lit(&v)? == *t).then_some(v)
+    };
+    let lit = |v: Value| Type::lit(&v).expect("a literal");
+    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut below = |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    let (mut ones, mut others) = (0, 0);
+    let piece = |below: &mut dyn FnMut(u64) -> u64| match below(12) {
+        0 => lit(Value::Bool(below(2) == 0)),
+        1 | 2 => lit(Value::Int(below(3) as i64)),
+        3 => lit(Value::float([0.5, -0.0, 0.0][below(3) as usize])),
+        4 => lit(Value::str(["x", "y"][below(2) as usize])),
+        5 => Type::int(),
+        6 => Type::bool(),
+        7 => Type::f64(),
+        8 => Type::atom("a"),
+        9 => Type::tuple(vec![lit(Value::Int(1))]),
+        10 => Type::empty(),
+        _ => Type::string(),
+    };
+    for _ in 0..20_000 {
+        let mut t = piece(&mut below);
+        for _ in 0..below(3) {
+            let p = piece(&mut below);
+            t = match below(3) {
+                0 => &t | &p,
+                1 => &t & &p,
+                _ => &t - &p,
+            };
+        }
+        let scalar = t.scalar();
+        assert_eq!(scalar, by_lit(&t), "{t}");
+        match scalar {
+            Some(_) => ones += 1,
+            None => others += 1,
+        }
+    }
+    println!("{ones} of one value, {others} not");
+    assert!(ones > 2000 && others > 2000);
+}
+
 /// A tuple with a component that lists no value has no value, and is built as the empty type
 /// itself, also nested, inside an atom's payload and in a union; a component empty only by a
 /// tuple meet is kept as written, though `is_empty` still finds the tuple empty.

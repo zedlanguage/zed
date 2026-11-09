@@ -84,7 +84,7 @@ use super::bes::{Answer, Bes, Decision, Kind, decide};
 use super::hash::KeyHasher;
 use super::rec::unfold::eval;
 use super::rec::{self, Env, Judgment, Why};
-use super::{Atoms, Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Tuples, Type, Verdict};
+use super::{Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Type, Universes, Verdict};
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
 
@@ -340,19 +340,18 @@ impl Type {
             (l.cofinite || !l.values.is_empty()).then(|| Type::with(|q| set(q, l.clone())))
         };
         let bools = (p.bools != 0).then(|| Type::with(|q| q.bools = p.bools));
-        let atoms = (p.atoms != Atoms::default())
+        let atoms = (!p.atoms.is_default())
             .then(|| Type::with(|q| q.atoms = p.atoms.clone()))
             .filter(|t| !t.is_empty());
-        let rest =
-            (p.tuples != Tuples::default() || p.structs || p.morphisms.is_leaf() != Some(false))
-                .then(|| {
-                    Type::with(|q| {
-                        q.tuples = p.tuples.clone();
-                        q.structs = p.structs;
-                        q.morphisms = p.morphisms.clone();
-                    })
+        let rest = (!p.tuples.is_default() || p.structs || p.morphisms.is_leaf() != Some(false))
+            .then(|| {
+                Type::with(|q| {
+                    q.tuples = p.tuples.clone();
+                    q.structs = p.structs;
+                    q.morphisms = p.morphisms.clone();
                 })
-                .filter(|t| !t.is_empty());
+            })
+            .filter(|t| !t.is_empty());
         Split {
             bases: [
                 bools,
@@ -360,6 +359,37 @@ impl Type {
                 lits(&p.rats, |q, l| q.rats = l),
                 lits(&p.floats, |q, l| q.floats = l),
                 lits(&p.strings, |q, l| q.strings = l),
+            ],
+            atoms,
+            rest,
+        }
+    }
+
+    /// Which parts [`Type::split`] gives, read from the parts as it reads them, but with a type
+    /// built only for the atoms and for the rest where they are listed, to tell whether they
+    /// are empty: the values of the carriers need no type, nor atoms that hold a bare atom (all
+    /// the names but those listed, or a listed name with its bare atom), so a type within one
+    /// carrier, or of bare atoms, is read with none built.
+    pub fn universes(&self) -> Universes {
+        let p = self.p();
+        let lits = |l: &Lits| l.cofinite || !l.values.is_empty();
+        let bare = p.atoms.cofinite || p.atoms.names.values().any(|a| a.bare);
+        let atoms = !p.atoms.is_default()
+            && (bare || !Type::with(|q| q.atoms = p.atoms.clone()).is_empty());
+        let rest = (!p.tuples.is_default() || p.structs || p.morphisms.is_leaf() != Some(false))
+            && !Type::with(|q| {
+                q.tuples = p.tuples.clone();
+                q.structs = p.structs;
+                q.morphisms = p.morphisms.clone();
+            })
+            .is_empty();
+        Universes {
+            bases: [
+                p.bools != 0,
+                lits(&p.ints),
+                lits(&p.rats),
+                lits(&p.floats),
+                lits(&p.strings),
             ],
             atoms,
             rest,

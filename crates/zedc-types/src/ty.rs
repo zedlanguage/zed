@@ -102,6 +102,10 @@ struct RowData {
     /// Whether a component, at any depth outside functions, in payloads too, holds the atoms
     /// of every name it does not list ([`Ty::open_atoms`]).
     open_atoms: bool,
+    /// The class of each component and its value where it is one value ([`class`]), and what
+    /// is read from them to file the row, found the first time the row is filed
+    /// ([`Row::keys`]) and kept.
+    keys: std::sync::OnceLock<Keys>,
 }
 
 impl Row {
@@ -193,6 +197,7 @@ impl Row {
             void,
             listed,
             open_atoms,
+            keys: std::sync::OnceLock::new(),
         }))
     }
 
@@ -232,6 +237,19 @@ impl Row {
     /// Its address: the same for each path to a shared row, so a walk visits it once.
     pub fn addr(&self) -> *const () {
         Arc::as_ptr(&self.0).cast()
+    }
+
+    /// The class of each component and its value where it is one value ([`class`]), by which
+    /// tuples are filed ([`Holders`], [`Groups`], [`Choices`]). Found once per row, the first
+    /// time it is asked for, and kept: filing a row again, in another walk or against another
+    /// type, reads them instead of working out each component's class from its set again,
+    /// which cost about 17,000 instructions a tuple of two components (TY-row-class). Filing a
+    /// tuple of two components now costs about 9k to 12k instructions the first time and 2.7k
+    /// to 5.4k after, from 16 to 4,096 tuples.
+    fn keys(&self) -> &Keys {
+        self.0
+            .keys
+            .get_or_init(|| Keys::new(self.0.cs.iter().map(class).collect()))
     }
 
     /// The components, to change.
@@ -3109,19 +3127,18 @@ enum Member {
     At(ShapeKey),
 }
 
-/// The class of a scalar set, not empty: the carrier its values are all of, or the one name of
-/// its atoms. It is read from the parts of `s` by universe ([`KType::split`]): a carrier's part
-/// is there only when it holds a value, and the atoms and the rest only when they are not
-/// empty, so `s` is within a carrier exactly when that carrier's part is its only one, and
-/// within the atoms when they are its only part, with no comparison of types.
+/// The class of a scalar set: the carrier its values are all of, or the one name of its atoms;
+/// none for an empty set, which has no part. It is read from the parts of `s` by universe
+/// ([`KType::universes`]): a carrier's part is there only when it holds a value, and the atoms
+/// and the rest only when they are not empty, so `s` is within a carrier exactly when that
+/// carrier's part is its only one, and within the atoms when they are its only part, with no
+/// comparison of types.
 fn class_of(s: &KType) -> Option<ShapeKey> {
-    let split = s.split();
-    let mut carriers = Carrier::ALL
-        .into_iter()
-        .filter(|c| split.bases[c.base()].is_some());
-    match (carriers.next(), carriers.next(), &split.atoms, &split.rest) {
-        (Some(c), None, None, None) => return Some(ShapeKey::Carrier(c)),
-        (None, _, Some(_), None) => {}
+    let split = s.universes();
+    let mut carriers = Carrier::ALL.into_iter().filter(|c| split.bases[c.base()]);
+    match (carriers.next(), carriers.next(), split.atoms, split.rest) {
+        (Some(c), None, false, false) => return Some(ShapeKey::Carrier(c)),
+        (None, _, true, false) => {}
         _ => return None,
     }
     let mut names = s.atom_names()?;
@@ -3142,9 +3159,6 @@ fn class(y: &Ty) -> Option<(ShapeKey, Option<Value>)> {
         let rows_only = y.set.is_empty() && y.family.is_empty();
         let one_length = y.tuples.iter().all(|s| s.len() == r.len());
         return (rows_only && one_length).then(|| (ShapeKey::Row(r.len()), y.point()));
-    }
-    if y.set.is_empty() {
-        return None;
     }
     let k = class_of(&y.set)?;
     Some((k, y.point()))
@@ -3264,18 +3278,19 @@ struct Choices {
 type Buckets = Vec<(usize, Bucket)>;
 
 impl Choices {
-    /// The shapes, each by its index in its list and its components, all of one width.
-    fn new(shapes: &[(usize, Vec<&Ty>)]) -> Choices {
+    /// The shapes, each by its index in its list and the keys of its components ([`class`]),
+    /// all of one width.
+    fn new<'k>(shapes: impl IntoIterator<Item = (usize, &'k [CompKey])>) -> Choices {
         // The groups by the places where a shape's components have a class, each with whether
         // it is one value there; each group's places are set once all are filed.
         let mut by_places: BTreeMap<Vec<(usize, bool)>, Group> = BTreeMap::new();
-        for (i, cs) in shapes {
+        for (i, keys) in shapes {
             let mut places = Vec::new();
             let mut key = Vec::new();
-            for (j, c) in cs.iter().enumerate() {
-                if let Some((k, point)) = class(c) {
+            for (j, c) in keys.iter().enumerate() {
+                if let Some((k, point)) = c {
                     places.push((j, point.is_some()));
-                    key.push(point.map_or(k, ShapeKey::Point));
+                    key.push(point.clone().map_or_else(|| k.clone(), ShapeKey::Point));
                 }
             }
             let group = by_places.entry(places).or_insert_with(|| Group {
@@ -3283,8 +3298,8 @@ impl Choices {
                 buckets: BTreeMap::new(),
                 all: Vec::new(),
             });
-            group.buckets.entry(key).or_default().push(*i);
-            group.all.push(*i);
+            group.buckets.entry(key).or_default().push(i);
+            group.all.push(i);
         }
         let groups = (by_places.into_iter())
             .map(|(places, group)| Group { places, ..group })
@@ -3375,34 +3390,33 @@ struct Filed {
 }
 
 impl Filed {
-    /// In the size of `t`'s tuples and payloads.
+    /// In the size of `t`'s tuples and payloads. The keys of the tuples are those each row
+    /// keeps ([`Row::keys`]); those of a payload shape are found here.
     fn new(t: &Ty) -> Filed {
-        let mut rows: HashMap<usize, Vec<(usize, Vec<&Ty>)>> = HashMap::new();
+        let mut rows: HashMap<usize, Vec<(usize, &[CompKey])>> = HashMap::new();
         for (i, r) in t.tuples.iter().enumerate() {
-            rows.entry(r.len())
-                .or_default()
-                .push((i, r.iter().collect()));
+            rows.entry(r.len()).or_default().push((i, &r.keys().comps));
         }
         let mut payloads = HashMap::new();
         for (n, rs) in &t.payloads {
             let Some(rs) = rs else { continue };
-            let mut groups: HashMap<ShapeGroup, Vec<(usize, Vec<&Ty>)>> = HashMap::new();
+            let mut groups: HashMap<ShapeGroup, Vec<(usize, Vec<CompKey>)>> = HashMap::new();
             for (i, r) in rs.iter().enumerate() {
-                groups
-                    .entry(shape_group(r))
-                    .or_default()
-                    .push((i, comps(r)));
+                let keys = comps(r).into_iter().map(class).collect();
+                groups.entry(shape_group(r)).or_default().push((i, keys));
             }
             let groups = groups.into_iter();
             payloads.insert(
                 n.clone(),
-                groups.map(|(g, s)| (g, Choices::new(&s))).collect(),
+                groups
+                    .map(|(g, s)| (g, Choices::new(s.iter().map(|(i, k)| (*i, &k[..])))))
+                    .collect(),
             );
         }
         Filed {
             rows: rows
                 .into_iter()
-                .map(|(n, s)| (n, Choices::new(&s)))
+                .map(|(n, s)| (n, Choices::new(s)))
                 .collect(),
             payloads,
         }
@@ -3430,27 +3444,71 @@ fn kind(k: &CompKey) -> Kind {
     }
 }
 
+/// What a row keeps to be filed ([`Row::keys`]): the keys of its components, and what each
+/// filing reads from them, shared so that filing the row again copies no key.
+struct Keys {
+    /// The class of each component and its value where it is one value ([`class`]).
+    comps: Box<[CompKey]>,
+    /// The [`Kind`] of each component, by which [`near_pairs`] groups tuples.
+    kinds: Box<[Kind]>,
+    /// The [`Kind`] at each place as [`Holders`] groups tuples, and the key it files the tuple
+    /// under in its group.
+    held: (Arc<[Kind]>, HeldKey),
+}
+
+/// The key of a tuple in its group of [`Holders`]: the class at each place where the group has
+/// one, with the value where it has one value.
+type HeldKey = Arc<[(ShapeKey, Option<Value>)]>;
+
+impl Keys {
+    fn new(comps: Box<[CompKey]>) -> Keys {
+        let kinds = comps.iter().map(kind).collect();
+        let mut held = Vec::with_capacity(comps.len());
+        let mut key = Vec::new();
+        for c in &comps {
+            match c {
+                None => held.push(Kind::Open),
+                // A component that is one tuple value is filed by its length only ([`Holders`]).
+                Some((k @ ShapeKey::Row(_), _)) | Some((k, None)) => {
+                    held.push(Kind::Class);
+                    key.push((k.clone(), None));
+                }
+                Some((k, Some(v))) => {
+                    held.push(Kind::Point);
+                    key.push((k.clone(), Some(v.clone())));
+                }
+            }
+        }
+        Keys {
+            comps,
+            kinds,
+            held: (held.into(), key.into()),
+        }
+    }
+}
+
 /// The tuples of one length and one [`Kind`] at each place, each by its index in its list and
-/// the keys of its components.
-type Pattern = (usize, Vec<Kind>);
-type Keyed = Vec<(usize, Vec<CompKey>)>;
+/// the keys of its components, which its row keeps ([`Row::keys`]).
+type Pattern<'r> = (usize, Cow<'r, [Kind]>);
+type Keyed<'r> = Vec<(usize, &'r [CompKey])>;
+/// One group of the right side of [`Groups`]: the kind at each place and its tuples.
+type RightGroup<'r> = (Cow<'r, [Kind]>, Keyed<'r>);
 
 /// The tuples of `rows`, each with the keys of its components, by length and [`Kind`] at each
 /// place, each list in written order.
-fn by_pattern(rows: &[Row]) -> HashMap<Pattern, Keyed> {
-    let mut out: HashMap<Pattern, Keyed> = HashMap::new();
+fn by_pattern(rows: &[Row]) -> HashMap<Pattern<'_>, Keyed<'_>> {
+    let mut out: HashMap<Pattern<'_>, Keyed<'_>> = HashMap::new();
     for (i, r) in rows.iter().enumerate() {
-        let keys: Vec<CompKey> = r.iter().map(class).collect();
-        // With no keys every tuple of a length is one group, and every tuple of the other side
-        // of that length is near it.
+        let Keys { comps, kinds, .. } = r.keys();
+        let kinds = Cow::Borrowed(&kinds[..]);
+        // With every place open every tuple of a length is one group, no key is read
+        // ([`project`]), and every tuple of the other side of that length is near it.
         #[cfg(test)]
-        let keys = if NEAR_ALL.get() {
-            vec![None; r.len()]
-        } else {
-            keys
+        let kinds = match NEAR_ALL.get() {
+            true => Cow::Owned(vec![Kind::Open; r.len()]),
+            false => kinds,
         };
-        let kinds = keys.iter().map(kind).collect();
-        out.entry((r.len(), kinds)).or_default().push((i, keys));
+        out.entry((r.len(), kinds)).or_default().push((i, comps));
     }
     out
 }
@@ -3473,18 +3531,18 @@ fn near_pairs(left: &[Row], right: &[Row]) -> Vec<Vec<usize>> {
 
 /// The tuples of two lists `left` and `right` grouped for [`Near`]: by length and [`Kind`] at
 /// each place, each with the keys of its components.
-struct Groups {
+struct Groups<'r> {
     /// The groups of `right`, by length.
-    right: HashMap<usize, Vec<(Vec<Kind>, Keyed)>>,
+    right: HashMap<usize, Vec<RightGroup<'r>>>,
     /// The groups of `left`, each its length and kinds.
-    left: Vec<Pattern>,
+    left: Vec<Pattern<'r>>,
     /// For each tuple of `left`, its group and the keys of its components; none when `right` has
     /// no tuple.
-    of: Vec<Option<(usize, Vec<CompKey>)>>,
+    of: Vec<Option<(usize, &'r [CompKey])>>,
 }
 
-impl Groups {
-    fn new(left: &[Row], right: &[Row]) -> Groups {
+impl<'r> Groups<'r> {
+    fn new(left: &'r [Row], right: &'r [Row]) -> Groups<'r> {
         let mut groups = Groups {
             right: HashMap::new(),
             left: Vec::new(),
@@ -3541,14 +3599,14 @@ type Filing<'g> = Vec<BTreeMap<Vec<(&'g ShapeKey, Option<&'g Value>)>, Vec<usize
 /// complete solution does not exist under that hypothesis; one could only refuse such unions,
 /// which would change the answers of narrowing that are found today.
 struct Near<'g> {
-    groups: &'g Groups,
+    groups: &'g Groups<'g>,
     /// For each group of `left` once one of its tuples is read, the right groups of its length
     /// filed by its keys, in the order of `groups.right`.
     filed: Vec<Option<Filing<'g>>>,
 }
 
 impl<'g> Near<'g> {
-    fn new(groups: &'g Groups) -> Near<'g> {
+    fn new(groups: &'g Groups<'g>) -> Near<'g> {
         Near {
             groups,
             filed: (0..groups.left.len()).map(|_| None).collect(),
@@ -3564,7 +3622,7 @@ impl<'g> Near<'g> {
             let (len, kinds) = &groups.left[*q];
             let right = groups.right.get(len).map_or(&[][..], Vec::as_slice);
             let filed = self.filed[*q].get_or_insert_with(|| {
-                let file = |(p, rows): &'g (Vec<Kind>, Keyed)| {
+                let file = |(p, rows): &'g RightGroup<'g>| {
                     let mut f: BTreeMap<_, Vec<usize>> = BTreeMap::new();
                     for (i, ks) in rows {
                         f.entry(project(ks, p, kinds)).or_default().push(*i);
@@ -3653,36 +3711,21 @@ fn value_class(x: &Value) -> Option<ShapeKey> {
 struct Holders {
     /// Each group's kinds, and its tuples under each key, by their index in the type's tuples,
     /// in written order; the groups in the order of their first tuple.
-    groups: Vec<(Vec<Kind>, ByKey)>,
+    groups: Vec<(Arc<[Kind]>, ByKey)>,
 }
 
-/// The tuples of one group of [`Holders`] under their key: the class at each place where the
-/// group has one, with the value where it has one value.
-type ByKey = BTreeMap<Vec<(ShapeKey, Option<Value>)>, Vec<usize>>;
+/// The tuples of one group of [`Holders`] under their key ([`HeldKey`]).
+type ByKey = BTreeMap<HeldKey, Vec<usize>>;
 
 impl Holders {
     /// The tuples `rows` of `t`, by their indices, filed.
     fn new(t: &Ty, rows: &[usize]) -> Holders {
         // Each group's first tuple, by which the groups are put in order.
-        let mut groups: HashMap<Vec<Kind>, (usize, ByKey)> = HashMap::new();
+        let mut groups: HashMap<Arc<[Kind]>, (usize, ByKey)> = HashMap::new();
         for &i in rows {
-            let mut kinds = Vec::with_capacity(t.tuples[i].len());
-            let mut key = Vec::new();
-            for c in t.tuples[i].iter() {
-                match class(c) {
-                    None => kinds.push(Kind::Open),
-                    Some((k @ ShapeKey::Row(_), _)) | Some((k, None)) => {
-                        kinds.push(Kind::Class);
-                        key.push((k, None));
-                    }
-                    Some((k, Some(v))) => {
-                        kinds.push(Kind::Point);
-                        key.push((k, Some(v)));
-                    }
-                }
-            }
-            let (_, filed) = groups.entry(kinds).or_insert_with(|| (i, BTreeMap::new()));
-            filed.entry(key).or_default().push(i);
+            let (kinds, key) = &t.tuples[i].keys().held;
+            let (_, filed) = (groups.entry(kinds.clone())).or_insert_with(|| (i, BTreeMap::new()));
+            filed.entry(key.clone()).or_default().push(i);
         }
         let mut groups: Vec<_> = groups.into_iter().collect();
         groups.sort_unstable_by_key(|(_, (first, _))| *first);
@@ -3702,7 +3745,7 @@ impl Holders {
         let mut key = Vec::with_capacity(items.len());
         self.groups.iter().flat_map(move |(kinds, filed)| {
             key.clear();
-            for ((k, x), kind) in classes.iter().zip(items.iter()).zip(kinds) {
+            for ((k, x), kind) in classes.iter().zip(items.iter()).zip(kinds.iter()) {
                 if *kind == Kind::Open {
                     continue;
                 }
@@ -3712,7 +3755,7 @@ impl Holders {
                 key.push((k.clone(), (*kind == Kind::Point).then(|| x.clone())));
             }
             filed
-                .get(&key)
+                .get(&key[..])
                 .map_or(&[][..], Vec::as_slice)
                 .iter()
                 .copied()
@@ -5674,18 +5717,22 @@ impl<'m> Pairs<'m, (*const Ty, *const Ty), bool> {
     /// When the pairs are few, every pair of one length is compared, with the same answer.
     async fn meets(&'m self, a: &'m Ty, b: &'m Ty) -> bool {
         // Complexity tradeoff: `l` and `r` tuples are compared pair by pair, with no keys, when
-        // `l·r ≤ 2·(l + r)`: one side of one tuple, or both of at most four. What is given up:
-        // nothing in order, since those are at most `2·(l + r)` pairs. Why: filing the tuples
-        // costs about 100k instructions plus 100k for each tuple on a side (classes of the
-        // components, maps), and a pair about 23k, so for `n` distinct tuples on each side the
-        // two cost the same near `n = 5` (measured 2026-11-09 on `(i, #xi)` against
-        // `(n + i, #xi)`: at n = 4, 436k filed against 384k by pairs; at n = 6, 638k against
-        // 843k). Both give the same answer, which `tuples_compared_by_meets_through_the_index_
-        // are_those_of_every_pair` checks; the crossover is measured again at the Zed port.
+        // `l·r ≤ l + r`: one side of one tuple, or two against two. What is given up: nothing
+        // in order, since those are at most `l + r` pairs. Why: filing costs about 22k
+        // instructions plus 26.5k for each tuple on a side (the classes of the components are
+        // read once per tuple and kept, `Row::keys`; the rest is maps), and a pair about 24k
+        // plus 15k for the walk, so the two cost the same near `l·r = 1.1·(l + r)`. Measured
+        // 2026-11-09 in instructions per walk on `(i, #xi)` against `(l + i, #xi)`, fresh types
+        // each walk, filed against by pairs: (1, 1) 75k against 39k; (1, 16) 477k against 394k;
+        // (2, 2) 128k against 109k; (2, 4) 181k against 208k; (3, 3) 179k against 230k;
+        // (8, 8) 441k against 1,558k; (32, 32) 1.70M against 25.06M. Every measured case takes
+        // the cheaper path. Both give the same answer, which `tuples_compared_by_meets_through_
+        // the_index_are_those_of_every_pair` checks; the crossover is measured again at the Zed
+        // port.
         // Tests: `tests/steps/l01_22_type_representation/kinds.rs`, `meets_of_many_tuples_
         // scales`; COMPLEXITY.md F132.
         let (l, r) = (a.tuples.len(), b.tuples.len());
-        let few = l.saturating_mul(r) <= 2 * (l + r);
+        let few = l.saturating_mul(r) <= l + r;
         let groups = (!few).then(|| Groups::new(&a.tuples, &b.tuples));
         let mut near = groups.as_ref().map(Near::new);
         for (l, r) in a.tuples.iter().enumerate() {
@@ -5755,19 +5802,21 @@ impl<'m> Pairs<'m, (*const Ty, *const Value), bool> {
     /// left out does not hold the value.
     fn tried(&self, t: &Ty, items: &Items, filed: &RefCell<Filings>) -> Tried {
         // Complexity tradeoff: the `l` tuples of one length of a node are scanned for each of
-        // its first `v` values and filed at the first `v` with `l·v > 40·(l + v)`: never for 40
-        // tuples or fewer, at about the 107th value for 64 tuples and the 42nd for 1,024. What
+        // its first `v` values and filed at the first `v` with `l·v > 16·(l + v)`: never for 16
+        // tuples or fewer, at about the 22nd value for 64 tuples and the 17th for 1,024. What
         // is given up: nothing in order, since the scans before filing cost at most about
-        // `40·(l + v)` tuples, linear in the node and its values. Why: filing costs the classes
-        // of every component, about 17k instructions a tuple of two components, and a lookup
-        // about 2.6k more than the rest of a value's walk, where a scan costs about 200 a tuple;
-        // so filing pays off only for many tuples read for many values. Measured 2026-11-09 in
-        // instructions, 20,000/l walks of a union of `l` tuples `(i, int)` read for `v` values
-        // each, filed against every tuple: l = 64, v = 64 480M against 500M, v = 128 1,214M
-        // against 998M, v = 256 1,765M against 1,980M; l = 256, v = 64 589M against 322M,
-        // v = 256 802M against 1,320M; l = 1,024, v = 64 537M against 261M, v = 1,024 818M
-        // against 4,495M; so at worst about twice the scans just after filing, and far less
-        // for many values. The constant 40 is measured again at the Zed port. Both give the
+        // `16·(l + v)` tuples, linear in the node and its values. Why: filing costs about 11k
+        // instructions a tuple of two components (the classes of the components, read once per
+        // tuple and kept, `Row::keys`, and the maps), where a scan costs about 400 a tuple for
+        // each value; so filing pays off only for many tuples read for many values. Measured
+        // 2026-11-09 in instructions per walk, max(4, 4096/l) walks of a union of `l` tuples
+        // `(i, int)` read for `v` values each, filed from the start against every tuple
+        // scanned: l = 64, v = 32 1.16M against 0.99M, v = 256 4.72M against 6.44M; l = 256,
+        // v = 32 3.25M against 3.31M, v = 256 6.88M against 15.72M; l = 1,024, v = 16 11.95M
+        // against 6.40M, v = 1,024 28.36M against 209.75M. Over 48 such cases the constant 16
+        // costs at worst 1.47 times the cheaper of the two (geometric mean 1.10), against 2.14
+        // (1.16) for the old 40 and 2.22 (1.14) for 8. The constant 16 is measured again at the
+        // Zed port. Both give the
         // same answer, which `tuples_that_hold_a_value_through_the_index_are_those_of_every_tuple`
         // checks. Tests: `tests/steps/l01_22_type_representation/kinds.rs`,
         // `contains_of_many_tuples_scales`; COMPLEXITY.md F133.
@@ -5802,7 +5851,7 @@ impl<'m> Pairs<'m, (*const Ty, *const Value), bool> {
             Visits::Scanned { n, rows } => {
                 *n += 1;
                 let l = rows.len();
-                if l.saturating_mul(*n) <= 40 * (l + *n) {
+                if l.saturating_mul(*n) <= 16 * (l + *n) {
                     return Tried::Scanned(Rc::clone(rows));
                 }
                 let holders = Rc::new(Holders::new(t, rows));
@@ -9105,7 +9154,7 @@ mod tests {
                 // Those that tuples decide: neither side open, and nothing but tuples meets.
                 if a.meets_here(b).is_none() {
                     let (l, r) = (a.tuples.len(), b.tuples.len());
-                    filed += usize::from(l * r > 2 * (l + r));
+                    filed += usize::from(l * r > l + r);
                     match by_index {
                         true => meet += 1,
                         false => apart += 1,
@@ -9207,7 +9256,8 @@ mod tests {
 
     /// [`class_of`], read from the parts of a set, is what comparing the set with each carrier
     /// and with the atoms gives, on random unions and differences of carriers, literals, atoms
-    /// with and without payloads, atoms of no value, all atoms but one, and tuples, some empty.
+    /// with and without payloads, atoms of no value, all atoms but one, and tuples, some empty; and
+    /// [`KType::universes`] gives the parts [`KType::split`] gives.
     #[test]
     fn class_of_read_from_the_parts_is_that_of_comparing_types() {
         let by_subtype = |s: &KType| {
@@ -9250,8 +9300,16 @@ mod tests {
                 };
             }
             if s.is_empty() {
+                assert!(class_of(&s).is_none(), "the class of {s:?}, empty");
                 continue;
             }
+            let split = s.split();
+            let universes = zed_kernel::types::Universes {
+                bases: split.bases.each_ref().map(Option::is_some),
+                atoms: split.atoms.is_some(),
+                rest: split.rest.is_some(),
+            };
+            assert!(s.universes() == universes, "the universes of {s:?}");
             let class = class_of(&s);
             assert!(class == by_subtype(&s), "the class of {s:?}");
             match class {

@@ -1870,10 +1870,32 @@ impl Type {
 
 impl Parts {
     fn scalars_only(&self) -> bool {
-        self.atoms == Atoms::default()
-            && self.tuples == Tuples::default()
+        self.atoms.is_default()
+            && self.tuples.is_default()
             && !self.structs
             && self.morphisms.is_leaf() == Some(false)
+    }
+
+    /// Whether these are the parts of [`Type::lit`] of `v`, a boolean or a value of its
+    /// carrier's part here: that one value in its carrier's part and every other part empty.
+    /// Types of parts are equal exactly when their parts are, so this is `Type::lit(v) == t`
+    /// for the type `t` of these parts, with no type built.
+    fn only(&self, v: &Value) -> bool {
+        let lits = [
+            (&self.ints, matches!(v, Value::Int(_) | Value::Big(_))),
+            (&self.rats, matches!(v, Value::Rat(_))),
+            (&self.floats, matches!(v, Value::Float(_))),
+            (&self.strings, matches!(v, Value::Str(_))),
+        ];
+        let bools = match v {
+            Value::Bool(b) => 1 << u8::from(*b),
+            _ => 0,
+        };
+        self.bools == bools
+            && lits
+                .iter()
+                .all(|(l, here)| !l.cofinite && l.values.len() == usize::from(*here))
+            && self.scalars_only()
     }
 
     /// Whether it holds a boolean, number or string, read from the parts.
@@ -1896,10 +1918,23 @@ pub struct Split {
     pub rest: Option<Type>,
 }
 
+/// Which universes a type holds values of: the parts [`Type::split`] gives, each true where
+/// that gives a type, as [`Type::universes`] reads them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Universes {
+    /// Whether it has values of `bool`, `int`, `rat`, `f64` and `String`, in that order.
+    pub bases: [bool; 5],
+    /// Whether it has atoms.
+    pub atoms: bool,
+    /// Whether it has tuples, structs or morphisms.
+    pub rest: bool,
+}
+
 impl Type {
     /// Its one value, when it is one boolean or one literal of `int`, `rat`, `f64` or `String`,
-    /// and nothing else: its first such value, read from the parts, is compared with the type of
-    /// that literal alone, so the cost is one literal's type and one comparison.
+    /// and nothing else: its first such value, read from the parts. A node of parts is that
+    /// literal's type exactly when its parts are the literal's (`Parts::only`), which is read
+    /// with no type built; a recursive node is compared with the type of the literal alone.
     pub fn scalar(&self) -> Option<Value> {
         let p = self.p();
         let first = |l: &&Lits| match l.cofinite {
@@ -1913,12 +1948,15 @@ impl Type {
                 .iter()
                 .find_map(first),
         }?;
-        (Type::lit(&v)? == *self).then_some(v)
+        match &*self.0 {
+            Node::Parts(p, _) => p.only(&v).then_some(v),
+            Node::Rec(_) => (Type::lit(&v)? == *self).then_some(v),
+        }
     }
 
     /// Whether it may hold an atom, read from its parts: false only when it holds none.
     pub fn may_hold_atoms(&self) -> bool {
-        self.p().atoms != Atoms::default()
+        !self.p().atoms.is_default()
     }
 
     /// The names of its atoms, each with whether it holds the bare atom `#name`, read from its
@@ -2119,6 +2157,11 @@ impl AtomPart {
 }
 
 impl Atoms {
+    /// Whether it is the part of no atom, `Atoms::default()`, read with nothing built.
+    fn is_default(&self) -> bool {
+        !self.cofinite && self.names.is_empty() && self.sum == 0
+    }
+
     fn get(&self, name: &str) -> AtomPart {
         match self.names.get(name) {
             Some(p) => p.clone(),
@@ -2222,6 +2265,11 @@ impl Atoms {
 }
 
 impl Tuples {
+    /// Whether it is the part of no tuple, `Tuples::default()`, read with nothing built.
+    fn is_default(&self) -> bool {
+        !self.rest && self.lens.is_empty()
+    }
+
     fn literal(items: Vec<Type>) -> Tuples {
         Tuples {
             rest: false,
