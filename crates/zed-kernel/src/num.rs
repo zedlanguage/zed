@@ -117,18 +117,16 @@ impl Rat {
     /// the text's length bounds the cost. [`TooLarge`] when the system refuses the memory for
     /// reading the digits, asked before anything is built.
     pub fn decimal(text: &str) -> Result<Option<Self>, TooLarge> {
-        let (mantissa, exp): (&str, Option<(Sign, &str)>) = match text.find(['e', 'E']) {
-            Some(i) => (&text[..i], Some(sign_of(&text[i + 1..]))),
-            None => (text, None),
-        };
-        let (sign, mantissa) = sign_of(mantissa);
-        let (whole, frac): (&str, &str) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-        let digits = |t: &str| t.bytes().all(|b| b.is_ascii_digit());
-        let read = !(whole.is_empty() && frac.is_empty()) && digits(whole) && digits(frac);
-        if !read || exp.is_some_and(|(_, e)| e.is_empty() || !digits(e)) {
-            return Ok(None);
+        match decimal_syntax(text) {
+            Some((sign, whole, frac, exp)) => Rat::decimal_parts(sign, whole, frac, exp).map(Some),
+            None => Ok(None),
         }
-        Rat::decimal_parts(sign, whole, frac, exp).map(Some)
+    }
+
+    /// Whether [`Rat::decimal`] reads `text` as a number, given the memory: one pass over the
+    /// text, reading none of its digits into a number.
+    pub fn is_decimal(text: &str) -> bool {
+        decimal_syntax(text).is_some()
     }
 
     /// The exact value of a decimal whose parts were checked: `whole` and `frac` decimal digits,
@@ -1105,6 +1103,27 @@ pub(crate) fn sign_of(text: &str) -> (Sign, &str) {
         (None, Some(rest)) => (Sign::Plus, rest),
         (None, None) => (Sign::Plus, text),
     }
+}
+
+/// A decimal literal's sign, whole digits, fraction digits and signed exponent digits.
+type DecimalParts<'t> = (Sign, &'t str, &'t str, Option<(Sign, &'t str)>);
+
+/// The parts of a decimal literal's text, as [`Rat::decimal_parts`] takes them: its sign, its
+/// whole and fraction digits and its exponent; `None` when it is not decimal digits with an
+/// optional sign, fraction and exponent.
+fn decimal_syntax(text: &str) -> Option<DecimalParts<'_>> {
+    let (mantissa, exp): (&str, Option<(Sign, &str)>) = match text.find(['e', 'E']) {
+        Some(i) => (&text[..i], Some(sign_of(&text[i + 1..]))),
+        None => (text, None),
+    };
+    let (sign, mantissa) = sign_of(mantissa);
+    let (whole, frac): (&str, &str) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = |t: &str| t.bytes().all(|b| b.is_ascii_digit());
+    let read = !(whole.is_empty() && frac.is_empty()) && digits(whole) && digits(frac);
+    if !read || exp.is_some_and(|(_, e)| e.is_empty() || !digits(e)) {
+        return None;
+    }
+    Some((sign, whole, frac, exp))
 }
 
 /// The value of a text of ASCII decimal digits; `Ok(None)` when it is empty or holds anything
