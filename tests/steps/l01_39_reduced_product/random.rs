@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use zed_kernel::Shared;
 
-use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
+use zed_kernel::{Evaluator, Prim, Term, Value, World};
 use zed_tests::instances::Rng;
 use zedc::store::product::Arm;
 
@@ -91,7 +91,7 @@ fn at(t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Option<Value> {
 /// checked, or the first point that reaches an arm whose scope does not hold it.
 fn check(s: &Shape, arms: &[Arm]) -> Result<usize, String> {
     assert_eq!(arms.len(), 6);
-    on_stack(|| check_on(s, arms))
+    check_on(s, arms)
 }
 
 fn check_on(s: &Shape, arms: &[Arm]) -> Result<usize, String> {
@@ -239,8 +239,7 @@ fn agree(arms: &[Arm], paths: &[Term], name: &str, value: &Term) -> Result<usize
             Shared::new(t.clone()),
         )
     };
-    let exact =
-        |t: &Term, o: bool| on_stack(|| preimage(&closed(t), &doms, &Demand::Bool(o))).exact;
+    let exact = |t: &Term, o: bool| preimage(&closed(t), &doms, &Demand::Bool(o)).exact;
     let function = matches!(value, Term::Lam(..));
     let mut compared = 0;
     for (a, p) in arms.iter().zip(paths) {
@@ -249,7 +248,7 @@ fn agree(arms: &[Arm], paths: &[Term], name: &str, value: &Term) -> Result<usize
             && atoms
                 .iter()
                 .all(|(t, o)| (function || !zedc::stage::free(t).contains(name)) && exact(t, *o));
-        let pre = on_stack(|| preimage(&closed(p), &doms, &Demand::Bool(true)));
+        let pre = preimage(&closed(p), &doms, &Demand::Bool(true));
         if !scope_exact || !pre.exact {
             continue;
         }
@@ -490,7 +489,7 @@ fn trace<'a>(
             .map(|((n, &k), vs)| (n.clone(), lit(vs[k])))
             .collect();
         t.next = 0;
-        on_stack(|| t.walk(body, &mut env, true))?;
+        t.walk(body, &mut env, true)?;
         assert_eq!(
             t.next,
             arms.len(),

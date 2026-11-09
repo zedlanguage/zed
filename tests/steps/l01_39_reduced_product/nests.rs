@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use zed_kernel::Shared;
 
-use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
+use zed_kernel::{Evaluator, Prim, Term, Value, World};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::cell::Premises;
@@ -227,35 +227,33 @@ fn meeting(t: &Term, o: bool, b: i64) -> Vec<BTreeMap<Arc<str>, Value>> {
 
 #[test]
 fn every_point_that_meets_a_nested_test_is_in_its_scope() {
-    on_stack(|| {
-        const B: i64 = 3;
-        let p = Premises::new();
-        let base = boxed(&["x", "y", "z"], B);
-        let mut rnd = Rng::new(0x57);
-        let (mut checked, mut caught, mut empty) = (0, 0, 0);
-        for _ in 0..200 {
-            let depth = rnd.int(1, 4) as usize;
-            let t = random_nest(&mut rnd, depth);
-            let o = rnd.below(2) == 0;
-            let pts = meeting(&t, o, B);
-            let r = base.assume(&t, o, &p);
-            for e in &pts {
-                assert!(r.contains(e), "{t} is {o} at {e:?}, outside\n{r}");
-            }
-            checked += pts.len();
-            empty += usize::from(r.bottom);
-            // Negative control: the scope of the opposite outcome misses some point that
-            // meets the test, unless the test has one outcome over the whole cube.
-            let q = base.assume(&t, !o, &p);
-            caught += usize::from(pts.iter().any(|e| !q.contains(e)));
+    const B: i64 = 3;
+    let p = Premises::new();
+    let base = boxed(&["x", "y", "z"], B);
+    let mut rnd = Rng::new(0x57);
+    let (mut checked, mut caught, mut empty) = (0, 0, 0);
+    for _ in 0..200 {
+        let depth = rnd.int(1, 4) as usize;
+        let t = random_nest(&mut rnd, depth);
+        let o = rnd.below(2) == 0;
+        let pts = meeting(&t, o, B);
+        let r = base.assume(&t, o, &p);
+        for e in &pts {
+            assert!(r.contains(e), "{t} is {o} at {e:?}, outside\n{r}");
         }
-        assert!(checked > 10_000, "{checked} points checked");
-        assert!(
-            caught > 100,
-            "the opposite outcome missed points in {caught} tests"
-        );
-        assert!(empty > 5, "{empty} empty scopes");
-    })
+        checked += pts.len();
+        empty += usize::from(r.bottom);
+        // Negative control: the scope of the opposite outcome misses some point that
+        // meets the test, unless the test has one outcome over the whole cube.
+        let q = base.assume(&t, !o, &p);
+        caught += usize::from(pts.iter().any(|e| !q.contains(e)));
+    }
+    assert!(checked > 10_000, "{checked} points checked");
+    assert!(
+        caught > 100,
+        "the opposite outcome missed points in {caught} tests"
+    );
+    assert!(empty > 5, "{empty} empty scopes");
 }
 
 #[test]

@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use zed_kernel::types::Type;
-use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
+use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::images::{self, TermRead};
@@ -236,7 +236,7 @@ fn outer_test_at(body: &Term) -> impl Fn(i64) -> bool {
             Shared::new(Term::Lit(Value::Int(x))),
             Shared::new(test.clone()),
         );
-        match on_stack(|| Evaluator::new(World::new()).run(&t)) {
+        match Evaluator::new(World::new()).run(&t) {
             Ok(Value::Bool(b)) => b,
             v => panic!("the test at n = {x} gave {v:?}"),
         }
@@ -599,7 +599,7 @@ fn deep_chain(d: usize) -> Domains {
 /// explicit stacks, with no overflow, and reads `n = 5`.
 #[test]
 fn a_deep_chain_of_summaries_is_formed_and_dropped() {
-    let got = on_stack(|| deep_chain(200_000));
+    let got = deep_chain(200_000);
     assert_eq!(got["n"].to_string(), "[5..=5]");
 }
 

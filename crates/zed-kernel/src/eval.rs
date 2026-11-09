@@ -407,12 +407,6 @@ pub struct Evaluator {
     trace: Option<Trace>,
 }
 
-/// Runs `f`. The evaluator needs no stack of its own any more; this stays until the store's
-/// callers stop naming it (item T2-mid).
-pub fn on_stack<R>(f: impl FnOnce() -> R) -> R {
-    f()
-}
-
 /// Evaluates a closed term with no ports and no fuel limit, expecting data.
 pub fn eval(term: &Term) -> Result<Value, KernelError> {
     Evaluator::new(World::new()).run(term)

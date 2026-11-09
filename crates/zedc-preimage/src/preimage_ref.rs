@@ -77,7 +77,7 @@ use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, eval, on_stack};
+use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, eval};
 
 use End::{Fin, NegInf, PosInf};
 use zedc_int::int::Int;
@@ -220,7 +220,7 @@ const POWER_FACTORS: usize = 64;
 /// The preimage of `demand` under `term`, whose free names in `inputs` range over their
 /// domains, no domain one whose members the source lists ([`preimage_listed`]).
 pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
-    on_stack(|| preimage_of(term, inputs, NONE_LISTED, demand))
+    preimage_of(term, inputs, NONE_LISTED, demand)
 }
 
 /// [`preimage`], the domains of the names in `listed` being sets whose members the source
@@ -232,10 +232,10 @@ pub fn preimage_listed(
     listed: &Listed,
     demand: &Demand,
 ) -> Preimage {
-    on_stack(|| preimage_of(term, inputs, listed, demand))
+    preimage_of(term, inputs, listed, demand)
 }
 
-/// [`preimage_listed`] on the caller's stack.
+/// The work of [`preimage`] and [`preimage_listed`].
 fn preimage_of(term: &Term, inputs: &Domains, listed: &Listed, demand: &Demand) -> Preimage {
     let mut tx = Tx::new();
     let root = tx.terms.add(term);
@@ -2787,7 +2787,7 @@ fn enumerate(term: &Term, dom: &Domains, listed: &Listed, demand: &Demand) -> Op
             exact: true,
         });
     }
-    on_stack(|| enumerate_on(term, &axes, demand))
+    enumerate_on(term, &axes, demand)
 }
 
 /// The congruence class of each input that has one, under `@exact`; an input not listed may be
@@ -2808,30 +2808,28 @@ pub fn exact_preimage(
     classes: &Classes,
     demand: &Demand,
 ) -> Preimage {
-    on_stack(|| {
-        let mut p = preimage_of(term, inputs, NONE_LISTED, demand);
-        if p.exact {
-            // Every point of the box meets the demand, so the classes alone narrow it.
-            p.domains = within_classes(&p.domains, classes).unwrap_or_else(|| {
-                (p.domains.keys().map(|k| (k.clone(), IntervalSet::empty()))).collect()
-            });
-            return p;
-        }
-        if !stage::ends(term) {
-            return p;
-        }
-        let Some((domains, exact)) = exact_search(term, &p.domains, classes, demand) else {
-            return p;
-        };
-        Preimage {
-            domains,
-            exact,
-            enumerated: true,
-            stops: p.stops,
-            relation: if exact { None } else { p.relation },
-            refusal: if exact { None } else { p.refusal },
-        }
-    })
+    let mut p = preimage_of(term, inputs, NONE_LISTED, demand);
+    if p.exact {
+        // Every point of the box meets the demand, so the classes alone narrow it.
+        p.domains = within_classes(&p.domains, classes).unwrap_or_else(|| {
+            (p.domains.keys().map(|k| (k.clone(), IntervalSet::empty()))).collect()
+        });
+        return p;
+    }
+    if !stage::ends(term) {
+        return p;
+    }
+    let Some((domains, exact)) = exact_search(term, &p.domains, classes, demand) else {
+        return p;
+    };
+    Preimage {
+        domains,
+        exact,
+        enumerated: true,
+        stops: p.stops,
+        relation: if exact { None } else { p.relation },
+        refusal: if exact { None } else { p.refusal },
+    }
 }
 
 /// A point of the inputs, each input within its class, at which the term meets the demand.
@@ -2896,11 +2894,9 @@ pub fn witness(
             true
         }
     }
-    on_stack(|| {
-        let mut first = First(None, lowest);
-        branch(term, dom, classes, demand, &mut first)?;
-        Some(first.0)
-    })
+    let mut first = First(None, lowest);
+    branch(term, dom, classes, demand, &mut first)?;
+    Some(first.0)
 }
 
 /// The projection of the points of `dom` in `classes` meeting `demand`, and whether their box

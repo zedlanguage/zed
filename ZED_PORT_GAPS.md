@@ -2876,3 +2876,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `HashSet<&Type>` of the one-valued types filled by `insert` in a `for` loop over `finite_order`, read by a closure | `Type::values_listed` | Mutation (gap 11) | a fold over the order building a persistent set of the one-valued types |
+
+## Entries from T2-ty (`zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `async fn` methods on a struct holding a `frames::Stack` and a `&RefCell<HashMap<K, V>>` memo, generic over the key and answer (`Pairs<'m, K, V>`), one `impl` per operation, each call that is not answered at once or from the memo on a heap frame (`Pairs::kept`) | `Ty::meet`, `Ty::meets`, `Ty::contains`, `Pairs::{meet, meets, contains, kept}` | Missing (no coroutines or `async`), interior mutability, as for `types/empty.rs` | Removed: the port's runtime must run deep recursion without overflowing; the memo a map threaded through the calls |
+| Memo keys made of raw addresses, `(*const Ty, *const Ty)` and `(*const Ty, *const Value)`, sound only while both operands are borrowed | `Pairs` | Identity (gap 1) | Keys by digest or node id |
+| A stack of items to write (`Dbg<'a>`) holding `&dyn fmt::Debug` for the leaves, so one loop writes types, rows, shapes, signatures and needs | `write_debug`, `debug_list`, `debug_map`, `debug_ty`, `debug_sig`, `debug_need` | Trait objects | A sum type of the things written, one case per kind, in a state receiver's list |

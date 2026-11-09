@@ -71,7 +71,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use zed_kernel::types::Type;
-use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval, on_stack};
+use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval};
 
 use End::{Fin, NegInf, PosInf};
 use zed_kernel::frames::{Deep, Stack};
@@ -208,7 +208,7 @@ fn run_closed(t: &Term) -> Option<Value> {
 /// The preimage of `demand` under `term`, whose free names in `inputs` range over their
 /// domains, no domain one whose members the source lists ([`preimage_listed`]).
 pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
-    on_stack(|| preimage_of(term, inputs, NONE_LISTED, demand))
+    preimage_of(term, inputs, NONE_LISTED, demand)
 }
 
 /// [`preimage`], the domains of the names in `listed` being sets whose members the source
@@ -221,10 +221,10 @@ pub fn preimage_listed(
     listed: &Listed,
     demand: &Demand,
 ) -> Preimage {
-    on_stack(|| preimage_of(term, inputs, listed, demand))
+    preimage_of(term, inputs, listed, demand)
 }
 
-/// [`preimage_listed`] on the caller's stack.
+/// The work of [`preimage`] and [`preimage_listed`].
 fn preimage_of(term: &Term, inputs: &Domains, listed: &Listed, demand: &Demand) -> Preimage {
     let mut tx = Tx::new();
     let root = tx.terms.add(term);
@@ -236,15 +236,13 @@ fn preimage_of(term: &Term, inputs: &Domains, listed: &Listed, demand: &Demand) 
 /// is given up: for the tests that check where the summary exists and what it says.
 #[doc(hidden)]
 pub fn summary_preimage(term: &Term, inputs: &Domains, z: &IntervalSet) -> Option<Domains> {
-    on_stack(|| {
-        let mut tx = Tx::new();
-        let root = tx.terms.add(term);
-        let marks = tx.landmarks(inputs, &Demand::Ints(z.clone()));
-        tx.start(inputs, marks);
-        let pa = tx.pa(root, ROOT)?;
-        let r = tx.invert_pa(&pa, z)?;
-        Some(tx.whole(&r))
-    })
+    let mut tx = Tx::new();
+    let root = tx.terms.add(term);
+    let marks = tx.landmarks(inputs, &Demand::Ints(z.clone()));
+    tx.start(inputs, marks);
+    let pa = tx.pa(root, ROOT)?;
+    let r = tx.invert_pa(&pa, z)?;
+    Some(tx.whole(&r))
 }
 
 /// The box over `inputs` of the points where `term` meets `demand`, read by the backward
@@ -257,15 +255,13 @@ pub fn summary_preimage(term: &Term, inputs: &Domains, z: &IntervalSet) -> Optio
 /// term itself, whose names of `lets` they would take for inputs, and are not run: the caller
 /// meets this box with the preimage of the term over the names themselves ([`preimage`]).
 pub fn let_preimage(term: &Term, inputs: &Domains, lets: Lets, demand: &Demand) -> Domains {
-    on_stack(|| {
-        let mut tx = Tx::new();
-        tx.lets = lets;
-        let root = tx.terms.add(term);
-        let marks = tx.landmarks(inputs, demand);
-        tx.start(inputs, marks);
-        let r = tx.back(root, ROOT, demand);
-        tx.whole(&r)
-    })
+    let mut tx = Tx::new();
+    tx.lets = lets;
+    let root = tx.terms.add(term);
+    let marks = tx.landmarks(inputs, demand);
+    tx.start(inputs, marks);
+    let r = tx.back(root, ROOT, demand);
+    tx.whole(&r)
 }
 
 /// [`let_preimage`], giving only the inputs the box narrows, each with its set, or `None` when
@@ -283,15 +279,13 @@ pub fn let_narrowing(
 ) -> Option<Domains> {
     #[cfg(feature = "counts")]
     counts::INPUTS.set(counts::INPUTS.get() + inputs.len() as u64);
-    on_stack(|| {
-        let mut tx = Tx::new();
-        tx.lets = lets;
-        let root = tx.terms.add(term);
-        let marks = tx.landmarks(inputs, demand);
-        tx.start(inputs, marks);
-        let r = tx.back(root, ROOT, demand);
-        tx.narrowed(&r)
-    })
+    let mut tx = Tx::new();
+    tx.lets = lets;
+    let root = tx.terms.add(term);
+    let marks = tx.landmarks(inputs, demand);
+    tx.start(inputs, marks);
+    let r = tx.back(root, ROOT, demand);
+    tx.narrowed(&r)
 }
 
 /// The summary of the term `e` a `let` binds ([`LetPa`]), its free names in `inputs` ranging
@@ -301,48 +295,46 @@ pub fn let_narrowing(
 /// unsummed, so that each binding costs its own term and not the summaries it adds
 /// ([`LetPa`]).
 pub fn let_summary(e: &Term, inputs: &Domains, lets: Lets) -> Option<LetPa> {
-    on_stack(|| {
-        let mut parts: Vec<(Int, LetPa)> = Vec::new();
-        let mut rest: Vec<(Int, &Term)> = Vec::new();
-        let mut constant = Int::ZERO;
-        let mut todo: Vec<(Int, &Term)> = vec![(Int::ONE, e)];
-        while let Some((c, t)) = todo.pop() {
-            let lit = |t: &Term| match t {
-                Term::Lit(Value::Int(k)) => Some(Int::from(*k)),
-                _ => None,
-            };
-            match t {
-                Term::Prim(Prim::Add, a) if a.len() == 2 => {
-                    todo.extend([(c.clone(), &a[0]), (c, &a[1])]);
-                }
-                Term::Prim(Prim::Sub, a) if a.len() == 2 => {
-                    todo.extend([(c.clone(), &a[0]), (-&c, &a[1])]);
-                }
-                Term::Prim(Prim::Neg, a) if a.len() == 1 => todo.push((-&c, &a[0])),
-                Term::Prim(Prim::Mul, a) if a.len() == 2 && lit(&a[0]).is_some() => {
-                    todo.push((&c * &lit(&a[0])?, &a[1]));
-                }
-                Term::Prim(Prim::Mul, a) if a.len() == 2 && lit(&a[1]).is_some() => {
-                    todo.push((&c * &lit(&a[1])?, &a[0]));
-                }
-                Term::Lit(Value::Int(k)) => constant = &constant + &(&c * &Int::from(*k)),
-                Term::Var(x) if let Some(l) = lets.get(x) => parts.push((c, l.summary.clone())),
-                _ => rest.push((c, t)),
+    let mut parts: Vec<(Int, LetPa)> = Vec::new();
+    let mut rest: Vec<(Int, &Term)> = Vec::new();
+    let mut constant = Int::ZERO;
+    let mut todo: Vec<(Int, &Term)> = vec![(Int::ONE, e)];
+    while let Some((c, t)) = todo.pop() {
+        let lit = |t: &Term| match t {
+            Term::Lit(Value::Int(k)) => Some(Int::from(*k)),
+            _ => None,
+        };
+        match t {
+            Term::Prim(Prim::Add, a) if a.len() == 2 => {
+                todo.extend([(c.clone(), &a[0]), (c, &a[1])]);
             }
-        }
-        let mut sum = Sep::constant(constant);
-        if !rest.is_empty() {
-            let mut tx = Tx::new();
-            tx.lets = lets;
-            let roots: Vec<Tid> = rest.iter().map(|(_, t)| tx.terms.add(t)).collect();
-            let marks = tx.landmarks(inputs, &Demand::Bool(true));
-            tx.start(inputs, marks);
-            for ((c, _), root) in rest.iter().zip(roots) {
-                sum.add_pa(tx.pa(root, ROOT)?.affine(c.clone(), 0), None);
+            Term::Prim(Prim::Sub, a) if a.len() == 2 => {
+                todo.extend([(c.clone(), &a[0]), (-&c, &a[1])]);
             }
+            Term::Prim(Prim::Neg, a) if a.len() == 1 => todo.push((-&c, &a[0])),
+            Term::Prim(Prim::Mul, a) if a.len() == 2 && lit(&a[0]).is_some() => {
+                todo.push((&c * &lit(&a[0])?, &a[1]));
+            }
+            Term::Prim(Prim::Mul, a) if a.len() == 2 && lit(&a[1]).is_some() => {
+                todo.push((&c * &lit(&a[1])?, &a[0]));
+            }
+            Term::Lit(Value::Int(k)) => constant = &constant + &(&c * &Int::from(*k)),
+            Term::Var(x) if let Some(l) = lets.get(x) => parts.push((c, l.summary.clone())),
+            _ => rest.push((c, t)),
         }
-        Some(LetPa::new(parts, sum))
-    })
+    }
+    let mut sum = Sep::constant(constant);
+    if !rest.is_empty() {
+        let mut tx = Tx::new();
+        tx.lets = lets;
+        let roots: Vec<Tid> = rest.iter().map(|(_, t)| tx.terms.add(t)).collect();
+        let marks = tx.landmarks(inputs, &Demand::Bool(true));
+        tx.start(inputs, marks);
+        for ((c, _), root) in rest.iter().zip(roots) {
+            sum.add_pa(tx.pa(root, ROOT)?.affine(c.clone(), 0), None);
+        }
+    }
+    Some(LetPa::new(parts, sum))
 }
 
 /// [`preimage`] of `term`, which is `root` in `tx`'s terms.
@@ -10863,7 +10855,7 @@ fn enumerate(term: &Term, dom: &Domains, listed: &Listed, demand: &Demand) -> Op
     if !stage::ends(term) {
         return None;
     }
-    on_stack(|| enumerate_on(term, &axes, demand))
+    enumerate_on(term, &axes, demand)
 }
 
 /// The congruence class of each input that has one, under `@exact`; an input not listed may be
@@ -10922,30 +10914,28 @@ pub fn exact_preimage(
     classes: &Classes,
     demand: &Demand,
 ) -> Preimage {
-    on_stack(|| {
-        let mut p = preimage_of(term, inputs, NONE_LISTED, demand);
-        if p.exact {
-            // Every point of the box meets the demand, so the classes alone narrow it.
-            p.domains = within_classes(&p.domains, classes).unwrap_or_else(|| {
-                (p.domains.keys().map(|k| (k.clone(), IntervalSet::empty()))).collect()
-            });
-            return p;
-        }
-        if !stage::ends(term) {
-            return p;
-        }
-        let Some((domains, exact)) = exact_search(term, &p.domains, classes, demand) else {
-            return p;
-        };
-        Preimage {
-            domains,
-            exact,
-            enumerated: true,
-            stops: p.stops,
-            relation: if exact { None } else { p.relation },
-            refusal: if exact { None } else { p.refusal },
-        }
-    })
+    let mut p = preimage_of(term, inputs, NONE_LISTED, demand);
+    if p.exact {
+        // Every point of the box meets the demand, so the classes alone narrow it.
+        p.domains = within_classes(&p.domains, classes).unwrap_or_else(|| {
+            (p.domains.keys().map(|k| (k.clone(), IntervalSet::empty()))).collect()
+        });
+        return p;
+    }
+    if !stage::ends(term) {
+        return p;
+    }
+    let Some((domains, exact)) = exact_search(term, &p.domains, classes, demand) else {
+        return p;
+    };
+    Preimage {
+        domains,
+        exact,
+        enumerated: true,
+        stops: p.stops,
+        relation: if exact { None } else { p.relation },
+        refusal: if exact { None } else { p.refusal },
+    }
 }
 
 /// A point of the inputs, each input within its class, at which the term meets the demand.
@@ -11010,11 +11000,9 @@ pub fn witness(
             true
         }
     }
-    on_stack(|| {
-        let mut first = First(None, lowest);
-        branch(term, dom, classes, demand, &mut first)?;
-        Some(first.0)
-    })
+    let mut first = First(None, lowest);
+    branch(term, dom, classes, demand, &mut first)?;
+    Some(first.0)
 }
 
 /// The projection of the points of `dom` in `classes` meeting `demand`, and whether their box

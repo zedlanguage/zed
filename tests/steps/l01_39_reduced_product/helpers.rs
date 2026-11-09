@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use zed_kernel::Shared;
 
-use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
+use zed_kernel::{Evaluator, Prim, Term, Value, World};
 
 use super::*;
 use zed_tests::step_helpers::l01_16_elaboration::with_prelude;
@@ -25,7 +25,8 @@ fn run(src: &str, x: i64) -> Value {
         .unwrap_or_else(|e| panic!("{src}: {e:?}"));
     let ok = u.get("ok").expect("a definition `ok`");
     let call = Term::App(Shared::new(ok), vec![Term::Lit(Value::Int(x))]);
-    on_stack(|| Evaluator::new(World::new()).run(&with_prelude(call)))
+    Evaluator::new(World::new())
+        .run(&with_prelude(call))
         .unwrap_or_else(|e| panic!("{src}: ok({x}) failed: {e:?}"))
 }
 

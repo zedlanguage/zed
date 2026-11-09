@@ -14,7 +14,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
+use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World};
 use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 use zedc::store::cell::Premises;
@@ -87,7 +87,8 @@ impl System {
         loop {
             let args = point.iter().map(|&v| Term::Lit(Value::Int(v))).collect();
             let call = with_prelude(Term::App(Shared::new(ok.clone()), args));
-            let v = on_stack(|| Evaluator::new(World::new()).run(&call))
+            let v = Evaluator::new(World::new())
+                .run(&call)
                 .unwrap_or_else(|e| panic!("{src}: ok{point:?} failed: {e:?}"));
             if v == Value::Int(1) {
                 for (o, &x) in out.iter_mut().zip(&point) {

@@ -49,7 +49,7 @@ use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::print;
 use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
 use zed_kernel::types::Type;
-use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
+use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World};
 
 use super::address::Address;
 use super::holes;
@@ -4592,7 +4592,7 @@ impl Scope {
         if pending.is_empty() {
             return;
         }
-        on_stack(|| self.enumerate_on(pending));
+        self.enumerate_on(pending);
     }
 
     fn enumerate_on(&mut self, pending: Vec<(Term, Vec<Arc<str>>, Enumerated)>) {

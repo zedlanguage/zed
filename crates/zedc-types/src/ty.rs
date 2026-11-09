@@ -16,12 +16,12 @@ use std::sync::Arc;
 
 use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::types::{Type as KType, Verdict};
-use zed_kernel::{Universe, Value};
+use zed_kernel::{Items, Universe, Value};
 
 use zedc_syntax::lex::Span;
 
 /// A type.
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Eq)]
 pub struct Ty {
     /// The scalars and atoms, and the kind-wide part: every tuple or every struct as `(..)`
     /// and `{..}` write them (L1.40d), and what narrowing leaves of those. A tuple shape built
@@ -746,8 +746,254 @@ impl std::hash::Hash for Row {
 
 impl fmt::Debug for Row {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_list().entries(&self.0.cs).finish()
+        write_debug(Dbg::Row(self), f)
     }
+}
+
+impl fmt::Debug for Ty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_debug(Dbg::Ty(self), f)
+    }
+}
+
+impl fmt::Debug for Sig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_debug(Dbg::Sig(self), f)
+    }
+}
+
+/// A part of the `Debug` text of a type ([`write_debug`]).
+enum Dbg<'a> {
+    /// Text written as it is.
+    Text(&'static str),
+    /// A part that holds no type, written by its own `Debug`.
+    Leaf(&'a dyn fmt::Debug),
+    Ty(&'a Ty),
+    Row(&'a Row),
+    Shape(&'a Shape),
+    Sig(&'a Sig),
+    Need(&'a Need),
+}
+
+/// Writes `start` as a derived `Debug` writes it on one line, for `{:#?}` too. A type nests as
+/// deep as the program, and the derived `Debug` recursed once a level (100,000 levels overflowed
+/// a 2 MiB stack), so the writing keeps its own stack, as [`write_parts`] does: each part
+/// expands to the parts it is made of, pushed so that they pop in order.
+fn write_debug(start: Dbg, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let mut stack = vec![start];
+    let mut parts = Vec::new();
+    while let Some(d) = stack.pop() {
+        match d {
+            Dbg::Text(s) => f.write_str(s)?,
+            Dbg::Leaf(x) => write!(f, "{x:?}")?,
+            Dbg::Ty(t) => debug_ty(t, &mut parts),
+            Dbg::Row(r) => debug_list(&mut parts, "[", r.iter(), "]", |p, t| p.push(Dbg::Ty(t))),
+            Dbg::Shape(s) => {
+                parts.push(Dbg::Text("Shape { items: "));
+                debug_list(&mut parts, "[", &s.items, "]", |p, t| p.push(Dbg::Ty(t)));
+                parts.push(Dbg::Text(", fields: "));
+                debug_map(&mut parts, &s.fields);
+                parts.push(Dbg::Text(" }"));
+            }
+            Dbg::Sig(s) => debug_sig(s, &mut parts),
+            Dbg::Need(n) => debug_need(n, &mut parts),
+        }
+        stack.extend(parts.drain(..).rev());
+    }
+    Ok(())
+}
+
+/// Pushes `open`, the parts `each` pushes for each of `items`, separated by commas, and
+/// `close`.
+fn debug_list<'a, T>(
+    parts: &mut Vec<Dbg<'a>>,
+    open: &'static str,
+    items: impl IntoIterator<Item = T>,
+    close: &'static str,
+    mut each: impl FnMut(&mut Vec<Dbg<'a>>, T),
+) {
+    parts.push(Dbg::Text(open));
+    for (i, x) in items.into_iter().enumerate() {
+        if i > 0 {
+            parts.push(Dbg::Text(", "));
+        }
+        each(parts, x);
+    }
+    parts.push(Dbg::Text(close));
+}
+
+/// Pushes the parts of a map of names to types.
+fn debug_map<'a>(parts: &mut Vec<Dbg<'a>>, m: &'a BTreeMap<Arc<str>, Ty>) {
+    debug_list(parts, "{", m, "}", |p, (k, t)| {
+        p.extend([Dbg::Leaf(k), Dbg::Text(": "), Dbg::Ty(t)]);
+    });
+}
+
+fn debug_ty<'a>(t: &'a Ty, parts: &mut Vec<Dbg<'a>>) {
+    let Ty {
+        set,
+        tuples,
+        fns,
+        vars,
+        dynamic,
+        family,
+        payloads,
+    } = t;
+    parts.extend([
+        Dbg::Text("Ty { set: "),
+        Dbg::Leaf(set),
+        Dbg::Text(", tuples: "),
+    ]);
+    debug_list(parts, "[", tuples, "]", |p, r| p.push(Dbg::Row(r)));
+    parts.push(Dbg::Text(", fns: "));
+    debug_list(parts, "[", fns, "]", |p, s| p.push(Dbg::Sig(s)));
+    parts.extend([
+        Dbg::Text(", vars: "),
+        Dbg::Leaf(vars),
+        Dbg::Text(", dynamic: "),
+        Dbg::Leaf(dynamic),
+        Dbg::Text(", family: "),
+        Dbg::Leaf(family),
+        Dbg::Text(", payloads: "),
+    ]);
+    debug_list(parts, "{", payloads, "}", |p, (k, shapes)| {
+        p.extend([Dbg::Leaf(k), Dbg::Text(": ")]);
+        match shapes {
+            None => p.push(Dbg::Text("None")),
+            Some(shapes) => {
+                p.push(Dbg::Text("Some("));
+                debug_list(p, "[", shapes, "]", |p, s| p.push(Dbg::Shape(s)));
+                p.push(Dbg::Text(")"));
+            }
+        }
+    });
+    parts.push(Dbg::Text(" }"));
+}
+
+fn debug_sig<'a>(s: &'a Sig, parts: &mut Vec<Dbg<'a>>) {
+    let Sig {
+        params,
+        arrows,
+        bounds,
+        data,
+        word,
+        needs,
+        own,
+        held,
+        named,
+        facts,
+    } = s;
+    parts.extend([
+        Dbg::Text("Sig { params: "),
+        Dbg::Leaf(params),
+        Dbg::Text(", arrows: "),
+    ]);
+    debug_list(parts, "[", arrows, "]", |p, a| {
+        p.push(Dbg::Text("Arrow { params: "));
+        debug_list(p, "[", &a.params, "]", |p, t| p.push(Dbg::Ty(t)));
+        p.extend([Dbg::Text(", result: "), Dbg::Ty(&a.result), Dbg::Text(" }")]);
+    });
+    parts.extend([
+        Dbg::Text(", bounds: "),
+        Dbg::Leaf(bounds),
+        Dbg::Text(", data: "),
+        Dbg::Leaf(data),
+        Dbg::Text(", word: "),
+        Dbg::Leaf(word),
+        Dbg::Text(", needs: "),
+    ]);
+    debug_list(parts, "[", needs, "]", |p, n| p.push(Dbg::Need(n)));
+    parts.extend([
+        Dbg::Text(", own: "),
+        Dbg::Leaf(own),
+        Dbg::Text(", held: "),
+        Dbg::Leaf(held),
+        Dbg::Text(", named: "),
+        Dbg::Leaf(named),
+        Dbg::Text(", facts: "),
+        Dbg::Leaf(facts),
+        Dbg::Text(" }"),
+    ]);
+}
+
+/// Pushes the parts of a need. A kind that holds no type is written by its derived `Debug`;
+/// each is named, so that a kind added with a type is written here.
+fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
+    parts.extend([
+        Dbg::Text("Need { on: "),
+        Dbg::Ty(&n.on),
+        Dbg::Text(", kind: "),
+    ]);
+    match &n.kind {
+        NeedKind::Component { i, key } => parts.extend([
+            Dbg::Text("Component { i: "),
+            Dbg::Leaf(i),
+            Dbg::Text(", key: "),
+            Dbg::Ty(key),
+            Dbg::Text(" }"),
+        ]),
+        NeedKind::Index(t) => parts.extend([Dbg::Text("Index("), Dbg::Ty(t), Dbg::Text(")")]),
+        NeedKind::Call {
+            what,
+            positional,
+            named,
+            curry,
+        } => {
+            parts.extend([Dbg::Text("Call { what: "), Dbg::Leaf(what)]);
+            parts.push(Dbg::Text(", positional: "));
+            debug_list(parts, "[", positional, "]", |p, t| p.push(Dbg::Ty(t)));
+            parts.push(Dbg::Text(", named: "));
+            debug_list(parts, "[", named, "]", |p, (k, t)| {
+                p.extend([
+                    Dbg::Text("("),
+                    Dbg::Leaf(k),
+                    Dbg::Text(", "),
+                    Dbg::Ty(t),
+                    Dbg::Text(")"),
+                ]);
+            });
+            parts.extend([Dbg::Text(", curry: "), Dbg::Leaf(curry), Dbg::Text(" }")]);
+        }
+        NeedKind::Into { what, ty } => parts.extend([
+            Dbg::Text("Into { what: "),
+            Dbg::Leaf(what),
+            Dbg::Text(", ty: "),
+            Dbg::Ty(ty),
+            Dbg::Text(" }"),
+        ]),
+        NeedKind::Narrow(Narrow::Not(t)) => {
+            parts.extend([Dbg::Text("Narrow(Not("), Dbg::Ty(t), Dbg::Text("))")]);
+        }
+        NeedKind::Order {
+            what,
+            word,
+            other,
+            first,
+        } => parts.extend([
+            Dbg::Text("Order { what: "),
+            Dbg::Leaf(what),
+            Dbg::Text(", word: "),
+            Dbg::Leaf(word),
+            Dbg::Text(", other: "),
+            Dbg::Ty(other),
+            Dbg::Text(", first: "),
+            Dbg::Leaf(first),
+            Dbg::Text(" }"),
+        ]),
+        k @ (NeedKind::Destructure { .. }
+        | NeedKind::Data(_)
+        | NeedKind::Payload { .. }
+        | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_))
+        | NeedKind::NoInt(_)
+        | NeedKind::Sum
+        | NeedKind::InDomain { .. }) => parts.push(Dbg::Leaf(k)),
+    }
+    parts.push(Dbg::Text(", result: "));
+    match &n.result {
+        None => parts.push(Dbg::Text("None")),
+        Some(t) => parts.extend([Dbg::Text("Some("), Dbg::Ty(t), Dbg::Text(")")]),
+    }
+    parts.extend([Dbg::Text(", span: "), Dbg::Leaf(&n.span), Dbg::Text(" }")]);
 }
 
 /// The payload an atom was built with, kept in one shared node with what it holds at any depth,
@@ -852,10 +1098,7 @@ impl std::hash::Hash for Shape {
 
 impl fmt::Debug for Shape {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Shape")
-            .field("items", &self.0.items)
-            .field("fields", &self.0.fields)
-            .finish()
+        write_debug(Dbg::Shape(self), f)
     }
 }
 
@@ -1701,7 +1944,7 @@ impl Rebuild for Settle<'_> {
 
 /// A function's signature: its parameters' names and kinds, shared by its arrows, which
 /// together are an intersection, and the carriers each bounded type variable ranges over.
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Eq)]
 pub struct Sig {
     /// The parameters.
     pub params: Vec<SParam>,
@@ -4700,24 +4943,25 @@ impl Ty {
 
     /// The meet with `t`, as an `is` test narrows: what of `self` is also in `t`.
     pub fn meet(&self, t: &Ty) -> Ty {
+        if self.tuples.is_empty() || t.tuples.is_empty() {
+            return self.meet_rest(t, Vec::new());
+        }
+        let memo = RefCell::default();
+        let pairs = Pairs {
+            stack: Stack::default(),
+            memo: &memo,
+        };
+        pairs.stack.run(pairs.meet(self, t))
+    }
+
+    /// [`Self::meet`] with `met`, the meets of the pairs of its tuples and `t`'s.
+    fn meet_rest(&self, t: &Ty, mut met: Vec<Row>) -> Ty {
         if t.dynamic {
             return self.clone();
         }
         let mut out = Ty::set(&self.set & &t.set);
         out.family = &self.family & &out.set;
         out.payloads = self.payloads.clone();
-        let mut met = Vec::new();
-        // Only the pairs of tuples that may share a value are met ([`near_pairs`]): the meet of
-        // any other pair has an empty component and is left out, so the tuples and their order
-        // are those of meeting every pair of one length.
-        for (a, near) in self.tuples.iter().zip(near_pairs(&self.tuples, &t.tuples)) {
-            for b in near.into_iter().map(|j| &t.tuples[j]) {
-                let cs: Vec<Ty> = a.iter().zip(b).map(|(x, y)| x.meet(y)).collect();
-                if cs.iter().all(|c| !c.is_empty()) {
-                    met.push(Row::new(cs));
-                }
-            }
-        }
         // A kind-wide part of one side keeps the other's shapes it holds whole; of a shape it
         // holds in part, the part goes to the set, where the kernel holds it exactly. A shape
         // with no kernel type is kept, which may be more than the meet.
@@ -4965,26 +5209,55 @@ impl Ty {
 
     /// Whether the value `v` is in it; a variable or the unknown holds every value.
     pub fn contains(&self, v: &Value) -> bool {
+        self.contains_here(v).unwrap_or_else(|items| {
+            let memo = RefCell::default();
+            let pairs = Pairs {
+                stack: Stack::default(),
+                memo: &memo,
+            };
+            pairs.stack.run(pairs.contains(self, items))
+        })
+    }
+
+    /// Whether the value `v` is in it, when that is known without reading its tuples: unless
+    /// `v` is a tuple outside its set and it has a tuple of `v`'s length, whose components
+    /// are given to be read.
+    fn contains_here<'v>(&self, v: &'v Value) -> Result<bool, &'v Items> {
         if self.dynamic || !self.vars.is_empty() {
-            return true;
+            return Ok(true);
         }
-        match v {
+        Ok(match v {
             Value::Tuple(items) => {
-                self.set.contains(v)
-                    || self.tuples.iter().any(|cs| {
-                        cs.len() == items.len() && cs.iter().zip(items).all(|(c, x)| c.contains(x))
-                    })
+                let here = self.set.contains(v);
+                if !here && self.tuples.iter().any(|cs| cs.len() == items.len()) {
+                    return Err(items);
+                }
+                here
             }
             Value::Family(_) => self.fns.iter().any(|s| s.data),
             Value::Path(_) => !self.fns.is_empty() || self.set.contains(v),
             _ => self.set.contains(v),
-        }
+        })
     }
 
     /// Whether `self` and `other` may share a value.
     pub fn meets(&self, other: &Ty) -> bool {
+        self.meets_here(other).unwrap_or_else(|| {
+            let memo = RefCell::default();
+            let pairs = Pairs {
+                stack: Stack::default(),
+                memo: &memo,
+            };
+            pairs.stack.run(pairs.meets(self, other))
+        })
+    }
+
+    /// Whether `self` and `other` may share a value, when that is known without reading their
+    /// tuples, which it is unless each has a tuple of a length the other has and nothing else
+    /// of them meets.
+    fn meets_here(&self, other: &Ty) -> Option<bool> {
         if !self.closed() || !other.closed() {
-            return true;
+            return Some(true);
         }
         // A shape meets the other side's kind-wide part when the kernel finds a common value;
         // a shape with no kernel type may.
@@ -4995,16 +5268,123 @@ impl Ty {
                     .iter()
                     .any(|cs| cs.kernel().is_none_or(|k| !(&k & &w).is_empty()))
         };
-        !(&self.set & &other.set).is_empty()
+        if !(&self.set & &other.set).is_empty()
             || wide_meets(self, other)
             || wide_meets(other, self)
-            || self.tuples.iter().any(|a| {
-                other
-                    .tuples
-                    .iter()
-                    .any(|b| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.meets(y)))
-            })
             || (!self.fns.is_empty() && !other.fns.is_empty())
+        {
+            return Some(true);
+        }
+        if self.tuples.is_empty() || other.tuples.is_empty() {
+            return Some(false);
+        }
+        let lengths: HashSet<usize> = other.tuples.iter().map(|b| b.len()).collect();
+        match self.tuples.iter().any(|a| lengths.contains(&a.len())) {
+            true => None,
+            false => Some(false),
+        }
+    }
+}
+
+/// A walk of the tuples of two types, or of a type and a value, side by side: [`Ty::meet`],
+/// [`Ty::meets`] and [`Ty::contains`]. Tuples nest as deep as the program, and each recursed
+/// once a level (100,000 levels overflowed a 2 MiB stack), so a pair of components whose
+/// answer needs their own tuples is walked in a frame of its own ([`Stack`]), in the order the
+/// recursion took. A pair of nodes shared at many places is walked once: its answer is kept
+/// by the addresses of the two, which stay put while both are borrowed, so a type with `2^n`
+/// paths through `n` tuples costs `O(n)` pairs, not `2^n`.
+struct Pairs<'m, K, V> {
+    stack: Stack<'m>,
+    /// The answer for each pair walked, by the addresses of the two.
+    memo: &'m RefCell<HashMap<K, V>>,
+}
+
+impl<'m, K: std::hash::Hash + Eq + Copy + 'm, V: Clone + Unpin + 'm> Pairs<'m, K, V> {
+    /// The answer kept for `key`, or the one `walk` makes in a frame of its own, then kept.
+    fn kept<F: Future<Output = V> + 'm>(
+        &'m self,
+        key: K,
+        walk: impl FnOnce() -> F + 'm,
+    ) -> Deep<'m, V> {
+        if let Some(v) = self.memo.borrow().get(&key) {
+            return Stack::ready(v.clone());
+        }
+        self.stack.call(move || async move {
+            let v = walk().await;
+            self.memo.borrow_mut().insert(key, v.clone());
+            v
+        })
+    }
+}
+
+impl<'m> Pairs<'m, (*const Ty, *const Ty), Ty> {
+    /// [`Ty::meet`] of `a` and `t`, which both hold tuples.
+    async fn meet(&'m self, a: &'m Ty, t: &'m Ty) -> Ty {
+        if t.dynamic {
+            return a.clone();
+        }
+        let mut met = Vec::new();
+        // Only the pairs of tuples that may share a value are met ([`near_pairs`]): the meet of
+        // any other pair has an empty component and is left out, so the tuples and their order
+        // are those of meeting every pair of one length.
+        for (r, near) in a.tuples.iter().zip(near_pairs(&a.tuples, &t.tuples)) {
+            'pair: for s in near.into_iter().map(|j| &t.tuples[j]) {
+                let mut cs = Vec::with_capacity(r.len());
+                for (x, y) in r.iter().zip(s) {
+                    let c = match x.tuples.is_empty() || y.tuples.is_empty() {
+                        true => x.meet_rest(y, Vec::new()),
+                        false => self.kept((x, y), move || self.meet(x, y)).await,
+                    };
+                    // A row with an empty component is left out, whatever the rest meet to.
+                    if c.is_empty() {
+                        continue 'pair;
+                    }
+                    cs.push(c);
+                }
+                met.push(Row::new(cs));
+            }
+        }
+        a.meet_rest(t, met)
+    }
+}
+
+impl<'m> Pairs<'m, (*const Ty, *const Ty), bool> {
+    /// [`Ty::meets`] of `a` and `b`, whose tuples decide it.
+    async fn meets(&'m self, a: &'m Ty, b: &'m Ty) -> bool {
+        for r in &a.tuples {
+            'pair: for s in b.tuples.iter().filter(|s| s.len() == r.len()) {
+                for (x, y) in r.iter().zip(s) {
+                    let met = match x.meets_here(y) {
+                        Some(m) => m,
+                        None => self.kept((x, y), move || self.meets(x, y)).await,
+                    };
+                    if !met {
+                        continue 'pair;
+                    }
+                }
+                return true;
+            }
+        }
+        false
+    }
+}
+
+impl<'m> Pairs<'m, (*const Ty, *const Value), bool> {
+    /// [`Ty::contains`] of `t` and a tuple of `items`, which its tuples decide.
+    async fn contains(&'m self, t: &'m Ty, items: &'m Items) -> bool {
+        'row: for r in t.tuples.iter().filter(|r| r.len() == items.len()) {
+            for (c, x) in r.iter().zip(items) {
+                let held = match c.contains_here(x) {
+                    Ok(h) => h,
+                    Err(inner) => self.kept((c, x), move || self.contains(c, inner)).await,
+                };
+                if !held {
+                    continue 'row;
+                }
+            }
+            return true;
+        }
+        false
     }
 }
 
