@@ -815,3 +815,81 @@ fn a_disjunct_with_no_point_beside_a_point_gives_one_answer_in_every_writing() {
         );
     }
 }
+
+/// A pipeline of `n` stages, each with a state `y[k]` that is 0 (idle) or 2 (drained), a
+/// state of 1 (stalled) or a credit `z[k] >= 0`, and a credit of at most 5; with `chain`,
+/// each stage's state at most 2 above the next one's. No stage can stall, but that shows only
+/// beside the stage's other choice, so each test of a choice reads the stage's rows (item
+/// PROJECT-dead2-quadratic). `zn` names the credits, so that two namings can be compared.
+fn dead2(n: usize, chain: bool, zn: &str) -> Formula {
+    let y = |k: usize| format!("y{k}");
+    let z = |k: usize| format!("{zn}{k}");
+    let mut fs = Vec::new();
+    for k in 0..n {
+        if chain && k + 1 < n {
+            fs.push(ge(&[(&y(k + 1), 1), (&y(k), -1)], 2));
+        }
+        fs.push(Formula::or(vec![
+            eq(&[(&y(k), 1)], 0),
+            eq(&[(&y(k), 1)], -2),
+        ]));
+        fs.push(Formula::or(vec![
+            eq(&[(&y(k), 1)], -1),
+            ge(&[(&z(k), 1)], 0),
+        ]));
+        fs.push(ge(&[(&z(k), -1)], 5));
+    }
+    Formula::and(fs)
+}
+
+/// The hulls are those the code before PROJECT-dead2-quadratic gave, under either naming of
+/// the credits, chained or not: a state in {0, 2}, a credit at most 5. The
+/// credit's hull has no lower bound, though no stage can stall and so a credit is at least
+/// 0: a sound hull, not the least, given alike before and after.
+#[test]
+fn pipeline_stage_hulls_match_the_code_before() {
+    for chain in [false, true] {
+        for zn in ["z", "a"] {
+            for n in [1, 4, 16, 128] {
+                let f = dead2(n, chain, zn);
+                let last = n - 1;
+                let syms = [
+                    sym(&format!("{zn}0")),
+                    sym("y0"),
+                    sym(&format!("{zn}{last}")),
+                    sym(&format!("y{last}")),
+                ];
+                let (each, skipped) =
+                    zedc::store::presburger::project_each(&f, &syms).expect("answered");
+                let hulls: Vec<String> = (each.iter())
+                    .map(|h| h.as_ref().expect("not refused").to_string())
+                    .collect();
+                assert_eq!(
+                    hulls,
+                    ["[..=5]", "[0..=0, 2..=2]", "[..=5]", "[0..=0, 2..=2]"],
+                    "n = {n}, chain = {chain}, credits {zn}"
+                );
+                assert!(skipped.is_empty());
+            }
+        }
+    }
+}
+
+/// Projecting the first credit of a chained pipeline of `n` stages costs O(n log n): each
+/// choice is tested against the rows projected onto its own stage, not against the whole
+/// chain, which cost `n` solves of `n` rows before (40.6 times the instructions from 16 to
+/// 128 stages).
+#[test]
+fn project_each_on_a_chained_pipeline_scales() {
+    let (small, large) = (dead2(16, true, "z"), dead2(16 * scaling::FACTOR, true, "z"));
+    let syms = [sym("z0")];
+    scaling::check_order(
+        "the first credit of a chained pipeline of stages",
+        16,
+        1,
+        |n| {
+            let f = if n == 16 { &small } else { &large };
+            let _ = std::hint::black_box(zedc::store::presburger::project_each(f, &syms));
+        },
+    );
+}

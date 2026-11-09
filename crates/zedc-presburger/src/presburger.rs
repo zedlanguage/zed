@@ -1683,6 +1683,14 @@ fn unordered(vars: Vec<Atom>, p: &Parts) -> Refusal {
 /// the names, changes no result. The cost is that of [`settle`] with the points of later
 /// stages unused, at most one test of each disjunct for each round.
 ///
+/// While the point holds, a disjunct is tested first against the base projected onto the
+/// atoms of its disjunction ([`stage_kernels`]), as [`settle`] and [`project_parts`] test
+/// theirs, and against the base rows linked to it only when the solver refuses that. The
+/// projection has a point with the disjunct exactly when the base has one, so where both
+/// tests answer they answer alike, and the answer is a fact of the rows, not of their order.
+/// On a chain of `n` stages with a disjunction at each, every test read the whole chain
+/// before, `n` solves of `n` rows (COMPLEXITY.md PROJECT-dead2-quadratic).
+///
 /// A disjunct is kept when its test finds a point or is refused, so a disjunct kept is not
 /// shown to have a point: [`AsSets::proven`] says which were. The last round adds nothing to
 /// the base (a round that adds rows is not the last), so each disjunct left was tested in it
@@ -1704,13 +1712,26 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
         let mut stage = std::mem::take(&mut p.ors);
         while !stage.is_empty() {
             let mut alone: Vec<Rc<Parts>> = Vec::new();
-            for ds in stage {
+            let kernels = stage_kernels(&base, &stage, at_model.then_some(&model));
+            for (ds, kernel) in stage.into_iter().zip(kernels) {
                 let n = ds.len();
                 // Each disjunct not shown empty, and whether it is shown to have a point.
                 let (mut live, shown): (Vec<Rc<Parts>>, Vec<bool>) = (ds.into_iter())
                     .filter_map(|d| {
                         if at_model && d.cons.iter().all(|c| c.holds(&model)) {
                             return Some((d, true));
+                        }
+                        // Asked of the base projected onto the disjunction's atoms, which has
+                        // a point with the disjunct exactly when the base has one; when the
+                        // solver refuses that, of the base's groups, as before.
+                        if let Some(k) = &kernel {
+                            let mut cs = k.around(&d.cons);
+                            cs.extend(d.cons.iter());
+                            match solve(&cs, false) {
+                                Ok(None) => return None,
+                                Ok(Some(_)) => return Some((d, true)),
+                                Err(_) => {}
+                            }
                         }
                         let mut cs = base.around(&d.cons);
                         cs.extend(d.cons.iter());
@@ -1749,6 +1770,41 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
             return Ok(Some(AsSets { p, proven }));
         }
     }
+}
+
+/// For each disjunction of `stage`, the rows of `base` projected ([`by_halves`]) onto the atoms
+/// of its disjuncts' own constraints, when `model`, a point of the base, is given and a
+/// disjunct does not hold there, so that one is asked; otherwise `None` for each. The stage
+/// adds no rows to the base while it is tested, so every projection is of the base as the
+/// stage began. On a chain or a tree of `m` rows, `k` disjunctions cost O((m + k) log k)
+/// instead of a solve of the whole linked group for each disjunct.
+fn stage_kernels(
+    base: &Linked,
+    stage: &[Vec<Rc<Parts>>],
+    model: Option<&Model>,
+) -> Vec<Option<Linked>> {
+    let mut kernels: Vec<Option<Linked>> = stage.iter().map(|_| None).collect();
+    let asks =
+        model.is_some_and(|m| (stage.iter().flatten()).any(|d| !d.cons.iter().all(|c| c.holds(m))));
+    if !asks || old_path() {
+        return kernels;
+    }
+    let keep: Vec<BTreeSet<Atom>> = (stage.iter())
+        .map(|ds| {
+            (ds.iter())
+                .flat_map(|d| d.cons.iter().flat_map(|c| c.lin.terms.keys().cloned()))
+                .collect()
+        })
+        .collect();
+    let rows: Vec<Con> = (base.around_atoms(keep.iter().flatten()).into_iter())
+        .cloned()
+        .collect();
+    let filled: Result<(), ()> = by_halves(rows, &keep, |i, k| {
+        kernels[i] = k.map(Linked::of);
+        Ok(Vec::new())
+    });
+    filled.expect("no leaf fails");
+    kernels
 }
 
 /// The parts that [`settle_as_sets`] leaves, and for each disjunction left, in the order of
@@ -11145,6 +11201,52 @@ mod by_halves_against_old {
         }
         assert_eq!(cases, 600);
         eprintln!("hulls narrower than the old path's: {narrower}");
+    }
+
+    /// `n` stages, each `y[k]` in `{0, -2}` with `y[k] == -1 or z[k] >= 0` and `z[k] <= 5`,
+    /// with `chain`, `y[k+1] - y[k] >= -2` linking each stage to the next (item
+    /// PROJECT-dead2-quadratic). The disjunct `y[k] == -1` has no point, but only beside the
+    /// other disjunction of its stage, so each test of a disjunct reads the stage's rows.
+    fn dead2(n: usize, chain: bool) -> (Formula, Vec<Atom>) {
+        let a = |s: &str, k: usize| Atom::Sym(format!("{s}{k}").into());
+        let (y, z) = (|k| Lin::atom(a("y", k)), |k| Lin::atom(a("z", k)));
+        let k = Lin::constant;
+        let mut fs = Vec::new();
+        for i in 0..n {
+            if chain && i + 1 < n {
+                fs.push(ge(y(i + 1).minus(&y(i)).plus(&k(2))));
+            }
+            fs.push(Formula::or(vec![eq(y(i)), eq(y(i).plus(&k(2)))]));
+            fs.push(Formula::or(vec![eq(y(i).plus(&k(1))), ge(z(i))]));
+            fs.push(ge(k(5).minus(&z(i))));
+        }
+        let syms = (0..n).flat_map(|i| [a("y", i), a("z", i)]).collect();
+        (Formula::and(fs), syms)
+    }
+
+    /// The stages' disjunctions tested against the base projected onto their atoms
+    /// ([`stage_kernels`]) give the hulls of the old path, which tested each against the
+    /// base's whole group, on every symbol: `y` in `{-2, 0}`, `z` in `[..=5]`.
+    #[test]
+    fn dead2_hulls_are_those_of_the_old_path() {
+        for chain in [false, true] {
+            for n in [1, 2, 3, 8, 17] {
+                let (f, syms) = dead2(n, chain);
+                let new = project_each(&f, &syms).expect("answered");
+                let old = old(|| project_each(&f, &syms)).expect("answered");
+                assert_eq!(new.0, old.0, "n = {n}, chain = {chain}");
+                assert_eq!((new.1.len(), old.1.len()), (0, 0));
+                for (h, s) in new.0.iter().zip(&syms) {
+                    let h = h.as_ref().expect("not refused").to_string();
+                    let want = if s.to_string().starts_with('y') {
+                        "[-2..=-2, 0..=0]"
+                    } else {
+                        "[..=5]"
+                    };
+                    assert_eq!(h, want, "{s}, n = {n}, chain = {chain}");
+                }
+            }
+        }
     }
 }
 
