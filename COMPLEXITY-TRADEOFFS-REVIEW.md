@@ -334,3 +334,25 @@ Line numbers are those before this review's edits.
 | `trivial.rs:682` (shared-field atom) | b1c9b0de | split by end symbol, wrong (loses agreement) | O(p log p) plus pairs, cubic in the atom | time and space cubic | complete | none |
 
 Observation, not changed (outside a comment-only item): in `group_oracle.rs` the tuple rounds build every combination of up to 6 values per component (6^w) before keeping the first 36; taking 36 while building would bound the work by 36 per tuple type.
+
+## crates/zedc-lattice
+
+15 sites. Most are widenings and narrowings: the naive version is the plain join or meet, whose chains need not end, and the used version bounds the chain length; the tradeoff is precision. Line numbers are those before the edits.
+
+| Site | Commit | Naive version, complexity | Used version, complexity | Tradeoffs | Before | Action |
+|---|---|---|---|---|---|---|
+| `affine.rs:489` `widen` | 44d370e7 | join, chains need not end | bounds only shrink: at most one change per first bound, plus O(\|K\|) | new symbolic bounds dropped | partial | added naive/used sentence |
+| `affine.rs:511` `narrow` | e86e485d | meet, chains need not end | each side changes at most once | tighter symbolic bound not taken | complete | none |
+| `affine.rs:533` `leq` | 44d370e7 | Presburger entailment | linear in the bounds | false where below with other terms | complete | none |
+| `interval.rs:324` `widen` | 44d370e7 | no widening, need not end | O(\|K\|) evaluations of a head | bound not named by a literal lost | complete | none |
+| `interval.rs:393` `narrow` | e86e485d | meet, need not end | O(\|K\|) elements | tighter bound between landmarks lost | complete | none |
+| `interval.rs:587` bit-word transfer | bc75c161 | exact image, search over the pieces' digits | hull, O(1) per word; shifts O(pieces) | holes not carried | complete | none |
+| `interval.rs:628` single kept operands | 9fd9e552 | kept-form rules | written out, its digits | exact | complete | none |
+| `lattice.rs:213` congruence narrow | 44d370e7 | meet, need not end | at most three changes | larger modulus not taken | complete | none |
+| `lattice.rs:273` finite-set widen | 44d370e7 | join, need not end | once per landmark | all members lost at the top | complete | none |
+| `lattice.rs:383` type widen | 6f016efe | join, need not end | each part at most once | members of a base type lost | complete | none |
+| `lattice.rs:406` type narrow | 6f016efe | meet, need not end | each part at most once | smaller `next` not taken | complete | none |
+| `revision.rs:327` image of pairs | 44d370e7 | k·m pieces, k^n over a chain | at most 4(k + 2) pairs, linear | merged pieces fill gaps | complete | none |
+| `revision.rs:488` | 007abbf8 | reference: `pow_end` | | root exact or bounded | complete (reference) | none |
+| `revision.rs:503` | 9e139638 | reference: `pow_end` | | | complete (reference) | none |
+| `revision.rs:538` `pow_end` | 9e139638 | kept-exponent atom, comparisons not specified; expansion squares terms 32 times | bound `2 ^ u32::MAX` or infinite, O(1) | end not exact | complete | none |

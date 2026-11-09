@@ -494,6 +494,8 @@ impl Lattice for Bounds {
     /// `l01_24_refinement_lattices::loops::a_counting_loop_keeps_its_symbolic_bound`.
     /// COMPLEXITY.md row C12. A complete solution would find loop invariants over the symbols
     /// (polyhedra or acceleration of affine loops), at exponential cost in the symbols.
+    /// Naive version: the join, whose chains need not end; used: a chain of widenings changes at
+    /// most once per bound of its first element, plus the interval widening's O(|K|) steps.
     fn widen(&self, next: &Self, marks: &Landmarks) -> Self {
         if *self == Bounds::bottom() {
             return next.clone();
