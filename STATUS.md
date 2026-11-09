@@ -1653,7 +1653,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| TEST-audit | audit attempt 1 | 2026-11-08 13:02 | done: REPORT.md complete (Part 1: 156 checks, 89 committed, 46 partial, 13 missing; Part 2: 93.9% lines, 93.6% regions, 718 never-run functions; Part 3: 882 beh |
 | TRIVIAL-models-study | impl attempt 1 | 2026-11-09 01:16 | ready: impl af2e4d70 on 07dca94a, spec ff57e5e on 9bf5aaf; work-counted budget, union-find clause check, 21 tests pass; TRIVIAL-shared-atom left open |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
