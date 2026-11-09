@@ -32,10 +32,11 @@
 //! between each class's holes walked once, and once for each division whose remainder the
 //! class holds.
 
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::holes::{Holes, hole_of};
-use super::{Atom, Con, Formula, Id, Lin, Rel, unit_classes};
+use super::{Atom, Con, Formula, Id, Lin, Rel};
 use zedc_int::int::Int;
 
 /// What the intervals and residues left say of a formula read with holes.
@@ -529,6 +530,138 @@ pub(super) fn read(f: &Formula, holes: &[(&Atom, &Holes)]) -> Reading {
         }
     }
     Reading::Within(within)
+}
+
+/// What each atom of `read` equals by the two-term equalities among `rows`, for
+/// [`split`](super::split): the
+/// atoms that equalities `a == b + c` and `a == -b + c` link form classes, each written as
+/// `s * r + d` (`s` 1 or -1) of one atom `r` of its class, an atom of `keep` where the class
+/// holds one, else the least; an atom of `read` that is the `r` of its class, or in none, and
+/// that an equality `k * a + e * b + c == 0` with `k` 1 or -1 sets, equals `-k * (e * b + c)`,
+/// `b` written as its class's, by the first such row. So the clauses of a chain whose links
+/// bind `x@{i-1} == x@i + 12` read the caller's atom however deep the chain, and not that of
+/// the link below (LOAD-bound-holes). Exact, since the rows stay. Time of the rows, near
+/// linear: a union of the classes by their atoms, each path compressed on the way.
+pub(super) fn unit_classes(
+    rows: &[impl Borrow<Con>],
+    read: &HashSet<Atom>,
+    keep: &HashSet<Atom>,
+) -> (HashMap<Atom, Lin>, HashMap<Atom, Lin>) {
+    // Each atom's index, and for each index the one it is set by: `(s, up, d)`, the atom
+    // equal to `s` times that at `up` plus `d`.
+    let mut index: HashMap<&Atom, usize> = HashMap::new();
+    let mut atoms: Vec<&Atom> = Vec::new();
+    let mut up: Vec<(Int, usize, Int)> = Vec::new();
+    type Term<'c> = (&'c Atom, &'c Int);
+    fn unit(c: &Con) -> Option<(Term<'_>, Term<'_>)> {
+        let mut terms = c.lin.terms.iter();
+        match (c.rel, terms.next(), terms.next(), terms.next()) {
+            (Rel::Eq, Some(x), Some(y), None) => Some((x, y)),
+            _ => None,
+        }
+    }
+    for c in rows.iter().map(Borrow::<Con>::borrow) {
+        let Some(((a, _), (b, _))) = unit(c) else {
+            continue;
+        };
+        for x in [a, b] {
+            if !index.contains_key(x) {
+                index.insert(x, atoms.len());
+                up.push((Int::ONE, atoms.len(), Int::ZERO));
+                atoms.push(x);
+            }
+        }
+    }
+    // The root of `i`, as `(s, r, d)`: the atom at `i` equals `s` times that at `r` plus `d`.
+    fn find(up: &mut [(Int, usize, Int)], i: usize) -> (Int, usize, Int) {
+        let (mut s, mut r, mut d) = (Int::ONE, i, Int::ZERO);
+        let mut path: Vec<usize> = Vec::new();
+        while up[r].1 != r {
+            path.push(r);
+            let (t, n, e) = up[r].clone();
+            // x == s·r + d and r == t·n + e, so x == s·t·n + s·e + d.
+            d = &(&s * &e) + &d;
+            s = &s * &t;
+            r = n;
+        }
+        // Each atom on the path set by the root directly, its value as above.
+        let (mut t, mut e) = (Int::ONE, Int::ZERO);
+        for &p in path.iter().rev() {
+            let (u, _, f) = up[p].clone();
+            // p == u·next + f and next == t·root + e.
+            e = &(&u * &e) + &f;
+            t = &u * &t;
+            up[p] = (t.clone(), r, e.clone());
+        }
+        (s, r, d)
+    }
+    let prefer = |x: &Atom, y: &Atom| (!keep.contains(x), x) < (!keep.contains(y), y);
+    for c in rows.iter().map(Borrow::<Con>::borrow) {
+        let Some(((a, k), (b, e))) = unit(c) else {
+            continue;
+        };
+        if k.abs() != Int::ONE || e.abs() != Int::ONE {
+            continue;
+        }
+        // k·a + e·b + c0 == 0, so a == -k·e·b - k·c0.
+        let (m, c0) = (-&(k * e), -&(k * &c.lin.constant));
+        let (sa, ra, da) = find(&mut up, index[a]);
+        let (sb, rb, db) = find(&mut up, index[b]);
+        if ra == rb {
+            continue;
+        }
+        // sa·ra + da == m·(sb·rb + db) + c0.
+        match prefer(atoms[ra], atoms[rb]) {
+            // rb == m·sb·(sa·ra + da - m·db - c0).
+            true => {
+                let f = &m * &sb;
+                let d = &f * &(&(&da - &(&m * &db)) - &c0);
+                up[rb] = (&f * &sa, ra, d);
+            }
+            // ra == sa·(m·sb·rb + m·db + c0 - da).
+            false => {
+                let d = &sa * &(&(&(&m * &db) + &c0) - &da);
+                up[ra] = (&(&sa * &m) * &sb, rb, d);
+            }
+        }
+    }
+    let lin = |s: Int, r: usize, d: Int| Lin {
+        terms: std::iter::once((atoms[r].clone(), s)).collect(),
+        constant: d,
+    };
+    let mut to: HashMap<Atom, Lin> = HashMap::new();
+    for (i, &a) in atoms.iter().enumerate() {
+        let (s, r, d) = find(&mut up, i);
+        if r != i && !keep.contains(a) {
+            to.insert(a.clone(), lin(s, r, d));
+        }
+    }
+    let mut also: HashMap<Atom, Lin> = HashMap::new();
+    for c in rows.iter().map(Borrow::<Con>::borrow) {
+        let Some(((x, kx), (y, ky))) = unit(c) else {
+            continue;
+        };
+        for ((a, k), (b, e)) in [((x, kx), (y, ky)), ((y, ky), (x, kx))] {
+            if k.abs() != Int::ONE
+                || !read.contains(a)
+                || to.contains_key(a)
+                || also.contains_key(a)
+            {
+                continue;
+            }
+            let (s, r, d) = find(&mut up, index[b]);
+            if r == index[a] {
+                continue;
+            }
+            // k·a + e·(s·r + d) + c0 == 0, so a == -k·e·s·r - k·(e·d + c0).
+            let set = Lin {
+                terms: std::iter::once((atoms[r].clone(), -&(&(k * e) * &s))).collect(),
+                constant: -&(k * &(&(e * &d) + &c.lin.constant)),
+            };
+            also.insert(a.clone(), set);
+        }
+    }
+    (to, also)
 }
 
 #[cfg(test)]
