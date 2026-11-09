@@ -26,6 +26,7 @@ use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
 use zed_kernel::types::Type;
 use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::instances::Rng;
+use zed_tests::scaling;
 use zedc::store::affine::Bounds;
 use zedc::store::cell::{Premise, Premises};
 use zedc::store::interval::{End, IntervalSet};
@@ -430,4 +431,66 @@ fn the_change_flag_matches_a_comparison() {
         changed += usize::from(flagged != start);
     }
     assert!(changed > 10_000, "{changed} products changed");
+}
+
+/// A term `d` deep over the integer `x`, of one of five forms, each level `k` built around
+/// the one below, `t`:
+///
+/// 0. a block bound inside a bound block, `z_k = { t }; z_k + 1`;
+/// 1. an `if` whose arms are not literals, bound in the arm of another,
+///    `if x > k { z_k = t; z_k } else { x }`;
+/// 2. a literal-armed `if` bound in each nested arm,
+///    `if x > k { z_k = if x > k + 1 { 1 } else { 2 }; t } else { x }`;
+/// 3. a chain of literal-armed `if`s bound one after another,
+///    `z_k = if x > k { 1 } else { 2 }; t`;
+/// 4. `if`s nested in arms, `if x > k { t } else { x }`.
+fn nest(form: u8, d: i64) -> Term {
+    let gt = |n| prim(Prim::Gt, vec![var("x"), int(n)]);
+    (0..d).fold(var("x"), |t, k| {
+        let z = format!("z{k}");
+        match form {
+            0 => let_(&z, t, prim(Prim::Add, vec![var(&z), int(1)])),
+            1 => if_(gt(k), let_(&z, t, var(&z)), var("x")),
+            2 => if_(gt(k), let_(&z, if_(gt(k + 1), int(1), int(2)), t), var("x")),
+            3 => let_(&z, if_(gt(k), int(1), int(2)), t),
+            _ => if_(gt(k), t, var("x")),
+        }
+    })
+}
+
+/// The five forms of [`nest`], deep: the random blocks are at most three deep.
+#[test]
+fn one_pass_and_transfer_agree_on_deep_nests() {
+    let scope = ints(&["x".into()]);
+    for (form, d) in [(0, 64), (1, 32), (2, 128), (3, 256), (4, 256)] {
+        let t = nest(form, d);
+        let one = arms_and_value(&t, &scope);
+        if let Some(diff) = difference(&one, &arms_and_value_by_transfer(&t, &scope)) {
+            panic!("form {form}, {d} deep: {diff}");
+        }
+    }
+}
+
+/// The walk and its reference are linear in the depth of a chain of literal-armed `if`s and
+/// of `if`s nested in arms. The other three forms of [`nest`] are not, in either: a binding
+/// costs the size of its bound term (`Scope::bind` summarizes it), and the value of an `if`
+/// whose arms are not literals reads its arms again (COMPLEXITY.md row PA-if-shortcut-diff).
+#[test]
+fn one_pass_and_transfer_scale_on_deep_nests() {
+    let scope = ints(&["x".into()]);
+    for (form, what) in [
+        (
+            3,
+            "a chain of `k` literal-armed `if`s bound one after another",
+        ),
+        (4, "`if`s nested `k` deep in arms"),
+    ] {
+        let terms = scaling::inputs(64, |k| nest(form, k as i64));
+        scaling::check(&format!("the one pass over {what}"), 64, |k| {
+            arms_and_value(&terms[&k], &scope);
+        });
+        scaling::check(&format!("the reference over {what}"), 64, |k| {
+            arms_and_value_by_transfer(&terms[&k], &scope);
+        });
+    }
 }

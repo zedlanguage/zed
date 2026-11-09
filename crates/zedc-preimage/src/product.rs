@@ -5720,6 +5720,10 @@ struct Run<'m> {
     out: RefCell<Vec<Arm>>,
     /// How many tests the walk has met: the position of the next test's premise.
     count: std::cell::Cell<u32>,
+    /// Whether [`Run::walk_value`] takes the value of an `if` with a literal in each arm from
+    /// the arms it reached; off only in the reference walk of the test that checks it
+    /// (`arms_and_value_by_transfer`, built with the feature `preimage-ref`).
+    shortcut: bool,
 }
 
 impl<'m> Run<'m> {
@@ -5730,6 +5734,7 @@ impl<'m> Run<'m> {
             inner: RefCell::new(Vec::new()),
             out: RefCell::new(Vec::new()),
             count: std::cell::Cell::new(0),
+            shortcut: true,
         }
     }
 
@@ -5856,7 +5861,9 @@ impl<'m> Run<'m> {
             }
             // A literal in each arm: the value is the literal of each arm some state reaches,
             // which the walk's scopes of the arms tell, so the test is not assumed again.
-            Term::If(c, a, b) if matches!((&**a, &**b), (Term::Lit(_), Term::Lit(_))) => {
+            Term::If(c, a, b)
+                if self.shortcut && matches!((&**a, &**b), (Term::Lit(_), Term::Lit(_))) =>
+            {
                 let reached = self.walk_if(c, a, b).await;
                 let value = |reached: bool, arm: &Term| match arm {
                     Term::Lit(v) if reached => Product::literal(v),
@@ -6095,19 +6102,19 @@ pub fn arms_and_value(term: &Term, scope: &Scope) -> (Vec<Arm>, Product) {
     (run.out.take(), p)
 }
 
-/// The arms of `term` and its value as the walk found them before PA-bind-cost: each `let`'s
-/// bound term walked for its arms and then given its value by the forward transfer
-/// ([`forward`]), which assumes each test again, with no premise. It costs what that walk
-/// cost: a block bound inside a bound block `d` deep is given its value again at each level,
-/// `O(d²)` bindings, so it is for tests on small terms (COMPLEXITY.md row PA-if-shortcut-diff).
-/// Built only with the feature `preimage-ref`.
+/// The arms of `term` and its value as the walk finds them without its shortcut for an `if`
+/// with a literal in each arm: such an `if`, as any other, is walked for its arms and then
+/// given its value by the forward transfer ([`forward`]), which assumes its test again, with no
+/// premise. Each `let` binds its value once, as in [`arms_and_value`], so the two cost the same
+/// order. The reference for the test of the shortcut (PA-if-shortcut-diff); built only with the
+/// feature `preimage-ref`.
 #[cfg(feature = "preimage-ref")]
 #[doc(hidden)]
 pub fn arms_and_value_by_transfer(term: &Term, scope: &Scope) -> (Vec<Arm>, Product) {
     let mut scope = scope.clone();
-    let run = Run::new(&mut scope);
-    run.stack.run(run.walk_by_transfer(term));
-    let p = run.stack.run(run.forward(term));
+    let mut run = Run::new(&mut scope);
+    run.shortcut = false;
+    let p = run.stack.run(run.walk_value(term));
     (run.out.take(), p)
 }
 
@@ -6119,64 +6126,6 @@ impl Product {
     #[doc(hidden)]
     pub fn reduce_domains_once(&mut self) -> bool {
         self.reduce_domains()
-    }
-}
-
-#[cfg(feature = "preimage-ref")]
-impl<'m> Run<'m> {
-    /// [`Run::walk`] as it was before PA-bind-cost: a `let`'s bound term is walked and then
-    /// given its value by [`Run::forward`].
-    fn walk_by_transfer(&'m self, t: &'m Term) -> Deep<'m, ()> {
-        match t {
-            Term::Let(..) | Term::If(..) | Term::Prim(..) | Term::App(..) => {
-                self.stack.call(move || self.walk_by_transfer_at(t))
-            }
-            _ => Stack::ready(()),
-        }
-    }
-
-    async fn walk_by_transfer_at(&'m self, t: &'m Term) {
-        match t {
-            Term::Let(x, e, b) => {
-                self.walk_by_transfer(e).await;
-                let p = self.forward(e).await;
-                let u = self.scope(|s| s.bind(x, p, e));
-                self.walk_by_transfer(b).await;
-                self.scope(|s| s.unbind(u));
-            }
-            Term::If(c, a, b) => {
-                let count = self.count.get();
-                self.count.set(count + 1);
-                let at = FactAddress {
-                    node: NodeAddress(Vector::unit(Position::root().child(count))),
-                    keypath: Vector::new(),
-                };
-                let prem = Premises::one(Premise::Constraint(at));
-                for (o, arm) in [(true, a), (false, b)] {
-                    let s = self.scope(|s| s.assume(c, o, &prem));
-                    self.out.borrow_mut().push(Arm {
-                        guard: c.to_string(),
-                        outcome: o,
-                        scope: s.clone(),
-                    });
-                    self.inner.borrow_mut().push(s);
-                    self.walk_by_transfer(arm).await;
-                    self.inner.borrow_mut().pop();
-                }
-            }
-            Term::Prim(_, args) => {
-                for a in args {
-                    self.walk_by_transfer(a).await;
-                }
-            }
-            Term::App(f, args) => {
-                self.walk_by_transfer(f).await;
-                for a in args {
-                    self.walk_by_transfer(a).await;
-                }
-            }
-            _ => {}
-        }
     }
 }
 

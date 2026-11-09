@@ -2515,7 +2515,8 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| The cargo feature `preimage-ref` adding public functions, an `impl Product` block and an `impl Run` block of reference walks, off in a release build | `arms_and_value`, `arms_and_value_by_transfer`, `Product::reduce_domains_once`, `Run::walk_by_transfer` | No conditional compilation (as the `preimage-ref` row of `preimage_ref`) | A unit of its own that only the test units import, given access to the walk's frames, or the reference walk kept in the test unit |
+| The cargo feature `preimage-ref` adding public functions and an `impl Product` block, off in a release build | `arms_and_value`, `arms_and_value_by_transfer`, `Product::reduce_domains_once` | No conditional compilation (as the `preimage-ref` row of `preimage_ref`) | A unit of its own that only the test units import, given access to `Run` |
+| A `bool` field of the walk that only the test's reference sets | `Run::shortcut` | None | A parameter of the walk, or a field as here |
 
 ## Entries from S22-hole-summaries (`crates/zedc-preimage/src/preimage.rs`)
 
