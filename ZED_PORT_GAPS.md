@@ -2518,6 +2518,17 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | The cargo feature `preimage-ref` adding public functions and an `impl Product` block, off in a release build | `arms_and_value`, `arms_and_value_by_transfer`, `Product::reduce_domains_once` | No conditional compilation (as the `preimage-ref` row of `preimage_ref`) | A unit of its own that only the test units import, given access to `Run` |
 | A `bool` field of the walk that only the test's reference sets | `Run::shortcut` | None | A parameter of the walk, or a field as here |
 
+## Entries from PA-walk-nest-cost (`crates/zedc-preimage/src/product.rs`, `crates/zedc-lattice/src/cell.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A summary made when first read, held in an `Arc<Mutex<..>>` shared by the copies of a binding, replaced from `Pending` to `Made` through `&self` | `product::Lazy`, `Making`, `Lazy::get` | Lazy cells (gap 3); interior mutability behind a shared reference | A lazy value of the language, if it has one; else the made summaries kept in a map by binding, threaded through the walk as `Reads` is |
+| `impl Drop` that queues the dropped part on a `thread_local!` list with a flag, so a chain of kept scopes is freed by a loop | `product::Basis`, `DROPPING` | Mutation, global state (as `zed-kernel` `deep::free_in`) | Removed: the runtime frees a deep chain without recursion itself |
+| The last emptied names, `Arc<Mutex<Option<Emptying>>>` in `Emptied`, shared by the copies of a scope and replaced at each emptying | `product::Emptied`, `Scope::empty_if_bottom` | Interior mutability behind a shared value, as `Held::last` | Threaded through the walk with the arms |
+| A `Copy` struct of borrowed persistent maps, made from a scope or from the parts a summary keeps, carrying the methods that read summaries | `product::View`, `Parts::view`, `Scope::view` | None | A record of the maps, passed by value |
+| A `RefCell<Vec<Premises>>` stack in the walk, pushed at each test and read from a mark | `Run::premises`, `Run::walk_arms`, `Run::walk_if_value` | Mutation | Threaded through the walk with the arms, as the walk's other state |
+| A nested `fn` returning an `Option<&Arc<Node>>` borrowed from its argument, to state the lifetime a closure could not | `Premises::without` (`entered`) | None | A local function |
+
 ## Entries from S22-hole-summaries (`crates/zedc-preimage/src/preimage.rs`)
 
 - No new gap. `Walk::pa_select` joins stretches with a let chain `if let Some(last) = slices.last_mut() && ..` (as `extend::decide_defined`) and mutates the last slice in place through `last_mut`, a `match` on the list's end at the port; `no_input_between` uses `slice::partition_point` (as `docs::check`) and `Option::is_none_or` (as `repair`).

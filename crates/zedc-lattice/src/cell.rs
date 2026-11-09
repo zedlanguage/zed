@@ -21,7 +21,7 @@
 //! linear relations and binding time join it, with the reduction between its domains, at step
 //! L1.39.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -65,6 +65,9 @@ struct Node {
     id: Id,
     /// Whether a premise of the set is a widening.
     widened: bool,
+    /// The greatest id of the sets of one premise the set is a union of: a part whose
+    /// `newest` is below the first id [`Premises::without`] drops holds none of those it drops.
+    newest: Id,
     kind: Kind,
 }
 
@@ -81,9 +84,11 @@ impl Premises {
 
     /// The set of `p` alone.
     pub fn one(p: Premise) -> Premises {
+        let id = fresh_id();
         Premises(Some(Arc::new(Node {
-            id: fresh_id(),
+            id,
             widened: matches!(p, Premise::Widened(_)),
+            newest: id,
             kind: Kind::One(p),
         })))
     }
@@ -106,13 +111,82 @@ impl Premises {
             (Some(a), Some(b)) if a.id == b.id => {}
             (Some(a), Some(b)) => {
                 let widened = a.widened || b.widened;
+                let newest = a.newest.max(b.newest);
                 let both = Kind::Both(self.clone(), other.clone());
                 *self = Premises(Some(Arc::new(Node {
                     id: fresh_id(),
                     widened,
+                    newest,
                     kind: both,
                 })));
             }
+        }
+    }
+
+    /// The set without the premises of the sets in `drop`, each a set of one premise
+    /// ([`Premises::one`]), sorted by when it was made, all made by this thread: the set a
+    /// caller would have had, had it never added those, since a union only adds premises.
+    /// A part is dropped by its id, so a premise equal to one of `drop` but made apart from
+    /// it stays.
+    ///
+    /// Complexity tradeoff: the naive removal rebuilds every union of the set, `O(m)` for `m`
+    /// parts, so that a walk removing the premises of each `if` it nests from the value
+    /// below cost `O(d²)` for `d` nested `if`s. Here a part is entered only when it holds a
+    /// set of one premise made at or after the first of `drop` (its `newest`, kept in `O(1)`
+    /// a union), and each part entered once, by id: `O(e log e + e log k)` for `e` parts
+    /// entered and `k` sets in `drop`. Given up: a part made by another thread after the
+    /// first of `drop`, whose ids may be greater, is entered though it holds none of them;
+    /// a part with no premise to drop rebuilt from parts that changed is a new union.
+    /// Trigger: `if`s nested in the arms of `if`s whose value is read
+    /// (`product::Run::walk_value`). Test:
+    /// `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_scale_on_deep_nests`,
+    /// COMPLEXITY.md row PA-walk-nest-cost.
+    pub fn without(&self, drop: &[Premises]) -> Premises {
+        let id = |p: &Premises| p.0.as_ref().map(|n| n.id);
+        let Some(first) = drop.first().and_then(id) else {
+            return self.clone();
+        };
+        fn entered(p: &Premises, first: Id) -> Option<&Arc<Node>> {
+            p.0.as_ref().filter(|n| n.newest >= first)
+        }
+        let mut out: HashMap<Id, Premises> = HashMap::new();
+        let mut todo: Vec<(&Premises, bool)> = vec![(self, false)];
+        while let Some((p, ready)) = todo.pop() {
+            let Some(n) = entered(p, first) else { continue };
+            if out.contains_key(&n.id) {
+                continue;
+            }
+            match &n.kind {
+                Kind::One(_) => {
+                    let gone = drop.binary_search_by_key(&Some(n.id), id).is_ok();
+                    out.insert(n.id, if gone { Premises::new() } else { p.clone() });
+                }
+                Kind::Both(a, b) if ready => {
+                    let part = |q: &Premises| {
+                        entered(q, first).map_or_else(|| q.clone(), |m| out[&m.id].clone())
+                    };
+                    let (mut x, y) = (part(a), part(b));
+                    let kept = if x.same(a) && y.same(b) {
+                        p.clone()
+                    } else {
+                        x.extend(&y);
+                        x
+                    };
+                    out.insert(n.id, kept);
+                }
+                Kind::Both(a, b) => todo.extend([(p, true), (a, false), (b, false)]),
+            }
+        }
+        entered(self, first).map_or_else(|| self.clone(), |n| out[&n.id].clone())
+    }
+
+    /// Whether both are the same shared set, or both empty: `O(1)`, where `==` compares the
+    /// premises when the sets are not shared.
+    pub fn same(&self, other: &Premises) -> bool {
+        match (&self.0, &other.0) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.id == b.id,
+            _ => false,
         }
     }
 

@@ -280,6 +280,36 @@ impl Product {
         .contains(&true)
     }
 
+    /// The product with each entry's premises without those of `drop` ([`Premises::without`]),
+    /// sharing its domains when no entry rests on one of them.
+    fn without(&self, drop: &[Premises]) -> Product {
+        let d = &**self;
+        let ps = [
+            &d.cell.ints.premises,
+            &d.cell.congruence.premises,
+            &d.cell.finite.premises,
+            &d.cell.float.premises,
+            &d.cell.length.premises,
+            &d.ty.premises,
+            &d.time.premises,
+        ];
+        let kept = ps.map(|p| p.without(drop));
+        if ps.iter().zip(&kept).all(|(a, b)| a.same(b)) {
+            return self.clone();
+        }
+        let [ints, congruence, finite, float, length, ty, time] = kept;
+        let mut p = self.clone();
+        let q = &mut *p;
+        q.cell.ints.premises = ints;
+        q.cell.congruence.premises = congruence;
+        q.cell.finite.premises = finite;
+        q.cell.float.premises = float;
+        q.cell.length.premises = length;
+        q.ty.premises = ty;
+        q.time.premises = time;
+        p
+    }
+
     /// Widens `self` by `other` at the component head `head`; whether anything changed.
     pub fn widen(&mut self, other: &Product, head: &FactAddress, marks: &Landmarks) -> bool {
         [
@@ -540,8 +570,361 @@ pub struct Scope {
 struct Binding {
     /// The lambda the name is bound to, when it is one.
     function: Option<Shared>,
-    /// The summary of the integer the name is bound to, over its inputs ([`Scope::summary`]).
-    summary: Option<Arc<Held>>,
+    /// The summary of the integer the name is bound to, over its inputs ([`View::summary`]).
+    summary: Lazy,
+}
+
+/// The summary a binding keeps ([`Scope::summarize`]), made the first time it is read
+/// ([`Lazy::get`]), in the scope the name was bound in, cut to the parts a summary reads
+/// ([`Scope::basis`]). Shared by the copies of the binding, so it is made once.
+///
+/// Complexity tradeoff: made at each binding, as before PA-walk-nest-cost, a summary costs the
+/// size of the bound term, so `d` blocks each bound inside the one before (`let z = (let y =
+/// .. in ..) in ..`) cost `Θ(d²)` though no test reads them. Made when read, a binding no test
+/// reads costs `O(1)` beside a copy in `O(1)` of the scope's persistent maps, which the binding
+/// keeps until its summary is made; the summaries made are the same, made in the same scopes.
+/// Trigger: the residual is a nest in which each bound name is read by a test, such as
+/// `let z = (let y = .. in if y > 0 ..) in if z > 0 ..`: each read summary still costs its
+/// whole bound term, `Θ(d²)` for `d` levels (measured in COMPLEXITY.md row PA-walk-nest-cost). Test of
+/// the fixed case: `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_scale_on_deep_nests`;
+/// a deep chain is made and dropped without recursion in
+/// `l01_39_reduced_product::if_shortcut::a_deep_chain_of_bindings_is_walked_and_dropped`.
+/// A complete solution would make a block's summary from those of its parts, bottom up.
+#[derive(Clone)]
+struct Lazy(Arc<Mutex<Making>>);
+
+enum Making {
+    /// Not read yet: the bound term, the scope it was bound in, and its free names once
+    /// found.
+    Pending {
+        e: Shared,
+        basis: Basis,
+        free: Option<BTreeSet<Arc<str>>>,
+    },
+    Made(Option<Arc<Held>>),
+}
+
+/// The parts of the scope a [`Lazy`] summary is made in that a summary reads
+/// ([`View::summarize_free`]), each a copy in `O(1)` of a persistent map or a number. A chain
+/// of bindings keeps a chain of these, each holding the bindings before it, so one is dropped
+/// by a loop on its thread rather than by recursion down the chain.
+struct Basis(Option<Box<Parts>>);
+
+struct Parts {
+    names: imbl::OrdMap<Arc<str>, Product>,
+    bindings: imbl::OrdMap<Arc<str>, Binding>,
+    orders: Orders,
+}
+
+impl Parts {
+    /// The parts as a summary reads them ([`View`]), of a scope some state reaches
+    /// ([`Scope::summarizes`]).
+    fn view(&self) -> View<'_> {
+        View {
+            names: &self.names,
+            bindings: &self.bindings,
+            orders: &self.orders,
+            bottom: false,
+        }
+    }
+}
+
+thread_local! {
+    /// The bases waiting to be dropped by the loop of a [`Basis`] drop further up the stack,
+    /// and whether one is running.
+    static DROPPING: (std::cell::Cell<bool>, RefCell<Vec<Parts>>) =
+        const { (std::cell::Cell::new(false), RefCell::new(Vec::new())) };
+}
+
+impl Drop for Basis {
+    fn drop(&mut self) {
+        let Some(s) = self.0.take() else { return };
+        // At thread exit the queue is gone and the scope is dropped where it is.
+        let _ = DROPPING.try_with(|(running, queue)| {
+            if running.get() {
+                queue.borrow_mut().push(*s);
+                return;
+            }
+            running.set(true);
+            let mut next = Some(*s);
+            while let Some(s) = next {
+                drop(s);
+                next = queue.borrow_mut().pop();
+            }
+            running.set(false);
+        });
+    }
+}
+
+/// The parts of a [`Scope`] the summaries of its bindings read, borrowed from a scope
+/// ([`Scope::view`]) or from the [`Parts`] a [`Lazy`] summary keeps, so that a summary made
+/// when first read builds no scope.
+#[derive(Clone, Copy)]
+struct View<'a> {
+    names: &'a imbl::OrdMap<Arc<str>, Product>,
+    bindings: &'a imbl::OrdMap<Arc<str>, Binding>,
+    orders: &'a Orders,
+    bottom: bool,
+}
+
+impl View<'_> {
+    /// [`Scope::get`].
+    fn get(&self, name: &str) -> Product {
+        if self.bottom {
+            return Product::bottom();
+        }
+        self.names.get(name).cloned().unwrap_or_else(Product::top)
+    }
+
+    /// The summary of `e`, of free names `free`, in this scope ([`Scope::summarize`]).
+    fn summarize_free(&self, e: &Term, free: &BTreeSet<Arc<str>>) -> Option<Arc<Held>> {
+        let (inputs, lets, widest) = self.inputs_and_lets(free, false);
+        let s = let_summary(e, &inputs, lets)?;
+        let made = Made::Scope(self.names.clone());
+        Some(Held::new(s, made, self.orders.clone(), widest))
+    }
+
+    /// Whether the summary `held` holds here: each input it reads is still the binding it was
+    /// made over, and that input's integers lie within those it was made over (a scope's
+    /// integers only narrow while a name is bound, but a name bound again is another binding).
+    ///
+    /// The inputs are kept in a tree with the number that fail ([`images::Read`]), found from
+    /// the tree of `held`'s last read, or else, for its first, of the last read of the summary
+    /// with the most inputs among those its value reads ([`Held::widest`]), by setting the
+    /// inputs where the two scopes' names or orders, or the two summaries' inputs, integers or
+    /// orders made over, differ ([`images::updated`]); afresh from the inputs the scope has,
+    /// when there is none, the summaries were not both made in a scope, or the differences
+    /// are as many as the inputs ([`images::fresh`]). Each read costs the lesser of the
+    /// differences and the inputs, times `O(log k)` for `k` inputs: a chain
+    /// `x_k = x_(k-1) + q_k` under a test of each `q_k` reads `x_(k-1)` at the binding of
+    /// `x_k` from `x_(k-2)` read at that of `x_(k-1)`, which differ at a few names, where
+    /// checking each input cost `O(k)` a binding and the chain `Θ(d²)` (item PA-walk-multi).
+    /// The answer is the same whichever read it starts from.
+    ///
+    /// Complexity tradeoff: naive version, each input of the summary checked at each read,
+    /// O(k) a read, Θ(k²) for k reads of summaries over k inputs (1,680 leaves set at k = 40,
+    /// 103,040 at k = 320). Used: the tree of the last read updated at the names that differ,
+    /// O(m log k) for m differences (158 and 1,278; COMPLEXITY.md row PA-walk-multi).
+    /// Tradeoffs: memory, one read per summary id kept in `Reads` for the life of the scope's
+    /// copies, never freed during a walk (row PA-bind-cost); a lock per read; when the
+    /// differences reach the inputs the read is made afresh, at the naive cost.
+    fn holds(&self, held: &Arc<Held>) -> bool {
+        // The names whose products or orders differ between the scope of `r` and `s`.
+        fn here<'a>(r: &'a HeldRead, s: View<'a>) -> impl Iterator<Item = &'a Arc<str>> + 'a {
+            let names = images::changed(&r.names, s.names);
+            names.chain(images::changed(&r.sum, s.orders))
+        }
+        let vars = held.summary.vars();
+        let limit = vars.len().min(self.names.len());
+        let leaf = |v: &Arc<str>, q: &Product| held.leaf(self.orders, v, q);
+        let mut last = held.last();
+        let tree = {
+            match &last.held {
+                Some(r) => images::updated(&r.tree, here(r, *self), vars, self.names, limit, leaf),
+                None => (held.widest.as_ref().and_then(Weak::upgrade)).and_then(|base| {
+                    let (Made::Scope(was), Made::Scope(now)) = (&base.made, &held.made) else {
+                        return None;
+                    };
+                    let reads = base.last();
+                    let r = reads.held.as_ref()?;
+                    let inputs = (base.summary.vars().diff(vars)).map(|d| match d {
+                        imbl::ordset::DiffItem::Add(v) | imbl::ordset::DiffItem::Remove(v) => v,
+                    });
+                    let changed = (inputs.chain(images::changed(was, now)))
+                        .chain(images::changed(&base.orders, &held.orders))
+                        .chain(here(r, *self));
+                    images::updated(&r.tree, changed, vars, self.names, limit, leaf)
+                }),
+            }
+        }
+        .unwrap_or_else(|| images::fresh(vars, self.names, leaf));
+        let holds = images::total(&tree).fails == 0 && images::len(&tree) == vars.len();
+        last.held = Some(images::Read {
+            names: self.names.clone(),
+            sum: self.orders.clone(),
+            tree,
+        });
+        holds
+    }
+
+    /// The held summary of the integer `x` is bound to, made if it was not ([`Lazy::get`]),
+    /// when it has one and it holds ([`View::holds`]).
+    fn summary(&self, x: &Arc<str>) -> Option<Arc<Held>> {
+        let held = self.bindings.get(x)?.summary.get()?;
+        self.holds(&held).then_some(held)
+    }
+
+    /// The integer names of `free`, as inputs over their integers, or, when bound by a `let`
+    /// with a summary that holds ([`View::summary`]), as names read through it, and the
+    /// summary with the most inputs among these. With `all`, for a test, which narrows
+    /// the inputs of each summary too ([`let_narrowing`]), a summary over two or more inputs
+    /// is read through the tree of its terms' bounds ([`View::term_read`]), its inputs not
+    /// among the inputs, so that the test costs the inputs it narrows and not all `k`, and the
+    /// input of a summary over one is an input, read in `O(log n)`. A test reads no scope no
+    /// state reaches (`Scope::narrow_node`, `Scope::exclude`). Without `all`, only the input
+    /// of a summary over one, which a term of a value other than a sum reads it through
+    /// (`2 * y` is a sum, `y * y` is not), for a value's summary ([`let_summary`]), which does not
+    /// read the inputs of the summaries it adds: so a chain of bindings each adding the one
+    /// before costs each binding its own term, not the inputs of all before it.
+    fn inputs_and_lets(
+        &self,
+        free: &BTreeSet<Arc<str>>,
+        all: bool,
+    ) -> (Domains, Lets, Option<Weak<Held>>) {
+        debug_assert!(
+            !(all && self.bottom),
+            "a test read in a scope no state reaches"
+        );
+        let int = Type::int();
+        let mut inputs = Domains::new();
+        let mut lets = Lets::new();
+        let mut widest: Option<(usize, Arc<Held>)> = None;
+        for n in free {
+            let p = self.get(n);
+            if !self.names.contains_key(n) || !p.ty.element.subtype(&int) {
+                continue;
+            }
+            match self.summary(n) {
+                Some(held) => {
+                    let k = held.summary.vars().len();
+                    let mut read = None;
+                    if all && k > 1 {
+                        read = Some(Arc::new(self.term_read(&held)) as _);
+                    } else if all || k == 1 {
+                        for v in held.summary.vars() {
+                            inputs.insert(v.clone(), self.get(v).ints().clone());
+                        }
+                    }
+                    lets.insert(
+                        n.clone(),
+                        LetIn {
+                            summary: held.summary.clone(),
+                            ints: p.ints().clone(),
+                            read,
+                        },
+                    );
+                    if widest.as_ref().is_none_or(|(w, _)| k > *w) {
+                        widest = Some((k, held));
+                    }
+                }
+                None => _ = inputs.insert(n.clone(), p.ints().clone()),
+            }
+        }
+        (inputs, lets, widest.map(|(_, held)| Arc::downgrade(&held)))
+    }
+
+    /// The inputs of the summary `held`, as a test reads them here: each input's
+    /// integers, and the bounds of the summary's term of each ([`LetPa::term_bounds`]) in a
+    /// tree found from that of the last test of the summary by setting the inputs whose
+    /// products differ between the two scopes ([`images::updated`]), or afresh when there is
+    /// none or the differences are as many as the inputs ([`images::fresh`]). Costs the lesser
+    /// of the differences and the inputs, times `O(log k)` for `k` inputs: `k` tests of one
+    /// name, each narrowing a few names, cost `O(k log k)`, where reading the inputs cost
+    /// `O(k)` a test (item PA-letpre-linear). The summary holds here ([`View::holds`]), so
+    /// the scope has each of its inputs.
+    ///
+    /// Complexity tradeoff: naive version, each test of a name over k inputs builds the
+    /// domains of all k, bounds each term and meets each input, O(k) a test and Θ(k²) for k
+    /// tests (3,200 term bounds at k = 40, 204,800 at k = 320). Used: this tree of the terms'
+    /// bounds, updated at the inputs that changed, and `Tx::invert_sep` inverting only the
+    /// terms wider than the slack (`Sums::wants`), each found in O(log k), so a test costs the
+    /// inputs it narrows (COMPLEXITY.md row PA-letpre-linear). Tradeoffs: one tree kept per
+    /// summary, that of its last test (`Held::last`); a term the inversion does not read as a
+    /// whole (an end at an end of `i128`, pieces with a gap) is always inverted, so such terms
+    /// cost what they did; results are the same as reading every input (checked on 800 random
+    /// sums).
+    fn term_read(&self, held: &Held) -> images::TermRead<Product> {
+        let vars = held.summary.vars();
+        let limit = vars.len().min(self.names.len());
+        let leaf = |v: &Arc<str>, q: &Product| held.summary.term_bounds(v, q.ints());
+        let mut last = held.last();
+        let tree = (last.bounds.as_ref())
+            .and_then(|r| {
+                let changed = images::changed(&r.names, self.names);
+                images::updated(&r.tree, changed, vars, self.names, limit, leaf)
+            })
+            .unwrap_or_else(|| images::fresh(vars, self.names, leaf));
+        last.bounds = Some(images::Read {
+            names: self.names.clone(),
+            sum: (),
+            tree: tree.clone(),
+        });
+        images::TermRead {
+            names: self.names.clone(),
+            vars: vars.clone(),
+            tree,
+            ints: Product::ints,
+        }
+    }
+}
+
+impl Lazy {
+    fn made(held: Option<Arc<Held>>) -> Lazy {
+        Lazy(Arc::new(Mutex::new(Making::Made(held))))
+    }
+
+    fn pending(e: &Shared, basis: Parts) -> Lazy {
+        Lazy(Arc::new(Mutex::new(Making::Pending {
+            e: e.clone(),
+            basis: Basis(Some(Box::new(basis))),
+            free: None,
+        })))
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Making> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The summary, made first when it was not. The summaries of the names its term reads are
+    /// made before it, those they read before them, and so on, by a loop over a stack rather
+    /// than by recursion; each is made once.
+    fn get(&self) -> Option<Arc<Held>> {
+        let mut todo = vec![self.clone()];
+        while let Some(top) = todo.last().cloned() {
+            let mut m = top.lock();
+            let Making::Pending { e, basis, free } = &mut *m else {
+                todo.pop();
+                continue;
+            };
+            let s = basis
+                .0
+                .as_deref()
+                .expect("a pending summary keeps its parts");
+            let free = free.get_or_insert_with(|| stage::free(e));
+            let waiting: Vec<Lazy> = (free.iter())
+                .filter(|n| s.names.contains_key(*n))
+                .filter_map(|n| s.bindings.get(n))
+                .filter(|b| matches!(*b.summary.lock(), Making::Pending { .. }))
+                .map(|b| b.summary.clone())
+                .collect();
+            if waiting.is_empty() {
+                let held = s.view().summarize_free(e, free);
+                *m = Making::Made(held);
+                todo.pop();
+            } else {
+                drop(m);
+                todo.extend(waiting);
+            }
+        }
+        match &*self.lock() {
+            Making::Made(held) => held.clone(),
+            Making::Pending { .. } => unreachable!("made above"),
+        }
+    }
+}
+
+impl PartialEq for Lazy {
+    /// Whether both have a summary or both have none; the summaries are caches, equal in every
+    /// binding, as [`Held`] is.
+    fn eq(&self, other: &Lazy) -> bool {
+        self.get().is_some() == other.get().is_some()
+    }
+}
+
+impl fmt::Debug for Lazy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("..")
+    }
 }
 
 /// The order of each name's binding in a [`Scope`]: a binding made later has a larger one. A
@@ -637,7 +1020,7 @@ impl fmt::Debug for Held {
 type HeldRead = images::Read<Orders, Product>;
 
 /// What a test last read of one summary: the scope's names, and the tree of the bounds of the
-/// summary's terms over the inputs there ([`Scope::term_read`]).
+/// summary's terms over the inputs there ([`View::term_read`]).
 type BoundsRead = images::Read<(), Product, TermBounds>;
 
 /// The last reads of a [`Held`] summary, in whichever copy of the scope they were made: what
@@ -650,11 +1033,20 @@ struct LastReads {
     bounds: Option<BoundsRead>,
 }
 
+/// The names of the scope a copy last emptied ([`Scope::empty_if_bottom`]), each the bottom,
+/// with the orders of its bindings then.
+struct Emptying {
+    orders: Orders,
+    names: imbl::OrdMap<Arc<str>, Product>,
+}
+
 /// Whether each name of a scope no state reaches is already the bottom
 /// ([`Scope::empty_if_bottom`]): a cache, equal in every scope, so that the arms a walk shows
-/// below a test no state passes empty the names once and not once each.
-#[derive(Clone, Copy, Default)]
-struct Emptied(bool);
+/// below a test no state passes empty the names once and not once each; and the names a
+/// copy of the scope last emptied ([`Emptying`]), shared by the copies, from which the next
+/// emptying is found.
+#[derive(Clone, Default)]
+struct Emptied(bool, Arc<Mutex<Option<Emptying>>>);
 
 impl PartialEq for Emptied {
     fn eq(&self, _: &Emptied) -> bool {
@@ -1763,7 +2155,7 @@ impl Scope {
         while p.reduce_domains() {}
         let summary = match given {
             None => self.summarize(e, &p),
-            Some(_) => summary,
+            Some(_) => Lazy::made(summary),
         };
         let order = self.clock;
         let binding = Binding {
@@ -1887,20 +2279,27 @@ impl Scope {
     }
 
     /// The summary of `e`, an integer bound to a name of product `p` ([`let_summary`]), over
-    /// the names it reads: those bound by `let`s with a summary that holds are read through it,
-    /// and the others are inputs. It keeps the integers of its inputs here as the scope's
-    /// names, and the orders of their bindings as the scope's orders, each a copy in `O(1)` of
-    /// a persistent map. Costs `e`'s size and the domains of the inputs it reads itself, not
-    /// the summaries of the names it reads ([`Scope::inputs_and_lets`]), beside checking that
-    /// those hold ([`Scope::holds`]).
-    fn summarize(&self, e: &Term, p: &Product) -> Option<Arc<Held>> {
+    /// the names it reads, made when first read ([`Lazy`]): those bound by `let`s with a
+    /// summary that holds are read through it, and the others are inputs. It keeps the
+    /// integers of its inputs here as the scope's names, and the orders of their bindings as
+    /// the scope's orders, each a copy in `O(1)` of a persistent map. Made, it costs `e`'s size
+    /// and the domains of the inputs it reads itself, not the summaries of the names it reads
+    /// ([`Scope::inputs_and_lets`]), beside checking that those hold ([`Scope::holds`]).
+    fn summarize(&self, e: &Shared, p: &Product) -> Lazy {
         if !self.summarizes(p) {
-            return None;
+            return Lazy::made(None);
         }
-        let (inputs, lets, widest) = self.inputs_and_lets(&stage::free(e), false);
-        let s = let_summary(e, &inputs, lets)?;
-        let made = Made::Scope(self.names.clone());
-        Some(Held::new(s, made, self.orders.clone(), widest))
+        Lazy::pending(e, self.basis())
+    }
+
+    /// The parts of this scope a summary reads ([`View::summarize_free`]): the names and the
+    /// bindings with their orders (a summary keeps its own last reads, `Held::last`). `O(1)`.
+    fn basis(&self) -> Parts {
+        Parts {
+            names: self.names.clone(),
+            bindings: self.bindings.clone(),
+            orders: self.orders.clone(),
+        }
     }
 
     /// Whether a name of product `p` bound here keeps a summary: an integer in a reachable
@@ -1909,177 +2308,28 @@ impl Scope {
         !self.bottom && p.ty.element.subtype(&Type::int())
     }
 
-    /// Whether the summary `held` holds here: each input it reads is still the binding it was
-    /// made over, and that input's integers lie within those it was made over (a scope's
-    /// integers only narrow while a name is bound, but a name bound again is another binding).
-    ///
-    /// The inputs are kept in a tree with the number that fail ([`images::Read`]), found from
-    /// the tree of `held`'s last read, or else, for its first, of the last read of the summary
-    /// with the most inputs among those its value reads ([`Held::widest`]), by setting the
-    /// inputs where the two scopes' names or orders, or the two summaries' inputs, integers or
-    /// orders made over, differ ([`images::updated`]); afresh from the inputs the scope has,
-    /// when there is none, the summaries were not both made in a scope, or the differences
-    /// are as many as the inputs ([`images::fresh`]). Each read costs the lesser of the
-    /// differences and the inputs, times `O(log k)` for `k` inputs: a chain
-    /// `x_k = x_(k-1) + q_k` under a test of each `q_k` reads `x_(k-1)` at the binding of
-    /// `x_k` from `x_(k-2)` read at that of `x_(k-1)`, which differ at a few names, where
-    /// checking each input cost `O(k)` a binding and the chain `Θ(d²)` (item PA-walk-multi).
-    /// The answer is the same whichever read it starts from.
-    ///
-    /// Complexity tradeoff: naive version, each input of the summary checked at each read,
-    /// O(k) a read, Θ(k²) for k reads of summaries over k inputs (1,680 leaves set at k = 40,
-    /// 103,040 at k = 320). Used: the tree of the last read updated at the names that differ,
-    /// O(m log k) for m differences (158 and 1,278; COMPLEXITY.md row PA-walk-multi).
-    /// Tradeoffs: memory, one read per summary id kept in `Reads` for the life of the scope's
-    /// copies, never freed during a walk (row PA-bind-cost); a lock per read; when the
-    /// differences reach the inputs the read is made afresh, at the naive cost.
+    /// The parts of this scope the summaries of its bindings read ([`View`]).
+    fn view(&self) -> View<'_> {
+        View {
+            names: &self.names,
+            bindings: &self.bindings,
+            orders: &self.orders,
+            bottom: self.bottom,
+        }
+    }
+
+    /// [`View::holds`] here.
     fn holds(&self, held: &Arc<Held>) -> bool {
-        // The names whose products or orders differ between the scope of `r` and `s`.
-        fn here<'a>(r: &'a HeldRead, s: &'a Scope) -> impl Iterator<Item = &'a Arc<str>> + 'a {
-            let names = images::changed(&r.names, &s.names);
-            names.chain(images::changed(&r.sum, &s.orders))
-        }
-        let vars = held.summary.vars();
-        let limit = vars.len().min(self.names.len());
-        let leaf = |v: &Arc<str>, q: &Product| held.leaf(&self.orders, v, q);
-        let mut last = held.last();
-        let tree = {
-            match &last.held {
-                Some(r) => images::updated(&r.tree, here(r, self), vars, &self.names, limit, leaf),
-                None => (held.widest.as_ref().and_then(Weak::upgrade)).and_then(|base| {
-                    let (Made::Scope(was), Made::Scope(now)) = (&base.made, &held.made) else {
-                        return None;
-                    };
-                    let reads = base.last();
-                    let r = reads.held.as_ref()?;
-                    let inputs = (base.summary.vars().diff(vars)).map(|d| match d {
-                        imbl::ordset::DiffItem::Add(v) | imbl::ordset::DiffItem::Remove(v) => v,
-                    });
-                    let changed = (inputs.chain(images::changed(was, now)))
-                        .chain(images::changed(&base.orders, &held.orders))
-                        .chain(here(r, self));
-                    images::updated(&r.tree, changed, vars, &self.names, limit, leaf)
-                }),
-            }
-        }
-        .unwrap_or_else(|| images::fresh(vars, &self.names, leaf));
-        let holds = images::total(&tree).fails == 0 && images::len(&tree) == vars.len();
-        last.held = Some(images::Read {
-            names: self.names.clone(),
-            sum: self.orders.clone(),
-            tree,
-        });
-        holds
+        self.view().holds(held)
     }
 
-    /// The held summary of the integer `x` is bound to, when it has one and it holds
-    /// ([`Scope::holds`]).
-    fn summary(&self, x: &Arc<str>) -> Option<&Arc<Held>> {
-        let held = self.bindings.get(x)?.summary.as_ref()?;
-        self.holds(held).then_some(held)
-    }
-
-    /// The integer names of `free`, as inputs over their integers, or, when bound by a `let`
-    /// with a summary that holds ([`Scope::summary`]), as names read through it, and the
-    /// summary with the most inputs among these. With `all`, for a test, which narrows
-    /// the inputs of each summary too ([`let_narrowing`]), a summary over two or more inputs
-    /// is read through the tree of its terms' bounds ([`Scope::term_read`]), its inputs not
-    /// among the inputs, so that the test costs the inputs it narrows and not all `k`, and the
-    /// input of a summary over one is an input, read in `O(log n)`. A test reads no scope no
-    /// state reaches (`Scope::narrow_node`, `Scope::exclude`). Without `all`, only the input
-    /// of a summary over one, which a term of a value other than a sum reads it through
-    /// (`2 * y` is a sum, `y * y` is not), for a value's summary ([`let_summary`]), which does not
-    /// read the inputs of the summaries it adds: so a chain of bindings each adding the one
-    /// before costs each binding its own term, not the inputs of all before it.
+    /// [`View::inputs_and_lets`] here.
     fn inputs_and_lets(
         &self,
         free: &BTreeSet<Arc<str>>,
         all: bool,
     ) -> (Domains, Lets, Option<Weak<Held>>) {
-        debug_assert!(
-            !(all && self.bottom),
-            "a test read in a scope no state reaches"
-        );
-        let int = Type::int();
-        let mut inputs = Domains::new();
-        let mut lets = Lets::new();
-        let mut widest: Option<(usize, &Arc<Held>)> = None;
-        for n in free {
-            let p = self.get(n);
-            if !self.names.contains_key(n) || !p.ty.element.subtype(&int) {
-                continue;
-            }
-            match self.summary(n) {
-                Some(held) => {
-                    let k = held.summary.vars().len();
-                    if widest.is_none_or(|(w, _)| k > w) {
-                        widest = Some((k, held));
-                    }
-                    let mut read = None;
-                    if all && k > 1 {
-                        read = Some(Arc::new(self.term_read(held)) as _);
-                    } else if all || k == 1 {
-                        for v in held.summary.vars() {
-                            inputs.insert(v.clone(), self.get(v).ints().clone());
-                        }
-                    }
-                    lets.insert(
-                        n.clone(),
-                        LetIn {
-                            summary: held.summary.clone(),
-                            ints: p.ints().clone(),
-                            read,
-                        },
-                    );
-                }
-                None => _ = inputs.insert(n.clone(), p.ints().clone()),
-            }
-        }
-        (inputs, lets, widest.map(|(_, held)| Arc::downgrade(held)))
-    }
-
-    /// The inputs of the summary `held`, as a test reads them here: each input's
-    /// integers, and the bounds of the summary's term of each ([`LetPa::term_bounds`]) in a
-    /// tree found from that of the last test of the summary by setting the inputs whose
-    /// products differ between the two scopes ([`images::updated`]), or afresh when there is
-    /// none or the differences are as many as the inputs ([`images::fresh`]). Costs the lesser
-    /// of the differences and the inputs, times `O(log k)` for `k` inputs: `k` tests of one
-    /// name, each narrowing a few names, cost `O(k log k)`, where reading the inputs cost
-    /// `O(k)` a test (item PA-letpre-linear). The summary holds here ([`Scope::holds`]), so
-    /// the scope has each of its inputs.
-    ///
-    /// Complexity tradeoff: naive version, each test of a name over k inputs builds the
-    /// domains of all k, bounds each term and meets each input, O(k) a test and Θ(k²) for k
-    /// tests (3,200 term bounds at k = 40, 204,800 at k = 320). Used: this tree of the terms'
-    /// bounds, updated at the inputs that changed, and `Tx::invert_sep` inverting only the
-    /// terms wider than the slack (`Sums::wants`), each found in O(log k), so a test costs the
-    /// inputs it narrows (COMPLEXITY.md row PA-letpre-linear). Tradeoffs: one tree kept per
-    /// summary, that of its last test (`Held::last`); a term the inversion does not read as a
-    /// whole (an end at an end of `i128`, pieces with a gap) is always inverted, so such terms
-    /// cost what they did; results are the same as reading every input (checked on 800 random
-    /// sums).
-    fn term_read(&self, held: &Held) -> images::TermRead<Product> {
-        let vars = held.summary.vars();
-        let limit = vars.len().min(self.names.len());
-        let leaf = |v: &Arc<str>, q: &Product| held.summary.term_bounds(v, q.ints());
-        let mut last = held.last();
-        let tree = (last.bounds.as_ref())
-            .and_then(|r| {
-                let changed = images::changed(&r.names, &self.names);
-                images::updated(&r.tree, changed, vars, &self.names, limit, leaf)
-            })
-            .unwrap_or_else(|| images::fresh(vars, &self.names, leaf));
-        last.bounds = Some(images::Read {
-            names: self.names.clone(),
-            sum: (),
-            tree: tree.clone(),
-        });
-        images::TermRead {
-            names: self.names.clone(),
-            vars: vars.clone(),
-            tree,
-            ints: Product::ints,
-        }
+        self.view().inputs_and_lets(free, all)
     }
 
     /// Records `t` as a written constraint that holds, by its content address: a constraint
@@ -2465,7 +2715,7 @@ impl Scope {
             written,
             written_by,
             bottom: false,
-            emptied: Emptied::default(),
+            emptied: Emptied(false, self.emptied.1.clone()),
             enumerated,
             projected,
             exact: self.exact,
@@ -3039,15 +3289,58 @@ impl Scope {
     /// Empties every name of a scope no state reaches, as a scope that is shown has them: once,
     /// when it is first shown, since nothing narrows or binds a name in it after
     /// ([`Scope::narrow`], [`Scope::bind`]) and its copies share the emptied names.
+    ///
+    /// The names are found from those a copy of the scope last emptied, by the bindings that
+    /// differ: the names of a scope are those it was made with and those it binds
+    /// ([`Scope::bind`]), each binding in `orders`, so two scopes made from one differ in their
+    /// names only where their orders differ.
+    ///
+    /// Complexity tradeoff: the naive emptying makes the bottom of each name, `O(n)` for `n`
+    /// names, so that a walk showing an arm no state reaches below each of `d` nested
+    /// bindings cost `Θ(d²)`. Here it costs the bindings that differ from the last emptied
+    /// scope, found by the persistent maps' difference, each `O(log n)`, and `O(n)` only for
+    /// the first. Given up: one emptied scope is kept, so emptyings alternating between two
+    /// scopes far apart pay their difference each time; a result whose count of names is not
+    /// the scope's is made afresh. Trigger: a scope no state reaches that is shown, as an arm
+    /// of a walk. Test:
+    /// `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_scale_on_deep_nests`,
+    /// COMPLEXITY.md row PA-walk-nest-cost.
     fn empty_if_bottom(&mut self) {
-        if self.bottom && !self.emptied.0 {
-            self.names = self
-                .names
-                .keys()
-                .map(|n| (n.clone(), Product::bottom()))
-                .collect();
-            self.emptied.0 = true;
+        if !self.bottom || self.emptied.0 {
+            return;
         }
+        let mut last = self
+            .emptied
+            .1
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let bottom = Product::bottom();
+        let names = (last.as_ref())
+            .map(|was| {
+                let mut out = was.names.clone();
+                for d in was.orders.diff(&self.orders) {
+                    match d {
+                        DiffItem::Add(n, _) if self.names.contains_key(n) => {
+                            _ = out.insert(n.clone(), bottom.clone())
+                        }
+                        DiffItem::Remove(n, _) if !self.names.contains_key(n) => _ = out.remove(n),
+                        _ => {}
+                    }
+                }
+                out
+            })
+            .filter(|out| out.len() == self.names.len())
+            .unwrap_or_else(|| {
+                (self.names.keys())
+                    .map(|n| (n.clone(), bottom.clone()))
+                    .collect()
+            });
+        *last = Some(Emptying {
+            orders: self.orders.clone(),
+            names: names.clone(),
+        });
+        self.names = names;
+        self.emptied.0 = true;
     }
 
     fn reduce_with(&mut self, whole: bool) {
@@ -5806,6 +6099,8 @@ struct Run<'m> {
     out: RefCell<Vec<Arm>>,
     /// How many tests the walk has met: the position of the next test's premise.
     count: std::cell::Cell<u32>,
+    /// The premise of each test the walk has met, in the order met ([`Run::walk_value_at`]).
+    premises: RefCell<Vec<Premises>>,
     /// Whether [`Run::walk_value`] takes the value of an `if` with a literal in each arm from
     /// the arms it reached; off only in the reference walk of the test that checks it
     /// (`arms_and_value_by_transfer`, built with the feature `preimage-ref`).
@@ -5820,6 +6115,7 @@ impl<'m> Run<'m> {
             inner: RefCell::new(Vec::new()),
             out: RefCell::new(Vec::new()),
             count: std::cell::Cell::new(0),
+            premises: RefCell::new(Vec::new()),
             shortcut: true,
         }
     }
@@ -5959,6 +6255,33 @@ impl<'m> Run<'m> {
                 p.join(&value(reached[1], b));
                 p
             }
+            // Each arm's value is found as the walk walks it, in the arm's scope, which holds
+            // the premises of the tests met since the walk entered this `if`; the value of the
+            // transfer, which assumes those tests with no premise, is the join without them.
+            // A union only adds premises, and a premise changes no element, so the transfer's
+            // value has the same elements and the premises of this one but those.
+            //
+            // Complexity tradeoff: the naive value walks the arms and then reads the whole
+            // `if` again with the transfer (`Run::forward`), which binds each `let` below once
+            // more: `O(d²)` bindings for `d` such `if`s nested in arms, each binding read again
+            // by each `if` above it. Here each arm is read once, and the premises of the tests
+            // below are dropped from the value (`Premises::without`), which enters only the
+            // parts of its premises made since the walk entered the `if`: `O(1)` a level when
+            // each level's value rests on its own test and those above. Given up: none in the
+            // elements; a value whose premises below are many unions pays for entering them at
+            // each `if` above that does not drop them first. Trigger: an `if` whose arms are
+            // not each a literal. Test:
+            // `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_scale_on_deep_nests`,
+            // COMPLEXITY.md row PA-walk-nest-cost. The reference walk
+            // (`arms_and_value_by_transfer`) keeps the naive value.
+            Term::If(c, a, b) if self.shortcut => {
+                let from = self.premises.borrow().len();
+                let [p, q] = self.walk_if_value(c, a, b).await;
+                let mut p = p;
+                p.join(&q);
+                let premises = self.premises.borrow();
+                p.without(&premises[from..])
+            }
             Term::If(..) => {
                 self.walk_at(t).await;
                 self.forward(t).await
@@ -5985,6 +6308,25 @@ impl<'m> Run<'m> {
     /// the test's premise its position in the walk; whether some state reaches each arm, the
     /// true arm first.
     async fn walk_if(&'m self, c: &'m Term, a: &'m Term, b: &'m Term) -> [bool; 2] {
+        self.walk_arms(c, a, b, false)
+            .await
+            .map(|(reached, _)| reached)
+    }
+
+    /// [`Run::walk_if`], with the value of each arm in its scope ([`Run::walk_value`]), the
+    /// true arm first.
+    async fn walk_if_value(&'m self, c: &'m Term, a: &'m Term, b: &'m Term) -> [Product; 2] {
+        (self.walk_arms(c, a, b, true).await).map(|(_, p)| p.unwrap_or_else(Product::bottom))
+    }
+
+    /// The walk of [`Run::walk_if`], each arm walked for its value too when `value` is set.
+    async fn walk_arms(
+        &'m self,
+        c: &'m Term,
+        a: &'m Term,
+        b: &'m Term,
+        value: bool,
+    ) -> [(bool, Option<Product>); 2] {
         let count = self.count.get();
         self.count.set(count + 1);
         let at = FactAddress {
@@ -5992,20 +6334,25 @@ impl<'m> Run<'m> {
             keypath: Vector::new(),
         };
         let prem = Premises::one(Premise::Constraint(at));
-        let mut reached = [false; 2];
+        self.premises.borrow_mut().push(prem.clone());
+        let mut out = [(false, None), (false, None)];
         for (i, (o, arm)) in [(true, a), (false, b)].into_iter().enumerate() {
             let s = self.scope(|s| s.assume(c, o, &prem));
-            reached[i] = !s.bottom;
+            out[i].0 = !s.bottom;
             self.out.borrow_mut().push(Arm {
                 guard: c.to_string(),
                 outcome: o,
                 scope: s.clone(),
             });
             self.inner.borrow_mut().push(s);
-            self.walk(arm).await;
+            if value {
+                out[i].1 = Some(self.walk_value(arm).await);
+            } else {
+                self.walk(arm).await;
+            }
             self.inner.borrow_mut().pop();
         }
-        reached
+        out
     }
 
     /// The arms of `t` in the scope the walk is in, appended to `out`; the scope is as it was

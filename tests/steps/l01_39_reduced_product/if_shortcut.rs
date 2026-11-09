@@ -471,26 +471,70 @@ fn one_pass_and_transfer_agree_on_deep_nests() {
     }
 }
 
-/// The walk and its reference are linear in the depth of a chain of literal-armed `if`s and
-/// of `if`s nested in arms. The other three forms of [`nest`] are not, in either: a binding
-/// costs the size of its bound term (`Scope::bind` summarizes it), and the value of an `if`
-/// whose arms are not literals reads its arms again (COMPLEXITY.md row PA-if-shortcut-diff).
+/// The walk is linear in the depth of each form of [`nest`]: blocks bound inside bound blocks
+/// (a binding's summary is made when a test reads it, `product::Lazy`), `if`s with blocks in
+/// their arms bound inside each other's arms (the value of an `if` is the join of its arms'
+/// values without the premises of its tests, `Run::walk_value_at`), literal-armed `if`s bound
+/// inside nested arms (a bottom scope's names are emptied from the last ones emptied,
+/// `Scope::empty_if_bottom`), a chain of literal-armed `if`s bound one after another, and `if`s
+/// nested in arms (COMPLEXITY.md row PA-walk-nest-cost). The reference reads the value of an
+/// `if` whose arms are not literals by the transfer again after walking its arms, `Θ(d²)` in
+/// the second form, so it is held to the others.
 #[test]
 fn one_pass_and_transfer_scale_on_deep_nests() {
     let scope = ints(&["x".into()]);
-    for (form, what) in [
+    for (form, what, reference) in [
+        (0, "blocks bound `k` deep inside bound blocks", true),
+        (
+            1,
+            "`if`s with blocks in their arms bound `k` deep inside each other's arms",
+            false,
+        ),
+        (
+            2,
+            "literal-armed `if`s bound inside arms nested `k` deep",
+            true,
+        ),
         (
             3,
             "a chain of `k` literal-armed `if`s bound one after another",
+            true,
         ),
-        (4, "`if`s nested `k` deep in arms"),
+        (4, "`if`s nested `k` deep in arms", true),
     ] {
         let terms = scaling::inputs(64, |k| nest(form, k as i64));
         scaling::check(&format!("the one pass over {what}"), 64, |k| {
             arms_and_value(&terms[&k], &scope);
         });
-        scaling::check(&format!("the reference over {what}"), 64, |k| {
-            arms_and_value_by_transfer(&terms[&k], &scope);
+        if reference {
+            scaling::check(&format!("the reference over {what}"), 64, |k| {
+                arms_and_value_by_transfer(&terms[&k], &scope);
+            });
+        }
+    }
+}
+
+/// A chain of 100,000 bindings `z_k = z_(k-1) + 1`, read by one test at the end, makes each
+/// summary when the test reads it, the bindings before it first, on an explicit stack; read
+/// by none, it keeps a chain of 100,000 scopes, which is dropped by a loop (`Lazy` and `Basis`
+/// in `product.rs`). Neither recurses down the chain.
+#[test]
+fn a_deep_chain_of_bindings_is_walked_and_dropped() {
+    let scope = ints(&["x".into()]);
+    let d = 100_000;
+    let z = |k: i64| {
+        if k < 0 {
+            "x".to_string()
+        } else {
+            format!("z{k}")
+        }
+    };
+    for read in [&z(d - 1), "x"] {
+        let last = if_(prim(Prim::Gt, vec![var(read), int(3)]), int(1), int(2));
+        let t = (0..d).rev().fold(last, |b, k| {
+            let_(&z(k), prim(Prim::Add, vec![var(&z(k - 1)), int(1)]), b)
         });
+        let (arms, _) = arms_and_value(&t, &scope);
+        assert_eq!(arms.len(), 2);
     }
 }
