@@ -4,7 +4,7 @@
 //! are forms of layer L10, which zedc does not compile yet, so these tests write `Never` where
 //! L1 takes a type: a parameter's type and a function type's result.
 
-use super::{sig, type_errors};
+use super::{info, sig, type_errors};
 
 #[test]
 fn a_function_type_may_declare_the_result_never() {
@@ -502,5 +502,33 @@ fn a_call_that_does_not_read_an_argument_of_no_value_keeps_its_value() {
     assert!(
         errors[0].starts_with("`take` does not take (\"s\")"),
         "{text}: {errors:?}"
+    );
+}
+
+/// The rejection of the call that passes `"s"` through `k` to `take` shows where `k` is declared
+/// with the type the checker found, saying that none was written and that `y` and the result
+/// have the same type at each call: `(_, _) -> _` alone says nothing of how `"s"` got through
+/// (MSG-declared-inferred-sig).
+#[test]
+fn the_rejection_of_a_value_passed_on_past_an_argument_of_no_value_shows_where_it_goes() {
+    let text = "k(positional x, positional y) = y;\ntake(positional x: int) = x;\n\
+                f(positional h: (int) -> Never) = take(k(h(1), \"s\"));\n";
+    let (info, _) = info(text);
+    assert_eq!(info.errors.len(), 1, "{text}");
+    let notes: Vec<&str> = info.errors[0].notes.iter().map(|n| &*n.text).collect();
+    assert!(
+        notes.contains(
+            &"`k` is declared here with no type written for `x`, `y` or its result; the type the \
+              checker found for `k` is `(_, _) -> _`, in which, at each call, `y` and the result \
+              have the same type"
+        ),
+        "{notes:?}"
+    );
+    assert!(
+        notes.contains(
+            &"`take` is declared here with no type written for its result; the type the checker \
+              found for `take` is `(int) -> int`"
+        ),
+        "{notes:?}"
     );
 }

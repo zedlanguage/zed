@@ -16,15 +16,16 @@ use zed_tests::step_helpers::l01_26_type_resolution::sig_of as sig;
 fn declared(text: &str) -> String {
     let out = rejected(text);
     let (_, rest) = out
-        .split_once("is declared here, `")
+        .split_once("is declared here with no type written for ")
         .unwrap_or_else(|| panic!("no declaration shown:\n{out}"));
-    rest[..rest.find("`\n").expect("the end of the signature")].into()
+    let (_, rest) = rest.split_once("` is `").expect("the type found");
+    rest[..rest.find('`').expect("the end of the signature")].into()
 }
 
 /// That `text` is type syntax: the parser and the resolver read it with nothing undefined
 /// (`parse_type`), and as a parameter's written type the whole compiler refuses nothing in it
 /// but `_` (InferType), whose layer L10 is not yet built.
-fn writes_back(text: &str) {
+pub(super) fn writes_back(text: &str) {
     parse_type(text).unwrap_or_else(|why| panic!("{why}"));
     let src = format!("u(positional v: {text}) = 1;\nm(positional n: int) = u();\n");
     let out = rejected(&src);

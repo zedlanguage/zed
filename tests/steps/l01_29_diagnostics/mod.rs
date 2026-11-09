@@ -8,6 +8,7 @@ mod binder_type;
 mod body_display;
 mod bug;
 mod casts;
+mod declared;
 mod derivations;
 mod emptied;
 mod explained;

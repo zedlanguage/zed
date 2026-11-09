@@ -170,7 +170,7 @@ fn zedc_run_reports_a_misplaced_argument_once_with_the_declaration() {
     assert_eq!(bad.stderr.matches(message).count(), 1, "{}", bad.stderr);
     assert!(
         bad.stderr
-            .contains("`greet` is declared here, `(name: _) -> String`"),
+            .contains("`greet` is declared here with no type written for `name` or its result; the type the checker found for `greet` is `(name: _) -> String`"),
         "{}",
         bad.stderr
     );

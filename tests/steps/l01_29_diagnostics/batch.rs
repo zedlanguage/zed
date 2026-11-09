@@ -121,7 +121,8 @@ fn batch_and_single_file_checking_agree() {
              chooses one; write `1r` or `1.0f64`\n  \
              T1 stands for a part written more than once:\n    \
              type T1 = rat | f64;\n  \
-             [1] 1:1: `f` is declared here, `(T1) -> T1`\n      \
+             [1] 1:1: `f` is declared here with no type written for its result; the type the \
+             checker found for `f` is `(T1) -> T1`\n      \
              1 | f(positional x: f64 | rat) = x;\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
         )

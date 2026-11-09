@@ -19,9 +19,9 @@ call "f(\"a\")" = (String) -> (int) -> (int, int, int)
 call "f(\"a\")(2)" = (int) -> (int, int, int)
 err `take` does not take ((int) -> (int) -> (int, int, int)): these are the types of its arguments here, and `take` has no arrow that takes them all [take(f: g(0))]
   note this call of `g` gives (int) -> (int) -> (int, int, int)
-  note `g` is declared here, `(int) -> (int) -> (int) -> (int, int, int)`
+  note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
   note `take` takes (f: (String) -> (int) -> (int, int, int)) -> (int, int, int)
-  note `take` is declared here, `(f: (String) -> (int) -> (int, int, int)) -> (int, int, int)`
+  note `take` is declared here with no type written for its result; the type the checker found for `take` is `(f: (String) -> (int) -> (int, int, int)) -> (int, int, int)`
 === "h = g(0);\nk = h(\"x\");\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 top h = (int) -> (int) -> (int, int, int)
@@ -44,7 +44,7 @@ sig g = (int) -> (int) -> (int) -> (int, int, int)
 sig u = (n: int) -> (int) -> (int) -> (int, int, int)
 sig v = (n: int) -> Never
 err this argument is passed by position, and the parameter it reaches, `n` of `u`, is a named parameter, which a call passes only by name, as `n: …` [n]
-  note `u` is declared here, `(n: int) -> (int) -> (int) -> (int, int, int)`
+  note `u` is declared here with no type written for its result; the type the checker found for `u` is `(n: int) -> (int) -> (int) -> (int, int, int)`
   note repair: pass `n` by name, as `n: …`
   note repair: declare `n` `positional` in `u`
 === "w(f: (int) -> (int) -> (int, int, int)) = f;\nr = w(f: g(0))(1)(2);\n"
@@ -59,21 +59,21 @@ sig w = (f: (f64) -> (int) -> (int, int, int)) -> (f64) -> (int) -> (int, int, i
 top r = Never
 err `w` does not take ((int) -> (int) -> (int, int, int)): these are the types of its arguments here, and `w` has no arrow that takes them all [w(f: g(0))]
   note this call of `g` gives (int) -> (int) -> (int, int, int)
-  note `g` is declared here, `(int) -> (int) -> (int) -> (int, int, int)`
+  note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
   note `w` takes (f: (f64) -> (int) -> (int, int, int)) -> (f64) -> (int) -> (int, int, int)
-  note `w` is declared here, `(f: (f64) -> (int) -> (int, int, int)) -> (f64) -> (int) -> (int, int, int)`
+  note `w` is declared here with no type written for its result; the type the checker found for `w` is `(f: (f64) -> (int) -> (int, int, int)) -> (f64) -> (int) -> (int, int, int)`
 === "t = (g(0), g(1));\nk = t;\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 top k = ((int) -> (int) -> (int, int, int), (int) -> (int) -> (int, int, int))
 top t = ((int) -> (int) -> (int, int, int), (int) -> (int) -> (int, int, int))
 err a tuple takes data, and this value may hold a function, `(int) -> (int) -> (int, int, int)`: data is a value that holds no function at any depth [g(0)]
   note this call of `g` gives (int) -> (int) -> (int, int, int)
-  note `g` is declared here, `(int) -> (int) -> (int) -> (int, int, int)`
+  note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
   note repair: call the function before the value gets here, so that the value holds its result and not the function
   note repair: keep the function under its own name, out of the value
 err a tuple takes data, and this value may hold a function, `(int) -> (int) -> (int, int, int)`: data is a value that holds no function at any depth [g(1)]
   note this call of `g` gives (int) -> (int) -> (int, int, int)
-  note `g` is declared here, `(int) -> (int) -> (int) -> (int, int, int)`
+  note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
   note repair: call the function before the value gets here, so that the value holds its result and not the function
   note repair: keep the function under its own name, out of the value
 === "c(x: int) = if x > 0 { g(0) } else { g(1) };\nd = c(x: 1)(2)(3);\n"
@@ -89,11 +89,11 @@ top z = Never
 top zz = Never
 call "g(q)(q)" = (int) -> (int) -> (int, int, int)
 err this argument is passed by position, and the parameter it reaches, `q` of `y`, is a named parameter, which a call passes only by name, as `q: …` [1]
-  note `y` is declared here, `(q: int) -> (int) -> (int, int, int)`
+  note `y` is declared here with no type written for `q` or its result; the type the checker found for `y` is `(q: int) -> (int) -> (int, int, int)`
   note repair: pass `q` by name, as `q: …`
   note repair: declare `q` `positional` in `y`
 err this argument is passed by position, and the parameter it reaches, `q` of `y`, is a named parameter, which a call passes only by name, as `q: …` [1.5]
-  note `y` is declared here, `(q: int) -> (int) -> (int, int, int)`
+  note `y` is declared here with no type written for `q` or its result; the type the checker found for `y` is `(q: int) -> (int) -> (int, int, int)`
   note repair: pass `q` by name, as `q: …`
   note repair: declare `q` `positional` in `y`
 === "take(f: (int) -> (int) -> (int, int, int)) = f(1)(2);\nr = take(f: (a1) -> (a2) -> (0 + 1, a1 + 1, a2 + 1));\n"
@@ -109,9 +109,9 @@ sig m = (f: (f64) -> (int) -> (int, int, int)) -> 0
 top r = Never
 err `m` does not take ((int) -> (int) -> (int, int, int)): these are the types of its arguments here, and `m` has no arrow that takes them all [m(f: k(x: 1))]
   note this call of `k` gives (int) -> (int) -> (int, int, int)
-  note `k` is declared here, `(x: int) -> (int) -> (int) -> (int, int, int)`
+  note `k` is declared here with no type written for its result; the type the checker found for `k` is `(x: int) -> (int) -> (int) -> (int, int, int)`
   note `m` takes (f: (f64) -> (int) -> (int, int, int)) -> 0
-  note `m` is declared here, `(f: (f64) -> (int) -> (int, int, int)) -> 0`
+  note `m` is declared here with no type written for its result; the type the checker found for `m` is `(f: (f64) -> (int) -> (int, int, int)) -> 0`
 === "h = g(0)(1);\nq = h + 1;\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 top h = (int) -> (int, int, int)
@@ -140,7 +140,7 @@ sig g = (int) -> (int) -> (int) -> (int, int, int)
 sig p = (x: T) -> (T) -> T for T in int | f64 | rat
 top q = Never
 err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1]
-  note `p` is declared here, `(x: T) -> (T) -> T for T in int | f64 | rat`
+  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: T) -> (T) -> T for T in int | f64 | rat`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
 === "p(x) = (y) -> (z) -> x + y + z;\nq = p(1)(2)(3);\nr = p(1.5)(2.5)(3.5);\n"
@@ -149,11 +149,11 @@ sig p = (x: T) -> (T) -> (T) -> T for T in int | f64 | rat
 top q = Never
 top r = Never
 err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1]
-  note `p` is declared here, `(x: T) -> (T) -> (T) -> T for T in int | f64 | rat`
+  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: T) -> (T) -> (T) -> T for T in int | f64 | rat`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
 err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1.5]
-  note `p` is declared here, `(x: T) -> (T) -> (T) -> T for T in int | f64 | rat`
+  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: T) -> (T) -> (T) -> T for T in int | f64 | rat`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
 === "p(x) = (y) -> (z) -> (x div 1, y, z);\nq = p(1)(\"s\")(true);\nr = p(1)(2)(3) + 1;\n"
@@ -162,11 +162,11 @@ sig p = (x: int) -> (_) -> (_) -> (int, _, _)
 top q = Never
 top r = Never
 err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1]
-  note `p` is declared here, `(x: int) -> (_) -> (_) -> (int, _, _)`
+  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: int) -> (_) -> (_) -> (int, _, _)`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
 err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1]
-  note `p` is declared here, `(x: int) -> (_) -> (_) -> (int, _, _)`
+  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: int) -> (_) -> (_) -> (int, _, _)`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
 === "o(x) = (y) -> (z) -> x div 1;\nq = o(1)(2)(3) == 2;\nw = (o(1), 0);\n"
@@ -175,11 +175,11 @@ sig o = (x: int) -> (_) -> (_) -> int
 top q = bool
 top w = Never
 err this argument is passed by position, and the parameter it reaches, `x` of `o`, is a named parameter, which a call passes only by name, as `x: …` [1]
-  note `o` is declared here, `(x: int) -> (_) -> (_) -> int`
+  note `o` is declared here with no type written for `x` or its result; the type the checker found for `o` is `(x: int) -> (_) -> (_) -> int`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `o`
 err this argument is passed by position, and the parameter it reaches, `x` of `o`, is a named parameter, which a call passes only by name, as `x: …` [1]
-  note `o` is declared here, `(x: int) -> (_) -> (_) -> int`
+  note `o` is declared here with no type written for `x` or its result; the type the checker found for `o` is `(x: int) -> (_) -> (_) -> int`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `o`
 === "h = g(0);\nt = (h, 1);\nr = if t is (((int) -> ((int) -> (int, int, int))), int) { 1 } else { t };\n"
@@ -191,7 +191,7 @@ err a tuple takes data, and this value may hold a function, `(int) -> (int) -> (
   note `h` is (int) -> (int) -> (int, int, int) here
   note `h` is defined as this expression, (int) -> (int) -> (int, int, int)
   note this call of `g` gives (int) -> (int) -> (int, int, int)
-  note `g` is declared here, `(int) -> (int) -> (int) -> (int, int, int)`
+  note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
   note repair: call the function before the value gets here, so that the value holds its result and not the function
   note repair: keep the function under its own name, out of the value
 === "h = g(0);\nt = (h, 1);\nr = if t is not (((int) -> ((int) -> (int, int, int))), int) { t } else { 2 };\n"
@@ -203,7 +203,7 @@ err a tuple takes data, and this value may hold a function, `(int) -> (int) -> (
   note `h` is (int) -> (int) -> (int, int, int) here
   note `h` is defined as this expression, (int) -> (int) -> (int, int, int)
   note this call of `g` gives (int) -> (int) -> (int, int, int)
-  note `g` is declared here, `(int) -> (int) -> (int) -> (int, int, int)`
+  note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
   note repair: call the function before the value gets here, so that the value holds its result and not the function
   note repair: keep the function under its own name, out of the value
 === "h = g(0)(1);\nt = (h, 1);\nr = if t is (((String) -> (int, int, int)), int) { 1 } else { t };\n"

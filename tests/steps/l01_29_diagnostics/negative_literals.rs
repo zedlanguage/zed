@@ -19,7 +19,8 @@ fn a_negative_decimal_at_an_int_parameter_is_rejected_at_its_minus() {
         out,
         "2:11: the literal `-2.5` is a decimal, and `int` is expected here; a decimal literal is \
 never an `int`
-  [1] 1:1: `scale` is declared here, `(int) -> int`
+  [1] 1:1: `scale` is declared here with no type written for its result; the type the checker found \
+for `scale` is `(int) -> int`
       1 | scale(positional x: int) = x * 2;
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
     );

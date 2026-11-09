@@ -929,7 +929,8 @@ has no arrow that takes them all
         |     ^^^^^^^ [2]
         |          ^ [1]
   [2] 2:5: `take` takes (Never) -> Never
-  [3] 1:1: `take` is declared here, `(Never) -> Never`
+  [3] 1:1: `take` is declared here with no type written for its result; the type the checker found \
+for `take` is `(Never) -> Never`
       1 | take(positional x: Never) = x;
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
     );
@@ -986,7 +987,8 @@ has no arrow that takes them all
   [2] 2:8: this literal, 1, is 1
   [3] 2:11: this literal, 2, is 2
   [4] 2:5: `f` takes (Never) -> Never
-  [5] 1:1: `f` is declared here, `(Never) -> Never`
+  [5] 1:1: `f` is declared here with no type written for its result; the type the checker found for \
+`f` is `(Never) -> Never`
       1 | f(positional x: (Never, int)) = x;
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [5]
         |                 ^^^^^^^^^^^^ [6]

@@ -65,7 +65,8 @@ main(stdin: Lines) -> (stdout: Lines) {
             "this expression is \"12\"",
             "this expression is #gold",
             "`discount` takes (price: int, tier: _) -> int",
-            "`discount` is declared here, `(price: int, tier: _) -> int`",
+            "`discount` is declared here with no type written for `tier` or its result; the type \
+             the checker found for `discount` is `(price: int, tier: _) -> int`",
         ]
     );
 }
@@ -179,7 +180,8 @@ main(stdin: Lines) -> (stdout: Lines) {
         [
             "this expression is \"a\"",
             "this call of `twice` gives int",
-            "`twice` is declared here, `(int) -> int`",
+            "`twice` is declared here with no type written for `x` or its result; the type the \
+             checker found for `twice` is `(int) -> int`",
             "`++` takes (String, String) -> String",
             "repair: wrap this in `String(…)`; the checker accepts that",
         ]
@@ -343,7 +345,7 @@ s = g(h);
       3 | g(positional x) { p = f(x); return p == p; }
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]
         |                                    ^^^^^^ [1]
-  [2] 3:1: `g` is declared here, `(_) -> bool`
+  [2] 3:1: `g` is declared here with no type written for `x` or its result; the type the checker found for `g` is `(_) -> bool`
   [3] 4:5: repair: call the function before the value gets here, so that the value holds its result and not the function
       4 | s = g(h);
         |     ^^^^

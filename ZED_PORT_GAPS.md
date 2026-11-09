@@ -3076,3 +3076,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A local `enum Step { Pair, Rest }` pushed on a `Vec` used as a heap stack, so the pairs are checked in the order a recursion would | `Ck::components` | Mutation (gap 11) | A union of the two step shapes and a recursive function over the stack, or a fold over it |
 | `Vec<[Vec<&Ty>; 2]>` grown with `resize_with(.., Default::default)` to the longest tuple and filled in place by position and side | `Ck::components` | Mutation (gap 11) | A map from position to the pair of lists, built by a fold over the rows |
 | A `HashSet` of pairs of types read, and one of messages already given, each tested and filled with `insert` | `Ck::components` | Mutation (gap 11) | A set threaded through the walk |
+
+## Entries from MSG-declared-inferred-sig (`crates/zedc-check/src/check/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `let [arrow] = &sig.arrows[..] else { return Vec::new(); }`, a slice pattern for exactly one arrow | `shared_places` | Slice patterns | Test the length, then index |
+| A `HashMap` from variable to its places filled through `entry()` (`Occupied` pushes, `Vacant` inserts and records the variable in a `Vec` of first-seen order) | `shared_places` | Mutation (gap 11) | A fold over the places into a map of lists and a list of variables in first-seen order |

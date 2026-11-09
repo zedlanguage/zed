@@ -24,7 +24,7 @@ l01_21_test_runner/zed/labels.zed
             Step {
                 line: 3,
                 col: 1,
-                text: "`label` is declared here, `(String, city: String, postcode: String) -> String`",
+                text: "`label` is declared here with no type written for its result; the type the checker found for `label` is `(String, city: String, postcode: String) -> String`",
                 source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
                 width: 110,
             },
@@ -69,7 +69,7 @@ l01_21_test_runner/zed/labels.zed
             Step {
                 line: 3,
                 col: 1,
-                text: "`label` is declared here, `(String, city: String, postcode: String) -> String`",
+                text: "`label` is declared here with no type written for its result; the type the checker found for `label` is `(String, city: String, postcode: String) -> String`",
                 source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
                 width: 110,
             },
@@ -107,7 +107,7 @@ l01_21_test_runner/zed/labels.zed
             Step {
                 line: 3,
                 col: 1,
-                text: "`label` is declared here, `(String, city: String, postcode: String) -> String`",
+                text: "`label` is declared here with no type written for its result; the type the checker found for `label` is `(String, city: String, postcode: String) -> String`",
                 source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
                 width: 110,
             },
@@ -138,7 +138,7 @@ l01_21_test_runner/zed/labels.zed
             Step {
                 line: 3,
                 col: 1,
-                text: "`label` is declared here, `(String, city: String, postcode: String) -> String`",
+                text: "`label` is declared here with no type written for its result; the type the checker found for `label` is `(String, city: String, postcode: String) -> String`",
                 source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
                 width: 110,
             },
@@ -162,7 +162,7 @@ l01_21_test_runner/zed/labels.zed
             Step {
                 line: 4,
                 col: 1,
-                text: "`stamp` is declared here, `(int, handler: (grams: int) -> String) -> String`",
+                text: "`stamp` is declared here with no type written for its result; the type the checker found for `stamp` is `(int, handler: (grams: int) -> String) -> String`",
                 source: "stamp(positional weight: int, handler: (grams: int) -> String) = handler(grams: weight);",
                 width: 88,
             },

@@ -1045,13 +1045,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::CallAlso { id, from, sig } => {
                 let out = m.take_ty();
                 if let Some(o) = self.whence.get(&id).map(|o| o.span) {
-                    let t = self.t;
-                    let name = &t.funcs[&id].name;
                     self.also_notes(from, |ck| {
                         built(1);
                         let mut notes = vec![Note {
                             span: o,
-                            text: format!("`{name}` is declared here, `{}`", ck.sig_text(&sig)),
+                            text: ck.declared_step(id, &sig),
                         }];
                         ck.declared_emptied(id, &mut notes);
                         notes

@@ -227,7 +227,8 @@ fn a_rejection_whose_types_all_have_values_gets_no_such_step() {
         [
             "this expression is true",
             "`f` takes ((int, bool)) -> (int, bool)",
-            "`f` is declared here, `((int, bool)) -> (int, bool)`",
+            "`f` is declared here with no type written for its result; the type the checker found \
+             for `f` is `((int, bool)) -> (int, bool)`",
         ],
         "{out}"
     );

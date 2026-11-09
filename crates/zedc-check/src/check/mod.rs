@@ -1450,7 +1450,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         built(1);
         let b = &self.t.res.binders[id].name;
         match why {
-            Why::Declared(sig) => format!("`{b}` is declared here, `{}`", self.sig_text(sig)),
+            Why::Declared(sig) => self.declared_step(id, sig),
             Why::Defined(v) => format!("`{b}` is defined as this expression, {}", self.text(v)),
             Why::Component(i, c) => format!("`{b}` is component {i} of this, {}", self.text(c)),
             Why::Port => format!("`{b}` is an output port"),
@@ -1492,6 +1492,37 @@ impl<'t, 'a> Ck<'t, 'a> {
             Why::Typed(a, ..) => emptied(a, out),
             _ => {}
         }
+    }
+
+    /// The step that says the function `id`, of signature `sig`, is declared here (DESIGN.md
+    /// sec:diagnostics). It names the parameters written with no type and says that the type it
+    /// shows is the one the checker found, not one written, and which of its places that type
+    /// writes `_` have the same type at each call ([`shared_places`]): `` `k` is declared here
+    /// with no type written for `x`, `y` or its result; the type the checker found for `k` is
+    /// `(_, _) -> _`, in which, at each call, `y` and the result have the same type ``.
+    /// A declaration writes no result type at this layer (the syntax tree has none), so the
+    /// result is always among the types not written, and the step never shows a type as
+    /// written.
+    fn declared_step(&self, id: usize, sig: &Sig) -> String {
+        let f = self.t.funcs[&id];
+        let mut unwritten: Vec<String> = (f.params.iter())
+            .filter(|p| p.ty.is_none())
+            .map(|p| format!("`{}`", p.name))
+            .collect();
+        unwritten.push("its result".into());
+        let sig = sig.solved_with(&|v| self.stale(v));
+        let shared = shared_places(&sig);
+        let name = &f.name;
+        let mut text = format!(
+            "`{name}` is declared here with no type written for {}; the type the checker found \
+             for `{name}` is `{sig}`",
+            or_list(&unwritten)
+        );
+        if !shared.is_empty() {
+            text.push_str(", in which, at each call, ");
+            text.push_str(&and_list(&shared));
+        }
+        text
     }
 
     /// [`emptied`] of each parameter type written on the function `id`, in order.
@@ -5914,6 +5945,56 @@ fn explain_empty(t: &Type, found: impl Fn(&Type) -> bool, out: &mut Vec<Note>) {
                 .filter(|c| !matches!(c.kind, TypeKind::Name(_)))
                 .map(Work::Explain),
         );
+    }
+}
+
+/// For each own variable of the one arrow of `sig` that its text writes `_`, and that stands in
+/// two of its places or more, a clause that names those places, in the order the variables are
+/// first met: `` `y` and the result have the same type ``. A place is a parameter, by its name,
+/// or the result, each whole or `part of` it. A type syntax that writes one variable at two
+/// places names it, and a name no bounds clause binds is a later layer's form (step L2.12), so
+/// the step says in words what `_` leaves out. With several arrows a place would also need its
+/// arrow, so no clause is given. Each place's variables are found once ([`Ty::vars_in`]), so the
+/// time is linear in the size of `sig`.
+fn shared_places(sig: &Sig) -> Vec<String> {
+    let [arrow] = &sig.arrows[..] else {
+        return Vec::new();
+    };
+    let written_every =
+        |v: &Arc<str>| sig.own.contains(v) && sig.bounds.get(v).is_none_or(|m| m & OTHER != 0);
+    let mut places: HashMap<Arc<str>, Vec<String>> = HashMap::new();
+    let mut order = Vec::new();
+    let named = (arrow.params.iter()).zip(sig.params.iter().map(|p| format!("`{}`", p.name)));
+    for (t, what) in named.chain([(&arrow.result, "the result".to_string())]) {
+        let mut vars = Vars::default();
+        t.vars_in(&mut vars);
+        for v in vars.order.into_iter().filter(written_every) {
+            let place = match t.as_var() == Some(&v) {
+                true => what.clone(),
+                false => format!("part of {what}"),
+            };
+            match places.entry(v) {
+                Entry::Occupied(mut e) => e.get_mut().push(place),
+                Entry::Vacant(e) => {
+                    order.push(e.key().clone());
+                    e.insert(vec![place]);
+                }
+            }
+        }
+    }
+    (order.iter())
+        .map(|v| &places[v])
+        .filter(|p| p.len() >= 2)
+        .map(|p| format!("{} have the same type", and_list(p)))
+        .collect()
+}
+
+/// `items` joined as a list of choices in a sentence: `a`, `a or b`, `a, b or c`.
+fn or_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
     }
 }
 
