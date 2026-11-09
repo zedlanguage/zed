@@ -9,7 +9,7 @@ use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{
     Atom, Con, Entailment, Formula, Lin, Refusal, Relation, Shared, decide, entails, project,
-    project_each, satisfiable,
+    project_each, row_box, satisfiable,
 };
 
 fn sym(s: &str) -> Atom {
@@ -598,6 +598,28 @@ fn eliminating_the_terms_of_a_long_row_costs_the_row_each_time() {
     }
     scaling::check_order("a sum of bounded terms", n, 1, |m| {
         drop(satisfiable(if m == n { &small } else { &large }));
+    });
+}
+
+/// The bounds the box stage gives the rows of a refused projection cost O(T log T) in the T
+/// terms: each row tightens each of its terms from one sum of the bounds of the others, not from
+/// a new sum for each term. `bounded_sum` gives each `x[i]` in [0, 49].
+#[test]
+fn the_box_of_refused_rows_scales() {
+    let n = 2048;
+    let (small, large) = (bounded_sum(n), bounded_sum(scaling::FACTOR * n));
+    let syms = |m: usize| -> Vec<Atom> { (0..m).map(|i| sym(&format!("x{i}"))).collect() };
+    let (s_small, s_large) = (syms(n), syms(scaling::FACTOR * n));
+    let want = IntervalSet::range(End::Fin(Num::from(0)), End::Fin(Num::from(49)));
+    for (f, s) in [(&small, &s_small), (&large, &s_large)] {
+        assert!(row_box(f, s).iter().all(|b| *b == want));
+    }
+    scaling::check_order("the box of one long row", n, 1, |m| {
+        drop(if m == n {
+            row_box(&small, &s_small)
+        } else {
+            row_box(&large, &s_large)
+        });
     });
 }
 

@@ -108,7 +108,7 @@ fn a_refused_test_gives_one_warning_at_its_test() {
             "{WIDER}\
              \n  [1] here the conditions `{constraints}` hold\
              \n  [2] the checker could not work out which values each of their variables can take: {GROWTH}\
-             \n  [3] so the conditions do not narrow the values of their variables here{}",
+             \n  [3] so here each of their variables keeps only the bounds that each condition gives it from the bounds of the others{}",
             value("w", "the conditions", constraints)
         )]
     );
@@ -134,7 +134,7 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
             "{WIDER}\
                  \n  [1] here the test `{test}` is {outcome}\
                  \n  [2] the checker could not work out which values its variables can take when it is {outcome}: {GROWTH}\
-                 \n  [3] so the test does not narrow the values of its variables here{}",
+                 \n  [3] so the test narrows the values of its variables here only to bounds that may be wider than it allows{}",
             value("x", "the test", test)
         )
     };
@@ -148,7 +148,7 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
         "{WIDER}\
          \n  [1] here the conditions `{constraints}` hold\
          \n  [2] the checker could not work out which values each of their variables can take: {GROWTH}\
-         \n  [3] so the conditions do not narrow the values of their variables here{}",
+         \n  [3] so here each of their variables keeps only the bounds that each condition gives it from the bounds of the others{}",
         value("w", "the conditions", constraints)
     );
     assert_eq!(
@@ -179,7 +179,7 @@ fn a_refused_projection_onto_each_name_gives_one_warning_for_each() {
                 "{WIDER}\
                  \n  [1] here the conditions `{constraints}` hold\
                  \n  [2] the checker could not work out which values `{n}` can take: {GROWTH}\
-                 \n  [3] so the conditions do not narrow the values of that variable here{}",
+                 \n  [3] so here that variable keeps only the bounds that each condition gives it from the bounds of the others{}",
                 value("w", "the conditions", constraints)
             )
         })

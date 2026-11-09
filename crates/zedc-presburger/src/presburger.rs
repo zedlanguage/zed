@@ -6306,15 +6306,28 @@ fn bounds(sys: &System) -> Option<Bounds> {
     let n = sys.vars.len();
     let lo: Vec<Option<Int>> = (0..n).map(|j| sys.bound(j, false)).collect();
     let hi: Vec<Option<Int>> = (0..n).map(|j| sys.bound(j, true)).collect();
+    let wide = sys.rows.iter().filter(|(a, _)| a.len() > 1);
+    tightened(lo, hi, wide.map(|(a, held)| (&**a, &held.k)))
+}
+
+/// The bounds `lo`, `hi` of each variable, each tightened once by every wide row
+/// `Σ a[i]·x[i] + k >= 0` of `wide` from those bounds, all rows at the same time ([`bounds`]); `None` when
+/// some variable is left with no value. One pass over the terms.
+fn tightened<'r>(
+    lo: Vec<Option<Int>>,
+    hi: Vec<Option<Int>>,
+    wide: impl Iterator<Item = (&'r [Term], &'r Int)>,
+) -> Option<Bounds> {
+    let n = lo.len();
     let (mut tlo, mut thi) = (lo.clone(), hi.clone());
-    for (a, held) in sys.rows.iter().filter(|(a, _)| a.len() > 1) {
+    for (a, k) in wide {
         // The largest value of `c·x[i]` in the box.
         let top = |i: usize, c: &Int| {
             if c.is_positive() { &hi[i] } else { &lo[i] }
                 .as_ref()
                 .map(|b| c * b)
         };
-        let mut sum = held.k.clone();
+        let mut sum = k.clone();
         let mut open: Vec<usize> = Vec::new();
         for (i, c) in a.iter() {
             match top(*i, c) {
@@ -7775,6 +7788,232 @@ fn project_each_inner(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
         Some(p) => project_parts(p, syms, Some(f), false, &mut HashMap::new()),
         None => Ok(no_points(syms)),
     }
+}
+
+/// [`project_each`] with a set for every symbol, for a caller that narrows by the
+/// projection: where the solver refuses the question or the projection onto a symbol, the
+/// symbol keeps the bounds the box stage gives the rows of the formula ([`row_box`]), which
+/// hold every value it takes at a point of the formula.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Boxed {
+    /// Each symbol's set: its projection, or where it was refused, the box stage's bounds
+    /// and the cause.
+    pub each: Vec<(IntervalSet, Option<Refusal>)>,
+    /// The causes for which a disjunction was left out of the projections.
+    pub skipped: Vec<Refusal>,
+    /// The cause for which the whole question was refused, when it was; every symbol then
+    /// keeps the box stage's bounds.
+    pub whole: Option<Refusal>,
+}
+
+impl Boxed {
+    /// The first cause for which a set is wider than the projection: of the whole question,
+    /// then of the first refused symbol, then of the first disjunction left out.
+    pub fn cause(&self) -> Option<Refusal> {
+        (self.whole.clone())
+            .or_else(|| self.each.iter().find_map(|(_, r)| r.clone()))
+            .or_else(|| self.skipped.first().cloned())
+    }
+}
+
+/// [`project_each`], each refused symbol, or every symbol when the whole question is refused,
+/// given the bounds of [`row_box`] in place of its projection ([`Boxed`]).
+///
+/// Complexity tradeoff: a projection the solver refuses (`Refusal::Growth` and the other
+/// causes of [`Refusal`], see `Omega::run`) keeps only the box stage's bounds: each row with
+/// one term bounds its atom, and each wider row tightens each of its atoms once from the
+/// bounds of the others, so the set can be wider than the projection (seed 17 case 272 of
+/// `l01_39_reduced_product::pendants::WRITTEN`: `z1` in [-7, 13] where the projection is
+/// [-7, 6]). Why: the exact projection of rows the solver refuses is an integer program over
+/// four variables or more, and propagating the bounds to their fixed point can take a number
+/// of rounds that grows with the constants, not the rows. Trigger: a question or a symbol the
+/// solver refuses. Tests: `l01_39_reduced_product::pendants::parts_once_answered_by_how_they_were_written_give_one_answer`,
+/// `l01_39_reduced_product::pendants::refused_projections_keep_the_box_of_their_rows`,
+/// `l01_38_presburger::omega::the_box_of_refused_rows_scales`. COMPLEXITY.md row
+/// PROJECT-growth-box. A complete solution would decide the integer program (see
+/// `Omega::run`).
+pub fn project_each_boxed(f: &Formula, syms: &[Atom]) -> Boxed {
+    let (each, skipped, whole) = match project_each(f, syms) {
+        Ok((each, skipped)) => (each, skipped, None),
+        Err(e) => (
+            syms.iter().map(|_| Err(e.clone())).collect(),
+            Vec::new(),
+            Some(e),
+        ),
+    };
+    let mut boxed: Option<Vec<IntervalSet>> = None;
+    let each = (each.into_iter().enumerate())
+        .map(|(k, r)| match r {
+            Ok(s) => (s, None),
+            Err(e) => {
+                let b = boxed.get_or_insert_with(|| row_box(f, syms));
+                (b[k].clone(), Some(e))
+            }
+        })
+        .collect();
+    Boxed {
+        each,
+        skipped,
+        whole,
+    }
+}
+
+/// The bounds the box stage of the Omega test (`tightened`) gives each of `syms` over the
+/// rows of `f`'s conjunction: each row with one term bounds its atom, as does each
+/// disjunction every disjunct of which bounds the atom (by their hull), and each wider row
+/// then tightens each of its atoms once from the bounds of the others, all rows at the same
+/// time. Other disjunctions and negations are not read, so each set holds every value the
+/// symbol takes at a point of `f`; every set is empty when the bounds show that `f` has no
+/// point. Each row is divided by the gcd of its coefficients and an equation is read as its
+/// two rows, so no order, sign, factor or repetition of the rows, and no name, changes the
+/// answer. O(T log T) for the T terms of `f`.
+pub fn row_box(f: &Formula, syms: &[Atom]) -> Vec<IntervalSet> {
+    let empty = || syms.iter().map(|_| IntervalSet::empty()).collect();
+    let mut index: HashMap<&Atom, usize> = HashMap::new();
+    let mut lo: Vec<Option<Int>> = Vec::new();
+    let mut hi: Vec<Option<Int>> = Vec::new();
+    let mut wide: Vec<Row> = Vec::new();
+    let mut ors: Vec<&[Formula]> = Vec::new();
+    // Raises the lower bound `b` to `v`, or with `upper` lowers the upper bound `b` to `v`.
+    fn raise(b: &mut Option<Int>, v: Int, upper: bool) {
+        if b.as_ref().is_none_or(|o| (v < *o) == upper) {
+            *b = Some(v);
+        }
+    }
+    let mut stack: Vec<&Formula> = vec![f];
+    while let Some(g) = stack.pop() {
+        match g {
+            Formula::And(cs) => stack.extend(cs.iter()),
+            Formula::Or(ds) if ds.is_empty() => return empty(),
+            Formula::Or(ds) => ors.push(&ds[..]),
+            Formula::Not(_) => {}
+            Formula::Con(c) => {
+                let mut a: Vec<Term> = (c.lin.terms.iter())
+                    .map(|(x, v)| {
+                        let n = index.len();
+                        let j = *index.entry(x).or_insert(n);
+                        if j == n {
+                            lo.push(None);
+                            hi.push(None);
+                        }
+                        (j, v.clone())
+                    })
+                    .collect();
+                a.sort_unstable_by_key(|(j, _)| *j);
+                let row = Row {
+                    a: a.into(),
+                    k: c.lin.constant.clone(),
+                };
+                let eq = c.rel == Rel::Eq;
+                let rows = match row.normal(eq) {
+                    Norm::False => return empty(),
+                    Norm::True => continue,
+                    Norm::Row(r) if eq => {
+                        let back = Row {
+                            a: opposite(&r.a).into(),
+                            k: -&r.k,
+                        };
+                        vec![r, back]
+                    }
+                    Norm::Row(r) => vec![r],
+                };
+                for r in rows {
+                    match &r.a[..] {
+                        // `x + k >= 0` or `-x + k >= 0`, the coefficient one after the
+                        // division by the gcd.
+                        [(j, c)] if c.is_positive() => raise(&mut lo[*j], -&r.k, false),
+                        [(j, _)] => raise(&mut hi[*j], r.k, true),
+                        _ => wide.push(r),
+                    }
+                }
+            }
+        }
+    }
+    // A disjunction bounds the atoms that every disjunct with a point bounds by its rows of
+    // one term, by the hull of those bounds.
+    for ds in ors {
+        let mut hull: Option<OneTerm<'_>> = None;
+        for d in ds {
+            let Some(own) = one_term_bounds(d) else {
+                continue;
+            };
+            hull = Some(match hull {
+                None => own,
+                Some(h) => (h.into_iter())
+                    .filter_map(|(x, (l, u))| {
+                        let (l2, u2) = own.get(x)?;
+                        let l = l.zip(l2.clone()).map(|(p, q)| p.min(q));
+                        let u = u.zip(u2.clone()).map(|(p, q)| p.max(q));
+                        (l.is_some() || u.is_some()).then_some((x, (l, u)))
+                    })
+                    .collect(),
+            });
+        }
+        let Some(hull) = hull else {
+            return empty();
+        };
+        for (x, (l, u)) in hull {
+            let n = index.len();
+            let j = *index.entry(x).or_insert(n);
+            if j == n {
+                lo.push(None);
+                hi.push(None);
+            }
+            if let Some(l) = l {
+                raise(&mut lo[j], l, false);
+            }
+            if let Some(u) = u {
+                raise(&mut hi[j], u, true);
+            }
+        }
+    }
+    let Some((lo, hi)) = tightened(lo, hi, wide.iter().map(|r| (&*r.a, &r.k))) else {
+        return empty();
+    };
+    let end = |v: &Option<Int>, inf: End| v.as_ref().map_or(inf, |v| End::Fin(Num::from(v)));
+    syms.iter()
+        .map(|s| match index.get(s) {
+            Some(&j) => IntervalSet::range(end(&lo[j], End::NegInf), end(&hi[j], End::PosInf)),
+            None => IntervalSet::top(),
+        })
+        .collect()
+}
+
+/// The bounds that one-term rows give each atom, lower and upper.
+type OneTerm<'a> = HashMap<&'a Atom, (Option<Int>, Option<Int>)>;
+
+/// The bounds that the rows of one term of the conjunction `d` give each of their atoms,
+/// `None` when one of them, or a lower bound above an upper one, shows `d` has no point. A
+/// disjunction within `d` is not read.
+fn one_term_bounds(d: &Formula) -> Option<OneTerm<'_>> {
+    let mut out: HashMap<&Atom, (Option<Int>, Option<Int>)> = HashMap::new();
+    let mut stack = vec![d];
+    while let Some(g) = stack.pop() {
+        match g {
+            Formula::And(cs) => stack.extend(cs.iter()),
+            Formula::Or(ds) if ds.is_empty() => return None,
+            Formula::Con(c) if c.lin.terms.len() == 1 => {
+                let (x, a) = c.lin.terms.iter().next().expect("one term");
+                let (l, u) = int_bounds([(a.clone(), c.lin.constant.clone(), c.rel)])?;
+                let e = out.entry(x).or_insert((None, None));
+                if let Some(l) = l
+                    && e.0.as_ref().is_none_or(|o| *o < l)
+                {
+                    e.0 = Some(l);
+                }
+                if let Some(u) = u
+                    && e.1.as_ref().is_none_or(|o| u < *o)
+                {
+                    e.1 = Some(u);
+                }
+            }
+            _ => {}
+        }
+    }
+    let crossed = out
+        .values()
+        .any(|b| matches!(b, (Some(l), Some(u)) if u < l));
+    (!crossed).then_some(out)
 }
 
 /// [`project_each`]'s answer for a formula with no point.

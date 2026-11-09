@@ -1307,8 +1307,10 @@ fn negated(c: &Cmp) -> Cmp {
     }
 }
 
-/// The projections of `f` framed by the boxes of `s`, each met with its box or the refusal,
-/// and the causes for which a disjunction was left out, or the refusal of the whole.
+/// The projections of `f` framed by the boxes of `s`, each met with its box, a refused one
+/// the bounds the box stage gives ([`presburger::project_each_boxed`]) with the refusal, and
+/// the causes for which a disjunction was left out, or the refusal of the whole with the
+/// bounds kept.
 fn each_answer(s: &Scope, f: &Formula, syms: &[Atom]) -> String {
     let mut parts: Vec<Formula> = syms
         .iter()
@@ -1318,24 +1320,24 @@ fn each_answer(s: &Scope, f: &Formula, syms: &[Atom]) -> String {
         })
         .collect();
     parts.push(f.clone());
-    match presburger::project_each(&Formula::and(parts), syms) {
-        Err(e) => format!("refused: {e:?}"),
-        Ok((each, skipped)) => {
-            let shown: Vec<String> = syms
-                .iter()
-                .zip(each)
-                .map(|(a, x)| {
-                    let Atom::Sym(n) = a else {
-                        unreachable!("a name")
-                    };
-                    match x {
-                        Ok(x) => format!("{n}={}", show(&s.get(n).ints().meet(&x))),
-                        Err(e) => format!("{n} refused: {e:?}"),
-                    }
-                })
-                .collect();
-            format!("{} left out: {skipped:?}", shown.join(" "))
-        }
+    let got = presburger::project_each_boxed(&Formula::and(parts), syms);
+    let shown: Vec<String> = syms
+        .iter()
+        .zip(got.each)
+        .map(|(a, (x, e))| {
+            let Atom::Sym(n) = a else {
+                unreachable!("a name")
+            };
+            let x = show(&s.get(n).ints().meet(&x));
+            match e {
+                None => format!("{n}={x}"),
+                Some(e) => format!("{n}={x} refused: {e:?}"),
+            }
+        })
+        .collect();
+    match got.whole {
+        Some(e) => format!("refused: {e:?}, kept {}", shown.join(" ")),
+        None => format!("{} left out: {:?}", shown.join(" "), got.skipped),
     }
 }
 
@@ -1575,7 +1577,7 @@ const WRITTEN: &[(&str, &str, &str)] = &[
     (
         "a + 2 * c >= -4 && (2 * a + b >= 7 || z2 <= 8) && a + 2 * b + c + z1 >= 4 && a >= b + z1 - 6 && (b >= c - 11 || z2 <= 4) && a + b + c >= z1 + 2 && a + z1 <= b + c + 9 && a + c >= z0 - 12 && a + b + 2 * c == z2 + 5",
         "a=[2,3] b=[-4,inf] c=[-inf,8] z0=[-6,-4] z1=[-7,13] z2=[-10,6]",
-        "a=[2,3] b refused: Growth c refused: Growth z0=[-6,-4] z1 refused: Growth z2 refused: Growth left out: [Growth]",
+        "a=[2,3] b=[-4,16] refused: Growth c=[-3,6] refused: Growth z0=[-6,-4] z1=[-7,13] refused: Growth z2=[-10,6] refused: Growth left out: [Growth]",
     ),
     (
         "(2 * a >= b + 2 || z0 <= 4) && !(a + b + z0 == 2 * c - 8) && (2 * a + b + 2 * c >= -9 || z1 <= 6) && 2 * a + b == c + z0 - 1",
@@ -1602,6 +1604,270 @@ fn parts_once_answered_by_how_they_were_written_give_one_answer() {
         WRITTEN.len(),
         wrong.join("\n")
     );
+}
+
+/// Each of `syms`, the names of `f` within the boxes of `s`: its set from
+/// [`presburger::project_each_boxed`] met with its box, and whether it was refused, by the
+/// question as a whole or alone.
+fn boxed_names(s: &Scope, f: &Formula, syms: &[Atom]) -> BTreeMap<String, (IntervalSet, bool)> {
+    let mut parts: Vec<Formula> = syms
+        .iter()
+        .map(|a| match a {
+            Atom::Sym(n) => presburger::member(a, s.get(n).ints()),
+            _ => unreachable!("a name"),
+        })
+        .collect();
+    parts.push(f.clone());
+    let got = presburger::project_each_boxed(&Formula::and(parts), syms);
+    syms.iter()
+        .zip(got.each)
+        .map(|(a, (x, e))| {
+            let Atom::Sym(n) = a else {
+                unreachable!("a name")
+            };
+            (n.to_string(), (s.get(n).ints().meet(&x), e.is_some()))
+        })
+        .collect()
+}
+
+/// `items` and `bs` with each name `n` written `to[n]`.
+fn renamed(
+    items: &[Item],
+    bs: &BTreeMap<String, Vec<Piece>>,
+    to: &BTreeMap<String, String>,
+) -> (Vec<Item>, BTreeMap<String, Vec<Piece>>) {
+    let cmp = |c: &Cmp| Cmp {
+        terms: c.terms.iter().map(|(n, k)| (to[n].clone(), *k)).collect(),
+        ..c.clone()
+    };
+    let items = items
+        .iter()
+        .map(|i| match i {
+            Item::Con(c) => Item::Con(cmp(c)),
+            Item::Ne(c) => Item::Ne(cmp(c)),
+            Item::Or(arms) => Item::Or(arms.iter().map(|a| a.iter().map(cmp).collect()).collect()),
+        })
+        .collect();
+    let bs = bs.iter().map(|(n, p)| (to[n].clone(), p.clone())).collect();
+    (items, bs)
+}
+
+/// The names of `bs` in order, each written `v{i}` with `i` counting down from the last, so
+/// renaming reverses the order of the names.
+fn reversing(bs: &BTreeMap<String, Vec<Piece>>) -> BTreeMap<String, String> {
+    let n = bs.len();
+    bs.keys()
+        .enumerate()
+        .map(|(i, k)| (k.clone(), format!("v{}", n - 1 - i)))
+        .collect()
+}
+
+/// The sets of [`boxed_names`] for `items` within `bs` as written and with the names reversed
+/// ([`reversing`]), each name of the second read back as the first; `Err` with both where they
+/// differ.
+#[allow(clippy::type_complexity)]
+fn boxed_as_named(
+    items: &[Item],
+    bs: &BTreeMap<String, Vec<Piece>>,
+    f: &Formula,
+) -> Result<BTreeMap<String, (IntervalSet, bool)>, String> {
+    let s = scope(bs);
+    let want = boxed_names(&s, f, &item_names(items));
+    let to = reversing(bs);
+    let (items2, bs2) = renamed(items, bs, &to);
+    let back: BTreeMap<&String, &String> = to.iter().map(|(k, v)| (v, k)).collect();
+    let got: BTreeMap<String, (IntervalSet, bool)> =
+        boxed_names(&scope(&bs2), &formula(&items2), &item_names(&items2))
+            .into_iter()
+            .map(|(n, x)| (back[&n].clone(), x))
+            .collect();
+    if got == want {
+        Ok(want)
+    } else {
+        Err(format!("as written {want:?}\n  renamed {got:?}"))
+    }
+}
+
+/// `[l,h l,h]` as printed by [`show`], as a set.
+fn shown_set(text: &str) -> IntervalSet {
+    let end = |s: &str, inf: End| match s {
+        "-inf" | "inf" => inf,
+        v => End::Fin(Num::from(v.parse::<i64>().expect("a bound"))),
+    };
+    let inner = (text.strip_prefix('[').and_then(|t| t.strip_suffix(']'))).expect("brackets");
+    inner
+        .split(' ')
+        .filter(|p| !p.is_empty())
+        .fold(IntervalSet::empty(), |acc, p| {
+            let (l, h) = p.split_once(',').expect("a piece");
+            acc.join(&IntervalSet::range(
+                end(l, End::NegInf),
+                end(h, End::PosInf),
+            ))
+        })
+}
+
+/// Case 272 of seed 17 (`WRITTEN`), which the solver refuses with four live variables or more
+/// (`Refusal::Growth`), within its boxes: `b`, `c`, `z1` and `z2` keep the bounds of the box
+/// stage over its rows, `b` and `c` narrower than their boxes, and each holds the exact hull
+/// that brute force finds; the answer is the same with the names reversed, in each of the four
+/// writings of [`four_ways`] and in six random writings ([`rewritten`], [`scaled`]).
+#[test]
+fn refused_projections_keep_the_box_of_their_rows() {
+    let (part, bx, _) = WRITTEN[3];
+    let items = parse(part);
+    let bs = boxes(bx);
+    let s = scope(&bs);
+    let syms = item_names(&items);
+    let want = boxed_as_named(&items, &bs, &formula(&items)).expect("one answer");
+    let shown: Vec<String> = want
+        .iter()
+        .map(|(n, (x, refused))| format!("{n}={}{}", show(x), if *refused { "!" } else { "" }))
+        .collect();
+    assert_eq!(
+        shown.join(" "),
+        "a=[2,3] b=[-4,16]! c=[-3,6]! z0=[-6,-4] z1=[-7,13]! z2=[-10,6]!"
+    );
+    let exact = brute(&items, &bs);
+    assert_eq!(
+        exact
+            .iter()
+            .map(|(n, (h, _))| format!("{n}={h}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+        "a=[2,3] b=[-4,15] c=[-3,6] z0=[-6,-4] z1=[-7,6] z2=[-6,6]"
+    );
+    for (n, (h, _)) in &exact {
+        let h = shown_set(h);
+        assert_eq!(want[n].0.meet(&h), h, "the box of {n} holds the exact hull");
+    }
+    let mut r = Rng::new(0x272);
+    let mut rs = Rng::new(0x5ca1e);
+    let writings = four_ways(&items)
+        .into_iter()
+        .map(|(_, g)| g)
+        .chain([false, true].map(|split| rewritten(&mut r, &items, split)))
+        .chain((0..2).map(|_| scaled(&mut rs, &items)))
+        .chain([false, true].map(|split| rewritten(&mut r, &items, split)));
+    for g in writings {
+        assert_eq!(boxed_names(&s, &g, &syms), want, "{g}");
+    }
+}
+
+/// Counts of the parts with a refused name, of the refused names, and of those narrower than
+/// their box.
+type RefusedCount = (usize, usize, usize);
+
+/// Checks the names of `items` within `bs` that the solver refuses, where it refuses one: each
+/// keeps a set that holds its exact hull (`hulls`, asked only then), the same with the names
+/// reversed ([`boxed_as_named`]) and in each writing of [`four_ways`]. Adds to `count`, and
+/// describes each mismatch, under `label`, in `wrong`.
+fn check_refused(
+    label: &str,
+    items: &[Item],
+    bs: &BTreeMap<String, Vec<Piece>>,
+    hulls: impl FnOnce() -> BTreeMap<String, IntervalSet>,
+    count: &mut RefusedCount,
+    wrong: &mut Vec<String>,
+) {
+    let s = scope(bs);
+    let syms = item_names(items);
+    let f = formula(items);
+    let got = boxed_names(&s, &f, &syms);
+    if !got.values().any(|(_, refused)| *refused) {
+        return;
+    }
+    count.0 += 1;
+    if let Err(e) = boxed_as_named(items, bs, &f) {
+        wrong.push(format!("{label}: {f}\n  {e}"));
+    }
+    for (how, g) in four_ways(items).into_iter().skip(1) {
+        let other = boxed_names(&s, &g, &syms);
+        if other != got {
+            wrong.push(format!(
+                "{label}: {f}\n  {how}: {g}\n  {got:?}\n  {other:?}"
+            ));
+        }
+    }
+    let hulls = hulls();
+    for (n, (x, refused)) in &got {
+        if !*refused {
+            continue;
+        }
+        count.1 += 1;
+        if x != s.get(n).ints() {
+            count.2 += 1;
+        }
+        let h = &hulls[n];
+        if x.meet(h) != *h {
+            wrong.push(format!(
+                "{label}: {f}\n  boxes {bs:?}\n  {n} = {} misses {}",
+                show(x),
+                show(h)
+            ));
+        }
+    }
+}
+
+/// Each name's hull from [`brute`].
+fn brute_hulls(items: &[Item], bs: &BTreeMap<String, Vec<Piece>>) -> BTreeMap<String, IntervalSet> {
+    brute(items, bs)
+        .into_iter()
+        .map(|(n, (h, _))| (n, shown_set(&h)))
+        .collect()
+}
+
+/// [`check_refused`] on the random parts of seeds `seeds`, 400 each, with `double` each part
+/// two random parts over the same names joined (more rows, so more refusals), the hulls by
+/// brute force.
+fn refused_names_in(seeds: std::ops::Range<u64>, double: bool) -> RefusedCount {
+    let mut count = (0, 0, 0);
+    let mut wrong = Vec::new();
+    for seed in seeds {
+        let mut r = Rng::new(seed);
+        for case in 0..400 {
+            let nz = 2 + r.below(5);
+            let mut items = random_part(&mut r, nz);
+            if double {
+                items.extend(random_part(&mut r, nz));
+            }
+            let bs = random_boxes(&mut r, nz);
+            let label = format!("seed {seed} case {case}");
+            let hulls = || brute_hulls(&items, &bs);
+            check_refused(&label, &items, &bs, hulls, &mut count, &mut wrong);
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} wrong:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
+    count
+}
+
+/// Seeds 11 to 14 (of item PROJECT-each-canon), checked by [`refused_names_in`].
+#[test]
+fn refused_projections_of_random_parts_keep_sound_boxes_first_half() {
+    let count = refused_names_in(11..15, false);
+    eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
+    assert_eq!(count, (2, 2, 1));
+}
+
+/// Seeds 15 to 18 (of item PROJECT-each-canon), checked by [`refused_names_in`].
+#[test]
+fn refused_projections_of_random_parts_keep_sound_boxes_second_half() {
+    let count = refused_names_in(15..19, false);
+    eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
+    assert_eq!(count, (2, 11, 8));
+}
+
+/// Seeds 11 and 12 with each part two random parts joined, checked by [`refused_names_in`].
+#[test]
+fn refused_projections_of_joined_random_parts_keep_sound_boxes() {
+    let count = refused_names_in(11..13, true);
+    eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
+    assert_eq!(count, (8, 31, 15));
 }
 
 /// A random part of seed 0xca17, its boxes, and six other writings of it with the same

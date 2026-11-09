@@ -1246,7 +1246,8 @@ impl Refused {
                     "the checker could not work out which values its variables can take when \
                      it is {outcome}: {cause}"
                 ),
-                "so the test does not narrow the values of its variables here",
+                "so the test narrows the values of its variables here only to bounds that may be wider \
+                 than it allows",
             ),
             Asked::Projection => (
                 format!("here the conditions `{c}` hold"),
@@ -1254,7 +1255,8 @@ impl Refused {
                     "the checker could not work out which values each of their variables can \
                      take: {cause}"
                 ),
-                "so the conditions do not narrow the values of their variables here",
+                "so here each of their variables keeps only the bounds that each condition gives it \
+                 from the bounds of the others",
             ),
             Asked::Disjunct => (
                 format!("here the conditions `{c}` hold"),
@@ -1267,7 +1269,8 @@ impl Refused {
             Asked::Onto(n) => (
                 format!("here the conditions `{c}` hold"),
                 format!("the checker could not work out which values `{n}` can take: {cause}"),
-                "so the conditions do not narrow the values of that variable here",
+                "so here that variable keeps only the bounds that each condition gives it from the \
+                 bounds of the others",
             ),
         };
         // The repairs rewrite the test or the conditions as printed: a scope is built from
@@ -4501,7 +4504,9 @@ impl Scope {
         })
     }
 
-    /// Meets each name `part` mentions with its projection, within every interval.
+    /// Meets each name `part` mentions with its projection, within every interval; where the
+    /// solver refuses the projection, with the bounds the box stage gives the rows of `part`
+    /// ([`presburger::project_each_boxed`]).
     fn project_part(&mut self, part: &Formula) {
         if let Some(out) = self.project_by_pendants(part) {
             for (n, x) in out {
@@ -4526,28 +4531,22 @@ impl Scope {
                 cause: cause.into(),
             });
         };
-        let each = match presburger::project_each(&whole, &syms) {
-            Ok((each, skipped)) => {
-                for cause in skipped {
+        // A refused projection keeps the bounds the box stage gives the rows (DESIGN step
+        // L1.38), and is reported.
+        let got = presburger::project_each_boxed(&whole, &syms);
+        let whole_refused = got.whole.is_some();
+        match got.whole {
+            Some(cause) => refuse(self, Asked::Projection, cause),
+            None => {
+                for cause in got.skipped {
                     refuse(self, Asked::Disjunct, cause);
                 }
-                each
             }
-            Err(cause) => {
-                refuse(self, Asked::Projection, cause);
-                return;
+        }
+        for (a, (x, e)) in syms.iter().zip(got.each) {
+            if let (Some(cause), false, Atom::Sym(n)) = (e, whole_refused, a) {
+                refuse(self, Asked::Onto(written_name(n).into()), cause);
             }
-        };
-        for (a, x) in syms.iter().zip(each) {
-            let x = match x {
-                Ok(x) => x,
-                Err(cause) => {
-                    if let Atom::Sym(n) = a {
-                        refuse(self, Asked::Onto(written_name(n).into()), cause);
-                    }
-                    continue;
-                }
-            };
             if let Atom::Sym(n) = a
                 && let Some(p) = self.names.get_mut(n)
             {

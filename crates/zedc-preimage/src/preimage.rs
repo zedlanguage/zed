@@ -468,7 +468,10 @@ fn preimage_in(
                 relation = (!exact).then_some(rel);
                 refusal = why;
             }
-            Err(why) => refusal = Some(why),
+            Err((dom, why)) => {
+                r = Whole { dom, exact: false };
+                refusal = Some(why);
+            }
         }
     }
     if !r.exact
@@ -522,9 +525,11 @@ fn wide(
 }
 
 /// The box `dom` narrowed to the projection of the classes' relation `rel` onto its inputs,
-/// with the refusal for which a disjunct was left out, as the linear stage projects its own
-/// relation ([`linear`]), here with one pair of auxiliary variables for the split input.
-fn project_classes(rel: &Relation, dom: &Domains) -> Result<(Domains, Option<Refusal>), Refusal> {
+/// with the refusal for which a set is wider than the projection, as the linear stage projects
+/// its own relation ([`linear`]), here with one pair of auxiliary variables for the split
+/// input. Where the solver refuses a projection, the input keeps the box stage's bounds
+/// ([`boxed_projections`]).
+fn project_classes(rel: &Relation, dom: &Domains) -> (Domains, Option<Refusal>) {
     let within = |d: &Domains| -> Formula {
         let parts = d
             .iter()
@@ -542,20 +547,33 @@ fn project_classes(rel: &Relation, dom: &Domains) -> Result<(Domains, Option<Ref
     // the box below.
     let hull = dom.iter().map(|(k, v)| (k.clone(), v.hull())).collect();
     let whole = Formula::and(vec![rel.defined(), within(&hull), rel.body.clone()]);
-    let (each, skipped) = presburger::project_each(&whole, &syms)?;
-    let mut each = each.into_iter();
+    let (out, why, _) = boxed_projections(&whole, dom, &syms);
+    (out, why)
+}
+
+/// Each input of `dom` met with its set in the projection of `whole` onto `syms`, the inputs
+/// `whole` mentions ([`presburger::project_each_boxed`]), an input not among them keeping its
+/// box; the first cause for which a set is wider than the projection; and the cause for which
+/// the solver refused a projection, where it did, whose input then keeps the bounds the box
+/// stage gives the rows of `whole` (DESIGN step L1.38).
+fn boxed_projections(
+    whole: &Formula,
+    dom: &Domains,
+    syms: &[presburger::Atom],
+) -> (Domains, Option<Refusal>, Option<Refusal>) {
+    let got = presburger::project_each_boxed(whole, syms);
+    let why = got.cause();
+    let refused = (got.whole.clone()).or_else(|| got.each.iter().find_map(|(_, e)| e.clone()));
+    let mut each = got.each.into_iter().zip(syms).peekable();
     let mut out = Domains::new();
     for (k, v) in dom {
-        let p = if mentioned.contains(&presburger::Atom::Sym(k.clone())) {
-            each.next()
-                .expect("one projection for each mentioned input")?
-                .meet(v)
-        } else {
-            v.clone()
+        let p = match each.next_if(|(_, s)| **s == presburger::Atom::Sym(k.clone())) {
+            Some(((x, _), _)) => x.meet(v),
+            None => v.clone(),
         };
         out.insert(k.clone(), p);
     }
-    Ok((out, skipped.first().cloned()))
+    (out, why, refused)
 }
 
 /// The relation of the classes of a split by remainders over many periods, exact on its box,
@@ -844,10 +862,7 @@ fn split_classes(
         .filter(|(own, _)| !own.is_empty())
         .collect();
     let rel = residue_relation(&name, c, &common, &parts);
-    let (out, why) = match project_classes(&rel, &rest) {
-        Ok(found) => found,
-        Err(why) => (rest, Some(why)),
-    };
+    let (out, why) = project_classes(&rel, &rest);
     let sets: Vec<&IntervalSet> = sets.iter().map(|(s, _)| &**s).collect();
     if covers(&out[&name], &sets, &cuts, m) {
         return Some((out, None));
@@ -2075,15 +2090,19 @@ impl<'t> Scoped<'t> {
 
 /// The linear stage: the relation of the demand over the box `dom`, the box narrowed to its
 /// projections and whether the box entails the relation, with the refusal that left the latter
-/// undecided, or the refusal that left the projections undecided. `None` when the term
-/// is outside the domain or the relation is refused.
+/// undecided; or, where the solver refused a projection, the box with the bounds the box
+/// stage gives the refused inputs ([`boxed_projections`]) and the refusal. `None` when the
+/// term is outside the domain or the relation is refused.
 #[allow(clippy::type_complexity)]
 fn linear(
     tx: &mut Tx<'_>,
     root: Tid,
     dom: &Domains,
     demand: &Demand,
-) -> Option<(Relation, Result<(Domains, bool, Option<Refusal>), Refusal>)> {
+) -> Option<(
+    Relation,
+    Result<(Domains, bool, Option<Refusal>), (Domains, Refusal)>,
+)> {
     tx.start(dom, Landmarks::none());
     let mut tr = Tr::new(false);
     tr.by_class = true;
@@ -2101,7 +2120,7 @@ fn linear(
         body,
         defs: tr.written(0),
     };
-    let go = || -> Result<(Domains, bool, Option<Refusal>), Refusal> {
+    let go = || -> Result<(Domains, bool, Option<Refusal>), (Domains, Refusal)> {
         let within = |d: &Domains| -> Formula {
             let parts = d
                 .iter()
@@ -2119,19 +2138,7 @@ fn linear(
             .map(|k| presburger::Atom::Sym(k.clone()))
             .filter(|a| mentioned.contains(a))
             .collect();
-        let (each, skipped) = presburger::project_each(&whole, &syms)?;
-        let mut each = each.into_iter();
-        let mut out = Domains::new();
-        for (k, v) in dom {
-            let p = if mentioned.contains(&presburger::Atom::Sym(k.clone())) {
-                each.next()
-                    .expect("one projection for each mentioned input")?
-                    .meet(v)
-            } else {
-                v.clone()
-            };
-            out.insert(k.clone(), p);
-        }
+        let (out, why, refused) = boxed_projections(&whole, dom, &syms);
         if is_empty(&out) {
             let none = out
                 .keys()
@@ -2139,13 +2146,16 @@ fn linear(
                 .collect();
             return Ok((none, true, None));
         }
+        if let Some(cause) = refused {
+            return Err((out, cause));
+        }
         let outside = Formula::and(vec![
             rel.defined(),
             within(&out),
             Formula::negate(rel.body.clone()),
         ]);
         Ok(match presburger::decide(&outside) {
-            Ok(meets) => (out, !meets, skipped.first().cloned()),
+            Ok(meets) => (out, !meets, why),
             Err(why) => (out, false, Some(why)),
         })
     };
