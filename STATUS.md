@@ -1678,23 +1678,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BUCKET-cmp-cost | impl attempt 1 | 2026-11-09 06:37 | ready 0da85285; 88 pieces, doc ok, 2 kernel pieces timed out at load 42-60 (pre-existing, slower on main); follow-up KERNEL-xor-agree-slow queued |
 | CUBE-root-wide | impl attempt 1 | 2026-11-09 06:44 | ready 58cfc4a1e8ce5c7ea09f7c37950b859fd07d1fca: rem_uint; 2M->16M passes (instructions 9.50, bytes 9.92); 262144->2M bytes 10.71 > 10.27 open as CUBE-remtree-cr |
-| EMPTY-bottom-arm | impl attempt 1 | 2026-11-09 06:43 | ready 127fd737 (+ spec 719fb98) with EMPTY-normalize-subst; 339+294 pieces, 1 piece over 60 s (zedc_preimage, tests pass alone); follow-ups NARROW-negated-star, |
-| EMPTY-normalize-subst | impl attempt 1 | 2026-11-09 06:44 | ready 127fd737 with EMPTY-bottom-arm; load 33.11 29.13 28.41 |
-| GROUP-refusal | repair attempt 2 | 2026-11-05 04:07 | ready at 9eca3e6c: import cycle gone (imports tool clean, s_01f 18 passed); 87 pieces 0 failed, load 10.4-25.7; ledger ready for GROUP-refusal and REFUSE-group- |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | KERNEL-div-newton | impl attempt 1 | 2026-11-07 13:07 | ready 58cfc4a1e8ce5c7ea09f7c37950b859fd07d1fca on wt/div-newton: Newton division, equality odd-base test un-ignored at 9.3x; 942 passed, 0 failed; follow-up DIV |
-| LIT-bare | impl attempt 1 | 2026-11-09 05:01 | String/hole/prelude-word decimal literals now rejected when unfixed; fences 04-floats suffixed; running checker groups into test-logs26 |
-| LOAD-mod-chain | impl attempt 1 | 2026-11-07 14:25 | ready: commit 3f2a97a3 on wt/load-mod-chain; 241 pieces, 3 timeouts under load in groups that do not reach the change (pass alone, 75-91 s at load 45-52); doc c |
+| LIT-bare | impl attempt 1 | 2026-11-09 05:01 | committed b33236e6 689be61f ab27a755; final run over affected groups |
 | MSG-line-quote-cost | impl attempt 1 | 2026-11-09 07:57 | ready 03bd44d4 on wt/msg-line-quote, spec 11c6dbe on wt/msg-line-quote-spec; 226 pieces, 1 known zedc_preimage 60 s timeout (unrelated crate); follow-up MSG-lin |
-| MSG-never-collapse | impl attempt 1 | 2026-11-09 06:44 | ready 860ecb23 on wt/msg-never; 120 pieces 0 failed, load 11.5-25.06; ledger ready |
 | PRINT-fn-parens | impl attempt 1 | 2026-11-09 07:57 | expectations updated (parens only), scaling tests added, fmt+clippy clean; final affected run |
 | PROJECT-each-canon | impl attempt 1 | 2026-11-07 16:39 | disj_groups joint chain 122x bytes under the canonical sign (same 122.7x on main with the equations negated: greedy pick reads x==3 first); fix: drop jointly em |
-| REFUSE-group-site | impl attempt 1 | 2026-11-05 04:07 | ready 39d523eb on wt/group-refusal: refused check names the head group and lists its definitions; group_site 3 tests, control fails both pins |
 | S22-fwd-holes | impl attempt 1 | 2026-11-07 09:50 | ready cd72cdd5; follow-ups S22-split-holes, S22-shapes-linear queued |
 | TEST-split-slow | impl attempt 1 | 2026-11-09 08:09 | ready 60fc4680 on wt/test-split-slow (also PREIMAGE-unit-piece, KERNEL-xor-agree-slow); 87 pieces 0 failed; follow-ups PREIMAGE-slow-rounds, KERNEL-eval-memo-ha |
-| TY-contains-rows | impl attempt 1 | 2026-11-09 06:48 | ready a4c1668e: groups zedc_types, l01_22, l01_26 pass (81 pieces; one l01_22 failure fixed by moving the orthogonal vectors test to 128/1024), load 27.10 33.55 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
