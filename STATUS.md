@@ -1637,12 +1637,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | C2-chain-general | impl attempt 1 | 2026-11-08 02:58 | started; worktree /home/luke/Work/wt/c2-chain-general on origin/main a70df51b |
 | LOAD-holes-mod | impl attempt 1 | 2026-11-07 17:30 | started: worktree wt/load-holes-mod from origin/main |
 | REFUSAL-nfa-refuse | impl attempt 1 | 2026-11-07 17:30 | started; worktree /home/luke/Work/wt/refusal-nfa-refuse on origin/main a70df51b |
-| SPEC-L1.19-inputs | running | 2026-11-07 19:32 |  |
-| SPEC-s4-base | spec attempt 1 | 2026-11-08 02:53 | resumed with rulings 1-5; measuring (iii) on holed cycles and multi-atom P |
-| ST-holes-moves | impl attempt 1 | 2026-11-07 14:32 | raise was the quadratic part of one-test hole families; raises now stop at the first failure per tree, resumed only when the ends refuse; laps/stair/mix ~2x per |
-| T11-ptr-tests | running | 2026-11-07 19:32 |  |
+| SPEC-L1.19-inputs | impl attempt 1 | 2026-11-07 19:32 | started; zed worktree spec-l119-inputs |
+| ST-holes-moves | impl attempt 1 | 2026-11-07 14:32 | negative control: base code does not finish holes::scaling within 60 s (laps at 64/512), load 7.4-8.4; xst holes tests on this build: 14 pass, 8 fail (ce_a_sets |
+| T11-ptr-tests | impl attempt 1 | 2026-11-07 19:32 | started; worktree wt/t11-ptr-tests from origin/main |
 | TABLE-short-scan | impl attempt 1 | 2026-11-07 12:26 | start: worktree /home/luke/Work/wt/table-short-scan on origin/main 007abbf8 |
-| TEST-audit | audit attempt 1 | 2026-11-08 13:02 | REPORT.md Parts 1 and 3 written (156 Part 1 rows: 89 committed, 46 partial, 13 missing; Part 3: 882 behaviors, 60 untested); coverage run still going |
+| TEST-audit | audit attempt 1 | 2026-11-08 13:02 | done: REPORT.md complete (Part 1: 156 checks, 89 committed, 46 partial, 13 missing; Part 2: 93.9% lines, 93.6% regions, 718 never-run functions; Part 3: 882 beh |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
