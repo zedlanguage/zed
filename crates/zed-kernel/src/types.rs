@@ -1792,6 +1792,25 @@ pub struct Split {
 }
 
 impl Type {
+    /// Its one value, when it is one boolean or one literal of `int`, `rat`, `f64` or `String`,
+    /// and nothing else: its first such value, read from the parts, is compared with the type of
+    /// that literal alone, so the cost is one literal's type and one comparison.
+    pub fn scalar(&self) -> Option<Value> {
+        let p = self.p();
+        let first = |l: &&Lits| match l.cofinite {
+            true => None,
+            false => l.values.iter().next().cloned(),
+        };
+        let v = match p.bools {
+            1 => Some(Value::Bool(false)),
+            2 => Some(Value::Bool(true)),
+            _ => [&p.ints, &p.rats, &p.floats, &p.strings]
+                .iter()
+                .find_map(first),
+        }?;
+        (Type::lit(&v)? == *self).then_some(v)
+    }
+
     /// Whether it may hold an atom, read from its parts: false only when it holds none.
     pub fn may_hold_atoms(&self) -> bool {
         self.p().atoms != Atoms::default()

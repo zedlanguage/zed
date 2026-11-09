@@ -127,3 +127,34 @@ fn atoms_combined_by_a_diff_agree_with_the_walk() {
         }
     }
 }
+
+/// `scalar` gives the one value of a type of one boolean or one literal, and nothing for any
+/// other type: two values, a carrier, a type without a value, an atom or a tuple.
+#[test]
+fn scalar_is_the_one_value_of_a_literal_type() {
+    let lit = |v: &Value| Type::lit(v).expect("a literal");
+    for v in [
+        Value::Bool(false),
+        Value::Bool(true),
+        Value::Int(3),
+        Value::float(0.5),
+        Value::str("x"),
+    ] {
+        assert_eq!(lit(&v).scalar(), Some(v.clone()), "{v:?}");
+    }
+    let one = lit(&Value::Int(1));
+    for t in [
+        &one | &lit(&Value::Int(2)),
+        &one | &lit(&Value::str("x")),
+        &one | &Type::atom("a"),
+        Type::int(),
+        Type::bool(),
+        Type::string(),
+        &Type::int() - &one,
+        Type::empty(),
+        Type::atom("a"),
+        Type::tuple(vec![one.clone()]),
+    ] {
+        assert_eq!(t.scalar(), None, "{t}");
+    }
+}

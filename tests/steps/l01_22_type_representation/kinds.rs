@@ -612,3 +612,233 @@ fn payloads_with_fields_and_tuples_that_hold_functions_are_compared_in_the_size_
         },
     );
 }
+
+fn var(name: &str) -> Ty {
+    Ty::var(name.into())
+}
+
+/// `l <: r`, with what it binds.
+fn bound(l: &Ty, r: &Ty) -> Option<Vec<(String, String)>> {
+    let mut b = Default::default();
+    let ok = l.sub(r, &mut b);
+    ok.then(|| {
+        b.iter()
+            .map(|(v, t)| (v.to_string(), t.to_string()))
+            .collect()
+    })
+}
+
+#[test]
+fn payloads_with_a_variable_are_searched_by_their_keys() {
+    // `#a(String, 0) | … | #a(String, n-1)` against `#a(T, n-1) | … | #a(T, 0)`: each payload
+    // is found by its second component, not tried against each shape before it (n²).
+    let inputs = scaling::inputs(256, |n| {
+        let l = with_payloads("a", (0..n).map(|i| vec![ty("String"), int(i)]).collect());
+        let r = with_payloads("a", (0..n).rev().map(|i| vec![var("T"), int(i)]).collect());
+        let wrong = with_payloads("a", (0..=n).map(|i| vec![ty("String"), int(i)]).collect());
+        (l, r, wrong)
+    });
+    scaling::check("n payloads with a variable against n", 256, |n| {
+        let (l, r, wrong) = &inputs[&n];
+        assert_eq!(bound(l, r), Some(vec![("T".into(), "String".into())]));
+        assert_eq!(bound(wrong, r), None);
+        assert_eq!(wrong.refused(r), "");
+    });
+}
+
+#[test]
+fn tuples_with_a_variable_are_searched_by_their_keys() {
+    // The same with tuples: `(String, i)` against `(T, i)` in the reverse order.
+    let inputs = scaling::inputs(256, |n| {
+        let l: Vec<Ty> = (0..n)
+            .map(|i| Ty::tuple(vec![ty("String"), int(i)]))
+            .collect();
+        let r: Vec<Ty> = (0..n)
+            .rev()
+            .map(|i| Ty::tuple(vec![var("T"), int(i)]))
+            .collect();
+        (Ty::union_all(&l), Ty::union_all(&r))
+    });
+    scaling::check("n tuples with a variable against n", 256, |n| {
+        let (l, r) = &inputs[&n];
+        assert_eq!(bound(l, r), Some(vec![("T".into(), "String".into())]));
+    });
+}
+
+#[test]
+fn shapes_with_no_variable_are_found_by_their_keys() {
+    let l = with_payloads(
+        "a",
+        vec![vec![int(1), ty("String")], vec![int(2), ty("int")]],
+    );
+    let r = with_payloads(
+        "a",
+        vec![
+            vec![int(2), ty("int")],
+            vec![ty("int"), ty("String")],
+            vec![int(1), ty("int")],
+        ],
+    );
+    assert_eq!(bound(&l, &r), Some(vec![]));
+    // Payloads told apart by carrier: `#a(int, String)` is not in `#a(String, int)`.
+    let crossed = with_payloads(
+        "a",
+        vec![vec![ty("int"), ty("String")], vec![ty("String"), ty("int")]],
+    );
+    let one = with_payloads("a", vec![vec![ty("String"), ty("int")]]);
+    assert_eq!(bound(&crossed, &crossed), Some(vec![]));
+    assert_eq!(bound(&crossed, &one), None);
+    assert_eq!(bound(&one, &crossed), Some(vec![]));
+}
+
+#[test]
+fn one_variable_used_twice_binds_both_components() {
+    let r = with_payloads(
+        "a",
+        vec![vec![var("T"), var("T")], vec![ty("String"), ty("int")]],
+    );
+    let same = with_payloads("a", vec![vec![int(1), int(1)]]);
+    let b = bound(&same, &r).expect("held");
+    assert_eq!(b.len(), 1);
+    assert_eq!(b[0].0, "T");
+    let other = with_payloads("a", vec![vec![ty("String"), int(3)]]);
+    assert!(bound(&other, &r).is_some());
+    let rows = Ty::union_all(&[Ty::tuple(vec![var("T"), var("T")]), ty("(String, int)")]);
+    assert!(bound(&ty("(1, 1)"), &rows).is_some());
+    assert!(bound(&ty("(String, 3)"), &rows).is_some());
+    // `T` holds both components, so it is bound to their union.
+    assert_eq!(
+        bound(&ty("(int, String)"), &rows),
+        Some(vec![("T".into(), "int | String".into())])
+    );
+}
+
+#[test]
+fn variables_in_nested_payloads_and_tuples_are_bound() {
+    let inner = |t: Ty| with_payloads("b", vec![vec![t]]);
+    let r = with_payloads(
+        "a",
+        vec![vec![int(0), inner(var("T"))], vec![int(1), inner(var("U"))]],
+    );
+    let l = with_payloads(
+        "a",
+        vec![
+            vec![int(1), inner(ty("String"))],
+            vec![int(0), inner(ty("int"))],
+        ],
+    );
+    assert_eq!(
+        bound(&l, &r),
+        Some(vec![
+            ("T".into(), "int".into()),
+            ("U".into(), "String".into())
+        ])
+    );
+    let rows = Ty::union_all(&[
+        Ty::tuple(vec![Ty::tuple(vec![int(0), var("T")]), int(0)]),
+        Ty::tuple(vec![Ty::tuple(vec![int(1), var("U")]), int(0)]),
+    ]);
+    assert_eq!(
+        bound(&ty("((1, String), 0) | ((0, int), 0)"), &rows),
+        Some(vec![
+            ("T".into(), "int".into()),
+            ("U".into(), "String".into())
+        ])
+    );
+}
+
+#[test]
+fn shapes_that_hold_no_member_are_not_matched() {
+    let r = with_payloads("a", vec![vec![var("T"), int(0)], vec![var("T"), int(1)]]);
+    let l = with_payloads("a", vec![vec![ty("String"), int(2)]]);
+    assert_eq!(bound(&l, &r), None);
+    assert_eq!(l.refused(&r), "");
+    let rows = Ty::union_all(&[Ty::tuple(vec![var("T"), int(0)]), ty("(int, 1)")]);
+    assert_eq!(bound(&ty("(String, 2)"), &rows), None);
+    assert_eq!(bound(&ty("(String, 1)"), &rows), None);
+}
+
+#[test]
+fn of_several_shapes_the_first_in_written_order_binds() {
+    // `#a(1)` is held by `#a(T)` and `#a(U)`; the first written binds.
+    let r = with_payloads("a", vec![vec![var("T")], vec![var("U")]]);
+    let l = with_payloads("a", vec![vec![int(1)]]);
+    assert_eq!(bound(&l, &r), Some(vec![("T".into(), "1".into())]));
+    let r = with_payloads("a", vec![vec![var("U")], vec![var("T")]]);
+    assert_eq!(bound(&l, &r), Some(vec![("U".into(), "1".into())]));
+    // A shape of a key before one with a variable: `(1, T)` before `(U, T)`.
+    let rows = Ty::union_all(&[
+        Ty::tuple(vec![var("U"), var("T")]),
+        Ty::tuple(vec![int(1), var("V")]),
+    ]);
+    assert_eq!(
+        bound(&ty("(1, 2)"), &rows),
+        Some(vec![("T".into(), "2".into()), ("U".into(), "1".into())])
+    );
+}
+
+#[test]
+fn shapes_told_apart_inside_tuple_components_are_found() {
+    // Components that are tuples of one value file the shapes by that value, and those of one
+    // length by the length, so these are found without a refusal.
+    let inner = with_payloads(
+        "b",
+        vec![vec![ty("(1, 2)")], vec![ty("(3, 4)")], vec![ty("(5, 6)")]],
+    );
+    let with_t = with_payloads(
+        "b",
+        vec![
+            vec![ty("(1, 2)")],
+            vec![ty("(3, 4)")],
+            vec![ty("(5, 6)")],
+            vec![Ty::tuple(vec![var("T"), var("T")])],
+        ],
+    );
+    let rows = Ty::union_all(&[ty("((1, 2), 0)"), ty("((3, 4), 0)"), ty("((5, 6), 0)")]);
+    let rows_t = Ty::union_all(&[rows.clone(), Ty::tuple(vec![var("T"), int(7)])]);
+    for (l, r) in [
+        (
+            Ty::tuple(vec![inner.clone(), int(1)]),
+            Ty::tuple(vec![inner.clone(), var("T")]),
+        ),
+        (inner.clone(), with_t),
+        (rows.clone(), rows_t),
+    ] {
+        assert!(bound(&l, &r).is_some(), "{l} <: {r}");
+        assert_eq!(l.refused(&r), "", "{l} <: {r}");
+    }
+}
+
+#[test]
+fn two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason() {
+    // Component 1 files both shapes under `int`, and `1 | 2` holds neither payload: each
+    // would search the bucket past its first shape.
+    let r = with_payloads(
+        "a",
+        vec![vec![ty("1 | 2"), var("T")], vec![ty("int"), var("U")]],
+    );
+    let l = with_payloads("a", vec![vec![int(3), int(5)], vec![int(4), int(6)]]);
+    assert_eq!(bound(&l, &r), None);
+    assert_eq!(
+        l.refused(&r),
+        " (not decided: the payloads #a(3, 5) and #a(4, 6) may each be held by one of the \
+         shapes #a(1 | 2, _) | #a(int, _), which are told apart only at component 1, where \
+         they agree with both, and neither is held by the first of those shapes; which shape \
+         holds each decides what the type variables are bound to, and the checker looks \
+         through those shapes for one of the two only)"
+    );
+    // One such payload is decided.
+    let one = with_payloads("a", vec![vec![int(3), int(5)]]);
+    assert_eq!(bound(&one, &r), Some(vec![("U".into(), "5".into())]));
+    // The same with tuples.
+    let rows = Ty::union_all(&[
+        Ty::tuple(vec![ty("1 | 2"), var("T")]),
+        Ty::tuple(vec![ty("int"), var("U")]),
+    ]);
+    let l = ty("(3, 5) | (4, 6)");
+    assert_eq!(bound(&l, &rows), None);
+    assert!(
+        l.refused(&rows)
+            .starts_with(" (not decided: the tuples (3, 5) and (4, 6) ")
+    );
+}

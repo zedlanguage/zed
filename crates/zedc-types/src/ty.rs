@@ -9,6 +9,7 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
@@ -86,6 +87,8 @@ struct RowData {
     /// The kernel type of the tuple shape with its atoms' payloads read ([`Ty::exact_data`]):
     /// none where [`Self::kernel`] has none.
     exact: Option<KType>,
+    /// The one value of the tuple shape, when each component is one value ([`Ty::point`]).
+    point: Option<Value>,
     /// The first kind-wide part, `(..)` or `{..}`, a component holds at any depth outside
     /// functions, in payloads too: a part that may hold a function ([`Ty::held_wide`]).
     wide: Option<KType>,
@@ -155,6 +158,10 @@ impl Row {
                 .collect::<Option<Vec<_>>>()
                 .map(KType::tuple),
         };
+        // Each component's rows keep their own, so this reads the components' outer levels.
+        let point = (cs.iter().map(Ty::point))
+            .collect::<Option<Vec<_>>>()
+            .map(Value::tuple);
         let wide = cs.iter().find_map(Ty::held_wide);
         let open_atoms = cs.iter().any(Ty::open_atoms);
         Row(Arc::new(RowData {
@@ -170,6 +177,7 @@ impl Row {
             vars,
             kernel,
             exact,
+            point,
             wide,
             listed,
             open_atoms,
@@ -2579,9 +2587,22 @@ struct Cx<'s> {
     /// found. Only the outermost [`fits_in`] reads it, so a comparison inside, tried and
     /// dropped, gives no reason.
     why: Option<Option<String>>,
+    /// Why the comparison was refused, if two members of one side each needed a shape that
+    /// [`Choices`] could not single out ([`Comparing::search`]): the first such refusal. A
+    /// refused comparison answers false, whatever else it found ([`Cx::decided`]).
+    unchosen: Option<String>,
+    /// The tuple and payload shapes of each component of a row or payload shape compared, filed
+    /// once for the comparison ([`Filed`]), by the address of the row or shape and the
+    /// component's place, the row or shape kept so that the address is not reused.
+    filed: HashMap<(usize, usize), (Pin, Arc<Filed>)>,
 }
 
 impl Cx<'_> {
+    /// `ok`, the answer of the comparison this state ran, unless the comparison was refused.
+    fn decided(&self, ok: bool) -> bool {
+        ok && self.unchosen.is_none()
+    }
+
     /// A new name, from `v`.
     fn fresh(&mut self, v: &str) -> Arc<str> {
         self.count += 1;
@@ -2722,6 +2743,416 @@ macro_rules! comparing {
     }};
 }
 
+/// A row or payload shape whose components' shapes are filed in [`Cx::filed`], kept there.
+#[expect(
+    dead_code,
+    reason = "a row or shape is held only so that its address is not reused"
+)]
+enum Pin {
+    Row(Row),
+    Shape(Shape),
+}
+
+/// Where the type a comparison holds pieces against sits: a component of a row or payload shape
+/// of the expected side, at its place (items, then fields), or elsewhere.
+#[derive(Clone, Copy)]
+enum Site<'a> {
+    In(Holder<'a>, usize),
+    Other,
+}
+
+/// A row or payload shape that holds the type a comparison holds pieces against.
+#[derive(Clone, Copy)]
+enum Holder<'a> {
+    Row(&'a Row),
+    Shape(&'a Shape),
+}
+
+impl Holder<'_> {
+    /// Its address, a key of [`Cx::filed`] with the place.
+    fn addr(self) -> usize {
+        match self {
+            Holder::Row(r) => Arc::as_ptr(&r.0) as usize,
+            Holder::Shape(s) => Arc::as_ptr(&s.0) as usize,
+        }
+    }
+
+    /// It, kept in [`Cx::filed`] while its address is a key.
+    fn pin(self) -> Pin {
+        match self {
+            Holder::Row(r) => Pin::Row(r.clone()),
+            Holder::Shape(s) => Pin::Shape(s.clone()),
+        }
+    }
+}
+
+/// What a component of a shape of the expected side holds, for [`Choices`]: one value, the
+/// values of one carrier, atoms of one name, or tuples of one length, and nothing else.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ShapeKey {
+    /// One scalar literal, or one tuple of such values at any depth ([`Ty::point`]).
+    Point(Value),
+    /// The values of one carrier.
+    Carrier(Carrier),
+    /// Atoms named this, bare or with payloads.
+    Atom(Arc<str>),
+    /// Tuples of this length.
+    Row(usize),
+}
+
+/// The shapes of one [`Group`] a member is tried against: those filed under a key, or every
+/// shape of the group (`None`).
+type Bucket = Option<Vec<ShapeKey>>;
+
+/// Where a component of a member may be held, at a place a [`Group`] files.
+enum Member {
+    /// By no shape: what it holds is held by no component filed there.
+    Nowhere,
+    /// By any shape: it holds nothing that a component must hold, or the checker does not
+    /// find what it holds.
+    Anywhere,
+    /// By the shapes filed under the key.
+    At(ShapeKey),
+}
+
+/// The class of a scalar set: the carrier its values are all of, or the one name of its atoms.
+fn class_of(s: &KType) -> Option<ShapeKey> {
+    if let Some(c) = Carrier::ALL.into_iter().find(|c| s.subtype(&c.ty())) {
+        return Some(ShapeKey::Carrier(c));
+    }
+    if !s.subtype(&atoms()) {
+        return None;
+    }
+    let mut names = s.atom_names()?;
+    let (n, _) = names.next()?;
+    names.next().is_none().then(|| ShapeKey::Atom(n.into()))
+}
+
+/// The class of `y`, a component of a shape of the expected side, and its value when it is one
+/// value ([`Ty::point`]): a non-empty set of one class ([`class_of`]) that holds no tuple,
+/// function, variable or unknown, or tuples of one length and nothing else, of the class of
+/// that length. Such a component holds a component of a member only when the member's holds
+/// values of its class alone ([`member`]), so the shapes can be filed by it.
+fn class(y: &Ty) -> Option<(ShapeKey, Option<Value>)> {
+    if y.dynamic || !y.vars.is_empty() || !y.fns.is_empty() {
+        return None;
+    }
+    if let Some(r) = y.tuples.first() {
+        let rows_only = y.set.is_empty() && y.family.is_empty();
+        let one_length = y.tuples.iter().all(|s| s.len() == r.len());
+        return (rows_only && one_length).then(|| (ShapeKey::Row(r.len()), y.point()));
+    }
+    if y.set.is_empty() {
+        return None;
+    }
+    let k = class_of(&y.set)?;
+    Some((k, y.point()))
+}
+
+/// Where `x`, a component of a member, may be held at a place a [`Group`] files, by value or by
+/// class, as [`accepts`] decides each piece of `x` against a component there ([`class`]):
+/// - A function, the unknown or a variable not rigid is held by none, since no such component
+///   holds a function or a variable. A rigid variable is held by those that hold each carrier
+///   of its bound: by none of one value, and by the class of the carrier for one carrier.
+/// - A set is held by the shapes of its value or class.
+/// - Tuples are held by those of their length, by class, and by value by those of their value
+///   when they are one value. Tuples that are not one value are looked for in every shape filed
+///   by value, since a component of no value is in any.
+fn member(x: &Ty, by_value: bool, rigid: &BTreeMap<Arc<str>, u8>) -> Member {
+    if x.dynamic || !x.fns.is_empty() {
+        return Member::Nowhere;
+    }
+    let mut carrier = None;
+    for v in &x.vars {
+        let Some(&m) = rigid.get(v) else {
+            return Member::Nowhere;
+        };
+        let mut cs = Carrier::of_mask(m);
+        match (cs.next(), cs.next()) {
+            (None, _) => {}
+            (Some(c), None) if !by_value && carrier.is_none_or(|d| d == c) => carrier = Some(c),
+            _ => return Member::Nowhere,
+        }
+    }
+    if let Some(r) = x.tuples.first() {
+        if !x.set.is_empty() || carrier.is_some() {
+            return Member::Nowhere;
+        }
+        return match by_value {
+            true => match x.point() {
+                Some(v) => Member::At(ShapeKey::Point(v)),
+                None => Member::Anywhere,
+            },
+            false => match x.tuples.iter().all(|s| s.len() == r.len()) {
+                true => Member::At(ShapeKey::Row(r.len())),
+                false => Member::Nowhere,
+            },
+        };
+    }
+    if x.set.is_empty() {
+        return match carrier {
+            Some(c) => Member::At(ShapeKey::Carrier(c)),
+            None => Member::Anywhere,
+        };
+    }
+    if by_value {
+        return match x.set.scalar() {
+            Some(v) => Member::At(ShapeKey::Point(v)),
+            None => Member::Nowhere,
+        };
+    }
+    match class_of(&x.set) {
+        Some(k) if carrier.is_none_or(|c| k == ShapeKey::Carrier(c)) => Member::At(k),
+        _ => Member::Nowhere,
+    }
+}
+
+/// The shapes of a group of [`Choices`] whose components have a class ([`class`]) at the same
+/// places, and are one value at the same places of those, filed by their components there: by
+/// value where they are one value, else by class. A shape filed under another key than a
+/// member's holds no component of the member's there ([`member`]).
+struct Group {
+    /// The places filed, each with whether it is filed by value.
+    places: Vec<(usize, bool)>,
+    /// The shapes under each key, by their index in the list of shapes, in order.
+    buckets: BTreeMap<Vec<ShapeKey>, Vec<usize>>,
+    /// Every shape of the group, in order.
+    all: Vec<usize>,
+}
+
+impl Group {
+    /// The bucket of the member whose components are `xs`, read with the rigid variables
+    /// `rigid`: `None` when no shape of the group holds it.
+    fn lookup(&self, xs: &[&Ty], rigid: &BTreeMap<Arc<str>, u8>) -> Option<Bucket> {
+        let mut key = Vec::with_capacity(self.places.len());
+        let mut anywhere = false;
+        for &(j, by_value) in &self.places {
+            match member(xs[j], by_value, rigid) {
+                Member::Nowhere => return None,
+                Member::Anywhere => anywhere = true,
+                Member::At(k) => key.push(k),
+            }
+        }
+        if anywhere {
+            return Some(None);
+        }
+        self.buckets.contains_key(&key).then_some(Some(key))
+    }
+
+    /// The shapes of the bucket `id`, in order.
+    fn bucket(&self, id: &Bucket) -> &[usize] {
+        match id {
+            None => &self.all,
+            Some(k) => &self.buckets[k],
+        }
+    }
+}
+
+/// The shapes of one group of the expected side, its tuples of one length or its payloads of one
+/// atom with one length and field names, in [`Group`]s by the places where their components
+/// have a class and are one value: a shape with a variable at a place leaves the place filed for
+/// the others. The shapes that may hold a member are those of its bucket in each group, and
+/// trying them in written order finds the shape the rule of one shape finds, with the same
+/// bindings.
+struct Choices {
+    groups: Vec<Group>,
+}
+
+/// The shapes a member may be in: a bucket of each of some groups of [`Choices`], by the
+/// group's index.
+type Buckets = Vec<(usize, Bucket)>;
+
+impl Choices {
+    /// The shapes, each by its index in its list and its components, all of one width.
+    fn new(shapes: &[(usize, Vec<&Ty>)]) -> Choices {
+        // The groups by the places where a shape's components have a class, each with whether
+        // it is one value there; each group's places are set once all are filed.
+        let mut by_places: BTreeMap<Vec<(usize, bool)>, Group> = BTreeMap::new();
+        for (i, cs) in shapes {
+            let mut places = Vec::new();
+            let mut key = Vec::new();
+            for (j, c) in cs.iter().enumerate() {
+                if let Some((k, point)) = class(c) {
+                    places.push((j, point.is_some()));
+                    key.push(point.map_or(k, ShapeKey::Point));
+                }
+            }
+            let group = by_places.entry(places).or_insert_with(|| Group {
+                places: Vec::new(),
+                buckets: BTreeMap::new(),
+                all: Vec::new(),
+            });
+            group.buckets.entry(key).or_default().push(*i);
+            group.all.push(*i);
+        }
+        let groups = (by_places.into_iter())
+            .map(|(places, group)| Group { places, ..group })
+            .collect();
+        Choices { groups }
+    }
+
+    /// The buckets of the member whose components are `xs`, read with the rigid variables
+    /// `rigid`, one for each group that may hold it.
+    fn lookup(&self, xs: &[&Ty], rigid: &BTreeMap<Arc<str>, u8>) -> Buckets {
+        (self.groups.iter().enumerate())
+            .filter_map(|(g, group)| Some((g, group.lookup(xs, rigid)?)))
+            .collect()
+    }
+
+    /// The shapes of the bucket `id` of the group `g`, in order.
+    fn bucket(&self, g: usize, id: &Bucket) -> &[usize] {
+        self.groups[g].bucket(id)
+    }
+
+    /// The shapes of `buckets`, merged in written order, each with the index in `buckets` of
+    /// its bucket and its place in that bucket.
+    fn merged<'c>(
+        &'c self,
+        buckets: &'c Buckets,
+    ) -> impl Iterator<Item = (usize, usize, usize)> + 'c {
+        use std::cmp::Reverse;
+        let shapes: Vec<&[usize]> = (buckets.iter())
+            .map(|(g, id)| self.bucket(*g, id))
+            .collect();
+        // Each bucket's next shape, by the shape first, so the heap yields written order.
+        let mut heads: std::collections::BinaryHeap<Reverse<(usize, usize, usize)>> =
+            (shapes.iter().enumerate())
+                .filter_map(|(k, s)| Some(Reverse((*s.first()?, k, 0))))
+                .collect();
+        std::iter::from_fn(move || {
+            let Reverse((r, k, at)) = heads.pop()?;
+            if let Some(&next) = shapes[k].get(at + 1) {
+                heads.push(Reverse((next, k, at + 1)));
+            }
+            Some((k, at, r))
+        })
+    }
+
+    /// Why the shapes of the bucket `id` of group `g` may each hold the members found in it,
+    /// for a message: the members have `items` items, then the fields `names`.
+    fn apart(&self, g: usize, id: &Bucket, items: usize, names: &[&Arc<str>]) -> String {
+        let places: Vec<String> = (self.groups[g].places.iter())
+            .map(|&(j, _)| match j.checked_sub(items) {
+                None => format!("component {}", j + 1),
+                Some(f) => format!("field {}", names[f]),
+            })
+            .collect();
+        match (id, &places[..]) {
+            (_, []) => "have no component that is one value, of one carrier, of one atom name or \
+                        of one tuple length"
+                .to_string(),
+            (None, _) => format!(
+                "are told apart only at {}, where each of the two has a component that any of \
+                 them may hold",
+                places.join(", ")
+            ),
+            (Some(_), _) => format!(
+                "are told apart only at {}, where they agree with both",
+                places.join(", ")
+            ),
+        }
+    }
+}
+
+/// The components of a payload shape, items then fields, as [`Comparing::shape_in`] pairs them.
+fn comps(s: &Shape) -> Vec<&Ty> {
+    s.items.iter().chain(s.fields.values()).collect()
+}
+
+/// The group of a payload shape: its number of items and its field names.
+type ShapeGroup = (usize, Vec<Arc<str>>);
+
+fn shape_group(s: &Shape) -> ShapeGroup {
+    (s.items.len(), s.fields.keys().cloned().collect())
+}
+
+/// The tuple and payload shapes of a type of the expected side, grouped and filed ([`Choices`]):
+/// the tuples by length, the payloads of each atom it lists by [`ShapeGroup`].
+struct Filed {
+    rows: HashMap<usize, Choices>,
+    payloads: HashMap<Arc<str>, HashMap<ShapeGroup, Choices>>,
+}
+
+impl Filed {
+    /// In the size of `t`'s tuples and payloads.
+    fn new(t: &Ty) -> Filed {
+        let mut rows: HashMap<usize, Vec<(usize, Vec<&Ty>)>> = HashMap::new();
+        for (i, r) in t.tuples.iter().enumerate() {
+            rows.entry(r.len())
+                .or_default()
+                .push((i, r.iter().collect()));
+        }
+        let mut payloads = HashMap::new();
+        for (n, rs) in &t.payloads {
+            let Some(rs) = rs else { continue };
+            let mut groups: HashMap<ShapeGroup, Vec<(usize, Vec<&Ty>)>> = HashMap::new();
+            for (i, r) in rs.iter().enumerate() {
+                groups
+                    .entry(shape_group(r))
+                    .or_default()
+                    .push((i, comps(r)));
+            }
+            let groups = groups.into_iter();
+            payloads.insert(
+                n.clone(),
+                groups.map(|(g, s)| (g, Choices::new(&s))).collect(),
+            );
+        }
+        Filed {
+            rows: rows
+                .into_iter()
+                .map(|(n, s)| (n, Choices::new(&s)))
+                .collect(),
+            payloads,
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether [`Comparing::search`] tries every shape in written order and refuses nothing, as
+    /// before the index: the form the differential test compares the index with.
+    static SCAN_ALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// What the comparison of the pieces of one type with a type `t` of the expected side keeps
+/// between the pieces: where `t` sits, its shapes filed once a piece needs them, and the
+/// buckets of its tuple shapes searched past their first shape, each with the tuple that did.
+struct Search<'a> {
+    site: Site<'a>,
+    filed: Option<Arc<Filed>>,
+    searched: BTreeMap<(usize, usize, Bucket), Row>,
+}
+
+impl<'a> Search<'a> {
+    fn new(site: Site<'a>) -> Search<'a> {
+        Search {
+            site,
+            filed: None,
+            searched: BTreeMap::new(),
+        }
+    }
+}
+
+/// A type of one payload shape or one union of payload shapes of the atom `n`, for a message.
+fn payload_text(n: &str, shapes: Vec<Shape>) -> String {
+    let mut t = Ty::set(KType::atom_with(n, &KType::top()));
+    t.payloads.insert(n.into(), Some(shapes));
+    t.to_string()
+}
+
+/// Why two members, `first` and `second`, of a union were refused ([`Comparing::search`]): each
+/// may be held by a later one of the shapes `bucket`, which `apart` describes
+/// ([`Choices::apart`]), and the checker looks through them for one of the two only.
+fn unchosen_text(what: &str, first: &str, second: &str, bucket: &str, apart: &str) -> String {
+    format!(
+        "the {what} {first} and {second} may each be held by one of the shapes {bucket}, which \
+         {apart}, and neither is held by the first of those shapes; which shape \
+         holds each decides what the type variables are bound to, and the checker looks \
+         through those shapes for one of the two only"
+    )
+}
+
 impl<'m, 's> Comparing<'m, 's> {
     /// [`fits_in`] in a frame of its own.
     fn fits(&'m self, s: Arc<Sig>, se: Env, q: Arc<Sig>, qe: Env) -> Deep<'m, bool> {
@@ -2759,8 +3190,11 @@ impl<'m, 's> Comparing<'m, 's> {
     /// of its own: with `b` and what it binds.
     fn rows(&'m self, cs: Row, ds: Row, mut b: Binds) -> Deep<'m, (bool, Binds)> {
         self.stack.call(move || async move {
-            for (c, d) in cs.iter().zip(&ds) {
-                if !self.sub_by_shape(c, d, &mut b).await {
+            for (j, (c, d)) in cs.iter().zip(&ds).enumerate() {
+                if !self
+                    .sub_by_shape(c, d, &mut b, Site::In(Holder::Row(&ds), j))
+                    .await
+                {
                     return (false, b);
                 }
             }
@@ -2777,6 +3211,7 @@ impl<'m, 's> Comparing<'m, 's> {
         // the normal form is not made (a variable, which a shape of `other` may bind) or the
         // kernel refused, each piece is tried by the rule of one shape, which is sound.
         let mut form: Option<Option<bool>> = None;
+        let mut search = Search::new(Site::Other);
         for p in t.pieces() {
             // A set piece with no kind-wide part, of a `t` that lists no payload, is decided by
             // the set alone ([`accepts`]): building both sides' kernel types for it cost each
@@ -2792,7 +3227,7 @@ impl<'m, 's> Comparing<'m, 's> {
             };
             let ok = match decided {
                 Some(ok) => ok,
-                None => accepts(other, &p, t, binds, self).await,
+                None => accepts(other, &p, t, binds, &mut search, self).await,
             };
             if !ok {
                 return false;
@@ -2864,8 +3299,11 @@ impl<'m, 's> Comparing<'m, 's> {
         self.stack.call(move || async move {
             let pairs =
                 (a.items.iter().zip(&b.items)).chain(a.fields.values().zip(b.fields.values()));
-            for (x, y) in pairs {
-                if !self.sub_by_shape(x, y, &mut binds).await {
+            for (j, (x, y)) in pairs.enumerate() {
+                if !self
+                    .sub_by_shape(x, y, &mut binds, Site::In(Holder::Shape(&b), j))
+                    .await
+                {
                     return (false, binds);
                 }
             }
@@ -2873,23 +3311,128 @@ impl<'m, 's> Comparing<'m, 's> {
         })
     }
 
+    /// The tuple and payload shapes of `t`, the type `search` compares pieces with, filed
+    /// ([`Filed`]): once for the pieces of one type, and once for the whole comparison where `t`
+    /// is a component of a row or payload shape, which a comparison may meet once for each
+    /// member of a union on the other side.
+    fn filed(&self, t: &Ty, search: &mut Search<'_>) -> Arc<Filed> {
+        if let Some(f) = &search.filed {
+            return f.clone();
+        }
+        let f = match search.site {
+            Site::Other => Arc::new(Filed::new(t)),
+            Site::In(h, j) => {
+                let mut cx = self.cx.borrow_mut();
+                let (_, f) = (cx.filed.entry((h.addr(), j)))
+                    .or_insert_with(|| (h.pin(), Arc::new(Filed::new(t))));
+                f.clone()
+            }
+        };
+        search.filed = Some(f.clone());
+        f
+    }
+
+    /// Records why the comparison is refused, the first time; `why` is made only then.
+    fn refuse(&self, why: impl FnOnce() -> String) {
+        let mut cx = self.cx.borrow_mut();
+        if cx.unchosen.is_none() {
+            cx.unchosen = Some(why());
+        }
+    }
+
+    /// The search for the shape of `choices`'s group that holds the member `member.1`, of the
+    /// group `member.0`, whose components are `xs`: the shapes of its buckets
+    /// ([`Choices::lookup`]), merged in written order, each tried by `fit` with the bindings so
+    /// far, the first that holds it keeping what it binds. The rule of one shape tries every
+    /// shape of the group in order; a shape outside the buckets holds no member of them, so the
+    /// shape found and the bindings are the same. `Ok(false)` when none holds it, and at once
+    /// when the comparison was refused, since it then answers false.
+    ///
+    /// Complexity tradeoff: a bucket is searched past its first shape for one member of a union
+    /// only; the next member of the same union that needs a later shape of the same bucket is
+    /// refused (`Err`, with the member that searched it, the group of [`Choices`] and the
+    /// bucket), and the comparison answers false ([`Cx::decided`]) with the reason
+    /// [`Ty::refused`] gives. What is given up: the verdict of the rule of one shape where two
+    /// members each need a later shape of one bucket, such as two members that the first shape
+    /// of a bucket does not hold, in a bucket of shapes that agree at every place filed. Why:
+    /// whether a shape holds a member is a comparison of their components, which binds
+    /// variables, with no order among shapes to search by; searching the shapes for each member
+    /// cost the members times the shapes, the n² of `#a(String, 1) | … <: #a(T, 1) | …` before
+    /// the index. With the refusal each bucket is searched past its first shape once, so a
+    /// member costs a lookup in each group, the first shape of each of its buckets and the
+    /// buckets it alone searches, and the members and shapes cost n log n times the groups. The
+    /// groups are the sets of places at which shapes have a class and are one value, a few in a
+    /// written union; shapes with variables or values at many different sets of places make as
+    /// many groups, up to the shapes, and then each member costs a lookup in each. Measured on
+    /// 20,000 random comparisons of unions of up to four shapes of width two against the rule
+    /// of one shape: the same verdict and bindings wherever not refused, and 6 refused
+    /// (`shapes_found_by_the_index_are_those_of_the_rule_of_one_shape`). Structure refused:
+    /// `#a(3, 5) | #a(4, 6) <: #a(1 | 2, T) | #a(int, U)`, where component 1 files both shapes
+    /// under `int` and `1 | 2` holds neither payload. Tests:
+    /// `tests/steps/l01_22_type_representation/kinds.rs`,
+    /// `payloads_with_a_variable_are_searched_by_their_keys` and the tests after it;
+    /// COMPLEXITY.md F124. A complete solution would search a bucket once for all its members,
+    /// by keys of the components that are not one value too (a tuple of a carrier, a payload),
+    /// at any depth, as the kernel files its rows (`RowIndex`), and would find the groups that
+    /// may hold a member by a partial-match index rather than one lookup in each.
+    async fn search<G: Ord + Clone, M: Clone>(
+        &'m self,
+        choices: &Choices,
+        xs: &[&Ty],
+        member: (G, &M),
+        searched: &mut BTreeMap<(G, usize, Bucket), M>,
+        binds: &mut Binds,
+        fit: impl Fn(usize, Binds) -> Deep<'m, (bool, Binds)>,
+    ) -> Result<bool, (M, usize, Bucket)> {
+        let buckets = {
+            let cx = self.cx.borrow();
+            if cx.unchosen.is_some() {
+                return Ok(false);
+            }
+            choices.lookup(xs, &cx.rigid)
+        };
+        #[cfg(test)]
+        let (buckets, scan_all) = match SCAN_ALL.get() {
+            true => ((0..choices.groups.len()).map(|g| (g, None)).collect(), true),
+            false => (buckets, false),
+        };
+        #[cfg(not(test))]
+        let scan_all = false;
+        let (group, m) = member;
+        // The buckets this member has searched past their first shape.
+        let mut past = vec![false; buckets.len()];
+        for (k, at, r) in choices.merged(&buckets) {
+            if at > 0 && !past[k] && !scan_all {
+                let (g, id) = &buckets[k];
+                match searched.entry((group.clone(), *g, id.clone())) {
+                    Entry::Occupied(e) => return Err((e.get().clone(), *g, id.clone())),
+                    Entry::Vacant(e) => e.insert(m.clone()),
+                };
+                past[k] = true;
+            }
+            let (ok, b) = fit(r, binds.clone()).await;
+            if ok {
+                *binds = b;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Whether the payloads `of` gives the atoms of `s` are in those `t` gives them, where the
     /// normal forms were not made ([`Comparing::by_form`]): a payload not known is in a payload
     /// not known only, and each payload shape is in one of `t`'s shapes of the same length and
-    /// field names, by the rule of one shape, binding `t`'s variables.
-    ///
-    /// Complexity tradeoff: the shapes of `t` are grouped by length and field names, so a shape
-    /// is tried only against those of its group, but within a group each is tried in turn.
-    /// What is given up: a payload union with a variable is checked in the product of the
-    /// shapes of one group on each side. Why: a variable may be bound by one shape and not by
-    /// another, so which shape holds a payload is a choice the kernel does not make; without a
-    /// variable, the normal forms decide the payloads in the size of the two sides. Structure:
-    /// `#a(T, 1) | … <: #a(int, int) | …`, `n` shapes of one length on each side, with a type
-    /// variable. Test: `tests/steps/l01_22_type_representation/kinds.rs`,
-    /// `payloads_with_a_variable_are_compared_shape_by_shape`; COMPLEXITY.md F124. A complete
-    /// solution would bind the variables by unification over the normal forms, with the
-    /// variables as marks.
-    async fn payloads_in(&'m self, s: &KType, of: &Ty, t: &Ty, binds: &mut Binds) -> bool {
+    /// field names, by the rule of one shape, binding `t`'s variables. The shapes tried for each
+    /// are found by [`Comparing::search`], which refuses where the rule would search one bucket
+    /// for two payloads.
+    async fn payloads_in(
+        &'m self,
+        s: &KType,
+        of: &Ty,
+        t: &Ty,
+        binds: &mut Binds,
+        search: &mut Search<'_>,
+    ) -> bool {
         // Called once `s` is in `t`'s set, with no carrier holding an atom: an atom of `s`
         // whose payloads `t` does not list is one whose payloads `t` holds all of. So only the
         // names `t` lists are read, not each name of `s`, which may be many more.
@@ -2900,34 +3443,101 @@ impl<'m, 's> Comparing<'m, 's> {
                 continue;
             }
             let Some(ls) = of.shapes(n) else { return false };
-            let key = |s: &Shape| (s.items.len(), s.fields.keys().cloned().collect::<Vec<_>>());
-            let mut groups: HashMap<_, Vec<&Shape>> = HashMap::new();
-            for r in rs {
-                groups.entry(key(r)).or_default().push(r);
+            if ls.is_empty() {
+                continue;
             }
+            let filed = self.filed(t, search);
+            let groups = (filed.payloads.get(n)).expect("each payload union `t` lists is filed");
+            let mut searched = BTreeMap::new();
             for l in ls {
-                let mut ok = false;
-                for r in groups.get(&key(l)).into_iter().flatten() {
-                    let (fit, b) = self.shape_in(l.clone(), (*r).clone(), binds.clone()).await;
-                    if fit {
-                        *binds = b;
-                        ok = true;
-                        break;
-                    }
-                }
-                if !ok {
+                let g = shape_group(l);
+                let Some(choices) = groups.get(&g) else {
                     return false;
+                };
+                let fit = |r: usize, b| self.shape_in(l.clone(), rs[r].clone(), b);
+                let xs = comps(l);
+                let found = self.search(choices, &xs, (g, l), &mut searched, binds, fit);
+                match found.await {
+                    Ok(true) => {}
+                    Ok(false) => return false,
+                    Err((first, k, id)) => {
+                        self.refuse(|| {
+                            let shapes = choices.bucket(k, &id).iter().map(|&r| rs[r].clone());
+                            let second = payload_text(n, vec![l.clone()]);
+                            let names: Vec<&Arc<str>> = l.fields.keys().collect();
+                            let apart = choices.apart(k, &id, l.items.len(), &names);
+                            unchosen_text(
+                                "payloads",
+                                &payload_text(n, vec![first]),
+                                &second,
+                                &payload_text(n, shapes.collect()),
+                                &apart,
+                            )
+                        });
+                        return false;
+                    }
                 }
             }
         }
         true
     }
 
+    /// Whether the tuple piece `cs` of a type is in one of the tuple shapes of `t` of its
+    /// length, the first in written order that holds it, binding `t`'s variables, of those
+    /// [`Comparing::search`] tries; `search` holds `t`'s shapes filed and the buckets the
+    /// other tuple pieces of the type searched.
+    async fn row_in(
+        &'m self,
+        cs: &Row,
+        t: &Ty,
+        search: &mut Search<'_>,
+        binds: &mut Binds,
+    ) -> bool {
+        let filed = self.filed(t, search);
+        let Some(choices) = filed.rows.get(&cs.len()) else {
+            return false;
+        };
+        let xs: Vec<&Ty> = cs.iter().collect();
+        let fit = |r: usize, b| self.rows(cs.clone(), t.tuples[r].clone(), b);
+        let found = self.search(
+            choices,
+            &xs,
+            (cs.len(), cs),
+            &mut search.searched,
+            binds,
+            fit,
+        );
+        match found.await {
+            Ok(ok) => ok,
+            Err((first, k, id)) => {
+                self.refuse(|| {
+                    let shapes = choices.bucket(k, &id).iter();
+                    let bucket = Ty {
+                        tuples: shapes.map(|&r| t.tuples[r].clone()).collect(),
+                        ..Ty::empty()
+                    };
+                    let second = Ty::of_row(cs.clone()).to_string();
+                    let apart = choices.apart(k, &id, cs.len(), &[]);
+                    unchosen_text(
+                        "tuples",
+                        &Ty::of_row(first).to_string(),
+                        &second,
+                        &bucket.to_string(),
+                        &apart,
+                    )
+                });
+                false
+            }
+        }
+    }
+
     /// [`Comparing::sub_in`] with each tuple piece held by one tuple shape of `other`: the rule
     /// for the components of a tuple, whose joint check is the kernel's on the whole tuple.
-    async fn sub_by_shape(&'m self, t: &Ty, other: &Ty, binds: &mut Binds) -> bool {
+    /// `other` sits at `site`.
+    async fn sub_by_shape(&'m self, t: &Ty, other: &Ty, binds: &mut Binds, site: Site<'_>) -> bool {
+        let mut search = Search::new(site);
         for p in t.pieces() {
-            if !accepts(other, &p, t, binds, self).await {
+            if !accepts(other, &p, t, binds, &mut search, self).await {
                 return false;
             }
         }
@@ -2958,7 +3568,9 @@ impl<'m, 's> Comparing<'m, 's> {
             };
             let row = Ty::of_row(a.clone());
             let mut b = Binds::new();
-            if self.sub_in(&row, &within, &mut b).await && b.is_empty() {
+            // A refused comparison keeps the row, as a failed one does.
+            let held = self.sub_in(&row, &within, &mut b).await;
+            if self.cx.borrow().decided(held) && b.is_empty() {
                 continue;
             }
             match (&tk, a.kernel()) {
@@ -3572,6 +4184,25 @@ impl Ty {
         self.function_in(|r| r.0.held.as_ref(), |s| s.held.as_ref())
     }
 
+    /// Its one value, when it is one scalar literal, or one tuple shape each of whose
+    /// components is one value, and nothing else: no variable, function, unknown or payload
+    /// listed. Each row keeps its own, so this reads the outer level.
+    fn point(&self) -> Option<Value> {
+        if self.dynamic
+            || !self.vars.is_empty()
+            || !self.fns.is_empty()
+            || !self.payloads.is_empty()
+            || !self.family.is_empty()
+        {
+            return None;
+        }
+        match (self.set.is_empty(), &self.tuples[..]) {
+            (false, []) => self.set.scalar(),
+            (true, [r]) => r.0.point.clone(),
+            _ => None,
+        }
+    }
+
     /// A function it may hold, at any depth, that no tuple expression has checked as data, so
     /// that no error has reported it yet.
     pub fn unchecked_function(&self) -> Option<&Arc<Sig>> {
@@ -3597,7 +4228,19 @@ impl Ty {
 
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.
     pub fn sub(&self, other: &Ty, binds: &mut Binds) -> bool {
-        comparing!(&mut Cx::default(), |c| c.sub_in(self, other, binds))
+        let mut cx = Cx::default();
+        let ok = comparing!(&mut cx, |c| c.sub_in(self, other, binds));
+        cx.decided(ok)
+    }
+
+    /// Why `self <: other` was refused, if two members of a union of `self` each needed a
+    /// shape of `other` the checker does not single out ([`Comparing::search`]).
+    fn unchosen(&self, other: &Ty) -> Option<String> {
+        let mut cx = Cx::default();
+        comparing!(&mut cx, |c| async {
+            c.sub_in(self, other, &mut Binds::new()).await;
+        });
+        cx.unchosen
     }
 
     /// [`Self::sub`], each class variable `solve` gives a type read as that type inside the
@@ -3607,7 +4250,8 @@ impl Ty {
             solve: Some(solve),
             ..Cx::default()
         };
-        comparing!(&mut cx, |c| c.sub_in(self, other, binds))
+        let ok = comparing!(&mut cx, |c| c.sub_in(self, other, binds));
+        cx.decided(ok)
     }
 
     /// [`Self::subtype`], read as [`Self::sub_with`] reads.
@@ -3710,6 +4354,9 @@ impl Ty {
     /// the types, so a message that reads as a counterexample would be wrong.
     pub fn refused(&self, other: &Ty) -> String {
         if let Some(why) = Forms::tie(self, other) {
+            return format!(" (not decided: {why})");
+        }
+        if let Some(why) = self.unchosen(other) {
             return format!(" (not decided: {why})");
         }
         match self.verdict(other) {
@@ -4038,12 +4685,15 @@ impl Ty {
 /// variable of `cx.fns` is the function it stands for.
 ///
 /// A tuple shape and a function are compared in a frame of their own ([`Comparing::rows`],
-/// [`Comparing::fits`]), through which every cycle of the comparisons passes.
+/// [`Comparing::fits`]), through which every cycle of the comparisons passes. The tuple and
+/// payload shapes of `t` that may hold a piece are found by `search` ([`Comparing::row_in`],
+/// [`Comparing::payloads_in`]), which holds them filed for all the pieces of `of`.
 async fn accepts<'m>(
     t: &Ty,
     p: &Piece,
     of: &Ty,
     binds: &mut Binds,
+    search: &mut Search<'_>,
     c: &'m Comparing<'m, '_>,
 ) -> bool {
     if t.dynamic {
@@ -4062,25 +4712,11 @@ async fn accepts<'m>(
                             })
                         })
                 };
-                held && c.payloads_in(s, of, t, binds).await
+                held && c.payloads_in(s, of, t, binds, search).await
             }
             // A kind-wide part that holds every tuple of the length holds it, whatever it holds.
             Piece::Tuple(cs) if KType::tuple(vec![KType::top(); cs.len()]).subtype(&t.set) => true,
-            Piece::Tuple(cs) => {
-                let mut ok = false;
-                for ds in &t.tuples {
-                    if ds.len() != cs.len() {
-                        continue;
-                    }
-                    let b;
-                    (ok, b) = c.rows(cs.clone(), ds.clone(), binds.clone()).await;
-                    if ok {
-                        *binds = b;
-                        break;
-                    }
-                }
-                ok
-            }
+            Piece::Tuple(cs) => c.row_in(cs, t, search, binds).await,
             // A type outside every comparison of function types holds its functions as written.
             Piece::Fn(s) => {
                 let mut ok = false;
@@ -4137,7 +4773,9 @@ async fn accepts<'m>(
 /// returns within its result, or arrows of `s` that do so together (`covered`).
 pub fn fits_sig(s: &Sig, q: &Sig) -> bool {
     let env = Env::new();
-    comparing!(&mut Cx::default(), |c| fits_in(s, &env, q, &env, &c))
+    let mut cx = Cx::default();
+    let ok = comparing!(&mut cx, |c| fits_in(s, &env, q, &env, &c));
+    cx.decided(ok)
 }
 
 /// [`fits_sig`], read as [`Ty::sub_with`] reads.
@@ -4147,7 +4785,8 @@ pub fn fits_sig_with(s: &Sig, q: &Sig, solve: Solve) -> bool {
         ..Cx::default()
     };
     let env = Env::new();
-    comparing!(&mut cx, |c| fits_in(s, &env, q, &env, &c))
+    let ok = comparing!(&mut cx, |c| fits_in(s, &env, q, &env, &c));
+    cx.decided(ok)
 }
 
 /// [`fits_sig`] inside the expected function types whose bounded variables `cx.rigid` holds,
@@ -4281,10 +4920,11 @@ pub fn why_unfit_with(s: &Sig, q: &Sig, solve: Solve) -> Option<String> {
 fn why_unfit_in(s: &Sig, q: &Sig, mut cx: Cx) -> Option<String> {
     cx.why = Some(None);
     let env = Env::new();
-    if comparing!(&mut cx, |c| fits_in(s, &env, q, &env, &c)) {
+    let ok = comparing!(&mut cx, |c| fits_in(s, &env, q, &env, &c));
+    if cx.decided(ok) {
         return None;
     }
-    cx.why.flatten()
+    cx.why.flatten().or(cx.unchosen)
 }
 
 #[cfg(test)]
@@ -4864,7 +5504,8 @@ impl Meet {
             rigid: self.rigid.clone(),
             ..Cx::default()
         };
-        comparing!(&mut cx, |c| meet_within(&self.results, &self.result, &c))
+        let ok = comparing!(&mut cx, |c| meet_within(&self.results, &self.result, &c));
+        cx.decided(ok)
     }
 }
 
@@ -7082,5 +7723,76 @@ mod tests {
         let s = Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::set(KType::int())));
         assert!(atom_of(Ty::func(s.clone())).kernel().is_none());
         assert!(row_of_atom(Ty::func(s)).kernel().is_none());
+    }
+
+    /// A random component of a shape: a literal of three, `int`, `String`, a tuple of a
+    /// literal and a component, or, when `open`, the variable `T` or `U`.
+    fn component(rng: &mut Rng, open: bool, depth: u32) -> Ty {
+        match rng.below(if open { 8 } else { 6 }) {
+            0..=2 => Ty::lit(&Value::Int(rng.below(3) as i64)),
+            3 => Ty::carrier(Carrier::Int),
+            4 => Ty::carrier(Carrier::Str),
+            5 if depth > 0 => Ty::carrier(Carrier::Int),
+            5 => Ty::tuple(vec![
+                Ty::lit(&Value::Int(rng.below(2) as i64)),
+                component(rng, open, depth + 1),
+            ]),
+            6 => Ty::var("T".into()),
+            _ => Ty::var("U".into()),
+        }
+    }
+
+    /// A union of one to four random members of width two: tuples, or payloads of the atom
+    /// `#p`.
+    fn shapes(rng: &mut Rng, open: bool, payloads: bool) -> Ty {
+        let k = 1 + rng.below(4);
+        let mut ms = Vec::new();
+        for _ in 0..k {
+            let cs = vec![component(rng, open, 0), component(rng, open, 0)];
+            ms.push(match payloads {
+                false => Ty::tuple(cs),
+                true => {
+                    let mut t = Ty::set(KType::atom_with("p", &KType::top()));
+                    let shape = Shape::new(cs, BTreeMap::new());
+                    t.payloads.insert("p".into(), Some(vec![shape]));
+                    t
+                }
+            });
+        }
+        Ty::union_all(&ms)
+    }
+
+    /// The shapes found through the index (COMPLEXITY.md F124) are those the rule of one shape
+    /// finds by trying every shape in written order: the same verdict and the same bindings
+    /// wherever the index does not refuse.
+    #[test]
+    fn shapes_found_by_the_index_are_those_of_the_rule_of_one_shape() {
+        let mut rng = Rng(24);
+        let (mut cases, mut held, mut refused, mut bound) = (0, 0, 0, 0);
+        for i in 0..20_000 {
+            let payloads = i % 2 == 1;
+            let s = shapes(&mut rng, false, payloads);
+            let t = shapes(&mut rng, true, payloads);
+            let mut by_index = Binds::new();
+            let ok = s.sub(&t, &mut by_index);
+            SCAN_ALL.set(true);
+            let mut by_scan = Binds::new();
+            let want = s.sub(&t, &mut by_scan);
+            SCAN_ALL.set(false);
+            cases += 1;
+            if s.unchosen(&t).is_some() {
+                assert!(!ok, "{s} <: {t}: refused, but held");
+                refused += 1;
+                continue;
+            }
+            assert_eq!(ok, want, "{s} <: {t}");
+            if ok {
+                assert_eq!(by_index, by_scan, "{s} <: {t}");
+                held += 1;
+                bound += usize::from(!by_index.is_empty());
+            }
+        }
+        println!("{cases} cases: {held} held ({bound} binding), {refused} refused");
+        assert!(held > 1000 && bound > 500, "{held} held, {bound} binding");
     }
 }

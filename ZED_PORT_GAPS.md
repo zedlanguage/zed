@@ -2806,3 +2806,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A Dijkstra search on a `BinaryHeap<Reverse<..>>` and a breadth-first search on a `VecDeque`, both filling `Vec`s of labels | `holes::Run::paths`, `holes::Run::hull` | Mutation (gap 11) | A recursive function over a persistent heap or queue, the labels a persistent map |
 | `return Err(Stop::..)` and `?` out of the loops over components and cycles | `holes::Run::component`, `holes::greatest` | Early exit (gap 12) | A result value checked at each step of the fold |
 | `self.raise(..)` changing the scope's potential, inside `Iterator::all`, which stops at the first `false` | `Scope::by_holes`, `Scope::project` | Mutation (gap 11), Early exit (gap 12) | A recursive function over the names that returns the new potential and stops on the first failed raise |
+
+## Entries from ATOM-payload-unify (`crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An `impl Iterator` built by `std::iter::from_fn` over a `BinaryHeap<Reverse<(usize, usize, usize)>>` it owns, a k-way merge | `Choices::merged` | Iterators, Mutation (gap 11) | a function that returns the merged list, or a heap threaded through a loop |
+| `BTreeMap::entry` matched on `Occupied` and `Vacant` to claim a bucket once | `Comparing::search` | Mutation (gap 11) | a lookup, then an insert into the map returned |
+| An enum constructor passed as a function (`point.map_or(k, ShapeKey::Point)`) | `Choices::new` | None | `if p is #some(v) { #Point(v) } else { k }` |
+| A `#[cfg(test)]` `thread_local!` `Cell<bool>` that switches a search to the full scan | `SCAN_ALL`, `Comparing::search` | No test-only state | a parameter of the search, or a test build of the module |
