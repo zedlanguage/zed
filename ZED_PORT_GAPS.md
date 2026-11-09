@@ -2854,3 +2854,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `out[*l].extend(..)` into a `Vec<Vec<usize>>` made at its full length, then `sort_unstable` of each list in place | `near_pairs` | Mutation (gap 11) | a map from each left index to its sorted list, built by the fold |
 | `std::mem::take(&mut out.tuples)` and a `Ty { tuples: .., ..bare.clone() }` per row, with an `Option<(&Ty, &Whole, &Arc<Filed>)>` passed down | `Comparing::diff`, `sub_near` | Mutation (gap 11) | the record with its tuples replaced, and an optional record argument |
 | A `#[cfg(test)]` `thread_local!` `Cell<bool>` that switches the lookup to every pair of one length | `NEAR_ALL`, `near_pairs` | No test-only state | a parameter of the lookup, or a test build of the module |
+
+## Entries from GROUP-admit (`tests/steps/l01_23_subtyping/admission_sweep.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `BTreeMap::entry` with `Entry::Vacant`/`Entry::Occupied` and `get_mut`, counting false rejections per arm in place | `sweep` | Mutation (gap 11) | a fold over the seeds that returns the map with the arm's record replaced |
+| Destructuring assignment `(r.size, r.seed, r.group) = (n, seed, group)` into fields of a borrowed record | `sweep` | Mutation (gap 11) | a new record in the fold |
+| A `&mut usize` counter threaded through a recursive walk to find the subterm at a preorder place | `replaced` | Mutation (gap 11) | the walk returns the place left with the new term |
+| A closure argument `impl Fn(&[T]) -> bool` for the property shrinking keeps | `shrink` | None | a function parameter |

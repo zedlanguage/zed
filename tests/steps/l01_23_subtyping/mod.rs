@@ -6,6 +6,7 @@
 //! declarations, which elaborate to them, join at L2.
 
 mod admission;
+mod admission_sweep;
 mod bes;
 mod bes_families;
 mod bound_paths;

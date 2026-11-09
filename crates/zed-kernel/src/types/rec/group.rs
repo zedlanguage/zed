@@ -191,6 +191,12 @@ impl Group {
         &self.0.defs
     }
 
+    /// The number of parameters of the first definition; 0 for a group with no definitions,
+    /// which is accepted and has no types.
+    fn arity(&self) -> usize {
+        self.0.defs.first().map_or(0, |d| d.params.len())
+    }
+
     fn reject(&self, def: usize, why: String) -> Rejection {
         Rejection {
             def,
@@ -199,7 +205,7 @@ impl Group {
     }
 
     fn regular(&self) -> Result<(), Rejection> {
-        let arity = self.0.defs[0].params.len();
+        let arity = self.arity();
         for (i, d) in self.0.defs.iter().enumerate() {
             if d.params.len() != arity {
                 return Err(self.reject(
@@ -478,11 +484,7 @@ impl Group {
     ///
     /// When `args` is not one type per parameter.
     pub fn instance(&self, args: Vec<Type>) -> Vec<Type> {
-        assert_eq!(
-            args.len(),
-            self.0.defs[0].params.len(),
-            "one argument per parameter"
-        );
+        assert_eq!(args.len(), self.arity(), "one argument per parameter");
         let made_by = thread();
         let key = (self.0.number, args);
         let lock = || {
