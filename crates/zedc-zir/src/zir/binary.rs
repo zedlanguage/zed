@@ -47,7 +47,7 @@ const GRADES: [Grade; 6] = [
     Grade::Assumed,
 ];
 
-const DERIVED: [Derived; 4] = [Derived::Group, Derived::Rank, Derived::Scan, Derived::Join];
+const DERIVED: [Derived; 4] = [Derived::Group, Derived::OrderedValues, Derived::Scan, Derived::Join];
 
 fn index<T: PartialEq>(all: &[T], x: &T) -> u8 {
     all.iter()

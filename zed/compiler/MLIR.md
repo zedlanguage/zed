@@ -97,7 +97,7 @@ dialect (mlir.llvm.org/docs/Dialects/Func), the `scf` dialect
 | `gen` | `scf.while`, the guard in the before region or the after region as the node's guard position says. A window keeps the rule of step L6.14a: generated code never loads below storage, and a read at a static distance has no compare. |
 | `fam` | a runtime call building the family; in a fused nest, the loop that produces it. |
 | `group` | the planner's chosen plan, lowered as the kernel definition its certificate holds; MLIR sees only the resulting loops and calls. |
-| `rank` | as `group`. |
+| `orderedValues` | as `group`. |
 | `scan` | `scf.for` with the running value as an iteration argument; a float scan other than `+` follows the canonical tree of DESIGN.md sec:reduction. |
 | `join` | as `group`. |
 

@@ -106,7 +106,7 @@ pub fn nodes_in(regions: &[Arc<Region>]) -> usize {
 /// An operation a back end may ask to have expanded.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Expansion {
-    /// A derived node (`group`, `rank`, `scan`, `join`), replaced by its certificate.
+    /// A derived node (`group`, `orderedValues`, `scan`, `join`), replaced by its certificate.
     Derived,
     /// An applied `prim >`, rewritten as `prim <` on its inputs swapped.
     Gt,

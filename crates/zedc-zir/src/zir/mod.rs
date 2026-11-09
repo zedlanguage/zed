@@ -18,7 +18,7 @@
 //! | `port read` | state | | value, state |
 //! | `port push` | state, value | | acknowledgment, state |
 //! | `fam` | domain, captures | function: key, captures → entry | family |
-//! | `group`, `rank`, `scan`, `join` | any | function: the certificate | any |
+//! | `group`, `orderedValues`, `scan`, `join` | any | function: the certificate | any |
 //! | `prim` | the primitive's arguments, or none | | value, or the primitive as a function |
 //! | `apply` | function, arguments | | value |
 //! | `lambda` | captures | function: parameters, captures → value | function |
@@ -136,8 +136,8 @@ pub enum Src {
 pub enum Derived {
     /// Grouping by a key.
     Group,
-    /// Ranking along an order.
-    Rank,
+    /// The values in order, keyed `0..<n` (`.orderedValues`).
+    OrderedValues,
     /// A prefix fold.
     Scan,
     /// A join of two families.
@@ -359,7 +359,7 @@ pub fn op_name(op: &Op) -> &'static str {
         Op::Read(_) | Op::Push(_) => "port",
         Op::Fam => "fam",
         Op::Derived(Derived::Group) => "group",
-        Op::Derived(Derived::Rank) => "rank",
+        Op::Derived(Derived::OrderedValues) => "orderedValues",
         Op::Derived(Derived::Scan) => "scan",
         Op::Derived(Derived::Join) => "join",
         Op::Prim(_) => "prim",

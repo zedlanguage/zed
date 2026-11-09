@@ -82,8 +82,8 @@ const CASES: &[(&str, &str, &str)] = &[
     ),
     (
         "derived in certificate",
-        "zir 1\nr region function (struct)\nr.0 group (r^0) -> (struct)\nr.0/0 region function (struct)\nr.0/0.0 rank (r.0/0^0) -> (struct)\nr.0/0.0/0 region function (struct)\nr.0/0.0/0 results (r.0/0.0/0^0)\nr.0/0 results (r.0/0.0^0)\nr results (r.0^0)\n",
-        "r.0/0.0: `rank` in a certificate, which holds only kernel nodes",
+        "zir 1\nr region function (struct)\nr.0 group (r^0) -> (struct)\nr.0/0 region function (struct)\nr.0/0.0 orderedValues (r.0/0^0) -> (struct)\nr.0/0.0/0 region function (struct)\nr.0/0.0/0 results (r.0/0.0/0^0)\nr.0/0 results (r.0/0.0^0)\nr results (r.0^0)\n",
+        "r.0/0.0: `orderedValues` in a certificate, which holds only kernel nodes",
     ),
     (
         "result count of if",

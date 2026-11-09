@@ -917,7 +917,7 @@ impl<'a> P<'a> {
             },
             "fam" => Op::Fam,
             "group" => Op::Derived(Derived::Group),
-            "rank" => Op::Derived(Derived::Rank),
+            "orderedValues" => Op::Derived(Derived::OrderedValues),
             "scan" => Op::Derived(Derived::Scan),
             "join" => Op::Derived(Derived::Join),
             "prim" => {
