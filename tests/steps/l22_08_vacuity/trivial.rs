@@ -366,7 +366,7 @@ impl Theory {
         // (`hardness::an_or_of_ands_is_refused` gives the reduction from 3-SAT), so every method
         // is exponential on some law of that shape. Structural trigger: an `||` whose operands
         // include several `&&`s. Tests: `hardness::an_or_of_ands_is_refused`,
-        // `hardness::the_work_limit_is_not_a_size_limit`; COMPLEXITY.md C31.
+        // `hardness::the_work_limit_is_not_a_size_limit`; COMPLEXITY.md C32.
         let cnf = parsed.cnf(&mut 0);
         self.laws.push(Law {
             name: name.to_string(),
@@ -566,9 +566,13 @@ impl Theory {
                         Ok(c) if c < 2 => out.push((Sym::Const(c), cond)),
                         Ok(c) => stack.push((args[(c - 2) as usize], cond)),
                         Err(at) => {
+                            // Each choice extends the condition by one entry, written at its
+                            // final length so that no path is copied twice.
                             for c in 0..choices(args.len()) {
-                                let mut next = cond.clone();
-                                next.insert(at, (*field, c));
+                                let mut next = Vec::with_capacity(cond.len() + 1);
+                                next.extend_from_slice(&cond[..at]);
+                                next.push((*field, c));
+                                next.extend_from_slice(&cond[at..]);
                                 if c < 2 {
                                     out.push((Sym::Const(c), next));
                                 } else {
@@ -652,20 +656,23 @@ impl Theory {
             // end symbol s: two constraints joined by s, linear in the paths. The field–constraint
             // graph gains the path left fields – s – right fields, with no cycle, so arc
             // consistency is as strong as on the pairs.
-            let mut l = Vec::new();
-            let mut r = Vec::new();
-            for (v, (lrange, rrange)) in common.iter().enumerate() {
-                l.extend(
-                    left[lrange.clone()]
-                        .iter()
-                        .map(|(_, c)| (v as u32, c.clone())),
-                );
-                r.extend(
-                    right[rrange.clone()]
-                        .iter()
-                        .map(|(_, c)| (v as u32, c.clone())),
-                );
-            }
+            // The paths in the common runs, moved, not copied, each with its run's index as the
+            // value of the end symbol. The runs are in order, so one walk of a side finds them.
+            let ends = |side: Vec<(Sym, Vec<(usize, Choice)>)>, on_right: bool| {
+                let run = |v: usize| if on_right { &common[v].1 } else { &common[v].0 };
+                let mut out = Vec::with_capacity((0..common.len()).map(|v| run(v).len()).sum());
+                let mut v = 0;
+                for (i, (_, cond)) in side.into_iter().enumerate() {
+                    while v < common.len() && run(v).end <= i {
+                        v += 1;
+                    }
+                    if v < common.len() && run(v).start <= i {
+                        out.push((v as u32, cond));
+                    }
+                }
+                out
+            };
+            let (l, r) = (ends(left, false), ends(right, true));
             return AtomForm::Split {
                 dom: common.len() as u32,
                 left: (lf, l),
@@ -685,7 +692,7 @@ impl Theory {
         // of `brute` dead ends and Lattice 2. Structural trigger: an atom whose sides share a
         // field and have many paths each. Test: `brute` and the corpus; the cubic growth is
         // pinned by `scaling::a_shared_field_atom_is_cubic`, not yet a scaling test;
-        // COMPLEXITY.md C31; plan row TRIVIAL-shared-atom.
+        // COMPLEXITY.md C32; plan row TRIVIAL-shared-atom.
         let mut out = Vec::new();
         for (lrange, rrange) in common {
             for (_, lc) in &left[lrange] {
@@ -722,6 +729,44 @@ enum AtomForm {
     Split { dom: u32, left: Side, right: Side },
     /// Sides that name a common field: the partial choices under which the atom holds.
     Cubes(Vec<Vec<(usize, Choice)>>),
+}
+
+/// A variable and one of its choices.
+type Lit = (usize, Choice);
+
+/// The cubes of one constraint, as the engine reads them.
+enum CubeSet {
+    /// Each cube written out.
+    Listed(Vec<Vec<(usize, Choice)>>),
+    /// One side of a split atom: the end symbol, and the side's paths, each with the end
+    /// symbol's value that completes it to a cube.
+    Ended(usize, Vec<(u32, Vec<(usize, Choice)>)>),
+}
+
+impl CubeSet {
+    fn len(&self) -> usize {
+        match self {
+            CubeSet::Listed(cubes) => cubes.len(),
+            CubeSet::Ended(_, paths) => paths.len(),
+        }
+    }
+
+    /// The choices in all the cubes.
+    fn choices(&self) -> usize {
+        match self {
+            CubeSet::Listed(cubes) => cubes.iter().map(Vec::len).sum(),
+            CubeSet::Ended(_, paths) => paths.iter().map(|(_, path)| path.len() + 1).sum(),
+        }
+    }
+
+    /// Cube `i`: its choices of fields, sorted by field, then the end symbol's choice, if any,
+    /// whose variable comes after every field.
+    fn cube(&self, i: usize) -> (&[Lit], Option<Lit>) {
+        match self {
+            CubeSet::Listed(cubes) => (&cubes[i], None),
+            CubeSet::Ended(end, paths) => (&paths[i].1, Some((*end, paths[i].0))),
+        }
+    }
 }
 
 /// The union of two sorted partial choices, or `None` when they choose one field two ways.
@@ -1071,8 +1116,10 @@ struct Engine<'t> {
     cube_alive: Vec<bool>,
     /// The cubes removed, in order, to undo them.
     killed: Vec<usize>,
-    /// For each choice of each variable, by index like `alive`: the cubes that use it.
-    uses: Vec<Vec<usize>>,
+    /// For each choice of each variable, by index like `alive`: the cubes that use it, in
+    /// `uses[uses_at[i]..uses_at[i + 1]]`.
+    uses: Vec<usize>,
+    uses_at: Vec<usize>,
     /// For each constraint of cubes and each choice of a variable in its scope: the live cubes
     /// that use it.
     count: Vec<u32>,
@@ -1103,7 +1150,7 @@ impl<'t> Engine<'t> {
     fn new(theory: &'t Theory) -> Self {
         let mut cons = Vec::new();
         let mut dom: Vec<u32> = theory.fields.iter().map(|f| choices(f.arity)).collect();
-        let mut cubes_of: Vec<Vec<Vec<(usize, Choice)>>> = Vec::new();
+        let mut cubes_of: Vec<CubeSet> = Vec::new();
         let mut push = |cons: &mut Vec<Constraint>, c: Constraint, cubes| {
             cons.push(c);
             cubes_of.push(cubes);
@@ -1119,7 +1166,7 @@ impl<'t> Engine<'t> {
                                 scope: theory.atom_scope(a),
                                 check: Check::Cubes,
                             },
-                            cubes,
+                            CubeSet::Listed(cubes),
                         ),
                         AtomForm::Split {
                             dom: values,
@@ -1130,13 +1177,6 @@ impl<'t> Engine<'t> {
                             dom.push(values);
                             for (mut scope, paths) in [left, right] {
                                 scope.push(end);
-                                let cubes = paths
-                                    .into_iter()
-                                    .map(|(v, mut cube)| {
-                                        cube.push((end, v));
-                                        cube
-                                    })
-                                    .collect();
                                 push(
                                     &mut cons,
                                     Constraint {
@@ -1144,7 +1184,7 @@ impl<'t> Engine<'t> {
                                         scope,
                                         check: Check::Cubes,
                                     },
-                                    cubes,
+                                    CubeSet::Ended(end, paths),
                                 );
                             }
                         }
@@ -1156,7 +1196,7 @@ impl<'t> Engine<'t> {
                             scope: theory.atoms_scope(clause),
                             check: Check::Whole(k),
                         },
-                        Vec::new(),
+                        CubeSet::Listed(Vec::new()),
                     ),
                 }
             }
@@ -1168,14 +1208,30 @@ impl<'t> Engine<'t> {
             total += d as usize;
         }
         offset.push(total);
+        // The tables below are made at their final lengths, counted first, so that building
+        // them allocates each once, in proportion to the cubes' choices.
+        let of_cubes = || (0..cons.len()).filter(|&c| matches!(cons[c].check, Check::Cubes));
+        let n_slots: usize = of_cubes().map(|c| cons[c].scope.len()).sum();
+        let n_cubes: usize = of_cubes().map(|c| cubes_of[c].len()).sum();
+        let n_lits: usize = of_cubes().map(|c| cubes_of[c].choices()).sum();
+        let n_bins: usize = of_cubes().map(|c| cubes_of[c].len() + 2).sum();
         let mut cons_of_law = vec![Vec::new(); theory.laws.len()];
         let mut whole_of = vec![Vec::new(); dom.len()];
         let mut open = vec![0; cons.len()];
-        let (mut slot_var, mut slots_of) = (Vec::new(), Vec::with_capacity(cons.len()));
+        let (mut slot_var, mut slots_of) =
+            (Vec::with_capacity(n_slots), Vec::with_capacity(cons.len()));
         let mut n_counts = 0;
-        let (mut cube_con, mut cube_start, mut cube_lits) = (Vec::new(), vec![0], Vec::new());
-        let mut uses = vec![Vec::new(); total];
-        let (mut live, mut bin, mut bin_of) = (vec![0; cons.len()], Vec::new(), Vec::new());
+        let (mut cube_con, mut cube_start, mut cube_lits) = (
+            Vec::with_capacity(n_cubes),
+            Vec::with_capacity(n_cubes + 1),
+            Vec::with_capacity(n_lits),
+        );
+        cube_start.push(0);
+        let (mut live, mut bin, mut bin_of) = (
+            vec![0; cons.len()],
+            Vec::with_capacity(n_bins),
+            Vec::with_capacity(cons.len()),
+        );
         // The slot of each variable in the constraint being built.
         let mut slot = vec![usize::MAX; dom.len()];
         for (c, con) in cons.iter().enumerate() {
@@ -1195,26 +1251,41 @@ impl<'t> Engine<'t> {
                         slot_var.push((f, n_counts));
                         n_counts += dom[f] as usize;
                     }
-                    for cube in &cubes_of[c] {
-                        let id = cube_con.len();
+                    let cubes = &cubes_of[c];
+                    for i in 0..cubes.len() {
                         cube_con.push(c);
-                        for &(f, v) in cube {
+                        let (path, end) = cubes.cube(i);
+                        for &(f, v) in path.iter().chain(&end) {
                             let s = slot[f];
                             cube_lits.push((f, v, slot_var[s].1 + v as usize, s));
-                            uses[offset[f] + v as usize].push(id);
                         }
                         cube_start.push(cube_lits.len());
                     }
                     for &f in &con.scope {
                         slot[f] = usize::MAX;
                     }
-                    live[c] = cubes_of[c].len() as u32;
+                    live[c] = cubes.len() as u32;
+                    // One bin for each count of mentions, 0 to the cubes, and one past the last.
+                    bin.extend(std::iter::repeat_n(0, cubes.len() + 2));
                 }
             }
             slots_of.push(first_slot..slot_var.len());
-            // One bin for each count of mentions, 0 to the cubes, and one past the last.
-            if matches!(con.check, Check::Cubes) {
-                bin.extend(std::iter::repeat_n(0, cubes_of[c].len() + 2));
+        }
+        // The cubes that use each choice, in one array by choice: count them, then fill each
+        // choice's run from its end, the cubes from the last, so each run is in cube order.
+        let mut uses_at = vec![0; total + 1];
+        for &(f, v, _, _) in &cube_lits {
+            uses_at[offset[f] + v as usize] += 1;
+        }
+        for i in 1..=total {
+            uses_at[i] += uses_at[i - 1];
+        }
+        let mut uses = vec![0; n_lits];
+        for k in (0..cube_con.len()).rev() {
+            for &(f, v, _, _) in cube_lits[cube_start[k]..cube_start[k + 1]].iter().rev() {
+                let i = offset[f] + v as usize;
+                uses_at[i] -= 1;
+                uses[uses_at[i]] = k;
             }
         }
         let mut count = vec![0; n_counts];
@@ -1267,6 +1338,7 @@ impl<'t> Engine<'t> {
             cube_alive: vec![true; n_cubes],
             killed: Vec::new(),
             uses,
+            uses_at,
             count,
             marked: vec![false; slot_var.len()],
             slot_var,
@@ -1388,8 +1460,8 @@ impl<'t> Engine<'t> {
                 let (f, v, _, _) = self.trail[self.head];
                 self.head += 1;
                 let i = self.offset[f] + v as usize;
-                for u in 0..self.uses[i].len() {
-                    let k = self.uses[i][u];
+                for u in self.uses_at[i]..self.uses_at[i + 1] {
+                    let k = self.uses[u];
                     if self.cube_alive[k] {
                         self.kill(k)?;
                     }
