@@ -6,8 +6,11 @@
 //! outside the sentence; [`plain`] finishes one text alone, as `type T1 = …; T1`.
 //!
 //! A reference is `\u{FDD5}k\u{FDD6}`, `k` the definition's place in the table: Unicode
-//! noncharacters, which no program text holds. A text with no part used twice holds none, and
-//! is the text it was before the step.
+//! noncharacters, which no user text in a message holds. The lexer refuses them outside a
+//! string, a string value is written with them escaped (`\u{fdd5}`, the `{:?}` form of
+//! `Value::Str`), and the source lines quoted under a message are drawn after [`lift`]; test
+//! l01_29 `markers`. A text with no part used twice holds none, and is the text it was before
+//! the step.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};

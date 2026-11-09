@@ -616,7 +616,8 @@ fn show_with(t: &Ty, masks: &Masks) -> String {
 }
 
 /// Where a repair note that writes types in code says to declare the definitions those
-/// types use ([`lay_out`]): a Unicode noncharacter, which no program text holds.
+/// types use ([`lay_out`]): a Unicode noncharacter, which no user text in a message holds
+/// (see `zed_kernel::types::defs`).
 const DECLARE: &str = "\u{FDD8}";
 
 /// Writes the types of one message, its text and its notes, in one numbering: each part
