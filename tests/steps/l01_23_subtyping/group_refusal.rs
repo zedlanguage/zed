@@ -2,9 +2,9 @@
 //! GROUP-refusal): a component mixing cycles through tuples and through function results, with
 //! two or more independent cycles and a tuple with two undecided components, is refused with a
 //! message naming the definition, the definitions taking part, the cycles, the tuple and a
-//! repair that a re-check confirms; it is not searched for emptiness. The rest of the group
-//! stays on the decider: a part the decider does not take is a leaf, decided with it empty and
-//! with it inhabited.
+//! repair that a re-check confirms, when the search for a value, which every member the decider
+//! leaves open goes to, does not decide it either. The rest of the group stays on the decider:
+//! a part the decider does not take is a leaf, decided with it empty and with it inhabited.
 
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
@@ -98,8 +98,8 @@ fn message(t: &Type) -> String {
     site.detail.expect("the decider's reason")
 }
 
-/// Before this item the members went to the search, which refused them for another cause, so
-/// the first assertion fails there.
+/// The members go to the search, which decides none of them; before this item the search's own
+/// cause was given, so the first assertion fails there.
 #[test]
 fn a_mixed_component_is_refused_with_its_own_message() {
     Type::forget_emptiness();
@@ -132,8 +132,9 @@ fn a_mixed_component_is_refused_with_its_own_message() {
          the tuple `(Tree, Thunk)` in `Node` needs a value of both `Tree` and `Thunk`, and \
          whether they have one is still open; the known ways to settle such a group take time \
          that grows with the square of its size, while the checker decides each group in time \
-         linear in it, so it stops here and counts `Pair` as possibly having a value; adding the \
-         case `| #end` to `Node`, as in `type Node = ((int) -> Pair) | (Tree, Thunk) | #end`, \
+         linear in it, so it does not settle this one; a search for a value of `Pair` then \
+         neither finds one nor shows that there is none, so the checker counts `Pair` as \
+         possibly having a value; adding the case `| #end` to `Node`, as in `type Node = ((int) -> Pair) | (Tree, Thunk) | #end`, \
          lets the checker decide it"
     );
 }
@@ -212,6 +213,49 @@ fn a_refused_member_with_a_value_built_is_inhabited() {
     }
 }
 
+/// A refused member read through a meet: its message names the tuple, not the meet, and the
+/// repair it offers leaves it to the search, since the decider's "inhabited" does not decide a
+/// member read through a meet (GROUP-setop); applied, the repair has the decider decide the
+/// component and leave the member to the search, as the message says.
+#[test]
+fn a_refused_member_read_through_a_meet_is_left_to_the_search_by_its_repair() {
+    Type::forget_emptiness();
+    let mut defs = placed(IN_ORDER);
+    defs.push((
+        "Both".into(),
+        atom(
+            "both",
+            vec![Expr::And(vec![
+                r(0),
+                Expr::Type(Type::tuple(vec![Type::top(), Type::top()])),
+            ])],
+        ),
+    ));
+    let types = group(defs.clone());
+    let m = message(&types[4]);
+    assert!(
+        m.contains("the tuple `(Tree, Thunk)` in `Node` needs a value of both"),
+        "{m}"
+    );
+    assert!(
+        m.ends_with(
+            "adding the case `| #end` to `Node`, as in `type Node = ((int) -> Pair) | \
+             (Tree, Thunk) | #end`, removes this obstacle, and whether `Both` has a value is \
+             then left to the search for one"
+        ),
+        "{m}"
+    );
+    defs[3].1 = or(vec![defs[3].1.clone(), atom("end", vec![])]);
+    Type::forget_emptiness();
+    let types = group(defs);
+    assert_eq!(types[0].decided_by_group(), Some(false));
+    assert_eq!(types[4].decided_by_group(), None);
+    // Whatever the search finds, the group's refusal is gone. (Today it builds no value: a
+    // value of `Pair` holds a function returning `Tree`, which it builds only once it has a
+    // value of `Tree`, which holds a `Pair`; so it gives `Refusal::NoWitness`.)
+    assert_ne!(types[4].verdict(), Verdict::Refused(Refusal::Group));
+}
+
 /// A member that reads a refused component is refused with it, and a type outside the group
 /// that reads a refused member points at that member; a member apart from the component stays
 /// on the decider.
@@ -239,14 +283,46 @@ fn a_reader_of_a_refused_member_points_at_it() {
     );
 }
 
-/// A recursive occurrence under `&` is a leaf of the decider, decided empty and inhabited in
-/// turn, so the members whose answer does not rest on it stay decided; before this item every
-/// member of such a group went to the search, and none was decided by the group.
+/// A function type permitting its own group's keys and returning into it is a leaf of the decider, decided
+/// empty and inhabited in turn, so the members whose answer does not rest on it stay decided;
+/// before this item every member of such a group went to the search, and none was decided by
+/// the group.
 #[test]
 fn a_part_the_decider_does_not_take_leaves_the_rest_of_the_group_decided() {
     Type::forget_emptiness();
+    let leaf = || {
+        Expr::Morphism(
+            Box::new(Expr::Type(Type::empty())),
+            Box::new(r(0)),
+            Box::new(r(0)),
+        )
+    };
     let types = group(vec![
-        // A = #nil | #s(A & L): inhabited whatever the leaf.
+        // A = #nil | #s(A) -> A with nothing promised: inhabited whatever the leaf.
+        (
+            "A".into(),
+            or(vec![atom("nil", vec![]), atom("s", vec![leaf()])]),
+        ),
+        // E = (int, E) | #e((A) -> empty, E): empty whatever the leaf.
+        (
+            "E".into(),
+            or(vec![pair(int(), r(1)), atom("e", vec![leaf(), r(1)])]),
+        ),
+    ]);
+    assert_eq!(types[0].decided_by_group(), Some(false));
+    assert_eq!(types[1].decided_by_group(), Some(true));
+    assert_eq!(types[1].verdict(), Verdict::Empty);
+}
+
+/// A recursive occurrence under `&` is read as GROUP-setop reads it (DESIGN.md L1.23): the meet
+/// as a tuple of its operands, a member shown empty is empty, and a member shown inhabited
+/// through the meet goes to the search, here `A`, though its case `#nil` has a value. The
+/// members that do not read the meet stay decided.
+#[test]
+fn a_member_read_through_a_meet_goes_to_the_search_and_the_rest_stays_decided() {
+    Type::forget_emptiness();
+    let types = group(vec![
+        // A = #nil | #s(A & L): inhabited, through `#nil`.
         (
             "A".into(),
             or(vec![
@@ -254,7 +330,7 @@ fn a_part_the_decider_does_not_take_leaves_the_rest_of_the_group_decided() {
                 atom("s", vec![Expr::And(vec![r(0), r(2)])]),
             ]),
         ),
-        // E = (int, E) | #e(A & L, E): empty whatever the leaf.
+        // E = (int, E) | #e(A & L, E): empty, as each case reads `E`.
         (
             "E".into(),
             or(vec![
@@ -268,7 +344,8 @@ fn a_part_the_decider_does_not_take_leaves_the_rest_of_the_group_decided() {
             or(vec![atom("nil", vec![]), atom("cons", vec![int(), r(2)])]),
         ),
     ]);
-    assert_eq!(types[0].decided_by_group(), Some(false));
+    assert_eq!(types[0].decided_by_group(), None);
+    assert_eq!(types[0].verdict(), Verdict::Inhabited);
     assert_eq!(types[1].decided_by_group(), Some(true));
     assert_eq!(types[2].decided_by_group(), Some(false));
     assert_eq!(types[1].verdict(), Verdict::Empty);

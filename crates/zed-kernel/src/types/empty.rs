@@ -195,6 +195,16 @@ fn group_verdicts(members: &[Type]) {
                     // shown inhabited, so refused. A member the group's decider refused is
                     // refused for that, whatever stopped the search, so that its message names
                     // the definitions, the cycles and the tuple behind it (`Type::refusal_site`).
+                    // Complexity tradeoff: such a member counts as inhabited, `Refusal::Group`.
+                    // Why: its component, with two or more independent cycles mixing tuples and
+                    // function results and a tuple with two undecided components (module `bes`,
+                    // step 5), is a game the known algorithms solve in time quadratic in the
+                    // group, and the decider stays linear; the member goes to the search, as
+                    // DESIGN.md L1.23 has every member the decider refuses, which decides some.
+                    // Trigger: `Answer::Refused` for the member in either run of `judge`, and the
+                    // search deciding nothing. Tests: `l01_23_subtyping::group_refusal`.
+                    // COMPLEXITY.md K85. A complete solution needs a game solver quadratic in
+                    // the component.
                     Verdict::Refused(if m.refused_by_group() {
                         Refusal::Group
                     } else {
@@ -5898,7 +5908,7 @@ fn judge<'a>(env: &'a Arc<Env>) -> Judgment {
     }
     let why = refused
         .contains(&true)
-        .then(|| refused::Why::new(n, b, origin, runs));
+        .then(|| refused::Why::new(n, b, origin, runs, wide));
     Judgment {
         answers,
         refused,

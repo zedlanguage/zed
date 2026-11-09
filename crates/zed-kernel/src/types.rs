@@ -4903,10 +4903,10 @@ pub enum Refusal {
     /// The search ended with the type not proved empty, and no value of it was built.
     NoWitness,
     /// The type is, or reads, a member of a recursive group whose decider (module `bes`) left
-    /// it undecided: a component mixing cycles through tuples and through the value types of
-    /// function types, with two or more independent cycles and a tuple with two undecided
-    /// components (DESIGN.md L1.23). The definitions, cycles and tuple are named by
-    /// [`Type::group_refusal`].
+    /// it undecided, and which the search for a value then left undecided too: a component
+    /// mixing cycles through tuples and through the value types of function types, with two or
+    /// more independent cycles and a tuple with two undecided components (DESIGN.md L1.23). The
+    /// definitions, cycles and tuple are named by [`Type::refusal_site`].
     Group,
 }
 
@@ -4955,7 +4955,8 @@ impl Refusal {
                  tuples, which a value cannot go around forever, and through the results of \
                  function types, which a value can; deciding such a group takes time that \
                  grows with the square of its size, while the checker decides each group in \
-                 time linear in it, so it counts the type as possibly having a value; add a \
+                 time linear in it, and a search for a value neither finds one nor shows that \
+                 there is none, so it counts the type as possibly having a value; add a \
                  case such as `| #end` to one of the definitions"
             }
         };

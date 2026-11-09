@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use super::super::bes::{Answer, Bes, Decision, Kind, decide};
 use super::super::rec::{self, Env, Group};
-use super::super::{Node, Refusal, Type};
+use super::super::{Node, Refusal, Type, Verdict};
+use super::settled;
 
 /// What a refused member's message reads, kept with its group's judgment ([`super::Judgment`]).
 pub(in crate::types) struct Why {
@@ -28,12 +29,15 @@ pub(in crate::types) struct Why {
     of: Vec<HashMap<u32, usize>>,
     /// The number of members, whose nodes come first.
     members: u32,
+    /// Whether each node reaches a meet or a difference, so that an inhabited answer does not
+    /// decide it ([`super::settled`]).
+    wide: Vec<bool>,
     /// Whether each node reaches a node that some run refused. A node that does not is decided
     /// in every run, and a repair, which changes only refused members, cannot change it.
     open: Vec<bool>,
     /// For each set of members given `| #end`, whether the decider then decides each member
     /// already re-checked with it.
-    checked: Mutex<HashMap<Vec<usize>, HashMap<u32, bool>>>,
+    checked: Mutex<HashMap<Vec<usize>, HashMap<u32, Recheck>>>,
 }
 
 impl Why {
@@ -42,6 +46,7 @@ impl Why {
         graph: Bes,
         origin: Vec<(usize, Arc<rec::Node>)>,
         runs: Vec<Decision>,
+        wide: Vec<bool>,
     ) -> Why {
         let of = (runs.iter())
             .map(|d| {
@@ -67,6 +72,7 @@ impl Why {
         }
         Why {
             members: members as u32,
+            wide,
             graph,
             origin,
             runs,
@@ -76,10 +82,12 @@ impl Why {
         }
     }
 
-    /// Whether the decider decides member `i` once the case `| #end` is added to each member
-    /// of `which`: the system of the nodes `i` reaches, each of `which` made a union of its old
-    /// node and `Top`, decided as `judge` decides, the leaves `Bot` and then `Top`. What `i`
-    /// reaches is all its answer reads, so this is what `judge` gives the group so written.
+    /// What the decider makes of member `i` once the case `| #end` is added to each member of
+    /// `which`: the system of the nodes `i` reaches, each of `which` made a union of its old
+    /// node and `Top`, decided as `judge` decides, the leaves `Bot` and then `Top`, and read as
+    /// `judge` reads it ([`settled`]). What `i` reaches is all its answer reads, so this is what
+    /// `judge` gives the group so written. The repair adds no meet or difference, so whether a
+    /// node reaches one is as it was.
     ///
     /// The re-check is shared. A node that reaches no refused node is not walked: it stands as
     /// `Top` or `Bot`, its answer in each run, since its answer reads only nodes the repair does
@@ -87,7 +95,7 @@ impl Why {
     /// the re-check from `i` reaches gets its answer kept, under `which`, since all it reaches
     /// lies inside what `i` reaches and the decider decides each component from the components
     /// below it alone; a later message for that member reads it from there.
-    fn decides_with_end(&self, i: u32, which: &BTreeSet<usize>) -> bool {
+    fn recheck(&self, i: u32, which: &BTreeSet<usize>) -> Recheck {
         let key: Vec<usize> = which.iter().copied().collect();
         let checked = || self.checked.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(&known) = checked().get(&key).and_then(|m| m.get(&i)) {
@@ -152,13 +160,32 @@ impl Why {
         let kept = checked.entry(key).or_default();
         for &v in order.iter().filter(|&&v| v < self.members) {
             let at = local[&v] as usize;
+            let (low, high) = (answers[0][at], answers[1][at]);
             kept.insert(
                 v,
-                answers[0][at] == Answer::Inhabited || answers[1][at] == Answer::Empty,
+                if settled(low, high, self.wide[v as usize]).is_some() {
+                    Recheck::Decided
+                } else if low == Answer::Refused || high == Answer::Refused {
+                    Recheck::Refused
+                } else {
+                    Recheck::Searched
+                },
             );
         }
         kept[&i]
     }
+}
+
+/// What the decider makes of a refused member once a repair is written ([`Why::recheck`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Recheck {
+    /// It decides the member.
+    Decided,
+    /// It refuses the member no longer, and leaves it to the search, as it leaves a member read
+    /// through a meet or a difference, or one whose answer rests on a part it does not take.
+    Searched,
+    /// It still refuses the member.
+    Refused,
 }
 
 /// Where a refused check points, when it rests on a recursive group.
@@ -175,17 +202,17 @@ pub struct GroupSite {
 
 impl Type {
     /// Where a check of `self` refused for `cause` points, when it rests on a recursive group.
-    /// For `Refusal::Group`, the member its group's decider refuses that `self` is or reads
-    /// first, with the reason ([`GroupSite::detail`]); for another cause, the first member on a
-    /// cycle of its group that `self` is or reads, with its group's definitions. `None` when
-    /// `self` reads no such member. The members are met in a walk of the parts of `self` from
+    /// For `Refusal::Group`, the member that `self` is or reads first whose group's decider
+    /// refuses it and whose search for a value leaves it undecided, with the reason
+    /// ([`GroupSite::detail`]); for another cause, the first member on a cycle of its group that
+    /// `self` is or reads, with its group's definitions. `None` when `self` reads no such member. The members are met in a walk of the parts of `self` from
     /// the top, a function of `self` alone. Time linear in the parts walked, and for
     /// `Refusal::Group` in the group, which is built again at most twice to confirm a repair.
     pub fn refusal_site(&self, cause: Refusal) -> Option<GroupSite> {
         let group = cause == Refusal::Group;
         let m = first_member(self, |t| {
             if group {
-                t.refused_by_group()
+                t.refused_by_group() && t.verdict() == Verdict::Refused(Refusal::Group)
             } else {
                 t.on_cycle()
             }
@@ -280,7 +307,7 @@ fn listed(names: &[String]) -> String {
 // The re-check of a repair is shared by the members of the group: it walks only the nodes that
 // reach a refused node, so a decided part that many refused members read is not walked at all,
 // and it keeps the answer of every member it reaches, so the other members of a
-// refused component read theirs from it (`Why::decides_with_end`). The messages of m refused
+// refused component read theirs from it (`Why::recheck`). The messages of m refused
 // members that read one decided part of n nodes cost O(m + n) together. COMPLEXITY.md K85.
 fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
     let judgment = env.judged.get().expect("the decider ran");
@@ -342,12 +369,14 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
         .collect();
     let cycles = refs.len() + connected(&taking, &refs) - taking.len();
     // The tuple: the least by its definition's name and its text among the tuples with two
-    // undecided components on the refused cycles.
+    // undecided components on the refused cycles. A meet with a recursive occurrence in it is
+    // read as a tuple of its operands, and is named only when no tuple is.
     let tuple = (reached.iter())
         .flat_map(|&k| run.refusals[k].tuples.iter().copied())
         .map(|v| {
             let (def, e) = &why.origin[v as usize];
-            (defs[*def].name.clone(), group.text(*def, e), v)
+            let meet = matches!(e.e, rec::Shape::And(_));
+            (meet, defs[*def].name.clone(), group.text(*def, e), v)
         })
         .min();
     let mut text = format!(
@@ -365,10 +394,11 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
         },
     );
     let mut fixes: Vec<BTreeSet<usize>> = vec![taking.clone()];
-    if let Some((owner, t, v)) = &tuple {
+    let mut parts_of = "the tuple's components";
+    if let Some((meet, owner, t, v)) = &tuple {
         let def = why.origin[*v as usize].0;
         let parts = match &why.origin[*v as usize].1.e {
-            rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) => xs.as_slice(),
+            rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) | rec::Shape::And(xs) => xs.as_slice(),
             _ => &[],
         };
         let open: Vec<String> = (why.graph.children(*v).iter().zip(parts))
@@ -376,38 +406,62 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
             .map(|(_, x)| format!("`{}`", group.text(def, x)))
             .take(2)
             .collect();
+        let (what, needs) = if *meet {
+            parts_of = "the meet's operands";
+            ("meet", "a value in each of")
+        } else {
+            ("tuple", "a value of both")
+        };
         text += &format!(
-            "; the tuple `{t}` in `{owner}` needs a value of both {}, and whether they have one \
-             is still open",
+            "; the {what} `{t}` in `{owner}` needs {needs} {}, and whether they have one is still \
+             open",
             listed(&open)
         );
         fixes.insert(0, BTreeSet::from([def]));
     }
     text += &format!(
         "; the known ways to settle such a group take time that grows with the square of its \
-         size, while the checker decides each group in time linear in it, so it stops here and \
-         counts {} as possibly having a value",
+         size, while the checker decides each group in time linear in it, so it does not settle \
+         this one; a search for a value of {0} then neither finds one nor shows that there is \
+         none, so the checker counts {0} as possibly having a value",
         name(i)
     );
-    // A repair is offered only when the decider, run again with it, decides the member.
-    let repaired = fixes.iter().find(|w| why.decides_with_end(i as u32, w));
-    text += &match repaired.map(|w| w.iter().copied().collect::<Vec<_>>()) {
+    // A repair is offered when the decider, run again with it, decides the member; failing
+    // that, one with which it no longer refuses the member, said to leave it to the search.
+    let outcomes: Vec<Recheck> = (fixes.iter()).map(|w| why.recheck(i as u32, w)).collect();
+    let pick = |want: Recheck| {
+        (fixes.iter().zip(&outcomes))
+            .find(|&(_, &o)| o == want)
+            .map(|(w, _)| w.iter().copied().collect::<Vec<_>>())
+    };
+    let (repaired, effect) = match pick(Recheck::Decided) {
+        Some(w) => (Some(w), "lets the checker decide it".to_owned()),
+        None => (
+            pick(Recheck::Searched),
+            format!(
+                "removes this obstacle, and whether {} has a value is then left to the search \
+                 for one",
+                name(i)
+            ),
+        ),
+    };
+    text += &match repaired {
         Some(w) if w.len() == 1 => format!(
-            "; adding the case `| #end` to {}, as in `{} | #end`, lets the checker decide it",
+            "; adding the case `| #end` to {}, as in `{} | #end`, {effect}",
             name(w[0]),
             written(group, w[0])
         ),
         Some(mut w) => {
             w.sort_by(|&a, &b| defs[a].name.cmp(&defs[b].name));
             format!(
-                "; adding the case `| #end` to each of {} lets the checker decide it",
+                "; adding the case `| #end` to each of {} {effect}",
                 listed(&w.into_iter().map(name).collect::<Vec<_>>())
             )
         }
-        None => "; adding the case `| #end` to these definitions does not settle it either, so \
-                 the tuple's components must be written so that they do not both lead back into \
-                 the group"
-            .to_owned(),
+        None => format!(
+            "; adding the case `| #end` to these definitions does not settle it either, so \
+             {parts_of} must be written so that they do not both lead back into the group"
+        ),
     };
     GroupSite {
         head: defs[i].name.clone(),

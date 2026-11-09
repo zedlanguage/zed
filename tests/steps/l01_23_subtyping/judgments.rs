@@ -91,13 +91,18 @@ fn emptiness_of_family_groups_agrees_with_the_reference() {
             let decided = decide(&g.bes()).answers;
             for (v, (t, w)) in types.iter().zip(&want).enumerate() {
                 match decided[v] {
-                    // A member the decider refuses is not searched for emptiness: it counts as
-                    // inhabited, and its verdict is the refusal, or inhabited by a value built.
+                    // A member the decider refuses goes to the search (DESIGN.md L1.23), which
+                    // may count an empty one as inhabited, never the other way; a verdict the
+                    // search gives agrees with the reference, and one it does not is the
+                    // group's refusal, which counts as inhabited.
                     Answer::Refused => {
-                        assert!(!t.is_empty(), "{name}:{n}: node {v} counted empty");
+                        assert!(!t.is_empty() || !w, "{name}:{n}: node {v} counted empty");
                         match t.verdict() {
-                            Verdict::Refused(Refusal::Group) => {}
+                            Verdict::Refused(Refusal::Group) => {
+                                assert!(!t.is_empty(), "{name}:{n}: node {v} refused, empty")
+                            }
                             Verdict::Inhabited => assert!(*w, "{name}:{n}: node {v}"),
+                            Verdict::Empty => assert!(!w, "{name}:{n}: node {v}"),
                             other => panic!("{name}:{n}: node {v}: {other:?}"),
                         }
                         refused += 1;
