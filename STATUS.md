@@ -1653,16 +1653,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FINITE-type | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/finite-type on 406ab90d |
-| GROUP-admit | impl attempt 1 | 2026-11-05 04:07 | started in wt/group-admit on 406ab90d; load 1.12 1.54 2.89 |
-| GROUP-refusal | impl attempt 1 | 2026-11-05 04:07 | started with REFUSE-group-site in /home/luke/Work/wt/group-refusal on 406ab90d |
-| GROUP-setop | impl attempt 1 | 2026-11-05 04:07 | started in /home/luke/Work/wt/group-setop on 406ab90d |
-| L2.8 | impl attempt 1 | 2026-11-05 04:07 | started in /home/luke/Work/wt/l2-8 from origin/main 406ab90d |
+| FINITE-type | impl attempt 1 | 2026-11-05 04:07 | affected groups (l01_10, l01_23/24/25/28, l01_39*, m0_05, zed_kernel, zedc_preimage/stage/check/types/lattice, deep_types): 293 pieces, 0 failed, --no-doc / loa |
+| GROUP-admit | impl attempt 1 | 2026-11-05 04:07 | ready d7e4d8ce: 50,000 groups, 0 accepted non-monotone, 28,463 false rejections (follow-up GROUP-admit-precision); empty-group panic fixed |
+| GROUP-refusal | impl attempt 1 | 2026-11-05 04:07 | judge two runs + Refusal::Group + refusal_site built; running l01_23 |
+| GROUP-setop | impl attempt 1 | 2026-11-05 04:07 | control a (decider reads A & B as A, not committed): a_meet_with_an_empty_operand_is_empty_with_no_search and meets_of_k_members_scale FAIL (Empty, searched 1 v |
+| L2.8 | impl attempt 1 | 2026-11-05 04:07 | pin.rs, Query::Address, pin phase in unit::load written; first build |
+| LIT-bare-spec | impl attempt 1 | 2026-11-09 04:30 | started; worktrees wt/lit-bare-spec (zed) and wt/lit-bare (zed-impl) from origin/main 80b1802 / 0b6bef9e |
 | REFUSE-group-site | running | 2026-11-05 04:07 |  |
-| SCALE-casts-spread | impl attempt 1 | 2026-11-09 04:01 | started; worktree /home/luke/Work/wt/scale-casts-spread |
-| SCALE-fix-kernel | impl attempt 2 | 2026-11-07 11:37 | started: worktree from wt/scale-fix-kernel a86b89ee, rebasing onto origin/main 406ab90d; 12 ignored tests to un-ignore under the Part G limit |
-| SURFACE-cycle | impl attempt 1 | 2026-11-07 16:01 | started; worktree wt/surface-cycle at origin/main 406ab90d, load 1.87 |
-| T2-ty | impl attempt 1 | 2026-11-03 09:36 | started; worktree t2-ty on origin/main 406ab90d |
+| SCALE-casts-spread | impl attempt 1 | 2026-11-09 04:01 | reproduced: 8m check with 100 rejections is 30.39e9 instructions, now and then 30.63e9; with getrandom fixed by LD_PRELOAD the outlier repeats exactly for a giv |
+| SCALE-fix-kernel | impl attempt 2 | 2026-11-07 11:37 | negative control (origin/main 505d41ce bdd.rs + set.rs, branch tests), load 22-26: FAIL l01_22 a_union_of_many_tuple_types_scales first runs 12.6 > 12.1; kinds  |
+| SURFACE-cycle | impl attempt 1 | 2026-11-07 16:01 | ready b4f756a1 on 406ab90d: surface() total on all 1364 group_oracle members (503 stopped before); 91 pieces of 12 groups pass, 0 failed, with doc tests; load 4 |
+| T2-ty | impl attempt 1 | 2026-11-03 09:36 | negative control (old ty.rs, not committed): Debug and meet/meets/contains at depth 100000 on 2 MiB stack overflow (rc 134 in 2.4 s and 4.9 s); shared tuples n= |
 | TRIVIAL-models-study | impl attempt 1 | 2026-11-09 01:16 | ready: impl af2e4d70 on 07dca94a, spec ff57e5e on 9bf5aaf; work-counted budget, union-find clause check, 21 tests pass; TRIVIAL-shared-atom left open |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
