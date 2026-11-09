@@ -189,13 +189,15 @@ fn clamp_is_in_range_exactly_when_lo_is_at_most_hi() {
             range
         ));
     }
-    // Without the premise, `max` of `min` is refuted at a point with `lo > hi`; the `if`
-    // chain, three nested disjunctions, is refused, so the obligation goes on to rung 5,
-    // whose split on `v < l` gives halves rung 2 refutes.
-    let w = refuted_at("ok(x: int, lo: int, hi: int) = true;", minmax);
-    assert!(w[1] > w[2], "{w:?}");
-    let e = rung2("ok(x: int, lo: int, hi: int) = true;", &chain);
-    assert!(matches!(e, Entailment::Refused(_)), "{e}");
+    // Without the premise, both are refuted at a point with `lo > hi`. The `if` chain, three
+    // nested disjunctions, was refused until S22-shapes-linear, and the obligation went on to
+    // rung 5, whose split on `v < l` gives halves rung 2 refutes; now the search for a
+    // countermodel answers with the first point its probe finds where the rest of its search
+    // refuses (`presburger::found`).
+    for range in [minmax, chain.as_str()] {
+        let w = refuted_at("ok(x: int, lo: int, hi: int) = true;", range);
+        assert!(w[1] > w[2], "{w:?}");
+    }
 }
 
 #[test]

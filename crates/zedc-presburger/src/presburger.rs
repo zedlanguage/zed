@@ -1378,7 +1378,7 @@ fn decide_inner(f: &Formula) -> Result<bool, Refusal> {
         match settle(p, true)? {
             None => Ok(false),
             Some(p) if p.ors.is_empty() => Ok(true),
-            Some(p) => Ok(found(p)?.is_some()),
+            Some(p) => has_point(p),
         }
     };
     if implied.is_empty() {
@@ -1900,14 +1900,48 @@ fn by_color<'a>(p: &'a Parts, color: &HashMap<Atom, usize>) -> Option<Vec<&'a Co
 }
 
 /// A point of the propagated parts `p`, or `None` when the search removes every disjunct of
-/// a disjunction.
+/// a disjunction. Where the [`pick`] after the probe fails, or the probe refuses, after the
+/// probe has found a point, that point is the answer (the first one found), not the refusal,
+/// so that [`satisfiable`] answers wherever [`decide`] does ([`has_point`]).
 fn found(p: Parts) -> Result<Option<Model>, Refusal> {
     if let Ok(m) = pick(&p, true) {
         return Ok(Some(m));
     }
-    match probe(p)? {
-        None => Ok(None),
-        Some(p) => pick(&p, true).map(Some),
+    let mut points = Vec::new();
+    let refused = match probe_to(p, &mut points, false) {
+        Ok(None) => return Ok(None),
+        Ok(Some(p)) => match pick(&p, true) {
+            Ok(m) => return Ok(Some(m)),
+            Err(why) => why,
+        },
+        Err(why) => why,
+    };
+    points
+        .into_iter()
+        .next()
+        .map_or(Err(refused), |m| Ok(Some(m)))
+}
+
+/// Whether the propagated parts `p` have a point: [`found`], but the probe stops at the first
+/// point it finds ([`probe_to`]), which is a point of `p`, where [`found`] probes every
+/// disjunct and then asks [`pick`] for a point again. On a membership in a set of `h` pieces
+/// next to disjunctions that the first [`pick`] reads the wrong way, each piece needs a point
+/// of its own, so a probe to the end found `h` points, each at the cost of the whole formula,
+/// `O(h^2)`, to answer a question its first point answers (S22-shapes-linear: shape 0 of
+/// `counted_shapes(spread_remainder_chain(k))` over `x` with `64 k` holes).
+///
+/// The answer is `found(p)?.is_some()`: the probe is the same up to its first point, a probe
+/// that finds none runs to the end as before, and [`found`] answers with that point where its
+/// own search after it refuses.
+fn has_point(p: Parts) -> Result<bool, Refusal> {
+    if pick(&p, true).is_ok() {
+        return Ok(true);
+    }
+    let mut points = Vec::new();
+    match probe_to(p, &mut points, true)? {
+        None => Ok(false),
+        Some(_) if !points.is_empty() => Ok(true),
+        Some(p) => pick(&p, true).map(|_| true),
     }
 }
 
@@ -2995,8 +3029,15 @@ fn by_halves<E>(
 /// parts per disjunct cost `130` times the work at `8k` (ledger PRES-guarded-chain). The
 /// disjunctions are tested in the order of [`private_links`], cheapest linked test first, so
 /// that a definition is tested after the goal's disjuncts that its cases refute are gone.
-fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
-    let mut points: Vec<Model> = Vec::new();
+fn probe(p: Parts) -> Result<Option<Parts>, Refusal> {
+    probe_to(p, &mut Vec::new(), false)
+}
+
+/// [`probe`], which pushes each point it finds onto `points`, so that its caller has them
+/// also when it refuses, and, when `stop` is set, stops at the first point and returns the
+/// parts as they stand. Each point holds a disjunct of the disjunction under test and every
+/// other part ([`point_with`]), so it is a point of `p`.
+fn probe_to(mut p: Parts, points: &mut Vec<Model>, stop: bool) -> Result<Option<Parts>, Refusal> {
     // The bounds on single atoms that the formula implies, found by [`learn`]. The formula
     // only gains constraints or stays equal from round to round, so they hold to the end.
     let mut implied = Near::default();
@@ -3039,6 +3080,11 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                     continue;
                 }
                 if let Some(m) = point_with(&p, &held, &d, &implied) {
+                    if stop {
+                        points.push(m);
+                        p.ors[i] = ds;
+                        return Ok(Some(p));
+                    }
                     for (o, hs) in p.ors.iter().zip(held.iter_mut()) {
                         for (e, h) in o.iter().zip(hs.iter_mut()) {
                             *h = *h || e.holds(&m);

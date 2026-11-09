@@ -3015,3 +3015,9 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Preorder intervals by an explicit stack of `(node, closing)` pairs and a running counter | `Lift::intervals` | Mutation (gap 11) | a recursive walk returning the next preorder number |
 | The run's unions sorted by preorder into reused `Vec`s (`by_dom`, `by_post`, `open`) cleared per type, and a stack of open intervals popped in place | `names::absorb` | Mutation (gap 11) | a sort per run and a fold carrying the stack as a list |
 | A `Bes` cloned and changed by `set` and `seal`, the copy returned as `Option<Bes>`; the leaves set to `Top` in both systems through `iter::once(&mut b).chain(absorbed.as_mut())` | `names::absorb`, `judge` | Mutation (gap 11) | a new system built from the old one's nodes with the dropped arms filtered out; the runs with leaves `Top` a second system built the same way |
+
+## Entries from S22-shapes-linear (`crates/zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A probe that pushes each point it finds onto a `&mut Vec<Model>` of its caller, read by the caller also after the probe refuses (`?` out of its loops), and, when `stop` is set, puts the disjunction back in the parts in place and returns from inside its loops at the first point | `probe_to`, `found`, `has_point` | Mutation (gap 11), early exit (gap 12) | A fold over the disjuncts whose state carries the points found, returned with the refusal or the parts, so `found` reads the first point from either result |

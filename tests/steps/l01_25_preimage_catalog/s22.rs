@@ -3263,3 +3263,40 @@ fn split_pieces_reach_each_kind_of_touched() {
         }
     });
 }
+
+/// COMPLEXITY.md S22-shapes-linear: whether the box of the first program of
+/// [`counted_shapes`] over the levels of [`spread_remainder_chain`] is exact, with `64k` holes
+/// in the domain of `x`, costs work of order `k` from 128 holes to 1024: 6.75 times the
+/// instructions and 6.82 times the bytes for 8 times the holes, where probing to the end took
+/// 17.4 times the bytes. The question has points, but the first search for one takes a piece
+/// of `x` that the `if` of the chain cannot follow, and the probe after it
+/// ([`zedc::store::presburger`]'s `has_point`) stops at its first point; probing to the end
+/// found a point for each of the `32k` pieces of `x`, each at the cost of the whole formula,
+/// `O(k^2)`.
+#[test]
+fn the_box_of_a_chain_over_many_holes_is_tested_in_linear_work() {
+    on_big_stack(|| {
+        let d = Demand::Bool(true);
+        let make = |holes: usize| {
+            let k = holes / 64;
+            let t = counted_shapes(spread_remainder_chain(k))[0].clone();
+            (t, x_with_holes(holes))
+        };
+        let n = 128;
+        let inputs = scaling::inputs(n, make);
+        for (t, ds) in inputs.values() {
+            assert!(
+                !preimage(t, ds, &d).exact,
+                "the box has points outside the preimage"
+            );
+        }
+        scaling::check(
+            "the exactness test of the box of a chain over the holes of `x`",
+            n,
+            |holes| {
+                let (t, ds) = &inputs[&holes];
+                preimage(t, ds, &d);
+            },
+        );
+    });
+}
