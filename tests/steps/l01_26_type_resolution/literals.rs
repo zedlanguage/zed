@@ -129,7 +129,9 @@ fn a_literal_at_a_union_of_two_carriers() {
     for lit in ["1", "-1", "0.5"] {
         let defined = two_carriers(lit).replace(
             &format!(" [{lit}]"),
-            &format!("\n  T1 stands for a part written more than once:\n    type T1 = rat | f64; [{lit}]"),
+            &format!(
+                "\n  T1 stands for a part written more than once:\n    type T1 = rat | f64; [{lit}]"
+            ),
         );
         assert_eq!(
             type_errors(&format!("f(positional x: f64 | rat) = x;\ny = f({lit});\n")),
