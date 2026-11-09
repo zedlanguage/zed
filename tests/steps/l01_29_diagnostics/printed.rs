@@ -784,7 +784,11 @@ has no arrow that takes them all
         |     ^^^^^^^^^
   [5] 1:1: `f` is declared here, `(Never) -> Never`
       1 | f(positional x: (Never, int)) = x;
-        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [6] 1:17: this tuple type has no value, since its component 0, `Never`, has none, so it is \
+`Never`
+      1 | f(positional x: (Never, int)) = x;
+        |                 ^^^^^^^^^^^^"
     );
     // The source line quoted shows the type as written; no type printed does.
     for (_, shown) in &seen {

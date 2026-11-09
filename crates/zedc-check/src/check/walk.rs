@@ -1019,8 +1019,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if let Some(o) = self.whence.get(&id).map(|o| o.span) {
                     let t = self.t;
                     let name = &t.funcs[&id].name;
-                    self.also(from, o, |ck| {
-                        format!("`{name}` is declared here, `{}`", ck.sig_text(&sig))
+                    self.also_notes(from, |ck| {
+                        built(1);
+                        let mut notes = vec![Note {
+                            span: o,
+                            text: format!("`{name}` is declared here, `{}`", ck.sig_text(&sig)),
+                        }];
+                        ck.declared_emptied(id, &mut notes);
+                        notes
                     });
                 }
                 m.ty(out);

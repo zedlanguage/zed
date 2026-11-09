@@ -69,6 +69,7 @@ use zedc_syntax::ast::{
     Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind, StrPart, Target,
     Type, TypeKind, shown,
 };
+use zedc_syntax::format::format_type;
 use zedc_syntax::lex::{Span, unread_literal};
 
 use kernel_type::kernel_type;
@@ -1304,6 +1305,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             while let Some(origin) = o {
                 next.push(note(origin.span, self.said(id, &origin.why)));
+                let mut why_none = Vec::new();
+                self.emptied_of(id, &origin.why, &mut why_none);
+                next.extend(why_none.into_iter().map(Work::Show));
                 if let Some(f) = origin.from {
                     next.push(Work::Derive(f));
                 }
@@ -1390,6 +1394,26 @@ impl<'t, 'a> Ck<'t, 'a> {
                 "`{b}` is narrowed to {} where this test decides",
                 self.text(t)
             ),
+        }
+    }
+
+    /// The steps that say why a part of a type written where the origin `why` of binder `id`
+    /// declares it has no value ([`emptied`]): the type of a parameter, or of each parameter of
+    /// a declared function. Built only for a derivation that is printed.
+    fn emptied_of(&self, id: usize, why: &Why<'a>, out: &mut Vec<Note>) {
+        match why {
+            Why::Declared(_) => self.declared_emptied(id, out),
+            Why::Typed(a, ..) => emptied(a, out),
+            _ => {}
+        }
+    }
+
+    /// [`emptied`] of each parameter type written on the function `id`, in order.
+    fn declared_emptied(&self, id: usize, out: &mut Vec<Note>) {
+        if let Some(f) = self.t.funcs.get(&id) {
+            for a in f.params.iter().filter_map(|p| p.ty.as_ref()) {
+                emptied(a, out);
+            }
         }
     }
 
@@ -2906,22 +2930,33 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// it; the note is put into words only when there is such an error, and none while a
     /// repair is tried, since its errors are only counted.
     fn also(&mut self, from: usize, span: Span, text: impl FnOnce(&Self) -> String) {
+        self.also_notes(from, |ck| {
+            built(1);
+            vec![Note {
+                span,
+                text: text(ck),
+            }]
+        });
+    }
+
+    /// [`Self::also`] of the notes `notes` makes, in order: each error from the `from`th on
+    /// gets those it lacks, in `O(m + k)` for its `m` notes and the `k` added.
+    fn also_notes(&mut self, from: usize, notes: impl FnOnce(&Self) -> Vec<Note>) {
         if self.trying || self.info.errors.len() <= from {
             return;
         }
-        built(1);
-        let note = Note {
-            span,
-            text: text(self),
-        };
+        let notes = notes(self);
         for e in &mut self.info.errors[from..] {
-            if !e.notes.contains(&note) {
-                // A witness goes before the menu, which ends the notes.
-                let menu = (e.notes.iter())
-                    .position(|n| n.text.starts_with("repair: "))
-                    .unwrap_or(e.notes.len());
-                e.notes.insert(menu, note.clone());
-            }
+            let have: HashSet<&Note> = e.notes.iter().collect();
+            let new: Vec<Note> = (notes.iter())
+                .filter(|n| !have.contains(n))
+                .cloned()
+                .collect();
+            // A witness goes before the menu, which ends the notes.
+            let menu = (e.notes.iter())
+                .position(|n| n.text.starts_with("repair: "))
+                .unwrap_or(e.notes.len());
+            e.notes.splice(menu..menu, new);
         }
     }
 
@@ -5129,8 +5164,191 @@ pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
         leaves,
         bound: HashMap::new(),
         open: Vec::new(),
+        empty: None,
     }
     .ty(t)
+}
+
+/// The steps that say why each part of the written type `t` that is written as a tuple type, an
+/// atom with a payload, a union, an intersection or a difference has no value, and so is
+/// printed `Never` (DESIGN.md sec:diagnostics: a message names every step from the cause to
+/// what it prints). A part inside one so explained is explained only where it is the cause:
+/// each step names its cause, a part written `Never` by name or the part explained in the
+/// step before it, so the steps run from the cause to the part `t` holds.
+///
+/// Built only for a message that is printed. One denotation of `t` that keeps the span of
+/// each part with no value, and one walk of `t`, each with its own stack: the time is linear
+/// in the size of `t`. Each step quotes no part it names but a name, an operand of the one
+/// intersection or difference whose operands all have values, which no other step quotes,
+/// so the text is linear in the size of `t` too.
+fn emptied(t: &Type, out: &mut Vec<Note>) {
+    let mut d = Denote {
+        leaves: &Binds::new(),
+        bound: HashMap::new(),
+        open: Vec::new(),
+        empty: Some(HashSet::new()),
+    };
+    d.ty(t);
+    let empty = d.empty.unwrap_or_default();
+    // A `for` clause has the value of the type it bounds.
+    fn bare(mut t: &Type) -> &Type {
+        while let TypeKind::For { ty, .. } = &t.kind {
+            t = ty;
+        }
+        t
+    }
+    let none = |t: &Type| empty.contains(&bare(t).span);
+    // What the step after the one that explains `c` calls it.
+    let cause = |c: &Type| match &bare(c).kind {
+        TypeKind::Name(n) => format!("`{n}`"),
+        TypeKind::Tuple(_) => "the tuple type of the step before".into(),
+        TypeKind::AtomApply(..) => "the atom type of the step before".into(),
+        TypeKind::Union(_) => "the union of the step before".into(),
+        TypeKind::And(_) => "the intersection of the step before".into(),
+        _ => "the difference of the step before".into(),
+    };
+    enum Work<'t> {
+        /// Explain the parts of this type with no value that no explained part holds.
+        Find(&'t Type),
+        /// Explain why this type has no value, its causes first.
+        Explain(&'t Type),
+        Say(Note),
+    }
+    let mut stack = vec![Work::Find(t)];
+    while let Some(w) = stack.pop() {
+        let t = match w {
+            Work::Say(n) => {
+                built(1);
+                out.push(n);
+                continue;
+            }
+            Work::Find(t) => {
+                let t = bare(t);
+                let parts: Vec<&Type> = match &t.kind {
+                    TypeKind::Tuple(_)
+                    | TypeKind::AtomApply(..)
+                    | TypeKind::Union(_)
+                    | TypeKind::And(_)
+                    | TypeKind::Diff(..)
+                        if none(t) =>
+                    {
+                        stack.push(Work::Explain(t));
+                        continue;
+                    }
+                    TypeKind::Name(_)
+                    | TypeKind::Atom(_)
+                    | TypeKind::Every(_)
+                    | TypeKind::AtomAny(_) => Vec::new(),
+                    TypeKind::Tuple(ts) | TypeKind::Union(ts) => ts.iter().collect(),
+                    TypeKind::And(ts) => Type::and_operands(ts),
+                    TypeKind::Diff(a, b) => vec![a, b],
+                    TypeKind::Arrow { params, result, .. } => {
+                        (params.iter().map(|p| &p.ty)).chain([&**result]).collect()
+                    }
+                    TypeKind::Bounded {
+                        lower,
+                        upper,
+                        result,
+                    } => vec![lower, upper, result],
+                    TypeKind::Apply(_, ps) | TypeKind::AtomApply(_, ps) => {
+                        ps.iter().map(|p| &p.ty).collect()
+                    }
+                    TypeKind::Record(fs) => fs.iter().map(|(_, t)| t).collect(),
+                    TypeKind::Array(t) => vec![t],
+                    TypeKind::For { .. } => unreachable!("`bare` takes off each `for` clause"),
+                };
+                stack.extend(parts.into_iter().rev().map(Work::Find));
+                continue;
+            }
+            Work::Explain(t) => t,
+        };
+        // The step for `t`, then the steps for the parts it names as its causes that are
+        // explained in turn, pushed reversed so that they pop first and in written order.
+        let mut causes: Vec<&Type> = Vec::new();
+        let why = match &t.kind {
+            TypeKind::Tuple(ts) => {
+                let (i, c) = (ts.iter().enumerate())
+                    .find(|(_, c)| none(c))
+                    .expect("a tuple type with no value has a component with none");
+                causes.push(c);
+                format!(
+                    "this tuple type has no value, since its component {i}, {}, has none",
+                    cause(c)
+                )
+            }
+            TypeKind::AtomApply(a, ps) => {
+                let (i, p) = (ps.iter().enumerate())
+                    .find(|(_, p)| none(&p.ty))
+                    .expect("an atom type with no value has a payload component with none");
+                causes.push(&p.ty);
+                let part = match &p.name {
+                    Some(n) if !p.positional => format!("field `{n}`"),
+                    _ => format!("component {i}"),
+                };
+                format!(
+                    "this atom type `#{a}` has no value, since its payload's {part}, {}, has none",
+                    cause(&p.ty)
+                )
+            }
+            TypeKind::Union(ts) => {
+                causes.extend(ts);
+                "this union has no value, since none of its members has one".into()
+            }
+            TypeKind::And(ts) => {
+                let ts = Type::and_operands(ts);
+                match ts.iter().find(|c| none(c)) {
+                    Some(c) => {
+                        causes.push(c);
+                        format!(
+                            "this intersection has no value, since its operand, {}, has none",
+                            cause(c)
+                        )
+                    }
+                    None => {
+                        let shown: Vec<String> = (ts.iter())
+                            .map(|c| format!("`{}`", format_type(c)))
+                            .collect();
+                        format!(
+                            "this intersection has no value, since no value is in all of {}",
+                            and_list(&shown)
+                        )
+                    }
+                }
+            }
+            TypeKind::Diff(a, _) if none(a) => {
+                causes.push(a);
+                format!(
+                    "this difference has no value, since its left operand, {}, has none",
+                    cause(a)
+                )
+            }
+            TypeKind::Diff(a, b) => format!(
+                "this difference has no value, since each value of `{}` is also in `{}`",
+                format_type(a),
+                format_type(b)
+            ),
+            _ => unreachable!("`Find` explains only a part written with parts"),
+        };
+        stack.push(Work::Say(Note {
+            span: t.span,
+            text: format!("{why}, so it is `Never`"),
+        }));
+        stack.extend(
+            (causes.into_iter().rev())
+                .map(bare)
+                .filter(|c| !matches!(c.kind, TypeKind::Name(_)))
+                .map(Work::Explain),
+        );
+    }
+}
+
+/// `items` joined as a list in a sentence: `a`, `a and b`, `a, b and c`.
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }
 
 /// One denotation, read from the top down so that each variable a `for` clause bounds is
@@ -5144,6 +5362,9 @@ struct Denote<'a> {
     bound: HashMap<&'a str, (u8, usize)>,
     /// The function types open around the place, outermost first.
     open: Vec<Reading>,
+    /// The span of each part read whose type lists no value, kept only by [`emptied`], which
+    /// explains them in a message.
+    empty: Option<HashSet<Span>>,
 }
 
 /// A function type [`Denote`] is reading.
@@ -5164,9 +5385,9 @@ enum Step<'a> {
     Ty(&'a Type),
     /// Make the value of this type from the values of its parts, the last on the value stack.
     Make(&'a Type),
-    /// Make the value of an intersection from the values of its operands, the given number
+    /// Make the value of this intersection from the values of its operands, the given number
     /// last on the value stack, as one function's arrows if the flag says so.
-    And(usize, bool),
+    And(&'a Type, usize, bool),
     /// [`Denote::open_params`].
     Open,
     /// [`Denote::close_params`].
@@ -5192,11 +5413,11 @@ impl<'a> Denote<'a> {
                 Step::Ty(t) => self.enter(t, &mut steps, &mut vals),
                 Step::Make(t) => {
                     let v = self.make(t, &mut vals);
-                    vals.push(v);
+                    self.push(t, v, &mut vals);
                 }
-                Step::And(n, overload) => {
+                Step::And(t, n, overload) => {
                     let ts = vals.split_off(vals.len() - n);
-                    vals.push(and(ts, overload));
+                    self.push(t, and(ts, overload), &mut vals);
                 }
                 Step::Open => self.open_params(),
                 Step::Close => self.close_params(),
@@ -5278,7 +5499,7 @@ impl<'a> Denote<'a> {
             // gathered in one list.
             TypeKind::And(ts) => {
                 let ts = Type::and_operands(ts);
-                steps.push(Step::And(ts.len(), Type::overload(&ts) == Ok(true)));
+                steps.push(Step::And(t, ts.len(), Type::overload(&ts) == Ok(true)));
                 steps.extend(ts.into_iter().rev().map(Step::Ty));
                 return;
             }
@@ -5327,7 +5548,17 @@ impl<'a> Denote<'a> {
                 return;
             }
         };
-        vals.push(leaf);
+        self.push(t, leaf, vals);
+    }
+
+    /// Pushes `v`, the value of `t`, to `vals`, noting `t` if it is kept and `v` lists no value.
+    fn push(&mut self, t: &Type, v: Ty, vals: &mut Vec<Ty>) {
+        if let Some(empty) = &mut self.empty
+            && v.lists_nothing()
+        {
+            empty.insert(t.span);
+        }
+        vals.push(v);
     }
 
     /// The value of `t`, a type with parts, made from the values of its parts, which are the
@@ -5675,5 +5906,65 @@ mod tests {
             .join()
             .expect("joining on an 8 MiB stack");
         assert_eq!(joined, (1, want));
+    }
+
+    /// The steps `emptied` gives for the written type `text`, each with the text it is placed
+    /// at.
+    fn why_none(text: &str) -> Vec<(String, String)> {
+        let tokens = zedc_syntax::lex::lex(text).expect("lexing a type");
+        let tree = zedc_syntax::parse::parse(text, &tokens, "Type", zedc_syntax::parse::TOP)
+            .expect("parsing a type");
+        let t = zedc_syntax::ast::ty(text, &tokens, &tree).expect("reading a type");
+        let mut out = Vec::new();
+        emptied(&t, &mut out);
+        (out.into_iter())
+            .map(|n| (text[n.span.start..n.span.end].to_string(), n.text))
+            .collect()
+    }
+
+    /// An atom with a payload, which layer L1 programs cannot write yet, names the payload
+    /// part with no value by its position or its field name.
+    #[test]
+    fn an_atom_with_an_empty_payload_names_the_part() {
+        let pair = |s: &str, w: &str| (s.to_string(), w.to_string());
+        assert_eq!(
+            why_none("#a(Never, int)"),
+            [pair(
+                "#a(Never, int)",
+                "this atom type `#a` has no value, since its payload's component 0, `Never`, \
+                 has none, so it is `Never`"
+            )]
+        );
+        assert_eq!(
+            why_none("#a(x: int, y: (bool, Never))"),
+            [
+                pair(
+                    "(bool, Never)",
+                    "this tuple type has no value, since its component 1, `Never`, has none, so \
+                     it is `Never`"
+                ),
+                pair(
+                    "#a(x: int, y: (bool, Never))",
+                    "this atom type `#a` has no value, since its payload's field `y`, the tuple \
+                     type of the step before, has none, so it is `Never`"
+                ),
+            ]
+        );
+    }
+
+    /// A `for` clause has the value of the type it bounds, so it is explained there; a type
+    /// with values gets no step.
+    #[test]
+    fn a_for_clause_is_explained_at_the_type_it_bounds() {
+        assert_eq!(
+            why_none("(a, Never) for a in int"),
+            [(
+                "(a, Never)".to_string(),
+                "this tuple type has no value, since its component 1, `Never`, has none, so it \
+                 is `Never`"
+                    .to_string()
+            )]
+        );
+        assert_eq!(why_none("(a, (int, bool)) for a in int | f64"), []);
     }
 }
