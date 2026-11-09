@@ -1725,9 +1725,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | ready f7e39a3e on wt/if-shortcut-diff: differential tests, no difference; l01_39+s_01f 59 pieces 0 failed; clippy, fmt, docs (with preimage-ref) clean |
 | PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | B2 (B1 + cgu=1 zed-kernel, zedc-lattice, zedc-int, zedc-presburger, zedc-stage) rebuild 415 s: block 600M, fees1 1000 874M, fees1 4000 3728M, fees100 736M, boun |
 | PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | negative control on merged 5fcc15f1: new test deep_let::the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block fails, 1000 blocks peak 6.53 MB left 6 |
-| PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | started, worktree wt/model-keys on origin/main 797f3be4 |
+| PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | random test (4000 cases; 60000 once: 49692 points, 46249 leave atoms out, 0 fail holds) finds no soundness bug; atoms lost in absorb/repair (own 49990, other di |
 | PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | differential vs main's tighten/hull_side test by test: 1,078,090 + 25,046 calls identical, 60 differ (all hull_side refusals Growth/Shadows on main now exact bo |
 | PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | ready cf7cdd28 on wt/pres-small-cost (rebased on 5414631a); 490 pieces 0 failed, load 17-57; follow-ups PRES-small-front, PRES-model-keys queued |
+| PRES-small-front | impl attempt 1 | 2026-11-09 14:43 | started on cf7cdd28 (stacked on wt/pres-small-cost), worktree small-front |
 | PRINT-group-site-defs | impl attempt 1 | 2026-11-09 13:49 | first run of affected groups after the printer change (182 pieces), load 39.18 34.46 27.64 |
 | PRINT-is-pattern | impl attempt 1 | 2026-11-09 14:57 | started in /home/luke/Work/wt/is-pattern, stacked on wt/group-site-defs a411cea5 |
 | PROJECT-hull-credit-lower | impl attempt 1 | 2026-11-09 12:10 | ready: wt/hull-credit 9664b8b9 rebased on origin/main 98d5d23d, 493/493 pieces pass, load 15-51; ledger ready + TIGHTEN-each-whole |
