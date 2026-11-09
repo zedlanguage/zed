@@ -2403,7 +2403,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
             false if declared => (missing.iter())
                 .filter(|&&j| sig.params[j].default.is_none())
-                .map(|&j| (span, Misfit::Missing(&sig.params[j].name)))
+                .map(|&j| {
+                    (
+                        span,
+                        Misfit::Missing(&sig.params[j].name, sig.params[j].positional),
+                    )
+                })
                 .collect(),
             false => (missing.iter())
                 .find_map(|&j| {
@@ -2411,7 +2416,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     match p.default {
                         Some((_, _, true)) => None,
                         Some((_, _, false)) => Some((span, Misfit::OpenDefault(&p.name))),
-                        None => Some((span, Misfit::Missing(&p.name))),
+                        None => Some((span, Misfit::Missing(&p.name, p.positional))),
                     }
                 })
                 .into_iter()

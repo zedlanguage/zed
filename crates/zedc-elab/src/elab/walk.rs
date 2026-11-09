@@ -1139,7 +1139,11 @@ impl<'a> Elab<'a> {
                 Some((_, _, false)) => {
                     self.misfit(ff.call.span, Misfit::OpenDefault(&p.name), &sig.to_string())
                 }
-                None => self.misfit(ff.call.span, Misfit::Missing(&p.name), &sig.to_string()),
+                None => self.misfit(
+                    ff.call.span,
+                    Misfit::Missing(&p.name, p.positional),
+                    &sig.to_string(),
+                ),
             };
             m.give(t);
             return;
@@ -1171,7 +1175,11 @@ impl<'a> Elab<'a> {
         for &j in &ff.missing {
             if f.params[j].default.is_none() {
                 ok = false;
-                self.misfit::<()>(ff.call.span, Misfit::Missing(&f.params[j].name), fname);
+                self.misfit::<()>(
+                    ff.call.span,
+                    Misfit::Missing(&f.params[j].name, f.params[j].positional),
+                    fname,
+                );
             }
         }
         if !ok {

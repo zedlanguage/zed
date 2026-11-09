@@ -118,8 +118,9 @@ pub enum Misfit<'s> {
     CurriedPositional(&'s str),
     /// A `...` call that leaves out no parameter.
     NothingLeftOut,
-    /// A saturated call that leaves out this parameter, which has no default.
-    Missing(&'s str),
+    /// A saturated call that leaves out this parameter, which has no default; `true` when the
+    /// parameter is positional, which `...` cannot leave out.
+    Missing(&'s str, bool),
     /// A call through a value that leaves out this parameter, whose default reads the other
     /// parameters.
     OpenDefault(&'s str),
@@ -134,7 +135,7 @@ impl Misfit<'_> {
             }
             Misfit::Named(_) | Misfit::Positional(_) => Some(Row::WrongForm),
             Misfit::CurriedPositional(_) | Misfit::NothingLeftOut => Some(Row::NothingLeftOut),
-            Misfit::Missing(_) | Misfit::OpenDefault(_) => Some(Row::MissingArgument),
+            Misfit::Missing(..) | Misfit::OpenDefault(_) => Some(Row::MissingArgument),
         }
     }
 
@@ -184,7 +185,7 @@ impl Misfit<'_> {
                  parameters the call leaves out, and the call gives every named parameter a \
                  value, so `...` has no parameter to leave out"
             ),
-            Misfit::Missing(name) => format!(
+            Misfit::Missing(name, _) => format!(
                 "this call of `{who}` gives no value to its parameter `{name}`, and `{name}` has \
                  no default, so the call cannot be made"
             ),
@@ -239,13 +240,31 @@ impl Misfit<'_> {
                 ),
             ],
             Misfit::NothingLeftOut => vec!["repair: remove the `...`".into()],
-            Misfit::Missing(name) => vec![
-                format!("repair: pass a value for `{name}` in this call"),
-                format!(
-                    "repair: give `{name}` a default in the declaration of `{who}`, as \
-                     `{name} = …`"
-                ),
-            ],
+            Misfit::Missing(name, positional) => {
+                let mut menu = vec![
+                    format!("repair: pass a value for `{name}` in this call"),
+                    format!(
+                        "repair: give `{name}` a default in the declaration of `{who}`, as \
+                         `{name} = …`"
+                    ),
+                ];
+                // `...` leaves out named parameters only (DESIGN.md sec:values_morphisms).
+                if !positional {
+                    menu.push(format!(
+                        "repair: end the call in `...`, as `{who}(…, ...)`, so that it gives a \
+                         function that takes `{name}: …` later"
+                    ));
+                }
+                let pass = match positional {
+                    true => name.to_string(),
+                    false => format!("{name}: {name}"),
+                };
+                menu.push(format!(
+                    "repair: make a function that takes `{name}` with a lambda, as \
+                     `({name}) -> {who}(…, {pass})`"
+                ));
+                menu
+            }
             Misfit::OpenDefault(name) => vec![
                 format!("repair: pass a value for `{name}` in this call"),
                 "repair: call the declared function by its name, so that its default fills the \
