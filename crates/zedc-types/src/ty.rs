@@ -3116,6 +3116,138 @@ impl Filed {
     }
 }
 
+/// A component's class and its value when it is one value ([`class`]); none when it has no
+/// class.
+type CompKey = Option<(ShapeKey, Option<Value>)>;
+
+/// What a component of a tuple holds, as [`near_pairs`] groups tuples by it: no class, a class
+/// and more than one value, or one value.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Kind {
+    Open,
+    Class,
+    Point,
+}
+
+fn kind(k: &CompKey) -> Kind {
+    match k {
+        None => Kind::Open,
+        Some((_, None)) => Kind::Class,
+        Some((_, Some(_))) => Kind::Point,
+    }
+}
+
+/// The tuples of one length and one [`Kind`] at each place, each by its index in its list and
+/// the keys of its components.
+type Pattern = (usize, Vec<Kind>);
+type Keyed = Vec<(usize, Vec<CompKey>)>;
+
+/// The tuples of `rows`, each with the keys of its components, by length and [`Kind`] at each
+/// place, each list in written order.
+fn by_pattern(rows: &[Row]) -> HashMap<Pattern, Keyed> {
+    let mut out: HashMap<Pattern, Keyed> = HashMap::new();
+    for (i, r) in rows.iter().enumerate() {
+        let keys: Vec<CompKey> = r.iter().map(class).collect();
+        let kinds = keys.iter().map(kind).collect();
+        out.entry((r.len(), kinds)).or_default().push((i, keys));
+    }
+    out
+}
+
+/// For each tuple of `left`, the tuples of `right` of its length that may share a value with
+/// it, by their indices, in written order. Two components share no value when both have a
+/// class ([`class`]) and the classes differ, or both are one value and the values differ: the
+/// carriers, the atoms of each name and the tuples of each length are disjoint, and two values
+/// the kernel tells apart are unequal [`Value`]s. Any two other components may share one. So a
+/// tuple of `right` left out shares no value with the tuple of `left`: their meet is empty
+/// ([`Ty::meet`] gives an empty component at the place), and the union of `right` holds the
+/// tuple exactly when the union of the tuples given holds it.
+///
+/// The tuples of each side are grouped by length and [`Kind`] at each place. For a group of
+/// each side, a tuple of one may share a value with a tuple of the other exactly when they
+/// agree at each place where both have a class: on the class, and on the value where both are
+/// one value. So the tuples of the right group are filed by those keys, and each tuple of the
+/// left group finds its own by one lookup.
+///
+/// Complexity tradeoff: each group of one side is filed or looked up once for each group of
+/// the other of its length. What is given up: the cost is O((l·G + r·H)·w·log r + p log p)
+/// for `l` and `r` tuples of width `w` in `H` and `G` groups and `p` pairs found, so `n` tuples
+/// in about `n` groups on each side cost about `n^2`. Why: a tuple of points and wildcards
+/// encodes a vector of bits (1 as the point `1` on one side and `0` on the other, 0 as `int`),
+/// so that two such tuples share a value exactly when the vectors are orthogonal; finding
+/// whether any of `n` vectors of about `c·log n` bits is orthogonal to another takes
+/// `n^(2-o(1))` time unless the strong exponential time hypothesis fails, even when no pair
+/// is found, and the groups of such tuples are then as many as the tuples. In a written union
+/// the groups are few. Structure: `n` tuples of width `2·log2 n`, each a different arrangement
+/// of points and `int`. Test: `tests/steps/l01_22_type_representation/kinds.rs`,
+/// `meeting_and_subtracting_tuples_of_many_patterns_costs_the_patterns`; COMPLEXITY.md F127.
+/// A complete solution does not exist under that hypothesis; one could only refuse such
+/// unions, which would change the answers of narrowing that are found today.
+fn near_pairs(left: &[Row], right: &[Row]) -> Vec<Vec<usize>> {
+    #[cfg(test)]
+    if NEAR_ALL.get() {
+        let same = |a: &Row| {
+            (0..right.len())
+                .filter(|&j| right[j].len() == a.len())
+                .collect()
+        };
+        return left.iter().map(same).collect();
+    }
+    let mut out = vec![Vec::new(); left.len()];
+    if left.is_empty() || right.is_empty() {
+        return out;
+    }
+    let mut groups: HashMap<usize, Vec<(Vec<Kind>, Keyed)>> = HashMap::new();
+    for ((len, kinds), rows) in by_pattern(right) {
+        groups.entry(len).or_default().push((kinds, rows));
+    }
+    // The keys of the components of a tuple of the group `p` at the places where the tuples of
+    // the group `q` of the other side have a class too, with the value where both are one value.
+    fn project<'k>(
+        keys: &'k [CompKey],
+        q: &[Kind],
+        p: &[Kind],
+    ) -> Vec<(&'k ShapeKey, Option<&'k Value>)> {
+        (keys.iter().zip(q.iter().zip(p)))
+            .filter_map(|(key, (&q, &p))| {
+                let (k, v) = key.as_ref()?;
+                match (q, p) {
+                    (Kind::Open, _) | (_, Kind::Open) => None,
+                    (Kind::Point, Kind::Point) => Some((k, v.as_ref())),
+                    _ => Some((k, None)),
+                }
+            })
+            .collect()
+    }
+    for ((len, q), members) in by_pattern(left) {
+        let Some(groups) = groups.get(&len) else {
+            continue;
+        };
+        for (p, rows) in groups {
+            let mut filed: BTreeMap<Vec<(&ShapeKey, Option<&Value>)>, Vec<usize>> = BTreeMap::new();
+            for (i, keys) in rows {
+                filed.entry(project(keys, p, &q)).or_default().push(*i);
+            }
+            for (l, keys) in &members {
+                if let Some(is) = filed.get(&project(keys, &q, p)) {
+                    out[*l].extend(is);
+                }
+            }
+        }
+    }
+    for o in &mut out {
+        o.sort_unstable();
+    }
+    out
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether [`near_pairs`] gives every tuple of the length, as meeting and subtracting did
+    /// before it: the form the differential test compares it with.
+    static NEAR_ALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 #[cfg(test)]
 thread_local! {
     /// Whether [`Comparing::search`] tries every shape in written order and refuses nothing, as
@@ -3265,6 +3397,20 @@ impl<'m, 's> Comparing<'m, 's> {
 
     /// [`Ty::sub`] of `t` and `other` inside the comparisons of function types the state holds.
     async fn sub_in(&'m self, t: &Ty, other: &Ty, binds: &mut Binds) -> bool {
+        self.sub_near(t, other, None, binds).await
+    }
+
+    /// [`Comparing::sub_in`]. When `t` is one tuple, `near` may give the part of `other` that
+    /// may share a value with it ([`near_pairs`]), what is read once of `other` ([`Whole`]) and
+    /// its shapes filed: the kernel then decides on that part ([`Comparing::near_form`]), and
+    /// the rule of one shape reads `other` through the shapes filed.
+    async fn sub_near(
+        &'m self,
+        t: &Ty,
+        other: &Ty,
+        near: Option<(&Ty, &Whole, &Arc<Filed>)>,
+        binds: &mut Binds,
+    ) -> bool {
         // The scalars, atoms with their payloads, kind-wide part and tuples of `t` are decided
         // together, once, by the kernel on their normal forms ([`Comparing::by_form`]), which
         // sees shapes that hold a piece only together. Trying each shape of `other` in turn
@@ -3273,6 +3419,9 @@ impl<'m, 's> Comparing<'m, 's> {
         // kernel refused, each piece is tried by the rule of one shape, which is sound.
         let mut form: Option<Option<bool>> = None;
         let mut search = Search::new(Site::Other);
+        if let Some((_, _, filed)) = near {
+            search.filed = Some(filed.clone());
+        }
         for p in t.pieces() {
             // A set piece with no kind-wide part, of a `t` that lists no payload, is decided by
             // the set alone ([`accepts`]): building both sides' kernel types for it cost each
@@ -3282,7 +3431,10 @@ impl<'m, 's> Comparing<'m, 's> {
                 Piece::Set(s) if plain(s) => None,
                 Piece::Set(_) | Piece::Tuple(_) => match form {
                     Some(d) => d,
-                    None => *form.insert(self.by_form(t, other).await),
+                    None => *form.insert(match near {
+                        Some((near, whole, _)) => self.near_form(t, near, whole).await,
+                        None => self.by_form(t, other).await,
+                    }),
                 },
                 _ => None,
             };
@@ -3312,45 +3464,85 @@ impl<'m, 's> Comparing<'m, 's> {
         let verdict = match (t.exact_data(), other.exact_data()) {
             (Some(a), Some(b)) => a.subtype_verdict(&b),
             _ => {
-                let mut forms = Forms::default();
-                let (left, right) = forms.places(t, other)?;
-                if forms.tied(&left, &right).is_some() {
-                    return Some(false);
-                }
-                for f in left.values().flatten() {
-                    forms.id(f);
-                }
-                forms.number_marks();
-                // Each function of `t` not on the same place of `other` is compared with each of
-                // `other` there: by [`Forms::tied`], one side has at most one, so the pairs are
-                // as many as the functions.
-                for (place, gs) in &right {
-                    let Some(fs) = left.get(place) else { continue };
-                    let unlike: Vec<&Arc<Sig>> = fs.iter().filter(|f| !gs.contains(*f)).collect();
-                    for g in gs {
-                        let mut fit = Vec::new();
-                        if fs.contains(g) {
-                            fit.push(forms.id(g));
-                        }
-                        for f in &unlike {
-                            let (f, g) = ((*f).clone(), g.clone());
-                            if self.fits(f.clone(), Env::new(), g, Env::new()).await {
-                                fit.push(forms.id(&f));
-                            }
-                        }
-                        forms.fits.insert((place.clone(), g.clone()), fit);
-                    }
-                }
-                let a = forms.form(t, true);
-                let b = forms.form(other, false);
-                a.subtype_verdict(&b)
+                let right = Right::of(other)?;
+                self.form_verdict(t, other, &right.fns, &right).await?
             }
         };
-        match verdict {
-            Verdict::Empty => Some(true),
-            Verdict::Inhabited => Some(false),
-            Verdict::Refused(_) => None,
+        held(verdict)
+    }
+
+    /// [`Comparing::by_form`] of the tuple `t` and the type `whole` reads, from `near`: `whole`
+    /// with only its tuples that may share a value with `t` ([`near_pairs`]). The kernel holds
+    /// `t` in `near` exactly when it holds it in `whole`; which way is taken, and which
+    /// functions are compared, is read from `whole`, as [`Comparing::by_form`] reads it.
+    async fn near_form(&'m self, t: &Ty, near: &Ty, whole: &Whole) -> Option<bool> {
+        if near.dynamic {
+            return Some(true);
         }
+        if !near.vars.is_empty() {
+            return None;
+        }
+        let verdict = match (t.exact_data(), &whole.rest) {
+            (Some(a), Some(rest)) => {
+                let rows = near.tuples.iter().map(|r| r.0.exact.clone());
+                let rows = rows.collect::<Option<Vec<_>>>()?;
+                a.subtype_verdict(&KType::union_all(std::iter::once(rest.clone()).chain(rows)))
+            }
+            _ => {
+                let right = whole.right.as_ref()?;
+                let near_fns = Forms::fns(near, false, &mut HashSet::new())?;
+                self.form_verdict(t, near, &near_fns, right).await?
+            }
+        };
+        held(verdict)
+    }
+
+    /// The kernel's verdict on the normal forms of `t` and `other` ([`Forms`]), or nothing
+    /// where they are not made; [`Verdict::Inhabited`], with no pair tried, for the class
+    /// [`Forms::tied`] names. `other` is the type compared with, or the part of it that may
+    /// share a value with `t`, whose functions at each place are `fns`; `whole` reads the type
+    /// compared with.
+    async fn form_verdict(
+        &'m self,
+        t: &Ty,
+        other: &Ty,
+        fns: &PlaceFns,
+        whole: &Right,
+    ) -> Option<Verdict> {
+        let mut forms = Forms::default();
+        let left = Forms::fns(t, true, &mut forms.fields)?;
+        forms.fields.extend(whole.fields.iter().cloned());
+        if forms.tied(&left, &whole.fns).is_some() {
+            return Some(Verdict::Inhabited);
+        }
+        for f in left.values().flatten() {
+            forms.id(f);
+        }
+        forms.number_marks();
+        // Each function of `t` not on the same place of `other` is compared with each of
+        // `other` there: by [`Forms::tied`], one side has at most one, so the pairs are as many
+        // as the functions.
+        for (place, gs) in fns {
+            let Some(fs) = left.get(place) else { continue };
+            let all = whole.fns.get(place).unwrap_or(gs);
+            let unlike: Vec<&Arc<Sig>> = fs.iter().filter(|f| !all.contains(*f)).collect();
+            for g in gs {
+                let mut fit = Vec::new();
+                if fs.contains(g) {
+                    fit.push(forms.id(g));
+                }
+                for f in &unlike {
+                    let (f, g) = ((*f).clone(), g.clone());
+                    if self.fits(f.clone(), Env::new(), g, Env::new()).await {
+                        fit.push(forms.id(&f));
+                    }
+                }
+                forms.fits.insert((place.clone(), g.clone()), fit);
+            }
+        }
+        let a = forms.form(t, true);
+        let b = forms.form(other, false);
+        Some(a.subtype_verdict(&b))
     }
 
     /// Whether each component and field of the payload `a` is in the one of `b` at its place
@@ -3629,17 +3821,32 @@ impl<'m, 's> Comparing<'m, 's> {
             set: w.clone(),
             ..u.clone()
         };
+        // What each tuple is compared with is read once: its tuples that may share a value with
+        // the tuple ([`near_pairs`]), its other parts and its shapes filed. Each comparison then
+        // costs the tuples found, not all of `u`'s.
+        let rows = std::mem::take(&mut out.tuples);
+        let nears = near_pairs(&rows, &within.tuples);
+        let whole = Whole::of(&within);
+        let filed = Arc::new(Filed::new(&within));
+        let bare = Ty {
+            tuples: Vec::new(),
+            ..within.clone()
+        };
         let mut rest = Vec::new();
-        let mut kept = Vec::with_capacity(out.tuples.len());
-        for a in std::mem::take(&mut out.tuples) {
+        let mut kept = Vec::with_capacity(rows.len());
+        for (a, near) in rows.into_iter().zip(nears) {
             *self.cx.borrow_mut() = Cx {
                 solve,
                 ..Cx::default()
             };
             let row = Ty::of_row(a.clone());
+            let near = Ty {
+                tuples: near.into_iter().map(|j| within.tuples[j].clone()).collect(),
+                ..bare.clone()
+            };
             let mut b = Binds::new();
             // A refused comparison keeps the row, as a failed one does.
-            let held = self.sub_in(&row, &within, &mut b).await;
+            let held = (self.sub_near(&row, &within, Some((&near, &whole, &filed)), &mut b)).await;
             if self.cx.borrow().decided(held) && b.is_empty() {
                 continue;
             }
@@ -3669,6 +3876,54 @@ enum Place {
 
 /// The functions met at each place, each once.
 type PlaceFns = HashMap<Place, HashSet<Arc<Sig>>>;
+
+/// Whether the kernel's verdict on a difference says the one side is in the other, or nothing
+/// when it refused.
+fn held(verdict: Verdict) -> Option<bool> {
+    match verdict {
+        Verdict::Empty => Some(true),
+        Verdict::Inhabited => Some(false),
+        Verdict::Refused(_) => None,
+    }
+}
+
+/// What [`Forms`] reads of the type of the expected side: the functions at each place of its
+/// rows and payloads, and the marks of the field names of its payloads.
+struct Right {
+    fns: PlaceFns,
+    fields: HashSet<String>,
+}
+
+impl Right {
+    /// None when `t` holds a variable, or the unknown, outside functions ([`Forms::fns`]).
+    fn of(t: &Ty) -> Option<Right> {
+        let mut fields = HashSet::new();
+        let fns = Forms::fns(t, false, &mut fields)?;
+        Some(Right { fns, fields })
+    }
+}
+
+/// What [`Comparing::diff`] reads once of the type each tuple is compared with, for
+/// [`Comparing::near_form`].
+struct Whole {
+    /// Its scalars, atoms with their payloads and kind-wide part as one kernel type, when it
+    /// and each of its tuples have an exact kernel type ([`Ty::exact_data`]).
+    rest: Option<KType>,
+    /// What [`Forms`] reads of it, when it makes its form.
+    right: Option<Right>,
+}
+
+impl Whole {
+    fn of(t: &Ty) -> Whole {
+        let rows_exact = t.tuples.iter().all(|r| r.0.exact.is_some());
+        Whole {
+            rest: rows_exact
+                .then(|| payload_set(&t.set, &t.payloads, |_, s| s.0.exact.clone()))
+                .flatten(),
+            right: Right::of(t),
+        }
+    }
+}
 
 /// A row, or a payload shape of the atom named, met by [`Forms`].
 #[derive(Clone, Copy)]
@@ -3814,8 +4069,10 @@ impl Forms {
     /// complete solution would order the functions at a place by their parameters and results,
     /// so that those a function fits are found by a search in that order, not by trying each.
     fn tied(&self, left: &PlaceFns, right: &PlaceFns) -> Option<Place> {
-        right.iter().find_map(|(place, gs)| {
-            let fs = left.get(place)?;
+        // The places of the side compared are looked up, since the other side may be a whole
+        // union whose places are many ([`Comparing::near_form`]).
+        left.iter().find_map(|(place, fs)| {
+            let gs = right.get(place)?;
             let unlike = fs.iter().filter(|f| !gs.contains(*f)).count();
             (unlike >= 2 && gs.len() >= 2).then(|| place.clone())
         })
@@ -4450,13 +4707,14 @@ impl Ty {
         out.family = &self.family & &out.set;
         out.payloads = self.payloads.clone();
         let mut met = Vec::new();
-        for a in &self.tuples {
-            for b in &t.tuples {
-                if a.len() == b.len() {
-                    let cs: Vec<Ty> = a.iter().zip(b).map(|(x, y)| x.meet(y)).collect();
-                    if cs.iter().all(|c| !c.is_empty()) {
-                        met.push(Row::new(cs));
-                    }
+        // Only the pairs of tuples that may share a value are met ([`near_pairs`]): the meet of
+        // any other pair has an empty component and is left out, so the tuples and their order
+        // are those of meeting every pair of one length.
+        for (a, near) in self.tuples.iter().zip(near_pairs(&self.tuples, &t.tuples)) {
+            for b in near.into_iter().map(|j| &t.tuples[j]) {
+                let cs: Vec<Ty> = a.iter().zip(b).map(|(x, y)| x.meet(y)).collect();
+                if cs.iter().all(|c| !c.is_empty()) {
+                    met.push(Row::new(cs));
                 }
             }
         }
@@ -7866,5 +8124,82 @@ mod tests {
         }
         println!("{cases} cases: {held} held ({bound} binding), {refused} refused");
         assert!(held > 1000 && bound > 500, "{held} held, {bound} binding");
+    }
+
+    /// A random component of a tuple for [`near_pairs`]: literals of three integers, of two
+    /// floats and of `true`, `int`, `String`, a bare atom of two names, a tuple of a literal and
+    /// a component, a union of no class, a function of three, and, when `open`, the variable
+    /// `T` or the unknown.
+    fn near_component(rng: &mut Rng, open: bool, depth: u32, fns: &[Arc<Sig>]) -> Ty {
+        match rng.below(if open { 15 } else { 13 }) {
+            0..=2 => Ty::lit(&Value::Int(rng.below(3) as i64)),
+            3 => Ty::carrier(Carrier::Int),
+            4 => Ty::carrier(Carrier::Str),
+            5 => Ty::lit(&Value::float([0.0, -0.0][rng.below(2) as usize])),
+            6 => Ty::lit(&Value::Bool(true)),
+            7 => Ty::set(KType::atom(["a", "b"][rng.below(2) as usize])),
+            8 if depth == 0 => Ty::tuple(vec![
+                Ty::lit(&Value::Int(rng.below(2) as i64)),
+                near_component(rng, open, depth + 1, fns),
+            ]),
+            8 => Ty::carrier(Carrier::Int),
+            9 => Ty::lit(&Value::Int(1)).union(&Ty::carrier(Carrier::Str)),
+            10..=12 => Ty::func(fns[rng.below(3) as usize].clone()),
+            13 => Ty::var("T".into()),
+            _ => Ty::dynamic(),
+        }
+    }
+
+    /// A union of one to six random tuples of one to three components, with, now and then, a
+    /// kind-wide part, `int`, and when `open` the variable `T`.
+    fn near_union(rng: &mut Rng, open: bool, fns: &[Arc<Sig>]) -> Ty {
+        let mut ms = Vec::new();
+        for _ in 0..1 + rng.below(6) {
+            let width = [1, 2, 2, 2, 3][rng.below(5) as usize];
+            let cs = (0..width)
+                .map(|_| near_component(rng, open, 0, fns))
+                .collect();
+            ms.push(Ty::tuple(cs));
+        }
+        match rng.below(12) {
+            0 => ms.push(Ty::set(KType::tuple(vec![KType::int(), KType::top()]))),
+            1 => ms.push(Ty::set(wide())),
+            2 => ms.push(Ty::carrier(Carrier::Int)),
+            3 if open => ms.push(Ty::var("T".into())),
+            _ => {}
+        }
+        Ty::union_all(&ms)
+    }
+
+    /// Meeting and subtracting through [`near_pairs`] gives exactly what meeting and
+    /// subtracting every pair of tuples of one length gives (COMPLEXITY.md F127), on random
+    /// unions of tuples of points, classes, unions, functions, variables and the unknown.
+    #[test]
+    fn tuples_met_and_subtracted_through_the_index_are_those_of_every_pair() {
+        let int = Ty::carrier(Carrier::Int);
+        let fns = [
+            Arc::new(Sig::one(Vec::new(), Vec::new(), int.clone())),
+            Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::lit(&Value::Int(1)))),
+            Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::carrier(Carrier::Str))),
+        ];
+        let mut rng = Rng(127);
+        let (mut cases, mut met, mut dropped) = (0, 0, 0);
+        for i in 0..20_000 {
+            let s = near_union(&mut rng, i % 3 == 0, &fns);
+            let t = near_union(&mut rng, i % 2 == 0, &fns);
+            for (a, b) in [(&s, &t), (&t, &s)] {
+                let (meet, diff) = (a.meet(b), a.diff(b));
+                NEAR_ALL.set(true);
+                let (want_meet, want_diff) = (a.meet(b), a.diff(b));
+                NEAR_ALL.set(false);
+                assert_eq!(meet, want_meet, "({a}) meet ({b})");
+                assert_eq!(diff, want_diff, "({a}) \\ ({b})");
+                cases += 1;
+                met += usize::from(!meet.tuples.is_empty());
+                dropped += usize::from(diff.tuples.len() < a.tuples.len());
+            }
+        }
+        println!("{cases} cases: {met} meets with a tuple, {dropped} differences dropping one");
+        assert!(met > 5000 && dropped > 3000, "{met} met, {dropped} dropped");
     }
 }

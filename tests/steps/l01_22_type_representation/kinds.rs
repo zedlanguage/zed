@@ -926,3 +926,142 @@ fn a_repair_by_a_shape_of_its_own_is_offered_only_where_a_component_tells_the_tw
         "{why}"
     );
 }
+
+/// `n` tuples on each side, in pairs `(t, u)` with what is left of `t` without `u` and what
+/// of `t` is in `u`, as tuple counts: each tuple of `t` may share a value with at most one of
+/// `u`, found by key lookup, which meeting or subtracting every pair of tuples compared in
+/// `n^2`.
+fn tuple_families(n: usize) -> Vec<(&'static str, Ty, Ty, usize, usize)> {
+    let rows = |f: &dyn Fn(usize) -> Ty| Ty::union_all(&(0..n).map(f).collect::<Vec<_>>());
+    let pair = |a: Ty, b: Ty| Ty::tuple(vec![a, b]);
+    let f = ty("(int) -> int");
+    vec![
+        // Points: `(i, i)` without and meet `(2i, 2i)`, decided by the kernel.
+        (
+            "points",
+            rows(&|i| pair(int(i), int(i))),
+            rows(&|i| pair(int(2 * i), int(2 * i))),
+            n / 2,
+            n / 2,
+        ),
+        // A function at a place: decided on the normal forms.
+        (
+            "functions",
+            rows(&|i| pair(f.clone(), int(i))),
+            rows(&|i| pair(f.clone(), int(2 * i))),
+            n / 2,
+            n / 2,
+        ),
+        // A variable on the expected side, which `String` would bind: every tuple is kept,
+        // and no tuple meets.
+        (
+            "variables",
+            rows(&|i| pair(ty("String"), int(i))),
+            rows(&|i| pair(var("T"), int(2 * i))),
+            n,
+            0,
+        ),
+        // `(bool, i)` is held by `(true, i) | (false, i)` only together.
+        (
+            "together",
+            rows(&|i| pair(ty("bool"), int(i))),
+            Ty::union_all(
+                &(0..n)
+                    .flat_map(|i| [pair(ty("true"), int(i)), pair(ty("false"), int(i))])
+                    .collect::<Vec<_>>(),
+            ),
+            0,
+            n,
+        ),
+    ]
+}
+
+#[test]
+fn subtracting_tuples_scales() {
+    // `t \ u` as `is not` narrows: each tuple of `t` is compared with the tuples of `u` that
+    // may share a value with it, found by key lookup.
+    let inputs = scaling::inputs(256, tuple_families);
+    scaling::check("n tuples without n tuples, four ways", 256, |n| {
+        for (what, t, u, left, _) in &inputs[&n] {
+            assert_eq!(t.diff(u).tuples.len(), *left, "{what}");
+        }
+    });
+}
+
+#[test]
+fn meeting_tuples_scales() {
+    // `t` meet `u` as `is` narrows: each tuple of `t` is met with the tuples of `u` that may
+    // share a value with it, found by key lookup; the tuples met are as many as the pairs.
+    let inputs = scaling::inputs(256, tuple_families);
+    scaling::check("n tuples met with n tuples, four ways", 256, |n| {
+        for (what, t, u, _, met) in &inputs[&n] {
+            let m = t.meet(u);
+            // A tuple met twice, `(bool, i)` with `(true, i)` and `(false, i)`, gives two.
+            let met = if *what == "together" { 2 * met } else { *met };
+            assert_eq!(m.tuples.len(), met, "{what}");
+        }
+    });
+}
+
+/// `n` tuples of points `(i, n + i)`, and `n` tuples `(i, int)` and `n` tuples `(int, n + i)`
+/// of two arrangements of points and `int`, which each hold one of the points.
+fn two_patterns(n: usize) -> (Ty, Ty) {
+    let pair = |a: Ty, b: Ty| Ty::tuple(vec![a, b]);
+    let points: Vec<Ty> = (0..n).map(|i| pair(int(i), int(n + i))).collect();
+    let open = (0..n).flat_map(|i| [pair(int(i), ty("int")), pair(ty("int"), int(n + i))]);
+    (
+        Ty::union_all(&points),
+        Ty::union_all(&open.collect::<Vec<_>>()),
+    )
+}
+
+/// `n` tuples of `2·log2 n` components on each side, each a different arrangement of `int` and
+/// a point, `1` on one side and `0` on the other: two tuples share a value exactly when no
+/// place holds a point in both, so finding the pairs is the orthogonal vectors problem.
+fn many_patterns(n: usize) -> (Ty, Ty) {
+    let width = 2 * n.ilog2() as usize;
+    let side = |point: usize| {
+        let rows: Vec<Ty> = (0..n)
+            .map(|i| {
+                // A different arrangement for each `i`, spread over the places.
+                let bits = (i as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - width);
+                Ty::tuple(
+                    (0..width)
+                        .map(|j| match bits >> j & 1 {
+                            1 => int(point),
+                            _ => ty("int"),
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        Ty::union_all(&rows)
+    };
+    (side(1), side(0))
+}
+
+#[test]
+fn meeting_and_subtracting_tuples_of_many_patterns_costs_the_patterns() {
+    // Tuples are filed by their arrangement of points, classes and components of no class, and
+    // each arrangement of one side is looked up once in each of the other: two arrangements,
+    // as `(i, int) | (int, n + i)`, cost O(n log n) for the points `(i, n + i)`, though each
+    // place alone has `n` tuples that hold any value there.
+    let inputs = scaling::inputs(256, two_patterns);
+    scaling::check("n points against n tuples of two arrangements", 256, |n| {
+        let (points, open) = &inputs[&n];
+        assert!(points.diff(open).tuples.is_empty());
+        assert_eq!(points.meet(open).tuples.len(), n);
+        assert_eq!(open.meet(points).tuples.len(), n);
+    });
+    // Complexity tradeoff (COMPLEXITY.md F127): as many arrangements as tuples cost the
+    // product of the two sides, which no algorithm avoids unless the strong exponential time
+    // hypothesis fails (the comment at `near_pairs` in `zedc_types::ty`).
+    let inputs = scaling::inputs(64, many_patterns);
+    scaling::check_order("n tuples against n of n arrangements", 64, 2, |n| {
+        let (ones, zeros) = &inputs[&n];
+        let met = ones.meet(zeros).tuples.len();
+        assert!(met <= n * n, "{met}");
+        let left = ones.diff(zeros).tuples.len();
+        assert!(left <= n, "{left}");
+    });
+}

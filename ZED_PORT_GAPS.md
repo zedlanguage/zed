@@ -2844,3 +2844,13 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | `std::panic::set_hook` with a payload read by `downcast_ref::<&str>` and `downcast_ref::<String>` | `main.rs` `bug_report` | No panic hook and no dynamic downcast | a broken invariant is the member `#bug(message)` (author, S.1d); the driver prints `rejection::bug` for it |
 | `macro_rules!` that expand to string literals inside `concat!` (`not_yet!`, `import_not_yet!`) | `tests/src/lib.rs` and the step tests | No macros | the texts are made by `rejection::not_yet` at run time, or written out |
+
+## Entries from TY-diff-meet (`crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `HashMap::entry(..).or_default().push(..)` grouping tuples by length and arrangement, and `BTreeMap::entry(..).or_default().push(..)` filing them by key | `by_pattern`, `near_pairs` | Mutation (gap 11) | a fold that returns the map with the index added to the key's list |
+| A `BTreeMap` keyed by `Vec<(&ShapeKey, Option<&Value>)>`, keys that borrow from the tuples' keys for the length of the call | `near_pairs` | None | keys of shared values; no lifetimes are written |
+| `out[*l].extend(..)` into a `Vec<Vec<usize>>` made at its full length, then `sort_unstable` of each list in place | `near_pairs` | Mutation (gap 11) | a map from each left index to its sorted list, built by the fold |
+| `std::mem::take(&mut out.tuples)` and a `Ty { tuples: .., ..bare.clone() }` per row, with an `Option<(&Ty, &Whole, &Arc<Filed>)>` passed down | `Comparing::diff`, `sub_near` | Mutation (gap 11) | the record with its tuples replaced, and an optional record argument |
+| A `#[cfg(test)]` `thread_local!` `Cell<bool>` that switches the lookup to every pair of one length | `NEAR_ALL`, `near_pairs` | No test-only state | a parameter of the lookup, or a test build of the module |
