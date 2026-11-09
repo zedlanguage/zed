@@ -532,25 +532,40 @@ fn bodies(rng: &mut Rng) -> [Term; 3] {
 /// Every run of every random body, at every point of its grid, reaches only arms whose scope
 /// holds the run's values there, and no arm found unreachable; checked for every arm of the
 /// body, those in `z`'s term too. Item PA-walk-multi narrows inputs through bindings over
-/// several of them, which this tests at the narrowed ends.
-#[test]
-fn every_run_of_a_random_body_reaches_only_arms_that_hold_it() {
+/// several of them, which this tests at the narrowed ends. Each of the three seeds is its own
+/// test, 900 bodies each, so that each runs in a process of its own (TEST-split-slow: the three
+/// together took 43 to 58 s alone at load 18 to 40). Each seed makes over a million checks
+/// (1,025,066 to 1,028,509), as the three together had to.
+fn every_run_of_random_bodies_reaches_only_arms_that_hold_it(seed: u64) {
     let xy: Vec<Arc<str>> = vec!["x".into(), "y".into()];
     let (mut checked, mut bodies_run) = (0, 0);
-    for seed in [0x1_39, 0x1_39_33, 7] {
-        let mut rng = Rng::new(seed);
-        for _ in 0..300 {
-            for body in bodies(&mut rng) {
-                let arms = zedc::store::product::arms(&body, &ints(&xy));
-                let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
-                let t = trace(&body, &xy, &arms, &holds).unwrap_or_else(|e| panic!("{body}: {e}"));
-                checked += t.checked;
-                bodies_run += 1;
-            }
+    let mut rng = Rng::new(seed);
+    for _ in 0..300 {
+        for body in bodies(&mut rng) {
+            let arms = zedc::store::product::arms(&body, &ints(&xy));
+            let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
+            let t = trace(&body, &xy, &arms, &holds).unwrap_or_else(|e| panic!("{body}: {e}"));
+            checked += t.checked;
+            bodies_run += 1;
         }
     }
-    assert_eq!(bodies_run, 2700);
+    assert_eq!(bodies_run, 900);
     assert!(checked > 1_000_000, "{checked} checks");
+}
+
+#[test]
+fn every_run_of_a_random_body_reaches_only_arms_that_hold_it_seed_1() {
+    every_run_of_random_bodies_reaches_only_arms_that_hold_it(0x1_39);
+}
+
+#[test]
+fn every_run_of_a_random_body_reaches_only_arms_that_hold_it_seed_2() {
+    every_run_of_random_bodies_reaches_only_arms_that_hold_it(0x1_39_33);
+}
+
+#[test]
+fn every_run_of_a_random_body_reaches_only_arms_that_hold_it_seed_3() {
+    every_run_of_random_bodies_reaches_only_arms_that_hold_it(7);
 }
 
 /// The check above fails on a scope one value too narrow: at each arm a run reached, an input

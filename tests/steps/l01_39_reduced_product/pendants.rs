@@ -4,7 +4,7 @@
 //! whole part on random parts where neither refuses, and on a program where the answer
 //! changed.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use zed_kernel::Prim;
@@ -363,8 +363,9 @@ fn points(
             End::Fin(Num::from(x))
         }
     };
-    let mut out: Vec<(IntervalSet, IntervalSet)> =
-        vec![(IntervalSet::empty(), IntervalSet::empty()); hubs.len() + zs.len()];
+    // The distinct ranges each name takes, joined once at the end: joining sets at each of
+    // the up to 151^3 points took 35 s on one row (TEST-split-slow).
+    let mut seen: Vec<BTreeSet<(i64, i64)>> = vec![BTreeSet::new(); hubs.len() + zs.len()];
     let mut v = vec![0i64; hubs.len()];
     let mut d = vec![vec![INF; size]; size];
     for at in 0..total {
@@ -420,13 +421,22 @@ fn points(
             .iter()
             .map(|x| (*x, *x))
             .chain((0..zs.len()).map(|i| (-d[i][src], d[src][i])));
-        for ((l, h), (hull, exact)) in values.zip(out.iter_mut()) {
-            let x = IntervalSet::range(fin(l, End::NegInf), fin(h, End::PosInf));
-            *exact = exact.join(&x);
-            *hull = hull.join(&x).hull();
+        for (x, s) in values.zip(seen.iter_mut()) {
+            s.insert(x);
         }
     }
-    if out.iter().all(|o| o.1.pieces().is_empty()) {
+    // The union of the ranges, and its hull, which is the hull of the hulls taken one at a
+    // time.
+    let out = seen.iter().map(|s| {
+        let exact = s.iter().fold(IntervalSet::empty(), |e, (l, h)| {
+            e.join(&IntervalSet::range(
+                fin(*l, End::NegInf),
+                fin(*h, End::PosInf),
+            ))
+        });
+        (exact.hull(), exact)
+    });
+    if seen.iter().all(BTreeSet::is_empty) {
         return None;
     }
     Some(

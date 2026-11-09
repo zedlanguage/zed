@@ -229,6 +229,20 @@ done < <(awk '
           fi
           ;;
         zedc-*) echo "$n crates/zedc $p" ;;
+        zedc_preimage-*)
+          # The random tests split into parts (names ending in a digit) took 4 to 37 s each
+          # alone at load 25 to 40, 711 s of processor time together, and the crate ran 75 to
+          # 83 s in one process (TEST-split-slow, 2026-11-09); each part gets a process.
+          if tests=$("$p" --list --format terse); then
+            parts=$(echo "$tests" | sed -n 's/^\(.*_[0-9]\): test$/\1/p')
+            echo "$n crates/zedc-preimage $p --exact$(printf ' --skip %s' $parts)"
+            for t in $parts; do
+              echo "$n::${t##*::} crates/zedc-preimage $p --exact $t"
+            done
+          else
+            echo "$n crates/zedc-preimage $p"
+          fi
+          ;;
         # A crate zedc-* split from zedc; zedc_binary is a test of zed-native, run from tests.
         zedc_*-*)
           c=crates/${n%-*}

@@ -826,7 +826,11 @@ fn exclusive_ors_agree_with_their_values() {
             (Part::literal(atom(i)), mask.fold(0u64, |m, b| m | 1 << b))
         })
         .collect();
-    let holds = |bits: u32| move |a: &Row| (0..6).any(|i| bits >> i & 1 == 1 && *a == atom(i));
+    let atoms: Vec<Row> = (0..6).map(atom).collect();
+    let holds = |bits: u32| {
+        let atoms = &atoms;
+        move |a: &Row| (0..6).any(|i| bits >> i & 1 == 1 && *a == atoms[i])
+    };
     let mut pool: Vec<(Part<Row>, u64)> = lits.clone();
     let mut ids: HashMap<u64, u64> = HashMap::new();
     let mut seed = 7u64;
