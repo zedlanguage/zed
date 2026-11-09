@@ -114,15 +114,55 @@ impl fmt::Display for Time {
     }
 }
 
-/// The element of the reduced product for one name.
+/// The element of the reduced product for one name: its domains ([`ProductDomains`]) behind a
+/// shared pointer, so that a copy costs `O(1)` and a change copies the domains only when
+/// another product shares them. A scope keeps its names in a persistent map, and the caches of
+/// a walk keep earlier versions of it (each held summary and its last read keep the names they
+/// were made over), so an insertion copies the map's nodes on the path to the name, and every
+/// product in them; with each product copied whole, a binding cost about 70 KB and a third of
+/// its time (item PA-bind-cost).
+#[derive(Clone)]
+pub struct Product(Arc<ProductDomains>);
+
+/// The domains of a [`Product`].
 #[derive(Clone, PartialEq, Debug)]
-pub struct Product {
+pub struct ProductDomains {
     /// The domains of step L1.24.
     pub cell: Cell,
     /// The type.
     pub ty: Entry<Type>,
     /// The binding time.
     pub time: Entry<Time>,
+}
+
+impl std::ops::Deref for Product {
+    type Target = ProductDomains;
+    fn deref(&self) -> &ProductDomains {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Product {
+    /// The domains, copied first when another product shares them.
+    fn deref_mut(&mut self) -> &mut ProductDomains {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl PartialEq for Product {
+    fn eq(&self, other: &Product) -> bool {
+        Arc::ptr_eq(&self.0, &other.0) || self.0 == other.0
+    }
+}
+
+impl fmt::Debug for Product {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Product")
+            .field("cell", &self.cell)
+            .field("ty", &self.ty)
+            .field("time", &self.time)
+            .finish()
+    }
 }
 
 impl Product {
@@ -141,11 +181,11 @@ impl Product {
 
     /// No information: any value, known when the program runs.
     pub fn top() -> Product {
-        Product {
+        Product(Arc::new(ProductDomains {
             cell: Cell::top(),
             ty: Entry::new(Type::top()),
             time: Entry::new(Time::Run),
-        }
+        }))
     }
 
     /// No value.
@@ -169,11 +209,11 @@ impl Product {
 
     /// The value `v`, known when the program is built.
     pub fn literal(v: &Value) -> Product {
-        Product {
+        Product(Arc::new(ProductDomains {
             cell: Cell::literal(v),
             ty: Entry::new(Type::lit(v).unwrap_or_else(Type::top)),
             time: Entry::new(Time::Build),
-        }
+        }))
     }
 
     /// Whether no value has this element.
@@ -244,17 +284,18 @@ impl Product {
     }
 
     /// Meets the interval domain with `x`.
-    fn meet_ints(&mut self, x: IntervalSet, premises: &Premises) {
-        self.cell.ints.meet(&Bounds::ints(x), premises);
+    fn meet_ints(&mut self, x: IntervalSet, premises: &Premises) -> bool {
+        self.cell.ints.meet(&Bounds::ints(x), premises)
     }
 
-    /// The reductions between this product's own domains, once each.
-    fn reduce_domains(&mut self) {
+    /// The reductions between this product's own domains, once each; whether one changed a
+    /// domain. Each change is a meet, so the product only descends.
+    fn reduce_domains(&mut self) -> bool {
         let prem = self.premises();
         let int = Type::int();
         let (x, c) = reduce_congruence(self.ints(), &self.cell.congruence.element);
-        self.meet_ints(x, &prem);
-        self.cell.congruence.meet(&c, &prem);
+        let mut changed = self.meet_ints(x, &prem);
+        changed |= self.cell.congruence.meet(&c, &prem);
         // A finite set against the interval: an integer member outside it goes.
         if let FiniteSet::Set(vs) = &self.cell.finite.element {
             let x = self.ints();
@@ -272,13 +313,13 @@ impl Product {
                         })
                         .collect(),
                 );
-                self.meet_ints(ints, &prem);
+                changed |= self.meet_ints(ints, &prem);
             }
-            self.cell.finite.meet(&FiniteSet::Set(kept), &prem);
+            changed |= self.cell.finite.meet(&FiniteSet::Set(kept), &prem);
         }
         // The type from the other domains.
         if self.ints().is_empty() || self.cell.congruence.element == Congruence::Bottom {
-            self.ty.meet(&!&int, &prem);
+            changed |= self.ty.meet(&!&int, &prem);
         } else {
             // The type's integers narrowed to the interval: the type's own integer literals,
             // which the source lists, met with the interval; or, for a type that lists none,
@@ -310,14 +351,14 @@ impl Product {
             };
             if let Some(vs) = vs {
                 let lits = Type::union_all(vs.iter().filter_map(Type::lit));
-                self.ty.meet(&(&!&int | &lits), &prem);
+                changed |= self.ty.meet(&(&!&int | &lits), &prem);
             }
         }
         if let FiniteSet::Set(vs) = &self.cell.finite.element {
             let lits: Option<Vec<Type>> = vs.iter().map(Type::lit).collect();
             if let Some(lits) = lits {
                 let t = Type::union_all(lits);
-                self.ty.meet(&t, &prem);
+                changed |= self.ty.meet(&t, &prem);
             }
         }
         // The other domains from the type.
@@ -356,7 +397,7 @@ impl Product {
                 FiniteSet::Top => ty.values_listed().map(FiniteSet::of),
             };
             if let Some(kept) = kept {
-                self.cell.finite.meet(&kept, &prem);
+                changed |= self.cell.finite.meet(&kept, &prem);
             }
         }
         if let Some(vs) = self.ty.element.ints_listed()
@@ -371,8 +412,9 @@ impl Product {
                     })
                     .collect(),
             );
-            self.meet_ints(ints, &prem);
+            changed |= self.meet_ints(ints, &prem);
         }
+        changed
     }
 }
 
@@ -1517,14 +1559,8 @@ impl Scope {
             }
             p.meet_ints(image, &premises);
         }
-        loop {
-            let before = p.clone();
-            p.reduce_domains();
-            debug_assert!(p.leq(&before), "a reduction rose: {before:?} to {p:?}");
-            if p == before {
-                break;
-            }
-        }
+        // Until no reduction changes a domain; each change is a meet, so the loop descends.
+        while p.reduce_domains() {}
         let summary = match given {
             None => self.summarize(e, &p),
             Some(_) => summary,
@@ -2132,7 +2168,11 @@ impl Scope {
                         .iter()
                         .map(|(n, _, _)| {
                             let p = names.get(n).cloned().unwrap_or_else(Product::top);
-                            (n.clone(), p.ints().clone(), p.cell.congruence.element)
+                            (
+                                n.clone(),
+                                p.ints().clone(),
+                                p.cell.congruence.element.clone(),
+                            )
                         })
                         .collect();
                     projected.insert(k.clone(), (with.clone(), at));
@@ -4237,7 +4277,11 @@ impl Scope {
             .iter()
             .map(|n| {
                 let p = self.get(n);
-                (n.clone(), p.ints().clone(), p.cell.congruence.element)
+                (
+                    n.clone(),
+                    p.ints().clone(),
+                    p.cell.congruence.element.clone(),
+                )
             })
             .collect()
     }
@@ -5517,6 +5561,118 @@ impl<'m> Run<'m> {
         }
     }
 
+    /// The arms of `t` appended to `out`, as [`Run::walk`] finds them, and the value of `t`, as
+    /// [`Run::forward`] finds it, in one pass, the scope as it was on return: each `let` in
+    /// `t` is bound once, where walking `t` and then finding its value bound each twice (item
+    /// PA-bind-cost). The arms, their order and their scopes are those of the walk, and the
+    /// value that of the transfer: an `if` is assumed with the walk's premises for its arms
+    /// and again without them for its value, since the two scopes differ in their premises.
+    fn walk_value(&'m self, t: &'m Term) -> Deep<'m, Product> {
+        match t {
+            Term::Let(..) | Term::If(..) | Term::Prim(..) | Term::App(..) => {
+                self.stack.call(move || self.walk_value_at(t))
+            }
+            _ => Stack::ready(self.scope(|s| leaf(t, s))),
+        }
+    }
+
+    async fn walk_value_at(&'m self, t: &'m Term) -> Product {
+        if self.scope(|s| s.bottom) {
+            // The transfer finds nothing in a scope no state reaches; the walk still shows
+            // the arms below, each unreachable.
+            self.walk(t).await;
+            return Product::bottom();
+        }
+        match t {
+            Term::Let(x, e, b) => {
+                let p = self.walk_value(e).await;
+                // As in `Run::forward_at`: a comparison that follows its carrier is, at an
+                // integer, the literal compared with the value just found.
+                let plain = follow(t).filter(|_| p.ty.element.subtype(&Type::int()));
+                let u = self.scope(|s| s.bind(x, p, e));
+                let out = match plain {
+                    Some(f) => {
+                        self.walk(b).await;
+                        if self.scope(|s| s.bottom) {
+                            Product::bottom()
+                        } else {
+                            let mut xs = Vec::with_capacity(2);
+                            for side in 0..2 {
+                                xs.push(if side == f.at {
+                                    self.forward(f.own).await
+                                } else {
+                                    self.scope(|s| s.get(x))
+                                });
+                            }
+                            forward_prim(f.op, xs)
+                        }
+                    }
+                    None => self.walk_value(b).await,
+                };
+                self.scope(|s| s.unbind(u));
+                out
+            }
+            // A literal in each arm: the value is the literal of each arm some state reaches,
+            // which the walk's scopes of the arms tell, so the test is not assumed again.
+            Term::If(c, a, b) if matches!((&**a, &**b), (Term::Lit(_), Term::Lit(_))) => {
+                let reached = self.walk_if(c, a, b).await;
+                let value = |reached: bool, arm: &Term| match arm {
+                    Term::Lit(v) if reached => Product::literal(v),
+                    _ => Product::bottom(),
+                };
+                let mut p = value(reached[0], a);
+                p.join(&value(reached[1], b));
+                p
+            }
+            Term::If(..) => {
+                self.walk_at(t).await;
+                self.forward(t).await
+            }
+            Term::Prim(op, args) => {
+                let mut xs = Vec::with_capacity(args.len());
+                for a in args {
+                    xs.push(self.walk_value(a).await);
+                }
+                forward_prim(*op, xs)
+            }
+            Term::App(f, args) => {
+                self.walk(f).await;
+                for a in args {
+                    self.walk(a).await;
+                }
+                self.scope(|s| leaf(t, s))
+            }
+            _ => self.scope(|s| leaf(t, s)),
+        }
+    }
+
+    /// The arms of `if c { a } else { b }` appended to `out`, each arm walked in its scope,
+    /// the test's premise its position in the walk; whether some state reaches each arm, the
+    /// true arm first.
+    async fn walk_if(&'m self, c: &'m Term, a: &'m Term, b: &'m Term) -> [bool; 2] {
+        let count = self.count.get();
+        self.count.set(count + 1);
+        let at = FactAddress {
+            node: NodeAddress(Vector::unit(Position::root().child(count))),
+            keypath: Vector::new(),
+        };
+        let prem = Premises::one(Premise::Constraint(at));
+        let mut reached = [false; 2];
+        for (i, (o, arm)) in [(true, a), (false, b)].into_iter().enumerate() {
+            let s = self.scope(|s| s.assume(c, o, &prem));
+            reached[i] = !s.bottom;
+            self.out.borrow_mut().push(Arm {
+                guard: c.to_string(),
+                outcome: o,
+                scope: s.clone(),
+            });
+            self.inner.borrow_mut().push(s);
+            self.walk(arm).await;
+            self.inner.borrow_mut().pop();
+        }
+        reached
+    }
+
     /// The arms of `t` in the scope the walk is in, appended to `out`; the scope is as it was
     /// on return.
     fn walk(&'m self, t: &'m Term) -> Deep<'m, ()> {
@@ -5531,32 +5687,12 @@ impl<'m> Run<'m> {
     async fn walk_at(&'m self, t: &'m Term) {
         match t {
             Term::Let(x, e, b) => {
-                self.walk(e).await;
-                let p = self.forward(e).await;
+                let p = self.walk_value(e).await;
                 let u = self.scope(|s| s.bind(x, p, e));
                 self.walk(b).await;
                 self.scope(|s| s.unbind(u));
             }
-            Term::If(c, a, b) => {
-                let count = self.count.get();
-                self.count.set(count + 1);
-                let at = FactAddress {
-                    node: NodeAddress(Vector::unit(Position::root().child(count))),
-                    keypath: Vector::new(),
-                };
-                let prem = Premises::one(Premise::Constraint(at));
-                for (o, arm) in [(true, a), (false, b)] {
-                    let s = self.scope(|s| s.assume(c, o, &prem));
-                    self.out.borrow_mut().push(Arm {
-                        guard: c.to_string(),
-                        outcome: o,
-                        scope: s.clone(),
-                    });
-                    self.inner.borrow_mut().push(s);
-                    self.walk(arm).await;
-                    self.inner.borrow_mut().pop();
-                }
-            }
+            Term::If(c, a, b) => _ = self.walk_if(c, a, b).await,
             Term::Prim(_, args) => {
                 for a in args {
                     self.walk(a).await;
