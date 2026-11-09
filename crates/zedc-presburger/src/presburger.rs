@@ -8328,10 +8328,16 @@ fn project_parts(
                         // A point of the disjunct with each disjunct below cut to its own
                         // constraints keeps it, as a level below the top is tightened
                         // ([`summarize`]); the search below it runs only when there is none.
+                        // Only whether a point exists is asked, so the probe stops at its
+                        // first point ([`probe_to`]); up to that point it is [`probe`], so a
+                        // refusal stays a refusal (kept as a point, as before) and no point is
+                        // `Ok(None)` exactly where [`probe`] gives it. Not [`has_point`]: its
+                        // [`pick`] before and after the probe repeats the one above and decides
+                        // nothing here (PRES-probe-first).
                         let point = sets
                             || q.ors.is_empty()
                             || pick(&q, false).is_ok()
-                            || !matches!(probe(q), Ok(None));
+                            || !matches!(probe_to(q, &mut Vec::new(), true), Ok(None));
                         Ok(((Vec::new(), Vec::new()), point))
                     }
                     Some(q) => project_parts(q, &sub, None, sets, memo).map(|e| {
