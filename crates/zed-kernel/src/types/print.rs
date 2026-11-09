@@ -64,7 +64,7 @@ impl Type {
 
     /// The type in the surface syntax after `is`, where sec:grammar reads a `TypeUnion` (in
     /// `IsTest` and `IsPat`), parenthesized where it would not be one: an arrow. A union, a
-    /// difference and an intersection are written bare, `(is bool | int)`; a bound of
+    /// difference and an intersection are written bare, `is bool | int`; a bound of
     /// `L .. U -> V` is the same place ([`Type::surface_bound`]).
     pub(crate) fn surface_after_is(&self) -> Surface {
         self.surface_at(At::Bound)

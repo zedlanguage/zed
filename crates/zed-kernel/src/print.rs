@@ -645,8 +645,10 @@ impl<'a> Pieces<'a> {
                 .patterns(ps.iter().map(|p| (None, p)))
                 .text(")"),
             Pattern::AnyAtom => self.text("#_"),
-            // The type as a program writes it after `is`: only an arrow is parenthesized.
-            Pattern::Is(t) => self.text(format!("(is {})", t.surface_after_is())),
+            // `is T`, sec:grammar's `IsPat` with no name, the type as a program writes it after
+            // `is`: only an arrow is parenthesized. The type ends where a pattern does, before
+            // `,`, `)` or an arm's `->`, which a `TypeUnion` does not take.
+            Pattern::Is(t) => self.text(format!("is {}", t.surface_after_is())),
         };
     }
 

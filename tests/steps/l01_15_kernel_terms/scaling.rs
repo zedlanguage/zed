@@ -208,7 +208,7 @@ fn negations_and_indices_print_in_linear_time() {
 }
 
 /// Item PRINT-group-site-defs: a term whose n type tests each write a part twice,
-/// `(is (int | #x{k}, int | #x{k}))`, is written with n declarations before it, in time
+/// `is (int | #x{k}, int | #x{k})`, is written with n declarations before it, in time
 /// linear in the term (COMPLEXITY.md K92).
 #[test]
 fn a_term_declaring_its_shared_parts_scales() {

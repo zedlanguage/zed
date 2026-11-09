@@ -315,7 +315,7 @@ match value {
     y
   ),
   #_ -> "failed",
-  (is int) -> "an integer"
+  is int -> "an integer"
 }
 --- a match with every pattern, width 40
 match value {
@@ -330,7 +330,7 @@ match value {
   () -> "unit",
   (x, (_, y)) -> (x + y),
   #_ -> "failed",
-  (is int) -> "an integer"
+  is int -> "an integer"
 }
 --- a match with every pattern, width 80
 match value {
@@ -345,10 +345,10 @@ match value {
   () -> "unit",
   (x, (_, y)) -> (x + y),
   #_ -> "failed",
-  (is int) -> "an integer"
+  is int -> "an integer"
 }
 --- a match with every pattern, on one line
-match value { _ -> "anything", amount -> amount, 0 -> "zero", "none" -> "none", #empty -> "empty", #cons(head, _) -> head, #err(code: c, line: 3) -> c, (only,) -> only, () -> "unit", (x, (_, y)) -> (x + y), #_ -> "failed", (is int) -> "an integer" }
+match value { _ -> "anything", amount -> amount, 0 -> "zero", "none" -> "none", #empty -> "empty", #cons(head, _) -> head, #err(code: c, line: 3) -> c, (only,) -> only, () -> "unit", (x, (_, y)) -> (x + y), #_ -> "failed", is int -> "an integer" }
 --- a family, width 20
 fam(
   lines,

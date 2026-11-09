@@ -12,11 +12,11 @@ fn term(text: &str, name: &str) -> String {
 fn is_is_a_match_on_the_type() {
     let t = term("f(x) = x is int | (int, String);", "f");
     assert!(
-        t.contains("(is int | (int, String)) -> true, _ -> false"),
+        t.contains("is int | (int, String) -> true, _ -> false"),
         "{t}"
     );
     let t = term("f(x) = x is not #none;", "f");
-    assert!(t.contains("(is #none) -> false, _ -> true"), "{t}");
+    assert!(t.contains("is #none -> false, _ -> true"), "{t}");
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn port_types_and_function_bounds_are_rejected() {
 #[test]
 fn a_one_tuple_and_a_morphism_type_with_two_bounds_elaborate() {
     let t = term("f(x) = x is (int,);", "f");
-    assert!(t.contains("(is (int,)) -> true"), "{t}");
+    assert!(t.contains("is (int,) -> true"), "{t}");
     // The guarantee lies within the permission: a morphism type, which `is` cannot test.
     assert_eq!(
         elab("f(x) = x is (#a .. #a | #b -> int);").unwrap_err(),

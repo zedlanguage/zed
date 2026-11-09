@@ -20,7 +20,8 @@
 //! its regions, and the results last; the reader accepts the lines in any order, so the form
 //! can be sorted, diffed and merged line by line. A pattern is written as the kernel writes
 //! one, except that a literal is `=v`, so a literal atom or tuple is not read as a pattern of
-//! that shape, and a binder the compiler made is written with `$`, which no name contains:
+//! that shape, a type test is `(is T)` with `T` in the kernel's own type text, which this
+//! form reads back, and a binder the compiler made is written with `$`, which no name contains:
 //! the elaborator's binder `$k` as it is, and the canonical binder at de Bruijn level `k`
 //! (canon/binders.rs) as `$$k`. A recursive type prints as its name, which this form cannot
 //! read back: such types are declared from step L2, and their text form comes with the
