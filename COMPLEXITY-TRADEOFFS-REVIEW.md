@@ -377,3 +377,36 @@ Observation, not changed (outside a comment-only item): in `group_oracle.rs` the
 | `walk.rs:3623` (lazy stars) | 961b304c | `k²` projections | O(k), measured | time only | complete | none |
 | `walk.rs:3925` (class replacement) | ff24610b | lazy read, O(size of `sig`) once (inferred) | every depth, O(size of `sig`) per level, n² worst | sites would follow class links | partial | added naive/used sentence |
 | `widen.rs:503` (word warnings) | c79fb5b4 | relational Presburger domain, exponential worst | O(1) per node, O(N) | no narrowing, operands independent | complete | none |
+
+## Other crates
+
+26 sites in zedc-stage, zedc, zed-tools, zedc-solvers, zedc-zir, zedc-base, zedc-syntax, zed-native, zed-rt and the corpus runtime. Line numbers are those before the edits.
+
+| Site | Commit | Naive version, complexity | Used version, complexity | Tradeoffs | Before | Action |
+|---|---|---|---|---|---|---|
+| `zedc-stage stage.rs:211` `ends` | 269ff6ee | size-change termination, PSPACE-complete; run with a step count (a size switch) | form check, near the distinct parts | terms that end but do not show it left to run time | complete | none |
+| `zedc-stage stage.rs:541` `Sets` | 269ff6ee | union by the sets' sizes | hash-consed tries with a pair memo, a path in the common case; no proved bound | worst near the product of sizes | complete | none |
+| `zedc-stage stage.rs:1048` maps | 269ff6ee | restriction by the sizes of map and set | hash-consed restriction with a pair memo; no proved bound | worst near the product of sizes | complete | none |
+| `zedc-stage stage.rs:2401` `eval` | 269ff6ee | keyed by each function, once per distinct function, O(part × functions) (inferred) | keyed by answers taken; m new answers run m + 1 times | sharing given up, not exactness | partial | added naive/used sentence |
+| `zedc front.rs:264` underlines | d16ca5c4 | every nest in full, O(d·L), quadratic | ends of heavy chains, O((s + L) log s) | marks drawn by ends | complete | none |
+| `zedc front.rs:630` linear questions | 3e67fdd0 | complete Presburger, exponential worst | solver fragment, refusals costed at their raise sites | correct programs may be rejected | partial | added naive/used sentence |
+| `zedc front.rs:708` chained relations | 5a4987d5 | each link decided whole, O(n²) | extended from the callee, O(n) | links that exclude the callee's point stay O(n²) | complete | none |
+| `zedc front.rs:747` refused question restated | b273d0f6 | answer from the callee's | decided whole, O(the relation) | paid only on refusal | complete | none |
+| `zedc mutate.rs:342` mutant rows | e2474205 | every row run, need not end | `stage::ends` form check, near the distinct parts | rows not shown to end are not run | partial | added naive/used sentence |
+| `zedc pin.rs:299` | f3d10776 | hash map, O(1) | ordered map, O(log p) | no sort at each write | complete | none |
+| `zedc suppress/addresses.rs:104` | 3e67fdd0 | each node's text hashed, O(n·depth); BLAKE3 at that cost | prefix hashes, O(n) once, O(1) per node | collisions mod 2^61 - 1 resolved by the rest of the address | complete | none |
+| `zed-tools catalog.rs:781` | 637fdcd1 | walk up the ancestors per name | linear in the text, one lookup per name | none | complete | none |
+| `zed-tools imports.rs:1339` | e18da1f4 | merged table, size of the modules per glob | one lookup per glob import | none | complete | none |
+| `zed-tools imports.rs:1784` | e9e91392 | reachability per calling file, O(files × imports); Rust type inference | scan typing; join O(p √p) (AGM bound) | two cases not reported; IMPORTS-untyped-join | complete | none |
+| `zed-tools imports.rs:2097` `ty_in` | e18da1f4 | read at every call, O(calls × type length) | once per text, O(type length) plus a lookup per call | memory for the kept types | partial | added naive/used sentence |
+| `zedc-solvers negsssp.rs:542` | abf5c32f | a unit per edge (24.9 times) or none (+5%) | a unit per vertex and negative edge, O(m) | measured | complete | none |
+| `zedc-solvers negsssp.rs:564` | abf5c32f | Duong's recursion alone | BF-Dijkstra first until it runs out, at most one pass extra | measured | complete | none |
+| `zedc-solvers utvpi.rs:278` race | 094a40b5 | Goldberg–Radzik alone O(V·E); BF-Dijkstra O((E + V log V)·r) | race with Duong's bound, measured constants | race constant about 2 | complete | none |
+| `zedc-zir canon.rs:220` | 208a874e | constants rewritten at each comparison | numbered regions, bytes of the operation per comparison | regions held until the lowering ends | complete | none |
+| `zedc-zir legalize.rs:169` | 05d22662 | hash-consed, O(distinct regions) (inferred) | each use, O(graph as a tree) | memo by address banned | partial | added naive/used sentence |
+| `zedc-zir lower.rs:182` occurrence ids | 9843712e | hash-consed ids, distinct subterms | tree size, `2^d` for shared parts | lowering already pays tree size | complete | none |
+| `zedc-base cost.rs:129` peak | e5a0a719 | freed at the last reader, O(r) | counted to the schedule's end, O(r) | upper bound may reject a feasible plan | complete | none |
+| `zedc-syntax grammar.rs:481` `within` | aac84859 | explicit stack, any depth | recursion, linear, stack per level | deep nests would overflow | complete | none |
+| `zed-native lib.rs:65` | fc4686da | Cranelift e-graph and backtracking allocator, n^1.6 and n^1.4 | `OptLevel::None`, linear | slower code | complete | none |
+| `zed-rt stack.rs:65` | d8fb27b5 | segmented stack, a compare per call | one reservation | refused under `RLIMIT_AS` | complete | none |
+| `zed/corpus/ref zedrt.rs:226` | 4f52ced8 | num-bigint `parse`, O(n²) | halves above `LEAF_DIGITS` | timed crossover, same results | complete | none |

@@ -170,6 +170,8 @@ pub fn legalize(g: Region, want: Expansions) -> Legalized {
                 // use, so the cost is the graph's size read as a tree, which is what validation
                 // and planning already pay (COMPLEXITY.md Z25, PLAN-shared-regions); a memo by
                 // address is banned.
+                // Naive version, the one used: each use legalized, O(graph size as a tree);
+                // hash-consed regions, once each, O(distinct regions) (inferred).
                 stack.push(Frame::new(Arc::unwrap_or_clone(r)));
                 continue;
             }

@@ -2096,6 +2096,8 @@ impl<'b, 'a> Walk<'b, 'a> {
     fn ty_in(&mut self, text: Text, given: bool) -> Ty {
         // Complexity tradeoff: a type is read once per text and kept, so a long return type is
         // not read again at every call of its function.
+        // Naive version: the type read at every call, O(calls × type length); used: once per
+        // text, O(type length) and one lookup per call.
         if let Some(ty) = self.read.get(&(text, given)) {
             return ty.clone();
         }

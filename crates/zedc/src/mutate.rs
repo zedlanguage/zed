@@ -354,6 +354,8 @@ pub fn run(
                 // COMPLEXITY.md row F58. A complete solution cannot exist; a stronger sound
                 // one would add a termination proof by decreasing measures (size-change
                 // termination, PSPACE-complete in the call graph), as `stage::ends` says.
+                // Naive version: every row run, which need not end; used: the form check of
+                // `stage::ends`, in time near the number of distinct parts of the term.
                 if !closed.iter().all(stage::ends) {
                     verdict = Verdict::NotRun;
                     continue;

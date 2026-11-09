@@ -638,6 +638,8 @@ fn grouped(written: &str) -> bool {
 /// `l01_38_presburger::checker::the_linear_questions_of_a_unit_scale`. COMPLEXITY.md row S18.
 /// A complete solution would need a complete Presburger procedure, exponential in the worst
 /// case, or would accept the function with a warning in place of the rejection.
+/// Naive version: a complete Presburger procedure, exponential in the worst case; used: the
+/// solver's fragment, with each refusal at the cost named at its raise site.
 ///
 /// Public for the test that times the questions alone, on a unit loaded before the timing:
 /// loading the unit of 64 functions there costs 3.5 times its questions, so a scaling test that

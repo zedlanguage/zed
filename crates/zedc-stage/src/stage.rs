@@ -2450,6 +2450,9 @@ impl Mixer {
     // and `l01_28_staging::mix::an_evaluation_error_is_left_to_run`. COMPLEXITY.md row F83. A
     // complete solution would read a part's calls inside a pure region through a pure lookup,
     // and key a call at an argument holding a family or a join by a hash-consed form of it.
+    // Naive version: a part keyed by what each function is, mixed once per distinct
+    // function it reads, O(part × functions) (inferred); used: keyed by the answers taken, mixed
+    // once per distinct answers, a function asking m new answers run m + 1 times.
     fn eval(&mut self, t: &Term, free: Set) -> Result<Value, String> {
         let base = self.watch.last().map(|w| w.base);
         let (lets, stubs) = self.needs(free, base);
