@@ -1680,7 +1680,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CUBE-root-wide | impl attempt 1 | 2026-11-09 06:44 | ready 58cfc4a1e8ce5c7ea09f7c37950b859fd07d1fca: rem_uint; 2M->16M passes (instructions 9.50, bytes 9.92); 262144->2M bytes 10.71 > 10.27 open as CUBE-remtree-cr |
 | EMPTY-arg-needs | impl attempt 1 | 2026-11-09 08:28 | started; worktree /home/luke/Work/wt/empty-arg at f409e070 |
-| GROUP-cycle-dup | impl attempt 1 | 2026-11-09 05:04 | reproduced: random 2-3 def X14 groups, seed 7, 200000 draws: 319 decided groups refused with one arm duplicated on main; after hash-consing the decider's nodes  |
+| GROUP-cycle-dup | impl attempt 1 | 2026-11-09 05:04 | tests cycle_dup.rs: 8 green with fix; on main code 3 red (tuple twice, order-differing unions, regrouping) decided->refused; scaling 8.0x (limit 12.10) |
 | GROUP-refusal-fallback | running | 2026-11-09 05:23 |  |
 | GROUP-refusal-meet-witness | running | 2026-11-09 06:38 |  |
 | GROUP-refusal-meet-wording | running | 2026-11-09 06:38 |  |
@@ -1692,7 +1692,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-never-expect | impl attempt 1 | 2026-11-09 07:57 | walk made total; 4 new unit tests pass; control with main's expect/unreachable/union-extend restored: all 4 stop (panic at tuple expect, atom expect, unreachabl |
 | NARROW-negated-star | impl attempt 1 | 2026-11-09 08:28 | started on wt/narrow-neg from f409e070 |
 | PRINT-fn-parens | impl attempt 1 | 2026-11-09 07:57 | ready cbdd73bd on wt/print-fn-parens: printers parenthesize by place; 176 pieces 0 failed; scaling 8.0x/7.9x |
-| PROJECT-each-canon | impl attempt 1 | 2026-11-07 16:39 | run 4: 574 pieces, 2 failed (s22 1250/2500 exact counts; early drop skips probe, 3 before-boxes back to main's coarser ones, sound); later drop restored to main |
+| PROJECT-canon-272 | running | 2026-11-09 09:27 |  |
+| PROJECT-canon-decide | running | 2026-11-09 09:27 |  |
+| PROJECT-canon-gcd | running | 2026-11-09 09:27 |  |
+| PROJECT-canon-precision | running | 2026-11-09 09:27 |  |
+| PROJECT-each-canon | impl attempt 1 | 2026-11-07 16:39 | ready at 01351ff1 on wt/project-canon; run 5 574 pieces 0 failed; ctl tree and scratch deleted; ledger ready + 4 follow-ups / load 10.13 |
 | S22-fwd-holes | repair attempt 1 | 2026-11-07 09:50 | ready 1599bba8: cycle broken (counter moved to shared_ints.rs), s_01f 18/18, 494 pieces 493 pass, 1 load timeout passes alone 47.3 s, load 9.5-33 |
 | TEST-split-slow | impl attempt 1 | 2026-11-09 08:09 | ready 60fc4680 on wt/test-split-slow (also PREIMAGE-unit-piece, KERNEL-xor-agree-slow); 87 pieces 0 failed; follow-ups PREIMAGE-slow-rounds, KERNEL-eval-memo-ha |
 | TY-row-class | impl attempt 1 | 2026-11-09 08:17 | started on wt/ty-row-class from origin/main |
