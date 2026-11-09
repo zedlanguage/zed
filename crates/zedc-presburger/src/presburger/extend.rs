@@ -194,14 +194,18 @@ impl Extending {
     // calls, and a chain with no point that its faces do not show empty. A chain with no
     // point whose faces hold nowhere by their holes and the residues of one modulus, such as
     // `q = (x < 10 || x > 20) && x mod 4 != 1` moved by 3, is answered from the faces
-    // ([`Faces::free`], LOAD-holes-mod: 24.6 s at 16 links, refused, before; 0.05 s now); one
-    // emptied only by two moduli together (`x mod 2 == 1 && x mod 3 == 1` between holes) is
-    // left to the solver on the faces, and decided whole where it refuses. Test
+    // ([`Faces::free`], LOAD-holes-mod: 24.6 s at 16 links, refused, before; 0.05 s now), and
+    // so is a chain of remainders, `p{i}(x) = x mod 3 < 2 && p{i-1}(x: x + 1)`, whose faces keep
+    // the residues as rows over one quotient, read together (LOAD-mod-chain: 21.9 s at 200
+    // links, refused, before; 0.12 s now); one emptied only by two moduli together
+    // (`x mod 2 == 1 && x mod 3 == 1` between holes) is left to the solver on the faces, and
+    // decided whole where it refuses. Test
     // `l01_38_presburger::extend::a_chain_whose_points_move_is_decided_whole`, which measures
     // it, `l01_38_presburger::one_scope::the_questions_of_a_chain_of_tests_scale` for the
     // chain whose points serve, and
     // `one_scope::the_questions_of_a_chain_of_holes_beside_one_modulus_scale` for the chains
-    // the faces show empty. COMPLEXITY.md rows LOAD-chain-share and LOAD-holes-mod. A complete
+    // the faces show empty, and `one_scope::the_questions_of_a_chain_of_remainders_scale`.
+    // COMPLEXITY.md rows LOAD-chain-share, LOAD-holes-mod and LOAD-mod-chain. A complete
     // solution needs an incremental integer procedure: a simplex kept from the callee, with
     // its basis, to which the new rows are added, and the branch of an integer search redone
     // only where the new rows cut it.

@@ -15,7 +15,8 @@
 //! - a clause each of whose disjuncts bounds `a - m * q` for one atom `a`, one modulus `|m|`
 //!   and some quotient `q` (`x mod 4 == 1 || x mod 4 == 3`, as the faces write it) keeps `a`
 //!   in the residues modulo `|m|` of the intervals its disjuncts leave; a two-term row is such
-//!   a clause with one disjunct;
+//!   a clause with one disjunct, the rows over one pair of terms (their signs made
+//!   those of the first term positive) read together as that disjunct;
 //! - an equality `v == m * w + u + c` (a division, `u` its remainder; the signs of `u` and `v`
 //!   free) keeps `v` in the residues modulo `|m|` of the values the class of `u` has left when
 //!   they are bounded: `x mod 4 != 1` is `x == 4 * q + r`, `0 <= r <= 3`, `!(r == 1)`.
@@ -28,9 +29,9 @@
 //! x mod 3 == 1` between holes leaving `3..=4`) is left to the solver.
 //!
 //! Time: the conjuncts, near linear ([`unit_classes`]); each holes given merged into its
-//! class's, the smaller into the larger; each clause's ranges sorted; and the intervals
-//! between each class's holes walked once, and once for each division whose remainder the
-//! class holds.
+//! class's, the smaller into the larger; each clause's ranges and the two-term rows sorted;
+//! and the intervals between each class's holes walked once, and once for each division
+//! whose remainder the class holds.
 
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -455,10 +456,27 @@ pub(super) fn read(f: &Formula, holes: &[(&Atom, &Holes)]) -> Reading {
             kept.push(r);
         }
     }
+    // The two-term rows over one pair of terms, read together: `x <= 3 * q` and
+    // `x >= 3 * q - 1` each leave every residue, and together leave `x mod 3` in 2 and 0.
+    // The signs are those of the first term made positive, so `x - 3 * q >= 0` and
+    // `-x + 3 * q + 1 >= 0` fall together. Sorting them is O(r log r) in the rows.
+    let mut pairs = Vec::new();
     for c in &rows {
-        if c.lin.terms.len() == 2
-            && let Some(r) = residues(&[vec![*c]], &|_| true)
-        {
+        let mut terms = c.lin.terms.iter();
+        let (Some((a, ka)), Some((b, kb)), None) = (terms.next(), terms.next(), terms.next())
+        else {
+            continue;
+        };
+        let key = match ka.is_negative() {
+            true => (a, -ka, b, -kb),
+            false => (a, ka.clone(), b, kb.clone()),
+        };
+        pairs.push((key, *c));
+    }
+    pairs.sort_by(|x, y| x.0.cmp(&y.0));
+    for group in pairs.chunk_by(|x, y| x.0 == y.0) {
+        let d: Vec<&Con> = group.iter().map(|(_, c)| *c).collect();
+        if let Some(r) = residues(&[d], &|_| true) {
             kept.push(r);
         }
     }
@@ -878,5 +896,34 @@ mod tests {
         // Two moduli in one clause have none.
         let mixed = or(vec![window(6, 4, 1, 1), window(7, 6, 1, 1)]);
         assert_eq!(super::key(&mixed, &free), None);
+    }
+
+    #[test]
+    fn rows_over_one_pair_of_terms_are_read_together() {
+        // A link of a chain of remainders (LOAD-mod-chain) writes `x mod 3` in `-1..=0`
+        // through the quotient `a1` and in `0..=1` through `a2`, each window as two rows at the
+        // top, one of them with its signs reversed: together the residues 2, 0 and 0, 1 leave
+        // 0, which `x mod 3` in `1..=2` (a clause) excludes. Each row alone leaves every
+        // residue.
+        let mut fs = between(0, 100);
+        fs.push(con(&[(0, -1), (1, 3)], 0, Rel::Ge));
+        fs.push(con(&[(0, 1), (1, -3)], 1, Rel::Ge));
+        fs.push(window(2, 3, 0, 1));
+        fs.push(or(vec![window(3, 3, 1, 2)]));
+        assert!(is_empty(&and(fs.clone()), &[]));
+        // Without either row of `a1` a residue 0 is left; so it is with `x mod 3` in `0..=2`.
+        for i in [2, 3] {
+            let mut gs = fs.clone();
+            gs.remove(i);
+            assert!(within(&and(gs), &[]).is_empty());
+        }
+        let mut gs = fs.clone();
+        gs[5] = or(vec![window(3, 3, 0, 2)]);
+        assert!(within(&and(gs), &[]).is_empty());
+        // Rows over one pair of atoms with other coefficients are read apart: `x >= 3 * a1 - 1`
+        // and `x <= 6 * a1 + 1` are no window, and leave every residue.
+        let mut gs = fs.clone();
+        gs[2] = con(&[(0, -1), (1, 6)], 1, Rel::Ge);
+        assert!(within(&and(gs), &[]).is_empty());
     }
 }

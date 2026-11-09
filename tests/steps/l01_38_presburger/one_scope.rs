@@ -2211,3 +2211,154 @@ fn the_questions_of_a_chain_of_holes_beside_one_modulus_scale() {
         shared_remainder_chain,
     );
 }
+
+/// A chain of remainders with no callee but the link below (LOAD-mod-chain): `p0(x) = x > 0`,
+/// and `p{i}(x) = {test} && p{i-1}(x: x + shift) && x < 1000 i` for `i` in 1..n.
+fn remainder_chain(test: &str, shift: i64, n: usize) -> String {
+    let mut src = String::from("p0(x: int) = x > 0;\n");
+    for i in 1..n {
+        src.push_str(&format!(
+            "p{i}(x: int) = {test} && p{}(x: x + {shift}) && x < {};\n",
+            i - 1,
+            1000 * i
+        ));
+    }
+    src
+}
+
+/// The chain of the task: from link 3 on, no `x` has `x`, `x + 1` and `x + 2` below 2 by 3.
+fn mod3_chain(n: usize) -> String {
+    remainder_chain("(x mod 3) < 2", 1, n)
+}
+
+/// Below 4 by 5, moved by 1: no point from link 5 on.
+fn mod5_chain(n: usize) -> String {
+    remainder_chain("x mod 5 < 4", 1, n)
+}
+
+/// Not 3 by 7, moved by 2: `x + 2 k` meets every residue by 7, so no point from link 7 on.
+fn mod7_chain(n: usize) -> String {
+    remainder_chain("!(x mod 7 == 3)", 2, n)
+}
+
+/// Below 2 by 3, moved by 3, the modulus: every link keeps the residues 0 and 1.
+fn kept_residue_chain(n: usize) -> String {
+    remainder_chain("x mod 3 < 2", 3, n)
+}
+
+/// A random test of `x`'s remainder by `m`.
+fn random_remainder_test(rng: &mut zed_tests::instances::Rng, m: i64) -> String {
+    let r = rng.int(0, m - 1);
+    match rng.below(5) {
+        0 => format!("x mod {m} < {}", rng.int(1, m)),
+        1 => format!("x mod {m} != {r}"),
+        2 => format!("x mod {m} == {r}"),
+        3 => format!("!(x mod {m} > {r})"),
+        _ => format!("x mod {m} >= {r}"),
+    }
+}
+
+/// A random chain of remainders: `p0` an interval, and links that test `x`'s remainder by one
+/// modulus, and now and then by a second, move the argument by up to the modulus and 2 either
+/// way, and bound `x` above and below, so that each answer can be found point by point. Most
+/// links share one test and one move, as a chain whose links hold nowhere from some link on.
+fn random_remainder_chain(rng: &mut zed_tests::instances::Rng) -> String {
+    let m = rng.int(2, 7);
+    let lo = rng.int(-10, 10);
+    let mut src = format!(
+        "p0(x: int) = x > {} && x < {};\n",
+        lit(lo),
+        lit(lo + rng.int(-2, 60))
+    );
+    let (base, shift) = (random_remainder_test(rng, m), rng.int(-m - 2, m + 2));
+    for i in 1..rng.int(2, 13) {
+        let mut test = match rng.below(4) {
+            0 => random_remainder_test(rng, m),
+            _ => base.clone(),
+        };
+        let shift = match rng.below(4) {
+            0 => rng.int(-m - 2, m + 2),
+            _ => shift,
+        };
+        if rng.below(4) == 0 {
+            let other = rng.int(2, 7);
+            test = format!("{test} && {}", random_remainder_test(rng, other));
+        }
+        let lo = rng.int(-20, 10);
+        src.push_str(&format!(
+            "p{i}(x: int) = {test} && p{}(x: x + {}) && x > {} && x < {};\n",
+            i - 1,
+            lit(shift),
+            lit(lo),
+            lit(lo + rng.int(-2, 80)),
+        ));
+    }
+    src
+}
+
+#[test]
+fn each_answer_of_a_chain_of_remainders_is_the_answer_of_the_relation_whole() {
+    // LOAD-mod-chain: a link's face keeps the residues of the link below as rows over one
+    // quotient, each one-sided; read together they leave the residues, and the face of the
+    // first link with no point is read empty without the solver. Each answer is the one found
+    // without faces, refusals too, but where only the faces answer, and then the one found
+    // point by point; and the one `decide` gives the relation written whole wherever that is
+    // decided; in both orders of the bodies. The chains of the scaling test, bounded below so
+    // that the points can be counted, and random chains. Only the faces answer 12 questions of
+    // the chain by 3 moved by 1, 12 of the one not 2 by 3 moved by 4, and 14 of the random
+    // chains, which give 1156 answers of the whole (measured). Against the rows read one at a
+    // time, as before, on 364 random chains of these and of holes in both orders: 48 refusals
+    // became `false`, and no other answer changed (measured once).
+    let bounded = |test: &str, shift: i64| {
+        let mut src = String::from("p0(x: int) = x > 0 && x < 50;\n");
+        for i in 1..9 {
+            src.push_str(&format!(
+                "p{i}(x: int) = {test} && p{}(x: x + {}) && x > 0 && x < {};\n",
+                i - 1,
+                lit(shift),
+                40 + 5 * i
+            ));
+        }
+        src
+    };
+    for (test, shift) in [
+        ("(x mod 3) < 2", 1),
+        ("x mod 5 < 4", 1),
+        ("!(x mod 7 == 3)", 2),
+        ("x mod 3 < 2", 3),
+        ("x mod 3 != 2", 4),
+        ("x mod 4 >= 3", -4),
+    ] {
+        let src = bounded(test, shift);
+        let decided = answers_with_faces_are_those_without(&src);
+        assert!(decided > 0, "no answer of the whole in\n{src}");
+    }
+    let mut rng = zed_tests::instances::Rng::new(0x40d3c);
+    let mut decided = 0;
+    for _ in 0..40 {
+        decided += answers_with_faces_are_those_without(&random_remainder_chain(&mut rng));
+    }
+    assert!(decided >= 1000, "{decided} answers of the whole");
+    // The chains of the scaling test, unbounded below: the answers written over quotients
+    // and remainders are those reading the bodies again, and those of the whole where decided.
+    for chain in [mod3_chain, mod5_chain, mod7_chain, kept_residue_chain] {
+        answers_are_those_reading_bodies(&chain(10));
+    }
+}
+
+#[test]
+fn the_questions_of_a_chain_of_remainders_scale() {
+    // LOAD-mod-chain. The chain of the task holds nowhere from link 3 on; its face kept the
+    // residues of the link below as one-sided rows, read one at a time, so each link was
+    // decided whole and refused (Shadows), and asked again whole: 5.5 s at 100 links, 21.9 s
+    // at 200 (debug, measured once). Now the face of link 3 is read empty, and each later
+    // link holds nowhere from the link below: 0.063 s at 100 links, 0.23 s at 400.
+    questions_scale_unit("a chain of remainders by 3", 50, mod3_chain);
+    questions_scale_unit("a chain of remainders by 5", 50, mod5_chain);
+    questions_scale_unit("a chain of remainders by 7 moved by 2", 50, mod7_chain);
+    questions_scale_unit(
+        "a chain of remainders moved by the modulus",
+        50,
+        kept_residue_chain,
+    );
+}

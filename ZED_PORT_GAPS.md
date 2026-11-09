@@ -2917,3 +2917,9 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Union-find with path halving over a `Vec<usize>` | `refused::connected` | Mutation (gap 11) | the same structure in a mutable array, or a count of parts by a walk with a visited set |
 | `tuples.truncate(branching)` to drop the tuples of a cycle that is not refused, and the struct update `Refusal { component, tuples, ..r }` | `bes.rs` `refusal` | Mutation (gap 11) | a list built per cycle and appended only when the cycle is refused; a record with two fields replaced |
 | The records `Judgment`, `Why` and `Recheck` defined in `types.rs` (module `rec`), with `impl Why` split between `types/empty.rs` (`new`) and `types/empty/refused.rs` (`recheck`); `GroupSite` defined in `types.rs` beside `Refusal` | `rec::Env::judged`, `judge`, `Why::new`, `Why::recheck`, `Type::refusal_site` | File import cycles (gap 10) | the records in the unit of the group's instance, which keeps them; `new` a function of the decider's unit and `recheck` one of the message unit, each importing the records, so the units form no cycle (`s_01f_import_graph`) |
+
+## Entries from LOAD-mod-chain (`crates/zedc-presburger/src/presburger/extend/residues.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Vec` of `((&Atom, Int, &Atom, Int), &Con)` pairs, the terms of each two-term row with the first coefficient made positive, sorted by key and split into runs of equal keys by `slice::chunk_by` | `residues::read` | Mutation of a growable vector (gap 11); borrowed references in a tuple | A fold over the rows into a persistent ordered map from the key to the list of its rows, read in key order |
