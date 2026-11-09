@@ -33,6 +33,7 @@ use std::cmp::Ordering;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::mem;
 use std::ops::Deref;
 use std::slice;
@@ -739,6 +740,171 @@ impl PartialEq for Value {
 }
 
 impl Eq for Value {}
+
+/// Hashes the value's digest (`digest`): two values equal under `==` hash alike, so a value
+/// can key a hash map. For a boolean, number or string, `==` is `Value::scalar_cmp` giving
+/// `Equal`. Unlike the order, the hash of a value of many parts costs its size.
+impl Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(digest(self));
+    }
+}
+
+/// splitmix64's finalizer on each `u64` in turn, from no seed, so a value's digest is the same
+/// on every run; bytes go in eight at a time, and a small integer as one word. Also the hasher
+/// of maps keyed by values and other small keys (`zedc_types::ty::Holders`), where SipHash, the
+/// standard map's, cost about a quarter of filing a tuple again (TY-row-hash).
+#[derive(Default)]
+pub struct Digest(u64);
+
+impl Hasher for Digest {
+    fn write(&mut self, bytes: &[u8]) {
+        let (words, rest) = bytes.as_chunks::<8>();
+        for w in words {
+            self.write_u64(u64::from_le_bytes(*w));
+        }
+        if !rest.is_empty() {
+            let mut w = [0; 8];
+            w[..rest.len()].copy_from_slice(rest);
+            self.write_u64(u64::from_le_bytes(w));
+        }
+    }
+
+    // A small integer, such as an enum's discriminant, goes in as one word, not as bytes.
+    fn write_u8(&mut self, x: u8) {
+        self.write_u64(u64::from(x));
+    }
+
+    fn write_u16(&mut self, x: u16) {
+        self.write_u64(u64::from(x));
+    }
+
+    fn write_u32(&mut self, x: u32) {
+        self.write_u64(u64::from(x));
+    }
+
+    fn write_usize(&mut self, x: usize) {
+        self.write_u64(x as u64);
+    }
+
+    fn write_u64(&mut self, x: u64) {
+        let mut z = (self.0.rotate_left(29) ^ x).wrapping_add(0x9e37_79b9_7f4a_7c15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        self.0 = z ^ (z >> 31);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// `a` and `b` combined by [`Digest`].
+fn mix(a: u64, b: u64) -> u64 {
+    let mut d = Digest(a);
+    d.write_u64(b);
+    d.0
+}
+
+/// The digest of a value that holds no sequence: a boolean, number, string or family. Two such
+/// values equal under `==` are of one variant (an `int` of 64 bits never equals a wide one) and
+/// equal there: booleans and integers by value, a rational by its residues, the same whatever primes
+/// it keeps as powers ([`Rat::residues`]), a float by its bits, a string by its text however joined,
+/// and a family by its number of entries, which equal families share.
+fn leaf_digest(v: &Value) -> u64 {
+    let mut h = Digest::default();
+    match v {
+        Value::Bool(b) => h.write_u64(u64::from(*b)),
+        Value::Int(n) => (1, n).hash(&mut h),
+        Value::Big(r) => (2, r.residues()).hash(&mut h),
+        Value::Rat(r) => (3, r.residues()).hash(&mut h),
+        Value::Float(x) => (4, x.get().to_bits()).hash(&mut h),
+        Value::Str(s) => (5, s).hash(&mut h),
+        Value::Family(f) => (6, f.len()).hash(&mut h),
+        Value::Atom(_) | Value::Tuple(_) | Value::Path(_) => {
+            unreachable!("a value with a sequence")
+        }
+    }
+    h.finish()
+}
+
+/// The digest of all but the sequence of a tuple, keypath or atom, and the sequence; none for
+/// any other value. An atom's is its name and field names.
+fn with_sequence(v: &Value) -> Option<(u64, &Items)> {
+    let mut h = Digest::default();
+    let items = match v {
+        Value::Tuple(xs) => {
+            h.write_u64(7);
+            xs
+        }
+        Value::Path(xs) => {
+            h.write_u64(8);
+            xs
+        }
+        Value::Atom(a) => {
+            (9, &a.name, &*a.fields).hash(&mut h);
+            &a.args
+        }
+        _ => return None,
+    };
+    Some((h.finish(), items))
+}
+
+/// The digest of `v`, the same for values equal under `==` (each sequence is equal component by
+/// component, see `deep`), and the same on every run. A sequence held by more than one holder,
+/// which a walk can meet again, is read once and its digest kept by its [`Id`], so a value of
+/// shared parts costs its distinct parts, as comparing it does; the walk keeps its own stack.
+fn digest(v: &Value) -> u64 {
+    /// A sequence being read: the digest of its holder's other parts, of its components so far,
+    /// the components left, and its id when it is shared.
+    struct Frame<'v> {
+        head: u64,
+        acc: u64,
+        rest: slice::Iter<'v, Value>,
+        id: Option<Id>,
+    }
+    fn shared(xs: &Items) -> Option<Id> {
+        (xs.is_shared() && !xs.is_empty()).then(|| xs.id())
+    }
+    fn open(head: u64, xs: &Items) -> Frame<'_> {
+        Frame {
+            head,
+            acc: mix(10, xs.len() as u64),
+            rest: xs.iter(),
+            id: shared(xs),
+        }
+    }
+    let Some((head, xs)) = with_sequence(v) else {
+        return leaf_digest(v);
+    };
+    if xs.is_empty() {
+        return mix(head, mix(10, 0));
+    }
+    let mut seen: HashMap<Id, u64> = HashMap::new();
+    let mut stack = vec![open(head, xs)];
+    while let Some(top) = stack.last_mut() {
+        if let Some(x) = top.rest.next() {
+            match with_sequence(x) {
+                None => top.acc = mix(top.acc, leaf_digest(x)),
+                Some((head, xs)) => match shared(xs).and_then(|id| seen.get(&id)) {
+                    Some(&acc) => top.acc = mix(top.acc, mix(head, acc)),
+                    None => stack.push(open(head, xs)),
+                },
+            }
+            continue;
+        }
+        let done = stack.pop().expect("the frame just read");
+        if let Some(id) = done.id {
+            seen.insert(id, done.acc);
+        }
+        let d = mix(done.head, done.acc);
+        match stack.last_mut() {
+            Some(up) => up.acc = mix(up.acc, d),
+            None => return d,
+        }
+    }
+    unreachable!("the walk returns when it closes the outermost sequence")
+}
 
 impl From<i64> for Value {
     fn from(n: i64) -> Self {
@@ -2911,5 +3077,194 @@ mod tests {
                 table.clear();
             },
         );
+    }
+
+    /// splitmix64 from `seed`.
+    struct Draw(u64);
+
+    impl Draw {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    fn std_hash(keys: &std::hash::RandomState, v: &Value) -> u64 {
+        use std::hash::BuildHasher;
+        keys.hash_one(v)
+    }
+
+    /// A value from a small domain, so that two drawn values are often equal, and the same value
+    /// in another form: a `rat` with its powers of 2 and 5 kept or built, a wide integer read
+    /// from a decimal exponent or from its digits, a string joined from two parts, a sequence
+    /// shared or fresh, a struct payload with fields of another id, and NaN by other bits.
+    fn drawn(d: &mut Draw, depth: u32) -> (Value, Value) {
+        let pick = d.below(if depth == 0 { 7 } else { 10 });
+        match pick {
+            0 => {
+                let b = d.below(2) == 1;
+                (Value::Bool(b), Value::Bool(b))
+            }
+            1 => {
+                let n = d.below(5) as i64 - 2;
+                (Value::Int(n), Value::Int(n))
+            }
+            2 => {
+                // m * 10^k / den, written with an exponent and built in full.
+                let (m, k, den) = (d.below(7) as i64 - 3, d.below(3), 1 + d.below(3) as i64);
+                let full = Rat::new(BigInt::from(m * 10_i64.pow(k as u32)), BigInt::from(den))
+                    .expect("a denominator above 0");
+                let kept = Rat::decimal(&format!("{m}e{k}"))
+                    .expect("memory")
+                    .expect("a decimal")
+                    .div(&Rat::int(BigInt::from(den)))
+                    .expect("memory")
+                    .expect("a denominator above 0");
+                let (a, b) = (Value::rat(full), Value::rat(kept));
+                if d.below(2) == 0 { (a, b) } else { (b, a) }
+            }
+            3 => {
+                // 10^(19 + k), beyond 64 bits, from its digits and from an exponent.
+                let k = d.below(2) as usize;
+                let digits = format!("1{}", "0".repeat(19 + k));
+                let a = Value::int_text(&digits, 10)
+                    .expect("memory")
+                    .expect("digits");
+                let r = Rat::decimal(&format!("1e{}", 19 + k))
+                    .expect("memory")
+                    .expect("a decimal");
+                let b = Value::integer(r);
+                assert!(matches!((&a, &b), (Value::Big(_), Value::Big(_))));
+                (a, b)
+            }
+            4 => {
+                let bits = [0.0, -0.0, 1.5, f64::NAN, f64::INFINITY];
+                let x = bits[d.below(5) as usize];
+                let y = if x.is_nan() {
+                    f64::from_bits(x.to_bits() ^ 1)
+                } else {
+                    x
+                };
+                (Value::float(x), Value::float(y))
+            }
+            5 => {
+                let words = ["", "ab", "abc", "a"];
+                let (s, t) = (words[d.below(4) as usize], words[d.below(4) as usize]);
+                let whole = Value::str(&format!("{s}{t}"));
+                let joined = Text::join(&Text::from(s), &Text::from(t)).expect("short");
+                (whole, Value::Str(joined))
+            }
+            6 => {
+                // Long enough that a text spans several of the blocks its hash reads.
+                let n = 60 + d.below(10) as usize;
+                let cut = d.below(n as u64) as usize;
+                let s = "x".repeat(n);
+                let joined =
+                    Text::join(&Text::from(&s[..cut]), &Text::from(&s[cut..])).expect("short");
+                (Value::str(&s), Value::Str(joined))
+            }
+            7 | 8 => {
+                let len = d.below(3) as usize;
+                let (xs, ys): (Vec<Value>, Vec<Value>) =
+                    (0..len).map(|_| drawn(d, depth - 1)).unzip();
+                let (a, b) = if pick == 7 {
+                    (Value::tuple(xs), Value::tuple(ys))
+                } else {
+                    (Value::path(xs), Value::path(ys))
+                };
+                // A shared copy has the same id; a fresh one another.
+                if d.below(2) == 0 {
+                    (a.clone(), a)
+                } else {
+                    (a, b)
+                }
+            }
+            _ => {
+                let name = ["e", "f"][d.below(2) as usize];
+                let len = d.below(3) as usize;
+                let (xs, ys): (Vec<Value>, Vec<Value>) =
+                    (0..len).map(|_| drawn(d, depth - 1)).unzip();
+                if d.below(2) == 0 {
+                    (Value::atom_with(name, xs), Value::atom_with(name, ys))
+                } else {
+                    let named = |vs: Vec<Value>| {
+                        let fields = vs
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, v)| (Arc::from(["p", "q", "r"][i]), v));
+                        Value::atom_named(name, fields.rev().collect()).expect("distinct names")
+                    };
+                    (named(xs), named(ys))
+                }
+            }
+        }
+    }
+
+    /// Equal values hash alike, under `Hash` with the standard hasher's random keys and under
+    /// the digest: each drawn value against its other form, and against the value drawn before
+    /// it, which is often equal in this small domain. 20,000 cases; the counts show that both
+    /// kinds of pair were met, and that unequal values do not all share a hash.
+    #[test]
+    fn equal_values_hash_alike() {
+        let mut d = Draw(7);
+        let (mut same, mut by_chance, mut apart, mut collided) = (0, 0, 0, 0);
+        let mut forms_differ = 0;
+        let mut last: std::collections::VecDeque<Value> = Default::default();
+        let keys = std::hash::RandomState::new();
+        for _ in 0..20_000 {
+            let (a, b) = drawn(&mut d, 3);
+            assert_eq!(a, b, "two forms of one value");
+            assert_eq!(digest(&a), digest(&b), "{a} in two forms");
+            assert_eq!(std_hash(&keys, &a), std_hash(&keys, &b), "{a} in two forms");
+            same += 1;
+            if let (Value::Rat(x), Value::Rat(y)) = (&a, &b) {
+                forms_differ += usize::from(x.integer_factors().1 != y.integer_factors().1);
+            }
+            for c in &last {
+                if *c == a {
+                    assert_eq!(digest(&a), digest(c), "{a} drawn twice");
+                    by_chance += 1;
+                } else {
+                    apart += 1;
+                    collided += usize::from(digest(&a) == digest(c));
+                }
+            }
+            if last.len() == 8 {
+                last.pop_front();
+            }
+            last.push_back(a);
+        }
+        assert_eq!(same, 20_000);
+        eprintln!(
+            "{forms_differ} rats in two forms, {by_chance} equal and {apart} unequal pairs, {collided} collided"
+        );
+        assert!(forms_differ > 100, "{forms_differ} rats in two forms");
+        assert!(by_chance > 1000, "{by_chance} equal pairs drawn");
+        assert!(apart > 1000 && collided == 0, "{collided} of {apart}");
+    }
+
+    /// A tuple of `n` levels in which each level holds the one below twice: 2^n paths, n
+    /// distinct sequences. Its digest reads each shared sequence once and keeps its own stack,
+    /// so 200,000 levels finish, and the digest equals that of the same value built fresh with
+    /// nothing shared (checked at 12 levels, where reading every path is cheap).
+    #[test]
+    fn a_deep_shared_value_is_digested_once_per_sequence() {
+        let shared = |n: usize| (0..n).fold(Value::Int(0), |v, _| Value::tuple(vec![v.clone(), v]));
+        fn fresh(n: usize) -> Value {
+            match n {
+                0 => Value::Int(0),
+                _ => Value::tuple(vec![fresh(n - 1), fresh(n - 1)]),
+            }
+        }
+        assert_eq!(digest(&shared(12)), digest(&fresh(12)));
+        let deep = shared(200_000);
+        let _ = digest(&deep);
     }
 }

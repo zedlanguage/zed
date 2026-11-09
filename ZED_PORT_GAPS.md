@@ -63,7 +63,7 @@ Library words the audit found missing, with no plan row adding them (PORT-catalo
 | `BigInt::trailing_zeros`, `BigUint::trailing_zeros` | 2 | `trailingZeros` of an integer with no width (L1.39a requires `width:`) | none at linear cost: a loop of `div 2` costs O(bits²) on an unbounded integer |
 | `<Discriminant<T> as PartialEq>::eq` | 1 | a test that two values of a union are the same member | a `match` on both, one arm per member |
 | `Ord::cmp` of each type, `partial_cmp`, `total_cmp`, `Iterator::cmp` and the `Ordering` methods (`reverse`, `then`, `then_with`, `is_*`) | 32 | a three-way comparison and its value | `a < b`, `a == b` and `by: le` for sorting |
-| `Hash::hash` of each type, `Hasher::write*`, `BuildHasher::hash_one`, `DefaultHasher` | 13 | a hash word for any value (row STD-blake3 covers byte sequences only) | the value as its key in a family |
+| `Hash::hash` of each type, `Hasher::write*`, `BuildHasher::hash_one`, `DefaultHasher`, a `HashMap` with a `BuildHasher` of its own (`zedc_types::ty::FilingHash` building `zed_kernel::value::Digest`, TY-row-hash) | 16 | a hash word for any value (row STD-blake3 covers byte sequences only) | the value as its key in a family |
 | `iter::repeat`, `iter::repeat_n` | 2 | a sequence of one value repeated, unbounded or `n` times | `xs[i] else d` for padding |
 | `TryFrom` narrowing (24), `checked_*` (21) | 45 | a narrowing conversion and checked fixed-width arithmetic as a value-level failure | `if a < 2^w { … }` written out (author question) |
 
@@ -156,8 +156,9 @@ three ways, all confirmed:
   `decide_groups_read` (`types/empty.rs`) notes each group once in O(1) per member met. A port
   needs a group number issued when the group is built, as `Type::rec` issues ids.
 - **Hand-written equality and order.** 12 `Ord` and 12 `PartialEq` impls (`Type`, `Row`, `Rec`,
-  `Bdd`, `Part`, `Expr`, `Text`, `Rope`, `Shown`, `Rat`, `F64`, `Value`, `Premises`), and 2 of
-  `Hash`. Zed's `==` and natural order are structural and cannot be replaced by a program.
+  `Bdd`, `Part`, `Expr`, `Text`, `Rope`, `Shown`, `Rat`, `F64`, `Value`, `Premises`), and 14 of
+  `Hash` (counted 2026-11-09 for TY-row-hash, which added `Value`'s: it hashes alike the values
+  `Value::scalar_cmp` calls equal, a fraction by its residues whatever its written form). Zed's `==` and natural order are structural and cannot be replaced by a program.
   `Rec` compares by `id` (types.rs:152), and `Bdd` nodes by an interned number. Where two
   digests tie, the order reads the contents as deep as they go, so it cannot use the call
   stack: one loop with a stack of its own (`types/bdd.rs` `order`) orders types, rows,

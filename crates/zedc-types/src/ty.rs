@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::types::{Refusal, Type as KType, Verdict};
+use zed_kernel::value::Digest;
 use zed_kernel::{Items, Universe, Value};
 
 use zedc_syntax::lex::Span;
@@ -244,8 +245,8 @@ impl Row {
     /// time it is asked for, and kept: filing a row again, in another walk or against another
     /// type, reads them instead of working out each component's class from its set again,
     /// which cost about 17,000 instructions a tuple of two components (TY-row-class). Filing a
-    /// tuple of two components now costs about 9k to 12k instructions the first time and 2.7k
-    /// to 5.4k after, from 16 to 4,096 tuples.
+    /// tuple of two components now costs about 8.4k to 9.7k instructions the first time and 1.9k
+    /// to 2.9k after, the same from 16 to 4,096 tuples: the filings are hash maps (TY-row-hash).
     fn keys(&self) -> &Keys {
         self.0
             .keys
@@ -2582,7 +2583,7 @@ pub struct Arrow {
 }
 
 /// A scalar carrier.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Carrier {
     /// `bool`.
     Bool,
@@ -3103,7 +3104,7 @@ impl Holder<'_> {
 
 /// What a component of a shape of the expected side holds, for [`Choices`]: one value, the
 /// values of one carrier, atoms of one name, or tuples of one length, and nothing else.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum ShapeKey {
     /// One scalar literal, or one tuple of such values at any depth ([`Ty::point`]).
     Point(Value),
@@ -3499,8 +3500,8 @@ type RightGroup<'r> = (Cow<'r, [Kind]>, Keyed<'r>);
 
 /// The tuples of `rows`, each with the keys of its components, by length and [`Kind`] at each
 /// place, each list in written order.
-fn by_pattern(rows: &[Row]) -> HashMap<Pattern<'_>, Keyed<'_>> {
-    let mut out: HashMap<Pattern<'_>, Keyed<'_>> = HashMap::new();
+fn by_pattern(rows: &[Row]) -> FMap<Pattern<'_>, Keyed<'_>> {
+    let mut out: FMap<Pattern<'_>, Keyed<'_>> = FMap::default();
     for (i, r) in rows.iter().enumerate() {
         let Keys { comps, kinds, .. } = r.keys();
         let kinds = Cow::Borrowed(&kinds[..]);
@@ -3536,7 +3537,7 @@ fn near_pairs(left: &[Row], right: &[Row]) -> Vec<Vec<usize>> {
 /// each place, each with the keys of its components.
 struct Groups<'r> {
     /// The groups of `right`, by length.
-    right: HashMap<usize, Vec<RightGroup<'r>>>,
+    right: FMap<usize, Vec<RightGroup<'r>>>,
     /// The groups of `left`, each its length and kinds.
     left: Vec<Pattern<'r>>,
     /// For each tuple of `left`, its group and the keys of its components; none when `right` has
@@ -3547,7 +3548,7 @@ struct Groups<'r> {
 impl<'r> Groups<'r> {
     fn new(left: &'r [Row], right: &'r [Row]) -> Groups<'r> {
         let mut groups = Groups {
-            right: HashMap::new(),
+            right: FMap::default(),
             left: Vec::new(),
             of: vec![None; left.len()],
         };
@@ -3569,7 +3570,7 @@ impl<'r> Groups<'r> {
 
 /// The right tuples of the groups of one length, each group filed by the keys a group of the
 /// left side reads ([`Near`]).
-type Filing<'g> = Vec<BTreeMap<Vec<(&'g ShapeKey, Option<&'g Value>)>, Vec<usize>>>;
+type Filing<'g> = Vec<FMap<Vec<(&'g ShapeKey, Option<&'g Value>)>, Vec<usize>>>;
 
 /// For each tuple of a list `left`, the tuples of a list `right` of its length that may share
 /// a value with it ([`Groups`]). Two components share no value when both have a class
@@ -3586,8 +3587,8 @@ type Filing<'g> = Vec<BTreeMap<Vec<(&'g ShapeKey, Option<&'g Value>)>, Vec<usize
 /// pair it wants ([`Ty::meets`]) files only the groups read before it.
 ///
 /// Complexity tradeoff: each group of one side is filed or looked up once for each group of
-/// the other of its length. What is given up: the cost is O((l·G + r·H)·w·log r + l·G·log G)
-/// for `l` and `r` tuples of width `w` in `H` and `G` groups, and a reader pays for each pair it
+/// the other of its length. What is given up: the cost is expected O((l·G + r·H)·w + l·G·log G)
+/// (hash maps; the log G sorts the buckets found into one order) for `l` and `r` tuples of width `w` in `H` and `G` groups, and a reader pays for each pair it
 /// reads, up to `l·r`, so `n` tuples in about `n` groups on each side cost about `n^2`. Why: a
 /// tuple of points and wildcards encodes a vector of bits (1 as the point `1` on one side and
 /// `0` on the other, 0 as `int`), so that two such tuples share a value exactly when the vectors
@@ -3626,7 +3627,7 @@ impl<'g> Near<'g> {
             let right = groups.right.get(len).map_or(&[][..], Vec::as_slice);
             let filed = self.filed[*q].get_or_insert_with(|| {
                 let file = |(p, rows): &'g RightGroup<'g>| {
-                    let mut f: BTreeMap<_, Vec<usize>> = BTreeMap::new();
+                    let mut f: FMap<_, Vec<usize>> = FMap::default();
                     for (i, ks) in rows {
                         f.entry(project(ks, p, kinds)).or_default().push(*i);
                     }
@@ -3698,7 +3699,8 @@ fn value_class(x: &Value) -> Option<ShapeKey> {
 /// read once for each, where the walk of the pair compares them through the memo of pairs.
 ///
 /// Complexity tradeoff: each group is looked up once for each value. What is given up: the
-/// cost is O(l·w·log l) to file `l` tuples of width `w` and O(g·w·log l + p) per value
+/// cost is expected O(l·w + G·log G) to file `l` tuples of width `w` (hash maps; the groups are
+/// sorted into one order) and O(g·w + p) per value
 /// for the `g` groups looked up (at most `G`, the groups) and `p` tuples found before one
 /// holds the value, so `l` tuples in about `l` groups, against `r` values,
 /// cost about `l·r`. Why: a tuple of points and `int` encodes a vector of bits (1 as the point
@@ -3718,16 +3720,50 @@ struct Holders {
 }
 
 /// The tuples of one group of [`Holders`] under their key ([`HeldKey`]).
-type ByKey = BTreeMap<HeldKey, Vec<usize>>;
+type ByKey = FMap<HeldKey, Vec<usize>>;
+
+/// A hash map of the filings of tuples ([`Holders`], [`Groups`], [`Near`]), hashed by
+/// [`Digest`]: with no seed, so the same on every run, though no result depends on its order.
+/// Each filing puts what it finds in written order itself.
+type FMap<K, V> = HashMap<K, V, FilingHash>;
+
+/// The hasher of [`FMap`]: [`Digest`] from no seed, or in a test from `SEED` when it is set.
+#[derive(Clone, Copy, Default)]
+struct FilingHash;
+
+impl std::hash::BuildHasher for FilingHash {
+    type Hasher = Digest;
+
+    #[cfg(not(test))]
+    fn build_hasher(&self) -> Digest {
+        Digest::default()
+    }
+
+    #[cfg(test)]
+    fn build_hasher(&self) -> Digest {
+        let mut h = Digest::default();
+        if SEED.get() != 0 {
+            std::hash::Hasher::write_u64(&mut h, SEED.get());
+        }
+        h
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The seed of the hasher of the filings ([`FilingHash`]), for the test that their results do
+    /// not depend on it.
+    static SEED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 impl Holders {
     /// The tuples `rows` of `t`, by their indices, filed.
     fn new(t: &Ty, rows: &[usize]) -> Holders {
         // Each group's first tuple, by which the groups are put in order.
-        let mut groups: HashMap<Arc<[Kind]>, (usize, ByKey)> = HashMap::new();
+        let mut groups: FMap<Arc<[Kind]>, (usize, ByKey)> = FMap::default();
         for &i in rows {
             let (kinds, key) = &t.tuples[i].keys().held;
-            let (_, filed) = (groups.entry(kinds.clone())).or_insert_with(|| (i, BTreeMap::new()));
+            let (_, filed) = (groups.entry(kinds.clone())).or_insert_with(|| (i, FMap::default()));
             filed.entry(key.clone()).or_default().push(i);
         }
         let mut groups: Vec<_> = groups.into_iter().collect();
@@ -3747,6 +3783,12 @@ impl Holders {
         let classes: Vec<Option<ShapeKey>> = items.iter().map(value_class).collect();
         let mut key = Vec::with_capacity(items.len());
         self.groups.iter().flat_map(move |(kinds, filed)| {
+            // A group of one key, as each group is when every tuple is its own arrangement, is
+            // compared with the value place by place, stopping at the first that differs,
+            // instead of building and hashing the value's whole key: the same answer, since
+            // the lookup also compares the keys for equality.
+            let one = (filed.len() == 1).then(|| filed.iter().next()).flatten();
+            let mut places = one.map(|(held, _)| held.iter());
             key.clear();
             for ((k, x), kind) in classes.iter().zip(items.iter()).zip(kinds.iter()) {
                 if *kind == Kind::Open {
@@ -3755,13 +3797,24 @@ impl Holders {
                 let Some(k) = k else {
                     return [].iter().copied();
                 };
-                key.push((k.clone(), (*kind == Kind::Point).then(|| x.clone())));
+                // The group's tuples are one scalar value here ([`Keys::new`]), so a value's
+                // atom or tuple, which may be large, is in none of them and is not hashed.
+                if *kind == Kind::Point && !matches!(k, ShapeKey::Carrier(_)) {
+                    return [].iter().copied();
+                }
+                let point = (*kind == Kind::Point).then_some(x);
+                match places.as_mut().map(Iterator::next) {
+                    Some(Some((hk, hx))) if hk == k && hx.as_ref() == point => {}
+                    Some(_) => return [].iter().copied(),
+                    None => key.push((k.clone(), point.cloned())),
+                }
             }
-            filed
-                .get(&key[..])
-                .map_or(&[][..], Vec::as_slice)
-                .iter()
-                .copied()
+            match one {
+                Some((_, found)) => found.as_slice(),
+                None => filed.get(&key[..]).map_or(&[][..], Vec::as_slice),
+            }
+            .iter()
+            .copied()
         })
     }
 }
@@ -5717,25 +5770,30 @@ impl<'m> Pairs<'m, (*const Ty, *const Ty), Ty> {
 impl<'m> Pairs<'m, (*const Ty, *const Ty), bool> {
     /// [`Ty::meets`] of `a` and `b`, whose tuples decide it. Only the pairs of tuples that may
     /// share a value are compared ([`Near`]), found by key lookup, not every pair of one length.
-    /// When the pairs are few, every pair of one length is compared, with the same answer.
+    /// When each side has one tuple, that one pair is compared, with the same answer.
     async fn meets(&'m self, a: &'m Ty, b: &'m Ty) -> bool {
         // Complexity tradeoff: `l` and `r` tuples are compared pair by pair, with no keys, when
-        // `l·r ≤ l + r`: one side of one tuple, or two against two. What is given up: nothing
-        // in order, since those are at most `l + r` pairs. Why: filing costs about 22k
-        // instructions plus 26.5k for each tuple on a side (the classes of the components are
-        // read once per tuple and kept, `Row::keys`; the rest is maps), and a pair about 24k
-        // plus 15k for the walk, so the two cost the same near `l·r = 1.1·(l + r)`. Measured
-        // 2026-11-09 in instructions per walk on `(i, #xi)` against `(l + i, #xi)`, fresh types
-        // each walk, filed against by pairs: (1, 1) 75k against 39k; (1, 16) 477k against 394k;
-        // (2, 2) 128k against 109k; (2, 4) 181k against 208k; (3, 3) 179k against 230k;
-        // (8, 8) 441k against 1,558k; (32, 32) 1.70M against 25.06M. Every measured case takes
-        // the cheaper path. Both give the same answer, which `tuples_compared_by_meets_through_
-        // the_index_are_those_of_every_pair` checks; the crossover is measured again at the Zed
-        // port.
+        // `l·r ≤ 1`: one tuple on each side. What is given up: nothing in order, since that is
+        // one pair. Why: filing costs about 20k instructions plus 10k for each tuple on a side
+        // of two components and 16k of five (the classes of the components are read once per
+        // tuple and kept, `Row::keys`; the rest is hashing), and a pair about 24k, so filing is
+        // already cheaper at one tuple against two. Measured 2026-11-09 in instructions per
+        // walk, fresh types each walk, on unions of tuples of 2 to 5 components with one point
+        // each and the other components `int`, `String` or `(int, bool)`, in one pattern or
+        // four, filed against by pairs, no pair meeting: (1, 1) 41k against 46k, and 53k
+        // against 50k for five components; (1, 2) 50k against 70k; (2, 2) 58k against 118k;
+        // (1, 16) 190k against 407k; (8, 8) 170k against 1,550k; (32, 32) 613k against 24.57M.
+        // Over 72 such cases the bound 1 costs at worst 6.75 times the cheaper path (geometric
+        // mean 1.12), against 6.75 (1.23) for the old `l + r`, and over the 58 where no pair
+        // meets at worst 1.13 (1.006) against 2.14 (1.16). The worst case is a pair that meets
+        // found among the first, (32, 32) 886k against 131k: filing reads every tuple first,
+        // and no bound on `l` and `r` alone can tell which pairs meet. Both give the same
+        // answer, which `tuples_compared_by_meets_through_the_index_are_those_of_every_pair`
+        // checks; the crossover is measured again at the Zed port.
         // Tests: `tests/steps/l01_22_type_representation/kinds.rs`, `meets_of_many_tuples_
         // scales`; COMPLEXITY.md F132.
         let (l, r) = (a.tuples.len(), b.tuples.len());
-        let few = l.saturating_mul(r) <= l + r;
+        let few = l.saturating_mul(r) <= 1;
         let groups = (!few).then(|| Groups::new(&a.tuples, &b.tuples));
         let mut near = groups.as_ref().map(Near::new);
         for (l, r) in a.tuples.iter().enumerate() {
@@ -5806,23 +5864,28 @@ impl<'m> Pairs<'m, (*const Ty, *const Value), bool> {
     fn tried(&self, t: &Ty, items: &Items, filed: &RefCell<Filings>) -> Tried {
         // Complexity tradeoff: the `l` tuples of one length of a node are scanned for each of
         // its first `v` values and filed at the first `v` with `l·v > 16·(l + v)`: never for 16
-        // tuples or fewer, at about the 22nd value for 64 tuples and the 17th for 1,024. What
-        // is given up: nothing in order, since the scans before filing cost at most about
-        // `16·(l + v)` tuples, linear in the node and its values. Why: filing costs about 11k
-        // instructions a tuple of two components (the classes of the components, read once per
-        // tuple and kept, `Row::keys`, and the maps), where a scan costs about 400 a tuple for
-        // each value; so filing pays off only for many tuples read for many values. Measured
-        // 2026-11-09 in instructions per walk, max(4, 4096/l) walks of a union of `l` tuples
-        // `(i, int)` read for `v` values each, filed from the start against every tuple
-        // scanned: l = 64, v = 32 1.16M against 0.99M, v = 256 4.72M against 6.44M; l = 256,
-        // v = 32 3.25M against 3.31M, v = 256 6.88M against 15.72M; l = 1,024, v = 16 11.95M
-        // against 6.40M, v = 1,024 28.36M against 209.75M. Over 48 such cases the constant 16
-        // costs at worst 1.47 times the cheaper of the two (geometric mean 1.10), against 2.14
-        // (1.16) for the old 40 and 2.22 (1.14) for 8. The constant 16 is measured again at the
-        // Zed port. Both give the
-        // same answer, which `tuples_that_hold_a_value_through_the_index_are_those_of_every_tuple`
-        // checks. Tests: `tests/steps/l01_22_type_representation/kinds.rs`,
-        // `contains_of_many_tuples_scales`; COMPLEXITY.md F133.
+        // tuples or fewer, at the 22nd value for 64 tuples and the 17th for 1,024. What is
+        // given up: nothing in order, since the scans before filing cost at most about
+        // `16·(l + v)` tuples, linear in the node and its values. Why: filing costs about 8k
+        // instructions a tuple of two components and 14k of five (the classes of the
+        // components, read once per tuple and kept, `Row::keys`, and hashing), where a scan
+        // costs about 440 a tuple for each value; so filing pays off only for many tuples read
+        // for many values, from fewer than 16 to 64 values whatever `l`. Measured 2026-11-09 in
+        // instructions per walk, max(2, 256/l) walks of a union of `l` tuples of 2 to 5
+        // components (one point each, the others `int`, `String` or `(int, bool)`, in one
+        // pattern or four) read for `v` values each, held by tuples spread over the union,
+        // filed from the start against every tuple scanned: two components, one pattern,
+        // l = 1,024, v = 16 8.80M against 3.35M, v = 64 9.56M against 12.05M, v = 1,024 24.68M
+        // against 229.66M; five components, four patterns, l = 1,024, v = 16 14.59M against
+        // 16.30M, v = 32 15.02M against 26.64M. Over 240 such cases the constant 16 costs at
+        // worst 2.25 times the cheaper of the two (geometric mean 1.033), against 2.18 (1.035)
+        // for 32, 4.14 (1.064) for 8 and 3.17 (1.096) for 64; with the scans before filing
+        // counted, at worst 2.50 (1.080) against 2.36 (1.083) for 32 and 2.81 (1.101) for 24.
+        // The two families cross at different `v`, so no constant suits both better. The
+        // constant is measured again at the Zed port. Both give the same answer, which
+        // `tuples_that_hold_a_value_through_the_index_are_those_of_every_tuple` checks. Tests:
+        // `tests/steps/l01_22_type_representation/kinds.rs`, `contains_of_many_tuples_scales`;
+        // COMPLEXITY.md F133.
         let len = items.len();
         let mut filed = filed.borrow_mut();
         let entry = filed.entry((t, len));
@@ -9162,8 +9225,8 @@ mod tests {
     /// comparing every pair of tuples of one length decides (COMPLEXITY.md F132), on random
     /// unions of tuples of points, classes, unions, functions, variables and the unknown, and
     /// on the same unions with each tuple of the other side nested as a component of a pair, so
-    /// that the tuples' own tuples are compared too. Pairs of sides with more pairs than twice
-    /// their tuples go through [`Near`]; the count of those decided by tuples is checked.
+    /// that the tuples' own tuples are compared too. Pairs of sides of more than one pair go
+    /// through [`Near`]; the count of those decided by tuples is checked.
     #[test]
     fn tuples_compared_by_meets_through_the_index_are_those_of_every_pair() {
         let int = Ty::carrier(Carrier::Int);
@@ -9189,7 +9252,7 @@ mod tests {
                 // Those that tuples decide: neither side open, and nothing but tuples meets.
                 if a.meets_here(b).is_none() {
                     let (l, r) = (a.tuples.len(), b.tuples.len());
-                    filed += usize::from(l * r > l + r);
+                    filed += usize::from(l * r > 1);
                     match by_index {
                         true => meet += 1,
                         false => apart += 1,
@@ -9355,5 +9418,82 @@ mod tests {
         }
         println!("{carriers} of a carrier, {names} of one name, {none} of none");
         assert!(carriers > 1000 && names > 500 && none > 1000);
+    }
+
+    /// What the filings find ([`Near`], [`Holders`]) does not depend on the hash or on the order
+    /// the tuples are filed in: with another seed of their hasher ([`SEED`]) the tuples come out
+    /// the same and in the same order, and with the tuples of the filed side given in reverse
+    /// the same tuples come out, on random unions and tuple values as in the tests above.
+    #[test]
+    fn filings_find_the_same_tuples_whatever_the_hash_and_the_order() {
+        let int = Ty::carrier(Carrier::Int);
+        let fns = [
+            Arc::new(Sig::one(Vec::new(), Vec::new(), int.clone())),
+            Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::lit(&Value::Int(1)))),
+            Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::carrier(Carrier::Str))),
+        ];
+        // The tuples found for each tuple of `left` among `right`, under the seed `seed`.
+        let near = |left: &[Row], right: &[Row], seed: u64| {
+            SEED.set(seed);
+            let groups = Groups::new(left, right);
+            let mut near = Near::new(&groups);
+            let found: Vec<Vec<usize>> = (0..left.len()).map(|l| near.of(l).collect()).collect();
+            SEED.set(0);
+            found
+        };
+        // The tuples of `t` among `rows` found for the tuple value of `items`.
+        let holders = |t: &Ty, rows: &[usize], items: &Items, seed: u64| {
+            SEED.set(seed);
+            let found: Vec<usize> = Holders::new(t, rows).of(items).collect();
+            SEED.set(0);
+            found
+        };
+        let sorted = |mut is: Vec<usize>| {
+            is.sort_unstable();
+            is
+        };
+        let mut rng = Rng(135);
+        let (mut found, mut several) = (0, 0);
+        for i in 0..5_000 {
+            let s = near_union(&mut rng, i % 3 == 0, &fns);
+            let t = near_union(&mut rng, i % 2 == 0, &fns);
+            let want = near(&s.tuples, &t.tuples, 0);
+            assert_eq!(near(&s.tuples, &t.tuples, 1 + i), want, "({s}) near ({t})");
+            let back: Vec<Row> = t.tuples.iter().rev().cloned().collect();
+            let last = t.tuples.len().saturating_sub(1);
+            for (got, want) in near(&s.tuples, &back, 7 + i).into_iter().zip(&want) {
+                let got = sorted(got.into_iter().map(|j| last - j).collect());
+                assert_eq!(&got, &sorted(want.clone()), "({s}) near ({t}) in reverse");
+            }
+            found += want.iter().filter(|w| !w.is_empty()).count();
+            several += want.iter().filter(|w| w.len() > 1).count();
+
+            let width = match t.tuples.is_empty() {
+                true => 1 + rng.below(3) as usize,
+                false => t.tuples[rng.below(t.tuples.len() as u64) as usize].len(),
+            };
+            let v = Value::tuple((0..width).map(|_| near_value(&mut rng, 0)).collect());
+            let Value::Tuple(items) = &v else {
+                unreachable!("a tuple value")
+            };
+            let rows: Vec<usize> = (0..t.tuples.len())
+                .filter(|&j| t.tuples[j].len() == width)
+                .collect();
+            let want = holders(&t, &rows, items, 0);
+            assert_eq!(holders(&t, &rows, items, 1 + i), want, "{t} holds {v:?}");
+            let back: Vec<usize> = rows.iter().rev().copied().collect();
+            assert_eq!(
+                sorted(holders(&t, &back, items, 7 + i)),
+                sorted(want.clone()),
+                "{t} holds {v:?} in reverse"
+            );
+            found += usize::from(!want.is_empty());
+            several += usize::from(want.len() > 1);
+        }
+        println!("{found} lookups found a tuple, {several} more than one");
+        assert!(
+            found > 5000 && several > 1000,
+            "{found} found, {several} several"
+        );
     }
 }
