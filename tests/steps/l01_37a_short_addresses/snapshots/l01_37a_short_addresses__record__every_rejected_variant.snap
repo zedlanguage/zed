@@ -14,6 +14,77 @@ constructor-called-by-position
 ]
   checks: [Outcome { line: 6, col: 5, failure: Some("the mark names the row \"Positional constructor call or pattern\", and the diagnostic is in no row of the rejection table: `Point` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Point`, or correct the name if it is misspelled.") }]
 
+decimal-literal-at-int
+  rejected: [
+    Diagnostic {
+        line: 4,
+        col: 11,
+        message: "`2.0` is an f64 where `int` is expected; a literal takes no other carrier",
+        steps: [
+            Step {
+                line: 4,
+                col: 7,
+                text: "`x` is 3 here",
+                source: "bad = x * 2.0;             // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0",
+                width: 1,
+            },
+            Step {
+                line: 3,
+                col: 7,
+                text: "`x` is defined as this expression, 3",
+                source: "x   = 3;",
+                width: 1,
+            },
+            Step {
+                line: 3,
+                col: 7,
+                text: "this expression is 3",
+                source: "x   = 3;",
+                width: 1,
+            },
+            Step {
+                line: 4,
+                col: 11,
+                text: "this literal, 2.0, is 2.0",
+                source: "bad = x * 2.0;             // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0",
+                width: 3,
+            },
+            Step {
+                line: 4,
+                col: 7,
+                text: "`*` takes (int, int) -> int",
+                source: "bad = x * 2.0;             // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0",
+                width: 7,
+            },
+            Step {
+                line: 4,
+                col: 7,
+                text: "`*` takes (f64, f64) -> f64",
+                source: "bad = x * 2.0;             // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0",
+                width: 7,
+            },
+            Step {
+                line: 4,
+                col: 7,
+                text: "`*` takes (rat, rat) -> rat",
+                source: "bad = x * 2.0;             // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0",
+                width: 7,
+            },
+            Step {
+                line: 4,
+                col: 7,
+                text: "repair: write `f64(x)`; the checker accepts that",
+                source: "bad = x * 2.0;             // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0",
+                width: 1,
+            },
+        ],
+        row: Some(
+            NoCommonCarrier,
+        ),
+    },
+]
+  checks: [Outcome { line: 4, col: 11, failure: Some("the mark names the row \"Numeric literal at a carrier that cannot take it\", and the diagnostic is in the row \"Two numeric values with no common carrier\": `2.0` is an f64 where `int` is expected; a literal takes no other carrier") }]
+
 dot-never-mutates
   rejected: [
     Diagnostic {
@@ -82,12 +153,6 @@ payload-built-by-position
     },
 ]
   checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 41, failure: Some("the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 21, failure: Some("a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
-
-plain-decimal-other-format
-  warnings: []
-  `h`: Ok(Float(3.5))
-  `bad`: Ok(Float(7.0))
-  checks: [Outcome { line: 4, col: 1, failure: Some("the line is marked ✗ and the unit is accepted") }]
 
 taint-reaches-clean-sink
   rejected: [

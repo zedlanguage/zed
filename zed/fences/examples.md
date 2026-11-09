@@ -68,17 +68,17 @@ f(x) {
 x   = 3;
 q   = 7 div 2;             // 3      integers divide with div and mod (Euclidean)
 r   = -7 mod 2;            // 1      (-7) mod 2 — unary minus binds tighter than mod; the remainder is never negative
-h   = f64(7) / 2n;         // 3.5    a cast is the type applied to the value
+h   = f64(7) / 2;          // 3.5    a cast is the type applied to the value
 t   = 1r / 3r;             // exact: rat
 big = 2 ^ 100;            // int has no width; ^ binds tighter than * and than unary minus, and associates to the right
-m   = 1_000_000;  hex = 0xFF;  bits = 0b1011;  sci = 1.5e-3;
-half = 0.5;                // f16: never .5 — a float literal starts with a digit, and is the first of f16, f32, f64 that holds it to within half a unit of its last digit; a suffix, as in 0.5f64, names the format
-dbl = h * 2n;              // 7.0    h is an f64, and 2n takes the format of the other operand
-// bad = h * 2.0;          // ✗ Plain decimal literal whose own format is not the format expected: 2.0 is an f16 and h an f64; no operator converts
+m   = 1_000_000;  hex = 0xFF;  bits = 0b1011;  sci: f64 = 1.5e-3;
+half: f64 = 0.5;           // never .5: a float literal starts with a digit; a decimal literal takes the format its use fixes, here the declared f64, and one that nothing fixes is an error; a suffix, as in 0.5f64, forces the format
+dbl = h * 2;               // 7.0    h is an f64, and the literal 2 takes the carrier of the other operand
+// bad = x * 2.0;          // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0
 y   = x ^ 2 + 2*x + 1;
 b: u8 = 255;               // u8 = int[0..=255]; 256 here is a type error, not a wrap
 w: i32 = shl(1, 30);       // no bitwise operators: bitAnd, bitOr, shl are ordinary functions
-z   = 7 / 2;               // ✗ Operator with no arrow at its operands' carrier: `/` is for the float formats and rat only
+z   = 7 / 2;               // ✗ Decimal literal, or `/` of integer literals, that nothing gives a carrier: `/` is for the float formats and rat only, so 7 and 2 stay without one; write f64(7) / 2 or declare z: f64
 ```
 
 <!-- EXAMPLES.md:110 layer L10: ring L10, word none, label none, documentation notation; section [3. Numbers] 2 -->
@@ -381,8 +381,8 @@ missingPayment = orders.diff(payments, on: #orderId);                      // th
 ```zed
 // [d4] sec:tour_basics
 struct Point { x: f64, y: f64 }
-p  = Point(x: 1n, y: 2n);
-p2 = p with { x = 3n };                // an update is a new value
+p  = Point(x: 1, y: 2);
+p2 = p with { x = 3 };                 // an update is a new value
 px = p.x;                               // p.x ≡ p[#x]
 dist(positional a: Point, positional b: Point) = ((a.x - b.x) ^ 2 + (a.y - b.y) ^ 2).sqrt;
 struct Circle { c: Point, r: f64 }
@@ -405,7 +405,7 @@ s2 = s with { hi = s.hi + 1 };           // still a Span: hi + 1 >= lo
 x = f64(3);
 y = f64(4);
 q = Point(x:, y:);                 // Point(x: x, y: y)
-// q = Point(3n, 4n);              // ✗ Positional constructor call or pattern: a constructor is called by name, Point(x: 3n, y: 4n)
+// q = Point(3, 4);                // ✗ Positional constructor call or pattern: a constructor is called by name, Point(x: 3, y: 4)
 ```
 
 <!-- EXAMPLES.md:443 layer L6: ring L6, word none, label none; section [10. Structs and updates] 4 -->
@@ -414,11 +414,11 @@ q = Point(x:, y:);                 // Point(x: x, y: y)
 Point.norm     = (x*x + y*y).sqrt;                  // pure: no primes
 Point.scale(k) = Point(x: x * k, y: y * k);          // pure: returns a new Point
 Point.move(positional dx, positional dy) { x' = x + dx; y' = y + dy; }  // (Point, f64, f64) -> Point
-p3 = p.move(1n, 0n);                                 // the moved point; p is unchanged
+p3 = p.move(1, 0);                                   // the moved point; p is unchanged
 walk = loop {
-  mutable pt = Point(x: 0n, y: 0n);
-  pt*.move(1n, 1n);                                  // pt' = pt.move(1n, 1n)
-  until pt.x > 5n;
+  mutable pt = Point(x: 0, y: 0);
+  pt*.move(1, 1);                                    // pt' = pt.move(1, 1)
+  until pt.x > 5;
 };
 ```
 
@@ -432,8 +432,8 @@ origin = { #x -> f64(0), #y -> f64(0) };   // has the fields of Point, so it is 
 ```zed
 // [d4] sec:lexical, sec:type_language — the record display and a nested update path
 origin2 = { x: f64(0), y: f64(0) };     // name: v is #name -> v — the same display as origin, spelled with field names
-k  = Circle(c: p, r: 1n);               // p : Point, from the first block of this section
-k2 = k with { c.x = 0n };               // one level in: k with { c = k.c with { x = 0n } }
+k  = Circle(c: p, r: 1);                // p : Point, from the first block of this section
+k2 = k with { c.x = 0 };                // one level in: k with { c = k.c with { x = 0 } }
 ```
 
 <!-- EXAMPLES.md:468 layer L2: ring L2, word L1 (Utf8String), label none; section [10. Structs and updates] 7 -->
@@ -551,7 +551,7 @@ a3 = withdraw(a, 10r) else #insufficient(short: _) -> a with { frozen = true }; 
 sim = loop {
   pos' = pos + vel * dt   with pos = p0;
   vel' = vel + acc * dt   with vel = v0;
-  until pos.y < 0n;
+  until pos.y < 0;
 };
 final   = sim.pos;                        // the last generation's value
 history = sim::frames;                    // int[0..<sim::len] -> Frame, kept only because it is demanded
@@ -726,7 +726,7 @@ g2 = greet(Cat(name: "Tom"));
 // [d4] sec:values_morphisms — a required name may be a field or a function in scope
 interface HasArea { area: f64 }
 describe(positional s: HasArea) = "area ${s.area}";
-d = describe(Circle(c: origin, r: 1n));  // area(s: Shape) is in scope, and s.area ≡ area(s:)
+d = describe(Circle(c: origin, r: 1));   // area(s: Shape) is in scope, and s.area ≡ area(s:)
 ```
 
 <!-- EXAMPLES.md:761 layer L2: ring L2, word none, label none; section [16. Generics and interfaces] 4 -->
@@ -758,7 +758,7 @@ dist(positional a: Point, positional b: Point) = (sq(a.x - b.x) + sq(a.y - b.y))
 import geometry.shapes.{Point, dist};    // unqualified; the alternatives are `import geometry.shapes;` (shapes.dist)
                                          //   and `import geometry.shapes as g;` (g.dist)
                                          //   a pinned form adds @hash("…"): the build writes the pin, and the file is then checked, not re-resolved
-far = dist(Point(x: 0n, y: 0n), Point(x: 3n, y: 4n));
+far = dist(Point(x: 0, y: 0), Point(x: 3, y: 4));
 ```
 
 <!-- EXAMPLES.md:797 layer L3: ring L1, word L3 (map), label none; section [18. Files, stores, and the world] 1 -->

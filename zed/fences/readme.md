@@ -146,11 +146,11 @@ hi = greet("Ann", ...);          // a function still waiting for punct
 ```zed
 big = 2 ^ 100;              // 2 to the power 100, the exact integer, with no overflow
 third = 1r / 3r;             // an exact rational
-half = 1.0 / 2.0;            // f16: 1.0 and 2.0 are f16
+half = f64(1) / 2.0;         // 2.0 takes the format of f64(1); 1.0 / 2.0 alone would be rejected, since nothing gives it a format
 q = 7 div 2;                 // 3
-ratio = f64(q) / 2n;         // conversions are written out; 2n takes the format of f64(q)
-twice(x: f64) = x * 2n;      // x * 2.0 would be rejected: 2.0 is an f16
-// bad = q + 1.5;            // ✗ Two numeric values with no common carrier: int + f16
+ratio = f64(q) / 2.0;        // conversions are written out; 2.0 takes the format of f64(q)
+twice(x: f64) = x * 2.0;     // 2.0 takes the format of x, and x * 2 would work too
+// bad = q + 1.5;            // ✗ Numeric literal at a carrier that cannot take it: q is an int, and 1.5 is never an int
 ```
 
 <!-- README.md:804 layer L3: ring L3, word none, label none; section [Strings] 1 -->
@@ -164,10 +164,10 @@ z = name::codepoints[0];             // the first code point, a char32
 <!-- README.md:826 layer L2: ring L2, word none, label none; section [Structs] 1 -->
 ```zed
 struct Point { x: f64, y: f64 }
-struct Circle { center: Point, radius: f64 = 1n }
+struct Circle { center: Point, radius: f64 = 1 }
 
-p = Point(x: 1n, y: 2n);
-moved = p with { x = 3n };
+p = Point(x: 1, y: 2);
+moved = p with { x = 3 };
 unit = Circle(center: p);
 
 Point.norm = (x * x + y * y).sqrt;
@@ -208,7 +208,7 @@ hello(positional n: Named) = "Hi, ${n.name}";
 ```zed
 import geometry.shapes.{Point, dist};
 
-far = dist(Point(x: 0n, y: 0n), Point(x: 3n, y: 4n));
+far = dist(Point(x: 0, y: 0), Point(x: 3, y: 4));
 ```
 
 <!-- README.md:945 layer L7: ring L7, word L1 (Utf8String), label none; section [`else` and `?.`] 1 -->
@@ -329,8 +329,8 @@ sessions = clicks.chunkBy(c -> c.userId).map(s -> Session(start: s.first.time, c
 ```zed
 scale(positional s: T, positional v: [T; n]) = s * v;     // result: [T; n]
 
-a: [f64; 2, 3] = [[1n, 2n, 3n], [4n, 5n, 6n]];
-b: [f64; 3, 2] = [[1n, 0n], [0n, 1n], [1n, 1n]];
+a: [f64; 2, 3] = [[1, 2, 3], [4, 5, 6]];
+b: [f64; 3, 2] = [[1, 0], [0, 1], [1, 1]];
 c = a.matmul(b);                                          // [f64; 2, 2]
 // d = a.matmul(a);                                       // ✗ Levels of one name with different domains: 3 columns, 2 rows
 ```
@@ -397,7 +397,7 @@ stats(positional data: [f64]) {
   return { mean:, sd: };      // short for { mean: mean, sd: sd }
 }
 
-m = stats([1n, 2n, 3n]).mean;         // sd is never computed
+m = stats([1, 2, 3]).mean;         // sd is never computed
 
 firstPrime = (for i in 2.. { i }).where(isPrime).first;
 ```
@@ -473,7 +473,7 @@ sumSquares(positional xs: [f64]) = xs.map(x -> x * x) >< (+);
 ranked(positional xs: [int]) = xs.sort(desc x -> x);
 
 @noalloc
-lerp(positional a: f64, positional b: f64, positional t: f64) = a * (1n - t) + b * t;
+lerp(positional a: f64, positional b: f64, positional t: f64) = a * (1 - t) + b * t;
 ```
 
 <!-- README.md:2203 layer L20: ring L10, word L20 (Json), label none; section [Partial evaluation] 1 -->
@@ -499,7 +499,7 @@ names = User::fields;       // the fields of the User struct above, by name and 
 ```zed
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }
 
-v = Vec3.parse("(1.0, 2.0, 3.0)") else Vec3(x: 0n, y: 0n, z: 0n);
+v = Vec3.parse("(1.0, 2.0, 3.0)") else Vec3(x: 0, y: 0, z: 0);
 s = v.serialize;       // "(1.0,2.0,3.0)"
 ```
 
@@ -574,8 +574,8 @@ law neverBothGreen(ns: Signal, ew: Signal) =
 ```zed
 @foreign("m", "cbrt") @stateless cbrt: (positional x: f64) -> f64;
 
-root = cbrt(8n) else f64(0);
+root = cbrt(8) else f64(0);
 
 @export("c", "zed_score")
-score(positional a: f64, positional b: f64) = (7n * a + 3n * b) / 10n;
+score(positional a: f64, positional b: f64) = (7 * a + 3 * b) / 10;
 ```

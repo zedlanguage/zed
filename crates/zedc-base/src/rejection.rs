@@ -64,9 +64,11 @@ rows! {
     EmissionDisjointness => "Emission-disjointness",
     Rebinding => "Rebinding in the same scope",
     BinderNamingType => "Binder naming a type",
-    // No diagnostic uses this row yet: step L1.26b (plan row L1.26b) moves the rejection of a
-    // plain decimal at another format here from `NoCommonCarrier`.
-    LiteralFormat => "Plain decimal literal whose own format is not the format expected",
+    // No diagnostic uses these two rows yet: plan row LIT-bare moves here the rejection of a
+    // numeric literal at a carrier it cannot take (as `x * 2.0` with `x: int`) and of a decimal
+    // literal, or a `/` of integer literals, that nothing gives a carrier (as `z = 7 / 2`).
+    LiteralCarrier => "Numeric literal at a carrier that cannot take it",
+    UnfixedDecimal => "Decimal literal, or `/` of integer literals, that nothing gives a carrier",
     NoCommonCarrier => "Two numeric values with no common carrier",
     UnusedMatchBinder => "Match binder unused in its guard and arm",
     CapitalizedFreeName => "Capitalized free name used once in a signature and nowhere in the body",

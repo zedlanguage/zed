@@ -139,7 +139,7 @@ Expr ::: 1..5 ::: ERROR
 Expr ::: a.. ::: (a ..)
 Expr ::: 3r + 0.1r + 1e10 + 0x_ff ::: ERROR
 Expr ::: 3r + 0.1r + 1e10 + 0xff + 1_000 ::: ((((3r + 0.1r) + 1e10) + 0xff) + 1_000)
-Expr ::: x + 1n - 0xFFn * 1_000n ::: ((x + 1n) - (0xFFn * 1_000n))
+Expr ::: x + 1 - 0xFF * 1_000 ::: ((x + 1) - (0xFF * 1_000))
 Expr ::: 1f64 ::: ERROR
 Expr ::: 0.1f8 ::: ERROR
 Expr ::: 0.1f64r ::: ERROR
@@ -494,7 +494,7 @@ Expr ::: text::u8[i] ::: ((text (:: u8)) ([ i ]))
 Expr ::: text::nfc::codepoints[i] ::: (((text (:: nfc)) (:: codepoints)) ([ i ]))
 Expr ::: text::chars::len ::: ((text (:: chars)) (:: len))
 Item ::: @fpwarn f(x) = x; ::: (@fpwarn (f ( x ) (= x ;)))
-Expr ::: if c { 2n } else { 1n } ::: (if c ({ 2n }) else ({ 1n }))
+Expr ::: if c { 2 } else { 1 } ::: (if c ({ 2 }) else ({ 1 }))
 Expr ::: char32("#") ::: (char32 (( "#" )))
 Expr ::: (1) ::: (( 1 ))
 Expr ::: ((1,),) ::: (( (( 1 , )) , ))

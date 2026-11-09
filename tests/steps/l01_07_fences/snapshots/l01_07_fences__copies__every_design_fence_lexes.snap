@@ -225,17 +225,17 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  16 | ann = greet ( str["Ann"] , punct : str["?"] ) ;
  17 | hiAnn = greet ( str["Ann"] , ... ) ;
  20 | «struct» Point { x : f64 , y : f64 }
- 21 | «struct» Circle { c : Point , r : f64 = 1₍10₎n }
+ 21 | «struct» Circle { c : Point , r : f64 = 1₍10₎ }
  22 | «struct» Rect { lo : Point , hi : Point }
  23 | «type» Shape = Circle | Rect ;
  25 | area ( s : Shape ) = «match» s {
  26 | Circle ( r : ) -> pi * r * r ,
  27 | Rect ( lo : , hi : ) -> ( hi . x - lo . x ) * ( hi . y - lo . y ) ,
  28 | } ;
- 30 | p = Point ( x : 1₍10₎n , y : 2₍10₎n ) ;
- 31 | p2 = p «with» { x = 3₍10₎n } ;
+ 30 | p = Point ( x : 1₍10₎ , y : 2₍10₎ ) ;
+ 31 | p2 = p «with» { x = 3₍10₎ } ;
  32 | unit = Circle ( c : p ) ;
- 33 | onAxis = Point ( x : 0₍10₎n , ... ) ;
+ 33 | onAxis = Point ( x : 0₍10₎ , ... ) ;
  35 | «struct» Round { «import» Rect , r : f64 }
 == DESIGN.md [sec:tour_methods] 1 L10
   1 | «struct» Counter { n : int , hi : int }
@@ -367,9 +367,9 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  36 | past = run :: frames [ run :: len - 2₍10₎ ] . doc «else» empty ;
  39 | @memoized report = sales . join ( costs , on : #sku ) . group ( ( ( s , c ) ) -> s . region ) . map ( rows -> rows . map ( ( ( s , c ) ) -> margin ( s , c ) ) . sum ) ;
  44 | rows = exec ( db , str["SELECT * WHERE name = "] ++ sanitize ( userName ) ) ;
- 47 | energy = m * v * v / 2₍10₎n ;
+ 47 | energy = m * v * v / 2₍10₎ ;
  51 | «struct» Vec3 «grammar» { str["("] x : f64 str[","] y : f64 str[","] z : f64 str[")"] }
- 52 | v = Vec3 . parse ( str["(1.0, 2.0, 3.0)"] ) «else» Vec3 ( x : 0₍10₎n , y : 0₍10₎n , z : 0₍10₎n ) ;
+ 52 | v = Vec3 . parse ( str["(1.0, 2.0, 3.0)"] ) «else» Vec3 ( x : 0₍10₎ , y : 0₍10₎ , z : 0₍10₎ ) ;
  53 | s = v . serialize ;
  56 | stats ( «positional» data : [ f64 ] ) {
  57 | n = f64 ( data :: len ) ;

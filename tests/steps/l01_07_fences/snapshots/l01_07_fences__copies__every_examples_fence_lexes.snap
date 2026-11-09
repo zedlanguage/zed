@@ -44,12 +44,12 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | x = 3₍10₎ ;
   3 | q = 7₍10₎ «div» 2₍10₎ ;
   4 | r = - 7₍10₎ «mod» 2₍10₎ ;
-  5 | h = f64 ( 7₍10₎ ) / 2₍10₎n ;
+  5 | h = f64 ( 7₍10₎ ) / 2₍10₎ ;
   6 | t = 1r / 3r ;
   7 | big = 2₍10₎ ^ 100₍10₎ ;
-  8 | m = 1000000₍10₎ ; hex = FF₍16₎ ; bits = 1011₍2₎ ; sci = 1.5e-3f ;
-  9 | half = 0.5f ;
- 10 | dbl = h * 2₍10₎n ;
+  8 | m = 1000000₍10₎ ; hex = FF₍16₎ ; bits = 1011₍2₎ ; sci : f64 = 1.5e-3f ;
+  9 | half : f64 = 0.5f ;
+ 10 | dbl = h * 2₍10₎ ;
  12 | y = x ^ 2₍10₎ + 2₍10₎ * x + 1₍10₎ ;
  13 | b : u8 = 255₍10₎ ;
  14 | w : i32 = shl ( 1₍10₎ , 30₍10₎ ) ;
@@ -237,8 +237,8 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   5 | missingPayment = orders . diff ( payments , on : #orderId ) ;
 == EXAMPLES.md [10. Structs and updates] 1 L2
   2 | «struct» Point { x : f64 , y : f64 }
-  3 | p = Point ( x : 1₍10₎n , y : 2₍10₎n ) ;
-  4 | p2 = p «with» { x = 3₍10₎n } ;
+  3 | p = Point ( x : 1₍10₎ , y : 2₍10₎ ) ;
+  4 | p2 = p «with» { x = 3₍10₎ } ;
   5 | px = p . x ;
   6 | dist ( «positional» a : Point , «positional» b : Point ) = ( ( a . x - b . x ) ^ 2₍10₎ + ( a . y - b . y ) ^ 2₍10₎ ) . sqrt ;
   7 | «struct» Circle { c : Point , r : f64 }
@@ -256,18 +256,18 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | Point . norm = ( x * x + y * y ) . sqrt ;
   3 | Point . scale ( k ) = Point ( x : x * k , y : y * k ) ;
   4 | Point . move ( «positional» dx , «positional» dy ) { x' = x + dx ; y' = y + dy ; }
-  5 | p3 = p . move ( 1₍10₎n , 0₍10₎n ) ;
+  5 | p3 = p . move ( 1₍10₎ , 0₍10₎ ) ;
   6 | walk = «loop» {
-  7 | «mutable» pt = Point ( x : 0₍10₎n , y : 0₍10₎n ) ;
-  8 | pt *. move ( 1₍10₎n , 1₍10₎n ) ;
-  9 | «until» pt . x > 5₍10₎n ;
+  7 | «mutable» pt = Point ( x : 0₍10₎ , y : 0₍10₎ ) ;
+  8 | pt *. move ( 1₍10₎ , 1₍10₎ ) ;
+  9 | «until» pt . x > 5₍10₎ ;
  10 | } ;
 == EXAMPLES.md [10. Structs and updates] 5 L3
   2 | origin = { #x -> f64 ( 0₍10₎ ) , #y -> f64 ( 0₍10₎ ) } ;
 == EXAMPLES.md [10. Structs and updates] 6 L2
   2 | origin2 = { x : f64 ( 0₍10₎ ) , y : f64 ( 0₍10₎ ) } ;
-  3 | k = Circle ( c : p , r : 1₍10₎n ) ;
-  4 | k2 = k «with» { c . x = 0₍10₎n } ;
+  3 | k = Circle ( c : p , r : 1₍10₎ ) ;
+  4 | k2 = k «with» { c . x = 0₍10₎ } ;
 == EXAMPLES.md [10. Structs and updates] 7 L2
   2 | «struct» Point { x : f64 , y : f64 }
   3 | «struct» Colored { «import» Point , color : Utf8String }
@@ -339,7 +339,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | sim = «loop» {
   3 | pos' = pos + vel * dt «with» pos = p0 ;
   4 | vel' = vel + acc * dt «with» vel = v0 ;
-  5 | «until» pos . y < 0₍10₎n ;
+  5 | «until» pos . y < 0₍10₎ ;
   6 | } ;
   7 | final = sim . pos ;
   8 | history = sim :: frames ;
@@ -446,7 +446,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
 == EXAMPLES.md [16. Generics and interfaces] 3 L10
   2 | «interface» HasArea { area : f64 }
   3 | describe ( «positional» s : HasArea ) = str["area " ${s . area}] ;
-  4 | d = describe ( Circle ( c : origin , r : 1₍10₎n ) ) ;
+  4 | d = describe ( Circle ( c : origin , r : 1₍10₎ ) ) ;
 == EXAMPLES.md [16. Generics and interfaces] 4 L2
   2 | «type» Pair ( A , B ) = { fst : A , snd : B } ;
 == EXAMPLES.md [16. Generics and interfaces] 5 L22
@@ -460,7 +460,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | dist ( «positional» a : Point , «positional» b : Point ) = ( sq ( a . x - b . x ) + sq ( a . y - b . y ) ) . sqrt ;
 == EXAMPLES.md [17. Modules] 2 L2
   2 | «import» geometry . shapes . { Point , dist } ;
-  5 | far = dist ( Point ( x : 0₍10₎n , y : 0₍10₎n ) , Point ( x : 3₍10₎n , y : 4₍10₎n ) ) ;
+  5 | far = dist ( Point ( x : 0₍10₎ , y : 0₍10₎ ) , Point ( x : 3₍10₎ , y : 4₍10₎ ) ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 1 L3
   2 | text = fs [ str["notes.txt"] ] «else» str[] ;
   3 | texts = files . map ( f -> fs [ f ] ) ;

@@ -27,7 +27,8 @@ Two declared orders meet in one key type
 Emission-disjointness
 Rebinding in the same scope
 Binder naming a type
-Plain decimal literal whose own format is not the format expected
+Numeric literal at a carrier that cannot take it
+Decimal literal, or `/` of integer literals, that nothing gives a carrier
 Two numeric values with no common carrier
 Match binder unused in its guard and arm
 Capitalized free name used once in a signature and nowhere in the body

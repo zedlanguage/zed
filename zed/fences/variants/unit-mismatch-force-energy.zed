@@ -45,12 +45,12 @@ past = run::frames[run::len - 2].doc else empty;  // any past state, O(log n), s
 rows = exec(db, "SELECT * WHERE name = " ++ sanitize(userName));  // ✓ and the sanitizer is auditable
 
 // 10 — Wrong physics doesn't build.
-energy = m * v * v / 2n;        // energy::units == "kg m^2 s^-2"  (a joule)
+energy = m * v * v / 2;        // energy::units == "kg m^2 s^-2"  (a joule)
 e = energy + force;            // ✗ Units that differ where an operation requires equal ones: kg m s^-2 is not kg m^2 s^-2
 
 // 11 — One declaration = type + parser + printer, with round-trip guaranteed.
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }
-v = Vec3.parse("(1.0, 2.0, 3.0)") else Vec3(x: 0n, y: 0n, z: 0n);
+v = Vec3.parse("(1.0, 2.0, 3.0)") else Vec3(x: 0, y: 0, z: 0);
 s = v.serialize;                   // "(1.0,2.0,3.0)" — phrase grammars skip input whitespace, serialize emits the canonical none; parse ∘ serialize == id
 
 // 12 — Compute only what's asked: one stats module, demand-pruned.

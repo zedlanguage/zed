@@ -194,61 +194,64 @@ pub const CHANGES: &[Change] = &[
                collection whose type and schema disagree: NUMERIC is not a binary float",
         stands_for: "orders: OrderId ->? { total: rat, note: Utf8String | #none }",
     },
-    // The fixture keeps the one binding the ✗ line reads and leaves out the live ✗ line.
+    // The fixture keeps the one binding the ✗ line reads and leaves out the others and the
+    // live ✗ line.
     Change::Omits {
-        fixture: "plain-decimal-other-format",
-        line: "x   = 3;",
-    },
-    Change::Omits {
-        fixture: "plain-decimal-other-format",
+        fixture: "decimal-literal-at-int",
         line: "q   = 7 div 2;             // 3      integers divide with div and mod (Euclidean)",
     },
     Change::Omits {
-        fixture: "plain-decimal-other-format",
+        fixture: "decimal-literal-at-int",
         line: "r   = -7 mod 2;            // 1      (-7) mod 2 — unary minus binds tighter than \
                mod; the remainder is never negative",
     },
     Change::Omits {
-        fixture: "plain-decimal-other-format",
+        fixture: "decimal-literal-at-int",
+        line: "h   = f64(7) / 2;          // 3.5    a cast is the type applied to the value",
+    },
+    Change::Omits {
+        fixture: "decimal-literal-at-int",
         line: "t   = 1r / 3r;             // exact: rat",
     },
     Change::Omits {
-        fixture: "plain-decimal-other-format",
+        fixture: "decimal-literal-at-int",
         line: "big = 2 ^ 100;            // int has no width; ^ binds tighter than * and than \
                unary minus, and associates to the right",
     },
     Change::Omits {
-        fixture: "plain-decimal-other-format",
-        line: "m   = 1_000_000;  hex = 0xFF;  bits = 0b1011;  sci = 1.5e-3;",
+        fixture: "decimal-literal-at-int",
+        line: "m   = 1_000_000;  hex = 0xFF;  bits = 0b1011;  sci: f64 = 1.5e-3;",
     },
     Change::Omits {
-        fixture: "plain-decimal-other-format",
-        line: "half = 0.5;                // f16: never .5 — a float literal starts with a digit, \
-               and is the first of f16, f32, f64 that holds it to within half a unit of its last \
-               digit; a suffix, as in 0.5f64, names the format",
+        fixture: "decimal-literal-at-int",
+        line: "half: f64 = 0.5;           // never .5: a float literal starts with a digit; a \
+               decimal literal takes the format its use fixes, here the declared f64, and one \
+               that nothing fixes is an error; a suffix, as in 0.5f64, forces the format",
     },
     Change::Omits {
-        fixture: "plain-decimal-other-format",
-        line: "dbl = h * 2n;              // 7.0    h is an f64, and 2n takes the format of the \
-               other operand",
+        fixture: "decimal-literal-at-int",
+        line: "dbl = h * 2;               // 7.0    h is an f64, and the literal 2 takes the \
+               carrier of the other operand",
     },
     Change::Omits {
-        fixture: "plain-decimal-other-format",
+        fixture: "decimal-literal-at-int",
         line: "y   = x ^ 2 + 2*x + 1;",
     },
     Change::Omits {
-        fixture: "plain-decimal-other-format",
-        line: "b: u8 = 255;               // u8 = int[0..=255]; 256 here is a type error, not a wrap",
+        fixture: "decimal-literal-at-int",
+        line: "b: u8 = 255;               // u8 = int[0..=255]; 256 here is a type error, not a \
+               wrap",
     },
     Change::Omits {
-        fixture: "plain-decimal-other-format",
-        line: "w: i32 = shl(1, 30);       // no bitwise operators: bitAnd, bitOr, shl are ordinary \
-               functions",
+        fixture: "decimal-literal-at-int",
+        line: "w: i32 = shl(1, 30);       // no bitwise operators: bitAnd, bitOr, shl are \
+               ordinary functions",
     },
     Change::Omits {
-        fixture: "plain-decimal-other-format",
-        line: "z   = 7 / 2;               // ✗ Operator with no arrow at its operands' carrier: `/` is \
-               for the float formats and rat only",
+        fixture: "decimal-literal-at-int",
+        line: "z   = 7 / 2;               // ✗ Decimal literal, or `/` of integer literals, \
+               that nothing gives a carrier: `/` is for the float formats and rat only, so 7 and \
+               2 stay without one; write f64(7) / 2 or declare z: f64",
     },
     // The sanitized call beside the ✗ call would bind rows twice.
     Change::Omits {

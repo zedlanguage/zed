@@ -213,13 +213,13 @@ comment big = 2 ^ 100; // 2 to the power 100, the exact integer, with no overflo
 check big == 1267650600228229401496703205376
 comment third = 1r / 3r; // an exact rational
 check third * 3r == 1r
-comment half = 1.0 / 2.0; // f16: 1.0 and 2.0 are f16
+comment half = f64(1) / 2.0; // 2.0 takes the format of f64(1); 1.0 / 2.0 alone would be rejected, since nothing gives it a format
 check half == 0.5
 comment q = 7 div 2; // 3
 check q == 3
-comment ratio = f64(q) / 2n; // conversions are written out; 2n takes the format of f64(q)
+comment ratio = f64(q) / 2.0; // conversions are written out; 2.0 takes the format of f64(q)
 no check: it explains the line and states no value
-comment twice(x: f64) = x * 2n; // x * 2.0 would be rejected: 2.0 is an f16
+comment twice(x: f64) = x * 2.0; // 2.0 takes the format of x, and x * 2 would work too
 no check: it explains the line and states no value
 text
 > big   = 1267650600228229401496703205376
@@ -663,9 +663,9 @@ text
 
 == README.md [Only what's needed runs] 1
 comment return { mean:, sd: }; // short for { mean: mean, sd: sd }
-comment m = stats([1n, 2n, 3n]).mean; // sd is never computed
+comment m = stats([1, 2, 3]).mean; // sd is never computed
 text
-> stats([1n, 2n, 3n]): n = 3.0, mean = 6.0 / 3.0 = 2.0
+> stats([1, 2, 3]): n = 3.0, mean = 6.0 / 3.0 = 2.0
 > m = 2.0, and sd has not run
 >
 > firstPrime before .where = 2, 3, 4, 5, ...

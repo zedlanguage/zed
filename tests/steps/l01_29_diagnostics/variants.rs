@@ -32,10 +32,14 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             format!("8: {}", zed_tests::not_yet!("the declared result type `-> int`")),
         ),
         ("nullable-column-missing-none", none(36)),
-        // L1.26b rejects it: 2.0 is an f16 and h an f64.
+        // Rejected already, in the row of two carriers; plan row LIT-bare moves the rejection to
+        // its own row, and this pin with it.
         (
-            "plain-decimal-other-format",
-            "4: the line is marked ✗ and the unit is accepted".into(),
+            "decimal-literal-at-int",
+            "4: the mark names the row \"Numeric literal at a carrier that cannot take it\", and \
+             the diagnostic is in the row \"Two numeric values with no common carrier\": `2.0` \
+             is an f64 where `int` is expected; a literal takes no other carrier"
+                .into(),
         ),
         ("numeric-is-not-binary-float", none(36)),
         (
