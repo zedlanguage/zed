@@ -930,8 +930,12 @@ fn parity_built_a_literal_at_a_time_scales() {
     // shared handle in place, one table probe per freed node, the inner nodes' exclusive ors
     // kept in a table, two literals met at once and the exclusive or tested before `zip`'s
     // frames bring it to 4.99G and 50.09G (10.0 times), 489M and 4.97G bytes (10.2 times),
-    // 28 s at load 31 where the code before took 54 s at load 30 (KERNEL-parity-cost).
-    let n = 1 << 11;
+    // 28 s at load 31 where the code before took 54 s at load 30, and 51 s inside a run of
+    // 508 tests (KERNEL-parity-cost). So the sizes are now 1,024 and 8,192 literals, where the
+    // limit is 11.44: 2.26G and 23.36G instructions (10.3 times), 221M and 2.31G bytes (10.4
+    // times), 11 s at load 30. Rebuilding every tree node on each literal fails the check at
+    // 128 and 1,024 literals, by 58.6 times the bytes.
+    let n = 1 << 10;
     let lits = scaling::inputs(n, |m| {
         (0..SHAPES)
             .map(|j| {
@@ -1651,6 +1655,106 @@ fn an_exclusive_or_built_on_another_thread_is_recognized() {
     assert!(d.xor_tag().is_some());
     assert_eq!(c, d);
     assert!(c.xor_tag().is_some(), "{c:?}");
+}
+
+/// What `exclusive_ors_shared_by_threads_are_the_ones_built_on_one` records of a part: its
+/// digest, its complement's, whether it is an exclusive or in its one form, and its text.
+type Record = (u64, u64, bool, String);
+
+/// The record of `p`; see `Record`.
+fn record(p: &Part<Row>) -> Record {
+    (
+        p.digest(),
+        p.not().digest(),
+        p.xor_tag().is_some(),
+        format!("{p:?}"),
+    )
+}
+
+/// One round of `exclusive_ors_shared_by_threads_are_the_ones_built_on_one` for thread `t`:
+/// three literals each joined to the part `p` another thread built, so that the tree nodes
+/// rebuilt keep `p`'s left subtrees and atoms, then all three in turn. Returns the records and
+/// the last part.
+fn extend(p: Part<Row>, round: u64, t: u64) -> (Vec<Record>, Part<Row>) {
+    let lits: Vec<_> = (0..3)
+        .map(|i| Part::literal(atom(60_000 + round * 100 + t * 10 + i)))
+        .collect();
+    let mut out: Vec<_> = lits.iter().map(|l| record(&xor_by_or(&p, l))).collect();
+    let last = lits.iter().fold(p, |f, l| xor_by_or(&f, l));
+    out.push(record(&last));
+    (out, last)
+}
+
+#[test]
+fn exclusive_ors_shared_by_threads_are_the_ones_built_on_one() {
+    // Each thread keeps its own tables (`TUPLES` in `types.rs`), and parts are shared between
+    // threads. Eight threads each start from an exclusive or of 40 atoms; in each round a
+    // thread takes the part another thread built in the round before, joins literals to it,
+    // and hands its result on, so that a thread rebuilds tree nodes whose left subtree and atom
+    // another thread made (`xor::inner`), and a part is dropped on a thread other than the one
+    // that built it. Every part built is recorded, and the records equal those of the same
+    // rounds run on one thread.
+    const THREADS: u64 = 8;
+    const ROUNDS: u64 = 6;
+    let start = |t: u64| parity(50_000 + t * 1_000, 40);
+    let alone = std::thread::spawn(move || {
+        let mut slots: Vec<_> = (0..THREADS).map(start).collect();
+        let mut out = Vec::new();
+        for r in 0..ROUNDS {
+            let taken: Vec<_> = (0..THREADS)
+                .map(|t| slots[((t + r + 1) % THREADS) as usize].clone())
+                .collect();
+            for (t, p) in (0..THREADS).zip(taken) {
+                let (rec, last) = extend(p, r, t);
+                out.push(rec);
+                slots[t as usize] = last;
+            }
+        }
+        out
+    })
+    .join()
+    .expect("the thread runs without panicking");
+    let slots: std::sync::Mutex<Vec<Option<Part<Row>>>> =
+        std::sync::Mutex::new((0..THREADS).map(|_| None).collect());
+    let barrier = std::sync::Barrier::new(THREADS as usize);
+    let shared: Vec<Vec<_>> = std::thread::scope(|s| {
+        let threads: Vec<_> = (0..THREADS)
+            .map(|t| {
+                let (slots, barrier) = (&slots, &barrier);
+                s.spawn(move || {
+                    let mut out = Vec::new();
+                    slots.lock().expect("no thread panics")[t as usize] = Some(start(t));
+                    for r in 0..ROUNDS {
+                        barrier.wait();
+                        let p = slots.lock().expect("no thread panics")
+                            [((t + r + 1) % THREADS) as usize]
+                            .clone()
+                            .expect("each slot is filled");
+                        barrier.wait();
+                        let (rec, last) = extend(p, r, t);
+                        out.push(rec);
+                        // The part replaced was built on another thread and is dropped here.
+                        let old = slots.lock().expect("no thread panics")[t as usize].replace(last);
+                        drop(old);
+                    }
+                    out
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .map(|h| h.join().expect("the thread runs without panicking"))
+            .collect()
+    });
+    for r in 0..ROUNDS {
+        for t in 0..THREADS {
+            let (a, b) = (
+                &alone[(r * THREADS + t) as usize],
+                &shared[t as usize][r as usize],
+            );
+            assert!(a == b, "round {r}, thread {t}");
+        }
+    }
 }
 
 /// The list of `m` blocks of two literals on the atoms from `base`, built by joining one
