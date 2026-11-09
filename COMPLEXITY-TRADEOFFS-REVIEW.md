@@ -410,3 +410,23 @@ Observation, not changed (outside a comment-only item): in `group_oracle.rs` the
 | `zed-native lib.rs:65` | fc4686da | Cranelift e-graph and backtracking allocator, n^1.6 and n^1.4 | `OptLevel::None`, linear | slower code | complete | none |
 | `zed-rt stack.rs:65` | d8fb27b5 | segmented stack, a compare per call | one reservation | refused under `RLIMIT_AS` | complete | none |
 | `zed/corpus/ref zedrt.rs:226` | 4f52ced8 | num-bigint `parse`, O(n²) | halves above `LEAF_DIGITS` | timed crossover, same results | complete | none |
+
+## Sites outside the 302 Rust markers
+
+The 302 markers counted by the item are in `.rs` files. Eleven more `// Complexity tradeoff:` comments are in the Zed prelude (`zed/prelude/*.zed`, copies of Rust comments) and in the TypeScript chart tool (`tools/dagview`). They were reviewed by the same rule.
+
+| Site | Commit | Naive version, complexity | Used version, complexity | Tradeoffs | Before | Action |
+|---|---|---|---|---|---|---|
+| `tools/dagview/layout.ts:35` placement | 10a5b9c1 | network simplex, about O(n²), 240 s | Brandes-Koepf, O(n), under 1 s | wider chart, narrowed later | complete | none |
+| `tools/dagview/layout.ts:60` starts | 10a5b9c1 | 7 random starts | 2, measured | best of fewer tries | complete | none |
+| `tools/dagview/layout.ts:103` second pass | 71c7ac5b | first pass alone | added O(m log m) pass, measured | more bends | complete | none |
+| `tools/dagview/narrow.ts:15` sweeps | 71c7ac5b | 0 sweeps | 8 sweeps, O(m log m) each | measured | complete | none |
+| `tools/dagview/state.ts:491` ancestors | c0fef4e4 | transitive closure, no near-linear method known | O(n·a) | memory | complete | none |
+| `zed/prelude/iteration.zed:24` | e6b30c2e | edges inverted once, O(V + E log E) (Rust copy) | O(V · E) | no flattening word yet; PRELUDE-depgraph | complete | none |
+| `zed/prelude/lattice.zed:110` | 44d370e7 | as `interval.rs:324` | | | complete | none |
+| `zed/prelude/lattice.zed:129` | e86e485d | as `interval.rs:393` | | | complete | none |
+| `zed/prelude/lattice.zed:209` | e86e485d | as `lattice.rs:213` | | | complete | none |
+| `zed/prelude/lattice.zed:228` | 44d370e7 | as `lattice.rs:273` | | | complete | none |
+| `zed/prelude/revision.zed:17` | 44d370e7 | k·m pairs | stated "at most k + m pairs"; the code (Rust copy `map2`) and COMPLEXITY.md S4, S14 take at most 4(k + 2) once both operands are split at 0 | | stale | corrected to 4(k + 2), here and in the description above it |
+
+The doc comment above `revision.rs` `map2` said the same "at most `k + m`" pairs, against the `4(k + 2)` of its own tradeoff paragraph and of the code (`shrink` caps the smaller operand to at most 2 pieces, `sign_parts` then splits both at 0); it is corrected too.

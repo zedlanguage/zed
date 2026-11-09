@@ -9,14 +9,15 @@
 // computed from its corners (the operator is monotone on a part of one sign),
 // and the images are joined. Endpoint arithmetic rounds outward, and 0 times an
 // infinite end is 0. For operands of k >= m parts, the one with fewer is first
-// capped to ceil((k + m) / k) pieces, so at most k + m pairs are taken, and each
+// capped to ceil((k + m) / k) pieces, so at most 4(k + 2) pairs are taken, and each
 // sign region of the image is capped to the most pieces either operand has in
 // one region: a chain of operators never grows piece counts, and no constant
 // bounds them.
 //
 // Complexity tradeoff: the merged pieces fill the gaps between them, so the
-// image can hold values no pair of operand values gives (k pieces times m
-// pieces keeps at most k + m pairs, not k * m). Why: the exact image has up to
+// image can hold values no pair of operand values gives (for k >= m pieces,
+// at most 4(k + 2) pairs once both are split at 0, not k * m). Why: the exact
+// image has up to
 // k * m pieces, and a chain of n operators up to k^n. Trigger: two operands of
 // more than one piece each, or an image with more pieces in a sign region than
 // either operand has there; the limits are relative to the operands, never

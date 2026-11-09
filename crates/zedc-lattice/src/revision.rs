@@ -319,7 +319,8 @@ fn regions(parts: &[(End, End)]) -> [Vec<(End, End)>; 3] {
 
 /// The image of each pair of parts under `f`, joined, with work linear in the operands and no
 /// constant bound. The operand with fewer parts is first capped to `ceil((k + m) / k)` pieces
-/// for `k >= m` parts, so the pairs are at most `k + m`; and each sign region of the image is
+/// for `k >= m` parts, so at most `4(k + 2)` pairs are taken once both are split at 0; and
+/// each sign region of the image is
 /// capped to the most pieces either operand has in one region, so no chain of operators
 /// multiplies piece counts (the rule of low complexity, Part G). With one operand of one
 /// piece, nothing is merged before the image is taken.
