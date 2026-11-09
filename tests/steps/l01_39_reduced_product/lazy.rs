@@ -364,3 +364,103 @@ fn stars_beside_a_satellite_or_a_sandwich_project_exactly() {
         assert_eq!(held(&lazy, &all, true), want, "lazy, sandwich {sandwich}");
     }
 }
+
+/// `Scope::settle` gives a leaf of a class the projection of an earlier leaf of the class
+/// when the other names and the leaf's own interval and class are as the earlier leaf's
+/// were. Against settling each leaf alone, which reuses nothing: leaves named before,
+/// between and after the hubs, so that the solver orders their names differently; the class
+/// one conjunct of the two hubs, of coefficient one or two at the leaf, or two conjuncts of
+/// one hub each; each leaf's own lower bound and hole drawn from two of each, so that some
+/// leaves share them and some do not; and the hubs with bounds, holes and a class. The last
+/// test moves a hub, so that every star is due at once. Each leaf is settled to the product
+/// it gets alone, and to the eager scope's.
+#[test]
+fn leaves_of_one_class_settled_together_get_what_each_gets_alone() {
+    const LEAVES: [&str; 6] = ["a0", "a1", "mm0", "mm1", "z0", "z1"];
+    let all = names(&["m", "n", "a0", "a1", "mm0", "mm1", "z0", "z1"]);
+    let leaves = names(&LEAVES);
+    let p = Premises::new();
+    let (mut reused, mut runs) = (0, 0);
+    for seed in 0..30 {
+        let mut rng = Rng::new(seed);
+        let form = rng.below(3);
+        let c = rng.int(-3, 3);
+        let star = |x: &str| -> Vec<Term> {
+            match form {
+                0 => vec![sum3(x, "n", "m", c, false)],
+                1 => vec![prim(
+                    Prim::Ge,
+                    prim(
+                        Prim::Sub,
+                        prim(Prim::Add, var(x), var(x)),
+                        prim(Prim::Add, var("n"), var("m")),
+                    ),
+                    int(c),
+                )],
+                _ => vec![diff_ge(x, "n", c), diff_ge(x, "m", -c)],
+            }
+        };
+        let mut t: Vec<Term> = Vec::new();
+        for h in ["n", "m"] {
+            t.push(prim(Prim::Ge, var(h), int(rng.int(-12, -2))));
+            t.push(prim(Prim::Le, var(h), int(rng.int(2, 12))));
+            t.push(prim(Prim::Ne, var(h), int(rng.int(-3, 3))));
+        }
+        if rng.below(2) == 0 {
+            // `n` even.
+            t.push(prim(Prim::Eq, prim(Prim::Mod, var("n"), int(2)), int(0)));
+        }
+        let lows = [rng.int(-20, 0), rng.int(-20, 0)];
+        let holes = [rng.int(-3, 6), rng.int(-3, 6)];
+        for x in LEAVES {
+            t.extend(star(x));
+            t.push(prim(Prim::Ge, var(x), int(rng.pick(&lows))));
+            t.push(prim(Prim::Ne, var(x), int(rng.pick(&holes))));
+        }
+        let (mut eager, mut lazy) = (ints(&all), ints(&all).lazy());
+        for t in &t {
+            eager = eager.assume(t, true, &p);
+            lazy = lazy.assume(t, true, &p);
+        }
+        let hub = prim(Prim::Ge, var("n"), int(rng.int(-4, 4)));
+        eager = eager.assume(&hub, true, &p);
+        lazy = lazy.assume(&hub, true, &p);
+        if eager.bottom {
+            assert!(
+                lazy.bottom,
+                "seed {seed}: the eager scope is empty, the lazy one not"
+            );
+            continue;
+        }
+        let classes: BTreeSet<_> = leaves
+            .iter()
+            .filter_map(|x| lazy.relation.class_of(x))
+            .collect();
+        let stars = leaves
+            .iter()
+            .filter(|x| lazy.relation.star(x).is_some())
+            .count();
+        let mut together = lazy.clone();
+        together.settle(&leaves);
+        for x in &leaves {
+            let mut alone = lazy.clone();
+            alone.settle([x]);
+            assert_eq!(together.get(x), alone.get(x), "seed {seed}: {x} with {t:?}");
+            assert_eq!(
+                together.get(x),
+                eager.get(x),
+                "seed {seed}: {x} eagerly, with {t:?}"
+            );
+        }
+        for h in names(&["m", "n"]) {
+            assert_eq!(together.get(&h), eager.get(&h), "seed {seed}: {h}");
+        }
+        runs += 1;
+        reused += usize::from(stars >= 2 && classes.len() == 1);
+    }
+    println!("{runs} runs, {reused} with two stars or more, all of one class");
+    assert!(
+        reused > runs / 2,
+        "{reused} of {runs} runs with the leaves in one class"
+    );
+}

@@ -207,6 +207,10 @@ struct StarIndex {
     near: OrdMap<Arc<str>, OrdMap<Arc<str>, usize>>,
     /// Of each name, the hubs whose `near` holds it.
     nearby: Uses<Arc<str>>,
+    /// Of each satellite related to a hub it is near, one such hub: the one that needs the
+    /// names the satellite relates to, while each other hub it is near needs this one
+    /// ([`StarIndex::place`]).
+    anchor: OrdMap<Arc<str>, Arc<str>>,
     /// What each hub of `level` needs among the hubs of a leaf to admit it.
     admit: Admit,
     /// The leaves of the names of `shapes` of two hubs or more, by their hubs.
@@ -272,6 +276,9 @@ struct Pending {
     free: BTreeSet<Arc<Formula>>,
     /// The conjuncts added, not yet in a block, each with the one it takes the place of.
     placed: Vec<(Arc<Formula>, Option<Arc<Formula>>)>,
+    /// The needs and hits moved so far ([`Conjuncts::readmit`]): a hub set opened or closed
+    /// moves the needs of satellites at other hubs.
+    moves: Moves,
 }
 
 /// The hubs of a leaf of two hubs or more ([`Conjuncts::star`]), in order: the key the leaves
@@ -284,8 +291,9 @@ type Hubs = Arc<[Arc<str>]>;
 #[derive(Clone, Debug, Default)]
 struct Admit {
     /// Of each such hub, the names its `near` names need among a leaf's hubs, each with how
-    /// many need it: a satellite the names it relates to other than the hub, any other name
-    /// itself. The hub admits a leaf whose hubs hold all of them.
+    /// many need it: a satellite its anchor, or at the anchor or when it has none the names it
+    /// relates to other than the hub ([`StarIndex::place`]); any other name itself. The hub
+    /// admits a leaf whose hubs hold all of them.
     needs: OrdMap<Arc<str>, OrdMap<Arc<str>, usize>>,
     /// Of each such hub and hub set at it, how many of the hub's `needs` the set holds.
     hits: OrdMap<(Arc<str>, Hubs), usize>,
@@ -302,6 +310,9 @@ struct Moves {
     lens: BTreeMap<Arc<str>, usize>,
     /// Of each hub and hub set at it, its `hits`.
     hits: BTreeMap<(Arc<str>, Hubs), usize>,
+    /// The hub sets opened since: their hubs' admissions are counted afresh
+    /// ([`Conjuncts::readmit`]), since needs may have moved before or after they opened.
+    fresh: BTreeSet<Hubs>,
 }
 
 impl Admit {
@@ -337,6 +348,75 @@ impl Admit {
             log.hits.entry(key.clone()).or_insert(k);
             self.hits.insert(key, k2);
         }
+    }
+}
+
+impl StarIndex {
+    /// Counts in (`up`) or out the needs of satellite `y` at each hub it is near
+    /// ([`Admit::needs`]), as `ties`, `nearby` and `anchor` now stand. A hub `h` near `y`
+    /// admits a leaf whose hubs hold the names `y` relates to other than `h`: as `h` is one
+    /// of the hubs, all of those names, the same test at each hub `y` is near. So when `y` is
+    /// related to some hub it is near, its anchor `a`, `a` needs the names `y` relates to and
+    /// each other hub near `y` needs `a` alone: when every hub of a leaf admits it, and one
+    /// of them is near `y`, `a` is among them and admits it, so they hold all the names `y`
+    /// relates to; and when they hold those names, they hold every need, `a` among them. So
+    /// the leaves all of whose hubs admit them are those of each hub needing all of `y`'s
+    /// names, and `y` holds `k - 1 + m` needs for `k` hubs near it and `m` names related, not
+    /// `k m`. Without an anchor each hub near `y` needs all of them, which holds only within
+    /// a flush: a hub of a hub set is no leaf, since a leaf's hubs have more conjuncts than
+    /// it ([`Conjuncts::shape_of`]), so no leaf holds a conjunct free at such a hub `h`, and
+    /// a conjunct of `h` and `y` free at `h` is free at `y` too once `refree` has seen it,
+    /// which puts `h` in `ties[y]` and makes `h` an anchor. In O(log n) for each.
+    fn place(&mut self, y: &Arc<str>, up: bool, log: &mut Moves) {
+        let StarIndex {
+            ties,
+            nearby,
+            anchor,
+            admit,
+            ..
+        } = self;
+        let a = anchor.get(y);
+        for h in nearby.of(y) {
+            match a {
+                Some(a) if a != h => admit.need(h, a, up, log),
+                _ => {
+                    for z in ties.get(y).into_iter().flat_map(OrdMap::keys) {
+                        if z != h {
+                            admit.need(h, z, up, log);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Picks the anchor of satellite `y`, which has no needs counted ([`StarIndex::place`]):
+    /// the first name it relates to that is a hub it is near, if any; and counts its needs.
+    /// In O(log n) for each name it relates to, and as `place` costs.
+    fn repick(&mut self, y: &Arc<str>, log: &mut Moves) {
+        let StarIndex {
+            ties,
+            nearby,
+            anchor,
+            ..
+        } = &mut *self;
+        match ties
+            .get(y)
+            .into_iter()
+            .flat_map(OrdMap::keys)
+            .find(|z| nearby.has(y, z))
+        {
+            Some(a) => anchor.insert(y.clone(), a.clone()),
+            None => anchor.remove(y),
+        };
+        self.place(y, true, log);
+    }
+
+    /// Picks the anchor of satellite `y` again, its needs counted out and back in
+    /// ([`StarIndex::repick`]): after a change that makes or takes away its anchor.
+    fn reanchor(&mut self, y: &Arc<str>, log: &mut Moves) {
+        self.place(y, false, log);
+        self.repick(y, log);
     }
 }
 
@@ -619,6 +699,13 @@ impl Conjuncts {
         }
     }
 
+    /// How many names the hubs of hub sets need, summed over the hubs ([`Admit::needs`]): what
+    /// a scaling test counts to show a satellite costs near the names it relates to.
+    #[doc(hidden)]
+    pub fn needs_held(&self) -> usize {
+        self.index.admit.needs.values().map(OrdMap::len).sum()
+    }
+
     /// The leaf and block of each star ([`Conjuncts::star`]).
     pub fn stars(&self) -> &OrdMap<Arc<str>, BlockId> {
         &self.index.stars
@@ -847,7 +934,7 @@ impl Conjuncts {
                 leaves.remove(x);
                 if leaves.is_empty() {
                     self.index.sets.remove(&old.hubs);
-                    self.close(&old.hubs);
+                    self.close(&old.hubs, &mut p.moves);
                 }
             }
         }
@@ -880,7 +967,7 @@ impl Conjuncts {
                     let fresh = leaves.is_empty();
                     leaves.insert(x.clone());
                     if fresh {
-                        self.open(&s.hubs);
+                        self.open(&s.hubs, &mut p.moves);
                     }
                 }
                 self.index.shapes.insert(x.clone(), Arc::new(s));
@@ -896,12 +983,13 @@ impl Conjuncts {
 
     /// Indexes hub set `hs`, of a leaf that is the first of its hubs ([`Admit`]): each hub's
     /// `near` names are counted, when it had no hub set before, from its free conjuncts as
-    /// last found, which `refree` then keeps. In O(log n) for each hub and pair of hubs, and
-    /// for each hub of no hub set before, as [`Conjuncts::view`] costs.
-    fn open(&mut self, hs: &Hubs) {
-        let mut refused = 0;
+    /// last found, which `refree` then keeps. Its hubs' admissions are counted again by
+    /// [`Conjuncts::readmit`], as the needs of satellites at other hubs may move later in the
+    /// same change ([`StarIndex::place`]). In O(log n) for each hub and pair of hubs, and for
+    /// each hub of no hub set before, as [`Conjuncts::view`] costs.
+    fn open(&mut self, hs: &Hubs, log: &mut Moves) {
         for h in hs.iter() {
-            self.view(h);
+            self.view(h, log);
             let Admit {
                 needs,
                 hits,
@@ -911,7 +999,6 @@ impl Conjuncts {
             let needs = needs.get(h);
             let held = |z: &&Arc<str>| *z != h && needs.is_some_and(|m| m.contains_key(*z));
             let k = hs.iter().filter(held).count();
-            refused += usize::from(k != needs.map_or(0, OrdMap::len));
             hits.insert((h.clone(), hs.clone()), k);
             level.add(h, &(k, hs.clone()));
             for z in hs.iter().filter(|z| *z != h) {
@@ -920,13 +1007,14 @@ impl Conjuncts {
                     .insert(hs.clone());
             }
         }
-        self.index.refused.insert(hs.clone(), refused);
+        self.index.refused.insert(hs.clone(), 0);
+        log.fresh.insert(hs.clone());
     }
 
     /// Forgets hub set `hs`, whose last leaf went ([`Conjuncts::open`]); a hub left with no
-    /// hub set forgets its `near` names. In O(log n) for each hub and pair of hubs, and for
-    /// each `near` name of such a hub.
-    fn close(&mut self, hs: &Hubs) {
+    /// hub set forgets its `near` names, and their needs. In O(log n) for each hub and pair of
+    /// hubs, and for each `near` name of such a hub as [`Conjuncts::contribute`] costs.
+    fn close(&mut self, hs: &Hubs, log: &mut Moves) {
         self.index.refused.remove(hs);
         for h in hs.iter() {
             let a = &mut self.index.admit;
@@ -943,32 +1031,22 @@ impl Conjuncts {
                 }
             }
             if a.level.count(h) == 0 {
-                a.needs.remove(h);
                 if let Some(near) = self.index.near.remove(h) {
                     for y in near.keys() {
                         self.index.nearby.remove(y, h);
+                        self.contribute(h, y, false, log);
                     }
                 }
+                let needs = self.index.admit.needs.remove(h);
+                debug_assert!(needs.is_none_or(|m| m.is_empty()), "needs left at {h}");
             }
         }
     }
 
     /// Counts hub `h`'s `near` names and their `needs` from its free conjuncts as last found,
-    /// when it has none yet. In O(log n) for each name of each free conjunct at `h`, and for
-    /// each name a satellite among them relates to.
-    ///
-    /// Complexity tradeoff: a satellite near a hub costs the names it relates to, at each
-    /// hub it is near, so that a satellite related to `d` hubs of hub sets holds `d - 1`
-    /// needs at each: O(d²) in its `d` conjuncts. Why: a hub admits a leaf when the leaf's
-    /// hubs hold its needs, counted by name, which a satellite's need of a set of names would
-    /// make a test of one set within another at each hub set at the hub. Trigger: a name of
-    /// `d` free conjuncts of two names each, of one sign, against `d` hubs of leaves of two
-    /// hubs or more, all of more conjuncts than it. Test:
-    /// `l01_39a_bit_words::scaling::satellites_of_two_hubs_keep_the_stars_of_their_hubs_in_linear_time`
-    /// (the case of `d = 2`, in linear time). COMPLEXITY.md row C37. A complete solution
-    /// counts each satellite once per hub set that holds the names it relates to, kept by
-    /// the sizes of those sets.
-    fn view(&mut self, h: &Arc<str>) {
+    /// when it has none yet. In O(log n) for each name of each free conjunct at `h`, and as
+    /// [`Conjuncts::contribute`] costs for each.
+    fn view(&mut self, h: &Arc<str>, log: &mut Moves) {
         if self.index.near.contains_key(h) {
             return;
         }
@@ -979,52 +1057,68 @@ impl Conjuncts {
             }
         }
         self.index.admit.needs.insert(h.clone(), OrdMap::new());
-        // No hub set is at `h` yet, so no hit moves.
-        let mut log = Moves::default();
         for y in near.keys() {
             self.index.nearby.add(y, h);
-            self.contribute(h, y, true, &mut log);
+            self.contribute(h, y, true, log);
         }
         self.index.near.insert(h.clone(), near);
     }
 
-    /// Counts in (`up`) or out the needs of `y` as a `near` name of hub `h` ([`Admit::needs`]):
-    /// of a satellite, a name of no free conjunct of other than two names, the names it
-    /// relates to other than `h`; of any other name, itself. In O(log n) for each.
+    /// Counts in (`up`) or out the needs of `y` as a `near` name of hub `h`, `h` already put
+    /// in or taken out of `nearby` ([`Admit::needs`]): of a satellite, a name of no free
+    /// conjunct of other than two names, as [`StarIndex::place`] counts them; of any other
+    /// name, itself. In O(log n); and for a satellite with no anchor, or whose anchor comes or
+    /// goes, as `place` costs.
     fn contribute(&mut self, h: &Arc<str>, y: &Arc<str>, up: bool, log: &mut Moves) {
-        let StarIndex {
-            ties, wide, admit, ..
-        } = &mut *self.index;
-        if wide.contains_key(y) {
-            admit.need(h, y, up, log);
+        let x = &mut *self.index;
+        if x.wide.contains_key(y) {
+            x.admit.need(h, y, up, log);
             return;
         }
-        for z in ties.get(y).into_iter().flat_map(OrdMap::keys) {
-            if z != h {
-                admit.need(h, z, up, log);
+        match x.anchor.get(y) {
+            Some(a) if a == h => {
+                // `h` leaves: its own needs go, then the others need a new anchor.
+                for z in x.ties.get(y).into_iter().flat_map(OrdMap::keys) {
+                    if z != h {
+                        x.admit.need(h, z, false, log);
+                    }
+                }
+                x.reanchor(y, log);
+            }
+            Some(a) => x.admit.need(h, a, up, log),
+            None => {
+                for z in x.ties.get(y).into_iter().flat_map(OrdMap::keys) {
+                    if z != h {
+                        x.admit.need(h, z, up, log);
+                    }
+                }
+                if up && x.ties.get(y).is_some_and(|t| t.contains_key(h)) {
+                    x.reanchor(y, log);
+                }
             }
         }
     }
 
     /// Counts the free conjunct of names `ns` in (`up`) or out at `y`, one of them, in its
     /// `ties` or `wide`; the needs of `y` at each hub it is near move with them
-    /// ([`Conjuncts::contribute`]). In O(log n), and when `y` becomes a satellite or stops
-    /// being one, O(log n) for each name it relates to at each hub it is near.
+    /// ([`StarIndex::place`]). In O(log n) when `y` has an anchor that stays; for a satellite
+    /// with none, O(log n) for each hub it is near; and when its anchor comes or goes, or `y`
+    /// becomes a satellite or stops being one, as `place` costs.
     fn tie(&mut self, y: &Arc<str>, ns: &BTreeSet<Arc<str>>, up: bool, log: &mut Moves) {
-        let StarIndex {
-            ties,
-            wide,
-            nearby,
-            admit,
-            ..
-        } = &mut *self.index;
+        let x = &mut *self.index;
         let step = |c: usize| if up { c + 1 } else { c - 1 };
         if ns.len() == 2 {
             let Some(z) = ns.iter().find(|n| *n != y) else {
                 unreachable!("two names, one of them `y`")
             };
-            let t = ties.entry(y.clone()).or_default();
-            let c = t.get(z).copied().unwrap_or(0);
+            let c = x.ties.get(y).and_then(|t| t.get(z)).copied().unwrap_or(0);
+            let moves = c == usize::from(!up) && !x.wide.contains_key(y);
+            let anchor = x.anchor.get(y).cloned();
+            let gone = moves && anchor.as_ref() == Some(z);
+            if gone {
+                x.place(y, false, log);
+            }
+            let t = x.ties.entry(y.clone()).or_default();
             match step(c) {
                 0 => {
                     t.remove(z);
@@ -1034,34 +1128,47 @@ impl Conjuncts {
                 }
             }
             if t.is_empty() {
-                ties.remove(y);
+                x.ties.remove(y);
             }
-            if c == usize::from(!up) && !wide.contains_key(y) {
-                for h in nearby.of(y).filter(|h| *h != z) {
-                    admit.need(h, z, up, log);
+            if gone {
+                x.repick(y, log);
+            } else if moves {
+                match anchor {
+                    Some(a) => x.admit.need(&a, z, up, log),
+                    None => {
+                        for h in x.nearby.of(y).filter(|h| *h != z) {
+                            x.admit.need(h, z, up, log);
+                        }
+                        if up && x.nearby.has(y, z) {
+                            x.reanchor(y, log);
+                        }
+                    }
                 }
             }
             return;
         }
-        let w = wide.get(y).copied().unwrap_or(0);
-        if w == usize::from(!up) {
+        let w = x.wide.get(y).copied().unwrap_or(0);
+        let flips = w == usize::from(!up);
+        if flips {
             // `y` stops being a satellite (`up`) or becomes one.
-            for h in nearby.of(y) {
-                for z in ties.get(y).into_iter().flat_map(OrdMap::keys) {
-                    if z != h {
-                        admit.need(h, z, !up, log);
-                    }
-                }
-                admit.need(h, y, up, log);
+            if up {
+                x.place(y, false, log);
+                x.anchor.remove(y);
+            }
+            for h in x.nearby.of(y) {
+                x.admit.need(h, y, up, log);
             }
         }
         match step(w) {
             0 => {
-                wide.remove(y);
+                x.wide.remove(y);
             }
             w => {
-                wide.insert(y.clone(), w);
+                x.wide.insert(y.clone(), w);
             }
+        }
+        if flips && !up {
+            x.repick(y, log);
         }
     }
 
@@ -1074,7 +1181,7 @@ impl Conjuncts {
     /// that holds it; for each hub whose number of needs changes, its hub sets that it
     /// admitted or admits; and the leaves of the hub sets that come to be admitted or stop.
     fn refree(&mut self, p: &mut Pending, check: &mut BTreeSet<Arc<str>>) {
-        let mut log = Moves::default();
+        let mut log = std::mem::take(&mut p.moves);
         for g in std::mem::take(&mut p.free) {
             let ns = names(&g);
             for h in &ns {
@@ -1124,8 +1231,9 @@ impl Conjuncts {
     /// Puts in `check` the leaves of each hub set whose hubs came to admit it all, or no
     /// longer do, by the moves `log` recorded: a hub admits a hub set when the set holds all
     /// its needs, so only a hub set whose hits moved, or whose hits equal the old or the new
-    /// number of needs of a hub whose number moved, may change. In O(log n) for each such hub
-    /// set, and the leaves of those that change.
+    /// number of needs of a hub whose number moved, may change. A hub set opened in the change
+    /// is counted afresh, its leaves already in `check`; one closed in it is gone. In O(log n)
+    /// for each such hub set and each hub of one opened, and the leaves of those that change.
     fn readmit(&mut self, log: &Moves, check: &mut BTreeSet<Arc<str>>) {
         let StarIndex {
             admit,
@@ -1146,8 +1254,10 @@ impl Conjuncts {
         }
         // Whether each hub set whose hubs' admissions moved was admitted by them all before.
         let mut was: BTreeMap<Hubs, bool> = BTreeMap::new();
-        for key in seen {
-            let k = admit.hits[&key];
+        for key in seen.into_iter().filter(|(_, hs)| !log.fresh.contains(hs)) {
+            let Some(&k) = admit.hits.get(&key) else {
+                continue;
+            };
             let k0 = log.hits.get(&key).copied().unwrap_or(k);
             let n = len(&key.0);
             let n0 = log.lens.get(&key.0).copied().unwrap_or(n);
@@ -1163,6 +1273,14 @@ impl Conjuncts {
                 *r -= 1;
             } else {
                 *r += 1;
+            }
+        }
+        for hs in &log.fresh {
+            if let Some(r) = refused.get_mut(hs) {
+                *r = hs
+                    .iter()
+                    .filter(|h| admit.hits[&((*h).clone(), hs.clone())] != len(h))
+                    .count();
             }
         }
         for (hs, then) in was {

@@ -1498,6 +1498,86 @@ fn a_star_goes_when_one_step_moves_its_counts() {
     same(&c);
 }
 
+/// Hubs `h0` to `hd`, leaves `ai >= hi && ai >= h(i+1)` of two hubs each, and a satellite `y`
+/// with `y >= hi` for every hub ([`Conjuncts::star`]), its conjuncts added before the leaves'
+/// (`first`) or after.
+fn satellite_of_every_hub(d: usize, first: bool) -> Conjuncts {
+    let ge = |a: &str, b: &str| {
+        let s = |x: &str| Lin::atom(Atom::Sym(x.into()));
+        Formula::Con(Con::ge(&s(a), &s(b)))
+    };
+    let leaves = (0..d).flat_map(|i| {
+        let a = format!("a{i}");
+        [ge(&a, &format!("h{i}")), ge(&a, &format!("h{}", i + 1))]
+    });
+    let satellite = (0..=d).map(|i| ge("y", &format!("h{i}")));
+    let mut c = Conjuncts::default();
+    if first {
+        satellite.chain(leaves).for_each(|g| c.and(g));
+    } else {
+        leaves.chain(satellite).for_each(|g| c.and(g));
+    }
+    c
+}
+
+/// A satellite related to `d + 1` hubs, each a hub of leaves of two hubs, costs near `d` in
+/// the names the hubs need, not `d` at each hub: the needs held across the hubs stay within
+/// three per hub ([`Conjuncts::needs_held`]), and building the conjunction is linear. No leaf
+/// is a star, since no leaf's hubs hold all the satellite's related names, as by the
+/// definition. COMPLEXITY.md C37.
+#[test]
+fn a_satellite_of_every_hub_costs_its_related_names_once() {
+    for first in [true, false] {
+        let c = satellite_of_every_hub(12, first);
+        let stars = stars_by_definition(&c);
+        for i in 0..12 {
+            let a = format!("a{i}");
+            assert_eq!(c.star(&a).is_some(), stars.contains_key(&*a), "{a} in {c}");
+            assert!(c.star(&a).is_none(), "{a} in {c}");
+        }
+        for d in [12, 96] {
+            let held = satellite_of_every_hub(d, first).needs_held();
+            assert!(
+                held <= 3 * (d + 1),
+                "{held} names needed across {} hubs (satellite first: {first})",
+                d + 1
+            );
+        }
+        // The satellite's conjuncts taken away one by one, its anchor first, until its related
+        // names fit the hubs of the last leaves, which become stars: as by the definition at
+        // each step, and with bounds on the hubs, so that they have more conjuncts than a leaf.
+        let mut c = satellite_of_every_hub(4, first);
+        for i in 0..=4 {
+            let h = Lin::atom(Atom::Sym(format!("h{i}").into()));
+            c.and(Formula::Con(Con::ge(&h, &Lin::constant(0))));
+        }
+        let mut starred = 0;
+        for i in 0..=4 {
+            let stars = stars_by_definition(&c);
+            let found: BTreeSet<Arc<str>> = c.stars().keys().cloned().collect();
+            assert_eq!(found, stars.keys().cloned().collect(), "{c}");
+            starred += found.len();
+            let g = c.set().iter().find(|g| {
+                let ns = names(g);
+                ns.contains("y") && ns.contains(&*format!("h{i}"))
+            });
+            let g = g.cloned().expect("the satellite's conjunct");
+            c.remove(&g);
+        }
+        let stars = stars_by_definition(&c);
+        let found: BTreeSet<Arc<str>> = c.stars().keys().cloned().collect();
+        assert_eq!(found, stars.keys().cloned().collect(), "{c}");
+        assert!(starred + found.len() > 0, "no leaf became a star: {c}");
+        scaling::check(
+            &format!("a satellite of every hub (satellite first: {first})"),
+            64,
+            |d| {
+                std::hint::black_box(satellite_of_every_hub(d, first));
+            },
+        );
+    }
+}
+
 /// The ladder of `if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear` at size
 /// `k`, and its tests: before each rung, a hole `x_i != 10 (k - i) + 5` that holds, so that
 /// the holes pile up, one in each name.

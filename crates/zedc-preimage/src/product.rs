@@ -1448,7 +1448,11 @@ impl Scope {
     /// projection and moves nothing else, as the first moved nothing else. The stars at hubs
     /// whose free conjuncts changed, as those of a satellite ([`Conjuncts::star`]), are then
     /// projected once for the class and not once for each leaf. A projection the solver
-    /// refused in part, which records the leaf's name, is not reused.
+    /// refused in part, which records the leaf's name, is not reused. Each part's projection
+    /// reads only the part and the interval and class of each name it mentions
+    /// (`Scope::framed`), and the parts of the two stars are one but for the leaf's name, so
+    /// the two projections are one but for that name. Test
+    /// `l01_39_reduced_product::lazy::leaves_of_one_class_settled_together_get_what_each_gets_alone`.
     pub fn settle<'a>(&mut self, names: impl IntoIterator<Item = &'a Arc<str>>) {
         if !self.lazy || self.bottom {
             return;
