@@ -75,15 +75,15 @@ use std::future::Future;
 use std::hash::BuildHasherDefault;
 use std::ops::{ControlFlow, Range};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use num_bigint::BigUint;
 
 use super::bdd::{Bdd, Form, Part};
-use super::bes::{Answer, Bes, Kind, decide};
+use super::bes::{Answer, Bes, Decision, Kind, decide};
 use super::hash::KeyHasher;
 use super::rec::unfold::eval;
-use super::rec::{self, Env};
+use super::rec::{self, Env, Judgment, Why};
 use super::{Atoms, Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Tuples, Type, Verdict};
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
@@ -5761,18 +5761,6 @@ fn known_empty(k: &Type) -> bool {
     *k == Type::empty() || k.judged() == Some(true)
 }
 
-/// What a group's decider found for its members ([`judge`]), kept with the instance.
-pub(in crate::types) struct Judgment {
-    /// Each member's emptiness, where the decider decides it.
-    answers: Vec<Option<bool>>,
-    /// Whether each member the decider does not decide is refused by it: searched as every
-    /// member left open is, and given `Refusal::Group` by `verdict` if the search does not
-    /// decide it.
-    refused: Vec<bool>,
-    /// What the message of a refused member reads; only when one is refused.
-    why: Option<refused::Why>,
-}
-
 /// Each member's emptiness at `env`'s arguments, as the group's fixed points decide it (module
 /// `bes`, cross-review X14): a union is an `Or` node, a tuple or atom payload an `And` node, a
 /// morphism type whose guarantee lies within its permission and is inhabited a `Mor` node of
@@ -5908,7 +5896,7 @@ fn judge<'a>(env: &'a Arc<Env>) -> Judgment {
     }
     let why = refused
         .contains(&true)
-        .then(|| refused::Why::new(n, b, origin, runs, wide));
+        .then(|| Why::new(n, b, origin, runs, wide));
     Judgment {
         answers,
         refused,
@@ -5925,6 +5913,53 @@ fn settled(low: Answer, high: Answer, wide: bool) -> Option<bool> {
         (_, Answer::Empty) => Some(true),
         (Answer::Inhabited, _) if !wide => Some(false),
         _ => None,
+    }
+}
+
+impl Why {
+    /// What the messages of the refused members of a group read: the decider's system `graph`,
+    /// the definition and expression of each node (`origin`), its runs and which nodes reach a
+    /// meet or a difference (`wide`), with which nodes reach a refused node. Time linear in the
+    /// system.
+    fn new(
+        members: usize,
+        graph: Bes,
+        origin: Vec<(usize, Arc<rec::Node>)>,
+        runs: Vec<Decision>,
+        wide: Vec<bool>,
+    ) -> Why {
+        let of = (runs.iter())
+            .map(|d| {
+                (d.refusals.iter().enumerate())
+                    .flat_map(|(k, c)| c.component.iter().map(move |&v| (v, k)))
+                    .collect()
+            })
+            .collect();
+        // The nodes that reach a refused node: those refused, then their parents, each once.
+        let mut open: Vec<bool> = (0..graph.len())
+            .map(|v| runs.iter().any(|d| d.answers[v] == Answer::Refused))
+            .collect();
+        let mut stack: Vec<u32> = (0..graph.len() as u32)
+            .filter(|&v| open[v as usize])
+            .collect();
+        while let Some(v) = stack.pop() {
+            for &u in graph.parents(v) {
+                if !open[u as usize] {
+                    open[u as usize] = true;
+                    stack.push(u);
+                }
+            }
+        }
+        Why {
+            members: members as u32,
+            wide,
+            graph,
+            origin,
+            runs,
+            of,
+            open,
+            checked: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -5952,7 +5987,6 @@ fn kids<'a>(
 }
 
 mod refused;
-pub use refused::GroupSite;
 
 #[cfg(test)]
 mod tests;

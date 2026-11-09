@@ -27,7 +27,6 @@ mod bucket;
 mod debug;
 mod empty;
 mod hash;
-pub use empty::GroupSite;
 #[cfg(test)]
 use hash::SALT;
 pub(crate) use hash::{KeyHasher, mix};
@@ -4970,6 +4969,18 @@ impl fmt::Display for Refusal {
     }
 }
 
+/// Where a refused check points, when it rests on a recursive group ([`Type::refusal_site`]).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GroupSite {
+    /// The definition the refusal points at: the member whose answer was being decided.
+    pub head: String,
+    /// Each definition that takes part, as `type name = body`: the head first, then by name.
+    pub defs: Vec<String>,
+    /// For a refusal by the group's decider (`Refusal::Group`), the whole reason, written to
+    /// follow "because".
+    pub detail: Option<String>,
+}
+
 /// A type in the surface syntax: the definitions it needs, in order, then the type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Surface {
@@ -5019,9 +5030,11 @@ pub mod rec {
     //! possibly empty when it is empty with every parameter empty, or has a parameter under a
     //! complement or to the right of `\`, where a larger argument shrinks it.
 
+    use std::collections::HashMap;
     use std::sync::atomic::AtomicU64;
     use std::sync::{Arc, Mutex, OnceLock};
 
+    use super::bes::{Bes, Decision};
     use super::{Type, bytes, mix};
     use crate::deep;
 
@@ -5667,7 +5680,7 @@ pub mod rec {
         /// member's when first read and until the end of the unit that read it ([`Env::forget`]).
         members: Vec<Mutex<Option<Type>>>,
         /// What the group's decider found for each member (`empty::judge`), when first asked.
-        pub(in crate::types) judged: OnceLock<super::empty::Judgment>,
+        pub(in crate::types) judged: OnceLock<Judgment>,
     }
 
     impl Env {
@@ -5676,6 +5689,60 @@ pub mod rec {
                 .as_ref()
                 .expect("a recursive occurrence is in a group")
         }
+    }
+
+    // The decider's findings are defined here, with the instance that keeps them, and made by
+    // module `empty` (`judge`) and read by its module `refused`, which build on this module:
+    // defined there, the instance would name them and the two files would import each other.
+
+    /// What a group's decider found for its members (`empty::judge`), kept with the instance.
+    pub(in crate::types) struct Judgment {
+        /// Each member's emptiness, where the decider decides it.
+        pub(in crate::types) answers: Vec<Option<bool>>,
+        /// Whether each member the decider does not decide is refused by it: searched as every
+        /// member left open is, and given `Refusal::Group` by `verdict` if the search does not
+        /// decide it.
+        pub(in crate::types) refused: Vec<bool>,
+        /// What the message of a refused member reads; only when one is refused.
+        pub(in crate::types) why: Option<Why>,
+    }
+
+    /// What a refused member's message reads, kept with its group's judgment ([`Judgment`]);
+    /// made and read in `empty::refused`.
+    pub(in crate::types) struct Why {
+        /// The decider's system, as it was built, its leaves last set `Top`.
+        pub(in crate::types) graph: Bes,
+        /// The definition and the expression each node stands for, by its number.
+        pub(in crate::types) origin: Vec<(usize, Arc<Node>)>,
+        /// The decisions: with the leaves `Bot`, and, when there are leaves, with them `Top`.
+        pub(in crate::types) runs: Vec<Decision>,
+        /// For each run, the refusal whose component holds each node it refused for its shape.
+        pub(in crate::types) of: Vec<HashMap<u32, usize>>,
+        /// The number of members, whose nodes come first.
+        pub(in crate::types) members: u32,
+        /// Whether each node reaches a meet or a difference, so that an inhabited answer does
+        /// not decide it (`empty::settled`).
+        pub(in crate::types) wide: Vec<bool>,
+        /// Whether each node reaches a node that some run refused. A node that does not is
+        /// decided in every run, and a repair, which changes only refused members, cannot
+        /// change it.
+        pub(in crate::types) open: Vec<bool>,
+        /// For each set of members given `| #end`, whether the decider then decides each member
+        /// already re-checked with it.
+        pub(in crate::types) checked: Mutex<HashMap<Vec<usize>, HashMap<u32, Recheck>>>,
+    }
+
+    /// What the decider makes of a refused member once a repair is written (`Why::recheck`).
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub(in crate::types) enum Recheck {
+        /// It decides the member.
+        Decided,
+        /// It refuses the member no longer, and leaves it to the search, as it leaves a member
+        /// read through a meet or a difference, or one whose answer rests on a part it does not
+        /// take.
+        Searched,
+        /// It still refuses the member.
+        Refused,
     }
 
     /// What a recursive node stands for, by which it is hashed and ordered: a member of a group, or

@@ -10,78 +10,16 @@
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, PoisonError};
 
-use super::super::bes::{Answer, Bes, Decision, Kind, decide};
-use super::super::rec::{self, Env, Group};
-use super::super::{Node, Refusal, Type, Verdict};
+use super::super::bes::{Answer, Bes, Kind, decide};
+use super::super::rec::{self, Env, Group, Recheck, Why};
+use super::super::{GroupSite, Node, Refusal, Type, Verdict};
 use super::settled;
 
-/// What a refused member's message reads, kept with its group's judgment ([`super::Judgment`]).
-pub(in crate::types) struct Why {
-    /// The decider's system, as it was built, its leaves last set `Top`.
-    graph: Bes,
-    /// The definition and the expression each node stands for, by its number.
-    origin: Vec<(usize, Arc<rec::Node>)>,
-    /// The decisions: with the leaves `Bot`, and, when there are leaves, with them `Top`.
-    runs: Vec<Decision>,
-    /// For each run, the refusal whose component holds each node it refused for its shape.
-    of: Vec<HashMap<u32, usize>>,
-    /// The number of members, whose nodes come first.
-    members: u32,
-    /// Whether each node reaches a meet or a difference, so that an inhabited answer does not
-    /// decide it ([`super::settled`]).
-    wide: Vec<bool>,
-    /// Whether each node reaches a node that some run refused. A node that does not is decided
-    /// in every run, and a repair, which changes only refused members, cannot change it.
-    open: Vec<bool>,
-    /// For each set of members given `| #end`, whether the decider then decides each member
-    /// already re-checked with it.
-    checked: Mutex<HashMap<Vec<usize>, HashMap<u32, Recheck>>>,
-}
-
+// `Why` and `Recheck` are defined in module `rec`, with the group's instance that keeps them, and
+// `Why` is made by `judge`; how a refused member's message reads it is written here.
 impl Why {
-    pub(super) fn new(
-        members: usize,
-        graph: Bes,
-        origin: Vec<(usize, Arc<rec::Node>)>,
-        runs: Vec<Decision>,
-        wide: Vec<bool>,
-    ) -> Why {
-        let of = (runs.iter())
-            .map(|d| {
-                (d.refusals.iter().enumerate())
-                    .flat_map(|(k, c)| c.component.iter().map(move |&v| (v, k)))
-                    .collect()
-            })
-            .collect();
-        // The nodes that reach a refused node: those refused, then their parents, each once.
-        let mut open: Vec<bool> = (0..graph.len())
-            .map(|v| runs.iter().any(|d| d.answers[v] == Answer::Refused))
-            .collect();
-        let mut stack: Vec<u32> = (0..graph.len() as u32)
-            .filter(|&v| open[v as usize])
-            .collect();
-        while let Some(v) = stack.pop() {
-            for &u in graph.parents(v) {
-                if !open[u as usize] {
-                    open[u as usize] = true;
-                    stack.push(u);
-                }
-            }
-        }
-        Why {
-            members: members as u32,
-            wide,
-            graph,
-            origin,
-            runs,
-            of,
-            open,
-            checked: Mutex::new(HashMap::new()),
-        }
-    }
-
     /// What the decider makes of member `i` once the case `| #end` is added to each member of
     /// `which`: the system of the nodes `i` reaches, each of `which` made a union of its old
     /// node and `Top`, decided as `judge` decides, the leaves `Bot` and then `Top`, and read as
@@ -174,30 +112,6 @@ impl Why {
         }
         kept[&i]
     }
-}
-
-/// What the decider makes of a refused member once a repair is written ([`Why::recheck`]).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Recheck {
-    /// It decides the member.
-    Decided,
-    /// It refuses the member no longer, and leaves it to the search, as it leaves a member read
-    /// through a meet or a difference, or one whose answer rests on a part it does not take.
-    Searched,
-    /// It still refuses the member.
-    Refused,
-}
-
-/// Where a refused check points, when it rests on a recursive group.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct GroupSite {
-    /// The definition the refusal points at: the member whose answer was being decided.
-    pub head: String,
-    /// Each definition that takes part, as `type name = body`: the head first, then by name.
-    pub defs: Vec<String>,
-    /// For a refusal by the group's decider (`Refusal::Group`), the whole reason, written to
-    /// follow "because".
-    pub detail: Option<String>,
 }
 
 impl Type {
