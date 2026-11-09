@@ -2529,6 +2529,14 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A persistent treap of `Option<Arc<Node>>` whose `split` and `join` copy the path they walk, shared between faces by `Arc` clone | `holes::Holes`, `holes::split`, `holes::join` | None (Zed values are shared and immutable) | A persistent ordered map from the stdlib catalog of step L2.11, or the same treap as a recursive union value |
 | A union-find with offsets in a `Vec<(Int, usize, Int)>` (each atom equal to `s` times its parent plus `d`), each path compressed in place by `find(&mut up, i)` | `extend::unit_classes` | Mutation (gap 11) | A persistent map from index to `(s, parent, d)` returned by `find`, or the union-find of the stdlib catalog of step L2.11 |
 
+## Entries from LOAD-holes-mod (`crates/zedc-presburger/src/presburger/extend.rs`, `extend/residues.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `BTreeMap<Atom, Line>` of per-class bounds, holes and residues filled through `entry(..).or_insert_with` and `&mut Line`, the holes swapped out by `std::mem::replace` and the residues by `std::mem::take` | `residues::Lines::line`, `Lines::cut`, `Lines::keep`, `residues::read` | Mutation (gap 11) | A fold over the conjuncts returning a persistent map from class root to its line |
+| A work list over the top-level equalities with a `HashMap<&Atom, Vec<usize>>` index and a `Vec` of unknown-atom counts decremented in place | `extend::fixed` | Mutation (gap 11) | A fold over a work list carrying the map of fixed values and the counts as persistent maps |
+| A `HashSet` of residue keys filled inside a `filter` closure (`kept_in.insert`) | `extend::clauses_once` | Mutation (gap 11); a closure capturing state by `&mut` | A fold over the clauses carrying the set of keys seen |
+
 ## Entries from LOAD-extend-refuses (`crates/zedc-presburger/src/presburger/extend.rs`)
 
 | Rust construct | Sites | Gap | At the port |

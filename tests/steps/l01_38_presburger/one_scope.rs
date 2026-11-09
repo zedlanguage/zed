@@ -1955,8 +1955,10 @@ fn the_questions_of_a_chain_moving_bounds_beside_a_shared_remainder_scale() {
     // the clauses `r == 5 || x <= b` keep the tightest `b`: 0.111, 0.369 s at 40, 80 links,
     // about 2.4 ms a link. Sized 8 and 64: without these three steps the cost of a link grows
     // until about link 60 and then stays, so 40 and 320 passed the limit, where 8 and 64 fail
-    // it (243 times the bytes; 189, 181 and 64 times without each step alone). Link 76 alone
-    // costs about 0.15 s at any length, so the sizes stay below it.
+    // it (243 times the bytes; 189, 181 and 64 times without each step alone). Link 76, the
+    // first with no point, was decided whole, about 0.15 s at any length; LOAD-holes-mod
+    // decides its face empty (3.5 ms), and the sizes past it are timed in
+    // `the_questions_of_a_chain_of_holes_beside_one_modulus_scale`.
     questions_scale(
         "a chain whose links move bounds beside a shared remainder",
         8,
@@ -2035,4 +2037,145 @@ fn each_answer_of_a_random_chain_moving_holes_is_the_answer_of_the_relation_whol
         decided += answers_with_faces_are_those_without(&random_hole_chain(&mut rng));
     }
     assert!(decided >= 1200, "{decided} answers of the whole");
+}
+
+/// A chain of `n - 1` links over `q`: `p0(x) = {p0}`, and `p{i}(x) = q(x: x) && p{i-1}(x: x +
+/// shift) && x < bound(i)` (LOAD-holes-mod).
+fn moved_chain(q: &str, p0: &str, shift: i64, n: usize, bound: impl Fn(usize) -> i64) -> String {
+    let mut src = format!("q(x: int) = {q};\np0(x: int) = {p0};\n");
+    for i in 1..n {
+        src.push_str(&format!(
+            "p{i}(x: int) = q(x: x) && p{}(x: x + {shift}) && x < {};\n",
+            i - 1,
+            bound(i)
+        ));
+    }
+    src
+}
+
+#[test]
+fn each_answer_of_a_chain_of_holes_beside_one_modulus_is_the_answer_of_the_relation_whole() {
+    // LOAD-holes-mod: the faces of these chains hold holes and the residues of one modulus;
+    // where no interval between the holes meets a residue left the face is empty, answered
+    // without the solver. Each answer is the one found without faces, refusals too, but where
+    // only the faces answer, and then the one found point by point; and the one `decide` gives
+    // the relation written whole wherever that is decided. Short chains with small bounds, as
+    // without faces each link is decided whole and refused (Shadows).
+    let small = |i: usize| 60 + 5 * i as i64;
+    let cases = [
+        // The chain of the task: no point from link 4 on.
+        moved_chain(
+            "(x < 10 || x > 20) && x mod 4 != 1 && x > 0 && x < 1000",
+            "x > 0",
+            3,
+            8,
+            small,
+        ),
+        // The same with the gap 10..=12 and links moving by 4, the modulus: the residues left
+        // stay those of `q`, and the face empties only where the holes cover the range.
+        moved_chain(
+            "(x < 10 || x > 12) && x mod 4 != 1 && x < 1000000",
+            "x > 13",
+            4,
+            8,
+            |i| 4 * i as i64 + 10,
+        ),
+        // An empty face: the bounds lie inside the hole.
+        moved_chain(
+            "(x < 10 || x > 20) && x mod 4 == 1 && x > 11 && x < 19",
+            "x > 0",
+            3,
+            6,
+            small,
+        ),
+        // A full face: every residue kept.
+        moved_chain(
+            "(x < 10 || x > 20) && (x mod 2 == 0 || x mod 2 == 1) && x > 0 && x < 1000",
+            "x > 0",
+            3,
+            6,
+            small,
+        ),
+        // Modulus 1.
+        moved_chain(
+            "(x < 10 || x > 20) && x mod 1 == 0 && x > 0 && x < 1000",
+            "x > 0",
+            3,
+            6,
+            small,
+        ),
+        // Holes at the ends of the range.
+        moved_chain(
+            "(x < 3 || x > 25) && x mod 5 == 3 && x > 0 && x < 30",
+            "x > 0",
+            2,
+            8,
+            small,
+        ),
+        // Two moduli, empty only together between the holes: left to the solver.
+        moved_chain(
+            "(x < 10 || x > 20) && x mod 2 == 1 && x mod 3 == 1 && x > 0 && x < 1000",
+            "x > 0",
+            3,
+            6,
+            small,
+        ),
+    ];
+    for src in &cases {
+        let decided = answers_with_faces_are_those_without(src);
+        assert!(decided > 0, "no answer of the whole in\n{src}");
+    }
+}
+
+/// The chain of the task: `(x < 10 || x > 20) && x mod 4 != 1` moved by 3, `x < 1000 i`.
+fn mod4_chain(n: usize) -> String {
+    moved_chain(
+        "(x < 10 || x > 20) && x mod 4 != 1 && x > 0 && x < 1000000",
+        "x > 0",
+        3,
+        n,
+        |i| 1000 * i as i64,
+    )
+}
+
+/// The gap 10..=12 beside `x mod 4 != 1`, moved by 4 under `x < 4 i + 10`.
+fn gapped_chain(n: usize) -> String {
+    moved_chain(
+        "(x < 10 || x > 12) && x mod 4 != 1 && x < 1000000",
+        "x > 13",
+        4,
+        n,
+        |i| 4 * i as i64 + 10,
+    )
+}
+
+/// The chain of the shared remainder by 6 moved by 12, past link 76.
+fn shared_remainder_chain(n: usize) -> String {
+    let mut src = String::from(
+        "q(x: int) = (x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50) && x > 0 \
+         && x < 1000000;\np0(x: int) = x > 0;\n",
+    );
+    for i in 1..n {
+        src.push_str(&rising_link(i));
+    }
+    src
+}
+
+#[test]
+fn the_questions_of_a_chain_of_holes_beside_one_modulus_scale() {
+    // LOAD-holes-mod. The chain of the task has no point from link 4 on; each link was decided
+    // whole and refused (Shadows): 8.73 s at 12 links, 29.2 s at 16 (debug, measured once).
+    // Now its face is read empty from its holes and the residues left by 4: 0.044 s at 12
+    // links, 0.75 s at 320.
+    questions_scale_unit("a chain of holes beside one modulus", 40, mod4_chain);
+    // The gapped chain keeps a point until its holes cover the range: 17.6 s at 23 links
+    // before, 0.071 s now, 1.68 s at 320.
+    questions_scale_unit("a chain of a gap beside one modulus", 40, gapped_chain);
+    // Link 76 of the shared-remainder chain is the first with no point: before, it was
+    // decided whole, 0.13 s; now its face is decided empty by the solver, 3.5 ms.
+    questions_scale_unit(
+        "a chain moving bounds beside a shared remainder past link 76",
+        40,
+        shared_remainder_chain,
+    );
 }

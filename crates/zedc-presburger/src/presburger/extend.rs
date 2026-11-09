@@ -33,6 +33,7 @@
 //! classes, so its size is bounded by the clauses written and not by the least common
 //! multiple of the moduli.
 
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::formula::{Rel, Shared};
@@ -42,7 +43,9 @@ use super::{
 use zedc_int::int::Int;
 
 mod holes;
+mod residues;
 use holes::{Holes, hole_of};
+use residues::Reading;
 
 /// Whether a formula holds somewhere and whether its negation does, each with the refusal that
 /// left it undecided.
@@ -189,12 +192,17 @@ impl Extending {
     // feasibility after adding a constraint has no procedure in time of the constraint alone
     // (an added constraint may move every point, and the elimination the solver does is not
     // kept). Trigger: a chain of tests whose constraints each exclude the point of the test it
-    // calls, and a chain with no point at all, such as `q = (x < 10 || x > 20) && x mod 4 !=
-    // 1` moved by 3 (from the fourth link `x + 3k` takes every residue mod 4): each link is
-    // decided whole and refused (`Shadows`), 6.3 s at 12 links and 24.6 s at 16 on
-    // LOAD-bound-holes, as slow on main. Test `l01_38_presburger::extend::a_chain_whose_points_move_is_decided_whole`, which
-    // measures it, and `l01_38_presburger::one_scope::the_questions_of_a_chain_of_tests_scale`
-    // for the chain whose points serve. COMPLEXITY.md row LOAD-chain-share. A complete
+    // calls, and a chain with no point that its faces do not show empty. A chain with no
+    // point whose faces hold nowhere by their holes and the residues of one modulus, such as
+    // `q = (x < 10 || x > 20) && x mod 4 != 1` moved by 3, is answered from the faces
+    // ([`Faces::free`], LOAD-holes-mod: 24.6 s at 16 links, refused, before; 0.05 s now); one
+    // emptied only by two moduli together (`x mod 2 == 1 && x mod 3 == 1` between holes) is
+    // left to the solver on the faces, and decided whole where it refuses. Test
+    // `l01_38_presburger::extend::a_chain_whose_points_move_is_decided_whole`, which measures
+    // it, `l01_38_presburger::one_scope::the_questions_of_a_chain_of_tests_scale` for the
+    // chain whose points serve, and
+    // `one_scope::the_questions_of_a_chain_of_holes_beside_one_modulus_scale` for the chains
+    // the faces show empty. COMPLEXITY.md rows LOAD-chain-share and LOAD-holes-mod. A complete
     // solution needs an incremental integer procedure: a simplex kept from the callee, with
     // its basis, to which the new rows are added, and the branch of an integer search redone
     // only where the new rows cut it.
@@ -381,10 +389,10 @@ impl Extending {
             }
         }
         // No kept part's point extends: a point of the parts read through their faces, nothing
-        // fixed ([`Faces::free`]), before the whole is decided.
+        // fixed, or the faces holding nowhere ([`Faces::free`]), before the whole is decided.
         if holds.is_none() {
             self.faces.make(&self.known, kids.iter(), def, iface);
-            holds = (self.faces.free(&self.known, kids, def)).map(|p| (Ok(true), Some(p)));
+            holds = self.faces.free(&self.known, kids, def);
         }
         let (holds, point) = holds.unwrap_or_else(|| holds_whole(g, def));
         // The part holds everywhere, so the whole fails where the other parts do. Their
@@ -662,24 +670,51 @@ impl Faces {
     /// holding outside `10..=20`), which was otherwise decided whole, the chain read again at
     /// each link. Exact: each face stands for its part where nothing beside it reads an atom
     /// it projects out, as in [`Faces::met`], and the point gives no value to those atoms.
-    /// `None` where no part has a face, an atom a face projects out is read beside it, or the
-    /// solver finds no point or refuses, so that the conjunction is then decided whole, as
-    /// before. A point found here is a point of the conjunction, so it answers where the
-    /// solver refuses the conjunction whole (`Err(Shadows)` on chains whose congruences meet
-    /// moved holes); those answers are checked point by point in the random tests. Time of
-    /// [`Faces::read`], and of the solver on the faces and the holes.
+    /// `(Ok(true), Some(point))` where the solver finds a point, `(Ok(false), None)` where the
+    /// faces hold nowhere (by their intervals and residues left, [`residues::read`], or by the
+    /// solver), and `None` where no part has a face, an atom a face projects out is read
+    /// beside it, or the solver refuses, so that the conjunction is then decided whole, as
+    /// before. A point found here is a point of the conjunction, so it answers where the solver
+    /// refuses the conjunction whole (`Err(Shadows)` on chains whose congruences meet moved
+    /// holes); those answers are checked point by point in the random tests. The faces holding
+    /// nowhere shows that the conjunction holds nowhere (LOAD-holes-mod): each face is the
+    /// projection of its part and the definitions it reaches, so a point of the conjunction
+    /// and its definitions gives one of every face and of every other part; so `q(x) = (x < 10
+    /// || x > 20) && x mod 4 != 1` moved by 3 holds at no link from the fourth on, each answer
+    /// `Ok(false)` from the faces, where the conjunction decided whole is refused (`Shadows`)
+    /// and every link above it was decided whole too, about cubic in the chain. The point is
+    /// sought first in the first interval between the holes that meets the residues left, by
+    /// two bounds in place of the holes written as clauses, since the solver's time grows with
+    /// the clauses (the chain moving `x < 10 || x > 12` by 4 below `x mod 4 != 1`: 2.5 s at its
+    /// twentieth link with the clauses); where it finds none there, with the holes written out.
+    /// Time of [`Faces::read`], of [`residues::read`], and of the solver on the faces and two
+    /// bounds, or, where the point lies in no first interval, on the faces and the holes.
     fn free(
         &self,
         known: &HashMap<Id, Known>,
         kids: &[Formula],
         def: &dyn Fn(u32) -> Formula,
-    ) -> Option<Point> {
+    ) -> Option<(Result<bool, Refusal>, Option<Point>)> {
         let (f, holes) = self.read(known, kids, None, &Point::new(), def)?;
+        let within = match residues::read(&f, &holes) {
+            Reading::Empty => return Some((Ok(false), None)),
+            Reading::Within(within) => within,
+        };
+        if !within.is_empty() {
+            let narrow = Formula::and(std::iter::once(f.clone()).chain(within).collect());
+            if let Ok(Some(p)) = point(&narrow) {
+                return Some((Ok(true), Some(p)));
+            }
+        }
         let mut written = vec![f];
         for (a, h) in &holes {
             written.extend(h.clauses(a));
         }
-        point(&Formula::and(written))
+        match point(&Formula::and(written)) {
+            Ok(Some(p)) => Some((Ok(true), Some(p))),
+            Ok(None) => Some((Ok(false), None)),
+            Err(_) => None,
+        }
     }
 
     /// The question of the conjunction whose parts are `kids`, each kept part but `kids[j]`
@@ -1071,7 +1106,12 @@ fn congruences_once(rows: Vec<Con>, keep: &HashSet<Atom>, also: &HashSet<Atom>) 
 /// key, and a clause whose key is that of one kept adds nothing to the projection. So a link of
 /// the chain `p{i}(x) = q(x: x) && p{i-1}(x: x + 3)` with `q = (x mod 3 == 1 || x mod 5 == 2)
 /// && ...` keeps one clause for each residue of the shift modulo 5, five in all, however long
-/// the chain. Time of the clauses and rows, near linear.
+/// the chain. A clause that keeps one atom in residues of one modulus through quotients no row
+/// and no other clause reads (`a - 4 * q` bounded to a window in each disjunct) is keyed by
+/// the atom, the modulus and the residues ([`residues::key`]), the quotients being free even
+/// where two bounds of one conjunction read them (LOAD-holes-mod): such a clause comes from
+/// each link of a chain moved by a multiple of the modulus, with its own quotient and its
+/// window moved, and is kept once. Time of the clauses and rows, near linear.
 fn clauses_once(clauses: Vec<Formula>, rows: &[Con], keep: &HashSet<Atom>) -> Vec<Formula> {
     let mut reads: HashMap<Atom, usize> = HashMap::new();
     let atoms = (rows
@@ -1082,10 +1122,15 @@ fn clauses_once(clauses: Vec<Formula>, rows: &[Con], keep: &HashSet<Atom>) -> Ve
         *reads.entry(a).or_default() += 1;
     }
     let mut said: HashSet<Formula> = HashSet::new();
+    let mut kept_in: HashSet<residues::Key> = HashSet::new();
     (clauses.into_iter())
         .filter(|f| {
+            let quotient = |a: &Atom| reads[a] == 1 && !keep.contains(a);
+            if let Some(k) = residues::key(f, &quotient) {
+                return kept_in.insert(k);
+            }
             let joined = joined(f);
-            let lone = |a: &Atom| reads[a] == 1 && !keep.contains(a) && !joined.contains(a);
+            let lone = |a: &Atom| quotient(a) && !joined.contains(a);
             said.insert(clause_key(f, &lone))
         })
         .collect()
@@ -1436,7 +1481,7 @@ fn split(items: Vec<Formula>, keep: &mut HashSet<Atom>) -> Option<(Vec<Formula>,
 /// the link below (LOAD-bound-holes). Exact, since the rows stay. Time of the rows, near
 /// linear: a union of the classes by their atoms, each path compressed on the way.
 fn unit_classes(
-    rows: &[Con],
+    rows: &[impl Borrow<Con>],
     read: &HashSet<Atom>,
     keep: &HashSet<Atom>,
 ) -> (HashMap<Atom, Lin>, HashMap<Atom, Lin>) {
@@ -1453,7 +1498,7 @@ fn unit_classes(
             _ => None,
         }
     }
-    for c in rows {
+    for c in rows.iter().map(Borrow::<Con>::borrow) {
         let Some(((a, _), (b, _))) = unit(c) else {
             continue;
         };
@@ -1489,7 +1534,7 @@ fn unit_classes(
         (s, r, d)
     }
     let prefer = |x: &Atom, y: &Atom| (!keep.contains(x), x) < (!keep.contains(y), y);
-    for c in rows {
+    for c in rows.iter().map(Borrow::<Con>::borrow) {
         let Some(((a, k), (b, e))) = unit(c) else {
             continue;
         };
@@ -1530,7 +1575,7 @@ fn unit_classes(
         }
     }
     let mut also: HashMap<Atom, Lin> = HashMap::new();
-    for c in rows {
+    for c in rows.iter().map(Borrow::<Con>::borrow) {
         let Some(((x, kx), (y, ky))) = unit(c) else {
             continue;
         };
@@ -1870,11 +1915,86 @@ fn met_outside(
         }
         return Ok(Some(out));
     }
+    // [`met`] fixes each atom of `m` to its value there, and the equalities conjoined in `f`
+    // then fix others ([`fixed`]), so a set of holes over such an atom is checked at its value
+    // and not written out (LOAD-holes-mod): a link whose callee's point lies in a hole asked
+    // the solver with each hole as a clause, O(n) clauses at link n.
+    let fixed = fixed(m, f);
     let mut written = vec![f.clone()];
     for (a, h) in holes {
-        written.extend(h.clauses(a));
+        match fixed.get(*a).or_else(|| m.get(*a)) {
+            Some(v) if h.holds(v) => return Ok(None),
+            Some(_) => {}
+            None => written.extend(h.clauses(a)),
+        }
     }
     met(m, &Formula::and(written))
+}
+
+/// The values `m` gives the atoms of the equalities conjoined in `f`, and those these
+/// equalities then fix: one with a single atom left without a value fixes it where its term at
+/// the others is divisible by the atom's coefficient. Each equality is read once its other
+/// atoms have values, whatever their order in `f`, so the time is that of `f`.
+fn fixed(m: &Point, f: &Formula) -> Model {
+    let mut eqs: Vec<&Con> = Vec::new();
+    // Each shared conjunction read once.
+    let mut seen: HashSet<Id> = HashSet::new();
+    let mut todo = vec![f];
+    while let Some(g) = todo.pop() {
+        match g {
+            Formula::And(gs) => {
+                if seen.insert(Id::any(g)) {
+                    todo.extend(gs.iter());
+                }
+            }
+            Formula::Con(c) if c.rel == Rel::Eq => eqs.push(c),
+            _ => {}
+        }
+    }
+    let mut at = Model::new();
+    // The equalities that read each atom without a value, and how many such atoms each reads.
+    let mut by: HashMap<&Atom, Vec<usize>> = HashMap::new();
+    let mut left: Vec<usize> = Vec::with_capacity(eqs.len());
+    for (i, c) in eqs.iter().enumerate() {
+        let mut n = 0;
+        for a in c.lin.terms.keys() {
+            match m.get(a) {
+                Some(v) => {
+                    at.insert(a.clone(), v.clone());
+                }
+                None => {
+                    by.entry(a).or_default().push(i);
+                    n += 1;
+                }
+            }
+        }
+        left.push(n);
+    }
+    let mut ready: Vec<usize> = (0..eqs.len()).filter(|&i| left[i] == 1).collect();
+    while let Some(i) = ready.pop() {
+        let c = eqs[i];
+        let mut rest = c.lin.constant.clone();
+        let mut unknown: Option<(&Atom, &Int)> = None;
+        for (a, k) in &c.lin.terms {
+            match at.get(a) {
+                Some(v) => rest = &rest + &(k * v),
+                None => unknown = Some((a, k)),
+            }
+        }
+        // `None` where another equality fixed the atom first.
+        let Some((a, k)) = unknown else { continue };
+        if !rest.mod_floor(k).is_zero() {
+            continue;
+        }
+        at.insert(a.clone(), -&rest.div_floor(k));
+        for &j in by.get(a).into_iter().flatten() {
+            left[j] -= 1;
+            if left[j] == 1 {
+                ready.push(j);
+            }
+        }
+    }
+    at
 }
 
 /// Gives each atom of `f` absent from `at` that an equality of `f` sets, the equality's other
@@ -1927,14 +2047,16 @@ fn holds_whole(
 /// of `f` given a value.
 fn found(f: &Formula) -> (Result<bool, Refusal>, Option<Point>) {
     match decided(f) {
-        Ok(true) => (Ok(true), point(f)),
+        Ok(true) => (Ok(true), point(f).ok().flatten()),
         other => (other, None),
     }
 }
 
 /// A point where `f` holds, every atom of `f` given a value, when the solver gives one: of `f`,
-/// or, where the solver refuses `f`, of `f` with its bindings in place ([`Bound`]).
-fn point(f: &Formula) -> Option<Point> {
+/// or, where the solver refuses `f`, of `f` with its bindings in place ([`Bound`]); `Ok(None)`
+/// when either form holds nowhere, which is exact, and the first refusal when both are refused
+/// or `f` has no bindings to put in place.
+fn point(f: &Formula) -> Result<Option<Point>, Refusal> {
     let filled = |g: &Formula, m: Model| {
         let mut p: Point = m.into_iter().collect();
         for a in g.atoms() {
@@ -1943,13 +2065,17 @@ fn point(f: &Formula) -> Option<Point> {
         p
     };
     match satisfiable(f) {
-        Ok(m) => m.map(|m| filled(f, m)),
-        Err(_) => {
-            let mut b = Bound::of(f)?;
-            let m = satisfiable(&b.f).ok().flatten()?;
+        Ok(m) => Ok(m.map(|m| filled(f, m))),
+        Err(e) => {
+            let Some(mut b) = Bound::of(f) else {
+                return Err(e);
+            };
+            let Some(m) = satisfiable(&b.f).map_err(|_| e)? else {
+                return Ok(None);
+            };
             let mut p = filled(&b.f, m);
             b.back(&mut p);
-            Some(p)
+            Ok(Some(p))
         }
     }
 }
@@ -2291,7 +2417,7 @@ fn fails_whole(
 ) -> (Result<bool, Refusal>, Option<Point>) {
     let not = Formula::negate(g.clone());
     match decide_defined(sums, not.clone(), def) {
-        Ok(true) => (Ok(true), point(&with(&reached(g, def), not))),
+        Ok(true) => (Ok(true), point(&with(&reached(g, def), not)).ok().flatten()),
         other => (other, None),
     }
 }
