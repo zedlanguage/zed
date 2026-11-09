@@ -292,7 +292,10 @@ impl<'a, 's> Builder<'a, 's> {
                     positional.push(Expr {
                         kind: ExprKind::SortKey {
                             desc: self.word(self.tree.nodes[k].start) == "desc",
-                            key: Box::new(self.node(kids[0])?),
+                            key: match kids.first() {
+                                Some(&key) => Some(Box::new(self.node(key)?)),
+                                None => None,
+                            },
                         },
                         span: self.span(k),
                     });

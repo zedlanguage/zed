@@ -92,7 +92,7 @@ FacetCall     : a facet record name(args), its arguments compile-time-stage
 Args          : the arguments, resolved by the call rules (sec:power) to positional kernel arguments
 NamedArg      : the argument of the named parameter; `name:` alone is `name: name`
 PosArg        : the positional argument of its alternative
-SortArg       : a sort key
+SortArg       : a sort key; `asc` or `desc` with no operand, followed by `,` or `)`, is the key `x -> x`, the value itself
 PlainArg      : a positional argument
 Primary       : the primary of its alternative
 AtomExpr      : a literal term

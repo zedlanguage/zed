@@ -120,6 +120,15 @@ Expr ::: x < -1 ::: (x < (- 1))
 Item ::: x <- -1; ::: (x <- (- 1) ;)
 Expr ::: f(x: 1, y: 2) ::: (f (( ((x : 1) , (y : 2)) )))
 Expr ::: xs.sort(desc x.size) ::: ((xs (. sort)) (( (desc (x (. size))) )))
+Expr ::: xs.sort(desc) ::: ((xs (. sort)) (( desc )))
+Expr ::: xs.sort(asc) ::: ((xs (. sort)) (( asc )))
+Expr ::: xs.sort(desc, asc x -> x.name) ::: ((xs (. sort)) (( (desc , (asc (x -> (x (. name))))) )))
+Expr ::: xs.sort(desc,) ::: ((xs (. sort)) (( (desc ,) )))
+Item ::: x = desc; ::: ERROR
+Expr ::: desc ::: ERROR
+Expr ::: xs.sort(desc + 1) ::: ERROR
+Expr ::: xs.sort((desc)) ::: ERROR
+Expr ::: xs.sort(desc x: 1) ::: ERROR
 Expr ::: "a${x + 1}b" ::: "a${x + 1}b"
 Expr ::: (+) ::: (( + ))
 Expr ::: [1, 2, 3] ::: ([ 1 , 2 , 3 ])

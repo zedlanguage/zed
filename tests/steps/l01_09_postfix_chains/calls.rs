@@ -101,10 +101,17 @@ fn a_form_of_a_later_layer_is_refused_as_not_compiled_yet() {
 
 #[test]
 fn a_sort_key_is_a_positional_argument() {
-    // DESIGN.md sec:grammar: `SortArg = ('asc' | 'desc') Expr`, one alternative of `PosArg`;
-    // it builds from here, and name resolution names the step that compiles it (L5.1).
+    // DESIGN.md sec:grammar: `SortArg = ('asc' | 'desc') (Expr | &(',' | ')'))`, one
+    // alternative of `PosArg`; it builds from here, and name resolution names the step that
+    // compiles it (L5.1). A word alone is the key `x -> x`, kept as written.
     let cases = [
         ("rows.sort(desc score)", "(call (. rows sort) (desc score))"),
+        ("xs.sort(desc)", "(call (. xs sort) (desc))"),
+        ("xs.sort(asc)", "(call (. xs sort) (asc))"),
+        (
+            "xs.sort(desc, asc x -> x.name)",
+            "(call (. xs sort) (desc) (asc (fn (x) (. x name))))",
+        ),
         (
             "keys.sort(asc v -> key(v))",
             "(call (. keys sort) (asc (fn (v) (call key v))))",
@@ -123,4 +130,30 @@ fn a_sort_key_is_a_positional_argument() {
     let err = ast(text).unwrap_err();
     assert_eq!(err.row, Some(zedc::rejection::Row::NamedBeforePositional));
     assert_eq!(&text[err.span.start..err.span.end], "asc a");
+}
+
+#[test]
+fn a_direction_word_alone_prints_back_and_needs_a_following_comma_or_paren() {
+    // The formatter prints the short form back as written, not as `desc x -> x`.
+    for text in [
+        "ys = xs.sort(desc);\n",
+        "ys = xs.sort(asc);\n",
+        "ys = xs.sort(desc, asc x -> x.name);\n",
+    ] {
+        assert_eq!(
+            zedc::format::format_source(text.as_bytes()).as_deref(),
+            Ok(text)
+        );
+    }
+    // Anywhere but before `,` or `)` in an argument list, the word needs its operand.
+    for text in [
+        "x = desc;\n",
+        "ys = xs.sort(desc + 1);\n",
+        "ys = xs.sort((desc));\n",
+    ] {
+        assert!(
+            zedc::format::format_source(text.as_bytes()).is_err(),
+            "{text}"
+        );
+    }
 }

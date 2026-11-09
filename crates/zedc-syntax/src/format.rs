@@ -1341,8 +1341,14 @@ impl<'a> Formatter<'a> {
                 stack.push(at(of, ELSE));
             }
             ExprKind::SortKey { desc, key } => {
-                self.put(if *desc { "desc " } else { "asc " });
-                stack.push(at(key, LAMBDA));
+                match key {
+                    Some(key) => {
+                        self.put(if *desc { "desc " } else { "asc " });
+                        stack.push(at(key, LAMBDA));
+                    }
+                    // A word alone, printed back as written (`xs.sort(desc)`).
+                    None => self.put(if *desc { "desc" } else { "asc" }),
+                }
             }
             ExprKind::Loop { label, body } => {
                 match label {

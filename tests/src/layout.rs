@@ -180,8 +180,8 @@ fn expr_kids<'a>(
         | ExprKind::Read { of: a, .. }
         | ExprKind::Loop { body: a, .. }
         | ExprKind::Break(a)
-        | ExprKind::Spread { of: a, .. }
-        | ExprKind::SortKey { key: a, .. } => out.push(a),
+        | ExprKind::Spread { of: a, .. } => out.push(a),
+        ExprKind::SortKey { key, .. } => out.extend(key.as_deref()),
         ExprKind::Binary(_, a, b)
         | ExprKind::Index(a, b)
         | ExprKind::In { of: a, set: b, .. }

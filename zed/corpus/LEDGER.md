@@ -39,24 +39,24 @@ DESIGN.md line 1561 assigns. Every label equals the line 1561 layer.
 | 6v | variants/06-matrix-multiply-remap.zed | the remap | L8 | L8 / L5 (slice) / L8 | L8 |
 | 6m | variants/06-matrix-multiply-method.zed | the stdlib method `matmul` | L14 | L1 / L14 (matmul) / L14 | (none) |
 | 7 | 07-json-parser.zed (+ json.zed) | grammar round trip, error recovery | L20 | L20 / L20 (serialize) / L20 | L20 |
-| 8 | 08-utf8-percent.zed | UTF-8 decode fused with percent decoding, zero intermediates | L6 | L6 / L5 (rank) / L6 | L6 |
+| 8 | 08-utf8-percent.zed | UTF-8 decode fused with percent decoding, zero intermediates | L6 | L6 / L5 (orderedValues) / L6 | L6 |
 | 9 | 09-canonical-equal.zed | equality against an unmaterialized canonical form | L3 | L1 / L3 (split) / L3 | L3 |
 | 10 | 10-regex-matcher.zed (+ regex.zed) | static regex specialized by `mix` | L19 | L2 / L19 (mix) / L19 | L19 |
 | 11 | 11-csv-split.zed | state machine parallelized by scan | L5 | L3 / L5 (slice) / L5 | L5 |
 | 12 | 12-cyk-table.zed | grammar-table recurrence (CYK) | L6 | L6 / L3 (where) / L6 | L6 |
-| 13 | 13-union-find.zed (+ uf.zed) | union-find, library path | L6 | L6 / L5 (rank) / L6 | L6 |
+| 13 | 13-union-find.zed (+ uf.zed) | union-find, library path | L6 | L6 / L5 (orderedValues) / L6 | L6 |
 | 14 | 14-clustering.zed | incremental all-pairs reuse | L7 | L6 / L5 (drop) / L7, label above both | L7 |
 | 15 | 15-spreadsheet.zed | incremental spreadsheet | L7 | L6 / L6 (::frames) / L7, label above both | L7 |
 | 16 | 16-game-tick.zed | generations, event coalescing | L7 | L7 / L7 (reducer) / L7 | L7 |
 | 17 | 17-sensor-pipeline.zed | batch to streaming, waves, windows | L7 | L3 / L7 (window) / L7 | L7 |
 | 18 | 18-socket-wordfreq.zed | frontier completion over a socket | L7 | L3 / L7 (window) / L7 | L7 |
-| 19 | 19-bank-ledger.zed | insufficient-funds values, failure surfacing | L6 | L6 / L5 (rank) / L6 | L6 |
+| 19 | 19-bank-ledger.zed | insufficient-funds values, failure surfacing | L6 | L6 / L5 (patch) / L6 | L6 |
 | 20 | 20-taint.zed | taint compile error, then the fix | L13 | L7 / L13 (taint) / L13 | L13 |
 | 20e | variants/20-taint-error.zed | the error version (must be rejected) | L13 | L7 / L13 (taint) / L13 | L13 |
 | 21 | 21-stats-module.zed (+ stats.zed) | demand-pruned record outputs sharing one sub-graph | L3 | L3 / L3 (split) / L3 | L3 |
 | 22 | 22-top-k.zed | sort pruning | L5 | L5 / L5 (take) / L5 | L5 |
-| 23 | 23-join-zoo.zed | all region triples, disjoint concatenation, range domains | L5 | L3 / L5 (rank) / L5 | L5 |
-| 23v | variants/23-join-zoo-remap.zed | joins as output-keypath constraints | L8 | L8 / L5 (rank) / L8 | L8 |
+| 23 | 23-join-zoo.zed | all region triples, disjoint concatenation, range domains | L5 | L3 / L5 (orderedValues) / L5 | L5 |
+| 23v | variants/23-join-zoo-remap.zed | joins as output-keypath constraints | L8 | L8 / L5 (orderedValues) / L8 | L8 |
 | 24 | 24-weighted-pick.zed | prefix sum + binary search, rank domains, sentinels | L6 | L6 / L5 (drop) / L6 | L6 |
 | 25 | 25-autocorrelation.zed | implicit valid-range join | L5 | L3 / L5 (zip) / L5 | L5 |
 | 26 | 26-heat-stencil.zed | stencil, wavefront skewing | L6 | L6 / L3 (split) / L6 | L6 |
@@ -241,22 +241,22 @@ program                            units  ring table (word)     label enabled ag
 05-max-prefix-sum.zed                  1    L3 L5 (scan)           L5      L5 yes
 06-matrix-multiply.zed                 1    L3 L5 (zip)            L5      L5 yes
 07-json-parser.zed                     2   L20 L20 (serialize)    L20     L20 yes
-08-utf8-percent.zed                    1    L6 L5 (rank)           L6      L6 yes
+08-utf8-percent.zed                    1    L6 L5 (orderedValues)    L6      L6 yes
 09-canonical-equal.zed                 1    L1 L3 (split)          L3      L3 yes
 10-regex-matcher.zed                   2    L2 L19 (mix)          L19     L19 yes
 11-csv-split.zed                       1    L3 L5 (slice)          L5      L5 yes
 12-cyk-table.zed                       1    L6 L3 (where)          L6      L6 yes
-13-union-find.zed                      2    L6 L5 (rank)           L6      L6 yes
+13-union-find.zed                      2    L6 L5 (orderedValues)    L6      L6 yes
 14-clustering.zed                      1    L6 L5 (drop)           L7      L7 yes (label above ring and table)
 15-spreadsheet.zed                     1    L6 L6 (::frames)       L7      L7 yes (label above ring and table)
 16-game-tick.zed                       1    L7 L7 (reducer)        L7      L7 yes
 17-sensor-pipeline.zed                 1    L3 L7 (window)         L7      L7 yes
 18-socket-wordfreq.zed                 1    L3 L7 (window)         L7      L7 yes
-19-bank-ledger.zed                     1    L6 L5 (rank)           L6      L6 yes
+19-bank-ledger.zed                     1    L6 L5 (patch)          L6      L6 yes
 20-taint.zed                           1    L7 L13 (taint)        L13     L13 yes
 21-stats-module.zed                    2    L3 L3 (split)          L3      L3 yes
 22-top-k.zed                           1    L5 L5 (take)           L5      L5 yes
-23-join-zoo.zed                        1    L3 L5 (rank)           L5      L5 yes
+23-join-zoo.zed                        1    L3 L5 (orderedValues)    L5      L5 yes
 24-weighted-pick.zed                   1    L6 L5 (drop)           L6      L6 yes
 25-autocorrelation.zed                 1    L3 L5 (zip)            L5      L5 yes
 26-heat-stencil.zed                    1    L6 L3 (split)          L6      L6 yes
@@ -269,7 +269,7 @@ program                            units  ring table (word)     label enabled ag
 06-matrix-multiply-method.zed          1    L1 L14 (matmul)       L14     L14 yes
 06-matrix-multiply-remap.zed           1    L8 L5 (slice)          L8      L8 yes
 20-taint-error.zed                     1    L7 L13 (taint)        L13     L13 yes
-23-join-zoo-remap.zed                  1    L8 L5 (rank)           L8      L8 yes
+23-join-zoo-remap.zed                  1    L8 L5 (orderedValues)    L8      L8 yes
 ```
 
 `cargo run -q -p zed-tools --bin layer -- <spec> controls/*.zed` (exit status 1, as intended):

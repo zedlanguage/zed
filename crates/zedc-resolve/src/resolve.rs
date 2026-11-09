@@ -2039,7 +2039,7 @@ impl Resolver<'_> {
             }
             ExprKind::SortKey { key, .. } => {
                 self.later(e.span, "a sort key `asc` or `desc`");
-                todo.push(Task::Expr(key));
+                todo.extend(key.as_deref().map(Task::Expr));
             }
         }
     }

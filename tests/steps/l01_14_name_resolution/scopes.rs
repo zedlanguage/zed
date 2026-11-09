@@ -139,4 +139,10 @@ fn a_sort_key_names_the_step_that_compiles_it() {
         ),
         "{es:?}"
     );
+    // A word alone is reported the same way, at the word.
+    let es = super::run("top(xs) = pick(xs, desc);").unwrap_err();
+    assert!(
+        es.contains(&concat!(zed_tests::not_yet!("a sort key `asc` or `desc`"), " [desc]").into()),
+        "{es:?}"
+    );
 }

@@ -170,7 +170,7 @@ Args          = (NamedArg | PosArg) % ',' (',' '...' | ','?)                    
 NamedArg      = Name ':' Expr?                                                     L1
 PosArg        = ~SortArg                                                           L5
               | ~PlainArg                                                          L1
-SortArg       = ('asc' | 'desc') Expr                                              L5
+SortArg       = ('asc' | 'desc') (Expr | &(',' | ')'))                             L5
 PlainArg      = !(Name ':') Expr                                                   L1
 
 Primary       = ~Literal                                                           L1

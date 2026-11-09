@@ -201,8 +201,9 @@ pub enum ExprKind {
     SortKey {
         /// Whether it is `desc`.
         desc: bool,
-        /// The key.
-        key: Box<Expr>,
+        /// The key; `None` for a direction word written alone, the key `x -> x`, the value
+        /// itself (`xs.sort(desc)`).
+        key: Option<Box<Expr>>,
     },
 }
 
