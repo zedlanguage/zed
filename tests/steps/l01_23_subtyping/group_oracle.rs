@@ -935,20 +935,7 @@ fn build_pool(ts: &Types, cap: usize, seed: u64) -> (Pool, bool) {
                     if opts.iter().any(Vec::is_empty) {
                         continue;
                     }
-                    let mut combos: Vec<Vec<usize>> = vec![vec![]];
-                    for o in &opts {
-                        combos = combos
-                            .iter()
-                            .flat_map(|c| {
-                                o.iter().map(move |&x| {
-                                    let mut d = c.clone();
-                                    d.push(x);
-                                    d
-                                })
-                            })
-                            .collect();
-                    }
-                    for c in combos.into_iter().take(36) {
+                    for c in first_tuples(&opts, 36) {
                         p.add(Node::Tup(c));
                     }
                 }
@@ -965,6 +952,36 @@ fn build_pool(ts: &Types, cap: usize, seed: u64) -> (Pool, bool) {
         }
     }
     (p, exhaustive)
+}
+
+/// The first `keep` tuples of the product of `opts`, the choices for each component in turn,
+/// in the order of the product's rows: the last component varies fastest. The empty product has
+/// one tuple, the empty one.
+///
+/// Complexity tradeoff: the naive form builds the whole product, `prod |opts[i]|` tuples
+/// (`6^w` for a tuple type of `w` components here, 1.7 million at `w = 8`), and then keeps
+/// `keep`. This one steps a counter with one digit per component, the last fastest, and builds
+/// only the tuples kept: `O(keep * w)` time and memory. Nothing is given up; the tuples and their
+/// order are those of the naive form (`the_first_tuples_are_those_of_the_whole_product`).
+fn first_tuples(opts: &[Vec<usize>], keep: usize) -> Vec<Vec<usize>> {
+    let mut out = Vec::with_capacity(keep);
+    if opts.iter().any(Vec::is_empty) {
+        return out;
+    }
+    let mut digit = vec![0; opts.len()];
+    while out.len() < keep {
+        out.push(digit.iter().zip(opts).map(|(&d, o)| o[d]).collect());
+        // The next row: raise the last digit that is not at its end and reset those after it.
+        let Some(k) = (0..opts.len())
+            .rev()
+            .find(|&k| digit[k] + 1 < opts[k].len())
+        else {
+            break;
+        };
+        digit[k] += 1;
+        digit[k + 1..].fill(0);
+    }
+    out
 }
 
 /// What the pool shows about a definition.
@@ -2845,4 +2862,66 @@ fn other_families_agree_across_orders() {
 #[test]
 fn meets_agree_across_orders_in_which_members_are_inhabited() {
     verdicts_agree_across_orders("meets", gen_meets, 0..800, (false, false));
+}
+
+/// The pool's rounds keep the first 36 tuples of the product of the values found for each
+/// component (`first_tuples`), built one by one. Against the whole product, built as the oracle
+/// first did, on random choices of up to 6 values for each of up to 5 components, some with none:
+/// the same tuples in the same order, both 36 and every one.
+#[test]
+fn the_first_tuples_are_those_of_the_whole_product() {
+    let whole = |opts: &[Vec<usize>]| -> Vec<Vec<usize>> {
+        let mut rows = vec![vec![]];
+        for o in opts {
+            rows = rows
+                .iter()
+                .flat_map(|r: &Vec<usize>| {
+                    o.iter().map(move |&x| {
+                        let mut d = r.clone();
+                        d.push(x);
+                        d
+                    })
+                })
+                .collect();
+        }
+        rows
+    };
+    let mut g = Rng::new(23);
+    for _ in 0..400 {
+        let opts: Vec<Vec<usize>> = (0..g.below(6))
+            .map(|_| (0..g.below(7)).map(|_| g.below(100)).collect())
+            .collect();
+        let all = whole(&opts);
+        assert_eq!(
+            first_tuples(&opts, 36),
+            all[..all.len().min(36)],
+            "{opts:?}"
+        );
+        assert_eq!(first_tuples(&opts, all.len()), all, "{opts:?}");
+    }
+    // A tuple type of no components has one tuple, and one with a component of no values none.
+    assert_eq!(first_tuples(&[], 36), [Vec::<usize>::new()]);
+    assert!(first_tuples(&[vec![1, 2], vec![]], 36).is_empty());
+    // Two components of six values: the 36 kept are the whole product, the second fastest.
+    let six: Vec<usize> = (0..6).collect();
+    let kept = first_tuples(&[six.clone(), six], 36);
+    assert_eq!(kept.len(), 36);
+    assert_eq!(
+        (&kept[0], &kept[1], &kept[35]),
+        (&vec![0, 0], &vec![0, 1], &vec![5, 5])
+    );
+}
+
+/// The first 36 tuples of a tuple type of `n` components with six values each, at `n` and `8n`:
+/// the product has `6^n` tuples, and only the 36 kept are built.
+#[test]
+fn the_first_tuples_of_a_wide_tuple_type_scale() {
+    let opts = scaling::inputs(64, |n| vec![(0..6).collect::<Vec<usize>>(); n]);
+    scaling::check(
+        "the first 36 tuples of a tuple type of n components",
+        64,
+        |m| {
+            std::hint::black_box(first_tuples(&opts[&m], 36));
+        },
+    );
 }

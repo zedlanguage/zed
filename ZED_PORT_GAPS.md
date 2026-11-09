@@ -3146,3 +3146,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A counting pass over the formula before the arrays are built, then `Vec::with_capacity` with the counts | `forced::Graph::of` | Mutation (gap 11) | arrays built by one fold whose length the port knows from the count, or a persistent array grown in place; the count pass stays as a fold |
 | A counting sort that fills `parent_list` and `watch_list` from the end, the start of each part's or variable's range serving as its cursor, the arrays read and written at once through split borrows (`let Graph { parts, kid_list, parent_list, .. } = self`) | `forced::Graph::link` | Mutation (gap 11) | a group-by into a map from part to its list, O(n log n), or the arrays in a state receiver |
 | A variable's value and bounds as `Option<Int>` fields of one struct changed in place (`known`, `lo`, `hi`), replaced when a forced row gives a tighter one | `forced::Var`, `Graph::solve` | Mutation (gap 11) | a record replaced by a new one at each tightening, in the state receiver that holds the arrays |
+
+## Entries from TEST-group-oracle-enum (`tests/steps/l01_23_subtyping/group_oracle.rs`, tests only)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Vec` of digits stepped in place as a mixed-radix counter: `digit[k] += 1` and `digit[k + 1..].fill(0)` | `first_tuples` | Mutation (gap 11) | A function from a counter to the next one, or a lazy sequence of the product's rows taken 36 at a time |
+| `let Some(k) = (0..n).rev().find(..) else { break; }`, a search from the end that leaves the loop when no digit can rise | `first_tuples` | Early exit (gap 12) | A match on the search's result in a recursive step |
