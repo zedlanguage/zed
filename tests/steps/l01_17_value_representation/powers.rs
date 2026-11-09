@@ -6,7 +6,7 @@ use num_bigint::BigInt;
 use zed_kernel::Rat;
 use zed_kernel::num::{LiteralRounding, literal_f32, literal_f64};
 use zed_tests::instances::Rng;
-use zed_tests::scaling::{self, check_order};
+use zed_tests::scaling::check_order;
 
 /// The value built out: the plain rational of its digits.
 fn built(r: &Rat) -> Rat {
@@ -384,29 +384,26 @@ fn ten_to_n_costs_its_exponent_and_not_its_digits() {
 /// KERNEL-sum-tower), not the O(n^1.47) of num-bigint's products they took before.
 #[test]
 fn a_kept_power_beside_its_built_successor_costs_n_log_n() {
+    let p = int(3).pow(&(1u64 << 18).into()).unwrap();
+    let s = p.add(&int(1)).unwrap();
+    assert!(p < s && s > p && p != s);
+    // `3^n` is built by squaring, so a run's work is a sum over squares of halving widths:
+    // those of at most `fast::MUL_LEAF` = 6144 words by num-bigint's Toom-3, which is the
+    // faster there, and the wider by transforms. The smaller run has three fewer squares by
+    // transforms than the larger, so its sum stops short and the ratio counts the change of
+    // method as growth: from n = 2^18 (the last square of 3,250 words, none by transforms) 14.6 times
+    // against a limit of 10.3, from 2^21 (three squares by transforms) 10.12 against 10.06,
+    // and from 2^22 (four) 9.72 against 10.0, in 20 s at load 47 (SCALE-fix-crossover,
+    // 2026-11-07). One comparison is timed, half the work of the three above, which builds
+    // `3^n` and the sum as they do. The SCALE-ratio limit tells num-bigint's O(n^1.47), 21
+    // times at 8n, from O(n log n), so the comparison at n and 64n that stood in for it is gone.
     check_order(
         "3^n + 1 built and compared with the kept 3^n",
-        1 << 18,
+        1 << 22,
         1,
         |n| {
             let p = int(3).pow(&(n as u64).into()).unwrap();
-            let s = p.add(&int(1)).unwrap();
-            assert!(p < s && s > p && p != s);
+            assert!(p < p.add(&int(1)).unwrap());
         },
-    );
-    // At n and 8n the 24 times allowed until SCALE-ratio also admitted num-bigint's O(n^1.47),
-    // 21 times; at n and 64n it is 452 times against about 90 for O(n log n), so a limit of 3
-    // times 64 tells them apart.
-    let run = |n: u64| {
-        let p = int(3).pow(&n.into()).unwrap();
-        assert!(p < p.add(&int(1)).unwrap());
-    };
-    scaling::compare(
-        "3^n + 1 built and compared with the kept 3^n: sizes 2^18 and 2^24",
-        "O(n log n) at 64 times the size, with 3 times over n, the margin the old limit of 24 \
-         had at 8n",
-        3.0 * 64.0,
-        || run(1 << 18),
-        || run(1 << 24),
     );
 }

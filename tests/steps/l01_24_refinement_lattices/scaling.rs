@@ -561,3 +561,32 @@ fn equality_over_a_wide_base_scales_with_its_bits() {
         |m| equal_over_a_wide_base(if m == n { &small } else { &large }),
     );
 }
+
+/// `(3^n * 2) ** 1000` against `3 ** (1000 n) * 2 ** 1000`: the shared factor 3 is odd, so
+/// `strip` takes its powers out by division, not by a shift (item SCALE-fix-strip-odd).
+/// Before the fix (num-bigint's gcd in `coprime_base`, one division per factor in `strip`)
+/// it took 38.5 and 55.4 times the instructions at n = 2^13 and 2^16. After it, 14.4 at 2^18,
+/// 11.1 at 2^19 and 11.4 at 2^20 against limits of about 10.2 (2026-11-07, load 20 to 30):
+/// `strip` is a few divisions of `2w` by `w` words, and the kernel's division of `2w` by `w`
+/// costs 6.5, 9.0, 11.5 and 12.4 squarings of `w` words at `w` = 4096, 16384, 32768 and
+/// 131072, so it grows faster than n log n over these sizes. With `MUL_LEAF` at 1024 it took
+/// 10.7 at 2^20. This test still fails, and n = 2^19 keeps it near 12 s.
+#[test]
+fn equality_over_a_wide_odd_base_scales_with_its_bits() {
+    use zedc::store::interval::Num;
+    let pair = |n: usize| {
+        let n32 = u32::try_from(n).unwrap();
+        let wide = Num::from(num_bigint::BigInt::from(3).pow(n32) * num_bigint::BigInt::from(2));
+        (
+            wide.pow(1000),
+            &Num::from(3).pow_by(&Num::from(1000 * n as u64)).unwrap() * &Num::from(2).pow(1000),
+        )
+    };
+    let n = 1 << 19;
+    let (small, large) = (pair(n), pair(scaling::FACTOR * n));
+    scaling::check(
+        "(3^n * 2) ** 1000 against 3 ** (1000 n) * 2 ** 1000: n digits base 3",
+        n,
+        |m| equal_over_a_wide_base(if m == n { &small } else { &large }),
+    );
+}

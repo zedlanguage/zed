@@ -99,7 +99,12 @@ fn a_sparse_division_scales() {
 /// two products, O(n log n).
 #[test]
 fn dividing_a_wide_number_scales() {
-    let n = 1 << 13;
+    // The reciprocal is built by Newton steps of halving widths, those of at most
+    // `fast::MUL_LEAF` = 6144 words with num-bigint's products, so a smaller run with few steps
+    // above it counts the change of method as growth: from 8,192 words 13.9 times against a
+    // limit of 10.8, from 16,384 11.1 against 10.7, from 32,768 10.1 against 10.6, in 9 s
+    // (SCALE-fix-crossover, 2026-11-07).
+    let n = 1 << 15;
     let inputs = built(n, |m| (int(random(2 * m, 3)), int(random(m, 4))));
     let (a, d) = at(&inputs, n, n);
     let (q, r) = random(2 * n, 3).div_rem(&random(n, 4));

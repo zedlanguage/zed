@@ -1019,16 +1019,38 @@ fn reduce(num: BigInt, den: BigInt) -> (BigInt, BigInt) {
 
 /// The greatest common divisor of `a` and `b`, not negative.
 fn gcd(a: &BigInt, b: &BigInt) -> BigInt {
-    // The half gcd (`fast::gcd`) costs O(M(n) log n) in the wider width even when the other is
-    // a word, so the wider is first reduced modulo the narrower by one division, O(M(n)) and
-    // linear when the narrower is a word, and the gcd then runs at the narrower width.
-    let (a, b) = (a.magnitude(), b.magnitude());
-    let g = match a.bits().cmp(&b.bits()) {
-        Ordering::Greater => fast::gcd(b, &fast::div_rem(a, b).1),
-        Ordering::Less if !a.is_zero() => fast::gcd(a, &fast::div_rem(b, a).1),
-        _ => fast::gcd(a, b),
+    BigInt::from(gcd_uint(a.magnitude(), b.magnitude()))
+}
+
+/// `(a / b, a mod b)` for `b` not zero, O(M(n)) in the width of `a` (`num::fast::div_rem`), for
+/// integers held outside a [`Rat`].
+pub fn div_rem_uint(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
+    fast::div_rem(a, b)
+}
+
+/// The greatest common divisor of `a` and `b`, for integers held outside a [`Rat`].
+pub fn gcd_uint(a: &BigUint, b: &BigUint) -> BigUint {
+    let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
+        return a | b;
     };
-    BigInt::from(g)
+    // The powers of 2 come out first, by shifts, so that `2^m` against `2^n 3` costs O(m + n)
+    // and not a division of `m` bits by `n`. The half gcd (`fast::gcd`) costs O(M(n) log n) in
+    // the wider width even when the other is a word, so the wider odd part is then reduced
+    // modulo the narrower by one division, O(M(n)) and linear when the narrower is a word, and
+    // the gcd runs at the narrower width.
+    fn odd(x: &BigUint, z: u64) -> Cow<'_, BigUint> {
+        match z {
+            0 => Cow::Borrowed(x),
+            _ => Cow::Owned(x >> z),
+        }
+    }
+    let (a, b) = (odd(a, za), odd(b, zb));
+    let g = match a.bits().cmp(&b.bits()) {
+        Ordering::Greater => fast::gcd(&b, &fast::div_rem(&a, &b).1),
+        Ordering::Less => fast::gcd(&a, &fast::div_rem(&b, &a).1),
+        Ordering::Equal => fast::gcd(&a, &b),
+    };
+    g << za.min(zb)
 }
 
 /// The digits `read_decimal` hands to num-bigint whole. The value read does not depend on it.

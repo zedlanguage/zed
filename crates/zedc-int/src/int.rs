@@ -12,7 +12,9 @@ use std::sync::{Arc, Mutex};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
-use zed_kernel::num::{TooLarge, mul_int, mul_uint, pow_uint, read_digits, room, to_decimal};
+use zed_kernel::num::{
+    TooLarge, div_rem_uint, gcd_uint, mul_int, mul_uint, pow_uint, read_digits, room, to_decimal,
+};
 
 /// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
 /// division.
@@ -869,7 +871,7 @@ fn coprime_base<'a>(xs: impl Iterator<Item = &'a BigUint>) -> Vec<BigUint> {
             continue;
         }
         let shared = base.iter().enumerate().find_map(|(i, b)| {
-            let g = Integer::gcd(b, &x);
+            let g = gcd_uint(b, &x);
             (!g.is_one()).then_some((i, g))
         });
         match shared {
@@ -907,12 +909,28 @@ fn exponents_over<'a>(
     out
 }
 
-/// The multiplicity `k` of `c >= 2` in `rest`, divided out of it: by `c`, `c ^ 2`, `c ^ 4`
-/// and so on while each divides, and then by the same powers in decreasing order, which take
-/// the binary digits of what is left. That is `O(log k)` divisions and squares, of at most
-/// twice the bits of `rest`, where dividing by `c` once per factor would make `k`. For `c` a
-/// power of 2, `2^t`, `k` is the trailing zeros of `rest` over `t`, rounded down, taken out by
-/// one shift.
+/// The multiplicity `k` of `c >= 2` in `rest`, divided out of it. For `c` a power of 2, `2^t`,
+/// `k` is the trailing zeros of `rest` over `t`, rounded down, taken out by one shift.
+/// Otherwise, after one division by `c`, which ends it when `c` does not divide `rest`, the
+/// powers `P_i = c ^ (2^i)` are built by squaring. A power is tested against `rest` by its
+/// remainder when its bits are at least the square of the bits of the last one tested (`c`
+/// first) and their square is at most the bits of `rest`. The squaring stops at the first
+/// `P_J` that fails such a test or is above `rest`, with `x = rest mod P_J`, or at the last
+/// `P_(J-1)` whose square is surely above `rest`, with
+/// `x = rest`. Either way the multiplicity left is below `2^J`, `x` has it, and `x` is below
+/// `P_J`. From `i = J - 1` down to 0, `x` is replaced by `x / P_i`, adding `2^i` to `k`, when
+/// `P_i` divides it, and by `x mod P_i` when not, which has the same multiplicity, below `2^i`,
+/// since `c` to that multiplicity plus one divides `P_i`; either way `x` is below `P_i` after,
+/// so the widths halve. Last, `rest` is divided once by `c ^ k`, the product of the `P_i` of
+/// the binary digits of `k`. With the kernel's arithmetic a test of `P_i` costs about
+/// `n log d` for `n` bits of `rest` and `d` of `P_i`, and the tested `log d` at least double
+/// and stay below `log n / 2`, so the tests cost O(n log n); the squares and the steps down cost O(M(w)) for `w` the bits of
+/// `P_J`, at most `n` and at most about the square of the bits of `c ^ k`; and the last
+/// division O(n log (k bits(c))). So `strip` costs O(M(n)) = O(n log n), and about O(n) for a
+/// small `c ^ k` (item SCALE-fix-strip-odd). Dividing all of `rest` by each `P_i` on the way
+/// up cost O(n log^2 n), and num-bigint's division made that O(n^2) for a small `c`; building
+/// the powers up to the width of `rest` before any test cost O(M(n)) for every `k`, and grew
+/// 85 times in bytes on `equality_over_a_wide_base_scales_with_its_bits`.
 fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
     if c.count_ones() == 1 {
         let t = c.bits() - 1;
@@ -920,30 +938,73 @@ fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
         *rest >>= k * t;
         return k;
     }
+    let (q, r) = div_rem_uint(rest, c);
+    if !r.is_zero() {
+        return 0;
+    }
+    *rest = q;
     let mut pows: Vec<Cow<'_, BigUint>> = vec![Cow::Borrowed(c)];
-    let mut k = 0u64;
-    loop {
-        let top = pows.last().expect("c is the first");
-        let (q, r) = rest.div_rem(top);
-        if !r.is_zero() {
-            break;
+    // The bits of the last power tested by its remainder.
+    let mut tested = 0u64;
+    let mut x: Cow<'_, BigUint> = loop {
+        let top = pows.last().expect("the power left by the last step");
+        if **top > *rest {
+            pows.pop();
+            break Cow::Borrowed(&*rest);
         }
-        *rest = q;
-        k += 1 << (pows.len() - 1);
+        // Complexity tradeoff: a test by remainder costs about `n log d`, the kernel's division
+        // of `n` bits by `d` (about ten products of `d` bits for each `d` bits of `rest`). It
+        // ends the squaring early when `c ^ k` is small, which keeps `strip` near O(n) there;
+        // above `d = sqrt(n)` the squares left cost less than a test, so none is made there.
+        // Without tests the squares cost O(M(n)) whatever `k` (85 times the bytes from 65536 to
+        // 524288 bits on `equality_over_a_wide_base_scales_with_its_bits`); with a test at
+        // every width allowed by the first rule the odd-base test took 13.9 times the
+        // instructions from 2^19 to 2^22 digits, against 11.1 (2026-11-07).
+        if top.bits() >= tested * tested && top.bits() * top.bits() <= rest.bits() {
+            tested = top.bits();
+            let (_, r) = div_rem_uint(rest, top);
+            if !r.is_zero() {
+                pows.pop();
+                break Cow::Owned(r);
+            }
+        }
+        // `top ^ 2` is at least `2 ^ (2 (bits - 1))`.
+        if 2 * (top.bits() - 1) >= rest.bits() {
+            break Cow::Borrowed(&*rest);
+        }
         let square = mul_uint(top, top);
         pows.push(Cow::Owned(square));
-    }
-    // c ^ (2^t), the last power, does not divide what is left, so its multiplicity is below
-    // 2^t.
-    pows.pop();
+    };
+    let mut more = 0u64;
     for (i, pw) in pows.iter().enumerate().rev() {
-        let (q, r) = rest.div_rem(pw);
-        if r.is_zero() {
-            *rest = q;
-            k += 1 << i;
-        }
+        let (q, r) = div_rem_uint(&x, pw);
+        x = Cow::Owned(match r.is_zero() {
+            true => {
+                more += 1 << i;
+                q
+            }
+            false => r,
+        });
     }
-    k
+    drop(x);
+    // The smaller powers first, so that each product is of a number by a wider one.
+    let divisor = pows
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| more >> i & 1 == 1)
+        .map(|(_, pw)| pw)
+        .fold(None, |acc: Option<Cow<'_, BigUint>>, pw| {
+            Some(match acc {
+                None => Cow::Borrowed(&**pw),
+                Some(a) => Cow::Owned(mul_uint(&a, pw)),
+            })
+        });
+    if let Some(d) = divisor {
+        let (q, r) = div_rem_uint(rest, &d);
+        debug_assert!(r.is_zero(), "c ^ {more} divides what is left");
+        *rest = q;
+    }
+    1 + more
 }
 
 impl Atom {
@@ -2832,6 +2893,54 @@ mod tests {
                 }
                 assert_eq!(strip(&mut rest, &c), k, "t = {t}, z = {z}");
                 assert_eq!(rest, want, "t = {t}, z = {z}");
+            }
+        }
+    }
+
+    /// Item SCALE-fix-strip-odd: `strip` by a factor that is not a power of 2, odd, even,
+    /// composite, a power of another, or wider than a word, against dividing once per factor,
+    /// on `c ^ k * u` for multiplicities `k` around powers of 2 and random `u`, some past the
+    /// widths at which the kernel divides by a reciprocal.
+    #[test]
+    fn stripping_any_factor_agrees_with_dividing_once_per_factor() {
+        let mut seed = 0x5eed_u64;
+        let mut next = move || {
+            seed = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let z = (seed ^ (seed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            let z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
+        };
+        let wide = BigUint::from_slice(&[0x8000_0001, 0x1234_5679, 0xdead_beef, 0x7]);
+        let factors = [
+            BigUint::from(3u32),
+            BigUint::from(5u32),
+            BigUint::from(6u32),
+            BigUint::from(9u32),
+            BigUint::from(15u32),
+            BigUint::from(12u32),
+            BigUint::from(u64::MAX),
+            wide,
+        ];
+        for c in &factors {
+            for k in [
+                0u64, 1, 2, 3, 7, 8, 9, 63, 64, 65, 255, 1000, 4095, 4096, 6000,
+            ] {
+                if k * c.bits() > 20_000 {
+                    continue;
+                }
+                for words in [1usize, 2, 40, 300] {
+                    let u = BigUint::from_slice(
+                        &(0..2 * words).map(|_| next() as u32).collect::<Vec<_>>(),
+                    ) + 1u32;
+                    let mut rest = c.pow(u32::try_from(k).unwrap()) * &u;
+                    let (mut want, mut times) = (rest.clone(), 0u64);
+                    while (&want % c).is_zero() {
+                        want /= c;
+                        times += 1;
+                    }
+                    assert_eq!(strip(&mut rest, c), times, "c = {c}, k = {k}, u = {u}");
+                    assert_eq!(rest, want, "c = {c}, k = {k}, u = {u}");
+                }
             }
         }
     }
