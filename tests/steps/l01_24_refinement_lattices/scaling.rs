@@ -504,9 +504,12 @@ fn equal_cores_scale_with_the_bits_of_the_exponent() {
     );
 }
 
-/// The bound of `x ^ 3` for `x` in `[0, 2^n + 3]`, and the cube of the end itself: the end is
+/// The bound of `x^3` for `x` in `[0, 2^n + 3]`, and the cube of the end itself: the end is
 /// kept as a power of its least root, found by a 2-adic root per prime index below its bits,
-/// at the cost of a few products of its bits, not of a root of all its bits per index.
+/// at the cost of a few products of its bits, not of a root of all its bits per index. An
+/// index whose root is wider than a word is first tested modulo the least prime that is 1
+/// modulo it, all such residues coming from one remainder tree, so `2^n + 3`, which is no
+/// power, takes almost no wide root.
 fn cube_of_a_wide_end(base: &num_bigint::BigInt) {
     use zedc::store::interval::Num;
     let end = Num::from(base.clone());
@@ -517,19 +520,23 @@ fn cube_of_a_wide_end(base: &num_bigint::BigInt) {
     assert_eq!(image.bounds().map(|(_, hi)| hi), Some(&Fin(cube)));
 }
 
+/// At 4,096 and 32,768 bits, and at 32,768 and 262,144, where the indices above 511, which no
+/// prime below 1,024 is 1 modulo, first have roots wider than a word. Before the remainder
+/// tree each of those indices took a 2-adic root: 11.0 and 12.2 times (bytes) against 11.00
+/// and 10.6 (CUBE-root-alloc, COMPLEXITY.md S46).
 #[test]
-#[ignore = "CUBE-root-alloc: 11.01 times the work at 4,096 and 32,768 bits, over the n log n limit 11.00 since SCALE-casts-spread; open"]
 fn the_cube_of_a_wide_end_scales_with_its_bits() {
-    let n = 4096;
-    let (small, large) = (
-        (num_bigint::BigInt::from(1) << n) + 3,
-        (num_bigint::BigInt::from(1) << (scaling::FACTOR * n)) + 3,
-    );
-    scaling::check(
-        "the cube of an end of 2^n + 3 and the image of x^3 up to it: n bits",
-        n,
-        |m| cube_of_a_wide_end(if m == n { &small } else { &large }),
-    );
+    for n in [4096, scaling::FACTOR * 4096] {
+        let (small, large) = (
+            (num_bigint::BigInt::from(1) << n) + 3,
+            (num_bigint::BigInt::from(1) << (scaling::FACTOR * n)) + 3,
+        );
+        scaling::check(
+            "the cube of an end of 2^n + 3 and the image of x^3 up to it: n bits",
+            n,
+            |m| cube_of_a_wide_end(if m == n { &small } else { &large }),
+        );
+    }
 }
 
 /// `(2^n * 3) ^ 1000` against `2 ^ (1000 n) * 3 ^ 1000`: the cores are written over the

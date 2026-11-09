@@ -50,7 +50,7 @@ fn pow_mod(mut a: u64, mut e: u64, m: u64) -> u64 {
 }
 
 /// Whether `n` is prime; exact for every 64-bit `n`, by the first twelve primes as bases.
-pub(super) fn is_prime(n: u64) -> bool {
+pub fn is_prime(n: u64) -> bool {
     const BASES: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
     if n < 2 {
         return false;

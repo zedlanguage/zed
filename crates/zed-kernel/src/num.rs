@@ -31,6 +31,7 @@ use num_integer::Integer;
 use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 
 use bound::{Format, Product};
+pub use factor::is_prime;
 use fast::built;
 pub use fast::{mul as mul_uint, mul_int, pow as pow_uint, to_decimal};
 pub use room::{LiteralRounding, TooLarge, bytes_of, room};

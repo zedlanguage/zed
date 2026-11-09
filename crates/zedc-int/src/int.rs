@@ -13,7 +13,8 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
 use zed_kernel::num::{
-    TooLarge, div_rem_uint, gcd_uint, mul_int, mul_uint, pow_uint, read_digits, room, to_decimal,
+    TooLarge, div_rem_uint, gcd_uint, is_prime, mul_int, mul_uint, pow_uint, read_digits, room,
+    to_decimal,
 };
 
 /// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
@@ -598,10 +599,13 @@ fn expand_pow(base: &BigUint, exp: &BigUint) -> BigUint {
 /// `(r, m)` with `b == r ^ m` and `r` not a perfect power, for `b >= 2`. Square roots are taken
 /// while `b` is a square; then each odd prime `p` below the bits of `b` is tried as the index of
 /// a root ([`OddPart::root`]), and tried again after it succeeds. A root found for a larger
-/// prime is no power of a smaller one, since `b` would then have been. Each failed index costs
-/// a 2-adic root of `bits / p` bits, so the cost is `O(M(n) log n)` for `n` the bits of `b` and
-/// `M(n)` the cost of a product of `n` bits, whatever the exponent `b` is raised to; a found
-/// root, or an index that passes the filters there without being one, adds one `p`-th power.
+/// prime is no power of a smaller one, since `b` would then have been. An index whose root
+/// fits in a word costs `O(log p)` word operations; a wider one is first tested by residues
+/// ([`OddPart::passes`], all from one remainder tree), and one that passes costs a 2-adic root
+/// of `bits / p` bits. So the cost is at most `O(M(n) log n)` for `n` the bits of `b` and `M(n)`
+/// the cost of a product of `n` bits, whatever the exponent `b` is raised to, and near `M(n)`
+/// when the residues reject most indices; a found root, or an index that passes the filters
+/// there without being one, adds one `p`-th power.
 fn least_root(mut b: BigUint) -> (BigUint, BigUint) {
     let mut m = BigUint::from(1u32);
     // r >= 2, so r ^ p has at least p + 1 bits.
@@ -663,16 +667,26 @@ const TEST_PRIMES: [u64; 3] = [
 /// `q - 1` before it looks for a root wider than one word: if `o == r ^ p` then
 /// `o ^ ((q - 1) / p) == 1` modulo `q` unless `q` divides `o`, and a number that is no `p`-th
 /// power passes one such `q` with chance about `1 / p`, since the `p`-th powers are one in `p`
-/// of the units modulo `q`.
+/// of the units modulo `q`. No prime below it is 1 modulo an index above `FILTER_BOUND / 2`,
+/// so each index wider than a word also gets the least prime that is 1 modulo it ([`Filter`]).
 const FILTER_BOUND: u64 = 1024;
 
+/// The residues of `o` by which [`OddPart::passes`] rejects an index: `(q, o mod q)` for each
+/// odd prime `q` below [`FILTER_BOUND`], and `(p, q, o mod q)` for each index `p` whose root is
+/// wider than one word, in increasing order of `p`, with `q` the least prime that is 1 modulo
+/// `p`.
+struct Filter {
+    small: Vec<(u64, u64)>,
+    wide: Vec<(u64, u64, u64)>,
+}
+
 /// `b = 2^v * o` with `o` odd, `o` modulo each of [`TEST_PRIMES`], and, once a root wider than
-/// one word is looked for, `o` modulo each odd prime below [`FILTER_BOUND`].
+/// one word is looked for, the residues of `o` in a [`Filter`].
 struct OddPart {
     v: u64,
     o: BigUint,
     residues: [u64; 3],
-    filter: std::cell::OnceCell<Vec<(u64, u64)>>,
+    filter: std::cell::OnceCell<Filter>,
 }
 
 impl OddPart {
@@ -688,37 +702,76 @@ impl OddPart {
         }
     }
 
-    /// `(q, o mod q)` for each odd prime `q` below [`FILTER_BOUND`], by one division of `o` per
-    /// product of these primes that fits in a word.
-    fn filter(&self) -> &[(u64, u64)] {
+    /// The [`Filter`] of `o`. The indices wider than a word are the odd primes `p` with
+    /// `64 * p < n`, for `n` the bits of `o`, and the least prime `q = k * p + 1` is found by
+    /// trying `k = 2, 4, ...`, about `ln q` tries ([`is_prime`]). All the residues come from
+    /// one remainder tree ([`remainders`]): the primes, multiplied into words, are `O(n / 64)`
+    /// bits together, so the tree costs `O(M(n))`, where one division of `o` per word cost
+    /// `O(n)` per index and `O(n^2 / log n)` in all.
+    fn filter(&self) -> &Filter {
         self.filter.get_or_init(|| {
             let prime = odd_primes_below(FILTER_BOUND);
-            let qs: Vec<u64> = (1..FILTER_BOUND / 2)
+            let small = (1..FILTER_BOUND / 2)
                 .filter(|&i| prime[i as usize])
-                .map(|i| 2 * i + 1)
+                .map(|i| 2 * i + 1);
+            let n = self.o.bits();
+            let index = odd_primes_below((n - 1) / 64 + 1);
+            let wide: Vec<(u64, u64)> = (1..index.len() as u64)
+                .filter(|&i| index[i as usize])
+                .map(|i| {
+                    let p = 2 * i + 1;
+                    let q = (1u64..)
+                        .map(|k| 2 * k * p + 1)
+                        .find(|&q| is_prime(q))
+                        .expect("a prime in each progression");
+                    (p, q)
+                })
                 .collect();
-            let mut out = Vec::with_capacity(qs.len());
-            let mut start = 0;
-            while start < qs.len() {
-                let (mut end, mut m) = (start, 1u64);
+            let qs: Vec<u64> = small.chain(wide.iter().map(|&(_, q)| q)).collect();
+            // The primes multiplied into words: `ends[w]` is one past the last prime of word `w`.
+            let (mut ms, mut ends) = (Vec::new(), Vec::new());
+            let mut end = 0;
+            while end < qs.len() {
+                let mut m = 1u64;
                 while let Some(next) = qs.get(end).and_then(|&q| m.checked_mul(q)) {
                     m = next;
                     end += 1;
                 }
-                let om = u64::try_from(&self.o % m).expect("below m");
-                out.extend(qs[start..end].iter().map(|&q| (q, om % q)));
-                start = end;
+                ms.push(m);
+                ends.push(end);
             }
-            out
+            let mut rq = Vec::with_capacity(qs.len());
+            for (end, om) in ends.into_iter().zip(remainders(&self.o, &ms)) {
+                rq.extend(qs[rq.len()..end].iter().map(|&q| om % q));
+            }
+            let cut = qs.len() - wide.len();
+            Filter {
+                small: qs[..cut].iter().zip(&rq).map(|(&q, &r)| (q, r)).collect(),
+                wide: wide
+                    .iter()
+                    .zip(&rq[cut..])
+                    .map(|(&(p, q), &r)| (p, q, r))
+                    .collect(),
+            }
         })
     }
 
-    /// Whether `o` is a `p`-th power residue modulo each prime of [`OddPart::filter`] that is 1
+    /// Whether `o` is a `p`-th power residue modulo each prime of the [`Filter`] that is 1
     /// modulo `p` and does not divide `o`, as it is when `o` is a `p`-th power.
     fn passes(&self, p: u64) -> bool {
-        self.filter().iter().all(|&(q, oq)| {
-            oq == 0 || !(q - 1).is_multiple_of(p) || pow_mod(oq, (q - 1) / p, q) == 1
-        })
+        let residue = |q: u64, oq: u64| oq == 0 || pow_mod(oq, (q - 1) / p, q) == 1;
+        let filter = self.filter();
+        filter
+            .small
+            .iter()
+            .all(|&(q, oq)| !(q - 1).is_multiple_of(p) || residue(q, oq))
+            && match filter.wide.binary_search_by_key(&p, |&(p, _, _)| p) {
+                Ok(i) => {
+                    let (_, q, oq) = filter.wide[i];
+                    residue(q, oq)
+                }
+                Err(_) => true,
+            }
     }
 
     /// The `r` with `r ^ p == 2^v * o`, for an odd prime `p`, when there is one. Such an `r`
@@ -770,6 +823,52 @@ impl OddPart {
     }
 }
 
+/// `x mod m` for each `m` of `ms`, by a remainder tree (Bernstein, "Fast multiplication and
+/// its applications", 2008): the `ms` are multiplied in pairs up to one product
+/// `P`, `x` is reduced modulo `P` once, and each remainder is reduced modulo the two products
+/// below it. For `B` the bits of `P` the cost is that of the one division and
+/// `O(M(B) log B)`, where one division of `x` per `m` costs `O(bits of x)` each.
+fn remainders(x: &BigUint, ms: &[u64]) -> Vec<u64> {
+    // levels[0] holds the ms; each level above holds the products of pairs of the one below.
+    // A level of odd length moves its last product up unchanged, so a product with no
+    // partner is stored once, on the highest level it reaches.
+    let mut levels: Vec<Vec<BigUint>> = vec![ms.iter().map(|&m| BigUint::from(m)).collect()];
+    while let Some(below) = levels.last_mut()
+        && below.len() > 1
+    {
+        let alone = (below.len() % 2 == 1).then(|| below.pop().expect("odd length"));
+        let mut up: Vec<BigUint> = below
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|[a, b]| mul_uint(a, b))
+            .collect();
+        up.extend(alone);
+        levels.push(up);
+    }
+    let Some(top) = levels.pop() else {
+        return Vec::new();
+    };
+    let mut rems: Vec<BigUint> = top.iter().map(|t| div_rem_uint(x, t).1).collect();
+    while let Some(nodes) = levels.pop() {
+        let mut down = Vec::with_capacity(2 * rems.len());
+        for (i, r) in rems.into_iter().enumerate() {
+            match nodes.get(2 * i..2 * i + 2) {
+                Some([a, b]) => {
+                    down.push(div_rem_uint(&r, a).1);
+                    down.push(div_rem_uint(&r, b).1);
+                }
+                // A product moved up from this level: `r` is already reduced modulo it.
+                _ => down.push(r),
+            }
+        }
+        rems = down;
+    }
+    rems.iter()
+        .map(|r| u64::try_from(r).expect("below a word"))
+        .collect()
+}
+
 /// `x ^ e` modulo `q`, for `q` below `2^64`.
 fn pow_mod(x: u64, mut e: u64, q: u64) -> u64 {
     let mul = |a: u64, b: u64| (u128::from(a) * u128::from(b) % u128::from(q)) as u64;
@@ -786,15 +885,22 @@ fn pow_mod(x: u64, mut e: u64, q: u64) -> u64 {
 
 /// The odd `x < 2^k` with `x ^ p == o` modulo `2^k`, for `o` odd, `p` an odd prime and
 /// `k >= 1`. Since `p` is odd, `x -> x ^ p` permutes the odd residues modulo `2^k`, so there is
-/// exactly one. Newton's method over the 2-adic integers finds it from `x = 1`, right modulo
-/// 2: `p * x ^ (p - 1)` is odd, so each step doubles the bits that are right. The inverse of
-/// that derivative is carried from step to step and refined by one Newton step of its own, so
-/// the cost is `O(M(k) log p)`, with `M(k)` that of a product of `k` bits.
+/// exactly one. Newton's method over the 2-adic integers finds it: `p * x ^ (p - 1)` is odd, so
+/// each step doubles the bits that are right. The first 64 bits come from
+/// [`odd_root_mod_word`], with the inverse of the derivative there, in one word; from there the
+/// inverse of the derivative is carried from step to step and refined by one Newton step of
+/// its own, so the cost is `O(M(k) log p)`, with `M(k)` that of a product of `k` bits, and a
+/// root of `k` bits takes `log2(k / 64)` steps on numbers wider than a word, not `log2 k`.
 fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
-    let mut x = BigUint::from(1u32);
-    // The inverse of an odd derivative, right modulo 2.
-    let mut z = BigUint::from(1u32);
-    let mut j = 1;
+    let low = o.iter_u64_digits().next().expect("o is odd");
+    let word = odd_root_mod_word(low, p);
+    if k <= 64 {
+        return BigUint::from(word & (u64::MAX >> (64 - k)));
+    }
+    let mut x = BigUint::from(word);
+    // The inverse of the derivative at `x`, right modulo 2^64.
+    let mut z = BigUint::from(inverse_mod_word(pow_word(word, p - 1).wrapping_mul(p)));
+    let mut j = 64;
     while j < k {
         j = (2 * j).min(k);
         let unit = BigUint::from(1u32) << j;
@@ -813,32 +919,38 @@ fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
     x
 }
 
+/// `b ^ e` modulo `2^64`.
+fn pow_word(mut b: u64, mut e: u64) -> u64 {
+    let mut out = 1u64;
+    while e > 0 {
+        if e & 1 == 1 {
+            out = out.wrapping_mul(b);
+        }
+        b = b.wrapping_mul(b);
+        e >>= 1;
+    }
+    out
+}
+
+/// The inverse of an odd `d` modulo `2^64`: `d` is its own inverse modulo 8, and each step
+/// `z * (2 - d * z)` doubles the bits that are right, so five steps make 96.
+fn inverse_mod_word(d: u64) -> u64 {
+    let mut z = d;
+    for _ in 0..5 {
+        z = z.wrapping_mul(2u64.wrapping_sub(d.wrapping_mul(z)));
+    }
+    z
+}
+
 /// [`odd_root_mod_pow2`] in one word: the odd `x` with `x ^ p == o` modulo `2^64`, for `o` odd
 /// and `p` odd, by six Newton steps from `x = 1`, each doubling the bits that are right.
 fn odd_root_mod_word(o: u64, p: u64) -> u64 {
-    let pow = |mut b: u64, mut e: u64| {
-        let mut out = 1u64;
-        while e > 0 {
-            if e & 1 == 1 {
-                out = out.wrapping_mul(b);
-            }
-            b = b.wrapping_mul(b);
-            e >>= 1;
-        }
-        out
-    };
     let mut x = 1u64;
     for _ in 0..6 {
-        let y = pow(x, p - 1);
+        let y = pow_word(x, p - 1);
         let f = y.wrapping_mul(x).wrapping_sub(o);
-        // The inverse of the odd derivative `p * x ^ (p - 1)`: `d` is its own inverse modulo
-        // 8, and each step `z * (2 - d * z)` doubles the bits that are right.
-        let d = y.wrapping_mul(p);
-        let mut z = d;
-        for _ in 0..5 {
-            z = z.wrapping_mul(2u64.wrapping_sub(d.wrapping_mul(z)));
-        }
-        x = x.wrapping_sub(f.wrapping_mul(z));
+        // The inverse of the odd derivative `p * x ^ (p - 1)`.
+        x = x.wrapping_sub(f.wrapping_mul(inverse_mod_word(y.wrapping_mul(p))));
     }
     x
 }
@@ -2973,6 +3085,50 @@ mod tests {
                 assert!(r.bit(0) && r < m, "p = {p}, k = {k}");
                 assert_eq!(r.modpow(&BigUint::from(p), &m), &o % &m, "p = {p}, k = {k}");
             }
+        }
+    }
+
+    #[test]
+    fn a_remainder_tree_gives_each_remainder() {
+        let x = BigUint::from(3u32).pow(5000u32) + 12_345u32;
+        // Lengths 0 to 9 take every shape of tree, with products moved up at odd lengths.
+        let all: Vec<u64> = (0..9u64).map(|i| u64::MAX - 58 - 2 * i).collect();
+        for len in 0..=all.len() {
+            let ms = &all[..len];
+            let want: Vec<u64> = ms
+                .iter()
+                .map(|&m| u64::try_from(&x % m).expect("below m"))
+                .collect();
+            assert_eq!(remainders(&x, ms), want, "{len} moduli");
+        }
+        // A number below the product of the moduli.
+        assert_eq!(remainders(&BigUint::from(5u32), &[7, 11, 13]), [5, 5, 5]);
+    }
+
+    #[test]
+    fn each_index_wider_than_a_word_has_its_least_prime() {
+        let o = BigUint::from(3u32).pow(3000u32);
+        let odd = OddPart::of(&o);
+        let filter = odd.filter();
+        // 3000 * log2(3) is 4755 bits: the indices wider than a word are the odd primes to 73.
+        let ps: Vec<u64> = filter.wide.iter().map(|&(p, _, _)| p).collect();
+        assert_eq!(
+            ps,
+            [
+                3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73
+            ]
+        );
+        for &(p, q, oq) in &filter.wide {
+            assert!(is_prime(q) && (q - 1).is_multiple_of(p), "p = {p}, q = {q}");
+            assert!(
+                (1..q / p).all(|k| !is_prime(k * p + 1)),
+                "{q} is the least prime 1 modulo {p}"
+            );
+            assert_eq!(BigUint::from(oq), &o % q, "p = {p}");
+        }
+        // 3 ^ 3000 is a 3rd and a 5th power, so it passes both indices.
+        for p in [3u64, 5] {
+            assert!(odd.passes(p), "p = {p}");
         }
     }
 
