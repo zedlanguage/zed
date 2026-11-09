@@ -11982,9 +11982,9 @@ mod forced_against_solver {
         assert_eq!(m.is_some(), d, "satisfiable and decide of {f}");
         let class = match forced(f, true) {
             Some(Forced::Empty) => match &m {
-                // The solver's answer is wrong when the point it gives is none of `f`, as with
-                // `x` and the product `x * y` both fixed beside a row of parity over a value a
-                // disjunction defines (PRES-product-parity, [`bounds_agree_with_the_solver`]):
+                // The solver's answer is wrong when the point it gives is none of `f`, as it was
+                // with `x` and the product `x * y` both fixed beside a row of parity over a value
+                // a disjunction defines until PRES-product-parity ([`bounds_agree_with_the_solver`]):
                 // counted apart.
                 Some(s) if is_point(f, s) != Some(true) => {
                     eprintln!(
@@ -12259,8 +12259,8 @@ mod forced_against_solver {
                 3,
             ),
             // `x == 0 && x * y == 3` takes the first disjunct, so `q0 == 2`, which is not odd:
-            // no point. The solver gives one that is none, `q0 == 1` from the second disjunct
-            // (PRES-product-parity); when it is fixed, this case is 0.
+            // no point. The solver gave one that is none, `q0 == 1` from the second disjunct,
+            // until its search read the product as a variable of its own (PRES-product-parity).
             (
                 Formula::and(vec![
                     Formula::or(vec![
@@ -12271,7 +12271,7 @@ mod forced_against_solver {
                     eq(&p, &k(3)),
                     eq(&q(0), &q(3).times(2).plus(&k(1))),
                 ]),
-                5,
+                0,
             ),
         ];
         for (f, want) in cases {
