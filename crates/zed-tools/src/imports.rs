@@ -21,12 +21,14 @@
 //! makes that block a unit of its own, which the caller imports. The receiver's type is found
 //! from the parameters, `let`s, fields, return types and paths the call chain starts from, with
 //! the standard wrappers (`Box`, `Rc`, `&`, `Option`, `Vec`, …) seen through. When it is not
-//! found, the call is an import of every file with a method of that name written apart from its
-//! type, so no cycle is missed; the report counts those calls. A call of a method written in
-//! its type's own file needs no edge: the caller already imports that file by naming the type
-//! (or reaches it through the file that gave it the value), so such an edge closes no cycle the
-//! graph does not already have. Trait methods are written with their trait or their type, which
-//! the caller names, so they too need none.
+//! found, the call imports a file with a method of that name written apart from its type only
+//! when the caller imports that type's file by a path or a typed call: a method's name alone is
+//! no import (`untyped_imports` names the cases this leaves out). The report counts the calls
+//! that import a file so. A call of a method written in its type's own file needs no edge: the
+//! caller already imports that file by naming the type (or reaches it through the file that
+//! gave it the value), so such an edge closes no cycle the graph does not already have. Trait
+//! methods are written with their trait or their type, which the caller names, so they too need
+//! none.
 //!
 //! A cycle is a strongly connected component of two files or more (a file naming its own items
 //! is no edge). Each is reported with its files, a shortest cycle through its first file, and
@@ -35,7 +37,10 @@
 //! file with a hash lookup per token, and the components are found by Tarjan's algorithm with
 //! an explicit stack in O(n + e), n the bytes of the files and e the imports between them.
 //! Sorting each file's imports, for the report and the citations, makes the whole
-//! O(n + e log e) (COMPLEXITY F103).
+//! O(n + e log e) (COMPLEXITY F103), but for the calls whose receiver is not typed: each pair of
+//! a file and a method name they call is joined with the type files of the methods of that name
+//! once, from the smaller side, and that join has no bound below the square root of n per pair
+//! (`untyped_imports`).
 
 mod lex;
 
@@ -118,8 +123,9 @@ pub struct Graph {
     /// The `mod name;` declarations a `#[path]` attribute places, which are not read, each as
     /// `file:line`.
     pub placed: Vec<String>,
-    /// The calls of a method written apart from its type whose receiver's type was not found,
-    /// each an import of every file with a method of that name written apart from its type.
+    /// The calls whose receiver's type was not found that import a file: one with a method of
+    /// that name written apart from its type, whose type's file the caller imports by a path or
+    /// a typed call.
     pub unknown_calls: usize,
     /// The inherent `impl` blocks whose type was not found in the crate.
     pub loose_impls: usize,
@@ -200,7 +206,8 @@ fn report(dir: &str, graph: &Graph, cycles: &[Vec<usize>], out: &mut String) {
     if graph.unknown_calls > 0 {
         say!(
             out,
-            "{} calls of a method written apart from its type, receiver not typed",
+            "{} calls of a method written apart from its type, receiver not typed, \
+             imported through the type's file",
             graph.unknown_calls
         );
     }
@@ -1568,6 +1575,7 @@ impl<'a> Builder<'a> {
         let open = self.openings(&done);
         let mut loose = self.attach(&done, &open);
         let mut split: HashMap<&'a str, Vec<(usize, usize)>> = HashMap::new();
+        let mut apart: Apart<'a> = HashMap::new();
         for def in &self.defs {
             for (&name, fs) in &def.methods {
                 // Only a method with `self` is called as `x.name(…)`; an associated function
@@ -1576,9 +1584,21 @@ impl<'a> Builder<'a> {
                     let file = self.fns[f].imp.map_or(def.file, |m| self.impls[m].file);
                     if file != def.file {
                         split.entry(name).or_default().push((file, open[f]));
+                        apart
+                            .entry((name, def.file))
+                            .or_default()
+                            .push((file, open[f]));
                     }
                 }
             }
+        }
+        let mut homes: HashMap<&'a str, Vec<usize>> = HashMap::new();
+        for files in apart.values_mut() {
+            files.sort_unstable();
+            files.dedup();
+        }
+        for &(name, home) in apart.keys() {
+            homes.entry(name).or_default().push(home);
         }
         for (&name, files) in &loose {
             split.entry(name).or_default().extend(files);
@@ -1592,17 +1612,26 @@ impl<'a> Builder<'a> {
             files.sort_unstable();
             files.dedup();
         }
-        let mut unknown = 0;
+        let mut untyped = Vec::new();
         for file in 0..self.files.len() {
             if !self.reached[file] {
                 continue;
             }
             let mut walk = Walk::new(&self, &done, (&split, &loose, &span), file);
             walk.run();
-            unknown += walk.unknown;
             for (to, line, call) in walk.out {
                 found.add(file, to, line, || call);
             }
+            untyped.extend(
+                walk.untyped
+                    .into_iter()
+                    .map(|(here, name, line)| (file, here, name, line)),
+            );
+        }
+        let (drawn, unknown) =
+            untyped_imports(&found, self.files.len(), &untyped, (&apart, &homes), &span);
+        for (from, to, line, name) in drawn {
+            found.add(from, to, line, || format!("?.{name}"));
         }
         // The files reached are numbered in path order.
         let mut number = vec![usize::MAX; self.files.len()];
@@ -1733,6 +1762,84 @@ impl<'a> Builder<'a> {
 /// the module its visibility opens it to.
 type Calls<'a> = HashMap<&'a str, Vec<(usize, usize)>>;
 
+/// The methods written apart from their types, by name and the file of their type, each with
+/// the file it is written in and the module its visibility opens it to.
+type Apart<'a> = HashMap<(&'a str, usize), Vec<(usize, usize)>>;
+
+/// The imports of the calls whose receiver is not typed, each as the calling file, the file of
+/// the method, the line and the method's name, and the number of calls that import a file.
+/// `untyped` holds the calls, each with its file, the number of its module in the module tree,
+/// its name and its line; `found` the imports
+/// drawn from paths and typed calls; `apart` and `homes` the methods written apart from their
+/// types, by name and type file, and the type files of each name; `span` the span of each module
+/// in the module tree (`Builder::spans`).
+///
+/// A call of `name` in file `c` imports the file `f` of a method `name` written apart from its
+/// type, and open to the call's module, only when `c` imports the file `d` of that type by a path
+/// or a typed call: a file that calls a method on a value of a type of the crate names that type,
+/// or something else of its file, in the code this tool reads. The name alone is no import:
+/// `stack.is_empty()` on a `Vec` in a file that imports nothing of `types.rs` does not import the
+/// file where `Type::is_empty` is written.
+///
+/// Complexity tradeoff: two cases are given up, and a cycle through such a call is not reported:
+/// a file that holds a value of the type only through another file (`c` imports `g`, `g` gives
+/// `c` a value of `d`'s type, `c` does not import `d`) when `c`'s chain from `g` is not typed,
+/// and the type's own file (`c` is `d`) calling an untyped receiver, which a file never imports.
+/// The reachability of `d` from `c` would cover the first, at a search per calling file,
+/// O(files × imports); Rust's own type inference, with traits and generics, would cover both,
+/// and the tool types receivers by a scan of each file instead. The calls typed draw their
+/// imports exactly, so the cases left are calls whose chain the scan does not type (a tuple
+/// `let`, a value of a generic's associated function). Test
+/// `s_01f_import_graph::an_untyped_receiver_imports_only_through_its_type_file`; COMPLEXITY.md
+/// F103. Each (file, name) pair is joined with the type files once, from the smaller side: the
+/// imports of `c` or the type files of `name`. That join is O(p √p) in the worst case, p the
+/// pairs and imports, as listing triangles is, for which no near-linear exact method is known;
+/// every method a call then visits is one it would draw an import of, but for its visibility.
+fn untyped_imports<'a>(
+    found: &Found,
+    files: usize,
+    untyped: &[(usize, usize, &'a str, usize)],
+    (apart, homes): (&Apart<'a>, &HashMap<&'a str, Vec<usize>>),
+    span: &[(usize, usize)],
+) -> (Vec<(usize, usize, usize, &'a str)>, usize) {
+    let mut out_of: Vec<Vec<usize>> = vec![Vec::new(); files];
+    for &(from, to) in found.0.keys() {
+        out_of[from].push(to);
+    }
+    let mut joined: HashMap<(usize, &'a str), Vec<usize>> = HashMap::new();
+    let mut drawn = Vec::new();
+    let mut calls = 0;
+    for &(c, here, name, line) in untyped {
+        let before = drawn.len();
+        let kept = joined.entry((c, name)).or_insert_with(|| {
+            let types = homes.get(name).map_or(&[][..], Vec::as_slice);
+            if out_of[c].len() < types.len() {
+                out_of[c]
+                    .iter()
+                    .copied()
+                    .filter(|&d| apart.contains_key(&(name, d)))
+                    .collect()
+            } else {
+                types
+                    .iter()
+                    .copied()
+                    .filter(|&d| found.0.contains_key(&(c, d)))
+                    .collect()
+            }
+        });
+        for &d in kept.iter() {
+            for &(f, open) in &apart[&(name, d)] {
+                let (s, e) = span[open];
+                if f != c && (s..e).contains(&here) {
+                    drawn.push((c, f, line, name));
+                }
+            }
+        }
+        calls += usize::from(drawn.len() > before);
+    }
+    (drawn, calls)
+}
+
 /// Names bound together, each with its type.
 type Binds<'a> = Vec<(&'a str, Ty)>;
 
@@ -1798,7 +1905,9 @@ struct Walk<'b, 'a> {
     /// The types read, by the text they were read from.
     read: HashMap<(Text, bool), Ty>,
     out: Vec<(usize, usize, String)>,
-    unknown: usize,
+    /// The calls of a method written apart from its type whose receiver is not typed, each with
+    /// the number of its module in the module tree (`Builder::spans`), its name and its line.
+    untyped: Vec<(usize, &'a str, usize)>,
 }
 
 impl<'b, 'a> Walk<'b, 'a> {
@@ -1839,7 +1948,7 @@ impl<'b, 'a> Walk<'b, 'a> {
             chained: vec![false; toks.len()],
             read: HashMap::new(),
             out: Vec::new(),
-            unknown: 0,
+            untyped: Vec::new(),
         }
     }
 
@@ -2643,8 +2752,9 @@ impl<'b, 'a> Walk<'b, 'a> {
     }
 
     /// The call of method `name` on a value of type `ty`, and its type. A method written apart
-    /// from its type draws the import of its file: exactly when the receiver's type is known,
-    /// and of every file with a method of that name written apart from its type when not.
+    /// from its type draws the import of its file when the receiver's type is known; when it is
+    /// not, the call is kept for `untyped_imports`, which draws it once every typed import is
+    /// known.
     fn call(&mut self, mut ty: Ty, name: &'a str, line: usize) -> Ty {
         let mut followed: HashSet<usize> = HashSet::new();
         loop {
@@ -2684,9 +2794,9 @@ impl<'b, 'a> Walk<'b, 'a> {
                     };
                 }
                 Ty::Unknown => {
-                    let split = self.split;
-                    if self.edges_to(split, name, line) {
-                        self.unknown += 1;
+                    if self.split.contains_key(name) {
+                        let here = self.span[self.frame().module].0;
+                        self.untyped.push((here, name, line));
                     }
                     return Ty::Unknown;
                 }
@@ -2694,25 +2804,17 @@ impl<'b, 'a> Walk<'b, 'a> {
         }
     }
 
-    /// The import of every `impl` block whose type is not found and that has a method `name`.
+    /// The import of every `impl` block whose type is not found and that has a method `name`
+    /// the current module may call, by its visibility.
     fn loose_edges(&mut self, name: &str, line: usize) {
-        let loose = self.loose;
-        self.edges_to(loose, name, line);
-    }
-
-    /// The import of each file of `calls` with a method `name` the current module may call, by
-    /// its visibility; whether there is one.
-    fn edges_to(&mut self, calls: &Calls<'a>, name: &str, line: usize) -> bool {
         let here = self.span[self.frame().module].0;
-        let mut any = false;
-        for &(to, open) in calls.get(name).map_or(&[][..], Vec::as_slice) {
+        let loose = self.loose;
+        for &(to, open) in loose.get(name).map_or(&[][..], Vec::as_slice) {
             let (s, e) = self.span[open];
             if (s..e).contains(&here) {
-                any = true;
                 self.edge(to, line, format!("?.{name}"));
             }
         }
-        any
     }
 
     /// The type of the standard method `name` called on the standard type `kind` holding `args`.

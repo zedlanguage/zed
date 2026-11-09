@@ -447,48 +447,60 @@ fn the_receiver_is_typed_through_patterns_closures_and_wrappers() {
 }
 
 #[test]
-fn an_untyped_receiver_imports_every_file_it_may_call() {
-    // `y` is the value of another crate's function, whose type the tool does not know: the
-    // call imports every file with a method `m` written apart from its type that `user.rs` may
-    // call. The private one in `hidden.rs` is out of its reach, and the associated function
-    // `C::m` is called by path, never as `y.m()`. On `x`, of a type parameter's type, only the
-    // methods of its bounds' traits can be called, so `x.m()` imports nothing.
-    let g = graph(&[
-        (
-            "lib.rs",
-            "mod t;\nmod am;\nmod bm;\nmod hidden;\nmod cm;\nmod user;\n",
-        ),
-        (
-            "t.rs",
-            "pub struct A;\npub struct B;\npub struct C;\npub struct D;\n",
-        ),
-        (
-            "am.rs",
-            "use crate::t::A;\nimpl A {\n    pub fn m(&self) {}\n}\n",
-        ),
-        (
-            "bm.rs",
-            "use crate::t::B;\nimpl B {\n    pub fn m(&mut self) {}\n}\n",
-        ),
-        (
-            "hidden.rs",
-            "use crate::t::D;\nimpl D {\n    fn m(&self) {}\n}\n",
-        ),
-        (
-            "cm.rs",
-            "use crate::t::C;\nimpl C {\n    pub fn m() {}\n}\n",
-        ),
-        (
-            "user.rs",
-            "pub fn f<T>(x: T) { x.m(); }\npub fn g() { let y = other::make(); y.m(); }\n",
-        ),
-    ]);
-    let from_user: Vec<String> = edges(&g)
-        .into_iter()
-        .filter(|e| e.starts_with("user.rs"))
-        .collect();
-    assert_eq!(from_user, ["user.rs -> am.rs", "user.rs -> bm.rs"]);
+fn an_untyped_receiver_imports_the_files_it_may_call_through_its_type_file() {
+    // `y` is the value of another crate's function, whose type the tool does not know. `user.rs`
+    // imports `t.rs`, where `A` to `D` are defined, so the call imports every file with a method
+    // `m` of one of them, written apart, that `user.rs` may call. The private one in `hidden.rs`
+    // is out of its reach, and the associated function `C::m` is called by path, never as
+    // `y.m()`. On `x`, of a type parameter's type, only the methods of its bounds' traits can be
+    // called, so `x.m()` imports nothing.
+    let crate_with = |user: &str| {
+        graph(&[
+            (
+                "lib.rs",
+                "mod t;\nmod am;\nmod bm;\nmod hidden;\nmod cm;\nmod user;\n",
+            ),
+            (
+                "t.rs",
+                "pub struct A;\npub struct B;\npub struct C;\npub struct D;\n",
+            ),
+            (
+                "am.rs",
+                "use crate::t::A;\nimpl A {\n    pub fn m(&self) {}\n}\n",
+            ),
+            (
+                "bm.rs",
+                "use crate::t::B;\nimpl B {\n    pub fn m(&mut self) {}\n}\n",
+            ),
+            (
+                "hidden.rs",
+                "use crate::t::D;\nimpl D {\n    fn m(&self) {}\n}\n",
+            ),
+            (
+                "cm.rs",
+                "use crate::t::C;\nimpl C {\n    pub fn m() {}\n}\n",
+            ),
+            ("user.rs", user),
+        ])
+    };
+    let from_user = |g: &Graph| -> Vec<String> {
+        edges(g)
+            .into_iter()
+            .filter(|e| e.starts_with("user.rs"))
+            .collect()
+    };
+    let calls = "pub fn f<T>(x: T) { x.m(); }\npub fn g() { let y = other::make(); y.m(); }\n";
+    let g = crate_with(&format!("pub fn h(_: &crate::t::A) {{}}\n{calls}"));
+    assert_eq!(
+        from_user(&g),
+        ["user.rs -> t.rs", "user.rs -> am.rs", "user.rs -> bm.rs"]
+    );
     assert_eq!(g.unknown_calls, 1);
+    // Without the import of `t.rs` the name `m` alone imports nothing: `y` is no value of a
+    // type of `t.rs` that `user.rs` could name.
+    let g = crate_with(calls);
+    assert!(from_user(&g).is_empty(), "{:?}", from_user(&g));
+    assert_eq!(g.unknown_calls, 0);
     // Called by its path, the associated function draws its own file.
     let by_path = graph(&[
         ("lib.rs", "mod t;\nmod cm;\nmod user;\n"),
@@ -502,6 +514,127 @@ fn an_untyped_receiver_imports_every_file_it_may_call() {
     assert_eq!(
         edges(&by_path),
         ["cm.rs -> t.rs", "user.rs -> t.rs", "user.rs -> cm.rs"]
+    );
+}
+
+#[test]
+fn an_untyped_receiver_imports_only_through_its_type_file() {
+    // A real cycle through an untyped call is still found: `user.rs` names `S`, of `t.rs`, and
+    // calls `go` on a value the tool does not type; `go` is written in `sm.rs`, which calls back
+    // into `user.rs`.
+    let g = graph(&[
+        ("lib.rs", "mod t;\nmod sm;\nmod user;\n"),
+        ("t.rs", "pub struct S;\n"),
+        (
+            "sm.rs",
+            "use crate::t::S;\nimpl S {\n    pub fn go(&self) { crate::user::back(); }\n}\n",
+        ),
+        (
+            "user.rs",
+            "use crate::t::S;\npub fn back() {}\n\
+             pub fn f(_: &S) { let (s, _) = (other::make(), 0); s.go(); }\n",
+        ),
+    ]);
+    assert_eq!(
+        edges(&g),
+        [
+            "sm.rs -> t.rs",
+            "sm.rs -> user.rs",
+            "user.rs -> t.rs",
+            "user.rs -> sm.rs"
+        ]
+    );
+    assert_eq!(cycles(&g), [["sm.rs", "user.rs"]]);
+    assert_eq!(g.unknown_calls, 1);
+    // The false cycle of zed-kernel's `types/bucket.rs`: `stack` is a `Vec`, from a tuple `let`
+    // the tool does not type, in a file that imports nothing of `t.rs`. `Bucket::is_empty`,
+    // written in `empty.rs`, which calls into `scan.rs`, shares only its name, so `scan.rs`
+    // does not import `empty.rs` and there is no cycle.
+    let crate_with = |scan: &str| {
+        graph(&[
+            ("lib.rs", "mod t;\nmod empty;\nmod scan;\n"),
+            ("t.rs", "pub struct Bucket;\n"),
+            (
+                "empty.rs",
+                "use crate::t::Bucket;\nimpl Bucket {\n    \
+                 pub fn is_empty(&self) -> bool { crate::scan::count() == 0 }\n}\n",
+            ),
+            ("scan.rs", scan),
+        ])
+    };
+    let untyped = "pub fn count() -> usize {\n    let (mut stack, at) = (Vec::new(), 0);\n    \
+                   stack.push(at);\n    if stack.is_empty() { 0 } else { 1 }\n}\n";
+    let g = crate_with(untyped);
+    assert_eq!(edges(&g), ["empty.rs -> t.rs", "empty.rs -> scan.rs"]);
+    assert!(cycles(&g).is_empty(), "{:?}", cycles(&g));
+    assert_eq!(g.unknown_calls, 0);
+    // Typed as a `Bucket`, the same call imports `empty.rs`, and the cycle is real.
+    let typed = "use crate::t::Bucket;\npub fn count() -> usize { 0 }\n\
+                 pub fn f(b: &Bucket) -> bool { b.is_empty() }\n";
+    let g = crate_with(typed);
+    assert_eq!(cycles(&g), [["empty.rs", "scan.rs"]]);
+    // Given up (the tradeoff of `untyped_imports`): the type's own file calling the method on
+    // an untyped receiver imports nothing, since a file never imports itself, though here the
+    // receiver might be a `Bucket`.
+    let own = graph(&[
+        ("lib.rs", "mod t;\nmod empty;\n"),
+        (
+            "t.rs",
+            "pub struct Bucket;\npub fn f() -> bool { let (b, _) = (other::make(), 0); \
+             b.is_empty() }\n",
+        ),
+        (
+            "empty.rs",
+            "use crate::t::Bucket;\nimpl Bucket {\n    \
+             pub fn is_empty(&self) -> bool { crate::t::f() }\n}\n",
+        ),
+    ]);
+    assert_eq!(edges(&own), ["empty.rs -> t.rs"]);
+    assert_eq!(own.unknown_calls, 0);
+}
+
+/// A crate of `n` types `T0` to `T{n-1}`, each in a file `t{i}.rs` with its one method `go`
+/// written apart in `m{i}.rs`, which names `T{i+1}` (the last `T0`) and calls `go` on a value
+/// the tool does not type: through `t{i+1}.rs`, the call imports `m{i+1}.rs`, and the `m` files
+/// are one cycle of `n` files.
+fn untyped_ring(n: usize) -> Vec<(String, String)> {
+    let mut files = Vec::new();
+    for i in 0..n {
+        let next = (i + 1) % n;
+        files.push((format!("t{i}.rs"), format!("pub struct T{i};\n")));
+        let text = format!(
+            "use crate::t{i}::T{i};\nuse crate::t{next}::T{next};\n\nimpl T{i} {{\n    \
+             pub fn go(&self) -> Option<T{next}> {{\n        let z = other::make();\n        \
+             z.go();\n        None\n    }}\n}}\n"
+        );
+        files.push((format!("m{i}.rs"), text));
+    }
+    let lib: String = (0..n).map(|i| format!("mod t{i};\nmod m{i};\n")).collect();
+    files.push(("lib.rs".to_string(), lib));
+    files.sort();
+    files
+}
+
+#[test]
+fn untyped_calls_scale_with_the_number_of_files() {
+    // Every type has a method `go`, so each untyped call meets n type files; joined from the
+    // calling file's two imports of type files, it costs two lookups, and the imports are 2n.
+    let n = 200;
+    let inputs = [untyped_ring(n), untyped_ring(8 * n)];
+    check(
+        "imports, by untyped calls of methods written apart",
+        n,
+        |m| {
+            let files = inputs
+                .iter()
+                .find(|f| f.len() == 2 * m + 1)
+                .expect("a size that was built");
+            let g = Graph::of(files).expect("the ring's graph");
+            assert_eq!(g.unknown_calls, m);
+            let found = g.cycles();
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].len(), m);
+        },
     );
 }
 
