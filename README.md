@@ -1838,7 +1838,8 @@ A loop describes one step, and the loop as a whole is a value holding the final 
 > **`loop { ... }`**, without a name after `loop`, is a loop with no step counter. **`run::frames`** is every step of the loop `run`, as a map from step number to that step's values. **`x.patch(edit)`** applies an edit to a map or document and gives the new version.
 
 ```zed
-sim = loop {
+sim = loop t {
+  while t < maxSteps;
   pos' = pos + vel * dt with pos = p0;
   vel' = vel + accel(pos) * dt with vel = v0;
   until pos'.x > bound;
@@ -1849,7 +1850,7 @@ history = sim::frames;
 steps = sim::len;
 ```
 
-Following only the `x` part, with `dt` = 1, `pos` starting at 0, `vel` at 1, `accel` always 1 and `bound` = 2, `final.x` is 3 and `steps` is 2. The starting values aren't part of `sim::frames`:
+Following only the `x` part, with `dt` = 1, `pos` starting at 0, `vel` at 1, `accel` always 1, `bound` = 2 and `maxSteps` = 10, `final.x` is 3 and `steps` is 2. The starting values aren't part of `sim::frames`:
 
 **`sim::frames`**
 
@@ -1860,6 +1861,8 @@ Following only the `x` part, with `dt` = 1, `pos` starting at 0, `vel` at 1, `ac
 </table>
 
 Both updates here read the old `pos`, so they don't race and their order doesn't matter. Each step writes each variable once, so a data race can't be written. Every read in a step sees the same snapshot of the previous step, so you need no temporary variables to keep a simultaneous update straight.
+
+The line `while t < maxSteps` is there because `history` reads `sim::frames`: a loop whose history you read must have a limit on its number of steps that the compiler can prove, and `until pos'.x > bound` ends the loop without saying after how many steps, so without the limit the compiler rejects the read and offers this limit or a `bound(n, …)` on the history.
 
 `sim::frames` is every step of the run, kept only if you read it. If you don't, the compiler keeps only the steps the loop still reads, so you never choose between a ring buffer and a full log by hand. Reading it is how you write undo:
 

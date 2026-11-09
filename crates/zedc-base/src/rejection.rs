@@ -88,6 +88,7 @@ rows! {
     AmbiguousAtCarrier => "Operator or literal ambiguous at a theory's carrier",
     NoFieldAtCarrier => "Operator or literal at a theory's carrier with no field to name",
     GenericInstance => "Instance of a generic definition that fails to type",
+    UnboundedHistory => "Demanded history of a loop whose step count has no proven bound",
     UnboundedSize => "Size with no proven bound under `@preallocated` or the `preallocated` mode",
     CellReadsItself => "Cell read on a path back to its own cell",
     MeaningCase => "Meaning function with a case `@decides` cannot reify",

@@ -336,13 +336,14 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   5 | a2 = withdraw ( a , 10r ) «else» a ;
   6 | a3 = withdraw ( a , 10r ) «else» #insufficient ( short : _ ) -> a «with» { frozen = «true» } ;
 == EXAMPLES.md [13. Loops and state] 1 L6
-  2 | sim = «loop» {
-  3 | pos' = pos + vel * dt «with» pos = p0 ;
-  4 | vel' = vel + acc * dt «with» vel = v0 ;
-  5 | «until» pos . y < 0₍10₎ ;
-  6 | } ;
-  7 | final = sim . pos ;
-  8 | history = sim :: frames ;
+  2 | sim = «loop» t {
+  3 | «while» t < maxSteps ;
+  4 | pos' = pos + vel * dt «with» pos = p0 ;
+  5 | vel' = vel + acc * dt «with» vel = v0 ;
+  6 | «until» pos . y < 0₍10₎ ;
+  7 | } ;
+  8 | final = sim . pos ;
+  9 | history = sim :: frames ;
 == EXAMPLES.md [13. Loops and state] 2 L6
   2 | run = «loop» {
   3 | «mutable» c = Counter ( n : 0₍10₎ , hi : 9₍10₎ ) ;
@@ -635,7 +636,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | main ( cmds : Stream ( Cmd ) ) -> ( out : Lines ) {
   5 | run = «loop» t {
   6 | todos' = todos . patch ( toEdits ( cmds [ t ] ) ) ;
-  7 | «while» t «in» cmds :: domain ;
+  7 | «while» t < maxCmds && t «in» cmds :: domain ;
   8 | } ;
   9 | out <- run :: frames . map ( f -> str[${f . todos :: card} " items"] ) ;
  10 | }

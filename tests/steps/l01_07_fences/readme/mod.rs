@@ -322,17 +322,17 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         concat!("line 1: ", zed_tests::not_yet!("the array type `[T; n]`")),
     ),
     (
-        "README.md:2108",
+        "README.md:2111",
         4,
         concat!("line 1: ", zed_tests::not_yet!("the refinement `[lo..]`")),
     ),
     (
-        "README.md:2108",
+        "README.md:2111",
         9,
         concat!("line 1: ", zed_tests::not_yet!("the refinement `[lo..]`")),
     ),
     (
-        "README.md:2138",
+        "README.md:2141",
         4,
         concat!(
             "line 1: ",
@@ -340,7 +340,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         ),
     ),
     (
-        "README.md:2138",
+        "README.md:2141",
         9,
         concat!(
             "line 1: ",
