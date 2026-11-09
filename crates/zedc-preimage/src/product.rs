@@ -979,11 +979,24 @@ fn syms(f: &Formula) -> Vec<Arc<str>> {
 pub type PartKey = (Formula, Option<Arc<str>>);
 
 /// What a part of the relation was projected with: the equalities among the constraints it is
-/// projected with, sorted, and, for the part of the constraints alone, their conjunction. A
-/// part is projected again when an equality joins or leaves them; a new inequality alone does
-/// not make a conjunct's part due (a known limit of precision, COMPLEXITY.md), so that a part
-/// costs its conjunct and not the constraints.
+/// projected with, sorted, and the constraints among them on the terms the part's conjunct
+/// compares, as `x - y` in `x - y >= 5 || y - x >= 5` (the box of its terms), or, for the part
+/// of the constraints alone, their conjunction. A part is projected again when an equality,
+/// or a constraint on one of its terms, joins or leaves them, as `-2 <= x - y <= 2` after the
+/// disjunction above, which leaves no value. A constraint on other terms alone does not make
+/// a conjunct's part due, so that a new constraint costs the parts on its term and not the
+/// block's (the walk `v_i + w <= 0 || v_(i+1) - w >= 1` through the shared name `w`).
 pub type PartWith = (Arc<[Con]>, Option<Formula>);
+
+/// The term of `c` with its sign chosen so that its first coefficient is positive: one key for
+/// `x - y >= 5` and `y - x >= 5`.
+fn unsigned(c: &Con) -> BTreeMap<Atom, Int> {
+    if c.lin.terms.values().next().is_some_and(Int::is_negative) {
+        c.lin.terms.iter().map(|(a, k)| (a.clone(), -k)).collect()
+    } else {
+        c.lin.terms.clone()
+    }
+}
 
 /// Each of `conjuncts` that is not a constraint, with the constraints, and the constraints
 /// alone when there are any; each part with its key and what it is projected with, in the
@@ -1003,14 +1016,30 @@ fn split<'a>(
         .collect();
     eqs.sort_unstable();
     let eqs: Arc<[Con]> = eqs.into();
+    // The constraints on each term, either sign.
+    let mut on: BTreeMap<BTreeMap<Atom, Int>, Vec<Con>> = BTreeMap::new();
+    for g in &cons {
+        if let Formula::Con(c) = g {
+            on.entry(unsigned(c)).or_default().push(c.clone());
+        }
+    }
     let least = cons.iter().min().map(|&c| c.clone());
     let base = Formula::and(cons.into_iter().cloned().collect());
     let mut parts: Vec<(PartKey, PartWith, Formula)> = others
         .into_iter()
         .map(|g| {
+            let terms: BTreeSet<BTreeMap<Atom, Int>> = g.cons().into_iter().map(unsigned).collect();
+            let mut boxed: Vec<Con> = terms
+                .iter()
+                .filter_map(|t| on.get(t))
+                .flatten()
+                .cloned()
+                .collect();
+            boxed.sort_unstable();
+            let boxed = Formula::and(boxed.into_iter().map(Formula::Con).collect());
             (
                 (g.clone(), leaf.cloned()),
-                (eqs.clone(), None),
+                (eqs.clone(), Some(boxed)),
                 Formula::and(vec![g.clone(), base.clone()]),
             )
         })
@@ -4004,7 +4033,7 @@ impl Scope {
     /// Projects `part`, which mentions `names`, when `key` is new, was last projected with
     /// other equalities or constraints than `with`, or one of their intervals or classes has
     /// changed since its last projection. A conjunct's part is not projected again when only
-    /// the inequalities it is projected with have changed.
+    /// inequalities on terms it does not compare have changed ([`PartWith`]).
     fn project_due(&mut self, key: PartKey, with: PartWith, part: &Formula, names: &[Arc<str>]) {
         if self.is_projected(&key, &with, names) {
             return;

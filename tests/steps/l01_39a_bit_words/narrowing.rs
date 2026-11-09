@@ -453,15 +453,13 @@ fn a_value_over_two_inputs_narrows_both() {
     assert!(out.contains("this `x` is int[-3..]"), "{out}");
 }
 
-/// A known precision limit (COMPLEXITY.md S25, B4) that a program meets. Where `used + free >=
-/// 1 || used - free >= 30` holds, the test `used >= free` shows `used >= 1`, so `used - 1` is
-/// at least 0. But the test on `cap` between them projects the disjunction, and the new
-/// inequality `used >= free` does not make the disjunction's part due again, so `used` stays
-/// int[-19..=20] and the program is rejected; without the test on `cap` it is accepted.
-/// Closing B4 in O(n log n) is item ST-ladder-incremental. If this test fails because the
-/// program is accepted, the limit is closed: assert that it is accepted, with its rows.
+/// Formerly a known precision limit (COMPLEXITY.md S25, B4), closed by item ST-B4: where
+/// `used + free >= 1 || used - free >= 30` holds, the test `used >= free` shows `used >= 1`, so
+/// `used - 1` is at least 0, with the test on `cap` between them or without it. A new
+/// inequality among the constraints a disjunction's part is projected with makes the part due
+/// again (`split` in `product.rs`).
 #[test]
-fn a_test_between_two_names_after_a_disjunction_on_both_is_a_known_precision_limit() {
+fn a_test_between_two_names_after_a_disjunction_on_both_is_exact() {
     let src = "copied(positional used: int, positional free: int, positional cap: int) =\n  \
            if used >= -20 && used <= 20 && free >= -20 && free <= 20 {\n    \
              if used + free >= 1 || used - free >= 30 {\n      \
@@ -471,8 +469,8 @@ fn a_test_between_two_names_after_a_disjunction_on_both_is_a_known_precision_lim
              } else { 0 }\n  \
            } else { 0 }\n\
          test { (5, 3, 10) -> 1, (1, 4, 10) -> 0, (8, 0, 9) -> 3, (5, 3, -1) -> 0 }\n";
-    let e = rejected(src);
-    assert!(e.contains("this `x` is int[-20..=19]"), "{e}");
+    assert!(accepted(src), "{}", rejected(src));
+    assert!(rows_pass(src), "{src}");
     let without = "copied(positional used: int, positional free: int) =\n  \
            if used >= -20 && used <= 20 && free >= -20 && free <= 20 {\n    \
              if used + free >= 1 || used - free >= 30 {\n      \

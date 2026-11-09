@@ -596,20 +596,20 @@ fn chain_answers(what: &str, close: impl Fn(usize) -> Option<i64> + Sync, empty:
 }
 
 #[test]
-#[ignore = "needs ST-B4"]
+#[ignore = "needs ST-B4: bounds kept implicitly (META4 O5), quadratic one test at a time"]
 fn a_cycle_of_weight_zero_fixes_each_name_in_near_linear_time() {
     chain_answers("cycle of weight 0", |n| Some(1 - n as i64), false);
 }
 
 #[test]
-#[ignore = "needs ST-B4"]
+#[ignore = "needs ST-B4: bounds kept implicitly (META4 O5), quadratic one test at a time"]
 fn a_cycle_of_weight_one_is_empty_in_near_linear_time() {
     chain_answers("cycle of weight 1", |n| Some(2 - n as i64), true);
 }
 
 /// CONTROL of the two above (Claude's open chain): no closing test.
 #[test]
-#[ignore = "needs ST-B4"]
+#[ignore = "needs ST-B4: bounds kept implicitly (META4 O5), quadratic one test at a time"]
 fn an_open_chain_narrows_in_near_linear_time() {
     chain_answers("open chain", |_| None, false);
 }
@@ -666,7 +666,7 @@ fn family(
 }
 
 #[test]
-#[ignore = "needs ST-B4"]
+#[ignore = "needs ST-B4: the implication kind (R3_CODEX 3.3); each case of a test moves the shared name and projects every part again"]
 fn a_walk_of_disjunctions_narrows_in_near_linear_time() {
     family(
         "walk",
@@ -683,7 +683,7 @@ fn a_walk_of_disjunctions_narrows_in_near_linear_time() {
 }
 
 #[test]
-#[ignore = "needs ST-B4"]
+#[ignore = "needs ST-B4: the implication kind (R3_CODEX 3.3); each case of a test moves the shared name and projects every part again"]
 fn control_a_walk_without_its_start_narrows_nothing_in_near_linear_time() {
     family(
         "walk without its start",
@@ -759,13 +759,11 @@ fn unbounded_family(what: &str, n: usize, make: impl Fn(usize) -> Sys + Sync) {
 }
 
 #[test]
-#[ignore = "needs ST-B4"]
 fn c26_narrows_in_near_linear_time() {
     unbounded_family("C26", 16, |k| c26(k, false));
 }
 
 #[test]
-#[ignore = "needs ST-B4"]
 fn base_churn_narrows_in_near_linear_time() {
     unbounded_family("base churn", 4, |k| c26(k, true));
 }
@@ -826,7 +824,7 @@ fn chain_raise(k: usize) -> Sys {
 }
 
 #[test]
-#[ignore = "needs ST-B4"]
+#[ignore = "needs ST-B4: bounds kept implicitly (META4 O5), quadratic one test at a time"]
 fn a_chain_raise_narrows_in_near_linear_time() {
     family("chain raise", 16, chain_raise, |k| {
         let k = k as i64;
@@ -842,7 +840,6 @@ fn a_chain_raise_narrows_in_near_linear_time() {
 /// META4): `x - y >= 5 || y - x >= 5`, then `-2 <= x - y <= 2`, `x`, `y` in `-20..=20`, leave no
 /// value, in either order.
 #[test]
-#[ignore = "needs ST-B4"]
 fn a_band_after_a_disjunction_is_empty() {
     let p = Premises::new();
     let s = boxed(&["x", "y"], 20);
@@ -860,7 +857,6 @@ fn a_band_after_a_disjunction_is_empty() {
 /// `used + free >= 1` with `used >= free` gives `2 used >= 1`: exact `used` in `1..=20`, in an
 /// eager and a lazy scope, with the test on `cap` before or after the disjunction.
 #[test]
-#[ignore = "needs ST-B4"]
 fn a_test_between_two_names_after_a_disjunction_on_both_is_exact() {
     let p = Premises::new();
     let all = names(&["used", "free", "cap"]);

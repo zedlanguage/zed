@@ -1,5 +1,6 @@
 //! The linear relation of a scope (step L1.39) as a persistent set of conjuncts, with the
-//! conjuncts that mention each name and, of the constraints on each term, the tighter one.
+//! conjuncts that mention each name, of the constraints on each term the tighter one, and of
+//! the disjunctions of two constraints on each pair of terms those that no other implies.
 //!
 //! A scope is copied for each case of a test and the cases are joined, so the relation is held
 //! in persistent maps: a copy costs O(1), a new conjunct O(log n) in the size of the relation,
@@ -92,6 +93,37 @@ type Tight = (BTreeMap<Atom, Int>, Rel);
 /// Conjuncts removed from every index but the blocks, by their atoms ([`Conjuncts::swap`]).
 type Held = BTreeMap<BTreeSet<Atom>, Vec<Arc<Formula>>>;
 
+/// The key of a disjunction of two constraints `f + c >= 0 || g + d >= 0` for the rule that
+/// keeps the stronger of two ([`Conjuncts::pair`]): its two terms `f` and `g`, in order.
+type PairKey = (BTreeMap<Atom, Int>, BTreeMap<Atom, Int>);
+
+/// The disjunctions kept on one [`PairKey`], each by its constant on the first term with its
+/// constant on the second: none implies another, so as the first constant rises the second
+/// falls.
+type Front = OrdMap<Int, (Int, Arc<Formula>)>;
+
+/// `g` as a disjunction of two constraints `f + c >= 0 || g + d >= 0` on two terms, with its
+/// key and the constants `c` and `d` of the terms in the key's order.
+fn pair_of(g: &Formula) -> Option<(PairKey, Int, Int)> {
+    let Formula::Or(gs) = g else { return None };
+    let [Formula::Con(a), Formula::Con(b)] = &gs[..] else {
+        return None;
+    };
+    if a.rel != Rel::Ge || b.rel != Rel::Ge || a.lin.terms == b.lin.terms {
+        return None;
+    }
+    let (a, b) = if a.lin.terms < b.lin.terms {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    Some((
+        (a.lin.terms.clone(), b.lin.terms.clone()),
+        a.lin.constant.clone(),
+        b.lin.constant.clone(),
+    ))
+}
+
 /// A conjunction of formulas, `true` when empty.
 #[derive(Clone, Debug, Default)]
 pub struct Conjuncts {
@@ -99,6 +131,9 @@ pub struct Conjuncts {
     set: OrdSet<Arc<Formula>>,
     /// Of the constraints on each term with each relation, the one kept.
     tight: OrdMap<Tight, Arc<Formula>>,
+    /// Of the disjunctions of two constraints on each pair of terms, those that no other
+    /// implies ([`Conjuncts::pair`]).
+    pairs: OrdMap<PairKey, Front>,
     /// The conjuncts that mention each name, alone or in a product.
     users: Uses<Arc<Formula>>,
     /// The blocks of the conjuncts: the forest of the conjuncts of no star, and each star's
@@ -1018,13 +1053,19 @@ impl Conjuncts {
 
     /// The conjunction with `f`: a conjunction's parts are added each, `true` is dropped and
     /// `false` absorbs, and of two constraints on one term with one relation the tighter
-    /// alone is kept, as [`Formula::and`] does. A conjunct of no atoms, such as the `!(0 == 0)`
-    /// of a test `x != x`, is decided at once: it is `true` or `false`, since no block holds
-    /// it and no projection would read it.
+    /// alone is kept, as [`Formula::and`] does; of two disjunctions of two constraints on one
+    /// pair of terms, one implied by the other goes. A conjunct of no atoms, such as the
+    /// `!(0 == 0)` of a test `x != x`, is decided at once: it is `true` or `false`, since no
+    /// block holds it and no projection would read it.
     pub fn and(&mut self, f: Formula) {
+        let mut held = Held::new();
         let mut p = Pending::default();
-        self.and_held(f, &mut Held::new(), &mut p);
+        self.and_held(f, &mut held, &mut p);
         self.flush(p);
+        // The disjunctions a stronger one replaced and no conjunct took the place of
+        // ([`Conjuncts::pair`]).
+        let rest: Vec<Arc<Formula>> = held.into_values().flatten().collect();
+        self.unplace(&rest);
     }
 
     /// The conjunction without the conjuncts `gone` and with `f`, in time near theirs: `f` is
@@ -1127,6 +1168,9 @@ impl Conjuncts {
         if self.set.contains(&g) {
             return;
         }
+        if !self.pair(&g, held, p) {
+            return;
+        }
         let ns = names(&g);
         for n in &ns {
             self.users.add(n, &g);
@@ -1152,6 +1196,45 @@ impl Conjuncts {
         p.placed.push((g, old));
     }
 
+    /// The rule that keeps the stronger of two disjunctions of two constraints on one pair of
+    /// terms, as the tighter of two constraints on one term is kept: whether `g`, new, is to be
+    /// added. `f + c >= 0 || g + d >= 0` implies `f + c' >= 0 || g + d' >= 0` when `c <= c'`
+    /// and `d <= d'`, so of the disjunctions on one pair of terms only those that no other
+    /// implies are kept, the maximal ones (a Pareto front). Each one `g` implies leaves every
+    /// index but the blocks, where `g` takes its place ([`Held`], [`Conjuncts::and`]). The
+    /// conjuncts kept depend on the set added alone, not on its order; a scope's disjunctions
+    /// on two forms, as the bounds `x + y >= j || x - y >= j` of COMPLEXITY.md C26, are then as
+    /// many as the incomparable ones and not one per test. In O(log n) for each disjunction
+    /// added, and O(log n) for each one it removes, which was added once.
+    fn pair(&mut self, g: &Arc<Formula>, held: &mut Held, p: &mut Pending) -> bool {
+        let Some((key, c, d)) = pair_of(g) else {
+            return true;
+        };
+        let front = self.pairs.get(&key).cloned().unwrap_or_default();
+        // The kept disjunction with the greatest first constant at most `c` has the least
+        // second constant of those, so `g` is implied when that one's is at most `d`.
+        if front
+            .range(..=c.clone())
+            .next_back()
+            .is_some_and(|(_, (d2, _))| *d2 <= d)
+        {
+            return false;
+        }
+        // Those `g` implies: from first constant `c` up, while the second is at least `d`.
+        let implied: Vec<Arc<Formula>> = front
+            .range(c.clone()..)
+            .take_while(|(_, (d2, _))| *d2 >= d)
+            .map(|(_, (_, h))| h.clone())
+            .collect();
+        for h in implied {
+            if self.unindex(&h, p) {
+                held.entry(h.atoms()).or_default().push(h);
+            }
+        }
+        self.pairs.entry(key).or_default().insert(c, (d, g.clone()));
+        true
+    }
+
     /// Removes `g` from the set and from every index but the blocks; whether it was there.
     /// A star that held it is changed by [`Conjuncts::flush`].
     fn unindex(&mut self, g: &Arc<Formula>, p: &mut Pending) -> bool {
@@ -1171,6 +1254,15 @@ impl Conjuncts {
             let key = (c.lin.terms.clone(), c.rel);
             if self.tight.get(&key) == Some(g) {
                 self.tight.remove(&key);
+            }
+        }
+        if let Some((key, c, _)) = pair_of(g)
+            && let Some(front) = self.pairs.get_mut(&key)
+            && front.get(&c).is_some_and(|(_, h)| h == g)
+        {
+            front.remove(&c);
+            if front.is_empty() {
+                self.pairs.remove(&key);
             }
         }
         true
@@ -1209,11 +1301,14 @@ impl Conjuncts {
         }
         self.flush(p);
         self.unplace(&gs);
+        let mut held = Held::new();
         let mut p = Pending::default();
         for g in gs {
-            self.and_held(g.forget(name), &mut Held::new(), &mut p);
+            self.and_held(g.forget(name), &mut held, &mut p);
         }
         self.flush(p);
+        let rest: Vec<Arc<Formula>> = held.into_values().flatten().collect();
+        self.unplace(&rest);
     }
 }
 

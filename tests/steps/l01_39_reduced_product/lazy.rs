@@ -215,58 +215,6 @@ fn a_test_between_the_hubs_of_a_star_settles_them_as_the_eager_scope_does() {
 }
 
 #[test]
-fn a_test_between_the_hubs_of_a_star_after_a_disjunction_on_them_is_a_known_precision_limit() {
-    // The shape of seed 1109, named: `used` and `free` in [-20, 20], a star
-    // `cap >= used + free - 3` whose leaf `cap` is unbounded above, then
-    // `used + free >= 1 || used - free >= 30`, then `used >= free`. With the disjunction the
-    // last test shows `used >= 1`, which only projecting the two together finds. The
-    // disjunction's part, keyed by its conjunct and the equalities, is not due again for a new
-    // inequality (COMPLEXITY.md S25 B4), so both scopes keep `used` int[-19..=20]; the eager
-    // scope found `used >= 1` only while the star's block and the hubs' block shared the
-    // part's key, at a cost of `k` projections for each of `k` such tests (item
-    // NARROW-lazy-settle). With the disjunction before the star, both keep int[-19..=20] too.
-    let p = Premises::new();
-    let all = names(&["used", "free", "cap"]);
-    let sum = || prim(Prim::Add, var("used"), var("free"));
-    let bounds = ["used", "free"]
-        .iter()
-        .map(|h| {
-            and(
-                prim(Prim::Ge, var(h), int(-20)),
-                prim(Prim::Le, var(h), int(20)),
-            )
-        })
-        .reduce(and)
-        .expect("two names");
-    let start = ints(&all).assume(&bounds, true, &p);
-    let room = or(prim(Prim::Ge, sum(), int(1)), diff_ge("used", "free", 30));
-    let star = prim(Prim::Ge, var("cap"), prim(Prim::Sub, sum(), int(3)));
-    let used: Arc<str> = Arc::from("used");
-    let ones = |s: &Scope| {
-        (-20..=20)
-            .filter(|v| s.settled(&used).contains(&zed_kernel::Value::Int(*v)))
-            .collect::<Vec<i64>>()
-    };
-    for (first, second, from) in [(&star, &room, -19), (&room, &star, -19)] {
-        let narrowed = |s: Scope| {
-            s.assume(first, true, &p).assume(second, true, &p).assume(
-                &diff_ge("used", "free", 0),
-                true,
-                &p,
-            )
-        };
-        let (eager, lazy) = (narrowed(start.clone()), narrowed(start.clone().lazy()));
-        let order = format!("{first:?} then {second:?}");
-        assert_eq!(
-            ones(&eager),
-            (from..=20).collect::<Vec<i64>>(),
-            "{order}: {eager}"
-        );
-        same(&eager, &lazy, &all, &[order]);
-    }
-}
-
-#[test]
 fn seed_3011_a_new_star_settles_its_leaf_as_the_eager_scope_does() {
     // Seed 3011 of `wide`, past its default seeds: `m + n >= -2` holds (`m <= 8` rules out the
     // other side of a disjunction), then `a0 >= n + m - 2`, then `a0 >= n + m + 1`. The eager

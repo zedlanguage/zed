@@ -47,22 +47,21 @@ fn a_scope_keeps_every_clause_of_a_relation() {
     let s = ints(&["x".into(), "y".into()]);
     for k in [1, 4, 40] {
         let r = s.assume(&clauses(k), true, &Premises::new());
-        // Each clause's two sides once each: the relation of the whole test, taken before the
-        // scope is narrowed, holds no copy of a side that a case of the split adds again.
+        // The two sides of the last clause once each: the relation of the whole test, taken
+        // before the scope is narrowed, holds no copy of a side that a case of the split adds
+        // again, and no clause that a stronger one on the same two sides implies (clause `j`
+        // follows from clause `k - 1`).
         let n = r.relation.cons().len();
-        assert!(n == 2 * k, "{k} clauses: {n} constraints in {}", r.relation);
+        assert!(n == 2, "{k} clauses: {n} constraints in {}", r.relation);
         let mut got: Vec<String> = r.relation.cons().iter().map(|c| c.to_string()).collect();
         got.sort();
-        let mut want: Vec<String> = (0..k)
-            .flat_map(|j| {
-                let diff = if j == 0 {
-                    "x >= y".to_string()
-                } else {
-                    format!("x >= y + {j}")
-                };
-                [format!("x + y >= {j}"), diff]
-            })
-            .collect();
+        let j = k - 1;
+        let diff = if j == 0 {
+            "x >= y".to_string()
+        } else {
+            format!("x >= y + {j}")
+        };
+        let mut want = vec![format!("x + y >= {j}"), diff];
         want.sort();
         assert_eq!(got, want, "{k} clauses");
         // Every point that meets the test is in the scope.
@@ -836,14 +835,13 @@ fn a_lazy_scope_with_many_disjunctions_among_the_hubs_of_a_star_scales() {
 }
 
 #[test]
-#[ignore]
 fn an_eager_scope_with_many_disjunctions_among_the_hubs_of_a_star_scales() {
-    // Fails: 26.4 times the instructions for 8 times the size. Each test projects the star
-    // again (`Scope::due`, its class), and that pass is linear in the star's block: the
-    // projections are 6k + 2 in all, but `Block::of` (`Conjuncts::core` and `split`), the
-    // names and the due check of every part, and the snapshot of every part in
-    // `Scope::project_block` run over all `k` parts at each test (COMPLEXITY.md C26; open
-    // item NARROW-eager-star-redo).
+    // Each test `x + y >= j || x - y >= j` implies the ones before it, which the relation
+    // drops (`Conjuncts::pair`), so the star's block holds one disjunction at each test and
+    // its pass over its parts costs O(1). Before item ST-B4 every disjunction stayed, and
+    // that pass, `Block::of`, the due check and the snapshot of every part, ran over all `k`
+    // parts at each test: 25.0 to 26.4 times the instructions for 8 times the size
+    // (COMPLEXITY.md C26; META4 O6).
     disjunctions_scale("k disjunctions among the hubs of a star, eager", false);
 }
 

@@ -117,26 +117,6 @@ fn a_disjunction_then_an_equality_narrows_each_name() {
     }
 }
 
-/// A known precision limit (COMPLEXITY.md, L1.39 nested tests): `x - y >= 5 || y - x >= 5`
-/// then `-2 <= x - y <= 2` leaves no value, but the second test moves no bound of a single
-/// name, so the part of the disjunction is not projected again and the scope is not empty.
-/// The scope is sound (it holds every point, of which there are none). In the other order,
-/// and after one more projection, the scope is empty. If this test fails because the first
-/// scope is empty, the limit is closed: remove the entry.
-#[test]
-fn a_band_after_a_disjunction_is_a_known_precision_limit() {
-    let p = Premises::new();
-    let s = boxed(&["x", "y"], 20);
-    let d = or(diff_ge("x", "y", 5), diff_ge("y", "x", 5));
-    let band = and(diff_ge("x", "y", -2), diff_ge("y", "x", -2));
-    let mut late = s.assume(&d, true, &p).assume(&band, true, &p);
-    assert!(!late.bottom, "the limit is closed: {late}");
-    assert!(s.assume(&band, true, &p).assume(&d, true, &p).bottom);
-    late.forget_projections();
-    late.reduce();
-    assert!(late.bottom, "{late}");
-}
-
 #[test]
 fn every_grouping_of_three_sides_gives_the_same_scope() {
     let p = Premises::new();
