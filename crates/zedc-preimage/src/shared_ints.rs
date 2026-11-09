@@ -17,8 +17,6 @@ use std::rc::Rc;
 use zedc_lattice::interval::{End, IntervalSet};
 use zedc_lattice::revision::{self, Op};
 
-use crate::preimage::count_forward;
-
 /// A set of integers, shared: a clone is `O(1)`.
 #[derive(Clone)]
 pub(crate) struct Ints(Rc<Node>);
@@ -221,6 +219,24 @@ impl fmt::Display for Ints {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.set().fmt(f)
     }
+}
+
+thread_local! {
+    /// The pieces of the integer sets that the forward transfer made on this thread since
+    /// [`forward_pieces`] last read it.
+    static FORWARD_PIECES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The pieces of the integer sets that the forward transfer made on this thread since the
+/// last call, which resets the count: each set listed, once, and none for a domain it shares
+/// (COMPLEXITY.md S22-fwd-holes).
+pub fn forward_pieces() -> u64 {
+    FORWARD_PIECES.replace(0)
+}
+
+/// Counts `n` pieces made for [`forward_pieces`].
+pub(crate) fn count_forward(n: usize) {
+    FORWARD_PIECES.with(|c| c.set(c.get() + n as u64));
 }
 
 #[cfg(test)]

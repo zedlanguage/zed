@@ -85,6 +85,7 @@ use zedc_stage::stage;
 
 use crate::divisors::{EMPTY, Set, Sets as DivisorSets};
 use crate::shared_ints::Ints;
+pub use crate::shared_ints::forward_pieces;
 
 /// The box of a term whose value `v` is known: every point when `v` meets the demand, none
 /// otherwise.
@@ -10951,24 +10952,6 @@ pub fn class_domain_reads() -> u64 {
 
 fn read_domain(n: usize) {
     CLASS_READS.with(|c| c.set(c.get() + n as u64));
-}
-
-thread_local! {
-    /// The pieces of the integer sets that the forward transfer made on this thread since
-    /// [`forward_pieces`] last read it.
-    static FORWARD_PIECES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// The pieces of the integer sets that the forward transfer made on this thread since the
-/// last call, which resets the count: each set listed, once, and none for a domain it shares
-/// (COMPLEXITY.md S22-fwd-holes).
-pub fn forward_pieces() -> u64 {
-    FORWARD_PIECES.replace(0)
-}
-
-/// Counts `n` pieces made for [`forward_pieces`].
-pub(crate) fn count_forward(n: usize) {
-    FORWARD_PIECES.with(|c| c.set(c.get() + n as u64));
 }
 
 /// The preimage of `demand` under `term` when its declaration is annotated `@exact`
