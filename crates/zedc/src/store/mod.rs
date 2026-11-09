@@ -23,6 +23,7 @@ pub use zedc_preimage::preimage;
 #[doc(hidden)]
 pub use zedc_preimage::preimage_ref;
 pub use zedc_preimage::product;
+pub use zedc_preimage::threshold;
 pub use zedc_presburger::conjuncts;
 pub use zedc_presburger::hull;
 pub use zedc_presburger::presburger;

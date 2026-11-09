@@ -666,7 +666,7 @@ fn family(
 }
 
 #[test]
-#[ignore = "needs ST-B4: the implication kind (R3_CODEX 3.3); each case of a test moves the shared name and projects every part again"]
+#[ignore = "S4-ti open: the threshold-implication solver (threshold.rs) is exact here but solves the whole component again for each test, so one test at a time is super-linear (2.2-3.5x per doubling of n; walk 23.3x, this family 24.7x against 24x)"]
 fn a_walk_of_disjunctions_narrows_in_near_linear_time() {
     family(
         "walk",
@@ -683,7 +683,7 @@ fn a_walk_of_disjunctions_narrows_in_near_linear_time() {
 }
 
 #[test]
-#[ignore = "needs ST-B4: the implication kind (R3_CODEX 3.3); each case of a test moves the shared name and projects every part again"]
+#[ignore = "S4-ti open: the threshold-implication solver (threshold.rs) is exact here but solves the whole component again for each test, so one test at a time is super-linear (2.2-3.5x per doubling of n; walk 23.3x, this family 24.7x against 24x)"]
 fn control_a_walk_without_its_start_narrows_nothing_in_near_linear_time() {
     family(
         "walk without its start",

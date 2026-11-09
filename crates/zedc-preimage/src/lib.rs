@@ -13,6 +13,7 @@ pub mod preimage;
 #[doc(hidden)]
 pub mod preimage_ref;
 pub mod product;
+pub mod threshold;
 
 /// The scaling test of the rule of low complexity, shared with the step tests.
 #[cfg(test)]

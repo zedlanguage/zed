@@ -21,6 +21,9 @@
 //!   monotonicity and the controls that break each; Codex's round-3 integer octagon projection
 //!   on 6,561 bound choices, the two-hub component with a dominating disjunction and the
 //!   implication walk, with their controls.
+//! - [`threshold`]: the threshold-implication solver of QUESTIONS A57 (`threshold::solve`)
+//!   against enumeration in each sign case, the unbounded hub, A57's reachability reduction,
+//!   and the scaling of the walk and of the hub search (ported from `a57.mjs` and `red.mjs`).
 //!
 //! Rejected by the meta-reviews and not ported: Gemini's patch to `Scope` (round 3 and round
 //! 4), the Bellman-Ford condition in C_holes case 3, class K without condition (iii), and
@@ -31,6 +34,7 @@ mod holes;
 mod holes_model;
 mod s4;
 mod s4_model;
+mod threshold;
 
 use std::sync::Arc;
 

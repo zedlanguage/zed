@@ -58,6 +58,7 @@ use super::preimage::{
     Classes, Demand, Domains, LetIn, LetPa, Lets, Listed, Shift, TermBounds, follow_own,
     let_narrowing, let_summary, preimage_listed, relations, witness,
 };
+use super::threshold;
 use zedc_int::int::Int;
 use zedc_lattice::affine::Bounds;
 use zedc_lattice::cell::{Cell, Entry, Premise, Premises};
@@ -1060,6 +1061,8 @@ struct Block {
     names: Vec<Arc<str>>,
     /// The leaf, when the block is a star ([`Conjuncts::star`]).
     leaf: Option<Arc<str>>,
+    /// The block as a threshold-implication component, when it is one ([`threshold::shape`]).
+    threshold: Option<threshold::Shape>,
 }
 
 impl Block {
@@ -1072,6 +1075,7 @@ impl Block {
         Block {
             parts: split(gs.iter().map(|g| &**g), leaf.as_ref()),
             names: names.into_iter().collect(),
+            threshold: threshold::shape(&gs),
             leaf,
         }
     }
@@ -3969,6 +3973,24 @@ impl Scope {
         if work.is_empty() {
             return;
         }
+        // A threshold-implication component is solved as a whole, exactly ([`threshold::solve`]).
+        // Complexity tradeoff: the component is solved again from the start each time one of
+        // its parts is due, so a block of N parts narrowed by N tests, one at a time, costs
+        // O(N · N log N log W) and not O(N log N log W). Why: the solver keeps no state between
+        // calls; carrying the least and greatest members from the scope's last bounds, and
+        // propagating only from the parts and names that changed, is not built. Trigger: a
+        // walk of N disjunctions on one shared name, tested one at a time. Test:
+        // `l01_39_reduced_product::xst::s4::a_walk_of_disjunctions_narrows_in_near_linear_time`
+        // (ignored). COMPLEXITY.md row S4-ti.
+        if let Some(shape) = &b.threshold
+            && self.project_threshold(shape)
+        {
+            for ((key, with, _), ns) in b.parts.iter().zip(&names) {
+                let at = self.snapshot(ns);
+                self.projected.insert(key.clone(), (with.clone(), at));
+            }
+            return;
+        }
         // A star's leaf is unbounded on the side away from its hubs, so each part bounds it by
         // a half-line its interval does not change, and no part's projection onto the hubs
         // reads it ([`Conjuncts::star`]): a move of the leaf makes no other part due and is
@@ -4019,6 +4041,39 @@ impl Scope {
         for ((key, with, _), ns) in b.parts.iter().zip(&names) {
             let at = self.snapshot(ns);
             self.projected.insert(key.clone(), (with.clone(), at));
+        }
+    }
+
+    /// Meets each name of the threshold-implication component `shape` with its exact bounds,
+    /// and the hub with its values that pass ([`threshold::solve`]); `false`, changing nothing,
+    /// when the hub has three or more values and its coefficients have both signs (plan row
+    /// S4-hub-mixed).
+    fn project_threshold(&mut self, shape: &threshold::Shape) -> bool {
+        let sys = shape.system(|n| self.get(n).ints().clone());
+        match threshold::solve(&sys) {
+            threshold::Answer::MixedHub => false,
+            threshold::Answer::Empty => {
+                match shape.names.first().or(shape.hub.as_ref()) {
+                    Some(n) => self.empty_at(&n.clone()),
+                    None => self.bottom = true,
+                }
+                true
+            }
+            threshold::Answer::Bounds { names, hub } => {
+                let mut meet = |n: &Arc<str>, x: IntervalSet| {
+                    if let Some(p) = self.names.get_mut(n) {
+                        let prem = p.premises();
+                        p.meet_ints(x, &prem);
+                    }
+                };
+                for (n, (lo, hi)) in shape.names.iter().zip(names) {
+                    meet(n, IntervalSet::range(lo, hi));
+                }
+                if let Some(w) = &shape.hub {
+                    meet(w, hub);
+                }
+                true
+            }
         }
     }
 
