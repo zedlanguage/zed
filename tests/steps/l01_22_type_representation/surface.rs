@@ -545,24 +545,28 @@ fn list_of(arg: Type) -> Type {
 }
 
 /// Item PRINT-fmt-audit: written by name (`Type::surface_by_name`), as a compiler type writes
-/// its kernel part inside the rest of its text, a type is one expression with no definitions,
-/// at the place it stands. Before, the compiler wrote the kernel text with its definitions in
-/// the middle of its own text: `(int | #x, int | #x)` alone was `type T1 = int | #x; (T1, T1)`,
-/// and in a union `#y | type T1 = int | #x; (T1, T1)`, which no parser reads.
+/// its kernel part inside the rest of its text, a recursive type is its group's name for it, a
+/// part used once is written where it stands, and a part used twice or more gets a definition
+/// placed before the whole type, never inside it. Before, the compiler wrote the kernel text
+/// with its definitions in the middle of its own text: in a union, `#y | type T1 = int | #x;
+/// (T1, T1)`, which no parser reads. Each text reads back as its type.
 #[test]
-fn a_type_written_by_name_has_no_definitions() {
+fn a_type_written_by_name_puts_its_definitions_first() {
     let int_or_x = &Type::int() | &Type::atom("x");
     let partial = Type::partial(Type::int(), Type::int());
     for (t, at, text) in [
+        // A part used twice: its definition is placed first.
         (
             tuple(&[int_or_x.clone(), int_or_x.clone()]),
             TextPlace::Any,
-            "(int | #x, int | #x)",
+            "type T1 = int | #x; (T1, T1)",
         ),
+        // A part shared at each of three levels is defined once per level. Written out at
+        // each use, it was `(((0, 0), (0, 0)), ((0, 0), (0, 0)))`: 2^k leaves for k levels.
         (
             shared(3),
             TextPlace::Any,
-            "(((0, 0), (0, 0)), ((0, 0), (0, 0)))",
+            "type T1 = (0, 0); type T2 = (T1, T1); (T2, T2)",
         ),
         (partial.clone(), TextPlace::Any, "int ->? int"),
         (partial.clone(), TextPlace::Union, "(int ->? int)"),
@@ -576,9 +580,12 @@ fn a_type_written_by_name_has_no_definitions() {
         ),
     ] {
         let s = t.surface_by_name(at);
-        assert!(s.exact && s.defs.is_empty(), "{s}");
-        assert_eq!(s.root, text);
+        assert!(s.exact, "{s}");
+        assert_eq!(s.to_string(), text);
         accepts(&s.root, "Type").unwrap();
+        for (name, body) in &s.defs {
+            accepts(&format!("type {name} = {body};"), "Unit").unwrap();
+        }
         let back = read(&s);
         assert!(
             back.subtype(&t) && t.subtype(&back),
@@ -588,11 +595,11 @@ fn a_type_written_by_name_has_no_definitions() {
     for n in [1, 2, 6] {
         for t in [shared(n), words(n), xor(n)] {
             let s = t.surface_by_name(TextPlace::Any);
-            assert!(s.defs.is_empty(), "{s}");
             assert!(read(&s).subtype(&t) && t.subtype(&read(&s)), "{s}");
         }
     }
-    // A recursive type is its group's name for it, its arguments written by name too.
+    // A recursive type is its group's name for it, its arguments written by name too; used
+    // twice, the name with its arguments is a part used twice.
     let inner = list_of(&Type::int() | &partial);
     for (t, text) in [
         (list(), "List"),
@@ -600,14 +607,41 @@ fn a_type_written_by_name_has_no_definitions() {
         (list_of(inner.clone()), "L(L(int | (int ->? int)))"),
         (
             tuple(&[inner.clone(), inner]),
-            "(L(int | (int ->? int)), L(int | (int ->? int)))",
+            "type T1 = L(int | (int ->? int)); (T1, T1)",
         ),
     ] {
         let s = t.surface_by_name(TextPlace::Any);
-        assert!(s.defs.is_empty(), "{s}");
-        assert_eq!(s.root, text);
+        assert_eq!(s.to_string(), text);
         accepts(&s.root, "Type").unwrap();
     }
+}
+
+/// Several types written together by name share their definitions, which the caller places
+/// before the whole text the types stand in.
+#[test]
+fn types_written_together_by_name_share_their_definitions() {
+    let int_or_x = &Type::int() | &Type::atom("x");
+    let pair = tuple(&[int_or_x.clone(), lit(1)]);
+    let s = Type::surfaces_by_name(&[
+        (pair.clone(), TextPlace::Union),
+        (int_or_x.clone(), TextPlace::Union),
+        (pair, TextPlace::Any),
+    ]);
+    assert_eq!(
+        s.defs,
+        [
+            ("T1".to_string(), "int | #x".to_string()),
+            ("T2".to_string(), "(T1, 1)".to_string())
+        ]
+    );
+    assert_eq!(s.roots, ["T2", "T1", "T2"]);
+    // A part used once in all of them is written where it stands.
+    let s = Type::surfaces_by_name(&[
+        (int_or_x, TextPlace::Union),
+        (tuple(&[lit(1), lit(2)]), TextPlace::Key),
+    ]);
+    assert!(s.defs.is_empty());
+    assert_eq!(s.roots, ["int | #x", "((1, 2))"]);
 }
 
 #[test]
@@ -634,7 +668,27 @@ fn the_text_of_a_type_written_by_name_scales() {
             assert_eq!(s.root.matches("L(").count(), n);
         },
     );
+    // A pair of the level below, n deep, shares a part at each level: each level is defined
+    // once, so the text grows as n log n (the names' digits), not as the 2^n leaves the
+    // pair has when each part is written out at each use.
+    let pairs = scaling::inputs(1000, shared);
+    let bytes = |n: usize| pairs[&n].surface_by_name(TextPlace::Any).to_string().len();
+    let (small, large) = (bytes(1000), bytes(8000));
+    assert!(
+        large as f64 <= small as f64 * scaling::limit(1000, 8000, 1),
+        "the text of a pair type shared n deep, written by name, grows from {small} bytes at \
+         n = 1000 to {large} bytes at n = 8000"
+    );
+    scaling::check(
+        "the text of a pair type shared n deep, written by name",
+        1000,
+        |n| {
+            let s = pairs[&n].surface_by_name(TextPlace::Any);
+            assert_eq!(s.defs.len(), n - 1);
+        },
+    );
 }
+
 /// The empty type prints as the prelude name `Never` (DESIGN.md, the L1 row of "Defined words
 /// by layer"), never `!_`: alone, as a function's result, as the lower bound of a domain, and
 /// not at all inside a union. Each text parses and reads back to its type.

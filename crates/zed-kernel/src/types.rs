@@ -5068,6 +5068,18 @@ pub struct Surface {
     pub exact: bool,
 }
 
+/// Several types in the surface syntax with one set of definitions ([`Type::surfaces_by_name`]):
+/// the definitions come before the whole text the types stand in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Surfaces {
+    /// Each definition's name and body.
+    pub defs: Vec<(String, String)>,
+    /// Each type's text, in the order given, which may name the definitions.
+    pub roots: Vec<String>,
+    /// Whether every word is in the surface syntax.
+    pub exact: bool,
+}
+
 /// Where a text stands, and so which classes it may have there unparenthesized: anywhere, as an
 /// operand of `|`, of `&`, the left of `\`, an operand of any connective, the key of an arrow,
 /// or a bound of `L .. U -> V` ([`Type::surface_by_name`]).

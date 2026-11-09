@@ -9,8 +9,8 @@
 //! a cycle prints as definitions that refer to each other. So the text is linear in the graph,
 //! however many paths its diagrams have.
 //!
-//! Written by name ([`Type::surface_by_name`]), a type is one expression instead: a recursive type
-//! is its group's name for it, as `L(int | #x)`, and a node used twice is written out at each use.
+//! Written by name ([`Type::surface_by_name`]), a recursive type is its group's name for it, as
+//! `L(int | #x)`, and a node used twice still gets a definition, placed before the whole text.
 //!
 //! A diagram node over the tuple type `a`, with `hi` and `lo`, is `a & hi | (lo \ a)`, and
 //! the cases where `hi` or `lo` is a leaf drop the parts that are empty. A part kept as its
@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use super::TextPlace as At;
 use super::bdd::{Bdd, Form, Part};
-use super::{Lits, Morphism, Node, Row, Surface, Tuples, Type};
+use super::{Lits, Morphism, Node, Row, Surface, Surfaces, Tuples, Type};
 
 impl Type {
     /// The type in the surface syntax (module `print`).
@@ -70,45 +70,66 @@ impl Type {
     /// The type in the surface syntax at `at`, parenthesized where the text would not be read
     /// there as one operand.
     pub(crate) fn surface_at(&self, at: At) -> Surface {
-        Printer::default().print(self, at)
+        Printer::default().print(&[(self.clone(), at)]).single()
     }
 
-    /// The type in the surface syntax at `at` as one expression: each recursive member is written
-    /// by the name its group gives it, as `L(int | #x)`, and a part used more than once is
-    /// written out at each use, so there are no definitions; a part of a definition kept
-    /// unevaluated, and an atom's payload that is a recursive type as a whole, are unfolded once.
-    /// A refused group's message writes the types its definitions hold so (`rec::Show`), inside
-    /// an expression of the definitions, and a compiler type writes its kernel part so, inside
-    /// the rest of its text. Time linear in the text, which repeats a part at each use, as the
-    /// type's internal text (`Type::rope`) does.
-    // Complexity tradeoff: written out at each use, a part shared at k levels is written 2^k
-    // times (`(T, T)` over `(U, U)` over …), where definitions keep the text linear in the
-    // graph ([`Type::surface`]). Type syntax has no definitions inside a type, and a printed
-    // type parses back as one `Type` (DESIGN.md "Printed types are syntax"); the compiler's own
-    // types write their tuples out at each use too (`Ty`'s `Display`). COMPLEXITY.md K90.
+    /// The type in the surface syntax at `at`, each recursive member written by the name its
+    /// group gives it, as `L(int | #x)`; a part of a definition kept unevaluated, and an atom's
+    /// payload that is a recursive type as a whole, are unfolded once. A part used more than once
+    /// gets a definition placed before the type, as with [`Type::surface`], and a part used once
+    /// is written where it stands, so the text is linear in the type's graph. Several types
+    /// written together share their definitions ([`Type::surfaces_by_name`]).
     pub fn surface_by_name(&self, at: At) -> Surface {
+        Type::surfaces_by_name(&[(self.clone(), at)]).single()
+    }
+
+    /// Several types written by name as [`Type::surface_by_name`] writes one, each at its place,
+    /// with one set of definitions for the parts used more than once among them all, which the
+    /// caller places before the whole text the types stand in: a refused group's message writes
+    /// the types its definitions hold so (`rec::Show`), and a compiler type its kernel parts.
+    /// Time `O(t log t)` in the tokens of the texts and the definitions, which are linear in the
+    /// types' graph (`Printer::canon`).
+    pub fn surfaces_by_name(types: &[(Type, At)]) -> Surfaces {
         Printer {
             by_name: true,
             ..Printer::default()
         }
-        .print(self, at)
+        .print(types)
+    }
+}
+
+impl Surfaces {
+    /// The one text of a single type, with its definitions.
+    fn single(mut self) -> Surface {
+        let root = self.roots.pop().expect("one type, one text");
+        debug_assert!(self.roots.is_empty(), "one type, one text");
+        Surface {
+            defs: self.defs,
+            root,
+            exact: self.exact,
+        }
     }
 }
 
 impl Printer {
-    /// The text of `t` at `at`.
-    fn print(mut self, t: &Type, at: At) -> Surface {
+    /// The texts of `types`, each at its place, with one set of definitions.
+    fn print(mut self, types: &[(Type, At)]) -> Surfaces {
         let p = &mut self;
-        let root = p.refer(Item::Ty(None, t.clone()));
-        let Seg::Node(i, _) = root.segs[0] else {
-            unreachable!("a reference is one node")
-        };
-        p.walk(i);
-        p.canon(i);
-        p.render(Text {
-            segs: vec![Seg::Node(i, at)],
-            class: root.class,
-        })
+        let roots: Vec<(usize, At)> = types
+            .iter()
+            .map(
+                |(t, at)| match p.refer(Item::Ty(None, t.clone())).segs[..] {
+                    [Seg::Node(i, _)] => (i, *at),
+                    _ => unreachable!("a reference is one node"),
+                },
+            )
+            .collect();
+        p.exact = true;
+        for &(i, _) in &roots {
+            p.walk(i);
+        }
+        p.canon(&roots);
+        p.render(&roots)
     }
 }
 
@@ -398,8 +419,7 @@ struct Printer {
     /// Each node's item, until visited.
     items: Vec<Option<Item>>,
     exact: bool,
-    /// Whether a recursive type is written by its name and a node used twice is written out at
-    /// each use, rather than given a definition ([`Type::surface_by_name`]).
+    /// Whether a recursive member is written by its group's name for it ([`Type::surface_by_name`]).
     by_name: bool,
 }
 
@@ -446,7 +466,6 @@ impl Printer {
     /// order their texts name them, so a node leaves after every node its text names, except
     /// one it is inside of (a recursive type's cycle).
     fn walk(&mut self, root: usize) {
-        self.exact = true;
         let mut stack = vec![Step::Enter(root)];
         while let Some(step) = stack.pop() {
             match step {
@@ -464,11 +483,12 @@ impl Printer {
         }
     }
 
-    /// The walk's order again, over the texts as [`Printer::canon`] ordered them.
-    fn order(&mut self, root: usize) {
+    /// The walk's order again, over the texts as [`Printer::canon`] ordered them, from each root
+    /// in turn.
+    fn order(&mut self, roots: &[(usize, At)]) {
         let mut seen = vec![false; self.texts.len()];
         self.post.clear();
-        let mut stack = vec![Step::Enter(root)];
+        let mut stack: Vec<Step> = roots.iter().rev().map(|&(i, _)| Step::Enter(i)).collect();
         while let Some(step) = stack.pop() {
             match step {
                 Step::Leave(i) => self.post.push(i),
@@ -488,7 +508,7 @@ impl Printer {
     fn named(&self, i: usize) -> bool {
         let text = self.texts[i].as_ref().expect("visited");
         let token = matches!(&text.segs[..], [Seg::Str(s)] if !s.contains([' ', '(', ',']));
-        self.forced[i].is_some() || (!self.by_name && self.uses[i] >= 2 && !token)
+        self.forced[i].is_some() || (self.uses[i] >= 2 && !token)
     }
 
     /// Orders the elements of every group by their contents, so that the text does not depend
@@ -500,7 +520,7 @@ impl Printer {
     /// one. The walk's order is then found again, and with it the names' numbers.
     // Complexity tradeoff: the tokens of one height are sorted together, so the time is
     // `O(t log t)` in the tokens of all texts, against `O(t)` for the walk alone.
-    fn canon(&mut self, root: usize) {
+    fn canon(&mut self, roots: &[(usize, At)]) {
         let n = self.texts.len();
         let height = self.heights();
         let mut levels: Vec<Vec<usize>> = Vec::new();
@@ -530,7 +550,7 @@ impl Printer {
                 rank[*i] = next;
             }
         }
-        self.order(root);
+        self.order(roots);
     }
 
     /// Each node's height in the graph of the texts with the edges out of the recursive types
@@ -1075,7 +1095,8 @@ impl Printer {
         found.into_iter().map(Option::flatten).collect()
     }
 
-    fn render(&self, root: Text) -> Surface {
+    /// The definitions, then each root's text at its place.
+    fn render(&self, roots: &[(usize, At)]) -> Surfaces {
         let mut named: Vec<Option<String>> = vec![None; self.texts.len()];
         let same = self.same_names();
         // Whether node `i` gets a definition: a named node whose name is its own.
@@ -1104,11 +1125,17 @@ impl Printer {
                 defs.push((name.clone(), body));
             }
         }
-        let mut out = String::new();
-        self.write(&root.segs, &named, &mut out);
-        Surface {
+        let roots = roots
+            .iter()
+            .map(|&(i, at)| {
+                let mut out = String::new();
+                self.write(&[Seg::Node(i, at)], &named, &mut out);
+                out
+            })
+            .collect();
+        Surfaces {
             defs,
-            root: out,
+            roots,
             exact: self.exact,
         }
     }

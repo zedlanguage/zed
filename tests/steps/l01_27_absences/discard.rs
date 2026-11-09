@@ -162,12 +162,15 @@ fn every_dropped_atom_is_named_with_where_it_enters() {
     let (message, _, notes) = the_error(t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #a | #b | #errs(#a | #b ->? #a | #b): `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
+        "`_` drops a loose failure this value may be, type T1 = #a | #b; T1 | #errs(T1 ->? T1): `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
     );
     assert!(notes.contains(&"the loose failure #a enters here [positional x: int | #a]".into()));
     assert!(notes.contains(&"the loose failure #b enters here [positional y: int | #b]".into()));
     assert!(
-        notes.contains(&"the loose failure #errs(#a | #b ->? #a | #b) enters here [x + y]".into())
+        notes.contains(
+            &"the loose failure type T1 = #a | #b; #errs(T1 ->? T1) enters here [x + y]".into()
+        ),
+        "{notes:?}"
     );
 }
 

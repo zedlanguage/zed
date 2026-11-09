@@ -4,6 +4,8 @@
 //! set it names in the kernel and in the checker, and prints back as text that reads back as the
 //! same type.
 
+use std::collections::BTreeMap;
+
 use zed_kernel::types::{Type, Universe};
 use zed_tests::scaling;
 use zed_tests::step_helpers::l01_13_formatter::fmt;
@@ -266,34 +268,55 @@ fn each_form_prints_as_written_and_reads_back_as_the_same_type() {
     }
 }
 
-/// Item PRINT-fmt-audit: the kernel set in a compiler type is written as one expression
-/// (`Type::surface_by_name`), at the place it stands in the compiler's text. Before, a part used
-/// twice got a definition, written in the middle of the compiler's text:
+/// Item PRINT-fmt-audit: the kernel sets in a compiler type are written together by name
+/// (`Type::surfaces_by_name`), each at the place it stands in the compiler's text, and a part
+/// used twice or more among them gets a definition placed before the whole text. Before, each
+/// set was written with its own definitions, which stood in the middle of the compiler's text
+/// where a set was not first:
 ///
-/// - `(int | #x, int | #x)` was `type T1 = int | #x; (T1, T1)`
-/// - `#y | (int | #x, int | #x)` was `type T1 = int | #x; #y | (T1, T1)`
-/// - `(int | #x, int | #x) | (bool, bool)` was `type T1 = int | #x; (T1, T1) | (bool, bool)`
+/// - `type T1 = int | #x; ((int) -> int, (T1, T1))` was `((int) -> int, type T1 = int | #x;
+///   (T1, T1))`, which no parser reads
+/// - `type T1 = int | #x; ((int) -> int, T1, T1)` was `((int) -> int, int | #x, int | #x)`: a
+///   part used in two sets is now a part used twice
 ///
-/// `int | (int ->? int)` and `(int ->? int) | (bool, bool)` were written so before too. Each text
-/// parses; a set reads back as the same type, and a function, which the reader makes the
-/// checker's own function type, reads back as that type again from its own text.
+/// The first version of this item wrote a part used twice at each use, `(int | #x, int | #x)`,
+/// which grows as 2^k for a part shared at k levels (COMPLEXITY.md K91). `int | (int ->? int)`
+/// and `(int ->? int) | (bool, bool)` are written as before. Each text parses as a type after
+/// its definitions, each of which parses; with the definitions written in place, a set reads
+/// back as the same type, and a function, which the reader makes the checker's own function
+/// type, reads back as that type again from its own text.
 #[test]
-fn a_kernel_set_in_a_compiler_type_is_written_without_definitions() {
+fn the_kernel_sets_in_a_compiler_type_put_their_definitions_first() {
     let int_or_x = &Type::int() | &Type::atom("x");
     let shared = tuple(&[int_or_x.clone(), int_or_x.clone()]);
     let partial = Type::partial(Type::int(), Type::int());
+    let f = ty("(int) -> int");
     // Each type, its text, and whether it is a set of values with no function.
     for (t, text, set) in [
-        (Ty::set(shared.clone()), "(int | #x, int | #x)", true),
+        (
+            Ty::set(shared.clone()),
+            "type T1 = int | #x; (T1, T1)",
+            true,
+        ),
         (
             Ty::set(&shared | &Type::atom("y")),
-            "#y | (int | #x, int | #x)",
+            "type T1 = int | #x; #y | (T1, T1)",
             true,
         ),
         (
             ty("(bool, bool)").union(&Ty::set(shared.clone())),
-            "(int | #x, int | #x) | (bool, bool)",
+            "type T1 = int | #x; (T1, T1) | (bool, bool)",
             true,
+        ),
+        (
+            Ty::tuple(vec![f.clone(), Ty::set(shared.clone())]),
+            "type T1 = int | #x; ((int) -> int, (T1, T1))",
+            false,
+        ),
+        (
+            Ty::tuple(vec![f, Ty::set(int_or_x.clone()), Ty::set(int_or_x)]),
+            "type T1 = int | #x; ((int) -> int, T1, T1)",
+            false,
         ),
         (
             Ty::set(&Type::int() | &partial),
@@ -307,12 +330,78 @@ fn a_kernel_set_in_a_compiler_type_is_written_without_definitions() {
         ),
     ] {
         assert_eq!(t.to_string(), text);
-        let back = ty(text);
+        let (defs, root) = split_definitions(text);
+        let tokens = lex_fence(root).unwrap();
+        parse(root, &tokens, "Type", TOP).unwrap_or_else(|e| panic!("{root}: {e:?}"));
+        for (name, body) in &defs {
+            let def = format!("type {name} = {body};");
+            let tokens = lex_fence(&def).unwrap();
+            parse(&def, &tokens, "Unit", TOP).unwrap_or_else(|e| panic!("{def}: {e:?}"));
+        }
+        let inlined = inline(&defs, root);
+        let back = ty(&inlined);
         match set {
             true => assert!(back.subtype(&t) && t.subtype(&back), "{text}"),
-            false => assert_eq!(ty(&back.to_string()), back, "{text}"),
+            false => assert_eq!(ty(&inline_text(&back.to_string())), back, "{text}"),
         }
     }
+}
+
+/// The definitions `type Tk = body; ` that open `text`, and the type after them.
+fn split_definitions(text: &str) -> (Vec<(&str, &str)>, &str) {
+    let mut defs = Vec::new();
+    let mut rest = text;
+    while let Some(def) = rest.strip_prefix("type ") {
+        let (name, def) = def.split_once(" = ").expect("a definition has a body");
+        let (body, after) = def.split_once("; ").expect("a definition ends with `; `");
+        defs.push((name, body));
+        rest = after;
+    }
+    (defs, rest)
+}
+
+/// `text` with each name `Tk` of `defs` replaced by its body in parentheses, the bodies
+/// themselves first.
+fn inline(defs: &[(&str, &str)], text: &str) -> String {
+    let mut bodies: BTreeMap<&str, String> = BTreeMap::new();
+    for (name, body) in defs {
+        let body = replace_names(&bodies, body);
+        bodies.insert(name, body);
+    }
+    replace_names(&bodies, text)
+}
+
+/// `text` with no definitions: its own written in place.
+fn inline_text(text: &str) -> String {
+    let (defs, root) = split_definitions(text);
+    inline(&defs, root)
+}
+
+/// `text` with each whole word that `bodies` names replaced by `(body)`.
+fn replace_names(bodies: &BTreeMap<&str, String>, text: &str) -> String {
+    let mut out = String::new();
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        match bodies.get(word.as_str()) {
+            Some(body) => {
+                out.push('(');
+                out.push_str(body);
+                out.push(')');
+            }
+            None => out.push_str(word),
+        }
+        word.clear();
+    };
+    for c in text.chars() {
+        if c.is_alphanumeric() || c == '_' {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
 }
 
 /// A union of `n` members, half kind-wide differences `(..) \ (i, i)` and `#_ \ #ai`, half

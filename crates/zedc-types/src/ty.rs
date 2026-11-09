@@ -5,7 +5,8 @@
 //! A type is a union of pieces: the values of one scalar carrier, the atoms, one tuple shape,
 //! one function, one type variable, or the unknown. An operator or a function applies to each
 //! combination of its arguments' pieces, so `int | f64` plus `int` is checked as `int + int`
-//! and `f64 + int`.
+//! and `f64 + int    /// the value type of a morphism type is written ([`Sig::morphism`]). It stands at `at`, which
+    /// decides its parentheses; of two members or more, each stands as an operand of `|`.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -7636,11 +7637,18 @@ impl Ty {
         out
     }
 
-    /// Writes the start of its text to `out`, and pushes the parts that follow to `parts`, in
-    /// order; with `found`, without its atom `#notFound`, as the value type of a morphism type
-    /// is written ([`Sig::morphism`]). It stands at `at`, which decides its parentheses; of two
-    /// members or more, each stands as an operand of `|`.
-    fn parts<'a>(&'a self, out: &mut String, parts: &mut Vec<Print<'a>>, found: bool, at: PrintAt) {
+    /// Puts its kernel set in `kernel`, to be written at offset `written` of the text, and pushes
+    /// the parts that follow to `parts`, in order; with `found`, without its atom `#notFound`, as
+    /// the value type of a morphism type is written ([`Sig::morphism`]). It stands at `at`, which
+    /// decides its parentheses; of two members or more, each stands as an operand of `|`.
+    fn parts<'a>(
+        &'a self,
+        written: usize,
+        kernel: &mut Kernel,
+        parts: &mut Vec<Print<'a>>,
+        found: bool,
+        at: PrintAt,
+    ) {
         let mut first = true;
         // An atom whose payloads are known prints each payload's type, `#ioError(op: String,
         // path: String, why: String)` (L29-print); the kernel set holds it with any payload.
@@ -7670,15 +7678,17 @@ impl Ty {
         };
         if !set.is_empty() {
             first = false;
-            // Written as one expression: a definition `type T1 = …;` would stand inside the rest
-            // of the text, where the grammar has no place for it.
-            let text = set.surface_by_name(match at {
-                PrintAt::Any | PrintAt::Listed | PrintAt::Result => TextPlace::Any,
-                PrintAt::Key => TextPlace::Key,
-                PrintAt::Bound => TextPlace::Bound,
-                PrintAt::Union => TextPlace::Union,
-            });
-            out.push_str(&text.to_string());
+            // Written once the rest is, with the other kernel sets of the text ([`write_parts`]).
+            kernel.at.push(written);
+            kernel.sets.push((
+                set.clone(),
+                match at {
+                    PrintAt::Any | PrintAt::Listed | PrintAt::Result => TextPlace::Any,
+                    PrintAt::Key => TextPlace::Key,
+                    PrintAt::Bound => TextPlace::Bound,
+                    PrintAt::Union => TextPlace::Union,
+                },
+            ));
         }
         for (n, ss) in shaped {
             for s in ss {
@@ -7833,14 +7843,21 @@ impl<'a> Morphism<'a> {
 /// stack: each part expands to the parts it is made of, which are put on the stack so that they
 /// pop in order. The time is that of the text; a signature opens its variables when it is
 /// reached and closes them after its arrows, so `scope` is as a recursive walk would have it.
+///
+/// The kernel sets in the text are written last, all together by name
+/// ([`KType::surfaces_by_name`]), each where it stands: a part used more than once among them
+/// gets a definition `type Tk = …;`, written before the whole text, so the text stays linear in
+/// the sets' graph.
 fn write_parts<'a>(start: Print<'a>, out: &mut String, scope: &mut Scope) {
+    let base = out.len();
+    let mut kernel = Kernel::default();
     let mut stack = vec![start];
     while let Some(part) = stack.pop() {
         let from = stack.len();
         match part {
             Print::Text(text) => out.push_str(text),
-            Print::Ty(t, at) => t.parts(out, &mut stack, false, at),
-            Print::Found(t) => t.parts(out, &mut stack, true, PrintAt::Result),
+            Print::Ty(t, at) => t.parts(out.len(), &mut kernel, &mut stack, false, at),
+            Print::Found(t) => t.parts(out.len(), &mut kernel, &mut stack, true, PrintAt::Result),
             Print::Sig(s, at) => s.parts(scope, &mut stack, at),
             Print::Family(s, at) => s.family_parts(scope, &mut stack, at),
             Print::Vars(t, first) => t.write_vars(first, out, scope),
@@ -7856,6 +7873,34 @@ fn write_parts<'a>(start: Print<'a>, out: &mut String, scope: &mut Scope) {
         }
         stack[from..].reverse();
     }
+    if kernel.sets.is_empty() {
+        return;
+    }
+    let texts = KType::surfaces_by_name(&kernel.sets);
+    let rest = out.split_off(base);
+    for (name, body) in &texts.defs {
+        out.push_str("type ");
+        out.push_str(name);
+        out.push_str(" = ");
+        out.push_str(body);
+        out.push_str("; ");
+    }
+    let mut from = 0;
+    for (at, text) in kernel.at.iter().zip(&texts.roots) {
+        let at = at - base;
+        out.push_str(&rest[from..at]);
+        out.push_str(text);
+        from = at;
+    }
+    out.push_str(&rest[from..]);
+}
+
+/// The kernel sets of a text still to be written ([`write_parts`]): where each stands in the
+/// text, and the set with its place.
+#[derive(Default)]
+struct Kernel {
+    at: Vec<usize>,
+    sets: Vec<(KType, TextPlace)>,
 }
 
 /// Pushes `sep` to `parts` before every item but the first, which `first` tells.

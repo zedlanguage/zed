@@ -7,13 +7,13 @@
 //! sec:type_resolution); this reads those too. The empty type prints as `Never`, a prelude type
 //! name of L1; its L10 form `!_` is read as well.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use zed_kernel::num::{TooLarge, bytes_of};
 use zed_kernel::{Rat, Value};
 
-use super::ty::{Binds, Ty};
+use super::ty::{Binds, ShapeData, Sig, Ty};
 use super::{carrier_mask, denoted_with};
 use zedc_syntax::ast::{self, Type, TypeKind};
 use zedc_syntax::lex::{self, Part, Tok};
@@ -21,10 +21,44 @@ use zedc_syntax::parse::{self, TOP};
 
 /// The type `text` states. Text that is no type is an error, as is a form `denoted` has no
 /// meaning for at layer L1 other than an atom with its payload type, and a leaf of layer L10
-/// other than the three above.
+/// other than the three above. A printed type opens with a definition `type Tk = …;` for each
+/// part it uses more than once (`Type::surfaces_by_name`): each definition is read in turn, its
+/// body may name the ones before it, and its name stands for its type where the rest names it.
+/// Time linear in the text: each part is read once, and a name's type is shared where it is
+/// named (`Ty` copies its outer level only).
 pub fn parse_type(text: &str) -> Result<Ty, String> {
     let tokens = lex::lex(text).map_err(|e| format!("`{text}`: {e}"))?;
-    let (body, binds) = leaves(text, text, &tokens)?;
+    let tok = |i: usize| tokens.get(i).map(|t| &t.tok);
+    let mut named = Binds::new();
+    let mut i = 0;
+    while let (Some(Tok::Keyword("type")), Some(Tok::Name(name)), Some(Tok::Op("="))) =
+        (tok(i), tok(i + 1), tok(i + 2))
+    {
+        let end = (i + 3..tokens.len())
+            .find(|&j| tokens[j].tok == Tok::Op(";"))
+            .ok_or_else(|| format!("`{text}`: the definition of `{name}` has no `;`"))?;
+        let body = &text[tokens[i + 3].span.start..tokens[end].span.start];
+        let t = read_part(text, body, &mut named)?;
+        named.insert(name.as_str().into(), t);
+        i = end + 1;
+    }
+    let rest = &text[tokens.get(i).map_or(text.len(), |t| t.span.start)..];
+    read_part(text, rest, &mut named)
+}
+
+/// The type `head`, a part of the printed type `text`, which may name the types of `named`:
+/// the definitions before it, and the leaves of layer L10 read so far, to which it adds its own.
+fn read_part(text: &str, head: &str, named: &mut Binds) -> Result<Ty, String> {
+    let tokens = lex::lex(head).map_err(|e| format!("`{text}`: {e}"))?;
+    // The names the resolver finds: the definitions `head` names, and its own leaves.
+    let mut found: HashSet<Arc<str>> = (tokens.iter())
+        .filter_map(|t| match &t.tok {
+            Tok::Name(n) => named.get_key_value(n.as_str()).map(|(k, _)| k.clone()),
+            _ => None,
+        })
+        .collect();
+    let body = leaves(text, head, &tokens, named, &mut found)?;
+    let binds = &*named;
     let tokens = lex::lex(&body).map_err(|e| format!("`{text}`: {e}"))?;
     let tree = parse::parse(&body, &tokens, "Type", TOP)
         .map_err(|e| format!("`{text}` is not a type: {e}"))?;
@@ -78,7 +112,7 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
             }
         }
     }
-    let ty = denoted_with(&t, &binds);
+    let ty = denoted_with(&t, binds);
     let on = bounds_in(&ty);
     if let Some(v) = bounded.into_iter().find(|v| !on.contains(*v)) {
         return Err(format!(
@@ -87,26 +121,35 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
     }
     // The names the resolver finds, as in a written type: a variable no clause bounds is not
     // defined.
-    let leaves = binds.keys().cloned().collect();
-    if let Err(es) = zedc_resolve::resolve::printed_type(&t, leaves) {
+    if let Err(es) = zedc_resolve::resolve::printed_type(&t, found) {
         let why: Vec<String> = es.into_iter().map(|e| e.message).collect();
         return Err(format!("`{text}`: {}", why.join("; ")));
     }
     Ok(ty)
 }
 
-/// The variables the signatures of `t` bound, at any depth. A type read from text is a tree,
-/// each signature built once, so the walk meets each node once.
+/// The variables the signatures of `t` bound, at any depth. A type read from text shares the
+/// rows, payloads and signatures of a definition at each name for it, so the walk keeps the
+/// rows, payloads and signatures it met and meets each once: time linear in the text.
 fn bounds_in(t: &Ty) -> HashSet<Arc<str>> {
     let mut out = HashSet::new();
+    let mut rows: HashSet<*const Ty> = HashSet::new();
+    let mut sigs: HashSet<*const Sig> = HashSet::new();
+    let mut shapes: HashSet<*const ShapeData> = HashSet::new();
     let mut stack = vec![t];
     while let Some(t) = stack.pop() {
-        stack.extend(t.tuples.iter().flatten());
-        for s in t.payloads.values().flatten().flatten() {
-            stack.extend(&s.items);
-            stack.extend(s.fields.values());
+        for row in &t.tuples {
+            if rows.insert(row.as_ptr()) {
+                stack.extend(row);
+            }
         }
-        for s in &t.fns {
+        for s in t.payloads.values().flatten().flatten() {
+            if shapes.insert(std::ptr::from_ref::<ShapeData>(s)) {
+                stack.extend(&s.items);
+                stack.extend(s.fields.values());
+            }
+        }
+        for s in t.fns.iter().filter(|s| sigs.insert(Arc::as_ptr(s))) {
             out.extend(s.bounds.keys().cloned());
             for a in &s.arrows {
                 stack.extend(&a.params);
@@ -117,10 +160,16 @@ fn bounds_in(t: &Ty) -> HashSet<Arc<str>> {
     out
 }
 
-/// `head` with each leaf of layer L10 replaced by a type variable, and what each variable
-/// stands for: `_` the unknown, `!_` the empty type, a literal its value.
-fn leaves(text: &str, head: &str, tokens: &[lex::Token]) -> Result<(String, Binds), String> {
-    let (mut out, mut binds) = (String::with_capacity(head.len()), BTreeMap::new());
+/// `head` with each leaf of layer L10 replaced by a type variable, put in `binds` with what it
+/// stands for (`_` the unknown, `!_` the empty type, a literal its value) and in `found`.
+fn leaves(
+    text: &str,
+    head: &str,
+    tokens: &[lex::Token],
+    binds: &mut Binds,
+    found: &mut HashSet<Arc<str>>,
+) -> Result<String, String> {
+    let mut out = String::with_capacity(head.len());
     let mut from = 0;
     let mut i = 0;
     while i < tokens.len() {
@@ -169,11 +218,12 @@ fn leaves(text: &str, head: &str, tokens: &[lex::Token]) -> Result<(String, Bind
         out.push_str(&head[from..start]);
         out.push_str(&name);
         from = tokens[i + used - 1].span.end;
+        found.insert(name.clone());
         binds.insert(name, ty);
         i += used;
     }
     out.push_str(&head[from..]);
-    Ok((out, binds))
+    Ok(out)
 }
 
 /// The integer of `digits` in `radix`, negated when `negative`, read in memory the system

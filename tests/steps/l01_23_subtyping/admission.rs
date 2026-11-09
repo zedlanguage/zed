@@ -379,23 +379,25 @@ fn nested_body() -> Expr {
 
 /// Item PRINT-fmt-audit: a refused group writes each type its definitions hold in the surface
 /// syntax, a recursive type by its group's name (`Type::surface_by_name`), its arguments and
-/// the parts of the group in the surface syntax too. Before, a type that needed a definition of
-/// its own was written in the kernel's internal prefix form, which no program can contain:
+/// the parts of the group in the surface syntax too; a part used twice or more in the quoted
+/// expression gets a definition placed before the whole expression. Before, a type that needed
+/// a definition of its own was written in the kernel's internal prefix form, which no program
+/// can contain:
 ///
 /// - `L(int | #x)` was `L((| int #x))`
 /// - `L(int ->? int)` was `L((->? int int))`
-/// - `(int | #x, int | #x)` was `(tuple (| int #x) (| int #x))`
-/// - `#c(int | #x, L(int | #x)) & #c(int, _)` was
+/// - `type T1 = int | #x; (T1, T1)` was `(tuple (| int #x) (| int #x))`
+/// - `type T1 = int | #x; #c(int, _) & #c(T1, L(T1))` was
 ///   `(#c (& (tuple (| int #x) L((| int #x))) (tuple int _)))`
 /// - `#w() | #w(int, P(int))` was `(#w (| (tuple) (tuple int P(int))))`
 /// - `#c(int, _) & #c(int, M(int))` was `(#c (& (tuple int M(int)) (tuple int _)))`
 /// - `Q(int | #x)` was `Q((| int #x))`
-/// - `#c(int | #x, (int | #x, Q(int | #x))) & #c(int, _)` was
+/// - `type T1 = int | #x; #c(int, _) & #c(T1, (T1, Q(T1)))` was
 ///   `(#c (& (tuple (| int #x) ((| int #x), Q((| int #x)))) (tuple int _)))`
 ///
 /// `int | (int ->? int)`, `M(int)` and `P(int)` were written so before too. Each text parses as
-/// a type; that the printer's text reads back as the same type is tested at the printer
-/// (l01_22 `surface`).
+/// a type and each definition as one; that the printer's text reads back as the same type is
+/// tested at the printer (l01_22 `surface`).
 #[test]
 fn a_refused_group_writes_the_types_it_holds_as_a_program_would() {
     let int_or_x = &Type::int() | &Type::atom("x");
@@ -405,31 +407,36 @@ fn a_refused_group_writes_the_types_it_holds_as_a_program_would() {
     let p = instance("P", seq_body(), Type::int());
     let q = instance("Q", nested_body(), int_or_x.clone());
     let c_int = Type::atom_with("c", &Type::tuple(vec![Type::int(), Type::top()]));
-    // Each type, its text, and whether the text stands unparenthesized on the left of `\`.
-    for (t, text, primary) in [
-        (l.clone(), "L(int | #x)", true),
+    let t1 = "type T1 = int | #x; ";
+    // Each type, the definitions placed first, its text, and whether the text stands
+    // unparenthesized on the left of `\`.
+    for (t, defs, text, primary) in [
+        (l.clone(), "", "L(int | #x)", true),
         (
             instance("L", list_body(), partial.clone()),
+            "",
             "L(int ->? int)",
             true,
         ),
         (
             Type::tuple(vec![int_or_x.clone(), int_or_x.clone()]),
-            "(int | #x, int | #x)",
+            t1,
+            "(T1, T1)",
             true,
         ),
-        (&l & &c_int, "#c(int | #x, L(int | #x)) & #c(int, _)", false),
-        (&Type::int() | &partial, "int | (int ->? int)", false),
-        (Type::atom_with("w", &p), "#w() | #w(int, P(int))", false),
-        (m.clone(), "M(int)", true),
-        (&m & &c_int, "#c(int, _) & #c(int, M(int))", false),
-        (p, "P(int)", true),
-        (q.clone(), "Q(int | #x)", true),
+        (&l & &c_int, t1, "#c(int, _) & #c(T1, L(T1))", false),
+        (&Type::int() | &partial, "", "int | (int ->? int)", false),
         (
-            &q & &c_int,
-            "#c(int | #x, (int | #x, Q(int | #x))) & #c(int, _)",
+            Type::atom_with("w", &p),
+            "",
+            "#w() | #w(int, P(int))",
             false,
         ),
+        (m.clone(), "", "M(int)", true),
+        (&m & &c_int, "", "#c(int, _) & #c(int, M(int))", false),
+        (p, "", "P(int)", true),
+        (q.clone(), "", "Q(int | #x)", true),
+        (&q & &c_int, t1, "#c(int, _) & #c(T1, (T1, Q(T1)))", false),
     ] {
         let message = refusal(
             &["N"],
@@ -441,10 +448,15 @@ fn a_refused_group_writes_the_types_it_holds_as_a_program_would() {
             false => format!("({text})"),
         };
         assert!(
-            message.contains(&format!("in `{left} \\ #b(N)`")),
+            message.contains(&format!("in `{defs}{left} \\ #b(N)`")),
             "{text}: {message}"
         );
         let tokens = lex_fence(text).unwrap();
         parse(text, &tokens, "Type", TOP).unwrap_or_else(|e| panic!("{text}: {e:?}"));
+        if !defs.is_empty() {
+            let defs = defs.trim_end();
+            let tokens = lex_fence(defs).unwrap();
+            parse(defs, &tokens, "Unit", TOP).unwrap_or_else(|e| panic!("{defs}: {e:?}"));
+        }
     }
 }

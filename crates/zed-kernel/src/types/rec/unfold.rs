@@ -302,8 +302,7 @@ pub(super) struct Show<'a> {
     pub(super) e: &'a Node,
     /// Whether a type that does not mention the group is written in the surface syntax (module
     /// `print`), as a message writes it, rather than by its name ([`Type::rope`]). A recursive
-    /// type in it is written by its name, with its arguments in the surface syntax too, as is a
-    /// parameter's argument.
+    /// type in it is written by its name, with its arguments in the surface syntax too.
     pub(super) surface: bool,
 }
 
@@ -314,6 +313,12 @@ impl Show<'_> {
     /// parenthesized only where the type grammar (DESIGN.md sec:grammar) would not read it as
     /// one operand of the part around it.
     fn rope(&self) -> Rope {
+        self.rope_with(&mut |t, _| t.rope())
+    }
+
+    /// The rope of the expression, each type in it given by `leaf` from the type and its place,
+    /// called on the types in the order they are written.
+    fn rope_with(&self, leaf: &mut dyn FnMut(&Type, Place) -> Rope) -> Rope {
         enum Step<'a> {
             Visit(&'a Node, Place),
             Build(&'a Node, Place),
@@ -324,15 +329,13 @@ impl Show<'_> {
             let r = match step {
                 Step::Visit(e, at) => match &e.e {
                     Shape::Param(i) => match self.args {
-                        Some(args) if self.surface => surface(&args[*i], at),
                         Some(args) => args[*i].rope(),
                         None => Rope::cat([Piece::from(self.params[*i].as_str())]),
                     },
                     Shape::Ref(i, args) if args.is_empty() => {
                         Rope::cat([Piece::from(self.defs[*i].name.as_str())])
                     }
-                    Shape::Type(t) if self.surface => surface(t, at),
-                    Shape::Type(t) => t.rope(),
+                    Shape::Type(t) => leaf(t, at),
                     _ => {
                         todo.push(Step::Build(e, at));
                         let n = e.e.kids().count();
@@ -397,15 +400,6 @@ impl Show<'_> {
     }
 }
 
-/// `t` in the surface syntax at `at`, a recursive type by its name ([`Type::surface_by_name`]).
-/// A text that would need a definition keeps its internal one.
-fn surface(t: &Type, at: Place) -> Rope {
-    match t.surface_by_name(at) {
-        s if s.defs.is_empty() => Rope::cat([Piece::from(s.root)]),
-        _ => t.rope(),
-    }
-}
-
 /// How the text of an expression of shape `s` that is not a leaf binds, for parenthesizing it
 /// as an operand: a leaf's text is parenthesized where it stands as it is made.
 fn class(s: &Shape) -> Class {
@@ -451,8 +445,28 @@ fn kid_place(s: &Shape, i: usize) -> Place {
     fixed.get(i).copied().flatten().unwrap_or(each)
 }
 
+/// In the surface syntax, the types the expression holds are written together by name
+/// ([`Type::surfaces_by_name`]): a part used more than once among them gets a definition, written
+/// before the whole expression, so the text is linear in the expression and the types' graph.
 impl fmt::Display for Show<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.rope().strs().try_for_each(|s| f.write_str(s))
+        if !self.surface {
+            return self.rope().strs().try_for_each(|s| f.write_str(s));
+        }
+        let mut leaves = Vec::new();
+        self.rope_with(&mut |t, at| {
+            leaves.push((t.clone(), at));
+            Rope::cat([])
+        });
+        let texts = Type::surfaces_by_name(&leaves);
+        for (name, body) in &texts.defs {
+            write!(f, "type {name} = {body}; ")?;
+        }
+        let mut roots = texts.roots.into_iter();
+        self.rope_with(&mut |_, _| {
+            Rope::cat([Piece::from(roots.next().expect("a text for each type"))])
+        })
+        .strs()
+        .try_for_each(|s| f.write_str(s))
     }
 }

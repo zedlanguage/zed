@@ -247,7 +247,7 @@ fn arrows_that_cover_only_across_two_parameters_are_refused_with_the_reason() {
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take (((x: int, y: int) -> String) & ((x: bool, y: bool) -> String) & ((x: int, y: bool) -> String) & ((x: bool, y: int) -> String)): at `(x: bool | int, y: bool | int) -> String`, the arrow `(x: int, y: int) -> String` takes a part of more than one parameter, and arrows are combined only when they differ at one parameter: telling whether arrows that each split several parameters cover them all can take time exponential in the number of parameters, so the checker does not try; to repair it, write the arrows so that they differ at one parameter [p(f: g)]"
+            "`p` does not take (((x: int, y: int) -> String) & ((x: bool, y: bool) -> String) & ((x: int, y: bool) -> String) & ((x: bool, y: int) -> String)): at `type T1 = bool | int; (x: T1, y: T1) -> String`, the arrow `(x: int, y: int) -> String` takes a part of more than one parameter, and arrows are combined only when they differ at one parameter: telling whether arrows that each split several parameters cover them all can take time exponential in the number of parameters, so the checker does not try; to repair it, write the arrows so that they differ at one parameter [p(f: g)]"
         ]
     );
     let text = "p(f: (x: int | bool, y: int) -> String) = f(x: 1, y: 2);\n\
@@ -346,7 +346,7 @@ fn a_bounded_variable_bound_to_two_carriers_fits_only_at_one_place() {
     assert_eq!(
         type_errors(text),
         [
-            "`add` is `(x: T, y: T) -> T for T in int | f64 | rat`, not `(x: int | f64, y: int | f64) -> int | f64`: at `(x: int | f64, y: int | f64) -> int | f64`, the arrow `(x: T, y: T) -> T for T in int | f64 | rat` takes it only with `T` bound to `int | f64`, values of more than one carrier, but a call fixes `T` to one carrier, and `T` stands at 2 places the arguments give, which could be given values of two carriers [add]"
+            "`add` is `(x: T, y: T) -> T for T in int | f64 | rat`, not `type T1 = int | f64; (x: T1, y: T1) -> T1`: at `type T1 = int | f64; (x: T1, y: T1) -> T1`, the arrow `(x: T, y: T) -> T for T in int | f64 | rat` takes it only with `T` bound to `int | f64`, values of more than one carrier, but a call fixes `T` to one carrier, and `T` stands at 2 places the arguments give, which could be given values of two carriers [add]"
         ]
     );
     let text = "p(f: (x: int | f64) -> ((y: int | f64) -> int)) = f(x: 1)(y: 1.5);\n\
@@ -354,7 +354,7 @@ fn a_bounded_variable_bound_to_two_carriers_fits_only_at_one_place() {
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take ((x: T) -> (y: T) -> int for T in int | f64): at `(x: int | f64) -> (y: int | f64) -> int`, the arrow `(x: T) -> (y: T) -> int for T in int | f64` takes it only with `T` bound to `int | f64`, values of more than one carrier, but a call fixes `T` to one carrier, and `T` stands where the arrow takes values of it inside a function type, which need not be of the carrier its argument fixes [p(f: g)]"
+            "`p` does not take ((x: T) -> (y: T) -> int for T in int | f64): at `type T1 = int | f64; (x: T1) -> (y: T1) -> int`, the arrow `(x: T) -> (y: T) -> int for T in int | f64` takes it only with `T` bound to `int | f64`, values of more than one carrier, but a call fixes `T` to one carrier, and `T` stands where the arrow takes values of it inside a function type, which need not be of the carrier its argument fixes [p(f: g)]"
         ]
     );
     // Near miss: one place, the result's alike, so each value takes the arrow at its carrier.
@@ -457,7 +457,7 @@ fn a_refused_cover_names_the_expected_types_variables() {
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take (((x: int | f64) -> int | f64 | #a) & ((x: int | f64) -> int | f64 | #b)): at `(x: U) -> U for U in int | f64`, the arrows `(x: int | f64) -> int | f64 | #a`, `(x: int | f64) -> int | f64 | #b` each take all of it, and the intersection of their results, `int | f64`, is not within `U` [p(f: g)]"
+            "`p` does not take (type T1 = int | f64; ((x: T1) -> int | f64 | #a) & ((x: T1) -> int | f64 | #b)): at `(x: U) -> U for U in int | f64`, the arrows `(x: int | f64) -> int | f64 | #a`, `(x: int | f64) -> int | f64 | #b` each take all of it, and the intersection of their results, `int | f64`, is not within `U` [p(f: g)]"
         ]
     );
     let text = "p(f: (x: U, y: int | f64) -> U for U in int | f64) = 0;\n\

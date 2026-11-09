@@ -325,11 +325,14 @@ fn rejected(src: &str) -> String {
 
 #[test]
 fn a_call_whose_check_was_refused_says_why() {
-    let triple = "(#a | #b | #c, #a | #b | #c, #a | #b | #c)";
+    // Item PRINT-fmt-audit: the argument type is written with a definition for the part it uses
+    // three times, placed before the type. Before: `((#a | #b | #c, #a | #b | #c,
+    // #a | #b | #c))`, the part at each use.
+    let shown = "type T1 = #a | #b | #c; (T1, T1, T1)";
     assert_eq!(
         rejected(&box_program(7)),
         format!(
-            "2:52: `g` does not take ({triple}); this is not proved wrong: the checker could not \
+            "2:52: `g` does not take ({shown}); this is not proved wrong: the checker could not \
              decide whether it fits, because {}",
             Refusal::TupleSplit.message()
         )
@@ -338,17 +341,15 @@ fn a_call_whose_check_was_refused_says_why() {
     assert_eq!(
         rejected(&box_program(6)),
         format!(
-            "2:52: `g` does not take ({triple}): these are the types of its arguments here, and `g` has no arrow that takes them all"
+            "2:52: `g` does not take ({shown}): these are the types of its arguments here, and `g` has no arrow that takes them all"
         )
     );
-    // The declared type is printed as it is written.
+    // The declared type is printed with the same definition. Before: `` `y` is declared
+    // `(#a | #b | #c, #a | #b | #c, #a | #b | #c)` ``.
     let Err(all) = zedc::run::load(box_program(7).as_bytes()) else {
         panic!("accepted")
     };
-    assert!(
-        all.contains(&format!("`y` is declared `{triple}`")),
-        "{all}"
-    );
+    assert!(all.contains(&format!("`y` is declared `{shown}`")), "{all}");
 }
 
 #[test]

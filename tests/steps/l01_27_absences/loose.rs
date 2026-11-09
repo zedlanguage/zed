@@ -32,7 +32,7 @@ fn the_pattern_form_handles_the_atom_it_names_and_keeps_the_rest() {
     let other = format!("f({LOOKUP}) = x else #empty -> 0;\n");
     assert_eq!(
         sig(&other, "f"),
-        "(int | #none | #notFound) -> int | #none | #notFound"
+        "type T1 = int | #none | #notFound; (T1) -> T1"
     );
 }
 
@@ -44,7 +44,7 @@ fn the_three_absences_stay_three_facts() {
             "f(positional x: int | #notFound, positional y: int | #none) = x + y;\n",
             "f"
         ),
-        "(int | #notFound, int | #none) -> int | #none | #notFound | #errs(#none | #notFound ->? #none | #notFound)"
+        "type T1 = #none | #notFound; (int | #notFound, int | #none) -> int | #none | #notFound | #errs(T1 ->? T1)"
     );
     let run = "f(positional x: int | #notFound, positional y: int | #none) = x + y;\n\
                a = f(#notFound, 1);\nb = f(1, #none);\nc = f(#notFound, #none);\n";
@@ -56,7 +56,7 @@ fn the_three_absences_stay_three_facts() {
 #[test]
 fn a_loose_atom_flows_through_safe_navigation() {
     let t = "f(positional x: int | #notFound) = x?.abs;\n";
-    assert_eq!(sig(t, "f"), "(int | #notFound) -> int | #notFound");
+    assert_eq!(sig(t, "f"), "type T1 = int | #notFound; (T1) -> T1");
     assert!(type_errors(t).is_empty());
     let run = format!("{t}a = f(#notFound);\nb = f(-3);\n");
     assert_eq!(value(&run, "a"), "#notFound");
@@ -69,7 +69,7 @@ fn a_loose_atom_passes_through_a_declared_function_whose_type_omits_it() {
     let t = "g(positional n: int) = n + 1;\n\
              f(positional x: int | #notFound) = g(x);\n";
     assert!(type_errors(t).is_empty());
-    assert_eq!(sig(t, "f"), "(int | #notFound) -> int | #notFound");
+    assert_eq!(sig(t, "f"), "type T1 = int | #notFound; (T1) -> T1");
     let run = format!("{t}a = f(#notFound);\nb = f(2);\n");
     assert_eq!(value(&run, "a"), "#notFound");
     assert_eq!(value(&run, "b"), "3");
@@ -82,7 +82,7 @@ fn a_loose_atom_passes_through_a_generic_function_bounded_to_carriers() {
     let t = "add(positional a, positional b) = a + b;\n\
              h(positional y: int | #nf) = add(y, 1);\n";
     assert!(type_errors(t).is_empty());
-    assert_eq!(sig(t, "h"), "(int | #nf) -> int | #nf");
+    assert_eq!(sig(t, "h"), "type T1 = int | #nf; (T1) -> T1");
     let run = format!("{t}a = h(#nf);\nb = h(2);\n");
     assert_eq!(value(&run, "a"), "#nf");
     assert_eq!(value(&run, "b"), "3");
@@ -134,7 +134,7 @@ fn a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values
              r(positional x, positional v) = if (x else 0) == 0 { size(v) } else { x + size(v) };\n";
     assert_eq!(
         sig(t, "r"),
-        "((int, _) -> int) & ((int | #_, _) -> int | #_)"
+        "type T1 = int | #_; ((int, _) -> int) & ((T1, _) -> T1)"
     );
     let bad = format!("{t}h(positional y: int | #nf) = r(1, y);\n");
     assert_eq!(

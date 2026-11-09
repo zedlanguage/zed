@@ -263,7 +263,7 @@ fn a_binding_passes_atoms_from_its_name_to_its_value_and_not_back() {
     let text = "r(positional a, positional b) = { s = a + b; (a else 0) + s };\n";
     assert_eq!(
         sig(text, "r"),
-        "((int, int) -> int) & ((int | #_, int) -> int | #_)"
+        "type T1 = int | #_; ((int, int) -> int) & ((T1, int) -> T1)"
     );
 }
 
@@ -507,7 +507,7 @@ fn a_function_whose_handled_atoms_also_reach_its_result_has_two_arrows() {
         (
             "r(positional line)",
             "if (line else \"\") == \"\" { \"empty\" } else { trim(line) }",
-            "((String) -> String) & ((String | #_) -> String | #_)",
+            "type T1 = String | #_; ((String) -> String) & ((T1) -> T1)",
         ),
         (
             "r(positional c)",
@@ -540,7 +540,7 @@ fn an_atom_from_elsewhere_stays_on_the_first_arrow() {
         "r(positional line) = if (line else \"\") == \"\" { #absent } else { trim(line) };\n";
     assert_eq!(
         sig(text, "r"),
-        "((String) -> String | #absent) & ((String | #_) -> String | #_)"
+        "type T1 = String | #_; ((String) -> String | #absent) & ((T1) -> T1)"
     );
 }
 

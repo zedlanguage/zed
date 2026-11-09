@@ -10,7 +10,7 @@ fn different_failures_on_two_operands_merge_into_errs() {
     let t = "f(positional x: int | #notFound, positional y: int | #invalid) = x + y;\n";
     assert_eq!(
         sig(t, "f"),
-        "(int | #notFound, int | #invalid) -> int | #invalid | #notFound | #errs(#invalid | #notFound ->? #invalid | #notFound)"
+        "type T1 = #invalid | #notFound; (int | #notFound, int | #invalid) -> int | #invalid | #notFound | #errs(T1 ->? T1)"
     );
     let run = format!("{t}a = f(#notFound, #invalid);\nb = f(#invalid, 1);\n");
     assert_eq!(value(&run, "a"), "#errs({#invalid, #notFound})");
@@ -22,10 +22,7 @@ fn the_same_failure_on_both_operands_is_that_failure() {
     // Both operands can only fail with `#notFound`, and two equal failures merge into one, so
     // the sum is a number or `#notFound` and never `#errs`.
     let t = "f(positional x: int | #notFound, positional y: int | #notFound) = x + y;\n";
-    assert_eq!(
-        sig(t, "f"),
-        "(int | #notFound, int | #notFound) -> int | #notFound"
-    );
+    assert_eq!(sig(t, "f"), "type T1 = int | #notFound; (T1, T1) -> T1");
     let run = format!("{t}a = f(#notFound, #notFound);\nb = f(1, #notFound);\nc = f(1, 2);\n");
     assert_eq!(value(&run, "a"), "#notFound");
     assert_eq!(value(&run, "b"), "#notFound");
@@ -35,7 +32,7 @@ fn the_same_failure_on_both_operands_is_that_failure() {
                  positional z: int | #notFound) = x + y * z;\n";
     assert_eq!(
         sig(three, "g"),
-        "(int | #notFound, int | #notFound, int | #notFound) -> int | #notFound"
+        "type T1 = int | #notFound; (T1, T1, T1) -> T1"
     );
 }
 
@@ -45,7 +42,7 @@ fn one_operand_that_can_fail_two_ways_meets_one_of_them() {
     let t = "f(positional x: int | #none | #notFound, positional y: int | #notFound) = x + y;\n";
     assert_eq!(
         sig(t, "f"),
-        "(int | #none | #notFound, int | #notFound) -> int | #none | #notFound | #errs(#none | #notFound ->? #none | #notFound)"
+        "type T1 = int | #none | #notFound; type T2 = #none | #notFound; (T1, int | #notFound) -> T1 | #errs(T2 ->? T2)"
     );
     let run = format!("{t}a = f(#none, #notFound);\nb = f(#notFound, #notFound);\n");
     assert_eq!(value(&run, "a"), "#errs({#none, #notFound})");
@@ -58,7 +55,7 @@ fn one_failing_operand_passes_its_failures_alone() {
     let t = "f(positional x: int | #none | #notFound, positional y: int) = x + y;\n";
     assert_eq!(
         sig(t, "f"),
-        "(int | #none | #notFound, int) -> int | #none | #notFound"
+        "type T1 = int | #none | #notFound; (T1, int) -> T1"
     );
 }
 
@@ -90,7 +87,7 @@ fn a_nested_chain_merges_into_one_flat_set() {
              = (x + y) + z;\n";
     assert_eq!(
         sig(t, "f"),
-        "(int | #a, int | #b, int | #c) -> int | #a | #b | #c | #errs(#a | #b | #c ->? #a | #b | #c)"
+        "type T1 = #a | #b | #c; (int | #a, int | #b, int | #c) -> int | #a | #b | #c | #errs(T1 ->? T1)"
     );
     let run = format!("{t}abc = f(#a, #b, #c);\nab = f(#a, #b, 1);\nac = f(#a, 1, #c);\n");
     assert_eq!(value(&run, "abc"), "#errs({#a, #b, #c})");
@@ -101,7 +98,7 @@ fn a_nested_chain_merges_into_one_flat_set() {
                  = (x + y) + z;\n";
     assert_eq!(
         sig(again, "g"),
-        "(int | #a, int | #b, int | #a) -> int | #a | #b | #errs(#a | #b ->? #a | #b)"
+        "type T1 = int | #a; type T2 = #a | #b; (T1, int | #b, T1) -> int | #a | #b | #errs(T2 ->? T2)"
     );
     assert_eq!(
         value(&format!("{again}v = g(#a, #b, #a);\n"), "v"),

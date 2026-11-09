@@ -119,7 +119,7 @@ fn batch_and_single_file_checking_agree() {
         Some(
             "2:12: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
              chooses one; write `1r` or `1.0f64`\n  \
-             [1] 1:1: `f` is declared here, `(rat | f64) -> rat | f64`\n      \
+             [1] 1:1: `f` is declared here, `type T1 = rat | f64; (T1) -> T1`\n      \
              1 | f(positional x: f64 | rat) = x;\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
         )

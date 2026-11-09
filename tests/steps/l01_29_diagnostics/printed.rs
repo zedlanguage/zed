@@ -241,15 +241,18 @@ fn a_merged_failure_reads_back() {
                 f(positional x: int | #notFound, positional y: int | #invalid) = x + y;\n\
                 g(positional x: int | #a, positional y: int | #b, positional z: int | #c) = (x + y) + z;\n\
                 h(positional a: int, positional b: int) = p(a) + p(b);\n";
-    for (name, want) in [
-        ("f", "#errs(#invalid | #notFound ->? #invalid | #notFound)"),
-        ("g", "#errs(#a | #b | #c ->? #a | #b | #c)"),
-        ("h", "#errs(#syntaxError(int) ->? #syntaxError(int))"),
+    // Item PRINT-fmt-audit: the set of failures, used twice, gets a definition placed first.
+    // Before, it was written at each use: `#errs(#invalid | #notFound ->? #invalid | #notFound)`.
+    // An atom with a payload is written by the compiler, not the kernel, so it gets none.
+    for (name, def, want) in [
+        ("f", "type T1 = #invalid | #notFound; ", "#errs(T1 ->? T1)"),
+        ("g", "type T1 = #a | #b | #c; ", "#errs(T1 ->? T1)"),
+        ("h", "", "#errs(#syntaxError(int) ->? #syntaxError(int))"),
     ] {
         let s = zed_tests::step_helpers::l01_26_type_resolution::sig_of(text, name);
         let t = Ty::func(s.clone());
         let shown = s.to_string();
-        assert!(shown.contains(want), "{shown}");
+        assert!(shown.starts_with(def) && shown.contains(want), "{shown}");
         assert_eq!(shown.matches("#errs").count(), 1, "{shown}");
         assert_eq!(mismatch(&t, &shown), None, "{shown}");
         let alone = &s.arrows[0].result;
@@ -274,7 +277,9 @@ fn a_partial_map_reads_back_with_its_miss() {
     assert_ne!(partial, back("String -> int"));
     let built = zedc::check::ty::errs_of(back("#a | #b"));
     let shown = built.to_string();
-    assert_eq!(shown, "#errs(#a | #b ->? #a | #b)");
+    // Item PRINT-fmt-audit: `#a | #b`, used twice, gets a definition placed first. Before:
+    // `#errs(#a | #b ->? #a | #b)`.
+    assert_eq!(shown, "type T1 = #a | #b; #errs(T1 ->? T1)");
     assert_eq!(mismatch(&built, &shown), None, "{shown}");
     let errs = back(&shown);
     let family = &errs.payloads["errs"].as_ref().expect("a payload")[0].items[0].fns[0];
@@ -682,9 +687,11 @@ fn morphism_types_print_as_written_and_read_back_in_every_position() {
             "(int .. int | String -> bool, int)",
             "(int .. int | String -> bool, int)",
         ),
+        // Item PRINT-fmt-audit: `int | String`, used twice, gets a definition placed first.
+        // Before: `int .. int | String -> int .. int | String -> bool`.
         (
             "int .. int | String -> (int .. int | String -> bool)",
-            "int .. int | String -> int .. int | String -> bool",
+            "type T1 = int | String; int .. T1 -> int .. T1 -> bool",
         ),
         (
             "(x: int .. int | String -> bool) -> int",

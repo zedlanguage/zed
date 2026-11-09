@@ -153,7 +153,7 @@ fn a_key_in_the_permission_alone_may_be_not_found() {
     );
     assert_eq!(
         lookup("int .. int | String -> bool", "int | String"),
-        "(m: int .. int | String -> bool, k: int | String) -> bool | #notFound"
+        "type T1 = int | String; (m: int .. T1 -> bool, k: T1) -> bool | #notFound"
     );
     assert_eq!(
         sig("f(m: #a .. #a | #b -> int) = m[#b];", "f"),
@@ -219,29 +219,45 @@ fn a_function_that_answers_on_the_permission_fits_a_bounded_map() {
 
 #[test]
 fn a_bounded_map_reads_back_in_every_position() {
-    for (m, shown) in [
+    // Each parameter type, as written and as written back, and the signature: item
+    // PRINT-fmt-audit gives `int | String`, used twice in it, a definition placed first. Before,
+    // the first was `(m: (int .. int | String -> bool, int)) -> (int .. int | String -> bool,
+    // int)`.
+    let t1 = "type T1 = int | String; ";
+    for (m, shown, signature) in [
         (
             "(int .. int | String -> bool, int)",
             "(int .. int | String -> bool, int)",
+            format!("{t1}(m: (int .. T1 -> bool, int)) -> (int .. T1 -> bool, int)"),
         ),
         (
             "(int .. int | String -> bool) | int",
             "int | (int .. int | String -> bool)",
+            format!("{t1}(m: int | (int .. T1 -> bool)) -> int | (int .. T1 -> bool)"),
         ),
         (
             "int .. int | String -> (int .. int | String -> bool)",
             "int .. int | String -> int .. int | String -> bool",
+            format!("{t1}(m: int .. T1 -> int .. T1 -> bool) -> int .. T1 -> int .. T1 -> bool"),
         ),
-        ("(String ->? int, int)", "(String ->? int, int)"),
-        ("(String ->? int) | int", "int | (String ->? int)"),
-        ("(int ->? int) ->? int", "(int ->? int) ->? int"),
+        (
+            "(String ->? int, int)",
+            "(String ->? int, int)",
+            "(m: (String ->? int, int)) -> (String ->? int, int)".to_string(),
+        ),
+        (
+            "(String ->? int) | int",
+            "int | (String ->? int)",
+            "(m: int | (String ->? int)) -> int | (String ->? int)".to_string(),
+        ),
+        (
+            "(int ->? int) ->? int",
+            "(int ->? int) ->? int",
+            "(m: (int ->? int) ->? int) -> (int ->? int) ->? int".to_string(),
+        ),
     ] {
         let text = format!("f(m: {m}) = m;");
-        assert_eq!(
-            sig(&text, "f"),
-            format!("(m: {shown}) -> {shown}"),
-            "{text}"
-        );
+        assert_eq!(sig(&text, "f"), signature, "{text}");
         let again = format!("f(m: {shown}) = m;");
         assert_eq!(sig(&again, "f"), sig(&text, "f"), "{again}");
     }
@@ -277,7 +293,7 @@ fn checking_and_printing_many_and_deep_bounded_maps_scales() {
     );
     assert_eq!(
         sig(&bounded(2), "g"),
-        "(m: int .. int | String -> int .. int | String -> bool, k: int) -> bool"
+        "type T1 = int | String; (m: int .. T1 -> int .. T1 -> bool, k: int) -> bool"
     );
     let units: std::collections::BTreeMap<usize, Resolved> = [100, scaling::FACTOR * 100]
         .into_iter()

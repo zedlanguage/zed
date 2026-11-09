@@ -17,7 +17,7 @@ fn every_side_of_a_long_chain_sees_the_tests_left_of_it() {
     assert_eq!(type_errors(text), Vec::<String>::new());
     assert_eq!(
         sig(text, "order"),
-        "(x: int | String, y: int | String) -> int"
+        "type T1 = int | String; (x: T1, y: T1) -> int"
     );
     assert_eq!(value(&format!("{text}d = order(x: 2, y: 7);\n"), "d"), "5");
     assert_eq!(
