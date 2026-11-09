@@ -2870,3 +2870,9 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | `std::mem::replace(&mut entered[i], true)` as the test and the mark of a visited set in one step, and `Vec<Option<usize>>` heights written in place as the explicit stack leaves each node | `types/print.rs` `Printer::heights` (SURFACE-cycle) | Mutation (gap 11) | a persistent set of entered nodes and a map of heights threaded through the loop's state |
 | A `Vec<Option<Option<usize>>>` memo (not reached, reached with no name, reached with a name) and a `waiting` flag per node, filled from a path popped in place | `types/print.rs` `Printer::same_names` (SURFACE-cycle) | Mutation (gap 11) | a map from node to `#none | #name(usize)` threaded through the fold, absence for not reached |
+
+## Entries from FINITE-type (`crates/zed-kernel/src/types.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashSet<&Type>` of the one-valued types filled by `insert` in a `for` loop over `finite_order`, read by a closure | `Type::values_listed` | Mutation (gap 11) | a fold over the order building a persistent set of the one-valued types |

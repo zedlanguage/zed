@@ -228,7 +228,8 @@ impl Lattice for Congruence {
     }
 }
 
-/// A finite set of scalars or atoms, or the top: no finite-set fact.
+/// A finite set of values (scalars, atoms, or tuples a type writes as a list), or the top: no
+/// finite-set fact.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FiniteSet<T: Ord> {
     /// Exactly these values.

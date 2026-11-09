@@ -1493,6 +1493,44 @@ impl Type {
         (!p.ints.cofinite).then(|| p.ints.values.iter().cloned().collect())
     }
 
+    /// The values of `self` when its form writes each of them as a list, `None` otherwise:
+    /// `self` is [`Type::finite`], and each tuple type its tuples lie in has components of at
+    /// most one value each by their form, at any depth, as `(true, false) | (false, true)` or
+    /// `(1, (#a, 2))`. Its scalars and bare atoms are literals of the type, as in `1 | 2 | 3`,
+    /// `#red | #green` and `bool`, which is `true | false`. So each value is one literal or one
+    /// tuple type of the form, and the values number no more than those, whatever the type.
+    /// A tuple type with a component of two or more values, as `(bool, bool)`, `(0 | 1, 0)` or
+    /// `t(d)`, `t(i + 1) = (t(i), t(i))`, is a product, which is not a list: its values grow
+    /// as the product of its components' counts, so it gives `None`, in time linear in the
+    /// type's distinct parts, whatever its number of values. No count is compared with
+    /// another: whether a component has one value is read from its form alone. Its user is
+    /// the type facet of a product cell (`zedc::store::product`), which lists only these
+    /// types' values (COMPLEXITY.md row S34).
+    pub fn values_listed(&self) -> Option<Vec<Value>> {
+        let order = self.finite_order(false)?;
+        // The types of the order with at most one value by their form: at most one literal or
+        // tuple type, each component of which is such a type. The order puts each type after
+        // the types in its boxes, so a component is decided before the type that holds it.
+        let mut single: HashSet<&Type> = HashSet::new();
+        let ones = |boxes: &[Row], single: &HashSet<&Type>| {
+            boxes.iter().all(|r| r.iter().all(|c| single.contains(c)))
+        };
+        let (last, below) = order.split_last()?;
+        for (t, boxes) in below {
+            let p = t.p();
+            let literals = p.bools.count_ones() as usize
+                + [&p.ints, &p.rats, &p.floats, &p.strings]
+                    .iter()
+                    .map(|l| l.values.len())
+                    .sum::<usize>()
+                + p.atoms.names.values().filter(|a| a.bare).count();
+            if literals + boxes.len() <= 1 && ones(boxes, &single) {
+                single.insert(t);
+            }
+        }
+        ones(&last.1, &single).then(|| self.each_value().map(Iterator::collect))?
+    }
+
     /// Each value of `self` once, when `self` is [`Type::finite`]: its scalars and bare atoms,
     /// then its tuples, length by length and box by box, the last component of a box fastest.
     /// Every type inside the boxes is made lazily too, one value at a time when a box first

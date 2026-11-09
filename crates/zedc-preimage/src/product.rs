@@ -323,17 +323,41 @@ impl Product {
         // The other domains from the type.
         // A finite set already held is kept where the type holds each member, so the type's
         // values are not listed: the cost is one membership test per member. With no finite
-        // set, the type's values become it, and every one is listed, since the set holds them
-        // all (COMPLEXITY.md row S34).
+        // set, the type's values become it only when the type writes them as a list
+        // (`Type::values_listed`), at a cost in the values written (COMPLEXITY.md row S34).
+        //
+        // Complexity tradeoff: a finite type that is not written as a list, a tuple type with
+        // a component of two or more values such as `(bool, bool)` or `t(d)`, `t(i + 1) =
+        // (t(i), t(i))`, keeps no finite set: the set stays the top and the type alone holds
+        // the name's values. Membership and emptiness are read from the type and lose
+        // nothing. What is lost: the one value of such a type when it has exactly one, as
+        // `(0 | 1, 0) - (1, 0)`, so the name is not taken as static (`Product::value`); a join
+        // of two arms keeps no list for it; and `x != v` for a tuple literal `v` takes `v` out
+        // of no list, so excluding each value of `(bool, bool)` in turn does not empty the
+        // scope (the type cannot take `v` out, since a key path of `v`'s shape is in the
+        // tuple type and is not equal to `v`).
+        // Why: listing a product of `k` components of two values each costs `2^k` values, and
+        // `t(d)` has `2^(2^d)`, exponential in the type as written; whether a combination of
+        // tuple types has exactly one value is coNP-hard (`types/empty.rs`). No size is
+        // compared: the rule reads the type's form. Trigger: a box of the type with a
+        // component of two or more literals or tuple types. Tests:
+        // `l01_39_reduced_product::finite_from_type::a_named_finite_type_stays_a_type`,
+        // `a_named_finite_type_reduces_in_time_linear_in_its_form`,
+        // `a_fact_on_a_listed_type_narrows_its_list_and_a_named_type_answers_from_the_type`.
+        // COMPLEXITY.md row S34. A complete solution would keep the finite set as a type,
+        // with the type's operations, and decide a type's one value by an emptiness search
+        // over its tuple types.
         if self.ty.element.finite() {
             let ty = &self.ty.element;
             let kept = match &self.cell.finite.element {
-                FiniteSet::Set(vs) => FiniteSet::of(vs.iter().filter(|v| ty.contains(v)).cloned()),
-                FiniteSet::Top => {
-                    FiniteSet::of(ty.each_value().expect("a finite type lists its values"))
+                FiniteSet::Set(vs) => {
+                    Some(FiniteSet::of(vs.iter().filter(|v| ty.contains(v)).cloned()))
                 }
+                FiniteSet::Top => ty.values_listed().map(FiniteSet::of),
             };
-            self.cell.finite.meet(&kept, &prem);
+            if let Some(kept) = kept {
+                self.cell.finite.meet(&kept, &prem);
+            }
         }
         if let Some(vs) = self.ty.element.ints_listed()
             && !vs.is_empty()

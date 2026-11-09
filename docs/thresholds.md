@@ -224,9 +224,13 @@ reduction lists. Each former use is bounded by its own inputs instead.
   when the interval has one member, and a range of more members is never listed, whatever
   its width (LIST-size; it was "at most two a piece" before); a type's
   own integer literals are filtered by the interval at any count, since the type already
-  writes them; and a type known finite (`Type::finite`) gives its values one at a time
-  (`Type::each_value`, T6; its inner types made one value at a time too, TD-values), with no size rule: the earlier rule that a tuple's rows be no
-  more than its components' values changed the answer with the size and is removed.
+  writes them; and a type known finite (`Type::finite`) gives its values only when it writes
+  them as a list (`Type::values_listed`, FINITE-type): literals, and tuple types each of whose
+  components is one value, such as `(true, false) | (false, true)`. A named finite type with a
+  product in it, such as `(bool, bool)` or `t(48)`, stays a type, however few its values,
+  and no count is compared. The earlier rule that a tuple's rows be no more than its
+  components' values changed the answer with the size and is removed; the listing of every
+  value of a finite type that followed it (EACH-collect) is removed too (COMPLEXITY.md S34).
   The enumeration's kept values are no longer capped, since they were already listed.
 
 Tests: `l01_24_refinement_lattices::scaling` (every result of six operators is in the image,
