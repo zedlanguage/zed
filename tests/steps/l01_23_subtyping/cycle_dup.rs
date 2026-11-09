@@ -191,10 +191,13 @@ fn many_arms_written_twice_and_nested_are_read_as_written_once() {
 
 /// Deciding the group of [`wide`] at `n` and `8n` arms: each part is read once and a union's
 /// arms sorted, so the work is within `n log n`. The definitions are checked before the runs are
-/// timed; a run makes a fresh instance, whose group is decided anew.
+/// timed; a run makes a fresh instance, whose group is decided anew. Building the instance
+/// costs about 57k instructions an arm, which hides a quadratic merge of equal arms at small
+/// `n`: one that looks each arm up in a list of the arms before it passed at `n` 1024 (10.2
+/// times) and failed at 2048 and 4096 (12.2 times), against 8.1 times here.
 #[test]
 fn many_arms_scale() {
-    let n = 256;
+    let n = 4096;
     let groups = scaling::inputs(n, |m| {
         let defs = (["Node", "Tree", "Thunk"].into_iter().zip(wide(m)))
             .map(|(name, body)| Def {
@@ -211,4 +214,211 @@ fn many_arms_scale() {
             std::hint::black_box(t.decided_by_group());
         }
     });
+}
+
+/// The group of `bodies` named `Node`, `Tree`, `Thunk`, then `A1`, `A2` and on.
+fn named(bodies: Vec<Expr>) -> Group {
+    let defs = (bodies.into_iter().enumerate())
+        .map(|(i, body)| Def {
+            name: match i {
+                NODE => "Node".into(),
+                TREE => "Tree".into(),
+                THUNK => "Thunk".into(),
+                _ => format!("A{}", i - THUNK),
+            },
+            params: vec![],
+            body,
+        })
+        .collect();
+    Group::new(defs).unwrap_or_else(|e| panic!("{}", e.message))
+}
+
+/// [`verdicts`] for a group of any number of definitions, named as [`named`] names them.
+fn verdicts_of(bodies: Vec<Expr>) -> Vec<(Option<bool>, Verdict)> {
+    Type::forget_emptiness();
+    (named(bodies).instance(vec![]).iter())
+        .map(|t| (t.decided_by_group(), t.verdict()))
+        .collect()
+}
+
+/// The first definition after `Thunk`.
+const A1: usize = 3;
+
+/// `(Tree, Tree)`.
+fn tt() -> Expr {
+    pair(r(TREE), r(TREE))
+}
+
+fn atom(name: &str) -> Expr {
+    Expr::Type(Type::atom(name))
+}
+
+/// [`base`] with `Node` and the definitions after `Thunk`.
+fn with(node: Expr, more: Vec<Expr>) -> Vec<Expr> {
+    let mut bodies = Vec::from(base(node));
+    bodies.extend(more);
+    bodies
+}
+
+/// ```text
+/// type Node = A1 | (Tree, Tree)
+/// type A1 = ((int) -> Thunk) | (Tree, Tree)
+/// ```
+///
+/// `Node`'s arm `(Tree, Tree)` is also an arm of `A1`. Before item GROUP-cycle-dup-names the
+/// two were two nodes, one more independent cycle than with `A1`'s arms written out, and every
+/// member was refused; `Node` now drops the arm it reaches through `A1`.
+#[test]
+fn a_union_named_as_an_arm_is_read_as_its_arms() {
+    let a1 = || or(vec![f(r(THUNK)), tt()]);
+    let out = verdicts_of(with(node(), vec![a1()]));
+    assert!(decided(&out), "{out:?}");
+    assert_eq!(verdicts_of(with(or(vec![r(A1), tt()]), vec![a1()])), out);
+    assert_eq!(verdicts_of(with(or(vec![tt(), r(A1)]), vec![a1()])), out);
+}
+
+/// `n` names, each the one before with its arm `(Tree, Tree)` repeated and an atom:
+///
+/// ```text
+/// type Node = An | (Tree, Tree)
+/// type A1 = ((int) -> Thunk) | (Tree, Tree)
+/// type Ak = A(k-1) | (Tree, Tree) | #ak
+/// ```
+///
+/// With `written_out`, `Node` is `((int) -> Thunk) | (Tree, Tree) | #a2 | … | #an`.
+fn chain(n: usize, written_out: bool) -> Vec<Expr> {
+    let mut more = vec![or(vec![f(r(THUNK)), tt()])];
+    for k in 2..=n {
+        more.push(or(vec![r(A1 + k - 2), tt(), atom(&format!("a{k}"))]));
+    }
+    let node = if written_out {
+        let mut arms = vec![f(r(THUNK)), tt()];
+        arms.extend((2..=n).map(|k| atom(&format!("a{k}"))));
+        or(arms)
+    } else {
+        or(vec![r(A1 + n - 1), tt()])
+    };
+    with(node, more)
+}
+
+#[test]
+fn a_chain_of_names_is_read_as_its_arms() {
+    for n in [1, 2, 5] {
+        let out = verdicts_of(chain(n, true));
+        assert!(decided(&out), "n = {n}: {out:?}");
+        assert_eq!(verdicts_of(chain(n, false)), out, "n = {n}");
+    }
+}
+
+/// ```text
+/// type Node = A1 | (Tree, Tree)
+/// type A1 = ((int) -> Thunk) | (Tree, Tree)
+/// type A2 = A1 | #o
+/// ```
+///
+/// `A1` is named by two unions, so `Node` does not dominate it, but every union `Node` reaches
+/// passes through `A1`: `A1` post-dominates `Node`.
+#[test]
+fn a_name_used_twice_is_read_as_its_arms() {
+    let more = || vec![or(vec![f(r(THUNK)), tt()]), or(vec![r(A1), atom("o")])];
+    let out = verdicts_of(with(node(), more()));
+    assert!(decided(&out), "{out:?}");
+    assert_eq!(verdicts_of(with(or(vec![r(A1), tt()]), more())), out);
+}
+
+/// ```text
+/// type Node = A2 | (Tree, Tree)
+/// type A1 = ((int) -> Thunk) | (Tree, Tree)
+/// type A2 = A1 | (Tree, Tree) | (A2, #z)
+/// ```
+///
+/// A name that refers to itself through a tuple, with arms that overlap those of the name it
+/// names: `A2` drops `(Tree, Tree)`, an arm of `A1`, and `Node` drops it too. Written with
+/// `(A2, #z)` as an arm of `Node` as well, `Node` drops that arm, an arm of `A2`. (With `A2`'s
+/// arms written out in `Node`, `Node` and `A2` each have their own `(A2, #z)` and neither names
+/// the other, and the group is refused: follow-up GROUP-cycle-dup-across.)
+#[test]
+fn names_in_a_cycle_are_read_as_their_arms() {
+    let a2z = || pair(r(A1 + 1), atom("z"));
+    let more = || vec![or(vec![f(r(THUNK)), tt()]), or(vec![r(A1), tt(), a2z()])];
+    let out = verdicts_of(with(or(vec![r(A1 + 1), tt()]), more()));
+    assert!(decided(&out), "{out:?}");
+    assert_eq!(
+        verdicts_of(with(or(vec![r(A1 + 1), tt(), a2z()]), more())),
+        out
+    );
+}
+
+/// Deciding the group of a [`chain`] of `n` and `8n` names: one topological order, two trees
+/// with lowest common ancestors in `log n`, and one sort of the arms, so within `n log n`.
+#[test]
+fn a_chain_of_names_scales() {
+    let n = 128;
+    let groups = scaling::inputs(n, |m| named(chain(m, false)));
+    scaling::check_order("a chain of n names", n, 1, |m| {
+        Type::forget_emptiness();
+        for t in &groups[&m].instance(vec![]) {
+            std::hint::black_box(t.decided_by_group());
+        }
+    });
+}
+
+/// ```text
+/// type Node = (Node, Node) | Tree | ((Node, int), (int) -> Tree) | (int) -> (Node, Node)
+/// type Tree = ((Node, int), (int) -> Tree) | (int) -> (Node, Node) | (Node, Node)
+/// ```
+///
+/// `Node`'s arms other than `Tree` are arms of `Tree`, so `Node` with them dropped is `Tree`.
+/// The group is decided inhabited as written, and refused with those arms dropped: the
+/// decider's bounds depend on the graph's shape, so the dropped arms are decided as a second
+/// system beside the one written, and a member either decides is decided.
+#[test]
+fn a_group_decided_as_written_stays_decided() {
+    let nn = || pair(r(NODE), r(NODE));
+    let both = || vec![pair(pair(r(NODE), int()), f(r(TREE))), f(nn())];
+    let mut node = vec![nn(), r(TREE)];
+    node.extend(both());
+    let mut tree = both();
+    tree.push(nn());
+    let v = verdicts_of(vec![or(node), or(tree)]);
+    assert!(
+        v.iter().all(|&(d, _)| d == Some(false)),
+        "both members are inhabited: {v:?}"
+    );
+}
+
+/// ```text
+/// type Node = Tree | (Node, Tree) | (int, (int) -> (int) -> Tree) | (Tree, Node) | ((int) -> Tree, Node | Tree)
+/// type Tree = (Tree, Node) | ((int) -> Tree, Node | Tree)
+/// ```
+///
+/// Every arm of `Tree` is an arm of `Node`, so `Node | Tree` is `Node`. Each `Node | Tree`
+/// reaches `Tree` through `Node`, but `Node` is named by both, so neither dominates it and
+/// neither is post-dominated by it: the arm is kept (`// Complexity tradeoff:` at
+/// `names::absorb`), the decider refuses the group, and the search finds its values. With
+/// `Node | Tree` written `Node` the decider decides it. Seed 34841 of the item's probe; when the
+/// tradeoff is lifted, the first verdicts become decided too.
+#[test]
+fn a_name_reached_by_two_unions_is_left_to_the_search() {
+    let (node, tree) = (|| r(NODE), || r(TREE));
+    let group = |inner: &dyn Fn() -> Expr| {
+        let arms = vec![
+            tree(),
+            pair(node(), tree()),
+            pair(int(), f(f(tree()))),
+            pair(tree(), node()),
+            pair(f(tree()), inner()),
+        ];
+        vec![
+            or(arms),
+            or(vec![pair(tree(), node()), pair(f(tree()), inner())]),
+        ]
+    };
+    let as_written = verdicts_of(group(&|| or(vec![node(), tree()])));
+    assert_eq!(
+        as_written,
+        vec![(None, Verdict::Inhabited), (None, Verdict::Inhabited)]
+    );
+    let v = verdicts_of(group(&node));
+    assert!(v.iter().all(|&(d, _)| d == Some(false)), "{v:?}");
 }

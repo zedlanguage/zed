@@ -3003,3 +3003,14 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A `HashMap` keyed by `(usize, Made<'a>)`, an enum whose `Atom` variant borrows the atom's name as `&'a str` from the group's bodies, filled through `Entry::Vacant` | `system` | Mutation (gap 11) | a persistent map keyed by the definition and the node's kind and children, the name held by value or by its interned number |
 | An explicit stack of `Step::Visit` and `Step::Make(node, k)` with `k` patched in place (`todo[at - 1]`) when a nested union's arms are read into its parent, and `Vec::split_off` of the last `k` finished nodes | `system` | Mutation (gap 11) | a fold over the parts in post-order that returns each part's node, a union returning the set of its arms' nodes |
 | Nodes added to the `Bes` as `Bot` placeholders and set to their kind and children once the whole group is read, by draining the map of made nodes | `system` | Mutation (gap 11) | the nodes built after the map is complete, in one pass over it |
+
+## Entries from GROUP-cycle-dup-names (`crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/names.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap` keyed by `Same<'a>`, a node's `Made` key with its children replaced by their type numbers (`Made::across`) or a closed part's class, filled through `entry().or_insert` with the next free number | `system` | Mutation (gap 11) | a persistent map from the key to its number, the next number the map's size |
+| `Lift`, binary lifting in one flat `Vec<u32>` (`up[v * levels + j]`) filled leaf by leaf, with `lca` swapping and stepping two cursors in place | `names::absorb`, `Lift` | Mutation (gap 11) | an immutable array per level built from the one below, or a persistent tree with depth and jump pointers per node |
+| Kahn's topological order with a mutable in-degree vector and a queue that is the output `Vec` read by index | `names::topological` | Mutation (gap 11) | a fold over the nodes with a persistent map of remaining in-degrees |
+| Preorder intervals by an explicit stack of `(node, closing)` pairs and a running counter | `Lift::intervals` | Mutation (gap 11) | a recursive walk returning the next preorder number |
+| The run's unions sorted by preorder into reused `Vec`s (`by_dom`, `by_post`, `open`) cleared per type, and a stack of open intervals popped in place | `names::absorb` | Mutation (gap 11) | a sort per run and a fold carrying the stack as a list |
+| A `Bes` cloned and changed by `set` and `seal`, the copy returned as `Option<Bes>`; the leaves set to `Top` in both systems through `iter::once(&mut b).chain(absorbed.as_mut())` | `names::absorb`, `judge` | Mutation (gap 11) | a new system built from the old one's nodes with the dropped arms filtered out; the runs with leaves `Top` a second system built the same way |

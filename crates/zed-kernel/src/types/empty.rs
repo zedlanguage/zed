@@ -5832,8 +5832,13 @@ fn known_empty(k: &Type) -> bool {
 /// rests on a leaf and goes to the search, with the members decided here read by their
 /// answers. A member the decider refuses in either run goes to the search too, and if the
 /// search does not decide it, its verdict is refused with its own message
-/// ([`Type::refusal_site`]). Time linear in the bodies, besides the emptiness of their closed
-/// parts.
+/// ([`Type::refusal_site`]).
+///
+/// A union that names another union with some of the same arms is decided a second time with
+/// those arms dropped ([`names::absorb`], item GROUP-cycle-dup-names), and a member decided by
+/// either system is decided: both are systems of the same types. The refusal message reads the
+/// first. Time linear in the bodies, besides the emptiness of their closed parts and the
+/// O(m log m) of [`names::absorb`].
 fn judge(env: &Arc<Env>) -> Judgment {
     let bodies = &env.group().0.bodies;
     let System {
@@ -5841,6 +5846,8 @@ fn judge(env: &Arc<Env>) -> Judgment {
         origin,
         mut wider,
         leaves,
+        same,
+        union,
     } = system(env);
     // The nodes that reach a meet or a difference, by their parents, each node once.
     let mut wide = vec![false; b.len()];
@@ -5855,13 +5862,18 @@ fn judge(env: &Arc<Env>) -> Judgment {
             }
         }
     }
+    let mut absorbed = names::absorb(&b, &same, &union);
     let mut runs = vec![decide(&b)];
+    let mut also: Vec<Decision> = absorbed.iter().map(decide).collect();
     if !leaves.is_empty() {
         // A leaf has no children either way, so the parents `seal` filled stay right.
-        for &v in &leaves {
-            b.set(v, Kind::Top, vec![]);
+        for g in std::iter::once(&mut b).chain(absorbed.as_mut()) {
+            for &v in &leaves {
+                g.set(v, Kind::Top, vec![]);
+            }
         }
         runs.push(decide(&b));
+        also.extend(absorbed.iter().map(decide));
     }
     // Complexity tradeoff: a member shown inhabited through a meet or a difference goes to the
     // search, which builds a value of the meet: one state of the product of its operands per
@@ -5878,7 +5890,14 @@ fn judge(env: &Arc<Env>) -> Judgment {
     let (mut answers, mut refused) = (vec![None; n], vec![false; n]);
     for i in 0..n {
         let (low, high) = (runs[0].answers[i], runs[runs.len() - 1].answers[i]);
-        answers[i] = settled(low, high, wide[i]);
+        let named = settled(low, high, wide[i]);
+        let read = (also.first().zip(also.last()))
+            .and_then(|(first, last)| settled(first.answers[i], last.answers[i], wide[i]));
+        debug_assert!(
+            named.is_none() || read.is_none() || named == read,
+            "the two systems of one group's types agree"
+        );
+        answers[i] = named.or(read);
         refused[i] = answers[i].is_none() && (low == Answer::Refused || high == Answer::Refused);
     }
     let why = refused
@@ -5952,12 +5971,15 @@ impl Why {
 
 /// The decider's system of a group ([`judge`]), sealed: the definition and expression each
 /// node stands for, by its number (the members' bodies first), the nodes of meets and
-/// differences, and the leaves, the parts the decider does not take.
+/// differences, the leaves, the parts the decider does not take, and each node's type across
+/// the definitions and whether it is a union, which [`names::absorb`] reads.
 struct System {
     b: Bes,
     origin: Vec<(usize, Arc<rec::Node>)>,
     wider: Vec<u32>,
     leaves: Vec<u32>,
+    same: Vec<u32>,
+    union: Vec<bool>,
 }
 
 /// What a node of the system is made of, within one definition; parts of one definition with
@@ -5975,7 +5997,7 @@ enum Made<'a> {
     Mor(u32, u32, u32),
 }
 
-impl Made<'_> {
+impl<'a> Made<'a> {
     /// The node's kind and children.
     fn node(self) -> (Kind, Vec<u32>) {
         match self {
@@ -5985,6 +6007,34 @@ impl Made<'_> {
             Made::Mor(_, _, v) => (Kind::Mor, vec![v]),
         }
     }
+
+    /// The same key with each child node replaced by its type's number in `same`, a union's
+    /// arms again a set: the key of the type across the group's definitions.
+    fn across(&self, same: &[u32]) -> Made<'a> {
+        let map = |xs: &[u32]| xs.iter().map(|&x| same[x as usize]).collect::<Vec<u32>>();
+        match self {
+            Made::Or(xs) => {
+                let mut ys = map(xs);
+                ys.sort_unstable();
+                ys.dedup();
+                Made::Or(ys)
+            }
+            Made::Tuple(xs) => Made::Tuple(map(xs)),
+            Made::Atom(name, xs) => Made::Atom(name, map(xs)),
+            Made::Meet(xs) => Made::Meet(map(xs)),
+            Made::Diff(r, a) => Made::Diff(*r, same[*a as usize]),
+            Made::Mor(l, u, v) => Made::Mor(*l, *u, same[*v as usize]),
+        }
+    }
+}
+
+/// What a type of a group's system is, across its definitions ([`names::absorb`]): a part
+/// with children by what it is made of, its children read across definitions, and a part with
+/// none by its class.
+#[derive(PartialEq, Eq, Hash)]
+enum Same<'a> {
+    Made(Made<'a>),
+    Class(u32),
 }
 
 /// The system of `env`'s group, read from the members' bodies: a node for each member, and one
@@ -6000,11 +6050,14 @@ impl Made<'_> {
 /// GROUP-cycle-dup). Merging two nodes with equal children, or lifting the arms of a union with
 /// one parent into that parent, removes as many edges as nodes or more, so it never adds a cycle;
 /// the answers are those of the types, which the merging does not change. A reference to
-/// another definition stays that definition's node: a union written through a definition's name
-/// and the same union written out still differ in their counts when the named union's arms
-/// overlap the arms written beside it (follow-up GROUP-cycle-dup-names). Parts of two
-/// definitions are not merged, so each node's origin, which the refusal message reads, is in the
-/// definition that wrote it.
+/// another definition stays that definition's node, so a union written through a definition's
+/// name and the same union written out differ in their counts when the named union's arms
+/// overlap the arms written beside it. Each node's type across the definitions (`same`) is
+/// numbered for [`names::absorb`], which [`judge`] uses to decide a second system with those arms
+/// dropped (item GROUP-cycle-dup-names). Parts of two definitions are not merged, so each node's
+/// origin, which the refusal message reads, is in the definition that wrote it; equal parts of
+/// two definitions that neither reaches through unions keep their own nodes (follow-up
+/// GROUP-cycle-dup-across).
 ///
 /// Each part is read once, from a stack; a part written like one met before in its definition
 /// is not read again. Expected time linear in the bodies, besides sorting each union's arms and
@@ -6019,10 +6072,20 @@ fn system(env: &Arc<Env>) -> System {
     let bodies = &env.group().0.bodies;
     let mut b = Bes::new();
     let mut origin = Vec::with_capacity(bodies.len());
+    // Each node's type across the definitions, a member's its own number (`Same`), and
+    // whether the node is a union, by its number.
+    let (mut same, mut union) = (Vec::with_capacity(bodies.len()), vec![false; bodies.len()]);
     for (i, e) in bodies.iter().enumerate() {
         b.add(Kind::Bot, vec![]);
         origin.push((i, Arc::clone(e)));
+        same.push(i as u32);
     }
+    // The number of each type met, after the members'.
+    let mut types: HashMap<Same<'_>, u32> = HashMap::new();
+    let type_of = |types: &mut HashMap<_, _>, key| {
+        let next = (bodies.len() + types.len()) as u32;
+        *types.entry(key).or_insert(next)
+    };
     let (mut wider, mut leaves) = (Vec::new(), Vec::new());
     // The node of each part read, by its definition and class.
     let mut seen: HashMap<(usize, u32), u32> = HashMap::new();
@@ -6039,6 +6102,7 @@ fn system(env: &Arc<Env>) -> System {
                     if let rec::Shape::Ref(i, _) = e.e {
                         if root {
                             b.set(def as u32, Kind::Or, vec![i as u32]);
+                            union[def] = true;
                         } else {
                             done.push(i as u32);
                         }
@@ -6120,6 +6184,8 @@ fn system(env: &Arc<Env>) -> System {
                         def as u32
                     } else {
                         origin.push((def, Arc::clone(e)));
+                        same.push(type_of(&mut types, Same::Class(e.class)));
+                        union.push(false);
                         b.add(Kind::Bot, vec![])
                     };
                     match kind {
@@ -6162,6 +6228,7 @@ fn system(env: &Arc<Env>) -> System {
                 }
             };
             if root {
+                union[def] = matches!(key, Made::Or(_));
                 let (kind, children) = key.node();
                 b.set(def as u32, kind, children);
                 if wide {
@@ -6172,6 +6239,9 @@ fn system(env: &Arc<Env>) -> System {
             let v = match made.entry((def, key)) {
                 Entry::Occupied(o) => *o.get(),
                 Entry::Vacant(slot) => {
+                    let key = &slot.key().1;
+                    same.push(type_of(&mut types, Same::Made(key.across(&same))));
+                    union.push(matches!(key, Made::Or(_)));
                     let v = b.add(Kind::Bot, vec![]);
                     origin.push((def, Arc::clone(e)));
                     if wide {
@@ -6194,9 +6264,12 @@ fn system(env: &Arc<Env>) -> System {
         origin,
         wider,
         leaves,
+        same,
+        union,
     }
 }
 
+mod names;
 mod refused;
 
 #[cfg(test)]
