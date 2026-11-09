@@ -1711,10 +1711,19 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BUILD-snapshot-stale | impl attempt 1 | 2026-11-09 12:14 | started (A doc+clippy refresh at publish, B stale-unit exclusion) |
+| BUILD-seed-dir-dates | impl attempt 1 | 2026-11-09 12:50 | started; measuring a fresh seed's first build (load 22.33) |
+| CHK-components-pairs | impl attempt 1 | 2026-11-09 12:22 | ready at 9850daab: 88 pieces 0 failed with doc check (l01_26*, l01_29, zedc_check, s_01f, l01_18), load 21.90 24.82 23.98; COMPLEXITY F140 |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
-| STAR-hub-set | impl attempt 1 | 2026-11-09 09:36 | d2 fix: red counter test written (needs_held accessor), load 26.25 23.21 26.31 |
-| TEST-deep-let-size | impl attempt 1 | 2026-11-09 12:10 | shrunk to DEEP 10,000, ifs 4,000, arms scale 250/2,000: 39.7G instructions, ~11 s total (was 324G); stack control aborts all 5; per-bind count control fails val |
+| MSG-declared-inferred-sig | impl attempt 1 | 2026-11-09 12:12 | started; worktree wt/declared-sig on cefadb2a |
+| MSG-fresh-name-clash | impl attempt 1 | 2026-11-09 13:30 | clippy clean; running groups l01_29 l01_26 l01_37a zedc_check zed_kernel zedc_types l01_07 s_01f with docs (load 24.88 21.69 21.93) |
+| PA-bind-cost | impl attempt 1 | 2026-11-09 12:59 | ready at 84e0fd77 on wt/pa-bind-cost: 483 pieces 0 failed with docs (load 11-30), block 4000 1201M->733M instr, fees 1890M->966M, bound block 2608M->1014M; foll |
+| PRES-probe-first | impl attempt 1 | 2026-11-09 11:34 | ready at 534d16c4: 469 pieces 0 failed (load 13.3-38.1); gain is per-hit only (2-4x on 8 hits), S22 shape 0 unchanged since the line is not reached there |
+| PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | started on cefadb2a in wt/project-each; load 24.76 |
+| PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | negative control (known_var rescans every part, quadratic) run once, not committed: scaling test fails at 22.2x instructions (64 vs 512 defs, limit 13.2); real  |
+| PROJECT-hull-credit-lower | impl attempt 1 | 2026-11-09 12:10 | final test run with doc check (l01_07 l01_25 l01_38 l01_39* zedc_presburger zedc_preimage s_01f), load 26.85 20.85 21.67 |
+| STAR-hub-set | impl attempt 1 | 2026-11-09 09:36 | committed b5c54d20, ledger ready; load 30.80 25.29 23.40 |
+| TEST-deep-let-size | impl attempt 1 | 2026-11-09 12:10 | ready e419bcb2 on wt/deep-let (rebased cefadb2a); l01_39_reduced_product+s_01f 49 pieces 0 failed with docs, load 10-16; follow-up PA-bind-cost queued |
+| TEST-preimage-split | impl attempt 1 | 2026-11-09 12:41 | ready 61793ff5: or_ifs in 16 parts, zedc_preimage+s_01f 58 pieces 0 failed slowest 16.1 s; follow-up PRES-small-cost queued |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
