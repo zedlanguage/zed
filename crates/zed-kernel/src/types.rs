@@ -883,6 +883,31 @@ fn atom_names<'a>(
     // comparison of at least that cost, rather than holding two iterators, which made each step
     // 208 bytes and the bytes a comparison allocates on ties more than 24x at 8n in the pinwheel
     // tests of `l01_23` (short-addresses build).
+    //
+    // Two maps on one root are equal, and two that differ nearly always do in their first
+    // entries, which `get_min` reads by one descent, while setting up the two ranges took most of
+    // a comparison of two atoms of tied digest. With the same for empty sets in `Lits`, that
+    // comparison went from 1,629 instructions to 446 (BUCKET-cmp-cost). A first entry that does
+    // not decide is read again by the loop.
+    if p.ptr_eq(q) {
+        return Ordering::Equal;
+    }
+    if matches!(from, Bound::Unbounded) {
+        match (p.get_min(), q.get_min()) {
+            (Some((k, u)), Some((l, v))) => {
+                let c = k.cmp(l).then(u.bare.cmp(&v.bare)).then_with(|| {
+                    match Arc::ptr_eq(&u.payload.0, &v.payload.0) {
+                        true => Ordering::Equal,
+                        false => u.payload.digest().cmp(&v.payload.digest()),
+                    }
+                });
+                if c != Ordering::Equal {
+                    return c;
+                }
+            }
+            (s, t) => return s.is_some().cmp(&t.is_some()),
+        }
+    }
     let (mut x, mut y) = (
         p.range::<_, Arc<str>>((from, Bound::Unbounded)),
         q.range::<_, Arc<str>>((from, Bound::Unbounded)),
@@ -1053,13 +1078,16 @@ struct Lits {
 /// found equal by `==`, which skips the nodes they share, before the values are read in order.
 /// So two equal sets made apart from one set compare in order `log n`, not `n`: the meets of a
 /// side `u` with the rows `(int - (2k + 1), int)` make each `u - (2k + 1)` once in the type
-/// and again in its boxes (LIST-xor-finite).
+/// and again in its boxes (LIST-xor-finite). Two sets on one root, two empty sets among them,
+/// are equal before either walk starts: `==` sets up two cursors even then, and every type
+/// without literals of a kind compares such a pair (BUCKET-cmp-cost).
 // Complexity tradeoff: two unequal sets with equal sums pay for both walks, `==` then the
 // ordered one; equal sums of unequal sets are a hash collision.
 impl Ord for Lits {
     fn cmp(&self, other: &Lits) -> std::cmp::Ordering {
         self.cofinite.cmp(&other.cofinite).then_with(|| {
-            match self.sum == other.sum && self.values == other.values {
+            let same = self.values.ptr_eq(&other.values);
+            match same || (self.sum == other.sum && self.values == other.values) {
                 true => std::cmp::Ordering::Equal,
                 false => self
                     .values

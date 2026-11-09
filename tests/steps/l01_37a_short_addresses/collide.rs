@@ -111,6 +111,32 @@ fn colliding_types_are_distinct_and_ordered_by_contents() {
     }
 }
 
+#[test]
+fn digests_spread_over_all_their_values() {
+    // A digest is mixed from its parts' digests in a chain of steps. With 8-bit digests a step
+    // that maps the 256 values of one part to fewer would shrink the chain's values at each
+    // step: the names a0 to a99999 reached 73 of 256 atom digests and the one-item tuple types
+    // over them 31, so ties were far more common than 8 bits make them. In the full build the
+    // low 8 bits of the digests are checked.
+    let atoms: Vec<Type> = (0..4000).map(|i| Type::atom(&format!("a{i}"))).collect();
+    let values = |ts: &mut dyn Iterator<Item = Type>| -> usize {
+        ts.map(|t| digest(&t) & 0xff)
+            .collect::<HashSet<u64>>()
+            .len()
+    };
+    let tuples = &mut atoms.iter().map(|a| Type::tuple(vec![a.clone()]));
+    let morphisms = &mut atoms
+        .windows(3)
+        .map(|w| Type::morphism(w[0].clone(), w[1].clone(), w[2].clone()));
+    let unions = &mut atoms
+        .windows(2)
+        .map(|w| Type::union_all([w[0].clone(), w[1].clone()]));
+    assert_eq!(values(&mut atoms.iter().cloned()), 256, "atoms");
+    assert_eq!(values(tuples), 256, "tuples");
+    assert_eq!(values(morphisms), 256, "morphism types");
+    assert_eq!(values(unions), 256, "unions");
+}
+
 /// `depth` levels of a pair of the level below, over `base`.
 fn chain(base: Type, depth: usize) -> Type {
     (0..depth).fold(base, |t, _| Type::tuple(vec![t.clone(), t]))

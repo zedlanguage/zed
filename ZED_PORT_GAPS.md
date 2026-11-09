@@ -2923,3 +2923,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `Vec` of `((&Atom, Int, &Atom, Int), &Con)` pairs, the terms of each two-term row with the first coefficient made positive, sorted by key and split into runs of equal keys by `slice::chunk_by` | `residues::read` | Mutation of a growable vector (gap 11); borrowed references in a tuple | A fold over the rows into a persistent ordered map from the key to the list of its rows, read in key order |
+
+## Entries from BUCKET-cmp-cost (`crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/hash.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `imbl::OrdSet::ptr_eq` and `imbl::OrdMap::ptr_eq`, two persistent collections on one root compared equal before any entry is read | `Lits::cmp`, `atom_names` | Identity (gap 1) | an equality of persistent collections that answers at once for one shared root, in the runtime (the `==` shortcut of gap 1) |
+| `imbl::OrdMap::get_min`, the first entry of an ordered map read by one descent before range iterators are made | `atom_names` | none: a library call | the first entry of an ordered persistent map |
+| Arithmetic on `u8` by `wrapping_add` and `wrapping_mul`, and `>>` and `^` to fold a `u64` into a byte | `mix_byte`, `fold`, `spread` | Bit words (BIT-words) | the bit words and arithmetic modulo 2^8 |
