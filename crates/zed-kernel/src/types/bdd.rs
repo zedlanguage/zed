@@ -24,7 +24,9 @@
 //! takes one pass over a list's first nodes, as a diagram would have them (`Bdd::reaching`).
 
 use std::cmp::Ordering;
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicBool, Ordering as Atomic};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -63,6 +65,7 @@ pub(super) struct Tables<A: Literal> {
     sets: set::SetTable<A>,
     cells: list::CellTable<A>,
     xors: xor::XorTable<A>,
+    inners: xor::InnerTable<A>,
 }
 
 impl<A: Literal> Tables<A> {
@@ -71,17 +74,46 @@ impl<A: Literal> Tables<A> {
             sets: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
             cells: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
             xors: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
+            inners: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
         }
     }
 }
 
 /// What a part, cell or set holds that is dropped in the thread's loop of type parts (module
 /// `deep`).
-#[expect(dead_code, reason = "a part is held only to be dropped")]
 pub(super) enum Owned<A: Literal> {
     Part(Part<A>),
     Set(Arc<Set<A>>),
     Cell(Arc<Cell<A>>),
+}
+
+impl<A: Literal> Owned<A> {
+    /// Whether this handle is the last strong one of its node, so that dropping it frees the
+    /// node. A leaf holds no node.
+    fn is_last(&self) -> bool {
+        match self {
+            Owned::Part(Part::Expr(e)) => Arc::strong_count(e) == 1,
+            Owned::Part(Part::Bdd(Bdd::List(c, _))) | Owned::Cell(c) => Arc::strong_count(c) == 1,
+            Owned::Part(Part::Bdd(Bdd::Leaf(_))) => false,
+            Owned::Set(s) => Arc::strong_count(s) == 1,
+        }
+    }
+
+    /// Drops the handle: in the thread's loop (module `deep`) when it is the last of its node, and
+    /// in place otherwise, which only lowers the count. A node freed holds handles to the nodes
+    /// below it, most of them shared with nodes still live (the halves of the exclusive ors that a
+    /// literal added leaves unchanged, the literals, the subtrees of sets and sequences), and each
+    /// went through the queue only to have its count lowered there: 7% of the instructions of
+    /// parity built a literal at a time (KERNEL-parity-cost). Should another thread drop its
+    /// handle between the count read and the drop here, the node is freed here, and its own drop
+    /// queues the handles it holds, so the stack grows by one node at most.
+    fn release(self) {
+        if self.is_last() {
+            A::free(self);
+        } else {
+            drop(self);
+        }
+    }
 }
 
 /// The atoms of a universe, each kind with its thread's tables of sets and cells.
@@ -113,35 +145,51 @@ impl<A: Literal> set::Atom for A {
         Literal::digest(self)
     }
     fn free_set(set: Arc<Set<A>>) {
-        A::free(Owned::Set(set));
+        Owned::Set(set).release();
     }
 }
-/// An expression leaves its thread's table of exclusive ors, if it is in it, and its operands
-/// and complement are freed in a loop, as a cell's next cell is.
+/// An expression leaves its thread's table of exclusive ors, or of the exclusive ors inside a
+/// tree node's, if it is in one, and its operands and complement are freed in a loop, as a
+/// cell's next cell is.
 impl<A: Literal> Drop for Expr<A> {
     fn drop(&mut self) {
-        if let Some((pair, constant)) = &self.xor
-            && let Some(s) = &pair.atoms
-        {
-            let key = (s.id, *constant);
-            A::untable(|t| {
-                if t.xors
-                    .get(&key)
-                    .is_some_and(|w| std::ptr::eq(w.as_ptr(), self))
-                {
-                    t.xors.remove(&key);
+        let is_self = |w: &Weak<Expr<A>>| std::ptr::eq(w.as_ptr(), self);
+        if let Some((pair, constant)) = &self.xor {
+            match &pair.atoms {
+                Some(s) => {
+                    let key = (s.id, *constant);
+                    A::untable(|t| untable(&mut t.xors, key, is_self));
                 }
-            });
+                None if !constant => {
+                    let key = pair.inner_key();
+                    A::untable(|t| untable(&mut t.inners, key, is_self));
+                }
+                None => {}
+            }
         }
         free_form(&mut self.form);
         if let Some(Source::Form(mut f)) = self.source.take() {
             free_form(&mut f);
         }
         if let Some(c) = self.complement.take() {
-            A::free(Owned::Part(c));
+            Owned::Part(c).release();
         }
         // The pair frees its parts in the loop when it is dropped.
         self.xor.take();
+    }
+}
+
+/// Removes the entry of `key` when it is the node `is_self` names, in one probe: an entry left by
+/// a node dropped on another thread, or replaced since, stays.
+fn untable<K: std::hash::Hash + Eq, N>(
+    table: &mut HashMap<K, Weak<N>, BuildHasherDefault<KeyHasher>>,
+    key: K,
+    is_self: impl FnOnce(&Weak<N>) -> bool,
+) {
+    if let Entry::Occupied(e) = table.entry(key)
+        && is_self(e.get())
+    {
+        e.remove();
     }
 }
 
@@ -153,7 +201,7 @@ fn free_form<A: Literal>(form: &mut Form<A>) {
     };
     for part in std::iter::once(p).chain(q) {
         if part.is_leaf().is_none() {
-            A::free(Owned::Part(std::mem::replace(part, Part::leaf(false))));
+            Owned::Part(std::mem::replace(part, Part::leaf(false))).release();
         }
     }
 }
@@ -684,7 +732,7 @@ impl<A: Literal> Part<A> {
     }
 
     pub(super) fn zip(&self, other: &Part<A>, op: Op) -> Part<A> {
-        match Part::zip_at_once(self, other, op) {
+        match Part::zip_at_once(self, other, op).or_else(|| Part::xor_at_once(self, other, op)) {
             Some(r) => r,
             None => Connect::run(|k| k.zip(self, other, op)),
         }
@@ -700,6 +748,24 @@ impl<A: Literal> Part<A> {
             (Some(_), _) => Some(b.clone()),
             (_, Some(_)) => Some(a.clone()),
             _ => (a == b).then(|| a.clone()),
+        }
+    }
+
+    /// `a op b` as an exclusive or in its one form ([`xor::xor_of`]), for operands neither a leaf,
+    /// nor equal, nor both lists. It is the part `Connect::zipped` makes: its first rule, `a` the
+    /// complement of `b`, does not fit them, since `u&v` (`u|v` under `And`) is the complement of
+    /// `!u&!v` (`!u|!v`) only when `u` and `v` are one function, and two exclusive ors in their
+    /// one form of two sets of atoms or two constants are two functions; its second is for two
+    /// lists; its third is this one.
+    // Complexity tradeoff: the constant-time test of `xor::xor_of` is run before the frames of
+    // `Connect`, and again in no frame, so that the union of two halves of an exclusive or skips
+    // the complement of one of them, made, compared and freed by the first rule; a union or
+    // meet that is no exclusive or pays for the test once, as before. Measured on parity built
+    // a literal at a time (KERNEL-parity-cost).
+    fn xor_at_once(a: &Part<A>, b: &Part<A>, op: Op) -> Option<Part<A>> {
+        match (a, b) {
+            (Part::Bdd(_), Part::Bdd(_)) => None,
+            _ => xor::xor_of(a, b, op),
         }
     }
 
@@ -800,7 +866,7 @@ impl<'m> Connect<'m> {
     }
 
     fn zip<A: Literal>(&'m self, a: &Part<A>, b: &Part<A>, op: Op) -> Deep<'m, Part<A>> {
-        match Part::zip_at_once(a, b, op) {
+        match Part::zip_at_once(a, b, op).or_else(|| Part::xor_at_once(a, b, op)) {
             Some(r) => Stack::ready(r),
             None => {
                 let (a, b) = (a.clone(), b.clone());
@@ -825,7 +891,10 @@ impl<'m> Connect<'m> {
         // `xor`), in `O(k log n)` for the `k` atoms of the smaller and the `n` of the larger,
         // rather than kept as the expression made in constant time, so that one set of atoms
         // built in any order is one node; parity built a literal at a time stays `O(n log n)`.
-        if let Some(x) = xor::xor_of(&a, &b, op) {
+        // Operands not both lists were tested before the frame (`Part::xor_at_once`).
+        if let (Part::Bdd(_), Part::Bdd(_)) = (&a, &b)
+            && let Some(x) = xor::xor_of(&a, &b, op)
+        {
             return x;
         }
         // Choices on one condition meet branch by branch.
@@ -1725,14 +1794,20 @@ mod xor {
     //! from (`Pair`), and the one dropped first is made again from them when its complement is
     //! asked for ([`mate`]), equal as built to the one dropped.
     //!
+    //! A tree node with two children joins its left subtree and its atom first, and that inner
+    //! exclusive or, which tags no set, is kept in a table of its own by the ids of its two
+    //! halves while it lives ([`InnerTable`]): a literal added on the right of a tree node, or of
+    //! a node split off on the left of it, leaves the left subtree and the atom as they were, so
+    //! the node rebuilt takes the inner exclusive or the one it replaces held, equal as built.
+    //!
     //! An exclusive or is recognized when it is built from two others ([`xor_of`], [`xor_choice`]),
     //! and a literal is one, of one atom; any other part is not taken for one.
 
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::HashMap;
     use std::sync::{Arc, Weak};
 
     use super::set::{self, Set, Tree};
-    use super::{Expr, Form, KeyHasher, Literal, Op, Operands, Owned, Part};
+    use super::{Bdd, Expr, Form, KeyHasher, Literal, Op, Operands, Owned, Part};
 
     /// An exclusive or: the set of its atoms, each taken, and the constant joined to them.
     pub(super) type Tag<A> = (Arc<Set<A>>, bool);
@@ -1751,18 +1826,31 @@ mod xor {
         fn drop(&mut self) {
             for part in [&mut self.p, &mut self.q] {
                 if part.is_leaf().is_none() {
-                    A::free(Owned::Part(std::mem::replace(part, Part::leaf(false))));
+                    Owned::Part(std::mem::replace(part, Part::leaf(false))).release();
                 }
             }
             if let Some(s) = self.atoms.take() {
-                A::free(Owned::Set(s));
+                Owned::Set(s).release();
             }
+        }
+    }
+
+    impl<A: Literal> Pair<A> {
+        /// The key of the pair's exclusive or in an [`InnerTable`]: the ids of its halves.
+        pub(super) fn inner_key(&self) -> (u64, u64) {
+            (self.p.id(), self.q.id())
         }
     }
 
     /// The live exclusive ors of a thread, by the id of their set's tree node and their constant.
     pub(in crate::types) type XorTable<A> =
         HashMap<(u64, bool), Weak<Expr<A>>, std::hash::BuildHasherDefault<KeyHasher>>;
+
+    /// The live inner exclusive ors of a thread, each of a tree node's left subtree and its atom
+    /// ([`node`]), by the ids of the two ([`Pair::inner_key`]); the constant is `false`, and the
+    /// complement is held by the exclusive or.
+    pub(in crate::types) type InnerTable<A> =
+        HashMap<(u64, u64), Weak<Expr<A>>, std::hash::BuildHasherDefault<KeyHasher>>;
 
     /// The exclusive or of the one literal on `atom`, taken or refused.
     fn literal<A: Literal>(atom: &A, taken: bool) -> Tag<A> {
@@ -1822,7 +1910,9 @@ mod xor {
     }
 
     /// The exclusive or of the atoms of the tree under `n`, built for each tree node below that has
-    /// none yet, children first, from a stack. The nodes built are held until their parents are.
+    /// none yet, children first, from a stack. The parts of the children of the tree nodes not yet
+    /// built are held on a second stack, each by its tree node's id, above those of the nodes
+    /// visited before: when a node is built, those of its children are the top ones.
     fn node<A: Literal>(n: &Arc<Set<A>>) -> Part<A> {
         // A node with no children is the literal of its atom, and takes no entry in the table.
         let known = |n: &Arc<Set<A>>| match (&n.left, &n.right) {
@@ -1832,36 +1922,66 @@ mod xor {
         if let Some(x) = known(n) {
             return x;
         }
-        let mut held: BTreeMap<u64, Part<A>> = BTreeMap::new();
+        let mut held: Vec<(u64, Part<A>)> = Vec::new();
         let mut stack = vec![(n, false)];
         while let Some((m, ready)) = stack.pop() {
             if !ready {
                 stack.push((m, true));
                 for c in [&m.left, &m.right].into_iter().flatten() {
                     match known(c) {
-                        Some(x) => {
-                            held.insert(c.id, x);
-                        }
+                        Some(x) => held.push((c.id, x)),
                         None => stack.push((c, false)),
                     }
                 }
                 continue;
             }
-            let side = |c: &Option<Arc<Set<A>>>| {
-                (c.as_ref()).map(|c| {
-                    (held.get(&c.id).cloned()).expect("a tree node's children are built before it")
-                })
-            };
+            let (mut l, mut r) = (None, None);
+            for c in [&m.left, &m.right].into_iter().flatten() {
+                let (id, x) = held
+                    .pop()
+                    .expect("a tree node's children are built before it");
+                match m.left.as_ref().is_some_and(|c| c.id == id) {
+                    true => l = Some(x),
+                    false => r = Some(x),
+                }
+                debug_assert!(
+                    m.left.iter().chain(&m.right).any(|c| c.id == id),
+                    "{}",
+                    c.id
+                );
+            }
             let k = Part::literal(m.key.0.clone());
-            let x = match (side(&m.left), side(&m.right)) {
+            let x = match (l, r) {
                 (Some(l), None) => xor2(&l, &k, Some(m)),
                 (None, Some(r)) => xor2(&k, &r, Some(m)),
-                (Some(l), Some(r)) => xor2(&xor2(&l, &k, None), &r, Some(m)),
+                (Some(l), Some(r)) => xor2(&inner(&l, &k), &r, Some(m)),
                 (None, None) => unreachable!("a tree node with no children is a literal, known"),
             };
-            held.insert(m.id, x);
+            held.push((m.id, x));
         }
-        held.remove(&n.id).expect("the root is built last")
+        let (id, x) = held.pop().expect("the root is built last");
+        debug_assert!(id == n.id && held.is_empty(), "the root is built last");
+        x
+    }
+
+    /// `l ^ k` for the part `l` of a tree node's left subtree and the literal `k` of its atom: the
+    /// live one of the thread, or made by [`xor2`] and kept.
+    // Complexity tradeoff: a lookup in a table for each tree node with two children, and an entry
+    // kept while the inner exclusive or lives, against building it again, six expressions and a
+    // pair, each made and later freed, when the left subtree and the atom are those of a node
+    // that lives: on a literal added below the node's right, and for the nodes that a split
+    // leaves on the left. Measured on parity built a literal at a time (KERNEL-parity-cost).
+    fn inner<A: Literal>(l: &Part<A>, k: &Part<A>) -> Part<A> {
+        let key = (l.id(), k.id());
+        if let Some(x) = A::table(|t| t.inners.get(&key).and_then(Weak::upgrade)) {
+            return Part::Expr(x);
+        }
+        let x = xor2(l, k, None);
+        if let Part::Expr(e) = &x {
+            // An entry left by a node dropped on another thread is replaced.
+            A::table(|t| t.inners.insert(key, Arc::downgrade(e)));
+        }
+        x
     }
 
     /// `p&!q | !p&q`, made as it stands, with its complement `p&q | !p&!q` held as its own; both
@@ -1910,18 +2030,27 @@ mod xor {
     /// complement of one), over disjoint sets of atoms: the halves of a pair, which [`node`]
     /// takes from a tree node's subtrees and its own atom. It is the part `a.zip(b, Op::And)`
     /// makes, without the search `Connect::zipped` runs, none of whose rules fits such operands:
-    /// they are not complements and not equal, since their atoms differ; only two literals are
-    /// two lists, joined as a chain; neither is an operand of `u&v | !u&!v` under `Or`, since the
-    /// halves of an exclusive or are meets, which are no exclusive or in their one form; an
-    /// exclusive or is no choice, since both of its halves' operands have their complements in
-    /// the other half (two conditions fit); and they are not `(!c|x) & (c|y)`, since the
-    /// complement of a meet made here is a union or `Not` of it, never a meet over other atoms.
+    /// they are not complements and not equal, since their atoms differ; two literals are two
+    /// lists, joined as a chain, which is built here at once; neither is an operand of
+    /// `u&v | !u&!v` under `Or`, since the halves of an exclusive or are meets, which are no
+    /// exclusive or in their one form; an exclusive or is no choice, since both of its halves'
+    /// operands have their complements in the other half (two conditions fit); and they are not
+    /// `(!c|x) & (c|y)`, since the complement of a meet made here is a union or `Not` of it, never
+    /// a meet over other atoms.
     /// So the meet is the expression of the two, ordered as `Connect::zipped` orders them.
     /// The test `types::bdd::tests::the_halves_of_exclusive_ors_meet_as_zip_meets_them`
     /// compares the two on random exclusive ors. The search took about three quarters of the work
     /// of parity built a literal at a time (SCALE-log-offset, COMPLEXITY K87).
     pub(super) fn meet<A: Literal>(a: &Part<A>, b: &Part<A>) -> Part<A> {
-        if let (Part::Bdd(_), Part::Bdd(_)) = (a, b) {
+        if let (Part::Bdd(x), Part::Bdd(y)) = (a, b) {
+            // Two literals on two atoms meet as the complement of the block that refuses both:
+            // the list `Bdd::and_literal` makes, without its search of the list for the atom.
+            if let (Some((u, s)), Some((v, t))) = (x.as_literal(), y.as_literal())
+                && u != v
+            {
+                let block = set::insert(Some(&set::single((u.clone(), !s))), (v.clone(), !t));
+                return Part::Bdd(Bdd::assemble(vec![(false, Some(block))], &Bdd::Leaf(true)));
+            }
             return a.zip(b, Op::And);
         }
         let (a, b) = if a.before(b) { (a, b) } else { (b, a) };
@@ -2057,12 +2186,12 @@ mod list {
                 }
             });
             for c in [self.left.take(), self.right.take()].into_iter().flatten() {
-                A::free(Owned::Cell(c));
+                Owned::Cell(c).release();
             }
             for v in &mut self.view {
                 if let Some((hi, lo)) = v.take() {
-                    A::free(Owned::Part(Part::Bdd(hi)));
-                    A::free(Owned::Part(Part::Bdd(lo)));
+                    Owned::Part(Part::Bdd(hi)).release();
+                    Owned::Part(Part::Bdd(lo)).release();
                 }
             }
         }

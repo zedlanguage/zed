@@ -926,7 +926,11 @@ fn parity_built_a_literal_at_a_time_scales() {
     // whose search for a simpler form (`choice_of`, `same_as_not`, `choice`, `negate`) never
     // finds one for the halves of an exclusive or (see `xor::meet`). With `xor::meet` a node
     // costs about 34,000: 6.51G and 66.12G instructions at 2,048 and 16,384 (10.2 times),
-    // 696M and 6.96G bytes (10.0 times), 25 s at load 6 (SCALE-log-offset).
+    // 696M and 6.96G bytes (10.0 times), 25 s at load 6 (SCALE-log-offset). Releasing a
+    // shared handle in place, one table probe per freed node, the inner nodes' exclusive ors
+    // kept in a table, two literals met at once and the exclusive or tested before `zip`'s
+    // frames bring it to 4.99G and 50.09G (10.0 times), 489M and 4.97G bytes (10.2 times),
+    // 28 s at load 31 where the code before took 54 s at load 30 (KERNEL-parity-cost).
     let n = 1 << 11;
     let lits = scaling::inputs(n, |m| {
         (0..SHAPES)
@@ -1263,9 +1267,15 @@ fn the_connectives_on_parts_scale_by_depth() {
     });
 }
 
-/// The entries of this thread's tables of tuple nodes, in all: sets, cells and exclusive ors.
+/// The entries of this thread's tables of tuple nodes, in all: sets, cells, exclusive ors and
+/// the exclusive ors of inner nodes.
 fn entries() -> usize {
-    Row::table(|t| t.sets.values().map(|b| b.len()).sum::<usize>() + t.cells.len() + t.xors.len())
+    Row::table(|t| {
+        t.sets.values().map(|b| b.len()).sum::<usize>()
+            + t.cells.len()
+            + t.xors.len()
+            + t.inners.len()
+    })
 }
 
 /// The exclusive or of the atoms `base..base + k`.
