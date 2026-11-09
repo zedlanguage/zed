@@ -1695,10 +1695,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| EMPTY-arg-needs | impl attempt 1 | 2026-11-09 08:28 | ready bb0cbe1c on wt/empty-arg, spec 4a91f5e on wt/empty-arg-spec; rebased on batch 81, 2 expectations updated for PRINT-fn-parens, l01_26 81 pieces 0 failed (l |
 | EMPTY-call-unused | impl attempt 1 | 2026-11-09 09:59 | reproduced on bb0cbe1c: k(x,y)=y; if b { k(h(1), 1) } else { 2 } typed 2 (arm dropped), take(k(h(1), "s")) accepted; load 45.23 |
 | GROUP-closure-order | running | 2026-11-09 10:11 |  |
-| GROUP-cycle-dup | impl attempt 1 | 2026-11-09 05:04 | ready 2f04cc3aa732c6a1fcc5db91a98218c05e921e2a on wt/group-cycle-dup, spec 167e1b7 on wt/group-cycle-dup-spec; follow-up GROUP-cycle-dup-names queued |
 | GROUP-cycle-dup-names | impl attempt 1 | 2026-11-09 10:09 | started; worktree wt/group-cycle-names from wt/group-cycle-dup 2f04cc3a |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | GROUP-search-hang | impl attempt 1 | 2026-11-09 10:11 | started with GROUP-closure-order in /home/luke/Work/wt/group-search-hang on wt/group-refusal-fu b5469127 |
@@ -1710,7 +1708,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PROJECT-canon-precision | running | 2026-11-09 09:27 |  |
 | S22-shapes-linear | impl attempt 1 | 2026-11-09 08:29 | measured main 01eb1be0, 64k holes, k=4/8/16/32: shape0 1.08/2.02/5.91/21.5 s (superlinear), shape3 0.94/1.56/2.61/5.30 s, shape4 0.41/0.76/1.38/2.55 s, shapes 1 |
 | S22-split-holes | impl attempt 1 | 2026-11-09 08:29 | shared function change in preimage.rs: Tx::start split into Tx::begin + Tx::start_from (same behavior), Kept also keeps SharedInts across class runs, Tx::invert |
-| TY-row-class | impl attempt 1 | 2026-11-09 08:17 | ready 815bb114 on wt/ty-row-class: classes kept per row; Holders 8.8k/2.7k..11.5k/5.4k per tuple cold/warm (was 15.9k..18.8k), Near 9.6k/3.6k..11.5k/5.4k (was 2 |
 | TY-row-hash | impl attempt 1 | 2026-11-09 09:57 | started; worktree wt/ty-row-hash stacked on wt/ty-row-class 815bb114, rebased onto origin/main |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
