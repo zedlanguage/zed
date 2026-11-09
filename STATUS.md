@@ -1664,19 +1664,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CARET-spacing | impl attempt 1 | 2026-11-09 04:56 | started; worktree /home/luke/Work/wt/caret from origin/main 766dd0ea; spec branch wt/caret-spec edcd72e |
-| EMPTY-print | impl attempt 1 | 2026-11-05 17:01 | ready: ca3fd999 on wt/empty-print; 203/204 pieces pass, l01_37a fence snapshot fails as on main |
 | GROUP-refusal | impl attempt 1 | 2026-11-05 04:07 | GROUP-refusal-share control: old per-member re-check on the new test (m=n Box members, ring of n): first runs allocated 63443106 and 3651796982 bytes at 128 and |
-| L2.8 | orch attempt  | 2026-11-05 04:07 | reviewed: ready (bbc904fe, spec e98b3dd); l02_03 failure on main is from A13 Never in DESIGN, sent to EMPTY-print; BUILD-stale-seed logged |
-| LIT-bare-spec | impl attempt 1 | 2026-11-09 04:30 | ready: zed 6d1302c (wt/lit-bare-spec), zed-impl 8b054aaa (wt/lit-bare); 31 pieces 0 failed; LIT-bare opened |
 | REFUSE-group-site | impl attempt 1 | 2026-11-05 04:07 | ready 39d523eb on wt/group-refusal: refused check names the head group and lists its definitions; group_site 3 tests, control fails both pins |
 | SCALE-casts-spread | impl attempt 1 | 2026-11-09 04:01 | reproduced: 8m check with 100 rejections is 30.39e9 instructions, now and then 30.63e9; with getrandom fixed by LD_PRELOAD the outlier repeats exactly for a giv |
-| T2-ty | impl attempt 1 | 2026-11-03 09:36 | follow-up edge fix needs orchestrator overrides: T11-ty notNeeds [TY-pairs-constant, TY-sub-constant]; TY-pairs-constant and TY-sub-constant notNeeds [T2-ty]; c |
-| TRIVIAL-models-study | merge attempt 1 | 2026-11-09 01:16 | back to merging: l22_08 one_large_atom_scales 11.5x > 11.4 bytes limit, deterministic |
 
-Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
-
-- SCALE-fix-kernel (branch wt/scale-fix-kernel; COMPLEXITY.md K86): the 12 tests ignored under it pass the Part G limit; SCALE-log-offset open.
+Merged into local main and not yet pushed: none.
 
 ## Open points
 
