@@ -1718,19 +1718,20 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| GROUP-overlaps-unfold | impl attempt 1 | 2026-11-09 12:48 | docs written (COMPLEXITY K36, K93; STATUS; ZED_PORT_GAPS); final run with doc check of l01_23..26, zed_kernel, s_01f; load 35.56 34.59 30.37 |
+| GROUP-overlaps-unfold | running | 2026-11-09 12:48 | deletes: none run, tried or canceled in this task; files I want removed (scratchpad): old_overlaps.rs new_overlaps.rs new_overlaps2.rs overlaps_doc.txt overlaps |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | MSG-fresh-name-clash | running | 2026-11-09 13:30 | noted for batch 88 (DOCS-TODO 54 and COMPLEXITY F140 renumber); deletes: none |
 | MSG-growth-projection-cause | impl attempt 1 | 2026-11-09 12:41 | ready at 2e4d1da9 on wt/growth-cause; 491 test pieces pass, load 17 to 37; deletes: none |
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | negative controls run once, reverted: shortcut taking both arms as reached fails the decided-cases test and random part 1 at seed 1; flag missing the finite-set |
-| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | reference lto=false (thin-local) full rebuild 252 s -j4: block 4000 623M, fees1 1000 900M, fees1 4000 3841M, fees100 4000 758M, boundblock 815M (16-18% below lt |
+| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | B1 (lto off; cgu=1 for all deps, zed-alloc-count, zedc-preimage) full rebuild 317 s: block 672M, fees1 1000 920M, fees1 4000 3917M, fees100 795M, boundblock 865 |
 | PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | negative control on merged 5fcc15f1: new test deep_let::the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block fails, 1000 blocks peak 6.53 MB left 6 |
 | PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | started, worktree wt/model-keys on origin/main 797f3be4 |
 | PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | differential vs main's tighten/hull_side test by test: 1,078,090 + 25,046 calls identical, 60 differ (all hull_side refusals Growth/Shadows on main now exact bo |
 | PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | ready cf7cdd28 on wt/pres-small-cost (rebased on 5414631a); 490 pieces 0 failed, load 17-57; follow-ups PRES-small-front, PRES-model-keys queued |
 | PRINT-group-site-defs | impl attempt 1 | 2026-11-09 13:49 | first run of affected groups after the printer change (182 pieces), load 39.18 34.46 27.64 |
 | PROJECT-hull-credit-lower | impl attempt 1 | 2026-11-09 12:10 | ready: wt/hull-credit 9664b8b9 rebased on origin/main 98d5d23d, 493/493 pieces pass, load 15-51; ledger ready + TIGHTEN-each-whole |
-| RENAME-orderedValues | impl attempt 1 | 2026-11-09 14:20 | ready 41b71c18 (spec b193f13): 36 pieces 0 failed after rebase, load 19-40; 30 grep hits left, all Rust identifiers |
+| R2-frames-limit | impl attempt 1 | 2026-11-09 14:50 | started; worktrees wt/r2-frames and wt/r2-frames-spec made |
+| RENAME-orderedValues | impl attempt 1 | 2026-11-09 14:20 | reopened for IR op rename and sort(desc) shorthand |
 | STAR-anchor-orders | impl attempt 1 | 2026-11-09 13:40 | started in /home/luke/Work/wt/anchor-orders on 5fcc15f1, load 19.83 |
 | TEST-lazy-split | impl attempt 1 | 2026-11-09 13:40 | started on origin/main 5fcc15f1 |
 
