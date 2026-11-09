@@ -1723,20 +1723,21 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | MSG-fresh-name-clash | running | 2026-11-09 13:30 | noted for batch 88 (DOCS-TODO 54 and COMPLEXITY F140 renumber); deletes: none |
 | MSG-growth-projection-cause | impl attempt 1 | 2026-11-09 12:41 | ready at 2e4d1da9 on wt/growth-cause; 491 test pieces pass, load 17 to 37; deletes: none |
-| PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | ready f7e39a3e on wt/if-shortcut-diff: differential tests, no difference; l01_39+s_01f 59 pieces 0 failed; clippy, fmt, docs (with preimage-ref) clean |
-| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | C2 (C + zedc-preimage cgu=16): block 719M, fees1 1000 1016M, boundblock 938M, no gain; preimage edit 16.1/15.7 s |
+| PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | repair ready b9a464bd: reference walk now same order as the walk, quadratic copy deleted after 8,000-seed agreement; walk's own superlinear forms (a)-(c) open f |
+| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | E (C4 + kernel/int/lattice/presburger/stage cgu4): 682M/963M/4136M/810M/886M; kernel one-line edit 81.9 s, revert 71.0 s (load 25-38); rejected |
 | PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | negative control on merged 5fcc15f1: new test deep_let::the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block fails, 1000 blocks peak 6.53 MB left 6 |
-| PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | random test (4000 cases; 60000 once: 49692 points, 46249 leave atoms out, 0 fail holds) finds no soundness bug; atoms lost in absorb/repair (own 49990, other di |
+| PA-walk-nest-cost | impl attempt 1 | 2026-11-09 15:39 | started; worktree wt/walk-nest-cost from origin/main dfd7a00f + if-shortcut-diff 3 commits |
+| PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | ready wt/model-keys 851e8143: not a soundness bug (linear); doc + seeded test model_keys 3/3; 499 pieces 0 failed; no code change, instruction counts unchanged; |
 | PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | deletes: none run, tried or canceled in this task; scratch files left for the orchestrator (listed in report) / load 23.14 |
 | PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | ready cf7cdd28 on wt/pres-small-cost (rebased on 5414631a); 490 pieces 0 failed, load 17-57; follow-ups PRES-small-front, PRES-model-keys queued |
 | PRES-small-front | impl attempt 1 | 2026-11-09 14:43 | started on cf7cdd28 (stacked on wt/pres-small-cost), worktree small-front |
 | PRINT-group-site-defs | impl attempt 1 | 2026-11-09 13:49 | first run of affected groups after the printer change (182 pieces), load 39.18 34.46 27.64 |
-| PRINT-is-pattern | impl attempt 1 | 2026-11-09 14:57 | started in /home/luke/Work/wt/is-pattern, stacked on wt/group-site-defs a411cea5 |
+| PRINT-is-pattern | impl attempt 1 | 2026-11-09 14:57 | ready c53d32f4 on wt/is-pattern (stacked on wt/group-site-defs a411cea5): kernel prints `is T`; 361 pieces pass with doc check, load 11.8 to 21.3; now 20.33 20. |
 | PROJECT-hull-credit-lower | impl attempt 1 | 2026-11-09 12:10 | ready: wt/hull-credit 9664b8b9 rebased on origin/main 98d5d23d, 493/493 pieces pass, load 15-51; ledger ready + TIGHTEN-each-whole |
-| Q43-spec | impl attempt 1 | 2026-11-09 15:05 | started; worktree /home/luke/Work/wt/q43-spec on origin/main 4929002 |
+| Q43-spec | impl attempt 1 | 2026-11-09 15:05 | ready: wt/q43-spec 1f505cf (DESIGN e0c5877, QUESTIONS 4e0eb4a, 1f505cf); cite rc 0; sync --check rc 1 from fence line shifts only (control rc 0); load 15.28 20. |
 | R2-frames-limit | impl attempt 1 | 2026-11-09 14:50 | started; worktrees wt/r2-frames and wt/r2-frames-spec made |
 | RENAME-orderedValues | impl attempt 1 | 2026-11-09 14:20 | deletes: none run (delete freeze); scratch files left for the orchestrator (listed in report) / load 21.25 |
-| STAR-anchor-orders | impl attempt 1 | 2026-11-09 13:40 | started in /home/luke/Work/wt/anchor-orders on 5fcc15f1, load 19.83 |
+| STAR-anchor-orders | impl attempt 1 | 2026-11-09 13:40 | ready wt/anchor-orders e25eb59c: random-order needs test (<= 3(d+1), all seeds hold), random build 10.0x linear; controls repick-no-anchor and contribute-no-rea |
 | TEST-lazy-split | impl attempt 1 | 2026-11-09 13:40 | ready: wt/lazy-split dcdf84a6; lazy 1 piece of 44-47 s -> 16 pieces, slowest 11.7 s at load 40.6; l01_39 + s_01f with docs 68 pieces 0 failed (load 27.9-43.2);  |
 | TEST-runner-one-worktree | impl attempt 1 | 2026-11-09 14:39 | ready 5f1b4307 on wt/runner-one-worktree: flock refusal per log dir; old script reproduced false failures (8 rc=0 lines, failed: 2); fixed: 12/12 + 5/5 concurre |
 
