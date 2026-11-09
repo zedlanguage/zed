@@ -2163,9 +2163,22 @@ impl<'m> Searching<'m> {
             // construction, exponential in the recursive types (the lists of int against lists
             // with a 1 at each place from the end up to `n`, and beyond it, cost 13.2G
             // instructions at `n` 8; whether such a union holds every list is NFA universality,
-            // PSPACE-complete). Trigger: two tuple types this pass takes out of one component
-            // with different recursive types on a cycle there, in the decision of a verdict or
-            // the search of a value after it. Tests:
+            // PSPACE-complete). Hardness of what is refused: an automaton with states `q`,
+            // letters `1..k` and moves `q -a-> q'` becomes, in linear size, the group
+            // `X_q = cons(a, X_q') | ..`, with `| nil` where `q` accepts; it accepts every word
+            // exactly when `list(1..k)` less `X_q0` is empty. This search answers in polynomial
+            // time on every difference and is exact on every one it does not refuse, so, unless
+            // P = PSPACE, the refused ones are not all decidable in polynomial time. The end
+            // family is the standard case: its smallest deterministic form, read from the
+            // front, has `2^n` states. Easy differences refused with it: the end family itself
+            // (Empty; read from the end it still forks, between the lists with no 1 and those
+            // with a 1 past place `n`), the same family less one place (Inhabited: a value is
+            // `[1, 0, ..]`; reversed by hand the search finds it, but the kernel has no reversal
+            // of list types, follow-up REFUSAL-reverse-words), and periodic lists mixing periods
+            // (unary universality, coNP-complete: the shortest value can be as long as the
+            // product of the periods). Trigger: two tuple types this pass takes out of one
+            // component with different recursive types on a cycle there, in the decision of a
+            // verdict or the search of a value after it. Tests:
             // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
             // and `each_refusal_names_its_cause` (`nfa`). COMPLEXITY.md K35. A complete solution
             // needs the subset construction over the forked tuple types, exponential in them.
@@ -2271,8 +2284,14 @@ impl<'m> Searching<'m> {
             if forking && (0..g.r.len()).any(|j| g.forks(&open, j)) {
                 // Complexity tradeoff: `verdict` refuses a part in which two open tuple types
                 // differ in a recursive component on one box, instead of following both. Why:
-                // following both is the subset construction, exponential in the recursive types;
-                // `is_empty` stops here too and counts the type as inhabited. Trigger: a
+                // following both is the subset construction, exponential in the recursive types
+                // (hard by the reduction at the fork in `narrow_tuples`); `is_empty` stops here
+                // too and counts the type as inhabited. A union of open tuple types less one
+                // other, as `(P(6,4) | P(12,4))` less `P(3,1)` of lengths modulo periods, is
+                // decided exactly by the split into the open tuple types below, but run before
+                // this refusal the split is order `n` pieces by a part of `n` nodes on
+                // `refusals::a_difference_of_forked_unions_is_refused_in_its_size` (62 times the
+                // bytes at 8 times `n`; REFUSAL-nfa-refuse, not kept). Trigger: a
                 // component on which the open tuple types fork, outside seeding. Tests:
                 // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`fork_empty`) and
                 // `a_value_is_sought_before_a_refusal` (`fork`). COMPLEXITY.md K26 and the Kept

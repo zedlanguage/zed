@@ -4824,8 +4824,10 @@ pub enum Refusal {
     /// A tuple part holds two tuple types open on one box that differ in a recursive
     /// component, or two that narrowing takes out of one component with different recursive
     /// types there, each on a cycle of its group (`Type::on_cycle`); and no value was found.
-    /// Following both is the subset construction, exponential in the recursive types (NFA
-    /// universality, PSPACE-complete).
+    /// Following both is the subset construction, exponential in the recursive types; every
+    /// NFA universality question (PSPACE-complete) is such a difference of list types, and
+    /// unless P = PSPACE the ones refused here are not all decidable in polynomial time
+    /// (COMPLEXITY.md K35).
     Fork,
     /// Negated lists of periodic lengths: whether they cover the lengths left is the covering
     /// problem for residues, which is NP-hard.
@@ -4848,10 +4850,9 @@ impl Refusal {
     pub fn message(self) -> String {
         let text = match self {
             Refusal::Fork => {
-                "no value of it was found, and two tuple types in it differ in one component, \
-                 where each holds a recursive type that contains itself again; deciding it would \
-                 follow both together with every set of their tails, a number of cases that \
-                 grows exponentially with these types"
+                "no value of it was found, and two of the tuple types involved differ in a \
+                 component whose type refers back to itself; following both at once can take \
+                 time exponential in the size of the types"
             }
             Refusal::Residues => {
                 "its lengths are residues of periodic lists, and deciding whether the excluded \
