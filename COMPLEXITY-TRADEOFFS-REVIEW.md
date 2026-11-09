@@ -209,3 +209,55 @@ fix was made in both.
 | `product.rs` `Scope::enumerate` | 44d370e7 | product of open names, exponential | one open name only | C6 | complete | none |
 | `product.rs:4890` (group searched) | 63a6f9c4 | repair from part, many visits | whole group search per failure | S40 | complete | none |
 | `threshold.rs:403` (hub search) | 37a8466a | one propagation, O(N log N) | O(log W) propagations | S4-ti | complete | none |
+
+## crates/zedc-presburger
+
+Line numbers are those before this review's edits.
+
+| Site | Commit | Naive version, complexity | Used version, complexity | Tradeoffs | Before | Action |
+|---|---|---|---|---|---|---|
+| `presburger.rs` `Formula::and_keeping` | eca1d8dc | merge, O(d k) copies | kept part, not merged | duplicate constraints kept (S31b) | complete | none |
+| `presburger.rs` `Formula::or_keeping` | eca1d8dc | merge, O(d k) | kept part | later tests split (S31b) | complete | none |
+| `presburger.rs` `complementary` | 4993072f | content hash per `or`, size × depth | constraint disjuncts only | compound `g \|\| !g` not found (S20) | complete | none |
+| `presburger.rs` `satisfiable_inner` | f611a272 | one ask without implied rows | rows first, retry on refusal | at most two asks | partial: no naive version | added naive/used |
+| `presburger.rs` `drop_jointly_empty` | c13b42a6 | (tree of halves, path remade) | O((m + k) log k) per pass, O(k) passes at worst | hub measured 9 to 31 passes (DISJ-incremental) | complete | none |
+| `presburger.rs:1298` (rows of one hash) | acd91255 | all pairs, O(n²) | hash groups, O(n) expected | pairwise within a collision | partial: no naive or used cost | added naive/used |
+| `presburger.rs` `or_old` | 01d71b2e | new path only | old path on refusal, O(n²) solves | DECIDE-disj-chain | complete | none |
+| `presburger.rs` `decide_inner` | 01d71b2e | one ask without implied rows | rows first, retry on refusal | at most two asks | partial: no naive version | added naive/used |
+| `presburger.rs` `Renamed` | eaa8e0c2 | canonical labeling, exponential | color refinement, refusal on ties | NAME-ties-or | complete | none |
+| `presburger.rs` `settle_tied` | eaa8e0c2 | probe, cubic (22 ms to 10.8 s) | one solve after settling | refusal `Unordered` | complete | none |
+| `presburger.rs` `pick` (no backtracking) | 44d370e7 | DPLL(T), exponential | first disjunct, never undone | `Refusal::Disjuncts` (S16, S18) | complete | none |
+| `presburger.rs` `pick` (fast reading) | 0125606a | whole-group reading, O(n²) | by halves, fallback O(n²) | no answer lost | complete | none |
+| `presburger.rs` `shadow` | 0125606a | Fourier-Motzkin, doubly exponential | exact eliminations that add no terms, O(m log m) | dense core kept | complete | none |
+| `presburger.rs:3183` (`probe` propagations) | cf275a26 | conflict explanation | r propagations, O(r log m) settles | PRES-guarded-chain | complete | none |
+| `presburger.rs:3343` (chain bounds) | cf275a26 | one pass along definitions | O(k²) passes, cubic | item PRES-settle-chain-rounds | complete | none |
+| `presburger.rs` `bounds_refute` | 78e5f708 | propagate to fixed point, rounds grow with magnitudes | two readings, O(n log n) | proofs needing more carries | complete | none |
+| `presburger.rs` `Parts::of` | eca1d8dc | shared chunk read once | O(d k) at separate branches; measured 50.7× | S31b | complete | none |
+| `presburger.rs` `absorb` | 71a3442d | solve per disjunct, quadratic | unit-coefficient removal, linear × log | DECIDE-disj-chain | complete | none |
+| `presburger.rs` `settle` | 01d71b2e | n solves of the group | by halves O(n log n); dense core quadratic | no answer lost | complete | none |
+| `presburger.rs` `splinters` (depth) | b79d6715 | Pugh's enumeration, exponential in coefficients and depth | live-variable bound | `Refusal::Shadows` (S18) | complete | none |
+| `presburger.rs` `splinters` (batches) | b79d6715 | every splinter, quadratic | stop at first refused batch | NAME-ties | complete | none |
+| `presburger.rs` `System::dominated` | 97add2a2 | half-plane intersection, O(log p) | O(p) per row, p ≤ 10 measured | Q1-LOCAL | complete | none |
+| `presburger.rs` `System::shrink` | fb9b82a6 | per-pair flags kept | O((r + z) t log n) | `Refusal::Growth` (Q1-LOCAL) | complete | none |
+| `presburger.rs:7098` (box stage refusal) | 128668f1 | full Omega, doubly exponential | five box points, one pass | `Refusal::Growth` (S18, Q1-ROWBOX) | complete | none |
+| `presburger.rs:7150` (tie refusal) | eaa8e0c2 | every order, exponential | refuse on tie | `Refusal::Tie` (NAME-ties) | complete | none |
+| `presburger.rs` `Omega::cycles` | bbed2a02 | search after every step, O(m·n) | once, O(m log m + n) | zero-sum cycles missed (OMEGA-cycle-growth) | complete | none |
+| `presburger.rs` `resolve` | 97add2a2 | resolve all first, O(n²) | O(w log w) per row, O(m n) on late cancellation | Q1-LOCAL | complete | none |
+| `presburger.rs` `project` | 44d370e7 | every disjunct combination, exponential | meet of unions | wider set (S7, S16) | complete | none |
+| `presburger.rs` `project_each` | acd91255 | both writings each time, 2× | second writing on refusal | PROJECT-each-canon | complete | none |
+| `presburger.rs` `project_each_boxed` | 564bef57 | integer program | box stage bounds, one pass | wider (PROJECT-growth-box) | complete | none |
+| `presburger.rs:8430` (hull bisection) | 01d71b2e | before: 41.6 s at 128 stages | O(n log n) on chains; O(n²) solves by cases | DISJ-incremental | complete | none |
+| `presburger.rs` `summarize` | 873f1a86 | level's own formula, O(d²) measured 51.1× | this formula | wider hull (S31) | complete | none |
+| `presburger.rs` `part_bounds` | 355e67f4 | integer program per hull, NP-hard | O(m log n) bounds | wider bounds (C2) | complete | none |
+| `presburger.rs:9892` (tiers) | 355e67f4 | see `Tier` | O(sides × cluster), O(sides × part) | C2 | complete | none |
+| `presburger.rs` `Tier` | 355e67f4 | integer program per side | Local O(sides × cluster), Whole O(sides × part) | measured 52 ms to 3.86 s (C2-local-tier) | complete | none |
+| `presburger.rs` `products` | 44d370e7 | CAD, doubly exponential; integers undecidable | products of premise pairs | `NotProved` (C2) | complete | none |
+| `deep.rs` `Flat` | eca1d8dc | (no shorter printed form) | written out, exponential in a chain | compare and hash linear | complete | none |
+| `deep.rs` `Formula::cmp` | 9e80c1c5 | read through, N | visited set, linear; O(e log N) with `Canon` | S31b | complete | none |
+| `deep/canon.rs` module | 9e80c1c5 | hash, linear but not deciding | parse O(k log N), O(n²) when N exponential | author accepted 2026-11-04 | complete | none |
+| `extend.rs` `Extending::defined` | 5a4987d5 | decide whole | extend kept part's answers | measured LOAD-holes-mod, LOAD-mod-chain | complete | none |
+| `extend.rs:311` (each part tried) | 3aa6326c | largest part only, decided whole twice | O(kept parts × whole) before whole | LOAD-chain-affine | complete | none |
+| `extend.rs:341` (faces) | 36279a9f | implication between clauses, co-NP-hard | merge equal, holes, bounds; O(n²) otherwise | LOAD-disj-residue | complete | none |
+| `extend.rs` `project` | 7d23ca0c | product of disjunctions, exponential | O(r d) per group | shared atom kept | complete | none |
+| `extend.rs` `decided` | a7032e3f | one shape asked | second shape on refusal | measured 42/34 refusals | complete | none |
+| `extend.rs` `Summaries::summary` | 4e48ee57 | every definition per test, O(n²) | summary per definition, O(n) | LOAD-chain-sep | complete | none |

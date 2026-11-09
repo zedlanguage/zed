@@ -898,6 +898,8 @@ fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
 // Complexity tradeoff: as in [`decide_inner`], a formula refused with the implied rows is
 // asked twice, so it costs up to twice what it cost before; the first ask stops at the
 // refusal. No answer is given up: one refused with the rows is asked as before without them.
+// Naive version: one ask without the implied rows; used: the ask with them first, and without
+// them only on a refusal, at most two asks of one size.
 fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
     let (p, gone) = absorbed(f, &[]);
     let implied = if old_path() {
@@ -1317,6 +1319,8 @@ fn opposite_rows(gs: &[&Formula]) -> BTreeSet<usize> {
     // `-t` for one `t`, two at most, since `Formula::and` holds equal rows once, unless two rows
     // share a 64-bit hash by chance. Trigger: such a collision; the size plays no part. Test:
     // `l01_39_reduced_product::pendants::rewritten_parts_give_one_answer_first_half`.
+    // Naive version: every pair of rows compared, O(n²) for n rows; used: rows grouped by hash,
+    // O(n) expected, pairs compared only within a group of one hash.
     for rows in by.values().filter(|rows| rows.len() > 1) {
         for (n, &i) in rows.iter().enumerate() {
             for &j in &rows[n + 1..] {
@@ -1384,6 +1388,8 @@ fn or_old<T>(run: impl Fn() -> Result<T, Refusal>) -> Result<T, Refusal> {
 /// them, so no answer given without them becomes a refusal.
 // Complexity tradeoff: a formula refused with the implied rows is asked twice, so it costs
 // up to twice what it cost before; the first ask stops at the refusal.
+// Naive version: one ask without the implied rows; used: the ask with them first, and without
+// them only on a refusal, at most two asks of one size.
 fn decide_inner(f: &Formula) -> Result<bool, Refusal> {
     decide_kept(f, None)
 }
