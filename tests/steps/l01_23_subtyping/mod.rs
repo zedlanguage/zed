@@ -15,6 +15,7 @@ mod cases;
 mod cells;
 mod deep_rec;
 mod group_oracle;
+mod group_refusal;
 mod judgments;
 mod listing;
 mod one_pass;

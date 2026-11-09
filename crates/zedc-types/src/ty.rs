@@ -15,7 +15,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use zed_kernel::frames::{Deep, Stack};
-use zed_kernel::types::{Type as KType, Verdict};
+use zed_kernel::types::{Refusal, Type as KType, Verdict};
 use zed_kernel::{Items, Universe, Value};
 
 use zedc_syntax::lex::Span;
@@ -5049,7 +5049,7 @@ impl Ty {
             return undecided(&why);
         }
         match self.verdict(other) {
-            Verdict::Refused(r) => undecided(&r.message()),
+            Verdict::Refused(r) => self.refused_in_group(other, r),
             // A function that a cover the checker refuses would take ([`why_unfit`]).
             _ => self
                 .fns
@@ -5057,6 +5057,32 @@ impl Ty {
                 .find_map(|s| other.fns.iter().find_map(|q| why_unfit(s, q)))
                 .map_or_else(String::new, |why| format!(": {why}")),
         }
+    }
+
+    /// The clause for a check of `self <: other` refused for `cause`. When the check rests on a
+    /// recursive group (`KType::refusal_site`), a second line names the definition it was
+    /// deciding and lists the group's definitions; for a refusal by the group's decider the
+    /// reason names the definitions, the cycles, the tuple and a repair (DESIGN.md L1.23). The
+    /// definitions carry no source place until recursive `type` declarations reach the
+    /// compiler (L2.5), so they are written out.
+    fn refused_in_group(&self, other: &Ty, cause: Refusal) -> String {
+        let site = match (self.exact_kernel(), other.exact_kernel()) {
+            (Some(a), Some(b)) => a.subtype_refusal_site(&b, cause),
+            _ => self.set.subtype_refusal_site(&other.set, cause),
+        };
+        let Some(site) = site else {
+            return undecided(&cause.message());
+        };
+        let why = site.detail.unwrap_or_else(|| cause.message());
+        let mut out = undecided(&why);
+        out += &format!(
+            "\n  the check reads the recursive type `{}`, defined by:",
+            site.head
+        );
+        for d in &site.defs {
+            out += &format!("\n    {d}");
+        }
+        out
     }
 
     /// The meet with `t`, as an `is` test narrows: what of `self` is also in `t`.

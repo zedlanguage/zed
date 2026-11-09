@@ -246,6 +246,7 @@ fn each_refusal_has_its_own_message() {
         Refusal::SharedCells(0),
         Refusal::MorphismSplit,
         Refusal::NoWitness,
+        Refusal::Group,
     ];
     let messages: BTreeSet<String> = all.iter().map(|r| r.message()).collect();
     assert_eq!(messages.len(), all.len());
@@ -262,7 +263,9 @@ fn the_checker_says_when_a_check_was_refused() {
     assert_eq!(
         lists.refused(&covered),
         format!(
-            "; this is not proved wrong: the checker could not decide whether it fits, because {}",
+            "; this is not proved wrong: the checker could not decide whether it fits, because {}\n  \
+             the check reads the recursive type `L`, defined by:\n    \
+             type L = #nil | #cons(int, L)",
             Refusal::Residues.message()
         )
     );

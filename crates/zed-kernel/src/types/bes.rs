@@ -136,9 +136,16 @@ pub enum Answer {
 }
 
 /// Why a component was refused: a tuple cycle among undecided nodes with more than one way
-/// around it and an `And` node that needs two undecided children.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// around it and an `And` node that needs two undecided children. The counts are those of the
+/// first such cycle found; `component` and `tuples` are sets, which do not depend on the order
+/// the nodes are numbered in, for a message to name (item GROUP-refusal).
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Refusal {
+    /// The undecided nodes of the refused component, in increasing order.
+    pub component: Vec<u32>,
+    /// The `And` nodes with two or more undecided children on every tuple cycle of the
+    /// component that is refused for its shape, in increasing order.
+    pub tuples: Vec<u32>,
     /// A node of the refused tuple cycle.
     pub node: u32,
     /// The nodes of the tuple cycle.
@@ -720,7 +727,10 @@ fn refusal(
     stamp: &mut Stamp,
 ) -> Option<Refusal> {
     sc.mark(u_set, true);
-    let mut found = None;
+    let mut found: Option<Refusal> = None;
+    // Every tuple cycle is read, not only the first refused one, so the tuples named do not
+    // depend on the order the cycles are found in; still one pass over the edges.
+    let mut tuples = Vec::new();
     for (cid, tc) in t_sccs.iter().enumerate() {
         if !g.cyclic(tc) {
             continue;
@@ -729,6 +739,7 @@ fn refusal(
             sc.t_comp[v as usize] = cid as u32;
         }
         let (mut internal_edges, mut branching_and, mut branching_or) = (0, 0, 0);
+        let branching = tuples.len();
         for &v in tc {
             stamp.advance();
             let (mut internal, mut undecided) = (0usize, 0usize);
@@ -744,7 +755,10 @@ fn refusal(
             internal_edges += internal;
             if undecided >= 2 {
                 match g.kind(v) {
-                    Kind::And => branching_and += 1,
+                    Kind::And => {
+                        branching_and += 1;
+                        tuples.push(v);
+                    }
                     Kind::Or => branching_or += 1,
                     Kind::Mor | Kind::Top | Kind::Bot => {}
                 }
@@ -754,8 +768,12 @@ fn refusal(
             sc.t_comp[v as usize] = u32::MAX;
         }
         let cyclomatic = internal_edges.saturating_sub(tc.len()) + 1;
-        if cyclomatic >= 2 && branching_and >= 1 {
+        if !(cyclomatic >= 2 && branching_and >= 1) {
+            tuples.truncate(branching);
+        } else if found.is_none() {
             found = Some(Refusal {
+                component: Vec::new(),
+                tuples: Vec::new(),
                 node: *tc.iter().min().expect("a component has a node"),
                 nodes: tc.len(),
                 internal_edges,
@@ -764,11 +782,19 @@ fn refusal(
                 branching_or: branching_or.max(1),
                 gates,
             });
-            break;
         }
     }
     sc.mark(u_set, false);
-    found
+    found.map(|r| {
+        let mut component = u_set.to_vec();
+        component.sort_unstable();
+        tuples.sort_unstable();
+        Refusal {
+            component,
+            tuples,
+            ..r
+        }
+    })
 }
 
 /// Drops edges no least fixed point can use: an `And` node with itself or an `And` parent of it

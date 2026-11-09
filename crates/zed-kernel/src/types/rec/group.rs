@@ -543,7 +543,7 @@ impl Group {
     }
 
     /// `e`, a node of definition `def`'s body, in the surface syntax. Time linear in its text.
-    fn text(&self, def: usize, e: &Node) -> String {
+    pub(in crate::types) fn text(&self, def: usize, e: &Node) -> String {
         Show {
             defs: &self.0.defs,
             params: &self.0.defs[def].params,

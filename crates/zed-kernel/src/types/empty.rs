@@ -192,8 +192,14 @@ fn group_verdicts(members: &[Type]) {
                     Verdict::Inhabited
                 } else {
                     // Complexity tradeoff at `Type::verdict_alone`: neither proved empty nor
-                    // shown inhabited, so refused.
-                    Verdict::Refused(cause.or(d.gave_up).unwrap_or(Refusal::NoWitness))
+                    // shown inhabited, so refused. A member the group's decider refused is
+                    // refused for that, whatever stopped the search, so that its message names
+                    // the definitions, the cycles and the tuple behind it (`Type::refusal_site`).
+                    Verdict::Refused(if m.refused_by_group() {
+                        Refusal::Group
+                    } else {
+                        cause.or(d.gave_up).unwrap_or(Refusal::NoWitness)
+                    })
                 }
             }
         };
@@ -256,7 +262,25 @@ impl Type {
             return None;
         };
         let (env, i) = r.key.member_at()?;
-        env.judged.get_or_init(|| judge(env))[i]
+        env.judged.get_or_init(|| judge(env)).answers[i]
+    }
+
+    /// Whether `self` is a recursive member that its group's decider refuses ([`judge`]).
+    pub(crate) fn refused_by_group(&self) -> bool {
+        let Node::Rec(r) = &*self.0 else {
+            return false;
+        };
+        r.key
+            .member_at()
+            .is_some_and(|(env, i)| env.judged.get_or_init(|| judge(env)).refused[i])
+    }
+
+    /// The emptiness that the decider of the recursive group of `self` (module `bes`) gives it,
+    /// when `self` is a member that decider decides: `Some(true)` empty, `Some(false)`
+    /// inhabited. `None` for any other type, and for a member it refuses or leaves to the
+    /// search.
+    pub fn decided_by_group(&self) -> Option<bool> {
+        self.judged()
     }
 
     /// Whether no value is in `self`, as far as the search proves it: a type it does not prove
@@ -5727,6 +5751,18 @@ fn known_empty(k: &Type) -> bool {
     *k == Type::empty() || k.judged() == Some(true)
 }
 
+/// What a group's decider found for its members ([`judge`]), kept with the instance.
+pub(in crate::types) struct Judgment {
+    /// Each member's emptiness, where the decider decides it.
+    answers: Vec<Option<bool>>,
+    /// Whether each member the decider does not decide is refused by it: searched as every
+    /// member left open is, and given `Refusal::Group` by `verdict` if the search does not
+    /// decide it.
+    refused: Vec<bool>,
+    /// What the message of a refused member reads; only when one is refused.
+    why: Option<refused::Why>,
+}
+
 /// Each member's emptiness at `env`'s arguments, as the group's fixed points decide it (module
 /// `bes`, cross-review X14): a union is an `Or` node, a tuple or atom payload an `And` node, a
 /// morphism type whose guarantee lies within its permission and is inhabited a `Mor` node of
@@ -5740,61 +5776,73 @@ fn known_empty(k: &Type) -> bool {
 /// inhabited when each operand is, and the difference as its left operand. Each holds at least
 /// the values of the type it stands for, so a member decided empty is empty. A member decided
 /// inhabited is so only if its node reaches none of these: `#b \ #b` is empty and `#b` is not,
-/// and `#a & #b` is empty while both are inhabited. Those members are `None` here, as is a
-/// member the decider refuses, and the coinductive search of module `empty` decides them, as
-/// it decides the members of every group whose decision it is asked for. Time linear in the
-/// bodies, besides the emptiness of their closed parts.
-fn judge(env: &Arc<Env>) -> Vec<Option<bool>> {
+/// and `#a & #b` is empty while both are inhabited. Those members are `None` here and go to
+/// the search ([`group_verdicts`]).
+///
+/// A part the decider does not take (a morphism with recursive bounds it does not admit, a
+/// closed part whose verdict is refused) is a leaf with no children, and the system is decided
+/// twice, the leaves `Bot` and then `Top` (item GROUP-refusal). Every node's answer is monotone
+/// in each leaf, and the leaves' true values lie between the two, so a member inhabited with
+/// the leaves `Bot`, or empty with them `Top`, is so; a member the two runs decide differently
+/// rests on a leaf and goes to the search, with the members decided here read by their
+/// answers. A member the decider refuses in either run goes to the search too, and if the
+/// search does not decide it, its verdict is refused with its own message
+/// ([`Type::refusal_site`]). Time linear in the bodies, besides the emptiness of their closed
+/// parts.
+fn judge<'a>(env: &'a Arc<Env>) -> Judgment {
     let bodies = &env.group().0.bodies;
-    let refused = || vec![None; bodies.len()];
     let mut b = Bes::new();
-    let mut stack = Vec::new();
+    // The definition and the expression each node stands for, by its number.
+    let mut origin: Vec<(usize, Arc<rec::Node>)> = Vec::new();
+    let mut stack: Vec<(u32, usize, &'a Arc<rec::Node>)> = Vec::new();
     // The nodes of a meet or a difference, read by a type that holds more values.
     let mut wider = Vec::new();
-    for e in bodies {
-        stack.push((b.add(Kind::Bot, vec![]), e));
+    for (i, e) in bodies.iter().enumerate() {
+        stack.push((b.add(Kind::Bot, vec![]), i, e));
+        origin.push((i, Arc::clone(e)));
     }
+    let mut leaves = Vec::new();
     // A closed part is read by its verdict, never by `is_empty`, whose "inhabited" may be a
     // check that gave up: a member judged on it could be judged empty when it is not.
-    while let Some((v, e)) = stack.pop() {
-        let (kind, children) = match &e.e {
+    while let Some((v, def, e)) = stack.pop() {
+        let mut kids = |xs: &mut dyn Iterator<Item = &'a Arc<rec::Node>>| {
+            kids(&mut b, &mut origin, &mut stack, def, xs)
+        };
+        let node = match &e.e {
             _ if !e.recursive => match eval(e, env).verdict() {
-                Verdict::Empty => (Kind::Bot, vec![]),
-                Verdict::Inhabited => (Kind::Top, vec![]),
-                Verdict::Refused(_) => return refused(),
+                Verdict::Empty => Some((Kind::Bot, vec![])),
+                Verdict::Inhabited => Some((Kind::Top, vec![])),
+                Verdict::Refused(_) => None,
             },
-            rec::Shape::Ref(i, _) => (Kind::Or, vec![*i as u32]),
-            rec::Shape::Union(xs) => (Kind::Or, kids(&mut b, &mut stack, xs)),
+            rec::Shape::Ref(i, _) => Some((Kind::Or, vec![*i as u32])),
+            rec::Shape::Union(xs) => Some((Kind::Or, kids(&mut xs.iter()))),
             rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) => {
-                (Kind::And, kids(&mut b, &mut stack, xs))
+                Some((Kind::And, kids(&mut xs.iter())))
             }
-            rec::Shape::Morphism(l, u, val) if l.recursive || u.recursive => {
-                // Admitted only with equal bounds and a value type that is not empty.
-                if val.recursive || eval(val, env).verdict() != Verdict::Inhabited {
-                    return refused();
-                }
-                (Kind::Top, vec![])
-            }
+            // Admitted only with equal bounds and a value type that is not empty.
+            rec::Shape::Morphism(l, u, val) if l.recursive || u.recursive => (!val.recursive
+                && eval(val, env).verdict() == Verdict::Inhabited)
+                .then(|| (Kind::Top, vec![])),
             rec::Shape::Morphism(l, u, val) => {
                 let (l, u) = (eval(l, env), eval(u, env));
                 // A key promised and not permitted leaves no morphism; with no key promised the
                 // empty morphism is one.
                 match (l.subtype_verdict(&u), l.verdict()) {
-                    (Verdict::Refused(_), _) | (_, Verdict::Refused(_)) => return refused(),
-                    (Verdict::Inhabited, _) => (Kind::Bot, vec![]),
-                    (Verdict::Empty, Verdict::Empty) => (Kind::Top, vec![]),
+                    (Verdict::Refused(_), _) | (_, Verdict::Refused(_)) => None,
+                    (Verdict::Inhabited, _) => Some((Kind::Bot, vec![])),
+                    (Verdict::Empty, Verdict::Empty) => Some((Kind::Top, vec![])),
                     (Verdict::Empty, Verdict::Inhabited) => {
-                        (Kind::Mor, kids(&mut b, &mut stack, [val]))
+                        Some((Kind::Mor, kids(&mut std::iter::once(val))))
                     }
                 }
             }
             rec::Shape::And(xs) => {
                 wider.push(v);
-                (Kind::And, kids(&mut b, &mut stack, xs))
+                Some((Kind::And, kids(&mut xs.iter())))
             }
             rec::Shape::Diff(a, _) => {
                 wider.push(v);
-                (Kind::Or, kids(&mut b, &mut stack, [a]))
+                Some((Kind::Or, kids(&mut std::iter::once(a))))
             }
             rec::Shape::Not(_) => {
                 unreachable!("admission keeps a recursive occurrence out of a complement")
@@ -5803,21 +5851,32 @@ fn judge(env: &Arc<Env>) -> Vec<Option<bool>> {
                 unreachable!("a closed part is not recursive")
             }
         };
-        b.set(v, kind, children);
+        match node {
+            Some((kind, children)) => b.set(v, kind, children),
+            None => leaves.push(v),
+        }
     }
     b.seal();
     // The nodes that reach a meet or a difference, by their parents, each node once.
-    let mut reaches = vec![false; b.len()];
+    let mut wide = vec![false; b.len()];
     for &v in &wider {
-        reaches[v as usize] = true;
+        wide[v as usize] = true;
     }
     while let Some(v) = wider.pop() {
         for &p in b.parents(v) {
-            if !reaches[p as usize] {
-                reaches[p as usize] = true;
+            if !wide[p as usize] {
+                wide[p as usize] = true;
                 wider.push(p);
             }
         }
+    }
+    let mut runs = vec![decide(&b)];
+    if !leaves.is_empty() {
+        // A leaf has no children either way, so the parents `seal` filled stay right.
+        for &v in &leaves {
+            b.set(v, Kind::Top, vec![]);
+        }
+        runs.push(decide(&b));
     }
     // Complexity tradeoff: a member shown inhabited through a meet or a difference goes to the
     // search, which builds a value of the meet: one state of the product of its operands per
@@ -5830,34 +5889,60 @@ fn judge(env: &Arc<Env>) -> Vec<Option<bool>> {
     // instructions at k 2, 3 and 4). COMPLEXITY.md K84. A complete solution needs the product
     // construction of the meet's tree automata, exponential in the number of operands
     // (emptiness of an intersection of tree automata is EXPTIME-complete).
-    (decide(&b).answers[..bodies.len()].iter().zip(&reaches))
-        .map(|(a, &wide)| match a {
-            Answer::Empty => Some(true),
-            Answer::Inhabited if !wide => Some(false),
-            Answer::Inhabited | Answer::Refused => None,
-        })
-        .collect()
+    let n = bodies.len();
+    let (mut answers, mut refused) = (vec![None; n], vec![false; n]);
+    for i in 0..n {
+        let (low, high) = (runs[0].answers[i], runs[runs.len() - 1].answers[i]);
+        answers[i] = settled(low, high, wide[i]);
+        refused[i] = answers[i].is_none() && (low == Answer::Refused || high == Answer::Refused);
+    }
+    let why = refused
+        .contains(&true)
+        .then(|| refused::Why::new(n, b, origin, leaves, runs));
+    Judgment {
+        answers,
+        refused,
+        why,
+    }
 }
 
-/// The node of each of `xs`: a member's own for a recursive occurrence, so that the graph has
-/// the group's shape and the decider's refusals do not depend on how a body is written; else a
-/// new node, queued on `stack` to be set from its expression.
+/// A node's emptiness from its answers with the leaves `Bot` (`low`) and `Top` (`high`), when
+/// they decide it: empty when empty with the leaves `Top`, inhabited when inhabited with them
+/// `Bot` and the node reaches no meet or difference (`wide`), whose operands hold more values
+/// than it.
+fn settled(low: Answer, high: Answer, wide: bool) -> Option<bool> {
+    match (low, high) {
+        (_, Answer::Empty) => Some(true),
+        (Answer::Inhabited, _) if !wide => Some(false),
+        _ => None,
+    }
+}
+
+/// The node of each of `xs`, parts of definition `def`: a member's own for a recursive
+/// occurrence, so that the graph has the group's shape and the decider's refusals do not depend
+/// on how a body is written; else a new node, its origin noted, queued on `stack` to be set from
+/// its expression.
 fn kids<'a>(
     b: &mut Bes,
-    stack: &mut Vec<(u32, &'a Arc<rec::Node>)>,
-    xs: impl IntoIterator<Item = &'a Arc<rec::Node>>,
+    origin: &mut Vec<(usize, Arc<rec::Node>)>,
+    stack: &mut Vec<(u32, usize, &'a Arc<rec::Node>)>,
+    def: usize,
+    xs: &mut dyn Iterator<Item = &'a Arc<rec::Node>>,
 ) -> Vec<u32> {
-    xs.into_iter()
-        .map(|x| {
-            if let rec::Shape::Ref(i, _) = x.e {
-                return i as u32;
-            }
-            let c = b.add(Kind::Bot, vec![]);
-            stack.push((c, x));
-            c
-        })
-        .collect()
+    xs.map(|x| {
+        if let rec::Shape::Ref(i, _) = x.e {
+            return i as u32;
+        }
+        let c = b.add(Kind::Bot, vec![]);
+        origin.push((def, Arc::clone(x)));
+        stack.push((c, def, x));
+        c
+    })
+    .collect()
 }
+
+mod refused;
+pub use refused::GroupSite;
 
 #[cfg(test)]
 mod tests;

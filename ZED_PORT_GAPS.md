@@ -2905,3 +2905,13 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | An iterative depth-first search over explicit frames that returns once two models are listed or a choice leads to no model | `search` | Early exit (gap 12) | a fold over the frames whose state carries the end reached, with the stop as its result |
 | A union-find with parities over #a, #b and a clause's binders (`Parities`, `Symbols`): parent and parity vectors and a `HashMap` from binder to node, updated in place with path compression; for a clause with one open field, a base union-find of the comparisons that do not reach the field and, per choice of the field, a local one keyed by the base roots | `Theory::clause_holds`, `Theory::clause_fails_for`, called by `Engine::check_clause` | Mutation (gap 11) | a persistent map from node to parent and parity threaded through the comparisons, or the union-find of the library once it has one |
 | A `HashMap` from field and value to the reason it was removed, built once to write the explanation | `explain` | Mutation (gap 11) | a map built by one fold over the trail |
+
+## Entries from GROUP-refusal and REFUSE-group-site (`crates/zed-kernel/src/types/empty.rs`, `empty/refused.rs`, `bes.rs`; `crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `OnceLock<Judgment>` on the group's `Env`, now holding the answers, the refused flags and the kept system (`refused::Why`) instead of `Vec<Option<bool>>` | `rec::Env::judged`, `judge`, `group_verdicts` | Lazy cells (gap 3) | a lazy field of the group record, as the other judged values are |
+| `Bes::set` of every leaf node to `Top` after the first `decide`, and in `decides_with_end` to `Bot` then `Top`, on one system | `judge`, `Why::decides_with_end` | Mutation (gap 11) | two systems that share every node but the leaves, or `decide` given the leaves' kind as an argument |
+| A breadth-first walk that pushes onto the `Vec` it reads by index, a `HashSet` or `HashMap` `Entry::Vacant` as its visited set, and a `VecDeque` queue | `refused_site`, `Why::decides_with_end`, `first_member` | Mutation (gap 11) | a fold over levels with a persistent set of the nodes seen |
+| Union-find with path halving over a `Vec<usize>` | `refused::connected` | Mutation (gap 11) | the same structure in a mutable array, or a count of parts by a walk with a visited set |
+| `tuples.truncate(branching)` to drop the tuples of a cycle that is not refused, and the struct update `Refusal { component, tuples, ..r }` | `bes.rs` `refusal` | Mutation (gap 11) | a list built per cycle and appended only when the cycle is refused; a record with two fields replaced |

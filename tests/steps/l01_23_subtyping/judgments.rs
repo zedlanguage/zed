@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use zed_kernel::types::bes::{Answer, decide};
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_kernel::types::{Type, Verdict};
+use zed_kernel::types::{Refusal, Type, Verdict};
 use zed_tests::scaling;
 
 fn r(i: usize) -> Expr {
@@ -91,10 +91,15 @@ fn emptiness_of_family_groups_agrees_with_the_reference() {
             let decided = decide(&g.bes()).answers;
             for (v, (t, w)) in types.iter().zip(&want).enumerate() {
                 match decided[v] {
-                    // The search decides a refused member, and may count an empty one as
-                    // inhabited, never the other way.
+                    // A member the decider refuses is not searched for emptiness: it counts as
+                    // inhabited, and its verdict is the refusal, or inhabited by a value built.
                     Answer::Refused => {
-                        assert!(!t.is_empty() || !w, "{name}:{n}: node {v} counted empty");
+                        assert!(!t.is_empty(), "{name}:{n}: node {v} counted empty");
+                        match t.verdict() {
+                            Verdict::Refused(Refusal::Group) => {}
+                            Verdict::Inhabited => assert!(*w, "{name}:{n}: node {v}"),
+                            other => panic!("{name}:{n}: node {v}: {other:?}"),
+                        }
                         refused += 1;
                     }
                     Answer::Empty | Answer::Inhabited => {
