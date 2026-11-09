@@ -2511,6 +2511,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A value shared by `Arc` and copied on write: `Deref` to its fields, `DerefMut` through `Arc::make_mut`, which copies only when another holder shares it; `PartialEq` that tries `Arc::ptr_eq` first | `Product`, `ProductDomains` | Mutation in place of a shared value; identity of values (as the `ptr_eq` rows of S22-fwd-holes) | Removed: Zed values are immutable and shared already, so a map holding a product shares it, and a changed product is a new value |
 | `async fn` returning a value beside the arms it pushes, with a `[bool; 2]` of the arms reached | `Run::walk_value`, `Run::walk_value_at`, `Run::walk_if` | None beyond the PA-let-stack rows (heap frames, `RefCell` state) | As `Run::walk` at the port |
 
+## Entries from PA-if-shortcut-diff (`crates/zedc-preimage/src/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The cargo feature `preimage-ref` adding public functions, an `impl Product` block and an `impl Run` block of reference walks, off in a release build | `arms_and_value`, `arms_and_value_by_transfer`, `Product::reduce_domains_once`, `Run::walk_by_transfer` | No conditional compilation (as the `preimage-ref` row of `preimage_ref`) | A unit of its own that only the test units import, given access to the walk's frames, or the reference walk kept in the test unit |
+
 ## Entries from S22-hole-summaries (`crates/zedc-preimage/src/preimage.rs`)
 
 - No new gap. `Walk::pa_select` joins stretches with a let chain `if let Some(last) = slices.last_mut() && ..` (as `extend::decide_defined`) and mutates the last slice in place through `last_mut`, a `match` on the list's end at the port; `no_input_between` uses `slice::partition_point` (as `docs::check`) and `Option::is_none_or` (as `repair`).

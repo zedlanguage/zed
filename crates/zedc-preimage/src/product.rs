@@ -6097,8 +6097,10 @@ pub fn arms_and_value(term: &Term, scope: &Scope) -> (Vec<Arm>, Product) {
 
 /// The arms of `term` and its value as the walk found them before PA-bind-cost: each `let`'s
 /// bound term walked for its arms and then given its value by the forward transfer
-/// ([`forward`]), which assumes each test again, with no premise. Built only with the feature
-/// `preimage-ref`.
+/// ([`forward`]), which assumes each test again, with no premise. It costs what that walk
+/// cost: a block bound inside a bound block `d` deep is given its value again at each level,
+/// `O(d²)` bindings, so it is for tests on small terms (COMPLEXITY.md row PA-if-shortcut-diff).
+/// Built only with the feature `preimage-ref`.
 #[cfg(feature = "preimage-ref")]
 #[doc(hidden)]
 pub fn arms_and_value_by_transfer(term: &Term, scope: &Scope) -> (Vec<Arm>, Product) {
