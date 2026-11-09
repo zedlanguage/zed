@@ -1643,15 +1643,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-audit-check | impl attempt 1 | 2026-11-09 00:16 | baseline: 654 pieces, 1 failed (l01_21_test_runner), load 21-53 |
 | MSG-audit-front | impl attempt 1 | 2026-11-09 00:16 | started: worktree /home/luke/Work/wt/msg-audit-front on 89c189c0 |
 | MSG-audit-solve-rt | impl attempt 1 | 2026-11-09 00:16 | ready fa4295f7: runtime, native build, lowering, Omega refusal and Scope warning messages rewritten; final run 42 pieces 0 failed with docs (load 29-59), earlie |
-| PRES-guarded-chain | impl attempt 1 | 2026-11-08 05:12 | ready: commit 703e067b on wt/pres-guarded-chain; test groups 406 pieces, 405 ok, zedc_preimage timed out at 60 s under load 22-40, passes alone (46.3 s at load  |
 | REFUSAL-nfa-refuse | impl attempt 1 | 2026-11-07 17:30 | reproduced on a70df51b release: nfa 59M..10.6G instr n 2..8, 73.9G n 10; cost is verdict_alone second value search Search{strict}.rep (114..20521 types, 300..16 |
 | SCALE-fix-wide | impl attempt 1 | 2026-11-07 11:37 | returned at cd875d85a49c693bdf3b639b207f6caef4d440b1: cube and equality fixed, 8 returned with evidence; load 17.52 23.82 25.89 |
-| SPEC-L1.19-inputs | impl attempt 1 | 2026-11-07 19:32 | DESIGN L1.19 edited (9a1676f on spec-l119-inputs, rebased on c1661c2); check RESULT OK; spec-dir tests 23 pieces 0 failed (l01_07 44, l01_08, l01_03 8, l07_03 1 |
-| ST-B4 | impl attempt 2 | 2026-11-07 18:55 | item 3 NOT BUILT, cost reported: fix-the-hub-at-each-value-and-join is Theta(V * N log N), V = Theta(N) named values; family x+w<=3i // y+w>=3i+2 (x,y fixed 0,  |
-| ST-holes-moves | impl attempt 1 | 2026-11-07 14:32 | ready f124824c: l01_39 groups 77 pieces, 368 passed, 0 failed, 18 ignored, load 18.3 to 21.5; 2 xst tests un-ignored, 7 stay ignored with reasons |
-| T11-ptr-tests | impl attempt 1 | 2026-11-07 19:32 | negative controls (not committed): Arc::new(unit.clone()) in testing::main_program fails testing::tests ptr_eq; same in mutate::original fails mutate::tests ptr |
+| ST-B4 | impl attempt 2 | 2026-11-07 18:55 | ready: commit adb30524 on wt/st-b4 (not merged, not pushed); ^l01_39 75 pieces 444 passed 0 failed 15 ignored; perf data and profiling build deleted |
 | TABLE-short-scan | impl attempt 1 | 2026-11-07 12:26 | ready: wt/table-short-scan 5d46e24c on a4feb3a2; slow test 145 s -> 7.5 s alone, piece 8.1 s alone at load 20; groups 153 pieces 0 failed with doc check; negati |
 | TEST-audit | audit attempt 1 | 2026-11-08 13:02 | done: REPORT.md complete (Part 1: 156 checks, 89 committed, 46 partial, 13 missing; Part 2: 93.9% lines, 93.6% regions, 718 never-run functions; Part 3: 882 beh |
+| TRIVIAL-models-study | impl attempt 1 | 2026-11-09 01:16 | started: worktree /home/luke/Work/wt/trivial-models-study on 881d52b6, seeded; prototype goes in tests/steps/l22_08_vacuity (L22 not built yet) |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
