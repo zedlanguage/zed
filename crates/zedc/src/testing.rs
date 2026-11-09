@@ -18,13 +18,13 @@ use std::sync::Arc;
 use zed_kernel::Term;
 
 use crate::address::ContentAddress;
-use crate::ast::StmtKind;
-use crate::elab::Cones;
+use crate::ast::{self, Stmt, StmtKind};
+use crate::elab::{Cones, Unit};
 use crate::mutate::{self, Verdict};
 use crate::query::{self, Db, Query};
 use crate::rejection::Row;
 use crate::rows::{row, wave};
-use crate::run::{self, Through};
+use crate::run::{self, Program, Through};
 use crate::suppress::{InFile, Severity, Suppress};
 use crate::work::{self, Stage};
 use crate::{fence, front, source};
@@ -161,9 +161,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
             let mut program = None;
             accepted = Accepted::Yes;
             if main.is_some() {
-                match work::stage(Stage::Program, None, || {
-                    run::program(stmts, Arc::clone(unit))
-                }) {
+                match main_program(stmts, unit) {
                     Ok(p) => program = Some(p),
                     Err(e) => {
                         // Placed and addressed as the front end's rejections are, with its
@@ -222,6 +220,14 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
     }
     out.sort_by_key(|o| (o.line, o.col));
     (out, accepted)
+}
+
+/// The program of the accepted unit `unit`, elaborated from `stmts`, sharing `unit` with the
+/// front end's result; counted as the work of [`Stage::Program`].
+fn main_program(stmts: &[Stmt], unit: &Arc<Unit>) -> Result<Program, ast::Error> {
+    work::stage(Stage::Program, None, || {
+        run::program(stmts, Arc::clone(unit))
+    })
 }
 
 /// The row of `definition`'s table that `db` keeps under `k`, a key of `q`, computed by `check`
@@ -438,4 +444,23 @@ fn mutants(db: &mut Db, texts: &[(&str, String)], stdout: &mut dyn Write) -> u8 
          {not_run} not run"
     );
     status
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::main_program;
+    use crate::query::Db;
+
+    #[test]
+    fn the_program_a_test_run_makes_shares_the_unit_of_the_front_end() {
+        let front =
+            Db::new().front("main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n");
+        let Ok((stmts, unit, _)) = &*front else {
+            panic!("the unit is accepted")
+        };
+        let p = main_program(stmts, unit).expect("`main`'s ports are `Lines`");
+        assert!(Arc::ptr_eq(&p.unit, unit));
+    }
 }

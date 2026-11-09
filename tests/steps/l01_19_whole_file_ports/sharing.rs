@@ -96,3 +96,34 @@ fn rows_still_run_when_the_program_is_refused() {
         ]
     );
 }
+
+#[test]
+fn zedc_run_reading_a_bound_file_of_n_lines_scales() {
+    let dir = std::env::temp_dir().join("zed-l01-19-sharing-scaling");
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = dir.join("first.zed");
+    std::fs::write(
+        &program,
+        "main(input: Lines) -> (stdout: Lines) {\n  stdout <- input[1] else \"\";\n}\n",
+    )
+    .unwrap();
+    let files = inputs(20_000, |n| {
+        let path = dir.join(format!("input-{n}.txt"));
+        std::fs::write(&path, &*lines(n)).unwrap();
+        path
+    });
+    check("zedc run reading a bound file of n lines", 20_000, |n| {
+        let args = [
+            "run".to_string(),
+            program.display().to_string(),
+            format!("input={}", files[&n].display()),
+        ];
+        let mut out = Vec::new();
+        let status = zedc::run::command(&args, &mut &b""[..], &mut out, &mut std::io::sink());
+        assert_eq!((status, out), (0, b"line 0\n".to_vec()));
+    });
+    std::fs::remove_file(&program).unwrap();
+    for path in files.values() {
+        std::fs::remove_file(path).unwrap();
+    }
+}

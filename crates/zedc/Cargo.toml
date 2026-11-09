@@ -33,6 +33,8 @@ zedc-zir.workspace = true
 zedc-elab.workspace = true
 
 [dev-dependencies]
+# Counts the bytes the unit tests allocate (run::tests: a bound file is read into its block once).
+zed-alloc-count.workspace = true
 # A dylib's file name does not change with its features, so `cargo test -p zedc` builds
 # zedc-presburger and zedc-solvers with the features the workspace build gives them (zedc-preimage's
 # tests turn on `two-at-a-time`, the step tests `counts`), and does not overwrite their copies.

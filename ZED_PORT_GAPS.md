@@ -137,6 +137,8 @@ three ways, all confirmed:
   with `Arc::ptr_eq` that a program holds the front end's unit and a record the input's bytes.
   Zed values are shared and have no identity to compare, so a port of these tests keeps only
   their bytes-allocated scaling check.
+  T11-ptr-tests added two more, `testing::tests` and `mutate::tests`: the programs `zedc test` and
+  `zedc test --mutants` make share the front end's unit. A port keeps neither.
   ERRS-precise added one in a library: `Atoms::zip` (`zed-kernel/types.rs`) walks
   `imbl::OrdMap::diff` of two atom maps, which skips the subtrees the maps share by address, so
   the union that builds a chain's `#errs(E ->? E)` costs the entries that differ, not the
@@ -1831,6 +1833,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `OpenOptions::create_new` for the object file, removed after the link | `link::build` | Command line (gap 6): computed output paths | A `Files` write to a computed path (step L7.3f) |
 | `std::env::var_os` for `CC` and `ZED_RUNTIME`, `current_exe` for the default library | `link::Toolchain::from_env` | Command line (gap 6) | An environment input port, which no step plans |
 | A struct of options parsed once and shared by `zedc run` and an executable, its methods taking `&mut dyn Read`/`Write` | `run::Options`, `run::Ports::run`, `run::executable` | none | A record and functions over the `Lines` ports |
+| A block allocated at a file's length (`repeat_n(0, n).collect::<Arc<[u8]>>()`), written through `Arc::get_mut` by `Read::read` into its unfilled tail, so the file is read with no copy (T11-ptr-tests) | `run::read_file`, `run::read_shared` | Mutation | The `Lines` port reads the file itself; a Zed program is given the bytes as a value and never fills a buffer |
 | A length-prefixed byte layout (`u64::to_le_bytes`, `split_first_chunk`, `split_at_checked`) | `exe::data`, `exe::Program::decode` | Bytes (gap 5) | Bytes words of step L7.3f |
 
 ## Entries from CHK-need-uses (`zedc-check/src/check/mod.rs`, `check/ty.rs`)

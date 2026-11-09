@@ -266,6 +266,19 @@ pub fn apply(term: &Term, at: &Position, to: &Change) -> Term {
     out
 }
 
+/// The program of the original unit `unit`, elaborated from `stmts`, sharing `unit`: none when
+/// the unit has no `main` or `run::program` refuses it, and its `main` rows then do not run.
+fn original(stmts: &[Stmt], unit: &Arc<Unit>) -> Option<run::Program> {
+    let has_main = stmts
+        .iter()
+        .any(|s| matches!(&s.kind, StmtKind::Function(f) if f.name == "main"));
+    if has_main {
+        run::program(stmts, Arc::clone(unit)).ok()
+    } else {
+        None
+    }
+}
+
 /// Each mutant of the unit `unit`, elaborated from `stmts`, with its verdict, in the order of
 /// [`mutants`]. Each row's closed term is run by `map`. The caller has run the tables against
 /// the original, and they pass. The original's program shares `unit`.
@@ -277,14 +290,7 @@ pub fn run(
 ) -> Result<Vec<(Mutant, Verdict)>, String> {
     let mutants = mutants(text, stmts, unit)?;
     let cones = Cones::new(unit);
-    let has_main = stmts
-        .iter()
-        .any(|s| matches!(&s.kind, StmtKind::Function(f) if f.name == "main"));
-    let program = if has_main {
-        run::program(stmts, Arc::clone(unit)).ok()
-    } else {
-        None
-    };
+    let program = original(stmts, unit);
     let main = unit.defs.iter().find(|d| d.name == "main");
     // The rows that reach each definition, in written order: an index built once from each
     // row's cone, so a mutant finds its rows by its definition.
@@ -402,4 +408,23 @@ pub fn describe(text: &str, name: &str, m: &Mutant, v: &Verdict) -> Option<Strin
         ),
     };
     Some(format!("{line}:{col}: {says}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::original;
+    use crate::query::Db;
+
+    #[test]
+    fn the_original_program_of_a_mutation_run_shares_the_unit_of_the_front_end() {
+        let front =
+            Db::new().front("main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n");
+        let Ok((stmts, unit, _)) = &*front else {
+            panic!("the unit is accepted")
+        };
+        let p = original(stmts, unit).expect("`main`'s ports are `Lines`");
+        assert!(Arc::ptr_eq(&p.unit, unit));
+    }
 }

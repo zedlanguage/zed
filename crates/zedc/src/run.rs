@@ -1106,15 +1106,10 @@ impl<'a> Options<'a> {
             if *kind != PortKind::Lines {
                 continue;
             }
-            let mut bytes = Vec::new();
-            match self.binds.get(name) {
-                Some(path) => {
-                    bytes = std::fs::read(path).map_err(|e| (2, format!("{path}: {e}")))?
-                }
+            let bytes = match self.binds.get(name) {
+                Some(path) => read_file(path).map_err(|e| (2, format!("{path}: {e}")))?,
                 None if name == "stdin" => {
-                    stdin
-                        .read_to_end(&mut bytes)
-                        .map_err(|e| (2, format!("standard input: {e}")))?;
+                    read_shared(stdin, 0).map_err(|e| (2, format!("standard input: {e}")))?
                 }
                 None => {
                     return Err((
@@ -1122,8 +1117,8 @@ impl<'a> Options<'a> {
                         format!("input port `{name}` needs a file: `{name}=path`"),
                     ));
                 }
-            }
-            lines.insert(name.clone(), Arc::from(bytes));
+            };
+            lines.insert(name.clone(), bytes);
         }
         Ok(lines)
     }
@@ -1208,12 +1203,130 @@ pub fn executable(
 /// The bytes of each `Lines` input, by port name, as a wave is given them.
 type LineInputs = BTreeMap<String, Arc<[u8]>>;
 
+/// The bytes of the file at `path`, read into the block a wave shares: its length, taken
+/// before the read, is the size of the block, so a file that keeps its length is read with no
+/// copy (see [`read_shared`]).
+fn read_file(path: &str) -> std::io::Result<Arc<[u8]>> {
+    let mut file = std::fs::File::open(path)?;
+    // A length that does not fit `usize` is read as an unknown length: the read then fails as
+    // `std::fs::read` fails on it.
+    let size = file
+        .metadata()
+        .map_or(0, |m| usize::try_from(m.len()).unwrap_or(0));
+    read_shared(&mut file, size)
+}
+
+/// The bytes `source` gives until its end, as one shared block. `size` is the length expected
+/// (a file's length, or 0 when it is not known): a block of that size is allocated and read
+/// into, so a source of that length is read with no copy. A source that ends sooner (a file
+/// that shrank) is copied into a block of its length; one that gives more (a file that grew, a
+/// pipe, standard input) has the rest read into a buffer and joined to the block in a new one,
+/// one copy, as reading into a `Vec` and converting it would make.
+fn read_shared(source: &mut dyn Read, size: usize) -> std::io::Result<Arc<[u8]>> {
+    // Collected from an iterator of known length, so the block is allocated once at its size.
+    let mut block: Arc<[u8]> = std::iter::repeat_n(0, size).collect();
+    let into = Arc::get_mut(&mut block).expect("a block just made has one owner");
+    let mut filled = 0;
+    while filled < size {
+        match source.read(&mut into[filled..]) {
+            Ok(0) => return Ok(Arc::from(&into[..filled])),
+            Ok(k) => filled += k,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    let mut rest = Vec::new();
+    source.read_to_end(&mut rest)?;
+    if rest.is_empty() {
+        return Ok(block);
+    }
+    Ok(block.iter().chain(&rest).copied().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use super::program;
+    use super::{program, read_shared};
     use crate::query::Db;
+
+    /// A source that gives at most `step` bytes per read and is interrupted before each.
+    struct Slow<'a> {
+        bytes: &'a [u8],
+        step: usize,
+        interrupt: bool,
+    }
+
+    impl std::io::Read for Slow<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.interrupt = !self.interrupt;
+            if self.interrupt {
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            let k = buf.len().min(self.step).min(self.bytes.len());
+            buf[..k].copy_from_slice(&self.bytes[..k]);
+            self.bytes = &self.bytes[k..];
+            Ok(k)
+        }
+    }
+
+    #[test]
+    fn a_source_is_read_whole_whatever_length_was_expected() {
+        let bytes: Vec<u8> = (0..1000_u32).map(|i| (i % 251) as u8).collect();
+        // Expected exactly, shorter (a file that grew, standard input with 0), longer (a file
+        // that shrank), and empty; each read in pieces of 7 bytes with interruptions between.
+        for size in [1000, 999, 600, 0, 1001, 4000] {
+            let mut source = Slow {
+                bytes: &bytes,
+                step: 7,
+                interrupt: false,
+            };
+            let read = read_shared(&mut source, size).unwrap();
+            assert_eq!(&read[..], &bytes[..], "expected length {size}");
+        }
+        let mut empty = Slow {
+            bytes: &[],
+            step: 7,
+            interrupt: false,
+        };
+        assert!(read_shared(&mut empty, 0).unwrap().is_empty());
+        assert!(read_shared(&mut &b""[..], 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_bound_file_is_read_into_its_block_with_no_copy() {
+        // The read holds the file's bytes once at its peak: one block of the file's length,
+        // where reading into a `Vec` and converting it to an `Arc<[u8]>` held them twice.
+        let n = 1 << 22;
+        let bytes: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
+        let dir = std::env::temp_dir().join("zed-zedc-run-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bound.txt");
+        std::fs::write(&path, &bytes).unwrap();
+        let path_text = path.display().to_string();
+        let (read, live) = zed_alloc_count::live(|| super::read_file(&path_text).unwrap());
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(&read[..], &bytes[..]);
+        assert!(
+            live.peak < n as u64 + 4096,
+            "peak {} bytes for a file of {n}",
+            live.peak
+        );
+    }
+
+    #[test]
+    fn a_failed_read_is_reported() {
+        struct Fails;
+        impl std::io::Read for Fails {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("the device is gone"))
+            }
+        }
+        for size in [0, 10] {
+            let e = read_shared(&mut Fails, size).unwrap_err();
+            assert_eq!(e.to_string(), "the device is gone");
+        }
+    }
 
     #[test]
     fn a_program_shares_the_unit_of_the_front_end_it_was_made_from() {
