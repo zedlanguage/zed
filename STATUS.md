@@ -1702,7 +1702,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | GROUP-cycle-dup-names | impl attempt 1 | 2026-11-09 10:09 | started; worktree wt/group-cycle-names from wt/group-cycle-dup 2f04cc3a |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | GROUP-search-hang | impl attempt 1 | 2026-11-09 10:11 | tracing the growing meet chain with a backtrace at new types (load 34.66 32.64 30.19) |
-| PRINT-bounds-comma | impl attempt 1 | 2026-11-09 09:10 | negative control (Sig::parts renders each parameter to decide its place) did not finish nested-signature scaling test in 900 s, rebuild included; reverted |
 | PRINT-fmt-audit | impl attempt 1 | 2026-11-09 09:10 | surface_by_name scaling: nested tuple n=1000/8000 8.4x work 8.0x bytes (limit 11.45); list-of-lists n=100/800 8.2x work (limit 12.77); negative control (n-times |
 | PROJECT-canon-272 | running | 2026-11-09 09:27 |  |
 | PROJECT-canon-decide | running | 2026-11-09 09:27 |  |
@@ -1710,7 +1709,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PROJECT-canon-precision | running | 2026-11-09 09:27 |  |
 | S22-shapes-linear | impl attempt 1 | 2026-11-09 08:29 | negative control (decide through found, as main), not committed: the_box_of_a_chain_over_many_holes_is_tested_in_linear_work at 128/1024 holes fails, 17.4x byte |
 | S22-split-holes | impl attempt 1 | 2026-11-09 08:29 | ready at 5bc3858f on wt/s22-split-holes; scale 10.1x instr 11.0x bytes (main control 19.3x, 26.9x, not committed); differential 3000 random programs identical t |
-| SIG-lost-spin | impl attempt 1 | 2026-11-09 10:23 | reproduced on main 5bbbcac7: checker Tables::order Err at any cycle -> whole scope unchecked (walk.rs:1228 returns dynamic), no checker error; f gets no sig; CL |
 | TY-row-hash | impl attempt 1 | 2026-11-09 09:57 | started; worktree wt/ty-row-hash stacked on wt/ty-row-class 815bb114, rebased onto origin/main |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
