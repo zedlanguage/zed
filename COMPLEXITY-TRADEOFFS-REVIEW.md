@@ -147,3 +147,65 @@ of them in this file state those three and cite K30.
 | `types/empty/names.rs` `absorb` | 92fdf6f2 | transitive reduction, O(n·m) or a matrix product | dominators, O(m log m) | some arms kept; group may be refused (K88) | complete | none |
 | `term/walk.rs` `queued` | 08f7809e | walk by paths, exponential in depth | pairs hashed once, O(distinct pairs) | constant per comparison | complete | none |
 | `provenance.rs` `Provenance::origins` | 40733fae | newest first, O(n²) on chains | oldest first, O(n log n) | reads values holding other failures, O(m log m) | complete | none |
+
+## crates/zedc-preimage
+
+Most sites here use the older form (given up, why, trigger, test, row, complete solution). A
+site is complete when that text states the naive or standard version with its cost and the
+used version with its cost; where one of the two costs was missing, a "Naive version: ...;
+used: ..." sentence was added. `preimage_ref.rs` repeats eight comments of `preimage.rs`; each
+fix was made in both.
+
+| Site | Commit | Naive version, complexity | Used version, complexity | Tradeoffs | Before | Action |
+|---|---|---|---|---|---|---|
+| `address.rs:418` (canonical address, smaller set into larger) | 241648eb | hashing modulo alpha (Maziarz et al.), O(n log² n) | small into large, n log n on a tree; n·F or k·m with shared parts | needs part-by-part comparison (C30) | complete | none |
+| `holes.rs:467` (three holed names on two cycles) | 9322ec49 | snapping to a fixed point, a lap per value | refusal, from the count of holed names | exact ends refused (S25) | partial: no used cost | added naive/used |
+| `holes.rs` `hull` | 9322ec49 | Dijkstra O(m log n) needs a potential | label correcting O(n m) without one | S25 | complete | none |
+| `preimage.rs` `StopKind::Outside` | 5f387d63 | read through the loop, need not end | stop, O(1), whole box | necessary only (C15) | partial: no costs | added naive/used |
+| `preimage.rs:358` (split after transfer) | 1f2e9e00 | split first, O(G n) | transfer first, O(n) | one class's run spent (S22e-quad) | complete | none |
+| `preimage.rs:384` (split over found box) | ef791023 | no second split | one more split O(G n log n), may be spent for nothing | S22-order-chain | complete | none |
+| `preimage.rs` `split_residues` (by-class terms) | 1f2e9e00 | one transfer per class, O(G n log n), up to O(n² log n) | shared summary, O(k log k) | listed terms (S22e) | complete | none |
+| `preimage.rs` `split_residues` (many periods) | c5ae623c | a piece per period, width / m | first, last and one middle piece; projection linear in pieces | wider boxes (S22e-wide) | complete | none |
+| `preimage.rs:736` (classes' sets) | 0130be38 | each class builds its set, O(H) each | shared set where equal | S22-split-holes | complete | none |
+| `preimage.rs:2421` (`n * q` atom) | 0ef80f85 | arithmetic with products, undecidable | one atom, Presburger | facts needing the product (S39) | partial: no used version | added naive/used |
+| `preimage.rs` `unite` | 1e4ead23 | (refusal scan) O(j m), up to n^1.5 | union by size O(n log n), refusals remembered | LOAD-affine-join | complete | none |
+| `preimage.rs` `Tx::marks` | 6254ad0c | persistent multiset, O(log k) per input | O(k log k) per run | PA-letpre-linear | complete | none |
+| `preimage.rs:4436` (recursion stop) | 44d370e7 | read at each depth, need not end | stop, O(1) | forward intervals kept (S12, S15) | partial: no costs | added naive/used |
+| `preimage.rs` `Walk::union` | 44d370e7 | exact union, up to 2^k boxes | box hull, smaller box's names | not exact (C14) | complete | none |
+| `preimage.rs:5588` (landmarks key) | 624ae2ac | exact key, up to 2^k summaries | landmark pairs | wider preimage (S13, S15) | complete | none |
+| `preimage.rs` `Walk::project` (HC4) | 624ae2ac | exact preimage, points of the box | one narrowing per operand (cost inferred) | necessary only (C16) | partial: no used cost | added naive/used |
+| `preimage.rs` `Walk::by_class` | 624ae2ac | each class's run, O(G n log n) | one summary, O(log G) per `if` | listed terms read per class | complete | none |
+| `preimage.rs:6968` (arms differ) | ef791023 | slice once | O(L log n), L ≤ G | S22e-quad | complete | none |
+| `preimage.rs` `Walk::back_by_class` | ca5957c8 | O(k²) demands | O(k log k) | inexact past two periods (S22-transfer-rem) | complete | none |
+| `preimage.rs:7362` (case cuts) | d891b8de | cut at every start, L·S = O(k²) | neighbors, C + 2S = O(k) | measured wider boxes (S22-case-cuts) | complete | none |
+| `preimage.rs` `Walk::defined_called` | 6a79d26f | callee's cone per call | condition at the arguments | RUNG2-definedness | complete | none |
+| `preimage.rs` `Walk::formula_called` | ace60e16 | body read k times, O(k · cone) | projection, rows left | measured 0.051 s / 4.41 s (LOAD-call-relation) | complete | none |
+| `preimage.rs` `Walk::lin_called` | 2fc841e1 | body per call, O(cone) | value projection | measured 0.239 s / 14.5 s | complete | none |
+| `preimage.rs` `Walk::defined_chain` | 2907021c | nested `if`s, Θ(k²), solver k³ | O(k) nodes; O(m log n) per new divisor | PRES-mod-conjuncts | complete | none |
+| `preimage.rs` `LetPa::sum` | 69c4cdd3 | (invert without forming) | O(d log d) per chain; Θ(d²) pieces when formed | measured (PA-let-block) | complete | none |
+| `preimage.rs` `ByClass::clamp` | ef791023 | clamp base once | O(L) clamps | S22e-quad | complete | none |
+| `preimage.rs` `in_range` | d4894aaa | per-arm transfer, about k^2.8 | i128 ends, O(1) per node | ends past i128 (S33) | complete | none |
+| `preimage.rs` `invert_treap` | 76bb9d4c | hull per subtree, O(log p) | O((m + 1) log p), O(p) after a sloped sum | exact | complete | none |
+| `preimage.rs` `mod_pre` | 44d370e7 | a piece per period, exponential in bits | 2p + 1 pieces | not exact (C17) | complete | none |
+| `preimage.rs` `enumerate` | 623a07d2 | product of axes, exponential | listed boxes only | wider answer (C18) | complete | none |
+| `preimage.rs` `witness` | 44d370e7 | unbounded search, undecidable | `None` on unbounded | S17 | complete | none |
+| `preimage_ref.rs` `Outside` | 19b249aa | as `preimage.rs` | as `preimage.rs` | C15 | partial | added naive/used |
+| `preimage_ref.rs` `POWER_FACTORS` | 19b249aa | k nested products, O(k) HC4 steps | power up to 64 factors | size switch, ledger CAP-power (C19) | partial: no costs | added naive/used |
+| `preimage_ref.rs:1099` (recursion stop) | 19b249aa | as `preimage.rs` | as `preimage.rs` | S12, S15 | partial | added naive/used |
+| `preimage_ref.rs:1134` (landmarks) | 19b249aa | as `preimage.rs` | | | complete | none |
+| `preimage_ref.rs` `union` | 19b249aa | as `preimage.rs` | | | complete | none |
+| `preimage_ref.rs` `project` (HC4) | 19b249aa | as `preimage.rs` | | | partial | added naive/used |
+| `preimage_ref.rs` `mod_pre` | 19b249aa | as `preimage.rs` | | | complete | none |
+| `preimage_ref.rs` `enumerate` | 623a07d2 | as `preimage.rs` | | | complete | none |
+| `preimage_ref.rs` `witness` | 19b249aa | as `preimage.rs` | | | complete | none |
+| `product.rs:328` (ints not listed) | 623a07d2 | list the interval, exponential in bits | not listed | C5 | complete | none |
+| `product.rs:370` (finite type not listed) | a280f330 | 2^k or 2^(2^d) values | type kept | one value lost (S34) | complete | none |
+| `product.rs` `Scope::refusals` | 44d370e7 | complete Presburger, exponential | refusal with a warning | S18, S28 | complete | none |
+| `product.rs:3011` (stars projected again) | e22a4f8f | leaves ordered by bound, only those cut | k projections | C26 | complete | none |
+| `product.rs:3263` (tree block by block) | 9322ec49 | no near-linear exact method known | block by block; O(k² log k) measured, open item O7 | S25 | complete | none |
+| `product.rs` `Scope::reseed` | 68416f08 | partial potential via Bellman-Ford O(n m) | point of the whole tree | S25 | complete | none |
+| `product.rs:4201` (threshold solve) | 37a8466a | kept state, O(N log N log W) | O(N · N log N log W) | case split 88% (S4-ti) | complete | none |
+| `product.rs` `Scope::project_by_pendants` | 35b95486 | each disjunct combination, exponential | pendants eliminated; else whole, O(k³) | S43 | complete | none |
+| `product.rs` `Scope::enumerate` | 44d370e7 | product of open names, exponential | one open name only | C6 | complete | none |
+| `product.rs:4890` (group searched) | 63a6f9c4 | repair from part, many visits | whole group search per failure | S40 | complete | none |
+| `threshold.rs:403` (hub search) | 37a8466a | one propagation, O(N log N) | O(log W) propagations | S4-ti | complete | none |

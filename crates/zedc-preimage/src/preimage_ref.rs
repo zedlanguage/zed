@@ -143,6 +143,8 @@ pub enum StopKind {
     /// `gen`, at the `_` arm of `scan`.
     /// COMPLEXITY.md row C15. A complete solution would compute a fixpoint of the loop's
     /// backward transfer with widening, as the forward iteration does for loops.
+    /// Naive version: the transfer read through the loop, once per iteration, which need not end;
+    /// used: the stop, O(1) at the loop, with the whole box as the answer (necessary only).
     Outside,
     /// A call of a lambda whose call is already being read.
     Recursion,
@@ -215,6 +217,9 @@ fn run_closed(t: &Term) -> Option<Value> {
 /// size, so it violates the no-thresholds rule; to be replaced (ledger item CAP-power). A
 /// complete solution would read any count of equal factors as a power, with ends held as
 /// unbounded integers.
+/// Naive version: k equal factors read as k nested products, O(k) HC4 steps, wider than the
+/// power's inverse; used: up to 64 factors, one power and its exact inverse; past 64, the
+/// nested products.
 const POWER_FACTORS: usize = 64;
 
 /// The preimage of `demand` under `term`, whose free names in `inputs` range over their
@@ -1105,6 +1110,9 @@ impl<'t> Tx<'t> {
             // `l01_25_preimage_catalog::stops::a_call_that_never_returns_stops_where_it_calls_itself`.
             // COMPLEXITY.md rows S12 and S15. A complete solution would compute a fixpoint of
             // the function's summary with widening, as the forward iteration does for loops.
+            // Naive version: the call read again at each depth it may reach, which need not
+            // end; used: the stop, O(1) at the call cycle, the inputs keeping their forward
+            // intervals.
             self.cx.cut = self.cx.cut.min(at);
             self.stop(StopKind::Recursion, t);
             return stopped;
@@ -2477,6 +2485,8 @@ impl<'t> Tx<'t> {
     /// `l01_25_preimage_catalog::entries::a_strict_disjunction_with_a_failing_side_is_necessary_only`.
     /// COMPLEXITY.md row C16. A complete solution is `@exact` ([`exact_preimage`]), which
     /// searches the box at a cost in its points.
+    /// Naive version: the exact preimage, a search of the box at a cost in its points; used: one
+    /// interval narrowing per operand, in the pieces of the two interval sets (inferred).
     fn project(&mut self, p: Prim, a: Tid, b: Tid, env: Eid, z: &IntervalSet) -> Res {
         let o = op(p, None).expect("binary scalar operator");
         let fa = self.fwd(a, env).ints;

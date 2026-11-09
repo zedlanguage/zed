@@ -475,6 +475,9 @@ impl Run<'_> {
         // part. Test: `l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused`.
         // COMPLEXITY.md row S25. A complete solution is an exact method for the snaps on a
         // component with any cycles, or a proof that none is near linear.
+        // Naive version: snapping to a fixed point, a lap per value of a range, so time in the
+        // widths of the ranges, exponential in their bits; used: the refusal, read from the count
+        // of names with holes before any snapping.
         if holed.len() > 2 {
             return Err(Stop::Refused(names.to_vec(), holed));
         }
