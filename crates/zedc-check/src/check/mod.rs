@@ -429,6 +429,32 @@ impl Lit {
     }
 }
 
+/// Which arguments an application needs the values of. Evaluation is neither strict nor lazy
+/// (DESIGN.md sec:non_goals), so an argument with no value, of type `Never`, leaves the call
+/// with no value only where the call needs that argument's value; elsewhere the call has the
+/// result its arrow gives.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Demand {
+    /// Every argument, as an operator, a prelude word or a lookup in a family needs.
+    All,
+    /// The first: `&&` and `||` read the second operand only where the first does not decide.
+    First,
+    /// What the function's body reads: its substituted result says where an argument with no
+    /// value reaches it, as `(x, 1)` does and `y` in `k(x, y) = y` does not.
+    Body,
+}
+
+impl Demand {
+    /// Whether the argument at `i` is needed for the call to give a value.
+    fn needs(self, i: usize) -> bool {
+        match self {
+            Demand::All => true,
+            Demand::First => i == 0,
+            Demand::Body => false,
+        }
+    }
+}
+
 /// An argument: its type, the literal it is, if it is one, the expression it is, if any, and
 /// the literals written in it, by component, if it is a tuple that holds one at any depth.
 /// `expr` is the expression itself, whose ints a call shows to a parameter with an

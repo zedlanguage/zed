@@ -45,11 +45,16 @@ pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
     let t = Tables::new(&[], &res);
     let mut ck = Ck::new(&t);
     let args = args.iter().map(|a| Some(Arg::of(a.clone()))).collect();
-    let (out, _) = ck.apply(
+    let demand = match op {
+        "&&" | "||" => Demand::First,
+        _ => Demand::All,
+    };
+    let (out, _) = ck.apply_demanding(
         &format!("`{op}`"),
         &op_sig(op),
         args,
         true,
+        demand,
         Span { start: 0, end: 0 },
     );
     (out, ck.info.errors.into_iter().map(|e| e.message).collect())
@@ -891,11 +896,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 let sig = op_sig("&&");
                 let t = self
-                    .apply(
+                    .apply_demanding(
                         &format!("`{op}`"),
                         &sig,
                         vec![Some(Arg::of(ta)), Some(Arg::of(b.t))],
                         true,
+                        Demand::First,
                         span,
                     )
                     .0;
@@ -932,11 +938,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let tb = m.take_ty();
                 let sig = op_sig("&&");
                 let t = self
-                    .apply(
+                    .apply_demanding(
                         &format!("`{op}`"),
                         &sig,
                         vec![Some(Arg::of(ta)), Some(Arg::of(tb))],
                         true,
+                        Demand::First,
                         span,
                     )
                     .0;
@@ -6102,15 +6109,43 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Applies `sig` to `args`, a missing one filled by its default. When `pass` holds, as
     /// for an operator or a prelude word, an argument's atoms pass through, two arguments'
-    /// merged into `#errs`. Gives the result and the arrows kept.
+    /// merged into `#errs`. Gives the result and the arrows kept. An operator, a prelude word
+    /// and a lookup in a family need every argument's value; a function's body reads what its
+    /// result says ([`Demand`]).
     fn apply(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: Vec<Option<Arg<'a>>>,
+        pass: bool,
+        span: Span,
+    ) -> (Ty, Vec<usize>) {
+        let demand = match pass || sig.data {
+            true => Demand::All,
+            false => Demand::Body,
+        };
+        self.apply_demanding(what, sig, args, pass, demand, span)
+    }
+
+    /// [`Self::apply`], the arguments the call needs the values of given by `demand`.
+    fn apply_demanding(
         &mut self,
         what: &str,
         sig: &Sig,
         mut args: Vec<Option<Arg<'a>>>,
         pass: bool,
+        demand: Demand,
         span: Span,
     ) -> (Ty, Vec<usize>) {
+        // An argument with no value that the call does not need: the call still gives what
+        // its arrow gives there. Read before the atoms that pass by are taken out, since an
+        // argument left with no value by them is one whose every value passes by.
+        let unneeded: Vec<bool> = (args.iter().enumerate())
+            .map(|(i, a)| {
+                a.as_ref()
+                    .is_some_and(|a| a.lit.is_none() && a.ty.is_empty() && !demand.needs(i))
+            })
+            .collect();
         let mut out = Ty::empty();
         let need_args = self.need_args.take();
         let leaving = std::mem::take(&mut self.leaving);
@@ -6177,10 +6212,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let passing = self.need_passed.len();
         let refusals = self.lit_refused.len();
         let r = match (sig.arrows.len(), self.first_taking(sig, &args, pass)) {
-            (1, _) => self.apply_one(what, sig, 0, &args, defer, span),
-            (_, Some(k)) => self.apply_one(what, sig, k, &args, defer, span),
+            (1, _) => self.apply_one(what, sig, 0, &args, &unneeded, defer, span),
+            (_, Some(k)) => self.apply_one(what, sig, k, &args, &unneeded, defer, span),
             _ => {
-                let r = self.apply_many(what, sig, &mut args, span);
+                let r = self.apply_many(what, sig, &mut args, &unneeded, span);
                 self.applied = None;
                 r
             }
@@ -6304,12 +6339,24 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// Binds each variable of the parameter `p` that no other argument binds to `Never`, for an
+    /// argument with no value: a union with the empty type, so the same in any order.
+    fn bind_never(&self, p: &Ty, binds: &mut Binds) {
+        let mut vars = Vars::default();
+        p.vars_in(&mut vars);
+        for v in vars.order.into_iter().filter(|v| !self.is_class(v)) {
+            binds.entry(v).or_insert_with(Ty::empty);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn apply_one(
         &mut self,
         what: &str,
         sig: &Sig,
         k: usize,
         args: &[Option<Arg<'a>>],
+        unneeded: &[bool],
         defer: BTreeSet<Arc<str>>,
         span: Span,
     ) -> Result<(Ty, Vec<usize>), String> {
@@ -6502,11 +6549,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // another argument binds it, and a need on it is checked on `Never`, not on the
             // unknown. Binding is a union, so this is the same in any order of the arguments.
             if ty.is_empty() {
-                let mut vars = Vars::default();
-                p.vars_in(&mut vars);
-                for v in vars.order.into_iter().filter(|v| !self.is_class(v)) {
-                    binds.entry(v).or_insert_with(Ty::empty);
-                }
+                self.bind_never(p, &mut binds);
                 continue;
             }
             for piece in ty.pieces() {
@@ -6603,10 +6646,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         if given.iter().any(|a| a.ty.dynamic) {
             out = out.union(&Ty::dynamic());
         }
-        if given
-            .iter()
-            .all(|a| a.lit.is_some() || a.ty.pieces().iter().any(|p| *p != Piece::Dyn))
-        {
+        // The call takes place when each argument has a value: one whose every value passed by
+        // leaves it untaken, and so does one of type `Never` that the call needs. One of type
+        // `Never` that a function's body reads only where its result says (`y` in
+        // `k(x, y) = y` with `k(n, 1)`) does not: the result is the arrow's, with the
+        // parameter's variables bound to `Never`, so it is `Never` only where that argument
+        // reaches it on every path.
+        if args.iter().zip(unneeded).all(|(a, &unneeded)| {
+            a.as_ref().is_none_or(|a| {
+                unneeded || a.lit.is_some() || a.ty.pieces().iter().any(|p| *p != Piece::Dyn)
+            })
+        }) {
             let result = close(&arrow.result.replace(&binds), sig, |v| self.is_class(v));
             out = out.union(&match partial {
                 true => result,
@@ -6636,6 +6686,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: &str,
         sig: &Sig,
         args: &mut [Option<Arg<'a>>],
+        unneeded: &[bool],
         span: Span,
     ) -> Result<(Ty, Vec<usize>), String> {
         let mut class = None;
@@ -6678,6 +6729,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (i, a) in args.iter().enumerate() {
             let pieces: Vec<Option<Piece>> = match a {
                 None => vec![None],
+                // An argument of type `Never` the call does not need keeps every arrow.
+                Some(_) if unneeded[i] => vec![None],
                 Some(a) if a.lit.is_some() && class.is_some() => {
                     vec![Some(Piece::Var(format!("${}", class.unwrap()).into()))]
                 }
@@ -6733,9 +6786,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut out = Ty::empty();
         for (alive, dyn_, at, path) in &states {
             let shown = |ck: &Self| {
-                let shown: Vec<String> = path
-                    .iter()
-                    .map(|p| p.as_ref().map_or_else(|| "_".into(), |p| ck.show(&p.ty())))
+                let shown: Vec<String> = (path.iter().zip(unneeded))
+                    .map(|(p, &u)| match p {
+                        Some(p) => ck.show(&p.ty()),
+                        None if u => ck.show(&Ty::empty()),
+                        None => "_".into(),
+                    })
                     .collect();
                 let pieces: Vec<Option<Ty>> =
                     path.iter().map(|p| p.as_ref().map(Piece::ty)).collect();
@@ -6784,9 +6840,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                     };
                     let a = &sig.arrows[j];
                     let mut binds = Binds::new();
-                    for (p, t) in path.iter().zip(&a.params) {
-                        if let Some(p) = p {
-                            self.sub(&p.ty(), t, &mut binds);
+                    for ((p, t), &u) in path.iter().zip(&a.params).zip(unneeded) {
+                        match p {
+                            Some(p) => {
+                                self.sub(&p.ty(), t, &mut binds);
+                            }
+                            None if u => self.bind_never(t, &mut binds),
+                            None => {}
                         }
                     }
                     out = out.union(&close(&a.result.subst(&binds), sig, |v| self.is_class(v)));

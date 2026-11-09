@@ -290,9 +290,9 @@ fn an_atom_with_a_payload_of_no_value_after_substitution_is_never() {
 }
 
 /// An argument of type `Never` binds the variable of its parameter to `Never`: a need of the
-/// generic function on that variable is checked on `Never`, which every use takes, and the
-/// call, whose argument has no value, gives none. No message names a type the program did not
-/// write.
+/// generic function on that variable is checked on `Never`, which every use takes. The call
+/// gives no value where its substituted result is `Never`, and its arrow's result elsewhere
+/// (EMPTY-call-unused). No message names a type the program did not write.
 #[test]
 fn an_argument_of_type_never_binds_its_variable_to_never() {
     for (text, want) in [
@@ -330,9 +330,9 @@ fn an_argument_of_type_never_binds_its_variable_to_never() {
         (
             "ap(positional g, positional y) = g(y);\nf(positional h: (int) -> int, positional \
              n: Never) = ap(h, n);\n",
-            "((int) -> int, Never) -> Never",
+            "((int) -> int, Never) -> int",
         ),
-        // One argument of no value: the call is never made, though the other has values.
+        // One argument of no value in a tuple the body builds: the tuple is `Never`.
         (
             "two(positional x, positional y) = (x, y);\nf(positional n: Never) = two(n, 1);\n",
             "(Never) -> Never",
@@ -342,14 +342,15 @@ fn an_argument_of_type_never_binds_its_variable_to_never() {
             "pair(positional x) = (x, 1);\nf(positional g: (int) -> Never) = pair(g(1));\n",
             "((int) -> Never) -> Never",
         ),
-        // A parameter with a declared type takes `Never`, which is below every type.
+        // A parameter with a declared type takes `Never`, which is below every type. The result is
+        // the arrow's: the checker does not ask whether the body reads `x` on every path.
         (
             "g(positional x: int) = x + 1;\nf(positional n: Never) = g(n);\n",
-            "(Never) -> Never",
+            "(Never) -> int",
         ),
         (
             "g(positional x: (int, String)) = x;\nf(positional n: Never) = g(n);\n",
-            "(Never) -> Never",
+            "(Never) -> (int, String)",
         ),
         // `Never` in a union adds nothing: the variable is bound by the rest.
         (
@@ -378,4 +379,122 @@ fn calls_with_never_and_with_int_do_not_meet() {
         assert_eq!(sig(&text, "h"), "(int) -> (int, 1)", "{text}");
         assert_eq!(sig(&text, "pair"), sig(alone, "pair"), "{text}");
     }
+}
+
+/// Evaluation is neither strict nor lazy, so an argument of type `Never` leaves a call of a
+/// declared function without a value only where the substituted body needs it: the call's type
+/// is the substituted result, with no rule that any argument of no value makes it `Never`
+/// (EMPTY-call-unused).
+#[test]
+fn a_call_with_an_argument_of_no_value_has_its_substituted_result() {
+    let k = "k(positional x, positional y) = y;\n";
+    let sel = "sel(positional b: bool, positional x, positional y) = if b { x } else { y };\n";
+    for (text, want) in [
+        // An unused argument: the result is the other argument's.
+        (
+            format!("{k}f(positional n: Never) = k(n, 1);\n"),
+            "(Never) -> 1",
+        ),
+        (
+            format!("{k}f(positional n: Never) = k(n, #a);\n"),
+            "(Never) -> #a",
+        ),
+        (
+            format!("{k}f(positional n: Never) = n.k(1);\n"),
+            "(Never) -> 1",
+        ),
+        (
+            "c(positional x: int) = 7;\nf(positional n: Never) = c(n);\n".to_string(),
+            "(Never) -> 7",
+        ),
+        // Used on one branch only: that branch adds nothing.
+        (
+            format!("{sel}f(positional b: bool, positional n: Never) = sel(b, n, 1);\n"),
+            "(bool, Never) -> 1",
+        ),
+        // Used on every path: the result is `Never`.
+        (
+            format!("{k}f(positional n: Never) = k(1, n);\n"),
+            "(Never) -> Never",
+        ),
+        (
+            format!("{sel}f(positional b: bool, positional n: Never) = sel(b, n, n);\n"),
+            "(bool, Never) -> Never",
+        ),
+        // Nested calls: each call has its own substituted result.
+        (
+            format!("{k}f(positional n: Never) = k(k(n, 1), 2);\n"),
+            "(Never) -> 2",
+        ),
+        (
+            format!("{k}f(positional n: Never) = k(1, k(2, n));\n"),
+            "(Never) -> Never",
+        ),
+        (
+            format!("{k}f(positional n: Never) = 1 + k(n, 2);\n"),
+            "(Never) -> int",
+        ),
+        (
+            format!("{k}pair(positional x) = (x, 1);\nf(positional n: Never) = pair(k(n, 3));\n"),
+            "(Never) -> (3, 1)",
+        ),
+        (
+            format!("{k}f(positional n: Never) = {{ z = k(n, 1); z + 1 }};\n"),
+            "(Never) -> int",
+        ),
+        // Used on every path but with a result that does not name `x`: the arrow's result
+        // `int`. Sound, as `Never` is below `int`; finding `Never` here needs a demand analysis.
+        (
+            "inc(positional x) = x + 1;\nf(positional n: Never) = inc(n);\n".to_string(),
+            "(Never) -> int",
+        ),
+        // An operator needs every operand; `&&` needs only the first.
+        (
+            "f(positional n: Never) = n + 1;\n".to_string(),
+            "(Never) -> Never",
+        ),
+        (
+            "f(positional b: bool, positional n: Never) = b && n;\n".to_string(),
+            "(bool, Never) -> bool",
+        ),
+        (
+            "f(positional b: bool, positional n: Never) = b || n;\n".to_string(),
+            "(bool, Never) -> bool",
+        ),
+        (
+            "f(positional b: bool, positional n: Never) = n && b;\n".to_string(),
+            "(bool, Never) -> Never",
+        ),
+        // A call through an argument function with several arrows.
+        (
+            "f(positional h: ((int) -> int) & ((bool) -> bool), positional n: Never) = h(n);\n"
+                .to_string(),
+            "(((int) -> int) & ((bool) -> bool), Never) -> int",
+        ),
+    ] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+        assert_eq!(sig(&text, "f"), want, "{text}");
+    }
+}
+
+/// The visible effect of the old rule, which typed `k(h(1), 1)` as `Never`: the branch that
+/// returns 1 was dropped from the result, and a call that passes `"s"` on to an `int` parameter
+/// was accepted.
+#[test]
+fn a_call_that_does_not_read_an_argument_of_no_value_keeps_its_value() {
+    let k = "k(positional x, positional y) = y;\n";
+    let text = format!(
+        "{k}f(positional h: (int) -> Never, positional b: bool) = if b {{ k(h(1), 1) }} else {{ 2 }};\n"
+    );
+    assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    assert_eq!(sig(&text, "f"), "((int) -> Never, bool) -> 1 | 2", "{text}");
+    let text = format!(
+        "{k}take(positional x: int) = x;\nf(positional h: (int) -> Never) = take(k(h(1), \"s\"));\n"
+    );
+    let errors = type_errors(&text);
+    assert_eq!(errors.len(), 1, "{text}: {errors:?}");
+    assert!(
+        errors[0].starts_with("`take` does not take (\"s\")"),
+        "{text}: {errors:?}"
+    );
 }
