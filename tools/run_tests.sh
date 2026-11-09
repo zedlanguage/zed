@@ -17,12 +17,14 @@
 # selects from that table without building or listing the binaries, for tests of the selection.
 # The table is as the run that wrote it left it: with --full or not, and stale once the test
 # binaries are rebuilt. --logs puts the logs, the table and the piece list in <dir> instead of
-# build/test-logs, so two runs in one checkout do not overwrite each other's files.
+# build/test-logs. Two runs in one checkout need different directories: a second run on a
+# directory in use stops at once and names the run using it.
 # The build is `cargo test --workspace --no-run`, which does nothing on a tree already built
 # that way, so a run after such a build starts the pieces at once.
 # A failed piece keeps its output in build/test-logs/<piece>.log, or in the --logs directory.
 # Every piece runs in the systemd slice zedtests.slice, whose 112 GB limit holds across all
 # checkouts together. A load above the number of cores raises the limit of the pieces that start under it in proportion.
+args=$*
 features= full_suite= only= list= reuse= logs= doc=1 jobs=6
 while [ $# -gt 0 ]; do
   case $1 in
@@ -90,6 +92,21 @@ root=$(pwd)
 out=${logs:-build/test-logs}
 [[ $out == /* ]] || out=$root/$out
 mkdir -p "$out"
+# One run at a time uses a log directory: two runs sharing its piece list and summary report
+# pieces of the other run and false failures (rc=127, or a failed count above the failed lines).
+# A second run stops at once and names the first. The kernel drops the lock when the run and
+# every piece it started have ended, so a killed run leaves none behind. The run holding the lock
+# writes its details to run.holder while it holds a short lock on that file, which every run
+# takes before trying the lock, so a stopped run reads the details of the run that stopped it.
+exec 7>>"$out/run.holder" 8>>"$out/run.lock"
+flock 7
+if ! flock -n 8; then
+  echo "Another tools/run_tests.sh run is using $out: $(cat "$out/run.holder")."
+  echo "Wait for it to end, or give this run a directory of its own with --logs <dir>."
+  exit 1
+fi
+echo "process $$, started $(date '+%F %T'), arguments: ${args:-none}" >"$out/run.holder"
+exec 7>&-
 # Writes the pieces of the table on stdin that --only selects to $out/pieces, one per line: its
 # name, directory and command. A line of the table is a piece's group, step folder, then those.
 select_pieces() {

@@ -74,5 +74,17 @@ check "a pattern matching nothing exits non-zero with a message" "1 NO PIECE MAT
 out=$(run --list --reuse-table --only '(')
 rc=$?
 check "an invalid pattern exits 2" "2 --only: not a valid extended regular expression: (" "$rc $out"
+# This script holds the lock of the log directory as a run in progress would; a run started
+# meanwhile stops at once and names it, and a run started after the lock is released runs.
+exec 8>>"$logs/run.lock"
+flock -n 8 || echo "FAILED: the lock of $logs is held before the check"
+echo "a run held by tools/test_run_tests.sh" >"$logs/run.holder"
+out=$(run --list --reuse-table --only '^zedc$')
+rc=$?
+check "a second run on a log directory in use stops and names the first" \
+  "1 Another tools/run_tests.sh run is using $(pwd)/$logs: a run held by tools/test_run_tests.sh.
+Wait for it to end, or give this run a directory of its own with --logs <dir>." "$rc $out"
+exec 8>&-
+check "a run starts once the lock is released" "$(by_binary zedc)" "$(selected '^zedc$')"
 echo "checks failed: $fails"
 [ "$fails" = 0 ]
