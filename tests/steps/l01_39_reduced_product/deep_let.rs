@@ -1,9 +1,15 @@
 //! Terms nested deep (PA-let-stack): the walk of the arms (`store::product::arms`) and the
 //! forward transfer it runs on each bound term (`store::product::forward`) keep the nesting of
-//! `let`s, `if`s and primitives on frames on the heap, so a block of 100,000 bindings has its
+//! `let`s, `if`s and primitives on frames on the heap, so a block of 10,000 bindings has its
 //! arms on a 2 MiB thread stack. Before, both recursed on the thread's stack once per level,
 //! and a block of 512 bindings overflowed the stack of a scaling run (on a 2 MiB stack the
 //! walk overflowed at about 670 bindings).
+//!
+//! The fixed depths are 10 to 25 times the depth that overflowed, and no more, because each level
+//! costs the checker's work on a binding or a test whatever the depth: at 100,000 bindings
+//! these tests took 324 billion instructions and up to 45 s each (TEST-deep-let-size). With
+//! the walk and the transfer recursing on the thread's stack again, every test here aborts
+//! with a stack overflow, at 200 to 400 levels.
 
 use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::scaling;
@@ -15,7 +21,7 @@ use super::ints;
 const STACK: usize = 2 << 20;
 
 /// How deep the terms are.
-const DEEP: usize = 100_000;
+const DEEP: usize = 10_000;
 
 /// Runs `f` on a thread with a 2 MiB stack, whatever `RUST_MIN_STACK` says.
 fn on_small_stack(f: impl FnOnce() + Send + 'static) {
@@ -67,17 +73,16 @@ fn fees(d: usize, every: usize) -> Term {
     })
 }
 
-/// The arms of [`fees`] with `DEEP` days and a fee every 1,000th, on a 2 MiB stack: two for
+/// The arms of [`fees`] with `DEEP` days and a fee every 100th, on a 2 MiB stack: two for
 /// each fee and two for the final test, in the order written, the last fee's `2` taken only by
 /// `n > DEEP`. The fee is spaced to keep the test short, not to hide a cost that grows: a
 /// test costs a reduction of the scope and a copy per arm, measured at 165, 181 and 186 µs
-/// with a fee on every day at 1,000, 4,000 and 12,500 days, and with 100 fees the time at
-/// 12,500 and 100,000 days is that of the block alone; so a fee on every day is O(d), about
-/// 20 s here, and the depth of the walk is the same.
+/// with a fee on every day at 1,000, 4,000 and 12,500 days (and [`the_arms_of_a_deep_block_scale`]
+/// checks that cost), and the depth of the walk is the same.
 #[test]
-fn a_block_of_100000_bindings_has_its_arms_on_a_2_mib_stack() {
+fn a_block_of_10000_bindings_has_its_arms_on_a_2_mib_stack() {
     on_small_stack(|| {
-        let every = 1_000;
+        let every = 100;
         let a = arms(&fees(DEEP, every), &ints(&["n".into()]));
         assert_eq!(a.len(), 2 * (DEEP / every) + 2);
         let fee = &a[a.len() - 4];
@@ -114,10 +119,10 @@ fn bound_to(value: Term, d: usize) -> Term {
     )
 }
 
-/// A binding whose value is a block of 100,000 `let`s, or a sum 100,000 deep: the forward
-/// transfer finds its value, `100,001`, and the test after it is taken only by its true arm.
+/// A binding whose value is a block of 10,000 `let`s, or a sum 10,000 deep: the forward
+/// transfer finds its value, `10,001`, and the test after it is taken only by its true arm.
 #[test]
-fn a_value_nested_100000_deep_is_found_on_a_2_mib_stack() {
+fn a_value_nested_10000_deep_is_found_on_a_2_mib_stack() {
     on_small_stack(|| {
         let scope = ints(&["n".into()]);
         for make in [block, sum] {
@@ -138,15 +143,15 @@ fn nested_ifs(d: usize) -> Term {
     })
 }
 
-/// `if`s nested 20,000 deep in their first arm, on a 2 MiB stack: the `k`-th test's true arm
+/// `if`s nested 4,000 deep in their first arm, on a 2 MiB stack: the `k`-th test's true arm
 /// holds `n > k`, its false arm `n == k` (`n <= 1` for the first), the arms in the order
 /// written (the true arms outside in, then the false arms inside out), and the value is
-/// 0 or 1. (Each test costs a reduction of the scope; the depth is 20,000 to keep the test
-/// short.)
+/// 0 or 1. (Each test costs a reduction of the scope; the depth is 4,000, ten times the
+/// depth at which the old walk overflowed, to keep the test short.)
 #[test]
-fn ifs_nested_20000_deep_have_their_arms_on_a_2_mib_stack() {
+fn ifs_nested_4000_deep_have_their_arms_on_a_2_mib_stack() {
     on_small_stack(|| {
-        let d = 20_000;
+        let d = 4_000;
         let a = arms(&nested_ifs(d), &ints(&["n".into()]));
         assert_eq!(a.len(), 2 * d);
         for k in [1, d / 2, d] {
@@ -168,23 +173,23 @@ fn ifs_nested_20000_deep_have_their_arms_on_a_2_mib_stack() {
     });
 }
 
-/// The arms of [`fees`] with a fee every day cost `O(d log d)`, at 1,000 and 8,000 days, on a
+/// The arms of [`fees`] with a fee every day cost `O(d log d)`, at 250 and 2,000 days, on a
 /// 2 MiB stack; the blocks are built before the timing.
 #[test]
 fn the_arms_of_a_deep_block_scale() {
     on_small_stack(|| {
-        let terms = scaling::inputs(1_000, |d| fees(d, 1));
+        let terms = scaling::inputs(250, |d| fees(d, 1));
         let scope = ints(&["n".into()]);
         scaling::check(
             "the arms of a block of d bindings, a test in each",
-            1_000,
+            250,
             |d| _ = arms(&terms[&d], &scope),
         );
     });
 }
 
 /// The forward transfer of a block of `d` bindings and of a sum `d` deep costs `O(d)`, at
-/// 12,500 and 100,000, on a 2 MiB stack; the terms are built before the timing.
+/// 1,250 and 10,000, on a 2 MiB stack; the terms are built before the timing.
 #[test]
 fn the_value_of_a_deep_term_scales() {
     on_small_stack(|| {
