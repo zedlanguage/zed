@@ -204,11 +204,12 @@ fn a_cast_menu_costs_the_same_in_a_larger_program() {
     // limit of work of order n^0 as the program around them grows from m to 8m expressions.
     // That scan did 4.1 times the work at m = 60,000 against 480,000; this code 1.00 times.
     // The difference of two counts needs the count of instructions; a meter of processor time
-    // does not repeat closely enough. The count of one check at 8m repeats to within 0.1%
-    // (29.87 to 29.90 billion), but now and then one is 0.23 billion off, which made the
-    // difference 1.45 times (4 of 15 runs on 2026-11-09, on main's code fe97f3cd too), so the
-    // measure is repeated as the harness repeats processor time: the test fails only when
-    // all of `scaling::TRIES` tries are over the limit.
+    // does not repeat closely enough. With malloc's cache per thread, one check at 8m now and
+    // then took 0.26 billion instructions more in malloc, from what earlier threads left in
+    // its arena, and the difference came out 1.38 to 1.44 times (4 of 18 runs of this step on
+    // 2026-11-09). `tools/run_tests.sh` turns that cache off: the difference then repeats to
+    // within 0.04% when the checks run alone, and beside this step's other tests, which
+    // allocate at the same time, it was 0.97 to 1.02 times in 30 runs.
     const R: usize = 100;
     let meter = &mut Meter::new();
     let mut rejections = |m: usize| {
@@ -234,14 +235,8 @@ fn a_cast_menu_costs_the_same_in_a_larger_program() {
     };
     let m = 60_000;
     let limit = scaling::limit(m, scaling::FACTOR * m, 0);
-    let (mut small, mut large, mut ratio) = (0, 0, f64::INFINITY);
-    for _ in 0..scaling::TRIES {
-        (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
-        ratio = large as f64 / small as f64;
-        if ratio <= limit {
-            break;
-        }
-    }
+    let (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
+    let ratio = large as f64 / small as f64;
     assert!(
         ratio <= limit,
         "{R} rejections beside {m} and {} expressions: {small} and {large} {}, {ratio:.2} \
@@ -421,14 +416,8 @@ fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program
     };
     let m = 60_000;
     let limit = scaling::limit(m, scaling::FACTOR * m, 0);
-    let (mut small, mut large, mut ratio) = (0, 0, f64::INFINITY);
-    for _ in 0..scaling::TRIES {
-        (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
-        ratio = large as f64 / small as f64;
-        if ratio <= limit {
-            break;
-        }
-    }
+    let (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
+    let ratio = large as f64 / small as f64;
     assert!(
         ratio <= limit,
         "{R} functions beside {m} and {} expressions: {small} and {large} {}, {ratio:.2} \

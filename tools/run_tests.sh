@@ -288,8 +288,18 @@ mkdir -p "$slot_dir"
 # glibc's memcpy and memset use rep movsb and rep stosb on a CPU with erms or fsrm, and the hardware
 # counter sees either as one instruction or few, so a quadratic copy would pass a scaling test. A
 # setting glibc does not know is ignored; this glibc leaves the stosb threshold alone without erms.
+# The instructions malloc spends depend on what earlier threads left in the arena a new thread takes
+# over, and on the order the hash seed frees blocks in. One check of the same program, on a new
+# thread each time in one process, took 30.39 billion instructions or, in some runs, 30.65 billion,
+# all of the extra in _int_malloc and unlink_chunk (callgrind); the difference of two such checks
+# that l01_29's casts tests take came out 1.5 times its size in 3 of 30 runs. With no per-thread
+# cache, the same 30 runs in 15 processes of random seeds repeat to within 0.04%, the first run of
+# each process apart (SCALE-casts-spread). The mmap and trim thresholds are left alone: a fixed
+# threshold of 128 KiB makes a 64,000-deep l01_26 test 6 times slower, and one of 32 MiB moves the
+# sizes at which the memory limits of l01_17 and l01_36 refuse.
 never=0xffffffffffffffff
-export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_threshold=$never:glibc.cpu.x86_rep_stosb_threshold=$never
+malloc=glibc.malloc.tcache_count=0
+export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_threshold=$never:glibc.cpu.x86_rep_stosb_threshold=$never:$malloc
 cores=$(nproc)
 export root out slots slot_dir cores
 take_slot() {

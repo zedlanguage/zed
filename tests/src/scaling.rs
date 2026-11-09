@@ -21,10 +21,16 @@
 //! processor time, because the larger run lost the caches and was preempted, and it retired
 //! 8.0 times the instructions on every try.
 //!
-//! The count has two limits. Work in the kernel is not counted. A `rep movsb` or `rep stosb`
+//! The count has three limits. Work in the kernel is not counted. A `rep movsb` or `rep stosb`
 //! counts as one instruction or few, whatever its length, and glibc's memcpy and memset use
 //! them on a CPU with erms or fsrm, so `tools/run_tests.sh` keeps glibc from them, and
-//! `copies_and_fills_count_by_their_length` fails on a machine where they are hidden.
+//! `copies_and_fills_count_by_their_length` fails on a machine where they are hidden. The
+//! instructions glibc's malloc spends depend on what earlier threads left in the arena a new
+//! thread takes over and on the order the hash seed frees blocks in: one check of the same
+//! program took 0.26 billion instructions (0.9%) more in some runs than in others, all of it in
+//! malloc, and a difference of two such counts, of about 0.5 billion, came out 1.5 times its
+//! size. So `tools/run_tests.sh` turns off malloc's cache per thread, and
+//! `malloc_keeps_no_state_from_earlier_threads` fails where it does not.
 //!
 //! Where the hardware has no counter, as in most virtual machines, [`Meter`] falls back on the
 //! kernel's task clock: the processor time of this thread and the threads it starts, without the
@@ -952,6 +958,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Fails where glibc's malloc keeps a cache per thread, which glibc turns off only by
+    /// `GLIBC_TUNABLES` as the process starts: there, the instructions a run spends in malloc
+    /// depend on the threads before it, and a difference of two counts can be 1.5 times its size.
+    #[test]
+    fn malloc_keeps_no_state_from_earlier_threads() {
+        let tunables = std::env::var("GLIBC_TUNABLES").unwrap_or_default();
+        let setting = "glibc.malloc.tcache_count=0";
+        assert!(
+            tunables.split(':').any(|s| s == setting),
+            "GLIBC_TUNABLES ({tunables:?}) does not set {setting}. Run the tests by \
+             tools/run_tests.sh, which sets it"
+        );
     }
 
     #[test]
