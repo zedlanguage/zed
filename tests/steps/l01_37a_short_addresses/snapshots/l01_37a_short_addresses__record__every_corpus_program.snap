@@ -44,8 +44,8 @@ expression: without_addresses(&out)
 20:11: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 21:11: an array display is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 21:19: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-21:61: an array display is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-21:62: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+21:70: an array display is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+21:71: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 22:3: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 22:12: a range is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 22:16: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
@@ -124,7 +124,7 @@ expression: without_addresses(&out)
 14:7: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 15:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 22:26: a `loop` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-25-autocorrelation.zed (L5): does not load: 11:51: a tuple-destructuring parameter is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+25-autocorrelation.zed (L5): does not load: 11:60: a tuple-destructuring parameter is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 12:13: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 12:22: a range is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 26-heat-stencil.zed (L6): does not load: 13:11: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
