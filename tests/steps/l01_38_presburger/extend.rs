@@ -126,7 +126,7 @@ fn a_chain_of_extensions_is_decided_in_time_of_its_links() {
 fn a_chain_whose_points_move_is_decided_whole() {
     // f{i} = f{i-1} && x + i * y >= 1000 i: the point found for f{i-1} is below the new
     // constraint, so each f{i} is decided whole, and each answer is still the one the whole has
-    // (the Complexity tradeoff at `Extending::answers`).
+    // (the Complexity tradeoff at `Extending::defined`).
     let mut f = Formula::and(vec![
         ge(sym("x"), sym("y").plus(&Lin::constant(1))),
         ge(sym("y"), Lin::constant(0)),

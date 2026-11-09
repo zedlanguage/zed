@@ -305,5 +305,32 @@ Line numbers are those before this review's edits.
 | `ty.rs:5865` (scan then file) | 5b8d1da1 | scan per value | file at `l·v > 16·(l + v)` | constant measured; same answers | complete | none |
 | `ty.rs:6218` `every_arrow_fits` | ce7b9082 | n·m comparisons | candidates by key, n²/2 worst, n for shared parameter | Hitting Set lower bound (conjecture) | complete | none |
 | `ty.rs:6466` covering (refusals) | 585e7f18 | DNF tautology, exponential; all subsets | linear in the width | three refused classes | complete | none |
-| `ty.rs:6491` covering (candidates) | 53d0c317 | — | candidates, n·m worst | measured 63.3 times bytes | complete | none |
+| `ty.rs:6491` covering (candidates) | 53d0c317 | each arrow with each slot arrow, n·m | candidates, n·m worst | measured 63.3 times bytes | complete | none |
 | `ty.rs:6659` `result_within` | 9b740605 | value by value, product of bounds; quadratic in shapes | linear in the results | some fits refused | complete | none |
+
+## tests
+
+18 markers in `tests/`. Twelve are references: a test comment that names a tradeoff comment in a crate and states the case it exercises. A reference is counted complete when the site it names exists and is complete; its costs are those of that site. One reference named a function that no longer holds the comment (stale) and was corrected. Line numbers are those before the edits.
+
+| Site | Commit | Naive version, complexity | Used version, complexity | Tradeoffs | Before | Action |
+|---|---|---|---|---|---|---|
+| `tests/src/oracle.rs:229` (walk ends after a stop) | ac2be137 | going on, O((n + s·F) log n) | ended walk, O(n log n) | bindings left unrun, reported with the reason | complete | none |
+| `grammar_read.rs:72` | aac84859 | reference: `Reader::within` (`zedc-syntax` grammar.rs) | | | complete (reference) | none |
+| `in_place.rs:351` | 56c364a9 | reference: `Rat::rem_built` (num.rs) | | | complete (reference) | none |
+| `in_place.rs:369` | 26b4df16 | reference: `Rat::scaled` (num.rs) | | | complete (reference) | none |
+| `memory_check.rs:312` | 1d71099a | reference: `bound::round` (num/bound.rs) | | | complete (reference) | none |
+| `products.rs:57` | 26b4df16 | reference: `Rat::mul`, `Rat::scaled` | | | complete (reference) | none |
+| `kinds.rs:1194` | a65698ee | reference: `Near` (ty.rs), F127 | | | complete (reference) | none |
+| `kinds.rs:1332` | b0648dc0 | reference: `Near` (ty.rs), F132 | | | complete (reference) | none |
+| `kinds.rs:1524` | 5b8d1da1 | reference: `Holders` (ty.rs), F133 | | | complete (reference) | none |
+| `admission_sweep.rs:306` | b57ac34a | exact monotonicity for any k, exponential in k (coNP-complete) | 2^k reads, groups of k ≤ 4 | larger groups not swept | complete | none |
+| `cycle_dup.rs:397` | 92fdf6f2 | reference: `names::absorb` (empty/names.rs) | | | complete (reference) | none |
+| `group_oracle.rs:446` `Machine` | 1c44eba7 | hash map, measured 35 s on one system | table quadratic in the pool, some megabytes | memory for time | complete | none |
+| `group_oracle.rs:918` (pool rounds) | 1c44eba7 | every value per component, product of pool sizes | 36 tuples and 6 constants per type per round, up to 6^w combinations built | `E` proves only the pool | partial | added naive/used sentence |
+| `l01_38_presburger/extend.rs:129` | 5a4987d5 | reference: named `Extending::answers`, which only calls `Extending::defined`, where the comment is | | | stale | reference changed to `Extending::defined` |
+| `ladder.rs:925` | 355e67f4 | reference: `part_bounds` (presburger.rs) | | | complete (reference) | none |
+| `ladder.rs:1405` | 355e67f4 | reference: `products` (presburger.rs) | | | complete (reference) | none |
+| `trivial.rs:357` (CNF) | b1c9b0de | CNF written out, product of clause counts | charged against the work budget, refused at it | budget is A54's stand-in (MIX-budget) | complete | none |
+| `trivial.rs:682` (shared-field atom) | b1c9b0de | split by end symbol, wrong (loses agreement) | O(p log p) plus pairs, cubic in the atom | time and space cubic | complete | none |
+
+Observation, not changed (outside a comment-only item): in `group_oracle.rs` the tuple rounds build every combination of up to 6 values per component (6^w) before keeping the first 36; taking 36 while building would bound the work by 36 per tuple type.

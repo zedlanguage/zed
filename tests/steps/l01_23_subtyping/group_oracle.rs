@@ -919,6 +919,9 @@ fn build_pool(ts: &Types, cap: usize, seed: u64) -> (Pool, bool) {
     // tuple type, so the pool stays small enough to decide in the test's time; what is given up
     // is values the choices did not build, so an `E` is a proof only of the pool. The choices
     // (above) are what make an `E` from a pool of every choice the answer the tests rely on.
+    // Naive version: every value per component, the product of the pool's sizes over a tuple
+    // type's components each round; used: at most 36 tuples and 6 constants per type each round,
+    // after building at most 6^w combinations for a tuple type of width w.
     for _ in 0..4 {
         let (lo, _) = bounds(ts, &p);
         let before = p.n.len();
