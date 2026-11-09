@@ -2588,12 +2588,11 @@ fn a_ring_of_the_group_that_hung_the_search_is_refused() {
 }
 
 /// The verdicts of every member of a ring of n copies of the group that hung the search, at n
-/// and 8n. Ignored: the time is quadratic in n. Each copy's search tests whether two types
-/// overlap (COMPLEXITY.md K36), and each such test unfolds the members it meets through the
-/// first parts of tuples, so it walks the whole ring: n tests of n types each
-/// (GROUP-overlaps-unfold).
+/// and 8n. Each copy's search tests whether two types overlap (COMPLEXITY.md K36), n tests
+/// that each reach the whole ring through the first parts of tuples. The ring is one strongly
+/// connected group of types, whose trie is made once and placed whole for each test; its types
+/// merge into one node, where a walk over the ring for each test cost n (GROUP-overlaps-unfold).
 #[test]
-#[ignore = "quadratic: each overlap test walks the whole ring (GROUP-overlaps-unfold)"]
 fn verdicts_of_a_ring_of_the_group_that_hung_the_search_scale() {
     verdicts_of_copies_scale(
         "the verdicts of every member of a ring of n copies of the group that hung the search",

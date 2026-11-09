@@ -306,6 +306,7 @@ impl Type {
         VERDICTS.with(|m| m.borrow_mut().clear());
         STORES.with(|m| m.borrow_mut().clear());
         SHARED.with(|m| m.borrow_mut().clear());
+        GROUPS.with(|m| m.borrow_mut().clear());
         super::rec::unfold::end_unit();
     }
 
@@ -2856,8 +2857,7 @@ impl<'m> Searching<'m> {
         for (j, cs) in cells {
             // Two cells that may share a value, as the split into classes reads them (K36),
             // leave the part to the search.
-            let held = Held::default();
-            let groups = overlaps(cs.iter().map(|&c| g.cells[j][c].ty.p_held(&held)), &held);
+            let groups = overlaps(cs.iter().map(|&c| &g.cells[j][c].ty));
             if groups.iter().any(|is| is.len() > 1) {
                 return None;
             }
@@ -5548,9 +5548,7 @@ fn classes(g: &Region, open: &[usize]) -> Option<(usize, Vec<Class>)> {
             return None;
         }
         let cells: Vec<usize> = g.open_cells(j, open).into_iter().collect();
-        let held = Held::default();
-        let ps = cells.iter().map(|&c| g.cells[j][c].ty.p_held(&held));
-        let groups = overlaps(ps, &held);
+        let groups = overlaps(cells.iter().map(|&c| &g.cells[j][c].ty));
         if groups.len() < 2 {
             return None;
         }
@@ -5571,11 +5569,11 @@ fn classes(g: &Region, open: &[usize]) -> Option<(usize, Vec<Class>)> {
 /// literal, the bare atom of the node's name, or a whole universe. An atom name and a tuple
 /// length label the node below, which holds the keys of the payloads of that name or of the
 /// first components of the tuples of that length. Two types with no key in common are disjoint.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Key<'a> {
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Key {
     Bool(u8),
-    Lit(usize, &'a Value),
-    Atom(&'a std::sync::Arc<str>),
+    Lit(usize, Value),
+    Atom(std::sync::Arc<str>),
     Len(usize),
     /// The bare atom of the name of the node.
     Bare,
@@ -5587,16 +5585,19 @@ enum Key<'a> {
 /// The keys `p` lists in universe `u` (0 to 3 the literals of `Lits`, 4 the atoms, 5 the
 /// tuples), each with whether `p` holds a value of it, and whether `p` is cofinite there: it
 /// then holds every value of each key it does not list. `none` is the empty type.
-fn listed<'a>(p: &'a Parts, u: usize, none: &Type) -> (bool, Vec<(Key<'a>, bool)>) {
+fn listed(p: &Parts, u: usize, none: &Type) -> (bool, Vec<(Key, bool)>) {
     match u {
         0..4 => {
             let l = [&p.ints, &p.rats, &p.floats, &p.strings][u];
-            let ks = l.values.iter().map(|v| (Key::Lit(u, v), !l.cofinite));
+            let ks = l
+                .values
+                .iter()
+                .map(|v| (Key::Lit(u, v.clone()), !l.cofinite));
             (l.cofinite, ks.collect())
         }
         4 => {
             let ks = p.atoms.names.iter();
-            let ks = ks.map(|(n, a)| (Key::Atom(n), a.bare || a.payload != *none));
+            let ks = ks.map(|(n, a)| (Key::Atom(n.clone()), a.bare || a.payload != *none));
             (p.atoms.cofinite, ks.collect())
         }
         _ => {
@@ -5608,28 +5609,36 @@ fn listed<'a>(p: &'a Parts, u: usize, none: &Type) -> (bool, Vec<(Key<'a>, bool)
 }
 
 /// An edge of the trie `overlaps` builds: an atom name or a tuple length.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum Edge<'a> {
-    Atom(&'a std::sync::Arc<str>),
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Edge {
+    Atom(std::sync::Arc<str>),
     Len(usize),
 }
 
 /// The trie of keys: node 0 is the whole type; below a node, one node per atom name and per
 /// tuple length that a type holds there. Two nodes merged are one node from then on, and so
 /// are their children by each edge.
-struct Trie<'a> {
+struct Trie {
     /// Each node's children by edge; a merged node's children are its class root's.
-    kids: Vec<HashMap<Edge<'a>, usize>>,
+    kids: Vec<HashMap<Edge, usize>>,
     /// The union-find of merged nodes.
     same: Vec<usize>,
 }
 
-impl<'a> Trie<'a> {
+impl Trie {
+    /// The trie of one node.
+    fn new() -> Trie {
+        Trie {
+            kids: vec![HashMap::new()],
+            same: vec![0],
+        }
+    }
+
     fn find(&mut self, x: usize) -> usize {
         root(&mut self.same, x)
     }
 
-    fn child(&mut self, x: usize, e: Edge<'a>) -> usize {
+    fn child(&mut self, x: usize, e: Edge) -> usize {
         let x = self.find(x);
         let next = self.kids.len();
         let y = *self.kids[x].entry(e).or_insert(next);
@@ -5666,31 +5675,331 @@ impl<'a> Trie<'a> {
     }
 }
 
-/// What one type puts in the trie, found by a walk over the types inside it: the keys it holds
-/// at each node, what it lists in each universe at each node, and the nodes under which it holds
-/// every value.
-struct Walk<'a> {
-    /// Each type inside met so far, by structure, and the node it was first met at.
-    seen: HashMap<&'a Type, usize>,
-    /// The types inside still to walk, with their nodes.
-    todo: Vec<(usize, &'a Parts)>,
-    /// The unfoldings of the recursive types met.
-    held: &'a Held,
+/// What one universe lists at a node: the universe, whether the list is cofinite, and its
+/// keys, each with whether a value of it is held.
+type Listed = (usize, bool, Vec<(Key, bool)>);
+
+/// What a type puts in the trie `overlaps` builds, read from its own parts: the keys it holds
+/// at its node, what it lists there in each universe, and its edges below.
+#[derive(Default)]
+struct Local<'a> {
+    points: Vec<Key>,
+    lists: Vec<Listed>,
+    kids: Vec<Kid<'a>>,
 }
 
-impl<'a> Walk<'a> {
-    /// Puts the values of `t` under node `y`. A type met again adds nothing: met at another
-    /// node, that node and the first are merged, so its keys under the first are its keys
-    /// under both.
-    fn enter(&mut self, trie: &mut Trie<'a>, y: usize, t: &'a Type) {
-        match self.seen.entry(t) {
-            Entry::Vacant(v) => {
-                v.insert(y);
-                self.todo.push((y, t.p_held(self.held)));
+/// One edge below a type's node: whether the type holds the bare atom of the name there,
+/// whether it holds every value there (every tuple of the length), and the types inside it
+/// under the edge, the payloads of the name or the first components of the tuples.
+struct Kid<'a> {
+    edge: Edge,
+    bare: bool,
+    whole: bool,
+    inside: Vec<&'a Type>,
+}
+
+/// What `p` puts at its node of the trie `overlaps` builds, and the edges below.
+fn local<'a>(p: &'a Parts, none: &Type) -> Local<'a> {
+    let mut points: Vec<Key> = (0..2u8)
+        .filter(|b| p.bools >> b & 1 == 1)
+        .map(Key::Bool)
+        .collect();
+    if p.structs {
+        points.push(Key::All(6));
+    }
+    if p.morphisms.is_leaf() != Some(false) {
+        points.push(Key::All(7));
+    }
+    let mut kids = Vec::new();
+    for (n, a) in &p.atoms.names {
+        if !a.bare && a.payload == *none {
+            continue;
+        }
+        let inside = match a.payload != *none {
+            true => vec![&a.payload],
+            false => Vec::new(),
+        };
+        kids.push(Kid {
+            edge: Edge::Atom(n.clone()),
+            bare: a.bare,
+            whole: false,
+            inside,
+        });
+    }
+    for (&n, f) in &p.tuples.lens {
+        if f.is_leaf() == Some(false) {
+            continue;
+        }
+        // Every value of a part `false` outside its tuple types is in one of them.
+        let whole = n == 0 || f.eval3(&|_| Some(false)) != Some(false);
+        let mut inside = Vec::new();
+        if !whole {
+            f.atoms(&mut |row: &'a Row| {
+                inside.push(&row[0]);
+                true
+            });
+        }
+        kids.push(Kid {
+            edge: Edge::Len(n),
+            bare: false,
+            whole,
+            inside,
+        });
+    }
+    let mut lists = Vec::with_capacity(6);
+    for u in 0..6 {
+        let (cofinite, ks) = listed(p, u, none);
+        let lits = ks
+            .iter()
+            .filter(|(k, held)| *held && matches!(k, Key::Lit(..)));
+        points.extend(lits.map(|(k, _)| k.clone()));
+        lists.push((u, cofinite, ks));
+    }
+    Local {
+        points,
+        lists,
+        kids,
+    }
+}
+
+/// The trie that one strongly connected group of types puts below the node of a member, where
+/// the types inside a type are its payloads and the first components of its tuples (each type
+/// reaches every member): one node per class of nodes, as one walk over the members merges
+/// them, the members' types met again at another node. The types of groups below this one are
+/// leaves, each at its node. It is the same trie from every member, a member's node being its
+/// class. What a type lists at a class is cut to what `overlaps` reads of it: the keys that
+/// every cofinite list there lists, or, with no cofinite list, the keys held there.
+struct Group {
+    /// The group's number, from one count per thread.
+    id: usize,
+    nodes: Vec<GroupNode>,
+}
+
+/// One node of a [`Group`]: its children by edge, the keys held there, what the universes
+/// list there, whether every value under it is held, and the types of lower groups placed
+/// there.
+#[derive(Default)]
+struct GroupNode {
+    kids: Vec<(Edge, usize)>,
+    points: Vec<Key>,
+    lists: Vec<Listed>,
+    whole: bool,
+    below: Vec<Type>,
+}
+
+thread_local! {
+    /// The group of each type that `overlaps` met inside a type, and the type's node there,
+    /// until `Type::forget_emptiness`.
+    // Complexity tradeoff: every type met inside the cells of the unit's splits is kept with
+    // its group until the unit ends, O(their total size) of memory; it buys each group's trie
+    // made once, where made for each cell a ring of k types costs k per cell and order k^2 in
+    // all (COMPLEXITY.md K36). Trigger: any split into classes.
+    static GROUPS: RefCell<ByType<(std::rc::Rc<Group>, usize)>> =
+        const { RefCell::new(ByType::with_hasher(Digests::new())) };
+    /// The number of the next [`Group`] made on this thread.
+    static GROUP_IDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The state of the walk of [`group_of`]: per type met, by its number in the order met, the
+/// type, its parts read, its group's number once its walk ends (`usize::MAX` before), and the
+/// lowest number it reaches through types whose groups are not made; the types met whose
+/// groups are not made, in order; and the walk, each type with its next type inside, by edge
+/// and by place under the edge.
+struct Walked<'a> {
+    number: HashMap<&'a Type, usize>,
+    types: Vec<&'a Type>,
+    locals: Vec<Local<'a>>,
+    group: Vec<usize>,
+    low: Vec<usize>,
+    open: Vec<usize>,
+    walk: Vec<(usize, usize, usize)>,
+}
+
+impl<'a> Walked<'a> {
+    fn visit(&mut self, t: &'a Type, held: &'a Held, none: &Type) {
+        let v = self.types.len();
+        self.number.insert(t, v);
+        self.types.push(t);
+        self.locals.push(local(t.p_held(held), none));
+        self.group.push(usize::MAX);
+        self.low.push(v);
+        self.open.push(v);
+        self.walk.push((v, 0, 0));
+    }
+
+    /// Makes the group `g` of `members`, whose walks have ended, and keeps it for each member:
+    /// one walk from a member over the types inside, each member's parts read once, a member
+    /// met again merging its two nodes, a type of a group below a leaf at its node.
+    fn make(&mut self, members: &[usize], g: usize) {
+        let mut trie = Trie::new();
+        let first = self.types[members[0]];
+        let mut node: HashMap<&'a Type, usize> = HashMap::from([(first, 0)]);
+        let mut todo = vec![(0, members[0])];
+        let mut points: Vec<(usize, Key)> = Vec::new();
+        let mut lists: Vec<(usize, Listed)> = Vec::new();
+        let mut wholes: Vec<usize> = Vec::new();
+        let mut below: Vec<&'a Type> = Vec::new();
+        while let Some((x, m)) = todo.pop() {
+            let l = std::mem::take(&mut self.locals[m]);
+            points.extend(l.points.into_iter().map(|k| (x, k)));
+            lists.extend(l.lists.into_iter().map(|li| (x, li)));
+            for kid in l.kids {
+                let y = trie.child(x, kid.edge);
+                if kid.bare {
+                    points.push((y, Key::Bare));
+                }
+                if kid.whole {
+                    wholes.push(y);
+                }
+                for t in kid.inside {
+                    match node.entry(t) {
+                        Entry::Occupied(o) => trie.merge(*o.get(), y),
+                        Entry::Vacant(e) => {
+                            e.insert(y);
+                            match self.number.get(t) {
+                                Some(&u) if self.group[u] == g => todo.push((y, u)),
+                                _ => below.push(t),
+                            }
+                        }
+                    }
+                }
             }
-            Entry::Occupied(o) => trie.merge(*o.get(), y),
+        }
+        // Each node's class, numbered in order of the classes' roots.
+        let roots: Vec<usize> = (0..trie.same.len()).map(|x| trie.find(x)).collect();
+        let mut class = vec![usize::MAX; roots.len()];
+        let mut count = 0;
+        for x in 0..roots.len() {
+            if roots[x] == x {
+                class[x] = count;
+                count += 1;
+            }
+        }
+        let at = |x: usize| class[roots[x]];
+        let mut nodes: Vec<GroupNode> = (0..count).map(|_| GroupNode::default()).collect();
+        for (x, kids) in trie.kids.iter().enumerate() {
+            if roots[x] == x {
+                nodes[at(x)].kids = kids.iter().map(|(e, &c)| (e.clone(), at(c))).collect();
+            }
+        }
+        let mut held: Vec<BTreeSet<Key>> = vec![BTreeSet::new(); count];
+        for (x, k) in points {
+            held[at(x)].insert(k);
+        }
+        for (n, ks) in nodes.iter_mut().zip(held) {
+            n.points = ks.into_iter().collect();
+        }
+        // Per class and universe: whether a list is cofinite, the keys every cofinite list
+        // lists, and the keys held. A cofinite list makes the class share the universe, so
+        // the keys held matter only with none.
+        #[allow(clippy::type_complexity)]
+        let mut cut: BTreeMap<(usize, usize), (Option<BTreeSet<Key>>, BTreeSet<Key>)> =
+            BTreeMap::new();
+        for (x, (u, cofinite, ks)) in lists {
+            let (meet, kept) = cut.entry((at(x), u)).or_default();
+            match cofinite {
+                true => {
+                    let ks: BTreeSet<Key> = ks.into_iter().map(|(k, _)| k).collect();
+                    match meet {
+                        Some(m) => m.retain(|k| ks.contains(k)),
+                        None => *meet = Some(ks),
+                    }
+                }
+                false => kept.extend(ks.into_iter().filter(|&(_, h)| h).map(|(k, _)| k)),
+            }
+        }
+        for ((c, u), (meet, kept)) in cut {
+            let (cofinite, ks) = match meet {
+                Some(m) => (true, m),
+                None if kept.is_empty() => continue,
+                None => (false, kept),
+            };
+            nodes[c]
+                .lists
+                .push((u, cofinite, ks.into_iter().map(|k| (k, true)).collect()));
+        }
+        for y in wholes {
+            nodes[at(y)].whole = true;
+        }
+        for t in below {
+            nodes[at(node[t])].below.push(t.clone());
+        }
+        let id = GROUP_IDS.with(|n| n.replace(n.get() + 1));
+        let group = std::rc::Rc::new(Group { id, nodes });
+        GROUPS.with(|m| {
+            let mut m = m.borrow_mut();
+            for &v in members {
+                let t = self.types[v];
+                m.insert(t.clone(), (group.clone(), at(node[t])));
+            }
+        });
+    }
+}
+
+/// The group of `t` and its node there ([`Group`]), made with each group below it not yet
+/// made, by Tarjan's walk over the types inside, which reads each type's parts once: a group
+/// is made when its walk ends, after the groups below it.
+fn group_of(t: &Type) -> (std::rc::Rc<Group>, usize) {
+    if let Some(g) = GROUPS.with(|m| m.borrow().get(t).cloned()) {
+        return g;
+    }
+    let none = Type::empty();
+    let held = Held::default();
+    let mut w = Walked {
+        number: HashMap::new(),
+        types: Vec::new(),
+        locals: Vec::new(),
+        group: Vec::new(),
+        low: Vec::new(),
+        open: Vec::new(),
+        walk: Vec::new(),
+    };
+    w.visit(t, &held, &none);
+    let mut groups = 0;
+    while let Some(&(v, k, j)) = w.walk.last() {
+        let top = w.walk.len() - 1;
+        let kids = &w.locals[v].kids;
+        if k < kids.len() {
+            if j == kids[k].inside.len() {
+                w.walk[top] = (v, k + 1, 0);
+                continue;
+            }
+            let x = kids[k].inside[j];
+            w.walk[top] = (v, k, j + 1);
+            match w.number.get(x) {
+                Some(&x) => {
+                    if w.group[x] == usize::MAX {
+                        w.low[v] = w.low[v].min(x);
+                    }
+                }
+                None => {
+                    if !GROUPS.with(|m| m.borrow().contains_key(x)) {
+                        w.visit(x, &held, &none);
+                    }
+                }
+            }
+            continue;
+        }
+        w.walk.pop();
+        if let Some(&(u, _, _)) = w.walk.last() {
+            w.low[u] = w.low[u].min(w.low[v]);
+        }
+        if w.low[v] == v {
+            let mut members = Vec::new();
+            while let Some(m) = w.open.pop() {
+                w.group[m] = groups;
+                members.push(m);
+                if m == v {
+                    break;
+                }
+            }
+            w.make(&members, groups);
+            groups += 1;
         }
     }
+    GROUPS
+        .with(|m| m.borrow().get(t).cloned())
+        .expect("the group of `t` is made")
 }
 
 /// The root of `i` in the union-find `parent`, halving the path.
@@ -5708,7 +6017,7 @@ fn join(parent: &mut [usize], a: usize, b: usize) {
     parent[a.max(b)] = a.min(b);
 }
 
-/// The types `ps` in classes, by index in order of their first members, joined when they share
+/// The types `ts` in classes, by index in order of their first members, joined when they share
 /// a key: two types of different classes are disjoint. The keys sit in a trie: the atoms of
 /// one name are keyed by their payload's keys under the node of the name, and the tuples of one
 /// length by the keys of their first component under the node of the length, so `#a((1,))` and
@@ -5717,10 +6026,14 @@ fn join(parent: &mut [usize], a: usize, b: usize) {
 /// each node, the cofinite types of a universe share it whole. A finite type meets one of them
 /// exactly when it holds a key that one does not list, so it shares the whole universe when it
 /// holds a key outside those every cofinite type lists; that set is the meet of their lists,
-/// taken from the shortest. Each type inside a type is walked once for it, found by its
+/// taken from the shortest. Each type inside a type is placed once for it, found by its
 /// structure, so the classes do not depend on whether equal types are one shared type; met
-/// again at another node, it merges that node with the first. The work is the size of the
-/// types times the log of the keys, and each child of a merged node moves O(log n) times.
+/// again at another node, it merges that node with the first. The types inside are placed a
+/// strongly connected group at a time ([`Group`]): a group's trie is made once until
+/// `Type::forget_emptiness` and placed whole for each type that reaches it, so a ring of k
+/// types costs each type that reaches it the size of the ring's trie, which merged nodes keep
+/// small, where a walk over the ring for each type cost k. The work is the size of the tries
+/// placed times the log of the keys, and each child of a merged node moves O(log n) times.
 // Complexity tradeoff: the keys are coarser than the meet of two types in three cases, each of
 // which joins disjoint types: tuples are keyed by their first component only, so `(1, 2)` and
 // `(1, 3)` land in one class; a tuple part that is not within its tuple types (a negated tuple
@@ -5754,70 +6067,82 @@ fn join(parent: &mut [usize], a: usize, b: usize) {
 // complete solution needs the connected parts of the graph in which two types meet: for tuples
 // that is the intersection graph of boxes, whose edges can number the square of the types, and
 // each edge an emptiness check.
-fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts>, held: &'a Held) -> Vec<Vec<usize>> {
+// Complexity tradeoff: a group's trie is placed whole for each type that reaches it, at the
+// node it is met at, since the nodes of two types are merged only through their own types. k
+// types that each reach one ring of k types with a name each, which merges no node, place k
+// tries of k nodes: order k^2 in one call (7.3, 25, 94 and 373 ms at k = 64, 128, 256, 512,
+// load about 25), as the walk over the ring for each type cost before. Why: the trie is that
+// large, k paths of k names from the root; keys meet only at a node two types reach, so a trie
+// holding the nodes two types reach would need the product of their tries. Trigger: many cells
+// of one split that each reach a large strongly connected group whose types do not merge. A
+// ring whose types merge, such as the ring of the group that hung the search, costs each type
+// the size of its merged trie: `l01_23_subtyping::group_oracle::
+// verdicts_of_a_ring_of_the_group_that_hung_the_search_scale`; the ring with a name each is
+// `types::empty::tests::types_that_each_reach_a_ring_of_names_are_apart`. COMPLEXITY.md K36.
+// No complete solution is known here: a trie of only the nodes that two types reach is the
+// product of their tries (follow-up GROUP-overlaps-names).
+fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
     let none = Type::empty();
-    let mut trie = Trie {
-        kids: vec![HashMap::new()],
-        same: vec![0],
-    };
+    let held = Held::default();
+    let mut trie = Trie::new();
     // Each type's keys, as (node, key, type).
-    let mut points: Vec<(usize, Key<'a>, usize)> = Vec::new();
-    // Each type's lists, as (node, universe, cofinite, keys, type).
-    #[allow(clippy::type_complexity)]
-    let mut lists: Vec<(usize, usize, bool, Vec<(Key<'a>, bool)>, usize)> = Vec::new();
+    let mut points: Vec<(usize, Key, usize)> = Vec::new();
+    // Each type's lists, as (node, list, type).
+    let mut lists: Vec<(usize, Listed, usize)> = Vec::new();
     // The nodes under which a type holds every value, as (node, type).
     let mut wholes: Vec<(usize, usize)> = Vec::new();
     let mut parent: Vec<usize> = Vec::new();
-    for (i, p) in ps.enumerate() {
+    for (i, t) in ts.enumerate() {
         parent.push(i);
-        let mut walk = Walk {
-            seen: HashMap::new(),
-            todo: vec![(0, p)],
-            held,
-        };
-        while let Some((x, p)) = walk.todo.pop() {
-            let bools = (0..2u8).filter(|b| p.bools >> b & 1 == 1);
-            points.extend(bools.map(|b| (x, Key::Bool(b), i)));
-            if p.structs {
-                points.push((x, Key::All(6), i));
+        let l = local(t.p_held(&held), &none);
+        points.extend(l.points.into_iter().map(|k| (0, k, i)));
+        lists.extend(l.lists.into_iter().map(|li| (0, li, i)));
+        // The types inside still to place, with their nodes.
+        let mut todo: Vec<(usize, Type)> = Vec::new();
+        for kid in l.kids {
+            let y = trie.child(0, kid.edge);
+            if kid.bare {
+                points.push((y, Key::Bare, i));
             }
-            if p.morphisms.is_leaf() != Some(false) {
-                points.push((x, Key::All(7), i));
+            if kid.whole {
+                wholes.push((y, i));
             }
-            for (n, a) in &p.atoms.names {
-                if !a.bare && a.payload == none {
+            todo.extend(kid.inside.into_iter().map(|t| (y, t.clone())));
+        }
+        // The groups placed for this type, by number, with the node each of their nodes is
+        // placed at. A type of a group placed is placed: met again, its node and the new one
+        // are merged.
+        type Placed = (std::rc::Rc<Group>, Vec<usize>);
+        let mut placed: HashMap<usize, Placed> = HashMap::new();
+        while let Some((y, t)) = todo.pop() {
+            let (g, c) = group_of(&t);
+            let (g, at) = match placed.entry(g.id) {
+                Entry::Occupied(o) => {
+                    trie.merge(o.get().1[c], y);
                     continue;
                 }
-                let y = trie.child(x, Edge::Atom(n));
-                if a.bare {
-                    points.push((y, Key::Bare, i));
+                Entry::Vacant(v) => {
+                    let n = g.nodes.len();
+                    v.insert((g, vec![usize::MAX; n]))
                 }
-                if a.payload != none {
-                    walk.enter(&mut trie, y, &a.payload);
-                }
-            }
-            for (&n, f) in &p.tuples.lens {
-                if f.is_leaf() == Some(false) {
+            };
+            let mut stack = vec![(c, y)];
+            while let Some((q, y)) = stack.pop() {
+                if at[q] != usize::MAX {
+                    trie.merge(at[q], y);
                     continue;
                 }
-                let y = trie.child(x, Edge::Len(n));
-                // Every value of a part `false` outside its tuple types is in one of them.
-                if n == 0 || f.eval3(&|_| Some(false)) != Some(false) {
+                at[q] = y;
+                let n = &g.nodes[q];
+                points.extend(n.points.iter().map(|k| (y, k.clone(), i)));
+                lists.extend(n.lists.iter().map(|li| (y, li.clone(), i)));
+                if n.whole {
                     wholes.push((y, i));
-                    continue;
                 }
-                f.atoms(&mut |row: &'a Row| {
-                    walk.enter(&mut trie, y, &row[0]);
-                    true
-                });
-            }
-            for u in 0..6 {
-                let (cofinite, ks) = listed(p, u, &none);
-                let lits = ks
-                    .iter()
-                    .filter(|(k, held)| *held && matches!(k, Key::Lit(..)));
-                points.extend(lits.map(|&(k, _)| (x, k, i)));
-                lists.push((x, u, cofinite, ks, i));
+                for (e, r) in &n.kids {
+                    stack.push((*r, trie.child(y, e.clone())));
+                }
+                todo.extend(n.below.iter().map(|t| (y, t.clone())));
             }
         }
     }
@@ -5825,30 +6150,30 @@ fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts>, held: &'a Held) -> Vec<Vec<
     let at: Vec<usize> = (0..trie.same.len()).map(|x| trie.find(x)).collect();
     // Per node and universe with a cofinite type, the keys every cofinite type there lists.
     let mut cofinites: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
-    for (l, (x, u, cofinite, _, _)) in lists.iter().enumerate() {
+    for (l, (x, (u, cofinite, _), _)) in lists.iter().enumerate() {
         if *cofinite {
             cofinites.entry((at[*x], *u)).or_default().push(l);
         }
     }
-    let shut: BTreeMap<(usize, usize), BTreeSet<Key<'a>>> = cofinites
+    let shut: BTreeMap<(usize, usize), BTreeSet<&Key>> = cofinites
         .into_iter()
         .map(|(at, ls)| {
             let shortest = *ls
                 .iter()
-                .min_by_key(|&&l| lists[l].3.len())
+                .min_by_key(|&&l| lists[l].1.2.len())
                 .expect("a group has a list");
-            let mut meet: BTreeSet<Key<'a>> = lists[shortest].3.iter().map(|&(k, _)| k).collect();
+            let mut meet: BTreeSet<&Key> = lists[shortest].1.2.iter().map(|(k, _)| k).collect();
             for &l in &ls {
                 if l != shortest {
-                    let ks: BTreeSet<Key<'a>> = lists[l].3.iter().map(|&(k, _)| k).collect();
+                    let ks: BTreeSet<&Key> = lists[l].1.2.iter().map(|(k, _)| k).collect();
                     meet.retain(|k| ks.contains(k));
                 }
             }
             (at, meet)
         })
         .collect();
-    for (x, u, cofinite, ks, i) in &lists {
-        let outside = |s: &BTreeSet<Key>| ks.iter().any(|(k, held)| *held && !s.contains(k));
+    for (x, (u, cofinite, ks), i) in &lists {
+        let outside = |s: &BTreeSet<&Key>| ks.iter().any(|(k, held)| *held && !s.contains(k));
         if *cofinite || shut.get(&(at[*x], *u)).is_some_and(outside) {
             points.push((*x, Key::All(*u), *i));
         }
@@ -5879,7 +6204,7 @@ fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts>, held: &'a Held) -> Vec<Vec<
             }
         }
     }
-    let mut first: BTreeMap<(usize, Key<'a>), usize> = BTreeMap::new();
+    let mut first: BTreeMap<(usize, Key), usize> = BTreeMap::new();
     for (x, k, i) in points {
         let x = at[x];
         let j = *first.entry((x, k)).or_insert(i);

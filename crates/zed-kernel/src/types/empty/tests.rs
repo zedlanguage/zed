@@ -36,10 +36,7 @@ fn classes_are_exact_on_cofinite_sets_names_and_lengths_and_join_tuples_by_first
         Type::atom_with("b", &one(Type::atom_with("c", &one(lit(2))))), // 13
         Type::atom_with("a", &one(&Type::int() - &lit(1))), // 14, meets 4, not 3
     ];
-    let classes = {
-        let held = Held::default();
-        overlaps(ts.iter().map(|t| t.p_held(&held)), &held)
-    };
+    let classes = overlaps(ts.iter());
     let expected: Vec<Vec<usize>> = vec![
         vec![0],
         vec![1, 2, 7, 8],
@@ -69,10 +66,7 @@ fn classes_join_under_a_tuple_part_outside_its_types_and_merge_the_nodes_of_a_ty
     let one = |t: Type| Type::tuple(vec![t]);
     let e = |t: Type| Type::atom_with("e", &one(t));
     let negated = [one(lit(1)), &one(Type::int()) - &one(lit(1)), one(lit(2))];
-    let classes = {
-        let held = Held::default();
-        overlaps(negated.iter().map(|t| t.p_held(&held)), &held)
-    };
+    let classes = overlaps(negated.iter());
     assert_eq!(classes, vec![vec![0, 1, 2]]);
     let shared = lit(1);
     for twice in [
@@ -80,10 +74,7 @@ fn classes_join_under_a_tuple_part_outside_its_types_and_merge_the_nodes_of_a_ty
         &one(lit(1)) | &e(lit(1)),
     ] {
         let ts = [twice, one(lit(2)), e(lit(2)), one(lit(3)), e(lit(4))];
-        let classes = {
-            let held = Held::default();
-            overlaps(ts.iter().map(|t| t.p_held(&held)), &held)
-        };
+        let classes = overlaps(ts.iter());
         assert_eq!(classes, vec![vec![0], vec![1, 2], vec![3], vec![4]]);
     }
     // `T = #nil | #cons((T, int))`.
@@ -101,10 +92,7 @@ fn classes_join_under_a_tuple_part_outside_its_types_and_merge_the_nodes_of_a_ty
         .instance(vec![])
         .remove(0);
     let ts = [t, Type::atom("nil"), Type::atom("x"), lit(5)];
-    let classes = {
-        let held = Held::default();
-        overlaps(ts.iter().map(|t| t.p_held(&held)), &held)
-    };
+    let classes = overlaps(ts.iter());
     assert_eq!(classes, vec![vec![0, 1], vec![2], vec![3]]);
 }
 
@@ -342,4 +330,77 @@ fn the_value_shown_for_a_two_cnf_holds_every_clause() {
         shown += 1;
     }
     assert!(shown > 0);
+}
+
+/// The classes of types inside a recursive group, placed as the group's trie (the walk at
+/// `overlaps`). With `P = #a((Q,)) | (int \ 1)` and `Q = #a((P,)) | (int \ 2)`, the cell
+/// `#a((P,))` puts `int \ 1` under `#a((..,))`, `int \ 2` one `#a((..,))` deeper, and meets `P`
+/// again one deeper still, which merges that node with the first. So `1` two deep meets
+/// `int \ 2` and is joined with the cell; `1` one deep is in no value of it; and `1` three deep
+/// is at the merged node, where it shares the key `1` with the `1` one deep. The classes are
+/// the same with the groups made before, in the other order, and made again after
+/// `Type::forget_emptiness`.
+#[test]
+fn classes_inside_a_recursive_group_follow_its_merged_nodes() {
+    use super::super::rec::{Def, Expr, Group};
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let a = |t: Type| Type::atom_with("a", &Type::tuple(vec![t]));
+    let def = |name: &str, other: usize, not: i64| Def {
+        name: name.into(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Atom("a".into(), vec![Expr::Ref(other, vec![])]),
+            Expr::Type(&Type::int() - &lit(not)),
+        ]),
+    };
+    let group = Group::new(vec![def("P", 1, 1), def("Q", 0, 2)]).expect("a group");
+    let p = group.instance(vec![]).remove(0);
+    let ts = [a(p), a(a(lit(1))), a(lit(1)), a(a(a(lit(1))))];
+    let expected = vec![vec![0, 1], vec![2, 3]];
+    Type::forget_emptiness();
+    assert_eq!(overlaps(ts.iter()), expected);
+    assert_eq!(overlaps(ts.iter()), expected, "with the groups made before");
+    let mut classes = overlaps(ts.iter().rev());
+    for is in &mut classes {
+        for i in is.iter_mut() {
+            *i = 3 - *i;
+        }
+        is.sort();
+    }
+    classes.sort();
+    assert_eq!(classes, expected, "in the other order");
+    Type::forget_emptiness();
+    assert_eq!(overlaps(ts.iter()), expected, "with the groups made again");
+}
+
+/// k types that each reach one ring of k types `T_j = #a_j((T_{j+1},)) | j`, each with an
+/// atom name of its own, are apart: the trie of the ring merges no node, and each type places
+/// it below its own name (the second tradeoff at `overlaps`, order k^2).
+#[test]
+fn types_that_each_reach_a_ring_of_names_are_apart() {
+    use super::super::rec::{Def, Expr, Group};
+    let k = 8;
+    let defs = (0..k)
+        .map(|j| Def {
+            name: format!("T{j}"),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Atom(format!("a{j}"), vec![Expr::Ref((j + 1) % k, vec![])]),
+                Expr::Type(Type::lit(&Value::Int(j as i64)).expect("an integer literal")),
+            ]),
+        })
+        .collect();
+    let ts = Group::new(defs).expect("a group").instance(vec![]);
+    let apart: Vec<Vec<usize>> = (0..k).map(|j| vec![j]).collect();
+    assert_eq!(overlaps(ts.iter()), apart);
+    // Beside them `#a0((1,))`: only `T0` holds `T1`, and so `1`, under `#a0((..,))` at the root;
+    // the other types reach `#a0` only below their own names, so it is joined with `T0` alone.
+    let mut with = ts.clone();
+    with.push(Type::atom_with(
+        "a0",
+        &Type::tuple(vec![Type::lit(&Value::Int(1)).expect("1")]),
+    ));
+    let mut classes: Vec<Vec<usize>> = (1..k).map(|j| vec![j]).collect();
+    classes.insert(0, vec![0, k]);
+    assert_eq!(overlaps(with.iter()), classes);
 }
