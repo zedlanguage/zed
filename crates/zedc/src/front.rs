@@ -72,10 +72,10 @@ pub struct Step {
 impl std::fmt::Display for Diagnostic {
     /// The message on one line; then each step numbered. The first step on a line is followed
     /// by that line, shown once for all the steps of the diagnostic on it (`shown`), with the
-    /// text each covers underlined (`underlines`). Each line of the source is shown once and each
-    /// row of underlines is at most as long as it and the numbers in the row, so k steps on one
-    /// line of L characters print O(k log k + L·r) characters, r the rows of underlines, not
-    /// O(k·L).
+    /// text each covers marked below it (`layout`, `draw`); a step that `layout` leaves undrawn
+    /// is given by its range, `3:11 to 3:19`, instead. Each line of the source is shown once and each row under it is at most as long
+    /// as it and the numbers in the row, so k steps on one line of L characters print
+    /// O(k log k + L·r) characters, r the rows under it (`layout` bounds r), not O(k·L).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}: {}", self.line, self.col, self.message)?;
         let gutter = self
@@ -92,22 +92,32 @@ impl std::fmt::Display for Diagnostic {
         for (i, s) in self.steps.iter().enumerate() {
             on.entry(s.line).or_default().push(i + 1);
         }
+        // How each line is drawn, worked out before any step is written, since a step given by
+        // its range may come before the line is shown.
+        let mut ranged = vec![false; self.steps.len()];
+        let drawn: HashMap<usize, Layout> = on
+            .iter()
+            .map(|(&line, here)| {
+                let l = layout(&self.steps[here[0] - 1].source, &self.steps, here);
+                for &n in &l.ranged {
+                    ranged[n - 1] = true;
+                }
+                (line, l)
+            })
+            .collect();
         for (i, s) in self.steps.iter().enumerate() {
             let n = format!("[{}]", i + 1);
-            write!(
-                f,
-                "\n  {n:<w$} {}:{}: {}",
-                s.line,
-                s.col,
-                s.text,
-                w = number + 2
-            )?;
+            write!(f, "\n  {n:<w$} {}:{}", s.line, s.col, w = number + 2)?;
+            if ranged[i] {
+                write!(f, " to {}:{}", s.line, s.col + s.width.max(1) - 1)?;
+            }
+            write!(f, ": {}", s.text)?;
             if let Some(here) = on.get(&s.line)
                 && here[0] == i + 1
+                && let Some(l) = drawn.get(&s.line)
             {
-                let (text, at) = shown(&s.source);
-                write!(f, "\n{pad} {:>gutter$} | {text}", s.line)?;
-                underlines(f, &margin, &at, &self.steps, here)?;
+                write!(f, "\n{pad} {:>gutter$} | {}", s.line, l.text)?;
+                draw(f, &margin, l)?;
             }
         }
         Ok(())
@@ -137,26 +147,53 @@ fn shown(source: &str) -> (String, Vec<usize>) {
     (text, at)
 }
 
-/// Writes, each row after `margin`, the underlines of the steps numbered `numbers` (counted
-/// from 1 in `steps`), all on one line whose characters start at the columns `at` (`shown`).
-/// Steps that cover the same text share one underline. When the steps cover one stretch of the
-/// line, it is underlined alone; otherwise each underline is followed by the numbers of its
-/// steps, `[2]` or `[2, 5]`. An underline and its numbers go on the first row free from one
-/// column before its start, so neither overlaps another (interval partitioning, which uses as
-/// few rows as the most underlines and numbers over one column). A step that ends past the line
-/// gets a caret for each character it lacks; one that covers only combining marks gets one,
-/// under the character they combine with. O(s log s + C) for s steps and C characters written.
-fn underlines(
-    f: &mut std::fmt::Formatter<'_>,
-    margin: &str,
-    at: &[usize],
-    steps: &[Step],
-    numbers: &[usize],
-) -> std::fmt::Result {
+/// How the steps on one source line are drawn under it (`layout`).
+struct Layout {
+    /// The line as quoted (`shown`).
+    text: String,
+    /// The stretches underlined in full, in the order of their first columns: the first column,
+    /// the columns, and the numbers after the underline (` [2, 5]`, or nothing when the line has
+    /// one stretch).
+    full: Vec<(usize, usize, String)>,
+    /// Each chain of nested stretches drawn by their ends, in the order of their first columns:
+    /// the chain's carets in column order, each its column and the numbers written for it
+    /// (`[4]`, or nothing).
+    rulers: Vec<Vec<(usize, String)>>,
+    /// The numbers of the steps given by their range instead of a mark.
+    ranged: Vec<usize>,
+}
+
+/// A stretch of a line that one or more steps cover.
+struct Stretch {
+    /// Its first character, counted from 0.
+    start: usize,
+    /// Its length in characters, at least 1.
+    width: usize,
+    /// The numbers of the steps that cover it, increasing.
+    numbers: Vec<usize>,
+}
+
+/// How the steps numbered `numbers` (counted from 1 in `steps`), all on the line `source`, are
+/// drawn under it. Steps that cover the same text share one stretch. The stretches that nest
+/// form a forest, each stretch's parent the least stretch that holds it. A child holding more
+/// than half of its parent's stretches (itself and those it holds) is its parent's heavy child;
+/// a parent has at most one. A heavy child that has a heavy child of its own is drawn by its
+/// ends, on a rule with a caret under its first and its last column; each chain of such
+/// stretches, one the heavy child of the next, shares one rule. Every other stretch is
+/// underlined in full. A stretch that overlaps an earlier one without either holding the other
+/// is not drawn, nor is a chain whose stretches share neither their first nor their last
+/// column; their steps are given by their range (`ranged`). O(s log s) for s steps.
+fn layout(source: &str, steps: &[Step], numbers: &[usize]) -> Layout {
+    let (text, at) = shown(source);
     let end = at.len() - 1;
     let column = |i: usize| at.get(i).copied().unwrap_or(at[end] + i - end);
-    // Each stretch some step covers: its first character, its length in characters, and the
-    // numbers of the steps that cover it.
+    // A stretch's first column and the column after it. A stretch past the end of the line gets
+    // a column for each character it lacks; one on combining marks alone is marked under the
+    // character they combine with.
+    let columns = |s: &Stretch| match (column(s.start), column(s.start + s.width)) {
+        (from, to) if to > from => (from, to),
+        (from, _) => (from.saturating_sub(1), from.max(1)),
+    };
     let mut spans: Vec<(usize, usize, usize)> = numbers
         .iter()
         .map(|&n| {
@@ -165,50 +202,187 @@ fn underlines(
         })
         .collect();
     spans.sort_unstable();
-    let mut covered: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+    // In the order of their first characters, the shorter first.
+    let mut covered: Vec<Stretch> = Vec::new();
     for (start, width, n) in spans {
         match covered.last_mut() {
-            Some((s, w, ns)) if (*s, *w) == (start, width) => ns.push(n),
-            _ => covered.push((start, width, vec![n])),
+            Some(s) if (s.start, s.width) == (start, width) => s.numbers.push(n),
+            _ => covered.push(Stretch {
+                start,
+                width,
+                numbers: vec![n],
+            }),
         }
     }
     let labeled = covered.len() > 1;
-    // Each underline: its first column, its columns, and the numbers after it. The columns grow
-    // with the characters, so these stay in the order of their starts.
-    let marks: Vec<(usize, usize, String)> = covered
-        .into_iter()
-        .map(|(start, width, ns)| {
-            // A step on combining marks alone is marked under the character they combine with.
-            let (from, to) = match (column(start), column(start + width)) {
-                (from, to) if to > from => (from, to),
-                (from, _) => (from.saturating_sub(1), from.max(1)),
-            };
+    let list = |ns: &[usize]| {
+        let ns: Vec<String> = ns.iter().map(usize::to_string).collect();
+        format!("[{}]", ns.join(", "))
+    };
+    // The forest: each stretch is met after every stretch that holds it (first characters
+    // increasing, the longer first), and the stretches still open when it is met form a chain,
+    // each holding the next.
+    let m = covered.len();
+    let mut order: Vec<usize> = (0..m).collect();
+    order.sort_unstable_by_key(|&k| (covered[k].start, Reverse(covered[k].width)));
+    let after = |k: usize| covered[k].start + covered[k].width;
+    let mut parent: Vec<Option<usize>> = vec![None; m];
+    let mut crossing = vec![false; m];
+    let mut placed = Vec::with_capacity(m);
+    let mut open: Vec<usize> = Vec::new();
+    for &k in &order {
+        while open.last().is_some_and(|&o| after(o) <= covered[k].start) {
+            open.pop();
+        }
+        match open.last() {
+            Some(&o) if after(o) < after(k) => crossing[k] = true,
+            top => {
+                parent[k] = top.copied();
+                open.push(k);
+                placed.push(k);
+            }
+        }
+    }
+    // Each stretch's size, itself and the stretches it holds, summed from the last met.
+    let mut size = vec![1usize; m];
+    for &k in placed.iter().rev() {
+        if let Some(p) = parent[k] {
+            size[p] += size[k];
+        }
+    }
+    let mut heavy: Vec<Option<usize>> = vec![None; m];
+    for &k in &placed {
+        if let Some(p) = parent[k]
+            && 2 * size[k] > size[p]
+        {
+            heavy[p] = Some(k);
+        }
+    }
+    let by_ends: Vec<bool> = (0..m)
+        .map(|k| heavy[k].is_some() && parent[k].is_some_and(|p| heavy[p] == Some(k)))
+        .collect();
+    // Complexity tradeoff: a stretch nested in a chain of heavy children is drawn by its ends,
+    // not underlined in full. What is given up: such a step's text is not marked under each of
+    // its characters, only under its first and last on a rule it shares with the rest of its
+    // chain, and a step whose text overlaps another's without either holding the other, or one
+    // on a chain whose stretches share neither a first nor a last column (`f(g(h(x)))`), gets
+    // no mark at all, only its range in its step line. Why: underlines that nest cannot share a row,
+    // so a line whose steps nest d deep, such as a sum `a0 + a1 + … + an` whose every partial
+    // sum is a step, would print d rows of up to L columns, O(d·L), quadratic when d grows with
+    // L; any layout that draws each nested extent as one connected mark needs as many rows, so
+    // the chain's extents must be split into ends. Which stretches: those on a chain of heavy
+    // children, except its top and its bottom, decided by how the stretches nest, never by a
+    // length. The bound: the stretches underlined in full that hold one column are, from the
+    // outermost, roots, light children (each at most half its parent, so at most log₂ s of them)
+    // and the bottoms of heavy chains (one per light child or root), so at most 2·log₂ s + 2;
+    // the rules over one column likewise; overlapping stretches are left out, so the rest nest.
+    // Rows are therefore O(log s) plus the rows that step numbers need beside each other, and a
+    // line costs O((s + L) log s). A balanced nesting, such as `(a + b) * (c + d)` repeated, is
+    // underlined in full and reaches that log factor. Tested by `l01_29_diagnostics::layout`
+    // (COMPLEXITY.md MSG-line-quote-nested). A complete solution, every nested stretch in full
+    // at O(s + L), is impossible by the row argument above.
+    let mut full = Vec::new();
+    let mut ranged = Vec::new();
+    for (k, s) in covered.iter().enumerate() {
+        if crossing[k] {
+            ranged.extend_from_slice(&s.numbers);
+        } else if !by_ends[k] {
+            let (from, to) = columns(s);
             let label = if labeled {
-                let ns: Vec<String> = ns.iter().map(usize::to_string).collect();
-                format!(" [{}]", ns.join(", "))
+                format!(" {}", list(&s.numbers))
             } else {
                 String::new()
             };
-            (from, to - from, label)
-        })
-        .collect();
-    // Complexity tradeoff: underlines that nest go on rows of their own, so a line with steps
-    // nested d deep prints d rows of up to L columns: O(L·d + s log s), which is O(s + L) for
-    // steps that are disjoint or nested a bounded depth, but O(s·L) for a chain nested on one line
-    // as deep as it is long, such as a sum `a0 + a1 + … + an` whose every partial sum is a step.
-    // What is given up: that chain's output stays quadratic in its length, though each nested step
-    // prints one row and not the line again (COMPLEXITY.md, MSG-line-quote-cost). Why: a step's
-    // underline under each character it covers is what shows its extent, and underlines that
-    // overlap cannot share a row, so any layout that draws each nested extent in full prints the
-    // sum of their widths. A complete solution would show nested extents by their ends, not in
-    // full; whether that reads as clearly is open (MSG-line-quote-nested). Tested by
-    // `l01_29_diagnostics::layout`.
+            full.push((from, to - from, label));
+        }
+    }
+    let mut rulers = Vec::new();
+    for &k in &placed {
+        if !by_ends[k] || parent[k].is_some_and(|p| by_ends[p]) {
+            continue;
+        }
+        // The chain from its outermost stretch inward.
+        let mut chain = vec![k];
+        while let Some(c) = heavy[chain[chain.len() - 1]].filter(|&c| by_ends[c]) {
+            chain.push(c);
+        }
+        let ends: Vec<(usize, usize)> = chain
+            .iter()
+            .map(|&c| {
+                let (from, to) = columns(&covered[c]);
+                (from, to - 1)
+            })
+            .collect();
+        // Where every stretch of the chain starts at one column, that caret needs no numbers and
+        // each step's numbers stand under the caret where it ends; where every one ends at one
+        // column, the other way round. Where neither holds, a reader would have to pair each
+        // first caret with its last one, so the chain's steps are given by their range instead.
+        let one_start = ends.iter().all(|e| e.0 == ends[0].0);
+        let one_end = !one_start && ends.iter().all(|e| e.1 == ends[0].1);
+        if !one_start && !one_end {
+            for &c in &chain {
+                ranged.extend_from_slice(&covered[c].numbers);
+            }
+            continue;
+        }
+        // The first columns increase inward and the last columns outward, and the innermost
+        // starts no later than it ends, so these are in column order.
+        let carets = chain
+            .iter()
+            .zip(&ends)
+            .map(|(&c, e)| (e.0, c, one_start))
+            .chain(
+                chain
+                    .iter()
+                    .zip(&ends)
+                    .rev()
+                    .map(|(&c, e)| (e.1, c, one_end)),
+            );
+        let mut ticks: Vec<(usize, Vec<usize>)> = Vec::new();
+        for (col, c, bare) in carets {
+            if ticks.last().is_none_or(|t| t.0 != col) {
+                ticks.push((col, Vec::new()));
+            }
+            if !bare && let Some(t) = ticks.last_mut() {
+                t.1.extend_from_slice(&covered[c].numbers);
+            }
+        }
+        rulers.push(
+            ticks
+                .into_iter()
+                .map(|(col, mut ns)| {
+                    ns.sort_unstable();
+                    ns.dedup();
+                    let label = if ns.is_empty() {
+                        String::new()
+                    } else {
+                        list(&ns)
+                    };
+                    (col, label)
+                })
+                .collect(),
+        );
+    }
+    Layout {
+        text,
+        full,
+        rulers,
+        ranged,
+    }
+}
+
+/// The rows that items placed from their first columns take, each item a first column and the
+/// first column after it that another item on its row may use: an item goes on the row whose
+/// last item ends first, if that is free at its column, else on a new row (interval
+/// partitioning, as few rows as the most items over one column). The items come in the order
+/// of their first columns. O(i log i) for i items.
+fn rows(items: impl Iterator<Item = (usize, usize)>) -> Vec<Vec<usize>> {
     let mut rows: Vec<Vec<usize>> = Vec::new();
-    // Each row by the first column after its last underline, its numbers and one space.
+    // Each row by the first column free after its last item.
     let mut free: BinaryHeap<Reverse<(usize, usize)>> = BinaryHeap::new();
-    for (k, (from, width, label)) in marks.iter().enumerate() {
+    for (k, (from, after)) in items.enumerate() {
         let row = match free.peek() {
-            Some(&Reverse((after, row))) if after <= *from => {
+            Some(&Reverse((at, row))) if at <= from => {
                 free.pop();
                 row
             }
@@ -218,15 +392,76 @@ fn underlines(
             }
         };
         rows[row].push(k);
-        free.push(Reverse((from + width + label.len() + 1, row)));
+        free.push(Reverse((after, row)));
     }
-    for row in &rows {
+    rows
+}
+
+/// Writes, each row after `margin`, the marks of `l`. First the underlines, each followed by
+/// its numbers and one column clear of the next. Then the rules of the chains drawn by their
+/// ends: a caret under the first and last column of each stretch in the chain, joined by `-`,
+/// the numbers of the last caret after it; the numbers of the other carets go on the rows below
+/// the rule, each starting under its caret. O(C) for C characters written, after the
+/// partitioning (`rows`).
+fn draw(f: &mut std::fmt::Formatter<'_>, margin: &str, l: &Layout) -> std::fmt::Result {
+    let full = rows(
+        l.full
+            .iter()
+            .map(|(from, width, label)| (*from, from + width + label.len() + 1)),
+    );
+    for row in &full {
         f.write_str(margin)?;
         let mut done = 0;
         for &k in row {
-            let (from, width, label) = &marks[k];
+            let (from, width, label) = &l.full[k];
             write!(f, "{:gap$}{:^<width$}{label}", "", "", gap = from - done)?;
             done = from + width + label.len();
+        }
+    }
+    // The numbers after a rule's last caret, with the space before them.
+    let last = |ticks: &[(usize, String)]| match ticks.last() {
+        Some((_, label)) if !label.is_empty() => format!(" {label}"),
+        _ => String::new(),
+    };
+    let rules = rows(l.rulers.iter().map(|ticks| {
+        let (first, end) = (ticks[0].0, ticks[ticks.len() - 1].0);
+        (first, end + 1 + last(ticks).len() + 1)
+    }));
+    for row in &rules {
+        f.write_str(margin)?;
+        let mut done = 0;
+        // The numbers of the carets other than the last, in column order.
+        let mut below: Vec<(usize, &str)> = Vec::new();
+        for &k in row {
+            let ticks = &l.rulers[k];
+            for (j, (col, label)) in ticks.iter().enumerate() {
+                if j == 0 {
+                    write!(f, "{:gap$}", "", gap = col - done)?;
+                } else {
+                    write!(f, "{:-<gap$}", "", gap = col - done)?;
+                }
+                f.write_str("^")?;
+                done = col + 1;
+                if j + 1 < ticks.len() && !label.is_empty() {
+                    below.push((*col, label));
+                }
+            }
+            let tail = last(ticks);
+            f.write_str(&tail)?;
+            done += tail.len();
+        }
+        for under in rows(
+            below
+                .iter()
+                .map(|(col, label)| (*col, col + label.len() + 1)),
+        ) {
+            f.write_str(margin)?;
+            let mut done = 0;
+            for k in under {
+                let (col, label) = below[k];
+                write!(f, "{:gap$}{label}", "", gap = col - done)?;
+                done = col + label.len();
+            }
         }
     }
     Ok(())

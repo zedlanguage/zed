@@ -2975,7 +2975,14 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | The display width of each character from the crate `unicode-width` (`UnicodeWidthChar::width`: 2 for wide East Asian characters, 0 for combining marks), a tab shown as four columns | `shown` | Code points and text tables (gap 7) | A width table in Zed, as for the other `unicode-*` tables, or a built-in for now; `codePoint` gives the key |
 | A `HashMap` from a source line to the numbers of its steps, built in one pass so each line is quoted once, at its first step | `Display for Diagnostic` | Mutation (gap 11) | A map built by one fold over the steps |
-| A `BinaryHeap<Reverse<(usize, usize)>>` of rows of underlines by their first free column, and the rows as `Vec`s pushed in place (interval partitioning) | `underlines` | Mutation (gap 11) | A persistent priority queue (a pairing or leftist heap) and a persistent list of rows threaded through a fold over the spans |
+| A `BinaryHeap<Reverse<(usize, usize)>>` of rows of underlines by their first free column, and the rows as `Vec`s pushed in place (interval partitioning) | `rows` (named `underlines` before MSG-line-quote-nested) | Mutation (gap 11) | A persistent priority queue (a pairing or leftist heap) and a persistent list of rows threaded through a fold over the spans |
+
+## Entries from MSG-line-quote-nested (`crates/zedc/src/front.rs`, the diagnostic renderer)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The forest of nested stretches built by a `Vec` used as a stack of open stretches, with parent, size and heavy-child arrays written in place by index | `layout` | Mutation (gap 11) | A fold over the stretches in order whose state is the stack as a persistent list; sizes by a second fold from the last stretch, into a persistent map from stretch to size |
+| A `bool` per step (`ranged`) set while the lines are laid out, read when the steps are written | `Display for Diagnostic` | Mutation (gap 11) | A set of the ranged steps' numbers returned by each line's layout and joined |
 
 ## Entries from KERNEL-div-newton (`crates/zed-kernel/src/num/fast.rs`)
 

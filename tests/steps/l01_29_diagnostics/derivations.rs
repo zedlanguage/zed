@@ -31,10 +31,10 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
   [5]  3:11: `n` is int here
   [6]  2:7: `n` is defined as this expression, int
        2 |   n = int(stdin[1]) else 0;
-         |       ^^^^^^^^^^^^^ [8]
          |       ^^^^^^^^^^^^^^^^^^^^ [6, 7]
          |           ^^^^^ [10]     ^ [12]
          |           ^^^^^^^^ [9]
+         |       ^-----------^ [8]
   [7]  2:7: this `else` gives int
   [8]  2:7: this call of `int` gives int | #invalid | #notFound | #ioError(op: String, path: String, why: String)
   [9]  2:11: this expression gives String | #notFound | #ioError(op: String, path: String, why: String)
@@ -268,9 +268,9 @@ fn a_rejected_nested_tuple_shows_each_tuple_and_its_type() {
       1 | x = "pair: " ++ ((1, 2.5), "a");
         |     ^^^^^^^^ [1] ^^^^^^^^ [3]
         |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^ [7]
-        |                 ^^^^^^^^^^^^^^^ [2, 8]
         |                   ^ [4]    ^^^ [6]
         |                      ^^^ [5]
+        |                 ^-------------^ [2, 8]
   [2] 1:17: this expression gives ((1, 2.5), "a")
   [3] 1:18: this expression gives (1, 2.5)
   [4] 1:19: this literal, 1, is 1
