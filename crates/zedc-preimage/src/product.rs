@@ -3977,9 +3977,11 @@ impl Scope {
         // Complexity tradeoff: the component is solved again from the start each time one of
         // its parts is due, so a block of N parts narrowed by N tests, one at a time, costs
         // O(N · N log N log W) and not O(N log N log W). Why: the solver keeps no state between
-        // calls; carrying the least and greatest members from the scope's last bounds, and
-        // propagating only from the parts and names that changed, is not built. Trigger: a
-        // walk of N disjunctions on one shared name, tested one at a time. Test:
+        // calls. Keeping it would not make such a walk near linear: each test is first split
+        // into cases, and a case that fixes the shared name narrows every earlier name, Θ(i)
+        // output per case (COMPLEXITY.md row S25, hard); measured at n = 320 the solve is 5% of
+        // the time and the case split 88%. Trigger: a walk of N disjunctions on one shared
+        // name, tested one at a time. Test:
         // `l01_39_reduced_product::xst::s4::a_walk_of_disjunctions_narrows_in_near_linear_time`
         // (ignored). COMPLEXITY.md row S4-ti.
         if let Some(shape) = &b.threshold

@@ -665,8 +665,34 @@ fn family(
     });
 }
 
+/// A walk whose start forces each `v` to at least `1 + w` and whose end asks `v5 + w <= 0`
+/// leaves no point. Its block is solved as a whole (`threshold::solve` answers that it is
+/// empty), which empties only the block's first name; the scope must then keep no value of any
+/// name, `u` too, which no test names, and must stay empty under a later test. With the step
+/// that turns an empty name into an empty scope (`Scope::reduce_with`) removed, this test fails
+/// on `u`.
 #[test]
-#[ignore = "S4-ti open: the threshold-implication solver (threshold.rs) is exact here but solves the whole component again for each test, so one test at a time is super-linear (2.2-3.5x per doubling of n; walk 23.3x, this family 24.7x against 24x)"]
+fn a_walk_that_leaves_no_point_empties_every_name() {
+    let mut sys = walk(6, true);
+    sys.rel
+        .push(prim(Prim::Le, prim(Prim::Add, var("v5"), var("w")), int(0)));
+    let mut all: Vec<String> = (0..6).map(|i| format!("v{i}")).collect();
+    all.extend(["w".into(), "u".into()]);
+    let sys = Sys::new(&all, 0, 3, vec![prim(Prim::Le, var("w"), int(1))], sys.rel);
+    let later = prim(Prim::Ge, var("u"), int(2));
+    for how in HOWS {
+        let s = sys.narrowed(how);
+        for s in [&s, &s.assume(&later, true, &Premises::new())] {
+            assert!(s.bottom, "{how:?}: {s}");
+            for n in &all {
+                assert_eq!(kept(s, n, 0, 3), Vec::<i64>::new(), "{how:?}: {n} in {s}");
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "S4-ti open: exact, but one test at a time is quadratic (about 4x per doubling of n): each test is split into cases and each case narrows all earlier names again (COMPLEXITY S25, hard); the solver is 5% of the time at n = 320"]
 fn a_walk_of_disjunctions_narrows_in_near_linear_time() {
     family(
         "walk",
@@ -683,7 +709,7 @@ fn a_walk_of_disjunctions_narrows_in_near_linear_time() {
 }
 
 #[test]
-#[ignore = "S4-ti open: the threshold-implication solver (threshold.rs) is exact here but solves the whole component again for each test, so one test at a time is super-linear (2.2-3.5x per doubling of n; walk 23.3x, this family 24.7x against 24x)"]
+#[ignore = "S4-ti open: exact, but one test at a time is quadratic (about 4x per doubling of n): each test is split into cases and each case narrows all earlier names again (COMPLEXITY S25, hard); the solver is 5% of the time at n = 320"]
 fn control_a_walk_without_its_start_narrows_nothing_in_near_linear_time() {
     family(
         "walk without its start",

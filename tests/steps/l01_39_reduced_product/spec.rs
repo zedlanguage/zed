@@ -130,3 +130,27 @@ fn a_negated_equality_with_i64_max_keeps_the_integers_past_it() {
     assert!(arm(&a, &format!("(n >= {m})"), true).reachable());
     assert!(arm(&a, &format!("(n >= {m})"), false).reachable());
 }
+
+/// The guide's example of choices that share one name (zed DOCS-TODO, "Choices that share one
+/// name: each choice an upper bound and a lower bound"), with the parameters' ranges written
+/// as tests, since parameter types are built at layer L10. In `f` each choice is an upper bound
+/// and a lower bound moved by `w`, and the block is solved as a whole: `w` keeps `0..=5` and
+/// `x`, `y` their whole ranges. In `g` both alternatives are lower bounds, and each is narrowed
+/// on its own: `w <= 7` or `w <= 5`, joined.
+#[test]
+fn choices_that_share_one_name_narrow_as_the_guide_says() {
+    let within = "x >= 0 && x <= 10 && y >= 0 && y <= 10 && w >= 0 && w <= 10 && x >= 2";
+    for (choice, w) in [
+        ("x + w <= 3 || y - w >= 5", "[0..=5]"),
+        ("x - w >= 3 || y - w >= 5", "[0..=7]"),
+    ] {
+        let src = format!("ok = (x, y, w) -> if {within} && ({choice}) {{ w }} else {{ 0 }};");
+        accepted(&src);
+        let (_, _, a) = arms_of(&src);
+        let then = arm(&a, "((y - w) >= 5)", true);
+        assert!(then.scope.warnings().is_empty(), "{choice}");
+        for (n, want) in [("x", "[2..=10]"), ("y", "[0..=10]"), ("w", w)] {
+            assert_eq!(then.scope.get(n).ints().to_string(), want, "{choice}: {n}");
+        }
+    }
+}
