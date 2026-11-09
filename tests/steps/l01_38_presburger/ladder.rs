@@ -419,12 +419,9 @@ fn guarded_divisors(k: usize) -> (Relation, Relation) {
 fn the_condition_that_no_operation_fails_scales() {
     // One condition `n + i != 0` for each of k divisors, each made once, and k divisors each
     // shown not 0 by the guard of its `||`, so that no condition is left; the translation is
-    // timed at k and 8k. The entailment is checked at k alone: the goal of guarded remainders
-    // costs the Presburger layer 130 times the work at 8k (measured 2026-11-08), each of its
-    // k negated conjuncts refuted only through the three cases of its remainder, one whole
-    // settling per conjunct (the Complexity tradeoff at `probe`). The unguarded chain and the
-    // sum scale (`a_chain_of_remainders_by_terms_scales`). COMPLEXITY.md rows
-    // RUNG2-definedness and PRES-mod-conjuncts.
+    // timed at k and 8k. The entailment is checked at k here and timed in
+    // `a_chain_of_guarded_remainders_scales` and `a_chain_of_remainders_by_terms_scales`.
+    // COMPLEXITY.md rows RUNG2-definedness, PRES-mod-conjuncts and PRES-guarded-chain.
     let n = 16;
     for (p, g) in [divisors(n), guarded_divisors(n)] {
         let e = entails(&p, &g);
@@ -436,6 +433,29 @@ fn the_condition_that_no_operation_fails_scales() {
         });
         scaling::check_order("the definedness of k guarded remainders", n, 1, |k| {
             guarded_divisors(k);
+        });
+    };
+    let thread = std::thread::Builder::new().stack_size(8 << 20);
+    thread.spawn(measure).unwrap().join().unwrap();
+}
+
+#[test]
+fn a_chain_of_guarded_remainders_scales() {
+    // PRES-guarded-chain: the goal `(n + 0 == 0 || x mod (n + 0) >= 0) && ...` over k
+    // divisors under the premise `true`. Its negation is a disjunction of k disjuncts
+    // `n + i != 0 && x mod (n + i) < 0`, each refuted only through the cases of its own
+    // remainder's definition, and each was refuted by a settling of the whole formula: 1.14G
+    // instructions at k = 16 and 148.6G at k = 128, 130 times (measured 2026-11-08). Now each is
+    // refuted by a settling of its own definition alone (`refuted_by_links` in `probe`). The
+    // entailment is timed at k and 8k. COMPLEXITY.md row PRES-guarded-chain.
+    let n = 16;
+    let (p, g) = guarded_divisors(n);
+    assert_eq!(kind(&entails(&p, &g)), "proved");
+    let measure = move || {
+        let inputs = scaling::inputs(n, guarded_divisors);
+        scaling::check_order("a chain of guarded remainders", n, 1, |k| {
+            let (p, g) = &inputs[&k];
+            assert_eq!(kind(&entails(p, g)), "proved");
         });
     };
     let thread = std::thread::Builder::new().stack_size(8 << 20);

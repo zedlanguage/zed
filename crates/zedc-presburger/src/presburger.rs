@@ -2690,6 +2690,14 @@ fn by_halves<E>(
 /// point, so the formula's points are as before; it may be one that propagation alone would
 /// have kept, so the result can have fewer disjuncts than one propagation per disjunct
 /// leaves.
+///
+/// Before a point is sought, a disjunct is tested by [`refuted_by_links`] with only the
+/// disjunctions it shares a private atom with, and one it removes is not read by [`learn`]:
+/// on a chain of `k` guarded remainders (`n + i == 0 || x mod (n + i) >= 0`) each disjunct of
+/// the negated goal has no point with its own remainder's definition, and a test of all the
+/// parts per disjunct cost `130` times the work at `8k` (ledger PRES-guarded-chain). The
+/// disjunctions are tested in the order of [`private_links`], cheapest linked test first, so
+/// that a definition is tested after the goal's disjuncts that its cases refute are gone.
 fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
     let mut points: Vec<Model> = Vec::new();
     // The bounds on single atoms that the formula implies, found by [`learn`]. The formula
@@ -2707,7 +2715,12 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                     .collect()
             })
             .collect();
-        for i in 0..p.ors.len() {
+        let (order, links) = private_links(&p);
+        // The bounds of single atoms that the top-level constraints write, read by
+        // [`refuted_by_links`].
+        let mut base = Near::default();
+        take(&p.cons, &mut Linked::default(), &mut base);
+        for i in order {
             let ds = std::mem::take(&mut p.ors[i]);
             let flags = std::mem::take(&mut held[i]);
             // The points found while this disjunction is tested, which its flags do not count.
@@ -2725,6 +2738,9 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                 if implied.refutes(&d.cons) {
                     continue;
                 }
+                if refuted_by_links(&p, &links[i][at], &base, &d) {
+                    continue;
+                }
                 if let Some(m) = point_with(&p, &held, &d, &implied) {
                     for (o, hs) in p.ors.iter().zip(held.iter_mut()) {
                         for (e, h) in o.iter().zip(hs.iter_mut()) {
@@ -2736,8 +2752,9 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                     live_held.push(true);
                     continue;
                 }
-                // Complexity tradeoff: a disjunct that no point holds and no implied bound
-                // removes is still tested by one propagation of all the parts, so `r` such
+                // Complexity tradeoff: a disjunct that no point holds, no implied bound and
+                // no linked test ([`refuted_by_links`]) removes is still tested by one
+                // propagation of all the parts, so `r` such
                 // disjuncts cost `r` propagations of the whole formula, and failed-literal
                 // probing is polynomial, not `O(n log n)`, when `r` grows with `n` and the
                 // disjuncts share no bound of one atom that [`learn`] finds. Why: `settle`
@@ -2761,7 +2778,12 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                 // `l01_38_presburger::probe::guards_beyond_the_inputs_scale` measure it. A
                 // complete solution is a `settle` that returns, with each refutation, the
                 // constraints its proof used (a conflict explanation), so that one propagation
-                // removes every disjunct those constraints exclude.
+                // removes every disjunct those constraints exclude. The linked test is that
+                // explanation for the case where it is one disjunction reached through a
+                // private atom; it costs at most one more `settle` of a part of the formula
+                // before the one of the whole, so the worst case stays `O(n)` per disjunct.
+                // Tests: `l01_38_presburger::ladder::a_chain_of_guarded_remainders_scales`
+                // (COMPLEXITY.md PRES-guarded-chain).
                 let mut q = Parts {
                     cons: p.cons.clone(),
                     ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
@@ -2892,6 +2914,91 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
             implied.tighten(x, None, Some(w - &Int::ONE));
         }
     }
+}
+
+/// For the disjunctions of `p`, the order in which [`probe`] tests them and, for each disjunct
+/// of each, its linked disjunctions: those that share with the disjunct's own disjunction an
+/// atom that the disjunct mentions and that no third disjunction mentions (a private atom).
+/// On a chain of guarded remainders, the remainder `r` of `x mod (n + i)` is written by the
+/// definition's disjunction and read by one disjunct of the negated goal, so that disjunct's
+/// link is the definition, and the definition with it has no point.
+///
+/// The order is by the cost of the linked test: a disjunction comes before another when the
+/// greatest, over its disjuncts, of the atoms its linked disjunctions mention is smaller, ties
+/// by position. A disjunction whose disjuncts are removed by small linked tests is thus tested
+/// first, and the disjuncts it loses are gone when the others are tested. The order reads
+/// only the formula's structure, not the atoms' names. Each atom of each disjunct is read once
+/// with a hash map, so the whole costs `O(n log n)` for parts of `n` atoms, the sort included.
+fn private_links(p: &Parts) -> (Vec<usize>, Vec<Vec<Vec<usize>>>) {
+    // The disjunctions that mention each atom, in increasing position, each once.
+    let mut readers: HashMap<&Atom, Vec<usize>> = HashMap::new();
+    // The atoms each disjunction mentions, counted once per disjunct.
+    let mut size = Vec::with_capacity(p.ors.len());
+    for (j, o) in p.ors.iter().enumerate() {
+        let mut s = 0;
+        for d in o {
+            s += d.atoms().len();
+            for a in d.atoms() {
+                let r = readers.entry(a).or_default();
+                if r.last() != Some(&j) {
+                    r.push(j);
+                }
+            }
+        }
+        size.push(s);
+    }
+    let mut key = Vec::with_capacity(p.ors.len());
+    let links: Vec<Vec<Vec<usize>>> = (p.ors.iter().enumerate())
+        .map(|(i, o)| {
+            let ls: Vec<Vec<usize>> = o
+                .iter()
+                .map(|d| {
+                    let mut l: Vec<usize> = (d.atoms().iter())
+                        .filter_map(|a| match readers[a].as_slice() {
+                            [x, y] if *x == i => Some(*y),
+                            [x, y] if *y == i => Some(*x),
+                            _ => None,
+                        })
+                        .collect();
+                    l.sort_unstable();
+                    l.dedup();
+                    l
+                })
+                .collect();
+            let cost = |l: &Vec<usize>| l.iter().map(|&j| size[j]).sum::<usize>();
+            key.push(ls.iter().map(cost).max().unwrap_or(0));
+            ls
+        })
+        .collect();
+    let mut order: Vec<usize> = (0..p.ors.len()).collect();
+    order.sort_by_key(|&i| (key[i], i));
+    (order, links)
+}
+
+/// Whether the disjunct `d` has no point with the disjunctions of `p` at the positions
+/// `links` (from [`private_links`]) and the bounds that `base` holds for `d`'s atoms. These
+/// are a part of `p`'s constraints, so an answer `true` proves that `d` has no point with
+/// `p`. The test costs one [`settle`] of `d` and its linked disjunctions, which on a chain of
+/// guarded remainders is one definition, not the whole chain.
+fn refuted_by_links(p: &Parts, links: &[usize], base: &Near, d: &Parts) -> bool {
+    if links.is_empty() {
+        return false;
+    }
+    let mut q = Parts {
+        cons: Vec::new(),
+        ors: (links.iter())
+            .map(|&j| p.ors[j].clone())
+            .filter(|o| !o.is_empty())
+            .collect(),
+        atoms: OnceCell::new(),
+        failed: Cell::new(0),
+        id: Cell::new(0),
+    };
+    for a in d.atoms() {
+        base.bounds(a, &mut q.cons);
+    }
+    q.put(d);
+    matches!(settle(q, false), Ok(None))
 }
 
 /// The least and the greatest value of each atom, as [`Near::one`] keeps them; an atom absent
