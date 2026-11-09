@@ -22,7 +22,7 @@ fn a_family_of_lines_is_written_one_line_per_entry() {
     let out = run("cat", src, "first\n", &[]);
     assert_eq!(out.status, 1);
     assert!(
-        out.stderr.contains("a `Lines` port takes a `String` or a family of strings, not ((int) -> String | #notFound | #ioError(op: String, path: String, why: String))"),
+        out.stderr.contains("a `Lines` port takes a `String` or a family of strings, not (int) -> String | #notFound | #ioError(op: String, path: String, why: String)"),
         "{}",
         out.stderr
     );

@@ -256,32 +256,32 @@ fn an_atom_with_a_payload_of_no_value_after_substitution_is_never() {
         )
     };
     for (text, want) in [
-        (call("#a(g(x), 1)"), "(((int) -> Never)) -> Never"),
-        (call("#a((g(x), 1), 2)"), "(((int) -> Never)) -> Never"),
-        (call("#a(k: g(x))"), "(((int) -> Never)) -> Never"),
+        (call("#a(g(x), 1)"), "((int) -> Never) -> Never"),
+        (call("#a((g(x), 1), 2)"), "((int) -> Never) -> Never"),
+        (call("#a(k: g(x))"), "((int) -> Never) -> Never"),
         (
             bool_call("if b { #a(g(x)) } else { #a(2) }"),
-            "(((int) -> Never), bool) -> #a(2)",
+            "((int) -> Never, bool) -> #a(2)",
         ),
         (
             bool_call("if b { #a(g(x)) } else { #b }"),
-            "(((int) -> Never), bool) -> #b",
+            "((int) -> Never, bool) -> #b",
         ),
         (
             bool_call("if b { #a } else { #a(g(x)) }"),
-            "(((int) -> Never), bool) -> #a",
+            "((int) -> Never, bool) -> #a",
         ),
         // In a function's result.
         (
             "app(positional g) = (positional x: int) -> #a(g(x), 1);\nf(positional h: (int) -> \
              Never) = app(h);\n"
                 .to_string(),
-            "(((int) -> Never)) -> ((int) -> Never)",
+            "((int) -> Never) -> (int) -> Never",
         ),
         // A payload that keeps a value is kept.
         (
             call("#a(g, x)"),
-            "(((int) -> Never)) -> #a(((int) -> Never), 1)",
+            "((int) -> Never) -> #a((int) -> Never, 1)",
         ),
     ] {
         assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");

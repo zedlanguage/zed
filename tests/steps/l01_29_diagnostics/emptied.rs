@@ -26,13 +26,15 @@ fn a_parameter_of_an_empty_tuple_type_says_why_it_is_never() {
         ],
         "{out}"
     );
-    // The step is placed at the tuple as written, after the declaration it explains.
+    // The step is placed at the tuple as written, after the declaration it explains: the
+    // declaration's line is quoted once, with the step's underline under the tuple.
     assert!(
         out.contains(
-            "  [6] 1:17: this tuple type has no value, since its component 0, `Never`, has \
-none, so it is `Never`
-      1 | f(positional x: (Never, int)) = x;
-        |                 ^^^^^^^^^^^^"
+            "      1 | f(positional x: (Never, int)) = x;
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [5]
+        |                 ^^^^^^^^^^^^ [6]
+  [6] 1:17: this tuple type has no value, since its component 0, `Never`, has \
+none, so it is `Never`"
         ),
         "{out}"
     );

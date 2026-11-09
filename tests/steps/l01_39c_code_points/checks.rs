@@ -15,10 +15,10 @@ fn an_argument_of_another_kind_is_rejected() {
             "x = scalar(\"a\");\n",
             "`scalar` takes (int) -> String | #notScalar",
         ),
-        ("x = utf8(1);\n", "`utf8` takes (String) -> (int ->? int)"),
+        ("x = utf8(1);\n", "`utf8` takes (String) -> int ->? int"),
         (
             "x = fromUtf8(\"x\");\n",
-            "`fromUtf8` takes ((int ->? int)) -> String | #badUtf8",
+            "`fromUtf8` takes (int ->? int) -> String | #badUtf8",
         ),
     ] {
         let out = rejected(src);
@@ -31,7 +31,7 @@ fn an_argument_of_another_kind_is_rejected() {
 fn the_bytes_are_not_a_number() {
     let out = rejected("x = utf8(\"a\") + 1;\n");
     assert!(
-        out.contains("this call of `utf8` gives (int ->? int)"),
+        out.contains("this call of `utf8` gives int ->? int"),
         "{out}"
     );
 }
