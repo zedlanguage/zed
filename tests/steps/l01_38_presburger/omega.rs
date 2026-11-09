@@ -864,36 +864,137 @@ fn dead2(n: usize, chain: bool, zn: &str) -> Formula {
     Formula::and(fs)
 }
 
-/// The hulls are those the code before PROJECT-dead2-quadratic gave, under either naming of
-/// the credits, chained or not: a state in {0, 2}, a credit at most 5. The
-/// credit's hull has no lower bound, though no stage can stall and so a credit is at least
-/// 0: a sound hull, not the least, given alike before and after.
+/// Every stage's credit is exactly `[0..=5]` and its state `{0, 2}`, under either naming of
+/// the credits, chained or not: no stage can stall, since its state is 0 or 2, so its credit
+/// is at least 0 (item PROJECT-hull-credit-lower). Before it the credit's hull had no lower
+/// bound: the rows the state's disjunction implies, `0 <= y <= 2`, allow a stall.
 #[test]
-fn pipeline_stage_hulls_match_the_code_before() {
+fn pipeline_stage_hulls_are_exact() {
     for chain in [false, true] {
         for zn in ["z", "a"] {
-            for n in [1, 4, 16, 128] {
+            for n in [1, 2, 3, 4, 16, 128] {
                 let f = dead2(n, chain, zn);
-                let last = n - 1;
-                let syms = [
-                    sym(&format!("{zn}0")),
-                    sym("y0"),
-                    sym(&format!("{zn}{last}")),
-                    sym(&format!("y{last}")),
-                ];
+                let syms: Vec<Atom> = (0..n)
+                    .flat_map(|k| [sym(&format!("{zn}{k}")), sym(&format!("y{k}"))])
+                    .collect();
                 let (each, skipped) =
                     zedc::store::presburger::project_each(&f, &syms).expect("answered");
                 let hulls: Vec<String> = (each.iter())
                     .map(|h| h.as_ref().expect("not refused").to_string())
                     .collect();
+                let exact: Vec<&str> = (0..n).flat_map(|_| ["[0..=5]", "[0..=0, 2..=2]"]).collect();
+                assert_eq!(hulls, exact, "n = {n}, chain = {chain}, credits {zn}");
+                assert!(skipped.is_empty());
+            }
+        }
+    }
+}
+
+/// `y` is 0 or 2, `y == 1 || w == 4 || w == 6`, `w == 5 || x >= 1` and `x <= 9`: `y == 1`
+/// goes, which leaves `w` 4 or 6, so `w == 5` goes and `x` is at least 1. Each removal needs
+/// the one before; the hulls are the same in each order of the disjunctions and of their
+/// disjuncts, and under each sign of the equations.
+#[test]
+fn removals_by_values_cascade_in_any_order() {
+    let parts = |flip: bool| -> Vec<Vec<Formula>> {
+        let s = if flip { -1 } else { 1 };
+        vec![
+            vec![eq(&[("y", s)], 0), eq(&[("y", s)], -2 * s)],
+            vec![
+                eq(&[("y", s)], -s),
+                eq(&[("w", s)], -4 * s),
+                eq(&[("w", s)], -6 * s),
+            ],
+            vec![eq(&[("w", s)], -5 * s), ge(&[("x", 1)], -1)],
+        ]
+    };
+    let syms = [sym("x"), sym("w"), sym("y")];
+    let orders: [[usize; 3]; 6] = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    for flip in [false, true] {
+        for order in orders {
+            for reverse in [false, true] {
+                let ors = parts(flip);
+                let mut fs: Vec<Formula> = (order.iter())
+                    .map(|&j| {
+                        let mut ds = ors[j].clone();
+                        if reverse {
+                            ds.reverse();
+                        }
+                        Formula::or(ds)
+                    })
+                    .collect();
+                fs.push(ge(&[("x", -1)], 9));
+                let f = Formula::and(fs);
+                let (each, skipped) = project_each(&f, &syms).expect("answered");
+                let hulls: Vec<String> = (each.iter())
+                    .map(|h| h.as_ref().expect("not refused").to_string())
+                    .collect();
                 assert_eq!(
                     hulls,
-                    ["[..=5]", "[0..=0, 2..=2]", "[..=5]", "[0..=0, 2..=2]"],
-                    "n = {n}, chain = {chain}, credits {zn}"
+                    ["[1..=9]", "[4..=4, 6..=6]", "[0..=0, 2..=2]"],
+                    "{f}"
                 );
                 assert!(skipped.is_empty());
             }
         }
+    }
+}
+
+/// A disjunct is removed by the values of each form read alone: with `x` and `y` each 0 or 2,
+/// `x + y == 1` of `x + y == 1 || z >= 0` is kept, though `x + y` is 0, 2 or 4, so `z` keeps
+/// no lower bound. A sound hull, wider than the exact `[0..=5]` (the complexity tradeoff on
+/// `drop_outside_values`, COMPLEXITY.md PROJECT-hull-credit-lower).
+#[test]
+fn a_sum_of_forms_with_gaps_is_not_read() {
+    let f = Formula::and(vec![
+        Formula::or(vec![eq(&[("x", 1)], 0), eq(&[("x", 1)], -2)]),
+        Formula::or(vec![eq(&[("y", 1)], 0), eq(&[("y", 1)], -2)]),
+        Formula::or(vec![eq(&[("x", 1), ("y", 1)], -1), ge(&[("z", 1)], 0)]),
+        ge(&[("z", -1)], 5),
+    ]);
+    let (each, skipped) = project_each(&f, &[sym("z")]).expect("answered");
+    let z = each[0].as_ref().expect("not refused");
+    let exact = IntervalSet::of(0, 5);
+    assert_eq!(z.join(&exact), *z, "the exact hull is inside");
+    assert_eq!(z.to_string(), "[..=5]");
+    assert!(skipped.is_empty());
+}
+
+/// Projecting the first and the last credit of a pipeline of `n` stages costs O(n log n),
+/// chained or not (stages not chained are alike, so they are projected as sets): the stalls
+/// are removed by the values of each state, one pass over the disjuncts' ranges, and each
+/// credit's hull is then `[0..=5]` (item PROJECT-hull-credit-lower).
+#[test]
+fn the_first_and_last_credits_of_a_pipeline_scale() {
+    for chain in [false, true] {
+        let (small, large) = (
+            dead2(16, chain, "z"),
+            dead2(16 * scaling::FACTOR, chain, "z"),
+        );
+        let (s_small, s_large) = (
+            [sym("z0"), sym("z15")],
+            [sym("z0"), sym(&format!("z{}", 16 * scaling::FACTOR - 1))],
+        );
+        scaling::check_order(
+            &format!("the first and last credits of a pipeline of stages, chained {chain}"),
+            16,
+            1,
+            |n| {
+                let (f, s) = if n == 16 {
+                    (&small, &s_small)
+                } else {
+                    (&large, &s_large)
+                };
+                let _ = std::hint::black_box(zedc::store::presburger::project_each(f, s));
+            },
+        );
     }
 }
 

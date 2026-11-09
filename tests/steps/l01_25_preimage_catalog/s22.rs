@@ -1014,7 +1014,7 @@ const GUARDED: [Counts; 16] = [
     (0, (0, 0, 53), (10, &[]), 0),
     (250, (0, 3, 41), (9, &[]), 0),
     (500, (0, 0, 45), (8, &[]), 0),
-    (750, (0, 0, 46), (11, &[]), 0),
+    (750, (0, 0, 47), (11, &[]), 0),
     (1000, (0, 0, 53), (14, &[]), 0),
     (1250, (0, 2, 50), (4, &[]), 0),
     (1500, (0, 0, 42), (12, &[]), 0),
@@ -1025,7 +1025,7 @@ const GUARDED: [Counts; 16] = [
     (2750, (0, 0, 48), (5, &[]), 0),
     (3000, (0, 0, 58), (10, &[]), 0),
     (3250, (0, 0, 52), (7, &[]), 0),
-    (3500, (0, 0, 49), (5, &[]), 0),
+    (3500, (0, 0, 50), (5, &[]), 0),
     (
         3750,
         (0, 2, 56),
@@ -1180,6 +1180,15 @@ guarded_ranges!(
 /// Since PROJECT-canon-gcd, which divides each row by the gcd of its coefficients, one more
 /// box of the transfer before, which shares the solver, is exact, in cases 250 to 500 (379,
 /// was 378); no result of the transfer changes.
+///
+/// Since PROJECT-hull-credit-lower, which removes before a projection each disjunct whose own
+/// rows put a form outside the values the other disjunctions leave it, two inexact boxes of
+/// the transfer are exact and narrower than the transfer before: in cases 750 to 1000,
+/// `if (abs(i) >= 5) { … }` with demand `[7, 22]` gives `i` in `[-4, -3] ∪ [-1, 0]`, where the
+/// transfer before keeps `(-inf, -3] ∪ [-1, +inf)`; in cases 3500 to 3750,
+/// `if ((i mod 3) == 1) { … }` with demand `[-15, -13] ∪ [-9, -6]` gives `i` in `{0, 3}`, where
+/// the transfer before keeps `{0} ∪ [2, 3]` (at 2 the chain gives -12). So the first half
+/// counts 380 made exact, the second 413; both boxes hold no point the interpreter refutes.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1200,13 +1209,13 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (0, 6, 379, 81, vec![], 0));
+    assert_eq!(sum(&GUARDED[..8]), (0, 6, 380, 81, vec![], 0));
     assert_eq!(
         sum(&GUARDED[8..]),
         (
             0,
             4,
-            412,
+            413,
             80,
             vec![
                 "i [2..] before i [2..=2, 5..]",

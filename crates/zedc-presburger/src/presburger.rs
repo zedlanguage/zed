@@ -101,6 +101,7 @@ use zedc_solvers::{live3, twovar, utvpi};
 mod deep;
 pub mod extend;
 mod formula;
+mod values;
 
 pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 
@@ -952,38 +953,8 @@ fn unit_rows_have_a_point(f: &Formula) -> Option<bool> {
 /// chain's end past what they allow leaves no point, where [`probe`] tests each disjunct by a
 /// propagation of the whole formula (COMPLEXITY.md DISJ-incremental).
 fn disjunction_hulls(ors: &[Vec<Rc<Parts>>]) -> Vec<Con> {
-    // The bounds each disjunct's rows put on the form with the given terms, the first term's
-    // coefficient positive.
-    type Bounds = BTreeMap<Vec<(Atom, Int)>, (Option<Int>, Option<Int>)>;
-    let own = |d: &Parts| -> Bounds {
-        let mut out = Bounds::new();
-        for c in &d.cons {
-            let Some((_, first)) = c.lin.terms.iter().next() else {
-                continue;
-            };
-            let flip = first.is_negative();
-            let terms: Vec<(Atom, Int)> = (c.lin.terms.iter())
-                .map(|(a, k)| (a.clone(), if flip { -k } else { k.clone() }))
-                .collect();
-            // `form + k >= 0` (or `== 0`) with `k` the constant read with the form's sign.
-            let k = if flip {
-                -&c.lin.constant
-            } else {
-                c.lin.constant.clone()
-            };
-            let (lo, hi) = out.entry(terms).or_insert((None, None));
-            let at_least = || -&k;
-            if !flip || c.rel == Rel::Eq {
-                let v = at_least();
-                *lo = Some(lo.take().map_or(v.clone(), |l: Int| l.max(v)));
-            }
-            if flip || c.rel == Rel::Eq {
-                let v = at_least();
-                *hi = Some(hi.take().map_or(v.clone(), |h: Int| h.min(v)));
-            }
-        }
-        out
-    };
+    // The bounds each disjunct's rows put on each form ([`values::form_bounds`]).
+    let own = |d: &Parts| values::form_bounds(&d.cons);
     let mut rows = Vec::new();
     for ds in ors {
         let Some((first, rest)) = ds.split_first() else {
@@ -8036,8 +8007,9 @@ fn no_points(syms: &[Atom]) -> Each {
 ///
 /// With `sets`, for parts whose atoms share a color ([`Naming::Tied`]), each question is one
 /// whose answer no order of the parts changes: no search ([`pick`], [`probe`]) removes
-/// disjuncts first; each disjunct of a disjunction is settled by [`settle_as_sets`] before any
-/// is asked for a symbol; those shown to have no point are not asked, and each of the others
+/// disjuncts first (the removal by values, [`values::drop_outside_values`], depends on no
+/// order); each disjunct of a disjunction is settled by [`settle_as_sets`] before any is
+/// asked for a symbol; those shown to have no point are not asked, and each of the others
 /// is asked for the symbols that all of them touch, even after one is refused; and a hull is
 /// tightened by [`decide`], which renames or settles the formula as its colors allow. The
 /// projection is then a function of the parts as sets: for each disjunction, the union of its
@@ -8053,13 +8025,23 @@ fn project_parts(
 ) -> Result<Each, Refusal> {
     let none = || no_points(syms);
     let mut skipped: Vec<Refusal> = Vec::new();
+    // Each disjunct whose own rows put a form outside the values that the base and the
+    // disjunctions leave it is removed first, with or without `sets`, on either path
+    // ([`values::drop_outside_values`]): `y == 1` of `y == 1 || z >= 0` where `y` is 0 or 2,
+    // which the rows the disjunctions imply keep (they allow `0 <= y <= 2`), so that `z` is
+    // projected with its lower bound (item PROJECT-hull-credit-lower). It asks the solver
+    // nothing, so it refuses nothing.
+    if !p.ors.is_empty() && !values::drop_outside_values(&p.cons, &mut p.ors, |d| d.cons.as_slice())
+    {
+        return Ok(none());
+    }
     // With two disjunctions or more, each disjunct that has no point with the base and the
     // rows the other disjunctions imply is removed first ([`drop_jointly_empty`]), before the
     // greedy search ([`pick`]) reads the disjuncts in their order: a disjunct removed so can
     // no longer be taken first and fail the search, which [`probe`] would then answer by a
     // question per disjunct. So which disjunct of `x == 3 || x == 7` comes first, which the
     // sign the equations are written with decides, no longer decides the cost (item
-    // PROJECT-each-canon). With `sets`, the parts are projected as they are.
+    // PROJECT-each-canon). With `sets`, no other disjunct is removed here.
     if !sets && p.ors.len() > 1 && !old_path() && drop_jointly_empty(&p.cons, &mut p.ors).is_none()
     {
         return Ok(none());
@@ -11471,7 +11453,8 @@ mod by_halves_against_old {
 
     /// The stages' disjunctions tested against the base projected onto their atoms
     /// ([`stage_kernels`]) give the hulls of the old path, which tested each against the
-    /// base's whole group, on every symbol: `y` in `{-2, 0}`, `z` in `[..=5]`.
+    /// base's whole group, on every symbol: `y` in `{-2, 0}`, `z` in `[0..=5]`, whose lower
+    /// bound the removal by values ([`values::drop_outside_values`]) finds on both paths.
     #[test]
     fn dead2_hulls_are_those_of_the_old_path() {
         for chain in [false, true] {
@@ -11486,7 +11469,7 @@ mod by_halves_against_old {
                     let want = if s.to_string().starts_with('y') {
                         "[-2..=-2, 0..=0]"
                     } else {
-                        "[..=5]"
+                        "[0..=5]"
                     };
                     assert_eq!(h, want, "{s}, n = {n}, chain = {chain}");
                 }

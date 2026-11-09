@@ -3090,3 +3090,13 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A `thread_local!` table of the names the program being checked binds, set by `ProgramNames::hold` in `check_with` and put back by its `Drop`, so that every printer that makes up a name, through `Display` and other printers that take no extra argument, skips the program's names | `names::HELD`, `ProgramNames`, `fresh_name`; `check_with` | Mutation, global state | The names passed to the printers as a parameter, or held in the state the checker threads through its messages, beside the definitions table of MSG-type-defs-layout |
 | A `loop` with `continue` and `break` that steps over taken names | `fresh_name` | Early exit (gap 12), mutation (gap 11) | A recursive function on the index |
+
+## Entries from PROJECT-hull-credit-lower (`crates/zedc-presburger/src/presburger/values.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Two union-find arrays (`next`, `prev`) over a form's segments, compressed in place by `find`, and a `dead` flag array with a worklist `Vec` of disjuncts popped in a loop | `Values`, `kill`, `drop_outside_values` | Mutation (gap 11) | a persistent union-find, or a persistent ordered set of the segments left, read by successor and predecessor; the worklist as a list carried by a loop |
+| A tree of minima over a flat `Vec` (`MinTree::set`) and a tree of coverage counts with lazy additions in two flat `Vec`s (`Cover`), updated in place, `MinTree` by loops over node indices and `Cover` by explicit stacks of them | `MinTree::set`, `MinTree::least`, `Cover::remove`, `Cover::zeros` | Mutation (gap 11) | persistent segment trees (one path copied per update, O(log n) each), walked by recursion on their depth (log n) |
+| `BTreeMap`s of buckets (`waiting`, `bounding`) changed through `get_mut`, `entry().or_default()` and `remove` while the worklist runs | `drop_outside_values` | Mutation (gap 11) | persistent maps carried through the loop |
+| `Vec::retain` with a counter captured by the closure, to drop the disjuncts marked dead in each disjunction | `drop_outside_values` | Mutation (gap 11) | a filter over the disjuncts zipped with their numbers |
+| A plain `fn(&D) -> &[Con]` parameter, generic in the disjunct type, so the module does not import its parent's `Parts` | `drop_outside_values` | none | a function parameter |

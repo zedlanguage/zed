@@ -40,3 +40,17 @@ features = ["two-at-a-time"]
 [dev-dependencies.zedc-solvers]
 workspace = true
 features = ["counts"]
+
+# The scaling test of the rule of low complexity (tests/src/scaling.rs), which the tests of
+# presburger/values.rs use.
+[dev-dependencies.rustix]
+workspace = true
+
+[dev-dependencies.zed-alloc-count]
+workspace = true
+
+[dev-dependencies.stacker]
+workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+perf-event2.workspace = true

@@ -6,3 +6,12 @@
 pub mod conjuncts;
 pub mod hull;
 pub mod presburger;
+
+/// The scaling test of the rule of low complexity, shared with the step tests.
+#[cfg(test)]
+#[path = "../../../tests/src/scaling.rs"]
+#[expect(
+    dead_code,
+    reason = "presburger's tests hold no radix conversion or gcd to the log-squared limit (`check_log_squared`)"
+)]
+mod scaling;
