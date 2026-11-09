@@ -442,11 +442,17 @@ fn a_call_with_an_argument_of_no_value_has_its_substituted_result() {
             format!("{k}f(positional n: Never) = {{ z = k(n, 1); z + 1 }};\n"),
             "(Never) -> int",
         ),
-        // Used on every path but with a result that does not name `x`: the arrow's result
-        // `int`. Sound, as `Never` is below `int`; finding `Never` here needs a demand analysis.
+        // `inc` is `(T) -> T for T in …` (bare literals are generic), so its result names the
+        // parameter's variable `T`, which the argument binds to `Never`: the call is `Never`.
         (
             "inc(positional x) = x + 1;\nf(positional n: Never) = inc(n);\n".to_string(),
-            "(Never) -> int",
+            "(Never) -> Never",
+        ),
+        // Used on every path but with a result that does not name `x`: the arrow's result
+        // `bool`. Sound, as `Never` is below `bool`; finding `Never` here needs a demand analysis.
+        (
+            "pos(positional x) = x > 0;\nf(positional n: Never) = pos(n);\n".to_string(),
+            "(Never) -> bool",
         ),
         // An operator needs every operand; `&&` needs only the first.
         (
