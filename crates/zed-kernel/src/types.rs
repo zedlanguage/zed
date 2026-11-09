@@ -1370,9 +1370,29 @@ impl Type {
         Type::with(|p| p.atoms = atoms)
     }
 
-    /// The tuple type `(t1, …, tn)`.
+    /// The tuple type `(t1, …, tn)`, or [`Type::empty`] when a component lists no value in
+    /// its parts: a product with an empty factor has no value.
     pub fn tuple(items: Vec<Type>) -> Type {
+        // Complexity tradeoff: only a component that lists no value in its parts, as
+        // `Type::empty` and every tuple built from one, makes the tuple empty here; one whose
+        // emptiness only the search proves, as `(int, int) & (bool, int)`, which the tuple
+        // part keeps as a meet, or a recursive type with no finite value, is kept as written.
+        // Why: the search costs up to the size of the component per tuple built, and this
+        // check costs O(1). Trigger: a component empty by a meet, difference or
+        // recursion the parts do not show. Tests:
+        // `types::tests::a_tuple_with_an_empty_component_is_empty`. COMPLEXITY.md C33. The
+        // complete solution runs the memoized `is_empty` on each component; `is_empty`
+        // already answers such a tuple right.
+        if items.iter().any(Type::lists_nothing) {
+            return Type::empty();
+        }
         Type::with(|p| p.tuples = Tuples::literal(items))
+    }
+
+    /// Whether `self` lists no value in its parts, the form [`Type::empty`] has: O(1). A type
+    /// for which this is false may still be empty ([`Type::is_empty`]).
+    pub fn lists_nothing(&self) -> bool {
+        matches!(&*self.0, Node::Parts(p, _) if p.scalars_only() && !p.has_scalars())
     }
 
     /// The morphism type with the given bounds and value type.

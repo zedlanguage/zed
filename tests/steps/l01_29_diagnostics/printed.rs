@@ -732,3 +732,68 @@ has no arrow that takes them all
         assert_eq!(mismatch(t, shown), None, "{shown}");
     }
 }
+
+/// A tuple with an empty component is the empty type: written, nested or in a union, it reads
+/// back as `Never` or without the tuple, and prints so.
+#[test]
+fn an_empty_product_prints_as_never_and_reads_back() {
+    for text in [
+        "(Never, int)",
+        "(int, Never)",
+        "((Never, int), bool)",
+        "(bool, (int, Never))",
+    ] {
+        let t = back(text);
+        assert_eq!(t, Ty::empty(), "{text}");
+        assert_eq!(t.to_string(), "Never", "{text}");
+    }
+    assert_eq!(
+        Ty::tuple(vec![Ty::empty(), Ty::carrier(Carrier::Int)]),
+        Ty::empty()
+    );
+    let union = back("(int, Never) | bool");
+    assert_eq!(union, Ty::carrier(Carrier::Bool));
+    assert_eq!(union.to_string(), "bool");
+    let f = back("(int) -> (Never, int)");
+    let shown = f.to_string();
+    assert_eq!(shown, "((int) -> Never)");
+    assert_eq!(mismatch(&f, &shown), None, "{shown}");
+    assert_eq!(back(&shown), f);
+}
+
+/// A rejection at a parameter whose type is an empty product writes that type `Never`, and each
+/// type it prints reads back to the type printed.
+#[test]
+fn a_rejection_writes_an_empty_product_as_never() {
+    let (seen, out) = printed_by("f(positional x: (Never, int)) = x;\nr = f((1, 2));\n");
+    assert_eq!(
+        out,
+        "2:5: `f` does not take ((1, 2)): these are the types of its arguments here, and `f` \
+has no arrow that takes them all
+  [1] 2:7: this expression gives (1, 2)
+      2 | r = f((1, 2));
+        |       ^^^^^^
+  [2] 2:8: this literal, 1, is 1
+      2 | r = f((1, 2));
+        |        ^
+  [3] 2:11: this literal, 2, is 2
+      2 | r = f((1, 2));
+        |           ^
+  [4] 2:5: `f` takes (Never) -> Never
+      2 | r = f((1, 2));
+        |     ^^^^^^^^^
+  [5] 1:1: `f` is declared here, `(Never) -> Never`
+      1 | f(positional x: (Never, int)) = x;
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+    );
+    // The source line quoted shows the type as written; no type printed does.
+    for (_, shown) in &seen {
+        assert!(
+            !shown.contains("Never,") && !shown.contains(", Never"),
+            "{shown}"
+        );
+    }
+    for (t, shown) in &seen {
+        assert_eq!(mismatch(t, shown), None, "{shown}");
+    }
+}

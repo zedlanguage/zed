@@ -5344,10 +5344,7 @@ impl<'a> Denote<'a> {
                         _ => items.push(v),
                     }
                 }
-                let mut t = Ty::set(KType::atom_with(a, &KType::top()));
-                t.payloads
-                    .insert(a.as_str().into(), Some(vec![Shape::new(items, fields)]));
-                t
+                Ty::atom_of(a, items, fields)
             }
             TypeKind::Tuple(ts) => Ty::tuple(vals.split_off(vals.len() - ts.len())),
             TypeKind::Union(ts) => {

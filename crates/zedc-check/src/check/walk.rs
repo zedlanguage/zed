@@ -227,12 +227,15 @@ pub(super) enum Frame<'a> {
         no: Facts,
         /// The node where the condition fails.
         fails: usize,
+        /// Whether each branch is unreachable ([`unreachable()`]).
+        dead: (bool, bool),
     },
     If3 {
         then: &'a Expr,
         otherwise: &'a Expr,
         out: Ty,
         a: Box<Ty>,
+        dead: (bool, bool),
     },
     /// Restores what a narrowing changed, and gives the result through.
     Widen(Saved<'a>),
@@ -743,6 +746,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     then,
                     otherwise,
                     out,
+                    dead: (unreachable(&yes), unreachable(&no)),
                     no,
                     fails,
                 });
@@ -754,6 +758,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 out,
                 no,
                 fails,
+                dead,
             } => {
                 let a = m.take_ty();
                 m.k(Frame::If3 {
@@ -761,6 +766,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     otherwise,
                     out,
                     a: Box::new(a),
+                    dead,
                 });
                 self.under(m, &no, fails, otherwise);
             }
@@ -769,9 +775,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 otherwise,
                 out,
                 a,
+                dead,
             } => {
                 let b = m.take_ty();
-                let t = self.branches(then, &a, otherwise, &b);
+                // An unreachable branch is still checked, and adds nothing to the result
+                // (sec:constraints: an arm a narrowing test makes bottom adds nothing to the join).
+                let t = match dead {
+                    (true, true) => Ty::empty(),
+                    (true, false) => b,
+                    (false, true) => *a,
+                    (false, false) => self.branches(then, &a, otherwise, &b),
+                };
                 m.ty(out.union(&t));
             }
             Frame::Widen(saved) => {
@@ -2020,10 +2034,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             fields,
             ..
         } = *s;
-        let mut t = Ty::set(KType::atom_with(name, &KType::top()));
-        t.payloads
-            .insert(name.into(), Some(vec![Shape::new(items, fields)]));
-        m.ty(t);
+        m.ty(Ty::atom_of(name, items, fields));
     }
 
     /// A prelude word applied to one argument, the receiver or the only positional one.
@@ -2937,6 +2948,19 @@ fn exported(e: &Expr) -> &Expr {
         },
         _ => e,
     }
+}
+
+/// Whether the branch where `facts` hold is unreachable: a test narrows a name to a type with
+/// no value, as `x is Never`, or `x is bool` for an `int`. O(1) per fact.
+fn unreachable(facts: &Facts) -> bool {
+    // Complexity tradeoff: a narrowed type counts as empty only when it lists no value
+    // (`Ty::lists_nothing`); one that only the kernel's search proves empty, as a tuple whose
+    // component is empty by a meet of tuple types, leaves its branch reachable and its type
+    // in the join, as before. Why: the search costs up to the size of the type per test.
+    // Trigger: an `is` against a type empty only by such a meet or by recursion. Tests:
+    // `l01_26_type_resolution::never::a_test_against_never_is_accepted`. COMPLEXITY.md C34.
+    // The complete solution asks `Ty::is_empty` with the kernel's memoized search.
+    facts.iter().any(|(_, t, _)| t.lists_nothing())
 }
 
 /// The scalars and atoms of `ty`, when it holds nothing else.

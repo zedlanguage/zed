@@ -92,6 +92,9 @@ struct RowData {
     /// The first kind-wide part, `(..)` or `{..}`, a component holds at any depth outside
     /// functions, in payloads too: a part that may hold a function ([`Ty::held_wide`]).
     wide: Option<KType>,
+    /// Whether a component lists no value ([`Ty::lists_nothing`]): the row has no value, and
+    /// [`Ty::of_row`] makes the empty type of it.
+    void: bool,
     /// Whether a component lists the payloads of an atom at any depth outside functions: when
     /// not, [`Self::exact`] is [`Self::kernel`].
     listed: bool,
@@ -164,6 +167,13 @@ impl Row {
             .map(Value::tuple);
         let wide = cs.iter().find_map(Ty::held_wide);
         let open_atoms = cs.iter().any(Ty::open_atoms);
+        // Complexity tradeoff: as in `KType::tuple`, only a component that lists no value
+        // makes the row void; one that only the kernel's search proves empty keeps the row.
+        // Why: the search costs up to the size of the component per row made; this is O(1)
+        // per component. Trigger: a component empty by a meet or recursion. Tests:
+        // `l01_26_type_resolution::never::a_tuple_with_an_empty_component_is_never`.
+        // COMPLEXITY.md C34.
+        let void = cs.iter().any(Ty::lists_nothing);
         Row(Arc::new(RowData {
             cs,
             digest,
@@ -179,6 +189,7 @@ impl Row {
             exact,
             point,
             wide,
+            void,
             listed,
             open_atoms,
         }))
@@ -1497,13 +1508,15 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
                 None => enter(&mut stack, Step::HeldDone(s), sig_tys(s).map(Step::Ty)),
             },
             Step::TyDone(t) => {
-                let tuples = out.rows.split_off(out.rows.len() - t.tuples.len());
+                let mut tuples = out.rows.split_off(out.rows.len() - t.tuples.len());
                 let fns = out.sigs.split_off(out.sigs.len() - t.fns.len());
                 let from = out.shapes.len() - t.payload_shapes().count();
                 let mut shapes = out.shapes.drain(from..);
                 let payloads = t.map_payloads(|_| {
                     (shapes.next()).expect("a walk makes one shape of each payload shape")
                 });
+                // A variable replaced by the empty type leaves a row with no value.
+                tuples.retain(|r| !r.0.void);
                 let mut made = Ty {
                     set: t.set.clone(),
                     tuples,
@@ -2909,7 +2922,9 @@ impl Cx<'_> {
     }
 
     /// [`Self::read`] of `t` whose tuples read as `tuples`: its functions and variables.
-    fn read_outer(&mut self, t: &Ty, tuples: Vec<Row>, env: &Env) -> Ty {
+    fn read_outer(&mut self, t: &Ty, mut tuples: Vec<Row>, env: &Env) -> Ty {
+        // A variable read as the empty type leaves a row with no value.
+        tuples.retain(|r| !r.0.void);
         let mut out = Ty {
             set: t.set.clone(),
             tuples,
@@ -4495,12 +4510,26 @@ impl Ty {
         Ty::of_row(Row::new(cs))
     }
 
-    /// The tuple shape of `row`.
+    /// The tuple shape of `row`, or the empty type when a component lists no value.
     pub fn of_row(row: Row) -> Ty {
+        if row.0.void {
+            return Ty::empty();
+        }
         Ty {
             tuples: vec![row],
             ..Ty::empty()
         }
+    }
+
+    /// The atom `#name(items, fields)`, or the empty type when a component lists no value.
+    pub fn atom_of(name: &str, items: Vec<Ty>, fields: BTreeMap<Arc<str>, Ty>) -> Ty {
+        if items.iter().chain(fields.values()).any(Ty::lists_nothing) {
+            return Ty::empty();
+        }
+        let mut t = Ty::set(KType::atom_with(name, &KType::top()));
+        t.payloads
+            .insert(name.into(), Some(vec![Shape::new(items, fields)]));
+        t
     }
 
     /// The function `s`.
@@ -4531,6 +4560,16 @@ impl Ty {
             dynamic: true,
             ..Ty::empty()
         }
+    }
+
+    /// Whether it lists no value: the form of [`Ty::empty`], read in O(1). A type for which
+    /// this is false may still be empty ([`Ty::is_empty`]).
+    pub fn lists_nothing(&self) -> bool {
+        self.set.lists_nothing()
+            && self.tuples.is_empty()
+            && self.fns.is_empty()
+            && self.vars.is_empty()
+            && !self.dynamic
     }
 
     /// Whether no value is in it.

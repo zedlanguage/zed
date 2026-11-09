@@ -173,7 +173,7 @@ err this argument is passed by position, and the parameter it reaches, `x` of `p
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig o = (x: int) -> ((_) -> ((_) -> int))
 top q = bool
-top w = (Never, 0)
+top w = Never
 err this argument is passed by position, and the parameter it reaches, `x` of `o`, is a named parameter, which a call passes only by name, as `x: …` [1]
   note `o` is declared here, `(x: int) -> ((_) -> ((_) -> int))`
   note repair: pass `x` by name, as `x: …`

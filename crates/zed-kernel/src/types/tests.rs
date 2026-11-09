@@ -164,3 +164,26 @@ fn scalar_is_the_one_value_of_a_literal_type() {
         assert_eq!(t.scalar(), None, "{t}");
     }
 }
+
+/// A tuple with a component that lists no value has no value, and is built as the empty type
+/// itself, also nested, inside an atom's payload and in a union; a component empty only by a
+/// tuple meet is kept as written, though `is_empty` still finds the tuple empty.
+#[test]
+fn a_tuple_with_an_empty_component_is_empty() {
+    let (never, int, b) = (Type::empty(), Type::int(), Type::bool());
+    let pair = Type::tuple(vec![never.clone(), int.clone()]);
+    assert_eq!(pair, never);
+    assert_eq!(Type::tuple(vec![int.clone(), never.clone()]), never);
+    assert_eq!(Type::tuple(vec![pair.clone(), b.clone()]), never);
+    assert_eq!(&pair | &b, b);
+    assert_eq!(pair.surface().to_string(), "Never");
+    let payload = Type::atom_with("a", &Type::tuple(vec![never.clone()]));
+    assert_eq!(payload, never);
+    assert_eq!(&payload | &Type::atom("b"), Type::atom("b"));
+    // A tuple with no components is the one empty tuple, not the empty type.
+    assert!(!Type::tuple(Vec::new()).is_empty());
+    let met = &Type::tuple(vec![int.clone(), int.clone()]) & &Type::tuple(vec![b.clone(), int]);
+    let kept = Type::tuple(vec![met.clone(), b]);
+    assert!(met.is_empty() && kept.is_empty());
+    assert_ne!(kept, never);
+}

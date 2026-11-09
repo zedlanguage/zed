@@ -123,7 +123,9 @@ fn debug_writes_the_derived_text_with_each_shared_node_once() {
     // made a decision list a treap of blocks, hashed as a tree, which changes the digests of
     // diagrams and so the order of a connective's operands (`Part::before`); REC-canon
     // (6cf6b730) hashes a recursive member by its group's canonical form, which changes the
-    // digest of the one sample with a `Tree` instance. The text is the same when this test runs
+    // digest of the one sample with a `Tree` instance; EMPTY-normalize makes a tuple with an
+    // empty component empty, which drops the member `#b((Never))` from one random sample's
+    // union (line 29). The text is the same when this test runs
     // alone, among the others and on one thread.
     let expected = include_str!("debug_text.txt");
     let samples = debug_samples::samples();
