@@ -5,8 +5,7 @@
 //! A type is a union of pieces: the values of one scalar carrier, the atoms, one tuple shape,
 //! one function, one type variable, or the unknown. An operator or a function applies to each
 //! combination of its arguments' pieces, so `int | f64` plus `int` is checked as `int + int`
-//! and `f64 + int    /// the value type of a morphism type is written ([`Sig::morphism`]). It stands at `at`, which
-    /// decides its parentheses; of two members or more, each stands as an operand of `|`.
+//! and `f64 + int`.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
