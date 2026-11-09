@@ -3603,6 +3603,7 @@ type Filing<'g> = Vec<FMap<Vec<(&'g ShapeKey, Option<&'g Value>)>, Vec<usize>>>;
 /// `meets_of_tuples_of_many_patterns_costs_the_patterns`; COMPLEXITY.md F127 and F132. A
 /// complete solution does not exist under that hypothesis; one could only refuse such unions,
 /// which would change the answers of narrowing that are found today.
+/// Naive version: every pair of tuples compared, O(l·r·w); used: the filing above.
 struct Near<'g> {
     groups: &'g Groups<'g>,
     /// For each group of `left` once one of its tuples is read, the right groups of its length
@@ -3714,6 +3715,7 @@ fn value_class(x: &Value) -> Option<ShapeKey> {
 /// `contains_of_tuples_of_many_patterns_costs_the_patterns`; COMPLEXITY.md F133. A complete
 /// solution does not exist under that hypothesis; one could only refuse such unions, which
 /// would refuse values the type holds.
+/// Naive version: every tuple scanned for each value, O(l·r·w); used: the lookups above.
 struct Holders {
     /// Each group's kinds, and its tuples under each key, by their index in the type's tuples,
     /// in written order; the groups in the order of their first tuple.
@@ -4680,6 +4682,8 @@ impl Forms {
     /// `functions_unlike_on_both_sides_at_one_place_are_refused`; COMPLEXITY.md F124. A
     /// complete solution would order the functions at a place by their parameters and results,
     /// so that those a function fits are found by a search in that order, not by trying each.
+    /// Naive version: every pair of functions at the place compared, O(n^2) comparisons; used: the
+    /// comparison refused at that place, with no function compared there.
     fn tied(&self, left: &PlaceFns, right: &PlaceFns) -> Option<Place> {
         // The places of the side compared are looked up, since the other side may be a whole
         // union whose places are many ([`Comparing::near_form`]).
@@ -4770,6 +4774,8 @@ impl Forms {
     /// `tests/steps/l01_22_type_representation/kinds.rs`,
     /// `marks_are_cut_from_sets_of_all_atoms`; COMPLEXITY.md F124. A complete solution would
     /// give the kernel a part for marks, which no type written holds.
+    /// Naive version, which is the one used: each set cut by each mark by name, O(k·m); with a
+    /// kernel part for marks, each set would be cut once, O(k) (inferred).
     fn cut(&self, set: &KType) -> KType {
         let Some(marks) = &self.marks else {
             return set.clone();

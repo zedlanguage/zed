@@ -285,3 +285,25 @@ Line numbers are those before this review's edits.
 | `int.rs:2599` `gcd` | d4894aaa | coprime-base factoring plus residues | written out, their digits | no form for gcd of unrelated powers | complete | none |
 | `int.rs:2851` `Hash` | d4894aaa | value hash, O(1) expected, at a root's digits | one bucket per sign, O(n) comparisons per lookup | hash must agree with equality across forms | partial | added standard/used sentence |
 | `int.rs:2907` decimal display | d4894aaa | own form as Zed text | written out, digits plus decimal conversion | printed value must parse back | complete | none |
+
+## crates/zedc-types
+
+15 sites, all in `ty.rs`. Line numbers are those before the edits. Four doc comments named the bound on the hard case (orthogonal vectors, a quadratic refusal) and the cost used, but not the naive version beside it; each gains one sentence.
+
+| Site | Commit | Naive version, complexity | Used version, complexity | Tradeoffs | Before | Action |
+|---|---|---|---|---|---|---|
+| `ty.rs:176` (void tuple row) | 3dae154f | kernel search, up to the component's size per row | O(1) per component | rows empty only by search kept | complete | none |
+| `ty.rs:506` `PartialEq` | 2d09ac32 | recursion, linear | recursion switching to an explicit stack, linear | none given up; stack bound by recursion depth | complete | none |
+| `ty.rs:1659` (hidden-variable memo) | 889d3e94 | memo keyed by set hidden, O(rows) plus hashing the set | O(rows × signatures) worst | hashing a set per signature avoided | complete | none |
+| `ty.rs:3032` explicit-stack comparison | 493ff031 | recursive, 59.0 ms | boxed futures, 60.8 ms, O(depth) heap | constant factor for unbounded depth | complete | none |
+| `ty.rs:3589` `Near` | a65698ee | every pair, O(l·r·w) | filed groups, O((l·G + r·H)·w + l·G·log G) | worst n² (orthogonal vectors under SETH) | partial | added naive/used sentence |
+| `ty.rs:3701` `Holders` | 5b8d1da1 | every tuple per value, O(l·r·w) | O(l·w + G·log G) to file, O(g·w + p) per value | worst l·r (orthogonal vectors) | partial | added naive/used sentence |
+| `ty.rs:4217` (shape search) | faa267cb | members × shapes, n² | n log n × groups, refusal past a first shape | 6 refusals in 20,000 random | complete | none |
+| `ty.rs:4672` `tied` | 241f0b9d | every pair of functions, n² | refused at the place | each pair could be compared | partial | added naive/used sentence |
+| `ty.rs:4764` `cut` | 241f0b9d | kernel part for marks, O(k) (inferred) | each set by each mark, O(k·m) | no kernel part for marks | partial | added sentence; complete cost marked inferred |
+| `ty.rs:5775` (pairwise below `l·r ≤ 1`) | b0648dc0 | pairs, measured instructions | filing, measured instructions | crossover measured; same answers | complete | none |
+| `ty.rs:5865` (scan then file) | 5b8d1da1 | scan per value | file at `l·v > 16·(l + v)` | constant measured; same answers | complete | none |
+| `ty.rs:6218` `every_arrow_fits` | ce7b9082 | n·m comparisons | candidates by key, n²/2 worst, n for shared parameter | Hitting Set lower bound (conjecture) | complete | none |
+| `ty.rs:6466` covering (refusals) | 585e7f18 | DNF tautology, exponential; all subsets | linear in the width | three refused classes | complete | none |
+| `ty.rs:6491` covering (candidates) | 53d0c317 | — | candidates, n·m worst | measured 63.3 times bytes | complete | none |
+| `ty.rs:6659` `result_within` | 9b740605 | value by value, product of bounds; quadratic in shapes | linear in the results | some fits refused | complete | none |
