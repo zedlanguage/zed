@@ -40,10 +40,9 @@
 use imbl::ordmap::DiffItem;
 use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fmt;
-use std::sync::atomic::{self, AtomicU64};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::print;
@@ -513,8 +512,6 @@ pub struct Scope {
     bindings: imbl::OrdMap<Arc<str>, Binding>,
     /// The order of each name's binding ([`Orders`]).
     orders: Orders,
-    /// What the summaries of the bindings read where they were last read ([`Reads`]).
-    reads: Reads,
     /// The order the next binding gets.
     clock: u64,
     /// The names as the last reduction left them, each product then at its own fixed point:
@@ -548,17 +545,29 @@ type Orders = imbl::OrdMap<Arc<str>, u64>;
 /// made over: it holds while each input it reads is the binding it was and that input's
 /// integers lie within those it was made over ([`Scope::holds`]). A cache, equal in every
 /// binding, as [`Reduced`] is.
+///
+/// It keeps its own last reads ([`LastReads`]), so that they are freed with it, when the last
+/// binding that holds it is unbound or dropped (item PA-read-cache-free). They were kept in a
+/// map by a number of each summary, shared by every copy of the scope and never emptied, so a
+/// walk held every read it had made: 6.5 MB for 1,000 blocks walked one after another, 54.8 MB
+/// for 8,000, left in the scope it was given
+/// (`deep_let::the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block`).
 struct Held {
-    /// A number no other held summary has, by which its reads are kept ([`Reads`]).
-    id: u64,
     summary: LetPa,
     /// The integers of the inputs when it was made.
     made: Made,
     /// The orders of the bindings when it was made.
     orders: Orders,
     /// The held summary with the most inputs among those of the names the value reads, whose
-    /// read the first read of this one starts from ([`Scope::holds`]).
-    widest: Option<u64>,
+    /// read the first read of this one starts from ([`Scope::holds`]). Weak, so that it is
+    /// freed with its own binding: a chain of summaries each holding the one before would be
+    /// freed only with the last, and freed recursively, one frame per summary. It was made
+    /// before this one, so a lock of its reads taken while this one's is held ([`Scope::holds`])
+    /// always goes from a later summary to an earlier one, and two such locks never wait on
+    /// each other.
+    widest: Option<Weak<Held>>,
+    /// What this summary read where it was last read, and what a test last read of it.
+    last: Mutex<LastReads>,
 }
 
 /// The integers of the inputs of a [`Held`] summary when it was made.
@@ -569,17 +578,20 @@ enum Made {
     Given(Domains),
 }
 
-static HELD_IDS: AtomicU64 = AtomicU64::new(0);
-
 impl Held {
-    fn new(summary: LetPa, made: Made, orders: Orders, widest: Option<u64>) -> Arc<Held> {
+    fn new(summary: LetPa, made: Made, orders: Orders, widest: Option<Weak<Held>>) -> Arc<Held> {
         Arc::new(Held {
-            id: HELD_IDS.fetch_add(1, atomic::Ordering::Relaxed),
             summary,
             made,
             orders,
             widest,
+            last: Mutex::default(),
         })
+    }
+
+    /// The last reads of this summary, locked.
+    fn last(&self) -> MutexGuard<'_, LastReads> {
+        self.last.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// What the input `v`, of product `q` in a scope of binding orders `orders`, adds there:
@@ -612,35 +624,22 @@ impl fmt::Debug for Held {
     }
 }
 
-/// For each held summary, by its id, what it read in the scope of its last read
-/// ([`images::Read`]), with the orders of the bindings there, from which the next read is
-/// found ([`Scope::holds`]). A cache shared by the copies of a scope, equal in every scope:
-/// a read finds the same whichever earlier read it starts from.
-/// What one summary read: the scope's names, the summary with the orders of the scope's
-/// bindings, and the tree of its inputs.
-type HeldRead = images::Read<(Arc<Held>, Orders), Product>;
+/// What one summary read: the scope's names, the orders of the scope's bindings, and the tree
+/// of its inputs.
+type HeldRead = images::Read<Orders, Product>;
 
 /// What a test last read of one summary: the scope's names, and the tree of the bounds of the
 /// summary's terms over the inputs there ([`Scope::term_read`]).
 type BoundsRead = images::Read<(), Product, TermBounds>;
 
-/// The reads of each held summary ([`HeldRead`]), and those of tests ([`BoundsRead`]).
-#[derive(Clone, Default)]
-struct Reads(
-    Arc<Mutex<HashMap<u64, HeldRead>>>,
-    Arc<Mutex<HashMap<u64, BoundsRead>>>,
-);
-
-impl PartialEq for Reads {
-    fn eq(&self, _: &Reads) -> bool {
-        true
-    }
-}
-
-impl fmt::Debug for Reads {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("..")
-    }
+/// The last reads of a [`Held`] summary, in whichever copy of the scope they were made: what
+/// it read in the scope of its last read ([`HeldRead`]), from which the next read is found
+/// ([`Scope::holds`]), and what a test last read of it ([`BoundsRead`]). A read finds the same
+/// whichever earlier read it starts from.
+#[derive(Default)]
+struct LastReads {
+    held: Option<HeldRead>,
+    bounds: Option<BoundsRead>,
 }
 
 /// Whether each name of a scope no state reaches is already the bottom
@@ -1505,7 +1504,6 @@ impl Scope {
             refusals: imbl::OrdMap::new(),
             bindings: imbl::OrdMap::new(),
             orders: imbl::OrdMap::new(),
-            reads: Reads::default(),
             clock: 0,
             reduced: Reduced::default(),
             seen: Seen::default(),
@@ -1902,20 +1900,21 @@ impl Scope {
         // The names whose products or orders differ between the scope of `r` and `s`.
         fn here<'a>(r: &'a HeldRead, s: &'a Scope) -> impl Iterator<Item = &'a Arc<str>> + 'a {
             let names = images::changed(&r.names, &s.names);
-            names.chain(images::changed(&r.sum.1, &s.orders))
+            names.chain(images::changed(&r.sum, &s.orders))
         }
         let vars = held.summary.vars();
         let limit = vars.len().min(self.names.len());
         let leaf = |v: &Arc<str>, q: &Product| held.leaf(&self.orders, v, q);
-        let mut reads = self.reads.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut last = held.last();
         let tree = {
-            match reads.get(&held.id) {
+            match &last.held {
                 Some(r) => images::updated(&r.tree, here(r, self), vars, &self.names, limit, leaf),
-                None => (held.widest.and_then(|w| reads.get(&w))).and_then(|r| {
-                    let base = &r.sum.0;
+                None => (held.widest.as_ref().and_then(Weak::upgrade)).and_then(|base| {
                     let (Made::Scope(was), Made::Scope(now)) = (&base.made, &held.made) else {
                         return None;
                     };
+                    let reads = base.last();
+                    let r = reads.held.as_ref()?;
                     let inputs = (base.summary.vars().diff(vars)).map(|d| match d {
                         imbl::ordset::DiffItem::Add(v) | imbl::ordset::DiffItem::Remove(v) => v,
                     });
@@ -1928,25 +1927,24 @@ impl Scope {
         }
         .unwrap_or_else(|| images::fresh(vars, &self.names, leaf));
         let holds = images::total(&tree).fails == 0 && images::len(&tree) == vars.len();
-        let read = images::Read {
+        last.held = Some(images::Read {
             names: self.names.clone(),
-            sum: (held.clone(), self.orders.clone()),
+            sum: self.orders.clone(),
             tree,
-        };
-        reads.insert(held.id, read);
+        });
         holds
     }
 
-    /// The summary of the integer `x` is bound to, with the id it is held by, when it has one
-    /// and it holds ([`Scope::holds`]).
-    fn summary(&self, x: &Arc<str>) -> Option<(LetPa, u64)> {
+    /// The held summary of the integer `x` is bound to, when it has one and it holds
+    /// ([`Scope::holds`]).
+    fn summary(&self, x: &Arc<str>) -> Option<&Arc<Held>> {
         let held = self.bindings.get(x)?.summary.as_ref()?;
-        self.holds(held).then(|| (held.summary.clone(), held.id))
+        self.holds(held).then_some(held)
     }
 
     /// The integer names of `free`, as inputs over their integers, or, when bound by a `let`
-    /// with a summary that holds ([`Scope::summary`]), as names read through it, and the id
-    /// of the summary with the most inputs among these. With `all`, for a test, which narrows
+    /// with a summary that holds ([`Scope::summary`]), as names read through it, and the
+    /// summary with the most inputs among these. With `all`, for a test, which narrows
     /// the inputs of each summary too ([`let_narrowing`]), a summary over two or more inputs
     /// is read through the tree of its terms' bounds ([`Scope::term_read`]), its inputs not
     /// among the inputs, so that the test costs the inputs it narrows and not all `k`, and the
@@ -1960,7 +1958,7 @@ impl Scope {
         &self,
         free: &BTreeSet<Arc<str>>,
         all: bool,
-    ) -> (Domains, Lets, Option<u64>) {
+    ) -> (Domains, Lets, Option<Weak<Held>>) {
         debug_assert!(
             !(all && self.bottom),
             "a test read in a scope no state reaches"
@@ -1968,30 +1966,30 @@ impl Scope {
         let int = Type::int();
         let mut inputs = Domains::new();
         let mut lets = Lets::new();
-        let mut widest: Option<(usize, u64)> = None;
+        let mut widest: Option<(usize, &Arc<Held>)> = None;
         for n in free {
             let p = self.get(n);
             if !self.names.contains_key(n) || !p.ty.element.subtype(&int) {
                 continue;
             }
             match self.summary(n) {
-                Some((summary, id)) => {
-                    let k = summary.vars().len();
+                Some(held) => {
+                    let k = held.summary.vars().len();
                     if widest.is_none_or(|(w, _)| k > w) {
-                        widest = Some((k, id));
+                        widest = Some((k, held));
                     }
                     let mut read = None;
                     if all && k > 1 {
-                        read = Some(Arc::new(self.term_read(&summary, id)) as _);
+                        read = Some(Arc::new(self.term_read(held)) as _);
                     } else if all || k == 1 {
-                        for v in summary.vars() {
+                        for v in held.summary.vars() {
                             inputs.insert(v.clone(), self.get(v).ints().clone());
                         }
                     }
                     lets.insert(
                         n.clone(),
                         LetIn {
-                            summary,
+                            summary: held.summary.clone(),
                             ints: p.ints().clone(),
                             read,
                         },
@@ -2000,10 +1998,10 @@ impl Scope {
                 None => _ = inputs.insert(n.clone(), p.ints().clone()),
             }
         }
-        (inputs, lets, widest.map(|(_, id)| id))
+        (inputs, lets, widest.map(|(_, held)| Arc::downgrade(held)))
     }
 
-    /// The inputs of `summary`, held by the id `id`, as a test reads them here: each input's
+    /// The inputs of the summary `held`, as a test reads them here: each input's
     /// integers, and the bounds of the summary's term of each ([`LetPa::term_bounds`]) in a
     /// tree found from that of the last test of the summary by setting the inputs whose
     /// products differ between the two scopes ([`images::updated`]), or afresh when there is
@@ -2012,23 +2010,22 @@ impl Scope {
     /// name, each narrowing a few names, cost `O(k log k)`, where reading the inputs cost
     /// `O(k)` a test (item PA-letpre-linear). The summary holds here ([`Scope::holds`]), so
     /// the scope has each of its inputs.
-    fn term_read(&self, summary: &LetPa, id: u64) -> images::TermRead<Product> {
-        let vars = summary.vars();
+    fn term_read(&self, held: &Held) -> images::TermRead<Product> {
+        let vars = held.summary.vars();
         let limit = vars.len().min(self.names.len());
-        let leaf = |v: &Arc<str>, q: &Product| summary.term_bounds(v, q.ints());
-        let mut reads = self.reads.1.lock().unwrap_or_else(PoisonError::into_inner);
-        let tree = (reads.get(&id))
+        let leaf = |v: &Arc<str>, q: &Product| held.summary.term_bounds(v, q.ints());
+        let mut last = held.last();
+        let tree = (last.bounds.as_ref())
             .and_then(|r| {
                 let changed = images::changed(&r.names, &self.names);
                 images::updated(&r.tree, changed, vars, &self.names, limit, leaf)
             })
             .unwrap_or_else(|| images::fresh(vars, &self.names, leaf));
-        let read = images::Read {
+        last.bounds = Some(images::Read {
             names: self.names.clone(),
             sum: (),
             tree: tree.clone(),
-        };
-        reads.insert(id, read);
+        });
         images::TermRead {
             names: self.names.clone(),
             vars: vars.clone(),
@@ -2410,7 +2407,6 @@ impl Scope {
             // does not.
             bindings: self.bindings.clone(),
             orders: self.orders.clone(),
-            reads: self.reads.clone(),
             clock: self.clock.max(other.clock),
             names,
             // This side's reduced names and what it last projected and enumerated: the join

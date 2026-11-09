@@ -2497,6 +2497,13 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `async fn` methods of a struct holding a `frames::Stack`, called through `fn`s returning `Deep` that answer a leaf at once (`Stack::ready`) or start a frame (`Stack::call`), so the walk of the arms and the forward transfer keep their nesting on the heap in plain-recursion order | `Run::forward`, `Run::forward_at`, `Run::walk`, `Run::walk_at` | No `async` or compiler-written state machines (as for PRE-stack-explicit) | Each walk's frames as a sum type with an explicit stack |
 | The scope of the current arm as the top of a `RefCell<Vec<Scope>>` over a `RefCell<&mut Scope>` of the caller, and the arms gathered in a `RefCell<Vec<Arm>>`, shared by all frames | `Run::scope`, `Run::inner`, `Run::outer`, `Run::out` | Mutation shared by frames (gap 1) | State threaded through the frame loop: a list of scopes and a list of arms |
 
+## Entries from PA-read-cache-free (`crates/zedc-preimage/src/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The last reads of a summary kept in the summary itself behind a `Mutex`, written from `&self` methods through `Arc<Held>` (replaces the map `product::Reads` of PA-walk-multi and PA-letpre-linear) | `Held::last`, `LastReads`, `Scope::holds`, `Scope::term_read` | Interior mutability behind a shared reference (as the `product::Reads` rows above); Zed has none | The walk's state threaded explicitly: `holds` and `term_read` take the summary's last reads and return the new ones, kept beside the binding in the scope the walk passes down, so they still go with the binding |
+| `Weak<Held>` to the summary a new one is built from, upgraded when read, so a new summary does not keep the old one alive and dropping a chain of summaries does not recurse | `Held::widest`, `Scope::inputs_and_lets` | References that do not own; Zed has no `Weak` | The widest input's reads passed by value when the new summary is made, instead of a reference to it |
+
 ## Entries from PA-bind-cost (`crates/zedc-preimage/src/product.rs`)
 
 | Rust construct | Sites | Gap | At the port |
