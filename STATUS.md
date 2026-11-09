@@ -1722,7 +1722,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | MSG-fresh-name-clash | running | 2026-11-09 13:30 | noted for batch 88 (DOCS-TODO 54 and COMPLEXITY F140 renumber); deletes: none |
 | MSG-growth-projection-cause | impl attempt 1 | 2026-11-09 12:41 | ready at 2e4d1da9 on wt/growth-cause; 491 test pieces pass, load 17 to 37; deletes: none |
-| PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | negative controls run once, reverted: shortcut taking both arms as reached fails the decided-cases test and random part 1 at seed 1; flag missing the finite-set |
+| PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | ready f7e39a3e on wt/if-shortcut-diff: differential tests, no difference; l01_39+s_01f 59 pieces 0 failed; clippy, fmt, docs (with preimage-ref) clean |
 | PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | B2 (B1 + cgu=1 zed-kernel, zedc-lattice, zedc-int, zedc-presburger, zedc-stage) rebuild 415 s: block 600M, fees1 1000 874M, fees1 4000 3728M, fees100 736M, boun |
 | PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | negative control on merged 5fcc15f1: new test deep_let::the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block fails, 1000 blocks peak 6.53 MB left 6 |
 | PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | started, worktree wt/model-keys on origin/main 797f3be4 |
@@ -1735,6 +1735,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | RENAME-orderedValues | impl attempt 1 | 2026-11-09 14:20 | reopened for IR op rename and sort(desc) shorthand |
 | STAR-anchor-orders | impl attempt 1 | 2026-11-09 13:40 | started in /home/luke/Work/wt/anchor-orders on 5fcc15f1, load 19.83 |
 | TEST-lazy-split | impl attempt 1 | 2026-11-09 13:40 | ready: wt/lazy-split dcdf84a6; lazy 1 piece of 44-47 s -> 16 pieces, slowest 11.7 s at load 40.6; l01_39 + s_01f with docs 68 pieces 0 failed (load 27.9-43.2);  |
+| TEST-runner-one-worktree | impl attempt 1 | 2026-11-09 14:39 | started on origin/main |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
