@@ -110,6 +110,11 @@ impl Bes {
         &self.children[v as usize]
     }
 
+    /// The parents of node `v`, once the system is sealed.
+    pub fn parents(&self, v: u32) -> &[u32] {
+        &self.parents[v as usize]
+    }
+
     /// Whether `tc`, a component of the tuple graph, has a cycle.
     fn cyclic(&self, tc: &[u32]) -> bool {
         tc.len() > 1 || {

@@ -1195,6 +1195,9 @@ struct Tally {
     conservative: usize,
     /// Refusals of a type the pool shows a member of: allowed, a verdict may refuse.
     missed: usize,
+    /// The members the verdicts sent to the search, their group's decider leaving them open
+    /// (`Type::members_searched`): a member asked counts each member of its group so sent.
+    searched: usize,
 }
 
 /// Each member of system `sys` against the pool; panics on a wrong answer.
@@ -1210,7 +1213,9 @@ fn compare(sys: &[E], tag: &str, tally: &mut Tally) {
         };
         tally.members += 1;
         Type::forget_emptiness();
+        let before = Type::members_searched();
         let verdict = t.verdict();
+        tally.searched += Type::members_searched() - before;
         Type::forget_emptiness();
         let empty = t.is_empty();
         let mut seen = &first;

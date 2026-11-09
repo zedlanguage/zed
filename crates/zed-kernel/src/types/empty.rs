@@ -123,6 +123,9 @@ thread_local! {
     /// the list in `STORES` and the value's number there.
     static SHARED: RefCell<ByType<(usize, usize)>> =
         const { RefCell::new(ByType::with_hasher(Digests::new())) };
+    /// The members of recursive groups this thread sent to the search of [`group_verdicts`]
+    /// because their group's decider left them open ([`Type::members_searched`]).
+    static SEARCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Keeps the verdicts of `members`, the recursive members of one group. A member the group's
@@ -142,6 +145,7 @@ fn group_verdicts(members: &[Type]) {
         .filter(|m| m.judged().is_none())
         .cloned()
         .collect();
+    SEARCHED.with(|c| c.set(c.get() + open.len()));
     let mut d = Search {
         strict: true,
         refuse_forks: true,
@@ -236,6 +240,13 @@ impl Type {
         STORES.with(|m| m.borrow_mut().clear());
         SHARED.with(|m| m.borrow_mut().clear());
         super::rec::unfold::end_unit();
+    }
+
+    /// How many members of recursive groups this thread has sent to the search because their
+    /// group's decider (module `bes`) left them open; a count that only grows, read by the tests
+    /// to show which groups the decider settles with no search.
+    pub fn members_searched() -> usize {
+        SEARCHED.with(std::cell::Cell::get)
     }
 
     /// The emptiness the group of a recursive member decides for it, if any ([`judge`]), decided
@@ -5721,15 +5732,25 @@ fn known_empty(k: &Type) -> bool {
 /// morphism type whose guarantee lies within its permission and is inhabited a `Mor` node of
 /// its value type, and a part that does not mention the group `Top` or `Bot` by its own
 /// emptiness. A cycle through a tuple is then empty and one through a morphism's value type
-/// inhabited. `None` for each member when a recursive occurrence stands under `&`, `\` or a
-/// complement, which the decider does not take, and for a member the decider refuses; the
-/// coinductive search of module `empty` decides those. Time linear in the bodies, besides the
-/// emptiness of their closed parts.
+/// inhabited.
+///
+/// A meet `a & b` or a difference `a \ b` with a recursive occurrence in it (admission keeps
+/// such an occurrence out of a complement and the right of `\`) is read by what it lies
+/// within (plan item GROUP-setop): the meet as an `And` node of its operands, which is
+/// inhabited when each operand is, and the difference as its left operand. Each holds at least
+/// the values of the type it stands for, so a member decided empty is empty. A member decided
+/// inhabited is so only if its node reaches none of these: `#b \ #b` is empty and `#b` is not,
+/// and `#a & #b` is empty while both are inhabited. Those members are `None` here, as is a
+/// member the decider refuses, and the coinductive search of module `empty` decides them, as
+/// it decides the members of every group whose decision it is asked for. Time linear in the
+/// bodies, besides the emptiness of their closed parts.
 fn judge(env: &Arc<Env>) -> Vec<Option<bool>> {
     let bodies = &env.group().0.bodies;
     let refused = || vec![None; bodies.len()];
     let mut b = Bes::new();
     let mut stack = Vec::new();
+    // The nodes of a meet or a difference, read by a type that holds more values.
+    let mut wider = Vec::new();
     for e in bodies {
         stack.push((b.add(Kind::Bot, vec![]), e));
     }
@@ -5767,7 +5788,17 @@ fn judge(env: &Arc<Env>) -> Vec<Option<bool>> {
                     }
                 }
             }
-            rec::Shape::And(_) | rec::Shape::Not(_) | rec::Shape::Diff(..) => return refused(),
+            rec::Shape::And(xs) => {
+                wider.push(v);
+                (Kind::And, kids(&mut b, &mut stack, xs))
+            }
+            rec::Shape::Diff(a, _) => {
+                wider.push(v);
+                (Kind::Or, kids(&mut b, &mut stack, [a]))
+            }
+            rec::Shape::Not(_) => {
+                unreachable!("admission keeps a recursive occurrence out of a complement")
+            }
             rec::Shape::Param(_) | rec::Shape::Type(_) => {
                 unreachable!("a closed part is not recursive")
             }
@@ -5775,12 +5806,35 @@ fn judge(env: &Arc<Env>) -> Vec<Option<bool>> {
         b.set(v, kind, children);
     }
     b.seal();
-    decide(&b).answers[..bodies.len()]
-        .iter()
-        .map(|a| match a {
+    // The nodes that reach a meet or a difference, by their parents, each node once.
+    let mut reaches = vec![false; b.len()];
+    for &v in &wider {
+        reaches[v as usize] = true;
+    }
+    while let Some(v) = wider.pop() {
+        for &p in b.parents(v) {
+            if !reaches[p as usize] {
+                reaches[p as usize] = true;
+                wider.push(p);
+            }
+        }
+    }
+    // Complexity tradeoff: a member shown inhabited through a meet or a difference goes to the
+    // search, which builds a value of the meet: one state of the product of its operands per
+    // node it reads. Why: the decider's answer is not exact there (`#a & #b`). Trigger: an
+    // `Inhabited` answer on a node that reaches a meet or a difference. Cost: linear in the
+    // meet's operands when a short value exists (`l01_23_subtyping::setop::meets_of_k_members_scale`,
+    // 7.1 times at k 8 and 64); exponential when the search forks on the product, which the
+    // verdict refuses as `Refusal::Fork` after a search for a value
+    // (`the_product_of_k_parity_lists_is_refused_by_its_fork`: 178M, 1.11G and 4.51G
+    // instructions at k 2, 3 and 4). COMPLEXITY.md K84. A complete solution needs the product
+    // construction of the meet's tree automata, exponential in the number of operands
+    // (emptiness of an intersection of tree automata is EXPTIME-complete).
+    (decide(&b).answers[..bodies.len()].iter().zip(&reaches))
+        .map(|(a, &wide)| match a {
             Answer::Empty => Some(true),
-            Answer::Inhabited => Some(false),
-            Answer::Refused => None,
+            Answer::Inhabited if !wide => Some(false),
+            Answer::Inhabited | Answer::Refused => None,
         })
         .collect()
 }
