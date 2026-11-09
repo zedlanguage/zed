@@ -17,7 +17,7 @@ sig take = (f: ((String) -> ((int) -> (int, int, int)))) -> (int, int, int)
 top r = !_
 call "f(\"a\")" = (String) -> ((int) -> (int, int, int))
 call "f(\"a\")(2)" = (int) -> (int, int, int)
-err `take` does not take (((int) -> ((int) -> (int, int, int)))) [take(f: g(0))]
+err `take` does not take (((int) -> ((int) -> (int, int, int)))): these are the types of its arguments here, and `take` has no arrow that takes them all [take(f: g(0))]
   note this call of `g` gives ((int) -> ((int) -> (int, int, int)))
   note `g` is declared here, `(int) -> ((int) -> ((int) -> (int, int, int)))`
   note `take` takes (f: ((String) -> ((int) -> (int, int, int)))) -> (int, int, int)
@@ -27,7 +27,7 @@ sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 top h = ((int) -> ((int) -> (int, int, int)))
 top k = !_
 call "h(\"x\")" = (int) -> ((int) -> (int, int, int))
-err `h` does not take ("x") [h("x")]
+err `h` does not take ("x"): these are the types of its arguments here, and `h` has no arrow that takes them all [h("x")]
   note this expression is "x"
   note `h` takes (int) -> ((int) -> (int, int, int))
 === "h = g(0)(1);\nk = h(\"x\");\n"
@@ -36,17 +36,17 @@ top h = ((int) -> (int, int, int))
 top k = !_
 call "g(0)(1)" = (int) -> ((int) -> (int, int, int))
 call "h(\"x\")" = (int) -> (int, int, int)
-err `h` does not take ("x") [h("x")]
+err `h` does not take ("x"): these are the types of its arguments here, and `h` has no arrow that takes them all [h("x")]
   note this expression is "x"
   note `h` takes (int) -> (int, int, int)
 === "u(n: int) = g(n);\nv(n: int) = u(n)(n)(n);\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig u = (n: int) -> ((int) -> ((int) -> (int, int, int)))
 sig v = (n: int) -> !_
-err `n` of `u` is named: pass it as `n: …` [n]
+err this argument is passed by position, and the parameter it reaches, `n` of `u`, is a named parameter, which a call passes only by name, as `n: …` [n]
   note `u` is declared here, `(n: int) -> ((int) -> ((int) -> (int, int, int)))`
   note repair: pass `n` by name, as `n: …`
-  note repair: declare `n` `positional`
+  note repair: declare `n` `positional` in `u`
 === "w(f: (int) -> (int) -> (int, int, int)) = f;\nr = w(f: g(0))(1)(2);\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig w = (f: ((int) -> ((int) -> (int, int, int)))) -> ((int) -> ((int) -> (int, int, int)))
@@ -57,7 +57,7 @@ call "w(f: g(0))(1)(2)" = (int) -> (int, int, int)
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig w = (f: ((f64) -> ((int) -> (int, int, int)))) -> ((f64) -> ((int) -> (int, int, int)))
 top r = !_
-err `w` does not take (((int) -> ((int) -> (int, int, int)))) [w(f: g(0))]
+err `w` does not take (((int) -> ((int) -> (int, int, int)))): these are the types of its arguments here, and `w` has no arrow that takes them all [w(f: g(0))]
   note this call of `g` gives ((int) -> ((int) -> (int, int, int)))
   note `g` is declared here, `(int) -> ((int) -> ((int) -> (int, int, int)))`
   note `w` takes (f: ((f64) -> ((int) -> (int, int, int)))) -> ((f64) -> ((int) -> (int, int, int)))
@@ -66,12 +66,16 @@ err `w` does not take (((int) -> ((int) -> (int, int, int)))) [w(f: g(0))]
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 top k = (((int) -> ((int) -> (int, int, int))), ((int) -> ((int) -> (int, int, int))))
 top t = (((int) -> ((int) -> (int, int, int))), ((int) -> ((int) -> (int, int, int))))
-err a tuple takes data, and this value may hold a function, `(int) -> ((int) -> (int, int, int))` [g(0)]
+err a tuple takes data, and this value may hold a function, `(int) -> ((int) -> (int, int, int))`: data is a value that holds no function at any depth [g(0)]
   note this call of `g` gives ((int) -> ((int) -> (int, int, int)))
   note `g` is declared here, `(int) -> ((int) -> ((int) -> (int, int, int)))`
-err a tuple takes data, and this value may hold a function, `(int) -> ((int) -> (int, int, int))` [g(1)]
+  note repair: call the function before the value gets here, so that the value holds its result and not the function
+  note repair: keep the function under its own name, out of the value
+err a tuple takes data, and this value may hold a function, `(int) -> ((int) -> (int, int, int))`: data is a value that holds no function at any depth [g(1)]
   note this call of `g` gives ((int) -> ((int) -> (int, int, int)))
   note `g` is declared here, `(int) -> ((int) -> ((int) -> (int, int, int)))`
+  note repair: call the function before the value gets here, so that the value holds its result and not the function
+  note repair: keep the function under its own name, out of the value
 === "c(x: int) = if x > 0 { g(0) } else { g(1) };\nd = c(x: 1)(2)(3);\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig c = (x: int) -> ((int) -> ((int) -> (int, int, int)))
@@ -84,14 +88,14 @@ sig y = (q: int) -> ((int) -> (int, int, int))
 top z = !_
 top zz = !_
 call "g(q)(q)" = (int) -> ((int) -> (int, int, int))
-err `q` of `y` is named: pass it as `q: …` [1]
+err this argument is passed by position, and the parameter it reaches, `q` of `y`, is a named parameter, which a call passes only by name, as `q: …` [1]
   note `y` is declared here, `(q: int) -> ((int) -> (int, int, int))`
   note repair: pass `q` by name, as `q: …`
-  note repair: declare `q` `positional`
-err `q` of `y` is named: pass it as `q: …` [1.5]
+  note repair: declare `q` `positional` in `y`
+err this argument is passed by position, and the parameter it reaches, `q` of `y`, is a named parameter, which a call passes only by name, as `q: …` [1.5]
   note `y` is declared here, `(q: int) -> ((int) -> (int, int, int))`
   note repair: pass `q` by name, as `q: …`
-  note repair: declare `q` `positional`
+  note repair: declare `q` `positional` in `y`
 === "take(f: (int) -> (int) -> (int, int, int)) = f(1)(2);\nr = take(f: (a1) -> (a2) -> (0 + 1, a1 + 1, a2 + 1));\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig take = (f: ((int) -> ((int) -> (int, int, int)))) -> (int, int, int)
@@ -103,7 +107,7 @@ sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig k = (x: int) -> ((int) -> ((int) -> (int, int, int)))
 sig m = (f: ((f64) -> ((int) -> (int, int, int)))) -> 0
 top r = !_
-err `m` does not take (((int) -> ((int) -> (int, int, int)))) [m(f: k(x: 1))]
+err `m` does not take (((int) -> ((int) -> (int, int, int)))): these are the types of its arguments here, and `m` has no arrow that takes them all [m(f: k(x: 1))]
   note this call of `k` gives ((int) -> ((int) -> (int, int, int)))
   note `k` is declared here, `(x: int) -> ((int) -> ((int) -> (int, int, int)))`
   note `m` takes (f: ((f64) -> ((int) -> (int, int, int)))) -> 0
@@ -113,7 +117,7 @@ sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 top h = ((int) -> (int, int, int))
 top q = !_
 call "g(0)(1)" = (int) -> ((int) -> (int, int, int))
-err `+` does not take (((int) -> (int, int, int)), 1) [h + 1]
+err `+` does not take (((int) -> (int, int, int)), 1): these are the types of its arguments here, and `+` has no arrow that takes them all [h + 1]
   note `h` is ((int) -> (int, int, int)) here
   note `h` is defined as this expression, ((int) -> (int, int, int))
   note this call gives ((int) -> (int, int, int))
@@ -128,87 +132,93 @@ top h = ((int) -> ((int) -> ((int) -> (int, int, int))))
 top k = !_
 call "h(0)" = (int) -> ((int) -> ((int) -> (int, int, int)))
 call "h(0)(\"a\")" = (int) -> ((int) -> (int, int, int))
-err `this value` does not take ("a") [h(0)("a")]
+err the function called here does not take ("a"): these are the types of its arguments here, and the function called here has no arrow that takes them all [h(0)("a")]
   note this expression is "a"
-  note `this value` takes (int) -> ((int) -> (int, int, int))
+  note the function called here takes (int) -> ((int) -> (int, int, int))
 === "p(x) = (y) -> x + y;\nq = p(1)(2.5);\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig p = (x: T) -> ((T) -> T) for T in int | f64 | rat
 top q = !_
-err `x` of `p` is named: pass it as `x: …` [1]
+err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1]
   note `p` is declared here, `(x: T) -> ((T) -> T) for T in int | f64 | rat`
   note repair: pass `x` by name, as `x: …`
-  note repair: declare `x` `positional`
+  note repair: declare `x` `positional` in `p`
 === "p(x) = (y) -> (z) -> x + y + z;\nq = p(1)(2)(3);\nr = p(1.5)(2.5)(3.5);\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig p = (x: T) -> ((T) -> ((T) -> T)) for T in int | f64 | rat
 top q = !_
 top r = !_
-err `x` of `p` is named: pass it as `x: …` [1]
+err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1]
   note `p` is declared here, `(x: T) -> ((T) -> ((T) -> T)) for T in int | f64 | rat`
   note repair: pass `x` by name, as `x: …`
-  note repair: declare `x` `positional`
-err `x` of `p` is named: pass it as `x: …` [1.5]
+  note repair: declare `x` `positional` in `p`
+err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1.5]
   note `p` is declared here, `(x: T) -> ((T) -> ((T) -> T)) for T in int | f64 | rat`
   note repair: pass `x` by name, as `x: …`
-  note repair: declare `x` `positional`
+  note repair: declare `x` `positional` in `p`
 === "p(x) = (y) -> (z) -> (x + 1, y, z);\nq = p(1)(\"s\")(true);\nr = p(1)(2)(3) + 1;\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig p = (x: int) -> ((_) -> ((_) -> (int, _, _)))
 top q = !_
 top r = !_
-err `x` of `p` is named: pass it as `x: …` [1]
+err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1]
   note `p` is declared here, `(x: int) -> ((_) -> ((_) -> (int, _, _)))`
   note repair: pass `x` by name, as `x: …`
-  note repair: declare `x` `positional`
-err `x` of `p` is named: pass it as `x: …` [1]
+  note repair: declare `x` `positional` in `p`
+err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1]
   note `p` is declared here, `(x: int) -> ((_) -> ((_) -> (int, _, _)))`
   note repair: pass `x` by name, as `x: …`
-  note repair: declare `x` `positional`
+  note repair: declare `x` `positional` in `p`
 === "o(x) = (y) -> (z) -> x + 1;\nq = o(1)(2)(3) == 2;\nw = (o(1), 0);\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig o = (x: int) -> ((_) -> ((_) -> int))
 top q = bool
 top w = (!_, 0)
-err `x` of `o` is named: pass it as `x: …` [1]
+err this argument is passed by position, and the parameter it reaches, `x` of `o`, is a named parameter, which a call passes only by name, as `x: …` [1]
   note `o` is declared here, `(x: int) -> ((_) -> ((_) -> int))`
   note repair: pass `x` by name, as `x: …`
-  note repair: declare `x` `positional`
-err `x` of `o` is named: pass it as `x: …` [1]
+  note repair: declare `x` `positional` in `o`
+err this argument is passed by position, and the parameter it reaches, `x` of `o`, is a named parameter, which a call passes only by name, as `x: …` [1]
   note `o` is declared here, `(x: int) -> ((_) -> ((_) -> int))`
   note repair: pass `x` by name, as `x: …`
-  note repair: declare `x` `positional`
+  note repair: declare `x` `positional` in `o`
 === "h = g(0);\nt = (h, 1);\nr = if t is (((int) -> ((int) -> (int, int, int))), int) { 1 } else { t };\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 top h = ((int) -> ((int) -> (int, int, int)))
 top r = 1
 top t = (((int) -> ((int) -> (int, int, int))), 1)
-err a tuple takes data, and this value may hold a function, `(int) -> ((int) -> (int, int, int))` [h]
+err a tuple takes data, and this value may hold a function, `(int) -> ((int) -> (int, int, int))`: data is a value that holds no function at any depth [h]
   note `h` is ((int) -> ((int) -> (int, int, int))) here
   note `h` is defined as this expression, ((int) -> ((int) -> (int, int, int)))
   note this call of `g` gives ((int) -> ((int) -> (int, int, int)))
   note `g` is declared here, `(int) -> ((int) -> ((int) -> (int, int, int)))`
+  note repair: call the function before the value gets here, so that the value holds its result and not the function
+  note repair: keep the function under its own name, out of the value
 === "h = g(0);\nt = (h, 1);\nr = if t is not (((int) -> ((int) -> (int, int, int))), int) { t } else { 2 };\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 top h = ((int) -> ((int) -> (int, int, int)))
 top r = 2
 top t = (((int) -> ((int) -> (int, int, int))), 1)
-err a tuple takes data, and this value may hold a function, `(int) -> ((int) -> (int, int, int))` [h]
+err a tuple takes data, and this value may hold a function, `(int) -> ((int) -> (int, int, int))`: data is a value that holds no function at any depth [h]
   note `h` is ((int) -> ((int) -> (int, int, int))) here
   note `h` is defined as this expression, ((int) -> ((int) -> (int, int, int)))
   note this call of `g` gives ((int) -> ((int) -> (int, int, int)))
   note `g` is declared here, `(int) -> ((int) -> ((int) -> (int, int, int)))`
+  note repair: call the function before the value gets here, so that the value holds its result and not the function
+  note repair: keep the function under its own name, out of the value
 === "h = g(0)(1);\nt = (h, 1);\nr = if t is (((String) -> (int, int, int)), int) { 1 } else { t };\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 top h = ((int) -> (int, int, int))
 top r = 1 | (((int) -> (int, int, int)), 1)
 top t = (((int) -> (int, int, int)), 1)
 call "g(0)(1)" = (int) -> ((int) -> (int, int, int))
-err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)` [h]
+err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)`: data is a value that holds no function at any depth [h]
   note `h` is ((int) -> (int, int, int)) here
   note `h` is defined as this expression, ((int) -> (int, int, int))
   note this call gives ((int) -> (int, int, int))
   note this literal, 1, is 1
+  note repair: call the function before the value gets here, so that the value holds its result and not the function
+  note repair: keep the function under its own name, out of the value
 === "f(c: bool) = if c { (g(0)(1), 1) } else { (g(1)(2), 2) };\nt = f(c: true);\nr = if t is (((int) -> (int, int, int)), int) { 1 } else { t };\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig f = (c: bool) -> (((int) -> (int, int, int)), 1) | (((int) -> (int, int, int)), 2)
@@ -216,31 +226,39 @@ top r = 1
 top t = (((int) -> (int, int, int)), 1) | (((int) -> (int, int, int)), 2)
 call "g(0)(1)" = (int) -> ((int) -> (int, int, int))
 call "g(1)(2)" = (int) -> ((int) -> (int, int, int))
-err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)` [g(0)(1)]
+err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)`: data is a value that holds no function at any depth [g(0)(1)]
   note this call gives ((int) -> (int, int, int))
   note this literal, 1, is 1
-err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)` [g(1)(2)]
+  note repair: call the function before the value gets here, so that the value holds its result and not the function
+  note repair: keep the function under its own name, out of the value
+err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)`: data is a value that holds no function at any depth [g(1)(2)]
   note this call gives ((int) -> (int, int, int))
   note this literal, 2, is 2
+  note repair: call the function before the value gets here, so that the value holds its result and not the function
+  note repair: keep the function under its own name, out of the value
 === "h = g(0)(1);\nt = (h, 1);\nr = if t is ((((int) -> (int, int, int)), int) | int) { 1 } else { t };\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 top h = ((int) -> (int, int, int))
 top r = 1
 top t = (((int) -> (int, int, int)), 1)
 call "g(0)(1)" = (int) -> ((int) -> (int, int, int))
-err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)` [h]
+err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)`: data is a value that holds no function at any depth [h]
   note `h` is ((int) -> (int, int, int)) here
   note `h` is defined as this expression, ((int) -> (int, int, int))
   note this call gives ((int) -> (int, int, int))
   note this literal, 1, is 1
+  note repair: call the function before the value gets here, so that the value holds its result and not the function
+  note repair: keep the function under its own name, out of the value
 === "h = g(0)(1);\nt = ((h, 1), 2);\nr = if t is ((((int) -> (int, int, int)), int), int) { 1 } else { t };\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 top h = ((int) -> (int, int, int))
 top r = 1
 top t = ((((int) -> (int, int, int)), 1), 2)
 call "g(0)(1)" = (int) -> ((int) -> (int, int, int))
-err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)` [h]
+err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)`: data is a value that holds no function at any depth [h]
   note `h` is ((int) -> (int, int, int)) here
   note `h` is defined as this expression, ((int) -> (int, int, int))
   note this call gives ((int) -> (int, int, int))
   note this literal, 1, is 1
+  note repair: call the function before the value gets here, so that the value holds its result and not the function
+  note repair: keep the function under its own name, out of the value

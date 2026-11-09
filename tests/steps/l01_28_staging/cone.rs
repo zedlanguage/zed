@@ -156,7 +156,8 @@ fn mixing_calls_of_functions_that_each_call_the_two_before_scales() {
 fn failing_calls_of_a_long_chain_are_left_to_run_in_linear_time() {
     deep(|| {
         let (_, report) = stage::mix(&with_main(2, F0::Fails, false), &["main"]);
-        let error = "type error: `+` applied to `int`, `bool`";
+        let error =
+            zed_kernel::KernelError::Type("`+` applied to `int`, `bool`".into()).to_string();
         let call = |j: usize| format!("{:?}: {error}", app(var(&f(j)), vec![lit(0i64)]));
         assert_eq!(left(&report), vec![call(1), call(2)]);
         let n = 100;
@@ -198,7 +199,7 @@ fn at_a_lambda(n: usize, f0: F0) -> Unit {
 fn failing_calls_no_answer_table_takes_are_run_as_written_in_linear_time() {
     deep(|| {
         let (_, report) = stage::mix(&at_a_lambda(2, F0::Fails), &["main"]);
-        let error = "type error: `>=` applied to a function";
+        let error = zed_kernel::KernelError::Type("`>=` applied to a function".into()).to_string();
         let call = |j: usize| {
             let t = app(var(&f(j)), vec![identity()]);
             format!("{t:?}: {error}")
@@ -242,7 +243,7 @@ fn a_binding_the_trick_cannot_build_is_left_to_run_as_mix_leaves_it() {
         (lam.to_string(), left(&report))
     };
     let call = format!("{:?}", app(var("g"), vec![Term::Lit(Value::float(-0.0))]));
-    let ge = "type error: `>=` applied to `f64`, `int`";
+    let ge = zed_kernel::KernelError::Type("`>=` applied to `f64`, `int`".into()).to_string();
     let site = format!("Prim(Add, [{call}, Var(\"x\")])");
     let lam = "x -> match x { 1 -> (g(-0.0) + x), _ -> (g(-0.0) + x) }".to_string();
     let errors = vec![format!("{site}: {ge}"), format!("{call}: {ge}")];
@@ -255,7 +256,7 @@ fn a_binding_the_trick_cannot_build_is_left_to_run_as_mix_leaves_it() {
     assert_eq!(split(bad.clone()), (lam, vec![]));
     // `mix` leaves `k` to run with the error of `+`, and nothing that reads it.
     let (_, report) = stage::mix(&reading_k(bad.clone()), &["main"]);
-    let add = "type error: `+` applied to `int`, `bool`";
+    let add = zed_kernel::KernelError::Type("`+` applied to `int`, `bool`".into()).to_string();
     assert_eq!(left(&report), vec![format!("{bad:?}: {add}")]);
     assert_eq!(
         stage::color(&reading_k(bad)),
@@ -294,7 +295,7 @@ fn chain_reading_k(n: usize) -> Unit {
 #[test]
 fn calls_reading_a_definition_the_trick_builds_are_split_in_linear_time() {
     deep(|| {
-        let ge = "type error: `>=` applied to a function";
+        let ge = zed_kernel::KernelError::Type("`>=` applied to a function".into()).to_string();
         let (_, report) = stage::split(
             &chain_reading_k(2),
             "g",

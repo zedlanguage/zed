@@ -9,6 +9,7 @@ mod body_display;
 mod bug;
 mod casts;
 mod derivations;
+mod explained;
 mod kernel_names;
 mod layout;
 mod negative_literals;

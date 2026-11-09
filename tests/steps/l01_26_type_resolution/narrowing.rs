@@ -44,7 +44,9 @@ fn the_right_operand_sees_the_left_ones_narrowing() {
     assert!(type_errors("short(x: int | String) = x is int || len(x) < 2;\n").is_empty());
     assert_eq!(
         type_errors("long(x: int | String) = x is int && len(x) > 2;\n"),
-        ["`len` does not take (int) [len(x)]"]
+        [
+            "`len` does not take (int): these are the types of its arguments here, and `len` has no arrow that takes them all [len(x)]"
+        ]
     );
 }
 
@@ -52,12 +54,16 @@ fn the_right_operand_sees_the_left_ones_narrowing() {
 fn without_a_test_the_whole_union_must_fit() {
     assert_eq!(
         type_errors("n(x: int | String) = x * 2;\n"),
-        ["`*` does not take (String, 2) [x * 2]"]
+        [
+            "`*` does not take (String, 2): these are the types of its arguments here, and `*` has no arrow that takes them all [x * 2]"
+        ]
     );
     // The narrowed branch is checked as the narrowed type.
     assert_eq!(
         type_errors("n(x) = if x is String { x + 1 } else { 0 };\n"),
-        ["`+` does not take (String, 1) [x + 1]"]
+        [
+            "`+` does not take (String, 1): these are the types of its arguments here, and `+` has no arrow that takes them all [x + 1]"
+        ]
     );
 }
 
@@ -65,6 +71,8 @@ fn without_a_test_the_whole_union_must_fit() {
 fn a_condition_must_be_bool() {
     assert_eq!(
         type_errors("c = if 1 { 2 } else { 3 };\n"),
-        ["the condition of `if` is 1, not bool [1]"]
+        [
+            "the condition of `if` is 1, not bool: `if` chooses its branch by a `bool`, and this condition may be another value [1]"
+        ]
     );
 }

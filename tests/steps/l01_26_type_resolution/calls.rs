@@ -28,8 +28,9 @@ fn a_default_that_reads_other_parameters_needs_the_declared_function() {
     assert_eq!(
         errors("tax(price, rate = price / 10.0) = price * rate;\nt = tax;\ny = t(price: 10.0);\n"),
         [
-            "the default of `rate` reads the function's other parameters, so only a call of the \
-          declared function fills it: pass `rate` [t(price: 10.0)]"
+            "this call goes through a function value and leaves out `rate`, whose default reads \
+          the function's other parameters; only a call of the declared function by its name \
+          fills such a default, so here `rate` has no value [t(price: 10.0)]"
         ]
     );
 }
@@ -53,10 +54,14 @@ fn destructuring_gives_each_name_its_component() {
     assert_eq!(value(p, "c"), "2");
     assert_eq!(
         type_errors("a, b = (1, 2, 3);\n"),
-        ["this value is (1, 2, 3), not a tuple of 2 [(1, 2, 3)]"]
+        [
+            "this value is (1, 2, 3), not a tuple of 2: it is taken apart into 2 names, one for each component, so it must be a tuple of 2 components [(1, 2, 3)]"
+        ]
     );
     assert_eq!(
         type_errors("t = (1, 2)[2];\n"),
-        ["(1, 2) has no component 2 [(1, 2)[2]]"]
+        [
+            "(1, 2) has no component 2: its components are at the positions 0 to 1, and this index is 2 [(1, 2)[2]]"
+        ]
     );
 }

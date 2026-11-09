@@ -58,7 +58,9 @@ fn summing_an_order() {
     );
     assert_eq!(
         errors("x = sum((1, \"a\"));\n"),
-        ["`sum` does not take (1, \"a\") [sum((1, \"a\"))]"]
+        [
+            "`sum` does not take (1, \"a\"): `sum` adds the components of a tuple, and they must all be numbers [sum((1, \"a\"))]"
+        ]
     );
 }
 
@@ -117,23 +119,33 @@ fn min_and_max_take_two_numbers_of_one_kind() {
     );
     assert_eq!(
         errors("x = min(\"a\", \"b\");\n"),
-        ["`min` does not take (\"a\", \"b\") [min(\"a\", \"b\")]"]
+        [
+            "`min` does not take (\"a\", \"b\"): these are the types of its arguments here, and `min` has no arrow that takes them all [min(\"a\", \"b\")]"
+        ]
     );
     assert_eq!(
         errors("x = min(1, true);\n"),
-        ["`min` does not take (1, true) [min(1, true)]"]
+        [
+            "`min` does not take (1, true): these are the types of its arguments here, and `min` has no arrow that takes them all [min(1, true)]"
+        ]
     );
     let both = "((int, int) -> int) & ((f64, f64) -> f64) & ((rat, rat) -> rat)";
     assert_eq!(
         errors("x = min(1);\n"),
-        [format!("missing argument `x1` of `{both}` [min(1)]")]
+        [format!(
+            "this call of `{both}` gives no value to its parameter `x1`, and `x1` has no default, so the call cannot be made [min(1)]"
+        )]
     );
     assert_eq!(
         errors("x = 3.max;\n"),
-        [format!("missing argument `x1` of `{both}` [3.max]")]
+        [format!(
+            "this call of `{both}` gives no value to its parameter `x1`, and `x1` has no default, so the call cannot be made [3.max]"
+        )]
     );
     assert_eq!(
         errors("x = max(1, 2, 3);\n"),
-        [format!("too many arguments: `{both}` takes 2 [3]")]
+        [format!(
+            "this argument is one more than `{both}` takes: `{both}` takes 2 arguments by position, and the arguments before this one already fill them all [3]"
+        )]
     );
 }

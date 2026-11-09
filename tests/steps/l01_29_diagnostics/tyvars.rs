@@ -37,7 +37,8 @@ fn writes_back(text: &str) {
             .iter()
             .all(|l| l.ends_with(zed_tests::not_yet!("the wildcard type `_`")));
     assert!(
-        out.starts_with("2:24: missing argument") || only_the_layer,
+        out.starts_with("2:24: this call of `u` gives no value to its parameter `v`")
+            || only_the_layer,
         "`{text}` as a written type:\n{out}"
     );
 }

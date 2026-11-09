@@ -195,7 +195,9 @@ impl Group {
             if d.params.len() != arity {
                 return Err(self.reject(
                     i,
-                    "takes other parameters than the definitions it is recursive with".into(),
+                    "takes other parameters than the definitions it is recursive with. To repair it, \
+                     give every type of the group the same parameters, in the same order"
+                        .into(),
                 ));
             }
             let mut bad = None;
@@ -209,11 +211,22 @@ impl Group {
                 }
             });
             if let Some(e) = bad {
+                let Expr::Ref(j, _) = e else {
+                    unreachable!("only a recursive occurrence is kept as the bad one")
+                };
+                // The occurrence as it should read: the member it names, given the parameters of
+                // this definition, which are in scope in its body, unchanged.
+                let fixed = match d.params.is_empty() {
+                    true => self.0.defs[j].name.to_string(),
+                    false => format!("{}({})", self.0.defs[j].name, d.params.join(", ")),
+                };
                 return Err(self.reject(
                     i,
                     format!(
                         "is not regular: its recursive occurrence `{}` changes the parameters, \
-                         so the type has no end of components",
+                         so following it reaches a new type at each step and the type has no end \
+                         of components. To repair it, pass the parameters unchanged at every \
+                         recursive occurrence, as `{fixed}`",
                         self.show(i, &e)
                     ),
                 ));
@@ -237,7 +250,10 @@ impl Group {
         match first_on_cycle(&bare) {
             Some(start) => Err(self.reject(
                 start,
-                "is not contractive: it reaches itself with no constructor between".into(),
+                "is not contractive: it reaches itself with no tuple, atom payload or function \
+                 type between, so it describes no values. To repair it, put each recursive \
+                 occurrence inside a tuple, an atom's payload or a function type"
+                    .into(),
             )),
             None => Ok(()),
         }
@@ -275,7 +291,9 @@ impl Group {
                     format!(
                         "is outside the form the checker accepts: {why}; the check is \
                          sufficient, not necessary, so a type it refuses may still be monotone \
-                         in emptiness"
+                         in emptiness. To repair it, write the type so that no \
+                         recursive occurrence stands there; one inside a tuple, an atom's \
+                         payload, a union or a function's value type is always accepted"
                     ),
                 ));
             }

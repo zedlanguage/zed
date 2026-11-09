@@ -101,7 +101,9 @@ const NEAR_MISSES: &[NearMiss] = &[
         "b = label(\"Ada\", city: \"Leeds\");\n",
         "b = label(name: \"Ada\", city: \"Leeds\");\n",
         "2:17",
-        Some("pass `name` by position"),
+        Some(
+            "pass `name` by position: remove `name: ` and put the value in `name`'s place among the arguments",
+        ),
     ),
     (
         Row::ParameterKinds,
@@ -117,7 +119,7 @@ const NEAR_MISSES: &[NearMiss] = &[
         "a = label(\"Ada\", city: \"Leeds\");\n",
         "a = label(\"Ada\");\n",
         "2:5",
-        Some("supply `city`"),
+        Some("pass a value for `city` in this call"),
     ),
     (
         Row::NothingLeftOut,

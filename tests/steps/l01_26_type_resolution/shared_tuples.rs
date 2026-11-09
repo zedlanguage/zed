@@ -38,7 +38,9 @@ fn a_value_held_twice_at_each_level_is_data() {
 fn a_function_held_twice_at_each_level_is_one_error() {
     // Reported once, at the tuple that first holds it; the levels above meet the same function.
     let at = |site: &str| {
-        format!("a tuple takes data, and this value may hold a function, `(int) -> int` [{site}]")
+        format!(
+            "a tuple takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [{site}]"
+        )
     };
     assert_eq!(type_errors(&by_calls(3, "scale")), [at("pair(scale)")]);
     assert_eq!(type_errors(&by_bindings(3, "scale")), [at("scale")]);

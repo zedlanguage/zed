@@ -72,7 +72,11 @@ fn each_menu_names_the_signed_forms_the_type_holds() {
         (
             "f64",
             "-9007199254740993n",
-            "2:7: `-9007199254740993n` is not an f64".to_string(),
+            "2:7: `-9007199254740993n` is not an f64: a literal written with `n` takes the carrier \
+             expected only when it is exactly a number of that carrier, and no f64 is exactly \
+             this number; write a literal that is exactly an f64, or write the number followed \
+             by `r` if the exact rational is meant"
+                .to_string(),
         ),
     ];
     let wrong: Vec<String> = cases

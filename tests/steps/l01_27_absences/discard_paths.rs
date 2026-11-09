@@ -52,7 +52,7 @@ fn a_default_in_one_branch_names_nothing_in_the_other() {
     let (message, span, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #notFound"
+        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
     );
     assert_eq!(
         span,
@@ -128,7 +128,7 @@ fn a_default_on_an_inner_if_covers_both_its_branches() {
     let (message, _, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #notFound"
+        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
     );
     assert_eq!(
         notes[0],
@@ -177,7 +177,7 @@ fn an_argument_with_a_default_carries_no_loose_failure_into_the_call() {
     let (message, _, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #negative"
+        "`_` drops a loose failure this value may be, #negative: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
     );
     assert_eq!(
         notes[0],
@@ -190,7 +190,7 @@ fn an_argument_with_a_default_carries_no_loose_failure_into_the_call() {
     let (message, _, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #notFound"
+        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
     );
     assert_eq!(
         notes[0],
@@ -219,7 +219,7 @@ fn a_generic_call_makes_the_failures_its_type_variable_takes_from_elsewhere() {
     let (message, _, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #notFound"
+        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
     );
     assert_eq!(
         notes[0],
@@ -231,7 +231,7 @@ fn a_generic_call_makes_the_failures_its_type_variable_takes_from_elsewhere() {
     let (message, _, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #notFound"
+        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
     );
     assert_eq!(
         notes[0],

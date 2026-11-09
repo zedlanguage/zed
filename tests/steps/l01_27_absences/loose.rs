@@ -116,8 +116,8 @@ fn a_loose_atom_enters_a_parameter_whose_bound_may_take_other_values() {
     assert_eq!(
         type_errors(&bad),
         [
-            "`k` does not take (int | #nf) [k(y)]",
-            "`size` does not take #nf, which is not int | (int, int) [k(y)]"
+            "`k` does not take (int | #nf): these are the types of its arguments here, and `k` has no arrow that takes them all [k(y)]",
+            "`size` does not take #nf, which is not int | (int, int): `size` takes only values of int | (int, int) [k(y)]"
         ]
     );
     let ok = format!("{t}h(positional y: int) = k(y);\nb = h(2);\n");
@@ -140,8 +140,8 @@ fn a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values
     assert_eq!(
         type_errors(&bad),
         [
-            "`r` does not take (1, int | #nf) [r(1, y)]",
-            "`size` does not take #nf, which is not int | (int, int) [r(1, y)]"
+            "`r` does not take (1, int | #nf): these are the types of its arguments here, and `r` has no arrow that takes them all [r(1, y)]",
+            "`size` does not take #nf, which is not int | (int, int): `size` takes only values of int | (int, int) [r(1, y)]"
         ]
     );
     let ok = format!("{t}h(positional y: int | #nf) = r(y, 2);\na = h(#nf);\nb = h(2);\n");

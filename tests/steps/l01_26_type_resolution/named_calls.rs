@@ -46,10 +46,15 @@ fn calls_that_pass_each_parameter_in_its_form_are_accepted_and_run() {
 
 #[test]
 fn the_checker_and_elaboration_reject_a_misplaced_argument_alike() {
-    let named =
-        |p: &str, f: &str, at: &str| format!("`{p}` of `{f}` is named: pass it as `{p}: …` [{at}]");
+    let named = |p: &str, f: &str, at: &str| {
+        format!(
+            "this argument is passed by position, and the parameter it reaches, `{p}` of `{f}`, is a named parameter, which a call passes only by name, as `{p}: …` [{at}]"
+        )
+    };
     let positional = |p: &str, f: &str, at: &str| {
-        format!("`{p}` of `{f}` is positional: pass it by position [{at}]")
+        format!(
+            "this argument is passed by name, as `{p}: …`, and `{p}` of `{f}` is declared `positional`, so a call passes it only by position [{at}]"
+        )
     };
     let cases: Vec<(&str, Vec<String>)> = vec![
         // A positional argument for a named parameter, and the reverse.
@@ -68,41 +73,41 @@ fn the_checker_and_elaboration_reject_a_misplaced_argument_alike() {
         // A name no parameter has, a parameter passed twice, and one argument too many.
         (
             "y = dbl(z: 3);",
-            vec!["`dbl` has no parameter `z` [3]".into()],
+            vec!["this argument is passed by the name `z`, and `dbl` has no parameter of that name, so the argument has no parameter to go to [3]".into()],
         ),
         (
             "y = 3.dbl(x: 4);",
-            vec!["`x` is already supplied [4]".into()],
+            vec!["this argument gives `x` of `dbl` a value, and an argument before it already gave `x` one; a call gives each parameter one value [4]".into()],
         ),
         (
             "y = add(1, 2, 3);",
-            vec!["too many arguments: `add` takes 2 [3]".into()],
+            vec!["this argument is one more than `add` takes: `add` takes 2 arguments by position, and the arguments before this one already fill them all [3]".into()],
         ),
         (
             "y = 3.zero();",
-            vec!["`zero` has no parameter for a receiver [3.zero()]".into()],
+            vec!["this call passes a value before the dot to `zero`, as `x.zero(…)` does, but `zero` takes no parameters, so the value before the dot has no parameter to go to [3.zero()]".into()],
         ),
         // Parameters left out with no default, and `...` that curries no named parameter.
         (
             "y = sub(a: 1);",
-            vec!["missing argument `b` of `sub` [sub(a: 1)]".into()],
+            vec!["this call of `sub` gives no value to its parameter `b`, and `b` has no default, so the call cannot be made [sub(a: 1)]".into()],
         ),
         (
             "y = sub();",
             vec![
-                "missing argument `a` of `sub` [sub()]".into(),
-                "missing argument `b` of `sub` [sub()]".into(),
+                "this call of `sub` gives no value to its parameter `a`, and `a` has no default, so the call cannot be made [sub()]".into(),
+                "this call of `sub` gives no value to its parameter `b`, and `b` has no default, so the call cannot be made [sub()]".into(),
             ],
         ),
         (
             "y = dbl(x: 1, ...);",
-            vec!["`...` leaves no named parameter out [dbl(x: 1, ...)]".into()],
+            vec!["this call of `dbl` ends in `...`, which makes a function of the named parameters the call leaves out, and the call gives every named parameter a value, so `...` has no parameter to leave out [dbl(x: 1, ...)]".into()],
         ),
         (
             "y = greet(punct: \"?\", ...);",
             vec![
-                "`...` curries named parameters only; the positional `name` is left out \
-                 [greet(punct: \"?\", ...)]"
+                "this call of `greet` ends in `...`, which makes a function of the named parameters the call leaves out, and the call also leaves out `name`, a positional parameter, which `...` cannot \
+                 leave out [greet(punct: \"?\", ...)]"
                     .into(),
             ],
         ),
@@ -122,15 +127,16 @@ fn the_checker_and_elaboration_reject_a_misplaced_argument_alike() {
         (
             "k = sub;\ny = k(a: 1);",
             vec![
-                "missing argument `b` of `(a: T, b: T) -> T for T in int | f64 | rat` [k(a: 1)]"
+                "this call of `(a: T, b: T) -> T for T in int | f64 | rat` gives no value to its parameter `b`, and `b` has no default, so the call cannot be made [k(a: 1)]"
                     .into(),
             ],
         ),
         (
             "t = tax;\ny = t(price: 10.0);",
             vec![
-                "the default of `rate` reads the function's other parameters, so only a call \
-                 of the declared function fills it: pass `rate` [t(price: 10.0)]"
+                "this call goes through a function value and leaves out `rate`, whose default reads \
+                 the function's other parameters; only a call of the declared function by its name \
+                 fills such a default, so here `rate` has no value [t(price: 10.0)]"
                     .into(),
             ],
         ),
@@ -160,7 +166,7 @@ fn zedc_run_reports_a_misplaced_argument_once_with_the_declaration() {
     let bad = run("named_call_bad", &program("greet(\"Al\")"), "", &[]);
     assert_eq!(bad.status, 1);
     assert_eq!(bad.stdout, "");
-    let message = "4:19: `name` of `greet` is named: pass it as `name: …`\n";
+    let message = "4:19: this argument is passed by position, and the parameter it reaches, `name` of `greet`, is a named parameter, which a call passes only by name, as `name: …`\n";
     assert_eq!(bad.stderr.matches(message).count(), 1, "{}", bad.stderr);
     assert!(
         bad.stderr

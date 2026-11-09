@@ -610,7 +610,10 @@ fn many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_t
         |unit| {
             let errors = unit.type_errors();
             assert_eq!(errors.len(), 1, "{errors:?}");
-            assert!(errors[0].contains("Orthogonal Vectors"), "{errors:?}");
+            assert!(
+                errors[0].contains("grows with the product of their number"),
+                "{errors:?}"
+            );
         },
     );
 }

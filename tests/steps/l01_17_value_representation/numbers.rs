@@ -87,7 +87,9 @@ fn numbers_of_different_kinds_do_not_mix() {
     // Values of two kinds do not mix; the checker finds it before anything runs.
     assert_eq!(
         errors("x = 1r;\na = x + f64(1);\n"),
-        ["`+` does not take (1r, f64) [x + f64(1)]"]
+        [
+            "`+` does not take (1r, f64): these are the types of its arguments here, and `+` has no arrow that takes them all [x + f64(1)]"
+        ]
     );
     // A plain literal keeps its kind too, and is rejected with the forms to write; a generic
     // literal `1n` takes the kind the other side expects, exactly (steps L1.26, L1.26a).

@@ -109,11 +109,14 @@ fn shown_operands_are_accepted() {
 fn a_call_that_does_not_fit_is_rejected() {
     let out = rejected("x = bitNot(5, 3);\n");
     assert!(
-        out.contains("too many arguments") || out.contains("is named"),
+        out.contains("one more than") || out.contains("is a named parameter"),
         "{out}"
     );
     let out = rejected("x = bitNot(5);\n");
-    assert!(out.contains("missing argument `width`"), "{out}");
+    assert!(
+        out.contains("gives no value to its parameter `width`"),
+        "{out}"
+    );
     let out = rejected("x = bitAnd(1, b: 2);\n");
     assert!(out.contains("`b` of"), "{out}");
     // A generic literal at an `f64` parameter is the `f64` it names; a plain int is rejected.

@@ -138,7 +138,8 @@ fn rejections(design: &str) -> String {
     for row in rows {
         let first = row[2..].split(" | ").next().unwrap_or_default();
         let name = first.split('(').next().unwrap_or_default().trim();
-        out.push_str(name);
+        // A table cell writes `|` as `\|`; the row's name is the text a reader sees.
+        out.push_str(&name.replace("\\|", "|"));
         out.push('\n');
     }
     out

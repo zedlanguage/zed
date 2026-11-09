@@ -125,7 +125,10 @@ fn a_rejection_names_its_cause() {
 
 /// The sentence every refusal of the admission check ends with.
 const SUFFICIENT: &str = "; the check is sufficient, not necessary, so a type it refuses may \
-                          still be monotone in emptiness";
+                          still be monotone in emptiness. To repair it, write the type so \
+                          that no recursive occurrence stands there; one inside a tuple, an \
+                          atom's payload, a union or a function's value type is always \
+                          accepted";
 
 /// The rejection of the group of `bodies`, named by `names`, each taking `params`.
 fn refusal(names: &[&str], params: &[&str], bodies: Vec<Expr>) -> String {

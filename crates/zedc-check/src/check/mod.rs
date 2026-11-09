@@ -141,54 +141,126 @@ impl Misfit<'_> {
     /// The message, for the function called `who`.
     pub fn message(self, who: &str) -> String {
         match self {
-            Misfit::NoReceiver => format!("`{who}` has no parameter for a receiver"),
-            Misfit::TooMany(n) => format!("too many arguments: `{who}` takes {n}"),
-            Misfit::Named(name) => format!("`{name}` of `{who}` is named: pass it as `{name}: …`"),
-            Misfit::Positional(name) => {
-                format!("`{name}` of `{who}` is positional: pass it by position")
+            Misfit::NoReceiver => format!(
+                "this call passes a value before the dot to `{who}`, as `x.{who}(…)` does, but \
+                 `{who}` takes no parameters, so the value before the dot has no parameter to go to"
+            ),
+            Misfit::TooMany(0) => {
+                format!("this argument is one more than `{who}` takes: `{who}` takes no arguments")
             }
-            Misfit::NoParam(name) => format!("`{who}` has no parameter `{name}`"),
-            Misfit::Supplied(name) => format!("`{name}` is already supplied"),
-            Misfit::CurriedPositional(name) => {
-                format!("`...` curries named parameters only; the positional `{name}` is left out")
-            }
-            Misfit::NothingLeftOut => "`...` leaves no named parameter out".into(),
-            Misfit::Missing(name) => format!("missing argument `{name}` of `{who}`"),
+            Misfit::TooMany(n) => format!(
+                "this argument is one more than `{who}` takes: `{who}` takes {n} argument{} by \
+                 position, and the arguments before this one already fill {}",
+                plural(n),
+                match n {
+                    1 => "it",
+                    _ => "them all",
+                }
+            ),
+            Misfit::Named(name) => format!(
+                "this argument is passed by position, and the parameter it reaches, `{name}` of \
+                 `{who}`, is a named parameter, which a call passes only by name, as \
+                 `{name}: …`"
+            ),
+            Misfit::Positional(name) => format!(
+                "this argument is passed by name, as `{name}: …`, and `{name}` of `{who}` is \
+                 declared `positional`, so a call passes it only by position"
+            ),
+            Misfit::NoParam(name) => format!(
+                "this argument is passed by the name `{name}`, and `{who}` has no parameter of \
+                 that name, so the argument has no parameter to go to"
+            ),
+            Misfit::Supplied(name) => format!(
+                "this argument gives `{name}` of `{who}` a value, and an argument before it \
+                 already gave `{name}` one; a call gives each parameter one value"
+            ),
+            Misfit::CurriedPositional(name) => format!(
+                "this call of `{who}` ends in `...`, which makes a function of the named \
+                 parameters the call leaves out, and the call also leaves out `{name}`, a \
+                 positional parameter, which `...` cannot leave out"
+            ),
+            Misfit::NothingLeftOut => format!(
+                "this call of `{who}` ends in `...`, which makes a function of the named \
+                 parameters the call leaves out, and the call gives every named parameter a \
+                 value, so `...` has no parameter to leave out"
+            ),
+            Misfit::Missing(name) => format!(
+                "this call of `{who}` gives no value to its parameter `{name}`, and `{name}` has \
+                 no default, so the call cannot be made"
+            ),
             Misfit::OpenDefault(name) => format!(
-                "the default of `{name}` reads the function's other parameters, so only a call \
-                 of the declared function fills it: pass `{name}`"
+                "this call goes through a function value and leaves out `{name}`, whose default \
+                 reads the function's other parameters; only a call of the declared function \
+                 by its name fills such a default, so here `{name}` has no value"
             ),
         }
     }
 
-    /// The menu of the misfit's row (DESIGN.md sec:diagnostics), in the table's order, each
-    /// entry a `repair:` note's text; empty for a misfit in no row.
-    pub(crate) fn menu(self) -> Vec<String> {
+    /// The menu of the misfit (DESIGN.md sec:diagnostics), in the table's order for a misfit
+    /// in a row, each entry a `repair:` note's text, for the function called `who`.
+    pub(crate) fn menu(self, who: &str) -> Vec<String> {
         match self {
-            Misfit::NoReceiver | Misfit::TooMany(_) | Misfit::NoParam(_) | Misfit::Supplied(_) => {
-                Vec::new()
-            }
+            Misfit::NoReceiver => vec![
+                format!("repair: call it as `{who}()`, with no value before the dot"),
+                format!(
+                    "repair: add a first parameter to the declaration of `{who}` for the value \
+                     before the dot"
+                ),
+            ],
+            Misfit::TooMany(_) => vec![
+                "repair: remove this argument".into(),
+                format!("repair: add a parameter for it to the declaration of `{who}`"),
+            ],
             Misfit::Named(name) => vec![
                 format!("repair: pass `{name}` by name, as `{name}: …`"),
-                format!("repair: declare `{name}` `positional`"),
+                format!("repair: declare `{name}` `positional` in `{who}`"),
             ],
             Misfit::Positional(name) => vec![
-                format!("repair: pass `{name}` by position"),
-                format!("repair: remove `positional` from the declaration of `{name}`"),
+                format!(
+                    "repair: pass `{name}` by position: remove `{name}: ` and put the value in \
+                     `{name}`'s place among the arguments"
+                ),
+                format!("repair: remove `positional` from the declaration of `{name}` in `{who}`"),
+            ],
+            Misfit::NoParam(name) => vec![
+                format!("repair: write the name of a parameter of `{who}` in place of `{name}`"),
+                "repair: remove this argument".into(),
+                format!("repair: add a parameter `{name}` to the declaration of `{who}`"),
+            ],
+            Misfit::Supplied(name) => vec![
+                format!("repair: remove this second value for `{name}`"),
+                format!("repair: remove the first value for `{name}` and keep this one"),
             ],
             Misfit::CurriedPositional(name) => vec![
                 "repair: remove the `...`".into(),
                 format!(
-                    "repair: leave out the positional `{name}` with a bracket section or a lambda"
+                    "repair: leave out the positional `{name}` with a bracket section or a \
+                     lambda, as `({name}) -> {who}({name}, …)`"
                 ),
             ],
             Misfit::NothingLeftOut => vec!["repair: remove the `...`".into()],
             Misfit::Missing(name) => vec![
-                format!("repair: supply `{name}`"),
-                format!("repair: declare a default for `{name}`"),
+                format!("repair: pass a value for `{name}` in this call"),
+                format!(
+                    "repair: give `{name}` a default in the declaration of `{who}`, as \
+                     `{name} = …`"
+                ),
             ],
-            Misfit::OpenDefault(name) => vec![format!("repair: supply `{name}`")],
+            Misfit::OpenDefault(name) => vec![
+                format!("repair: pass a value for `{name}` in this call"),
+                "repair: call the declared function by its name, so that its default fills the \
+                 parameter"
+                    .into(),
+            ],
         }
+    }
+}
+
+/// `s` for a count other than one.
+fn plural(n: usize) -> &'static str {
+    match n {
+        1 => "",
+        _ => "s",
     }
 }
 
@@ -989,9 +1061,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                     | TypeKind::Every(_)
                     | TypeKind::AtomAny(_) => {}
                     TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
-                        unreachable!("resolve rejects the forms of layer L2")
+                        unreachable!(
+                            "name resolution rejects every record type and every type applied to arguments before the checker reads the program"
+                        )
                     }
-                    TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
+                    TypeKind::Array(_) => unreachable!(
+                        "name resolution rejects every array type before the checker reads the program"
+                    ),
                 }
             }
         }
@@ -1018,6 +1094,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut notes = self.derive(&[span]);
         notes.extend(menu.into_iter().map(|text| Note { span, text }));
         self.rejects_with(row, span, message, notes);
+    }
+
+    /// An error at `span` in no row of the rejection table, with the derivation of the
+    /// expression there and then the repairs `menu`, each placed at `span`.
+    fn error_offering(
+        &mut self,
+        span: Span,
+        message: impl Into<String>,
+        menu: impl IntoIterator<Item = String>,
+    ) {
+        let mut notes = self.derive(&[span]);
+        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        self.error_with(span, message, notes);
     }
 
     /// An error at `span` that is a case of the row `row` of the rejection table, with the
@@ -1598,7 +1687,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.rejects_with(
             Row::WritesNothing,
             span,
-            format!("`_` drops a loose failure {what} may be, {atoms}"),
+            format!(
+                "`_` drops a loose failure {what} may be, {atoms}: `_` drops only a failure the \
+                 program names, as the default of an `else` names it, and this one would be \
+                 dropped with nothing in the text saying so"
+            ),
             notes,
         );
     }
@@ -2247,10 +2340,33 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// is data, and data that selects no arrow is an error (sec:failure).
     fn passing(&mut self, t: &Ty, what: &str, span: Span) -> Ty {
         if !t.family.is_empty() {
-            self.error(
-                span,
-                format!("{what} does not take {}", Ty::set(t.family.clone())),
+            let atoms = Ty::set(t.family.clone());
+            // The first atom, written as a pattern, for the repair.
+            let first = t
+                .family
+                .atom_names()
+                .and_then(|mut names| names.next())
+                .map(|(name, bare)| match bare {
+                    true => format!("#{name}"),
+                    false => format!("#{name}(_)"),
+                });
+            let message = format!(
+                "{what} does not take {atoms}, which the value here may be: an atom of a named \
+                 family is data like any other value, not a failure that passes through {what} \
+                 untouched, and {what} has no case for it"
             );
+            let mut menu = Vec::new();
+            if let Some(a) = first {
+                menu.push(format!(
+                    "repair: replace `{a}` by a value {what} takes before the value gets here, as \
+                     `v else {a} -> d`, where `v` is the value and `d` the value to use instead"
+                ));
+            }
+            menu.push(
+                "repair: test the value with `match` and handle each atom in its own arm"
+                    .to_string(),
+            );
+            self.error_offering(span, message, menu);
         }
         t.loose_ty()
     }
@@ -2295,20 +2411,49 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// Reports an index `shown` at `span` that names no component of the tuple `tuple`, of `n`
+    /// components.
+    fn no_component(&mut self, tuple: &str, n: usize, shown: &str, span: Span) {
+        let (why, menu) = match n {
+            0 => (
+                "the empty tuple has no components at all".to_string(),
+                "repair: index a tuple that has components".to_string(),
+            ),
+            _ => (
+                format!("its components are at the positions 0 to {}", n - 1),
+                format!("repair: use an index from 0 to {}", n - 1),
+            ),
+        };
+        self.error_offering(
+            span,
+            format!("{tuple} has no component {shown}: {why}, and this index is {shown}"),
+            [menu],
+        );
+    }
+
     /// Reports `what`, a use that does not take every value, of a value of type `_`, which may
     /// be any: an `is` test narrows it first (DESIGN.md, Soundness).
     fn any(&mut self, what: &str, span: Span) {
-        self.error(
-            span,
-            format!("{what} does not take every value, and this value is `_`, which may be any: test it with `is` first"),
+        let message = format!(
+            "{what} does not take every value, and this value is `_`, which may be any value: the \
+             checker cannot show that it is one {what} takes"
         );
+        let menu = [
+            "repair: test the value with `is` first, as `if v is int { … } else { … }`, so that \
+             inside the branch it has the type tested"
+                .to_string(),
+            "repair: write the type of the value where it is bound, as `x: int = …`, so that it \
+             is no longer `_`"
+                .to_string(),
+        ];
+        self.error_offering(span, message, menu);
     }
 
     /// Checks that a value of `t` may be pushed to a `Lines` port (L1.19): a `String` or a
     /// family of strings. A failure is disposed of before it reaches a port (sec:failure). A
     /// family writes its stored entries, so the `#notFound` of a key it lacks is not pushed;
     /// at L1 the families are the `Lines` and `CommandLine` ports, which store no `#notFound`.
-    fn pushed(&mut self, t: &Ty, span: Span) {
+    fn pushed(&mut self, t: &Ty, port: &str, span: Span) {
         let strings = |t: &KType| t.subtype(&KType::string());
         let plain = |t: &Ty| t.tuples.is_empty() && t.vars.is_empty();
         let not_found = KType::atom("notFound");
@@ -2321,13 +2466,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .all(|a| plain(&a.result) && strings(&(&a.result.set - &not_found)))
             });
         if !ok && !t.dynamic && t.vars.is_empty() {
-            self.error(
-                span,
-                format!(
-                    "a `Lines` port takes a `String` or a family of strings, not {}",
-                    self.show(t)
-                ),
+            let message = format!(
+                "a `Lines` port takes a `String` or a family of strings, not {}: the port \
+                 `{port}` writes each value pushed to it as one line of text, and the value \
+                 pushed here may be something other than text",
+                self.show(t)
             );
+            let menu = [
+                format!(
+                    "repair: write the value into a string, as `{port} <- \"${{v}}\";`, where `v` \
+                     is the value"
+                ),
+                "repair: handle the values that are not text first, with `match` or with `else`, \
+                 as `v else #notFound -> \"\"`"
+                    .to_string(),
+            ];
+            self.error_offering(span, message, menu);
         }
     }
 
@@ -2585,9 +2739,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
         ];
         self.derive_into(&[ax, aw], &mut notes);
+        let menu = [
+            format!(
+                "repair: pass a `{name}` in {needs}, or test it with `is` first, so that inside \
+                 the branch it lies there"
+            ),
+            "repair: pass a larger `width`, if the operation is meant on a wider word".to_string(),
+        ];
+        notes.extend(menu.into_iter().map(|text| Note { span, text }));
         self.error_with(
             span,
-            format!("`{w}` takes `{name}` in {needs}, and this `{name}` is {sx} with `width` {sw}"),
+            format!(
+                "`{w}` takes `{name}` in {needs}, and this `{name}` is {sx} with `width` {sw}: \
+                 `{w}` is defined only for such a `{name}`, and the checker found that this one \
+                 may lie outside it"
+            ),
             notes,
         );
     }
@@ -2632,7 +2798,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if picked.is_empty() && !unknown {
             let tuple = self.text(&Ty::of_row(cs.clone()));
             let shown = self.text(&key);
-            self.error(span, format!("{tuple} has no component {shown}"));
+            self.no_component(&tuple, n, &shown, span);
             return out;
         }
         let keys = KType::union_all(
@@ -2928,6 +3094,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.rejected_at(what, args, None)
     }
 
+    /// [`Self::rejected`] when the check was not decided, `why` saying why: the message then
+    /// says that, and not that no arrow takes the arguments.
+    fn rejected_because(&self, what: &str, args: &[Option<Arg>], why: &str) -> String {
+        self.message_of(what, args, None, why)
+    }
+
     /// [`Self::rejected`], with argument `i` shown as the piece `p` of it that failed at the
     /// parameter of type `q`, and the cause when that check was refused.
     fn rejected_at(
@@ -2935,6 +3107,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: &str,
         args: &[Option<Arg>],
         at: Option<(usize, &Piece, &Ty)>,
+    ) -> String {
+        self.message_of(what, args, at, "")
+    }
+
+    /// The message of [`Self::rejected_at`], `why` given as the cause when the check was not
+    /// decided: with no cause, the arguments' types and that no arrow of `what` takes them all,
+    /// which the derivation then shows arrow by arrow.
+    fn message_of(
+        &self,
+        what: &str,
+        args: &[Option<Arg>],
+        at: Option<(usize, &Piece, &Ty)>,
+        why: &str,
     ) -> String {
         let shown: Vec<String> = args
             .iter()
@@ -2947,8 +3132,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         let why = at
             .and_then(|(i, p, q)| Some(args[i].as_ref()?.ty.of_piece(p).refused(q)))
-            .unwrap_or_default();
-        format!("{what} does not take ({}){why}", shown.join(", "))
+            .filter(|w| !w.is_empty())
+            .unwrap_or_else(|| why.to_string());
+        does_not_take(what, &shown.join(", "), &why)
     }
 
     /// [`Self::apply`] of a signature of one arrow. The arguments at the parameters that are
@@ -3109,7 +3295,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect();
             let all: Vec<usize> = (0..sig.arrows.len()).collect();
             let why = refused_among(sig, &all, &tys);
-            return Err(format!("{}{why}", self.rejected(what, args)));
+            return Err(self.rejected_because(what, args, &why));
         };
         for (i, t) in retyped {
             if let Some(a) = &mut args[i] {
@@ -3151,7 +3337,7 @@ fn refused_among(sig: &Sig, arrows: &[usize], args: &[Option<&Ty>]) -> String {
             }
             cause
         })
-        .map(|r| format!(" (not decided: {})", r.message()))
+        .map(|r| ty::undecided(&r.message()))
         .unwrap_or_default()
 }
 
@@ -3751,9 +3937,17 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, String> {
         v => run(Prim::CastRat, v),
     };
     let not = || {
+        let (a, name) = (article(c), c.name());
+        // Why, and the repair, after the literal or the words that stand for it.
+        let why = format!(
+            ": a literal written with `n` takes the carrier expected only when it is exactly a \
+             number of that carrier, and no {name} is exactly this number; write a literal that \
+             is exactly {a} {name}, or write the number followed by `r` if the exact rational \
+             is meant"
+        );
         Err(quoting(
-            &format_args!("`{}` is not {} {}", l.written(), article(c), c.name()),
-            || format!("this literal is not {} {}", article(c), c.name()),
+            &format_args!("`{}` is not {a} {name}{why}", l.written()),
+            || format!("this literal is not {a} {name}{why}"),
         ))
     };
     let Some(exact) = exact else {
@@ -4974,7 +5168,9 @@ impl<'a> Denote<'a> {
     fn enter(&mut self, t: &'a Type, steps: &mut Vec<Step<'a>>, vals: &mut Vec<Ty>) {
         let leaf = match &t.kind {
             TypeKind::Apply(..) | TypeKind::Record(_) => {
-                unreachable!("resolve rejects the forms of layer L2")
+                unreachable!(
+                    "name resolution rejects every record type and every type applied to arguments before the checker reads the program"
+                )
             }
             // Resolve rejects a written one until L2.5; the reader of printed types reads one,
             // since the checker builds atoms with payloads from L1 on (L29-print).
@@ -4983,7 +5179,9 @@ impl<'a> Denote<'a> {
                 steps.extend(ps.iter().rev().map(|p| Step::Ty(&p.ty)));
                 return;
             }
-            TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
+            TypeKind::Array(_) => unreachable!(
+                "name resolution rejects every array type before the checker reads the program"
+            ),
             TypeKind::Name(n) if self.leaves.contains_key(n.as_str()) => {
                 self.leaves[n.as_str()].clone()
             }
@@ -5324,6 +5522,19 @@ fn one_shape_per_length(t: &Ty) -> Ty {
         }
     }
     out.pop().expect("the type is joined")
+}
+
+/// The message that `what` takes none of the argument types `shown`: `why` is the cause when
+/// one is known, and with none, the message says that no arrow of `what` takes them all,
+/// which the derivation then shows arrow by arrow.
+pub(crate) fn does_not_take(what: &str, shown: &str, why: &str) -> String {
+    match why.is_empty() {
+        true => format!(
+            "{what} does not take ({shown}): these are the types of its arguments here, and \
+             {what} has no arrow that takes them all"
+        ),
+        false => format!("{what} does not take ({shown}){why}"),
+    }
 }
 
 #[cfg(test)]

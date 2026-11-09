@@ -33,6 +33,8 @@ rows! {
     MissingAlgebraicObligation => "Missing algebraic obligation",
     UndischargeableEnsure => "Undischargeable `@ensure`",
     UnsatisfiableConstraints => "Unsatisfiable declared constraints",
+    // No diagnostic uses this row yet: plan row ST-B4 emits it.
+    LoopedAlternatives => "A test whose `||` alternatives limit each other's ranges in a loop",
     // No diagnostic uses this row yet: plan row H10-refuse emits it.
     UndecidablePremise => "Undecidable premise class",
     QuantifierNotFinite => "Quantifier in a law over a domain that is not finite",

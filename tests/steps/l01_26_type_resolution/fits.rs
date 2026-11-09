@@ -55,7 +55,10 @@ fn a_lambda_parameter_with_another_name_is_an_error() {
         type_errors(&format!("{APPLY}y = apply(f: (a, s) -> a - s);\n")),
         [
             "the lambda's parameter `s` is not a parameter of `(a: int, b: int) -> int`: \
-          rename it `b` [s]"
+          rename it `b`. The lambda is passed where a function of type `(a: int, b: int) -> int` is \
+          expected, and a call of it passes each named argument by its name, so each parameter \
+          the lambda does not take by position must have a name of `(a: int, b: int) -> int` or \
+          a default [s]"
         ]
     );
 }
@@ -78,7 +81,9 @@ fn named_parameters_do_not_fit_a_positional_type() {
 fn a_lambdas_result_must_fit() {
     assert_eq!(
         type_errors("apply(f: (int) -> String) = f(1);\ny = apply(f: n -> n + 1);\n"),
-        ["the lambda returns int, and `(int) -> String` returns String [n + 1]"]
+        [
+            "the lambda returns int, and `(int) -> String` returns String: the lambda is passed where a function of type `(int) -> String` is expected, so its result must be String [n + 1]"
+        ]
     );
 }
 
@@ -99,13 +104,17 @@ fn a_slot_written_as_an_intersection_of_function_types_takes_each_arrow() {
     let half = format!("{BOTH}half(x: int) = x div 2;\ny = both(f: half);\n");
     assert_eq!(
         type_errors(&half),
-        ["`half` is `(x: int) -> int`, not `((x: int) -> int) & ((x: f64) -> f64)` [half]"]
+        [
+            "`half` is `(x: int) -> int`, not `((x: int) -> int) & ((x: f64) -> f64)`: it is passed where a function of that type is expected, and its own type does not fit that one [half]"
+        ]
     );
     // A call through the slot that no arrow takes is refused with each arrow.
     let text = "both(f: ((x: int) -> int) & ((x: f64) -> f64)) = f(x: \"a\");\n";
     assert_eq!(
         type_errors(text),
-        ["`f` does not take (\"a\") [f(x: \"a\")]"]
+        [
+            "`f` does not take (\"a\"): these are the types of its arguments here, and `f` has no arrow that takes them all [f(x: \"a\")]"
+        ]
     );
 }
 
@@ -147,7 +156,7 @@ fn a_slot_written_with_an_overload_in_parentheses_takes_every_arrow() {
         type_errors(&half),
         [
             "`half` is `(x: int) -> int`, not `((x: int) -> int) & ((x: f64) -> f64) & \
-             ((x: rat) -> rat)` [half]"
+             ((x: rat) -> rat)`: it is passed where a function of that type is expected, and its own type does not fit that one [half]"
         ]
     );
     let text = "three(f: (((x: int) -> int) & ((x: f64) -> f64)) & ((y: rat) -> rat)) = \
@@ -211,14 +220,18 @@ fn arrows_that_cover_together_must_each_return_within_the_slots_result() {
                 q(g: ((x: int) -> String) & ((x: bool) -> int)) = p(f: g);\n";
     assert_eq!(
         type_errors(text),
-        ["`p` does not take ((((x: int) -> String) & ((x: bool) -> int))) [p(f: g)]"]
+        [
+            "`p` does not take ((((x: int) -> String) & ((x: bool) -> int))): these are the types of its arguments here, and `p` has no arrow that takes them all [p(f: g)]"
+        ]
     );
     // Nor do arrows that leave part of the parameter out.
     let text = "p(f: (x: int | bool | String) -> String) = f(x: 1);\n\
                 q(g: ((x: int) -> String) & ((x: bool) -> String)) = p(f: g);\n";
     assert_eq!(
         type_errors(text),
-        ["`p` does not take ((((x: int) -> String) & ((x: bool) -> String))) [p(f: g)]"]
+        [
+            "`p` does not take ((((x: int) -> String) & ((x: bool) -> String))): these are the types of its arguments here, and `p` has no arrow that takes them all [p(f: g)]"
+        ]
     );
 }
 
@@ -238,8 +251,10 @@ fn arrows_that_cover_only_across_two_parameters_are_refused_with_the_reason() {
              ((x: int, y: bool) -> String) & ((x: bool, y: int) -> String))): at `((x: bool | \
              int, y: bool | int) -> String)`, the arrow `((x: int, y: int) -> String)` takes a \
              part of more than one parameter, and arrows are combined only when they differ at \
-             one parameter: whether arrows that split several parameters cover them is \
-             coNP-complete (rule 6 of sec:type_resolution) [p(f: g)]"
+             one parameter: telling whether arrows that each split several parameters cover \
+             them all can take time exponential in the number of parameters, so the checker \
+             does not try; to repair it, write the arrows so that they differ at one parameter \
+             [p(f: g)]"
         ]
     );
     let text = "p(f: (x: int | bool, y: int) -> String) = f(x: 1, y: 2);\n\
@@ -275,8 +290,7 @@ fn a_function_type_takes_part_in_a_cover_and_a_type_variable_does_not() {
              in int | f64)` would take part of `x` only by binding its type variable there, and \
              arrows that cover a parameter together bind no variable: which part each takes is \
              a choice per arrow, and fixing a bounded variable to each carrier of its bound \
-             multiplies the arrows by the product of the bounds (rule 6 of \
-             sec:type_resolution) [p(f: g)]"
+             multiplies the arrows by the product of the bounds [p(f: g)]"
         ]
     );
     let text = "p(f: (x: (bool,)) -> String) = 0;\n\
@@ -313,7 +327,7 @@ fn arrows_whose_results_only_intersect_within_the_slots_fit() {
             "`p` does not take ((((x: int) -> String | #a | #c) & ((x: int) -> String | #b | \
              #c))): at `((x: int) -> String | #a)`, the arrows `((x: int) -> String | #a | #c)`, \
              `((x: int) -> String | #b | #c)` each take all of it, and the intersection of their \
-             results, `String | #c`, is not within `String | #a` (rule 6 of sec:type_resolution) \
+             results, `String | #c`, is not within `String | #a` \
              [p(f: g)]"
         ]
     );
@@ -334,11 +348,12 @@ fn arrows_whose_results_intersect_within_only_on_different_sets_are_refused_with
             "`p` does not take ((((x: bool | int) -> String | #a) & ((x: int) -> String | #b) & \
              ((x: bool) -> String | #c))): at `((x: bool | int) -> String)`, the arrows `((x: \
              bool | int) -> String | #a)`, `((x: int) -> String | #b)`, `((x: bool) -> String | \
-             #c)` each return outside `String`; where several take one value, the intersection \
-             of their results is the result, and the checker builds it only from arrows that \
+             #c)` each return outside `String`; where several take one value, the result is \
+             what their results share, and the checker works that out only for arrows that \
              each take all that the arrows returning within `String` leave of one parameter, \
-             since finding the values each set of arrows shares is as hard as Orthogonal \
-             Vectors (rule 6 of sec:type_resolution) [p(f: g)]"
+             since finding the values each group of arrows shares takes time that grows with \
+             the product of their number; to repair it, write the arrows so that each returns \
+             within `String` [p(f: g)]"
         ]
     );
 }
@@ -360,7 +375,7 @@ fn a_bounded_variable_bound_to_two_carriers_fits_only_at_one_place() {
              `((x: T, y: T) -> T for T in int | f64 | rat)` takes it only with `T` bound to \
              `int | f64`, values of more than one carrier, but a call fixes `T` to one carrier, \
              and `T` stands at 2 places the arguments give, which could be given values of two \
-             carriers (rule 6 of sec:type_resolution) [add]"
+             carriers [add]"
         ]
     );
     let text = "p(f: (x: int | f64) -> ((y: int | f64) -> int)) = f(x: 1)(y: 1.5);\n\
@@ -373,7 +388,7 @@ fn a_bounded_variable_bound_to_two_carriers_fits_only_at_one_place() {
              int | f64)` takes it only with `T` bound to `int | f64`, values of more than one \
              carrier, but a call fixes `T` to one carrier, and `T` stands where the arrow takes \
              values of it inside a function type, which need not be of the carrier its argument \
-             fixes (rule 6 of sec:type_resolution) [p(f: g)]"
+             fixes [p(f: g)]"
         ]
     );
     // Near miss: one place, the result's alike, so each value takes the arrow at its carrier.
@@ -407,7 +422,9 @@ fn an_overload_whose_arrows_overlap_is_checked_by_the_arrows_it_names() {
                 q(g: ((x: bool) -> String) & ((x: int) -> int)) = p(f: g);\n";
     assert_eq!(
         type_errors(text),
-        ["`p` does not take ((((x: bool) -> String) & ((x: int) -> int))) [p(f: g)]"]
+        [
+            "`p` does not take ((((x: bool) -> String) & ((x: int) -> int))): these are the types of its arguments here, and `p` has no arrow that takes them all [p(f: g)]"
+        ]
     );
     let text = "p(f: (x: int | bool) -> String | int) = f(x: 1);\n\
                 q(g: ((x: bool) -> String) & ((x: int) -> int)) = p(f: g);\n";
@@ -443,7 +460,7 @@ fn results_that_hold_a_function_or_a_variable_are_intersected() {
              function in one result is left out where another holds no function, and a variable \
              bounded by carriers where each carrier of its bound is missing from some other \
              result; every other piece that holds a function, a variable or the unknown is kept \
-             whole), is not within `String` (rule 6 of sec:type_resolution) [p(f: g)]"
+             whole), is not within `String` [p(f: g)]"
         ]
     );
     let text = "p(f: (x: U) -> U for U in int | f64) = f(x: 1);\n\
@@ -484,8 +501,7 @@ fn a_refused_cover_names_the_expected_types_variables() {
             "`p` does not take ((((x: int | f64) -> int | f64 | #a) & ((x: int | f64) -> int | \
              f64 | #b))): at `((x: U) -> U for U in int | f64)`, the arrows `((x: int | f64) -> \
              int | f64 | #a)`, `((x: int | f64) -> int | f64 | #b)` each take all of it, and the \
-             intersection of their results, `int | f64`, is not within `U` (rule 6 of \
-             sec:type_resolution) [p(f: g)]"
+             intersection of their results, `int | f64`, is not within `U` [p(f: g)]"
         ]
     );
     let text = "p(f: (x: U, y: int | f64) -> U for U in int | f64) = 0;\n\
@@ -497,7 +513,7 @@ fn a_refused_cover_names_the_expected_types_variables() {
              f64) -> U for U in int | f64)`, the arrow `((x: T, y: T) -> T for T in int | f64)` \
              takes it only with `T` bound to `int | f64 | U`, values of more than one carrier, \
              but a call fixes `T` to one carrier, and `T` stands at 2 places the arguments give, \
-             which could be given values of two carriers (rule 6 of sec:type_resolution) \
+             which could be given values of two carriers \
              [p(f: g)]"
         ]
     );

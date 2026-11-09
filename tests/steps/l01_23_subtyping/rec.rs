@@ -142,7 +142,9 @@ fn the_plans_definitions() {
     assert_eq!(
         rejected(vec![nest]),
         "the type `Nest` is not regular: its recursive occurrence `Nest((A, A))` changes the \
-         parameters, so the type has no end of components"
+         parameters, so following it reaches a new type at each step and the type has no end of \
+         components. To repair it, pass the parameters unchanged at every recursive occurrence, \
+         as `Nest(A)`"
     );
     // `type T = (T) -> (#a & #b)` would be inhabited exactly when it is empty.
     let t = Expr::exact(r(0, vec![]), Expr::And(vec![bare("a"), bare("b")]));
@@ -150,7 +152,9 @@ fn the_plans_definitions() {
         rejected(vec![def("T", &[], t)]),
         "the type `T` is outside the form the checker accepts: a recursive occurrence stands in \
          the guarantee of `(T) -> (#a & #b)`, whose value type `#a & #b` is empty; the check is \
-         sufficient, not necessary, so a type it refuses may still be monotone in emptiness"
+         sufficient, not necessary, so a type it refuses may still be monotone in emptiness. To repair it, write the type so that no recursive occurrence \
+         stands there; one inside a tuple, an atom's payload, a union or a function's value \
+         type is always accepted"
     );
 }
 

@@ -165,8 +165,8 @@ fn a_value_left_by_a_test_used_against_the_tested_value_is_rejected_at_the_test(
     assert_eq!(
         type_errors(src),
         [
-            "the value this test leaves is used as int, and the value it tests as String \
-          [r else 0]"
+            "the value this test leaves is used as int, and the value it tests as String: the test \
+          narrows the value it tests, so both uses are of one value, and no value is both [r else 0]"
         ]
     );
 }

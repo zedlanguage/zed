@@ -102,7 +102,7 @@ fn a_rejected_unit_is_kept_with_its_diagnostics() {
     // The outcome carries the diagnostic's derivation, as `zedc test` prints it.
     assert!(
         first[0]
-            .starts_with("1:30: `*` does not take (int, \"8\")\n  [1] 1:30: `cents` is int here\n"),
+            .starts_with("1:30: `*` does not take (int, \"8\"): these are the types of its arguments here, and `*` has no arrow that takes them all\n  [1] 1:30: `cents` is int here\n"),
         "{first:?}"
     );
     assert_eq!(checks(&mut db, bad), first);
@@ -443,7 +443,7 @@ cents * 8 div 100
     // text, so nothing is computed for it.
     assert!(says(
         &ran[1].seen,
-        "pricing.zed 4:30: `*` does not take (int, \"8\")"
+        "pricing.zed 4:30: `*` does not take (int, \"8\"): these are the types of its arguments here, and `*` has no arrow that takes them all"
     ));
     assert!(says(
         &ran[1].seen,

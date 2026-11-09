@@ -71,11 +71,15 @@ fn tuples_min_and_max_cannot_order_are_refused() {
     );
     assert_eq!(
         errors("x = min((1, \"a\"), (1, \"b\"));\n"),
-        ["`min` does not take (\"a\", \"b\") [min((1, \"a\"), (1, \"b\"))]"]
+        [
+            "`min` does not take (\"a\", \"b\"): these are the types of its arguments here, and `min` has no arrow that takes them all [min((1, \"a\"), (1, \"b\"))]"
+        ]
     );
     assert_eq!(
         errors("x = min((1, 2.0), (1, 3));\n"),
-        ["`min` does not take (2.0, 3) [min((1, 2.0), (1, 3))]"]
+        [
+            "`min` does not take (2.0, 3): these are the types of its arguments here, and `min` has no arrow that takes them all [min((1, 2.0), (1, 3))]"
+        ]
     );
     assert_eq!(
         errors("x = min((1, 2), 3);\n"),
@@ -84,7 +88,7 @@ fn tuples_min_and_max_cannot_order_are_refused() {
     assert_eq!(
         errors("x = min((int(\"x\"), 2), (1, 3));\n"),
         [
-            "`min` does not order #invalid in a tuple; handle it before `min` [min((int(\"x\"), 2), (1, 3))]"
+            "`min` does not order #invalid in a tuple: it compares tuples component by component, and an atom has no order among the numbers; handle it before `min` [min((int(\"x\"), 2), (1, 3))]"
         ]
     );
 }
@@ -95,19 +99,27 @@ fn an_operator_of_the_same_signature_does_not_take_tuples() {
     // takes two tuples. Two tuples under `+` are refused as before, not added componentwise.
     assert_eq!(
         errors("y = (-3, 1) + \"a\";\n"),
-        ["`+` does not take ((-3, 1), \"a\") [(-3, 1) + \"a\"]"]
+        [
+            "`+` does not take ((-3, 1), \"a\"): these are the types of its arguments here, and `+` has no arrow that takes them all [(-3, 1) + \"a\"]"
+        ]
     );
     assert_eq!(
         errors("y = (1, 2) + (3, 4);\n"),
-        ["`+` does not take ((1, 2), (3, 4)) [(1, 2) + (3, 4)]"]
+        [
+            "`+` does not take ((1, 2), (3, 4)): these are the types of its arguments here, and `+` has no arrow that takes them all [(1, 2) + (3, 4)]"
+        ]
     );
     assert_eq!(
         errors("y = (1, 2) - (3, 4);\n"),
-        ["`-` does not take ((1, 2), (3, 4)) [(1, 2) - (3, 4)]"]
+        [
+            "`-` does not take ((1, 2), (3, 4)): these are the types of its arguments here, and `-` has no arrow that takes them all [(1, 2) - (3, 4)]"
+        ]
     );
     assert_eq!(
         errors("y = (1, 2) * (3, 4);\n"),
-        ["`*` does not take ((1, 2), (3, 4)) [(1, 2) * (3, 4)]"]
+        [
+            "`*` does not take ((1, 2), (3, 4)): these are the types of its arguments here, and `*` has no arrow that takes them all [(1, 2) * (3, 4)]"
+        ]
     );
     // The word itself, by name or as a method, still takes them.
     assert_eq!(x("min((1, 2), (3, 4))"), "(1, 2)");
@@ -270,7 +282,9 @@ fn a_function_of_the_arrows_of_min_that_is_not_min_does_not_take_tuples() {
         errors(
             "ap(positional h: (positional a: int, positional b: int) -> int, positional p: (int, int), positional q: (int, int)) = h(p, q);\n"
         ),
-        ["`h` does not take ((int, int), (int, int)) [h(p, q)]"]
+        [
+            "`h` does not take ((int, int), (int, int)): these are the types of its arguments here, and `h` has no arrow that takes them all [h(p, q)]"
+        ]
     );
 }
 
@@ -365,17 +379,24 @@ fn a_parameter_met_with_a_tuple_refuses_what_min_refuses() {
     );
     assert_eq!(
         e("g((#red, 9))"),
-        ["`min` does not order #red in a tuple; handle it before `min` [g((#red, 9))]"]
+        [
+            "`min` does not order #red in a tuple: it compares tuples component by component, and an atom has no order among the numbers; handle it before `min` [g((#red, 9))]"
+        ]
     );
     assert_eq!(
         e("g((0.5, 1.0))"),
         [
-            "`min` does not take (0.5, 1) [g((0.5, 1.0))]",
-            "`min` does not take (1.0, 2) [g((0.5, 1.0))]"
+            "`min` does not take (0.5, 1): these are the types of its arguments here, and `min` has no arrow that takes them all [g((0.5, 1.0))]",
+            "`min` does not take (1.0, 2): these are the types of its arguments here, and `min` has no arrow that takes them all [g((0.5, 1.0))]"
         ]
     );
     // A number is not a tuple: the parameter keeps no number carrier.
-    assert_eq!(e("g(3)"), ["`g` does not take (3) [g(3)]"]);
+    assert_eq!(
+        e("g(3)"),
+        [
+            "`g` does not take (3): these are the types of its arguments here, and `g` has no arrow that takes them all [g(3)]"
+        ]
+    );
     assert_eq!(
         errors("g(positional a) = min(a, (1, (2, 3)));\nx = g((1, 9));\n"),
         ["`min` does not take 9 and (2, 3): it takes two tuples or two numbers [g((1, 9))]"]
@@ -399,7 +420,9 @@ fn a_generic_function_that_calls_min_on_its_own_parameters_takes_numbers() {
     assert_eq!(value(&format!("{g}x = g(3, 2);\n"), "x"), "2");
     assert_eq!(
         errors(&format!("{g}x = g((1, 2), (0, 9));\n")),
-        ["`g` does not take ((1, 2), (0, 9)) [g((1, 2), (0, 9))]"]
+        [
+            "`g` does not take ((1, 2), (0, 9)): these are the types of its arguments here, and `g` has no arrow that takes them all [g((1, 2), (0, 9))]"
+        ]
     );
 }
 
@@ -511,7 +534,9 @@ fn a_call_joins_the_result_of_min_as_min_joins_it() {
     );
     assert_eq!(
         errors("g0(positional a) = min(a, (0, 0));\ng1(positional a) = g0(min(a, (1.0, 0)));\n"),
-        ["`min` does not take (1.0, 0) [g0(min(a, (1.0, 0)))]"]
+        [
+            "`min` does not take (1.0, 0): these are the types of its arguments here, and `min` has no arrow that takes them all [g0(min(a, (1.0, 0)))]"
+        ]
     );
     // `max` of a `min` is one of the three operands as well.
     assert_eq!(

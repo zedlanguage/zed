@@ -480,8 +480,14 @@ fn what_is_no_printed_type_is_an_error() {
             "`$0`: the character `$` (U+0024) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"$\"`.",
         ),
         ("!int", "`!int`: `!` stands before no `_`"),
-        ("{x: int}", "`{x: int}` holds a form of layer L2"),
-        ("[int]", "`[int]` holds a form of layer L3"),
+        (
+            "{x: int}",
+            "`{x: int}` holds a record type or a type applied to arguments, which the checker never prints",
+        ),
+        (
+            "[int]",
+            "`[int]` holds an array type, which the checker never prints",
+        ),
         (
             "(T) -> T for T in widget",
             "`(T) -> T for T in widget`: `widget` in the bound of `T` is no carrier",

@@ -155,7 +155,10 @@ fn an_unknown_int_is_rejected_and_the_kernel_would_stop_on_it() {
         .run(&t)
         .unwrap_err()
         .to_string();
-    assert_eq!(stop, "type error: `^` applied to `int`, `int`");
+    assert_eq!(
+        stop,
+        zed_kernel::KernelError::Type("`^` applied to `int`, `int`".into()).to_string()
+    );
 }
 
 #[test]

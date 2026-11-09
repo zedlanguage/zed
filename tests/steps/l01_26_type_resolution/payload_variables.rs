@@ -38,8 +38,7 @@ fn in_atoms_twice_in_a_tuple(n: usize, arg: &str) -> String {
 }
 
 /// The refusal of `same = h(scale)`, at the argument.
-const REFUSED: &str =
-    "`==` takes data, and this value may hold a function, `(int) -> int` [h(scale)]";
+const REFUSED: &str = "`==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [h(scale)]";
 
 #[test]
 fn a_function_deep_in_a_payload_in_a_tuple_is_refused_by_equality() {

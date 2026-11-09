@@ -34,9 +34,16 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
     while let Some(t) = stack.pop() {
         match &t.kind {
             TypeKind::Apply(..) | TypeKind::Record(_) => {
-                return Err(format!("`{text}` holds a form of layer L2"));
+                return Err(format!(
+                    "`{text}` holds a record type or a type applied to arguments, which the \
+                     checker never prints"
+                ));
             }
-            TypeKind::Array(_) => return Err(format!("`{text}` holds a form of layer L3")),
+            TypeKind::Array(_) => {
+                return Err(format!(
+                    "`{text}` holds an array type, which the checker never prints"
+                ));
+            }
             TypeKind::Name(_) | TypeKind::Atom(_) | TypeKind::Every(_) | TypeKind::AtomAny(_) => {}
             TypeKind::Tuple(ts) | TypeKind::Union(ts) => stack.extend(ts),
             TypeKind::And(ts) => {
@@ -140,7 +147,12 @@ fn leaves(text: &str, head: &str, tokens: &[lex::Token]) -> Result<(String, Bind
             (Tok::Str(parts), _) => match &parts[..] {
                 [] => (Ty::lit(&Value::str("")), 1),
                 [Part::Text(s)] => (Ty::lit(&Value::str(s)), 1),
-                _ => return Err(format!("`{text}`: a literal type with a hole")),
+                _ => {
+                    return Err(format!(
+                        "`{text}` holds a text literal with an expression inside it, which is \
+                         no type"
+                    ));
+                }
             },
             (Tok::Keyword(k @ ("true" | "false")), _) => (Ty::lit(&Value::Bool(*k == "true")), 1),
             _ => {

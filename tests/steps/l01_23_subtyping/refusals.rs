@@ -261,7 +261,10 @@ fn the_checker_says_when_a_check_was_refused() {
     assert!(!lists.subtype(&covered));
     assert_eq!(
         lists.refused(&covered),
-        format!(" (not decided: {})", Refusal::Residues.message())
+        format!(
+            "; this is not proved wrong: the checker could not decide whether it fits, because {}",
+            Refusal::Residues.message()
+        )
     );
     // The cover by 0 modulo 2 or 3 and 1 or 5 modulo 6 is decided, and holds.
     let cover = [period(2, 0), period(3, 0), period(6, 1), period(6, 5)];
@@ -323,14 +326,17 @@ fn a_call_whose_check_was_refused_says_why() {
     assert_eq!(
         rejected(&box_program(7)),
         format!(
-            "2:52: `g` does not take ({triple}) (not decided: {})",
+            "2:52: `g` does not take ({triple}); this is not proved wrong: the checker could not \
+             decide whether it fits, because {}",
             Refusal::TupleSplit.message()
         )
     );
     // A decided failure names no cause.
     assert_eq!(
         rejected(&box_program(6)),
-        format!("2:52: `g` does not take ({triple})")
+        format!(
+            "2:52: `g` does not take ({triple}): these are the types of its arguments here, and `g` has no arrow that takes them all"
+        )
     );
     // The declared type is printed as it is written.
     let Err(all) = zedc::run::load(box_program(7).as_bytes()) else {
@@ -352,7 +358,7 @@ fn a_tuple_that_shapes_hold_only_together_is_taken() {
     let src = "g(x: (#a, #c) | (#b, #c)) = x;\nh(y: (#a | #b | #c, #c)) = g(x: y);\nmain() = 0;\n";
     assert_eq!(
         rejected(src),
-        "2:28: `g` does not take ((#a | #b | #c, #c))"
+        "2:28: `g` does not take ((#a | #b | #c, #c)): these are the types of its arguments here, and `g` has no arrow that takes them all"
     );
 }
 
@@ -369,8 +375,12 @@ fn a_morphism_type_whose_bound_check_was_refused_says_why() {
              [((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int)]"
                 .to_string(),
             format!(
-                "the guarantee (left of `..`) of this morphism type is not within its permission \
-             (right of `..`) (not decided: {}) [((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int)]",
+                "in a function type `L .. U -> V`, every function the guarantee `L`, left of \
+                 `..`, describes must also be allowed by the permission `U`, right of `..`, and \
+                 the checker could not show that this one's guarantee is within its permission; \
+                 this is not proved wrong: the checker could not decide whether it fits, because \
+                 {}. To repair it, narrow the type left of `..`, or widen the type right of it \
+                 [((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int)]",
                 Refusal::MorphismSplit.message()
             )
         ]
@@ -424,10 +434,17 @@ fn an_overload_whose_check_was_refused_says_why() {
             );
             match why {
                 Some(r) => {
-                    let tail = format!(" (not decided: {})", r.message());
+                    let tail = format!(
+                        "; this is not proved wrong: the checker could not decide whether it \
+                         fits, because {}",
+                        r.message()
+                    );
                     assert!(first.ends_with(&tail), "{op} on {t}: {first}");
                 }
-                None => assert!(!first.contains("not decided"), "{op} on {t}: {first}"),
+                None => assert!(
+                    !first.contains("this is not proved wrong"),
+                    "{op} on {t}: {first}"
+                ),
             }
         }
     }
@@ -439,14 +456,14 @@ fn a_literal_argument_and_a_need_result_name_no_cause_when_decided() {
     // it does not meet: it is always decided, so no refused input reaches this path.
     assert_eq!(
         rejected("g(x: #a | (int, int)) = x;\nmain() = g(x: 1);\n"),
-        "2:10: `g` does not take (1)"
+        "2:10: `g` does not take (1): these are the types of its arguments here, and `g` has no arrow that takes them all"
     );
     // What a use of an argument gives against what the use needs: decided here. The
     // checker's own types hold no difference of tuples (a written `\` of tuples is dropped
     // from them), so no refused check reaches this path from a program.
     assert_eq!(
         rejected("f(x) = x[1] + 1;\nmain() = f(x: (1, \"s\"));\n"),
-        "2:10: `f` gives \"s\" here, which is not int"
+        "2:10: `f` gives \"s\" here, which is not int: the use requires a value of int"
     );
 }
 
@@ -483,7 +500,7 @@ fn an_overload_rejected_by_a_decided_check_names_no_cause() {
             first.starts_with(&format!("`{op}` does not take (")),
             "{first}"
         );
-        assert!(!first.contains("not decided"), "{first}");
+        assert!(!first.contains("this is not proved wrong"), "{first}");
     }
 }
 

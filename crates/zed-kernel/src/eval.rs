@@ -1704,7 +1704,7 @@ impl<'t> Machine<'_, 't> {
                 _ if matches!(p, Prim::Eq | Prim::Ne) => {
                     return type_err(format!(
                         "`{}` on functions compares them at every point of an enumerable \
-                         domain, which their types give (step L1.22)",
+                         domain, which their types give",
                         p.written()
                     ));
                 }

@@ -40,7 +40,9 @@ fn a_generic_function_fits_a_slot_of_two_arrows() {
     let plain = format!("{both}inc(x) = x + 1;\ny = both(f: inc);\n");
     assert_eq!(
         type_errors(&plain),
-        ["`inc` is `(x: int) -> int`, not `((x: int) -> int) & ((x: f64) -> f64)` [inc]"]
+        [
+            "`inc` is `(x: int) -> int`, not `((x: int) -> int) & ((x: f64) -> f64)`: it is passed where a function of that type is expected, and its own type does not fit that one [inc]"
+        ]
     );
 }
 

@@ -120,7 +120,7 @@ fn a_test_on_another_name_is_rejected() {
         "bits(positional n: int, positional m: int) = if m >= 0 { popCount(n) } else { 0 };\n",
     );
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is int\n"),
+        out.contains("`popCount` takes `x` in int[0..], and this `x` is int: "),
         "{out}"
     );
     assert!(!out.contains("this test is"), "{out}");
@@ -165,7 +165,7 @@ fn a_test_on_a_call_the_operand_repeats_is_rejected_and_its_named_value_accepted
          f(positional n: int) = if g(n) >= 0 { popCount(g(n)) } else { 0 };\n",
     );
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is int\n"),
+        out.contains("`popCount` takes `x` in int[0..], and this `x` is int: "),
         "{out}"
     );
     assert!(rows_pass(
@@ -203,7 +203,7 @@ fn a_case_no_value_reaches_adds_nothing_to_the_join() {
            if n < 0 && m < 0 { 0 } else { popCount(n) };\n",
     );
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is int\n"),
+        out.contains("`popCount` takes `x` in int[0..], and this `x` is int: "),
         "{out}"
     );
 }
@@ -355,7 +355,7 @@ fn a_value_with_no_summary_or_an_unbounded_other_input_narrows_no_input() {
     ] {
         let out = rejected(src);
         assert!(
-            out.contains("`popCount` takes `x` in int[0..], and this `x` is int\n"),
+            out.contains("`popCount` takes `x` in int[0..], and this `x` is int: "),
             "{out}"
         );
     }
@@ -416,7 +416,7 @@ fn a_parameter_narrowed_by_is_has_a_summary() {
            if x is int { m = x + 3; if m >= 3 { popCount(n) } else { 0 } } else { 0 };\n",
     );
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is int\n"),
+        out.contains("`popCount` takes `x` in int[0..], and this `x` is int: "),
         "{out}"
     );
 }

@@ -14,7 +14,9 @@ const SCALE: &str = "scale(positional x) = x * 2;\n";
 
 /// The one error a tuple expression holding `scale` gives, at `at`.
 fn holds_scale(at: &str) -> String {
-    format!("a tuple takes data, and this value may hold a function, `(int) -> int` [{at}]")
+    format!(
+        "a tuple takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [{at}]"
+    )
 }
 
 #[test]
@@ -48,7 +50,7 @@ fn two_functions_in_tuples_are_two_errors() {
     let text = format!(
         "{SCALE}shift(positional x) = x + 1;\na = (scale, 1);\nb = (shift, 1);\nc = (a, b);\n"
     );
-    let shift = "a tuple takes data, and this value may hold a function, `(int) -> int` [shift]";
+    let shift = "a tuple takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [shift]";
     assert_eq!(
         type_errors(&text),
         [holds_scale("scale"), shift.to_string()]
@@ -95,9 +97,9 @@ fn a_function_in_many_nested_tuples_is_one_error_in_linear_time() {
             .collect();
         scaling::check_order(what, 500, 1, |n| {
             let info = units[&n].check();
-            // One error with its two notes, whatever the depth.
+            // One error with its two notes and its two repairs, whatever the depth.
             assert_eq!(info.errors.len(), 1, "{what} at {n}");
-            assert_eq!(info.errors[0].notes.len(), 2, "{what} at {n}");
+            assert_eq!(info.errors[0].notes.len(), 4, "{what} at {n}");
         });
     }
 }
@@ -149,9 +151,8 @@ fn in_a_wide_payload(n: usize, leaf: &str) -> String {
 fn a_function_in_an_atom_s_payload_is_one_error() {
     // A payload may hold a function (DESIGN.md, `#atom(t)`), and `==` compares payloads: the
     // function is reported once, at the tuple that holds the atom, or else at the `==`.
-    let at_tuple =
-        "a tuple takes data, and this value may hold a function, `(int) -> int` [#a(scale)]";
-    let at_eq = "`==` takes data, and this value may hold a function, `(int) -> int` [t == #b]";
+    let at_tuple = "a tuple takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [#a(scale)]";
+    let at_eq = "`==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [t == #b]";
     assert_eq!(type_errors(&in_atoms_and_tuples(3, "scale")), [at_tuple]);
     assert_eq!(type_errors(&in_a_wide_payload(3, "scale")), [at_eq]);
     assert_eq!(
@@ -239,7 +240,9 @@ fn in_atoms_by_calls(n: usize, leaf: &str) -> String {
 fn a_function_in_atoms_nested_in_atoms_is_refused_by_equality() {
     // A payload may hold a function (DESIGN.md, `#atom(t)`), and `==` compares payloads.
     let at_eq = |at: &str| {
-        format!("`==` takes data, and this value may hold a function, `(int) -> int` [{at}]")
+        format!(
+            "`==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth [{at}]"
+        )
     };
     type Family = fn(usize, &str) -> String;
     for (text, at) in [

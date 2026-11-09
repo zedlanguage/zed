@@ -107,7 +107,8 @@ fn a_refused_comparison_names_the_operator_and_operands_as_written() {
             } else {
                 "`String`, `int`"
             };
-            let want = format!("type error: {written} applied to {types}");
+            let want =
+                zed_kernel::KernelError::Type(format!("{written} applied to {types}")).to_string();
             for t in refused_comparisons(p, weight_first) {
                 assert_eq!(kernel(&t), Err(want.clone()), "{t:?}");
                 for got in every_back_end(&lower(&t).unwrap()) {

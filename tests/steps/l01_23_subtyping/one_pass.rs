@@ -618,7 +618,7 @@ fn an_orthogonal_vectors_meet_is_refused_naming_its_component() {
     assert!(!t.is_empty());
     let m = Refusal::SharedCells(0).message();
     assert!(
-        m.contains("component 0") && m.contains("Orthogonal Vectors"),
+        m.contains("component 0") && m.contains("grows with the square of their number"),
         "{m}"
     );
 }

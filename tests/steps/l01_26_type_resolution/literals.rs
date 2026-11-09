@@ -77,7 +77,9 @@ fn a_plain_literal_compared_with_an_inferred_parameter_fixes_its_carrier() {
     assert_eq!(value(&format!("{half}y = isHalf(0.5);\n"), "y"), "true");
     assert_eq!(
         type_errors(&format!("{half}y = isHalf(0.5r);\n")),
-        ["`isHalf` does not take (5e-1r) [isHalf(0.5r)]"]
+        [
+            "`isHalf` does not take (5e-1r): these are the types of its arguments here, and `isHalf` has no arrow that takes them all [isHalf(0.5r)]"
+        ]
     );
     assert_eq!(
         type_errors(&format!("{half}y = isHalf(1);\n")),
@@ -174,7 +176,9 @@ fn generic_literals_in_a_tuple_take_its_components_carriers() {
     // An inexact component is an error at that literal.
     assert_eq!(
         type_errors("f(positional p: (f64, f64)) = p;\ny = f((9007199254740993n, 1n));\n"),
-        ["`9007199254740993n` is not an f64 [9007199254740993n]"]
+        [
+            "`9007199254740993n` is not an f64: a literal written with `n` takes the carrier expected only when it is exactly a number of that carrier, and no f64 is exactly this number; write a literal that is exactly an f64, or write the number followed by `r` if the exact rational is meant [9007199254740993n]"
+        ]
     );
 }
 
@@ -505,7 +509,9 @@ fn a_plain_literal_is_rejected_at_each_kind_of_declared_type() {
     );
     assert_eq!(
         type_errors("scaled(x: f64, scale: f64 = \"x\") = x * scale;\n"),
-        ["the default of `scale` is \"x\", not f64 [\"x\"]"]
+        [
+            "the default of `scale` is \"x\", not f64: a default is a value of its parameter's type [\"x\"]"
+        ]
     );
     assert!(type_errors("scaled(x: f64, scale: f64 = 2n) = x * scale;\n").is_empty());
     // A literal in another base has no decimal form: only its generic form is offered.

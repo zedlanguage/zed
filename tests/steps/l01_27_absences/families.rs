@@ -70,7 +70,12 @@ fn narrowing_keeps_the_marking() {
 fn a_family_atom_that_selects_no_arrow_is_an_error() {
     let int = Ty::carrier(Carrier::Int);
     let (_, errors) = operator("+", &[int.clone(), color()]);
-    assert_eq!(errors, ["`+` does not take (int, #blue | #green | #red)"]);
+    assert_eq!(
+        errors,
+        [
+            "`+` does not take (int, #blue | #green | #red): these are the types of its arguments here, and `+` has no arrow that takes them all"
+        ]
+    );
     // Loose, the same atoms flow through.
     let (out, errors) = operator("+", &[int.clone(), color().written()]);
     assert!(errors.is_empty(), "{errors:?}");

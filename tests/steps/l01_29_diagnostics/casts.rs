@@ -38,7 +38,9 @@ fn a_rat_and_an_f64_are_shown_with_their_carriers_and_the_casts_between_them() {
     let out = rejected(&src);
     assert_eq!(
         out.lines().next(),
-        Some("1:25: `+` does not take (rat, f64)"),
+        Some(
+            "1:25: `+` does not take (rat, f64): these are the types of its arguments here, and `+` has no arrow that takes them all"
+        ),
         "{out}"
     );
     let s = steps(&out);
@@ -67,7 +69,7 @@ fn an_int_and_an_f64_offer_f64_of_the_int() {
     let src = program("scaled(n: int, x: f64) = n * x;");
     let out = rejected(&src);
     assert!(
-        out.starts_with("1:26: `*` does not take (int, f64)"),
+        out.starts_with("1:26: `*` does not take (int, f64): these are the types of its arguments here, and `*` has no arrow that takes them all"),
         "{out}"
     );
     assert!(out.contains(&offered("f64(n)")), "{out}");
@@ -93,7 +95,7 @@ fn parameters_without_declared_types_are_shown_with_the_uses_that_gave_their_car
     let src = program("mix(positional a, positional b) = (a * 1r, b * 2.5, a + b);");
     let out = rejected(&src);
     assert!(
-        out.starts_with("1:53: `+` does not take (rat, f64)"),
+        out.starts_with("1:53: `+` does not take (rat, f64): these are the types of its arguments here, and `+` has no arrow that takes them all"),
         "{out}"
     );
     let s = steps(&out);
@@ -140,7 +142,7 @@ fn a_value_with_no_numeric_cast_is_offered_none() {
     let src = program("bump(b: bool, x: f64) = b + x;");
     let out = rejected(&src);
     assert!(
-        out.starts_with("1:25: `+` does not take (bool, f64)"),
+        out.starts_with("1:25: `+` does not take (bool, f64): these are the types of its arguments here, and `+` has no arrow that takes them all"),
         "{out}"
     );
     assert!(!out.contains("repair:"), "{out}");
@@ -302,7 +304,7 @@ fn a_call_of_max_offers_the_casts_of_its_arguments() {
     let src = program("top(r: rat, x: f64) = max(r, x);");
     let out = rejected(&src);
     assert!(
-        out.starts_with("1:23: `max` does not take (rat, f64)"),
+        out.starts_with("1:23: `max` does not take (rat, f64): these are the types of its arguments here, and `max` has no arrow that takes them all"),
         "{out}"
     );
     assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);

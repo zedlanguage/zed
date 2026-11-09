@@ -212,8 +212,8 @@ pub(super) enum Frame<'a> {
     Seen(&'a Expr),
     /// Gives this type in place of the result.
     Const(Ty),
-    /// Reports the error, if any, and gives nothing.
-    Fail(Option<(Span, String)>),
+    /// Reports the error, if any, with its repairs, and gives nothing.
+    Fail(Option<(Span, String, Vec<String>)>),
     Str(Box<StrF<'a>>),
     Unary(&'static str, Span),
     Tuple(Box<TupleF<'a>>),
@@ -642,8 +642,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Fail(err) => {
                 m.take();
-                if let Some((span, message)) = err {
-                    self.error(span, message);
+                if let Some((span, message, menu)) = err {
+                    self.error_offering(span, message, menu);
                 }
                 m.ty(Ty::empty());
             }
@@ -722,7 +722,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let shown = self.show(&c);
                         let mut notes = self.derive(&[cond.span]);
                         notes.extend(self.reasons(&c));
-                        self.error_with(cond.span, format!("{what} is {shown}, not bool"), notes);
+                        notes.push(Note {
+                            span: cond.span,
+                            text: "repair: compare the value, so that the condition is a `bool`, \
+                                   as `if x == 0 { … }` or `if x is int { … }`"
+                                .to_string(),
+                        });
+                        self.error_with(
+                            cond.span,
+                            format!(
+                                "{what} is {shown}, not bool: `if` chooses its branch by a \
+                                 `bool`, and this condition may be another value"
+                            ),
+                            notes,
+                        );
                         break;
                     }
                 }
@@ -963,7 +976,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     unreachable!("a push")
                 };
                 if self.lines_out.contains(port) {
-                    self.pushed(&t, value.span);
+                    self.pushed(&t, port, value.span);
                 }
             }
             Frame::InferGiven(s) => self.infer_given(m, s),
@@ -1008,7 +1021,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let f = m.take_ty();
                 let what = match &callee.kind {
                     ExprKind::Name(n) => n.clone(),
-                    _ => "this value".into(),
+                    _ => "the function called here".into(),
                 };
                 if let (ExprKind::Name(w), Some(Ref::Prelude(_))) =
                     (&callee.kind, self.t.res.uses.get(&callee.span))
@@ -1024,8 +1037,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                         return self.word(m, w, positional, None, span);
                     }
                     // Elaboration reports named arguments and `...`.
-                    let err = (named.is_empty() && !curry)
-                        .then(|| (span, format!("`{w}` takes one argument")));
+                    let err = (named.is_empty() && !curry).then(|| {
+                        let n = positional.len();
+                        let message = format!("`{w}` takes one argument, and this call passes {n}");
+                        let menu = vec![format!("repair: pass one argument, as `{w}(x)`")];
+                        (span, message, menu)
+                    });
                     m.k(Frame::Fail(err));
                     m.each(Args::of(positional, named).exprs());
                     return;
@@ -1113,7 +1130,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let s = only_fn(&t).expect("a lambda's type is a function type");
                 if !self.fits_slot(&s, &e, "the lambda", span) {
                     let (s, e) = (self.sig_text(&s), self.sig_text(&e));
-                    self.error(span, format!("the lambda is `{s}`, not `{e}`"));
+                    let menu = [format!(
+                        "repair: change the lambda so that its parameters and its result have the \
+                         types of `{e}`"
+                    )];
+                    self.error_offering(
+                        span,
+                        format!(
+                            "the lambda is `{s}`, not `{e}`: it is passed where a function of that \
+                             type is expected, and its own type does not fit that one"
+                        ),
+                        menu,
+                    );
                 }
                 self.fitted(span, order, extra);
                 m.ty(Ty::func(e));
@@ -1288,13 +1316,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             | StmtKind::Import(_)
             | StmtKind::Local(_)
             | StmtKind::Annotated { .. } => {
-                unreachable!("resolve rejects the forms of layer L2")
+                unreachable!(
+                    "name resolution rejects every struct, type, method, import, local and annotated definition before the checker reads the program"
+                )
             }
             StmtKind::Mutable(_)
             | StmtKind::IndexedDef(_)
             | StmtKind::While(_)
             | StmtKind::Until(_)
-            | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
+            | StmtKind::Expr(_) => unreachable!(
+                "name resolution rejects every mutable variable, indexed definition, while, until and expression statement before the checker reads the program"
+            ),
             StmtKind::Bind { value, .. } => {
                 m.k(Frame::Bind(s));
                 m.job(Job::Expr(value));
@@ -1496,14 +1528,30 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let mut notes = self.derive(&[d.span]);
                         notes.extend(self.reasons(t));
                         let dt = self.text(&dt);
-                        self.error_with(d.span, format!("{what} is {dt}, not {shown}"), notes);
+                        notes.extend(default_repairs(&p.name, &dt, &shown, d.span));
+                        self.error_with(
+                            d.span,
+                            format!(
+                                "{what} is {dt}, not {shown}: a default is a value of its \
+                                 parameter's type"
+                            ),
+                            notes,
+                        );
                     }
                 }
                 None => {
                     if !self.subtype(&dt, t) {
                         let why = dt.refused(t);
                         let (dt, t) = (self.text(&dt), self.text(t));
-                        self.error(d.span, format!("{what} is {dt}, not {t}{why}"));
+                        let menu = default_repairs(&p.name, &dt, &t, d.span);
+                        self.error_offering(
+                            d.span,
+                            format!(
+                                "{what} is {dt}, not {t}: a default is a value of its parameter's \
+                                 type{why}"
+                            ),
+                            menu.into_iter().map(|n| n.text),
+                        );
                     }
                 }
             }
@@ -1603,7 +1651,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             | ExprKind::With { .. }
             | ExprKind::This
             | ExprKind::Match { .. } => {
-                unreachable!("resolve rejects the forms of layer L2")
+                unreachable!(
+                    "name resolution rejects every record, with, this and match before the checker reads the program"
+                )
             }
             ExprKind::Range(..)
             | ExprKind::In { .. }
@@ -1613,10 +1663,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             | ExprKind::Array(_)
             | ExprKind::Set(_)
             | ExprKind::Map(_)
-            | ExprKind::For { .. } => unreachable!("resolve rejects the forms of layer L3"),
-            ExprKind::SortKey { .. } => unreachable!("resolve rejects the forms of layer L5"),
+            | ExprKind::For { .. } => unreachable!(
+                "name resolution rejects every range, in, reduction, read, section, array, set, map and for before the checker reads the program"
+            ),
+            ExprKind::SortKey { .. } => unreachable!(
+                "name resolution rejects every sort key before the checker reads the program"
+            ),
             ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
-                unreachable!("resolve rejects the forms of layer L6")
+                unreachable!(
+                    "name resolution rejects every loop, break and spread before the checker reads the program"
+                )
             }
             // A `rat` literal is decorated and keeps its carrier.
             ExprKind::Rat(s) => match Rat::decimal(s) {
@@ -2237,7 +2293,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 Piece::Dyn => {
                     self.tried_at(span, None);
-                    self.any(&format!("a call of `{}`", s.what), span);
+                    self.any(&format!("a call of {}", callee(&s.what)), span);
                 }
                 Piece::Var(_) => {
                     self.tried_at(span, None);
@@ -2246,7 +2302,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if p.is_atoms() => {}
                 p => {
                     let shown = self.text(&p.ty());
-                    self.error(span, format!("`{}` is {shown}, not a function", s.what));
+                    let w = &s.what;
+                    let menu = [format!(
+                        "repair: call a function here, or write `{w}` without the parentheses \
+                         if its value is meant"
+                    )];
+                    self.error_offering(
+                        span,
+                        format!(
+                            "`{w}` is {shown}, not a function: this call applies `{w}` to \
+                             arguments, and a value of type {shown} cannot be applied"
+                        ),
+                        menu,
+                    );
                 }
             }
         }
@@ -2398,7 +2466,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let t = match s.curry {
             true => self.partial(&s.sig, args, &s.missing, false, &s.what, s.span),
             false => {
-                let what = format!("`{}`", s.what);
+                let what = callee(&s.what);
                 // Inside a function with a widened parameter, each call records the atoms it
                 // gives from outside: its own when no argument holds a loose atom, else those
                 // of a trial.
@@ -2440,21 +2508,26 @@ impl<'t, 'a> Ck<'t, 'a> {
             for (at, misfit) in misfits {
                 let message = misfit.message(&who);
                 let menu = misfit
-                    .menu()
+                    .menu(&who)
                     .into_iter()
                     .map(|text| Note { span: at, text });
                 match misfit.row() {
                     Some(row) => self.rejects_with(row, at, message, menu.collect()),
-                    None => self.error_with(at, message, Vec::new()),
+                    None => self.error_with(at, message, menu.collect()),
                 }
             }
             return m.ty(Ty::empty());
         }
+        // The first misfit, the one elaboration would report first, explains the refusal.
+        let (at, misfit) = misfits[0];
         let message = format!(
-            "`{what}` does not take these arguments: it is `{}`",
-            self.sig_text(sig)
+            "`{what}` here is a function of type `{}`, and the arguments of this call do not \
+             fit its parameters: {}",
+            self.sig_text(sig),
+            misfit.message(what)
         );
-        m.k(Frame::Fail(Some((span, message))));
+        let menu = misfit.menu(what);
+        m.k(Frame::Fail(Some((at, message, menu))));
         m.each(args.exprs());
     }
 
@@ -2629,7 +2702,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if params.len() < pos.len() {
             let shown = self.sig_text(&e);
             let menu = [format!(
-                "repair: a lambda in the form `{shown}` passes, its first {} parameters taken by \
+                "repair: write the lambda with the parameters of `{shown}`, its first {} taken by \
                  position",
                 pos.len()
             )];
@@ -2637,7 +2710,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Row::ParameterKinds,
                 span,
                 format!(
-                    "the lambda takes {} parameter{}, and `{shown}` passes {} by position",
+                    "the lambda takes {} parameter{}, and `{shown}` passes {} by position: the \
+                     lambda is called as a function of type `{shown}` is, so it needs a \
+                     parameter for each argument passed by position",
                     params.len(),
                     if params.len() == 1 { "" } else { "s" },
                     pos.len()
@@ -2670,8 +2745,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let shown = self.sig_text(&e);
                     let menu = match free.first() {
                         Some(f) => format!("repair: rename `{}` to {f}", p.name),
-                        None => format!("repair: a lambda in the form `{shown}` passes"),
+                        None => {
+                            format!("repair: write the lambda with the parameters of `{shown}`")
+                        }
                     };
+                    let fix = format!(
+                        "{fix}. The lambda is passed where a function of type `{shown}` is \
+                         expected, and a call of it passes each named argument by its name, so \
+                         each parameter the lambda does not take by position must have a name of \
+                         `{shown}` or a default"
+                    );
                     self.rejects_offering(
                         Row::ParameterKinds,
                         p.span,
@@ -2739,9 +2822,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if !self.subtype(&r, &want) {
                     let why = r.refused(&want);
                     let (r, want, e) = (self.text(&r), self.text(&want), self.sig_text(&s.e));
-                    self.error(
+                    let menu = [
+                        format!("repair: change the lambda's body so that it gives {want}"),
+                        format!(
+                            "repair: handle the values that are not {want} in the body, with \
+                             `match` or with `else`"
+                        ),
+                    ];
+                    self.error_offering(
                         s.body.span,
-                        format!("the lambda returns {r}, and `{e}` returns {want}{why}"),
+                        format!(
+                            "the lambda returns {r}, and `{e}` returns {want}: the lambda is \
+                             passed where a function of type `{e}` is expected, so its result must \
+                             be {want}{why}"
+                        ),
+                        menu,
                     );
                 }
                 s.a += 1;
@@ -2764,12 +2859,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 let why = t.refused(&a);
                                 let (ta, tt) = (self.text(&a), self.text(&t));
                                 let e = self.sig_text(&s.e);
-                                self.error(
+                                let name = &p.name;
+                                let menu = [format!(
+                                    "repair: declare `{name}` as {tt}, or with no type, so that it \
+                                     takes every argument `{e}` passes"
+                                )];
+                                self.error_offering(
                                     p.span,
                                     format!(
-                                        "the lambda's parameter `{}` is {ta}, and `{e}` passes {tt}{why}",
-                                        p.name
+                                        "the lambda's parameter `{name}` is {ta}, and `{e}` passes \
+                                         {tt}: the lambda is called as a function of type `{e}` \
+                                         is, so each parameter must take every value passed to \
+                                         it{why}"
                                     ),
+                                    menu,
                                 );
                             }
                             t = a;
@@ -3498,9 +3601,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if p.is_atoms() => {}
                 p => {
                     if i == 0 {
-                        self.error(
+                        let menu = [
+                            format!("repair: give this binding a tuple of {n} components"),
+                            "repair: bind the value to one name, as `t = …;`, and take it apart \
+                             only where a test with `is` has shown it to be a tuple"
+                                .to_string(),
+                        ];
+                        self.error_offering(
                             span,
-                            format!("this value is {}, not a tuple of {n}", self.text(&p.ty())),
+                            format!(
+                                "this value is {}, not a tuple of {n}: it is taken apart into {n} \
+                                 names, one for each component, so it must be a tuple of {n} \
+                                 components",
+                                self.text(&p.ty())
+                            ),
+                            menu,
                         );
                     }
                 }
@@ -3698,11 +3813,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             );
             if !self.merge(k, j, "the value tested", span) {
                 let (kt, jt) = (self.show(&kt), self.show(&jt));
-                self.error(
+                let menu = [format!(
+                    "repair: test for a type that the later uses take, or convert the value \
+                     where it is used as {jt}"
+                )];
+                self.error_offering(
                     span,
                     format!(
-                        "the value this test leaves is used as {jt}, and the value it tests as {kt}"
+                        "the value this test leaves is used as {jt}, and the value it tests as \
+                         {kt}: the test narrows the value it tests, so both uses are of one \
+                         value, and no value is both"
                     ),
+                    menu,
                 );
             }
         }
@@ -3940,11 +4062,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A use checked on a value that flowed in has no call whose argument gave the atoms.
         let passed: Vec<NeedPass> = self.need_passed.drain(start..).collect();
         for (inner, _, k) in passed {
+            let atoms = Ty::set(k);
             let message = format!(
-                "{inner} does not take {}: an atom passes by only at a call given it",
-                Ty::set(k)
+                "{inner} does not take {atoms}: an atom an argument holds passes by a call to the \
+                 call's result, but this value reaches {inner} as no argument of a call, so the \
+                 atom has nowhere to go"
             );
-            self.error(n.span, message);
+            let menu = [format!(
+                "repair: handle {atoms} before the value reaches {inner}, with `else` or `match`"
+            )];
+            self.error_offering(n.span, message, menu);
         }
         if let Some(r) = &n.result
             && let Some(k) = self.class_of_ty(r)
@@ -3952,7 +4079,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             let shown = self.show(r);
             let got = self.text(&got);
-            self.error(n.span, format!("this use gives {got}, not {shown}"));
+            let menu = [
+                "repair: declare the types of the values this use reads, so that it is checked \
+                 where it is written"
+                    .to_string(),
+            ];
+            self.error_offering(
+                n.span,
+                format!(
+                    "this use gives {got}, not {shown}: its result flows into a value that \
+                     other uses have already made {shown}"
+                ),
+                menu,
+            );
         }
         self.also(from, n.span, |_| "this use needs it here".to_string());
     }
@@ -4094,13 +4233,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(o) => {
                     let t = o.shape.clone();
                     let (on, t) = (self.text(&on), self.text(&t));
-                    self.error(
+                    let menu = [
+                        "repair: declare the types of the function's parameters, so that the call \
+                         inside it is checked at those types"
+                            .to_string(),
+                    ];
+                    self.error_offering(
                         span,
                         format!(
                             "{what} needs this of its argument again inside its own check, on \
-                             {on} where it was {t}: the checker does not follow a call at a \
-                             type that may grow without end"
+                             {on} where it was {t}: checking it there would need the same check \
+                             at a larger type again, without end, so the checker stops here"
                         ),
+                        menu,
                     );
                     Ty::empty()
                 }
@@ -4127,13 +4272,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                         if !self.subtype(&got, &first) {
                             let why = got.refused(&first);
                             let (got, first) = (self.text(&got), self.text(&first));
-                            self.error(
+                            let menu = [
+                                "repair: declare the result type of the function, so that its \
+                                 body is checked against it"
+                                    .to_string(),
+                            ];
+                            self.error_offering(
                                 span,
                                 format!(
                                     "{what} needs this of its argument again inside its own \
                                      check, and the result is not settled: it gives {got} \
-                                     where the use inside gave {first}{why}"
+                                     where the use inside gave {first}, so the use has no one \
+                                     result the checker can find{why}"
                                 ),
+                                menu,
                             );
                         }
                     }
@@ -4146,13 +4298,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             if let Some(r) = &n.result {
                 if !self.sub(&got, r, binds) {
                     let why = got.refused(r);
-                    self.error(
+                    let (got, r) = (self.text(&got), self.text(r));
+                    let menu = [format!(
+                        "repair: change the argument, so that {what} gives a value of {r} here"
+                    )];
+                    self.error_offering(
                         span,
                         format!(
-                            "{what} gives {} here, which is not {}{why}",
-                            self.text(&got),
-                            self.text(r)
+                            "{what} gives {got} here, which is not {r}: the use requires a value \
+                             of {r}{why}"
                         ),
+                        menu,
                     );
                 }
                 for v in &r.vars {
@@ -4192,12 +4348,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             if !ok {
                 let p = self.show(&piece.ty());
                 let why = on.of_piece(&piece).refused(ty);
-                self.error(
+                let ty = self.text(ty);
+                let menu = [
+                    format!("repair: pass {what} a value of {ty}"),
+                    format!(
+                        "repair: test the value with `is` first, as `if v is {ty} {{ … }}`, or \
+                         handle the values that are not {ty} with `else` or `match`"
+                    ),
+                ];
+                self.error_offering(
                     span,
                     format!(
-                        "{what} does not take {p}, which is not {}{why}",
-                        self.text(ty)
+                        "{what} does not take {p}, which is not {ty}: {what} takes only values of \
+                         {ty}{why}"
                     ),
+                    menu,
                 );
             }
         }
@@ -4275,7 +4440,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn bind_pattern(&mut self, p: &Pattern, v: &Ty, mut next: usize) {
         let atom_of = |p: &Pattern| -> Arc<str> {
             let Pattern::Atom { name, .. } = p else {
-                unreachable!("resolve rejects the forms of layer L2")
+                unreachable!(
+                    "name resolution accepts no pattern but an atom pattern before the checker reads the program"
+                )
             };
             name.as_str().into()
         };
@@ -4289,7 +4456,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ..
             } = *p
             else {
-                unreachable!("resolve rejects the forms of layer L2")
+                unreachable!(
+                    "name resolution accepts no pattern but an atom pattern before the checker reads the program"
+                )
             };
             let (slot, sub) = match fields.get(*i) {
                 Some((f, sub)) => (Slot::Field(f.as_str().into()), sub.as_ref()),
@@ -4452,9 +4621,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 notes.extend(self.deciding_notes(e));
             }
             notes.extend(self.derive(&[n.at.unwrap_or(span)]));
+            notes.extend(exponent_repairs(span));
             self.error_with(
                 span,
-                format!("`^` on an int needs an exponent of at least 0, and this one is {shown}"),
+                format!(
+                    "`^` on an int needs an exponent of at least 0, and this one is {shown}: an \
+                     int raised to a negative power is a fraction, not an int"
+                ),
                 notes,
             );
         }
@@ -4540,9 +4713,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             let shown = self.show(&Ty::set(ints));
             let what = &d.what;
             let domain = domain_text(d);
-            self.error(
+            self.error_offering(
                 span,
-                format!("{what}, and this value may be {shown}, not shown to be in {domain}"),
+                format!(
+                    "{what}, and this value may be {shown}: the checker cannot show that it lies \
+                     in {domain}"
+                ),
+                domain_repairs(&domain),
             );
         }
         self.no_int_vars(t, d, span);
@@ -4558,11 +4735,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             let k = class_id(v).filter(|&k| k < self.classes.len());
             let Some(r) = k.map(|k| self.find(k)) else {
                 let what = &d.what;
-                self.error(
+                let domain = domain_text(d);
+                self.error_offering(
                     span,
                     format!(
-                        "{what}, and this value is of the type variable `{v}`, which may be int"
+                        "{what}, and this value has the type `{v}`, which stands \
+                         for whatever type the caller passes and may be any int: the checker cannot show that it lies in {domain}"
                     ),
+                    domain_repairs(&domain),
                 );
                 continue;
             };
@@ -4650,8 +4830,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(a) = args.get(*param).and_then(Option::as_ref) else {
                 // A parameter left out takes its default, whose value the call does not show.
                 if sig.params.get(*param).is_some_and(|p| p.default.is_some()) {
-                    let message = format!("{takes}, and its default is not shown to be");
-                    self.error_with(span, message, chain());
+                    let dom = domain_text(domain);
+                    let message = format!(
+                        "{takes}, and this call leaves `{p}` out, so `{p}` takes its default, \
+                         which the checker cannot show lies in {dom}"
+                    );
+                    let mut notes = chain();
+                    notes.extend(
+                        [
+                            format!("repair: pass `{p}` in this call, with a value in {dom}"),
+                            format!("repair: give `{p}` a default in {dom}"),
+                        ]
+                        .into_iter()
+                        .map(|text| Note { span, text }),
+                    );
+                    self.error_with(span, message, notes);
                 }
                 continue;
             };
@@ -4664,8 +4857,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 if !ns.is_empty() && !listed_in(domain, &ns) {
                     let shown = self.show(&Ty::set(ns));
-                    let message = format!("{takes}, and this `{p}` is {shown}");
-                    self.error_with(span, message, chain());
+                    let message = format!("{takes}, and this `{p}` is {shown}{}", outside(domain));
+                    let mut notes = chain();
+                    notes.extend(passed_repairs(&p, domain, span));
+                    self.error_with(span, message, notes);
                 }
                 continue;
             };
@@ -4714,7 +4909,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             self.derive_into(&[at], &mut notes);
             notes.extend(chain());
-            self.error_with(span, format!("{takes}, and this `{p}` is {shown}"), notes);
+            notes.extend(passed_repairs(&p, domain, span));
+            let message = format!("{takes}, and this `{p}` is {shown}{}", outside(domain));
+            self.error_with(span, message, notes);
         }
     }
 
@@ -4727,21 +4924,30 @@ impl<'t, 'a> Ck<'t, 'a> {
         // through, each of which meets the same value, so that fixing the error fixes them all.
         if let Some(s) = t.unchecked_function() {
             let s = self.sig_text(s);
-            let notes = self.derive(&[from]);
+            let mut notes = self.derive(&[from]);
+            notes.extend(data_repairs(span));
             self.error_with(
                 span,
-                format!("{what} takes data, and this value may hold a function, `{s}`"),
+                format!(
+                    "{what} takes data, and this value may hold a function, `{s}`: data is a \
+                     value that holds no function at any depth"
+                ),
                 notes,
             );
         } else if let Some(w) = t.held_wide() {
             // `(..)` and `{..}` hold every tuple and struct, those that hold a function too: a
             // block that ends `return h, 1` gives one.
-            self.error(
+            let notes = data_repairs(span);
+            self.error_with(
                 span,
                 format!(
-                    "{what} takes data, and this value, of `{}`, may hold a function",
+                    "{what} takes data, and this value, of `{}`, may hold a function: data is a \
+                     value that holds no function at any depth, and `{}` holds every value of \
+                     its shape, functions too",
+                    Ty::set(w.clone()),
                     Ty::set(w)
                 ),
+                notes,
             );
         }
         // A class, at any depth, needs data of each of its values. A row that holds no class
@@ -4928,9 +5134,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             let only = |t: &Ty, open: bool| open && t.tuples.is_empty() && rest(t, true);
             if !atoms.is_empty() {
                 let atoms = self.text(&Ty::set(atoms));
-                self.error(
+                self.error_offering(
                     span,
-                    format!("{who} does not order {atoms} in a tuple; handle it before {what}"),
+                    format!(
+                        "{who} does not order {atoms} in a tuple: it compares tuples component by \
+                         component, and an atom has no order among the numbers; handle it before \
+                         {what}"
+                    ),
+                    [format!(
+                        "repair: replace {atoms} by a number before {what}, with `match` or \
+                         `else`, as `v else {atoms} -> 0`"
+                    )],
                 );
             } else if a.tuples.is_empty() && b.tuples.is_empty() {
                 self.apply(
@@ -4948,9 +5162,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 || !rest(b, open[1])
             {
                 let (s, t) = (self.text(a), self.text(b));
-                self.error(
+                self.error_offering(
                     span,
                     format!("{who} does not take {s} and {t}: it takes two tuples or two numbers"),
+                    ["repair: pass two numbers, or two tuples of the same length".to_string()],
                 );
             } else {
                 // The components at each position of the shapes of each length.
@@ -4963,9 +5178,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 for (n, [s, t]) in by_len {
                     if s.is_empty() || t.is_empty() {
                         let (s, t) = (self.text(a), self.text(b));
-                        self.error(
+                        self.error_offering(
                             span,
-                            format!("{who} does not take {s} and {t}: a tuple of {n} components has none of its length to compare with"),
+                            format!(
+                                "{who} does not take {s} and {t}: a tuple of {n} components has \
+                                 none of its length to compare with"
+                            ),
+                            [format!(
+                                "repair: pass two tuples of the same length, both of {n} \
+                                 components or both of another length"
+                            )],
                         );
                         continue;
                     }
@@ -5065,9 +5287,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 notes.extend(self.deciding_notes(e));
             }
             self.derive_into(&[at], &mut notes);
+            notes.extend(
+                domain_repairs("int[0..]")
+                    .into_iter()
+                    .map(|text| Note { span, text }),
+            );
             self.error_with(
                 span,
-                format!("`{w}` takes `{name}` in int[0..], and this `{name}` is {shown}"),
+                format!(
+                    "`{w}` takes `{name}` in int[0..], and this `{name}` is {shown}: `{w}` reads \
+                     `{name}` as binary digits, and an int below 0 has no finite row of them"
+                ),
                 notes,
             );
         }
@@ -5104,9 +5334,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let mut notes = vec![Note {
                 span: at,
-                text: format!("`{name}` is this operand, of a type variable"),
+                text: format!("`{name}` is this operand, of no declared type"),
             }];
             self.derive_into(&[at], &mut notes);
+            notes.push(Note {
+                span: at,
+                text: format!(
+                    "repair: declare the type of `{name}` where it is bound, as \
+                     `{name}: int[0..<2 ^ 32]`"
+                ),
+            });
             let checks = match i == last {
                 true => "its operands".to_string(),
                 false => format!("`{name}`"),
@@ -5114,8 +5351,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.error_with(
                 span,
                 format!(
-                    "`{w}` checks {checks} against `width`, and the checker does not follow \
-                     that check through a value of a type variable: declare the type of `{name}`"
+                    "`{w}` checks {checks} against `width`, and `{name}` has no declared type \
+                     here, so its values are whatever the caller passes; the checker does not \
+                     follow this check back to each caller, so it needs the type of `{name}` \
+                     declared"
                 ),
                 notes,
             );
@@ -5133,9 +5372,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 text: format!("`width` is this operand, {sw}"),
             }];
             self.derive_into(&[aw], &mut notes);
+            notes.push(Note {
+                span,
+                text: "repair: pass a `width` that is a multiple of 8, such as 8, 16, 32 or 64"
+                    .to_string(),
+            });
             self.error_with(
                 span,
-                format!("`{w}` takes `width` a multiple of 8, and this `width` is {sw}"),
+                format!(
+                    "`{w}` takes `width` a multiple of 8, and this `width` is {sw}: `{w}` works on \
+                     whole bytes, and the checker found that this `width` may not be a whole \
+                     number of bytes"
+                ),
                 notes,
             );
             return;
@@ -5240,7 +5488,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter(|v| !given.contains(v))
             .collect();
         self.leaving = missing.to_vec();
-        let (result, kept) = self.apply(&format!("`{what}`"), sig, args, false, span);
+        let (result, kept) = self.apply(&callee(what), sig, args, false, span);
         let Some((binds, needs)) = self.applied.take() else {
             return result;
         };
@@ -5327,7 +5575,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if p.is_atoms() => {}
                 p => {
                     let shown = self.text(&p.ty());
-                    self.error(span, format!("this value is {shown}, not a function"));
+                    self.error_offering(
+                        span,
+                        format!(
+                            "this value is {shown}, not a function: this call applies it to an \
+                             argument, and a value of type {shown} cannot be applied"
+                        ),
+                        ["repair: call a function here, or drop the argument list after the value"
+                            .to_string()],
+                    );
                 }
             }
         }
@@ -5349,13 +5605,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 Piece::Tuple(cs) => match i.and_then(|i| cs.get(i)) {
                     Some(c) => out = out.union(c),
-                    None => self.error(
-                        span,
-                        format!(
-                            "{} has no component {shown}",
-                            self.text(&Ty::of_row(cs.clone()))
-                        ),
-                    ),
+                    None => {
+                        let tuple = self.text(&Ty::of_row(cs.clone()));
+                        self.no_component(&tuple, cs.len(), &shown, span);
+                    }
                 },
                 Piece::Var(_) if let Some(k) = self.class_of(&p) => {
                     let kind = NeedKind::Component {
@@ -5369,7 +5622,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if p.is_atoms() => {}
                 p => {
                     let t = self.text(&p.ty());
-                    self.error(span, format!("`[{shown}]` takes a tuple, not {t}"))
+                    self.error_offering(
+                        span,
+                        format!(
+                            "`[{shown}]` takes a tuple, not {t}: an index picks a component of a \
+                             tuple or an entry of a family, and {t} has neither"
+                        ),
+                        [format!(
+                            "repair: index a tuple or a family, or drop `[{shown}]`"
+                        )],
+                    )
                 }
             }
         }
@@ -5483,7 +5745,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                 false => String::new(),
             };
             let (s, e) = (self.sig_text(&s), self.sig_text(e));
-            self.error(span, format!("`{}` is `{s}`, not `{e}`{why}", f.name));
+            let why = match why.is_empty() {
+                true => ": it is passed where a function of that type is expected, and its own \
+                         type does not fit that one"
+                    .to_string(),
+                false => why,
+            };
+            let name = &f.name;
+            self.error_offering(
+                span,
+                format!("`{name}` is `{s}`, not `{e}`{why}"),
+                [
+                    format!("repair: pass a function of type `{e}` in place of `{name}`"),
+                    format!(
+                        "repair: pass a lambda of type `{e}` that calls `{name}` with the \
+                         arguments it takes"
+                    ),
+                ],
+            );
         }
         if from.iter().enumerate().any(|(i, &j)| i != j) {
             self.put(Undo::Fit(span, Some(Fit::Adapter { from })));
@@ -5917,7 +6196,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if a.lit.is_some() {
                 if !self.sub(&ty, p, &mut binds) {
                     let why = ty.refused(p);
-                    return Err(format!("{}{why}", self.rejected(what, args)));
+                    return Err(self.rejected_because(what, args, &why));
                 }
                 continue;
             }
@@ -6153,7 +6432,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     path.iter().map(|p| p.as_ref().map(Piece::ty)).collect();
                 let pieces: Vec<Option<&Ty>> = pieces.iter().map(Option::as_ref).collect();
                 let why = refused_among(sig, &kept, &pieces);
-                format!("{what} does not take ({}){why}", shown.join(", "))
+                super::does_not_take(what, &shown.join(", "), &why)
             };
             match (class, at) {
                 (Some(k), Some(at)) => {
@@ -6208,6 +6487,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         Ok((out, kept))
     }
 
+    /// Reports `sum` at `span` given `shown`, which is not a tuple of numbers.
+    fn sum_refused(&mut self, shown: &str, span: Span) {
+        self.error_offering(
+            span,
+            format!(
+                "`sum` does not take ({shown}): `sum` adds the components of a tuple, and they \
+                 must all be numbers"
+            ),
+            [
+                "repair: pass a tuple whose components are all numbers, as `sum((1, 2, 3))`"
+                    .to_string(),
+            ],
+        );
+    }
+
     /// `sum` of a tuple: its components added in turn, `0` for the empty tuple; atoms pass.
     fn sum(&mut self, x: Arg<'a>, span: Span) -> Ty {
         let t = &x.ty;
@@ -6216,6 +6510,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         for p in t.pieces() {
             match p {
                 Piece::Tuple(cs) => {
+                    // A component that holds a value of no number is the tuple's fault, not
+                    // that of one `+`, so the message names the tuple.
+                    let not_number = |p: &Piece| {
+                        !matches!(p, Piece::Var(_))
+                            && !p.is_atoms()
+                            && !p.carrier().is_some_and(Carrier::numeric)
+                    };
+                    if cs.iter().any(|c| c.pieces().iter().any(not_number)) {
+                        let shown: Vec<String> = cs.iter().map(|c| self.text(c)).collect();
+                        self.sum_refused(&shown.join(", "), span);
+                        continue;
+                    }
                     // The components as `+` takes them: a literal written in the tuple stays
                     // one, and adopts the carrier of the others, which are added first. Each
                     // `+` takes its two operands in the order they are written, as a message
@@ -6232,7 +6538,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     for (i, c) in args {
                         let pair = if i < at { [c, acc] } else { [acc, c] };
                         let ty = self
-                            .apply("`sum`", &add, pair.map(Some).to_vec(), true, span)
+                            .apply("`+` in `sum`", &add, pair.map(Some).to_vec(), true, span)
                             .0;
                         (at, acc) = (at.min(i), Arg::of(ty));
                     }
@@ -6243,7 +6549,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             && !p.carrier().is_some_and(Carrier::numeric)
                     }) {
                         let shown = self.text(&c.ty());
-                        self.error(span, format!("`sum` does not take ({shown})"));
+                        self.sum_refused(&shown, span);
                     }
                     out = out.union(&acc);
                 }
@@ -6263,10 +6569,95 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if p.is_atoms() => {}
                 p => {
                     let shown = self.text(&p.ty());
-                    self.error(span, format!("`sum` does not take ({shown})"))
+                    self.sum_refused(&shown, span)
                 }
             }
         }
         out
     }
+}
+
+/// The repairs of a default of type `got` for the parameter `name` of type `want`, each placed
+/// at the default, `span`.
+fn default_repairs(name: &str, got: &str, want: &str, span: Span) -> Vec<Note> {
+    [
+        format!("repair: write a default of type {want}"),
+        format!("repair: declare `{name}` with a type that holds {got} as well, as `{name}: {want} | {got}`"),
+    ]
+    .into_iter()
+    .map(|text| Note { span, text })
+    .collect()
+}
+
+/// The repairs of an int `^` whose exponent may be below 0, at `span`.
+fn exponent_repairs(span: Span) -> Vec<Note> {
+    [
+        "repair: test the exponent first, as `if n >= 0 { x ^ n } else { … }`, so that inside \
+         the branch it is at least 0",
+        "repair: declare the exponent with a type of no int below 0, as `n: int[0..]`",
+    ]
+    .into_iter()
+    .map(|text| Note {
+        span,
+        text: text.to_string(),
+    })
+    .collect()
+}
+
+/// The repairs of a value that may lie outside the ints `domain` a use needs.
+fn domain_repairs(domain: &str) -> Vec<String> {
+    vec![
+        format!(
+            "repair: test the value first, as `if v is {domain} {{ … }} else {{ … }}`, so that \
+             inside the branch it lies in {domain}"
+        ),
+        format!("repair: declare the value with a type in {domain}, as `v: {domain}`"),
+    ]
+}
+
+/// The callee of a call as a message names it: a name in code quotes, and the words that
+/// stand for a callee written as an expression as they are.
+fn callee(what: &str) -> String {
+    match what.contains(' ') {
+        true => what.to_string(),
+        false => format!("`{what}`"),
+    }
+}
+
+/// The repairs of a value that holds a function where data is taken, at `span`.
+fn data_repairs(span: Span) -> Vec<Note> {
+    [
+        "repair: call the function before the value gets here, so that the value holds its \
+         result and not the function",
+        "repair: keep the function under its own name, out of the value",
+    ]
+    .into_iter()
+    .map(|text| Note {
+        span,
+        text: text.to_string(),
+    })
+    .collect()
+}
+
+/// Why an argument outside the ints `d` is refused: the use it reaches needs ints in `d`.
+fn outside(d: &IntDomain) -> String {
+    format!(
+        ": a value outside {} would reach a use that does not take it",
+        domain_text(d)
+    )
+}
+
+/// The repairs of an argument `p` that may lie outside the ints `d` its use needs.
+fn passed_repairs(p: &str, d: &IntDomain, span: Span) -> Vec<Note> {
+    let dom = domain_text(d);
+    [
+        format!(
+            "repair: test the argument first, as `if v is {dom} {{ … }} else {{ … }}`, and pass \
+             it as `{p}` inside the branch"
+        ),
+        format!("repair: declare the value passed as `{p}` with a type in {dom}"),
+    ]
+    .into_iter()
+    .map(|text| Note { span, text })
+    .collect()
 }

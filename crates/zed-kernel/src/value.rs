@@ -2317,34 +2317,78 @@ pub enum KernelError {
     },
 }
 
+/// Where a bug in zedc is reported: a message for a broken invariant names it
+/// (DESIGN.md sec:diagnostics).
+pub const REPORT_TO: &str = "https://github.com/zedlanguage/zed/issues";
+
 impl fmt::Display for KernelError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             KernelError::Collision { keypath } => {
-                write!(f, "collision: two writers for keypath [")?;
+                write!(f, "two entries were written at the same key path, [")?;
                 for (i, k) in keypath.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{k}")?;
                 }
-                write!(f, "]")
+                write!(
+                    f,
+                    "], of one family (or one entry's key path begins another's), and a family \
+                     holds one value at each key path; the program does not say which of the \
+                     two to keep or how to combine them. To repair it, make the keys distinct, \
+                     or combine the values that share a key with a reduction such as `sum`"
+                )
             }
-            KernelError::EmptyKeypath => write!(f, "a key map returned an empty keypath"),
-            KernelError::MixedDepth => write!(f, "fold over leaves at another depth than its own"),
-            KernelError::Type(msg) => write!(f, "type error: {msg}"),
-            KernelError::UnknownPort(name) => write!(f, "unknown port `{name}`"),
-            KernelError::Port(name, why) => write!(f, "port `{name}`: {why}"),
-            KernelError::OutOfFuel => write!(f, "out of fuel"),
+            KernelError::EmptyKeypath => write!(
+                f,
+                "a key function gave the empty key path `[]` for an entry, and every entry of \
+                 a family needs at least one key. To repair it, make the key function give at \
+                 least one key for every value"
+            ),
+            KernelError::MixedDepth => write!(
+                f,
+                "a reduction collapses one level of a family's keys, and this family holds \
+                 values at more than one depth of keys, so it has no one level to collapse. \
+                 To repair it, give every entry of the family the same number of keys"
+            ),
+            KernelError::Type(msg) => write!(
+                f,
+                "the run stopped because of a bug in zedc itself, not in your program: a \
+                 program the checker accepts never gives an operation a value it cannot take, \
+                 and here the evaluator met this: {msg}. Please report it at {REPORT_TO}, with \
+                 the command line you ran and the files it read, so that it can be repeated"
+            ),
+            KernelError::UnknownPort(name) => write!(
+                f,
+                "the program uses the port `{name}`, and the run was given no port of that \
+                 name. To repair it, declare `{name}` as a port of `main`, or remove the use"
+            ),
+            KernelError::Port(name, why) => {
+                write!(f, "the port `{name}` could not answer a read: {why}")
+            }
+            KernelError::OutOfFuel => write!(
+                f,
+                "the evaluation stopped after the number of steps it was allowed: a recursion \
+                 or a `gen` loop did not finish within them, so it may never finish. To repair \
+                 it, make each step of the recursion or loop come closer to its end"
+            ),
             KernelError::Stalled { keys } => {
-                write!(f, "recursion stalled: entries ")?;
+                write!(
+                    f,
+                    "the recursive definition could not finish: the entries at keys "
+                )?;
                 for (i, k) in keys.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{k}")?;
                 }
-                write!(f, " depend on each other")
+                write!(
+                    f,
+                    " each wait for another of them, so none of them ever gets a value. To \
+                     repair it, give at least one of them a value that does not read the others"
+                )
             }
             KernelError::NumberTooLarge { op, bits } => write!(
                 f,
@@ -2703,28 +2747,47 @@ mod tests {
         };
         assert_eq!(
             c.to_string(),
-            r#"collision: two writers for keypath ["ann", 2]"#
+            r#"two entries were written at the same key path, ["ann", 2], of one family (or one entry's key path begins another's), and a family holds one value at each key path; the program does not say which of the two to keep or how to combine them. To repair it, make the keys distinct, or combine the values that share a key with a reduction such as `sum`"#
         );
         assert_eq!(
             KernelError::EmptyKeypath.to_string(),
-            "a key map returned an empty keypath"
+            "a key function gave the empty key path `[]` for an entry, and every entry of a \
+             family needs at least one key. To repair it, make the key function give at least \
+             one key for every value"
         );
         assert_eq!(
             KernelError::MixedDepth.to_string(),
-            "fold over leaves at another depth than its own"
+            "a reduction collapses one level of a family's keys, and this family holds values \
+             at more than one depth of keys, so it has no one level to collapse. To repair it, \
+             give every entry of the family the same number of keys"
         );
-        assert_eq!(KernelError::Type("x".into()).to_string(), "type error: x");
+        assert_eq!(
+            KernelError::Type("`+` applied to `int`, `bool`".into()).to_string(),
+            "the run stopped because of a bug in zedc itself, not in your program: a program \
+             the checker accepts never gives an operation a value it cannot take, and here the \
+             evaluator met this: `+` applied to `int`, `bool`. Please report it at \
+             https://github.com/zedlanguage/zed/issues, with the command line you ran and the \
+             files it read, so that it can be repeated"
+        );
         assert_eq!(
             KernelError::UnknownPort("p".into()).to_string(),
-            "unknown port `p`"
+            "the program uses the port `p`, and the run was given no port of that name. To \
+             repair it, declare `p` as a port of `main`, or remove the use"
         );
-        assert_eq!(KernelError::OutOfFuel.to_string(), "out of fuel");
+        assert_eq!(
+            KernelError::OutOfFuel.to_string(),
+            "the evaluation stopped after the number of steps it was allowed: a recursion or a \
+             `gen` loop did not finish within them, so it may never finish. To repair it, make \
+             each step of the recursion or loop come closer to its end"
+        );
         let s = KernelError::Stalled {
             keys: vec![Value::Int(1), Value::Int(2)],
         };
         assert_eq!(
             s.to_string(),
-            "recursion stalled: entries 1, 2 depend on each other"
+            "the recursive definition could not finish: the entries at keys 1, 2 each wait for \
+             another of them, so none of them ever gets a value. To repair it, give at least \
+             one of them a value that does not read the others"
         );
     }
 

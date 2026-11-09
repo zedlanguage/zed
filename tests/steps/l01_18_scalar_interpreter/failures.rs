@@ -62,7 +62,9 @@ fn euclidean_division_keeps_the_remainder_non_negative() {
 fn mixed_kinds_select_no_arrow() {
     assert_eq!(
         errors("x = \"a\" ++ 1;\n"),
-        ["`++` does not take (\"a\", 1) [\"a\" ++ 1]"]
+        [
+            "`++` does not take (\"a\", 1): these are the types of its arguments here, and `++` has no arrow that takes them all [\"a\" ++ 1]"
+        ]
     );
     // A literal keeps its kind: `1.5` is no int, and no form of it is.
     assert_eq!(

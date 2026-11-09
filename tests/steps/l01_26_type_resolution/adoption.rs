@@ -70,7 +70,9 @@ fn a_literal_argument_keeps_its_carrier() {
     // Within a body too: `x / 2` leaves `x` int, which `/` does not take.
     assert_eq!(
         type_errors("half(x) = x / 2;\n"),
-        ["`/` does not take (int, int) [x / 2]"]
+        [
+            "`/` does not take (int, int): these are the types of its arguments here, and `/` has no arrow that takes them all [x / 2]"
+        ]
     );
     assert_eq!(value("half(x) = x / 2.0;\ny = half(x: 3.0);\n", "y"), "1.5");
 }
@@ -88,7 +90,9 @@ fn a_generic_literal_that_cannot_take_a_carrier_exactly_is_an_error() {
     );
     assert_eq!(
         type_errors(&format!("{f}y = f(9007199254740993n);\n")),
-        ["`9007199254740993n` is not an f64 [9007199254740993n]"]
+        [
+            "`9007199254740993n` is not an f64: a literal written with `n` takes the carrier expected only when it is exactly a number of that carrier, and no f64 is exactly this number; write a literal that is exactly an f64, or write the number followed by `r` if the exact rational is meant [9007199254740993n]"
+        ]
     );
     assert_eq!(
         value(&format!("{f}y = f(9007199254740992n);\n"), "y"),

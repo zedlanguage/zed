@@ -19,7 +19,7 @@ l01_21_test_runner/zed/labels.zed
     Diagnostic {
         line: 5,
         col: 5,
-        message: "missing argument `city` of `label`",
+        message: "this call of `label` gives no value to its parameter `city`, and `city` has no default, so the call cannot be made",
         steps: [
             Step {
                 line: 3,
@@ -31,14 +31,14 @@ l01_21_test_runner/zed/labels.zed
             Step {
                 line: 5,
                 col: 5,
-                text: "repair: supply `city`",
+                text: "repair: pass a value for `city` in this call",
                 source: "a = label();                                // ✗ Missing argument: name has no default",
                 width: 7,
             },
             Step {
                 line: 5,
                 col: 5,
-                text: "repair: declare a default for `city`",
+                text: "repair: give `city` a default in the declaration of `label`, as `city = …`",
                 source: "a = label();                                // ✗ Missing argument: name has no default",
                 width: 7,
             },
@@ -50,7 +50,7 @@ l01_21_test_runner/zed/labels.zed
     Diagnostic {
         line: 5,
         col: 5,
-        message: "missing argument `name` of `label`",
+        message: "this call of `label` gives no value to its parameter `name`, and `name` has no default, so the call cannot be made",
         steps: [
             Step {
                 line: 3,
@@ -62,14 +62,14 @@ l01_21_test_runner/zed/labels.zed
             Step {
                 line: 5,
                 col: 5,
-                text: "repair: supply `name`",
+                text: "repair: pass a value for `name` in this call",
                 source: "a = label();                                // ✗ Missing argument: name has no default",
                 width: 7,
             },
             Step {
                 line: 5,
                 col: 5,
-                text: "repair: declare a default for `name`",
+                text: "repair: give `name` a default in the declaration of `label`, as `name = …`",
                 source: "a = label();                                // ✗ Missing argument: name has no default",
                 width: 7,
             },
@@ -81,7 +81,7 @@ l01_21_test_runner/zed/labels.zed
     Diagnostic {
         line: 6,
         col: 17,
-        message: "`name` of `label` is positional: pass it by position",
+        message: "this argument is passed by name, as `name: …`, and `name` of `label` is declared `positional`, so a call passes it only by position",
         steps: [
             Step {
                 line: 3,
@@ -93,14 +93,14 @@ l01_21_test_runner/zed/labels.zed
             Step {
                 line: 6,
                 col: 17,
-                text: "repair: pass `name` by position",
+                text: "repair: pass `name` by position: remove `name: ` and put the value in `name`'s place among the arguments",
                 source: "b = label(name: \"Ada\", city: \"Leeds\");      // ✗ Argument in the wrong form: name is positional",
                 width: 5,
             },
             Step {
                 line: 6,
                 col: 17,
-                text: "repair: remove `positional` from the declaration of `name`",
+                text: "repair: remove `positional` from the declaration of `name` in `label`",
                 source: "b = label(name: \"Ada\", city: \"Leeds\");      // ✗ Argument in the wrong form: name is positional",
                 width: 5,
             },
@@ -112,7 +112,7 @@ l01_21_test_runner/zed/labels.zed
     Diagnostic {
         line: 7,
         col: 5,
-        message: "`...` leaves no named parameter out",
+        message: "this call of `label` ends in `...`, which makes a function of the named parameters the call leaves out, and the call gives every named parameter a value, so `...` has no parameter to leave out",
         steps: [
             Step {
                 line: 3,
@@ -136,7 +136,7 @@ l01_21_test_runner/zed/labels.zed
     Diagnostic {
         line: 8,
         col: 25,
-        message: "the lambda's parameter `g` is not a parameter of `(grams: int) -> String`: rename it `grams`",
+        message: "the lambda's parameter `g` is not a parameter of `(grams: int) -> String`: rename it `grams`. The lambda is passed where a function of type `(grams: int) -> String` is expected, and a call of it passes each named argument by its name, so each parameter the lambda does not take by position must have a name of `(grams: int) -> String` or a default",
         steps: [
             Step {
                 line: 4,
@@ -190,7 +190,7 @@ l01_29_diagnostics/zed/narrowed.zed
     Diagnostic {
         line: 3,
         col: 22,
-        message: "`++` does not take (int, \"x\")",
+        message: "`++` does not take (int, \"x\"): these are the types of its arguments here, and `++` has no arrow that takes them all",
         steps: [
             Step {
                 line: 3,

@@ -4852,28 +4852,39 @@ impl Refusal {
             Refusal::Fork => {
                 "no value of it was found, and two of the tuple types involved differ in a \
                  component whose type refers back to itself; following both at once can take \
-                 time exponential in the size of the types"
+                 time exponential in the size of the types, so the checker does not try; write \
+                 the two tuple types so that they agree in that component, or test the value \
+                 with `is` first"
             }
             Refusal::Residues => {
-                "its lengths are residues of periodic lists, and deciding whether the excluded \
-                 lists cover them is the covering problem for residues (NP-hard)"
+                "the types involved allow list lengths that repeat with a period, and telling \
+                 whether the lengths they exclude cover all the lengths left can take time \
+                 exponential in the number of periods, so the checker does not try; write the \
+                 lengths allowed as one list type, or test the length with `is` first"
             }
             Refusal::TupleSplit => {
-                "a tuple part is decided only by a case split in more than one component at \
-                 once; write the case split as a union"
+                "one part of the tuple types involved is decided only by splitting more than \
+                 one of its components into cases at once, which the checker does not do; \
+                 write those cases out as a union of tuple types"
             }
             Refusal::SharedCells(j) => {
                 return format!(
-                    "a tuple part meets parts that pick cells of component {j} in different ways, \
-                 and comparing them is the Orthogonal Vectors problem (no method below \
-                 quadratic time is known); write the meet as a union of cases on component {j}"
+                    "the tuple types involved combine, with `&` or `|`, types that restrict \
+                     component {j} of a tuple in different ways, and comparing every pair of \
+                     them takes time that grows with the square of their number, so the \
+                     checker does not try; write the combination as a union of cases on \
+                     component {j}"
                 );
             }
             Refusal::MorphismSplit => {
-                "a function part is decided neither by the types it forces nor by a split into \
-                 its function types"
+                "one part of the function types involved is decided neither by the types its \
+                 arguments must have nor by splitting it into its separate function types; \
+                 write the function type as one type `(…) -> …`, or as a union of them"
             }
-            Refusal::NoWitness => "it was not proved empty, and no value of it could be built",
+            Refusal::NoWitness => {
+                "the checker could neither show that no value has the type nor build a value \
+                 that has it; write the type more simply, or test the value with `is` first"
+            }
         };
         text.to_owned()
     }

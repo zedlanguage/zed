@@ -325,13 +325,16 @@ fn a_use_that_takes_data_refuses_every_tuple() {
         ("String(x)", "`String`", "String(x)"),
     ] {
         let text = format!("f(x: (..)) = {body};\n{call}");
-        let want =
-            format!("{what} takes data, and this value, of `(..)`, may hold a function [{at}]");
+        let want = format!(
+            "{what} takes data, and this value, of `(..)`, may hold a function: data is a value that holds no function at any depth, and `(..)` holds every value of its shape, functions too [{at}]"
+        );
         assert_eq!(errors(&text), [want], "{text}");
     }
     assert_eq!(
         errors("f(x: (int, (..))) = x == x;\n"),
-        ["`==` takes data, and this value, of `(..)`, may hold a function [x == x]"]
+        [
+            "`==` takes data, and this value, of `(..)`, may hold a function: data is a value that holds no function at any depth, and `(..)` holds every value of its shape, functions too [x == x]"
+        ]
     );
     // A tuple whose shape is written holds what its components hold.
     assert_eq!(errors("f(x: (int, int)) = x == x;\n"), Vec::<String>::new());
@@ -474,7 +477,7 @@ fn functions_unlike_on_both_sides_at_one_place_are_refused() {
     );
     assert!(!t.subtype(&u));
     assert!(
-        t.refused(&u).contains("not decided: two or more functions"),
+        t.refused(&u).contains("because two or more functions"),
         "{}",
         t.refused(&u)
     );

@@ -332,7 +332,10 @@ fn a_second_stop_through_functions_is_not_compared() {
     let mut u = stops_reaching_functions(3);
     u.defs.push(def("z", add(var("b0"), int(1)), true));
     u.defs.push(def("y", var("f0"), false));
-    let error = "the error `type error: `+` applied to `bool`, `int``";
+    let error = format!(
+        "the error `{}`",
+        zed_kernel::KernelError::Type("`+` applied to `bool`, `int`".into())
+    );
     let r = bindings(&u, &[("refuse", &refuse)]);
     let expected = |b: &str, want: &str| {
         format!("binding `{b}`: the interpreter gives {want}, and refuse gives the error `refused`")
@@ -341,12 +344,12 @@ fn a_second_stop_through_functions_is_not_compared() {
         r.mismatches,
         vec![
             expected("c0", "the value 0"),
-            expected("b0", error),
+            expected("b0", &error),
             expected("c1", "the value 1"),
             expected("b1", AFTER_B0),
             expected("c2", AFTER_B0),
             expected("b2", AFTER_B0),
-            expected("z", error),
+            expected("z", &error),
         ]
     );
     let not = |b: &str| format!("binding `{b}`: not compared, as {}", &AFTER_B0[15..]);

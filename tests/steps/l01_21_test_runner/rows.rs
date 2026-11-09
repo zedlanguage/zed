@@ -71,7 +71,7 @@ a = label(city: \"Leeds\");    // ✗ Argument in the wrong form: but the name i
         checks(unit),
         [
             "2:5: the mark names the row \"Argument in the wrong form\", and the diagnostic is \
-             in the row \"Missing argument\": missing argument `name` of `label`"
+             in the row \"Missing argument\": this call of `label` gives no value to its parameter `name`, and `name` has no default, so the call cannot be made"
         ]
     );
 }

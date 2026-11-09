@@ -64,7 +64,9 @@ fn a_chain_of_or_narrows_nothing_where_it_holds() {
             "f(x: int | String, y: int | String) = \
              if (x is int || y is int) && x > 0 { 1 } else { 0 };\n"
         ),
-        ["`>` does not take (String, 0) [x > 0]"]
+        [
+            "`>` does not take (String, 0): these are the types of its arguments here, and `>` has no arrow that takes them all [x > 0]"
+        ]
     );
 }
 
@@ -75,7 +77,9 @@ fn a_side_far_along_a_chain_is_checked_with_the_tests_that_hold_there() {
             "f(x: int | String, y: int | String) = \
              if y is String && x is int && len(y) > 0 && len(x) > 2 { 1 } else { 0 };\n"
         ),
-        ["`len` does not take (int) [len(x)]"]
+        [
+            "`len` does not take (int): these are the types of its arguments here, and `len` has no arrow that takes them all [len(x)]"
+        ]
     );
 }
 
@@ -99,7 +103,9 @@ fn the_narrowing_of_a_chain_ends_with_its_branch() {
              x * 2\n\
              };\n"
         ),
-        ["`*` does not take (String, 2) [x * 2]"]
+        [
+            "`*` does not take (String, 2): these are the types of its arguments here, and `*` has no arrow that takes them all [x * 2]"
+        ]
     );
 }
 

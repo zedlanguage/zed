@@ -298,7 +298,10 @@ fn curried_refusal_message(d: usize, uses: usize, at: usize, result: &str) -> St
         let p = if d - 1 - i == at { "String" } else { "int" };
         format!("({p}) -> {}", if i == 0 { r } else { format!("({r})") })
     });
-    format!("`g` is `{given}`, not `{expected}` [g]")
+    format!(
+        "`g` is `{given}`, not `{expected}`: it is passed where a function of that type is \
+         expected, and its own type does not fit that one [g]"
+    )
 }
 
 #[test]

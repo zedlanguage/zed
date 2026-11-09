@@ -33,31 +33,31 @@ fn call_rules() {
     let cases = [
         (
             "x = greet(name: \"Al\");",
-            "`name` of `greet` is positional: pass it by position [\"Al\"]",
+            "this argument is passed by name, as `name: …`, and `name` of `greet` is declared `positional`, so a call passes it only by position [\"Al\"]",
         ),
         (
             "x = greet(punct: \"?\");",
-            "missing argument `name` of `greet` [greet(punct: \"?\")]",
+            "this call of `greet` gives no value to its parameter `name`, and `name` has no default, so the call cannot be made [greet(punct: \"?\")]",
         ),
         (
             "x = greet(\"Al\", \"?\");",
-            "`punct` of `greet` is named: pass it as `punct: …` [\"?\"]",
+            "this argument is passed by position, and the parameter it reaches, `punct` of `greet`, is a named parameter, which a call passes only by name, as `punct: …` [\"?\"]",
         ),
         (
             "x = greet(\"Al\", tone: 1);",
-            "`greet` has no parameter `tone` [1]",
+            "this argument is passed by the name `tone`, and `greet` has no parameter of that name, so the argument has no parameter to go to [1]",
         ),
         (
             "x = greet(\"Al\", punct: \"?\", ...);",
-            "`...` leaves no named parameter out [greet(\"Al\", punct: \"?\", ...)]",
+            "this call of `greet` ends in `...`, which makes a function of the named parameters the call leaves out, and the call gives every named parameter a value, so `...` has no parameter to leave out [greet(\"Al\", punct: \"?\", ...)]",
         ),
         (
             "x = greet(punct: \"?\", ...);",
-            "`...` curries named parameters only; the positional `name` is left out [greet(punct: \"?\", ...)]",
+            "this call of `greet` ends in `...`, which makes a function of the named parameters the call leaves out, and the call also leaves out `name`, a positional parameter, which `...` cannot leave out [greet(punct: \"?\", ...)]",
         ),
         (
             "x = \"Al\".greet(\"?\");",
-            "`punct` of `greet` is named: pass it as `punct: …` [\"?\"]",
+            "this argument is passed by position, and the parameter it reaches, `punct` of `greet`, is a named parameter, which a call passes only by name, as `punct: …` [\"?\"]",
         ),
     ];
     for (call, want) in cases {
@@ -68,7 +68,10 @@ fn call_rules() {
 #[test]
 fn too_many_arguments() {
     let e = one("pair(positional a, positional b) = (a, b);\nx = 1.pair(2, 3);\n");
-    assert_eq!(e, "too many arguments: `pair` takes 2 [3]");
+    assert_eq!(
+        e,
+        "this argument is one more than `pair` takes: `pair` takes 2 arguments by position, and the arguments before this one already fill them all [3]"
+    );
 }
 
 #[test]
@@ -86,7 +89,7 @@ fn named_arguments_through_a_value_need_its_parameter_names() {
     let e = one("inc = x -> x + 1;\ny = inc(x: 1);\n");
     assert_eq!(
         e,
-        "`x` of `(int) -> int` is positional: pass it by position [1]"
+        "this argument is passed by name, as `x: …`, and `x` of `(int) -> int` is declared `positional`, so a call passes it only by position [1]"
     );
     // A prelude word, and a value of unknown type, give no parameter names.
     let want = "named arguments and `...` need the parameter names of the function called, \

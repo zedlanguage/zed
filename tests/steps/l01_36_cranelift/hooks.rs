@@ -159,6 +159,6 @@ fn a_lookup_port_as_a_condition_is_read() {
     let t = if_(Term::Read("p".into()), lit(1i64), lit(2i64));
     assert_eq!(
         refused(&t, w),
-        "type error: expected data, found a function"
+        zed_kernel::KernelError::Type("expected data, found a function".into()).to_string()
     );
 }

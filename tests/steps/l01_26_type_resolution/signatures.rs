@@ -125,7 +125,9 @@ fn a_default_is_checked_at_its_parameters_type() {
 fn a_default_of_the_wrong_type_is_an_error() {
     assert_eq!(
         type_errors("f(a: int, b: int = a > 0) = a + b;\n"),
-        ["the default of `b` is bool, not int [a > 0]"]
+        [
+            "the default of `b` is bool, not int: a default is a value of its parameter's type [a > 0]"
+        ]
     );
 }
 
@@ -134,13 +136,17 @@ fn a_body_that_checks_at_no_type_is_reported() {
     // Wrong at every type: the error is the body's own.
     assert_eq!(
         type_errors("bad(x) = x + \"a\" * 2;\n"),
-        ["`*` does not take (\"a\", 2) [\"a\" * 2]"]
+        [
+            "`*` does not take (\"a\", 2): these are the types of its arguments here, and `*` has no arrow that takes them all [\"a\" * 2]"
+        ]
     );
     // Wrong at each carrier, for a reason that depends on it: `++` makes `x` a String, and
     // the error is at the use that then finds it none.
     assert_eq!(
         type_errors("neither(x) = x ++ \"a\" + 1;\n"),
-        ["`+` does not take (String, 1) [x ++ \"a\" + 1]"]
+        [
+            "`+` does not take (String, 1): these are the types of its arguments here, and `+` has no arrow that takes them all [x ++ \"a\" + 1]"
+        ]
     );
 }
 
@@ -176,6 +182,8 @@ fn a_plain_literal_compared_for_equality_fixes_its_carrier() {
     assert_eq!(sig(src, "eq1"), "(int) -> bool");
     assert_eq!(
         type_errors(src),
-        ["`eq1` does not take (\"a\") [eq1(\"a\")]"]
+        [
+            "`eq1` does not take (\"a\"): these are the types of its arguments here, and `eq1` has no arrow that takes them all [eq1(\"a\")]"
+        ]
     );
 }

@@ -103,10 +103,17 @@ impl fmt::Display for SameKey {
         let [s, t] = self.spans;
         write!(
             f,
-            "cells {a} and {b}, written at bytes {}..{} and {}..{}, have the same name, \
-             content address, canonical form and keypath: one fact has two cells in the store, \
-             so no order of the traversal tells them apart",
-            s.start, s.end, t.start, t.end
+            "zedc stopped because of a bug in zedc itself, not in your program: zedc expected \
+             each fact it works out about the program to be stored once, and found two facts \
+             (numbers {a} and {b}, written at bytes {}..{} and {}..{}) with the same name, the \
+             same content and the same place, so the order in which it works through them is \
+             not fixed. Please report it at {}, with the command line you ran and the files it \
+             read, so that it can be repeated",
+            s.start,
+            s.end,
+            t.start,
+            t.end,
+            zed_kernel::value::REPORT_TO
         )
     }
 }

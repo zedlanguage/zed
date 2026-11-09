@@ -45,11 +45,12 @@ fn a_read_the_record_lacks_stops_the_replay() {
     assert_eq!(
         e.as_deref(),
         Some(
-            "port `fs`: the program reads \"a.txt\" here, and the record holds no read of it, so \
-             the replay cannot go on: a replay reads nothing from outside, only what the record \
-             holds. The run that wrote the record did not read \"a.txt\", so its inputs differed \
-             from these, or the record has been changed. Replay with the inputs of the recorded \
-             run, or make a new record with `zedc run <file> --record <out>`."
+            "the port `fs` could not answer a read: the program reads \"a.txt\" here, and \
+             the record holds no read of it, so the replay cannot go on: a replay reads nothing \
+             from outside, only what the record holds. The run that wrote the record did not \
+             read \"a.txt\", so its inputs differed from these, or the record has been changed. \
+             Replay with the inputs of the recorded run, or make a new record with `zedc run \
+             <file> --record <out>`."
         )
     );
 }

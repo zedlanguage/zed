@@ -15,7 +15,7 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
     );
     assert_eq!(
         out,
-        r#"4:13: `++` does not take ("total: ", int)
+        r#"4:13: `++` does not take ("total: ", int): these are the types of its arguments here, and `++` has no arrow that takes them all
   [1]  4:13: this expression is "total: "
        4 |   stdout <- "total: " ++ total;
          |             ^^^^^^^^^
@@ -135,7 +135,10 @@ main(stdin: Lines) -> (stdout: Lines) {
 ",
     );
     let first = out.lines().next().unwrap();
-    assert_eq!(first, "1:23: `++` does not take (\"#\", int | f64 | rat)");
+    assert_eq!(
+        first,
+        "1:23: `++` does not take (\"#\", int | f64 | rat): these are the types of its arguments here, and `++` has no arrow that takes them all"
+    );
     let s = steps(&out);
     for step in [
         "this `*` gives int | f64 | rat",
@@ -159,7 +162,7 @@ main(stdin: Lines) -> (stdout: Lines) {
     );
     assert_eq!(
         out.lines().next().unwrap(),
-        "1:36: `++` does not take (\"#\", int | f64 | rat)"
+        "1:36: `++` does not take (\"#\", int | f64 | rat): these are the types of its arguments here, and `++` has no arrow that takes them all"
     );
     let s = steps(&out);
     for step in [
@@ -271,7 +274,7 @@ fn a_rejected_nested_tuple_shows_each_tuple_and_its_type() {
     let out = rejected("x = \"pair: \" ++ ((1, 2.5), \"a\");\n");
     assert_eq!(
         out,
-        r#"1:5: `++` does not take ("pair: ", ((1, 2.5), "a"))
+        r#"1:5: `++` does not take ("pair: ", ((1, 2.5), "a")): these are the types of its arguments here, and `++` has no arrow that takes them all
   [1] 1:5: this expression is "pair: "
       1 | x = "pair: " ++ ((1, 2.5), "a");
         |     ^^^^^^^^
@@ -322,7 +325,7 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
     let out = rejected("inc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n");
     assert_eq!(
         out,
-        "3:8: `==` takes data, and this value may hold a function, `(int) -> int`
+        "3:8: `==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth
   [1] 3:8: `boxed` is #box(((int) -> int)) here
       3 | same = boxed == boxed;
         |        ^^^^^
@@ -336,7 +339,11 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
   [5] 1:7: `inc` is defined as this expression, ((int) -> int)
       1 | inc = x -> x + 1;
         |       ^^^^^^^^^^
-  [6] 1:7: this expression is ((int) -> int)"
+  [6] 1:7: this expression is ((int) -> int)
+  [7] 3:8: repair: call the function before the value gets here, so that the value holds its result and not the function
+      3 | same = boxed == boxed;
+        |        ^^^^^^^^^^^^^^
+  [8] 3:8: repair: keep the function under its own name, out of the value"
     );
 }
 
@@ -354,12 +361,16 @@ s = g(h);
     );
     assert_eq!(
         out,
-        "4:5: `==` takes data, and this value may hold a function, `(int) -> int`
+        "4:5: `==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth
   [1] 3:36: `g` needs this of its argument here
       3 | g(positional x) { p = f(x); return p == p; }
         |                                    ^^^^^^
   [2] 3:1: `g` is declared here, `(_) -> bool`
       3 | g(positional x) { p = f(x); return p == p; }
-        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [3] 4:5: repair: call the function before the value gets here, so that the value holds its result and not the function
+      4 | s = g(h);
+        |     ^^^^
+  [4] 4:5: repair: keep the function under its own name, out of the value"
     );
 }

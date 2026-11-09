@@ -49,19 +49,29 @@ fn kernel_form(
 ) -> Option<KType> {
     Some(match &t.kind {
         TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
-            unreachable!("resolve rejects the forms of layer L2")
+            unreachable!(
+                "name resolution rejects every record type and every type applied to \
+                 arguments before a type is read"
+            )
         }
-        TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
+        TypeKind::Array(_) => {
+            unreachable!("name resolution rejects every array type before a type is read")
+        }
         // A bounded variable stands for one carrier that a call of the function chooses; a
         // run-time test has no call to choose it.
         TypeKind::For { bounds, .. } => {
             let vars: Vec<String> = bounds.iter().map(|b| format!("`{}`", b.name)).collect();
+            let (variables, each) = match vars.len() {
+                1 => ("variable", "it"),
+                _ => ("variables", "each one"),
+            };
             ports.push((
                 t.span,
                 format!(
-                    "an `is` test cannot take a type with bounded variables ({}): a call \
-                     chooses each one's carrier, and a test has no call; test each carrier \
-                     instead",
+                    "this `is` test names a type with the bounded {variables} {}; a call of a \
+                     function chooses which carrier of its bound {each} stands for, and a test \
+                     has no call to choose it, so the test has no one type to check against. \
+                     To repair it, test each carrier of the bound in turn, as `x is int`",
                     vars.join(", ")
                 ),
             ));
@@ -76,7 +86,11 @@ fn kernel_form(
             _ => {
                 ports.push((
                     t.span,
-                    format!("`{n}` is the type of a port, and no value has it"),
+                    format!(
+                        "`{n}` is the type of a port, which only a port parameter has; no value \
+                         has it, so it cannot be written here. To repair it, write the type \
+                         of the values the port carries, such as `String`"
+                    ),
                 ));
                 return None;
             }
@@ -112,17 +126,23 @@ fn kernel_form(
             if let Some(bounds) = bounds
                 && !l.subtype(&u)
             {
-                let why = match l.subtype_verdict(&u) {
-                    zed_kernel::types::Verdict::Refused(r) => {
-                        format!(" (not decided: {})", r.message())
-                    }
-                    _ => String::new(),
+                // A refused check is not a proved failure, so it is not stated as one.
+                let found = match l.subtype_verdict(&u) {
+                    zed_kernel::types::Verdict::Refused(r) => format!(
+                        "and the checker could not show that this one's guarantee is within its \
+                         permission{}",
+                        crate::ty::undecided(&r.message())
+                    ),
+                    _ => "and in this one the guarantee allows functions the permission does not"
+                        .to_string(),
                 };
                 bounds.push((
                     t.span,
                     format!(
-                        "the guarantee (left of `..`) of this morphism type is not within its \
-                         permission (right of `..`){why}"
+                        "in a function type `L .. U -> V`, every function the guarantee `L`, left \
+                         of `..`, describes must also be allowed by the permission `U`, right of \
+                         `..`, {found}. To repair it, narrow the type left of `..`, or widen the \
+                         type right of it"
                     ),
                 ));
             }

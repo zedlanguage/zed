@@ -2360,6 +2360,14 @@ pub const OTHER: u8 = 1 << 5;
 /// The mask of every value.
 pub const EVERY: u8 = (1 << 6) - 1;
 
+/// The clause a message about a check that was refused ends with: the check is not proved to
+/// fail, the checker could not decide it, and `why` says why (DESIGN.md sec:diagnostics).
+pub fn undecided(why: &str) -> String {
+    format!(
+        "; this is not proved wrong: the checker could not decide whether it fits, because {why}"
+    )
+}
+
 /// The mask `m` as a type, in type syntax: `_` when it holds [`OTHER`], since `int | _` is `_`
 /// (DESIGN.md L1.26); otherwise its carriers joined by `|`, and `!_`, the empty type, when it
 /// holds none.
@@ -3759,8 +3767,9 @@ impl Forms {
         let mut forms = Forms::default();
         let (left, right) = forms.places(t, other)?;
         forms.tied(&left, &right).map(|_| {
-            "two or more functions at one place of a tuple or payload are each unlike two or \
-             more functions there in the type expected, and which fits which is not compared"
+            "two or more functions at one place of a tuple or an atom's payload are each unlike \
+             two or more functions at that place of the type expected, and the checker does not \
+             try every way of pairing them; give the functions at that place one function type"
         })
     }
 
@@ -4354,13 +4363,13 @@ impl Ty {
     /// the types, so a message that reads as a counterexample would be wrong.
     pub fn refused(&self, other: &Ty) -> String {
         if let Some(why) = Forms::tie(self, other) {
-            return format!(" (not decided: {why})");
+            return undecided(why);
         }
         if let Some(why) = self.unchosen(other) {
             return format!(" (not decided: {why})");
         }
         match self.verdict(other) {
-            Verdict::Refused(r) => format!(" (not decided: {})", r.message()),
+            Verdict::Refused(r) => undecided(&r.message()),
             // A function that a cover the checker refuses would take ([`why_unfit`]).
             _ => self
                 .fns
@@ -5114,30 +5123,31 @@ async fn refused_cover<'m>(
             };
             return Some(format!(
                 "at `{slot}`, the arrows {} each take all of it, and the intersection of their \
-                 results{meet} is not within `{result}` (rule 6 of sec:type_resolution)",
+                 results{meet} is not within `{result}`",
                 arrows.join(", "),
             ));
         }
         format!(
             "the arrows {} each return outside `{result}`; where several take one value, the \
-             intersection of their results is the result, and the checker builds it only from \
+             result is what their results share, and the checker works that out only for \
              arrows that each take all that the arrows returning within `{result}` leave of one \
-             parameter, since finding the values each set of arrows shares is as hard as \
-             Orthogonal Vectors",
+             parameter, since finding the values each group of arrows shares takes time that \
+             grows with the product of their number; to repair it, write the arrows so that \
+             each returns within `{result}`",
             arrows.join(", ")
         )
     } else {
         let i = split?;
         format!(
             "the arrow `{}` takes a part of more than one parameter, and arrows are combined \
-             only when they differ at one parameter: whether arrows that split several \
-             parameters cover them is coNP-complete",
+             only when they differ at one parameter: telling whether arrows that each split \
+             several parameters cover them all can take time exponential in the number of \
+             parameters, so the checker does not try; to repair it, write the arrows so that \
+             they differ at one parameter",
             arrow_text(s, &s.arrows[i])
         )
     };
-    Some(format!(
-        "at `{slot}`, {reason} (rule 6 of sec:type_resolution)"
-    ))
+    Some(format!("at `{slot}`, {reason}"))
 }
 
 /// `t` as a message about a comparison with `q` prints it: the variables `q` bounds by

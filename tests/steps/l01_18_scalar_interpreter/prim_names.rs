@@ -132,7 +132,7 @@ fn an_arity_refusal_says_one_argument() {
             .run(&t)
             .unwrap_err()
             .to_string(),
-        "type error: `popCount` takes 1 argument, given 2"
+        zed_kernel::KernelError::Type("`popCount` takes 1 argument, given 2".into()).to_string()
     );
 }
 
@@ -149,7 +149,7 @@ fn comparing_a_number_with_a_city_name_names_the_comparison() {
             .run(&t)
             .unwrap_err()
             .to_string(),
-        "type error: `>` applied to `int`, `String`"
+        zed_kernel::KernelError::Type("`>` applied to `int`, `String`".into()).to_string()
     );
 }
 

@@ -215,7 +215,7 @@ fn a_function_inside_a_tuple_pattern_is_the_kernels_error() {
     let got = agree(&calls(3, m));
     assert_eq!(
         got,
-        Err("type error: `(..)` applied to a function".to_string())
+        Err(zed_kernel::KernelError::Type("`(..)` applied to a function".into()).to_string())
     );
 }
 

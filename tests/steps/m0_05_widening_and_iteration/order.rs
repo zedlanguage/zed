@@ -232,7 +232,8 @@ fn two_cells_with_one_key_are_refused_with_their_spans_wherever_they_are_written
         assert_eq!(solve(&m).unwrap_err(), err);
         let text = err.to_string();
         assert!(
-            text.contains("same name, content address, canonical form and keypath")
+            text.contains("a bug in zedc itself")
+                && text.contains("the same name, the same content and the same place")
                 && text.contains(&format!(
                     "bytes {}..{} and {}..{}",
                     spans[0].start, spans[0].end, spans[1].start, spans[1].end
@@ -581,7 +582,12 @@ fn a_unit_reversed_and_rotated_gives_the_same_types_and_diagnostics() {
     };
     let n = decls.len();
     let want = findings(&text(&(0..n).collect::<Vec<_>>()));
-    assert_eq!(want.1, ["`*` does not take (\"a\", 2) [\"a\" * 2]"]);
+    assert_eq!(
+        want.1,
+        [
+            "`*` does not take (\"a\", 2): these are the types of its arguments here, and `*` has no arrow that takes them all [\"a\" * 2]"
+        ]
+    );
     assert!(want.0.contains(&"bump: (x: int) -> int".to_string()));
     assert!(want.0.contains(&"shout: (s: String) -> String".to_string()));
     assert!(want.0.contains(&"total = int".to_string()), "{:?}", want.0);

@@ -174,11 +174,15 @@ fn a_key_in_the_permission_alone_may_be_not_found() {
 fn a_key_not_inside_the_permission_is_a_static_error() {
     assert_eq!(
         type_errors("f(m: int .. int | String -> bool, k: bool) = m[k];"),
-        ["this function does not take (bool) [m[k]]"]
+        [
+            "this function does not take (bool): these are the types of its arguments here, and this function has no arrow that takes them all [m[k]]"
+        ]
     );
     assert_eq!(
         type_errors("f(m: int .. int | String -> bool, k: int | bool) = m[k];"),
-        ["this function does not take (bool) [m[k]]"]
+        [
+            "this function does not take (bool): these are the types of its arguments here, and this function has no arrow that takes them all [m[k]]"
+        ]
     );
 }
 
@@ -211,7 +215,7 @@ fn a_function_that_answers_on_the_permission_fits_a_bounded_map() {
     assert_eq!(
         type_errors(&format!("{pass}g = f(m: (k) -> #notFound);")),
         [
-            "the lambda returns #notFound, and `int .. int | String -> bool` returns bool [#notFound]"
+            "the lambda returns #notFound, and `int .. int | String -> bool` returns bool: the lambda is passed where a function of type `int .. int | String -> bool` is expected, so its result must be bool [#notFound]"
         ]
     );
 }

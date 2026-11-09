@@ -9,8 +9,15 @@ use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
 use zedc::resolve::resolve;
 
-const BAD: &str = "the guarantee (left of `..`) of this morphism type is not within its \
-                   permission (right of `..`)";
+/// The start of the message for a morphism type whose guarantee is outside its permission.
+const BOUND: &str = "in a function type `L .. U -> V`, every function the guarantee `L`, left of \
+                     `..`, describes must also be allowed by the permission `U`, right of `..`, ";
+/// The repairs that message ends with.
+const REPAIR: &str = ". To repair it, narrow the type left of `..`, or widen the type right of it";
+const BAD: &str = "in a function type `L .. U -> V`, every function the guarantee `L`, left of \
+                   `..`, describes must also be allowed by the permission `U`, right of `..`, \
+                   and in this one the guarantee allows functions the permission does not. To \
+                   repair it, narrow the type left of `..`, or widen the type right of it";
 
 /// The diagnostics of `src` through `zedc::run::load`, one per line.
 fn through_load(src: &str) -> Vec<String> {
@@ -43,7 +50,7 @@ fn through_check(src: &str) -> Vec<String> {
 fn rejected_everywhere(src: &str, want: &[String]) {
     assert_eq!(through_load(src), want, "load: {src}");
     // The checker alone gives the bound errors; elaboration may add its own.
-    let bound: Vec<String> = want.iter().filter(|w| w.contains(BAD)).cloned().collect();
+    let bound: Vec<String> = want.iter().filter(|w| w.contains(BOUND)).cloned().collect();
     assert_eq!(through_check(src), bound, "check: {src}");
     let s = src.to_string();
     let alone = std::thread::spawn(move || through_load(&s)).join().unwrap();
@@ -94,7 +101,9 @@ fn a_parameter_whose_morphism_bound_check_was_refused_says_why() {
     rejected_everywhere(
         src,
         &[format!(
-            "1:6: {BAD} (not decided: {})",
+            "1:6: {BOUND}and the checker could not show that this one's guarantee is within its \
+             permission; this is not proved wrong: the checker could not decide whether it fits, \
+             because {}{REPAIR}",
             Refusal::MorphismSplit.message()
         )],
     );
