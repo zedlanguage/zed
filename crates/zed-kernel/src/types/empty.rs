@@ -5898,7 +5898,7 @@ fn judge<'a>(env: &'a Arc<Env>) -> Judgment {
     }
     let why = refused
         .contains(&true)
-        .then(|| refused::Why::new(n, b, origin, leaves, runs));
+        .then(|| refused::Why::new(n, b, origin, runs));
     Judgment {
         answers,
         refused,

@@ -445,3 +445,47 @@ fn a_group_of_refused_components_scales() {
         }
     });
 }
+
+/// The refused component of [`pairs`], a ring of `n` lists `Ints{k} = #nil | #cons(int,
+/// Ints{k+1})` that the decider decides, and `m` members `Box{k} = (Pair, Ints0)`, each refused
+/// since it reads `Pair`, and each reading the whole ring.
+fn boxes(m: usize, n: usize) -> Vec<(String, Expr)> {
+    let mut defs: Vec<(String, Expr)> = pairs("", [0, 1, 2, 3]).into();
+    for k in 0..n {
+        defs.push((
+            format!("Ints{k}"),
+            or(vec![
+                atom("nil", vec![]),
+                atom("cons", vec![int(), r(4 + (k + 1) % n)]),
+            ]),
+        ));
+    }
+    for k in 0..m {
+        defs.push((format!("Box{k}"), pair(r(0), r(4))));
+    }
+    defs
+}
+
+/// m refused members that share one decided part of n definitions: their messages together
+/// cost O(m + n), not O(m n), at (m, n) and (8m, 8n), since the re-check of the repair does not
+/// walk the decided part again for each member (COMPLEXITY.md K85).
+#[test]
+fn refused_members_sharing_a_decided_part_scale() {
+    let n = 128;
+    Type::forget_emptiness();
+    let types = group(boxes(n, n));
+    assert!((types[4..4 + n].iter()).all(|t| t.decided_by_group() == Some(false)));
+    for t in &types[4 + n..] {
+        assert_eq!(t.verdict(), Verdict::Refused(Refusal::Group));
+        let site = t.refusal_site(Refusal::Group).expect("a refused member");
+        assert!(site.head.starts_with("Box"), "{site:?}");
+        assert_eq!(site.defs.len(), 5, "{site:?}");
+    }
+    scaling::check_order("m refused members sharing a decided part of n", n, 1, |n| {
+        Type::forget_emptiness();
+        let types = group(boxes(n, n));
+        for t in &types[4 + n..] {
+            std::hint::black_box(t.refusal_site(Refusal::Group));
+        }
+    });
+}

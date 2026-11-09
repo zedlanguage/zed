@@ -10,7 +10,7 @@
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use super::super::bes::{Answer, Bes, Decision, Kind, decide};
 use super::super::rec::{self, Env, Group};
@@ -22,14 +22,18 @@ pub(in crate::types) struct Why {
     graph: Bes,
     /// The definition and the expression each node stands for, by its number.
     origin: Vec<(usize, Arc<rec::Node>)>,
-    /// The parts the decider does not take, each a node with no children ([`super::judge`]).
-    leaves: Vec<u32>,
     /// The decisions: with the leaves `Bot`, and, when there are leaves, with them `Top`.
     runs: Vec<Decision>,
     /// For each run, the refusal whose component holds each node it refused for its shape.
     of: Vec<HashMap<u32, usize>>,
     /// The number of members, whose nodes come first.
     members: u32,
+    /// Whether each node reaches a node that some run refused. A node that does not is decided
+    /// in every run, and a repair, which changes only refused members, cannot change it.
+    open: Vec<bool>,
+    /// For each set of members given `| #end`, whether the decider then decides each member
+    /// already re-checked with it.
+    checked: Mutex<HashMap<Vec<usize>, HashMap<u32, bool>>>,
 }
 
 impl Why {
@@ -37,7 +41,6 @@ impl Why {
         members: usize,
         graph: Bes,
         origin: Vec<(usize, Arc<rec::Node>)>,
-        leaves: Vec<u32>,
         runs: Vec<Decision>,
     ) -> Why {
         let of = (runs.iter())
@@ -47,13 +50,29 @@ impl Why {
                     .collect()
             })
             .collect();
+        // The nodes that reach a refused node: those refused, then their parents, each once.
+        let mut open: Vec<bool> = (0..graph.len())
+            .map(|v| runs.iter().any(|d| d.answers[v] == Answer::Refused))
+            .collect();
+        let mut stack: Vec<u32> = (0..graph.len() as u32)
+            .filter(|&v| open[v as usize])
+            .collect();
+        while let Some(v) = stack.pop() {
+            for &u in graph.parents(v) {
+                if !open[u as usize] {
+                    open[u as usize] = true;
+                    stack.push(u);
+                }
+            }
+        }
         Why {
             members: members as u32,
             graph,
             origin,
-            leaves,
             runs,
             of,
+            open,
+            checked: Mutex::new(HashMap::new()),
         }
     }
 
@@ -61,50 +80,84 @@ impl Why {
     /// of `which`: the system of the nodes `i` reaches, each of `which` made a union of its old
     /// node and `Top`, decided as `judge` decides, the leaves `Bot` and then `Top`. What `i`
     /// reaches is all its answer reads, so this is what `judge` gives the group so written.
+    ///
+    /// The re-check is shared. A node that reaches no refused node is not walked: it stands as
+    /// `Top` or `Bot`, its answer in each run, since its answer reads only nodes the repair does
+    /// not change (each member of `which` reaches a refused node of its own). And every member
+    /// the re-check from `i` reaches gets its answer kept, under `which`, since all it reaches
+    /// lies inside what `i` reaches and the decider decides each component from the components
+    /// below it alone; a later message for that member reads it from there.
     fn decides_with_end(&self, i: u32, which: &BTreeSet<usize>) -> bool {
+        let key: Vec<usize> = which.iter().copied().collect();
+        let checked = || self.checked.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(&known) = checked().get(&key).and_then(|m| m.get(&i)) {
+            return known;
+        }
+        debug_assert!(
+            which.iter().all(|&d| self.open[d]),
+            "each member given `| #end` reaches a refused node"
+        );
         let mut local: HashMap<u32, u32> = HashMap::from([(i, 0)]);
         let mut order = vec![i];
         let mut k = 0;
         while k < order.len() {
-            for &w in self.graph.children(order[k]) {
-                if let Entry::Vacant(e) = local.entry(w) {
-                    e.insert(order.len() as u32);
-                    order.push(w);
+            let v = order[k];
+            if self.open[v as usize] {
+                for &w in self.graph.children(v) {
+                    if let Entry::Vacant(e) = local.entry(w) {
+                        e.insert(order.len() as u32);
+                        order.push(w);
+                    }
                 }
             }
             k += 1;
         }
-        let leaf: HashSet<u32> = self.leaves.iter().copied().collect();
+        // The nodes walked, by their new numbers; each node not walked into stands as a node
+        // with no children, set to its answer in each run below.
         let mut b = Bes::new();
+        let mut fixed: Vec<(u32, u32)> = Vec::new();
         for &v in &order {
-            let children = self.graph.children(v).iter().map(|w| local[w]).collect();
-            b.add(self.graph.kind(v), children);
+            if self.open[v as usize] {
+                let children = self.graph.children(v).iter().map(|w| local[w]).collect();
+                b.add(self.graph.kind(v), children);
+            } else {
+                fixed.push((b.add(Kind::Bot, vec![]), v));
+            }
         }
-        // The leaves, by their new numbers: a member's node given `| #end` keeps its old node
-        // under the new union.
-        let mut leaves = Vec::new();
         for &v in &order {
-            let mut at = local[&v];
             if v < self.members && which.contains(&(v as usize)) {
+                let at = local[&v];
                 let old = b.add(self.graph.kind(v), b.children(at).to_vec());
                 let end = b.add(Kind::Top, vec![]);
                 b.set(at, Kind::Or, vec![old, end]);
-                at = old;
-            }
-            if leaf.contains(&v) {
-                leaves.push(at);
             }
         }
         b.seal();
         let mut answers = Vec::new();
-        for kind in [Kind::Bot, Kind::Top] {
-            // A leaf has no children either way, so the parents `seal` filled stay right.
-            for &v in &leaves {
-                b.set(v, kind, vec![]);
+        for run in 0..2 {
+            let d = &self.runs[run.min(self.runs.len() - 1)];
+            // A node set here has no children either way, so the parents `seal` filled stay
+            // right.
+            for &(at, v) in &fixed {
+                let kind = if d.answers[v as usize] == Answer::Inhabited {
+                    Kind::Top
+                } else {
+                    Kind::Bot
+                };
+                b.set(at, kind, vec![]);
             }
-            answers.push(decide(&b).answers[0]);
+            answers.push(decide(&b).answers);
         }
-        answers[0] == Answer::Inhabited || answers[1] == Answer::Empty
+        let mut checked = checked();
+        let kept = checked.entry(key).or_default();
+        for &v in order.iter().filter(|&&v| v < self.members) {
+            let at = local[&v] as usize;
+            kept.insert(
+                v,
+                answers[0][at] == Answer::Inhabited || answers[1][at] == Answer::Empty,
+            );
+        }
+        kept[&i]
     }
 }
 
@@ -222,15 +275,13 @@ fn listed(names: &[String]) -> String {
     }
 }
 
-/// The site of member `i` of `env`, which its group's decider refuses. Time linear in the part
-/// of the group's system that member `i` reaches, and in the texts written.
-// Complexity tradeoff: each message walks, and decides again with the repair, the part of the
-// group the member reaches, so the messages of m refused members that all reach one part of n
-// nodes cost O(m n), where a table shared by the members could cost O(m + n). Why: a message is
-// written only for a check that was refused and is reported, and the walk keeps the decider
-// itself linear and free of any per-message table. Trigger: a message asked for each of many
-// refused members of one group. Tests: `l01_23_subtyping::group_refusal`. COMPLEXITY.md K85. A
-// complete solution keeps the reached parts and their re-check per refused component.
+/// The site of member `i` of `env`, which its group's decider refuses. Time linear in the texts
+/// written and in the nodes member `i` reaches that reach a refused node, with their edges.
+// The re-check of a repair is shared by the members of the group: it walks only the nodes that
+// reach a refused node, so a decided part that many refused members read is not walked at all,
+// and it keeps the answer of every member it reaches, so the other members of a
+// refused component read theirs from it (`Why::decides_with_end`). The messages of m refused
+// members that read one decided part of n nodes cost O(m + n) together. COMPLEXITY.md K85.
 fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
     let judgment = env.judged.get().expect("the decider ran");
     let why = judgment.why.as_ref().expect("a member is refused");
