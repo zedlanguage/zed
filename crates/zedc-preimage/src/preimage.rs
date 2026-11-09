@@ -84,6 +84,7 @@ use zedc_presburger::presburger::{self, Con, Formula, Joining, Lin, Mark, Refusa
 use zedc_stage::stage;
 
 use crate::divisors::{EMPTY, Set, Sets as DivisorSets};
+use crate::shared_ints::Ints;
 
 /// The box of a term whose value `v` is known: every point when `v` meets the demand, none
 /// otherwise.
@@ -2762,7 +2763,27 @@ struct Run {
     /// In a run that is not split, the cuts of the classes of each input and modulus the
     /// terms compare, found once ([`Tx::remainder_cuts`]).
     cut_table: Option<Rc<CutTable>>,
+    /// The sets of integers of the forward transfer, shared ([`SharedInts`]).
+    ints: SharedInts,
 }
+
+/// The sets of integers of one run's forward transfer that are found more than once, each
+/// made once and shared ([`Ints`]): the domain of each input, each integer literal, and the
+/// result of each operator on two sets. The guards of a chain of `k` levels each read `x mod
+/// 1024` of their own copy of `x`: each copy's set is the one domain, so the remainder is
+/// taken once, not `k` times over the `H` pieces of the domain (COMPLEXITY.md S22-fwd-holes).
+#[derive(Default)]
+struct SharedInts {
+    /// By the domain's address, which the entry keeps alive.
+    inputs: HashMap<*const IntervalSet, Ints>,
+    literals: HashMap<i64, Ints>,
+    /// By the operator and the operands ([`Ints::id`]), which the entry keeps alive. No
+    /// power: its key would need its exponent.
+    ops: HashMap<OpKey, (Ints, [Ints; 2])>,
+}
+
+/// An operator other than a power, and the ids of its two operands ([`Ints::id`]).
+type OpKey = (std::mem::Discriminant<Op>, *const (), *const ());
 
 /// The classes of remainders `x mod m` that [`Walk::by_class`] reads a term over: class `i`
 /// is `cuts[i]..cuts[i + 1]`.
@@ -2896,8 +2917,8 @@ struct Whole {
 /// What forward transfer knows of a term's value.
 #[derive(Clone)]
 struct Fwd {
-    /// The integers it may be.
-    ints: IntervalSet,
+    /// The integers it may be, shared with every value that holds them ([`Ints`]).
+    ints: Ints,
     /// Whether it may be `true`, and `false`.
     bools: (bool, bool),
     /// Whether it may be a failure: an atom such as `#divByZero`, which every primitive but
@@ -2908,7 +2929,7 @@ struct Fwd {
 }
 
 impl Fwd {
-    fn int(ints: IntervalSet) -> Fwd {
+    fn int(ints: Ints) -> Fwd {
         Fwd {
             ints,
             ..Fwd::none()
@@ -2924,7 +2945,7 @@ impl Fwd {
 
     fn none() -> Fwd {
         Fwd {
-            ints: IntervalSet::empty(),
+            ints: Ints::empty(),
             bools: (false, false),
             fails: false,
             other: false,
@@ -2933,7 +2954,7 @@ impl Fwd {
 
     fn top() -> Fwd {
         Fwd {
-            ints: IntervalSet::top(),
+            ints: Ints::of(IntervalSet::top()),
             bools: (true, true),
             fails: true,
             other: true,
@@ -2957,7 +2978,7 @@ impl Fwd {
     /// Whether every value it may be meets `d`.
     fn meets(&self, d: &Demand) -> bool {
         match d {
-            Demand::Ints(z) => self.is_int() && self.ints.is_subset(z),
+            Demand::Ints(z) => self.is_int() && self.ints.set().is_subset(z),
             Demand::Bool(w) => self.is_bool() && !(if *w { self.bools.1 } else { self.bools.0 }),
         }
     }
@@ -4464,6 +4485,34 @@ impl<'t> Tx<'t> {
         Some((*s, *se, j.add(k)))
     }
 
+    /// The set of the input domain `dom`, one for the run ([`SharedInts`]).
+    fn input_ints(&mut self, dom: Rc<IntervalSet>) -> Ints {
+        let shared = &mut self.run.ints.inputs;
+        (shared.entry(Rc::as_ptr(&dom)))
+            .or_insert_with(|| Ints::shared(dom))
+            .clone()
+    }
+
+    /// The set of the literal `n`, one for the run ([`SharedInts`]).
+    fn literal_ints(&mut self, n: i64) -> Ints {
+        (self.run.ints.literals.entry(n))
+            .or_insert_with(|| Ints::of(IntervalSet::single(n)))
+            .clone()
+    }
+
+    /// [`Ints::forward`], once for each operator and operands in the run ([`SharedInts`]).
+    fn forward_ints(&mut self, o: &Op, a: &Ints, b: &Ints) -> Ints {
+        if matches!(o, Op::Pow(_)) {
+            return Ints::forward(o, a, b);
+        }
+        let key = (std::mem::discriminant(o), a.id(), b.id());
+        let shared = &mut self.run.ints.ops;
+        let (r, _) = shared
+            .entry(key)
+            .or_insert_with(|| (Ints::forward(o, a, b), [a.clone(), b.clone()]));
+        r.clone()
+    }
+
     /// [`Walk::fwd`] on a new stack.
     fn fwd(&mut self, t: Tid, env: Eid) -> Fwd {
         let w = Walk::new(self);
@@ -5229,7 +5278,7 @@ impl<'m, 't> Walk<'m, 't> {
                 // rows S13 and S15. A complete solution would read each call in place (exact,
                 // exponential in the nesting) or key summaries by relational summaries that
                 // hold for every argument (a polyhedral or Presburger summary per function).
-                let dom = self.with(|tx| f.ints.snap(tx.marks()));
+                let dom = self.with(|tx| f.ints.set().snap(tx.marks()));
                 sig.push(Arg::Ints(dom.clone()));
                 doms.push((i, dom));
                 binds.push((p, None));
@@ -5401,8 +5450,8 @@ impl<'m, 't> Walk<'m, 't> {
 
     async fn fwd_at(&'m self, t: Tid, env: Eid) -> Fwd {
         match self.node(t) {
-            Node::Int(n) => Fwd::int(IntervalSet::single(n)),
-            Node::Lit(Value::Big(n)) => Fwd::int(IntervalSet::point(Num::from(&**n))),
+            Node::Int(n) => Fwd::int(self.with(|tx| tx.literal_ints(n))),
+            Node::Lit(Value::Big(n)) => Fwd::int(Ints::of(IntervalSet::point(Num::from(&**n)))),
             Node::Bool(b) => Fwd::bools(b, !b),
             Node::Lit(Value::Atom(_)) => Fwd {
                 fails: true,
@@ -5415,10 +5464,13 @@ impl<'m, 't> Walk<'m, 't> {
             Node::Var(x) => match self.lookup(env, x) {
                 Some((bt, be)) => self.fwd(bt, be).await,
                 None => self.with(|tx| {
-                    let x = tx.name(x);
-                    match (tx.cx.get(x), tx.lets.get(x)) {
-                        (Some(dom), _) => Fwd::int(dom.clone()),
-                        (None, Some(l)) => Fwd::int(l.ints.clone()),
+                    let x = tx.name(x).clone();
+                    if let Some(dom) = tx.cx.inputs.get(&x).cloned() {
+                        return Fwd::int(tx.input_ints(dom));
+                    }
+                    match (tx.cx.get(&x), tx.lets.get(&x)) {
+                        (Some(dom), _) => Fwd::int(Ints::of(dom.clone())),
+                        (None, Some(l)) => Fwd::int(Ints::of(l.ints.clone())),
                         (None, None) => Fwd::top(),
                     }
                 }),
@@ -5477,6 +5529,16 @@ impl<'m, 't> Walk<'m, 't> {
         }
     }
 
+    /// An integer operator over its operands' forward values, failing where either may be
+    /// other than an integer, or where `by_zero`.
+    fn arith(&'m self, o: &Op, a: &Fwd, b: &Fwd, by_zero: bool) -> Fwd {
+        Fwd {
+            ints: self.with(|tx| tx.forward_ints(o, &a.ints, &b.ints)),
+            fails: !a.is_int() || !b.is_int() || by_zero,
+            ..Fwd::none()
+        }
+    }
+
     async fn fwd_prim(&'m self, t: Tid, p: Prim, args: Span, env: Eid) -> Fwd {
         use Prim::*;
         if p.arity().is_some_and(|n| n != args.len()) {
@@ -5486,25 +5548,25 @@ impl<'m, 't> Walk<'m, 't> {
             && let Some((base, be, k)) = self.with(|tx| tx.power(t, env))
         {
             let b = self.fwd(base, be).await;
-            return arith(&Op::Pow(k), &b, &b, false);
+            return self.arith(&Op::Pow(k), &b, &b, false);
         }
         match p {
             Neg | Abs => {
                 let a = self.fwd(self.arg(args, 0), env).await;
-                arith(&op(p, None).expect("scalar"), &a, &a, false)
+                self.arith(&op(p, None).expect("scalar"), &a, &a, false)
             }
             Pow => match self.exponent(self.arg(args, 1), env).await {
                 Some(k) => {
                     let a = self.fwd(self.arg(args, 0), env).await;
-                    arith(&Op::Pow(k), &a, &a, false)
+                    self.arith(&Op::Pow(k), &a, &a, false)
                 }
                 None => Fwd::top(),
             },
             Add | Sub | Mul | IntDiv | Mod | Min | Max => {
                 let a = self.fwd(self.arg(args, 0), env).await;
                 let b = self.fwd(self.arg(args, 1), env).await;
-                let by_zero = matches!(p, IntDiv | Mod) && b.ints.contains(0);
-                arith(&op(p, None).expect("scalar"), &a, &b, by_zero)
+                let by_zero = matches!(p, IntDiv | Mod) && b.ints.set().contains(0);
+                self.arith(&op(p, None).expect("scalar"), &a, &b, by_zero)
             }
             Lt | Le | Gt | Ge | Eq | Ne => {
                 let a = self.fwd(self.arg(args, 0), env).await;
@@ -6083,7 +6145,7 @@ impl<'m, 't> Walk<'m, 't> {
                     _ => {}
                 }
                 let fa = self.fwd(a, env).await.ints;
-                let (s, exact) = mod_pre(z, c, &fa);
+                let (s, exact) = mod_pre(z, c, fa.set());
                 let mut r = self.back(a, env, ints(s)).await;
                 r.exact &= exact;
                 r
@@ -6092,7 +6154,7 @@ impl<'m, 't> Walk<'m, 't> {
             (Min | Max, _, Some(c)) => self.back(a, env, ints(minmax_pre(p, z, c))).await,
             (Min | Max, None, None) => {
                 let f = self.fwd(t, env).await.ints;
-                let zf = z.meet(&f);
+                let zf = z.meet(f.set());
                 let (Some((flo, fhi)), Some((lo, hi))) = (f.bounds(), zf.bounds()) else {
                     return Res::none();
                 };
@@ -6149,7 +6211,7 @@ impl<'m, 't> Walk<'m, 't> {
             };
         }
         let fc = self.fwd(c, env).await.ints;
-        let zc = revision::backward(o, 0, &fc, &fc, z);
+        let zc = revision::backward(o, 0, fc.set(), fc.set(), z);
         self.back(c, env, Demand::Ints(zc)).await
     }
 
@@ -6169,8 +6231,8 @@ impl<'m, 't> Walk<'m, 't> {
         let o = op(p, None).expect("binary scalar operator");
         let fa = self.fwd(a, env).await.ints;
         let fb = self.fwd(b, env).await.ints;
-        let za = revision::backward(&o, 0, &fa, &fb, z);
-        let zb = revision::backward(&o, 1, &fa, &fb, z);
+        let za = revision::backward(&o, 0, fa.set(), fb.set(), z);
+        let zb = revision::backward(&o, 1, fa.set(), fb.set(), z);
         let ra = self.back(a, env, Demand::Ints(za)).await;
         let rb = self.back(b, env, Demand::Ints(zb)).await;
         let mut r = self.meet(ra, rb);
@@ -8321,15 +8383,6 @@ fn or_if_as_if() -> bool {
     return OR_IF_AS_IF.get();
     #[cfg(not(test))]
     false
-}
-
-/// An integer operator over its operands' forward values.
-fn arith(o: &Op, a: &Fwd, b: &Fwd, by_zero: bool) -> Fwd {
-    Fwd {
-        ints: revision::forward(o, &a.ints, &b.ints),
-        fails: !a.is_int() || !b.is_int() || by_zero,
-        ..Fwd::none()
-    }
 }
 
 /// An integer term as a function of one input `var` (R1_GEMINI Thm 3.1: the value of a term
@@ -10573,11 +10626,11 @@ fn scalar(p: Prim) -> bool {
 }
 
 /// Forward transfer of a comparison over two integer sets.
-fn compare(p: Prim, a: &IntervalSet, b: &IntervalSet) -> Fwd {
+fn compare(p: Prim, a: &Ints, b: &Ints) -> Fwd {
     let (Some((alo, ahi)), Some((blo, bhi))) = (a.bounds(), b.bounds()) else {
         return Fwd::bools(false, false);
     };
-    fn one(x: &IntervalSet) -> Option<(&End, &End)> {
+    fn one(x: &Ints) -> Option<(&End, &End)> {
         x.bounds().filter(|(l, h)| l == h)
     }
     let (t, f) = match p {
@@ -10586,7 +10639,7 @@ fn compare(p: Prim, a: &IntervalSet, b: &IntervalSet) -> Fwd {
         Prim::Gt => (ahi > blo, alo <= bhi),
         Prim::Ge => (ahi >= blo, alo < bhi),
         _ => {
-            let eq = !a.meet(b).is_empty();
+            let eq = !a.set().meet(b.set()).is_empty();
             let ne = !(one(a).is_some() && one(a) == one(b));
             if p == Prim::Eq { (eq, ne) } else { (ne, eq) }
         }
@@ -10898,6 +10951,24 @@ pub fn class_domain_reads() -> u64 {
 
 fn read_domain(n: usize) {
     CLASS_READS.with(|c| c.set(c.get() + n as u64));
+}
+
+thread_local! {
+    /// The pieces of the integer sets that the forward transfer made on this thread since
+    /// [`forward_pieces`] last read it.
+    static FORWARD_PIECES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The pieces of the integer sets that the forward transfer made on this thread since the
+/// last call, which resets the count: each set listed, once, and none for a domain it shares
+/// (COMPLEXITY.md S22-fwd-holes).
+pub fn forward_pieces() -> u64 {
+    FORWARD_PIECES.replace(0)
+}
+
+/// Counts `n` pieces made for [`forward_pieces`].
+pub(crate) fn count_forward(n: usize) {
+    FORWARD_PIECES.with(|c| c.set(c.get() + n as u64));
 }
 
 /// The preimage of `demand` under `term` when its declaration is annotated `@exact`

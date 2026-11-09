@@ -26,8 +26,8 @@ use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::lattice::Congruence;
 use zedc::store::preimage::{
-    Classes, Demand, Domains, Listed, Preimage, class_domain_reads, exact_preimage, preimage,
-    preimage_listed,
+    Classes, Demand, Domains, Listed, Preimage, class_domain_reads, exact_preimage, forward_pieces,
+    preimage, preimage_listed,
 };
 use zedc::store::preimage_ref as before;
 use zedc::store::presburger::{Atom, Model, Refusal};
@@ -3023,6 +3023,38 @@ fn class_ranges_read_the_holes_once() {
             ratio <= scaling::limit(n, scaling::FACTOR * n, 1),
             "pieces of the domain read at sizes {n} and {}: {small} and {large}, {ratio:.1} times, \
              over {}",
+            scaling::FACTOR * n,
+            scaling::limit(n, scaling::FACTOR * n, 1)
+        );
+    });
+}
+
+/// COMPLEXITY.md S22-fwd-holes: the forward transfer of the levels of
+/// [`spread_remainder_chain`], with `64k` holes in the domain of `x`, in the second program of
+/// [`counted_shapes`], makes integer sets of pieces of order `k`, from `k` to `8k`: the domain
+/// of `x` is shared, not copied, and a join or a `max` keeps its operands and its bounds, so
+/// no set lists the holes again where no reader asks for its pieces. Copying the holes into
+/// each level's set made `O(k * H)` pieces.
+#[test]
+fn forward_sets_of_a_chain_share_the_holes_scale() {
+    on_big_stack(|| {
+        let d = Demand::Bool(true);
+        let n = 8;
+        let made = |k: usize| {
+            let t = counted_shapes(spread_remainder_chain(k))[1].clone();
+            let ds = x_with_holes(64 * k);
+            forward_pieces();
+            let p = preimage(&t, &ds, &d);
+            assert!(p.exact, "the preimage at k = {k} is exact");
+            forward_pieces()
+        };
+        let (small, large) = (made(n), made(scaling::FACTOR * n));
+        assert!(small > 0, "the forward transfer makes sets");
+        let ratio = large as f64 / small as f64;
+        assert!(
+            ratio <= scaling::limit(n, scaling::FACTOR * n, 1),
+            "pieces of the forward sets at sizes {n} and {}: {small} and {large}, {ratio:.1} \
+             times, over {}",
             scaling::FACTOR * n,
             scaling::limit(n, scaling::FACTOR * n, 1)
         );

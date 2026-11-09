@@ -2499,6 +2499,16 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 - No new gap. `Walk::pa_select` joins stretches with a let chain `if let Some(last) = slices.last_mut() && ..` (as `extend::decide_defined`) and mutates the last slice in place through `last_mut`, a `match` on the list's end at the port; `no_input_between` uses `slice::partition_point` (as `docs::check`) and `Option::is_none_or` (as `repair`).
 - `preimage::CLASS_READS`, read and reset by a test through `class_domain_reads`, is a `thread_local!` `Cell<u64>` counter, the gap of row `preimage::EXACT` above (the count returned with the answer at the port); `meets` uses `partition_point` as `no_input_between`.
 
+## Entries from S22-fwd-holes (`crates/zedc-preimage/src/shared_ints.rs`, `preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A shared node (`Rc<Node>`) whose pieces are filled in once when first read (`OnceCell`), and whose recipe is taken out at that time (`RefCell<Option<Made>>`) | `shared_ints::Ints`, `Ints::set`, `Ints::list` | Mutation of a shared value, a cache filled in place (as `Rec` and `Shown`) | A persistent node that holds its recipe, listed by the reader into a table keyed by the node, or the pieces carried with the value once listed |
+| Keys made from addresses: `Rc::as_ptr` of an input's domain and `Ints::id`, the address of a node, with the entry holding the node so that the address is not reused; `Rc::ptr_eq` as a fast path of equality | `preimage::SharedInts`, `Tx::input_ints`, `Tx::forward_ints`, `Ints::join`, `impl PartialEq for Ints` | Identity of values (as the `ptr_eq` rows above) | Numbered nodes: each set made gets a number from the run, and the tables are keyed by numbers |
+| `impl Drop for Node` with a work list that unwraps each node held once (`Rc::try_unwrap`), so that dropping a chain of `k` levels does not recurse | `shared_ints::Node` | None | Removed: the runtime frees values, and must free a long chain without recursion itself (as `check::Origin`) |
+| `thread_local!` empty set shared by every value with no integer; `thread_local!` `Cell<u64>` counter `FORWARD_PIECES`, read and reset by a test through `forward_pieces` | `Ints::empty`, `preimage::count_forward` | Thread-local state (the gap of `preimage::EXACT` and `CLASS_READS` above) | A constant empty set; the count returned with the answer |
+| `std::mem::Discriminant<Op>` in a key | `preimage::OpKey` | None | The operator's tag as a value of an enumeration without payload |
+
 ## Entries from TY-sub-stack (`crates/zedc-types/src/ty.rs`)
 
 | Rust construct | Sites | Gap | At the port |
