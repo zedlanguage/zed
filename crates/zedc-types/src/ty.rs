@@ -3081,13 +3081,20 @@ enum Member {
     At(ShapeKey),
 }
 
-/// The class of a scalar set: the carrier its values are all of, or the one name of its atoms.
+/// The class of a scalar set, not empty: the carrier its values are all of, or the one name of
+/// its atoms. It is read from the parts of `s` by universe ([`KType::split`]): a carrier's part
+/// is there only when it holds a value, and the atoms and the rest only when they are not
+/// empty, so `s` is within a carrier exactly when that carrier's part is its only one, and
+/// within the atoms when they are its only part, with no comparison of types.
 fn class_of(s: &KType) -> Option<ShapeKey> {
-    if let Some(c) = Carrier::ALL.into_iter().find(|c| s.subtype(&c.ty())) {
-        return Some(ShapeKey::Carrier(c));
-    }
-    if !s.subtype(&atoms()) {
-        return None;
+    let split = s.split();
+    let mut carriers = Carrier::ALL
+        .into_iter()
+        .filter(|c| split.bases[c.base()].is_some());
+    match (carriers.next(), carriers.next(), &split.atoms, &split.rest) {
+        (Some(c), None, None, None) => return Some(ShapeKey::Carrier(c)),
+        (None, _, Some(_), None) => {}
+        _ => return None,
     }
     let mut names = s.atom_names()?;
     let (n, _) = names.next()?;
@@ -3406,6 +3413,14 @@ fn by_pattern(rows: &[Row]) -> HashMap<Pattern, Keyed> {
     let mut out: HashMap<Pattern, Keyed> = HashMap::new();
     for (i, r) in rows.iter().enumerate() {
         let keys: Vec<CompKey> = r.iter().map(class).collect();
+        // With no keys every tuple of a length is one group, and every tuple of the other side
+        // of that length is near it.
+        #[cfg(test)]
+        let keys = if NEAR_ALL.get() {
+            vec![None; r.len()]
+        } else {
+            keys
+        };
         let kinds = keys.iter().map(kind).collect();
         out.entry((r.len(), kinds)).or_default().push((i, keys));
     }
@@ -3413,90 +3428,154 @@ fn by_pattern(rows: &[Row]) -> HashMap<Pattern, Keyed> {
 }
 
 /// For each tuple of `left`, the tuples of `right` of its length that may share a value with
-/// it, by their indices, in written order. Two components share no value when both have a
-/// class ([`class`]) and the classes differ, or both are one value and the values differ: the
+/// it, by their indices, in written order ([`Near`]). A tuple of `right` left out shares no
+/// value with the tuple of `left`: their meet is empty ([`Ty::meet`] gives an empty component
+/// at the place), and the union of `right` holds the tuple exactly when the union of the tuples
+/// given holds it.
+fn near_pairs(left: &[Row], right: &[Row]) -> Vec<Vec<usize>> {
+    let groups = Groups::new(left, right);
+    let mut near = Near::new(&groups);
+    let mut sorted = |l| {
+        let mut is: Vec<usize> = near.of(l).collect();
+        is.sort_unstable();
+        is
+    };
+    (0..left.len()).map(&mut sorted).collect()
+}
+
+/// The tuples of two lists `left` and `right` grouped for [`Near`]: by length and [`Kind`] at
+/// each place, each with the keys of its components.
+struct Groups {
+    /// The groups of `right`, by length.
+    right: HashMap<usize, Vec<(Vec<Kind>, Keyed)>>,
+    /// The groups of `left`, each its length and kinds.
+    left: Vec<Pattern>,
+    /// For each tuple of `left`, its group and the keys of its components; none when `right` has
+    /// no tuple.
+    of: Vec<Option<(usize, Vec<CompKey>)>>,
+}
+
+impl Groups {
+    fn new(left: &[Row], right: &[Row]) -> Groups {
+        let mut groups = Groups {
+            right: HashMap::new(),
+            left: Vec::new(),
+            of: vec![None; left.len()],
+        };
+        if left.is_empty() || right.is_empty() {
+            return groups;
+        }
+        for ((len, kinds), rows) in by_pattern(right) {
+            groups.right.entry(len).or_default().push((kinds, rows));
+        }
+        for (pattern, members) in by_pattern(left) {
+            for (l, keys) in members {
+                groups.of[l] = Some((groups.left.len(), keys));
+            }
+            groups.left.push(pattern);
+        }
+        groups
+    }
+}
+
+/// The right tuples of the groups of one length, each group filed by the keys a group of the
+/// left side reads ([`Near`]).
+type Filing<'g> = Vec<BTreeMap<Vec<(&'g ShapeKey, Option<&'g Value>)>, Vec<usize>>>;
+
+/// For each tuple of a list `left`, the tuples of a list `right` of its length that may share
+/// a value with it ([`Groups`]). Two components share no value when both have a class
+/// ([`class`]) and the classes differ, or both are one value and the values differ: the
 /// carriers, the atoms of each name and the tuples of each length are disjoint, and two values
-/// the kernel tells apart are unequal [`Value`]s. Any two other components may share one. So a
-/// tuple of `right` left out shares no value with the tuple of `left`: their meet is empty
-/// ([`Ty::meet`] gives an empty component at the place), and the union of `right` holds the
-/// tuple exactly when the union of the tuples given holds it.
+/// the kernel tells apart are unequal [`Value`]s. Any two other components may share one, so a
+/// tuple of `right` not given for a tuple of `left` shares no value with it.
 ///
-/// The tuples of each side are grouped by length and [`Kind`] at each place. For a group of
-/// each side, a tuple of one may share a value with a tuple of the other exactly when they
-/// agree at each place where both have a class: on the class, and on the value where both are
-/// one value. So the tuples of the right group are filed by those keys, and each tuple of the
-/// left group finds its own by one lookup.
+/// For a group of each side, a tuple of one may share a value with a tuple of the other exactly
+/// when they agree at each place where both have a class: on the class, and on the value where
+/// both are one value. So the tuples of each right group are filed by those keys, and each
+/// tuple of the left group finds its own by one lookup. The right groups are filed for a left
+/// group when the first tuple of the left group is read, so a reader that stops at the first
+/// pair it wants ([`Ty::meets`]) files only the groups read before it.
 ///
 /// Complexity tradeoff: each group of one side is filed or looked up once for each group of
-/// the other of its length. What is given up: the cost is O((l·G + r·H)·w·log r + p log p)
-/// for `l` and `r` tuples of width `w` in `H` and `G` groups and `p` pairs found, so `n` tuples
-/// in about `n` groups on each side cost about `n^2`. Why: a tuple of points and wildcards
-/// encodes a vector of bits (1 as the point `1` on one side and `0` on the other, 0 as `int`),
-/// so that two such tuples share a value exactly when the vectors are orthogonal; finding
-/// whether any of `n` vectors of about `c·log n` bits is orthogonal to another takes
-/// `n^(2-o(1))` time unless the strong exponential time hypothesis fails, even when no pair
-/// is found, and the groups of such tuples are then as many as the tuples. In a written union
-/// the groups are few. Structure: `n` tuples of width `2·log2 n`, each a different arrangement
-/// of points and `int`. Test: `tests/steps/l01_22_type_representation/kinds.rs`,
-/// `meeting_and_subtracting_tuples_of_many_patterns_costs_the_patterns`; COMPLEXITY.md F127.
-/// A complete solution does not exist under that hypothesis; one could only refuse such
-/// unions, which would change the answers of narrowing that are found today.
-fn near_pairs(left: &[Row], right: &[Row]) -> Vec<Vec<usize>> {
-    #[cfg(test)]
-    if NEAR_ALL.get() {
-        let same = |a: &Row| {
-            (0..right.len())
-                .filter(|&j| right[j].len() == a.len())
-                .collect()
-        };
-        return left.iter().map(same).collect();
-    }
-    let mut out = vec![Vec::new(); left.len()];
-    if left.is_empty() || right.is_empty() {
-        return out;
-    }
-    let mut groups: HashMap<usize, Vec<(Vec<Kind>, Keyed)>> = HashMap::new();
-    for ((len, kinds), rows) in by_pattern(right) {
-        groups.entry(len).or_default().push((kinds, rows));
-    }
-    // The keys of the components of a tuple of the group `p` at the places where the tuples of
-    // the group `q` of the other side have a class too, with the value where both are one value.
-    fn project<'k>(
-        keys: &'k [CompKey],
-        q: &[Kind],
-        p: &[Kind],
-    ) -> Vec<(&'k ShapeKey, Option<&'k Value>)> {
-        (keys.iter().zip(q.iter().zip(p)))
-            .filter_map(|(key, (&q, &p))| {
-                let (k, v) = key.as_ref()?;
-                match (q, p) {
-                    (Kind::Open, _) | (_, Kind::Open) => None,
-                    (Kind::Point, Kind::Point) => Some((k, v.as_ref())),
-                    _ => Some((k, None)),
-                }
-            })
-            .collect()
-    }
-    for ((len, q), members) in by_pattern(left) {
-        let Some(groups) = groups.get(&len) else {
-            continue;
-        };
-        for (p, rows) in groups {
-            let mut filed: BTreeMap<Vec<(&ShapeKey, Option<&Value>)>, Vec<usize>> = BTreeMap::new();
-            for (i, keys) in rows {
-                filed.entry(project(keys, p, &q)).or_default().push(*i);
-            }
-            for (l, keys) in &members {
-                if let Some(is) = filed.get(&project(keys, &q, p)) {
-                    out[*l].extend(is);
-                }
-            }
+/// the other of its length. What is given up: the cost is O((l·G + r·H)·w·log r + l·G·log G)
+/// for `l` and `r` tuples of width `w` in `H` and `G` groups, and a reader pays for each pair it
+/// reads, up to `l·r`, so `n` tuples in about `n` groups on each side cost about `n^2`. Why: a
+/// tuple of points and wildcards encodes a vector of bits (1 as the point `1` on one side and
+/// `0` on the other, 0 as `int`), so that two such tuples share a value exactly when the vectors
+/// are orthogonal; finding whether any of `n` vectors of about `c·log n` bits is orthogonal to
+/// another, which is what `meets` decides on them, takes `n^(2-o(1))` time unless the strong
+/// exponential time hypothesis fails, even when no pair is found, and the groups of such tuples
+/// are then as many as the tuples. In a written union the groups are few. Structure: `n` tuples
+/// of width `2·log2 n`, each a different arrangement of points and `int`. Tests:
+/// `tests/steps/l01_22_type_representation/kinds.rs`,
+/// `meeting_and_subtracting_tuples_of_many_patterns_costs_the_patterns` and
+/// `meets_of_tuples_of_many_patterns_costs_the_patterns`; COMPLEXITY.md F127 and F132. A
+/// complete solution does not exist under that hypothesis; one could only refuse such unions,
+/// which would change the answers of narrowing that are found today.
+struct Near<'g> {
+    groups: &'g Groups,
+    /// For each group of `left` once one of its tuples is read, the right groups of its length
+    /// filed by its keys, in the order of `groups.right`.
+    filed: Vec<Option<Filing<'g>>>,
+}
+
+impl<'g> Near<'g> {
+    fn new(groups: &'g Groups) -> Near<'g> {
+        Near {
+            groups,
+            filed: (0..groups.left.len()).map(|_| None).collect(),
         }
     }
-    for o in &mut out {
-        o.sort_unstable();
+
+    /// The tuples of `right` that may share a value with the tuple `l` of `left`, bucket by
+    /// bucket, the buckets in the order of their first tuples, each in written order.
+    fn of(&mut self, l: usize) -> impl Iterator<Item = usize> + '_ {
+        let groups = self.groups;
+        let mut buckets: Vec<&[usize]> = Vec::new();
+        if let Some((q, keys)) = &groups.of[l] {
+            let (len, kinds) = &groups.left[*q];
+            let right = groups.right.get(len).map_or(&[][..], Vec::as_slice);
+            let filed = self.filed[*q].get_or_insert_with(|| {
+                let file = |(p, rows): &'g (Vec<Kind>, Keyed)| {
+                    let mut f: BTreeMap<_, Vec<usize>> = BTreeMap::new();
+                    for (i, ks) in rows {
+                        f.entry(project(ks, p, kinds)).or_default().push(*i);
+                    }
+                    f
+                };
+                right.iter().map(file).collect()
+            });
+            for (f, (p, _)) in filed.iter().zip(right) {
+                if let Some(b) = f.get(&project(keys, kinds, p)) {
+                    buckets.push(b);
+                }
+            }
+            // The groups of `right` come in no fixed order; their buckets, which hold no tuple
+            // twice, are read by first tuple, so that a reader tries the pairs in one order on
+            // every run.
+            buckets.sort_unstable_by_key(|b| b[0]);
+        }
+        buckets.into_iter().flatten().copied()
     }
-    out
+}
+
+/// The keys of the components `keys` of a tuple of the group `p` at the places where the tuples
+/// of the group `q` of the other side have a class too, with the value where both are one value.
+fn project<'k>(
+    keys: &'k [CompKey],
+    q: &[Kind],
+    p: &[Kind],
+) -> Vec<(&'k ShapeKey, Option<&'k Value>)> {
+    (keys.iter().zip(q.iter().zip(p)))
+        .filter_map(|(key, (&q, &p))| {
+            let (k, v) = key.as_ref()?;
+            match (q, p) {
+                (Kind::Open, _) | (_, Kind::Open) => None,
+                (Kind::Point, Kind::Point) => Some((k, v.as_ref())),
+                _ => Some((k, None)),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -5388,10 +5467,33 @@ impl<'m> Pairs<'m, (*const Ty, *const Ty), Ty> {
 }
 
 impl<'m> Pairs<'m, (*const Ty, *const Ty), bool> {
-    /// [`Ty::meets`] of `a` and `b`, whose tuples decide it.
+    /// [`Ty::meets`] of `a` and `b`, whose tuples decide it. Only the pairs of tuples that may
+    /// share a value are compared ([`Near`]), found by key lookup, not every pair of one length.
+    /// When the pairs are few, every pair of one length is compared, with the same answer.
     async fn meets(&'m self, a: &'m Ty, b: &'m Ty) -> bool {
-        for r in &a.tuples {
-            'pair: for s in b.tuples.iter().filter(|s| s.len() == r.len()) {
+        // Complexity tradeoff: `l` and `r` tuples are compared pair by pair, with no keys, when
+        // `l·r ≤ 2·(l + r)`: one side of one tuple, or both of at most four. What is given up:
+        // nothing in order, since those are at most `2·(l + r)` pairs. Why: filing the tuples
+        // costs about 100k instructions plus 100k for each tuple on a side (classes of the
+        // components, maps), and a pair about 23k, so for `n` distinct tuples on each side the
+        // two cost the same near `n = 5` (measured 2026-11-09 on `(i, #xi)` against
+        // `(n + i, #xi)`: at n = 4, 436k filed against 384k by pairs; at n = 6, 638k against
+        // 843k). Both give the same answer, which `tuples_compared_by_meets_through_the_index_
+        // are_those_of_every_pair` checks; the crossover is measured again at the Zed port.
+        // Tests: `tests/steps/l01_22_type_representation/kinds.rs`, `meets_of_many_tuples_
+        // scales`; COMPLEXITY.md F132.
+        let (l, r) = (a.tuples.len(), b.tuples.len());
+        let few = l.saturating_mul(r) <= 2 * (l + r);
+        let groups = (!few).then(|| Groups::new(&a.tuples, &b.tuples));
+        let mut near = groups.as_ref().map(Near::new);
+        for (l, r) in a.tuples.iter().enumerate() {
+            let near = near.as_mut().map(|n| n.of(l));
+            let every = few.then(|| (0..b.tuples.len()).filter(|&j| b.tuples[j].len() == r.len()));
+            let near = near
+                .into_iter()
+                .flatten()
+                .chain(every.into_iter().flatten());
+            'pair: for s in near.map(|j| &b.tuples[j]) {
                 for (x, y) in r.iter().zip(s) {
                     let met = match x.meets_here(y) {
                         Some(m) => m,
@@ -8620,5 +8722,110 @@ mod tests {
         }
         println!("{cases} cases: {met} meets with a tuple, {dropped} differences dropping one");
         assert!(met > 5000 && dropped > 3000, "{met} met, {dropped} dropped");
+    }
+
+    /// Whether two types share a value, decided on the pairs of tuples [`Near`] finds, is what
+    /// comparing every pair of tuples of one length decides (COMPLEXITY.md F132), on random
+    /// unions of tuples of points, classes, unions, functions, variables and the unknown, and
+    /// on the same unions with each tuple of the other side nested as a component of a pair, so
+    /// that the tuples' own tuples are compared too. Pairs of sides with more pairs than twice
+    /// their tuples go through [`Near`]; the count of those decided by tuples is checked.
+    #[test]
+    fn tuples_compared_by_meets_through_the_index_are_those_of_every_pair() {
+        let int = Ty::carrier(Carrier::Int);
+        let fns = [
+            Arc::new(Sig::one(Vec::new(), Vec::new(), int.clone())),
+            Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::lit(&Value::Int(1)))),
+            Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::carrier(Carrier::Str))),
+        ];
+        let mut rng = Rng(132);
+        let (mut cases, mut meet, mut apart, mut filed) = (0, 0, 0, 0);
+        for i in 0..20_000 {
+            let s = near_union(&mut rng, i % 3 == 0, &fns);
+            let t = near_union(&mut rng, i % 2 == 0, &fns);
+            let nest = |u: &Ty| Ty::tuple(vec![Ty::lit(&Value::Int(0)), u.clone()]);
+            let (ns, nt) = (nest(&s), nest(&t));
+            for (a, b) in [(&s, &t), (&t, &s), (&ns, &nt)] {
+                let by_index = a.meets(b);
+                NEAR_ALL.set(true);
+                let want = a.meets(b);
+                NEAR_ALL.set(false);
+                assert_eq!(by_index, want, "({a}) meets ({b})");
+                cases += 1;
+                // Those that tuples decide: neither side open, and nothing but tuples meets.
+                if a.meets_here(b).is_none() {
+                    let (l, r) = (a.tuples.len(), b.tuples.len());
+                    filed += usize::from(l * r > 2 * (l + r));
+                    match by_index {
+                        true => meet += 1,
+                        false => apart += 1,
+                    }
+                }
+            }
+        }
+        println!("{cases} cases; decided by tuples: {meet} meet, {apart} apart, {filed} filed");
+        assert!(
+            meet > 1000 && apart > 1000 && filed > 1000,
+            "{meet} meet, {apart} apart, {filed} filed"
+        );
+    }
+
+    /// [`class_of`], read from the parts of a set, is what comparing the set with each carrier
+    /// and with the atoms gives, on random unions and differences of carriers, literals, atoms
+    /// with and without payloads, atoms of no value, all atoms but one, and tuples, some empty.
+    #[test]
+    fn class_of_read_from_the_parts_is_that_of_comparing_types() {
+        let by_subtype = |s: &KType| {
+            if let Some(c) = Carrier::ALL.into_iter().find(|c| s.subtype(&c.ty())) {
+                return Some(ShapeKey::Carrier(c));
+            }
+            if !s.subtype(&atoms()) {
+                return None;
+            }
+            let mut names = s.atom_names()?;
+            let (n, _) = names.next()?;
+            names.next().is_none().then(|| ShapeKey::Atom(n.into()))
+        };
+        let piece = |rng: &mut Rng| match rng.below(15) {
+            0 => KType::int(),
+            1 => KType::lit(&Value::Int(rng.below(3) as i64)).expect("a literal"),
+            2 => KType::f64(),
+            3 => KType::lit(&Value::float(1.5)).expect("a literal"),
+            4 => KType::rat(),
+            5 => KType::string(),
+            6 => KType::bool(),
+            7 => KType::lit(&Value::Bool(false)).expect("a literal"),
+            8 => KType::atom(["a", "b"][rng.below(2) as usize]),
+            9 => KType::atom_with("a", &KType::int()),
+            10 => KType::atom_with("c", &KType::empty()),
+            11 => &atoms() - &KType::atom("a"),
+            12 => KType::tuple(vec![KType::int(), KType::top()]),
+            13 => KType::tuple(vec![KType::empty()]),
+            _ => KType::atom_with("a", &KType::tuple(vec![KType::empty()])),
+        };
+        let mut rng = Rng(133);
+        let (mut carriers, mut names, mut none) = (0, 0, 0);
+        for _ in 0..20_000 {
+            let mut s = piece(&mut rng);
+            for _ in 0..rng.below(3) {
+                let p = piece(&mut rng);
+                s = match rng.below(4) {
+                    0 => &s - &p,
+                    _ => &s | &p,
+                };
+            }
+            if s.is_empty() {
+                continue;
+            }
+            let class = class_of(&s);
+            assert!(class == by_subtype(&s), "the class of {s:?}");
+            match class {
+                Some(ShapeKey::Carrier(_)) => carriers += 1,
+                Some(_) => names += 1,
+                None => none += 1,
+            }
+        }
+        println!("{carriers} of a carrier, {names} of one name, {none} of none");
+        assert!(carriers > 1000 && names > 500 && none > 1000);
     }
 }

@@ -1055,7 +1055,7 @@ fn meeting_and_subtracting_tuples_of_many_patterns_costs_the_patterns() {
     });
     // Complexity tradeoff (COMPLEXITY.md F127): as many arrangements as tuples cost the
     // product of the two sides, which no algorithm avoids unless the strong exponential time
-    // hypothesis fails (the comment at `near_pairs` in `zedc_types::ty`).
+    // hypothesis fails (the comment at `Near` in `zedc_types::ty`).
     let inputs = scaling::inputs(64, many_patterns);
     scaling::check_order("n tuples against n of n arrangements", 64, 2, |n| {
         let (ones, zeros) = &inputs[&n];
@@ -1063,5 +1063,145 @@ fn meeting_and_subtracting_tuples_of_many_patterns_costs_the_patterns() {
         assert!(met <= n * n, "{met}");
         let left = ones.diff(zeros).tuples.len();
         assert!(left <= n, "{left}");
+    });
+}
+
+/// Whether `a` and `b` share a value, checked to be the same both ways round.
+fn meets(a: &str, b: &str) -> bool {
+    let (a, b) = (ty(a), ty(b));
+    let m = a.meets(&b);
+    assert_eq!(m, b.meets(&a), "({a}) meets ({b}) one way only");
+    m
+}
+
+#[test]
+fn meets_compares_tuples_of_one_length_only() {
+    assert!(!meets("(1, 2)", "(1, 2, 3)"));
+    assert!(!meets(
+        "(1, 2) | (1, 2, 3, 4)",
+        "(1, 2, 3) | (1, 2, 3, 4, 5)"
+    ));
+    // A tuple of each length on both sides: only those of one length are compared.
+    assert!(meets("(1, 2) | (1, 2, 3)", "(1, 2, 3)"));
+    assert!(meets("(1, 2) | (1, 2, 3)", "(int, int, 3) | (5, 6)"));
+    assert!(!meets("(1, 2) | (1, 2, 3)", "(int, int, 4) | (5, 6)"));
+}
+
+#[test]
+fn meets_tells_apart_tuples_that_share_a_prefix() {
+    assert!(!meets("(1, 2, 3)", "(1, 2, 4)"));
+    assert!(meets("(1, 2, 3)", "(1, 2, int)"));
+    assert!(!meets("(1, 2, 3) | (1, 2, 4)", "(1, 2, 5) | (1, 2, 6)"));
+    assert!(meets("(1, 2, 3) | (1, 2, 4)", "(1, 2, 5) | (1, 2, 4)"));
+    // The same prefix, then a class at the last place on one side and a value on the other.
+    assert!(meets("(1, true, 1) | (1, true, 2)", "(1, bool, 2)"));
+    assert!(!meets("(1, true, 1) | (1, true, 2)", "(1, bool, String)"));
+    // Prefixes that are tuples themselves.
+    assert!(!meets("((1, 2), 3) | ((1, 2), 4)", "((1, 2), 5)"));
+    assert!(meets("((1, 2), 3) | ((1, 2), 4)", "((1, int), 4)"));
+    assert!(!meets("((1, 2), 3) | ((1, 2), 4)", "((1, 3), int)"));
+}
+
+#[test]
+fn meets_of_a_side_with_no_tuples_is_decided_by_the_rest() {
+    assert!(!meets("int", "(1, 2)"));
+    assert!(!meets("String | bool", "(1, 2) | (int, int, int)"));
+    assert!(meets("int | (1, 2)", "int"));
+    // An empty type shares no value with any.
+    let empty = Ty::empty();
+    assert!(!empty.meets(&ty("(1, 2)")) && !ty("(1, 2)").meets(&empty));
+    assert!(!empty.meets(&empty));
+}
+
+#[test]
+fn meets_of_one_tuple_against_many_finds_the_one_that_shares_a_value() {
+    let many = ty("(0, 0) | (1, 1) | (2, 2) | (3, 3) | (4, 4) | (5, 5)");
+    for (one, shares) in [
+        ("(int, 5)", true),
+        ("(5, int)", true),
+        ("(4, 5)", false),
+        ("(int, 6)", false),
+        ("(int, bool)", false),
+        ("(1 | String, 1)", true),
+        ("(2 | String, 1)", false),
+    ] {
+        let one = ty(one);
+        assert_eq!(one.meets(&many), shares, "({one}) meets ({many})");
+        assert_eq!(many.meets(&one), shares, "({many}) meets ({one})");
+    }
+}
+
+/// Unions of `n` tuples, as pairs `(t, u)` with whether `t` and `u` share a value: no two
+/// tuples, or the last two only, so that a walk of every pair of one length compares `n^2`
+/// pairs where a lookup of each tuple's own compares at most one.
+fn meets_families(n: usize) -> Vec<(&'static str, Ty, Ty, bool)> {
+    let rows = |f: &dyn Fn(usize) -> Ty| Ty::union_all(&(0..n).map(f).collect::<Vec<_>>());
+    let pair = |a: Ty, b: Ty| Ty::tuple(vec![a, b]);
+    vec![
+        // `(i, n + i)` against `(i + 1, n + i)`: each pair differs at one place or both.
+        (
+            "points",
+            rows(&|i| pair(int(i), int(n + i))),
+            rows(&|i| pair(int(i + 1), int(n + i))),
+            false,
+        ),
+        // The same, with the tuple `(n - 1, 2n - 1)` last on the other side too.
+        (
+            "the last pair",
+            rows(&|i| pair(int(i), int(n + i))),
+            Ty::union_all(&[
+                rows(&|i| pair(int(i + 1), int(n + i))),
+                pair(int(n - 1), int(2 * n - 1)),
+            ]),
+            true,
+        ),
+        // Two arrangements of points and `int` against points of other values.
+        (
+            "two arrangements",
+            Ty::union_all(
+                &(0..n)
+                    .flat_map(|i| [pair(int(i), ty("int")), pair(ty("int"), int(n + i))])
+                    .collect::<Vec<_>>(),
+            ),
+            rows(&|i| pair(int(2 * n + i), int(3 * n + i))),
+            false,
+        ),
+        // Tuples of tuples that differ in the inner tuple.
+        (
+            "nested",
+            rows(&|i| pair(pair(int(i), int(i)), ty("bool"))),
+            rows(&|i| pair(pair(int(n + i), int(i)), ty("bool"))),
+            false,
+        ),
+    ]
+}
+
+#[test]
+fn meets_of_many_tuples_scales() {
+    // Each tuple of one side is compared only with the tuples of the other that agree with it
+    // at every place where both have a class or a value, found by key lookup.
+    let inputs = scaling::inputs(256, meets_families);
+    scaling::check("n tuples against n tuples, meets, four ways", 256, |n| {
+        for (what, t, u, shares) in &inputs[&n] {
+            assert_eq!(t.meets(u), *shares, "{what}");
+            assert_eq!(u.meets(t), *shares, "{what}");
+        }
+    });
+}
+
+#[test]
+fn meets_of_tuples_of_many_patterns_costs_the_patterns() {
+    // Complexity tradeoff (COMPLEXITY.md F132): as many arrangements as tuples cost up to the
+    // product of the two sides; whether any pair shares a value is the orthogonal vectors
+    // problem, which no algorithm decides faster unless the strong exponential time hypothesis
+    // fails (the comment at `Near` in `zedc_types::ty`).
+    let inputs = scaling::inputs(64, |n| {
+        let (ones, zeros) = many_patterns(n);
+        let shares = !ones.meet(&zeros).tuples.is_empty();
+        (ones, zeros, shares)
+    });
+    scaling::check_order("n tuples against n of n arrangements, meets", 64, 2, |n| {
+        let (ones, zeros, shares) = &inputs[&n];
+        assert_eq!(ones.meets(zeros), *shares);
     });
 }
