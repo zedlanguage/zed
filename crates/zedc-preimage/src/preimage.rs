@@ -13684,6 +13684,102 @@ mod tests {
         });
     }
 
+    /// `false || (if 2x > max(x, x) {ym + -3 <= -6} else {2x > max(x, x)}) ||
+    /// (let n0 = min(x, 3) - min(x, -3) in let n1 = stage(n0) in ... n_k == -7)`, with
+    /// `ym = if y mod 2 != 1 {-1} else {-1}` and `stage(n) = if n < 2 {-1} else {(if n != -4
+    /// {n + 3} else {max(n, 2)}) - (-1)}`: round 81 of `summaries_read_again` (seed
+    /// `0x5851_f42d_4c95_7f2d`, part 1) minimized and grown to `k` stages (item
+    /// PREIMAGE-slow-rounds).
+    fn staged_chain(k: usize) -> Term {
+        let v = |n: &str| Term::Var(n.into());
+        let int = |i: i64| Term::Lit(Value::Int(i));
+        let p2 = |p: Prim, a: Term, b: Term| Term::Prim(p, vec![a, b]);
+        let if_ =
+            |c: Term, a: Term, b: Term| Term::If(Shared::new(c), Shared::new(a), Shared::new(b));
+        let stage = |n: Term| {
+            let inner = if_(
+                p2(Prim::Ne, n.clone(), int(-4)),
+                p2(Prim::Add, n.clone(), int(3)),
+                p2(Prim::Max, n.clone(), int(2)),
+            );
+            if_(
+                p2(Prim::Lt, n, int(2)),
+                int(-1),
+                p2(Prim::Sub, inner, int(-1)),
+            )
+        };
+        let mut body = p2(Prim::Eq, v(&format!("n{k}")), int(-7));
+        for i in (1..=k).rev() {
+            body = Term::Let(
+                format!("n{i}").into(),
+                Shared::new(stage(v(&format!("n{}", i - 1)))),
+                Shared::new(body),
+            );
+        }
+        let arg = p2(
+            Prim::Sub,
+            p2(Prim::Min, v("x"), int(3)),
+            p2(Prim::Min, v("x"), int(-3)),
+        );
+        let call = Term::Let("n0".into(), Shared::new(arg), Shared::new(body));
+        let c = Shared::new(p2(
+            Prim::Gt,
+            p2(Prim::Mul, int(2), v("x")),
+            p2(Prim::Max, v("x"), v("x")),
+        ));
+        let ym = if_(
+            p2(Prim::Ne, p2(Prim::Mod, v("y"), int(2)), int(1)),
+            Term::Prim(Prim::Neg, vec![int(1)]),
+            Term::Prim(Prim::Neg, vec![int(1)]),
+        );
+        let left = Term::If(
+            c.clone(),
+            Shared::new(p2(Prim::Le, p2(Prim::Add, ym, int(-3)), int(-6))),
+            c,
+        );
+        let left = p2(Prim::Or, Term::Lit(Value::Bool(false)), left);
+        p2(Prim::Or, left, call)
+    }
+
+    /// The preimage of [`staged_chain`] under `false`, whose hulls are tightened by questions
+    /// to the solver over the whole formula (`presburger::project_each`). Before item
+    /// PREIMAGE-slow-rounds each question probed every disjunct again; now the points found
+    /// are kept across the questions and a disjunct is searched from both ends of the chain.
+    /// What is left is the probe of the formula itself, whose `learn` settles a bound at
+    /// stage `i` in about `i` rounds of the whole formula (COMPLEXITY.md
+    /// PREIMAGE-slow-rounds).
+    #[test]
+    #[ignore = "PRES-settle-chain-rounds: 22.4 times the bytes at 4 and 32 stages, over the limit 22.0; a bound learned at stage i settles in about i rounds of the whole formula; open"]
+    fn a_staged_chain_under_false_is_read_in_time_near_its_length() {
+        crate::scaling::check_order(
+            "the preimage under false of a chain of k stages",
+            4,
+            1,
+            |k| {
+                let p = preimage(&staged_chain(k), &domains(), &Demand::Bool(false));
+                assert!(p.exact, "k = {k}: {p:?}");
+            },
+        );
+    }
+
+    /// The preimage of [`staged_chain`] under `false` is the whole box at every length, under
+    /// `true` empty: no stage reaches `-7`, and the left side holds nowhere.
+    #[test]
+    fn a_staged_chain_is_read_exactly() {
+        for k in [1, 2, 5] {
+            let t = staged_chain(k);
+            let all = preimage(&t, &domains(), &Demand::Bool(false));
+            assert!(all.exact, "k = {k}: {all:?}");
+            assert_eq!(all.domains, domains(), "k = {k}");
+            let none = preimage(&t, &domains(), &Demand::Bool(true));
+            assert!(none.exact, "k = {k}: {none:?}");
+            assert!(
+                none.domains.values().all(IntervalSet::is_empty),
+                "k = {k}: {none:?}"
+            );
+        }
+    }
+
     /// `min` and `max` of a summary with a constant ([`clamp_treap`]) agree with the summary
     /// clamped point by point, on random piecewise summaries.
     #[test]

@@ -1367,24 +1367,65 @@ fn or_old<T>(run: impl Fn() -> Result<T, Refusal>) -> Result<T, Refusal> {
 // Complexity tradeoff: a formula refused with the implied rows is asked twice, so it costs
 // up to twice what it cost before; the first ask stops at the refusal.
 fn decide_inner(f: &Formula) -> Result<bool, Refusal> {
-    let p = absorbed(f, &[]).0;
+    decide_kept(f, None)
+}
+
+/// [`decide_inner`], which with `kept` adds to it a point of `f` where the search finds one.
+/// Both search as [`has_point`] does, with [`probe_to`] stopped at the first point of the
+/// parts it finds, which answers `true`, so the answer with `kept` is the answer without it.
+/// A point is kept only once `f` is shown to hold at it, with the atoms that [`absorb`]
+/// projected away given values ([`repair`]); a point of the parts at which `f` does not hold
+/// so still answers `true` (S22-shapes-linear and PREIMAGE-slow-rounds, one first-point path).
+fn decide_kept(f: &Formula, mut kept: Option<&mut Vec<Model>>) -> Result<bool, Refusal> {
+    let (p, gone) = absorbed(f, &[]);
     let implied = if old_path() {
         Vec::new()
     } else {
         disjunction_hulls(&p.ors)
     };
-    let ask = |mut p: Parts, rows: Vec<Con>| -> Result<bool, Refusal> {
+    let point_of_f = |mut m: Model| {
+        repair(&mut m, &gone);
+        f.holds(&m).then_some(m)
+    };
+    let mut ask = |mut p: Parts, rows: Vec<Con>| -> Result<bool, Refusal> {
         p.cons.extend(rows);
-        match settle(p, true)? {
-            None => Ok(false),
-            Some(p) if p.ors.is_empty() => Ok(true),
-            Some(p) => has_point(p),
+        let p = match settle(p, true)? {
+            None => return Ok(false),
+            Some(p) if p.ors.is_empty() => return Ok(true),
+            Some(p) => p,
+        };
+        let Some(kept) = kept.as_deref_mut() else {
+            return has_point(p);
+        };
+        if let Ok(m) = pick(&p, true) {
+            kept.extend(point_of_f(m));
+            return Ok(true);
+        }
+        let mut first = Vec::new();
+        let Some(q) = probe_to(p, &mut first, true)? else {
+            return Ok(false);
+        };
+        match first.pop() {
+            // The probe ran to its end, as [`found`]'s does.
+            None => pick(&q, true).map(|m| {
+                kept.extend(point_of_f(m));
+                true
+            }),
+            // A point of the parts, so `f` has one ([`has_point`]); it is kept only where `f`
+            // holds at it once the atoms [`absorb`] projected away are given values.
+            Some(m) => {
+                kept.extend(point_of_f(m));
+                Ok(true)
+            }
         }
     };
     if implied.is_empty() {
         return ask(p, implied);
     }
-    ask(p, implied).or_else(|_| ask(absorbed(f, &[]).0, Vec::new()))
+    match ask(p, implied) {
+        Err(_) => ask(absorbed(f, &[]).0, Vec::new()),
+        r => r,
+    }
 }
 
 /// The new name of `a` under the renaming `to` of [`Renamed`]; an atom not in it keeps its own,
@@ -3035,8 +3076,10 @@ fn probe(p: Parts) -> Result<Option<Parts>, Refusal> {
 
 /// [`probe`], which pushes each point it finds onto `points`, so that its caller has them
 /// also when it refuses, and, when `stop` is set, stops at the first point and returns the
-/// parts as they stand. Each point holds a disjunct of the disjunction under test and every
-/// other part ([`point_with`]), so it is a point of `p`.
+/// parts with the disjunction then tested whole, which have the points of `p`. Each point
+/// holds a disjunct of the disjunction under test and every other part ([`point_with`]), so
+/// it is a point of `p`. Until that point it does what [`probe`] does, so without one it
+/// gives what [`probe`] gives.
 fn probe_to(mut p: Parts, points: &mut Vec<Model>, stop: bool) -> Result<Option<Parts>, Refusal> {
     // The bounds on single atoms that the formula implies, found by [`learn`]. The formula
     // only gains constraints or stays equal from round to round, so they hold to the end.
@@ -3079,70 +3122,87 @@ fn probe_to(mut p: Parts, points: &mut Vec<Model>, stop: bool) -> Result<Option<
                 if refuted_by_links(&p, &links[i][at], &base, &d) {
                     continue;
                 }
-                if let Some(m) = point_with(&p, &held, &d, &implied) {
-                    if stop {
-                        points.push(m);
-                        p.ors[i] = ds;
-                        return Ok(Some(p));
+                let mut point = point_with(&p, &held, &d, &implied, false);
+                if point.is_none() {
+                    // Complexity tradeoff: a disjunct that no point holds, no implied bound and
+                    // no linked test ([`refuted_by_links`]) removes is still tested by one
+                    // propagation of all the parts, so `r` such
+                    // disjuncts cost `r` propagations of the whole formula, and failed-literal
+                    // probing is polynomial, not `O(n log n)`, when `r` grows with `n` and the
+                    // disjuncts share no bound of one atom that [`learn`] finds. Why: `settle`
+                    // does not report which disjuncts its proof covers, and an undoable
+                    // (trail-based) propagation does not help, since on a chain each refutation's
+                    // own propagation runs through the whole chain. Each refuted disjunct also
+                    // costs [`learn`]: for each bound of one atom it writes, an exponential and a
+                    // binary search over the `m` bounds the other disjuncts write on that atom, up
+                    // to about `2 log2 m + 1` tests, each one [`bounds_refute`] (one propagation
+                    // of bounds, `O(n log n)`) and, when that does not refute, one `settle`. The
+                    // search usually ends on a bound that has a point, and that test always costs
+                    // a `settle`. So when no learned bound removes a later disjunct, `r` refuted
+                    // disjuncts cost up to `O(r log m)` settles, not `r` (verifier's counters:
+                    // `guards_beyond_the_inputs_scale` 5 calls of `learn` and 16 settles in them,
+                    // cross 2 and 2). Trigger: disjuncts without a point whose proofs
+                    // differ by more than a bound of one atom. Tests:
+                    // `l01_25_preimage_catalog::s22::chains_on_two_inputs_keep_their_boxes`
+                    // reaches it (cross at `k = 51`); `chain_cross_above_its_width_scales` (cross
+                    // at 12 and 96, COMPLEXITY.md S22: 40.0 times the bytes with one propagation
+                    // per disjunct, 10.1 times now) and
+                    // `l01_38_presburger::probe::guards_beyond_the_inputs_scale` measure it. A
+                    // complete solution is a `settle` that returns, with each refutation, the
+                    // constraints its proof used (a conflict explanation), so that one propagation
+                    // removes every disjunct those constraints exclude. The linked test is that
+                    // explanation for the case where it is one disjunction reached through a
+                    // private atom; it costs at most one more `settle` of a part of the formula
+                    // before the one of the whole, so the worst case stays `O(n)` per disjunct.
+                    // Tests: `l01_38_presburger::ladder::a_chain_of_guarded_remainders_scales`
+                    // (COMPLEXITY.md PRES-guarded-chain).
+                    let mut q = Parts {
+                        cons: p.cons.clone(),
+                        ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
+                        atoms: OnceCell::new(),
+                        failed: Cell::new(0),
+                        id: Cell::new(0),
+                    };
+                    q.put(&d);
+                    if matches!(settle(q, false), Ok(None)) {
+                        // The disjunction without `d`, which the formula is equal to without it.
+                        let rest: Vec<Rc<Parts>> =
+                            live.iter().chain(&ds[at + 1..]).cloned().collect();
+                        learn(&p, rest, &d, &mut implied);
+                        continue;
                     }
-                    for (o, hs) in p.ors.iter().zip(held.iter_mut()) {
-                        for (e, h) in o.iter().zip(hs.iter_mut()) {
-                            *h = *h || e.holds(&m);
-                        }
-                    }
-                    points.push(m);
-                    live.push(d);
-                    live_held.push(true);
-                    continue;
+                    // A disjunct the propagation leaves is searched again with the
+                    // disjunctions read in the other order: [`pick`] reads the last first, and
+                    // on a chain of definitions written first to last (each stage of
+                    // `n1 = if n0 < 2 {..} else {..}`, `n2 = ..`) a stage chosen first fixes
+                    // a value that a stage read later defines otherwise, so the search is
+                    // refused on every disjunct and each of them costs a propagation of the
+                    // whole formula. Read from the first, each stage is chosen after the stages
+                    // that define its inputs, and the point found holds many disjuncts, which
+                    // are then kept unasked. Only a disjunct the propagation leaves pays the
+                    // second search, so none is added for a disjunct removed (item
+                    // PREIMAGE-slow-rounds). The disjuncts removed are those without a point,
+                    // as before; a point only spares a question.
+                    point = point_with(&p, &held, &d, &implied, true);
                 }
-                // Complexity tradeoff: a disjunct that no point holds, no implied bound and
-                // no linked test ([`refuted_by_links`]) removes is still tested by one
-                // propagation of all the parts, so `r` such
-                // disjuncts cost `r` propagations of the whole formula, and failed-literal
-                // probing is polynomial, not `O(n log n)`, when `r` grows with `n` and the
-                // disjuncts share no bound of one atom that [`learn`] finds. Why: `settle`
-                // does not report which disjuncts its proof covers, and an undoable
-                // (trail-based) propagation does not help, since on a chain each refutation's
-                // own propagation runs through the whole chain. Each refuted disjunct also
-                // costs [`learn`]: for each bound of one atom it writes, an exponential and a
-                // binary search over the `m` bounds the other disjuncts write on that atom, up
-                // to about `2 log2 m + 1` tests, each one [`bounds_refute`] (one propagation
-                // of bounds, `O(n log n)`) and, when that does not refute, one `settle`. The
-                // search usually ends on a bound that has a point, and that test always costs
-                // a `settle`. So when no learned bound removes a later disjunct, `r` refuted
-                // disjuncts cost up to `O(r log m)` settles, not `r` (verifier's counters:
-                // `guards_beyond_the_inputs_scale` 5 calls of `learn` and 16 settles in them,
-                // cross 2 and 2). Trigger: disjuncts without a point whose proofs
-                // differ by more than a bound of one atom. Tests:
-                // `l01_25_preimage_catalog::s22::chains_on_two_inputs_keep_their_boxes`
-                // reaches it (cross at `k = 51`); `chain_cross_above_its_width_scales` (cross
-                // at 12 and 96, COMPLEXITY.md S22: 40.0 times the bytes with one propagation
-                // per disjunct, 10.1 times now) and
-                // `l01_38_presburger::probe::guards_beyond_the_inputs_scale` measure it. A
-                // complete solution is a `settle` that returns, with each refutation, the
-                // constraints its proof used (a conflict explanation), so that one propagation
-                // removes every disjunct those constraints exclude. The linked test is that
-                // explanation for the case where it is one disjunction reached through a
-                // private atom; it costs at most one more `settle` of a part of the formula
-                // before the one of the whole, so the worst case stays `O(n)` per disjunct.
-                // Tests: `l01_38_presburger::ladder::a_chain_of_guarded_remainders_scales`
-                // (COMPLEXITY.md PRES-guarded-chain).
-                let mut q = Parts {
-                    cons: p.cons.clone(),
-                    ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
-                    atoms: OnceCell::new(),
-                    failed: Cell::new(0),
-                    id: Cell::new(0),
-                };
-                q.put(&d);
-                if !matches!(settle(q, false), Ok(None)) {
+                let Some(m) = point else {
                     live.push(d);
                     live_held.push(false);
                     continue;
+                };
+                if stop {
+                    points.push(m);
+                    p.ors[i] = ds;
+                    return Ok(Some(p));
                 }
-                // The disjunction without `d`, which the formula is equal to without it.
-                let rest: Vec<Rc<Parts>> = live.iter().chain(&ds[at + 1..]).cloned().collect();
-                learn(&p, rest, &d, &mut implied);
+                for (o, hs) in p.ors.iter().zip(held.iter_mut()) {
+                    for (e, h) in o.iter().zip(hs.iter_mut()) {
+                        *h = *h || e.holds(&m);
+                    }
+                }
+                points.push(m);
+                live.push(d);
+                live_held.push(true);
             }
             changed |= live.len() < n;
             if live.is_empty() {
@@ -3224,6 +3284,13 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
             }
             let mut q = f.clone();
             q.cons.push(c);
+            // Complexity tradeoff: on a chain of definitions, a bound at the i-th stage
+            // reaches the end of the chain in about i rounds of `settle`, each a pass over the
+            // whole formula, so the bounds of a chain of k stages cost O(k^2) passes, cubic in
+            // k in all (`a_staged_chain_under_false_is_read_in_time_near_its_length` in
+            // zedc-preimage, ignored; 22.4 times the bytes from 4 to 32 stages). Propagating
+            // the bound along the chain's definitions in one pass is item
+            // PRES-settle-chain-rounds; every bound recorded stays proved.
             matches!(settle(q, false), Ok(None))
         };
         if !none(&ws[0]) {
@@ -3553,7 +3620,14 @@ fn narrow_to(b: &mut AtomBounds, a: &Atom, lo: Option<Int>, hi: Option<Int>) -> 
 /// the search.
 /// The bounds in `implied`, which the formula implies, are added to the parts, so that the
 /// search does not choose a value of an atom that no point has.
-fn point_with(p: &Parts, held: &[Vec<bool>], d: &Parts, implied: &Near) -> Option<Model> {
+/// With `backward`, [`pick`] reads the disjunctions from the first, not from the last.
+fn point_with(
+    p: &Parts,
+    held: &[Vec<bool>],
+    d: &Parts,
+    implied: &Near,
+    backward: bool,
+) -> Option<Model> {
     let others = || p.ors.iter().zip(held).filter(|(o, _)| !o.is_empty());
     let mut cons = p.cons.clone();
     implied
@@ -3574,6 +3648,9 @@ fn point_with(p: &Parts, held: &[Vec<bool>], d: &Parts, implied: &Near) -> Optio
         id: Cell::new(0),
     };
     q.put(d);
+    if backward {
+        q.ors.reverse();
+    }
     let m = pick(&q, true).ok()?;
     let meets = d.holds(&m)
         && p.cons.iter().all(|c| c.holds(&m))
@@ -8118,6 +8195,9 @@ fn project_parts(
     }
     if n_ors > 1 && out.iter().any(finite) {
         let mut summary: Option<Formula> = None;
+        // The points of the formula that the questions found, shared by the symbols, which are
+        // asked of the one formula ([`tighten`]).
+        let mut points: Vec<Model> = Vec::new();
         for (o, sym) in out.iter_mut().zip(syms) {
             let Ok(s) = o else { continue };
             let Some((End::Fin(_), End::Fin(_))) = s.bounds() else {
@@ -8127,8 +8207,12 @@ fn project_parts(
                 Some(f) => f,
                 None => summary.get_or_insert_with(|| summarize(&linked.cons, &seen, syms)),
             };
-            let ask = if sets { decide } else { decide_inner };
-            *o = tighten(f, sym, s.clone(), &implied, ask);
+            let ask: fn(&Formula, &mut Vec<Model>) -> Result<bool, Refusal> = if sets {
+                |f, _| decide(f)
+            } else {
+                |f, kept| decide_kept(f, Some(kept))
+            };
+            *o = tighten(f, sym, s.clone(), &implied, ask, &mut points);
         }
     }
     skipped.sort_unstable();
@@ -8199,22 +8283,32 @@ fn summarize(cons: &[Con], seen: &[Option<Vec<Projected>>], syms: &[Atom]) -> Fo
 /// question is asked of `ask`, [`decide_inner`] for a formula renamed or [`decide`] when its
 /// atoms may share a color. `hint` holds rows that the parts `f` stands for imply, read with
 /// `f`'s own to find a point at each end.
+///
+/// `points` holds points of `f` found so far, and `ask` adds a point of `f` it finds to it
+/// ([`decide_kept`]). A question whose constraint holds at one of them has a point, so it is
+/// not asked: `ask` would answer it `true` or refuse it, and either leaves the bound where a
+/// point leaves it; a point with `sym` at an end of `set` shows that end is its bound. Where the
+/// search refuses a question that [`probe`] finds a point of, the question was a refusal at
+/// the cost of two probes of the whole formula run to their end (item PREIMAGE-slow-rounds);
+/// it is now answered at the first point.
 fn tighten(
     f: &Formula,
     sym: &Atom,
     set: IntervalSet,
     hint: &[Con],
-    ask: fn(&Formula) -> Result<bool, Refusal>,
+    ask: fn(&Formula, &mut Vec<Model>) -> Result<bool, Refusal>,
+    points: &mut Vec<Model>,
 ) -> Result<IntervalSet, Refusal> {
     let Some((End::Fin(lo), End::Fin(hi))) = set.bounds() else {
         return Ok(set);
     };
     let x = Lin::atom(sym.clone());
-    let none = |con: Con| {
-        matches!(
-            ask(&Formula::and(vec![f.clone(), Formula::Con(con)])),
-            Ok(false)
-        )
+    let none = |con: Con, points: &mut Vec<Model>| {
+        !points.iter().any(|m| con.holds(m))
+            && matches!(
+                ask(&Formula::and(vec![f.clone(), Formula::Con(con)]), points),
+                Ok(false)
+            )
     };
     let (one, two) = (Int::ONE, Int::from(2));
     let (lo, hi) = (Int::from(lo), Int::from(hi));
@@ -8229,32 +8323,36 @@ fn tighten(
     let mut rows = mem::take(&mut parts.cons);
     rows.extend(disjunction_hulls(&parts.ors));
     rows.extend(hint.iter().cloned());
-    let mut at_end = |v: &Int| {
-        rows.push(Con::eq(&x, &Lin::constant(v.clone())));
+    let mut at_end = |v: &Int, points: &[Model]| {
+        let end = Con::eq(&x, &Lin::constant(v.clone()));
+        if points.iter().any(|m| end.holds(m)) {
+            return true;
+        }
+        rows.push(end);
         let held = point_of(&rows).is_some_and(|m| f.holds(&m));
         rows.pop();
         held
     };
     // The least `v` in `lo..=hi` with no proof that `f` has no point where `sym <= v`, and the
     // greatest with none where `sym >= v`.
-    let new_lo = if at_end(&lo) {
+    let new_lo = if at_end(&lo, points) {
         lo
     } else {
         let (mut a, mut b) = (lo, hi.clone());
         while a < b {
             let mid = &a + &(&b - &a).div_floor(&two);
-            if none(Con::ge(&Lin::constant(mid.clone()), &x)) {
+            if none(Con::ge(&Lin::constant(mid.clone()), &x), points) {
                 a = &mid + &one
             } else {
                 b = mid
             }
         }
-        if none(Con::ge(&Lin::constant(a.clone()), &x)) {
+        if none(Con::ge(&Lin::constant(a.clone()), &x), points) {
             return Ok(IntervalSet::empty());
         }
         a
     };
-    if at_end(&hi) {
+    if at_end(&hi, points) {
         return Ok(set.meet(&IntervalSet::range(
             End::Fin(Num::from(&new_lo)),
             End::Fin(Num::from(&hi)),
@@ -8263,7 +8361,7 @@ fn tighten(
     let (mut a, mut b) = (new_lo.clone(), hi);
     while a < b {
         let mid = &b - &(&b - &a).div_floor(&two);
-        if none(Con::ge(&x, &Lin::constant(mid.clone()))) {
+        if none(Con::ge(&x, &Lin::constant(mid.clone())), points) {
             b = &mid - &one
         } else {
             a = mid

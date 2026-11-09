@@ -3027,4 +3027,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A probe that pushes each point it finds onto a `&mut Vec<Model>` of its caller, read by the caller also after the probe refuses (`?` out of its loops), and, when `stop` is set, puts the disjunction back in the parts in place and returns from inside its loops at the first point | `probe_to`, `found`, `has_point` | Mutation (gap 11), early exit (gap 12) | A fold over the disjuncts whose state carries the points found, returned with the refusal or the parts, so `found` reads the first point from either result |
+| A probe that pushes each point it finds onto a `&mut Vec<Model>` of its caller, read by the caller also after the probe refuses (`?` out of its loops), and, when `stop` is set, puts the disjunction back in the parts in place and returns from inside its loops at the first point | `probe_to`, `found`, `has_point`, `decide_kept` | Mutation (gap 11), early exit (gap 12) | A fold over the disjuncts whose state carries the points found, returned with the refusal or the parts, so `found` reads the first point from either result |
+
+## Entries from PREIMAGE-slow-rounds (`crates/zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An optional out-parameter `Option<&mut Vec<Model>>` that a search pushes each checked point into, reborrowed with `as_deref_mut` | `decide_kept`, `project_parts`, `tighten` | Mutation (gap 11) | the search returns its answer and the points it checked, and the caller joins them to its own list |
+| `q.ors.reverse()` on a fresh copy of the disjunctions | `point_with` | Mutation (gap 11) | the disjunctions read through a reversed view |
