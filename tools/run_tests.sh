@@ -181,6 +181,8 @@ fi
 # load 30) joined it; its seed loops of stars and of satellites took 38 and 42 s alone. Each
 # loop is a module of parts over its seeds, and each part is a piece (2026-11-09,
 # TEST-lazy-split).
+# l01_39 if_shortcut holds four random parts of about 14 s each at load 35, which together
+# would pass 60 s (2026-11-09, PA-if-shortcut-diff).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
@@ -197,6 +199,7 @@ split="
   l01_39_reduced_product::lazy::a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product
   l01_39_reduced_product::lazy::a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_product
   l01_39_reduced_product::lazy::leaves_of_one_class_settled_together_get_what_each_gets_alone
+  l01_39_reduced_product::if_shortcut
   l01_39a_bit_words l01_39a_bit_words::scaling
   l25_08_mutate l25_08_mutate::scaling
 "

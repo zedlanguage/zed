@@ -18,6 +18,7 @@ mod follow;
 mod helpers;
 mod holes;
 mod hull;
+mod if_shortcut;
 mod lazy;
 mod linked;
 mod named_test;
