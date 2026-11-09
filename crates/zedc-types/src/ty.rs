@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use zed_kernel::frames::{Deep, Stack};
@@ -3578,6 +3579,153 @@ fn project<'k>(
         .collect()
 }
 
+/// The class of a value, as [`class`] gives the class of a component that holds it: the
+/// carrier of a boolean, number or string, the name of an atom, the length of a tuple. None
+/// for a keypath or a family, which no component with a class holds: such a component holds
+/// no function, and its set is within one carrier, within the atoms of one name, or empty
+/// beside its tuples.
+fn value_class(x: &Value) -> Option<ShapeKey> {
+    Some(match x {
+        Value::Bool(_) => ShapeKey::Carrier(Carrier::Bool),
+        Value::Int(_) | Value::Big(_) => ShapeKey::Carrier(Carrier::Int),
+        Value::Rat(_) => ShapeKey::Carrier(Carrier::Rat),
+        Value::Float(_) => ShapeKey::Carrier(Carrier::F64),
+        Value::Str(_) => ShapeKey::Carrier(Carrier::Str),
+        Value::Atom(a) => ShapeKey::Atom(a.name.clone()),
+        Value::Tuple(xs) => ShapeKey::Row(xs.len()),
+        Value::Path(_) | Value::Family(_) => return None,
+    })
+}
+
+/// The tuples of one length of a type, filed for the tuple values [`Ty::contains`] looks for
+/// in them ([`Pairs::contains`]): in groups by [`Kind`] at each place, and in each group by
+/// their classes at the places where they have one and their values where they are one
+/// scalar value. A tuple holds a value only when, at each such place, the value's component
+/// is of that class ([`value_class`]) and, where the tuple's component is one value, equal to
+/// it; so each group is looked up once by the value's own key, and a tuple of no group's
+/// bucket does not hold the value.
+///
+/// A component that is one tuple value is filed by its length only: comparing a value's
+/// component with it would read the two whole, and a value compared with many types would be
+/// read once for each, where the walk of the pair compares them through the memo of pairs.
+///
+/// Complexity tradeoff: each group is looked up once for each value. What is given up: the
+/// cost is O(l·w·log l) to file `l` tuples of width `w` and O(g·w·log l + p) per value
+/// for the `g` groups looked up (at most `G`, the groups) and `p` tuples found before one
+/// holds the value, so `l` tuples in about `l` groups, against `r` values,
+/// cost about `l·r`. Why: a tuple of points and `int` encodes a vector of bits (1 as the point
+/// `0`, 0 as `int`), and a tuple value of zeros and ones holds in it exactly when the two
+/// vectors are orthogonal; deciding for each of `r` vectors of about `c·log n` bits whether one
+/// of `l` such vectors is orthogonal to it is the orthogonal vectors problem, `n^(2-o(1))`
+/// unless the strong exponential time hypothesis fails. In a written union the groups are
+/// few. Structure: `n` tuples of width `2·log2 n`, each a different arrangement of points and
+/// `int`. Test: `tests/steps/l01_22_type_representation/kinds.rs`,
+/// `contains_of_tuples_of_many_patterns_costs_the_patterns`; COMPLEXITY.md F133. A complete
+/// solution does not exist under that hypothesis; one could only refuse such unions, which
+/// would refuse values the type holds.
+struct Holders {
+    /// Each group's kinds, and its tuples under each key, by their index in the type's tuples,
+    /// in written order; the groups in the order of their first tuple.
+    groups: Vec<(Vec<Kind>, ByKey)>,
+}
+
+/// The tuples of one group of [`Holders`] under their key: the class at each place where the
+/// group has one, with the value where it has one value.
+type ByKey = BTreeMap<Vec<(ShapeKey, Option<Value>)>, Vec<usize>>;
+
+impl Holders {
+    /// The tuples `rows` of `t`, by their indices, filed.
+    fn new(t: &Ty, rows: &[usize]) -> Holders {
+        // Each group's first tuple, by which the groups are put in order.
+        let mut groups: HashMap<Vec<Kind>, (usize, ByKey)> = HashMap::new();
+        for &i in rows {
+            let mut kinds = Vec::with_capacity(t.tuples[i].len());
+            let mut key = Vec::new();
+            for c in t.tuples[i].iter() {
+                match class(c) {
+                    None => kinds.push(Kind::Open),
+                    Some((k @ ShapeKey::Row(_), _)) | Some((k, None)) => {
+                        kinds.push(Kind::Class);
+                        key.push((k, None));
+                    }
+                    Some((k, Some(v))) => {
+                        kinds.push(Kind::Point);
+                        key.push((k, Some(v)));
+                    }
+                }
+            }
+            let (_, filed) = groups.entry(kinds).or_insert_with(|| (i, BTreeMap::new()));
+            filed.entry(key).or_default().push(i);
+        }
+        let mut groups: Vec<_> = groups.into_iter().collect();
+        groups.sort_unstable_by_key(|(_, (first, _))| *first);
+        Holders {
+            groups: groups
+                .into_iter()
+                .map(|(kinds, (_, filed))| (kinds, filed))
+                .collect(),
+        }
+    }
+
+    /// The tuples that may hold the tuple value of `items`, group by group, each looked up
+    /// only when the tuples before it have been read, so that a value held by a tuple of an
+    /// early group costs the lookups up to that group only. The order is the same on every run.
+    fn of<'h>(&'h self, items: &'h Items) -> impl Iterator<Item = usize> + 'h {
+        let classes: Vec<Option<ShapeKey>> = items.iter().map(value_class).collect();
+        let mut key = Vec::with_capacity(items.len());
+        self.groups.iter().flat_map(move |(kinds, filed)| {
+            key.clear();
+            for ((k, x), kind) in classes.iter().zip(items.iter()).zip(kinds) {
+                if *kind == Kind::Open {
+                    continue;
+                }
+                let Some(k) = k else {
+                    return [].iter().copied();
+                };
+                key.push((k.clone(), (*kind == Kind::Point).then(|| x.clone())));
+            }
+            filed
+                .get(&key)
+                .map_or(&[][..], Vec::as_slice)
+                .iter()
+                .copied()
+        })
+    }
+}
+
+/// How the tuples of one length of a type are read for the values [`Pairs::contains`] looks
+/// for in them, by the number of values read so far.
+enum Visits {
+    /// One value read, by a scan of all the type's tuples, which lists none of them.
+    Once,
+    /// `n` values read, each by a scan of `rows`, the tuples of the length, which the walk of
+    /// each value shares.
+    Scanned { n: usize, rows: Rc<[usize]> },
+    /// Filed, and each value read by lookup.
+    Filed(Rc<Holders>),
+}
+
+/// The tuples of a type to compare with one tuple value ([`Pairs::tried`]): every tuple of its
+/// length, found by a scan of all the type's tuples; those of its length, listed; or those
+/// [`Holders`] finds, which the walk of each value shares.
+enum Tried {
+    Every,
+    Scanned(Rc<[usize]>),
+    Found(Rc<Holders>),
+}
+
+/// The tuples of each length of each type node read by one [`Ty::contains`], by the node's
+/// address, which stays put while the type is borrowed.
+type Filings = HashMap<(*const Ty, usize), Visits>;
+
+#[cfg(test)]
+thread_local! {
+    /// How [`Pairs::contains`] reads the tuples of a type, for the differential test: `None`
+    /// as in use, `Some(false)` by a scan of every tuple of the length for each value, as
+    /// before [`Holders`], and `Some(true)` filed from the first value on.
+    static FILE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
 #[cfg(test)]
 thread_local! {
     /// Whether [`near_pairs`] gives every tuple of the length, as meeting and subtracting did
@@ -5355,11 +5503,12 @@ impl Ty {
     pub fn contains(&self, v: &Value) -> bool {
         self.contains_here(v).unwrap_or_else(|items| {
             let memo = RefCell::default();
+            let filed = RefCell::default();
             let pairs = Pairs {
                 stack: Stack::default(),
                 memo: &memo,
             };
-            pairs.stack.run(pairs.contains(self, items))
+            pairs.stack.run(pairs.contains(self, items, &filed))
         })
     }
 
@@ -5537,13 +5686,33 @@ impl<'m> Pairs<'m, (*const Ty, *const Ty), bool> {
 }
 
 impl<'m> Pairs<'m, (*const Ty, *const Value), bool> {
-    /// [`Ty::contains`] of `t` and a tuple of `items`, which its tuples decide.
-    async fn contains(&'m self, t: &'m Ty, items: &'m Items) -> bool {
-        'row: for r in t.tuples.iter().filter(|r| r.len() == items.len()) {
+    /// [`Ty::contains`] of `t` and a tuple of `items`, which its tuples decide. Only the
+    /// tuples of `t` that may hold the value are compared with it, found by key lookup
+    /// ([`Holders`]), once `t`'s tuples of its length have been read for enough values; until
+    /// then every tuple of the length is, with the same answer. `filed` keeps each type node's
+    /// tuples, filed or not, for the whole walk.
+    async fn contains(&'m self, t: &'m Ty, items: &'m Items, filed: &'m RefCell<Filings>) -> bool {
+        let (every, scanned, found) = match self.tried(t, items, filed) {
+            Tried::Every => (Some(()), None, None),
+            Tried::Scanned(rows) => (None, Some(rows), None),
+            Tried::Found(holders) => (None, None, Some(holders)),
+        };
+        let every = every
+            .into_iter()
+            .flat_map(|()| (0..t.tuples.len()).filter(|&i| t.tuples[i].len() == items.len()));
+        let scanned = scanned
+            .into_iter()
+            .flat_map(|rows| (0..rows.len()).map(move |k| rows[k]));
+        let found = found.as_deref().into_iter().flat_map(|h| h.of(items));
+        let rows = every.chain(scanned).chain(found);
+        'row: for r in rows.map(|i| &t.tuples[i]) {
             for (c, x) in r.iter().zip(items) {
                 let held = match c.contains_here(x) {
                     Ok(h) => h,
-                    Err(inner) => self.kept((c, x), move || self.contains(c, inner)).await,
+                    Err(inner) => {
+                        self.kept((c, x), move || self.contains(c, inner, filed))
+                            .await
+                    }
                 };
                 if !held {
                     continue 'row;
@@ -5552,6 +5721,69 @@ impl<'m> Pairs<'m, (*const Ty, *const Value), bool> {
             return true;
         }
         false
+    }
+
+    /// The tuples of `t` to compare with the tuple value of `items`, by their indices: every
+    /// tuple of its length in written order, or those [`Holders`] finds, group by group. A tuple
+    /// left out does not hold the value.
+    fn tried(&self, t: &Ty, items: &Items, filed: &RefCell<Filings>) -> Tried {
+        // Complexity tradeoff: the `l` tuples of one length of a node are scanned for each of
+        // its first `v` values and filed at the first `v` with `l·v > 40·(l + v)`: never for 40
+        // tuples or fewer, at about the 107th value for 64 tuples and the 42nd for 1,024. What
+        // is given up: nothing in order, since the scans before filing cost at most about
+        // `40·(l + v)` tuples, linear in the node and its values. Why: filing costs the classes
+        // of every component, about 17k instructions a tuple of two components, and a lookup
+        // about 2.6k more than the rest of a value's walk, where a scan costs about 200 a tuple;
+        // so filing pays off only for many tuples read for many values. Measured 2026-11-09 in
+        // instructions, 20,000/l walks of a union of `l` tuples `(i, int)` read for `v` values
+        // each, filed against every tuple: l = 64, v = 64 480M against 500M, v = 128 1,214M
+        // against 998M, v = 256 1,765M against 1,980M; l = 256, v = 64 589M against 322M,
+        // v = 256 802M against 1,320M; l = 1,024, v = 64 537M against 261M, v = 1,024 818M
+        // against 4,495M; so at worst about twice the scans just after filing, and far less
+        // for many values. The constant 40 is measured again at the Zed port. Both give the
+        // same answer, which `tuples_that_hold_a_value_through_the_index_are_those_of_every_tuple`
+        // checks. Tests: `tests/steps/l01_22_type_representation/kinds.rs`,
+        // `contains_of_many_tuples_scales`; COMPLEXITY.md F133.
+        let len = items.len();
+        let mut filed = filed.borrow_mut();
+        let entry = filed.entry((t, len));
+        let first = matches!(entry, std::collections::hash_map::Entry::Vacant(_));
+        let visits = entry.or_insert(Visits::Once);
+        #[cfg(test)]
+        match FILE.get() {
+            Some(false) => return Tried::Every,
+            Some(true) if !matches!(visits, Visits::Filed(_)) => {
+                let rows: Vec<usize> = (0..t.tuples.len())
+                    .filter(|&i| t.tuples[i].len() == len)
+                    .collect();
+                *visits = Visits::Filed(Rc::new(Holders::new(t, &rows)));
+            }
+            _ => {}
+        }
+        match visits {
+            Visits::Once if first => Tried::Every,
+            Visits::Once => {
+                let rows: Rc<[usize]> = (0..t.tuples.len())
+                    .filter(|&i| t.tuples[i].len() == len)
+                    .collect();
+                *visits = Visits::Scanned {
+                    n: 2,
+                    rows: Rc::clone(&rows),
+                };
+                Tried::Scanned(rows)
+            }
+            Visits::Scanned { n, rows } => {
+                *n += 1;
+                let l = rows.len();
+                if l.saturating_mul(*n) <= 40 * (l + *n) {
+                    return Tried::Scanned(Rc::clone(rows));
+                }
+                let holders = Rc::new(Holders::new(t, rows));
+                *visits = Visits::Filed(Rc::clone(&holders));
+                Tried::Found(holders)
+            }
+            Visits::Filed(holders) => Tried::Found(Rc::clone(holders)),
+        }
     }
 }
 
@@ -8794,6 +9026,91 @@ mod tests {
             meet > 1000 && apart > 1000 && filed > 1000,
             "{meet} meet, {apart} apart, {filed} filed"
         );
+    }
+
+    /// A random value for [`near_component`]'s tuples: integers 0 to 2, the floats 0, -0 and
+    /// 1.5, both booleans, two strings, two bare atoms, an atom with a payload, a tuple of an
+    /// integer and a value, a path, an integer outside 64 bits and a rational.
+    fn near_value(rng: &mut Rng, depth: u32) -> Value {
+        match rng.below(14) {
+            0..=2 => Value::Int(rng.below(3) as i64),
+            3 => Value::float([0.0, -0.0, 1.5][rng.below(3) as usize]),
+            4 => Value::Bool(rng.below(2) == 0),
+            5 => Value::str(["s", "t"][rng.below(2) as usize]),
+            6 => Value::atom(["a", "b"][rng.below(2) as usize]),
+            7 => Value::atom_with("a", vec![Value::Int(rng.below(2) as i64)]),
+            8 | 9 if depth == 0 => Value::tuple(vec![
+                Value::Int(rng.below(2) as i64),
+                near_value(rng, depth + 1),
+            ]),
+            8 | 9 => Value::Int(1),
+            10 => Value::path(vec![Value::str("k")]),
+            11 => Value::int_text("123456789012345678901234567890", 10)
+                .expect("an integer")
+                .expect("an integer"),
+            12 => Value::rat(
+                zed_kernel::Rat::decimal("0.5")
+                    .expect("a rat")
+                    .expect("a rat"),
+            ),
+            _ => Value::tuple(Vec::new()),
+        }
+    }
+
+    /// Whether a type holds a tuple value, decided on the tuples [`Holders`] finds, is what
+    /// comparing the value with every tuple of its length decides (COMPLEXITY.md F133), on
+    /// random unions of tuples of points, classes, unions, functions, variables and the unknown,
+    /// and random tuple values of points of every kind, alone, nested as the second component
+    /// of `(0, _)`, and as `k` values `(x)` in a tuple of `k` copies of `(t)`: a copy of a type copies
+    /// its outer level, so through the one row of `(t)` the union is one node, read for each of
+    /// the `k` values in one walk, and filed in its own course.
+    #[test]
+    fn tuples_that_hold_a_value_through_the_index_are_those_of_every_tuple() {
+        let int = Ty::carrier(Carrier::Int);
+        let fns = [
+            Arc::new(Sig::one(Vec::new(), Vec::new(), int.clone())),
+            Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::lit(&Value::Int(1)))),
+            Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::carrier(Carrier::Str))),
+        ];
+        let mut rng = Rng(134);
+        let (mut cases, mut held, mut apart) = (0, 0, 0);
+        for i in 0..20_000 {
+            let t = near_union(&mut rng, i % 3 == 0, &fns);
+            // A value of a length that `t` has most of the time: that of one of its tuples.
+            let width = match t.tuples.is_empty() || rng.below(5) == 0 {
+                true => 1 + rng.below(3) as usize,
+                false => t.tuples[rng.below(t.tuples.len() as u64) as usize].len(),
+            };
+            let tuple =
+                |rng: &mut Rng| Value::tuple((0..width).map(|_| near_value(rng, 0)).collect());
+            let v = tuple(&mut rng);
+            let k = 1 + rng.below(12) as usize;
+            let vs = Value::tuple(
+                (0..k)
+                    .map(|_| Value::tuple(vec![tuple(&mut rng)]))
+                    .collect(),
+            );
+            let nest = |u: &Ty| Ty::tuple(vec![Ty::lit(&Value::Int(0)), u.clone()]);
+            let nv = Value::tuple(vec![Value::Int(0), v.clone()]);
+            let wide = Ty::tuple(vec![Ty::tuple(vec![t.clone()]); k]);
+            for (a, x) in [(&t, &v), (&nest(&t), &nv), (&wide, &vs)] {
+                let by_index = a.contains(x);
+                FILE.set(Some(true));
+                let filed = a.contains(x);
+                FILE.set(Some(false));
+                let want = a.contains(x);
+                FILE.set(None);
+                assert_eq!(by_index, want, "({a}) holds {x:?}");
+                assert_eq!(filed, want, "({a}) holds {x:?}, filed at once");
+                cases += 1;
+                match want {
+                    true => held += 1,
+                    false => apart += 1,
+                }
+            }
+        }
+        println!("{cases} cases: {held} held, {apart} not");
+        assert!(held > 5000 && apart > 5000, "{held} held, {apart} not");
     }
 
     /// [`class_of`], read from the parts of a set, is what comparing the set with each carrier

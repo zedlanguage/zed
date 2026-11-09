@@ -1205,3 +1205,224 @@ fn meets_of_tuples_of_many_patterns_costs_the_patterns() {
         assert_eq!(ones.meets(zeros), *shares);
     });
 }
+
+/// The tuple value of `xs`.
+fn tv(xs: Vec<zed_kernel::value::Value>) -> zed_kernel::value::Value {
+    zed_kernel::value::Value::tuple(xs)
+}
+
+/// The integer value `i`.
+fn iv(i: usize) -> zed_kernel::value::Value {
+    zed_kernel::value::Value::Int(i as i64)
+}
+
+/// The tuple of `k` components, each the one-component tuple `(t)` sharing one row. A copy of
+/// a type copies its outer level, so `k` copies of `t` itself would be `k` nodes, each read
+/// once; through the shared row, `t` is one node, read for each of the `k` components of a
+/// value made by [`singles`].
+fn shared(t: &Ty, k: usize) -> Ty {
+    Ty::tuple(vec![Ty::tuple(vec![t.clone()]); k])
+}
+
+/// The tuple value of the one-component tuples `(v)` for each `v` of `vs`, for [`shared`].
+fn singles(vs: impl Iterator<Item = zed_kernel::value::Value>) -> zed_kernel::value::Value {
+    tv(vs.map(|v| tv(vec![v])).collect())
+}
+
+/// Whether `t` holds `v`, with `t`'s tuples read for many values in one walk: the tuple of
+/// `k` copies of `(v)` is looked for in [`shared`]`(t, k)`, so the one node `t` is read for
+/// `k` values (distinct copies of `v`), and the answer is that for `v` alone.
+fn holds_many(t: &Ty, v: &zed_kernel::value::Value, k: usize) -> bool {
+    let held = shared(t, k).contains(&singles((0..k).map(|_| v.clone())));
+    assert_eq!(held, t.contains(v), "{t} holds {v:?} alone and {k} times");
+    held
+}
+
+#[test]
+fn contains_compares_tuples_of_one_length_only() {
+    let t = ty("(1, 2) | (1, 2, 3)");
+    for k in [1, 8] {
+        assert!(holds_many(&t, &tv(vec![iv(1), iv(2)]), k));
+        assert!(holds_many(&t, &tv(vec![iv(1), iv(2), iv(3)]), k));
+        assert!(!holds_many(&t, &tv(vec![iv(1)]), k));
+        assert!(!holds_many(&t, &tv(vec![iv(1), iv(2), iv(3), iv(4)]), k));
+    }
+}
+
+#[test]
+fn contains_finds_the_one_tuple_of_many_that_holds_a_value() {
+    // Points, classes, atoms, strings and nested tuples, and components of no class.
+    let many = ty(
+        "(0, 0) | (1, 1) | (2, int) | (int, 3) | (#a, String) | (\"s\", bool) \
+                   | ((1, 2), 4) | ((int, 2), 5) | (1 | String, 6)",
+    );
+    use zed_kernel::value::Value;
+    for (v, held) in [
+        (tv(vec![iv(1), iv(1)]), true),
+        (tv(vec![iv(1), iv(0)]), false),
+        (tv(vec![iv(2), iv(9)]), true),
+        (tv(vec![iv(9), iv(3)]), true),
+        (tv(vec![iv(9), iv(4)]), false),
+        (tv(vec![Value::atom("a"), Value::str("x")]), true),
+        (tv(vec![Value::atom("b"), Value::str("x")]), false),
+        (tv(vec![Value::atom("a"), iv(1)]), false),
+        (tv(vec![Value::str("s"), Value::Bool(true)]), true),
+        (tv(vec![Value::str("t"), Value::Bool(true)]), false),
+        (tv(vec![tv(vec![iv(1), iv(2)]), iv(4)]), true),
+        (tv(vec![tv(vec![iv(1), iv(3)]), iv(4)]), false),
+        (tv(vec![tv(vec![iv(7), iv(2)]), iv(5)]), true),
+        (tv(vec![tv(vec![iv(7), iv(2), iv(1)]), iv(5)]), false),
+        (tv(vec![Value::str("u"), iv(6)]), true),
+        (tv(vec![iv(2), iv(6)]), true),
+        (tv(vec![Value::float(1.0), iv(6)]), false),
+    ] {
+        for k in [1, 2, 8, 40] {
+            assert_eq!(
+                holds_many(&many, &v, k),
+                held,
+                "{many} holds {v:?}, {k} times"
+            );
+        }
+    }
+}
+
+#[test]
+fn contains_of_a_type_open_at_a_place_holds_any_value_there() {
+    // A variable or the unknown holds every value, so every value is looked for in its tuples.
+    use zed_kernel::value::Value;
+    for t in [
+        Ty::union_all(&[
+            Ty::tuple(vec![Ty::var("T".into()), int(1)]),
+            Ty::tuple(vec![int(0), int(2)]),
+        ]),
+        Ty::union_all(&[
+            Ty::tuple(vec![Ty::dynamic(), int(1)]),
+            Ty::tuple(vec![int(0), int(2)]),
+        ]),
+    ] {
+        for k in [1, 40] {
+            assert!(holds_many(&t, &tv(vec![Value::str("x"), iv(1)]), k));
+            assert!(holds_many(&t, &tv(vec![iv(0), iv(2)]), k));
+            assert!(!holds_many(&t, &tv(vec![Value::str("x"), iv(2)]), k));
+        }
+    }
+}
+
+/// Unions of `n` tuples, each with a tuple value of `n` components looked for in it, and
+/// whether the union holds every component: each held by one tuple, or each but the last,
+/// so that a scan of every tuple for each component reads `n^2` tuples where a lookup of each
+/// component's own reads one.
+fn contains_families(n: usize) -> Vec<(&'static str, Ty, zed_kernel::value::Value, bool)> {
+    use zed_kernel::value::Value;
+    let rows = |f: &dyn Fn(usize) -> Ty| Ty::union_all(&(0..n).map(f).collect::<Vec<_>>());
+    let pair = |a: Ty, b: Ty| Ty::tuple(vec![a, b]);
+    // The union read for `n` values in one walk ([`shared`]), and the values.
+    let wide = |u: Ty| shared(&u, n);
+    let values = |f: &dyn Fn(usize) -> Value| singles((0..n).map(f));
+    vec![
+        // `(i, n + i)`, each value held by its own tuple, in reverse order.
+        (
+            "points",
+            wide(rows(&|i| pair(int(i), int(n + i)))),
+            values(&|i| tv(vec![iv(n - 1 - i), iv(2 * n - 1 - i)])),
+            true,
+        ),
+        // The same, the last value held by none.
+        (
+            "the last held by none",
+            wide(rows(&|i| pair(int(i), int(n + i)))),
+            values(&|i| match i + 1 == n {
+                true => tv(vec![iv(0), iv(n + 1)]),
+                false => tv(vec![iv(n - 1 - i), iv(2 * n - 1 - i)]),
+            }),
+            false,
+        ),
+        // Two arrangements of points and `int`, each value held by the second only.
+        (
+            "two arrangements",
+            wide(Ty::union_all(
+                &(0..n)
+                    .flat_map(|i| [pair(int(i), ty("int")), pair(ty("int"), int(n + i))])
+                    .collect::<Vec<_>>(),
+            )),
+            values(&|i| tv(vec![iv(5 * n + i), iv(2 * n - 1 - i)])),
+            true,
+        ),
+        // Atoms and strings, and tuples of tuples that differ in the inner tuple.
+        (
+            "atoms and nested",
+            wide(rows(&|i| {
+                pair(pair(int(i), int(i)), Ty::lit(&Value::str(&format!("s{i}"))))
+            })),
+            values(&|i| {
+                tv(vec![
+                    tv(vec![iv(n - 1 - i), iv(n - 1 - i)]),
+                    Value::str(&format!("s{}", n - 1 - i)),
+                ])
+            }),
+            true,
+        ),
+    ]
+}
+
+#[test]
+fn contains_of_many_tuples_scales() {
+    // Each component of the value is looked for only in the tuples of the union that agree
+    // with it at every place where they have a class or a value, found by key lookup.
+    let inputs = scaling::inputs(256, contains_families);
+    scaling::check(
+        "n tuple values in n tuples, contains, four ways",
+        256,
+        |n| {
+            for (what, t, v, held) in &inputs[&n] {
+                assert_eq!(t.contains(v), *held, "{what}");
+            }
+        },
+    );
+}
+
+#[test]
+fn contains_of_tuples_of_many_patterns_costs_the_patterns() {
+    // Complexity tradeoff (COMPLEXITY.md F133): as many arrangements as tuples cost up to the
+    // product of the tuples and the values; whether a tuple holds a value is the orthogonal
+    // vectors problem, which no algorithm decides faster unless the strong exponential time
+    // hypothesis fails (the comment at `Holders` in `zedc_types::ty`).
+    use zed_kernel::value::Value;
+    let inputs = scaling::inputs(128, |n| {
+        let width = 2 * n.ilog2() as usize;
+        // A different arrangement for each `i`, never all `int`, which would hold every value.
+        let bits =
+            |i: usize| ((i as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - width)) | 1;
+        // The tuple `i`: the point 0 where `bits(i)` has a 1, `int` elsewhere.
+        let rows: Vec<Ty> = (0..n)
+            .map(|i| {
+                Ty::tuple(
+                    (0..width)
+                        .map(|j| match bits(i) >> j & 1 {
+                            1 => int(0),
+                            _ => ty("int"),
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        // The value `i`: 0 where `bits(i)` has a 1, 1 elsewhere, held by the tuple `i` and by
+        // each tuple whose points are among those places, which few are; so the tuples before
+        // the `i`th are looked through, group by group, for most values.
+        let value = |i: usize| {
+            tv((0..width)
+                .map(|j| Value::Int(i64::from(bits(i) >> j & 1 == 0)))
+                .collect())
+        };
+        (shared(&Ty::union_all(&rows), n), singles((0..n).map(value)))
+    });
+    scaling::check_order(
+        "n tuple values in n tuples of n arrangements",
+        128,
+        2,
+        |n| {
+            let (t, v) = &inputs[&n];
+            assert!(t.contains(v));
+        },
+    );
+}
