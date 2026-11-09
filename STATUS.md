@@ -1653,6 +1653,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| FINITE-type | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/finite-type on 406ab90d |
+| GROUP-admit | impl attempt 1 | 2026-11-05 04:07 | started in wt/group-admit on 406ab90d; load 1.12 1.54 2.89 |
+| GROUP-refusal | impl attempt 1 | 2026-11-05 04:07 | started with REFUSE-group-site in /home/luke/Work/wt/group-refusal on 406ab90d |
+| GROUP-setop | impl attempt 1 | 2026-11-05 04:07 | started in /home/luke/Work/wt/group-setop on 406ab90d |
+| L2.8 | impl attempt 1 | 2026-11-05 04:07 | started in /home/luke/Work/wt/l2-8 from origin/main 406ab90d |
+| REFUSE-group-site | running | 2026-11-05 04:07 |  |
+| SCALE-casts-spread | impl attempt 1 | 2026-11-09 04:01 | started; worktree /home/luke/Work/wt/scale-casts-spread |
+| SCALE-fix-kernel | impl attempt 2 | 2026-11-07 11:37 | started: worktree from wt/scale-fix-kernel a86b89ee, rebasing onto origin/main 406ab90d; 12 ignored tests to un-ignore under the Part G limit |
+| SURFACE-cycle | impl attempt 1 | 2026-11-07 16:01 | started; worktree wt/surface-cycle at origin/main 406ab90d, load 1.87 |
+| T2-ty | impl attempt 1 | 2026-11-03 09:36 | started; worktree t2-ty on origin/main 406ab90d |
 | TRIVIAL-models-study | impl attempt 1 | 2026-11-09 01:16 | ready: impl af2e4d70 on 07dca94a, spec ff57e5e on 9bf5aaf; work-counted budget, union-find clause check, 21 tests pass; TRIVIAL-shared-atom left open |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
