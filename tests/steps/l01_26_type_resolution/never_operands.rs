@@ -231,7 +231,7 @@ fn a_comparison_of_never_with_shared_tuples_scales() {
     });
 }
 
-/// The examples of DOCS-TODO 48 that are accepted, with their signatures, and those rejected.
+/// The examples of DOCS-TODO 50 that are accepted, with their signatures, and those rejected.
 #[test]
 fn the_examples_of_the_guide() {
     for (text, name, want) in [
