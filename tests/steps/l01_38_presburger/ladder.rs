@@ -16,7 +16,7 @@ use zed_kernel::Value;
 use zed_tests::scaling;
 use zed_tests::step_helpers::l01_25_preimage_catalog::function;
 use zedc::store::preimage::relations;
-use zedc::store::presburger::{Entailment, Relation, entails};
+use zedc::store::presburger::{self, Entailment, Relation, entails};
 
 use super::entailment::rung2;
 use super::{at, holds, point, window};
@@ -685,14 +685,17 @@ fn product_chain_with(k: usize, extra: &[String]) -> (Relation, Relation) {
 #[test]
 fn products_whose_factors_one_chain_connects_scale() {
     // Every factor lies in one part, the chain; its atoms are bounded in one pass over the
-    // part, not each by its own questions over the whole part (C2-chain).
+    // part, not each by its own questions over the whole part (C2-chain): no side of a hull is
+    // asked of the solver.
     let n = 16;
     let built = scaling::inputs(n, product_chain);
     let measure = move || {
         scaling::check("a sum of products along one chain entailed", n, |k| {
             let (p, g) = &built[&k];
+            presburger::hull_sides_asked();
             let e = entails(p, g);
             assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            assert_eq!(presburger::hull_sides_asked(), 0, "{k}");
         });
     };
     scaling::on_a_thread(8 << 20, measure);
@@ -701,7 +704,7 @@ fn products_whose_factors_one_chain_connects_scale() {
 #[test]
 fn products_along_a_chain_with_a_general_row_scale() {
     // The chain of `product_chain` and one row of three atoms, which is not a difference
-    // constraint (C2-chain-general).
+    // constraint (C2-chain-general); no side of a hull is asked of the solver.
     let n = 16;
     let built = scaling::inputs(n, |k| {
         product_chain_with(k, &["z0 + z1 + x0 >= 0".to_string()])
@@ -712,8 +715,10 @@ fn products_along_a_chain_with_a_general_row_scale() {
             n,
             |k| {
                 let (p, g) = &built[&k];
+                presburger::hull_sides_asked();
                 let e = entails(p, g);
                 assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+                assert_eq!(presburger::hull_sides_asked(), 0, "{k}");
             },
         );
     };
@@ -821,31 +826,85 @@ fn a_general_row_bounds_a_factor_from_the_bounds_of_its_other_atoms() {
 }
 
 #[test]
-fn a_bound_that_needs_two_rows_at_once_is_not_found() {
-    // Complexity tradeoff of `part_bounds` (C2-chain-general): `v >= w1`, `v >= w2` and
-    // `w1 + w2 >= 10` give `v >= 5`, but only through two rows at once; each factor's bounds
-    // come from the hulls of the difference rows and one pass over each other row, so no lower
-    // bound of `v` is found, and `v * c >= 5 * c` is not proved. It is not refuted either: the
-    // goal holds, and the obligation passes to the next rung. A disjunction written among the
-    // premises gives no bound either: the parts are formed from the definitions and the
-    // top-level linear constraints only, as before C2-chain-general, so `a >= 5` from
-    // `a >= 5 || a >= 7` is not found.
-    for (premise, goal) in [
-        (
-            "ok(v, w1, w2, c) = v >= w1 && v >= w2 && w1 + w2 >= 10 && c >= 0;",
-            "ok(v, w1, w2, c) = v * c >= 5 * c;",
-        ),
-        (
-            "ok(a, c) = (a >= 5 || a >= 7) && c >= 0;",
-            "ok(a, c) = a * c >= 5 * c;",
-        ),
-    ] {
-        let e = rung2(premise, goal);
-        assert!(
-            matches!(e, Entailment::NotProved(_)),
-            "{premise} to {goal}: {e}"
-        );
+fn a_bound_through_a_general_row_and_difference_rows_is_found() {
+    // `v >= w1`, `v >= w2` and `w1 + w2 >= 10` give `2 * v >= 10`, so `v >= 5`: the general
+    // row with each atom replaced by its bound through the difference rows to the factor `v`
+    // (C2-chain-general, `eliminate` in `part_bounds`), with no question to the solver. With
+    // `w1 + w2 >= 9` the bound rounds up to the same `v >= 5`, since `2 * v >= 9` on integers;
+    // with `w1 + w2 >= 8` the goal fails at `v = w1 = w2 = 4, c = 1`, and is not proved.
+    let at_ten = (
+        "ok(v, w1, w2, c) = v >= w1 && v >= w2 && w1 + w2 >= 10 && c >= 0;",
+        "ok(v, w1, w2, c) = v * c >= 5 * c;",
+    );
+    let at_nine = (
+        "ok(v, w1, w2, c) = v >= w1 && v >= w2 && w1 + w2 >= 9 && c >= 0;",
+        "ok(v, w1, w2, c) = v * c >= 5 * c;",
+    );
+    // A disjunction written among the premises joins the part of its atoms, and gives the
+    // side that each disjunct bounds, at the widest: `a >= 5`.
+    let joined = (
+        "ok(a, c) = (a >= 5 || a >= 7) && c >= 0;",
+        "ok(a, c) = a * c >= 5 * c;",
+    );
+    for (premise, goal) in [at_ten, at_nine, joined] {
+        presburger::hull_sides_asked();
+        assert_proved(premise, goal);
+        assert_eq!(presburger::hull_sides_asked(), 0, "{premise} to {goal}");
     }
+    let (premise, goal) = (
+        "ok(v, w1, w2, c) = v >= w1 && v >= w2 && w1 + w2 >= 8 && c >= 0;",
+        "ok(v, w1, w2, c) = v * c >= 5 * c;",
+    );
+    let e = rung2(premise, goal);
+    assert!(
+        !matches!(e, Entailment::Proved(_)),
+        "{premise} to {goal}: {e}"
+    );
+    assert!(!true_on_window(premise, goal));
+}
+
+#[test]
+fn a_bound_that_needs_two_general_rows_is_found_by_the_solver() {
+    // `b + c <= 3` and `c >= 0` give `b <= 3`, and only then does `a + b >= 10` give `a >= 7`.
+    // Where `b` and `c` are not factors they are eliminated first (`shadow` in `part_bounds`),
+    // which leaves `a >= 7` as a bound, with no question to the solver.
+    presburger::hull_sides_asked();
+    assert_proved(
+        "ok(a, b, c, d) = a + b >= 10 && b + c <= 3 && c >= 0 && d >= 0;",
+        "ok(a, b, c, d) = a * d >= 7 * d;",
+    );
+    assert_eq!(presburger::hull_sides_asked(), 0);
+    // Where `b` and `c` are factors too (of `b * c` in the premise) they are kept, and the
+    // bound `b <= 3` found from `b + 2 * c <= 3` is passed on to `a + b >= 10` (`propagate`
+    // in `part_bounds`), again with no question. With `b + c >= -100` as well, `b <= 3` and
+    // `c >= 0` each wait on the other through the two rows; each is let go with the bound it
+    // has, `c >= 0` from `c >= 0`, which gives `b <= 3` and then `a >= 7`.
+    for premise in [
+        "ok(a, b, c, d) = a + b >= 10 && b + 2 * c <= 3 && c >= 0 && d >= 0 && b * c >= -1000;",
+        "ok(a, b, c, d) = a + b >= 10 && b + 2 * c <= 3 && c >= 0 && d >= 0 && b * c >= -1000 \
+         && b + c >= -100;",
+    ] {
+        presburger::hull_sides_asked();
+        assert_proved(premise, "ok(a, b, c, d) = a * d >= 7 * d;");
+        assert_eq!(presburger::hull_sides_asked(), 0, "{premise}");
+    }
+    // Complexity tradeoff of `part_bounds` (C2-chain-general): `e` is eliminated, which leaves
+    // `a + b >= 10` and `a - 2 * b >= 1`, and `b` is kept, being in a disjunction. `a >= 7`
+    // needs both rows at once (twice the first and the second give `3 * a >= 21`), so no one
+    // row bounds `a` from the bounds of the others, the goal is not proved from the bounds
+    // found, and the sides not known to be hulls are asked of the solver (`products`, first
+    // over each factor's cluster), which finds `a >= 7`. With `a * d >= 8 * d` the goal fails at
+    // `a = e = 7, b = 3, d = 1`, and is not proved.
+    let premise = "ok(a, b, d, e) = a >= e && e + b >= 10 && e - 2 * b >= 1 && (b >= 0 || b <= -5) && d >= 0;";
+    presburger::hull_sides_asked();
+    assert_proved(premise, "ok(a, b, d, e) = a * d >= 7 * d;");
+    assert!(presburger::hull_sides_asked() > 0);
+    let goal = "ok(a, b, d, e) = a * d >= 8 * d;";
+    let e = rung2(premise, goal);
+    assert!(
+        !matches!(e, Entailment::Proved(_)),
+        "{premise} to {goal}: {e}"
+    );
 }
 
 #[test]
@@ -963,4 +1022,110 @@ fn the_conditions_of_shared_divisors_scale() {
     };
     let thread = std::thread::Builder::new().stack_size(8 << 20);
     thread.spawn(measure).unwrap().join().unwrap();
+}
+
+/// A sum of products `x{i} * y{i}` over a chain `z0 <= z1 <= ...` of `k` links, where each
+/// link has `x{i} >= z{i}`, `y{i} >= z{i}`, `x{i} + b{i} >= 10` and the rows `link(i)`, which
+/// bound `x{i}` below by 7 or more; the goal is that the sum is at least `Σ 7 * y{i}`.
+fn open_side_chain(k: usize, link: fn(usize) -> String) -> (Relation, Relation) {
+    let names: Vec<String> = (0..k)
+        .map(|i| format!("x{i}, y{i}, z{i}, b{i}, c{i}"))
+        .collect();
+    let head = format!("ok({})", names.join(", "));
+    let mut premise = vec!["z0 >= 0".to_string()];
+    premise.extend((1..k).map(|i| format!("z{i} >= z{} + 1", i - 1)));
+    premise.push(format!("z{} <= {}", k - 1, 2 * k));
+    premise.extend((0..k).map(|i| {
+        format!(
+            "x{i} >= z{i} && y{i} >= z{i} && x{i} + b{i} >= 10 && {}",
+            link(i)
+        )
+    }));
+    let left: Vec<String> = (0..k).map(|i| format!("x{i} * y{i}")).collect();
+    let right: Vec<String> = (0..k).map(|i| format!("7 * y{i}")).collect();
+    let (ps, p) = function(&format!("{head} = {};", premise.join(" && ")));
+    let (_, g) = function(&format!(
+        "{head} = {} >= {};",
+        left.join(" + "),
+        right.join(" + ")
+    ));
+    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
+    let g = rs.pop().expect("two relations");
+    (rs.pop().expect("two relations"), g)
+}
+
+/// The scaling test of [`open_side_chain`] with `link`: each goal is proved, and with
+/// `no_side`, no side of a hull is asked of the solver.
+fn open_side_chain_scales(what: &'static str, link: fn(usize) -> String, no_side: bool) {
+    let n = 16;
+    let built = scaling::inputs(n, |k| open_side_chain(k, link));
+    let measure = move || {
+        scaling::check(what, n, |k| {
+            let (p, g) = &built[&k];
+            presburger::hull_sides_asked();
+            let e = entails(p, g);
+            let asked = presburger::hull_sides_asked();
+            assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            assert!(!no_side || asked == 0, "{k}: {asked} sides asked");
+        });
+    };
+    scaling::on_a_thread(8 << 20, measure);
+}
+
+#[test]
+fn products_whose_factor_bounds_pass_through_two_general_rows_scale() {
+    // The bound `x{i} >= 7 + 2 * i` needs `x{i} + b{i} >= 10` and `b{i} + 2 * c{i} <= 3` at
+    // once; `b{i}` and `c{i}` are not factors, so they are eliminated before the factors are
+    // bounded (`shadow` in `part_bounds`), and no side of a hull is asked of the solver
+    // (C2-chain-general).
+    open_side_chain_scales(
+        "a sum of products whose factor bounds pass through two general rows",
+        |i| format!("b{i} + 2 * c{i} <= 3 && c{i} >= z{i}"),
+        true,
+    );
+}
+
+#[test]
+fn products_whose_factor_bounds_pass_from_row_to_row_scale() {
+    // As above, but `b{i}` and `c{i}` are factors (of `b{i} * c{i}`) and are kept: the bound
+    // `b{i} <= 3 - 2 * i` from `b{i} + 2 * c{i} <= 3` is passed on to `x{i} + b{i} >= 10`
+    // (`propagate` in `part_bounds`), and no side is asked (C2-chain-general).
+    open_side_chain_scales(
+        "a sum of products whose factor bounds pass from row to row",
+        |i| format!("b{i} + 2 * c{i} <= 3 && c{i} >= z{i} && b{i} * c{i} >= -1000000"),
+        true,
+    );
+}
+
+#[test]
+fn products_whose_factor_bounds_wait_on_each_other_scale() {
+    // As above, with `b{i} + c{i} >= z{i} - 100`, so that the upper side of `b{i}` and the
+    // lower side of `c{i}` each wait on the other through the rows; each is let go with the
+    // bound it has (`propagate`), and no side is asked (C2-chain-general).
+    open_side_chain_scales(
+        "a sum of products whose factor bounds wait on each other",
+        |i| {
+            format!(
+                "b{i} + 2 * c{i} <= 3 && c{i} >= z{i} && b{i} * c{i} >= -1000000 \
+                 && b{i} + c{i} >= z{i} - 100"
+            )
+        },
+        true,
+    );
+}
+
+#[test]
+fn products_whose_factors_keep_open_sides_scale() {
+    // Complexity tradeoff of `products` (C2-chain-general): `x{i} >= 7` needs
+    // `x{i} + b{i} >= 10`, `x{i} - b{i} - c{i} >= 4` and `c{i} >= 0` at once, with `b{i}` and
+    // `c{i}` kept (they are factors of `b{i} * c{i}`), so no row bounds `x{i}` from the bounds
+    // of the others and the goal is not proved from the bounds found. Each open side of a
+    // factor is then asked of the solver over the rows of that factor's link alone (its
+    // cluster, `clusters` in `part_bounds`), not over the whole chain, so the work stays
+    // linear in the number of links.
+    open_side_chain_scales(
+        "a sum of products whose factors keep open sides",
+        |i| format!("x{i} - b{i} - c{i} >= 4 && c{i} >= 0 && b{i} * c{i} >= -1000000"),
+        false,
+    );
 }

@@ -2788,6 +2788,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A `HashMap<Atom, Ends>` tightened in place by `entry(..).or_insert_with(..)` and two passes over the rows | `conjunct_bounds`, `meet_bound` | Mutation (gap 11) | A fold over the rows building a new map per pass |
 | A `HashMap<Id, Option<HashMap<Atom, Ends>>>` memo of each shared disjunct, cloned out on each read | `disjunction_bounds` | Identity (gap 1), Shared tables (gap 2) | A memo keyed by the disjunct's structural key; the maps are shared values, so no copy |
 | `Iterator::partition` of references into two `Vec<&Con>` | `part_bounds` | None | `partition` over a list |
+| A `thread_local!` `Cell<u64>` counter of solver questions, read and reset by a public function for tests | `SIDES`, `hull_side`, `hull_sides_asked` | Mutation (gap 11), no thread-local state | The count returned with the result by `products`, or kept by the test harness's own instrumentation |
+| Kahn's work list: a struct of `Vec`s (`at`, `late`, `left`, `queued`, `gone`, `valued`) updated in place by a method, a `Vec` (`ready`) used as a stack, and a closure reading rows by index | `propagate` (`Found::give`) | Mutation (gap 11) | A fold over the work list threading a record of persistent maps |
+| Union-find with path halving, `parent[i] = parent[parent[i]]` in place | `clusters` (and `products`, as before) | Mutation (gap 11) | A persistent union-find (Conchon and Filliâtre 2007), O(log n) per step |
+| One `Rc<Formula>` per cluster shared by every atom of the cluster in a map | `clusters`, `PartBounds::local` | None: Zed values are shared | A map from each atom to the cluster's formula |
+| A `FnMut` closure that sets a captured `bool` (`loose`) while it computes a side | `products` (`side`) | Mutation (gap 11) | The side returned with a flag, folded with `or` |
 
 ## Entries from PRES-mod-conjuncts (`zedc-preimage/src/preimage.rs`, `zedc-presburger/src/presburger.rs`)
 

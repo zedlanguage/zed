@@ -8112,53 +8112,72 @@ fn point_of(rows: &[Con]) -> Option<Model> {
     Some(model)
 }
 
-/// The least and greatest values of a symbol over a formula, given a point `m` of it. A side
-/// with no bound is found by one question, [`unbounded`]. A bound is then found by the monotone questions "is there a point with the
-/// symbol at most `v`" and "at least `v`", searched outward from the point's value with steps
-/// that double, then by bisection, so it takes O(log d) questions for a bound at distance d,
-/// each on integers of O(log d) bits. Every bound is exact at any magnitude.
+/// The least and greatest values of a symbol over a formula, given a point `m` of it: the two
+/// sides [`hull_side`] finds.
 fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Refusal> {
+    let end = |dir: i64, inf: End| -> Result<End, Refusal> {
+        Ok(hull_side(c, sym, m, dir)?.map_or(inf, |v| End::Fin(Num::from(&v))))
+    };
+    Ok(IntervalSet::range(
+        end(-1, End::NegInf)?,
+        end(1, End::PosInf)?,
+    ))
+}
+
+thread_local! {
+    /// The sides [`hull_side`] has found on this thread since [`hull_sides_asked`] was last
+    /// called.
+    static SIDES: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The number of sides of hulls (the least or the greatest value of one atom over a formula)
+/// that the solver has been asked for on this thread since the last call, which resets it. A
+/// test reads it to show that the bounds of the factors of products were found without the
+/// solver.
+pub fn hull_sides_asked() -> u64 {
+    SIDES.replace(0)
+}
+
+/// The greatest value (`dir` 1) or the least (`dir` -1) of a symbol over a formula, given a
+/// point `m` of it; `None` when there is none. A side with no bound is found by one question,
+/// [`unbounded`]. A bound is then found by the monotone question "is there a point with the
+/// symbol at least `v`" (or at most), searched outward from the point's value with steps that
+/// double, then by bisection, so it takes O(log d) questions for a bound at distance d, each
+/// on integers of O(log d) bits. Every bound is exact at any magnitude.
+fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>, Refusal> {
+    SIDES.set(SIDES.get() + 1);
+    if unbounded(c, sym, dir)? {
+        return Ok(None);
+    }
     let x = Lin::atom(sym.clone());
     let at = m.get(sym).cloned().unwrap_or(Int::ZERO);
-    let with = |con: Con| -> Result<bool, Refusal> {
-        decide_inner(&Formula::and(vec![c.clone(), Formula::Con(con)]))
-    };
-    let below = |v: &Int| with(Con::ge(&Lin::constant(v.clone()), &x));
-    let above = |v: &Int| with(Con::ge(&x, &Lin::constant(v.clone())));
-    // The last value of the monotone `holds` that is true, moving from `start` (true) by
-    // `dir`; `holds` is false far enough that way, since the side is bounded.
-    let edge = |holds: &dyn Fn(&Int) -> Result<bool, Refusal>,
-                start: &Int,
-                dir: &Int|
-     -> Result<Int, Refusal> {
-        let (mut good, mut step) = (start.clone(), Int::ONE);
-        let bad = loop {
-            let next = &good + &(dir * &step);
-            if !holds(&next)? {
-                break next;
-            }
-            good = next;
-            step = &step + &step;
+    let step_dir = Int::from(dir);
+    // Whether some point has the symbol at `v` or beyond it, going `dir`: false far enough
+    // that way, since the side is bounded, and true at the point's value.
+    let holds = |v: &Int| -> Result<bool, Refusal> {
+        let beyond = if dir > 0 {
+            Con::ge(&x, &Lin::constant(v.clone()))
+        } else {
+            Con::ge(&Lin::constant(v.clone()), &x)
         };
-        let (mut good, mut bad) = (good, bad);
-        let two = Int::from(2);
-        while (&bad - &good).abs() > Int::ONE {
-            let mid = &good + &(&bad - &good).div_floor(&two);
-            if holds(&mid)? { good = mid } else { bad = mid }
+        decide_inner(&Formula::and(vec![c.clone(), Formula::Con(beyond)]))
+    };
+    let (mut good, mut step) = (at, Int::ONE);
+    let bad = loop {
+        let next = &good + &(&step_dir * &step);
+        if !holds(&next)? {
+            break next;
         }
-        Ok(good)
+        good = next;
+        step = &step + &step;
     };
-    let lo = if unbounded(c, sym, -1)? {
-        End::NegInf
-    } else {
-        End::Fin(Num::from(&edge(&below, &at, &Int::from(-1))?))
-    };
-    let hi = if unbounded(c, sym, 1)? {
-        End::PosInf
-    } else {
-        End::Fin(Num::from(&edge(&above, &at, &Int::ONE)?))
-    };
-    Ok(IntervalSet::range(lo, hi))
+    let (mut good, mut bad) = (good, bad);
+    let two = Int::from(2);
+    while (&bad - &good).abs() > Int::ONE {
+        let mid = &good + &(&bad - &good).div_floor(&two);
+        if holds(&mid)? { good = mid } else { bad = mid }
+    }
+    Ok(Some(good))
 }
 
 /// The hull of every atom of `cons`, constraints with a point `m`, when each is a difference
@@ -8193,92 +8212,169 @@ type Ends = (Option<Int>, Option<Int>);
 
 /// [`difference_hulls`] with each hull as its two ends.
 fn difference_ends(cons: &[&Con], m: &Model) -> Option<HashMap<Atom, Ends>> {
-    // Node 0 is `z`; the atoms follow in order of first use.
-    let mut node: HashMap<&Atom, usize> = HashMap::new();
-    let mut atoms: Vec<&Atom> = Vec::new();
-    let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new()];
-    for c in cons {
-        let mut ends: Vec<(usize, bool)> = Vec::with_capacity(2);
-        for (a, k) in &c.lin.terms {
-            if !k.is_unit() {
-                return None;
+    Some(Differences::of(cons, m)?.ends())
+}
+
+/// Difference constraints and bounds with a point, as the graph of [`difference_hulls`]: node 0
+/// is `z`, standing for 0, and the atoms follow in order of first use; `y <= x + k` is the edge
+/// `x → y` of weight `k`, held in `out` at `x` and in `back` at `y`; `p` is the point's value at
+/// each node, 0 at `z`.
+struct Differences<'a> {
+    atoms: Vec<&'a Atom>,
+    node: HashMap<&'a Atom, usize>,
+    out: Vec<Vec<(usize, Int)>>,
+    back: Vec<Vec<(usize, Int)>>,
+    p: Vec<Int>,
+}
+
+/// Which way a search of [`Differences`] goes: `Up` along the edges, so that a node `v` at
+/// distance `d` from a source `s` has `v <= s + d`, or `Down` against them, so that
+/// `v >= s - d`.
+#[derive(Clone, Copy)]
+enum Along {
+    Up,
+    Down,
+}
+
+impl<'a> Differences<'a> {
+    /// The graph of `cons`, constraints with the point `m`; `None` when one is not a difference
+    /// constraint or a bound, or `m` gives no value to one of their atoms.
+    fn of(cons: &[&'a Con], m: &Model) -> Option<Differences<'a>> {
+        let mut node: HashMap<&Atom, usize> = HashMap::new();
+        let mut atoms: Vec<&Atom> = Vec::new();
+        let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new()];
+        for c in cons {
+            let mut ends: Vec<(usize, bool)> = Vec::with_capacity(2);
+            for (a, k) in &c.lin.terms {
+                if !k.is_unit() {
+                    return None;
+                }
+                let i = *node.entry(a).or_insert_with(|| {
+                    atoms.push(a);
+                    out.push(Vec::new());
+                    atoms.len()
+                });
+                ends.push((i, k.is_positive()));
             }
-            let i = *node.entry(a).or_insert_with(|| {
-                atoms.push(a);
-                out.push(Vec::new());
-                atoms.len()
-            });
-            ends.push((i, k.is_positive()));
+            // The term as `x - y + k` with `x` or `y` possibly `z`: the edge `x → y` of
+            // weight `k`.
+            let (x, y) = match ends[..] {
+                [(i, true)] => (i, 0),
+                [(i, false)] => (0, i),
+                [(i, true), (j, false)] => (i, j),
+                [(i, false), (j, true)] => (j, i),
+                _ => return None,
+            };
+            out[x].push((y, c.lin.constant.clone()));
+            if c.rel == Rel::Eq {
+                out[y].push((x, -&c.lin.constant));
+            }
         }
-        // The term as `x - y + k` with `x` or `y` possibly `z`: the edge `x → y` of weight `k`.
-        let (x, y) = match ends[..] {
-            [(i, true)] => (i, 0),
-            [(i, false)] => (0, i),
-            [(i, true), (j, false)] => (i, j),
-            [(i, false), (j, true)] => (j, i),
-            _ => return None,
+        let mut p: Vec<Int> = Vec::with_capacity(out.len());
+        p.push(Int::ZERO);
+        for a in &atoms {
+            p.push(m.get(*a)?.clone());
+        }
+        let mut back: Vec<Vec<(usize, Int)>> = vec![Vec::new(); out.len()];
+        for (u, es) in out.iter().enumerate() {
+            for (v, w) in es {
+                // The point meets every row, so no reduced weight is negative.
+                if (w + &p[u]) < p[*v] {
+                    return None;
+                }
+                back[*v].push((u, w.clone()));
+            }
+        }
+        Some(Differences {
+            atoms,
+            node,
+            out,
+            back,
+            p,
+        })
+    }
+
+    /// The distance of each node from the nearest of `sources` going `along`, with that
+    /// source, or `None` where no source reaches. Each edge `u → v` of weight `w` is taken at
+    /// its reduced weight `w + sign·(p(u) - p(v))` (`sign` 1 up, -1 down), which the point
+    /// keeps from being negative, so the search is Dijkstra's from all the sources at once:
+    /// O(m log n) for m edges over n nodes. Nearest is by reduced distance, which is the slack
+    /// at the point of the bound the path gives, and of two sources at one reduced distance the
+    /// earlier in `sources` keeps the node: each node's label is the least pair (reduced
+    /// distance, place in `sources`), which the order of the edges does not change. Unless
+    /// `through_z`, the search does not enter `z`, so a path is a chain of difference
+    /// constraints alone and not of a bound on one end joined to a bound on the other.
+    fn search(
+        &self,
+        along: Along,
+        sources: &[usize],
+        through_z: bool,
+    ) -> Vec<Option<(Int, usize)>> {
+        let (edges, sign) = match along {
+            Along::Up => (&self.out, Int::ONE),
+            Along::Down => (&self.back, Int::from(-1)),
         };
-        out[x].push((y, c.lin.constant.clone()));
-        if c.rel == Rel::Eq {
-            out[y].push((x, -&c.lin.constant));
-        }
-    }
-    let mut p: Vec<Int> = Vec::with_capacity(out.len());
-    p.push(Int::ZERO);
-    for a in &atoms {
-        p.push(m.get(*a)?.clone());
-    }
-    let mut back: Vec<Vec<(usize, Int)>> = vec![Vec::new(); out.len()];
-    for (u, es) in out.iter().enumerate() {
-        for (v, w) in es {
-            // The point meets every row, so no reduced weight is negative.
-            if (w + &p[u]) < p[*v] {
-                return None;
-            }
-            back[*v].push((u, w.clone()));
-        }
-    }
-    // The distances from `z` along `edges`, each edge `u → v` of reduced weight
-    // `w + sign·(p(u) - p(v))`, which is not negative; `None` where `z` does not reach.
-    let search = |edges: &[Vec<(usize, Int)>], sign: &Int| -> Vec<Option<Int>> {
-        let reduced = |u: usize, v: usize, w: &Int| w + &(sign * &(&p[u] - &p[v]));
-        let mut dist: Vec<Option<Int>> = vec![None; edges.len()];
+        let p = &self.p;
+        // Each node's least (reduced distance, place of its source in `sources`).
+        let mut label: Vec<Option<(Int, usize)>> = vec![None; edges.len()];
         let mut done = vec![false; edges.len()];
         let mut heap = std::collections::BinaryHeap::new();
-        dist[0] = Some(Int::ZERO);
-        heap.push(std::cmp::Reverse((Int::ZERO, 0usize)));
-        while let Some(std::cmp::Reverse((d, u))) = heap.pop() {
+        for (r, &s) in sources.iter().enumerate() {
+            if label[s].is_none() {
+                label[s] = Some((Int::ZERO, r));
+                heap.push(std::cmp::Reverse((Int::ZERO, r, s)));
+            }
+        }
+        while let Some(std::cmp::Reverse((d, r, u))) = heap.pop() {
             if mem::replace(&mut done[u], true) {
                 continue;
             }
             for (v, w) in &edges[u] {
-                let nd = &d + &reduced(u, *v, w);
-                if dist[*v].as_ref().is_none_or(|old| nd < *old) {
-                    dist[*v] = Some(nd.clone());
-                    heap.push(std::cmp::Reverse((nd, *v)));
+                if *v == 0 && !through_z {
+                    continue;
+                }
+                let nd = &d + &(w + &(&sign * &(&p[u] - &p[*v])));
+                if label[*v]
+                    .as_ref()
+                    .is_none_or(|(old, q)| (&nd, r) < (old, *q))
+                {
+                    label[*v] = Some((nd.clone(), r));
+                    heap.push(std::cmp::Reverse((nd, r, *v)));
                 }
             }
         }
-        // Back from reduced distances: `d(v) = d'(v) + sign·(p(v) - p(z))`, `p(z)` being 0.
-        dist.into_iter()
+        // Back from reduced distances: `d(v) = d'(v) - sign·(p(s) - p(v))` for the source `s`.
+        label
+            .into_iter()
             .enumerate()
-            .map(|(v, d)| d.map(|d| &d + &(sign * &p[v])))
+            .map(|(v, l)| {
+                l.map(|(d, r)| {
+                    let s = sources[r];
+                    (&d - &(&sign * &(&p[s] - &p[v])), s)
+                })
+            })
             .collect()
-    };
-    let up = search(&out, &Int::ONE);
-    let down = search(&back, &Int::from(-1));
-    Some(
-        atoms
+    }
+
+    /// The least and greatest value of each atom: the negated distance to `z` and the distance
+    /// from it.
+    fn ends(&self) -> HashMap<Atom, Ends> {
+        let up = self.search(Along::Up, &[0], true);
+        let down = self.search(Along::Down, &[0], true);
+        self.atoms
             .iter()
             .enumerate()
             .map(|(k, a)| {
                 (
                     (*a).clone(),
-                    (down[k + 1].as_ref().map(|d| -d), up[k + 1].clone()),
+                    (
+                        down[k + 1].as_ref().map(|(d, _)| -d),
+                        up[k + 1].as_ref().map(|(d, _)| d.clone()),
+                    ),
                 )
             })
-            .collect(),
-    )
+            .collect()
+    }
 }
 
 /// Whether `c` is a difference constraint or a bound, a row [`difference_ends`] takes.
@@ -8442,55 +8538,523 @@ fn disjunction_bounds(
     }
 }
 
-/// Bounds of the atoms of `part`, a part of the premises with the point `m`: the hulls of
-/// its difference constraints and bounds ([`difference_ends`]), then those hulls again with
-/// the bounds found from the first hulls added as rows: those each other top-level
-/// constraint gives its atoms ([`row_bounds`]), and those each top-level disjunction gives
-/// from its disjuncts' top-level constraints ([`disjunction_bounds`]). Each bound holds at
-/// every point of the part, since each row added does. The cost is two shortest-path passes
-/// and one pass over the other rows and over each disjunction's disjuncts, O(m log n) for m
-/// rows over n atoms. Where every row is a difference constraint or a bound the bounds are
-/// the hulls [`hull_from`] finds.
-///
-/// Complexity tradeoff: with any other row the bounds may be wider than the hulls: a bound
-/// that needs two rows at once is not found, so from `v >= w1`, `v >= w2` and
-/// `w1 + w2 >= 10` no lower bound of `v` is found, where the hull's is 5; nor one from a
-/// row nested two levels deep, in a disjunction within a disjunct, or under the negation of
-/// an equality or of a conjunction or disjunction. Why:
-/// the hull of every atom of a general integer system is one integer program for each side
-/// of each atom, and asking the solver for each factor cost O(factors × part)
-/// (C2-chain-general). Trigger: a product whose factor's part has a row with a coefficient
-/// other than ±1, three atoms or more, two atoms of one sign, a disjunction or an auxiliary
-/// definition. Test:
-/// `l01_38_presburger::ladder::a_bound_that_needs_two_rows_at_once_is_not_found`.
-/// COMPLEXITY.md row C2. The bounds stay sound, so a goal that needs the hull is not proved
-/// and passes to the next rung.
-fn part_bounds(part: &Formula, m: &Model) -> HashMap<Atom, Ends> {
-    let (mut cons, mut ors) = (Vec::new(), Vec::new());
-    for g in part.conjuncts() {
-        match g {
-            Formula::Or(ds) => ors.push(ds),
-            _ => cons.extend(as_row(g)),
+/// The bounds that the rows `other` give the atoms at the nodes `sources` of `g` through
+/// paths of difference rows, by one level of elimination, pushed onto `out` as bound rows. In a
+/// row `Σ k·a + c >= 0`, each atom `a` that a path ties to a source `s` (`a <= s + d` where
+/// `k > 0`, `a >= s - d` where `k < 0`, so `k·a <= k·s + |k|·d`) is replaced by that bound, and
+/// each other atom by its own greatest `k·a` from `b`; the row then gives `K·s + C >= 0`, a
+/// bound on `s` when `K` is not zero, rounded inward. For example `w1 <= v` and `w2 <= v` turn
+/// `w1 + w2 >= 10` into `2·v - 10 >= 0`, so `v >= 5`. Each bound holds wherever the rows do,
+/// since each replacement only raises the row's left side. Each atom is tied to its nearest
+/// source alone ([`Differences::search`], two searches from all the sources at once, not
+/// through `z`), and a row is read once, a sum kept for each source among its atoms', so the
+/// cost is O(m log n) for m rows over n atoms. An equality is read as two rows.
+fn eliminate(
+    g: &Differences,
+    b: &HashMap<Atom, Ends>,
+    sources: &[usize],
+    other: &[&Con],
+    out: &mut Vec<Con>,
+) {
+    if sources.is_empty() || other.is_empty() {
+        return;
+    }
+    let up = g.search(Along::Up, sources, false);
+    let down = g.search(Along::Down, sources, false);
+    /// For one source: the sum of the coefficients replaced by it, the sum of the constants
+    /// its paths add, the sum of those atoms' own greatest terms from `b`, and how many of
+    /// them have none.
+    struct Tied {
+        k: Int,
+        path: Int,
+        own: Int,
+        open: usize,
+    }
+    let mut row = |lin: &Lin| {
+        // The constant and the greatest terms from `b`, and the number of atoms with none.
+        let mut fixed = lin.constant.clone();
+        let mut open = 0usize;
+        let mut by: BTreeMap<usize, Tied> = BTreeMap::new();
+        for (a, k) in &lin.terms {
+            let own = (b.get(a))
+                .and_then(|(lo, hi)| {
+                    if k.is_positive() {
+                        hi.as_ref()
+                    } else {
+                        lo.as_ref()
+                    }
+                })
+                .map(|v| k * v);
+            match &own {
+                Some(v) => fixed = &fixed + v,
+                None => open += 1,
+            }
+            let ends = if k.is_positive() { &up } else { &down };
+            let Some((d, s)) = g.node.get(a).and_then(|&i| ends[i].as_ref()) else {
+                continue;
+            };
+            let t = by.entry(*s).or_insert_with(|| Tied {
+                k: Int::ZERO,
+                path: Int::ZERO,
+                own: Int::ZERO,
+                open: 0,
+            });
+            t.k = &t.k + k;
+            t.path = &t.path + &(&k.abs() * d);
+            match own {
+                Some(v) => t.own = &t.own + &v,
+                None => t.open += 1,
+            }
+        }
+        for (s, t) in by {
+            if open > t.open || t.k.is_zero() {
+                continue;
+            }
+            let c = &(&fixed - &t.own) + &t.path;
+            let x = Lin::atom(g.atoms[s - 1].clone());
+            out.push(Con {
+                lin: if t.k.is_positive() {
+                    x.minus(&Lin::constant(-&c.div_floor(&t.k)))
+                } else {
+                    Lin::constant(c.div_floor(&-&t.k)).minus(&x)
+                },
+                rel: Rel::Ge,
+            });
+        }
+    };
+    for c in other {
+        row(&c.lin);
+        if c.rel == Rel::Eq {
+            row(&c.lin.times(-1));
         }
     }
-    let (mut rows, other): (Vec<&Con>, Vec<&Con>) =
-        cons.iter().map(|c| &**c).partition(|c| is_difference(c));
-    let Some(first) = difference_ends(&rows, m) else {
-        return HashMap::new();
-    };
-    let mut added = Vec::new();
+}
+
+/// For each atom of `f`, whether it has a positive and whether a negative coefficient in a
+/// constraint `t >= 0` of `f` in negation normal form ([`nnf`]: under an odd number of
+/// negations `t >= 0` is `-t - 1 >= 0`), an equality, or its negation, counting as both. An
+/// atom with no negative one keeps every constraint that holds holding as it rises, so from any
+/// point of `f` it rises without bound over the points of `f`, the others fixed; one with no
+/// positive one likewise falls without bound. One fold over the distinct parts of `f` with the
+/// parity of the negations above them, so the cost is linear in its size.
+fn signs(f: &Formula) -> HashMap<Atom, (bool, bool)> {
+    let mut out: HashMap<Atom, (bool, bool)> = HashMap::new();
+    f.fold(
+        true,
+        |g, pos| pos != matches!(g, Formula::Not(_)),
+        |g, pos, _: Vec<()>| {
+            if let Formula::Con(c) = g {
+                for (a, k) in &c.lin.terms {
+                    let (p, n) = out.entry(a.clone()).or_default();
+                    if c.rel == Rel::Eq {
+                        (*p, *n) = (true, true);
+                    } else if k.is_positive() == pos {
+                        *p = true;
+                    } else {
+                        *n = true;
+                    }
+                }
+            }
+        },
+    );
+    out
+}
+
+/// The bounds that the rows `other` give their atoms from the bounds `b` and from each other,
+/// pushed onto `out` as bound rows. A row `Σ k·a + c >= 0` gives `a` a lower bound where
+/// `k > 0` and an upper one where `k < 0`, from the sides of the other atoms that bound their
+/// terms from above, as [`row_bounds`] reads it. A side is final once each row that bounds it
+/// has been read for it, and a row is read for an atom once the sides it needs of the other
+/// atoms are final, so a bound found through one row reaches the rows that need it: from
+/// `b + 2·c <= 3` with `c >= 0`, `b <= 3`, and then from `a + b >= 10`, `a >= 7`. The sides
+/// are taken in that order (Kahn's), so each final side is what reading the rows again and
+/// again until nothing changes gives it, and the result does not depend on the order of the
+/// rows. A side that depends on itself through the rows is never final, and a row that needs
+/// it is read for nothing else. A row is read at most twice, once when one of the sides it
+/// needs is not final and once when none is, each time in one pass over its terms, so the
+/// cost is linear in the rows' terms. An equality is read as two rows.
+fn propagate(other: &[&Con], b: &HashMap<Atom, Ends>, out: &mut Vec<Con>) {
+    // A side is `2·i` for the lower one of the `i`th atom and `2·i + 1` for the upper. Each
+    // row `>= 0` holds, for each term, the side it gives, the side it needs and its
+    // coefficient, and the row's constant.
+    let mut index: HashMap<&Atom, usize> = HashMap::new();
+    let mut atoms: Vec<&Atom> = Vec::new();
+    /// A row: for each term the side it gives, the side it needs and its coefficient; and the
+    /// constant.
+    type Row = (Vec<(usize, usize, Int)>, Int);
+    let mut rows: Vec<Row> = Vec::new();
     for c in other {
+        let signs: &[i64] = if c.rel == Rel::Eq { &[1, -1] } else { &[1] };
+        for &sign in signs {
+            let sign = Int::from(sign);
+            let terms = (c.lin.terms.iter())
+                .map(|(a, k)| {
+                    let i = *index.entry(a).or_insert_with(|| {
+                        atoms.push(a);
+                        atoms.len() - 1
+                    });
+                    let k = &sign * k;
+                    let up = usize::from(k.is_positive());
+                    (2 * i + 1 - up, 2 * i + up, k)
+                })
+                .collect();
+            rows.push((terms, &sign * &c.lin.constant));
+        }
+    }
+    let mut at: Vec<Option<Int>> = Vec::with_capacity(2 * atoms.len());
+    for a in &atoms {
+        let (lo, hi) = b.get(*a).cloned().unwrap_or_default();
+        at.push(lo);
+        at.push(hi);
+    }
+    let start = at.clone();
+    // How many terms still give each side, whether it is final, the rows whose terms need it,
+    // and how many of each row's terms need a side not final.
+    let mut left = vec![0usize; at.len()];
+    let mut needed_by: Vec<Vec<usize>> = vec![Vec::new(); at.len()];
+    for (i, (terms, _)) in rows.iter().enumerate() {
+        for (gives, needs, _) in terms {
+            left[*gives] += 1;
+            needed_by[*needs].push(i);
+        }
+    }
+    let mut fin: Vec<bool> = left.iter().map(|&n| n == 0).collect();
+    let mut pending: Vec<usize> = (rows.iter())
+        .map(|(terms, _)| terms.iter().filter(|(_, n, _)| !fin[*n]).count())
+        .collect();
+    // Row `i` read for its one term whose needed side is not final, or with none, for each
+    // term but the one that needs `skip`, read before: the sides given and their bounds.
+    let read = |i: usize, at: &[Option<Int>], fin: &[bool], skip: Option<usize>| {
+        let (terms, constant) = &rows[i];
+        // The greatest value of each term whose needed side is final; `None` if unbounded.
+        let tops: Vec<Option<Int>> = (terms.iter())
+            .map(|(_, n, k)| at[*n].as_ref().filter(|_| fin[*n]).map(|v| k * v))
+            .collect();
+        let lone = terms.iter().filter(|(_, n, _)| !fin[*n]).count();
+        let wide = tops.iter().filter(|t| t.is_none()).count() - lone;
+        let sum = (tops.iter().flatten()).fold(constant.clone(), |s, t| &s + t);
+        let mut given: Vec<(usize, Option<Int>)> = Vec::new();
+        for ((g, n, k), top) in terms.iter().zip(&tops) {
+            if (lone == 1) == fin[*n] || skip == Some(*n) {
+                continue;
+            }
+            // With `M` the greatest value of the other terms and the constant, `k·a >= -M`.
+            let rest = match top {
+                Some(t) if wide == 0 => Some(&sum - t),
+                None if wide + lone == 1 => Some(sum.clone()),
+                _ => None,
+            };
+            let v = rest.map(|rest| {
+                if k.is_positive() {
+                    -&rest.div_floor(k)
+                } else {
+                    rest.div_floor(&-k)
+                }
+            });
+            given.push((*g, v));
+        }
+        given
+    };
+    /// The sides as they are found: the bound of each, read by the rows; the bound given to
+    /// each side after it was let go, which no row reads; how many terms still give each;
+    /// whether each is queued to be final, or was let go; the queue; and the sides with a
+    /// bound that are not queued.
+    struct Found {
+        at: Vec<Option<Int>>,
+        late: Vec<Option<Int>>,
+        left: Vec<usize>,
+        queued: Vec<bool>,
+        gone: Vec<bool>,
+        ready: Vec<usize>,
+        valued: Vec<usize>,
+    }
+    /// The tighter of the bounds `old` and `v` of side `s`.
+    fn meet(s: usize, old: &mut Option<Int>, v: Int) {
+        if old
+            .as_ref()
+            .is_none_or(|o| if s.is_multiple_of(2) { v > *o } else { v < *o })
+        {
+            *old = Some(v);
+        }
+    }
+    impl Found {
+        /// Meets each side given with its bound, and counts the term as read for it.
+        fn give(&mut self, given: Vec<(usize, Option<Int>)>) {
+            for (s, v) in given {
+                if let Some(v) = v {
+                    if self.gone[s] {
+                        meet(s, &mut self.late[s], v);
+                    } else {
+                        if self.at[s].is_none() && !self.queued[s] {
+                            self.valued.push(s);
+                        }
+                        meet(s, &mut self.at[s], v);
+                    }
+                }
+                self.left[s] -= 1;
+                if self.left[s] == 0 && !mem::replace(&mut self.queued[s], true) {
+                    self.ready.push(s);
+                }
+            }
+        }
+    }
+    let n = at.len();
+    let valued = (0..n).filter(|&s| !fin[s] && at[s].is_some()).collect();
+    let mut found = Found {
+        at,
+        late: vec![None; n],
+        left,
+        queued: fin.clone(),
+        gone: vec![false; n],
+        ready: Vec::new(),
+        valued,
+    };
+    for (i, _) in pending.iter().enumerate().filter(|(_, p)| **p <= 1) {
+        found.give(read(i, &found.at, &fin, None));
+    }
+    loop {
+        while let Some(s) = found.ready.pop() {
+            fin[s] = true;
+            for &i in &needed_by[s] {
+                pending[i] -= 1;
+                if pending[i] <= 1 {
+                    let skip = (pending[i] == 0).then_some(s);
+                    found.give(read(i, &found.at, &fin, skip));
+                }
+            }
+        }
+        // What is left waits on sides that depend on themselves through the rows. Each side
+        // with a bound is let go at once with the bound it has, and the rows read on from
+        // there; a bound it is given later is kept, but no row reads it, so what each row
+        // reads is fixed by the rows alone and not by the order they are taken in.
+        let go: Vec<usize> = mem::take(&mut found.valued)
+            .into_iter()
+            .filter(|&s| !found.queued[s])
+            .collect();
+        if go.is_empty() {
+            break;
+        }
+        for s in go {
+            found.queued[s] = true;
+            found.gone[s] = true;
+            found.ready.push(s);
+        }
+    }
+    for (s, (v, late)) in found.at.into_iter().zip(found.late).enumerate() {
+        let mut v = v;
+        if let Some(l) = late {
+            meet(s, &mut v, l);
+        }
+        let Some(v) = v.filter(|v| start[s].as_ref() != Some(v)) else {
+            continue;
+        };
+        let x = Lin::atom(atoms[s / 2].clone());
+        out.push(Con {
+            lin: if s.is_multiple_of(2) {
+                x.minus(&Lin::constant(v))
+            } else {
+                Lin::constant(v).minus(&x)
+            },
+            rel: Rel::Ge,
+        });
+    }
+}
+
+/// For each atom of a row of `cons` that is not a difference constraint or a bound, or of a
+/// disjunction of `ors`, the formula of its cluster: the atoms that such rows and disjunctions
+/// join, by union-find over the atoms of each, with those rows and disjunctions, the
+/// difference constraints of `cons` on atoms of the cluster alone, and the bounds `ends` of
+/// each atom of the cluster. Each holds wherever `cons`, `ors` and `ends` do, so the hull of
+/// an atom over its cluster contains its hull over them, and it is wider where a path of
+/// difference constraints through other atoms ties two atoms of the cluster more closely than
+/// their bounds do. Each row and disjunction is read once, so the cost is linear in their size,
+/// with a factor log n for the ordered map of the n atoms, which keeps the order of each
+/// cluster's rows independent of the hash seed.
+fn clusters(
+    cons: &[Con],
+    ors: &[&Formula],
+    ends: &HashMap<Atom, Ends>,
+) -> HashMap<Atom, Rc<Formula>> {
+    fn find(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let mut ids: BTreeMap<Atom, usize> = BTreeMap::new();
+    let mut parent: Vec<usize> = Vec::new();
+    let mut join = |atoms: Vec<Atom>, parent: &mut Vec<usize>| -> Option<usize> {
+        let mut root = None;
+        for a in atoms {
+            let i = *ids.entry(a).or_insert_with(|| {
+                parent.push(parent.len());
+                parent.len() - 1
+            });
+            let r = find(parent, i);
+            match root {
+                None => root = Some(r),
+                Some(q) => parent[r] = q,
+            }
+        }
+        root
+    };
+    let mut joining: Vec<(usize, Formula)> = Vec::new();
+    for c in cons.iter().filter(|c| !is_difference(c)) {
+        if let Some(r) = join(c.lin.terms.keys().cloned().collect(), &mut parent) {
+            joining.push((r, Formula::Con(c.clone())));
+        }
+    }
+    for g in ors {
+        if let Some(r) = join(g.atoms().into_iter().collect(), &mut parent) {
+            joining.push((r, (*g).clone()));
+        }
+    }
+    let mut parts: HashMap<usize, Vec<Formula>> = HashMap::new();
+    for (r, f) in joining {
+        let root = find(&mut parent, r);
+        parts.entry(root).or_default().push(f);
+    }
+    for c in cons.iter().filter(|c| is_difference(c)) {
+        let mut roots = c.lin.terms.keys().map(|a| ids.get(a).copied());
+        let Some(Some(first)) = roots.next() else {
+            continue;
+        };
+        let root = find(&mut parent, first);
+        if roots.all(|i| i.is_some_and(|i| find(&mut parent, i) == root)) {
+            parts.entry(root).or_default().push(Formula::Con(c.clone()));
+        }
+    }
+    for (a, &i) in &ids {
+        let root = find(&mut parent, i);
+        let (lo, hi) = ends.get(a).cloned().unwrap_or_default();
+        let x = Lin::atom(a.clone());
+        let part = parts.entry(root).or_default();
+        if let Some(lo) = lo {
+            part.push(Formula::Con(Con::ge(&x, &Lin::constant(lo))));
+        }
+        if let Some(hi) = hi {
+            part.push(Formula::Con(Con::ge(&Lin::constant(hi), &x)));
+        }
+    }
+    let formulas: HashMap<usize, Rc<Formula>> = (parts.into_iter())
+        .map(|(root, fs)| (root, Rc::new(Formula::and(fs))))
+        .collect();
+    (ids.into_iter())
+        .map(|(a, i)| {
+            let root = find(&mut parent, i);
+            (a, Rc::clone(&formulas[&root]))
+        })
+        .collect()
+}
+
+/// What [`part_bounds`] finds of a part: bounds of its atoms, whether they are its hulls
+/// because every row is a difference constraint or a bound, and, where they are not, the
+/// cluster of each atom of a general row or a disjunction ([`clusters`]).
+struct PartBounds {
+    ends: HashMap<Atom, Ends>,
+    hulls: bool,
+    local: HashMap<Atom, Rc<Formula>>,
+}
+
+/// Bounds of the atoms of `part`, a part of the premises with the point `m`, whose atoms
+/// `factors` are factors of products. First, every atom that is not a factor and is in no
+/// disjunction is eliminated from the top-level rows where that is exact over the integers and
+/// adds no terms ([`shadow`]), so a chain of general rows through such atoms becomes rows on
+/// the atoms kept, with the same integer points on them: from `a + b >= 10`, `b + 2·c <= 3`
+/// and `c >= 0`, with `b` and `c` not kept, `a >= 7`. Then come the hulls of the difference
+/// constraints and bounds left ([`difference_ends`]), and those hulls again with the bounds
+/// found from the first hulls added as rows: those each other row gives its atoms alone
+/// ([`row_bounds`]) and through the bounds the other rows give ([`propagate`]), those it gives
+/// the factors through paths of difference rows ([`eliminate`]), and those each top-level
+/// disjunction gives from its disjuncts' top-level constraints ([`disjunction_bounds`]). Each
+/// bound holds at every point of the part, since each row added does. Where the bounds are not
+/// all hulls, the cluster of each atom of a general row or a disjunction is kept too
+/// ([`clusters`]), for [`products`] to ask the solver over. The cost is the elimination,
+/// which adds no terms, four shortest-path passes, and passes linear in the other rows and in
+/// each disjunction's disjuncts, O(m log n) for m rows over n atoms. Where every row is a
+/// difference constraint or a bound the bounds are the hulls [`hull_from`] finds.
+///
+/// Complexity tradeoff: with any other row a bound may be wider than the hull, or missing:
+/// one that needs two general rows at once on atoms that are both kept (from
+/// `a + b >= 10` and `a - 2·b >= 1` with `b` in a disjunction, `a >= 7`), a side that depends
+/// on itself through the rows (let go with the bound it has, [`propagate`]), a path to a
+/// factor other than the nearest one, or a row nested two levels deep, in a disjunction
+/// within a disjunct, or under the negation of an equality or of a conjunction or disjunction.
+/// Why: the hull of one atom of a general integer system is an integer program, and integer
+/// programming is NP-hard, so no method finds every hull in O(m log n) unless P = NP; each
+/// side by [`hull_from`] costs O(part). These bounds are a first try: where the goal is then
+/// not proved, [`products`] asks the solver for each side of a factor not known to be the
+/// hull's, and its own tradeoff comment says what that costs. Test:
+/// `l01_38_presburger::ladder::a_bound_that_needs_two_general_rows_is_found_by_the_solver`.
+/// COMPLEXITY.md row C2.
+fn part_bounds(part: &Formula, m: &Model, factors: &[&Atom]) -> PartBounds {
+    // The rows, and every atom that is a factor or in a disjunction.
+    let (mut cons, mut ors, mut whole) = (Vec::new(), Vec::new(), true);
+    let mut joined: Vec<&Formula> = Vec::new();
+    let mut keep: HashSet<Atom> = factors.iter().map(|a| (*a).clone()).collect();
+    for g in part.conjuncts() {
+        match g {
+            Formula::Or(ds) => {
+                ors.push(ds);
+                joined.push(g);
+                keep.extend(g.atoms());
+            }
+            _ => match as_row(g) {
+                Some(c) => cons.push(c.into_owned()),
+                None => whole = false,
+            },
+        }
+    }
+    // The rows with every other atom eliminated where that is exact and adds no terms
+    // ([`shadow`]): their integer points on the atoms kept are those of the rows, so the
+    // hulls of the factors are the same, and a chain of general rows through atoms that are
+    // not factors becomes rows on the factors alone, often difference constraints.
+    let Some(cons) = shadow(&cons, &|a| keep.contains(a), true) else {
+        return PartBounds {
+            ends: HashMap::new(),
+            hulls: false,
+            local: HashMap::new(),
+        };
+    };
+    let (mut rows, other): (Vec<&Con>, Vec<&Con>) = cons.iter().partition(|c| is_difference(c));
+    let hulls = whole && other.is_empty() && ors.is_empty();
+    let Some(g) = Differences::of(&rows, m) else {
+        return PartBounds {
+            ends: HashMap::new(),
+            hulls: false,
+            local: HashMap::new(),
+        };
+    };
+    let first = g.ends();
+    let mut added = Vec::new();
+    for c in &other {
         row_bounds(&c.lin, |a| first.get(a), &mut added);
         if c.rel == Rel::Eq {
             row_bounds(&c.lin.times(-1), |a| first.get(a), &mut added);
         }
     }
+    propagate(&other, &first, &mut added);
+    let sources: Vec<usize> = factors
+        .iter()
+        .filter_map(|a| g.node.get(a).copied())
+        .collect();
+    eliminate(&g, &first, &sources, &other, &mut added);
     let mut seen = HashMap::new();
     for ds in ors {
         disjunction_bounds(ds, &first, &mut seen, &mut added);
     }
     if added.is_empty() {
-        return first;
+        let local = if hulls {
+            HashMap::new()
+        } else {
+            clusters(&cons, &joined, &first)
+        };
+        return PartBounds {
+            ends: first,
+            hulls,
+            local,
+        };
     }
     // The point `m` may leave out an atom that no difference row names, and the shortest
     // paths need its value at each atom of their rows; such an atom is in no other difference
@@ -8498,11 +9062,16 @@ fn part_bounds(part: &Formula, m: &Model) -> HashMap<Atom, Ends> {
     let (known, loose): (Vec<&Con>, Vec<&Con>) =
         (added.iter()).partition(|r| r.lin.terms.keys().all(|a| m.get(a).is_some()));
     rows.extend(known);
-    let mut out = difference_ends(&rows, m).unwrap_or(first);
+    let mut ends = difference_ends(&rows, m).unwrap_or(first);
     for r in loose {
-        meet_bound(&mut out, r, &HashMap::new());
+        meet_bound(&mut ends, r, &HashMap::new());
     }
-    out
+    let local = if hulls {
+        HashMap::new()
+    } else {
+        clusters(&cons, &joined, &ends)
+    };
+    PartBounds { ends, hulls, local }
 }
 
 /// Whether `sym` takes arbitrarily large values (`dir` 1) or arbitrarily small ones (`dir`
@@ -8655,9 +9224,45 @@ pub fn entails(premises: &Relation, goal: &Relation) -> Entailment {
 }
 
 fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Refusal> {
+    let (ps, loose) = products(premises, goal, Tier::Cheap)?;
+    let first = linear_reading(premises, goal, ps)?;
+    if !loose || !matches!(first, Entailment::NotProved(_)) {
+        return Ok(first);
+    }
+    // The bounds of some factor may be wider than its hull, so the products are taken again
+    // from the hulls the solver finds for those sides, first over each factor's cluster and
+    // then, if the goal is still not proved, over its whole part. Each bound found holds
+    // wherever the premises do and lies within the one before, so each such product implies
+    // the one from the wider bound with the linear premises, whatever one try proves the next
+    // proves too, and the last verdict is the one the hulls give. Where the solver refuses,
+    // the verdict before stands.
+    // Complexity tradeoff: each try costs one solver question for each open side, over the
+    // cluster O(sides × cluster) and over the part O(sides × part); see [`Tier`] for why and
+    // when. COMPLEXITY.md row C2.
+    let (ps, loose) = match products(premises, goal, Tier::Local) {
+        Ok(found) => found,
+        Err(_) => return Ok(first),
+    };
+    let second = linear_reading(premises, goal, ps).unwrap_or(first);
+    if !loose || !matches!(second, Entailment::NotProved(_)) {
+        return Ok(second);
+    }
+    Ok(products(premises, goal, Tier::Whole)
+        .and_then(|(ps, _)| linear_reading(premises, goal, ps))
+        .unwrap_or(second))
+}
+
+/// Whether `premises` with the products `extra` ([`products`]) entail `goal` when each
+/// product is read as its own atom: proved, or a point of the premises where the goal fails,
+/// which is a countermodel when it is one with each product read as a product.
+fn linear_reading(
+    premises: &Relation,
+    goal: &Relation,
+    extra: Vec<Formula>,
+) -> Result<Entailment, Refusal> {
     let defs = Formula::and(vec![premises.defined(), goal.defined()]);
     let mut ps = vec![premises.body.clone()];
-    ps.extend(products(premises, goal)?);
+    ps.extend(extra);
     let premise = Formula::and(ps.clone());
     let f = Formula::and(vec![
         defs.clone(),
@@ -8689,8 +9294,39 @@ fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Ref
     Ok(Entailment::NotProved(m))
 }
 
+/// Which bounds [`products`] takes of a factor: those [`part_bounds`] finds (`Cheap`), or
+/// those with each side not known to be the hull's replaced by the hull the solver finds
+/// ([`hull_side`]) over the factor's cluster ([`clusters`], `Local`) or over its whole part
+/// (`Whole`). A side found over the cluster lies between the hull over the part and the
+/// bound of `Cheap`, since the cluster holds wherever the part does and holds that bound.
+///
+/// Complexity tradeoff: `Local` costs one solver question of the cluster for each open side
+/// and O(log d) more for a bound at distance d, so O(sides × cluster), linear over a chain
+/// of links that each hold their own general rows, and O(n²) at worst when one cluster holds
+/// n open factors; `Whole` costs O(sides × part), O(n²) on a part with n open factors. Why:
+/// the hull of one atom of a general integer system is an integer program, NP-hard, and the
+/// bounds [`part_bounds`] finds in O(m log n) are not always the hulls; no way is known to
+/// share the work of one side's question with another's. Trigger: [`entails_inner`] takes
+/// `Local` only when the goal is not proved from the `Cheap` bounds and one of them is not
+/// known to be the hull's, and `Whole` only when the goal is still not proved, which needs a
+/// path of difference constraints through atoms outside a cluster that ties two of its atoms
+/// more closely than their bounds do. Test:
+/// `l01_38_presburger::ladder::products_whose_factors_keep_open_sides_scale` (`Local`, linear
+/// in the links). COMPLEXITY.md row C2.
+#[derive(Clone, Copy)]
+enum Tier {
+    Cheap,
+    Local,
+    Whole,
+}
+
 /// For each product the formulas mention, the products in pairs of the premises on its two
-/// factors, each `>= 0`.
+/// factors, each `>= 0`, and whether a bound used is not known to be the factor's hull. The
+/// bounds of each factor are those [`part_bounds`] finds, with each side not known to be the
+/// hull's found by the solver as `tier` says ([`Tier`]). A side is known to be the hull's
+/// when every row of the part is a difference constraint or a bound, when the part's point
+/// meets the bound, or, with no bound, when the factor has no coefficient of the sign that
+/// could stop it going that way ([`signs`]).
 ///
 /// Complexity tradeoff: a product of two variables is an opaque atom, bounded only by these
 /// products of pairs of linear premises; a goal that needs any other nonlinear reasoning is
@@ -8702,8 +9338,11 @@ fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Ref
 /// COMPLEXITY.md row C2. No complete solution exists for integers; a stronger sound one would
 /// add higher-degree products of premises (Positivstellensatz certificates), at a cost
 /// polynomial of growing degree.
-fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusal> {
-    use std::collections::hash_map::Entry;
+fn products(
+    premises: &Relation,
+    goal: &Relation,
+    tier: Tier,
+) -> Result<(Vec<Formula>, bool), Refusal> {
     let mut wanted = BTreeSet::new();
     for f in [&premises.body, &goal.body] {
         for a in f.atoms() {
@@ -8713,26 +9352,36 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
         }
     }
     if wanted.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     }
-    // The top-level linear inequalities, an equality read as two.
+    // The top-level linear inequalities, an equality read as two; and the other top-level
+    // conjuncts that mention no product, a disjunction or a negation, which bound the factors
+    // too ([`disjunction_bounds`]).
     let mut linear = Vec::new();
+    let mut joined = Vec::new();
     for g in premises.body.conjuncts() {
-        if let Formula::Con(c) = g
-            && c.lin.is_linear()
-        {
-            linear.push(c.lin.clone());
-            if c.rel == Rel::Eq {
-                linear.push(c.lin.times(-1));
+        match g {
+            Formula::Con(c) => {
+                if c.lin.is_linear() {
+                    linear.push(c.lin.clone());
+                    if c.rel == Rel::Eq {
+                        linear.push(c.lin.times(-1));
+                    }
+                }
+            }
+            _ => {
+                if g.atoms().iter().all(|a| !matches!(a, Atom::Product(..))) {
+                    joined.push(g.clone());
+                }
             }
         }
     }
-    // The rows of the premises, their definitions and the linear inequalities, in parts that
-    // share no atom, by union-find over the atoms each row mentions; and the linear rows on
-    // each atom. A factor's bounds are its hull over its own part: the other parts constrain
-    // other atoms, so where the premises have a point the hull is the hull over all of them,
-    // and where they have none they entail any goal. Taking the hull over all the premises for
-    // each factor cost O(factors × premises) (LADDER-study,
+    // The rows of the premises, their definitions, the linear inequalities and the other
+    // conjuncts above, in parts that share no atom, by union-find over the atoms each row
+    // mentions; and the linear rows on each atom. A factor's bounds are its hull over its own
+    // part: the other parts constrain other atoms, so where the premises have a point the hull
+    // is the hull over all of them, and where they have none they entail any goal. Taking the
+    // hull over all the premises for each factor cost O(factors × premises) (LADDER-study,
     // `l01_38_presburger::ladder::products_of_premises_in_pairs_scale`).
     let rows: Vec<Formula> = premises
         .defs
@@ -8744,6 +9393,7 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
                 rel: Rel::Ge,
             })
         }))
+        .chain(joined)
         .collect();
     fn find(parent: &mut [usize], mut i: usize) -> usize {
         while parent[i] != i {
@@ -8795,18 +9445,43 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
             on_atom.entry(a).or_default().push(i);
         }
     }
-    // What each part gives its factors, found once for the part when its first factor is
-    // reached: `None` when it has no point, and otherwise the bounds of all its atoms
-    // ([`part_bounds`], O(m log n) for m rows over n atoms). Asking [`hull_from`] for each
-    // factor cost O(factors × part) on one part (C2-chain,
-    // `l01_38_presburger::ladder::products_whose_factors_one_chain_connects_scale`, and
-    // C2-chain-general, `products_along_a_chain_with_a_general_row_scale`).
-    let mut given: HashMap<usize, Option<HashMap<Atom, Ends>>> = HashMap::new();
-    let mut on: BTreeMap<Factor, Vec<Lin>> = BTreeMap::new();
     let factors: BTreeSet<Factor> = wanted
         .iter()
         .flat_map(|(x, y)| [x.clone(), y.clone()])
         .collect();
+    // The factors of each part, in order.
+    let mut part_factors: BTreeMap<usize, Vec<Atom>> = BTreeMap::new();
+    for s in &factors {
+        let atom = s.atom();
+        if let Some(&id) = ids.get(&atom)
+            && consistent
+        {
+            part_factors
+                .entry(find(&mut parent, id))
+                .or_default()
+                .push(atom);
+        }
+    }
+    // What each part gives its factors: `None` when it has no point, and otherwise its point,
+    // the bounds of all its atoms ([`part_bounds`], O(m log n) for m rows over n atoms), and,
+    // where those are not all hulls, the signs of its atoms ([`signs`], linear in the part).
+    // Asking [`hull_from`] for each factor cost O(factors × part) on one part (C2-chain,
+    // `l01_38_presburger::ladder::products_whose_factors_one_chain_connects_scale`, and
+    // C2-chain-general, `products_along_a_chain_with_a_general_row_scale`).
+    type Signs = HashMap<Atom, (bool, bool)>;
+    let mut given: HashMap<usize, Option<(Model, PartBounds, Option<Signs>)>> = HashMap::new();
+    for (root, atoms) in &part_factors {
+        let part = &parts[root];
+        let found = satisfiable_inner(part)?.map(|m| {
+            let refs: Vec<&Atom> = atoms.iter().collect();
+            let b = part_bounds(part, &m, &refs);
+            let signs = (!b.hulls).then(|| signs(part));
+            (m, b, signs)
+        });
+        given.insert(*root, found);
+    }
+    let mut loose = false;
+    let mut on: BTreeMap<Factor, Vec<Lin>> = BTreeMap::new();
     for s in factors {
         let atom = s.atom();
         let mut set: Vec<Lin> = on_atom.get(&atom).map_or_else(Vec::new, |is| {
@@ -8817,21 +9492,42 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
             Some(&id) if consistent => Some(find(&mut parent, id)),
             _ => None,
         };
-        if let Some(root) = root {
-            let part = &parts[&root];
-            let found = match given.entry(root) {
-                Entry::Occupied(e) => e.into_mut(),
-                Entry::Vacant(e) => {
-                    e.insert(satisfiable_inner(part)?.map(|m| part_bounds(part, &m)))
+        if let Some(root) = root
+            && let Some((m, b, signs)) = &given[&root]
+        {
+            let (lo, hi) = b.ends.get(&atom).cloned().unwrap_or_default();
+            // Whether the side going `dir` is the hull's: see the doc comment above.
+            let known = |end: &Option<Int>, dir: i64| {
+                b.hulls
+                    || match end {
+                        Some(v) => m.get(&atom) == Some(v),
+                        None => signs
+                            .as_ref()
+                            .and_then(|s| s.get(&atom))
+                            .is_some_and(|&(pos, neg)| if dir > 0 { !neg } else { !pos }),
+                    }
+            };
+            let mut side = |end: Option<Int>, dir: i64| -> Result<Option<Int>, Refusal> {
+                if known(&end, dir) {
+                    return Ok(end);
+                }
+                match (tier, b.local.get(&atom)) {
+                    (Tier::Whole, _) => hull_side(&parts[&root], &atom, m, dir),
+                    (Tier::Local, Some(c)) => {
+                        loose = true;
+                        Ok(hull_side(c, &atom, m, dir).unwrap_or(end))
+                    }
+                    _ => {
+                        loose = true;
+                        Ok(end)
+                    }
                 }
             };
-            if let Some((lo, hi)) = found.as_ref().and_then(|b| b.get(&atom)) {
-                if let Some(l) = lo {
-                    set.push(x.minus(&Lin::constant(l.clone())));
-                }
-                if let Some(h) = hi {
-                    set.push(Lin::constant(h.clone()).minus(&x));
-                }
+            if let Some(l) = side(lo, -1)? {
+                set.push(x.minus(&Lin::constant(l)));
+            }
+            if let Some(h) = side(hi, 1)? {
+                set.push(Lin::constant(h).minus(&x));
             }
         }
         set.sort();
@@ -8851,7 +9547,7 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
             }
         }
     }
-    Ok(out.into_iter().map(Formula::Con).collect())
+    Ok((out.into_iter().map(Formula::Con).collect(), loose))
 }
 
 #[cfg(feature = "two-at-a-time")]
@@ -9549,7 +10245,10 @@ pub(super) mod tests {
     /// The bounds [`part_bounds`] gives each atom of a part contain the hull the solver finds
     /// ([`hull_from`]), on random parts of up to 6 rows over 4 names with coefficients from -3
     /// to 3 and up to three atoms a row, some with a disjunction of two conjunctions of such
-    /// rows; and they are the hull itself for many atoms, so the comparison is not empty.
+    /// rows, with a random set of the names as factors; and they are the hull itself for many
+    /// atoms, so the comparison is not empty. Each side that [`products`] takes as known to be
+    /// the hull is the hull: every side where the bounds are hulls, a side the point meets, and
+    /// a missing side that [`signs`] shows to be open.
     #[test]
     fn part_bounds_contain_the_hulls_the_solver_finds() {
         let names = ["a", "b", "c", "d"];
@@ -9568,7 +10267,7 @@ pub(super) mod tests {
                 rel,
             })
         };
-        let (mut compared, mut same) = (0, 0);
+        let (mut compared, mut same, mut known) = (0, 0, 0);
         for _ in 0..1500 {
             let mut parts: Vec<Formula> = (0..1 + rng.below(6)).map(|_| row(&mut rng)).collect();
             if rng.below(3) == 0 {
@@ -9583,27 +10282,47 @@ pub(super) mod tests {
             let Ok(Some(model)) = satisfiable_inner(&whole) else {
                 continue;
             };
-            let bounds = part_bounds(&whole, &model);
+            let factors: Vec<Atom> = (whole.atoms().into_iter())
+                .filter(|_| rng.below(2) == 0)
+                .collect();
+            let bounds = part_bounds(&whole, &model, &factors.iter().collect::<Vec<_>>());
+            let signs = signs(&whole);
             for a in whole.atoms() {
                 let Ok(hull) = hull_from(&whole, &a, &model) else {
                     continue;
                 };
                 let end =
                     |e: &Option<Int>, inf: End| e.as_ref().map_or(inf, |v| End::Fin(Num::from(v)));
-                let found = bounds.get(&a).map_or(IntervalSet::top(), |(lo, hi)| {
-                    IntervalSet::range(end(lo, End::NegInf), end(hi, End::PosInf))
-                });
+                let (lo, hi) = bounds.ends.get(&a).cloned().unwrap_or_default();
+                let found = IntervalSet::range(end(&lo, End::NegInf), end(&hi, End::PosInf));
                 assert!(
                     hull.is_subset(&found),
                     "{whole} onto {a}: {hull} in {found}"
                 );
                 compared += 1;
                 same += usize::from(hull.hull() == found);
+                let (h_lo, h_hi) = hull.bounds().expect("the part has a point");
+                let (pos, neg) = signs[&a];
+                let sides = [
+                    (&lo, End::NegInf, h_lo, !pos),
+                    (&hi, End::PosInf, h_hi, !neg),
+                ];
+                for (e, inf, h, open) in sides {
+                    let sure = (bounds.hulls && factors.contains(&a))
+                        || match e {
+                            Some(v) => model.get(&a) == Some(v),
+                            None => open,
+                        };
+                    if sure {
+                        known += 1;
+                        assert_eq!(&end(e, inf), h, "{whole} onto {a}: {e:?} for {hull}");
+                    }
+                }
             }
         }
         assert!(
-            compared > 1000 && same > compared / 4,
-            "{same} of {compared}"
+            compared > 1000 && same > compared / 4 && known > compared / 2,
+            "{same} and {known} of {compared}"
         );
     }
 
