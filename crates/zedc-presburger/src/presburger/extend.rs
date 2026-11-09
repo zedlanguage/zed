@@ -492,6 +492,17 @@ impl Extending {
 }
 
 /// The faces of the kept conjunctions, each once asked: `None` where none is made.
+// Complexity tradeoff: naive version, a link whose largest kept part's point does not extend
+// reads the rest of the conjunction, the whole chain, O(n²) over a chain of n links. Used:
+// each kept conjunction has a face, made lazily and once on an explicit stack (the faces
+// made are the visited set): `shadow` of its own constraints and the definitions they reach
+// onto the atoms its call binds, so a chain's face stays a few rows however long the chain;
+// other parts are read through their faces, O(the faces' rows) a link (8.2 times the bytes
+// from 50 to 400 links). Tradeoffs: a face stands for its part only where nothing else in
+// the question reads an atom it projects out, checked where it is made and where it is read;
+// otherwise the question is asked with the parts, as before. Test
+// `l01_38_presburger::one_scope::the_questions_of_a_drifting_chain_scale`; COMPLEXITY.md row
+// LOAD-call-summary.
 #[derive(Default)]
 struct Faces {
     by: HashMap<Id, Option<Face>>,
@@ -1670,6 +1681,15 @@ fn reached(f: &Formula, def: &dyn Fn(u32) -> Formula) -> Vec<Formula> {
 /// The definitions `f` reaches through the auxiliary variables `m` gives no value: those of
 /// its auxiliary variables not in `m`, and of theirs. Time of `f` and of the definitions read,
 /// each read once, and O(log n) for each variable looked up in `m`.
+// Complexity tradeoff: naive version, a link's new parts read with every definition they
+// reach, the whole chain of definitions, so a chain of n tests over a chain of definitions
+// costs O(n²) (74.6 times the instructions from 25 to 200 links). Used: only the definitions
+// reached past the auxiliary variables the kept part's point already gives a value, each
+// read once, O(new parts and their definitions) a link (8.1 times). Tradeoffs: where the
+// point does not extend, or the shortened question does not settle it, the question is
+// decided with all it reaches, O(n) that link, as before; the answers are `decide`'s. Test
+// `l01_38_presburger::one_scope::the_questions_of_a_chain_of_tests_over_a_chain_of_definitions_scale`;
+// COMPLEXITY.md row LOAD-chain-defs.
 fn reached_past(f: &Formula, def: &dyn Fn(u32) -> Formula, m: &Point) -> Vec<Formula> {
     reached_by(f, def, &|a| m.contains_key(a))
 }

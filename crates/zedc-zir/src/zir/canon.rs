@@ -77,6 +77,13 @@ pub fn step(g: &mut Region) -> Option<&'static str> {
 }
 
 /// The normal form of `g`: the graph [`step`] reaches, in one pass.
+// Complexity tradeoff: the naive normalizer applies one rule step at a time (`step`) and
+// restarts from the top after each rewrite, O(k) steps of O(k) each for k edges and patterns,
+// O(k²) (COMPLEXITY.md Z3). Here every rule acts on one edge or one pattern alone, so each is
+// put in normal form once, in one pass, O(k) plus `normal_edge`'s O(F log F) per edge of F
+// facets (Z18). Precondition: no rule reads more than one edge or pattern; a rule that did
+// would need the restart again. Nothing is refused. Test
+// `l01_32_canonical_zir::fuzz::the_one_pass_normal_form_is_the_one_the_steps_reach`.
 pub fn canonicalize(g: &Region) -> Region {
     let mut g = g.clone();
     normalize(&mut g);

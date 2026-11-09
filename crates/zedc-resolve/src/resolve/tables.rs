@@ -41,6 +41,12 @@ struct Uses {
 /// A list of binders as a key: hashed by its first binder and length, compared by sharing
 /// first and by content only when not shared. Each use of an overload set shares the set's
 /// list (`Ref::Bound`), so finding a use's group costs `O(1)`.
+// Complexity tradeoff (COMPLEXITY.md F49, F16): the naive tables record each use once per
+// binder it may name, and each statement using an overload set waits on every overload,
+// O(U·K) entries and edges for U uses of K overloads (7.3 s at U = K = 8,000). Grouping the
+// uses by their shared list makes U + K entries and edges. The key hashes the first binder
+// and the length only, O(1) per use; two different lists that agree on both collide and
+// are compared by content, O(K) per such comparison, which only lists not shared reach.
 struct ListKey<'a>(&'a Vector<usize>);
 
 impl Hash for ListKey<'_> {
@@ -264,6 +270,11 @@ impl<'a> Tables<'a> {
     /// reads the uses of the scope's own binders only, not those of the scopes inside it.
     /// A use of an overload set waits on one join node, which waits on the set's statements,
     /// so `U` uses of `K` overloads make `U + K` dependencies, not `U·K`.
+    // Complexity tradeoff (COMPLEXITY.md F7, F49): the naive order collects each scope's
+    // uses with `uses_in`, which reads the uses of every scope nested inside, O(uses · depth)
+    // over a nest; here a scope reads only the groups of its own binders and places each use
+    // in its statement by binary search, O(uses log n) in all, with a hash map from binder
+    // to statement per scope.
     pub fn order(&self, items: &[&'a Stmt]) -> Result<Vec<usize>, Vec<Vec<usize>>> {
         topo_joined(&self.deps(items), items.len())
     }

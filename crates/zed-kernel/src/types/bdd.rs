@@ -18,10 +18,22 @@
 //! A part is decided (module `empty`) by three-valued operations: it is evaluated with some
 //! atoms known (`Part::eval3`) and restricted to them (`Part::restrict`), each in time linear in
 //! its literals; asked which atoms every value takes or refuses (`Part::forced`), in `O(n log n)`
-//! on a list and one evaluation per atom on an expression; and settled on its shared
-//! subexpressions (`Part::settle`), one evaluation per shared subexpression in each round. The
-//! last two are above the rule of low complexity, an open item (DESIGN.md L1.23). Listing values
-//! takes one pass over a list's first nodes, as a diagram would have them (`Bdd::reaching`).
+//! on a list and in one pass over the nodes of an expression (COMPLEXITY.md K32); and settled on
+//! its shared subexpressions (`Part::settle`), one evaluation per shared subexpression in each
+//! round. The last is above the rule of low complexity, an open item (DESIGN.md L1.23). Listing
+//! values takes one pass over a list's first nodes, as a diagram would have them
+//! (`Bdd::reaching`).
+//!
+//! Complexity tradeoff (COMPLEXITY.md K1, K3): the naive form, a union of clauses (DNF), takes
+//! `2^C` clauses to complement `C` clauses by De Morgan's product (K1) and `O(C³)` to merge its
+//! clauses after each change (K3); a reduced ordered diagram makes a union or intersection of
+//! `a` and `b` in up to `|a|·|b|` nodes, exponential over a chain of them. Used: a list in one
+//! form, complemented in `O(1)` by flipping its first block's value, grown only by literals,
+//! `O(log n)` expected each; every other union or intersection an expression built in `O(1)`,
+//! with no merging step. Given up: what a diagram would show at once is found when the part is
+//! decided (module `empty`), whose walk of an expression's paths is exponential in the worst
+//! case and refuses the classes named there; memory is the expressions kept, one node per
+//! connective built.
 
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
@@ -1034,6 +1046,11 @@ impl<'m> Connect<'m> {
                 // shorter chain's literals up in the longer, so that the time is `O(k log n)`
                 // for `k` the shorter's literals and `n` the longer's; the rests are built only
                 // for a single atom.
+                // Complexity tradeoff (COMPLEXITY.md K67 (2)): the naive version lists both
+                // chains at each join, O(k + n) per join, so a meet of m literals joined to m
+                // meets of two costs O(m²). Used: the shorter chain listed and each of its atoms
+                // looked up in the longer one's block (`set::get`), O(k log n). Given up: a log
+                // factor per lookup where both chains are of one length.
                 let short_is_d = d.chain_len(inner) <= e.chain_len(inner);
                 let (short, long) = if short_is_d { (d, e) } else { (e, d) };
                 let lits = short
@@ -1481,6 +1498,12 @@ impl<A: Literal> Part<A> {
     /// `false`, and a diagram under an atom taken or refused on every path to `true`. The sets
     /// are persistent and a union adds the smaller to the larger, so the time is `O(n log n)`
     /// in the nodes when the sets stay small, and at most the nodes times the atoms.
+    // Complexity tradeoff (COMPLEXITY.md K32): the naive version evaluates the part once per
+    // atom, O(atoms × nodes) (11.5 s on the choice chain with a choice swapped at d = 46). Used:
+    // one post-order pass with persistent sets, O(N log N) in the nodes while the sets stay
+    // small; since subexpressions are shared, the smaller-into-larger argument does not bound
+    // the total, so the worst case is still the nodes times the atoms, each set taking memory
+    // up to the atoms below its node. Nothing refused, the answer exact.
     pub(super) fn forced(&self) -> (Vec<A>, Vec<A>) {
         // Settings `(atom, value)`; `None` is every setting.
         type Set<A> = Option<imbl::OrdSet<(A, bool)>>;
@@ -2140,6 +2163,15 @@ mod list {
     //! from its block or cuts the list at its block. Each such change rebuilds the cells on the
     //! paths to the blocks it changes, `O(log m)` cells in expectation, each looked up in the
     //! table in `O(1)` expected.
+
+    // Complexity tradeoff (COMPLEXITY.md K63): the naive join of a chain to a diagram is the
+    // apply of `Bdd::zip`, which builds diagrams of up to `k` nodes at the `k`-th atom, so a
+    // list built a literal at a time costs O(m²) for m literals. Used: the list is a treap of
+    // hash-consed cells, and a literal joined to it rebuilds the cells on the paths to the blocks
+    // it changes, O(log m) cells in expectation, each found in the table in O(1) expected.
+    // Given up: the balance holds only in expectation (the priorities are hashes of the
+    // literals); each live cell has a weak entry in its thread's table and caches its atoms and
+    // views once read; a larger constant factor per literal than a plain node.
 
     use std::collections::HashMap;
     use std::sync::atomic::Ordering as Atomic;
@@ -2827,6 +2859,12 @@ mod list {
             let Bdd::List(root, v) = self else {
                 return self.clone();
             };
+            // Complexity tradeoff (COMPLEXITY.md K67 (1)): the naive memo is kept per list, so m
+            // lists sharing a tail of m blocks restrict that tail once each, O(m²). Used: the
+            // memo is keyed by cell id and first value, so each cell is restricted once per
+            // memo, and lists that share subtrees below their cut paths share that work. Given
+            // up: memory for one memo entry per cell reached and a hash (splitmix64) per cell;
+            // two lists share only the subtrees below their cut paths, not a whole common tail.
             let key = |c: &Cell<A>, w: bool| 2 * c.id + u64::from(w);
             let piece = |memo: &Memo<A>, c: &Seq<A>, w: bool| match c {
                 None => ((None, w), None),

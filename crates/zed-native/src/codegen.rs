@@ -38,6 +38,15 @@ type W = (V, V);
 /// slot, or a constant. Each word is loaded just before each use, so every value the register
 /// allocator sees lives only a few instructions; a value live across many calls costs it
 /// time in proportion to their number (COMPLEXITY.md Z14).
+// Complexity tradeoff: the standard form keeps each word in a virtual register from its
+// definition to its last use, so a word used after many calls stays live across all of them,
+// and the register allocator's work is O(n²) for n words each live across the calls after it
+// (Z14; many named fields were killed at 671 s on that form). Here each word lives in a stack
+// slot and is loaded just before each use, so every live range is a few instructions long and
+// allocation is linear. Tradeoffs: a store per word made and a load per use, and a 16-byte
+// frame slot per word (R10), so the code is slower than register-held code by a constant
+// factor; stack slots are not reused by liveness. Nothing is refused. Tests
+// `l01_36_cranelift::scaling`.
 #[derive(Clone, Copy)]
 enum Loc {
     Slot(cranelift_codegen::ir::StackSlot),

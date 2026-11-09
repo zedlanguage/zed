@@ -15,6 +15,16 @@
 //! takes it out, without comparing, and starts again. Each change to a bucket restarts a lookup
 //! at most once, so the restarts cost `O(log b)` for each node taken out.
 
+// Complexity tradeoff (COMPLEXITY.md K83): the naive bucket is a list read whole at each lookup
+// and scanned for its entry at each drop, O(b) comparisons per lookup and O(b) per drop, each
+// comparison as deep as the levels on which the hashes tie. Used: a treap ordered by contents,
+// O(log b) comparisons per lookup and O(log b) rotations and no comparison per drop, in
+// expectation; a bucket of one node keeps no slots. Given up: the bound holds only in
+// expectation; slots, priorities and parent links cost memory once a second node is put in; a
+// lookup restarts from the root after each change to the bucket during a comparison. Each
+// comparison still reads the levels on which the hashes tie, so the `short-addresses` chain of
+// n nested tuples stays about O(n² log n), which only a comparison not by contents would avoid.
+
 use std::cmp::Ordering;
 use std::sync::{Arc, Weak};
 

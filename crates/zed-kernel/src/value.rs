@@ -443,7 +443,11 @@ impl Value {
     /// distinct ones as `#errs({…})`, an `#errs` among them giving its members, and a single
     /// failure as itself.
     pub fn merge_failures<'a>(atoms: impl IntoIterator<Item = &'a Value>) -> Value {
-        // The largest set is extended, not copied, so a chain of n merges costs O(n log n).
+        // Complexity tradeoff (COMPLEXITY.md K18): the naive merge copies every member of each
+        // `#errs` set into a new set, O(n) per merge and O(n²) for a chain of `n` failing
+        // operands. Used: the largest set is shared (imbl) and extended by the others' members,
+        // O(m log n) for the `m` members added, so the chain costs O(n log n). Tradeoff: the
+        // smaller sets are still copied in; merging many sets of equal size costs their sum.
         let atoms: Vec<&Value> = atoms.into_iter().collect();
         let base = atoms
             .iter()
@@ -572,6 +576,13 @@ impl Value {
     /// `self`. `None` when a pair of components is of two kinds or two tuples differ in length.
     /// The walk reads each distinct pair of shared tuples once, so it costs
     /// O(distinct pairs of components read).
+    // Complexity tradeoff: naive version, both tuples read as trees to the first difference,
+    // O(paths), which is `2^d` for `t(k + 1) = (t(k), t(k))` nested `d` deep. Used: the walk
+    // of `items_eq` with its pair table keyed by the parts' ids (see the tradeoff there, K15,
+    // K21, K40), O(distinct pairs of components read), stopping at the first pair that
+    // differs. Tradeoffs: the pair table's memory, as there. Tests
+    // `l01_18_scalar_interpreter::tuple_min_max::min_of_two_tuples_nested_n_deep_through_shared_parts_scales`
+    // (depth 1,000 and 8,000). COMPLEXITY.md row K75.
     pub fn selects(&self, other: &Value, min: bool) -> Option<bool> {
         let r = if min { Relation::Min } else { Relation::Max };
         walk(step(self, other, r)).map(|o| match o {
@@ -1159,6 +1170,12 @@ impl Family {
     /// any other level there. Fails with [`KernelError::Collision`] when two leaves
     /// share a keypath, or one leaf's keypath is a prefix of another's, and with
     /// [`KernelError::EmptyKeypath`] for a leaf with no keys.
+    // Complexity tradeoff (COMPLEXITY.md K7, K10): the naive version writes every leaf of a
+    // family given as a leaf one by one, O(L·d) for `L` leaves `d` deep, and O(L·d²) through a
+    // `discard` that rebuilds each level. Used: such a family is kept whole (`Levels::place`)
+    // when nothing else is at or above its keypath, O(log n) to place it, so each level costs
+    // its own entries. Tradeoff: where something else is written beneath that keypath the
+    // family's leaves are still written one by one, as before.
     pub fn from_leaves(
         leaves: impl IntoIterator<Item = (Keypath, Value)>,
     ) -> Result<Self, KernelError> {
@@ -1326,6 +1343,13 @@ impl<'a> Merging<'a> {
 /// The union of `a` and `b`. A collision is reported as building `a`'s leaves and then `b`'s
 /// would report it: at `b`'s leaf, or, where `a` has a leaf above a subtree of `b`, at the
 /// subtree's first leaf.
+// Complexity tradeoff (COMPLEXITY.md K7): the naive union rebuilds the family from the
+// leaves of both, O(n + m) per union and O(n²) over a loop that adds one entry per step. Used: a
+// persistent ordered map; the smaller family's entries are inserted into a shared copy of the
+// larger's, recursing only where both hold a family under one key, O(m log n) for the smaller
+// size `m`. Tradeoffs: imbl's nodes cost a constant factor in time and memory over a flat
+// vector; a collision is reported where building `a`'s leaves then `b`'s would report it, so the
+// walk keeps the keypath prefix, O(depth) memory.
 fn union(a: &Family, b: &Family) -> Result<Family, KernelError> {
     let mut prefix = Vec::new();
     let mut level = Merging::new(a, b);
@@ -1998,6 +2022,21 @@ fn settle(c: &Comparisons, same: bool) -> bool {
     all
 }
 
+// Complexity tradeoff (COMPLEXITY.md K15, K21, K40, K73): the naive equality reads both values as
+// trees in full, O(tree size), which is `2^d` for `d` levels that share one part and `O(n)` per
+// round for the fixpoint test of a lattice `fix` whose iterate changes one key (O(R·n) over `R`
+// rounds); one part held in n places of two values is read n times under the surface
+// relations, O(n²) (K73). The same table serves `==`, `cmp`, `surface_eq` and `surface_cmp`,
+// one set per relation, kept until the outermost comparison ends (`Scope`). Used: a shared
+// sequence or map is equal to itself at once; each pair of shared parts is read once per
+// comparison, kept in `Comparisons` by the parts' ids, never their addresses;
+// two families under identity are read by imbl's `diff`, which skips the nodes they share. Cost
+// O(distinct pairs of parts read), and for a lattice iterate the nodes the round changed.
+// Tradeoffs: the pair table's memory, kept between comparisons up to 8 times the last one's
+// pairs (`clear`); one hash insert per pair entered, 18 to 24% more instructions on families
+// with no sharing (K73); every pair of families entered is kept, since which are held twice is not
+// known; the IEEE 754 relations still read a shared sequence, since a NaN is not equal to
+// itself.
 /// Whether two sequences of values are the same.
 pub(crate) fn items_eq(a: &Items, b: &Items) -> bool {
     // One shared sequence, or two empty ones: equal without a walk. The entries `diff` compares
@@ -2102,6 +2141,13 @@ impl<'a> Copying<'a> {
 /// Copies `from`, tuples, keypaths and atoms' payloads to any depth, and every other value
 /// through `leaf`. A shared sequence is copied once, and its copy is shared in the same places,
 /// so the copy of a DAG is a DAG of the same size.
+// Complexity tradeoff (COMPLEXITY.md K21, K22, K40): the naive copy and the naive test of
+// `all_leaves` recurse on the thread's stack and read the value as a tree, O(depth) native stack
+// and O(tree size), `2^d` for `d` levels that share one sequence. Used: a loop with a stack on
+// the heap and a map, or a set, keyed by the shared sequence's id (drawn by `fresh_id`, never
+// its address), so each shared sequence is read once: O(distinct sequences) time, O(depth)
+// heap. Tradeoff: the map or set costs memory in the shared sequences met, and only sequences
+// held in more than one place (`is_shared`) are entered in it.
 pub(crate) fn copy(from: &[Value], leaf: fn(&Value) -> Value) -> Vec<Value> {
     let mut level = Copying::new(from, Shape::Tuple, None);
     let mut above = Vec::new();

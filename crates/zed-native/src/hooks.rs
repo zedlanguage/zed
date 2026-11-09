@@ -363,6 +363,15 @@ fn atom_name(x: &Text) -> Result<Arc<str>, String> {
 
 /// The shape of atom node `id` on `ins`, `[name, field names, payload…]`, or `None` when the
 /// kernel refuses it. A shape made from stable words is kept for the node's next run.
+// Complexity tradeoff: the naive atom node hands its whole payload to the kernel and back,
+// O(payload) per atom, so a list of n atoms, each holding the rest, costs O(n²) (COMPLEXITY.md
+// R2: 30.0 times for 8 times the length). Here `node` makes the atom from its words as
+// `Prim::Atom` would, with this shape, and the kernel is called only for a shape it refuses,
+// so that the error is the kernel's; a shape whose name and field names are constants is kept
+// per node, so a struct atom run again costs no sort and no map. Tradeoffs: the kernel's
+// atom rules (field order, a repeated name refused) are written a second time here and must
+// agree with it; one kept shape per atom node. Tests
+// `l01_36_cranelift::scaling::a_list_of_many_atoms_scales` and `l01_36_cranelift::hooks`.
 fn shape(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Option<Shape>, String> {
     let key = (ins[0], ins[1]);
     if let Some((a, b, sh)) = &s.shapes[id]
@@ -610,6 +619,12 @@ struct Lets {
     /// path (COMPLEXITY.md R9). No cell is freed while a term is built, so each word names one
     /// closure. A closure's term is a lambda whose body is shared, so a copy costs its
     /// parameter names.
+    // Complexity tradeoff: the naive build walks a closure once per path to it, 2^d for d
+    // levels each capturing the level below twice (R9: 4 times per 2 levels, 17.6 s at 20).
+    // Here each closure's term is built once per kernel call and kept by its cell word (index
+    // and generation, so a cell freed and taken again is a new key), and every later use is a
+    // copy sharing the body: O(closures + captures). Tradeoff: one map entry per closure for
+    // the call. Nothing is refused. Tests `l01_36_cranelift::shared_closures`.
     closures: HashMap<i64, Term>,
 }
 

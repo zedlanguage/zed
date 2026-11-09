@@ -117,6 +117,15 @@ impl W {
     /// A number's magnitude: its count of 64-bit limbs, then the limbs, least significant
     /// first, each a little-endian word. Linear in its bits, where decimal digits cost more
     /// than linear time to convert.
+    // Complexity tradeoff: the form this replaced wrote a number past `i64` as its decimal
+    // digits (`Rat::numer_text`, `denom_text`), about n^1.5 in its bits n by num-bigint's
+    // conversion (COMPLEXITY.md Z26: 15.6 s at 2^25 bits, about 80 minutes at 2^30). Here the
+    // sign and the 64-bit limbs of the numerator and denominator in lowest terms are written,
+    // O(n). Tradeoffs: the bytes are not readable as a number, and the change of form changed
+    // every content address (`canon::VERSION` 3 to 4). Nothing is refused here beyond the
+    // memory refusal of `number`. Tests
+    // `l01_32_canonical_zir::wide_constants::addressing_a_wide_constant_is_linear_in_its_bits`
+    // and `..._stays_linear_over_64_times_the_bits`; the same form in `canon/serial.rs`.
     fn magnitude(&mut self, m: &BigUint) {
         self.n(m.iter_u64_digits().len() as u64);
         m.iter_u64_digits().for_each(|d| self.n(d));

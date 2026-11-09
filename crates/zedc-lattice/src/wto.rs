@@ -243,6 +243,16 @@ pub fn show(order: &[Element]) -> String {
 /// the first vertex whose component can hold both. Each level lists its elements in decreasing
 /// order of the time the traversal finished them. The step tests check the result against the
 /// declarative definition (`m0_05_widening_and_iteration::wto`).
+///
+/// Complexity tradeoff: the standard algorithm, Bourdoncle's recursive one, traverses each
+/// component again at every level of nesting, `O(d·(V + E))` for nesting depth `d`, so
+/// `O(V·(V + E))` on a nest of loops. Used: one depth-first traversal and the loop-nesting
+/// forest, each edge read once, `O((V + E) log V)`. The `log V` is the common ancestor of an
+/// edge's ends by binary lifting (`Traversal::ancestors`, `V log V` words of memory); the
+/// union-find of the sets has path halving without union by rank, which is `O(log V)` per
+/// find amortized. Nothing is refused and the order is the recursive algorithm's. Test:
+/// `m0_05_widening_and_iteration::scaling::the_order_of_nested_loops_takes_time_linear_in_the_depth`;
+/// COMPLEXITY.md row S9.
 pub fn weak_topological_order(succ: &[Vec<usize>]) -> Vec<Element> {
     let n = succ.len();
     let t = Traversal::of(succ);

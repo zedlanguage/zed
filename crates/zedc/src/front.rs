@@ -376,6 +376,13 @@ fn layout(source: &str, steps: &[Step], numbers: &[usize]) -> Layout {
 /// last item ends first, if that is free at its column, else on a new row (interval
 /// partitioning, as few rows as the most items over one column). The items come in the order
 /// of their first columns. O(i log i) for i items.
+///
+/// Complexity tradeoff: naive version, each item tried against every row in turn, O(i·r) for
+/// r rows, up to O(i²) when steps nest as deep as they are many; before MSG-line-quote-cost a
+/// line was quoted again for each step on it, O(s·L) bytes. Used: the rows in a min-heap by
+/// their first free column, O(i log i), with as few rows as the most items over one column.
+/// Tradeoffs: none in the output's row count; the heap's memory, O(r). COMPLEXITY.md row
+/// MSG-line-quote-cost (its nested case: the tradeoff in [`layout`]).
 fn rows(items: impl Iterator<Item = (usize, usize)>) -> Vec<Vec<usize>> {
     let mut rows: Vec<Vec<usize>> = Vec::new();
     // Each row by the first column free after its last item.

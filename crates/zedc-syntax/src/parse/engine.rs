@@ -140,6 +140,15 @@ struct Entry {
     /// an entry with this mark, at this position or a later one. It holds only for those seeds,
     /// or a later match may enter the cycle through that other rule. Any other entry cannot
     /// go stale: no seed reached anything it read.
+    // Complexity tradeoff (COMPLEXITY.md F35, F36): as first built, every rule at a position
+    // went stale at each growth of a left-recursive rule there, so an alternative that failed
+    // after a long prefix walked it again: quadratic in the tokens, and in the rungs of a
+    // ladder. Only the entries this mark reaches go stale now, which makes chains, calls,
+    // blocks and whole programs linear, for one flag per entry and a rung that tries its
+    // growth once more at each operand (about 1.2 to 1.7 times the parse time). Still
+    // quadratic in the tokens, as the row records: a `*` or `%` loop written in the
+    // left-recursive rule itself before a token that fails, and a lookahead over a rule that
+    // grows; F36 measured the lookaheads sec:grammar writes as linear.
     reads_seed: bool,
     /// The position's version when `best` was last computed.
     version: usize,
@@ -316,6 +325,11 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
         // and L1.26a a position holds 4.6 to 13.6 entries on average and at most 67
         // (COMPLEXITY.md F86). A hash map keyed by position and rule took 6% to 27% more
         // instructions and, its table scattered over memory, 1.9 times the cycles.
+        // Complexity tradeoff (COMPLEXITY.md row F86): naive version, that hash map, O(1) a
+        // lookup with SipHash. Used: a list of the position's entries in a `Vec`, scanned,
+        // O(2R) a lookup at worst for R rules (342 for this grammar), 4.6 to 13.6 entries on
+        // average. Tradeoff: a grammar whose positions hold many entries would pay the scan;
+        // the bound is a constant of the grammar, not of the input.
         let slot = 2 * r + usize::from(head);
         let mut at = self.last[pos];
         while at != NO_ENTRY && self.memo[at].slot != slot {

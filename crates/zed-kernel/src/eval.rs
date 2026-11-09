@@ -10,6 +10,13 @@
 //! stack, and the depth of a program is limited by the machine's memory alone (DESIGN.md
 //! sec:verification, step M0.11). A call in tail position leaves no frame unless provenance is
 //! recorded, so a loop written as tail recursion runs in constant space.
+//!
+//! Complexity tradeoff (COMPLEXITY.md K20): the naive evaluator recurses on the thread's stack,
+//! O(depth) native stack (run on a 1 GiB thread), and copied the values of `Prim::Tuple` and
+//! `Prim::Path`, O(n²) to build a list of `n`. Used: an explicit-stack machine, O(1) work per
+//! step outside values and environments, its frames on the heap, values shared. Tradeoffs: a
+//! frame is a heap allocation, which measured cheaper than the old recursion (1.2 µs against 10
+//! µs per call at 19,990 calls, release build); depth is limited by memory alone.
 
 use imbl::{OrdMap, Vector};
 use std::borrow::Cow;
@@ -212,6 +219,11 @@ fn global_env<'t>(reads: &'t [(Arc<str>, Global)]) -> Env<'t> {
 /// The names in scope, in a persistent map: binding a name and looking one up cost
 /// `O(log n)` in the names in scope, and a closure's copy of its environment costs `O(1)`.
 /// A binding replaces an outer one of the same name.
+// Complexity tradeoff (COMPLEXITY.md K8): the naive environment is a list of frames walked on
+// each lookup, O(depth), so O(n·depth) for `n` reads, and a closure copies it, O(names). Used:
+// a persistent ordered map, O(log n) per binding and lookup and O(1) per closure. Tradeoff:
+// memory, since the environments of a chain of `let`s stay live and each shares all but
+// O(log n) nodes with the last, O(n log n) in all (1.2 GB at 16,000 `let`s against 0.6 GB).
 type Env<'t> = Option<OrdMap<&'t str, Binding<'t>>>;
 
 fn bind<'t>(env: Env<'t>, name: &'t str, value: V<'t>, fact: Option<usize>) -> Env<'t> {
@@ -2088,6 +2100,14 @@ impl<'t> Machine<'_, 't> {
     /// waits on `j` and is tried again in the round after `j` is defined: each round tries
     /// only the entries whose wait ended, and a chain of `D` entries costs `D` attempts, not
     /// `D²/2`. Jacobi rounds define the same entries in the same rounds as trying them all.
+    // Complexity tradeoff (COMPLEXITY.md K5): the naive version copies the domain and the
+    // defined map for each attempt and tries every undefined entry in every round, O(D³) for a
+    // chain of `D` entries (`D` rounds of `D` attempts, each copying `D` entries). Used: one
+    // shared map whose entries carry the round that defined them (`Defined`), and a wait list
+    // per undefined entry read, so a chain costs `D` attempts under every schedule and each
+    // attempt only what it reads, O(D log D) for the chain. Tradeoffs: memory for the round
+    // stamps and the wait lists, O(D); it rests on entries never changing once defined, which
+    // makes a retried attempt read the same entries and stop at the same one.
     fn round(&mut self, mut st: Box<Rounds<'t>>) -> R<Step<'t>> {
         self.ev.burn()?;
         if st.ready.is_empty() {
@@ -2125,6 +2145,14 @@ impl<'t> Machine<'_, 't> {
     /// not `m` times from the start. An attempt that stops read an entry that was being
     /// demanded or had stalled: that entry is on a cycle or waits on one, and so does the
     /// attempt, whose entry stalls.
+    // Complexity tradeoff (COMPLEXITY.md K14): the naive version reruns an entry from the
+    // start after each undefined entry it reads is defined, O(m²) for an entry reading `m`
+    // undefined ones, and checks for a cycle by `Vec::contains` on the demand stack, O(D²) for
+    // a chain of `D`. Used: the undefined entry is evaluated where it is read, so each entry is
+    // evaluated once, and the entries being demanded and those stalled are ordered sets, so the
+    // cycle check is O(log D) and a chain ending in a cycle stalls in O(D log D). Tradeoffs: the
+    // demanded entries' frames are nested, held on the machine's heap stack, O(D) memory; an
+    // entry on a cycle and every entry waiting on it stall rather than being retried.
     fn pull(&mut self, mut st: Box<Pull<'t>>) -> R<Step<'t>> {
         while let Some(k) = st.fix.domain.get(st.next) {
             st.next += 1;

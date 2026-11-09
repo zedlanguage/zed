@@ -50,10 +50,18 @@ use bucket::Bucket;
 
 /// A type: the set of values it denotes. Types are ordered by their digests first, so two
 /// types are ordered without reading their contents unless their digests are equal, and then by
-/// the loop of `bdd::order`, which reads the contents with a stack of its own.
+/// the loop of `order`, which reads the contents with a stack of its own.
 #[derive(Clone)]
 pub struct Type(Arc<Node>);
 
+// Complexity tradeoff (COMPLEXITY.md K12): the naive comparison reads both types' contents,
+// O(s·depth) per comparison for a type of size `s` nested `depth` deep, and rebuilds `empty`
+// and `top` per call. Used: a deterministic digest made from the children's digests when a node
+// is made, compared first; the contents are read only on equal digests, by the loop of `order`,
+// once per pair of nodes. O(1) for types of different digest. Tradeoffs: one 64-bit digest per
+// node; the order is that of the digests, not of the text, so the printer sorts each part's
+// clauses as text itself; on a digest tie (a collision, or the short-addresses build) two
+// types are read in full, linear in their size.
 impl Ord for Type {
     fn cmp(&self, other: &Type) -> std::cmp::Ordering {
         if Arc::ptr_eq(&self.0, &other.0) {
@@ -369,7 +377,7 @@ pub struct Arrow {
     pub value: Type,
 }
 
-/// Equal when the three types are, read in one loop of `bdd::order`.
+/// Equal when the three types are, read in one loop of `order`.
 impl PartialEq for Arrow {
     fn eq(&self, other: &Arrow) -> bool {
         order(Step::Morphisms(self, other)) == std::cmp::Ordering::Equal
@@ -407,11 +415,11 @@ impl std::ops::Deref for Morphism {
     }
 }
 
-/// By guarantee, then permission, then value, the order `bdd::order` gives two morphism types;
+/// By guarantee, then permission, then value, the order `order` gives two morphism types;
 /// one node is equal to itself without reading it. Each pair of types is compared by
 /// [`Type::cmp`], by pointer and then by digest before its contents, so that a table of
 /// morphism types, whose lookups compare a key with some `log n` others that nearly always
-/// differ in a field's digest, enters the loop of `bdd::order` only where two digests tie
+/// differ in a field's digest, enters the loop of `order` only where two digests tie
 /// (EMPTY-morphism-diff-cost: a search through nested morphism types had entered that loop
 /// some 1,900 times a level, and enters it some 170 times).
 impl Ord for Morphism {
@@ -703,6 +711,13 @@ type Equal = HashSet<(u64, u64), std::hash::BuildHasherDefault<hash::KeyHasher>>
 /// diagrams over rows, so where the digests tie (short-addresses build, step L1.37a, or a 64-bit
 /// collision) two types n deep are compared n levels down (SHORT-stack-l01_22).
 fn order(first: Step<'_>) -> Ordering {
+    // Complexity tradeoff (COMPLEXITY.md K48): the naive order recurses on the call stack with
+    // no memo, so it reads a shared node once per path to it, exponential in the depth of
+    // sharing of two equal diagrams, and takes one native frame per level where the digests tie.
+    // Used: the pairs found equal are kept in `equal` for the whole comparison, so each pair of
+    // nodes is read once, O(pairs compared) steps, each a hash lookup; the stack is on the heap.
+    // Given up: memory for the set, O(pairs found equal), and one hash insert per pair found
+    // equal; a comparison its digests decide allocates nothing.
     let mut equal = Equal::default();
     // The first step is held apart, so that a comparison its digests decide allocates nothing.
     let mut steps = Vec::new();
@@ -2549,6 +2564,13 @@ impl Type {
     /// loop: a try of `show`, or of a recursive node's naming, that finds a text inside missing
     /// gives up, the types it named are made first, and the try is made again, so each type is
     /// tried at most twice.
+    // Complexity tradeoff (COMPLEXITY.md K19, K39): the naive text copies the texts of the
+    // types inside into each type's text, O(n·depth) for a type `depth` deep, and recurses on
+    // the thread's stack, which overflows at depth 100,000 on 2 MiB. Used: a rope made once per
+    // type and kept with it, holding the inner ropes by reference, made in a loop with a stack
+    // of its own, each type tried at most twice, O(text) time. Tradeoffs: every type keeps its
+    // rope until dropped (memory O(pieces) per distinct type); a try that finds a text missing
+    // is thrown away and made again, at most twice the work.
     fn rope(&self) -> Rope {
         if let Some(r) = self.text().get() {
             return r.clone();
@@ -5781,6 +5803,13 @@ pub mod rec {
 
     /// Whether the domain bounds `l` and `u`, of one group, are written the same: their classes,
     /// given when the group's trees were built ([`Node::of`]), are equal. O(1) (COMPLEXITY.md K27).
+    // Complexity tradeoff (COMPLEXITY.md K27): the naive test compares the two bounds by
+    // structure, O(n log n) in all on equal bounds nested `log n` deep, since a node lies in at
+    // most log2 n bounds compared equal. Used: each node is given a class when its tree is built
+    // (`Numbering::first`, keyed by digest; a node joins the first node of equal head and child
+    // classes), expected O(1) a node, and the test compares classes, O(1). Tradeoffs: the table
+    // lives while the group's trees are built, O(nodes) memory; nodes of equal digest and
+    // differing shape take further probes, never a wrong class.
     fn same(l: &Node, u: &Node) -> bool {
         l.class == u.class
     }
@@ -5986,7 +6015,7 @@ pub mod rec {
         /// The order of two keys: by digest, kind and class, the groups' canonical forms, the
         /// spelling and the arguments. What the forms' shapes decide is decided here; the pairs of
         /// types inside them that tie in digest, then the arguments, are pushed to `types` in the
-        /// order they are to be compared when the rest ties, by the caller's loop (`bdd::order`), so
+        /// order they are to be compared when the rest ties, by the caller's loop (`order`), so
         /// that no type is compared by recursion here. Time linear in the classes where the groups
         /// differ and tie in digest, linear in the part where two parts are spelled alike, and
         /// constant otherwise.
@@ -6090,6 +6119,14 @@ pub mod rec {
     /// children, besides the O(N log N) comparisons of the starting sort, of which those of two
     /// types cost what [`Type::cmp`] costs.
     fn canon(bodies: &[Arc<Node>], defs: &[Def]) -> Canon {
+        // Complexity tradeoff (COMPLEXITY.md K72): the naive canonical form numbers each member
+        // by a walk of its own reachable part, O(N) per member and O(N²) on one strongly
+        // connected component; numbering by written order is O(N) but makes a reordered group a
+        // second type. Used: color refinement with Hopcroft's smaller-half rule
+        // (`crate::refine`), O((N + M) log N), plus the O(N log N) comparisons of the starting
+        // sort. Given up: memory for the graph (a vertex per node and per place, an arc per
+        // child) and a log factor over the written-order numbering; bisimilar members fall into
+        // one class.
         // The nodes by number, but the arguments of an occurrence, which are not read.
         let mut nodes: Vec<&Arc<Node>> = Vec::new();
         let mut todo: Vec<&Arc<Node>> = bodies.iter().collect();

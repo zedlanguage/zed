@@ -97,6 +97,13 @@ pub fn allocated() -> u64 {
 /// Adds `bytes` to this thread's count and its parents', from inside the allocator, when the
 /// system gave the block (`block` is not null) and returns `block`. The walk is as long as the
 /// chain of threads that started this one, a handful in any test.
+///
+/// Complexity tradeoff: the other version, one count per thread with a thread's descendants
+/// summed at each read, is O(1) per allocation but O(threads) per read and needs the live
+/// threads listed. Used: each allocation walks the chain of threads that started this one,
+/// O(d) for a chain `d` threads long, and a read is O(1). Tradeoffs: allocation costs grow
+/// with `d`, which only a test's own threads set, about three; the compiler and runtime start
+/// none. COMPLEXITY.md row "`zed_alloc_count` `count`".
 fn count(block: *mut u8, bytes: usize) -> *mut u8 {
     if !block.is_null() {
         let mut count = this_count();

@@ -413,6 +413,13 @@ impl<'a> Elab<'a> {
                 // than holding a copy of it, and defaults that call functions with defaults stay
                 // linear in size. A literal or a name is copied: no copy is captured, the kernel
                 // names being unique in the unit.
+                // Complexity tradeoff (COMPLEXITY.md F2, F23): the naive form copies the
+                // default into every call that leaves it out, exponential in the length of a
+                // chain of functions whose defaults call the previous one twice (2.9 million
+                // characters at 16). One definition per default keeps the unit linear in
+                // size, at the cost of one more definition and one call per use. The reads of
+                // the defaults find their parameter in the map `at`, O(1) each, where a search
+                // of the parameter list cost O(reads × params); the map costs O(params) memory.
                 let at: HashMap<usize, usize> = (f.params.iter().enumerate())
                     .map(|(i, p)| (self.id(p.span, &p.name), i))
                     .collect();

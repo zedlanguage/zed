@@ -54,6 +54,13 @@ pub struct TooLong {
 }
 
 /// A length in bytes and in characters (Unicode scalar values).
+// Complexity tradeoff: the naive `len` counts the characters of the text at each call
+// (`s.chars().count()`), O(n) per call, O(n²) for a loop that reads the length of a growing
+// string (COMPLEXITY.md R4: 39.1 to 63.9 times for 8 times the size). Here each tree and node
+// keeps its length in bytes and in characters, counted once when a block is made and added at
+// a join, so `len` and `char_count` are O(1) and read no text. Tradeoff: two words more per
+// node, and one character count per block made. Nothing is refused. Tests
+// `l01_36_cranelift::string_scaling` and `l01_36_cranelift::strings`.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 struct Size {
     len: usize,
@@ -126,6 +133,15 @@ impl Text {
     /// times as long as the first: when the two lengths in bytes add up past `usize::MAX` the
     /// join's length is not representable, and it is refused with
     /// [`TooLong`].
+    // Complexity tradeoff: the naive join writes the two texts out into one buffer, O(a + b)
+    // per join, so a loop appending to a string and reading it after each append costs O(n²)
+    // (COMPLEXITY.md R5: 42.6 to 63.3 times for 8 times the size). Here a join shares both
+    // parts in a persistent finger tree, O(1) amortized for a block added at an end and
+    // O(log m) for two longer texts, and is never written out. Tradeoffs: a reader that needs
+    // one `&str` (`flat`: `lower`, `upper`, `trim`, the casts) writes a temporary copy at each
+    // call, and hashing and printing walk the blocks at each use; a join copies up to `LEAF`
+    // bytes (see there); a sum of lengths past `usize::MAX` is refused with `TooLong`. Tests
+    // `l01_36_cranelift::string_scaling`, `string_length` and `text::tests`; C29, K16.
     pub fn join(a: &Text, b: &Text) -> Result<Text, TooLong> {
         if a.is_empty() {
             return Ok(b.clone());

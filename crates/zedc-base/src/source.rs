@@ -195,6 +195,12 @@ pub fn line_col(bytes: &[u8], offset: usize) -> (usize, usize) {
 /// Where the lines of a text start, found once, so that the line and column of an offset cost
 /// a binary search and a count of the scalars before it on its line, not a decoding of the
 /// text up to it.
+// Complexity tradeoff (COMPLEXITY.md F8): the naive `line_col` decodes the text from byte 0
+// for each offset, O(k · N) for k offsets in a text of N bytes; the line starts found once,
+// O(N) time and O(lines) memory, place an offset in O(log lines) plus a count of the scalars
+// before it on its line. That count is still O(line length) per offset, so many offsets on
+// one long line cost O(k · line), the size of the output that shows that line per offset
+// (row F30).
 pub struct Lines {
     /// The byte offsets after a line break, each with the 1-based number of the line it
     /// starts, in increasing order, beginning with `(0, 1)`. Inside a `\r\n` both the offset

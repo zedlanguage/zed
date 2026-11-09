@@ -17,6 +17,13 @@
 //! which refines by successors (the canonical form of recursive type groups, `types::rec`).
 //! Moved here from `zedc-presburger` (item REC-canon), since `zed-kernel` does not depend on it.
 
+// Complexity tradeoff (COMPLEXITY.md K72): the naive refinement recolors every vertex by its
+// neighbors' colors in rounds until no class splits, O(N + M) per round and up to N rounds,
+// O(N (N + M)). Used: each popped class refines only the classes of its neighbors, and the
+// largest part of a split is not pushed (Hopcroft's rule), O((N + M) log N). Given up: memory
+// for the arrays by color and by vertex (`members`, `at`, `count`, the stack), all O(N), and a
+// larger constant factor per step than one round of the naive version.
+
 use std::mem;
 
 /// The state of a refinement, after Berkholz, Bonsma and Grohe's

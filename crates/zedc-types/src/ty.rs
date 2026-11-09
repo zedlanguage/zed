@@ -52,6 +52,12 @@ pub struct Ty {
 /// a type is copied in the time of its outer level; and a check that walks into tuples reads
 /// a row where it would walk into it, so a tuple nested `n` deep costs `O(n)` in all, not
 /// `O(n)` at each level.
+// Complexity tradeoff (COMPLEXITY.md row F89): naive version, a row held by value and walked
+// at each level, O(n^2) for a tuple nested n deep (three walks of the whole type per level
+// in `Ck::finish`). Used: one shared node holding what the row holds at any depth (its
+// variables merged small into large, whether a tuple expression checked it, its first
+// unchecked function), copied in O(1), each read O(1). Tradeoffs: those facts are made with
+// every row, read or not, and a reference count per row.
 #[derive(Clone)]
 pub struct Row(Arc<RowData>);
 
@@ -209,6 +215,10 @@ impl Row {
     /// each row's is made once, whatever the paths to it: `d(positional x) = (x, x)` called
     /// `n` times nested gives `n` rows each holding the one below twice, `2^n` paths, which a
     /// walk into the components took `2^n` time for at each call (TUPLE-eq-dup).
+    // Complexity tradeoff (COMPLEXITY.md row F109): naive version, a walk into the components
+    // at each call, O(2^n) for that family. Used: made once with the row from its components'
+    // kept kernel types, O(1) per read. Tradeoff: every row pays for its kernel type when it is
+    // made, whether or not it is read, and keeps it.
     fn kernel(&self) -> Option<KType> {
         self.0.kernel.clone()
     }
@@ -383,6 +393,16 @@ impl Ty {
 /// shapes on the path to it, which keep it as their held or unchecked function (`above`,
 /// [`Same::shared_sigs`]): those are not met again below it, so a function held once, in a
 /// type built once, is not recorded either.
+///
+/// Complexity tradeoff: naive version, the derived `==`, one recursion per level, O(paths):
+/// `2^n` for two types of `n` shared nodes built apart (n = 2,000 did not finish in 60 s), and
+/// a stack overflow at 100,000 levels on 2 MiB. Used: the union-find above, O((n + m) α) for
+/// types of `n` and `m` nodes as graphs, with recursion while the stack has room and `left`
+/// after. Tradeoffs: the table's memory, one entry per shared node met; nodes are keyed by
+/// address, which is sound only because the borrowed operands keep every recorded node alive
+/// for the whole comparison (the table never outlives it); the `Arc::strong_count` test that
+/// skips unshared nodes is a constant-factor saving, not needed for the answer.
+/// COMPLEXITY.md row F118.
 #[derive(Default)]
 struct Same<'a> {
     /// The lowest stack address the recursion descends from ([`Same::room`]), set when it first
@@ -1033,6 +1053,13 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
 /// outer level; and a walk that would enter a payload reads what the shape keeps instead, so
 /// `n` atoms nested directly in atoms cost `O(n)` in all, not `O(n)` at each level
 /// (ATOM-nested-sq).
+// Complexity tradeoff (COMPLEXITY.md rows F106 and ATOM-payload-open, whose walks read
+// whether a shape is open from what it keeps rather than with no visited set, O(2^n)):
+// naive version, a payload held by value, so
+// each copy of a type copies every payload under it, O(n^2) for n atoms nested in atoms since
+// the checker keeps the type of each expression. Used: one shared node per payload, a copy
+// in O(1), O(n) in all. Tradeoffs: a reference count and an indirection per payload; a change
+// to a payload builds a new node.
 #[derive(Clone)]
 pub struct Shape(Arc<ShapeData>);
 
@@ -1156,6 +1183,11 @@ impl Drop for ShapeData {
 /// signatures and payload shapes no other type holds are opened and what they hold pushed,
 /// the function a row or shape keeps as held and the signature a signature was settled into
 /// among it, so dropping a type nested `n` deep needs no recursion `n` deep.
+// Complexity tradeoff (COMPLEXITY.md row TY-write-stack, with `Sig::facts` and `Sig::digest`,
+// which work out the functions held deepest first by `held_without`): naive version, the drop
+// glue and plain recursion, O(n) time and O(n) frames of the thread's stack, which overflowed
+// 2 MiB at 8,000 nested lambdas. Used: heap stacks, O(n) time and O(n) heap. Tradeoffs: the
+// parts are moved onto a `Vec` before they drop, a constant factor; nothing is refused.
 fn drop_types(mut tys: Vec<Ty>, sigs: impl IntoIterator<Item = Arc<Sig>>) {
     let mut sigs: Vec<Arc<Sig>> = sigs.into_iter().collect();
     loop {
@@ -1469,6 +1501,13 @@ struct Rebuilt {
 }
 
 /// What `w` makes of the types `roots`, in order.
+// Complexity tradeoff (COMPLEXITY.md rows F97 and TY-subst-stacks): naive version, a
+// recursive walk that enters a row once per path to it, O(2^n) for n rows each holding the one
+// below twice, and one frame of the thread's stack per level, so a deep type overflowed it.
+// Used: each row, shape and held function made once and given again from the walker's memo
+// ([`Rebuild::known_row`], `made_row`), O(distinct parts), on an explicit heap stack, O(depth)
+// heap. Tradeoffs: the memo holds each part made until the walk ends; the steps and results
+// are pushed and popped where recursion would call, a constant factor.
 fn rebuild_tys<'a>(w: &mut impl Rebuild, roots: impl IntoIterator<Item = &'a Ty>) -> Vec<Ty> {
     let mut stack: Vec<Step<'a>> = roots.into_iter().map(Step::Ty).collect();
     stack.reverse();
@@ -2059,6 +2098,12 @@ pub struct Sig {
 ///
 /// And it keeps the signature's hash ([`Sig::digest`]), made from the hashes of the
 /// functions it holds, so a set of functions hashes each at the cost of its outer level.
+// Complexity tradeoff (COMPLEXITY.md row F77): the naive version works out a signature's
+// variables at each depth it is met, O(n^3) for n nested tuples (106M instructions per node at
+// n = 400) and O(n^2) for n nested lambdas. Used: a memo per signature, filled on first use,
+// so each signature is walked once, linear in all. Tradeoffs: three `OnceLock`s per signature;
+// a clone starts empty and works them out again, since it may be changed; equality and
+// hashing ignore the memo.
 #[derive(Default)]
 pub struct Facts(
     std::sync::OnceLock<VarFacts>,
@@ -2182,6 +2227,11 @@ impl VarFacts {
 /// the insertions merge a set into one it was made from at its full size, `O(n^2 log n)` over
 /// `n` rows `t(k) = (t(k-1), (t(k-1), Vk))`, and the difference walks the larger set when the
 /// two share no node.
+// Complexity tradeoff (COMPLEXITY.md row F93): naive version, the insertions alone,
+// O(n^2 log n) over that family. Used: the two ways interleaved, at most twice the cheaper of
+// the two, O(m log n) or about the depth of the tree when the sets share their nodes.
+// Tradeoff: a constant factor of two on sets where only one way is fast; the row is fixed
+// only in part (see it for the family that stays above n log n).
 fn merge(set: &mut imbl::OrdSet<Arc<str>>, other: &imbl::OrdSet<Arc<str>>) {
     let (large, small) = match other.len() > set.len() {
         true => (other, &*set),
@@ -2332,6 +2382,13 @@ impl std::hash::Hash for Width {
 ///
 /// Two are compared one call at a time, and the same chain at once, and only the first call is
 /// hashed, so a chain of `n` calls costs O(1) to hash, not O(n) at each of its `n` links.
+///
+/// Complexity tradeoff: naive version, each need holds its own copy of the chain, with its
+/// notes written out, so a chain of `n` wrappers costs O(n) at each wrapper and O(n²) in all
+/// (built at every call, the notes took 28.4 times the bytes from 200 to 1,600 wrappers).
+/// Used: each link holds the one before it shared, so a wrapper adds one link, O(1), and the
+/// notes are written from the chain only for an error, O(links). Tradeoffs: a chain lives as
+/// long as any need that holds a link of it. COMPLEXITY.md row F123.
 #[derive(Clone, Debug)]
 pub struct Via {
     /// The call.
@@ -2896,6 +2953,10 @@ struct Cx<'s> {
     /// names ([`Comparing::fits_read`]). A failed fit of an arrow is followed by the search for
     /// a cover, which compares the same two results again; without this, a refusal of curried
     /// function types compared each level twice for each level around it, 2^depth in all.
+    // Complexity tradeoff (COMPLEXITY.md row TY-refuse-exp): naive version, each comparison
+    // run again, O(2^depth). Used: the verdict kept by the pair of names, one comparison per
+    // pair, linear in the depth. Tradeoff: one entry per pair compared, held until the
+    // outermost comparison ends.
     fitted: HashMap<(Arc<str>, Arc<str>), bool>,
     /// When asked for, by [`why_unfit`], why the outermost comparison failed, if one of the
     /// covers rule 6 of sec:type_resolution gives is refused there: `Some(None)` until it is
@@ -4808,6 +4869,9 @@ impl Forms {
 }
 
 /// Type variables, each once, in order of first appearance.
+// Complexity tradeoff (COMPLEXITY.md F28): the naive collection searches the variables found
+// before for each new one, O(v²); a hash set beside the order costs O(1) expected per
+// variable, at a second copy of each name's reference.
 #[derive(Default)]
 pub struct Vars {
     seen: HashSet<Arc<str>>,
@@ -4942,6 +5006,11 @@ impl Ty {
     }
 
     /// The union.
+    // Complexity tradeoff (COMPLEXITY.md F17): the naive union searches the list built so far
+    // for each tuple and function by deep equality, O(T²) for T shapes; hash sets make it
+    // O(T) expected, at one set entry per shape of `self`. Kept: an `if`/`else if` chain of
+    // n branches of distinct tuple types still builds types of total size Θ(n²), since each
+    // `if` holds the union of the branches below it; the cost is the size of the types.
     pub fn union(&self, other: &Ty) -> Ty {
         let mut out = self.clone();
         out.set = &out.set | &other.set;
@@ -4966,6 +5035,11 @@ impl Ty {
 
     /// The union of `ts`, built once: joining them one at a time copied the union so far each
     /// time, `O(n²)` in the tuple shapes.
+    // Complexity tradeoff (COMPLEXITY.md F22): the naive fold of `union` copies the union so
+    // far at each member, O(n²) in the shapes; here the shapes are collected once through one
+    // hash set, O(n) expected, and the kernel sets are joined in pairs by
+    // `KType::union_all`, whose diagrams would be rebuilt n times one at a time. Memory: the
+    // hash sets of the shapes seen.
     pub fn union_all<'t>(ts: impl IntoIterator<Item = &'t Ty>) -> Ty {
         let ts: Vec<&Ty> = ts.into_iter().collect();
         let mut out = Ty::empty();
@@ -5040,6 +5114,11 @@ impl Ty {
     /// family's atoms. Each step complements only a set that lists no atom names or the
     /// family's, so it costs `O(f log n)` for `f` family atoms of `n`, where `set − loose`
     /// would complement every loose atom.
+    // Complexity tradeoff (COMPLEXITY.md F21): the naive `set − loose` builds the complement
+    // of every loose atom so far, O(n) per binary operator and O(n²) on a chain of n failure
+    // atoms; `(set − atoms) ∪ (set ∩ family)` equals it and complements only the fixed set of
+    // all atoms, O(f log n) for f family atoms. Precondition: the family is small beside the
+    // loose atoms, as in the chains the checker builds; a large family costs its size.
     pub fn without_loose(&self) -> Ty {
         // A set that holds no atom loses none.
         let set = match self.set.may_hold_atoms() {
@@ -5247,7 +5326,12 @@ impl Ty {
             return None;
         }
         // Each row's kernel type is made once and kept in the row ([`Row::kernel`]).
-        // Joined in pairs: one at a time costs the size of the union so far for each shape.
+        // Complexity tradeoff (COMPLEXITY.md K38): the naive version tries each shape in turn
+        // against a tuple piece, O(shapes × components) a piece and n² for n shapes, and misses
+        // a piece the shapes hold only together; adding the shapes to the union one at a time
+        // costs the size of the union so far for each, also n². Used: the shapes joined in pairs
+        // (`union_all`), O(n log n), and the kernel decides the piece. Given up: a piece the
+        // kernel cannot decide is refused with its cause.
         let shapes = self.tuples.iter().map(Row::kernel);
         let shapes = shapes.collect::<Option<Vec<_>>>()?;
         Some(KType::union_all(
@@ -5403,6 +5487,8 @@ impl Ty {
                 }
             }
         }
+        // Complexity tradeoff (COMPLEXITY.md F17): repeated shapes dropped through a hash set,
+        // O(m) expected for m met shapes, where a search of the kept list was O(m²).
         let mut have = HashSet::new();
         let first: Vec<bool> = met.iter().map(|cs| have.insert(cs)).collect();
         out.tuples.extend(
@@ -5719,6 +5805,15 @@ impl Ty {
 /// recursion took. A pair of nodes shared at many places is walked once: its answer is kept
 /// by the addresses of the two, which stay put while both are borrowed, so a type with `2^n`
 /// paths through `n` tuples costs `O(n)` pairs, not `2^n`.
+///
+/// Complexity tradeoff: naive version, plain recursion over both types as trees, O(paths),
+/// `2^n` for `n` shared tuples (n = 2,000 did not finish in 60 s), and a stack overflow at
+/// 100,000 levels. Used: a heap frame per pair of components that both hold tuples, and the
+/// memo by the pair's addresses, O(distinct pairs of nodes) frames and lookups. Tradeoffs:
+/// the memo's memory, one entry per pair walked, for the whole walk; keying by address is
+/// sound only because both operands stay borrowed until the walk ends, so no recorded node is
+/// freed or its address reused; each frame is a boxed future, a constant factor over a stack
+/// frame, as measured at [`Comparing`]. COMPLEXITY.md row F128.
 struct Pairs<'m, K, V> {
     stack: Stack<'m>,
     /// The answer for each pair walked, by the addresses of the two.
@@ -7550,6 +7645,10 @@ impl fmt::Display for Ty {
 /// the type, with the name it is printed with, or none when it is printed `_`. A variable no
 /// signature around it bounds by carriers is printed `_`, the type of every value, since type
 /// syntax writes a type variable only with its bound (DESIGN.md L1.26, sec:diagnostics).
+// Complexity tradeoff (COMPLEXITY.md F68): naive, each fresh name tried from `T` again at
+// each rename, O(renames²) tries; used, a map from each variable to its stack of printed
+// names, a set of the names in use and one counter that only grows, O(size of the type) plus O(renames) fresh names.
+// Memory: one entry per open variable; a fresh name skipped once is never reused in the type.
 #[derive(Default)]
 struct Scope {
     /// Each variable's printed names, innermost signature last.
@@ -7660,6 +7759,10 @@ impl Ty {
             .filter_map(|(n, ss)| Some((n, ss.as_ref()?)))
             .filter(|(n, _)| holds_payload(&self.set, n))
             .collect();
+        // Complexity tradeoff (COMPLEXITY.md F57): naive, the whole set printed or narrowed
+        // once per payload atom, O(p · n) for p payload atoms in a set of n atoms (37.3 times for
+        // 8 times the size, per the row); used, the payload atoms taken out in one difference
+        // with their union, O(p log n), and each payload printed once.
         let rest = (!shaped.is_empty()).then(|| {
             let listed = shaped
                 .iter()

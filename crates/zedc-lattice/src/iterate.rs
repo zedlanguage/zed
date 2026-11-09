@@ -93,6 +93,17 @@ pub fn solve<L: Lattice>(eq: &impl Equations<L>) -> Result<Vec<L>, SameKey> {
 /// not at every literal of the program. Building them takes time and space linear in the sum,
 /// over the components, of the landmarks each holds, which is at most the landmarks times the
 /// depth of nesting.
+///
+/// Complexity tradeoff: the standard choice gives every cell all `L` literals of the program
+/// as landmarks, so a head may stop at each, `3L + 1` evaluations per head whatever its loop
+/// writes. Used: each cell takes the landmarks of its innermost component, nested ones
+/// included, so a head's evaluations follow the literals of its loop (5 for a counter beside
+/// 1 to 128 other literals). Cost: the sets take memory up to `L` times the nesting depth,
+/// since an outer component holds its inner ones' landmarks again. Precision: a head no longer
+/// stops at a literal written outside its loop, so its widening may pass a value such a
+/// literal would have stopped it at (inferred from the code, not measured). Tests:
+/// `m0_05_widening_and_iteration::scaling::a_head_takes_only_the_landmarks_of_its_loop` and
+/// `a_head_stops_at_most_once_per_landmark`; COMPLEXITY.md row S13.
 pub struct Scopes {
     sets: Vec<Landmarks>,
     /// The set of each cell.
@@ -184,6 +195,17 @@ const NONE: usize = usize::MAX;
 /// of a cell it reads from outside, not once per change of every enclosing head, and nested
 /// loops cost work linear in their number, where restarted counters made it exponential in
 /// the depth.
+///
+/// Complexity tradeoff: the standard recursive strategy stabilizes every inner component
+/// again at each change of an enclosing head, exponential in the nesting depth `h` (64^h
+/// with the old head counters). Used: a component is skipped while no cell it reads from
+/// outside has changed, so it is stabilized once per such change, work linear in the
+/// number of loops for a nest. Cost of the skip: a `dirty` flag per vertex, and a change of a
+/// cell marks the components between each reader and the common enclosing component, `O(d)`
+/// per edge for nesting depth `d`. No result changes (a clean component is already a
+/// post-fixpoint of its equations; the stack-machine oracle agrees). Tests:
+/// `m0_05_widening_and_iteration::scaling::nested_loops_cost_linear_work_in_the_depth` and
+/// `the_nest_scales`; COMPLEXITY.md row S3.
 struct Walk<L> {
     cells: Vec<L>,
     marks: Scopes,

@@ -517,6 +517,11 @@ type Saved<'a> = VecDeque<(usize, Option<Ty>, Option<Rc<Origin<'a>>>)>;
 /// moves at most log2 n times however the joins nest, and a tree of joins of n items costs
 /// O(n log n): the facts and narrowings of a chain of `&&` or `||`, nested to the left, to
 /// the right or both ways (COMPLEXITY.md IS-chain-quad).
+// Complexity tradeoff (COMPLEXITY.md row IS-chain-quad): naive version, `a` then `b` copied
+// into a new list at each join, and each level of a chain narrowing every fact again, O(k^2)
+// for a chain of k sides in time and bytes. Used: small onto large, O(k log k) for any tree of
+// joins, with the narrowing a side left in place handed on (`Ck::narrow_side`). Tradeoff: a
+// `VecDeque` in place of a `Vec`, so that the shorter list can go on either end.
 fn joined<T>(mut a: VecDeque<T>, mut b: VecDeque<T>) -> VecDeque<T> {
     if a.len() >= b.len() {
         a.append(&mut b);
@@ -553,6 +558,12 @@ type Called<'e> = (Arc<Sig>, Option<(&'e Expr, bool)>);
 /// binder costs one origin however many tests already narrow it. What it says is kept as data
 /// and put into words only by a derivation that reaches it (step L1.39b), since a derivation
 /// is built only for a rejection that is reported.
+// Complexity tradeoff (COMPLEXITY.md row F80): naive version, each origin, class reason and
+// call note put into words when recorded, O(size of the type printed) per binder and per call
+// whether or not an error is reported (a repair trial built the derivation of each error it
+// dropped). Used: data recorded in O(1), words only when a reported rejection's derivation
+// reaches it, at the cost of what it walks. Tradeoff: the data holds its types and signatures
+// alive until the check ends.
 struct Origin<'a> {
     span: Span,
     why: Why<'a>,
@@ -708,6 +719,15 @@ type OrderKey = (Arc<str>, bool, Span);
 /// A class of values that must share one carrier: a node of the union-find forest of
 /// docs/thresholds.md, replacement 1. Only a root's fields other than `parent` and `rank`
 /// are read.
+///
+/// Complexity tradeoff: naive version, the search over signatures, contexts and combinations
+/// of carriers it replaced (COMPLEXITY.md F6, F18), exponential in the parameters and nesting
+/// and stopped by caps. Used: a union-find by rank, each class merged or narrowed at most
+/// (values + 6 × classes) times, O(log N) a step, O(N log N) in all; the lists of a merged
+/// pair move shorter into longer ([`Ck::merge`]). Tradeoffs: no path compression, so a find
+/// is O(log N), not nearly O(1); a tried repair undoes its changes from a log of the roots it
+/// touched ([`Ck::touch`]), which compression would extend to every node on a path.
+/// COMPLEXITY.md row "undeclared parameters (check), `apply`".
 #[derive(Clone)]
 struct Class {
     parent: usize,
@@ -730,6 +750,10 @@ struct Class {
     uses: Vec<(usize, Need)>,
     /// The result of each use in `uses` by its kind and whether it gives a value, the first
     /// recorded of equal ones, so a repeated use is found without a scan of `uses`.
+    // Complexity tradeoff (COMPLEXITY.md row F90): naive version, a scan of `uses` for each
+    // new use, O(n) a use and O(n^2) for n uses of one class (a parameter destructured into n
+    // names). Used: a hash map by kind, O(1) a use plus hashing the kind; classes merge the
+    // smaller map into the larger. Tradeoff: one entry per distinct use beside `uses`.
     known: HashMap<(NeedKind, bool), Ty>,
     /// The index in `uses` of each `NeedKind::Order` use by its word, its side and its site:
     /// the uses of one site are one use, of the union of their other operands joined one
@@ -774,6 +798,10 @@ struct Ck<'t, 'a> {
     info: Info,
     /// Each write to `info`'s maps, and to a class while a repair is tried, with the value
     /// it replaced, so that a repair is undone by what it wrote.
+    // Complexity tradeoff (COMPLEXITY.md F6): the naive way to try a repair is to clone
+    // `info` and restore the clone, O(size of the unit's findings) per try; the log makes a
+    // try cost what it writes, at one entry of memory per write until the try is kept or
+    // undone.
     log: Vec<Undo>,
     /// Each expression's type, by its span, as last found.
     seen: HashMap<Span, Seen<'a>>,
@@ -1269,6 +1297,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             Derive(Span),
             Show(Note),
         }
+        // Complexity tradeoff (COMPLEXITY.md F29): a scan of the notes shown before each new
+        // one is O(R²) for R notes; the set of the notes shown makes each test O(1) expected,
+        // for one copy of each note.
         let mut shown: HashSet<Note> = out.iter().cloned().collect();
         let mut visited = HashSet::new();
         let mut stack: Vec<Work> = spans.iter().rev().map(|&s| Work::Derive(s)).collect();
@@ -2284,6 +2315,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.trying {
             return out;
         }
+        // Complexity tradeoff (COMPLEXITY.md F29): the naive dedup looks for each reason among
+        // the notes kept before it, O(R²) for R reasons; a hash set of the notes kept makes it
+        // O(R) expected, at the cost of one more copy of each note in memory.
         let mut seen: HashSet<Note> = HashSet::new();
         for p in t.pieces() {
             if let Some(k) = self.class_of(&p) {
@@ -5478,7 +5512,8 @@ impl Handled {
 // need sets keyed by the handlers rather than by their atoms, which the checker would then
 // have to expand at each parameter anyway.
 // Naive version: each binder's set gathered by its own walk of the graph, O(B + R + E)
-// unions per binder (inferred); used: one pass of Tarjan's algorithm, O(B + R + E) unions in all.
+// unions per binder (inferred); used: one pass of Tarjan's algorithm, O(B + R + E) unions in all
+// (COMPLEXITY.md rows F117 and F74, whose union-find this replaced).
 fn handled(res: &Resolution) -> Handled {
     const NONE: usize = usize::MAX;
     let (b, total) = (res.binders.len(), res.binders.len() + res.regions.len());

@@ -635,6 +635,10 @@ impl Type {
     /// The operands of the intersection of `ts`, with each intersection in parentheses among
     /// them replaced by its own operands, in written order: `(A & B) & C` has `A`, `B` and `C`.
     /// The walk keeps its own stack, as parentheses nest as deep as the text.
+    // Complexity tradeoff (COMPLEXITY.md row F82): naive version, each nested intersection
+    // joined again at each depth by copying the inner signature, O(n^2) bytes for n levels
+    // (31 times the bytes at 8n against n), on the thread's stack. Used: the operands gathered
+    // once on a heap stack, O(n) time and heap. Tradeoff: one `Vec` of references; none given up.
     pub fn and_operands(ts: &[Type]) -> Vec<&Type> {
         let mut out = Vec::with_capacity(ts.len());
         let mut stack: Vec<&Type> = ts.iter().rev().collect();

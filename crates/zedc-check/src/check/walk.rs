@@ -26,6 +26,12 @@ pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
 
 /// Checks a unit whose binder tables are `t`, as [`check`] does with tables it builds.
 pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
+    // Complexity tradeoff (COMPLEXITY.md F32): emptiness results kept for the whole thread let
+    // a unit checked after an equal one look up keys equal to its types but built apart, each
+    // compared in full, O(n²) for a unit of size n. Dropping them here shares results within
+    // one unit only: an equal later unit decides them again, O(n) more work, rather than
+    // compare them. Keying by identity instead loses the reuse within a unit that the L1.23
+    // tuple-difference test needs.
     KType::forget_emptiness();
     // The types the messages write put their definitions in one table, which `Ck::finish`
     // lays out message by message.
@@ -3378,6 +3384,15 @@ impl<'a> Ck<'_, 'a> {
     /// reading its `k - 1` narrowed inputs cost `O(k)` a binding and the chain `Θ(d²)` (item
     /// PA-let-narrow-many). The result is the same either way.
     ///
+    /// Complexity tradeoff: naive version, every input of the summary read at each binding
+    /// (subset check, term bounds and premises), O(k) a read and Θ(d²) for the chain (2,275
+    /// term bounds at d = 64, 132,867 at d = 512). Used: the persistent tree of the last read,
+    /// updated at the inputs that differ, O(m log k) for m differences (323 and 2,563 at the
+    /// same sizes; COMPLEXITY.md row PA-let-narrow-many). Tradeoffs: memory, one read (a copy
+    /// in O(1) of the scope's names and a tree of O(k) nodes, shared with the reads it was
+    /// made from) kept per binder until the walk ends; when the differences reach the inputs
+    /// the read is made afresh, which costs what the naive read did.
+    ///
     /// [`LetPa::changed_since`]: zedc_preimage::preimage::LetPa::changed_since
     fn read_image(
         &mut self,
@@ -3442,6 +3457,16 @@ impl<'a> Ck<'_, 'a> {
     /// forming it adds their sums and does not walk them: a test reading any binder of a block,
     /// in any order, costs its own summary. Costs the size of each value read, once, and the
     /// merges of the inputs' maps and of the formed sums, each by input.
+    ///
+    /// Complexity tradeoff: naive version, the summary of a binder made afresh at each test
+    /// that reads it, through the summaries of all the binders it reads, O(d) a test and
+    /// O(d²) for a block of d tested bindings (measured with the memo cleared before each
+    /// test: 0.23 to 19.4 billion instructions at d = 64 to 1024). Used: one summary per
+    /// binder, kept in `Arms::summaries` for the walk, O(size of its value) once, so the block
+    /// is O(d) (0.16 to 2.54 billion instructions; COMPLEXITY.md row PA-let-check). Tradeoffs:
+    /// memory, one summary per binder until the walk ends; a summary is made where the binder
+    /// is first read and keeps the input types of that place ([`Ck::narrowed_at`]), which is
+    /// sound because a binder is read only within the narrowing it was bound in.
     ///
     /// [`Summarized`]: super::arms::Summarized
     /// [`LetPa::form`]: zedc_preimage::preimage::LetPa::form
@@ -4001,6 +4026,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the classes tested, run from older to newer: one pass from the last link joins each
     /// class to a carrier class it leads to, and one from the first joins it to a carrier
     /// class it comes from. Two passes over the links: `O(n log n)` with the merges.
+    // Complexity tradeoff (COMPLEXITY.md row F119): the naive version passes over the links
+    // until no join changes a class, O(n²) for a chain of n links where each pass moves a
+    // carrier one link (inferred). Used: the roots sorted and deduplicated once, then one pass
+    // last to first and one first to last, O(n log n). Precondition: links run from older to
+    // newer classes, which holds since a test's class is made after the class it tests.
     fn join_narrowed(&mut self, level: usize) {
         let mut from: Vec<usize> = Vec::new();
         for i in 0..self.pending[level].len() {
@@ -5291,6 +5321,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// read again: `n` levels that each hold the one below twice cost `n`, not `2^n`
     /// (CHK-components-pairs). The pairs are checked on a heap stack in the order a recursion
     /// would: a pair's own pieces, then its components position by position, then its rest.
+    ///
+    /// Complexity tradeoff: naive version, every pair of tuples read and each pair's
+    /// components recursively, with no visited set: O(n²) pairs for `n` tuples a side (`x < x`
+    /// over 800 shapes took 39.9 s), O(n³) for lengths 1 to `n`, `2^n` through shared rows.
+    /// Used: one union of each side's components per position and a set of the pairs of
+    /// component types read, O(n) in the types read. Tradeoffs: the set's memory, one pair of
+    /// types per pair read; a failure is reported for the two unions met, as for `x < y` with
+    /// `x: int | f64`, each piece that does not compare named once, not once per pair of
+    /// tuples. COMPLEXITY.md row F140.
     fn components(&mut self, what: &str, a: &Ty, b: &Ty, span: Span) {
         enum Step {
             Pair(Ty, Ty),
@@ -6280,6 +6319,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         // An argument with no value that the call does not need: the call still gives what
         // its arrow gives there. Read before the atoms that pass by are taken out, since an
         // argument left with no value by them is one whose every value passes by.
+        //
+        // Complexity tradeoff: a call of a function whose body reads an argument of no value
+        // on every path still gets its arrow's result, not `Never`: `g(positional x: int) =
+        // x + 1` with `g(n)`, `n: Never`, is `int` (sound, less precise). Naive (complete)
+        // version: a demand analysis of each body, which parameters it reads on every path,
+        // one pass over the body per function and arrow and a fixpoint through recursive
+        // calls (not built; cost inferred, at least linear in all bodies per arrow). Used:
+        // only an operator, a prelude word, a family lookup (`Demand::All`) and the first
+        // operand of `&&` and `||` (`Demand::First`) make the call `Never`; one `Vec<bool>`
+        // of the arguments per call, O(arguments). Trigger: a declared or bounded parameter
+        // read on every path. Test:
+        // `l01_26_type_resolution::never::a_call_with_an_argument_of_no_value_has_its_substituted_result`.
+        // COMPLEXITY.md row C36.
         let unneeded: Vec<bool> = (args.iter().enumerate())
             .map(|(i, a)| {
                 a.as_ref()
@@ -6506,6 +6558,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut grouped = vec![false; args.len()];
         // The arguments each bounded variable stands at, in one pass over the arguments: one
         // pass per variable over every argument cost `O(v a)`.
+        // Complexity tradeoff (COMPLEXITY.md F65): naive, a scan of the `a` arguments for each
+        // of the `v` bounded variables, O(v·a); used, one pass grouping them in a hash map,
+        // O(a + v) expected, plus one `Vec` of positions per variable.
         let mut at_of: HashMap<&str, Vec<usize>> = HashMap::new();
         for (i, (p, a)) in arrow.params.iter().zip(args).enumerate() {
             if let Some(v) = p.as_var().filter(|_| a.is_some()) {
@@ -6821,6 +6876,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// arrows that adopt fewest. Then the arguments' pieces are taken in turn, each state
     /// the arrows still alive and the carriers they allow where the class stands
     /// ([`ClassAt`]): a state per such pair, not per combination of pieces.
+    // Complexity tradeoff (COMPLEXITY.md row ISSUE1-tvar-else): naive version, a state per
+    // combination of the arguments' pieces, O(p^a) for a arguments of p pieces. Used: states
+    // merged by (arrows alive, `ClassAt`), O(a p s A) for A arrows and s states, s bounded by
+    // the arrows and carriers and independent of the program's size. Tradeoff: states merge
+    // only when both parts are equal, so an operator's s can double the count keyed by arrows
+    // alone (the class's restriction is kept on each path).
     fn apply_many(
         &mut self,
         what: &str,

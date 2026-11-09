@@ -31,6 +31,10 @@ pub(super) enum Built {
 }
 
 /// The cache [`Builder::written_bare`] reads, one per source.
+// Complexity tradeoff (COMPLEXITY.md F60): listing the names written bare again at each
+// rejected chain costs O(chains · source) (59.7 times for 8 times the size, per the row); the
+// list made once per source on the first rejection, in one pass, makes each word of a chain one
+// hash lookup, for one set of the source's names held while the builder runs.
 pub(super) type Bare<'a> = std::cell::OnceCell<std::collections::HashSet<&'a str>>;
 
 /// The builder of one tree, a text's or a string hole's: what each node built to, until its

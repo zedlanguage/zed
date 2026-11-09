@@ -66,6 +66,10 @@ impl Out<'_> {
     /// A number's magnitude: its count of 64-bit limbs, then the limbs, least significant
     /// first, each a word. Linear in its bits, where decimal digits cost more than linear time
     /// to convert.
+    // Complexity tradeoff: as at `zir::binary`'s `magnitude` (COMPLEXITY.md Z26): decimal
+    // digits, about n^1.5 in the bits n, replaced by the 64-bit limbs, O(n); the kernel address
+    // changed with the form. Test
+    // `l01_32_canonical_zir::wide_constants::addressing_a_wide_constant_is_linear_in_its_bits`.
     fn magnitude(&mut self, m: &BigUint) {
         self.word(m.iter_u64_digits().len() as u64);
         m.iter_u64_digits().for_each(|d| self.word(d));

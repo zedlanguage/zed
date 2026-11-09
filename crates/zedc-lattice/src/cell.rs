@@ -46,6 +46,16 @@ pub enum Premise {
 
 /// A set of premises whose union takes constant time: a set is one premise, or the union of
 /// two sets it shares with whatever else holds them.
+// Complexity tradeoff: the standard set (a `BTreeSet` copied at each narrowing and union) costs
+// O(m) per union, O(n²) over a loop summary of n steps. Used: a union is a node holding both
+// sides, O(1), and `Premises::set` reads the shared nodes once each by a visited set of ids,
+// O(m log m) for m distinct parts; walked as a tree it would cost the number of paths, n²/2
+// for a loop of n iterations and exponential in depth where every level shares (93.0 times the
+// instructions at 200 → 1600 without the visited set). Tradeoffs: an `Arc` node and a `u64`
+// id per union; a premise met twice is kept in the node graph until `set` dedupes it;
+// `contains` and `set` cost a walk, not a lookup. Ids, never addresses, key the visited set.
+// Tests: `l01_24_refinement_lattices::cell::reading_a_shared_premise_set_scales` and
+// `l01_39_reduced_product::scaling`; COMPLEXITY.md rows S8 and S35.
 #[derive(Clone, Default)]
 pub struct Premises(Option<Arc<Node>>);
 

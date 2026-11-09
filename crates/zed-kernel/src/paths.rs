@@ -7,6 +7,17 @@
 /// with node [`Paths::ROOT`] the whole scrutinee. A binder's path is one node, so no binder
 /// copies the path above it: a binder at each of `d` levels costs `d` nodes, not `d²/2` part
 /// indices (HEAP-binder-paths, HEAP-binder-memory).
+// Complexity tradeoff: the naive form copies the path from the scrutinee to each binder
+// (`at.to_vec()`), and a release reads each kept path from the top and filters the kept paths
+// at each freed cell: O(d²) time and bytes for a binder at each of d levels (COMPLEXITY.md
+// HEAP-binder-paths, HEAP-binder-memory; 61.0 to 63.8 times the bytes for 8 times the depth).
+// Here each part entered is one node with its parent, a binder records its node, and a release
+// builds the tree of nodes on the way to the kept binders once (`Kept`): O(nodes + kept).
+// Tradeoff: a binder's path as a list of indices costs O(depth) to read back (`path`), which
+// only messages do. Nothing is refused. Tests
+// `l01_36_cranelift::scaling::a_binder_at_every_level_of_a_deep_pattern_scales`,
+// `releasing_a_binder_at_every_level_scales` and
+// `l01_34_memory::binders::a_binder_at_every_level_of_a_deep_match_scales`.
 #[derive(Debug)]
 pub struct Paths {
     /// Each node's parent node and part index, in the order entered, which is preorder;

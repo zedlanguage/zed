@@ -82,6 +82,13 @@ impl Unit {
 /// kernel name's definition, and the definitions each definition reads, found when first
 /// needed. A term's cone then costs the definitions in it, not a pass over the unit, and
 /// closing a term over its cone shares each definition's term rather than copying it.
+// Complexity tradeoff (COMPLEXITY.md F9, F41): the naive form closes each test row over the
+// whole unit (`Unit::close` per row), O(rows × unit), and copies each definition's term into
+// the row's lets and prints it into the row's key, O(rows × reached size). The index here is
+// built once, O(definitions); each definition's reads are found once, when first asked, and
+// its key number once; a row's cone is a worklist over the definitions it reaches, with a
+// visited set, and its lets share the definitions' terms (`Def.term` is an `Arc`). Memory:
+// one entry per definition for the map, its reads and its number, kept while the index lives.
 pub struct Cones<'u> {
     unit: &'u Unit,
     by_kernel: HashMap<&'u str, usize>,
@@ -203,7 +210,9 @@ fn pattern_names(p: &Pattern) -> Vec<&Arc<str>> {
 ///
 /// The term is read as the graph of its distinct parts: a part shared by two places (one
 /// [`Shared`] node reached twice, known by its id) is read once, so the time is near the
-/// number of distinct parts, not the size of the term unshared (COMPLEXITY.md row ENDS). Each part is read once whatever
+/// number of distinct parts, not the size of the term unshared (COMPLEXITY.md row ENDS; read
+/// as a tree, a chain of k `if`s whose two arms hold one shared part cost O(2^k); the reads
+/// kept by id cost one entry per distinct part). Each part is read once whatever
 /// names are bound around it: what it needs of them is the set of names it calls that must
 /// each be free or bound by `let` to a function that ends (`Needs`), and the binder of a
 /// name reads that set. A part shared under two bindings of a name it calls so gives each
@@ -835,6 +844,13 @@ struct Summary {
 /// by the node's id as in [`Reader::ids`]: a part shared by two places is one node reached
 /// twice. The names a part reads are a set of [`Sets`], so a union stops where its two sets
 /// share a node.
+// Complexity tradeoff (COMPLEXITY.md F4, F13, F83): the naive mix computes `free` and `effects`
+// afresh at every node, with the bound names in a `Vec`, O(k³) for a chain of k local
+// definitions (O(t · depth) for `free` alone), and reading the term as a tree costs O(2^d)
+// when each of d levels shares one part between two places (F83). Here each part held in a
+// node is summarized once, by the node's id (O(P log P) for P distinct parts), and the names
+// are sets of [`Sets`], so a mix costs the distinct parts plus the unions [`Sets`] bounds. Memory: one summary per node read and the tries of
+// the sets until the next `mix_top` clears them.
 #[derive(Default)]
 struct Frees {
     names: HashMap<Arc<str>, Name>,
@@ -1283,6 +1299,9 @@ impl Remix {
 }
 
 fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
+    // Complexity tradeoff (COMPLEXITY.md F25): a search of the list of roots for each
+    // definition costs O(definitions × roots); the roots in a hash set cost O(1) per
+    // definition and O(roots) memory.
     let roots: HashSet<&str> = roots.iter().copied().collect();
     let mut demanded: BTreeSet<Arc<str>> = unit
         .defs
@@ -1394,6 +1413,12 @@ pub fn split(unit: &Unit, name: &str, param: usize, d: &Domain) -> Result<(Term,
 /// arguments of the unit's calls once mixed, those of its tests' cases, and a mixer with
 /// every definition bound mixed, as [`mix`] binds it. Splitting `k` functions then costs one mix of the
 /// unit and `k` mixes of their bodies, where each split mixed the whole unit again.
+// Complexity tradeoff (COMPLEXITY.md F42): the naive split mixes the whole unit to find the
+// calls and binds every definition again for each function split, O(splits × unit) (72.3
+// times the work for 8 times the functions). The specializer mixes and binds once,
+// O(unit), and each split then costs the mixes of one body, once per value and once for the
+// general arm. Memory: the mixer's scope and the gathered arguments live as long as the
+// specializer; a split must leave the scope as it found it.
 pub struct Specializer<'u> {
     unit: &'u Unit,
     /// The position of the first definition of each source name.
@@ -1554,6 +1579,10 @@ struct Entry {
 /// (`stamps`): the number of entries pushed before it over the whole run (`pushed`), which
 /// only grows and so is never reused after a pop, so two places where a map restricted to
 /// some names is one map bind each of those names to one entry.
+// Complexity tradeoff (COMPLEXITY.md F4): the naive scope is a list searched from the
+// innermost entry, O(n) per lookup and O(n · depth) over a nest of lets; `by_name` finds a
+// name's entries in O(log n), at the cost of one map entry per name in scope and a pop that
+// removes each name's position as its entry leaves.
 #[derive(Default)]
 struct Scope {
     entries: Vec<Entry>,
@@ -2932,6 +2961,11 @@ impl Mixer {
     /// it again under that map shares the result, so the parts mixed, and the mixed term's
     /// distinct parts, are not more than the term's distinct parts times the maps each is
     /// reached under (COMPLEXITY.md row F83).
+    // Complexity tradeoff (COMPLEXITY.md row F83): the naive mix reads the term as a tree, so
+    // a part shared by two places is mixed once per path, O(2^d) for d levels that each share
+    // one part. Used: a memo by (node id, map of the names the part reads), O(Q log Q) for Q
+    // such pairs, and heap stacks in place of recursion. Tradeoffs: the memo holds one mixed
+    // part per pair until the mix ends; a part reached under many maps is mixed once per map.
     fn mix(&mut self, site: Site<'_>) -> Out {
         let mut todo = vec![Mix::Part(site)];
         let mut done: Vec<Out> = Vec::new();

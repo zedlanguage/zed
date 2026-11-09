@@ -10,8 +10,8 @@
 //! order too. `async` is used because it writes each frame's resume points and saved locals,
 //! which a hand-written machine would list by hand at each recursive call.
 //!
-//! The emptiness search of `types::empty` and zedc's preimage analysis (`store::preimage`) run
-//! on it.
+//! The emptiness search of `types::empty` and zedc's preimage analysis
+//! (`zedc_preimage::preimage`) run on it.
 
 use std::cell::Cell;
 use std::mem::ManuallyDrop;
@@ -23,6 +23,15 @@ use std::task::{Context, Poll, Waker};
 type Frame<'m> = Pin<Box<dyn Future<Output = ()> + 'm>>;
 
 /// The stack's link with the calls running on it.
+// Complexity tradeoff: the standard form is plain recursion on the thread's stack, O(depth)
+// stack, which overflowed a 2 MiB thread between depths 1,000 and 3,000 in the preimage
+// transfer (COMPLEXITY.md PRE-stack). Here each call that may recurse is a boxed frame on a
+// `Vec` on the heap, O(1) per call (one box and one `Rc` cell for the answer; none when the
+// answer is ready), so depth is limited by memory alone and time stays linear in the calls.
+// Tradeoffs: a constant factor, from allocating and moving frame states: 11% more processor
+// time on the preimage unit test, and at depth 100,000 peak memory of 257 to 907 MB; a frame
+// is as large as its callee's state machine. Nothing is refused. Tests
+// `l01_25_preimage_catalog::deep` and `frames::tests::a_frame_holds_its_call_once`.
 pub struct Stack<'m> {
     /// The frame a suspended call asks to run next, from the poll that asks until the loop in
     /// [`Stack::run`] takes it. `ManuallyDrop` gives the type no destructor, so that a `Stack`

@@ -718,6 +718,12 @@ fn delete_cascade(g: &Bes, u_set: &[u32], t_sccs: &[Vec<u32>], sc: &mut Scratch)
 /// The first cyclic tuple component of `u_set` with cyclomatic number 2 or more and an `And`
 /// node with two distinct undecided children, if any. Distinct children are counted with
 /// `stamp`, in time linear in the edges.
+// Complexity tradeoff (COMPLEXITY.md K26): the naive count searches a list of the children
+// seen, O(n²) on a node of `n` children (control `exring:6:1`: 36.80 times at 8n, limit 24).
+// Used: one stamp per node, advanced per parent, so a child is counted when its mark is not
+// the current stamp, O(nodes + edges) in all. Tradeoff: one `u32` per node held for the whole
+// decision. The refusal itself is the tradeoff at `group_verdicts` (`Refusal::Group`): a
+// component of that shape would need a general game solver, quadratic or worse in it.
 fn refusal(
     g: &Bes,
     u_set: &[u32],

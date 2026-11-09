@@ -193,6 +193,11 @@ pub fn dominates(a: &[u64], b: &[u64]) -> bool {
 /// only with the frontier found before it: `O(P log P + P·F·devices)` for `F` plans on the
 /// frontier. No known algorithm finds a Pareto frontier of more than three quantities in
 /// `O(P log P)`, and this vector has `3·devices + 2`.
+// Complexity tradeoff (COMPLEXITY.md F20): the naive frontier compares every pair of plans,
+// O(P² · devices); the lexicographic sort lets each plan be compared only with the frontier
+// found before it, O(P log P + P · F · devices). It is still O(P² · devices) when every plan
+// is on the frontier (F = P), the size of the output's pairwise check; no known algorithm does
+// better for more than three quantities. Memory: one cost vector per feasible plan.
 pub fn frontier(plans: &[Plan], target: &Target) -> Vec<Plan> {
     let n = target.devices.len();
     let mut live: Vec<(&Plan, Vec<u64>)> = plans

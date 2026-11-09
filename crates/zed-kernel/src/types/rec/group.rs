@@ -289,6 +289,16 @@ impl Group {
     /// is sufficient for the group's emptiness to be monotone in its members' emptiness, not
     /// necessary, so a refusal says the type is outside that form, with the reason, its site
     /// and, for a definition narrowed where it is named, the definitions it is named through.
+    // Complexity tradeoff (COMPLEXITY.md K27, GROUP-admit, GROUP-admit-msg): an exact test of
+    // whether the group's emptiness is monotone in its members' emptiness is coNP-complete for a
+    // formula with complement; the evaluator of the tests (`Flat::monotone` in
+    // `l01_23_subtyping::admission_sweep`) costs O(2^k · k · m) for `k` definitions of total
+    // size `m`. Used: a sufficient syntactic check, one walk of the bodies (`refs`), one
+    // propagation of `via` over a stack, each definition entered once, and one search per body
+    // (`flipped`), O(size of the bodies). Given up: a group whose emptiness is monotone but
+    // which names a definition where a domain may be narrowed is rejected with "is outside the
+    // form the checker accepts", naming the site and the path; the message is built only on
+    // rejection, in time linear in its text.
     fn monotone(&self) -> Result<(), Rejection> {
         let bodies = &self.0.bodies;
         // A definition is constrained when it is named under `&`, `\`, a complement or the

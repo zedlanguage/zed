@@ -242,6 +242,16 @@ pub const EXPANSIONS: Expansions = Expansions::of(&[Expansion::Derived]);
 /// its parameters, and which lambda each of its arguments is captured from. Each is worked out
 /// once, so a question asked again, from a branch nested above or a second call, costs O(1),
 /// and planning is linear in the occurrences and their edges.
+// Complexity tradeoff: the naive planner asks again, at each region, whether each region under
+// it consumes each argument and what its uses are, and names each planned region by its path:
+// O(k·d²) questions for k names read in a nest d deep, and O(d²) bytes of paths (COMPLEXITY.md
+// Z4; 71.2 times the instructions for 8 times the depth on the 4-name nest). Here each region
+// occurrence gets a number once, by its parent occurrence, node and region index in a map, and
+// every answer is kept by that number, and planned regions are numbered in preorder and linked
+// to their parents, a path being worked out for a message only: O(occurrences + edges) time
+// and memory. Tradeoff: the answers of every occurrence are held until planning ends. Nothing
+// is refused. Tests
+// `l01_34_memory::chains`.
 pub fn plan(g: &Region, fuse: bool) -> Plan {
     let mut p = Planner {
         occs: vec![Occ {
@@ -1783,6 +1793,13 @@ impl<'g> Machine<'g, '_> {
     /// deep as the program. A shared sequence met again is the cell made for it, so a value
     /// whose levels each hold the one below twice is a cell per level, not one per path
     /// (COMPLEXITY.md R9).
+    // Complexity tradeoff: the naive form gives each occurrence of a part its own cell, 2^d
+    // cells for d levels each holding the one below twice (R9). Here the cell of each shared
+    // sequence is kept in `made` by the sequence's identity (`Value::shared_parts`) and counted
+    // once per holder: O(distinct sequences + holders). Tradeoffs: one map entry per shared
+    // sequence for the call; equal sequences built apart get cells of their own, as the native
+    // heap's `fresh` does, so the counts of the two agree. Nothing is refused. Tests
+    // `l01_36_cranelift::shared_values`.
     fn tree(&mut self, v: &Value) -> Option<usize> {
         type Entered<'v> = (&'v [Value], Option<SharedParts<'v>>, Vec<Option<usize>>);
         let mut stack: Vec<Entered<'_>> = Vec::new();
@@ -1910,6 +1927,13 @@ impl<'g> Machine<'g, '_> {
 
     /// Checks the cells touched since the last check, which passed: no other cell's count or
     /// references changed. When one is wrong, the full audit names every fault.
+    // Complexity tradeoff: the naive check runs the full audit after each step, O(heap) per
+    // step and O(steps · heap) in all (COMPLEXITY.md Z14). Here the machine keeps the cells
+    // each step touches and their reference counts (`refs`, `holds`) up to date as it goes, and
+    // the check reads only those cells, O(cells touched) per step; the full audit runs only
+    // when one of them is wrong, to name every fault. Precondition: every write to a count or a
+    // reference records its cell in `touched`; a write that did not would go unchecked until a
+    // later fault. Nothing is refused. Tests `l01_36_cranelift::scaling`.
     fn check(&mut self, when: &dyn Display) -> Result<(), String> {
         let touched = std::mem::take(&mut self.touched);
         let wrong = touched.iter().any(|&c| {
@@ -1990,6 +2014,13 @@ struct Lets {
     /// run has: a closure captured on many paths is built once, so the term is a graph the
     /// size of the closures, not a tree of every path (COMPLEXITY.md R9). A closure's term is
     /// a `let` of its lambda, whose parts are shared, so a copy costs a few words.
+    // Complexity tradeoff: the naive build walks a closure once per path to it, 2^d for d
+    // levels each capturing the level below twice (R9: 4 times per 2 levels). Here each
+    // closure's term is built once per kernel call and kept by `Clo::cell` (the machine never
+    // reuses a cell), and every later use is a copy sharing the body: O(closures + captures).
+    // Tradeoff: one map entry per closure for the call. Nothing is refused. Tests
+    // `l01_36_cranelift::shared_closures` and
+    // zed-native's `hooks::tests::a_closure_captured_twice_at_each_level_is_built_once`.
     closures: HashMap<usize, Term>,
 }
 

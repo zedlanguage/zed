@@ -175,6 +175,11 @@ impl fmt::Debug for Position {
 /// The static half of a fact address: the position of each call site through which the run
 /// entered the function holding the node, and then the node's own position. Only equality and
 /// order mean anything; the positions change with the build (sec:keypaths, the opaque token).
+// Complexity tradeoff (COMPLEXITY.md K9): the naive address copies the call stack and the
+// keypath into each fact, O(depth) per fact, O(S·depth) for `S` facts. Used: persistent vectors
+// (`imbl::Vector`) the run pushes and pops in amortized O(1) and every fact's address shares,
+// O(1) more per fact. Tradeoff: a constant factor in time and memory per push over a plain
+// vector, and comparing two addresses still reads them, O(depth).
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct NodeAddress(pub Vector<Position>);
 

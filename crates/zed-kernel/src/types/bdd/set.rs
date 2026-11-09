@@ -274,6 +274,13 @@ fn join<A: Atom>(mut a: Option<&Arc<Set<A>>>, mut b: Option<&Arc<Set<A>>>) -> Tr
     rebuild(spine, bottom)
 }
 
+// Complexity tradeoff (COMPLEXITY.md K86 (1)): the naive version removes each literal that
+// goes by `remove`, O(log m) each, O(r log m) for r of m literals; `split_classes` removes each
+// literal once on each of its `log k` levels, so a product split into c cells cost
+// O(c log² c). Used: one in-order walk, O(m) per block, nodes made only on the paths to the
+// literals removed and on the joins, which makes the split O(c log c). Given up: a block
+// that loses few literals still costs O(m) calls of `keep`, more than O(r log m) when r is
+// below m / log m.
 /// The set of the literals for which `keep`, called on each in order, is true. One walk, from
 /// a stack: a subtree that loses no literal is kept as it is, a node that stays is made again
 /// over its new children, and the children of one that goes are joined. So removing `r` of `m`

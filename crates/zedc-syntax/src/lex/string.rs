@@ -40,6 +40,12 @@ enum Raw {
 /// What is known of the holes of one text, so that a hole nested in others is scanned once,
 /// not once for each hole around it: the end of each hole found, by the position of its `${`,
 /// and the positions of the text's line breaks.
+// Complexity tradeoff (COMPLEXITY.md F15, F63): the naive lexer scans a hole for its `}`
+// again from each hole around it and searches each nested string's text for a line break at
+// each level, O(N · depth); and a pass over the line breaks per comment or inner string
+// costs O(B) each. Here each hole's end is found once and kept by the position of its `${`,
+// and a line break is found by binary search in the B breaks, O(log B). Memory: one map
+// entry per hole and one position per line break of the text.
 pub(super) struct Holes {
     ends: HashMap<usize, usize>,
     breaks: Vec<usize>,
@@ -454,6 +460,11 @@ fn strip(text: &str, content: usize, raw: &[Raw]) -> Result<Vec<(usize, usize)>,
 
 /// The literal text from `start` to `end`, less the `cuts`, which are sorted and do not
 /// overlap, with its escapes decoded.
+// Complexity tradeoff (COMPLEXITY.md F14): the naive decoder asks every cut at every
+// character (`cuts.iter().any`), O(chars · lines); with the cuts sorted once and not
+// overlapping, each piece finds its first cut by binary search and passes the cuts in step
+// with its characters, O(chars + pieces · log lines). Precondition: the cuts are sorted and
+// disjoint, as the caller makes them.
 fn decode(text: &str, start: usize, end: usize, cuts: &[(usize, usize)]) -> String {
     // The first cut not ending before each character, found by search and then advanced.
     let mut next = cuts.partition_point(|&(_, b)| b <= start);

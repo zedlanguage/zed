@@ -245,9 +245,16 @@ enum Place {
 struct Formatter<'a> {
     text: &'a str,
     /// The comments not yet written, by their first byte.
+    // Complexity tradeoff (COMPLEXITY.md F10): the naive formatter scans all C comments at
+    // each query, O(S · C) for S statements; the map by start offset answers a range query
+    // in O(log C) and removes each comment once it is written, so the queries cost O(log C)
+    // each plus the comments they return.
     comments: BTreeMap<usize, Span>,
     /// The text so far. Each level adds only its own text, so writing a nest of depth `d` is
     /// linear in the output.
+    // Complexity tradeoff (COMPLEXITY.md F11): the naive renderer returns a string per
+    // level that its parent copies, O(N · depth) for N bytes of output; pieces pushed in
+    // order and joined once cost O(N), at one `Cow` per piece of memory until the join.
     pieces: Vec<Cow<'a, str>>,
     /// How many of `pieces` hold a line break.
     breaks: usize,

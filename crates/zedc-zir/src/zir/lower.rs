@@ -58,6 +58,15 @@ use zedc_base::address::ContentAddress;
 
 /// The binding of each name in scope while lowering, kept persistently so that a closure keeps
 /// the scope it was defined in at no cost.
+// Complexity tradeoff: the naive scope is a vector of bindings searched from the end, O(S) per
+// lookup, with a copy of the whole scope kept by each function called in place and an index
+// rebuilt at each call, O(n·S) for n such functions over a scope of S names (COMPLEXITY.md Z6,
+// Z12). The scope used is a persistent hash map (`imbl::HashMap`): a lookup and a binding cost
+// O(log S) with a hash-trie constant, and keeping, restoring or swapping a whole scope is O(1),
+// since the map's nodes are shared. Tradeoffs: a lookup is a few times slower than in a
+// `std::collections::HashMap`, and each binding allocates the path of trie nodes it changes.
+// Nothing is refused. Tests `l01_33_lowering::scaling::reading_a_name_bound_far_out_scales`
+// and `lowering_many_functions_called_in_place_scales`.
 type Scope<'t> = imbl::HashMap<Arc<str>, Val<'t>>;
 
 /// What a name is bound to while lowering.
@@ -345,9 +354,16 @@ impl<'t> Lower<'t> {
         if matches!(s, Src::Const(_)) {
             return s;
         }
-        // Each region holds an edge once, however often it is read, so a region's arguments
-        // do not grow with the reads below it. The walk stops at the nearest region that has
-        // the edge, and every region it passes takes the edge, so a read costs O(1) amortized.
+        // Complexity tradeoff: the naive lowering carries an edge through every region above
+        // each read, as a new argument of each, O(d) per read and O(d²) arguments, code and
+        // time for a name read at every depth of a nest d deep (COMPLEXITY.md Z9b). Here each
+        // region holds an edge once, however often it is read (`Frame::brought`), so a region's
+        // arguments do not grow with the reads below it; the walk stops at the nearest region
+        // that has the edge, and every region it passes takes the edge, so a read costs O(1)
+        // amortized. Tradeoff: one map entry per region per edge carried, kept until the
+        // region closes. Nothing is refused. Tests
+        // `l01_33_lowering::scaling::a_name_read_at_every_depth_scales` and
+        // `a_name_read_at_every_depth_enters_each_region_once`.
         let key = (at, captured(&s));
         let top = self.frames.len() - 1;
         let mut from = top;
@@ -435,6 +451,18 @@ impl<'t> Lower<'t> {
     /// costs one hash lookup and `O(log k)` shape comparisons for `k` nodes of its key, each at
     /// most the bytes of the smaller node's operation, inputs and outputs: `k` is one but for a collision of 256-bit keys, and
     /// about n/256 for n nodes in the `short-addresses` build (8-bit keys).
+    // Complexity tradeoff: the naive add canonicalizes and encodes the whole subtree of each
+    // new node to compare it, O(n) per node and O(n²) to O(n³) in all (COMPLEXITY.md Z2), and
+    // a chain of the nodes of one key confirms each candidate in turn, O(k) per add (Z19,
+    // repair 1). Here a node's key is hashed from its shell and its regions' keys, each node
+    // hashed when it is added and when its region closes, and the nodes of one key sit in a
+    // `BTreeMap` ordered by `canon::Shape`, so an add costs one hash lookup and O(log k) shape
+    // comparisons. Tradeoffs: the key alone is never trusted, so a lookup that hits pays the
+    // comparisons of the shells' bytes as well as the hash; each shape is held until the
+    // lowering ends. Nothing is refused. Tests
+    // `l01_33_lowering::scaling::lowering_a_deep_nest_scales`, `l01_37a_short_addresses::collide`,
+    // `l01_32_canonical_zir::fuzz::the_key_agrees_with_the_address` and
+    // `l01_37a_short_addresses::scaling::many_equal_nodes_are_found_by_their_keys`.
     fn add(&mut self, node: Node, keys: Vec<ContentAddress>, numbers: Vec<usize>) -> usize {
         let shape = match (&self.refused, canon::Shape::of(&node, numbers.clone())) {
             (None, Ok(shape)) => shape,
@@ -662,6 +690,14 @@ impl<'t> Lower<'t> {
                         } else {
                             // Two owners: the region returns the ports' states, and the closure
                             // threads them through each call.
+                            // Complexity tradeoff: the naive lowering inlines the lambda at
+                            // every call, recursively, c^k nodes for a chain of k functions each
+                            // calling the one before c times (COMPLEXITY.md Z1). Here a function
+                            // that uses a port and is named more than once is one `lambda` node,
+                            // and each call is an `apply` threading the ports' states: O(1) nodes
+                            // per call. Tradeoff: a call through `apply` is not specialized to
+                            // its arguments as an inlined body is; a name used once is still
+                            // inlined. Nothing is refused. Test `l01_33_lowering::scaling`.
                             s.jobs.push(Job::Closure {
                                 name: x,
                                 params: ps,
@@ -1317,6 +1353,14 @@ fn names(p: &Pattern) -> Vec<Arc<str>> {
 
 /// The [`Uses`] of the lambda body `b`, each body's found once: a lambda inside `b` adds the
 /// uses of its own body, less the names bound around it in `b`.
+// Complexity tradeoff: the naive search reads the whole body of each `let`-bound lambda, the
+// lambdas nested in it included, and looks each port up among those found, O(n·depth) for
+// lambdas nested d deep (COMPLEXITY.md Z11). Here the uses of each body are found once and
+// kept in `bodies` by the body's occurrence id, and an enclosing body adds the kept uses of a
+// lambda inside it, less the names bound around it. Cost: each body walked once, plus the uses
+// handed up from the bodies directly inside it. Tradeoff: the uses of every lambda body are
+// held until the lowering ends. Nothing is refused. Test
+// `l01_33_lowering::scaling::lowering_lambdas_bound_by_nested_lets_scales`.
 fn body_uses(b: At<'_>, bodies: &mut Bodies, places: &Places) -> Uses {
     if let Some(u) = bodies.get(&b.id) {
         return u.clone();

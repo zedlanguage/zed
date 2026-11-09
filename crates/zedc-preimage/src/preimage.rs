@@ -1685,6 +1685,24 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
 /// [`Scoped::written`], and a chain whose links each define one (`x mod 7`) is translated in
 /// O(n) as well, where dropping the translations of a body that made one read the chain once
 /// per body (LOAD-chain-aux).
+// Complexity tradeoff: naive version, each body closed over its cone and read with a fresh
+// transfer, numbering and translating every definition it reaches again: O(n²) for a chain
+// of n functions (LOAD-chain, 54 times from 100 to 800), and the same for a chain of tests
+// that copy their callee's constraints (LOAD-chain-share, 62.6 times), define auxiliary
+// variables (LOAD-chain-aux, 90.9 times) or pass moved arguments (LOAD-chain-args, 61.5
+// times). Used: one numbering and one translation state for the scope; each body keeps
+// what the runs before found and drops, in time of what it made, what depends on it; a
+// call's relation is kept whole as one shared part, indexed by the names its arguments hold;
+// a body whose call shifts or renames its parameters is read in the callee's coordinates
+// (`Frame`). Each chain is about 8 times per 8 times the links. Tradeoffs: the scope holds
+// O(n) entries for the unit's lifetime; a link the kept point does not extend, or a refused
+// question in moved coordinates, is decided whole, O(n²) as before (the comments at
+// `presburger::extend::Extending` and `front::linear_questions`). Tests in
+// `l01_38_presburger::one_scope`: `the_questions_of_a_chain_of_calls_scale`,
+// `the_questions_of_a_chain_of_tests_scale`,
+// `the_questions_of_a_chain_defining_auxiliary_variables_scale` and
+// `the_questions_of_a_chain_moving_its_argument_scale`; COMPLEXITY.md rows LOAD-chain,
+// LOAD-chain-share, LOAD-chain-aux and LOAD-chain-args.
 pub struct Scoped<'t> {
     tx: Tx<'t>,
     scope: Eid,
@@ -2769,6 +2787,12 @@ impl<'t> Terms<'t> {
     /// it takes time of the term's distinct parts. A part held inline (the root, an argument)
     /// is reached only through its parent, so it is numbered when its parent is, with no
     /// lookup. Ids are only looked up, never ordered, so the numbers follow the walk alone.
+    // Complexity tradeoff: the naive numbering walks the term as a tree, once per path, which
+    // is exponential in depth where parts are shared (`k` branches over one shared arm: 18,554.7
+    // times the work from 2 to 16 without the visited set). Used: an explicit stack and a
+    // visited set of the shared parts' ids, linear in the distinct parts, with no recursion on
+    // depth. Cost: a hash map entry per shared part for the call. Test:
+    // `l01_25_preimage_catalog::scaling::long_shared_arms`; COMPLEXITY.md row S21.
     fn add(&mut self, root: &'t Term) -> Tid {
         let mut seen = HashMap::new();
         let mut todo = Vec::new();
@@ -3225,6 +3249,18 @@ impl Fwd {
 /// whichever summary it is read. The pair fixes the value: the inputs of the transfer are the
 /// same in every context, and a parameter is read through the scope that binds it, which
 /// differs for each summary, since the parameter's name holds the summary's number.
+// Complexity tradeoff: the naive transfer reads a `let`-bound name's term again at each use,
+// 2^k for `let`s k deep (296 ms at k = 14), O(n·depth) for `constant` read at every node, and
+// with a memo per summary about n^1.8 through chains of calls (42 ms at 48, 727 ms at 384
+// functions). Used: one memo per transfer, keyed by (term number, scope number), so each term
+// is read once per scope it is read in: linear in the (term, scope) pairs reached, about
+// n^1.2 measured on the call chains (5.9, 68 and 645 ms at 48, 384 and 3072). Tradeoffs:
+// memory for every entry until the transfer ends; keys are numbers ([`Terms`], scopes by
+// `scope_ids`), never addresses, so a number is not reused while kept. Nothing is refused
+// here; no depth or fuel is counted (the old `TRANSFER_FUEL` and `CALL_DEPTH` are gone).
+// Tests: `l01_25_preimage_catalog::scaling::the_transfer_scales`,
+// `a_long_chain_of_lets_is_not_cut` and the `long_*` tests; COMPLEXITY.md rows S1, S1b, S6,
+// S11, S19 and S21.
 #[derive(Default)]
 struct Memo {
     mentions: HashMap<At, Entry<Option<bool>>>,
@@ -3313,6 +3349,18 @@ struct Projection {
 /// definition chooses (a disjunction or a negation), an atom is a product or an auxiliary
 /// variable without a definition, a binding binds an atom of `key`, or an atom other than a
 /// kept pair stays ([`presburger::eliminated`]).
+// Complexity tradeoff: naive version, a call that does not hold its callee's claim reads the
+// callee's body again, O(m) a call for a callee of m links, O(n·m) over a chain of n links.
+// Used: the callee's canonical relation with every variable but the canonical atoms and the
+// inputs eliminated (Fourier–Motzkin with the dark shadow, exact or nothing), made once per
+// callee and key (`Memo::projections`) and written at each call's arguments, O(the rows left)
+// a call (one or two rows for one parameter; 8.0 times the bytes from 50 to 400 links).
+// Tradeoffs: memory for one projection per callee and key; where the relation or a
+// definition chooses (a disjunction or a negation), reads a product, binds an atom of the key
+// or leaves a variable (a congruence such as `x mod 4 == 1`), the body is read again as
+// before. Test
+// `l01_38_presburger::one_scope::the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale`;
+// COMPLEXITY.md row LOAD-affine-cone.
 fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
     use presburger::Atom;
     let own: HashSet<&Arc<str>> = (key.iter().flat_map(|l| l.terms.keys()))
@@ -4715,6 +4763,16 @@ impl<'t> Tx<'t> {
     /// `k` deep. Each product is read once and compares the first factors of its two operands
     /// once, so the cost is linear in the products reached plus the size of the factors
     /// compared, however the products share operands.
+    // Complexity tradeoff: the naive reading gathers each product's factors again, walking
+    // down to its first factor, O(n·depth), n² for a chain of n factors (85.2M to 2,652M
+    // instructions at 512 and 4,096 factors, 31.1 times). Used: each product read once, bottom
+    // up, into `Tx::powers` by (term, scope), joining its operands' readings: linear in the
+    // products plus the factors compared (5.48M to 43.3M, 7.9 times). Cost: one entry per
+    // product reached for the life of the transfer; the count is exact (`Count`), so counts
+    // that double per level cost O(d²) bits at depth d (row S30b). Nothing refused, no limit on
+    // the factors. Test:
+    // `l01_25_preimage_catalog::powers::reading_a_product_as_a_power_is_linear_in_its_factors`;
+    // COMPLEXITY.md row S30.
     fn read_powers(&mut self, at: At) {
         let mut todo = vec![at];
         while let Some(&at) = todo.last() {
@@ -7364,6 +7422,13 @@ impl<'m, 't> Walk<'m, 't> {
     /// whose definition has a disjunct for each piece of the summaries and each cut, at most
     /// `C + 2S` for `C` pieces with `S` starts between them, and the summary costs
     /// `O(k log k)`.
+    // Complexity tradeoff: naive version and used version as above (k nested disjunctions read
+    // together, 24.6 s at k = 120; one variable by cases, 104 ms at k = 480). Tradeoffs: only a
+    // guard on the remainder of one input by a constant; elsewhere the `if` is translated
+    // level by level, as before; the cases are kept per scope (`Tr::cases`) until
+    // `Tr::truncate`. Test
+    // `l01_25_preimage_catalog::s22::remainder_chains_in_the_linear_stage_scale`; COMPLEXITY.md
+    // row S22-linear-rem.
     async fn lin_by_class(&'m self, t: Tid, g: Tid, env: Eid) -> Option<Lin> {
         if !self.tr(|tr| tr.by_class) || self.with(|tx| tx.run.residue.is_some()) {
             return None;
@@ -8650,6 +8715,15 @@ impl<'m, 't> Walk<'m, 't> {
 
     /// The guard, the then arm and the `false` of `u` where `u` is `if g { a } else { false }`,
     /// as the elaborator writes `g && a`.
+    // Complexity tradeoff: naive version, each `if g { a } else { false }` of a chain read as an
+    // `if`, `(g && a) || (!g && false)`, copying the whole prefix conjunction into a new one at
+    // each level, O(k²) for a chain of k (3.57 times per doubling). Used: `Walk::chain` reads
+    // such an `if` as a `&&`, its guard and then arm operands of one `Joining`, linear (2.00
+    // times per doubling). Tradeoffs: the children of an `if` may be shared, so `Terms::shared`
+    // records each subterm reached twice and a shared inner chain is read once by its memo
+    // entry; the answers are the same. Tests
+    // `l01_25_preimage_catalog::scaling::a_chain_of_and_written_as_ifs_is_joined_in_one_pass`
+    // and `a_chain_of_or_written_as_ifs_is_joined_in_one_pass`; COMPLEXITY.md row S31c.
     fn and_if(&self, u: Tid) -> Option<(Tid, Tid, Tid)> {
         match self.node(u) {
             Node::If(g, a, b) if matches!(self.node(b), Node::Bool(false)) => Some((g, a, b)),
@@ -8724,6 +8798,17 @@ fn or_if_as_if() -> bool {
 /// one: `i64::MIN - (u + 3)` is summarized, although its constant `i64::MIN - 3` lies outside
 /// `i64`, and so is `u + 1` at `u = i64::MAX`. At an infinite end of the domain a piece takes
 /// the infinity its line tends to ([`value_at`]), never the value at an end of `i64`.
+// Complexity tradeoff: naive version, the backward transfer asks a term shared by both arms
+// of k `if`s, one arm adding a constant, for `t >= -d` at each `d` up to `k - j`, O(k²) (58.7
+// times from 256 to 2,048). Used: a term of one input built from `if`, `+ c`, `- c`, `0 - x`,
+// `c * x` and negation is summarized once as a persistent treap of affine pieces, and a
+// demand is inverted by descending only into subtrees whose values meet it, each integer
+// demand first met with the hull of the term's values: O(k log k) (7.4 times). Tradeoffs:
+// one input only; a term outside that grammar falls back to the transfer; the hull may
+// narrow a box the old `map2` piece cap widened, a sound subset
+// (`meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened`). Tests
+// `l01_25_preimage_catalog::s22` (compared with the transfer before on 22,628 cases) and
+// `long_shared_values_preimage`; COMPLEXITY.md row S22.
 #[derive(Clone)]
 enum Pa {
     /// The constant `c` everywhere.
@@ -8831,6 +8916,14 @@ impl Pa {
     /// it to a part of `dom` ([`Walk::pa_select`]), and cut at the holes, the summary of each
     /// class of a split carried every hole another class made, `O(k^2)` pieces for a chain of
     /// `k` guards (COMPLEXITY.md S22-hole-summaries).
+    // Complexity tradeoff: naive version, the summary cut at every hole of the domain, O(k²)
+    // pieces for k guards (953 cases, 8.3 s at k = 32; 77 GB at 128). Used: the summary over the
+    // hull, with `Walk::pa_select` giving a hole to the stretch before it (`no_input_between`,
+    // O(log P)), `2k + 1 + 3T` cases (729 at k = 256). Tradeoffs: the summary claims values at
+    // the holes, which is sound only because every reader meets its result with the domain or
+    // slices it to a part of the domain; a new reader must do the same. Test
+    // `l01_25_preimage_catalog::s22::class_ranges_read_the_holes_once`; COMPLEXITY.md row
+    // S22-hole-summaries.
     fn to_treap(&self, dom: &IntervalSet) -> Option<Tree> {
         let (a, b) = match self {
             Pa::Piecewise { root, .. } => return Some(root.clone()),
@@ -8906,6 +8999,20 @@ pub struct LetIn {
 /// `pa` over its input's domain, and in `tot` their sum ([`Tot`]), each put in as its term
 /// is: so the bounds of the sum, with some inputs over other domains, cost those inputs
 /// ([`LetPa::image_shifted`]) and not all of them.
+///
+/// Complexity tradeoff: naive version, the bounds of the value computed from every term's
+/// bounds over its input's integers at each read (`Sep::bounds`, `pa_bounds` once per input),
+/// O(k) a read for `k` inputs, so a chain of `d` bindings each reading the one before cost
+/// Θ(d²) term bounds (COMPLEXITY.md rows PA-let-multi and PA-let-narrow-many: 2,275 at
+/// d = 64, 132,867 at d = 512). Used: `tot` keeps the sum of the terms' bounds over the
+/// domains formed over, and an input read over other integers adds its `Shift`, O(log k)
+/// each, so a read costs the inputs that changed, not all `k`, and the chain O(d log d)
+/// (323 and 2,563 at the same sizes). Tradeoffs: one `Tb` and the total kept per term;
+/// `tot` is `None` when the sum was not formed over domains, and then `LetPa::image_shifted`
+/// gives no image, so the checker binds the name with no narrowing from it (a loss of
+/// precision, not of time); a sum scaled since its terms were put in makes every shift differ
+/// (`LetPa::changed_since` returns `None`), and the read is made afresh, O(h log h) for the
+/// `h` inputs the scope has.
 #[derive(Clone)]
 struct Sep {
     scale: Int,

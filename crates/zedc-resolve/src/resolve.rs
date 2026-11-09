@@ -126,6 +126,10 @@ pub enum Ref {
     /// Binders of the unit, by index: one, or the arrows of an overload set. The list is
     /// persistent, so every use of a set of `K` arrows shares it: `U` uses cost `O(U)`, not
     /// `O(U·K)`.
+    // Complexity tradeoff (COMPLEXITY.md F46): a `Vec` per use copies the K arrows into each
+    // of U uses, O(U·K) time and memory; the persistent `imbl::Vector` is shared, O(1) per
+    // use, at a larger constant per element read and an inline copy for lists of three or
+    // fewer, which costs O(1).
     Bound(Vector<usize>),
     /// A prelude word of layer L1.
     Prelude(String),
@@ -152,6 +156,10 @@ pub struct Resolution {
     pub uses: BTreeMap<Span, Ref>,
     /// The binders of each `else` pattern and of each `match` arm, by the `else`'s or the arm's
     /// text: a range of `binders`.
+    // Complexity tradeoff (COMPLEXITY.md F12): the naive checker finds an `else` pattern's
+    // binders by scanning every pattern binder that starts before the default,
+    // O(elses · binders); the range recorded here costs O(log elses) per `else` and one
+    // map entry per pattern.
     pub patterns: BTreeMap<Span, Range<usize>>,
     /// The fields of each struct, by the struct's statement: a range of `binders`.
     pub fields: BTreeMap<Span, Range<usize>>,
@@ -700,6 +708,10 @@ struct Resolver<'u> {
     scopes: Vec<Vec<String>>,
     /// The bindings of each name in the open scopes, innermost last, so a name is found in
     /// `O(1)` however deep the scopes nest.
+    // Complexity tradeoff (COMPLEXITY.md F16): the naive lookup walks the chain of scopes
+    // outward, O(depth) per use and O(uses · depth) over a nest (ratio 34 at 8 times the
+    // depth); a stack per name finds the innermost binding in O(1), at one stack entry per
+    // binding and a pop of each name a scope binds when it closes (`scopes`).
     visible: HashMap<String, Vec<Bound>>,
     /// Whether the declaration being bound is marked `local`.
     local: bool,
@@ -737,6 +749,9 @@ struct Bound {
     ids: Vector<usize>,
     /// The written parameter types of each, which tell an overload's arrows apart: a set, so
     /// declaring `K` overloads costs `O(K)`, not `O(K²)`.
+    // Complexity tradeoff (COMPLEXITY.md F16): comparing each new overload with every
+    // earlier one costs O(K²); a hash set of the written parameter types costs O(1) per
+    // overload (O(length of the types) to hash), at one entry of memory per overload.
     signatures: HashSet<Option<Vec<Option<String>>>>,
     /// Whether every binder is a function, so the binders are arrows of one overload set.
     functions: bool,

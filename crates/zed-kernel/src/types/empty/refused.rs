@@ -413,6 +413,12 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
     // reaches a meet or a difference, a repair holding it leaves it to the search, as above, so
     // once an earlier repair does that too, the one holding it is not re-checked: re-checked,
     // m such members, each reaching n nodes, cost O(m n) together under their own keys.
+    // Complexity tradeoff (COMPLEXITY.md K95): the naive version re-checks every repair up to
+    // the first decided, the last under a key holding the member, so m members that each reach
+    // a meet or a difference and n nodes cost O(m n). Used: once an earlier repair left such a
+    // member to the search, the repair holding it is skipped, so the shared re-checks cost
+    // O(m + n) together. Given up: nothing; the skipped re-check could only leave the member
+    // to the search too, and the message names the earlier repair.
     let mut searched = None;
     let decided = fixes.iter().find(|&w| {
         if searched.is_some() && why.wide[i] && w.contains(&i) {

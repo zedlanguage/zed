@@ -113,6 +113,9 @@ pub const RULES: [Rule; 4] = [
 ];
 
 /// The pairs of `f` out of order, counted while merge-sorting it: `O(F log F)`.
+// Complexity tradeoff (COMPLEXITY.md F5): comparing every pair counts the inversions in
+// O(F²); counting them while merge-sorting costs O(F log F), with a buffer of F facets per
+// merge and the slice left sorted (callers pass a copy).
 fn inversions(f: &mut [Facet]) -> usize {
     if f.len() < 2 {
         return 0;
@@ -148,6 +151,12 @@ pub fn ranks(d: &Def) -> [u64; 4] {
 pub fn canonicalize(d: &Def) -> Def {
     // The rules' normal form, reached directly: every binder renamed, the hints the renaming
     // adds and the written ones dropped, the facets sorted without repeats, the domain normal.
+    // Complexity tradeoff (COMPLEXITY.md F5): the naive form applies the rules one step at a
+    // time, renaming one binder and walking the whole term per step, O(B · t · d), and
+    // bubble-sorting the facets by the swap rule, O(F³) with the rank recomputed per step.
+    // Here the binders are renamed in one walk, O(t log t), and the facets filtered, sorted
+    // and deduplicated once, O(F log F). The rules stay as the definition; the test
+    // `alpha::the_normal_form_is_the_rules_applied_one_step_at_a_time` checks that both agree.
     let mut facets: Vec<Facet> = d.facets.iter().filter(|f| !f.hint).cloned().collect();
     facets.sort();
     facets.dedup();

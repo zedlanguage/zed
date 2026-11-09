@@ -842,6 +842,11 @@ fn pin_units(db: &mut Db, pkg: &mut Package, prelude: Option<(usize, Span)>) {
 
 /// The address of the unit `v` of `pkg`, kept in `memo` once found: `None` when it has no text,
 /// is not resolved, or does not compile alone.
+///
+/// Complexity tradeoff: naive version, a unit addressed again at each import that names it,
+/// O(i × t) for `i` imports of units of size `t`. Used: a memo by unit index, each unit
+/// addressed once, O(t log t) for the units' definitions in all. Tradeoffs: one address kept
+/// per unit while the pins are checked. COMPLEXITY.md row F129.
 fn unit_address(
     db: &mut Db,
     pkg: &Package,

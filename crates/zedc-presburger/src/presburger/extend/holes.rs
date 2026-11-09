@@ -106,6 +106,15 @@ fn last(t: &Tree) -> Option<&Node> {
 }
 
 /// The holes over one atom: intervals of integers it lies outside of.
+// Complexity tradeoff: naive version, each clause `x < a || x > b` of a face kept as a
+// disjunction, so a chain that moves a hole through n calls carries n disjunctions and is
+// decided whole, O(n²) (0.39/1.62/7.06 s at 40/80/160 links). Used: the clauses over one atom
+// kept as an ordered map of disjoint intervals, a persistent treap shared between faces,
+// O(log n) a cut, read through each call's binding (0.032/0.098/0.198 s). Tradeoffs: one
+// treap node per hole; the answers are main's, except that a link decided through the faces
+// with nothing fixed (`Faces::free`) may answer where the conjunction decided whole is
+// refused. Test `l01_38_presburger::one_scope::the_questions_of_a_chain_moving_a_hole_scale`;
+// COMPLEXITY.md row LOAD-bound-holes.
 #[derive(Clone)]
 pub(super) struct Holes {
     tree: Tree,

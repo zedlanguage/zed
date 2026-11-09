@@ -367,6 +367,18 @@ impl StarIndex {
     /// it ([`Conjuncts::shape_of`]), so no leaf holds a conjunct free at such a hub `h`, and
     /// a conjunct of `h` and `y` free at `h` is free at `y` too once `refree` has seen it,
     /// which puts `h` in `ties[y]` and makes `h` an anchor. In O(log n) for each.
+    ///
+    /// Complexity tradeoff: naive version, each hub near `y` needs every name `y` relates
+    /// to, `k m` needs for `k` hubs and `m` names, so a satellite related to `d` hubs costs
+    /// O(d²) needs (measured d(d - 1): 132 and 9,120 at `d` 12 and 96, before STAR-hub-set);
+    /// a satellite's names kept once as a set would instead make each admission a test of
+    /// one set within another at each hub set at each hub. Used: the anchor holds the `m`
+    /// names and each other hub the anchor alone, `k - 1 + m` needs, O((k + m) log n) per
+    /// move of the anchor, and admission counted per name, one membership test per name.
+    /// Tradeoffs: none in the answers (exact, as argued above); memory for `anchor` and the
+    /// hit counts of [`Admit`]; an anchor that moves re-counts the satellite's needs. Test
+    /// `l01_39_reduced_product::linked::a_satellite_of_every_hub_costs_its_related_names_once`
+    /// (2d - 1 needs). COMPLEXITY.md row C37.
     fn place(&mut self, y: &Arc<str>, up: bool, log: &mut Moves) {
         let StarIndex {
             ties,
@@ -2173,6 +2185,17 @@ impl Blocks {
     /// (`Blocks::split`); if that fails, the blocks of every conjunct linked to one of `gs`
     /// are built again. Each block is split once for all the conjuncts it loses, so a removal
     /// costs near the blocks it touches, not their size times the conjuncts removed.
+    // Complexity tradeoff: naive version, the block is split once per conjunct removed, each
+    // split placing the block's other conjuncts again, and `place` and `split` look a placed
+    // disjunction up in `of` once per name it mentions, each lookup comparing the whole
+    // disjunction: O(k³) for a join of two arms on k disjoint groups (26 ms → 6.26 s at
+    // k = 8 → 64). Used: the removed conjuncts are grouped by block and each block is split
+    // once for all it loses; `unite` returns the block it places into, so no lookup repeats:
+    // near linear (1.5 → 17.2 ms). Tradeoffs: one `BTreeMap` of the removed conjuncts per
+    // call; a failed split rebuilds the blocks of every conjunct linked to `gs`. Results are
+    // byte for byte those of the old code on 600 random joins. Tests:
+    // `l01_39_reduced_product::disjoint::the_join_of_arms_on_many_disjoint_groups_scales` and
+    // `disjoint::the_blocks_of_a_join_are_those_of_the_definition`; COMPLEXITY.md row S29.
     pub fn remove(&mut self, gs: &[Arc<Formula>]) {
         // The conjuncts removed from each block, the blocks in the order `gs` first meets them.
         let mut from: BTreeMap<BlockId, Vec<&Arc<Formula>>> = BTreeMap::new();

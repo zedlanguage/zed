@@ -23,6 +23,15 @@ use imbl::{OrdMap, OrdSet};
 use zed_kernel::{Evidence, FixKind, Grade, GuardPos, Pattern, Shared, Term, Value, Witness};
 
 /// The content address of a term, the key of a written constraint.
+// Complexity tradeoff: naive version, the key is the term's printed text, which writes a
+// shared part once per path to it, 2^d for d levels of shared parts (98 ms at d = 16, 5.5 s
+// at d = 22), and keeps two constraints alike up to binder names apart. Used: the term with
+// each binder renamed by its height, a shared part renamed once per binding of its free
+// names (memo), ordered by a 64-bit digest and then by the canonical terms compared part by
+// part, a pair of shared parts once: linear in the distinct parts (0.07 ms at d = 16, 33 ms at
+// d = 8,192). Tradeoffs: the canonical term is kept in the key, memory of the term's distinct
+// parts; equal digests cost a structural comparison, since a digest is never an identity.
+// Tests `l01_39_reduced_product::written_address` and `address::tests`; COMPLEXITY.md row S45.
 #[derive(Clone)]
 pub struct Address {
     /// The digest of `term`. It is not truncated under the feature `short-addresses`: it orders

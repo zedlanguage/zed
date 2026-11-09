@@ -7,6 +7,16 @@
 //! ([`Id`]), so its cost is the number of distinct parts and not the size of the tree written
 //! out. A part held by one parent alone is reached once and is not kept in the map.
 
+// Complexity tradeoff: naive version, the derived `Drop`, `Clone`, `PartialEq`, `Ord`, `Hash`,
+// `Debug` and `Display` and the recursive maps, O(n) time but O(depth) thread stack, so a
+// formula about 4,000 deep overflowed a 2 MiB thread. Used: each walk keeps its work on the
+// heap (a post-order fold with a context passed down, or a work list), O(distinct parts) time
+// with a map for parts held by two parents or more. Tradeoffs: heap memory of O(depth) for the
+// stack and O(shared parts) for the map, a larger constant than plain recursion; the order,
+// equality and printed text are those of the derived forms. Tests `l01_38_presburger::deep`
+// (100,000 guards on a 2 MiB thread; 8.0 times from 12,500 to 100,000);
+// COMPLEXITY.md row S27.
+
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;

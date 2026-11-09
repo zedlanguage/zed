@@ -628,6 +628,10 @@ pub fn counterexamples(text: &str, engines: &[Engine<'_>]) -> (Report, usize) {
     // Each failure's text and its first place in source order. The failures that begin with
     // a row's text are one range of this map, and the first of them in source order is the
     // row's: a lookup per row in place of a pass over the failures.
+    // Complexity tradeoff (COMPLEXITY.md row F107): naive version, each row searching every
+    // failure and each binding asking `Unit::get` with a new `Cones` of the unit, O(n^2) in the
+    // definitions. Used: one `Cones` per unit and this ordered map, O(n log n). Tradeoff: the
+    // map holds a reference to each failure until the replay ends.
     let mut first: BTreeMap<&str, usize> = BTreeMap::new();
     for (i, f) in failures.iter().enumerate() {
         first.entry(f.as_str()).or_insert(i);

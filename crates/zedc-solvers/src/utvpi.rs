@@ -73,6 +73,15 @@ pub fn integer_empty_by(n: usize, rows: &[(&[Term], &Int)], search: Search) -> b
 
 /// An integer point of the rows, each of one or two terms with unit coefficients, over `n`
 /// variables, by variable, or `None` when they have none. A variable in no row is 0.
+// Complexity tradeoff: naive version, the point placed by eliminating every variable with fill
+// allowed, where fill grows the rows each elimination makes (a v by v grid of unit differences:
+// 18.8 then 31.1 times the instructions per 8 times the rows). Used: the point is read from the
+// potential `integer_empty` already finds: s(u) = (p(u) - p(-u))/2 is whole or a half, and the
+// halves joined by tight edges are rounded together by 2-SAT over those edges (Tarjan
+// components, linear); a literal in one component with its negation is an odd zero cycle, no
+// point. The cost is that of the potential plus linear work. Tradeoffs: unit two-variable rows
+// only; the point is one of many and need not be the one elimination would give. Tests in
+// `l01_38_presburger::model`; COMPLEXITY.md row S38.
 pub fn integer_point(n: usize, rows: &[(&[Term], &Int)]) -> Option<Vec<Int>> {
     integer_point_by(n, rows, Search::First)
 }

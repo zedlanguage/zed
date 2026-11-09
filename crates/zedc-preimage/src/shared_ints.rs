@@ -18,6 +18,16 @@ use zedc_lattice::interval::{End, IntervalSet};
 use zedc_lattice::revision::{self, Op};
 
 /// A set of integers, shared: a clone is `O(1)`.
+// Complexity tradeoff: naive version, an `IntervalSet` made at each level, O(k·H) pieces for k
+// levels over a domain of H holes (2,362,372 pieces at k = 64). Used: a shared node whose
+// join and monotone operators keep their operands and bounds in O(1), its pieces listed only
+// when a reader asks, each set once on an explicit stack (130 pieces at k = 64). Tradeoffs:
+// an `Rc` node per operation, kept alive until the run ends; a reader of the pieces pays the
+// listing then; `preimage::SharedInts` keys operator entries by operand addresses, valid
+// only because each entry keeps its operands alive. Tests
+// `l01_25_preimage_catalog::s22::forward_sets_of_a_chain_share_the_holes_scale` and
+// `shared_ints::tests::made_sets_list_as_the_listed_operations_give`; COMPLEXITY.md row
+// S22-fwd-holes.
 #[derive(Clone)]
 pub(crate) struct Ints(Rc<Node>);
 

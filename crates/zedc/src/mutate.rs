@@ -253,6 +253,10 @@ fn sites(
 /// order of the remix that follows), then the node changed in place. The copy shares what
 /// `term` holds behind an `Arc` until the path to `at` reaches it ([`child_mut`]).
 pub fn apply(term: &Term, at: &Position, to: &Change) -> Term {
+    // Complexity tradeoff (COMPLEXITY.md F58): a rebuild along the path by `with_child`, which
+    // copies each inline child list, costs O(size × depth), cubic over the mutants of one
+    // chain; one copy of the term and the node changed in place through `child_mut` costs
+    // O(size), the order of the remix that follows. Precondition: `at` lies in `term`.
     let mut out = term.clone();
     let mut node = &mut out;
     for i in at.path() {

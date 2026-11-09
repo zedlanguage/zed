@@ -120,6 +120,14 @@ impl fmt::Display for Time {
 /// were made over), so an insertion copies the map's nodes on the path to the name, and every
 /// product in them; with each product copied whole, a binding cost about 70 KB and a third of
 /// its time (item PA-bind-cost).
+///
+/// Complexity tradeoff: naive version, the domains held by value, so an insertion into a
+/// scope's map copies O(log n) chunks of up to 16 products each, every product deep:
+/// O(s log n) for products of size s, about 70 KB a binding. Used: products behind an `Arc`,
+/// so the copied path shares them, O(log n) pointer copies a binding (COMPLEXITY.md row
+/// PA-bind-cost: a block of 4,000 bindings 1,201M to 733M instructions). Tradeoffs: one more
+/// indirection on each read, and a change to a product another holds copies it once
+/// (`Arc::make_mut`).
 #[derive(Clone)]
 pub struct Product(Arc<ProductDomains>);
 
@@ -1577,6 +1585,15 @@ impl Scope {
     /// (`Scope::framed`), and the parts of the two stars are one but for the leaf's name, so
     /// the two projections are one but for that name. Test
     /// `l01_39_reduced_product::lazy::leaves_of_one_class_settled_together_get_what_each_gets_alone`.
+    ///
+    /// Complexity tradeoff: naive version, each stale leaf's star projected alone, one
+    /// projection per leaf, O(leaves × size of a star's core). Used: one projection per class
+    /// whose other names, interval and class match, and a meet per further leaf, O(classes ×
+    /// core + leaves × log classes), the classes in an ordered map local to the call.
+    /// Tradeoffs: memory for each class's names before and the leaf's interval after, until
+    /// the call ends; a leaf whose names or interval differ, or whose projection the solver
+    /// refused in part, is projected alone as before, so no answer changes. COMPLEXITY.md
+    /// row C37.
     pub fn settle<'a>(&mut self, names: impl IntoIterator<Item = &'a Arc<str>>) {
         if !self.lazy || self.bottom {
             return;
@@ -1668,6 +1685,13 @@ impl Scope {
     /// scope then mentions `x`, so `p`'s own reductions are the whole reduction, and the
     /// scope is not copied unless `x` shadows a name or `p` is empty. `e` is the bound term,
     /// kept when it is a lambda, so that a test calling `x` is read through the call.
+    // Complexity tradeoff: naive version, the body of each `let` gets a copy of the whole
+    // scope, O(s) per binding and O(n²) over a chain of n `let`s. Used: the binding changes the
+    // scope in place and `Scope::unbind` restores it from the returned `Unbind`, O(log s) in the
+    // persistent maps plus the reductions of `p`, near linear over the chain (42.6 ms → 3.4 ms
+    // at 200 `let`s). Tradeoffs: the scope is still copied when `x` shadows a name or `p` is empty; bindings must be
+    // undone in the reverse order they were made. Tests: `l01_39_reduced_product::scaling`
+    // and `a_binding_forgets_what_held_of_the_name_it_shadows`; COMPLEXITY.md row S8.
     pub fn bind(&mut self, x: &Arc<str>, p: Product, e: &Shared) -> Unbind {
         self.bind_with(x, p, e, None)
     }
@@ -1829,6 +1853,11 @@ impl Scope {
     /// insertion would share none of them after a few bindings. The cost is the entries that
     /// differ, each `O(log n)`.
     fn seen_fresh(&mut self, x: &Arc<str>, before: &imbl::OrdMap<Arc<str>, Product>) {
+        // Complexity tradeoff (COMPLEXITY.md PA-let-block): naive, the caches left as they
+        // were, so each test diffs every name bound since the last reduction, Θ(k) at the k-th
+        // binding and Θ(d²) over a block of d bindings; used, each cache rebased on the names
+        // now, O(entries that differ · log n) per binding. Precondition: `x` is fresh, so its
+        // product is already at its fixed point.
         let now = &self.names;
         let rebase = |cache: &mut imbl::OrdMap<Arc<str>, Product>| {
             if cache.ptr_eq(before) {
@@ -1896,6 +1925,14 @@ impl Scope {
     /// `x_k` from `x_(k-2)` read at that of `x_(k-1)`, which differ at a few names, where
     /// checking each input cost `O(k)` a binding and the chain `Θ(d²)` (item PA-walk-multi).
     /// The answer is the same whichever read it starts from.
+    ///
+    /// Complexity tradeoff: naive version, each input of the summary checked at each read,
+    /// O(k) a read, Θ(k²) for k reads of summaries over k inputs (1,680 leaves set at k = 40,
+    /// 103,040 at k = 320). Used: the tree of the last read updated at the names that differ,
+    /// O(m log k) for m differences (158 and 1,278; COMPLEXITY.md row PA-walk-multi).
+    /// Tradeoffs: memory, one read per summary id kept in `Reads` for the life of the scope's
+    /// copies, never freed during a walk (row PA-bind-cost); a lock per read; when the
+    /// differences reach the inputs the read is made afresh, at the naive cost.
     fn holds(&self, held: &Arc<Held>) -> bool {
         // The names whose products or orders differ between the scope of `r` and `s`.
         fn here<'a>(r: &'a HeldRead, s: &'a Scope) -> impl Iterator<Item = &'a Arc<str>> + 'a {
@@ -2010,6 +2047,17 @@ impl Scope {
     /// name, each narrowing a few names, cost `O(k log k)`, where reading the inputs cost
     /// `O(k)` a test (item PA-letpre-linear). The summary holds here ([`Scope::holds`]), so
     /// the scope has each of its inputs.
+    ///
+    /// Complexity tradeoff: naive version, each test of a name over k inputs builds the
+    /// domains of all k, bounds each term and meets each input, O(k) a test and Θ(k²) for k
+    /// tests (3,200 term bounds at k = 40, 204,800 at k = 320). Used: this tree of the terms'
+    /// bounds, updated at the inputs that changed, and `Tx::invert_sep` inverting only the
+    /// terms wider than the slack (`Sums::wants`), each found in O(log k), so a test costs the
+    /// inputs it narrows (COMPLEXITY.md row PA-letpre-linear). Tradeoffs: one tree kept per
+    /// summary, that of its last test (`Held::last`); a term the inversion does not read as a
+    /// whole (an end at an end of `i128`, pieces with a gap) is always inverted, so such terms
+    /// cost what they did; results are the same as reading every input (checked on 800 random
+    /// sums).
     fn term_read(&self, held: &Held) -> images::TermRead<Product> {
         let vars = held.summary.vars();
         let limit = vars.len().min(self.names.len());
@@ -2087,6 +2135,14 @@ impl Scope {
     /// its own binding, itself included, would read another binding here, so it is left
     /// unbound and the transfer stops at its call. The cost is the functions reached and
     /// their terms' sizes, each visited once.
+    // Complexity tradeoff: naive version, the functions a test calls are followed along every
+    // path of calls, exponential in the depth when each function calls the two before it (did
+    // not finish in 120 s at 32 without the visited set). Used: a visited set of the functions
+    // reached, each closed over once, O(functions reached + their sizes) per test. Tradeoffs:
+    // the closed test is kept as a written constraint, so its size counts once per arm; the
+    // preimage still recurses on the depth of the term (T2-mid), so the scaling test stops at
+    // 256 levels. Test `l01_39_reduced_product::scaling::tests_read_through_the_functions_they_call_scale`;
+    // COMPLEXITY.md row S24.
     fn close(&self, test: &Term) -> Option<Term> {
         let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut todo: Vec<Arc<str>> = stage::free(test).into_iter().collect();
@@ -2199,6 +2255,18 @@ impl Scope {
     /// product, hubs, star and settled product on both sides, so it stays stale in the join,
     /// where settling it gives that product. This costs the leaves at the names that differ,
     /// which the names of an eager join would differ at as well.
+    // Complexity tradeoff: naive version, the join is `Or(R∧A, R∧B)`, which copies the common
+    // part R into each side, so k joins in a row cost 2^k connectives. Used: the conjuncts the
+    // sides share are found by the difference of their persistent sets (`Conjuncts`) and kept
+    // once; the rest becomes one `Formula::either` of the two remainders, with the equalities
+    // both sides hold (Karr's join, `Scope::hull`); the cost follows the conjuncts the sides
+    // differ in, and each join of differing sides adds one disjunction. Tradeoffs: no cap, so a
+    // scope keeps every conjunct; a relation with disjunctions is decided by a greedy choice
+    // with one level of lookahead (`Refusal::Disjuncts` where both fail) and projected per
+    // disjunction (S16), not split into all its conjunctions. Splitting the blocks the join
+    // touches is S29 (`conjuncts::Blocks::remove`). Tests in `l01_39_reduced_product::scaling`:
+    // `narrowing_by_a_conjunction_of_disjunctions_scales` and
+    // `a_join_keeps_the_equalities_of_its_sides_and_scales`; COMPLEXITY.md row S2.
     pub fn join(&self, other: &Scope) -> Scope {
         if self.bottom {
             return other.clone();
@@ -4021,6 +4089,16 @@ impl Scope {
     /// of weight `k` read is checked to have `q_s + k - q_x - g_x` of zero or more, which is
     /// its reduced weight in the potential on either side ([`Potential`]). Each key pushed is
     /// then at least the key popped, and each name is popped at its latest bound once.
+    // Complexity tradeoff: naive version, every seed reads all its edges in and the Dijkstra
+    // search starts from every seed, so a hub `n` with 2k edges from k tests `ai == n` is read
+    // twice per side at each test, O(k²) (37.4 times the instructions from k = 150 to 1200).
+    // Used: a seed reads only the edges of the conjuncts added, and the edges into it only if
+    // its product changed or another block moved it (`Seeds::changed`); the search starts from
+    // the changed seeds and those lowered, O((s + a + m) log n) per projection (8.6 times).
+    // Tradeoffs: correctness rests on every other edge holding at the fixed point the last
+    // projection left, so `Seeds::changed` must record every change of a seed's product.
+    // Test `l01_39a_bit_words::scaling::tests_that_equate_each_reading_to_a_hub_read_the_hub_once_each`;
+    // COMPLEXITY.md row NARROW-hub-seed-edges.
     fn bound_pass(
         &self,
         relation: &Conjuncts,
@@ -5710,6 +5788,14 @@ pub fn forward(e: &Term, scope: &mut Scope) -> Product {
 /// and not by the thread's stack; the calls run in the order the recursive walks ran them
 /// (item PA-let-stack). The scope the walk is in is the top of `inner`, or `outer` when
 /// `inner` is empty: the scope of an `if` arm is pushed while its arm is walked.
+///
+/// Complexity tradeoff: naive version, plain recursion on the thread's stack, O(d) time and
+/// O(d) stack frames for a term d deep, which overflowed a 2 MiB thread at about 670 bindings.
+/// Used: the same calls in the same order as boxed futures on a heap stack, O(d) time and
+/// O(d) heap, no depth limit (COMPLEXITY.md row PA-let-stack). Tradeoffs: one allocation and
+/// one `RefCell` check per frame, a constant factor; measured at equal sizes on a 4 GiB stack
+/// the two were within a factor of 1.4 either way (arms of 8,000 tests 3.18 s recursive
+/// against 2.27 s here, forward of a block of 100,000 4.51 s against 4.52 s).
 struct Run<'m> {
     stack: Stack<'m>,
     /// The scope the walk starts in.

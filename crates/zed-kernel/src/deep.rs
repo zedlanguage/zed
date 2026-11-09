@@ -2,6 +2,13 @@
 //! the thread's queue and returns, so a chain of parts is freed whatever its depth, with no
 //! recursion on the machine stack (DESIGN.md sec:kernel, "Reference semantics"). Values
 //! (`value`), terms (`term`) and types (`types`, `types/rec`) each keep a queue of their own.
+//!
+//! Complexity tradeoff (COMPLEXITY.md K22, K39): the naive drop recurses through the parts on
+//! the thread's stack, O(depth) native stack, an abort with no message past the stack size
+//! (depth 100,000 on 2 MiB). Used: a drop reached from inside another queues its part, and the
+//! outermost drop empties the queue in a loop, O(size) time as before and O(depth) heap. Given
+//! up: a constant factor per part queued; parts are freed later than their holder, in queue
+//! order; while the thread ends and its queue is gone, a part is dropped by recursion.
 
 use std::cell::{Cell, RefCell};
 use std::thread::LocalKey;

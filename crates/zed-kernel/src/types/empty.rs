@@ -673,6 +673,14 @@ impl Type {
 /// The pairs met are at most the product of the types, and only those reached are made: a row
 /// is compared with the rows of `b` that share its first column, when any do, so unions keyed
 /// by a scalar cost one row each.
+// Complexity tradeoff (COMPLEXITY.md K37): the naive version recomputes the relation until no
+// pair changes, each round rereading every pair, O(pairs × rounds); the version before T6 made
+// 4n² pairs, 0.5 s at n = 128, for the union of `nth_from_end(1..=n)` against itself plus one.
+// Used: each pair
+// counts its open choices and a failure is spread once along its readers, as in Horn
+// satisfiability, O(needs) with O(log n) per lookup in `pairs`; a row equal to a row of `b`
+// holds with no search. Given up: the proof is sufficient only, so a pair it cannot show goes
+// to `Search`.
 #[derive(Default)]
 struct Simulation {
     pairs: BTreeMap<(Type, Type), usize>,
@@ -1316,6 +1324,13 @@ struct Cell {
 /// changed is tested again only against the cells open on it that have a tuple type still in
 /// the part, and only when they are next read. Each change is logged, so a piece of the box is
 /// tried and the box restored after.
+// Complexity tradeoff (COMPLEXITY.md K24): the naive region keeps what is known per tuple type
+// and component and tests each tuple type apart, O(N) in the `N` components written but with a
+// test per component even where many tuple types share its type. Used: one cell per component
+// and distinct type, tested once for every tuple type sharing it, and retested only when its
+// component changed; still O(N), the input's own size and a lower bound (DESIGN.md L1.23), with
+// about 3.4 times fewer instructions at c = 128 to 512 columns. Tradeoffs: the cell table and the
+// change log cost memory O(N); a prefix trie weighed against it measured `c^2.93`.
 #[derive(Default)]
 struct Region {
     r: Vec<Type>,
@@ -1699,6 +1714,11 @@ impl Search {
     /// on the walk that is on none puts `t` on none. The types that lead to a type with no
     /// step, or into a cycle they are not on, are on none, and are recorded so; a chain of
     /// lists is then walked once in all, not once from each of its types.
+    // Complexity tradeoff (COMPLEXITY.md K31): the naive version walks the list from each type
+    // to its cycle or dead end, O(k) a type and Θ(n²) for the `n` lists `R_k` of
+    // `nth_from_end(n)`. Used: the answer of every type on a walk is recorded (`cycles`), so each
+    // chain is walked once, O(n log n) in all with the ordered map. Tradeoff: the map holds an
+    // entry for each type walked while the search lives, O(n) memory.
     fn find_cycle(&mut self, t: &Type) -> Option<Cycle> {
         let (mut seen, mut path) = (BTreeMap::new(), Vec::new());
         let (mut x, mut steps) = (t.clone(), 0);
@@ -3302,6 +3322,14 @@ impl<'m> Searching<'m> {
     /// reads a type still being decided is proved empty, if it is, at the end of the phase.
     /// While a seed is sought nothing is decided, since that search keeps no answer.
     async fn no_key(&'m self, k: &Type) -> bool {
+        // Complexity tradeoff (COMPLEXITY.md K60): the naive version decides each key type by a
+        // search of its own, which reads the nest below it again: a nest of d morphisms, each
+        // the key type of the next, costs O(d²) (inferred from the structure, not measured).
+        // Used: the key type is decided in this search as a value type is, each key type once,
+        // O(d) for the nest. Given up: a key type whose decision reads a type still being
+        // decided is proved empty only at the end of the phase, and none is proved empty while
+        // a seed is sought, so the closure that needs it may be left unbuilt and its member
+        // refused (`Refusal::NoWitness`).
         if self.s().seeding {
             return false;
         }
@@ -3524,6 +3552,14 @@ impl<'m> Searching<'m> {
             // (`l01_23_subtyping::refusals::a_union_of_forked_differences_is_refused_in_its_size`,
             // and `a_pair_type_met_with_forked_differences_is_refused_in_its_size`, whose pair
             // type holds the box and so drops out; COMPLEXITY.md K80).
+            // Complexity tradeoff (COMPLEXITY.md K80): the naive search narrows each of the n
+            // candidates of the whole part against the n cells of its components and then
+            // refines each open tuple type, O(n²) narrowings. Used: the split into disjoint
+            // disjuncts, the skip of candidates inside an excluded tuple type
+            // (`inside_excluded`) and the proof below that a part whose candidates all lie
+            // inside excluded tuple types is empty, O(n) for these forms. Given up: nothing for
+            // a part these cover; a forked part not so proved empty is refined as before, at
+            // its old cost, so a value only refining finds is kept.
             let split = narrowed.disjoint_disjuncts();
             let parts = split.clone().unwrap_or_else(|| vec![whole.clone()]);
             for f in &parts {
@@ -3613,6 +3649,10 @@ impl<'m> Searching<'m> {
                         cells[b.cell(e, j)].push(e);
                     }
                 }
+                // Complexity tradeoff (COMPLEXITY.md K35, K80): the naive version narrows every
+                // candidate, O(n^2) types for n candidates; used, one test per candidate skips
+                // those inside an excluded tuple type, O(n) on the pairs of `fork_by`; nothing is
+                // given up, the answer is the same.
                 // One candidate for each tuple type left, narrowed by what the part says of it. A
                 // candidate inside a tuple type the part excludes holds no value of it, and the
                 // narrowing or the check of its row would say so, so it is skipped: narrowing it tests
@@ -6372,7 +6412,12 @@ fn judge(env: &Arc<Env>) -> Judgment {
     // 7.1 times at k 8 and 64); exponential when the search forks on the product, which the
     // verdict refuses as `Refusal::Fork` after a search for a value
     // (`the_product_of_k_parity_lists_is_refused_by_its_fork`: 178M, 1.11G and 4.51G
-    // instructions at k 2, 3 and 4). COMPLEXITY.md K84. A complete solution needs the product
+    // instructions at k 2, 3 and 4). COMPLEXITY.md K84. Naive version: a recursive occurrence
+    // under `&` or `\` makes the decider give up the whole group, so every member goes to the
+    // search (3.15M and 73.2M instructions at k 8 and 64, 23 times). Used: the decider reads
+    // `a & b` as an `And` node of its operands and `a \ b` as `a`, linear in the group, its
+    // `Empty` answers exact, so only members shown inhabited through a meet or a difference
+    // are searched (603K and 4.34M at k 8 and 64). A complete solution needs the product
     // construction of the meet's tree automata, exponential in the number of operands
     // (emptiness of an intersection of tree automata is EXPTIME-complete).
     let n = bodies.len();

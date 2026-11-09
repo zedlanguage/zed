@@ -422,6 +422,12 @@ impl Bounds {
 /// many symbols are `O(k log k)` and not `O(k²)` (DESIGN.md Part G). A constant has no least
 /// value, so the range starts at the first bound with these terms, found by walking down from
 /// a probe with constant 0: `O(log n + k)` for `k` bounds with these terms.
+// Complexity tradeoff: the naive version scans every bound of the side for each bound
+// added, compared or joined, O(k²) over k bounds (8 ms at 200 and 484 ms at 1,600 symbols,
+// ratio 60.8). Used: a range of the ordered set, O(log n + k) per call, O(k log k) in all.
+// Precondition: `Bound`'s order compares the terms first, so bounds with equal terms are
+// neighbors; the probe copies the terms, O(t) for t symbols. Nothing is given up. Test:
+// `l01_24_refinement_lattices::scaling::bounds_on_many_symbols_scale`; COMPLEXITY.md row S10.
 fn same_terms<'a>(
     set: &'a BTreeSet<Bound>,
     terms: &'a BTreeMap<Sym, Num>,

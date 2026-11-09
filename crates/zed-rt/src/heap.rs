@@ -209,6 +209,15 @@ impl Obj {
 /// shared in this generation, and the kernel value of a string, tuple or atom once made. A
 /// cell's contents do not change while it is live, and its parts live at least as long, so the
 /// value holds until the cell is freed (COMPLEXITY.md R1).
+// Complexity tradeoff: the naive slow path copies each input into a kernel value and back at
+// every kernel call, O(size) per call, so a value of n words handed to the kernel n times
+// costs O(n²) (R1: 47.8 times the instructions for 8 times the size). Here each string, tuple
+// or atom cell keeps the kernel value made from it, set when a kernel result becomes cells or
+// on the first read, cleared when the cell is freed, so a value is read once however often it
+// is handed over, and a cell met on several paths (R6) is read once. Tradeoffs: the memory of
+// one kernel value per such cell while it lives, shared with the value's parts; correct only
+// because a live cell's contents never change (the one write is the reuse of a freed slot,
+// which clears the value). Nothing is refused. Tests `l01_36_cranelift::kernel_inputs`.
 #[derive(Debug)]
 struct Cell {
     count: u32,
@@ -228,6 +237,14 @@ pub const CELL_BYTES: usize = mem::size_of::<Cell>();
 
 /// An entry of the table: an uncounted value, and where the entries of its parts start once a
 /// match has read them.
+// Complexity tradeoff: the naive table pushes every part a match reads, a deep clone of the
+// constant at each match, O(size) memory per match and O(matches · size) in all (R3: 991
+// entries after 10 matches at depth 100). Here an entry's parts are entered once, together,
+// the first time a match reads them (`parts`), and later matches read them in place, so the
+// table grows with the distinct constants and parts a run reads, not with its matches.
+// Tradeoff: an entry is never freed (a VAL word has no count, R6), so the table keeps every
+// part read until the run ends. Nothing is refused. Tests `l01_36_cranelift::reuse` and
+// `l01_36_cranelift::scaling::matching_one_constant_many_times_scales`.
 #[derive(Debug)]
 struct Entry {
     value: Value,
@@ -517,6 +534,14 @@ impl Heap {
     /// costs a cell per level, not one per path (COMPLEXITY.md R9); every other part is its
     /// own. Each cell keeps its part of `v` as its kernel value, so handing it to the kernel
     /// again reads nothing.
+    // Complexity tradeoff: the naive form gives each occurrence of a part its own cell, so a
+    // value whose d levels each hold the one below twice costs 2^d cells and time (R9: 4 times
+    // per 2 levels). Here the cell of each shared sequence is kept in `made`, keyed by the
+    // sequence's identity (`Value::shared_parts`), and a second holder takes an increment:
+    // O(distinct sequences + holders). Tradeoffs: one map entry per shared sequence for the
+    // call; equal sequences built apart get cells of their own, since only identity is
+    // compared, as the counting machine does. Nothing is refused. Tests
+    // `l01_36_cranelift::shared_values`.
     pub fn fresh(&mut self, v: &Value) -> Result<Word, String> {
         let mut stack: Vec<Making<'_>> = Vec::new();
         // The cell of each shared sequence made so far, by the sequence's identity.
@@ -949,6 +974,12 @@ impl Heap {
     /// place. A string, tuple or atom in cells is decided by its kind alone when `t` holds
     /// every value of that kind or none, so its text and parts are not read; otherwise it is
     /// made a value, which `t` reads whole.
+    // Complexity tradeoff: the naive test makes the whole value of the cell and asks `t`,
+    // O(size of the value) per test (R13: 8.0 times for 8 times the size). Here `t` is first
+    // met with the cell's kind, O(size of `t`), and when `t` holds all of the kind or none of it
+    // the answer needs no read of the value. Tradeoff: a `t` that holds part of the kind pays
+    // the meet and then the full read, as before. Nothing is refused. Tests
+    // `l01_36_cranelift::kinds`.
     fn is_in(&mut self, w: Word, t: &Type) -> Result<bool, String> {
         if w.tag == Word::VAL {
             return Ok(t.contains(&self.vals[w.bits as usize].value));

@@ -899,7 +899,7 @@ fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
 // asked twice, so it costs up to twice what it cost before; the first ask stops at the
 // refusal. No answer is given up: one refused with the rows is asked as before without them.
 // Naive version: one ask without the implied rows; used: the ask with them first, and without
-// them only on a refusal, at most two asks of one size.
+// them only on a refusal, at most two asks of one size. COMPLEXITY.md row S44.
 fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
     let (p, gone) = absorbed(f, &[]);
     let implied = if old_path() {
@@ -1719,6 +1719,16 @@ fn unordered(vars: Vec<Atom>, p: &Parts) -> Refusal {
 /// shown to have a point: [`AsSets::proven`] says which were. The last round adds nothing to
 /// the base (a round that adds rows is not the last), so each disjunct left was tested in it
 /// against the base as returned, and the marks of that round hold for the parts returned.
+// Complexity tradeoff: naive version, each disjunct the base's point missed is solved with
+// every base row linked to its atoms, a whole union-find group: on a chain of n stages, n
+// solves of n rows, O(n²) (40.6 times the instructions from 16 to 128 stages). Used: while the
+// point holds, a disjunct is tested first against the base projected by halves onto its own
+// atoms (`stage_kernels`, `by_halves`), O((m + k) log k) for k disjunctions on a chain or
+// tree of m rows (11.0 times). Tradeoffs: a projection the solver refuses sends the question
+// to the whole group, O(n) that disjunct, as before; the hulls are unchanged. Tests
+// `l01_38_presburger::omega::project_each_on_a_chained_pipeline_scales` and
+// `omega::pipeline_stage_hulls_match_the_code_before`; COMPLEXITY.md row
+// PROJECT-dead2-quadratic.
 fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
     let mut base = Linked::reduced(std::mem::take(&mut p.cons));
     loop {
@@ -2054,6 +2064,13 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 /// The answer is `found(p)?.is_some()`: the probe is the same up to its first point, a probe
 /// that finds none runs to the end as before, and [`found`] answers with that point where its
 /// own search after it refuses.
+// Complexity tradeoff: naive version, `found` probing every disjunct to the end, O(h²) here
+// (21.5 s at k = 32). Used: the probe stops at its first point, linear in the pieces (6.75
+// times the instructions in the scaling test below). Tradeoffs: a probe that finds no point
+// still runs to the end; `satisfiable` still probes to the end, so its model is main's. Tests
+// `l01_25_preimage_catalog::s22::the_box_of_a_chain_over_many_holes_is_tested_in_linear_work`
+// and `l01_38_presburger::model::satisfiable_agrees_with_decide_on_disjunctions_of_unit_rows`;
+// COMPLEXITY.md row S22-shapes-linear.
 fn has_point(p: Parts) -> Result<bool, Refusal> {
     if pick(&p, true).is_ok() {
         return Ok(true);
@@ -5443,6 +5460,15 @@ pub fn colors(cons: &[Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
 /// the numbers depend on the structure alone, not on the names or the order of the rows.
 /// O((n + m + t) log(n + m + t)) for n variables, m rows and t terms, with the sorts of the
 /// starting colors.
+// Complexity tradeoff: naive version, rounds of hashed color refinement until no class
+// splits, O(n²) on a pipeline of n stages, which needs about n/2 rounds (125 → 1000 stages:
+// 78.5 times the instructions); a fixed count of rounds instead stops before the colors are
+// stable, and a hash may merge colors (coefficients 2 and -3). Used: Berkholz, Bonsma and
+// Grohe's canonical refinement with Hopcroft's rule, O((n + m + t) log(n + m + t)), colors
+// numbered by sorting. Tradeoffs: the graph of variables, rows and terms is built in memory,
+// O(n + m + t); a coloring is a stable partition, not a canonical labeling, so symmetric
+// variables stay in one class. Tests in `tests/steps/l01_38_presburger/canonical.rs`;
+// COMPLEXITY.md row S32.
 fn stable_colors(atoms: &[Atom], cons: &[&Con]) -> Vec<usize> {
     let (n, m) = (atoms.len(), cons.len());
     let mut terms: Vec<(usize, usize, &Int)> = Vec::new();
@@ -6915,6 +6941,18 @@ impl Omega {
         }
     }
 
+    // Complexity tradeoff: naive version, Pugh's Omega test recursing into both the real and
+    // the dark shadow at each inexact elimination, O(2^V) problems per leaf for V variables
+    // (15 variables took 1.03 s). Used: one loop with no recursion into the shadows, exact
+    // eliminations first, eliminating only while the rows hold no more terms than the input;
+    // at the first inexact elimination the real shadow is tested once (`relaxed_empty`), then
+    // the dark shadow is solved, and `search` tries the splinters of one side one level deep.
+    // Steps are polynomial in the rows (2 ms at 15 variables). Tradeoffs: two refusals, each
+    // a property of the system's shape: `Refusal::Shadows` when a splinter leaves a gray
+    // shadow of its own, `Refusal::Growth` when every elimination left would add terms and
+    // the box test decides nothing; the cases still above n log n are row S18. Tests in
+    // `l01_38_presburger::scaling` (`a_long_chain_with_a_point_scales` and the other chain
+    // tests); COMPLEXITY.md row S5.
     fn run(&mut self) -> Leaf {
         // The values of the variables left when the loop ends, zero where none is given.
         let mut start: Vec<Int> = Vec::new();
