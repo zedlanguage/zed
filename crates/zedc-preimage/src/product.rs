@@ -490,6 +490,10 @@ pub struct Scope {
     /// Each question the integer solver left undecided while this scope was narrowed or
     /// projected, with the constraint it was asked of and how the scope came to ask it; each
     /// one leaves the scope sound but wider than it could be. [`Scope::warnings`] reports them.
+    /// Each keeps the sets its variables kept when it was refused (none when nothing stood in
+    /// for its answer), which its warning names: a repeat in one scope keeps their meet, and a
+    /// join keeps their join. Recording one costs O(log k + m log m) for k refusals and m
+    /// variables.
     ///
     /// Complexity tradeoff: a refused question (`presburger::Refusal`, whose costs and
     /// triggers are documented where each is raised) leaves the relation's narrowing out, so
@@ -502,7 +506,7 @@ pub struct Scope {
     /// `…::two_refused_arms_joined_give_both_warnings_in_one_order`,
     /// `…::warnings_of_many_refused_tests_scale`. COMPLEXITY.md rows S18 (the solver) and S28
     /// (this report). A complete solution would decide every question (see `presburger`).
-    pub refusals: imbl::OrdSet<Refused>,
+    pub refusals: imbl::OrdMap<Refused, Kept>,
     /// Each name a `let` of the walk bound, with the order of its binding and, for a function,
     /// its lambda: a test that calls a function is closed over it before its preimage is taken
     /// ([`Scope::close`]). Shared between the scopes of a walk's arms, not copied.
@@ -1183,6 +1187,42 @@ pub struct Refused {
     pub cause: Cause,
 }
 
+/// The sets a refused question left its variables, each by its name in the scope: a set holds
+/// every value the question allows the variable and may hold more. For a refused projection
+/// they are the bounds the box stage gives the rows (DESIGN step L1.38), and for a refused test
+/// the box of its preimage. Empty where the question left no variable such a set: a case of an
+/// alternative set aside, or the ends of names with holes.
+pub type Kept = Arc<BTreeMap<Arc<str>, IntervalSet>>;
+
+/// The sets of `a` and `b` combined by `f` for each variable both hold; with `either`, a
+/// variable only one holds keeps its set, and otherwise it is left out. O(m log m) in the m
+/// variables.
+fn merged(
+    a: &BTreeMap<Arc<str>, IntervalSet>,
+    b: &BTreeMap<Arc<str>, IntervalSet>,
+    f: impl Fn(&IntervalSet, &IntervalSet) -> IntervalSet,
+    either: bool,
+) -> BTreeMap<Arc<str>, IntervalSet> {
+    let mut out = BTreeMap::new();
+    for (n, x) in a {
+        match b.get(n) {
+            Some(y) => {
+                out.insert(n.clone(), f(x, y));
+            }
+            None if either => {
+                out.insert(n.clone(), x.clone());
+            }
+            None => {}
+        }
+    }
+    if either {
+        for (n, y) in b {
+            out.entry(n.clone()).or_insert_with(|| y.clone());
+        }
+    }
+    out
+}
+
 /// Why a question was left undecided.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Cause {
@@ -1257,9 +1297,62 @@ fn or_outside_parentheses(text: &str) -> bool {
     false
 }
 
+/// The sets a refused question left its variables, as a warning names them ([`shown`]). Each
+/// list is in the order of the names in the scope, each name as the program wrote it.
+enum Shown {
+    /// It left no variable a set.
+    None,
+    /// The sets of the variables with a bound, each as a type, `` `b: int[-4..=16]` ``, and
+    /// the variables left every integer, each in backquotes; each list joined by commas and a
+    /// last "and".
+    Bounds {
+        /// The variables with a bound and their sets.
+        bounded: String,
+        /// The variables with none.
+        open: String,
+    },
+    /// The variables whose sets are empty, so that no values meet the question.
+    NoValue(String),
+}
+
+/// `items` joined by commas and a last "and": `a`, `a and b`, `a, b and c`.
+fn listed_and(items: &[String]) -> String {
+    match items.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The sets `kept` as a warning names them ([`Shown`]). O(the length of the text).
+fn shown(kept: &Kept) -> Shown {
+    if kept.is_empty() {
+        return Shown::None;
+    }
+    let quoted = |n: &Arc<str>| format!("`{}`", written_name(n));
+    let empty: Vec<String> = (kept.iter())
+        .filter(|(_, x)| x.is_empty())
+        .map(|(n, _)| quoted(n))
+        .collect();
+    if !empty.is_empty() {
+        return Shown::NoValue(listed_and(&empty));
+    }
+    let (open, bounded): (Vec<_>, Vec<_>) =
+        kept.iter().partition(|(_, x)| **x == IntervalSet::top());
+    let bounded: Vec<String> = (bounded.into_iter())
+        .map(|(n, x)| format!("`{}: int{x}`", written_name(n)))
+        .collect();
+    let open: Vec<String> = open.into_iter().map(|(n, _)| quoted(n)).collect();
+    Shown::Bounds {
+        bounded: listed_and(&bounded),
+        open: listed_and(&open),
+    }
+}
+
 impl Refused {
-    /// The warning that reports this refusal, with its derivation and its repairs.
-    fn warning(&self) -> Warning {
+    /// The warning that reports this refusal, with its derivation and its repairs, and the sets
+    /// `sets` it left its variables.
+    fn warning(&self, sets: &Kept) -> Warning {
         let c = &self.constraint;
         let cause = match &self.cause {
             Cause::Solver(r) => r,
@@ -1283,24 +1376,52 @@ impl Refused {
                 };
             }
         };
+        // A refused projection or test keeps sets for its variables, and its cause ends by
+        // naming them; a case set aside keeps none, and its cause ends with the search.
+        let last = |source: &str| match shown(sets) {
+            Shown::None => cause.to_string(),
+            Shown::Bounds { bounded, open } => {
+                let text = match (bounded.is_empty(), open.is_empty()) {
+                    (true, _) => format!(
+                        "The checker stopped there, and {source} rule out no value: {open} may \
+                         still be any whole number"
+                    ),
+                    (false, true) => format!("The checker stopped there, with {source}: {bounded}"),
+                    (false, false) => format!(
+                        "The checker stopped there, with {source}: {bounded}; {open} may still \
+                         be any whole number"
+                    ),
+                };
+                cause.closed_by(&text).to_string()
+            }
+            Shown::NoValue(names) => cause
+                .closed_by(&format!(
+                    "The checker stopped there, but {source} leave no value for {names}"
+                ))
+                .to_string(),
+        };
         let (given, asked, kept) = match &self.asked {
             Asked::Test { outcome } => (
                 format!("here the test `{c}` is {outcome}"),
                 format!(
                     "the checker could not work out which values its variables can take when \
-                     it is {outcome}: {cause}"
+                     it is {outcome}: {}",
+                    last("the bounds it found on the test's variables")
                 ),
-                "so the test narrows the values of its variables here only to bounds that may be wider \
-                 than it allows",
+                "so the test narrows the values of its variables here only to those bounds, \
+                 which may be wider than it allows",
             ),
             Asked::Projection => (
                 format!("here the conditions `{c}` hold"),
                 format!(
                     "the checker could not work out which values each of their variables can \
-                     take: {cause}"
+                     take: {}",
+                    last(
+                        "the bounds that each condition gives each variable from the bounds of the others"
+                    )
                 ),
-                "so here each of their variables keeps only the bounds that each condition gives it \
-                 from the bounds of the others",
+                "so here each of their variables keeps only those bounds, which may be wider \
+                 than the conditions allow",
             ),
             Asked::Disjunct => (
                 format!("here the conditions `{c}` hold"),
@@ -1312,9 +1433,14 @@ impl Refused {
             ),
             Asked::Onto(n) => (
                 format!("here the conditions `{c}` hold"),
-                format!("the checker could not work out which values `{n}` can take: {cause}"),
-                "so here that variable keeps only the bounds that each condition gives it from the \
-                 bounds of the others",
+                format!(
+                    "the checker could not work out which values `{n}` can take: {}",
+                    last(&format!(
+                        "the bounds that each condition gives `{n}` from the bounds of the others"
+                    ))
+                ),
+                "so here that variable keeps only those bounds, which may be wider than the \
+                 conditions allow",
             ),
         };
         // The repairs rewrite the test or the conditions as printed: a scope is built from
@@ -1376,7 +1502,7 @@ impl Scope {
             projected: imbl::OrdMap::new(),
             exact,
             exactly: imbl::OrdMap::new(),
-            refusals: imbl::OrdSet::new(),
+            refusals: imbl::OrdMap::new(),
             bindings: imbl::OrdMap::new(),
             orders: imbl::OrdMap::new(),
             reads: Reads::default(),
@@ -2012,14 +2138,23 @@ impl Scope {
     /// narrowed or projected, joined scopes included, in the order of [`Refused`]: by
     /// constraint, how it was asked, then cause, whatever order they were met in.
     pub fn warnings(&self) -> Vec<Warning> {
-        self.refusals.iter().map(Refused::warning).collect()
+        (self.refusals.iter())
+            .map(|(r, kept)| r.warning(kept))
+            .collect()
     }
 
     /// Keeps `r`, a question the integer solver left undecided while this scope was narrowed or
-    /// projected, once, in O(log k) in the k refusals kept. Every refused test and part of the
-    /// relation is kept through here.
-    pub fn refuse(&mut self, r: Refused) {
-        self.refusals.insert(r);
+    /// projected, once, with `kept`, the sets it left its variables. The same question asked
+    /// again in this scope keeps the meet of the sets of each time, each of which holds every
+    /// value the question allows here, so the sets do not depend on the order the questions
+    /// were met in. O(log k) in the k refusals kept and O(m log m) in the m variables of `kept`.
+    /// Every refused test and part of the relation is kept through here.
+    pub fn refuse(&mut self, r: Refused, kept: Kept) {
+        let kept = match self.refusals.get(&r) {
+            Some(old) if *old != kept => Arc::new(merged(old, &kept, IntervalSet::meet, true)),
+            _ => kept,
+        };
+        self.refusals.insert(r, kept);
     }
 
     /// The names with one value each, and their values.
@@ -2242,9 +2377,22 @@ impl Scope {
         // in, since this side's constraints need not hold at them.
         let exactly = self.exactly.clone();
         let mut refusals = self.refusals.clone();
+        // A question refused on both sides keeps, for each variable, the join of its sets, since
+        // the join's values are those of either side; one refused on one side keeps that
+        // side's sets.
         for d in self.refusals.diff(&other.refusals) {
-            if let imbl::ordset::DiffItem::Add(r) = d {
-                refusals.insert(r.clone());
+            match d {
+                DiffItem::Add(r, kept) => {
+                    refusals.insert(r.clone(), kept.clone());
+                }
+                DiffItem::Update {
+                    old: (r, mine),
+                    new: (_, theirs),
+                } => {
+                    let both = merged(mine, theirs, IntervalSet::join, false);
+                    refusals.insert(r.clone(), Arc::new(both));
+                }
+                DiffItem::Remove(..) => {}
             }
         }
         Scope {
@@ -2744,11 +2892,22 @@ impl Scope {
             let pre = preimage_listed(t, &doms, &listed_names, &Demand::Bool(outcome));
             exact = pre.exact;
             if let Some(cause) = pre.refusal {
-                self.refuse(Refused {
-                    constraint: print::written(written, written_name).into(),
-                    asked: Asked::Test { outcome },
-                    cause: cause.into(),
-                });
+                // What the refused preimage kept: its bounds on the test's variables, which
+                // hold every value at which the test has this outcome.
+                let kept: Kept = Arc::new(
+                    (pre.domains.iter())
+                        .filter(|(n, _)| self.names.contains_key(*n))
+                        .map(|(n, d)| (n.clone(), d.clone()))
+                        .collect(),
+                );
+                self.refuse(
+                    Refused {
+                        constraint: print::written(written, written_name).into(),
+                        asked: Asked::Test { outcome },
+                        cause: cause.into(),
+                    },
+                    kept,
+                );
             }
             // The names bound by `let`s read through their summaries: the test narrows the
             // inputs they are computed from as well as the names. Only the inputs it narrows
@@ -3557,14 +3716,17 @@ impl Scope {
                     .map(|&i| written_name(&names[i]).into())
                     .collect();
                 holed.sort_unstable();
-                self.refuse(Refused {
-                    constraint,
-                    asked: Asked::Projection,
-                    cause: Cause::Holes {
-                        holed,
-                        names: part.len(),
+                self.refuse(
+                    Refused {
+                        constraint,
+                        asked: Asked::Projection,
+                        cause: Cause::Holes {
+                            holed,
+                            names: part.len(),
+                        },
                     },
-                });
+                    Kept::default(),
+                );
                 Ends::Blockwise
             }
             holes::Outcome::Kept(sets) => {
@@ -4631,32 +4793,50 @@ impl Scope {
         // The text of `part`, each name as written, printed once, and only when a question
         // about it is refused.
         let mut text: Option<Arc<str>> = None;
-        let mut refuse = |s: &mut Scope, asked: Asked, cause: presburger::Refusal| {
+        let mut refuse = |s: &mut Scope, asked: Asked, cause: presburger::Refusal, kept: Kept| {
             let constraint = text
                 .get_or_insert_with(|| part.written(written_name).into())
                 .clone();
-            s.refuse(Refused {
+            let r = Refused {
                 constraint,
                 asked,
                 cause: cause.into(),
-            });
+            };
+            s.refuse(r, kept);
         };
         // A refused projection keeps the bounds the box stage gives the rows (DESIGN step
-        // L1.38), and is reported.
+        // L1.38), and is reported with them: each name of the scope that `part` mentions, or
+        // for a projection onto one name refused alone, that name.
         let got = presburger::project_each_boxed(&whole, &syms);
-        let whole_refused = got.whole.is_some();
-        match got.whole {
-            Some(cause) => refuse(self, Asked::Projection, cause),
+        let boxed = |s: &Scope, only: Option<usize>| -> Kept {
+            let each = syms.iter().zip(&got.each).enumerate();
+            let sets = each.filter_map(|(i, (a, (x, _)))| match a {
+                Atom::Sym(n) if only.is_none_or(|k| k == i) && s.names.contains_key(n) => {
+                    Some((n.clone(), x.clone()))
+                }
+                _ => None,
+            });
+            Arc::new(sets.collect())
+        };
+        let mut refused = Vec::new();
+        match &got.whole {
+            Some(cause) => refused.push((Asked::Projection, cause.clone(), boxed(self, None))),
             None => {
-                for cause in got.skipped {
-                    refuse(self, Asked::Disjunct, cause);
+                for cause in &got.skipped {
+                    refused.push((Asked::Disjunct, cause.clone(), Kept::default()));
+                }
+                for (i, (a, (_, e))) in syms.iter().zip(&got.each).enumerate() {
+                    if let (Some(cause), Atom::Sym(n)) = (e, a) {
+                        let onto = Asked::Onto(written_name(n).into());
+                        refused.push((onto, cause.clone(), boxed(self, Some(i))));
+                    }
                 }
             }
         }
-        for (a, (x, e)) in syms.iter().zip(got.each) {
-            if let (Some(cause), false, Atom::Sym(n)) = (e, whole_refused, a) {
-                refuse(self, Asked::Onto(written_name(n).into()), cause);
-            }
+        for (asked, cause, kept) in refused {
+            refuse(self, asked, cause, kept);
+        }
+        for (a, (x, _)) in syms.iter().zip(got.each) {
             if let Atom::Sym(n) = a
                 && let Some(p) = self.names.get_mut(n)
             {

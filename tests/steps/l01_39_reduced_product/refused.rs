@@ -4,8 +4,9 @@
 use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
+use zedc::store::interval::IntervalSet;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, Shared, project_each};
-use zedc::store::product::{Asked, Refused, Scope};
+use zedc::store::product::{Asked, Kept, Refused, Scope};
 
 fn sym(s: &str) -> Atom {
     Atom::Sym(Arc::from(s))
@@ -76,8 +77,23 @@ const GROWTH: &str = "to find whole numbers that meet these conditions, the chec
                       variable at a time, putting in place of the conditions on it conditions on \
                       the variables left. Here four variables or more are left, and removing any \
                       one of them would leave more conditions than there are now, so the work \
-                      could grow without end. The checker stopped there, with no values found and \
-                      none ruled out";
+                      could grow without end";
+
+/// The sentence that closes [`GROWTH`] where the checker kept bounds `source` that rule out no
+/// value of `names`.
+fn none_ruled_out(source: &str, names: &str) -> String {
+    format!(
+        "{GROWTH}. The checker stopped there, and {source} rule out no value: {names} may still \
+         be any whole number"
+    )
+}
+
+/// The bounds a refused projection keeps.
+const EACH: &str =
+    "the bounds that each condition gives each variable from the bounds of the others";
+
+/// The bounds a refused test keeps.
+const FOUND: &str = "the bounds it found on the test's variables";
 
 /// The first line of every warning.
 const WIDER: &str = "warning: the checker knows less here about the values of some variables \
@@ -107,8 +123,9 @@ fn a_refused_test_gives_one_warning_at_its_test() {
         vec![format!(
             "{WIDER}\
              \n  [1] here the conditions `{constraints}` hold\
-             \n  [2] the checker could not work out which values each of their variables can take: {GROWTH}\
-             \n  [3] so here each of their variables keeps only the bounds that each condition gives it from the bounds of the others{}",
+             \n  [2] the checker could not work out which values each of their variables can take: {}\
+             \n  [3] so here each of their variables keeps only those bounds, which may be wider than the conditions allow{}",
+            none_ruled_out(EACH, "`w`, `x`, `y` and `z`"),
             value("w", "the conditions", constraints)
         )]
     );
@@ -133,8 +150,9 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
         format!(
             "{WIDER}\
                  \n  [1] here the test `{test}` is {outcome}\
-                 \n  [2] the checker could not work out which values its variables can take when it is {outcome}: {GROWTH}\
-                 \n  [3] so the test narrows the values of its variables here only to bounds that may be wider than it allows{}",
+                 \n  [2] the checker could not work out which values its variables can take when it is {outcome}: {}\
+                 \n  [3] so the test narrows the values of its variables here only to those bounds, which may be wider than it allows{}",
+            none_ruled_out(FOUND, "`w`, `x`, `y` and `z`"),
             value("x", "the test", test)
         )
     };
@@ -147,8 +165,9 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
     let projection = format!(
         "{WIDER}\
          \n  [1] here the conditions `{constraints}` hold\
-         \n  [2] the checker could not work out which values each of their variables can take: {GROWTH}\
-         \n  [3] so here each of their variables keeps only the bounds that each condition gives it from the bounds of the others{}",
+         \n  [2] the checker could not work out which values each of their variables can take: {}\
+         \n  [3] so here each of their variables keeps only those bounds, which may be wider than the conditions allow{}",
+        none_ruled_out(EACH, "`w`, `x`, `y` and `z`"),
         value("w", "the conditions", constraints)
     );
     assert_eq!(
@@ -178,8 +197,12 @@ fn a_refused_projection_onto_each_name_gives_one_warning_for_each() {
             format!(
                 "{WIDER}\
                  \n  [1] here the conditions `{constraints}` hold\
-                 \n  [2] the checker could not work out which values `{n}` can take: {GROWTH}\
-                 \n  [3] so here that variable keeps only the bounds that each condition gives it from the bounds of the others{}",
+                 \n  [2] the checker could not work out which values `{n}` can take: {}\
+                 \n  [3] so here that variable keeps only those bounds, which may be wider than the conditions allow{}",
+                none_ruled_out(
+                    &format!("the bounds that each condition gives `{n}` from the bounds of the others"),
+                    &format!("`{n}`")
+                ),
                 value("w", "the conditions", constraints)
             )
         })
@@ -295,13 +318,17 @@ fn warnings_of_many_refused_tests_scale() {
     // The check above is mostly the solver's work, about 11M instructions per refused test, so
     // the refusals' own cost is measured alone: keeping k refusals, each once, in a scope.
     let n = 4096;
-    let refused = [n, FACTOR * n].map(|k| -> Vec<Refused> {
+    let refused = [n, FACTOR * n].map(|k| -> Vec<(Refused, Kept)> {
         names(k)
             .chunks(4)
-            .map(|c| Refused {
-                constraint: growth_test([&*c[0], &*c[1], &*c[2], &*c[3]]).into(),
-                asked: Asked::Test { outcome: true },
-                cause: Refusal::Growth.into(),
+            .map(|c| {
+                let r = Refused {
+                    constraint: growth_test([&*c[0], &*c[1], &*c[2], &*c[3]]).into(),
+                    asked: Asked::Test { outcome: true },
+                    cause: Refusal::Growth.into(),
+                };
+                let sets = c.iter().map(|n| (n.clone(), IntervalSet::top()));
+                (r, Arc::new(sets.collect()))
             })
             .collect()
     });
@@ -309,8 +336,8 @@ fn warnings_of_many_refused_tests_scale() {
     scaling::check("keeping refusals", n, |k| {
         let s = refused[usize::from(k != n)]
             .iter()
-            .fold(empty.clone(), |mut s, r| {
-                s.refuse(r.clone());
+            .fold(empty.clone(), |mut s, (r, kept)| {
+                s.refuse(r.clone(), kept.clone());
                 s
             });
         assert_eq!(s.refusals.len(), k);
@@ -363,4 +390,126 @@ fn growth_term(names: &[Arc<str>]) -> Term {
     .into_iter()
     .reduce(|a, b| Term::Prim(Prim::And, vec![a, b]))
     .expect("four rows")
+}
+
+/// A refused projection whose variables have bounds names the bounds the box stage kept, each
+/// in the program's names and as a type the program can write, and those it left every whole
+/// number; the warning no longer says that nothing was ruled out (item
+/// MSG-growth-projection-cause).
+#[test]
+fn a_refused_projection_names_the_bounds_it_kept() {
+    let constraints = "12 * w + 10 * y + 12 * z <= 4 * x + 11 && 8 * w + 5 * x + z <= 12 * y + 31 \
+                       && 4 * w + 10 * x >= 10 * y + 11 * z + 28 && 11 * w + 4 * x + 12 * z >= y + 28";
+    let warning = |bounds: &str| {
+        format!(
+            "{WIDER}\
+             \n  [1] here the conditions `{constraints}` hold\
+             \n  [2] the checker could not work out which values each of their variables can take: {GROWTH}. The checker stopped there, with {EACH}: {bounds}\
+             \n  [3] so here each of their variables keeps only those bounds, which may be wider than the conditions allow{}",
+            value("w", "the conditions", constraints)
+        )
+    };
+    let g = growth_test(["x", "y", "z", "w"]);
+    let s = arm_scope(
+        &format!("x >= 0 && x <= 9 && y >= -5 && z <= 20 && {g}"),
+        true,
+    );
+    assert_eq!(
+        texts(&s),
+        vec![warning(
+            "`w: int[-23..]`, `x: int[0..=9]`, `y: int[-5..]` and `z: int[..=20]`"
+        )]
+    );
+    let s = arm_scope(&format!("x >= 0 && x <= 9 && {g}"), true);
+    assert_eq!(
+        texts(&s),
+        vec![warning(
+            "`x: int[0..=9]`; `w`, `y` and `z` may still be any whole number"
+        )]
+    );
+}
+
+/// Case 272 of seed 17 (`pendants::WRITTEN`) within its boxes: the projection onto `b`, `z1`
+/// and `z2` is refused, and each warning names the bounds the box stage kept for its variable;
+/// a case of an alternative set aside keeps no bounds, since the box stage does not read it,
+/// and still says that its search found no values and ruled none out.
+#[test]
+fn a_refused_projection_onto_one_name_names_its_bounds() {
+    let case = "a + 2 * c >= -4 && (2 * a + b >= 7 || z2 <= 8) && a + 2 * b + c + z1 >= 4 \
+                && a >= b + z1 - 6 && (b >= c - 11 || z2 <= 4) && a + b + c >= z1 + 2 \
+                && a + z1 <= b + c + 9 && a + c >= z0 - 12 && a + b + 2 * c == z2 + 5";
+    let bounds = "a >= 2 && a <= 3 && b >= -4 && c <= 8 && z0 >= -6 && z0 <= -4 && z1 >= -7 \
+                  && z1 <= 13 && z2 >= -10 && z2 <= 6";
+    let src = format!("ok(a, b, c, z0, z1, z2) = if {bounds} && {case} {{ 1 }} else {{ 0 }};");
+    let (_, _, arms) = super::arms_of(&src);
+    let got = texts(&super::arm(&arms, "z2 + 5", true).scope);
+    for (n, set) in [("b", "[-4..=15]"), ("z1", "[-7..=13]"), ("z2", "[-10..=6]")] {
+        let want = format!(
+            "{GROWTH}. The checker stopped there, with the bounds that each condition gives `{n}` \
+             from the bounds of the others: `{n}: int{set}`\n"
+        );
+        assert!(got.iter().any(|w| w.contains(&want)), "{n}: {got:#?}");
+    }
+    let aside = format!(
+        "so it set that case aside: {GROWTH}. The checker stopped there, with no values found \
+         and none ruled out\n"
+    );
+    assert_eq!(
+        got.iter().filter(|w| w.contains(&aside)).count(),
+        2,
+        "{got:#?}"
+    );
+    assert!(
+        got.iter()
+            .all(|w| w.contains(&aside) || !w.contains("none ruled out")),
+        "{got:#?}"
+    );
+}
+
+/// The sets a refusal keeps do not depend on the order the questions were met in: the same
+/// question refused twice in a scope keeps the meet of its sets, a name only one time bounds
+/// keeping that bound; refused on both sides of a join, the join of its sets; refused on one
+/// side only, that side's sets.
+#[test]
+fn the_bounds_of_a_refusal_do_not_depend_on_the_order_it_was_met_in() {
+    let r = Refused {
+        constraint: "u + v >= 0".into(),
+        asked: Asked::Projection,
+        cause: Refusal::Growth.into(),
+    };
+    let kept = |sets: &[(&str, i64, i64)]| -> Kept {
+        Arc::new(
+            (sets.iter())
+                .map(|&(n, lo, hi)| (Arc::from(n), IntervalSet::of(lo, hi)))
+                .collect(),
+        )
+    };
+    let names: Vec<Arc<str>> = ["u", "v"].map(Arc::from).into();
+    let refused = |sets: &[&Kept]| {
+        sets.iter().fold(super::ints(&names), |mut s, k| {
+            s.refuse(r.clone(), (*k).clone());
+            s
+        })
+    };
+    let bounds = |s: &Scope| {
+        let w = texts(s);
+        assert_eq!(w.len(), 1, "{w:#?}");
+        let (_, rest) = w[0].split_once(&format!("with {EACH}: ")).expect("bounds");
+        rest.split_once('\n').expect("a step after").0.to_string()
+    };
+    let (a, b) = (kept(&[("v", 0, 9)]), kept(&[("u", -3, 3), ("v", 5, 20)]));
+    let met = "`u: int[-3..=3]` and `v: int[5..=9]`";
+    assert_eq!(bounds(&refused(&[&a, &b])), met);
+    assert_eq!(bounds(&refused(&[&b, &a])), met);
+    assert_eq!(bounds(&refused(&[&b, &a, &b])), met);
+    let (l, r2) = (
+        refused(&[&kept(&[("v", 0, 3)])]),
+        refused(&[&kept(&[("v", 7, 9)])]),
+    );
+    let joined = "`v: int[0..=3, 7..=9]`";
+    assert_eq!(bounds(&l.join(&r2)), joined);
+    assert_eq!(bounds(&r2.join(&l)), joined);
+    let none = super::ints(&names);
+    assert_eq!(bounds(&l.join(&none)), "`v: int[0..=3]`");
+    assert_eq!(bounds(&none.join(&l)), "`v: int[0..=3]`");
 }

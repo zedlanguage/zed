@@ -143,7 +143,8 @@ pub struct Tie {
     pub rows: Vec<String>,
 }
 
-/// The sentence that closes every refusal: how far the search got.
+/// The sentence that closes a refusal of a question whose answer nothing stands in for: how
+/// far the search got ([`Refusal::closed_by`] closes the others).
 const STOPPED: &str = "The checker stopped there, with no values found and none ruled out";
 
 /// The opening of a refusal met while removing variables.
@@ -320,33 +321,56 @@ impl Refusal {
     }
 }
 
+impl Refusal {
+    /// This refusal's reason, what the checker was working out and why it stopped, closed by
+    /// the sentence `last`, which says what the checker kept: for a refused projection, the
+    /// bounds it kept (DESIGN step L1.38), where [`Refusal`]'s own closing sentence, that it
+    /// found no values and ruled none out, would be false.
+    pub fn closed_by<'a>(&'a self, last: &'a str) -> impl fmt::Display + 'a {
+        Closed { why: self, last }
+    }
+}
+
+/// A refusal's reason and the sentence that closes it ([`Refusal::closed_by`]).
+struct Closed<'a> {
+    why: &'a Refusal,
+    last: &'a str,
+}
+
 impl fmt::Display for Refusal {
+    /// The reason, closed by the sentence that the checker found no values and ruled none out.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
+        self.closed_by(STOPPED).fmt(f)
+    }
+}
+
+impl fmt::Display for Closed<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.why {
             Refusal::Growth => write!(
                 f,
                 "{REMOVING}. Here four variables or more are left, and removing any one of \
                  them would leave more conditions than there are now, so the work could grow \
-                 without end. {STOPPED}"
+                 without end."
             ),
             Refusal::Shadows => write!(
                 f,
                 "{REMOVING}. Where the values a variable can take have gaps, it splits the \
                  conditions into cases, one for each gap. Here the only values could lie in a \
                  case that would have to be split again with as many variables left as before, \
-                 so the splitting need not end. {STOPPED}"
+                 so the splitting need not end."
             ),
             Refusal::Disjuncts => write!(
                 f,
                 "{ALTERNATIVES}; no choice it tried has values that meet every condition, \
-                 and it could rule out none of the cases. {STOPPED}"
+                 and it could rule out none of the cases."
             ),
             Refusal::Tie(t) => write!(
                 f,
                 "{REMOVING}. Its next step must choose among the variables {}, which occur \
                  alike in the conditions (with the same coefficients, in conditions that are \
                  alike) and share {}, so only their names could order them, and the checker \
-                 never lets a name change an answer. {STOPPED}",
+                 never lets a name change an answer.",
                 quoted(&t.vars),
                 conditions(&t.rows)
             ),
@@ -356,7 +380,7 @@ impl fmt::Display for Refusal {
                  and the variables {} occur alike in them (with the same coefficients, in \
                  conditions that are alike), so only their names could order the search, and \
                  the checker never lets a name change an answer; the one choice the conditions \
-                 alone fix, if there is one, has no values that meet the rest. {STOPPED}",
+                 alone fix, if there is one, has no values that meet the rest.",
                 if t.rows.len() == 1 {
                     format!("the alternative {}", quoted(&t.rows))
                 } else {
@@ -365,7 +389,8 @@ impl fmt::Display for Refusal {
                 if t.rows.len() == 1 { "is" } else { "are" },
                 quoted(&t.vars)
             ),
-        }
+        }?;
+        write!(f, " {}", self.last)
     }
 }
 

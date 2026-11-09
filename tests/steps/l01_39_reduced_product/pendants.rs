@@ -1760,10 +1760,13 @@ type RefusedCount = (usize, usize, usize);
 
 /// Checks the names of `items` within `bs` that the solver refuses, where it refuses one: each
 /// keeps a set that holds its exact hull (`hulls`, asked only then), the same with the names
-/// reversed ([`boxed_as_named`]) and in each writing of [`four_ways`]. Adds to `count`, and
-/// describes each mismatch, under `label`, in `wrong`.
+/// reversed ([`boxed_as_named`]), in each writing of [`four_ways`], and in other orders of the
+/// parts and of the names: reversed, two random orders drawn from `order`, and a random
+/// writing of [`rewritten`], so that a box whose answer depends on the order of the rows is
+/// caught. Adds to `count`, and describes each mismatch, under `label`, in `wrong`.
 fn check_refused(
     label: &str,
+    order: &mut Rng,
     items: &[Item],
     bs: &BTreeMap<String, Vec<Piece>>,
     hulls: impl FnOnce() -> BTreeMap<String, IntervalSet>,
@@ -1783,6 +1786,29 @@ fn check_refused(
     }
     for (how, g) in four_ways(items).into_iter().skip(1) {
         let other = boxed_names(&s, &g, &syms);
+        if other != got {
+            wrong.push(format!(
+                "{label}: {f}\n  {how}: {g}\n  {got:?}\n  {other:?}"
+            ));
+        }
+    }
+    let mut reordered = vec![(
+        "reversed",
+        items.iter().rev().cloned().collect::<Vec<_>>(),
+        syms.iter().rev().cloned().collect::<Vec<_>>(),
+    )];
+    for _ in 0..2 {
+        let (mut is, mut ss) = (items.to_vec(), syms.clone());
+        shuffle(order, &mut is);
+        shuffle(order, &mut ss);
+        reordered.push(("shuffled", is, ss));
+    }
+    let mut writings: Vec<(&str, Formula, Vec<Atom>)> = (reordered.into_iter())
+        .map(|(how, is, ss)| (how, formula(&is), ss))
+        .collect();
+    writings.push(("rewritten", rewritten(order, items, false), syms.clone()));
+    for (how, g, ss) in writings {
+        let other = boxed_names(&s, &g, &ss);
         if other != got {
             wrong.push(format!(
                 "{label}: {f}\n  {how}: {g}\n  {got:?}\n  {other:?}"
@@ -1825,6 +1851,8 @@ fn refused_names_in(seeds: std::ops::Range<u64>, double: bool) -> RefusedCount {
     let mut wrong = Vec::new();
     for seed in seeds {
         let mut r = Rng::new(seed);
+        // The orders are drawn apart from the parts, so that the parts are those of the seed.
+        let mut order = Rng::new(0x0de5 ^ seed);
         for case in 0..400 {
             let nz = 2 + r.below(5);
             let mut items = random_part(&mut r, nz);
@@ -1834,7 +1862,9 @@ fn refused_names_in(seeds: std::ops::Range<u64>, double: bool) -> RefusedCount {
             let bs = random_boxes(&mut r, nz);
             let label = format!("seed {seed} case {case}");
             let hulls = || brute_hulls(&items, &bs);
-            check_refused(&label, &items, &bs, hulls, &mut count, &mut wrong);
+            check_refused(
+                &label, &mut order, &items, &bs, hulls, &mut count, &mut wrong,
+            );
         }
     }
     assert!(
