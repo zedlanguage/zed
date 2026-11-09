@@ -100,9 +100,11 @@ use zedc_solvers::{live3, twovar, utvpi};
 
 mod deep;
 pub mod extend;
+mod forced;
 mod formula;
 mod values;
 
+use forced::Forced;
 pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 
 /// Why a question lies outside the fragment the solver decides. Each is reported in its own
@@ -851,9 +853,16 @@ impl fmt::Display for Relation {
     }
 }
 
-/// Whether `f` holds somewhere, and where.
+/// Whether `f` holds somewhere, and where. A formula whose forced equations fix its atoms one
+/// after another, as the preimage of a chain of `if` at a point gives, is answered by
+/// propagation alone in time linear in its size (module `forced`, PRES-small-cost), with every
+/// atom of the formula in its point; any other goes to the solver.
 pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
-    or_old(|| satisfiable_named(f))
+    match forced::forced(f) {
+        Some(Forced::Empty) => Ok(None),
+        Some(Forced::Point(m)) => Ok(Some(m)),
+        Some(Forced::Holds) | None => or_old(|| satisfiable_named(f)),
+    }
 }
 
 /// [`satisfiable`] on one path ([`or_old`]).
@@ -909,8 +918,14 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 
 /// Whether `f` holds somewhere. A conjunction is decided without building a point; a point is
 /// built only to search the disjunctions that propagation leaves.
+/// A formula that propagation over its forced parts decides (module `forced`) is answered
+/// without the solver.
 pub fn decide(f: &Formula) -> Result<bool, Refusal> {
-    or_old(|| decide_named(f))
+    match forced::forced(f) {
+        Some(Forced::Empty) => Ok(false),
+        Some(Forced::Point(_) | Forced::Holds) => Ok(true),
+        None => or_old(|| decide_named(f)),
+    }
 }
 
 /// [`decide`] on one path ([`or_old`]).
@@ -11722,5 +11737,220 @@ mod jointly_empty_order {
         assert!(ors.iter().all(|ds| ds.len() == 1));
         back.reverse();
         assert_eq!(kept(&ors), kept(&back));
+    }
+}
+
+// Propagation over forced parts (module `forced`, PRES-small-cost) against the whole solver.
+#[cfg(test)]
+mod forced_against_solver {
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+
+    use super::forced::{Forced, forced};
+    use super::*;
+
+    fn sym(x: &str) -> Lin {
+        Lin::atom(Atom::Sym(Arc::from(x)))
+    }
+
+    fn q(i: u32) -> Lin {
+        Lin::atom(Atom::Aux(i))
+    }
+
+    fn k(v: i64) -> Lin {
+        Lin::constant(v)
+    }
+
+    fn ge(a: &Lin, b: &Lin) -> Formula {
+        Formula::Con(Con::ge(a, b))
+    }
+
+    fn eq(a: &Lin, b: &Lin) -> Formula {
+        Formula::Con(Con::eq(a, b))
+    }
+
+    /// What the whole solver says of `f`: the point it finds, or `None` when it finds none, and
+    /// whether `f` holds somewhere; `None` when it refuses.
+    fn slow(f: &Formula) -> Option<(Option<Model>, bool)> {
+        let m = or_old(|| satisfiable_named(f)).ok()?;
+        let d = or_old(|| decide_named(f)).ok()?;
+        Some((m, d))
+    }
+
+    /// Whether `p` is a point of `f`, as the solver reads `f`.
+    fn is_point(f: &Formula, p: &Model) -> bool {
+        let at = (p.iter()).map(|(a, v)| eq(&Lin::atom(a.clone()), &Lin::constant(v.clone())));
+        let fixed = Formula::and(std::iter::once(f.clone()).chain(at).collect());
+        slow(&fixed).expect("the solver answers").1
+    }
+
+    /// Checks [`forced`] of `f` against the whole solver; gives which answer it gave (0 empty,
+    /// 1 point, 2 holds, 3 undecided).
+    fn agrees(f: &Formula) -> usize {
+        let Some((m, d)) = slow(f) else {
+            eprintln!("refused: {f}");
+            return 4;
+        };
+        assert_eq!(m.is_some(), d, "satisfiable and decide of {f}");
+        match forced(f) {
+            Some(Forced::Empty) => {
+                assert_eq!(m, None, "{f} has a point, but propagation found none");
+                0
+            }
+            Some(Forced::Point(p)) => {
+                // The solver's point is this one, but may leave out some atoms.
+                let s = m.expect("a point");
+                assert!(
+                    s.iter().all(|(a, v)| p.get(a) == Some(v)),
+                    "the point of {f}: {p:?}, the solver's {s:?}"
+                );
+                assert_eq!(p.keys().cloned().collect::<BTreeSet<_>>(), f.atoms(), "{f}");
+                assert!(is_point(f, &p), "{p:?} is no point of {f}");
+                1
+            }
+            Some(Forced::Holds) => {
+                assert!(d, "{f} has no point, but propagation found it holds");
+                2
+            }
+            None => 3,
+        }
+    }
+
+    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % n
+        }
+
+        fn small(&mut self) -> i64 {
+            self.below(7) as i64 - 3
+        }
+    }
+
+    /// A formula of the shape the preimage of a chain of `if` at a point gives: definitions
+    /// `(g && c * q_i == e1) || (!g && q_i == e2)`, each guard `g` over the inputs or an earlier
+    /// definition and held in both disjuncts (a shared part), with the inputs fixed or left
+    /// free, sometimes fixed twice to different values, and terms with the product `x * y`.
+    fn chain(rng: &mut Rng) -> Formula {
+        let p = Lin::atom(Atom::product(&Arc::from("x"), &Arc::from("y")));
+        let mut fs = Vec::new();
+        let defs = 1 + rng.below(4) as u32;
+        for i in 0..defs {
+            let over = |rng: &mut Rng| match rng.below(4) {
+                0 => sym("x"),
+                1 => sym("y"),
+                2 if i > 0 => q(rng.below(u64::from(i)) as u32),
+                _ => p.clone(),
+            };
+            let g = ge(&over(rng), &k(rng.small()));
+            let c = 1 + rng.below(2) as i64;
+            let e1 = over(rng).plus(&k(rng.small()));
+            let e2 = k(rng.small());
+            fs.push(Formula::or(vec![
+                Formula::and(vec![g.clone(), eq(&q(i).times(c), &e1)]),
+                Formula::and(vec![Formula::negate(g), eq(&q(i), &e2)]),
+            ]));
+        }
+        for x in ["x", "y"] {
+            match rng.below(5) {
+                0 => {}
+                1 => fs.push(eq(&sym(x).times(2), &k(rng.small()))),
+                _ => fs.push(eq(&sym(x), &k(rng.small()))),
+            }
+        }
+        if rng.below(6) == 0 {
+            fs.push(eq(&sym("x"), &k(rng.small())));
+        }
+        Formula::and(fs)
+    }
+
+    #[test]
+    fn propagation_agrees_with_the_solver_on_chains_of_definitions() {
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let mut seen = [0usize; 5];
+        for _ in 0..3000 {
+            seen[agrees(&chain(&mut rng))] += 1;
+        }
+        // Each answer occurs often enough to be tested.
+        assert!(seen[..4].iter().all(|&n| n >= 50), "answers {seen:?}");
+    }
+
+    #[test]
+    fn corner_cases_agree_with_the_solver() {
+        let p = Lin::atom(Atom::product(&Arc::from("x"), &Arc::from("y")));
+        let g = ge(&sym("x"), &k(1));
+        let cases = [
+            // true and false.
+            (Formula::top(), 1),
+            (Formula::bottom(), 0),
+            // A non-integer value: `2 q0 == 3`.
+            (
+                Formula::and(vec![eq(&q(0).times(2), &k(3)), eq(&sym("x"), &k(1))]),
+                0,
+            ),
+            (
+                Formula::and(vec![eq(&q(0).times(2), &sym("x")), eq(&sym("x"), &k(3))]),
+                0,
+            ),
+            // A product is an atom of its own: an equation fixes it, not its factors.
+            (Formula::and(vec![eq(&p, &k(6)), eq(&sym("x"), &k(2))]), 1),
+            // and its factors' values do not give it one.
+            (
+                Formula::and(vec![
+                    ge(&p, &k(6)),
+                    eq(&sym("x"), &k(2)),
+                    eq(&sym("y"), &k(3)),
+                ]),
+                3,
+            ),
+            // A shared guard, read in both disjuncts.
+            (
+                Formula::and(vec![
+                    Formula::or(vec![
+                        Formula::and(vec![g.clone(), eq(&sym("x"), &q(0))]),
+                        Formula::and(vec![Formula::negate(g.clone()), eq(&q(0), &k(1))]),
+                    ]),
+                    eq(&sym("x"), &k(0)),
+                ]),
+                1,
+            ),
+            // A negation is not forced into its operand: `!(x >= 1 && y == 2)` fixes nothing.
+            (
+                Formula::and(vec![
+                    Formula::negate(Formula::and(vec![g.clone(), eq(&sym("y"), &k(2))])),
+                    eq(&sym("x"), &k(3)),
+                ]),
+                3,
+            ),
+            // True at the values given, with `z` free.
+            (
+                Formula::and(vec![
+                    eq(&sym("x"), &k(1)),
+                    Formula::or(vec![g.clone(), eq(&sym("z"), &k(5))]),
+                ]),
+                2,
+            ),
+            // Two values for one variable.
+            (
+                Formula::and(vec![eq(&sym("x"), &k(1)), eq(&sym("x").times(2), &k(4))]),
+                0,
+            ),
+            // A disjunction with two live operands fixes nothing.
+            (
+                Formula::and(vec![
+                    Formula::or(vec![eq(&sym("x"), &k(1)), eq(&sym("x"), &k(2))]),
+                    ge(&sym("y"), &k(0)),
+                ]),
+                3,
+            ),
+        ];
+        for (f, want) in cases {
+            assert_eq!(agrees(&f), want, "{f}");
+        }
     }
 }

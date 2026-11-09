@@ -36,6 +36,7 @@ pub(crate) mod random;
 mod repair;
 pub(crate) mod scaling;
 mod shared;
+mod small_cost;
 mod stages;
 mod tight;
 

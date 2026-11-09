@@ -3100,3 +3100,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `BTreeMap`s of buckets (`waiting`, `bounding`) changed through `get_mut`, `entry().or_default()` and `remove` while the worklist runs | `drop_outside_values` | Mutation (gap 11) | persistent maps carried through the loop |
 | `Vec::retain` with a counter captured by the closure, to drop the disjuncts marked dead in each disjunction | `drop_outside_values` | Mutation (gap 11) | a filter over the disjuncts zipped with their numbers |
 | A plain `fn(&D) -> &[Con]` parameter, generic in the disjunct type, so the module does not import its parent's `Parts` | `drop_outside_values` | none | a function parameter |
+
+## Entries from PRES-small-cost (`crates/zedc-presburger/src/presburger/forced.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Unit propagation over a formula graph held in flat arrays (`value`, `forced`, `left`, `known`) changed in place by an event stack (`Event::Valued`, `Force`, `Known`) until it is empty or a forced part is false (`return false` out of the loop) | `forced::Graph::run`, `valued`, `force`, `known_var`, `solve` | Mutation (gap 11), early exit (gap 12) | a state receiver holding the arrays and the stack, the loop a fold that stops at the first contradiction; persistent arrays keep it O(n log n), mutable ones O(n) |
+| Parents and watch lists as ranges into one `Vec<u32>` each, filled by a counting sort through a cursor array | `forced::Graph::link`, `ranges` | Mutation (gap 11) | a group-by into a map from part to its parents, O(n log n), or the same arrays in a state receiver (as for `utvpi::potential`) |
+| A `HashMap<Atom, u32>` numbering atoms through `entry().or_insert_with_key`, and a `HashMap<Id, u32>` as the visited set of shared parts | `forced::Graph::of`, `number` | Identity (gap 1) for `Id`; none for the atoms | the atoms numbered by a fold over a map; the shared parts by the identity the port gives `Shared` |
