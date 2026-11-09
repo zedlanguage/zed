@@ -1205,7 +1205,9 @@ impl Core {
     // `l01_24_refinement_lattices::ends::kept_values_with_no_kept_form_are_written_out`
     // (the two cube roots above); COMPLEXITY.md S33. A complete solution would keep a root in
     // a form that a floor determines, as the least radicand with that floor, found as a kept
-    // value: the open case of a root of a sum at `Kept::root`.
+    // value: the open case of a root of a sum at `Kept::root`. Naive version: every pair of
+    // cores compared by `value_cmp`, at the bits of the value; used: a form comparison at the
+    // cost of the coprime base, with `value_cmp` only for roots of differing radicands.
     fn same(&self, o: &Core) -> bool {
         if self == o {
             return true;
@@ -2860,7 +2862,9 @@ impl Hash for Num {
     // residue modulo a fixed prime: a big value by `%`, a kept value with integer cores by
     // `Kept::residue`, and a kept value holding a root by the residue of each root written
     // out once and kept in the atom's memo, at the cost of the root's digits; equal values
-    // have one residue whatever their forms, so this agrees with equality.
+    // have one residue whatever their forms, so this agrees with equality. Standard version: a
+    // hash of the value, O(1) expected per lookup but at the cost of a root's digits; used: one
+    // bucket per sign, O(1) to hash and O(n) comparisons per lookup among n such values.
     fn hash<H: Hasher>(&self, h: &mut H) {
         match &self.0 {
             Word::Small(v) => v.hash(h),

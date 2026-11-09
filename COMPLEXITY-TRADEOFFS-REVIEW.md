@@ -261,3 +261,27 @@ Line numbers are those before this review's edits.
 | `extend.rs` `project` | 7d23ca0c | product of disjunctions, exponential | O(r d) per group | shared atom kept | complete | none |
 | `extend.rs` `decided` | a7032e3f | one shape asked | second shape on refusal | measured 42/34 refusals | complete | none |
 | `extend.rs` `Summaries::summary` | 4e48ee57 | every definition per test, O(n²) | summary per definition, O(n) | LOAD-chain-sep | complete | none |
+
+## crates/zedc-int
+
+17 sites, all in `int.rs`. Most are the fallbacks where a kept value (a sum of powers) has no kept form for an operation, so the value is written out "at the cost of its digits". These state both versions: the kept form that is missing (named as the complete solution) and the written-out value used, with its cost; they are counted complete. Line numbers are those before the edits.
+
+| Site | Commit | Naive version, complexity | Used version, complexity | Tradeoffs | Before | Action |
+|---|---|---|---|---|---|---|
+| `int.rs:1067` (`strip` remainder tests) | 3d29a0df | squares only, O(M(n)) whatever `k` | test by remainder, about `n log d`, only where `d <= sqrt(n)` | measured 13.9 vs 11.1 instruction growth | complete | none |
+| `int.rs:1198` `Core::same` | d4894aaa | `value_cmp` at the bits of the value | form comparison over a coprime base | roots of different radicands only by `value_cmp` | partial | added naive/used sentence |
+| `int.rs:1418` `fold` | d4894aaa | written out, bits of the value | one sort plus a power per term (doc comment) | only powers of one integer folded | complete | none |
+| `int.rs:1488` root bisection | d4894aaa | Newton, O(log bits) steps | bisection, O(bits · bits of k) products | interval Newton needs a containment proof | complete | none |
+| `int.rs:1699` root of a root | d4894aaa | kept nested-root atom | written out, its digits plus a root | needs radicand residues | complete | none |
+| `int.rs:1864` perfect-power test | d4894aaa | closed-form root, not known | precision to the bits of `x`, one residue test per 64 bits | no closed form for a root of a sum | complete | none |
+| `int.rs:2012` written-out memory ask | 0e524771 | one ask per allocation | one ask, a byte per bit of the widest bound | refusal window up to 5.49 times; memory-ask rule | complete | none |
+| `int.rs:2058` value inside `i128` | d4894aaa | cancelled by `fold` | written out, digits of the cores | as `fold` | complete | none |
+| `int.rs:2244` trailing zeros of a root | 9fd9e552 | 2-adic residue in the memo | written out, its digits | root needs unit precision | complete | none |
+| `int.rs:2261` kept exponent | 9fd9e552 | kept-exponent atom | exponent written out, its digits | no atom with kept exponent | complete | none |
+| `int.rs:2320` power of a sum | d4894aaa | kept `s ^ k` atom | expansion, up to `C(n + k - 1, k)` terms | new atom needs its own approximation and residues | complete | none |
+| `int.rs:2364` power past `u32` | 7498c2e7 | expansion, past any memory | `None`, O(1), caller bounds outward | loses exactness | complete | none |
+| `int.rs:2524` `div_floor` | d4894aaa | kept `floor(a / b)` atom | written out, their digits; by a power of 2 in form | new form needed | complete | none |
+| `int.rs:2566` `mod_floor` | d4894aaa | from a kept quotient | written out, their digits | as `div_floor` | complete | none |
+| `int.rs:2599` `gcd` | d4894aaa | coprime-base factoring plus residues | written out, their digits | no form for gcd of unrelated powers | complete | none |
+| `int.rs:2851` `Hash` | d4894aaa | value hash, O(1) expected, at a root's digits | one bucket per sign, O(n) comparisons per lookup | hash must agree with equality across forms | partial | added standard/used sentence |
+| `int.rs:2907` decimal display | d4894aaa | own form as Zed text | written out, digits plus decimal conversion | printed value must parse back | complete | none |
