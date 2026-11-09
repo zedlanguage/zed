@@ -1718,11 +1718,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| GROUP-overlaps-unfold | impl attempt 1 | 2026-11-09 12:48 | differential vs old walk: 301 pieces of l01_23-26/zed_kernel/s_01f pass with assert_eq in every call; l01_23 alone 481,187 calls (183k non-empty), 0 mismatches |
+| GROUP-overlaps-unfold | impl attempt 1 | 2026-11-09 12:48 | docs written (COMPLEXITY K36, K93; STATUS; ZED_PORT_GAPS); final run with doc check of l01_23..26, zed_kernel, s_01f; load 35.56 34.59 30.37 |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | MSG-fresh-name-clash | running | 2026-11-09 13:30 | noted for batch 88 (DOCS-TODO 54 and COMPLEXITY F140 renumber); deletes: none |
 | MSG-growth-projection-cause | impl attempt 1 | 2026-11-09 12:41 | ready at 2e4d1da9 on wt/growth-cause; 491 test pieces pass, load 17 to 37; deletes: none |
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | started; worktree if-shortcut-diff at origin/main 5fcc15f1 |
+| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | started, worktree /home/luke/Work/wt/lto-cost on 5fcc15f1 |
 | PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | started, worktree /home/luke/Work/wt/read-cache-free on 5fcc15f1 |
 | PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | differential vs main's tighten/hull_side test by test: 1,078,090 + 25,046 calls identical, 60 differ (all hull_side refusals Growth/Shadows on main now exact bo |
 | PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | deletes: one command, ran, rc=0 for both parts: (1) inside zrun, 'rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/cargo/profil |
