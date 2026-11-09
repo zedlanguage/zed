@@ -1722,11 +1722,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | MSG-fresh-name-clash | running | 2026-11-09 13:30 | noted for batch 88 (DOCS-TODO 54 and COMPLEXITY F140 renumber); deletes: none |
 | MSG-growth-projection-cause | impl attempt 1 | 2026-11-09 12:41 | ready at 2e4d1da9 on wt/growth-cause; 491 test pieces pass, load 17 to 37; deletes: none |
-| PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | started; worktree if-shortcut-diff at origin/main 5fcc15f1 |
-| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | started, worktree /home/luke/Work/wt/lto-cost on 5fcc15f1 |
-| PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | started, worktree /home/luke/Work/wt/read-cache-free on 5fcc15f1 |
+| PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | negative controls run once, reverted: shortcut taking both arms as reached fails the decided-cases test and random part 1 at seed 1; flag missing the finite-set |
+| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | reference lto=false (thin-local) full rebuild 252 s -j4: block 4000 623M, fees1 1000 900M, fees1 4000 3841M, fees100 4000 758M, boundblock 815M (16-18% below lt |
+| PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | negative control on merged 5fcc15f1: new test deep_let::the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block fails, 1000 blocks peak 6.53 MB left 6 |
+| PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | started, worktree wt/model-keys on origin/main 797f3be4 |
 | PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | differential vs main's tighten/hull_side test by test: 1,078,090 + 25,046 calls identical, 60 differ (all hull_side refusals Growth/Shadows on main now exact bo |
-| PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | deletes: one command, ran, rc=0 for both parts: (1) inside zrun, 'rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/cargo/profil |
+| PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | ready cf7cdd28 on wt/pres-small-cost (rebased on 5414631a); 490 pieces 0 failed, load 17-57; follow-ups PRES-small-front, PRES-model-keys queued |
 | PRINT-group-site-defs | impl attempt 1 | 2026-11-09 13:49 | first run of affected groups after the printer change (182 pieces), load 39.18 34.46 27.64 |
 | PROJECT-hull-credit-lower | impl attempt 1 | 2026-11-09 12:10 | ready: wt/hull-credit 9664b8b9 rebased on origin/main 98d5d23d, 493/493 pieces pass, load 15-51; ledger ready + TIGHTEN-each-whole |
 | RENAME-orderedValues | impl attempt 1 | 2026-11-09 14:20 | ready 41b71c18 (spec b193f13): 36 pieces 0 failed after rebase, load 19-40; 30 grep hits left, all Rust identifiers |
