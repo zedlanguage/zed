@@ -52,6 +52,7 @@ use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
 
 use super::address::Address;
+use super::holes;
 use super::images;
 use super::preimage::{
     Classes, Demand, Domains, LetIn, LetPa, Lets, Listed, Shift, TermBounds, follow_own,
@@ -749,6 +750,17 @@ enum Shortest {
     Bottom(Arc<str>),
 }
 
+/// What [`Scope::by_holes`] did with a tree.
+enum Ends {
+    /// It projected the tree, as [`Scope::shortest`] does.
+    Done(Shortest),
+    /// It refused the tree, whose names, these, then had their gaps raised to their holes, so
+    /// shortest paths project it.
+    Paths(Vec<Arc<str>>),
+    /// A name has a class, or it refused the tree: the tree is projected block by block.
+    Blockwise,
+}
+
 /// Why [`Scope::shortest`] left a tree to be projected block by block.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fall {
@@ -1066,8 +1078,31 @@ pub struct Refused {
     pub constraint: Arc<str>,
     /// How the scope came to ask it.
     pub asked: Asked,
-    /// Why the solver left it undecided.
-    pub cause: presburger::Refusal,
+    /// Why it was left undecided.
+    pub cause: Cause,
+}
+
+/// Why a question was left undecided.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Cause {
+    /// The integer solver refused it.
+    Solver(presburger::Refusal),
+    /// The ends of names with holes are not found exactly: the difference constraints join
+    /// `names` names, both ways, in more than one cycle, and more than two of them, `holed`,
+    /// have holes (item ST-holes-moves). It depends on the constraints and on which names
+    /// have holes alone.
+    Holes {
+        /// The names with holes, as written, in order.
+        holed: Vec<Arc<str>>,
+        /// The number of names the constraints join.
+        names: usize,
+    },
+}
+
+impl From<presburger::Refusal> for Cause {
+    fn from(r: presburger::Refusal) -> Cause {
+        Cause::Solver(r)
+    }
 }
 
 /// How a scope came to ask a question of the integer solver.
@@ -1110,7 +1145,28 @@ impl Refused {
     /// The warning that reports this refusal, with its derivation.
     fn warning(&self) -> Warning {
         let c = &self.constraint;
-        let cause = &self.cause;
+        let cause = match &self.cause {
+            Cause::Solver(r) => r,
+            Cause::Holes { holed, names } => {
+                let holed: Vec<String> = holed.iter().map(|n| format!("`{n}`")).collect();
+                return Warning {
+                    message: "the ends of names with holes are not found exactly".to_string(),
+                    steps: vec![
+                        format!("the constraints `{c}` hold in the scope"),
+                        format!(
+                            "they join their {names} names both ways in more than one cycle, \
+                             and {} of them have holes: {}; the ends of such names are found \
+                             exactly when at most two of them have holes",
+                            holed.len(),
+                            holed.join(", ")
+                        ),
+                        "the names of the constraints are narrowed one block at a time, and \
+                         their ends may be wider than the constraints make them"
+                            .to_string(),
+                    ],
+                };
+            }
+        };
         let (given, asked, kept) = match &self.asked {
             Asked::Test { outcome } => (
                 format!("the test `{c}` is assumed {outcome}"),
@@ -2444,7 +2500,7 @@ impl Scope {
                 self.refuse(Refused {
                     constraint: print::written(written, written_name).into(),
                     asked: Asked::Test { outcome },
-                    cause,
+                    cause: cause.into(),
                 });
             }
             // The names bound by `let`s read through their summaries: the test narrows the
@@ -2876,7 +2932,12 @@ impl Scope {
             // way its tree is, so that the potential holds at every edge it has
             // ([`Scope::repair`]); then the gap of each seed whose interval's gap has grown
             // past the one the potential holds with, as when a test leaves a hole in it
-            // ([`Scope::raise`]).
+            // ([`Scope::raise`]). A raise that fails leaves its name past its gap, so its tree
+            // is projected by the ends of its names, which do not read the gaps, whatever the
+            // other raises do: the tree's raises stop there, and are made only if the ends
+            // refuse the tree ([`Scope::by_holes`]). Otherwise `k` holes in one test on a cycle
+            // of `k` names with no slack each lowered the potential round the cycle before
+            // failing, Θ(k²).
             for (&t, at) in &fresh {
                 if !at.added.is_empty() {
                     match self.repair(&relation, t, &at.added) {
@@ -2893,7 +2954,9 @@ impl Scope {
                     }
                 }
                 for n in &at.names {
-                    self.raise(&relation, t, n);
+                    if !self.raise(&relation, t, n) {
+                        break;
+                    }
                 }
             }
         }
@@ -2916,6 +2979,15 @@ impl Scope {
         let mut cause: BTreeMap<BlockId, BTreeSet<Arc<str>>> = BTreeMap::new();
         // The trees projected as a whole after an echo, whose blocks are not projected again.
         let mut whole_trees: BTreeSet<BlockId> = BTreeSet::new();
+        // The trees projected by the ends of their names, and those left to be projected
+        // block by block, in this projection.
+        let mut solved: BTreeSet<BlockId> = BTreeSet::new();
+        let mut blockwise: BTreeSet<BlockId> = BTreeSet::new();
+        // The trees whose ends were refused and whose gaps were then raised, to be projected by
+        // shortest paths, with their names, whose record in the relation is brought up to date
+        // after the worklist, which reads the relation ([`Scope::sync_gap`]).
+        let mut paths: BTreeSet<BlockId> = BTreeSet::new();
+        let mut raised: Vec<Arc<str>> = Vec::new();
         while let Some(b) = work.pop_front() {
             queued.remove(&b);
             let from = cause.remove(&b).unwrap_or_default();
@@ -2926,30 +2998,72 @@ impl Scope {
             // A tree of difference constraints and bounds whose names have no class, and holes
             // only within the gaps the potential holds with ([`Potential`]), is projected by
             // shortest paths from what changed in it, once for all its blocks on the worklist,
-            // and again for each move that reaches it from a star; otherwise, or when that
-            // cannot be done, block by block as below.
+            // and again for each move that reaches it from a star. A tree of them with holes
+            // past those gaps, or one that shortest paths left, is projected by the ends of its
+            // names ([`Scope::by_holes`]), once, and again for each move that reaches it from
+            // another tree. Otherwise, or when neither can be done, block by block as below.
             //
-            // Complexity tradeoff: a tree with a class in a name, or holes in names that no
-            // potential holds with (a cycle of edges of weight less than the sum of its names'
-            // gaps, as `x <= z <= x + 1` with a hole in each, or an equality with a name with
-            // holes), is projected block by block, from the blocks due, with the whole tree
-            // projected at an echo. Why: shortest paths over the names' hulls are then not the
-            // projection (`x, z` in `[w, w + 1]`, `x <= z <= x + 1`, `x != 5`, `z != 6` leave
-            // out `w = 5`), and no exact incremental rule for such holes is known here; the
-            // holes of one name then leave holes in the others. Trigger: tests that each leave
-            // a hole in another name of such a cycle, with `if`s joined between them: the band
-            // `10 <= x_i - x_(i+1) <= 11`, `x_i != 10 (k - i) + 5` and rungs
-            // `x_i - x_(i+2) >= 20` read 138 M, 4,115 M and 110,524 M instructions at k = 5, 10
-            // and 20, as on the code before, and 12 M to 28 M at k = 5 to 10 with no hole. Tests
-            // that leave holes in many names of a tree no such cycle passes through are
-            // projected by shortest paths, at a cost in proportion to the names whose potential
-            // each hole lowers ([`Scope::raise`]): about k / 2 a hole on a chain of k names
-            // whose edges have no slack in the potential, quadratic in all, and `m - 1` on an `m`
-            // by `m` grid, `n^1.5` in its `n` names. That cost is open, item ST-holes-moves, and
-            // not approved. COMPLEXITY.md row S25.
+            // Complexity tradeoff: a tree with a class in a name, or one whose ends the method
+            // refuses (holes in three names or more of a part that its constraints join both
+            // ways in more than one cycle, [`holes`]), is projected block by block, from the
+            // blocks due, with the whole tree projected at an echo. Why: shortest paths over
+            // the names' hulls are then not the projection (`x, z` in `[w, w + 1]`,
+            // `x <= z <= x + 1`, `x != 5`, `z != 6` leave out `w = 5`), and no exact method in
+            // O(N log N) is known for such parts; the holes of one name then leave holes in the
+            // others. Trigger: tests that each leave a hole in another name of such a part,
+            // with `if`s joined between them: the band `10 <= x_i - x_(i+1) <= 11`,
+            // `x_i != 10 (k - i) + 5` and rungs `x_i - x_(i+2) >= 20` read 138 M, 4,115 M and
+            // 110,524 M instructions at k = 5, 10 and 20, as on the code before ST-holes-moves.
+            // The ends solve the whole tree at each projection that reaches it, in O(N log N)
+            // for its `N` names, conjuncts and pieces, and tests that leave a hole in one more
+            // name of a tree each, one at a time, also raise the potential of the names below
+            // it ([`Scope::raise`]): `k` such tests on a tree of `k` names cost O(k² log k), as
+            // the chain and the grid of `linked` measure, and so do `k` holes in one test on a
+            // chain with slack enough that every raise holds. That cost is open, item O7 of the
+            // cross-review xst, and not approved. COMPLEXITY.md row S25.
             let shortest =
                 !every && !blocks.is_apart(b) && !fallen.contains_key(&t) && !holed.contains(&t);
-            if shortest && blocks.gaps(t) == Some(0) {
+            let ends = !blocks.is_apart(b)
+                && !blockwise.contains(&t)
+                && !paths.contains(&t)
+                && blocks
+                    .gaps(t)
+                    .is_some_and(|k| k > 0 || fallen.contains_key(&t) || holed.contains(&t));
+            if ends && !(solved.contains(&t) && from.is_empty()) {
+                match self.by_holes(&relation, t, b, shortest) {
+                    Ends::Done(Shortest::Moved(ns)) => {
+                        solved.insert(t);
+                        for n in &ns {
+                            for g in relation.moved(n, self.lazy) {
+                                if let Some(c) = blocks.of(g)
+                                    && blocks.tree(c) != t
+                                {
+                                    cause.entry(c).or_default().insert(n.clone());
+                                    if queued.insert(c) {
+                                        work.push_back(c);
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    Ends::Done(Shortest::Bottom(n)) => {
+                        self.empty_at(&n);
+                        self.relation = relation;
+                        return;
+                    }
+                    Ends::Paths(ns) => {
+                        paths.insert(t);
+                        raised.extend(ns);
+                    }
+                    Ends::Blockwise => {
+                        blockwise.insert(t);
+                    }
+                }
+            } else if ends {
+                continue;
+            }
+            if shortest && (blocks.gaps(t) == Some(0) || paths.contains(&t)) {
                 let mut at = fresh.remove(&t).unwrap_or_default();
                 at.names.extend(from.iter().cloned());
                 at.changed.extend(from.iter().cloned());
@@ -3034,12 +3148,185 @@ impl Scope {
                 whole_trees.insert(blocks.tree(b));
             }
         }
+        for n in &raised {
+            self.sync_gap(&mut relation, n);
+        }
         for (t, b) in fallen {
             if let Some(b) = b {
                 self.reseed(&mut relation, t, b);
             }
         }
         self.relation = relation;
+    }
+
+    /// Projects tree `t` of the forest, a tree of difference constraints and bounds some of
+    /// whose names have holes, `b` a block of it, by the ends of its names (item
+    /// ST-holes-moves, [`holes`]): each name is met with its integers between its least and
+    /// greatest values over the integer points of the tree's constraints within the names'
+    /// integers. The ends are exact; the values between them are exact for a name on no cycle
+    /// of constraints with a name with holes, and may have no point otherwise.
+    ///
+    /// When the method refuses the tree and `paths` is set, the gap of each of its names is
+    /// raised to its holes ([`Scope::raise`]); when every raise holds, shortest paths project
+    /// the tree exactly ([`Ends::Paths`]), as they did before the projection skipped the
+    /// raises ([`Scope::project`]). Otherwise the refusal is recorded as a warning of its own
+    /// ([`Cause::Holes`]), and the tree is projected block by block, as when a name has a
+    /// class.
+    ///
+    /// In O(N log N) for the tree's names, conjuncts and the pieces of its names' integers, as
+    /// [`holes`]: the conjuncts are found by a search from the block's names with a visited set.
+    /// A refused tree's raises cost as [`Scope::raise`] states.
+    fn by_holes(&mut self, relation: &Conjuncts, t: BlockId, b: BlockId, paths: bool) -> Ends {
+        let blocks = relation.blocks();
+        let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
+        let mut work: Vec<Arc<str>> = Vec::new();
+        for g in blocks.members(b) {
+            for n in conjuncts::names(g) {
+                if seen.insert(n.clone()) {
+                    work.push(n);
+                }
+            }
+        }
+        let mut tree: BTreeSet<Arc<Formula>> = BTreeSet::new();
+        while let Some(n) = work.pop() {
+            for g in relation.mentioning(&n) {
+                if !blocks
+                    .of(g)
+                    .is_some_and(|c| !blocks.is_apart(c) && blocks.tree(c) == t)
+                    || !tree.insert(g.clone())
+                {
+                    continue;
+                }
+                for m in conjuncts::names(g) {
+                    if seen.insert(m.clone()) {
+                        work.push(m);
+                    }
+                }
+            }
+        }
+        // The names in order, each name's bounds from the conjuncts that bound it alone, and
+        // the edges between names, each with its conjunct.
+        let names: Vec<Arc<str>> = seen.into_iter().collect();
+        let at = |n: &Arc<str>| names.binary_search(n).ok();
+        let mut lo: Vec<Option<Int>> = vec![None; names.len()];
+        let mut hi: Vec<Option<Int>> = vec![None; names.len()];
+        let mut edges: Vec<(usize, usize, Int)> = Vec::new();
+        let mut of: Vec<&Arc<Formula>> = Vec::new();
+        for g in &tree {
+            let Some((e, back)) = conjuncts::edges(g) else {
+                return Ends::Blockwise;
+            };
+            for e in std::iter::once(e).chain(back) {
+                match (e.from.as_ref().and_then(at), e.to.as_ref().and_then(at)) {
+                    (Some(u), Some(v)) => {
+                        edges.push((u, v, e.weight));
+                        of.push(g);
+                    }
+                    // `x_v <= w`.
+                    (None, Some(v)) => {
+                        if hi[v].as_ref().is_none_or(|h| e.weight < *h) {
+                            hi[v] = Some(e.weight);
+                        }
+                    }
+                    // `0 <= x_u + w`.
+                    (Some(u), None) => {
+                        let l = -&e.weight;
+                        if lo[u].as_ref().is_none_or(|x| l > *x) {
+                            lo[u] = Some(l);
+                        }
+                    }
+                    (None, None) => return Ends::Blockwise,
+                }
+            }
+        }
+        let end = |x: &Option<Int>, inf: End| x.as_ref().map_or(inf, |x| End::Fin(Num::from(x)));
+        let int = |e: &End| match e {
+            End::Fin(v) => Some(Int::from(v)),
+            _ => None,
+        };
+        let mut dom: Vec<holes::Pieces> = Vec::with_capacity(names.len());
+        for (i, n) in names.iter().enumerate() {
+            let bound = IntervalSet::range(end(&lo[i], End::NegInf), end(&hi[i], End::PosInf));
+            let ints = match self.names.get(n) {
+                Some(p) if classed(p) => return Ends::Blockwise,
+                Some(p) => p.ints().meet(&bound),
+                None => bound,
+            };
+            if ints.pieces().is_empty() {
+                return Ends::Done(Shortest::Bottom(n.clone()));
+            }
+            dom.push(
+                ints.pieces()
+                    .iter()
+                    .map(|(a, b)| (int(a), int(b)))
+                    .collect(),
+            );
+        }
+        let potential: Vec<Option<Int>> = names
+            .iter()
+            .map(|n| self.potential.at.get(n).map(|x| x.0.clone()))
+            .collect();
+        let graph = holes::Graph {
+            dom,
+            edges,
+            potential,
+        };
+        match holes::solve(&graph) {
+            holes::Outcome::Empty => Ends::Done(Shortest::Bottom(names[0].clone())),
+            holes::Outcome::Refused { names: part, holed } => {
+                // A raise that fails leaves its name past its gap, and the tree off shortest
+                // paths whatever the others do, so the raises stop there.
+                if paths && names.iter().all(|n| self.raise(relation, t, n)) {
+                    return Ends::Paths(names);
+                }
+                // The constraints between the names of the part, as written.
+                let inside: BTreeSet<usize> = part.iter().copied().collect();
+                let gs: BTreeSet<&Arc<Formula>> = graph
+                    .edges
+                    .iter()
+                    .zip(&of)
+                    .filter(|((u, v, _), _)| inside.contains(u) && inside.contains(v))
+                    .map(|(_, g)| *g)
+                    .collect();
+                let constraint = Formula::and(gs.into_iter().map(|g| (**g).clone()).collect())
+                    .written(written_name)
+                    .into();
+                let mut holed: Vec<Arc<str>> = holed
+                    .iter()
+                    .map(|&i| written_name(&names[i]).into())
+                    .collect();
+                holed.sort_unstable();
+                self.refuse(Refused {
+                    constraint,
+                    asked: Asked::Projection,
+                    cause: Cause::Holes {
+                        holed,
+                        names: part.len(),
+                    },
+                });
+                Ends::Blockwise
+            }
+            holes::Outcome::Kept(sets) => {
+                let mut moved = Vec::new();
+                for (n, set) in names.iter().zip(sets) {
+                    let Some(p) = self.names.get_mut(n) else {
+                        continue;
+                    };
+                    let set = IntervalSet::from_pieces(
+                        set.iter()
+                            .map(|(a, b)| (end(a, End::NegInf), end(b, End::PosInf)))
+                            .collect(),
+                    );
+                    let before = p.ints().clone();
+                    let prem = p.premises();
+                    p.meet_ints(set, &prem);
+                    if *p.ints() != before {
+                        moved.push(n.clone());
+                    }
+                }
+                Ends::Done(Shortest::Moved(moved))
+            }
+        }
     }
 
     /// Projects tree `t` of the forest, a tree of difference constraints and bounds whose
@@ -3224,21 +3511,26 @@ impl Scope {
     /// edges added are ([`Scope::repair`]). When that finds a cycle negative with the gaps,
     /// nothing changes, and `x` keeps its tree from shortest paths ([`Scope::sync_gap`]): the
     /// holes of `x` may then leave holes in the other names. A name the potential lacks takes
-    /// the gap alone, with no edge to read. In O((r + their edges) log n) for the `r` names whose
-    /// potential falls, which is every name below `x` on a chain with no slack in the
-    /// potential: open, item ST-holes-moves (COMPLEXITY.md row S25).
-    fn raise(&mut self, relation: &Conjuncts, t: BlockId, x: &Arc<str>) {
+    /// the gap alone, with no edge to read. Whether `x` is now within its gap, or has a class
+    /// or no product, which no raise changes.
+    ///
+    /// In O((r + their edges) log n) for the `r` names whose potential falls, which is every
+    /// name below `x` on a chain with no slack in the potential: `k` raises that each hold on
+    /// a chain of `k` names cost O(k² log k), open, item O7 of the cross-review xst
+    /// (COMPLEXITY.md row S25). A projection stops raising a tree at the first raise that
+    /// fails ([`Scope::project`]).
+    fn raise(&mut self, relation: &Conjuncts, t: BlockId, x: &Arc<str>) -> bool {
         let Some(p) = self.names.get(x).filter(|p| !classed(p)) else {
-            return;
+            return true;
         };
         let g = hole_gap(p.ints());
         let was = self.potential.gap_of(x);
         if g <= was {
-            return;
+            return true;
         }
         let Some(px) = self.potential.at.get(x).cloned() else {
             self.potential.gap.insert(x.clone(), g);
-            return;
+            return true;
         };
         let mut pot = self.potential.at.clone();
         let mut tied = self.potential.tied.clone();
@@ -3261,7 +3553,9 @@ impl Scope {
             self.potential.at = pot;
             self.potential.tied = tied;
             self.potential.gap = gap;
+            return true;
         }
+        false
     }
 
     /// Empties the interval of `n`, or the scope when it has no product of `n`.
@@ -4015,14 +4309,14 @@ impl Scope {
         // The text of `part`, each name as written, printed once, and only when a question
         // about it is refused.
         let mut text: Option<Arc<str>> = None;
-        let mut refuse = |s: &mut Scope, asked: Asked, cause| {
+        let mut refuse = |s: &mut Scope, asked: Asked, cause: presburger::Refusal| {
             let constraint = text
                 .get_or_insert_with(|| part.written(written_name).into())
                 .clone();
             s.refuse(Refused {
                 constraint,
                 asked,
-                cause,
+                cause: cause.into(),
             });
         };
         let each = match presburger::project_each(&whole, &syms) {

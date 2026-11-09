@@ -4,6 +4,7 @@
 
 pub mod address;
 mod divisors;
+mod holes;
 pub mod images;
 pub mod preimage;
 /// The backward transfer before S22a, which tests compare [`preimage`] with. Built only with

@@ -254,7 +254,7 @@ fn warnings_of_many_refused_tests_scale() {
             .map(|c| Refused {
                 constraint: growth_test([&*c[0], &*c[1], &*c[2], &*c[3]]).into(),
                 asked: Asked::Test { outcome: true },
-                cause: Refusal::Growth,
+                cause: Refusal::Growth.into(),
             })
             .collect()
     });
