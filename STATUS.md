@@ -1633,8 +1633,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| ATOM-payload-unify | impl attempt 1 | 2026-11-08 05:12 | started; worktree wt/atom-payload-unify from origin/main a70df51b |
+| C2-chain-general | impl attempt 1 | 2026-11-08 02:58 | started; worktree /home/luke/Work/wt/c2-chain-general on origin/main a70df51b |
+| LOAD-holes-mod | impl attempt 1 | 2026-11-07 17:30 | started: worktree wt/load-holes-mod from origin/main |
+| REFUSAL-nfa-refuse | impl attempt 1 | 2026-11-07 17:30 | started; worktree /home/luke/Work/wt/refusal-nfa-refuse on origin/main a70df51b |
+| SPEC-L1.19-inputs | running | 2026-11-07 19:32 |  |
+| SPEC-s4-base | spec attempt 1 | 2026-11-08 02:53 | resumed with rulings 1-5; measuring (iii) on holed cycles and multi-atom P |
+| ST-holes-moves | impl attempt 1 | 2026-11-07 14:32 | raise was the quadratic part of one-test hole families; raises now stop at the first failure per tree, resumed only when the ends refuse; laps/stair/mix ~2x per |
+| T11-ptr-tests | running | 2026-11-07 19:32 |  |
 | TABLE-short-scan | impl attempt 1 | 2026-11-07 12:26 | start: worktree /home/luke/Work/wt/table-short-scan on origin/main 007abbf8 |
-| TEST-audit | audit attempt 1 | 2026-11-08 13:02 | instrumented build done (4.2 GB, rc 0); starting whole suite under coverage, -j 4, --no-doc; load 7.55 11.55 8.89 |
+| TEST-audit | audit attempt 1 | 2026-11-08 13:02 | REPORT.md Parts 1 and 3 written (156 Part 1 rows: 89 committed, 46 partial, 13 missing; Part 3: 882 behaviors, 60 untested); coverage run still going |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
