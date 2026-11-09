@@ -8295,15 +8295,20 @@ impl<'a> Differences<'a> {
     }
 
     /// The distance of each node from the nearest of `sources` going `along`, with that
-    /// source, or `None` where no source reaches. Each edge `u → v` of weight `w` is taken at
-    /// its reduced weight `w + sign·(p(u) - p(v))` (`sign` 1 up, -1 down), which the point
-    /// keeps from being negative, so the search is Dijkstra's from all the sources at once:
-    /// O(m log n) for m edges over n nodes. Nearest is by reduced distance, which is the slack
-    /// at the point of the bound the path gives, and of two sources at one reduced distance the
-    /// earlier in `sources` keeps the node: each node's label is the least pair (reduced
-    /// distance, place in `sources`), which the order of the edges does not change. Unless
-    /// `through_z`, the search does not enter `z`, so a path is a chain of difference
-    /// constraints alone and not of a bound on one end joined to a bound on the other.
+    /// source, or `None` where no source reaches or two are nearest. Each edge `u → v` of
+    /// weight `w` is taken at its reduced weight `w + sign·(p(u) - p(v))` (`sign` 1 up, -1
+    /// down), which the point keeps from being negative, so the search is Dijkstra's from all
+    /// the sources at once. Nearest is by reduced distance, which is the slack at the point of
+    /// the bound the path gives. A source is its own nearest, through the empty path. A node
+    /// that two sources reach at its least reduced distance has no nearest, and nor has a node
+    /// whose shortest paths pass through one: choosing among them could only go by their places
+    /// in `sources`, that is by name, and the checker never lets a name change an answer
+    /// (C2-chain-general; `l01_38_presburger::ladder::the_bounds_found_do_not_depend_on_names`).
+    /// Each node is expanded at most twice at its least distance, once with one nearest source
+    /// and once with none, so the cost is O(m log n) for m edges over n nodes, and the result
+    /// does not depend on the order of the edges. Unless `through_z`, the search does not enter
+    /// `z`, so a path is a chain of difference constraints alone and not of a bound on one end
+    /// joined to a bound on the other.
     fn search(
         &self,
         along: Along,
@@ -8315,32 +8320,43 @@ impl<'a> Differences<'a> {
             Along::Down => (&self.back, Int::from(-1)),
         };
         let p = &self.p;
-        // Each node's least (reduced distance, place of its source in `sources`).
-        let mut label: Vec<Option<(Int, usize)>> = vec![None; edges.len()];
-        let mut done = vec![false; edges.len()];
+        // Each node's least reduced distance, with its one nearest source, or `None` for two
+        // or more; and how far it has been expanded: 0 not yet, 1 with one source, 2 with none.
+        let mut label: Vec<Option<(Int, Option<usize>)>> = vec![None; edges.len()];
+        let mut expanded = vec![0u8; edges.len()];
         let mut heap = std::collections::BinaryHeap::new();
-        for (r, &s) in sources.iter().enumerate() {
-            if label[s].is_none() {
-                label[s] = Some((Int::ZERO, r));
-                heap.push(std::cmp::Reverse((Int::ZERO, r, s)));
-            }
+        for &s in sources {
+            label[s] = Some((Int::ZERO, Some(s)));
+            heap.push(std::cmp::Reverse((Int::ZERO, s)));
         }
-        while let Some(std::cmp::Reverse((d, r, u))) = heap.pop() {
-            if mem::replace(&mut done[u], true) {
+        while let Some(std::cmp::Reverse((d, u))) = heap.pop() {
+            let Some((du, from)) = label[u].clone() else {
+                continue;
+            };
+            let stage = if from.is_some() { 1 } else { 2 };
+            if d > du || expanded[u] >= stage {
                 continue;
             }
+            expanded[u] = stage;
             for (v, w) in &edges[u] {
-                if *v == 0 && !through_z {
+                if (*v == 0 && !through_z)
+                    || label[*v].as_ref().is_some_and(|(_, s)| *s == Some(*v))
+                {
                     continue;
                 }
                 let nd = &d + &(w + &(&sign * &(&p[u] - &p[*v])));
-                if label[*v]
-                    .as_ref()
-                    .is_none_or(|(old, q)| (&nd, r) < (old, *q))
-                {
-                    label[*v] = Some((nd.clone(), r));
-                    heap.push(std::cmp::Reverse((nd, r, *v)));
-                }
+                let next = match &label[*v] {
+                    Some((old, _)) if nd > *old => continue,
+                    Some((old, s)) if nd == *old => {
+                        if s.is_none() || *s == from {
+                            continue;
+                        }
+                        None
+                    }
+                    _ => from,
+                };
+                label[*v] = Some((nd.clone(), next));
+                heap.push(std::cmp::Reverse((nd, *v)));
             }
         }
         // Back from reduced distances: `d(v) = d'(v) - sign·(p(s) - p(v))` for the source `s`.
@@ -8348,10 +8364,9 @@ impl<'a> Differences<'a> {
             .into_iter()
             .enumerate()
             .map(|(v, l)| {
-                l.map(|(d, r)| {
-                    let s = sources[r];
-                    (&d - &(&sign * &(&p[s] - &p[v])), s)
-                })
+                let (d, s) = l?;
+                let s = s?;
+                Some((&d - &(&sign * &(&p[s] - &p[v])), s))
             })
             .collect()
     }
@@ -8546,8 +8561,9 @@ fn disjunction_bounds(
 /// bound on `s` when `K` is not zero, rounded inward. For example `w1 <= v` and `w2 <= v` turn
 /// `w1 + w2 >= 10` into `2·v - 10 >= 0`, so `v >= 5`. Each bound holds wherever the rows do,
 /// since each replacement only raises the row's left side. Each atom is tied to its nearest
-/// source alone ([`Differences::search`], two searches from all the sources at once, not
-/// through `z`), and a row is read once, a sum kept for each source among its atoms', so the
+/// source alone, and to none where two are nearest, so that no name chooses
+/// ([`Differences::search`], two searches from all the sources at once, not through `z`);
+/// such an atom counts with its own bound from `b`. A row is read once, a sum kept for each source among its atoms', so the
 /// cost is O(m log n) for m rows over n atoms. An equality is read as two rows.
 fn eliminate(
     g: &Differences,
@@ -8979,8 +8995,9 @@ struct PartBounds {
 /// one that needs two general rows at once on atoms that are both kept (from
 /// `a + b >= 10` and `a - 2·b >= 1` with `b` in a disjunction, `a >= 7`), a side that depends
 /// on itself through the rows (let go with the bound it has, [`propagate`]), a path to a
-/// factor other than the nearest one, or a row nested two levels deep, in a disjunction
-/// within a disjunct, or under the negation of an equality or of a conjunction or disjunction.
+/// factor other than the nearest one or to one of two nearest, or a row nested two levels
+/// deep, in a disjunction within a disjunct, or under the negation of an equality or of a
+/// conjunction or disjunction.
 /// Why: the hull of one atom of a general integer system is an integer program, and integer
 /// programming is NP-hard, so no method finds every hull in O(m log n) unless P = NP; each
 /// side by [`hull_from`] costs O(part). These bounds are a first try: where the goal is then
@@ -9312,7 +9329,9 @@ fn linear_reading(
 /// path of difference constraints through atoms outside a cluster that ties two of its atoms
 /// more closely than their bounds do. Test:
 /// `l01_38_presburger::ladder::products_whose_factors_keep_open_sides_scale` (`Local`, linear
-/// in the links). COMPLEXITY.md row C2.
+/// in the links). Measured quadratic case: one cluster of k links joined by a sum of their
+/// atoms, 32 sides in 52 ms at k = 8 and 234 sides in 3.86 s at k = 64; plan row
+/// C2-local-tier. COMPLEXITY.md row C2.
 #[derive(Clone, Copy)]
 enum Tier {
     Cheap,

@@ -11,12 +11,15 @@
 //! procedures reach it"; sec:domains: a refused question "is reported as not proved").
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use zed_kernel::Value;
 use zed_tests::scaling;
 use zed_tests::step_helpers::l01_25_preimage_catalog::function;
 use zedc::store::preimage::relations;
-use zedc::store::presburger::{self, Entailment, Relation, entails};
+use zedc::store::presburger::{
+    self, Atom, Con, Entailment, Factor, Formula, Lin, Relation, entails,
+};
 
 use super::entailment::rung2;
 use super::{at, holds, point, window};
@@ -668,6 +671,16 @@ fn product_chain(k: usize) -> (Relation, Relation) {
 
 /// [`product_chain`] with the rows `extra` added to the premise.
 fn product_chain_with(k: usize, extra: &[String]) -> (Relation, Relation) {
+    let (premise, goal) = product_chain_source(k, extra);
+    let (ps, p) = function(&premise);
+    let (_, g) = function(&goal);
+    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
+    let g = rs.pop().expect("two relations");
+    (rs.pop().expect("two relations"), g)
+}
+
+/// The premise and the goal of [`product_chain_with`], as written.
+fn product_chain_source(k: usize, extra: &[String]) -> (String, String) {
     let names: Vec<String> = (0..k).map(|i| format!("x{i}, y{i}, z{i}")).collect();
     let head = format!("ok({})", names.join(", "));
     let mut premise = vec!["z0 >= 0".to_string()];
@@ -676,12 +689,12 @@ fn product_chain_with(k: usize, extra: &[String]) -> (Relation, Relation) {
     premise.extend((0..k).map(|i| format!("x{i} >= z{i} && y{i} >= z{i}")));
     premise.extend(extra.iter().cloned());
     let goal: Vec<String> = (0..k).map(|i| format!("x{i} * y{i}")).collect();
-    let (ps, p) = function(&format!("{head} = {};", premise.join(" && ")));
-    let (_, g) = function(&format!("{head} = {} >= 0;", goal.join(" + ")));
-    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
-    let g = rs.pop().expect("two relations");
-    (rs.pop().expect("two relations"), g)
+    (
+        format!("{head} = {};", premise.join(" && ")),
+        format!("{head} = {} >= 0;", goal.join(" + ")),
+    )
 }
+
 #[test]
 fn products_whose_factors_one_chain_connects_scale() {
     // Every factor lies in one part, the chain; its atoms are bounded in one pass over the
@@ -923,6 +936,253 @@ fn a_chain_bounds_each_factor_by_the_whole_chain() {
     assert!(!matches!(e, Entailment::Proved(_)), "{e}");
 }
 
+/// The parameters of `ok` in `src`, as written.
+fn parameters(src: &str) -> Vec<String> {
+    let start = src.find("ok(").expect("a definition `ok`") + 3;
+    let end = start + src[start..].find(')').expect("a closed parameter list");
+    src[start..end]
+        .split(',')
+        .map(|p| p.split(':').next().unwrap_or(p).trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect()
+}
+
+/// `src` with each word (a run of letters, digits and `_`) that `to` names replaced by its
+/// image.
+fn renamed(src: &str, to: &BTreeMap<String, String>) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        out.push_str(to.get(word.as_str()).unwrap_or(word));
+        word.clear();
+    };
+    for c in src.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
+/// A verdict written over the names `back` gives each symbol, so that two verdicts compare
+/// up to a renaming: its kind, and for a proof each top-level conjunct of its certificate
+/// (whose products of premises in pairs carry the bounds found for each factor), sorted, and
+/// for a refutation the witness. A point where the linear reading fails is any such point, and
+/// a refusal names the variables it could not tell apart, so neither is compared.
+fn up_to_names(e: &Entailment, back: &BTreeMap<Arc<str>, Arc<str>>) -> String {
+    let sym = |s: &Arc<str>| back.get(s).cloned().unwrap_or_else(|| s.clone());
+    let factor = |f: &Factor| match f {
+        Factor::Sym(s) => Factor::Sym(sym(s)),
+        Factor::Aux(n) => Factor::Aux(*n),
+    };
+    let atom = |a: &Atom| match a {
+        Atom::Sym(s) => Atom::Sym(sym(s)),
+        Atom::Product(x, y) => Atom::product_of(factor(x), factor(y)),
+        Atom::Aux(n) => Atom::Aux(*n),
+    };
+    let con = |c: &Con| {
+        Formula::Con(Con {
+            lin: Lin {
+                terms: c
+                    .lin
+                    .terms
+                    .iter()
+                    .map(|(a, k)| (atom(a), k.clone()))
+                    .collect(),
+                constant: c.lin.constant.clone(),
+            },
+            rel: c.rel,
+        })
+    };
+    fn conjuncts(f: &Formula, out: &mut Vec<String>) {
+        match f {
+            Formula::And(gs) => gs.iter().for_each(|g| conjuncts(g, out)),
+            _ => out.push(f.to_string()),
+        }
+    }
+    match e {
+        Entailment::Proved(ps) => {
+            let mut shown = Vec::new();
+            for p in ps {
+                conjuncts(&p.map_cons(&con), &mut shown);
+            }
+            shown.sort();
+            format!("proved from {}", shown.join(" && "))
+        }
+        Entailment::Refuted(m) => {
+            let w: BTreeMap<Atom, _> = m.iter().map(|(a, v)| (atom(a), v.clone())).collect();
+            format!("refuted at {w:?}")
+        }
+        Entailment::NotProved(_) => "not proved".to_string(),
+        Entailment::Refused(_) => "refused".to_string(),
+    }
+}
+
+/// Each obligation that `part_bounds` reads through its shortest paths, which the tests above
+/// name, at three links where a family has `k`.
+fn path_search_cases() -> Vec<(String, String)> {
+    let pair = |p: &str, g: &str| (p.to_string(), g.to_string());
+    let links: [fn(usize) -> String; 4] = [
+        |i| format!("b{i} + 2 * c{i} <= 3 && c{i} >= z{i}"),
+        |i| format!("b{i} + 2 * c{i} <= 3 && c{i} >= z{i} && b{i} * c{i} >= -1000000"),
+        |i| {
+            format!(
+                "b{i} + 2 * c{i} <= 3 && c{i} >= z{i} && b{i} * c{i} >= -1000000 \
+                 && b{i} + c{i} >= z{i} - 100"
+            )
+        },
+        |i| format!("x{i} - b{i} - c{i} >= 4 && c{i} >= 0 && b{i} * c{i} >= -1000000"),
+    ];
+    let k = 3;
+    let mut cases = vec![
+        product_chain_source(k, &[]),
+        product_chain_source(k, &["z0 + z1 + x0 >= 0".to_string()]),
+        product_chain_source(
+            k,
+            &(0..k)
+                .map(|i| format!("2 * x{i} + y{i} >= z{i}"))
+                .collect::<Vec<_>>(),
+        ),
+        product_chain_source(
+            k,
+            &(0..k)
+                .map(|i| format!("abs(x{i} - y{i}) <= z{i} + 1"))
+                .collect::<Vec<_>>(),
+        ),
+    ];
+    cases.extend(links.iter().map(|&l| open_side_chain_source(k, l)));
+    cases.extend([
+        pair(
+            "ok(a, b, c) = a + b >= 10 && a <= 3 && c >= 0;",
+            "ok(a, b, c) = b * c >= 7 * c;",
+        ),
+        pair(
+            "ok(a, b, c) = 2 * a == b + 4 && b >= 0 && c >= 0;",
+            "ok(a, b, c) = a * c >= 2 * c;",
+        ),
+        pair(
+            "ok(a, b, c, d) = a + b >= 10 && a <= 3 && d >= b + 1 && c >= 0;",
+            "ok(a, b, c, d) = d * c >= 8 * c;",
+        ),
+        pair(
+            "ok(a, c, d) = abs(a) <= d && d <= 1000 && c >= 0;",
+            "ok(a, c, d) = d * c >= 0;",
+        ),
+        pair(
+            "ok(a, b, c, d) = b >= 5 && a >= b && abs(a) <= d && d <= 1000 && c >= 0;",
+            "ok(a, b, c, d) = d * c >= 5 * c;",
+        ),
+        pair(
+            "ok(a, c, d) = abs(a) <= d && d <= 1000 && c >= 0;",
+            "ok(a, c, d) = a * c >= -1000 * c;",
+        ),
+        pair(
+            "ok(v, w1, w2, c) = v >= w1 && v >= w2 && w1 + w2 >= 10 && c >= 0;",
+            "ok(v, w1, w2, c) = v * c >= 5 * c;",
+        ),
+        pair(
+            "ok(v, w1, w2, c) = v >= w1 && v >= w2 && w1 + w2 >= 8 && c >= 0;",
+            "ok(v, w1, w2, c) = v * c >= 5 * c;",
+        ),
+        pair(
+            "ok(a, c) = (a >= 5 || a >= 7) && c >= 0;",
+            "ok(a, c) = a * c >= 5 * c;",
+        ),
+        pair(
+            "ok(a, b, c, d) = a + b >= 10 && b + 2 * c <= 3 && c >= 0 && d >= 0 \
+             && b * c >= -1000;",
+            "ok(a, b, c, d) = a * d >= 7 * d;",
+        ),
+        pair(
+            "ok(a, b, d, e) = a >= e && e + b >= 10 && e - 2 * b >= 1 \
+             && (b >= 0 || b <= -5) && d >= 0;",
+            "ok(a, b, d, e) = a * d >= 7 * d;",
+        ),
+        pair(
+            "ok(x0, x1, x2) = x0 >= 1 && x1 >= x0 + 1 && x2 >= x1 + 1;",
+            "ok(x0, x1, x2) = x0 * x2 >= 3;",
+        ),
+    ]);
+    cases
+}
+
+/// Obligations whose general row `w1 + w2 >= 10` reaches the two factors `u` and `v` through
+/// difference rows (`w1 <= u`, `w2 <= u`, `w1 <= v`, `w2 <= v - 1`) at one slack where the
+/// point meets them all the paths tie; they give the two different bounds `u >= 5` and
+/// `v >= 6`. In the last two, `w1` and `w2` are in a disjunction, so they are kept and the
+/// general row is read through the paths (`eliminate` in `part_bounds`); in the first two
+/// they are eliminated first. Each goal needs one of the bounds, and the certificate shows
+/// both, so a bound that went with the name of a factor would show in it.
+const TIED: [(&str, &str); 4] = [
+    (
+        "ok(u, v, w1, w2, c) = u >= w1 && u >= w2 && v >= w1 && v >= w2 + 1 && w1 + w2 >= 10 \
+         && v >= 0 && c >= 0;",
+        "ok(u, v, w1, w2, c) = u * c >= 5 * c && v * c >= 0;",
+    ),
+    (
+        "ok(u, v, w1, w2, c) = u >= w1 && u >= w2 && v >= w1 && v >= w2 + 1 && w1 + w2 >= 10 \
+         && u >= 0 && c >= 0;",
+        "ok(u, v, w1, w2, c) = v * c >= 6 * c && u * c >= 0;",
+    ),
+    (
+        "ok(u, v, w1, w2, c) = u >= w1 && u >= w2 && v >= w1 && v >= w2 + 1 && w1 + w2 >= 10 \
+         && v >= 0 && c >= 0 && (w1 >= -1000 || w2 <= -2000);",
+        "ok(u, v, w1, w2, c) = u * c >= 5 * c && v * c >= 0;",
+    ),
+    (
+        "ok(u, v, w1, w2, c) = u >= w1 && u >= w2 && v >= w1 && v >= w2 + 1 && w1 + w2 >= 10 \
+         && u >= 0 && c >= 0 && (w1 >= -1000 || w2 <= -2000);",
+        "ok(u, v, w1, w2, c) = v * c >= 6 * c && u * c >= 0;",
+    ),
+];
+
+#[test]
+fn the_bounds_found_do_not_depend_on_names() {
+    // "the checker never lets a name change an answer": each obligation above whose bounds
+    // `part_bounds` reads through shortest paths, renamed so that the order of its names is
+    // reversed, and again so that it is rotated, gives the same verdict and, for a proof, the
+    // same certificate up to the renaming, so the same bounds on each factor
+    // (C2-chain-general). In the tied cases ([`TIED`]) the paths to `u` and `v` tie, and
+    // choosing the factor that is first by name gave `u >= 5` alone as written and both bounds
+    // with the names reversed; a node with two nearest factors now goes with neither, and the
+    // sides left open are asked of the solver, which gives both under every naming.
+    let tied = TIED.iter().map(|(p, g)| (p.to_string(), g.to_string()));
+    let mut differ = Vec::new();
+    for (premise, goal) in path_search_cases().into_iter().chain(tied) {
+        let mut names = parameters(&premise);
+        names.sort();
+        let n = names.len();
+        let first = up_to_names(&rung2(&premise, &goal), &BTreeMap::new());
+        if TIED.iter().any(|(p, _)| *p == premise) {
+            for bound in ["5 * c <= c * u", "6 * c <= c * v"] {
+                assert!(first.contains(bound), "{premise}: {first}");
+            }
+        }
+        let places: [fn(usize, usize) -> usize; 2] =
+            [|r, n| n - 1 - r, |r, n| (r + n.div_ceil(2)) % n];
+        for place in places {
+            let to: BTreeMap<String, String> = (names.iter().enumerate())
+                .map(|(r, a)| (a.clone(), format!("v{:03}", place(r, n))))
+                .collect();
+            let back: BTreeMap<Arc<str>, Arc<str>> = (to.iter())
+                .map(|(a, b)| (Arc::from(b.as_str()), Arc::from(a.as_str())))
+                .collect();
+            let (p2, g2) = (renamed(&premise, &to), renamed(&goal, &to));
+            let second = up_to_names(&rung2(&p2, &g2), &back);
+            if second != first {
+                differ.push(format!(
+                    "{premise} to {goal}:\n  as written: {first}\n  as {p2}: {second}"
+                ));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
 /// `g{k}`, which calls `g{k-1}` twice, each time with the argument `b mod (b + 1)`, which fails
 /// at `b = -1`, and so on down to `g0(a, b) = b >= 0`; and `ok(x, n) = g{k}(x, n)`. Not `f`,
 /// since `f64` names a type.
@@ -1028,6 +1288,16 @@ fn the_conditions_of_shared_divisors_scale() {
 /// link has `x{i} >= z{i}`, `y{i} >= z{i}`, `x{i} + b{i} >= 10` and the rows `link(i)`, which
 /// bound `x{i}` below by 7 or more; the goal is that the sum is at least `Σ 7 * y{i}`.
 fn open_side_chain(k: usize, link: fn(usize) -> String) -> (Relation, Relation) {
+    let (premise, goal) = open_side_chain_source(k, link);
+    let (ps, p) = function(&premise);
+    let (_, g) = function(&goal);
+    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
+    let g = rs.pop().expect("two relations");
+    (rs.pop().expect("two relations"), g)
+}
+
+/// The premise and the goal of [`open_side_chain`], as written.
+fn open_side_chain_source(k: usize, link: fn(usize) -> String) -> (String, String) {
     let names: Vec<String> = (0..k)
         .map(|i| format!("x{i}, y{i}, z{i}, b{i}, c{i}"))
         .collect();
@@ -1043,15 +1313,10 @@ fn open_side_chain(k: usize, link: fn(usize) -> String) -> (Relation, Relation) 
     }));
     let left: Vec<String> = (0..k).map(|i| format!("x{i} * y{i}")).collect();
     let right: Vec<String> = (0..k).map(|i| format!("7 * y{i}")).collect();
-    let (ps, p) = function(&format!("{head} = {};", premise.join(" && ")));
-    let (_, g) = function(&format!(
-        "{head} = {} >= {};",
-        left.join(" + "),
-        right.join(" + ")
-    ));
-    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
-    let g = rs.pop().expect("two relations");
-    (rs.pop().expect("two relations"), g)
+    (
+        format!("{head} = {};", premise.join(" && ")),
+        format!("{head} = {} >= {};", left.join(" + "), right.join(" + ")),
+    )
 }
 
 /// The scaling test of [`open_side_chain`] with `link`: each goal is proved, and with

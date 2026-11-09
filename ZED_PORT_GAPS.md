@@ -2793,6 +2793,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Union-find with path halving, `parent[i] = parent[parent[i]]` in place | `clusters` (and `products`, as before) | Mutation (gap 11) | A persistent union-find (Conchon and Filliâtre 2007), O(log n) per step |
 | One `Rc<Formula>` per cluster shared by every atom of the cluster in a map | `clusters`, `PartBounds::local` | None: Zed values are shared | A map from each atom to the cluster's formula |
 | A `FnMut` closure that sets a captured `bool` (`loose`) while it computes a side | `products` (`side`) | Mutation (gap 11) | The side returned with a flag, folded with `or` |
+| A label per node `Vec<Option<(Int, Option<usize>)>>` (distance and nearest factor, `None` where two are nearest) and a stage per node `Vec<u8>`, both updated in place while a `BinaryHeap` of `Reverse` pairs is drained, so a node is expanded at most twice | `Differences::search` | Mutation (gap 11) | A fold over a persistent priority queue threading persistent maps of labels and stages |
 
 ## Entries from PRES-mod-conjuncts (`zedc-preimage/src/preimage.rs`, `zedc-presburger/src/presburger.rs`)
 
