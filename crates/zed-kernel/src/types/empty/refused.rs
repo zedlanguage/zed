@@ -83,6 +83,9 @@ impl Why {
         // whole, O(nodes reached) for this message alone; m refused members whose re-checks
         // under one repair each meet such a member, and reach n nodes, cost O(m n) together.
         // Cutting there too needs the decider's cycles of the whole system, kept with `Why`.
+        // Naive version: every re-check walks the whole system, O(n) each, O(m n) for m refused
+        // members; used: the walk with cuts, O(nodes reached) each, falling back to the whole walk
+        // only where it meets a member kept refused (COMPLEXITY.md K85).
         let (cut, (local, order)) = match walk(true) {
             Some(w) => (true, w),
             None => (

@@ -118,6 +118,9 @@ thread_local! {
     // those no reader reads too, so the memory is that of every group's searches together,
     // O(total values built), where a search's values were dropped when it ended; it buys reads
     // with no copy. Trigger: any group decided by `group_verdicts`. COMPLEXITY.md K62.
+    // Naive version (K62): a reader outside the group gets a search of its own that reads no
+    // kept value, deciding again the part of the group it reaches, O(m·n) for m readers of a
+    // group of n; used: the kept values read by index, O(1) per read.
     static STORES: RefCell<Vec<Vec<Rep>>> = const { RefCell::new(Vec::new()) };
     /// For each member given `Inhabited` by [`group_verdicts`] with a value its searches built:
     /// the list in `STORES` and the value's number there.
@@ -181,7 +184,9 @@ fn group_verdicts(members: &[Type]) {
             // Complexity tradeoff: a member decided inhabited whose value the shared search does
             // not build gets a search of its own, which may read the whole group again; the X14
             // groups of 1024 and 2048 definitions measured for plan item VERDICT-group-share
-            // needed none.
+            // needed none. Naive version (COMPLEXITY.md K56): a search of its own for every
+            // member, n searches of a group of n, O(n²); used: one shared search of the group,
+            // with this search of its own only for a member the shared one built no value of.
             Some(false) => m.verdict_alone(),
             None => {
                 let (b, id, cause) = found.next().expect("one answer per member not decided");
@@ -368,6 +373,8 @@ impl Type {
         // COMPLEXITY.md K35. A complete solution needs the subset construction over the forked
         // tuple types; deciding whether such a union holds every list is NFA universality,
         // PSPACE-complete. The answers of a search a fork ended may rest on it, so none is kept.
+        // Used: the search stopped at the fork, polynomial in the types written (module
+        // comment).
         let mut s = Search {
             refuse_forks: true,
             ..Search::default()
@@ -622,7 +629,9 @@ impl Type {
             // `l01_23_subtyping::judgments::a_morphism_cycle_through_an_empty_part_is_empty`.
             // COMPLEXITY.md Kept row "emptiness and subtyping of tuple and morphism parts". A
             // complete solution needs a value builder for every kind of type (closures included,
-            // L2) and a complete search.
+            // L2) and a complete search, exponential in the types (the subset construction at
+            // a fork, a split of the box in every component); used: the two searches already
+            // run, each polynomial in the types written (module comment), and nothing more.
             Verdict::Refused(s.refused.or(s.gave_up).unwrap_or(Refusal::NoWitness))
         }
     }
@@ -1286,7 +1295,9 @@ fn residue_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> Option<BigUint> {
     // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length` and
     // `the_meet_of_prime_cycles_scales`; COMPLEXITY.md K34. A complete solution would search
     // the residues modulo each prime power with backtracking, exponential in the primes in the
-    // worst case, since the covering problem for residues is NP-hard.
+    // worst case, since the covering problem for residues is NP-hard. Used (COMPLEXITY.md
+    // K34): O(residues tried × classes × primes²), polynomial in the periods, the length a
+    // `BigUint` never walked.
     Some(greedy_length(&classes, none)).filter(fits)
 }
 
@@ -2183,7 +2194,10 @@ impl<'m> Searching<'m> {
     /// full, and `n` shapes held together cost order `n^2` (47.6 times the instructions from 64 to
     /// 512 in `a_tuple_that_shapes_hold_only_together_is_checked_in_the_size_of_the_union`). Keyed
     /// by node, such an operand misses and its type is built again, as before the memo; what is
-    /// given up is the hits on equal operands built apart. COMPLEXITY.md K51.
+    /// given up is the hits on equal operands built apart. COMPLEXITY.md K51. Naive version:
+    /// no memo, or a scan of the search's types at each call, which failed `nested_tuples_scale`
+    /// at 34.0 times from depth 400 to 3200 (limit 24); used: one build per pair of operand
+    /// nodes, a hash lookup by address per call.
     async fn settles(&'m self, x: &Type, y: &Type, both: bool) -> bool {
         if let Some(b) = x.scalar_cell(y, both) {
             return b;
@@ -2256,7 +2270,9 @@ impl<'m> Searching<'m> {
             // Complexity tradeoff: a fork met while no type is being decided cannot be put on
             // the roots that read it, so it ends the search and refuses every root the decider
             // left open, as it refuses the one root of a search of its own. Trigger: `current`
-            // is none at a fork. COMPLEXITY.md K61.
+            // is none at a fork. COMPLEXITY.md K61. Naive version: a search of its own per open
+            // member, n searches of a group of n, O(n²); used: one search with every open member
+            // as a root, so one fork outside any type being decided refuses them all.
             _ => s.refused = Some(Refusal::Fork),
         }
     }
@@ -2416,7 +2432,8 @@ impl<'m> Searching<'m> {
                     // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
                     // and `a_value_found_by_refining_a_forked_part_is_kept`. COMPLEXITY.md K35.
                     // A complete solution needs the subset construction over the forked tuple
-                    // types.
+                    // types, exponential in them; used: no value sought in that part, so the
+                    // search stays polynomial in the types written.
                     self.s().give_up(Refusal::Fork);
                     return false;
                 }
@@ -2450,7 +2467,8 @@ impl<'m> Searching<'m> {
                 // needs the subset construction over the forked rows (a tree automaton
                 // determinized on demand), exponential in the rows of the fork. A search with
                 // several roots refuses only those that read the type being decided
-                // (`Search::causes`).
+                // (`Search::causes`). Used: the refusal, so the search stays polynomial in the
+                // types written (module comment).
                 self.refuse_fork();
                 return true;
             }
@@ -2512,6 +2530,8 @@ impl<'m> Searching<'m> {
             // that gives no answer has still walked it, `k` walks in all (the choice chain
             // against a swapped one in `l01_23_subtyping::x13` grew 237 times in bytes at 8
             // times `d`, above its order `d²`). Trigger: `may_cover` false. COMPLEXITY.md K71.
+            // Used: one pass per part, each node read once, linear in the part (K71: the one
+            // pass decided these meets in one walk).
             let mut unread = None;
             if may_cover {
                 match self.one_pass(g, &f, &open).await {
@@ -2539,6 +2559,8 @@ impl<'m> Searching<'m> {
                 // `l01_23_subtyping::one_pass::an_orthogonal_vectors_meet_is_refused_naming_its_component`
                 // and `random_parts_out_of_the_class_are_decided_or_refused`. COMPLEXITY.md K71. A
                 // complete solution needs the split, order `c²` and worse with more operands.
+                // Used: the one pass, each node once, and the refusal; the K71 scaling tests
+                // hold the class it decides to n log n.
                 self.s().give_up(Refusal::SharedCells(j));
                 return false;
             }
@@ -3566,7 +3588,9 @@ impl<'m> Searching<'m> {
                 // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
                 // and `a_value_is_sought_before_a_refusal` (`fork`, found by a candidate past
                 // the first fork). COMPLEXITY.md K35. A complete solution needs the subset
-                // construction over the forked tuple types.
+                // construction over the forked tuple types, exponential in them. Used: one
+                // candidate per tuple type once per path; the end family takes 1,578 `cuts` at
+                // `n` 64 against 63,634 without `past_fork` (K35 control, 50 times from 8 to 64).
                 if self.s().kept_forks > forks {
                     if past {
                         continue;

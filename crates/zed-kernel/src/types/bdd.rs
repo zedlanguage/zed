@@ -761,7 +761,10 @@ impl<A: Literal> Part<A> {
     // `Connect`, and again in no frame, so that the union of two halves of an exclusive or skips
     // the complement of one of them, made, compared and freed by the first rule; a union or
     // meet that is no exclusive or pays for the test once, as before. Measured on parity built
-    // a literal at a time (KERNEL-parity-cost).
+    // a literal at a time (KERNEL-parity-cost). Naive version: the frames of `Connect` alone,
+    // whose rule `a = !b` makes, compares and frees the complement of one half, a constant
+    // factor per union; used: the test first. Both are of order n log n on parity; COMPLEXITY.md
+    // K90 (5): 51.01G to 50.09G instructions and 6.96G to 4.97G bytes at 16,384 literals.
     fn xor_at_once(a: &Part<A>, b: &Part<A>, op: Op) -> Option<Part<A>> {
         match (a, b) {
             (Part::Bdd(_), Part::Bdd(_)) => None,
@@ -892,6 +895,9 @@ impl<'m> Connect<'m> {
         // rather than kept as the expression made in constant time, so that one set of atoms
         // built in any order is one node; parity built a literal at a time stays `O(n log n)`.
         // Operands not both lists were tested before the frame (`Part::xor_at_once`).
+        // Naive version (COMPLEXITY.md K63): the expression kept as made, O(1) per exclusive
+        // or, but one set of atoms built in two orders is then two nodes, which are not equal
+        // by id; that later steps then compare such parts in full is inferred.
         if let (Part::Bdd(_), Part::Bdd(_)) = (&a, &b)
             && let Some(x) = xor::xor_of(&a, &b, op)
         {

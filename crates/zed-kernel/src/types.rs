@@ -288,7 +288,10 @@ impl std::ops::Deref for PartsRef<'_> {
 /// shared reference and stays at its place until the holder is dropped, so a walk may keep
 /// borrows into the parts of every recursive type it meets. Block `k` has room for `2^k`.
 // Complexity tradeoff: a put walks to the block with room, O(log n) for the `n`th; a block
-// that knew the last block would refer into its own holder.
+// that knew the last block would refer into its own holder. The standard form, one growing
+// `Vec`, puts in O(1) amortized but moves its items when it grows, which would end the
+// borrows into them; a pointer to the last block would put in O(1) but make the holder
+// refer into itself.
 #[derive(Default)]
 struct Held {
     used: std::cell::Cell<usize>,
@@ -4098,7 +4101,10 @@ impl Graph {
     /// exclusive or that counts its operands that hold.
     // Complexity tradeoff: each node is checked once, in constant time but for its key, a
     // list's blocks or an exclusive or's two operands; a choice whose halves are not known
-    // complements by these forms stays a union of meets.
+    // complements by these forms stays a union of meets. Naive version (COMPLEXITY.md K69,
+    // item 10): the chain left as built, `n` choices and their complements, each changed by a
+    // change of `r(0)`, so a check reads order `n` nodes per tuple, O(n²) over the listing;
+    // used: one pass over the nodes, O(nodes), then a change reaches one exclusive or.
     fn parities(mut self) -> Graph {
         let mut canon: Vec<(usize, bool)> = Vec::with_capacity(self.nodes.len());
         // A list by its rows and each block's value, flipped so its tail is false.
@@ -4173,7 +4179,9 @@ impl Graph {
     /// chain is one union that counts its operands that hold.
     // Complexity tradeoff: a merged node takes the operand list of its largest merged operand
     // and adds the others to it, so each operand moves order `log n` times; the lists are then
-    // sorted, order `n log n` for `n` nodes.
+    // sorted, order `n log n` for `n` nodes. Naive version: the chain of unions not merged,
+    // read again node by node for each candidate, order `n` per candidate (K69: listing 25
+    // times at 8n with the chain not merged).
     fn merged(mut self) -> Graph {
         let len = self.nodes.len();
         let operands = |v: &Vertex| -> Vec<usize> {
@@ -4427,12 +4435,16 @@ struct Class {
     /// change, read by all `n`, is made once, not once per value (LIST-box-overlap).
     // Complexity tradeoff: a set's changes are kept, order the nodes they change, only when it
     // recurs, so the memory kept is at most the time spent making them a second time; a set
-    // seen once costs its key.
+    // seen once costs its key. Naive version: no memo, the side's change made again for each
+    // value, read by all `n` operands, order `n` per value (K69, LIST-box-overlap); used: made
+    // once per recurring set, then a hash lookup costing the set's length.
     under: HashMap<Vec<(usize, bool)>, Option<Overlay>>,
     /// Per set of changed rows a tuple's check applied, the part's value: a set every tuple of
     /// a box changes, such as the side of a meet alone, is applied once.
     // Complexity tradeoff: one entry per set applied, its key the size of the set, so at most
-    // the time spent applying it.
+    // the time spent applying it. Naive version: the set applied again for every tuple of the
+    // box, its changed nodes each time; used: applied once, then a hash lookup costing the
+    // set's length (K69).
     known: HashMap<Vec<(usize, bool)>, bool>,
 }
 
