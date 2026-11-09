@@ -1653,16 +1653,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| SCALE-fix-crossover | impl attempt 1 | 2026-11-07 12:13 | ready 672c3618 on wt/scale-chain: 30 tests ignored with open rows, deep_types fixed, targeted groups pass; load 8.12 8.78 13.08 |
-| SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | ready 672c3618 on wt/scale-chain: 30 tests ignored with open rows, deep_types fixed, targeted groups pass; load 8.12 8.78 13.08 |
-| SCALE-fix-strip-odd | impl attempt 1 | 2026-11-07 12:13 | ready 672c3618 on wt/scale-chain: 30 tests ignored with open rows, deep_types fixed, targeted groups pass; load 8.12 8.78 13.08 |
-| SCALE-fix-wide | impl attempt 1 | 2026-11-07 11:37 | ready 672c3618 on wt/scale-chain: 30 tests ignored with open rows, deep_types fixed, targeted groups pass; load 8.12 8.78 13.08 |
-| SCALE-ratio | impl attempt 1 | 2026-11-07 11:08 | ready 672c3618 on wt/scale-chain: 30 tests ignored with open rows, deep_types fixed, targeted groups pass; load 8.12 8.78 13.08 |
 | TEST-audit | audit attempt 1 | 2026-11-08 13:02 | done: REPORT.md complete (Part 1: 156 checks, 89 committed, 46 partial, 13 missing; Part 2: 93.9% lines, 93.6% regions, 718 never-run functions; Part 3: 882 beh |
-| TESTS-L1.17-wide-edges | impl attempt 1 | 2026-11-08 23:59 | ready 19f13623 on wt/tests-l117-edges (origin/main 60991c11): 11 edge tests, 1 ignored (SPEC-zero-order queued); checker panic on i64::MIN mod -1 fixed in widen |
-| TESTS-L1.39a-f64bits-nan | impl attempt 1 | 2026-11-08 23:59 | ready db6cc22e on wt/tests-l139a-nan; clippy workspace clean; l01_39a_bit_words 46 pieces 0 failed with doc check (load 18-19); STATUS row, plan Done:, ledger r |
 | TRIVIAL-models-study | impl attempt 1 | 2026-11-09 01:16 | ready: impl af2e4d70 on 07dca94a, spec ff57e5e on 9bf5aaf; work-counted budget, union-find clause check, 21 tests pass; TRIVIAL-shared-atom left open |
-| TY-diff-meet | impl attempt 1 | 2026-11-09 02:15 | ready 6778f711 on wt/ty-diff-meet (rebased on 60991c11), COMPLEXITY F127, STATUS, ZED_PORT_GAPS, plan_dag Done; not pushed |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
