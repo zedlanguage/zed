@@ -1697,19 +1697,27 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| EMPTY-call-unused | impl attempt 1 | 2026-11-09 09:59 | ready 61832d6a (spec 023e27f); 151 pieces 0 failed, then 165 pieces 0 failed; follow-up EMPTY-call-demand queued; load 21 |
-| GROUP-closure-order | running | 2026-11-09 10:11 |  |
-| GROUP-cycle-dup-names | impl attempt 1 | 2026-11-09 10:09 | started; worktree wt/group-cycle-names from wt/group-cycle-dup 2f04cc3a |
+| EMPTY-call-unused | merge attempt 1 | 2026-11-09 09:59 | dropped from batch 84: never.rs:476 inc(n) gives (Never) -> Never on origin/main, expected (Never) -> int; state merging, rebase and re-verify |
+| GROUP-closure-order | impl attempt 1 | 2026-11-09 10:11 | new pairs fixture (x9014) is Inhabited with defs in one order, Refused(Group) in two others: definition-order dependence remains in the value search; investigat |
+| GROUP-cycle-dup-names | impl attempt 1 | 2026-11-09 10:09 | ready: impl 86e3baab (wt/group-cycle-names), spec 98ac5f2 (wt/group-cycle-names-spec); groups l01_23_subtyping/l01_22/l01_29/zed_kernel/s_01f with doc tests 92  |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
-| GROUP-search-hang | impl attempt 1 | 2026-11-09 10:11 | tracing the growing meet chain with a backtrace at new types (load 34.66 32.64 30.19) |
-| PRINT-fmt-audit | impl attempt 1 | 2026-11-09 09:10 | surface_by_name scaling: nested tuple n=1000/8000 8.4x work 8.0x bytes (limit 11.45); list-of-lists n=100/800 8.2x work (limit 12.77); negative control (n-times |
-| PROJECT-canon-272 | running | 2026-11-09 09:27 |  |
-| PROJECT-canon-decide | running | 2026-11-09 09:27 |  |
-| PROJECT-canon-gcd | running | 2026-11-09 09:27 |  |
-| PROJECT-canon-precision | running | 2026-11-09 09:27 |  |
-| S22-shapes-linear | impl attempt 1 | 2026-11-09 08:29 | negative control (decide through found, as main), not committed: the_box_of_a_chain_over_many_holes_is_tested_in_linear_work at 128/1024 holes fails, 17.4x byte |
-| S22-split-holes | impl attempt 1 | 2026-11-09 08:29 | ready at 5bc3858f on wt/s22-split-holes; scale 10.1x instr 11.0x bytes (main control 19.3x, 26.9x, not committed); differential 3000 random programs identical t |
-| TY-row-hash | impl attempt 1 | 2026-11-09 09:57 | started; worktree wt/ty-row-hash stacked on wt/ty-row-class 815bb114, rebased onto origin/main |
+| GROUP-search-hang | impl attempt 1 | 2026-11-09 10:11 | negative control: full shuffled battery with optimistic_values off (ZNOOPT=1) started (load 31.29) |
+| KERNEL-parity-cost | impl attempt 1 | 2026-11-09 08:45 | ready bf56a3ba on wt/kernel-parity-cost; 508 pieces 0 failed, load 18.5-48.4; 1.41x fewer instructions (2x not reached); follow-ups KERNEL-parity-lazy-halves, K |
+| MSG-line-quote-nested | impl attempt 1 | 2026-11-09 08:30 | ready: impl 1059ae06 on wt/msg-quote-nested, spec 8589b4b on wt/msg-quote-nested-spec; l01_29 222/0, l01_21 58/0, l01_07 44/0, l07_03 19/0, s_01f 18/0 (--no-doc |
+| MSG-type-defs-layout | impl attempt 1 | 2026-11-09 11:52 | started; worktrees type-defs-layout (on wt/print-fmt-audit 1f63b8ec) and type-defs-layout-spec |
+| PREIMAGE-slow-rounds | impl attempt 1 | 2026-11-09 08:45 | negative control: old presburger.rs, staged chain at 4 and 32 stages not done in 120 s; fix3 restored |
+| PRINT-defs-spec | running | 2026-11-09 11:52 |  |
+| PRINT-fmt-audit | impl attempt 1 | 2026-11-09 09:10 | ready at 1f63b8ec, ledger updated |
+| PROJECT-canon-272 | impl attempt 1 | 2026-11-09 09:27 | ready on wt/project-canon-fu at 8420a13e (stacks on wt/project-canon); see ledger note |
+| PROJECT-canon-decide | impl attempt 1 | 2026-11-09 09:27 | ready on wt/project-canon-fu at 8420a13e (stacks on wt/project-canon); see ledger note |
+| PROJECT-canon-gcd | impl attempt 1 | 2026-11-09 09:27 | ready on wt/project-canon-fu at 8420a13e (stacks on wt/project-canon); see ledger note |
+| PROJECT-canon-precision | impl attempt 1 | 2026-11-09 09:27 | ready on wt/project-canon-fu at 8420a13e (stacks on wt/project-canon); see ledger note |
+| PROJECT-growth-box | impl attempt 1 | 2026-11-09 11:24 | start; load 30.61 |
+| REPAIR-is-shared-type | running | 2026-11-09 11:52 |  |
+| S22-shapes-linear | impl attempt 1 | 2026-11-09 08:29 | ready at 905a39ce on wt/s22-shapes-linear (rebased b5a32b5c); decide stops its probe at the first point; 549/549 pieces; differential 32 main refusals now answe |
+| S22-split-holes | impl attempt 1 | 2026-11-09 08:29 | ready again at 7ac34728: deterministic touched cases vs main 01eb1be0, 10000-program differential identical, 466 pieces 0 failed |
+| STAR-hub-set | impl attempt 1 | 2026-11-09 09:36 | negative control on main code (b5a32b5c) with branch tests: atoms k 24->192 21.5x bytes (29.8M->641.2M, limit 14.6) FAILS; reads k 12->96 19.5x bytes (20.8M->40 |
+| TY-row-hash | impl attempt 1 | 2026-11-09 09:57 | ready acaeffdb on b5a32b5c; 89 pieces 0 failed with docs (load 22.6-31.3); scaling meets 7.8x, contains 7.9x (limit 12.1) |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
