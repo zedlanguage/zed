@@ -980,7 +980,7 @@ fn touched<'a>(
     }
 }
 
-/// How many pieces [`touched`] answered by each of its five kinds on this thread since the
+/// How many pieces `touched` answered by each of its five kinds on this thread since the
 /// last call of [`touched_paths`] (COMPLEXITY.md S22-split-holes).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TouchedPaths {
