@@ -790,9 +790,11 @@ fn rem((a, b): Word, (c, d): Word) -> Option<Word> {
     }
     if c == d
         && (b as i128 - a as i128) < c.unsigned_abs() as i128
-        && a.rem_euclid(c) <= b.rem_euclid(c)
+        && a.wrapping_rem_euclid(c) <= b.wrapping_rem_euclid(c)
     {
-        return Some((a.rem_euclid(c), b.rem_euclid(c)));
+        // `wrapping_rem_euclid` is exact: only `i64::MIN mod -1` overflows `rem_euclid`, and its
+        // remainder is 0, which is what the wrapping form returns.
+        return Some((a.wrapping_rem_euclid(c), b.wrapping_rem_euclid(c)));
     }
     let top = c.unsigned_abs().max(d.unsigned_abs()) - 1;
     let top = i64::try_from(top).expect("the size of an i64 less 1 is an i64");

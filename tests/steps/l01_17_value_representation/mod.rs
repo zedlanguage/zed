@@ -6,6 +6,7 @@
 
 mod asks;
 mod atoms;
+mod edges;
 mod equality;
 mod fields;
 mod in_place;
