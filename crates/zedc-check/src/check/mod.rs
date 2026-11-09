@@ -47,12 +47,12 @@ pub mod walk;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use zed_kernel::num::TooLarge;
-use zed_kernel::types::{Type as KType, Verdict};
+use zed_kernel::types::{Type as KType, Verdict, defs};
 use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
 use zedc_base::rejection::Row;
@@ -613,6 +613,55 @@ fn show_with(t: &Ty, masks: &Masks) -> String {
     #[cfg(not(feature = "printed-types"))]
     let _ = narrowed;
     text
+}
+
+/// Where a repair note that writes types in code says to declare the definitions those
+/// types use ([`lay_out`]): a Unicode noncharacter, which no program text holds.
+const DECLARE: &str = "\u{FDD8}";
+
+/// Writes the types of one message, its text and its notes, in one numbering: each part
+/// written more than once gets one definition, named `T1`, `T2`, … with no name `taken` by the
+/// program or written in the message, and the definitions stand after the sentence on lines of
+/// their own (module `defs` of the kernel). A repair note whose code names one says, where it
+/// wrote [`DECLARE`], to declare them at the top level; elsewhere [`DECLARE`] is dropped. A
+/// message with no part written twice is as it was.
+fn lay_out(message: &mut String, notes: &mut [Note], taken: &dyn Fn(&str) -> bool) {
+    let code: Vec<bool> = notes.iter().map(|n| defs::holds(&n.text)).collect();
+    let mut texts: Vec<&mut String> = std::iter::once(&mut *message)
+        .chain(notes.iter_mut().map(|n| &mut n.text))
+        .collect();
+    let lifted = defs::lift(&mut texts, taken);
+    let these = match lifted.len() {
+        1 => "the declaration above",
+        _ => "the declarations above",
+    };
+    for (n, code) in notes.iter_mut().zip(code) {
+        if n.text.contains(DECLARE) {
+            let declare = format!(
+                ", with {these} written first at the top level of the file, before the function"
+            );
+            n.text = n.text.replace(DECLARE, if code { &declare } else { "" });
+        }
+    }
+    let Some(((last, _), rest)) = lifted.split_last() else {
+        return;
+    };
+    let names: Vec<&str> = rest.iter().map(|(n, _)| n.as_str()).collect();
+    match names.is_empty() {
+        true => write!(
+            message,
+            "\n  {last} stands for a part written more than once:"
+        ),
+        false => write!(
+            message,
+            "\n  {} and {last} stand for parts written more than once:",
+            names.join(", ")
+        ),
+    }
+    .expect("a String takes any text");
+    for (name, body) in &lifted {
+        write!(message, "\n    type {name} = {body};").expect("a String takes any text");
+    }
 }
 
 /// A use that removed carriers from a class, kept as data until a reported rejection lists
@@ -2411,7 +2460,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Puts each class's type in place of its variable in what the checker found. Each
     /// signature is settled first ([`Sig::settle`]): the signatures of calls through values
     /// share the functions they hold, as `g(0)(1)…(n)` does, and are settled once each, not
-    /// once for each signature that holds them.
+    /// once for each signature that holds them. Each message then writes the definitions its
+    /// types share once, below its sentence, named apart from the program's names ([`lay_out`]).
     fn finish(&mut self) {
         let sigs = std::mem::take(&mut self.info.sigs);
         self.info.sigs = sigs
@@ -2428,12 +2478,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             .into_iter()
             .map(|(k, t)| (k, self.shown(&self.solved(&t))))
             .collect();
+        let names: HashSet<&str> = (self.t.res.binders.iter())
+            .map(|b| b.name.as_str())
+            .collect();
         let mut errors = std::mem::take(&mut self.info.errors);
         for e in &mut errors {
             e.message = self.named(&e.message);
             for n in &mut e.notes {
                 n.text = self.named(&n.text);
             }
+            lay_out(&mut e.message, &mut e.notes, &|w| names.contains(w));
         }
         self.info.errors = errors;
     }

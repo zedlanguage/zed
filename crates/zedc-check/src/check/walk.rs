@@ -27,6 +27,9 @@ pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
 /// Checks a unit whose binder tables are `t`, as [`check`] does with tables it builds.
 pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     KType::forget_emptiness();
+    // The types the messages write put their definitions in one table, which `Ck::finish`
+    // lays out message by message.
+    let _defs = defs::collect();
     let mut ck = Ck::new(t);
     ck.bounds();
     ck.walk(unit);
@@ -43,6 +46,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
 pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
     let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
     let t = Tables::new(&[], &res);
+    let _defs = defs::collect();
     let mut ck = Ck::new(&t);
     let args = args.iter().map(|a| Some(Arg::of(a.clone()))).collect();
     let demand = match op {
@@ -57,7 +61,13 @@ pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
         demand,
         Span { start: 0, end: 0 },
     );
-    (out, ck.info.errors.into_iter().map(|e| e.message).collect())
+    let messages = (ck.info.errors.into_iter())
+        .map(|mut e| {
+            lay_out(&mut e.message, &mut e.notes, &|_| false);
+            e.message
+        })
+        .collect();
+    (out, messages)
 }
 
 /// What a job gives back.
@@ -2823,8 +2833,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         if params.len() < pos.len() {
             let shown = self.sig_text(&e);
             let menu = [format!(
-                "repair: write the lambda with the parameters of `{shown}`, its first {} taken by \
-                 position",
+                "repair: write the lambda with the parameters of `{shown}`{DECLARE}, its first {} \
+                 taken by position",
                 pos.len()
             )];
             self.rejects_offering(
@@ -2869,7 +2879,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let menu = match free.first() {
                         Some(f) => format!("repair: rename `{}` to {f}", p.name),
                         None => {
-                            format!("repair: write the lambda with the parameters of `{shown}`")
+                            format!(
+                                "repair: write the lambda with the parameters of `{shown}`{DECLARE}"
+                            )
                         }
                     };
                     let fix = format!(
@@ -2984,7 +2996,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 let e = self.sig_text(&s.e);
                                 let name = &p.name;
                                 let menu = [format!(
-                                    "repair: declare `{name}` as {tt}, or with no type, so that it \
+                                    "repair: declare `{name}` as {tt}{DECLARE}, or with no type, so that it \
                                      takes every argument `{e}` passes"
                                 )];
                                 self.error_offering(
@@ -4544,8 +4556,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let menu = [
                     format!("repair: pass {what} a value of {ty}"),
                     format!(
-                        "repair: test the value with `is` first, as `if v is {is_ty} {{ … }}`, or \
-                         handle the values that are not {ty} with `else` or `match`"
+                        "repair: test the value with `is` first, as `if v is {is_ty} {{ … }}`{DECLARE}, \
+                         or handle the values that are not {ty} with `else` or `match`"
                     ),
                 ];
                 self.error_offering(
@@ -5980,7 +5992,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let menu = [
                 format!(
                     "repair: declare the parameters of `{}` as `{shown}` passes them, with \
-                     `positional` where it passes by position",
+                     `positional` where it passes by position{DECLARE}",
                     f.name
                 ),
                 format!(
@@ -6060,8 +6072,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 [
                     format!("repair: pass a function of type `{e}` in place of `{name}`"),
                     format!(
-                        "repair: pass a lambda of type `{e}` that calls `{name}` with the \
-                         arguments it takes"
+                        "repair: pass a lambda of type `{e}`{DECLARE} that calls `{name}` with \
+                         the arguments it takes"
                     ),
                 ],
             );
@@ -7050,7 +7062,7 @@ fn default_repairs(name: &str, got: &str, want: &str, both: &str, span: Span) ->
     [
         format!("repair: write a default of type {want}"),
         format!(
-            "repair: declare `{name}` with a type that holds {got} as well, as `{name}: {both}`"
+            "repair: declare `{name}` with a type that holds {got} as well, as `{name}: {both}`{DECLARE}"
         ),
     ]
     .into_iter()

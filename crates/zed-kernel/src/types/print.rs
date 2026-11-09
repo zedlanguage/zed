@@ -28,6 +28,8 @@ use super::TextPlace as At;
 use super::bdd::{Bdd, Form, Part};
 use super::{Lits, Morphism, Node, Row, Surface, Surfaces, Tuples, Type};
 
+pub mod defs;
+
 impl Type {
     /// The type in the surface syntax (module `print`).
     pub fn surface(&self) -> Surface {
@@ -1102,20 +1104,25 @@ impl Printer {
         // Whether node `i` gets a definition: a named node whose name is its own.
         let defined = |i: usize| self.named(i) && same[i].is_none_or(|j| j == i);
         let mut defs = Vec::new();
-        let mut k = 0;
-        for &i in &self.post {
-            if defined(i) {
-                k += 1;
-                named[i] = Some(format!("T{k}"));
+        let collecting = defs::active();
+        if collecting {
+            self.collect(&same, &mut named);
+        } else {
+            let mut k = 0;
+            for &i in &self.post {
+                if defined(i) {
+                    k += 1;
+                    named[i] = Some(format!("T{k}"));
+                }
+            }
+            for &i in &self.post {
+                if let Some(j) = same[i].filter(|&j| self.named(i) && j != i) {
+                    named[i] = named[j].clone();
+                }
             }
         }
         for &i in &self.post {
-            if let Some(j) = same[i].filter(|&j| self.named(i) && j != i) {
-                named[i] = named[j].clone();
-            }
-        }
-        for &i in &self.post {
-            if let Some(name) = named[i].as_ref().filter(|_| defined(i)) {
+            if let Some(name) = named[i].as_ref().filter(|_| defined(i) && !collecting) {
                 let mut body = String::new();
                 self.write(
                     &self.texts[i].as_ref().expect("visited").segs,
@@ -1137,6 +1144,53 @@ impl Printer {
             defs,
             roots,
             exact: self.exact,
+        }
+    }
+
+    /// While a message collects definitions (module `defs`): names each node that gets a
+    /// definition by a reference to its place in the thread's table, merged with an equal
+    /// definition there, and each node whose name is another's by that reference too. A
+    /// definition whose body uses one not placed yet, as in a cycle, gets a place of its own
+    /// first and its body after the others.
+    fn collect(&self, same: &[Option<usize>], named: &mut [Option<String>]) {
+        let defined = |i: usize| self.named(i) && same[i].is_none_or(|j| j == i);
+        let mut aliases: Vec<Vec<usize>> = vec![Vec::new(); self.texts.len()];
+        for &i in &self.post {
+            if let Some(j) = same[i].filter(|&j| self.named(i) && j != i) {
+                aliases[j].push(i);
+            }
+            if self.named(i) {
+                named[i] = Some(defs::WAIT.into());
+            }
+        }
+        let body = |i: usize, named: &[Option<String>]| {
+            let mut body = String::new();
+            let segs = &self.texts[i].as_ref().expect("visited").segs;
+            self.write(segs, named, &mut body);
+            body
+        };
+        let mut waiting = Vec::new();
+        for &i in &self.post {
+            if !defined(i) {
+                continue;
+            }
+            let b = body(i, named);
+            let k = match b.contains(defs::WAIT) {
+                true => {
+                    let k = defs::reserve();
+                    waiting.push((i, k));
+                    k
+                }
+                false => defs::add(b),
+            };
+            let r = defs::reference(k);
+            for &a in &aliases[i] {
+                named[a] = Some(r.clone());
+            }
+            named[i] = Some(r);
+        }
+        for (i, k) in waiting {
+            defs::fill(k, body(i, named));
         }
     }
 
@@ -1204,6 +1258,7 @@ mod tests {
 
     use super::super::bdd::Part;
     use super::super::{Op, Row, SALT, Type};
+    use super::defs::{collect, holds, lift, plain};
     use crate::scaling;
     use crate::value::Value;
 
@@ -1361,5 +1416,56 @@ mod tests {
                 );
             },
         );
+    }
+
+    fn defs_abc() -> Type {
+        Type::atom("a") | Type::atom("b") | Type::atom("c")
+    }
+
+    #[test]
+    fn a_shared_part_is_a_reference_while_collecting_and_reads_alone_as_before() {
+        let t = Type::tuple(vec![defs_abc(), defs_abc(), defs_abc()]);
+        let alone = t.surface().to_string();
+        assert_eq!(alone, "type T1 = #a | #b | #c; (T1, T1, T1)");
+        let _on = collect();
+        let s = t.surface();
+        assert!(s.defs.is_empty());
+        assert!(holds(&s.root));
+        assert_eq!(plain(&s.root), alone);
+        // A type with no part used twice holds no reference.
+        assert_eq!(defs_abc().surface().root, "#a | #b | #c");
+    }
+
+    #[test]
+    fn one_message_has_one_numbering_and_each_definition_once() {
+        let _on = collect();
+        let x = Type::tuple(vec![defs_abc(), defs_abc()]).surface().root;
+        let y = Type::tuple(vec![defs_abc(), defs_abc(), defs_abc()])
+            .surface()
+            .root;
+        let ab = Type::atom("a") | Type::atom("b");
+        let z = Type::tuple(vec![ab.clone(), ab]).surface().root;
+        let mut message = format!("`f` does not take ({x}, {y})");
+        let mut note = format!("`f` takes {z}");
+        let defs = lift(&mut [&mut message, &mut note], &|_| false);
+        assert_eq!(message, "`f` does not take ((T1, T1), (T1, T1, T1))");
+        assert_eq!(note, "`f` takes (T2, T2)");
+        assert_eq!(
+            defs,
+            [
+                ("T1".to_string(), "#a | #b | #c".to_string()),
+                ("T2".to_string(), "#a | #b".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_name_the_message_or_the_program_holds_is_skipped() {
+        let _on = collect();
+        let x = Type::tuple(vec![defs_abc(), defs_abc()]).surface().root;
+        let mut message = format!("`T1` does not take {x}");
+        let defs = lift(&mut [&mut message], &|w| w == "T2");
+        assert_eq!(message, "`T1` does not take (T3, T3)");
+        assert_eq!(defs[0].0, "T3");
     }
 }

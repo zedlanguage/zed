@@ -31,6 +31,7 @@ mod hash;
 use hash::SALT;
 pub(crate) use hash::{KeyHasher, mix};
 mod print;
+pub use print::defs;
 
 use imbl::ordmap::DiffItem;
 use imbl::{OrdMap, OrdSet};

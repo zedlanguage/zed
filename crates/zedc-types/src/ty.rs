@@ -8082,11 +8082,12 @@ pub mod printed {
         SEEN.take().unwrap_or_default()
     }
 
-    /// Records that `t` was printed as `text`, if recording is on.
+    /// Records that `t` was printed as `text`, if recording is on. A text of a message, which names
+    /// definitions the message writes apart, is recorded with them before it, as it reads alone.
     pub fn record(t: &Ty, text: &str) {
         SEEN.with_borrow_mut(|seen| {
             if let Some(seen) = seen {
-                seen.push((t.clone(), text.into()));
+                seen.push((t.clone(), zed_kernel::types::defs::plain(text)));
             }
         });
     }

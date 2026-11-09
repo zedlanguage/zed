@@ -3043,3 +3043,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | An explicit stack of types and a `HashSet` of tuple rows seen, keyed by the row's address (`Row::addr`), both updated in place | `Ck::compared_alone` | Identity (gap 1), mutation (gap 11) | a fold over the rows in order with a persistent set keyed by the row's content digest |
 | A `Vec` of tuple rows grouped by length in a `BTreeMap` built in place, then the union of each position's components | `Ck::min_max_tuples`, an operand of type `Never` beside a tuple | Mutation (gap 11) | a fold over the rows into a persistent map from length to rows |
+
+## Entries from MSG-type-defs-layout (`crates/zed-kernel/src/types/print/defs.rs`, `print.rs`, `zedc-check/src/check/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `thread_local!` table of the definitions printed while a checker runs, turned on and restored by a drop guard (`Collecting`), so that every type a message writes, through `Display` and other printers that take no extra argument, shares one table | `defs::collect`, `defs::active`, `add`, `reserve`, `fill`, `lift`; `Printer::render`, `Printer::collect`; `check_with`, `operator` | Mutation, global state | The printer takes the table as a parameter (a state receiver) and the checker passes its own; the guard goes away |
+| References written into message text as Unicode noncharacters (`U+FDD5 k U+FDD6`, `U+FDD7` for a definition not placed yet, `U+FDD8` where a repair asks for the declarations), found and replaced by splitting the text | `defs::reference`, `refs`, `rename`, `plain`, `holds`; `DECLARE` and `lay_out` in `check/mod.rs` | None (strings) | A message held as a list of text parts and references, not one string, so no character is reserved |

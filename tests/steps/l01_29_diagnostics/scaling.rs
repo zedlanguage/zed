@@ -86,3 +86,26 @@ fn the_reasons_of_a_class_narrowed_many_times_scale() {
         .join()
         .unwrap();
 }
+
+/// `h` passes `g` a pair of `n` parts, each written twice: `((#a0 | #b0, #a0 | #b0), …)`.
+fn shared_parts(n: usize) -> String {
+    let pairs: Vec<String> = (0..n)
+        .map(|i| format!("(#a{i} | #b{i}, #a{i} | #b{i})"))
+        .collect();
+    format!(
+        "g(x: int) = x;\nh(y: ({})) = g(x: y);\nmain() = 0;\n",
+        pairs.join(", ")
+    )
+}
+
+#[test]
+fn a_message_with_many_definitions_scales() {
+    // One message names its `n` definitions in one numbering and writes each once, on its own
+    // line (step MSG-type-defs-layout).
+    scaling::check("a message with n parts written more than once", 200, |n| {
+        let out = rejected(&shared_parts(n));
+        let last = format!("    type T{n} = #a{m} | #b{m};\n", m = n - 1);
+        assert!(out.contains(&last), "{out}");
+        assert_eq!(out.matches("    type T").count(), n);
+    });
+}

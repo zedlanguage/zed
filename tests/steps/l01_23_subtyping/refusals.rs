@@ -326,9 +326,11 @@ fn rejected(src: &str) -> String {
 #[test]
 fn a_call_whose_check_was_refused_says_why() {
     // Item PRINT-fmt-audit: the argument type is written with a definition for the part it uses
-    // three times, placed before the type. Before: `((#a | #b | #c, #a | #b | #c,
-    // #a | #b | #c))`, the part at each use.
-    let shown = "type T1 = #a | #b | #c; (T1, T1, T1)";
+    // three times. Before: `((#a | #b | #c, #a | #b | #c, #a | #b | #c))`, the part at each
+    // use. Item MSG-type-defs-layout: the definition stands on a line of its own after the
+    // sentence, which names the part `T1`; before, the sentence read
+    // `` `g` does not take (type T1 = #a | #b | #c; (T1, T1, T1)) ``.
+    let shown = "(T1, T1, T1)";
     assert_eq!(
         rejected(&box_program(7)),
         format!(
@@ -344,11 +346,16 @@ fn a_call_whose_check_was_refused_says_why() {
             "2:52: `g` does not take ({shown}): these are the types of its arguments here, and `g` has no arrow that takes them all"
         )
     );
-    // The declared type is printed with the same definition. Before: `` `y` is declared
-    // `(#a | #b | #c, #a | #b | #c, #a | #b | #c)` ``.
+    // The declared type is printed with the same definition, written once for the message.
+    // Before: `` `y` is declared `(#a | #b | #c, #a | #b | #c, #a | #b | #c)` ``.
     let Err(all) = zedc::run::load(box_program(7).as_bytes()) else {
         panic!("accepted")
     };
+    assert!(
+        all.contains("\n  T1, T2, T3 and T4 stand for parts written more than once:\n    type T1 = #a | #b | #c;\n"),
+        "{all}"
+    );
+    assert_eq!(all.matches("type T1").count(), 1, "{all}");
     assert!(all.contains(&format!("`y` is declared `{shown}`")), "{all}");
 }
 
@@ -432,6 +439,8 @@ fn an_overload_whose_check_was_refused_says_why() {
             Type::forget_emptiness();
             let errors = operator_errors(op, &vec![Ty::set(t.clone()); n]);
             let first = errors.first().unwrap_or_else(|| panic!("`{op}` took {t}"));
+            // The sentence, before the lines that define the parts it writes twice.
+            let first = first.lines().next().unwrap_or_default();
             assert!(
                 first.starts_with(&format!("`{op}` does not take (")),
                 "{first}"

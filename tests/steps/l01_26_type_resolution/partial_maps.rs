@@ -212,7 +212,7 @@ fn a_function_that_answers_on_the_permission_fits_a_bounded_map() {
     assert_eq!(
         type_errors(&format!("{pass}g = f(m: (k) -> #notFound);")),
         [
-            "the lambda returns #notFound, and `int .. int | String -> bool` returns bool: the lambda is passed where a function of type `int .. int | String -> bool` is expected, so its result must be bool [#notFound]"
+            "the lambda returns #notFound, and `int .. int | String -> bool` returns bool: the lambda is passed where a function of type `int .. int | String -> bool` is expected, so its result must be bool\n  T1 stands for a part written more than once:\n    type T1 = int | String; [#notFound]"
         ]
     );
 }

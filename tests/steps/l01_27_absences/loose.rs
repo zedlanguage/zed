@@ -140,8 +140,8 @@ fn a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values
     assert_eq!(
         type_errors(&bad),
         [
-            "`r` does not take (1, int | #nf): these are the types of its arguments here, and `r` has no arrow that takes them all [r(1, y)]",
-            "`size` does not take #nf, which is not int | (int, int): `size` takes only values of int | (int, int) [r(1, y)]"
+            "`r` does not take (1, int | #nf): these are the types of its arguments here, and `r` has no arrow that takes them all\n  T1 stands for a part written more than once:\n    type T1 = int | #_; [r(1, y)]",
+            "`size` does not take #nf, which is not int | (int, int): `size` takes only values of int | (int, int)\n  T1 stands for a part written more than once:\n    type T1 = int | #_; [r(1, y)]"
         ]
     );
     let ok = format!("{t}h(positional y: int | #nf) = r(y, 2);\na = h(#nf);\nb = h(2);\n");
@@ -180,4 +180,72 @@ fn the_is_repair_writes_a_function_type_in_parentheses() {
     assert!(type_errors(&ok).is_empty(), "{:?}", type_errors(&ok));
     let back = zedc::check::read::parse_type("(int) -> int").unwrap();
     assert_eq!(back.to_string(), "(int) -> int");
+}
+
+/// Item REPAIR-is-shared-type: the `is` repair on a type with a part written twice. Before, the
+/// repair wrote the definition inside the code, `if v is type T1 = int | #x; (T1, T1) { … }`,
+/// which no parser reads. Now the message writes the definition once, on a line of its own,
+/// and the repair says to write it at the top level; its name is no name of the program.
+/// Applied, the repaired program parses and resolves, and the declaration is the one thing
+/// this zedc does not compile yet (DESIGN.md step L2.1); the same test with the part written
+/// out is accepted.
+#[test]
+fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
+    let t = "ap(positional g: (int | #x, int | #x)) = 0;\n";
+    let call = "h(positional y: int | #nf) = k(y);\n";
+    let bad = format!("{t}k(positional a) = (ap(a), a);\n{call}");
+    let out = match zedc::run::load(bad.as_bytes()) {
+        Ok(_) => panic!("accepted:\n{bad}"),
+        Err(e) => e,
+    };
+    assert!(
+        out.contains(
+            "`ap` does not take #nf, which is not (T1, T1): `ap` takes only values of (T1, T1)\n  \
+             T1 stands for a part written more than once:\n    type T1 = int | #x;\n"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "repair: test the value with `is` first, as `if v is (T1, T1) { … }`, with the \
+             declaration above written first at the top level of the file, before the function, \
+             or handle the values that are not (T1, T1) with `else` or `match`"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("repair: pass `ap` a value of (T1, T1)\n"),
+        "{out}"
+    );
+    assert!(!out.contains("type T1 = int | #x; "), "{out}");
+    // The repair applied: it parses and resolves, and only the declaration is refused.
+    let fixed = format!(
+        "type T1 = int | #x;\n{t}k(positional a) = if a is (T1, T1) {{ ap(a) }} else {{ 0 }};\n\
+         {call}"
+    );
+    let refused = match zedc::run::load(fixed.as_bytes()) {
+        Ok(_) => panic!("type declarations compile now: check the repair in full:\n{fixed}"),
+        Err(e) => e,
+    };
+    assert_eq!(refused.lines().count(), 1, "{refused}");
+    assert!(
+        refused.contains("1:1: a type declaration is part of the Zed language"),
+        "{refused}"
+    );
+    let inline = format!(
+        "{t}k(positional a) = if a is (int | #x, int | #x) {{ ap(a) }} else {{ 0 }};\n{call}"
+    );
+    assert!(
+        type_errors(&inline).is_empty(),
+        "{:?}",
+        type_errors(&inline)
+    );
+    // A program that names something `T1` gets the next free name.
+    let taken = format!("T1(positional q) = q;\n{bad}");
+    let out = match zedc::run::load(taken.as_bytes()) {
+        Ok(_) => panic!("accepted:\n{taken}"),
+        Err(e) => e,
+    };
+    assert!(out.contains("as `if v is (T2, T2) { … }`"), "{out}");
+    assert!(out.contains("\n    type T2 = int | #x;\n"), "{out}");
 }

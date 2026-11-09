@@ -124,11 +124,16 @@ fn a_literal_at_a_union_of_two_carriers() {
     // A decimal is never an `int`, so it takes `f64`.
     let text = "f(positional x: int | f64) = x is f64;\ny = f(0.5);\n";
     assert_eq!(value(text, "y"), "true");
-    // Two carriers, neither `int`: nothing chooses one.
+    // Two carriers, neither `int`: nothing chooses one. The note that writes `f`'s type names
+    // the part it uses twice, `T1`.
     for lit in ["1", "-1", "0.5"] {
+        let defined = two_carriers(lit).replace(
+            &format!(" [{lit}]"),
+            &format!("\n  T1 stands for a part written more than once:\n    type T1 = rat | f64; [{lit}]"),
+        );
         assert_eq!(
             type_errors(&format!("f(positional x: f64 | rat) = x;\ny = f({lit});\n")),
-            [two_carriers(lit)]
+            [defined]
         );
     }
     let text = "f(positional x: f64 | rat) = x is rat;\ny = f(1r);\n";
