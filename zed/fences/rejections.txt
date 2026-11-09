@@ -3,7 +3,7 @@ Unlifted carrier
 Missing algebraic obligation
 Undischargeable `@ensure`
 Unsatisfiable declared constraints
-Disjunctions outside the S4 class
+A test whose `\|\|` alternatives limit each other's ranges in a loop
 Undecidable premise class
 Quantifier in a law over a domain that is not finite
 Obligation below proof grade
