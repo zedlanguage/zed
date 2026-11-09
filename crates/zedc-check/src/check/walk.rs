@@ -70,7 +70,7 @@ pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
     );
     let messages = (ck.info.errors.into_iter())
         .map(|mut e| {
-            lay_out(&mut e.message, &mut e.notes, &|_| false);
+            lay_out(&mut e.message, &mut e.notes);
             e.message
         })
         .collect();
@@ -3965,7 +3965,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut mine_seen = BTreeSet::new();
         for v in sig.first_seen(&mine) {
             let r = class_id(&v).expect("a class variable");
-            let name = fresh_var_name(&mut n, |name| facts.names.contains(name));
+            let name = fresh_name(Names::Variables, &mut n, |name| facts.names.contains(name));
             if self.classes[r].mask != EVERY {
                 sig.bounds.insert(v.clone(), self.classes[r].mask);
             }

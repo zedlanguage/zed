@@ -3083,3 +3083,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | `let [arrow] = &sig.arrows[..] else { return Vec::new(); }`, a slice pattern for exactly one arrow | `shared_places` | Slice patterns | Test the length, then index |
 | A `HashMap` from variable to its places filled through `entry()` (`Occupied` pushes, `Vacant` inserts and records the variable in a `Vec` of first-seen order) | `shared_places` | Mutation (gap 11) | A fold over the places into a map of lists and a list of variables in first-seen order |
+
+## Entries from MSG-fresh-name-clash (`crates/zed-kernel/src/types/print/names.rs`, `crates/zedc-check/src/check/walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `thread_local!` table of the names the program being checked binds, set by `ProgramNames::hold` in `check_with` and put back by its `Drop`, so that every printer that makes up a name, through `Display` and other printers that take no extra argument, skips the program's names | `names::HELD`, `ProgramNames`, `fresh_name`; `check_with` | Mutation, global state | The names passed to the printers as a parameter, or held in the state the checker threads through its messages, beside the definitions table of MSG-type-defs-layout |
+| A `loop` with `continue` and `break` that steps over taken names | `fresh_name` | Early exit (gap 12), mutation (gap 11) | A recursive function on the index |

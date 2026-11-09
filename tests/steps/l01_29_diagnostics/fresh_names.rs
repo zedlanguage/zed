@@ -198,3 +198,30 @@ fn naming_variables_beside_many_program_names_scales() {
         },
     );
 }
+
+/// `ap` takes a pair of two `int | #x`, so a message about it defines that part; the program
+/// binds `defs` too.
+fn defining(defs: &str) -> String {
+    format!("{defs}ap(positional g: (int | #x, int | #x)) = 0;\nh() = ap(1);\nmain() = 0;\n")
+}
+
+#[test]
+fn a_definition_skips_the_program_names_by_the_same_rule() {
+    // The definitions (MSG-type-defs-layout) pick their names with the same function as the
+    // variables, so the names the program binds are skipped there too.
+    for (defs, name) in [
+        ("", "T1"),
+        ("T1 = 1;\nT2 = 2;\n", "T3"),
+        ("T = 1;\nT2 = 2;\n", "T1"),
+    ] {
+        let out = rejected(&defining(defs));
+        assert!(
+            out.contains(&format!("    type {name} = int | #x;")),
+            "{name} for {defs:?}:\n{out}"
+        );
+        assert!(
+            out.contains(&format!("`ap` takes (({name}, {name})) -> 0")),
+            "{out}"
+        );
+    }
+}

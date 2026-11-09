@@ -16,6 +16,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use zed_kernel::frames::{Deep, Stack};
+pub use zed_kernel::types::names::{Names, ProgramNames, fresh_name};
 use zed_kernel::types::{Refusal, TextPlace, Type as KType, Verdict};
 use zed_kernel::value::Digest;
 use zed_kernel::{Items, Universe, Value};
@@ -7564,7 +7565,7 @@ impl Scope {
     /// Opens the variables `sig` binds, giving each bounded one a printed name, and returns
     /// them with their masks, in the order of `sig.bounds`. A name not printed around the
     /// signature is kept; otherwise the next of `T`, `U`, … not yet tried that is neither
-    /// printed around it nor a name of its own nor one the program binds ([`fresh_var_name`]).
+    /// printed around it nor a name of its own nor one the program binds ([`fresh_name`]).
     fn open(&mut self, sig: &Sig) -> Vec<(Arc<str>, u8)> {
         let mut out = Vec::new();
         for (v, &m) in &sig.bounds {
@@ -7573,7 +7574,7 @@ impl Scope {
                 continue;
             }
             let name = if self.printed.contains(v) {
-                fresh_var_name(&mut self.fresh, |name| {
+                fresh_name(Names::Variables, &mut self.fresh, |name| {
                     self.printed.contains(name) || sig.bounds.contains_key(name)
                 })
             } else {
@@ -8050,94 +8051,7 @@ pub fn class_id(v: &str) -> Option<usize> {
 
 /// The `n`th name of a signature's own type variables: `T`, `U`, `V`, `W`, `T5`, ….
 pub fn var_name(n: usize) -> Arc<str> {
-    match n {
-        0..4 => ["T", "U", "V", "W"][n].into(),
-        _ => format!("T{}", n + 1).into(),
-    }
-}
-
-/// The `n` for which `name` is [`var_name`]`(n)`, if it is one of those names: `T5` is 4, and
-/// `T1` to `T4` and `T05` are none.
-fn var_index(name: &str) -> Option<usize> {
-    match name {
-        "T" => Some(0),
-        "U" => Some(1),
-        "V" => Some(2),
-        "W" => Some(3),
-        _ => {
-            let digits = name.strip_prefix('T')?;
-            if digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
-                return None;
-            }
-            digits
-                .parse::<usize>()
-                .ok()
-                .filter(|&k| k >= 5)
-                .map(|k| k - 1)
-        }
-    }
-}
-
-thread_local! {
-    /// The type variable names of the program being checked on this thread, as
-    /// [`ProgramNames`] holds them: for each `n` such that the program binds [`var_name`]`(n)`,
-    /// the first `m > n` such that it binds none of the names `n..m`.
-    static PROGRAM_NAMES: RefCell<Rc<HashMap<usize, usize>>> = RefCell::default();
-}
-
-/// The names a program binds, which no type variable is named while it is held: a type a
-/// message prints is read in the program's scope, where `T` already names the program's own
-/// `T` (DESIGN.md sec:diagnostics, "Types in a message"). Dropping it puts back the names held
-/// before, so a check started inside another, as of an operator alone, leaves them as it found
-/// them.
-pub struct ProgramNames(Rc<HashMap<usize, usize>>);
-
-impl ProgramNames {
-    /// Holds `names`, the names the program binds, on this thread until it is dropped. Only
-    /// those [`var_name`] gives matter, so the table is as large as they are. `O(k)` for `k`
-    /// names.
-    pub fn hold<'n>(names: impl IntoIterator<Item = &'n str>) -> ProgramNames {
-        let taken: HashSet<usize> = names.into_iter().filter_map(var_index).collect();
-        // Each run of consecutive taken indices is walked once, from its first index.
-        let mut ends = HashMap::with_capacity(taken.len());
-        for &n in &taken {
-            if n > 0 && taken.contains(&(n - 1)) {
-                continue;
-            }
-            let mut end = n + 1;
-            while taken.contains(&end) {
-                end += 1;
-            }
-            ends.extend((n..end).map(|k| (k, end)));
-        }
-        ProgramNames(PROGRAM_NAMES.replace(Rc::new(ends)))
-    }
-}
-
-impl Drop for ProgramNames {
-    fn drop(&mut self) {
-        PROGRAM_NAMES.set(std::mem::take(&mut self.0));
-    }
-}
-
-/// The next name of [`var_name`] from the `n`th on that the program being checked does not
-/// bind ([`ProgramNames`]) and `taken` does not hold, with `n` moved past it. Every place that
-/// names type variables picks its names here, so all of them skip the program's names alike.
-/// A run of names the program binds is stepped over at once, so a pick costs `O(1)` beside the
-/// names `taken` holds, however many names the program binds.
-pub fn fresh_var_name(n: &mut usize, taken: impl Fn(&Arc<str>) -> bool) -> Arc<str> {
-    PROGRAM_NAMES.with_borrow(|program| {
-        loop {
-            if let Some(&end) = program.get(n) {
-                *n = end;
-            }
-            let name = var_name(*n);
-            *n += 1;
-            if !taken(&name) {
-                break name;
-            }
-        }
-    })
+    Names::Variables.nth(n)
 }
 
 /// The types printed on a thread while recording is on, each with the text printed (feature

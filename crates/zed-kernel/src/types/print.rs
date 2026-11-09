@@ -29,6 +29,7 @@ use super::bdd::{Bdd, Form, Part};
 use super::{Lits, Morphism, Node, Row, Surface, Surfaces, Tuples, Type};
 
 pub mod defs;
+pub mod names;
 
 impl Type {
     /// The type in the surface syntax (module `print`).
@@ -1111,8 +1112,9 @@ impl Printer {
             let mut k = 0;
             for &i in &self.post {
                 if defined(i) {
-                    k += 1;
-                    named[i] = Some(format!("T{k}"));
+                    named[i] = Some(names::fresh_name(names::Names::Definitions, &mut k, |_| {
+                        false
+                    }));
                 }
             }
             for &i in &self.post {

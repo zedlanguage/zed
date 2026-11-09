@@ -15,6 +15,8 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
+use super::names::{Names, fresh_name};
+
 /// Opens a reference.
 const REF: char = '\u{FDD5}';
 /// Closes a reference.
@@ -119,8 +121,9 @@ fn rename(text: &str, names: &HashMap<usize, String>) -> String {
 /// and writes each reference by its name. Gives the definitions, name and body, each before
 /// its uses but where definitions refer to each other in a cycle. Numbers are given in that
 /// order, which is found from the texts alone, so equal texts get equal names. A name is
-/// skipped if `taken` says so or a text holds it as a word. `texts` with no reference are
-/// left as they are, and give no definition.
+/// skipped if the program binds it, `taken` says so or a text holds it as a word, so a
+/// variable `T5` the message writes leaves `T5` to it ([`fresh_name`]). `texts` with no
+/// reference are left as they are, and give no definition.
 ///
 /// Time linear in the texts and the bodies reached, with a hash lookup per reference.
 pub fn lift(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) -> Vec<(String, String)> {
@@ -165,13 +168,9 @@ pub fn lift(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) -> Vec<(Str
     let mut names: HashMap<usize, String> = HashMap::with_capacity(bodies.len());
     let mut n = 0;
     for (k, _) in &bodies {
-        let name = loop {
-            n += 1;
-            let name = format!("T{n}");
-            if !words.contains(name.as_str()) && !taken(&name) {
-                break name;
-            }
-        };
+        let name: String = fresh_name(Names::Definitions, &mut n, |w| {
+            words.contains(w) || taken(w)
+        });
         names.insert(*k, name);
     }
     for text in texts.iter_mut() {

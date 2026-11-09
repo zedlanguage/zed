@@ -74,8 +74,8 @@ use zedc_syntax::lex::{Span, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
-    Arrow, Binds, Carrier, EVERY, IntDomain, Narrow, Need, NeedKind, OTHER, Piece, SParam, Shape,
-    Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, class_id, errs, fresh_var_name, mask_text,
+    Arrow, Binds, Carrier, EVERY, IntDomain, Names, Narrow, Need, NeedKind, OTHER, Piece, SParam,
+    Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, class_id, errs, fresh_name, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -621,17 +621,17 @@ fn show_with(t: &Ty, masks: &Masks) -> String {
 const DECLARE: &str = "\u{FDD8}";
 
 /// Writes the types of one message, its text and its notes, in one numbering: each part
-/// written more than once gets one definition, named `T1`, `T2`, … with no name `taken` by the
-/// program or written in the message, and the definitions stand after the sentence on lines of
+/// written more than once gets one definition, named `T1`, `T2`, … with no name the program
+/// binds or the message writes ([`fresh_name`]), and the definitions stand after the sentence on lines of
 /// their own (module `defs` of the kernel). A repair note whose code names one says, where it
 /// wrote [`DECLARE`], to declare them at the top level; elsewhere [`DECLARE`] is dropped. A
 /// message with no part written twice is as it was.
-fn lay_out(message: &mut String, notes: &mut [Note], taken: &dyn Fn(&str) -> bool) {
+fn lay_out(message: &mut String, notes: &mut [Note]) {
     let code: Vec<bool> = notes.iter().map(|n| defs::holds(&n.text)).collect();
     let mut texts: Vec<&mut String> = std::iter::once(&mut *message)
         .chain(notes.iter_mut().map(|n| &mut n.text))
         .collect();
-    let lifted = defs::lift(&mut texts, taken);
+    let lifted = defs::lift(&mut texts, &|_| false);
     let these = match lifted.len() {
         1 => "the declaration above",
         _ => "the declarations above",
@@ -2475,7 +2475,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             let to = renamed
                 .entry(v.clone())
                 .or_insert_with(|| {
-                    let name = fresh_var_name(&mut n, |name| used.contains(name));
+                    let name: Arc<str> =
+                        fresh_name(Names::Variables, &mut n, |name| used.contains(name));
                     used.insert(name.clone());
                     name
                 })
@@ -2506,16 +2507,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             .into_iter()
             .map(|(k, t)| (k, self.shown(&self.solved(&t))))
             .collect();
-        let names: HashSet<&str> = (self.t.res.binders.iter())
-            .map(|b| b.name.as_str())
-            .collect();
         let mut errors = std::mem::take(&mut self.info.errors);
         for e in &mut errors {
             e.message = self.named(&e.message);
             for n in &mut e.notes {
                 n.text = self.named(&n.text);
             }
-            lay_out(&mut e.message, &mut e.notes, &|w| names.contains(w));
+            lay_out(&mut e.message, &mut e.notes);
         }
         self.info.errors = errors;
     }
