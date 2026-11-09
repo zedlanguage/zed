@@ -5,7 +5,9 @@
 //! q0 == 2*q3 + 1` its point of the base gives `x*y` the value 3 and `y` none, so the second
 //! disjunct's `x*y <= 2` read `0 * 0` and held there; the disjunct was kept, the search took
 //! it, and the point `{x: 0, x*y: 3, q0: 1, q3: 0}` came back, though `x*y <= 2` fails at it
-//! and the formula has no point at all.
+//! and the formula has no point at all. Propagation (`forced`) now answers that case before
+//! the solver; the same case with `x` bounded by two rows, and a case with `x` free, still
+//! reach the solver's search.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -65,7 +67,8 @@ fn holds(f: &Formula, m: &Model) -> bool {
 }
 
 /// The case PRES-small-front found: no point, since `x == 0` and `x * y == 3` take the first
-/// disjunct, which makes `q0 == 2`, and `q0` is odd.
+/// disjunct, which makes `q0 == 2`, and `q0` is odd. Propagation (`forced`), which runs before
+/// the solver, now answers this case itself; the cases below reach the solver.
 fn found_case() -> Formula {
     let (p, x) = (product(), sym("x"));
     Formula::and(vec![
@@ -84,6 +87,45 @@ fn a_product_fixed_beside_a_parity_row_leaves_no_point() {
     let f = found_case();
     assert_eq!(satisfiable(&f), Ok(None), "{f}");
     assert_eq!(decide(&f), Ok(false), "{f}");
+}
+
+/// [`found_case`] with `x == 0` written as two bounds, which propagation (`forced`) does not
+/// read, so the solver itself must answer it.
+#[test]
+fn the_found_case_with_x_bounded_by_two_rows_reaches_the_solver_and_has_no_point() {
+    let (p, x) = (product(), sym("x"));
+    let f = Formula::and(vec![
+        Formula::or(vec![
+            Formula::and(vec![ge(&p, &k(3)), eq(&x, &q(0).minus(&k(2)))]),
+            Formula::and(vec![Formula::negate(ge(&p, &k(3))), eq(&q(0), &k(1))]),
+        ]),
+        ge(&x, &k(0)),
+        ge(&k(0), &x),
+        eq(&p, &k(3)),
+        eq(&q(0), &q(3).times(2).plus(&k(1))),
+    ]);
+    assert_eq!(satisfiable(&f), Ok(None), "{f}");
+    assert_eq!(decide(&f), Ok(false), "{f}");
+}
+
+/// `x` is free, so propagation leaves the formula to the solver. The first disjunct needs
+/// `q0 == 2`, which the parity row forbids, so the point must take the second, `x <= -2` and
+/// `q0 == 3`. The solver once read `x * y` at its base point, `x` absent, as `0 * 0`, so
+/// `x * y == q0 - 1` held with `q0 == 1` and the first disjunct was taken.
+#[test]
+fn a_free_factor_does_not_make_the_product_zero_inside_the_search() {
+    let (p, x) = (product(), sym("x"));
+    let f = Formula::and(vec![
+        Formula::or(vec![
+            Formula::and(vec![ge(&x, &k(-1)), eq(&p, &q(0).minus(&k(1)))]),
+            Formula::and(vec![Formula::negate(ge(&x, &k(-1))), eq(&q(0), &k(3))]),
+        ]),
+        eq(&q(0), &q(10).times(2).plus(&k(1))),
+        eq(&p, &k(1)),
+    ]);
+    let m = satisfiable(&f).expect("decided").expect("a point");
+    assert!(holds(&f, &m), "{m:?} is no point of {f}");
+    assert_eq!(m.get(&Atom::Aux(0)), Some(&Int::from(3)), "{m:?}");
 }
 
 #[test]
@@ -197,7 +239,7 @@ fn point_in_window(f: &Formula, w: i64) -> Option<Model> {
 /// it returns none and the formula has at most five atoms, no point lies in `-3..=3`.
 #[test]
 fn every_point_returned_holds_with_products_parity_rows_and_disjunctions() {
-    let mut rng = Rng::new(0x5eed_0f_9a41_7e5);
+    let mut rng = Rng::new(0x0005_eed0_f9a4_17e5);
     let (mut points, mut empty, mut refused, mut searched) = (0, 0, 0, 0);
     let mut shapes = BTreeSet::new();
     for _ in 0..3000 {

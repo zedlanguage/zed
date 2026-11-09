@@ -863,7 +863,9 @@ impl fmt::Display for Relation {
 /// hold with that atom read as zero (`pick`). A caller that needs a value for every atom gives
 /// those left out zero (`l01_38_presburger::model_keys`). A product is read as an atom of its
 /// own, as everywhere in the solver, so its value in the point need not be the product of its
-/// factors' values.
+/// factors' values: the point satisfies `f` with each product read as a variable of its own
+/// (PRES-product-parity), and [`Formula::holds`], which reads a product through its factors, may
+/// reject it (PRES-model-products).
 pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
     match forced::forced(f, true) {
         Some(Forced::Empty) => Ok(None),
