@@ -7,7 +7,7 @@
 //! indexed definition, and expression statements `e;`; and from step L7.3, the unit items
 //! `@name;` and `@name(args);`, as `@log(#off);`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::builder::{Builder, Built};
 use super::{
@@ -367,15 +367,17 @@ impl Builder<'_, '_> {
             .collect()
     }
 
-    /// The struct of node `n`, a `Struct`; a field declared twice, or a path imported twice,
-    /// is an error.
+    /// The struct of node `n`, a `Struct`; a field declared twice is an error. A path imported
+    /// again is kept once, at its first import: it brings in the same fields, and a field
+    /// brought in twice with equal forms is one field at its first place (DESIGN.md
+    /// sec:introspection).
     fn structure(&mut self, n: usize) -> Result<Struct, Error> {
         let (&name, kids) = self
             .kids(n)
             .split_first()
             .expect("Struct = 'struct' Name …");
         let mut fields = Vec::with_capacity(kids.len());
-        let (mut names, mut paths) = (HashMap::new(), HashMap::new());
+        let (mut names, mut paths) = (HashMap::new(), HashSet::new());
         for &k in kids {
             // A `StructField` is a field with a default, or holds a `Field`.
             let (f, default) = match self.kids(k) {
@@ -386,15 +388,15 @@ impl Builder<'_, '_> {
             let fk = self.kids(f);
             let span = self.span(k);
             if self.tree.name(fk[0]) == "Path" {
+                // A path is its words, so `a.B`, `a .B` and `a . B` are one path, and a repeat
+                // of a path is dropped. O(1) per import: one hash lookup keyed by its words,
+                // in time linear in their length.
                 let p = &self.tree.nodes[fk[0]];
-                let path =
-                    &self.text[self.tokens[p.start].span.start..self.tokens[p.end - 1].span.end];
-                self.once(&mut paths, path, fk[0], "import", "written")?;
-                let path = (p.start..p.end).step_by(2).map(|i| self.word(i));
-                fields.push(Field::Import {
-                    path: path.collect::<Vec<_>>().join("."),
-                    span,
-                });
+                let words: Vec<&str> = (p.start..p.end).step_by(2).map(|i| self.word(i)).collect();
+                let path = words.join(".");
+                if paths.insert(words) {
+                    fields.push(Field::Import { path, span });
+                }
             } else {
                 let name = self.word(self.tree.nodes[fk[0]].start);
                 self.once(&mut names, name, fk[0], "field", "declared")?;

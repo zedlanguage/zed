@@ -55,6 +55,41 @@ fn a_struct_of_many_fields_scales() {
     linear("a struct and a display of n fields", 1000, wide);
 }
 
+/// `struct Many { import m.T0, import m .T1, … }`, `n` imports of distinct paths, some written
+/// with spaces around their `.`.
+fn imports(n: usize) -> String {
+    let paths: Vec<String> = (0..n)
+        .map(|i| format!("import m{}T{i}", [".", " .", ". ", " . "][i % 4]))
+        .collect();
+    format!("struct Many {{ {} }}\n", paths.join(", "))
+}
+
+#[test]
+fn a_struct_of_many_imports_scales() {
+    linear("a struct of n imports", 1000, imports);
+}
+
+/// `struct Many { import m.T0, …, import m . T0, … }`: the `n` imports of `imports(n)`, then
+/// each path again, spaced another way, so the last `n` imports are repeats.
+fn repeated(n: usize) -> String {
+    let again: Vec<String> = (0..n)
+        .map(|i| format!("import m{}T{i}", [" . ", ". ", " .", "."][i % 4]))
+        .collect();
+    imports(n).replacen(" }", &format!(", {} }}", again.join(", ")), 1)
+}
+
+#[test]
+fn a_struct_that_imports_every_path_twice_scales() {
+    // Each repeat is found by one lookup and dropped, so the struct keeps `n` imports.
+    for n in [1000, 8000] {
+        let p = parsed(repeated(n));
+        let stmts = unit(&p.text, &p.tokens, &p.tree).unwrap();
+        let shown = stmts[0].to_string();
+        assert_eq!(shown.matches("(import ").count(), n, "{shown}");
+    }
+    linear("a struct of n imports, each written twice", 1000, repeated);
+}
+
 /// `n` methods on one struct, each with a parameter.
 fn methods(n: usize) -> String {
     (0..n)

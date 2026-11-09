@@ -84,3 +84,13 @@ fn a_method_body_block_is_on_several_lines() {
         "Range.clamp(v) {\n  low = if v < lo { lo } else { v };\n  if low > hi { hi } else { low }\n}\n",
     );
 }
+
+/// A repeated import of one path is one import (DESIGN.md sec:introspection), so the formatter
+/// writes it once, at the first import's place, however the repeat is spaced.
+#[test]
+fn a_repeated_import_is_written_once() {
+    check(
+        "struct P { import a.B, z: f64, import a . B, }\n",
+        "struct P { import a.B, z: f64 }\n",
+    );
+}
