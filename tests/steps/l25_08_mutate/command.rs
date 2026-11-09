@@ -34,11 +34,11 @@ fn undetected_mutants_do_not_change_the_exit_status() {
         out,
         format!(
             "2 passed, 0 failed, 0 rejection units\n\
-             {a}:1:31: undetected: `<` replaced by `<=` in `isMinor` at .0: every row that \
+             {a}:1:31: undetected: `<` replaced by `<=` in `isMinor` at .0.1: every row that \
              reaches it passes\n\
-             {a}:1:33: undetected: `18` replaced by `17` in `isMinor` at .0.1: every row that \
+             {a}:1:33: undetected: `18` replaced by `17` in `isMinor` at .0.1.1.3: every row that \
              reaches it passes\n\
-             {a}:1:33: undetected: `18` replaced by `19` in `isMinor` at .0.1: every row that \
+             {a}:1:33: undetected: `18` replaced by `19` in `isMinor` at .0.1.1.3: every row that \
              reaches it passes\n\
              3 mutants: 0 detected, 3 undetected, 0 skipped, 0 not run\n"
         )
@@ -100,7 +100,7 @@ fn several_files_report_as_each_file_alone() {
     );
     let b = unit(
         "batch-b.zed",
-        "limit = 10;\nscale(positional x) = x * (2 + 0) test { 3 -> 6 }\n",
+        "limit = 10;\nscale(positional x: int) = x * (2 + 0) test { 3 -> 6 }\n",
     );
     // A rejection unit has no mutants.
     let c = unit(

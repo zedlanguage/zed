@@ -11,11 +11,11 @@ fn the_fares_report() {
         [
             "10:51: skipped: `+` replaced by `-` in `fare` at .0.1.1: the build stage gives the \
              definition the original's term",
-            "6:31: undetected: `<` replaced by `<=` in `isMinor` at .0: every row that reaches \
+            "6:31: undetected: `<` replaced by `<=` in `isMinor` at .0.1: every row that reaches \
              it passes",
-            "6:33: undetected: `18` replaced by `17` in `isMinor` at .0.1: every row that \
+            "6:33: undetected: `18` replaced by `17` in `isMinor` at .0.1.1.3: every row that \
              reaches it passes",
-            "6:33: undetected: `18` replaced by `19` in `isMinor` at .0.1: every row that \
+            "6:33: undetected: `18` replaced by `19` in `isMinor` at .0.1.1.3: every row that \
              reaches it passes",
             "15 mutants: 11 detected, 3 undetected, 1 skipped, 0 not run",
         ]
@@ -35,12 +35,15 @@ fn a_boundary_the_table_checks_detects_its_mutants() {
 
 #[test]
 fn a_mutant_the_build_stage_proves_equal_is_skipped() {
-    // `2 + 0` and `2 - 0` are both built to 2; the other mutants change the factor.
-    let unit = "scale(positional x) = x * (2 + 0) test { 3 -> 6 }\n";
+    // `2 + 0` and `2 - 0` are both built to 2; the other mutants change the factor. `x` is
+    // declared `int`: with `x` generic, `2 + 0` takes the carrier of `x` (L1.26a), one `match`
+    // on it per literal, and the build stage does not yet build the two to the same term
+    // (follow-up STAGE-generic-fold).
+    let unit = "scale(positional x: int) = x * (2 + 0) test { 3 -> 6 }\n";
     assert_eq!(
         report(unit),
         [
-            "1:30: skipped: `+` replaced by `-` in `scale` at .0.1: the build stage gives the \
+            "1:35: skipped: `+` replaced by `-` in `scale` at .0.1: the build stage gives the \
              definition the original's term",
             "5 mutants: 4 detected, 0 undetected, 1 skipped, 0 not run",
         ]
@@ -53,11 +56,11 @@ fn a_table_that_omits_the_boundary_leaves_its_mutants_undetected() {
     assert_eq!(
         report(unit),
         [
-            "1:31: undetected: `<` replaced by `<=` in `isMinor` at .0: every row that reaches \
+            "1:31: undetected: `<` replaced by `<=` in `isMinor` at .0.1: every row that reaches \
              it passes",
-            "1:33: undetected: `18` replaced by `17` in `isMinor` at .0.1: every row that \
+            "1:33: undetected: `18` replaced by `17` in `isMinor` at .0.1.1.3: every row that \
              reaches it passes",
-            "1:33: undetected: `18` replaced by `19` in `isMinor` at .0.1: every row that \
+            "1:33: undetected: `18` replaced by `19` in `isMinor` at .0.1.1.3: every row that \
              reaches it passes",
             "3 mutants: 0 detected, 3 undetected, 0 skipped, 0 not run",
         ]
@@ -154,11 +157,11 @@ guard(positional x) = if x > 0 { w(w) } else { x } test { 0 -> 0 }
     assert_eq!(
         report(unit),
         [
-            "2:28: not run: `>` replaced by `>=` in `guard` at .0.0: no row that ran fails, \
+            "2:28: not run: `>` replaced by `>=` in `guard` at .0.0.1: no row that ran fails, \
              and the form of a row that reaches it does not show that it ends",
-            "2:30: not run: `0` replaced by `-1` in `guard` at .0.0.1: no row that ran fails, \
+            "2:30: not run: `0` replaced by `-1` in `guard` at .0.0.1.1.3: no row that ran fails, \
              and the form of a row that reaches it does not show that it ends",
-            "2:30: not run: `0` replaced by `1` in `guard` at .0.0.1: no row that ran fails, \
+            "2:30: not run: `0` replaced by `1` in `guard` at .0.0.1.1.3: no row that ran fails, \
              and the form of a row that reaches it does not show that it ends",
             "3 mutants: 0 detected, 0 undetected, 0 skipped, 3 not run",
         ]

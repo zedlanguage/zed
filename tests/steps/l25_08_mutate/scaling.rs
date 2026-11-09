@@ -93,8 +93,18 @@ fn running_the_mutants_of_n_functions_each_with_a_row_scales() {
 
 /// One definition with `n` additions in a chain and a row that checks its sum: `3n` mutants
 /// (each `+` by `-`, each `1` by `0` and by `2`), each of which copies, remixes and runs the
-/// whole definition, so the run is of order n².
+/// whole definition, so the run is of order n². `x` is declared `int`, so each `1` is an `int`.
 fn chain_with_row(n: usize) -> String {
+    format!(
+        "f(positional x: int) = x{} test {{ 0 -> {n} }}\n",
+        " + 1".repeat(n)
+    )
+}
+
+/// [`chain_with_row`] with `x` undeclared: each `1` takes the carrier of `x` (DESIGN.md L1.26a),
+/// one `match` on it per literal, and each mutant runs about 6 times the work of the `int`
+/// chain's (COMPLEXITY.md F133).
+fn generic_chain_with_row(n: usize) -> String {
     format!(
         "f(positional x) = x{} test {{ 0 -> {n} }}\n",
         " + 1".repeat(n)
@@ -104,18 +114,23 @@ fn chain_with_row(n: usize) -> String {
 #[test]
 fn running_the_mutants_of_a_chain_of_n_additions_scales() {
     // The front end elaborates a chain by recursion, as deep as the chain: a main thread's stack.
-    on_main_sized_stack(running_a_chain);
+    on_main_sized_stack(|| running_a_chain("", 100, chain_with_row));
 }
 
-fn running_a_chain() {
+#[test]
+fn running_the_mutants_of_a_generic_chain_of_n_additions_scales() {
+    on_main_sized_stack(|| running_a_chain("generic ", 50, generic_chain_with_row));
+}
+
+fn running_a_chain(kind: &str, n: usize, make: fn(usize) -> String) {
     let cache = Warm::default();
     // n mutants, each O(n) to build, remix and run: order 2.
     scaling::check_order(
-        "running the mutants of a chain of n additions",
-        100,
+        &format!("running the mutants of a {kind}chain of n additions"),
+        n,
         2,
         |n| {
-            let (text, mut db) = warm(&cache, n, chain_with_row);
+            let (text, mut db) = warm(&cache, n, make);
             let front = db.front(&text);
             let (stmts, unit, _) = front.as_ref().as_ref().unwrap();
             let found = mutate::run(&text, stmts, unit, &run::direct).unwrap();

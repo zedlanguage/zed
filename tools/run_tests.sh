@@ -156,6 +156,8 @@ fi
 # alone) joined its random module (2026-11-07, PA-walk-multi).
 # l01_26 ran past 60 s whole at load 24 once deep_ops joined it, its operations on types
 # 100,000 deep taking up to 15 s each (2026-11-09, T2-ty).
+# l25_08 ran past 60 s whole at load 14 once bare literals made its chain of additions generic;
+# its generic chain takes 35 s alone and the int chain 11 s (2026-11-09, LIT-bare).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
@@ -168,6 +170,7 @@ split="
   l01_38_presburger::shared l01_38_presburger::stages
   l01_39_reduced_product l01_39_reduced_product::random
   l01_39a_bit_words l01_39a_bit_words::scaling
+  l25_08_mutate l25_08_mutate::scaling
 "
 # The pieces of step folder $1 in the test binary $2, or of its module $3 (a path in the
 # binary) when one is given. A module's piece filters by `$3::`, which libtest matches anywhere in
