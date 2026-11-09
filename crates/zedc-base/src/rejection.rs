@@ -37,6 +37,8 @@ rows! {
     LoopedAlternatives => "A test whose `||` alternatives limit each other's ranges in a loop",
     // No diagnostic uses this row yet: plan row H10-refuse emits it.
     UndecidablePremise => "Undecidable premise class",
+    // No diagnostic uses this row yet: plan row HULL-conic emits it.
+    NumberTooWide => "Number too wide to factor",
     QuantifierNotFinite => "Quantifier in a law over a domain that is not finite",
     BelowProofGrade =>
         "Obligation below proof grade",
