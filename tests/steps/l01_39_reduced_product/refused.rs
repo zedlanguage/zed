@@ -432,7 +432,9 @@ fn a_refused_projection_names_the_bounds_it_kept() {
 /// Case 272 of seed 17 (`pendants::WRITTEN`) within its boxes: the projection onto `b`, `z1`
 /// and `z2` is refused, and each warning names the bounds the box stage kept for its variable;
 /// a case of an alternative set aside keeps no bounds, since the box stage does not read it,
-/// and still says that its search found no values and ruled none out.
+/// and still says that its search found no values and ruled none out. `b` is refused only in
+/// the case with no alternative left, where `z2 <= 4` and so `b <= 13`; in the cases with an
+/// alternative its values are found exactly (PRES-project-each-cost).
 #[test]
 fn a_refused_projection_onto_one_name_names_its_bounds() {
     let case = "a + 2 * c >= -4 && (2 * a + b >= 7 || z2 <= 8) && a + 2 * b + c + z1 >= 4 \
@@ -443,7 +445,7 @@ fn a_refused_projection_onto_one_name_names_its_bounds() {
     let src = format!("ok(a, b, c, z0, z1, z2) = if {bounds} && {case} {{ 1 }} else {{ 0 }};");
     let (_, _, arms) = super::arms_of(&src);
     let got = texts(&super::arm(&arms, "z2 + 5", true).scope);
-    for (n, set) in [("b", "[-4..=15]"), ("z1", "[-7..=13]"), ("z2", "[-10..=6]")] {
+    for (n, set) in [("b", "[-4..=13]"), ("z1", "[-7..=13]"), ("z2", "[-10..=6]")] {
         let want = format!(
             "{GROWTH}. The checker stopped there, with the bounds that each condition gives `{n}` \
              from the bounds of the others: `{n}: int{set}`\n"
