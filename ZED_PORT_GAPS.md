@@ -2510,6 +2510,14 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `thread_local!` empty set shared by every value with no integer; `thread_local!` `Cell<u64>` counter `FORWARD_PIECES`, read and reset by a test through `forward_pieces` | `Ints::empty`, `preimage::count_forward` | Thread-local state (the gap of `preimage::EXACT` and `CLASS_READS` above) | A constant empty set; the count returned with the answer |
 | `std::mem::Discriminant<Op>` in a key | `preimage::OpKey` | None | The operator's tag as a value of an enumeration without payload |
 
+## Entries from S22-split-holes (`crates/zedc-preimage/src/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A memo of meets with the domain held in a `RefCell<Option<HashMap<..>>>` field of `Tx`, set to `Some` for the time of a split and to `None` after it | `Tx::split_meets`, `Tx::meet_domain`, `split_residues` | Mutation of the checker state shared by the class runs (as `SharedInts`) | A table threaded through the class runs and returned by each |
+| Keys made from addresses: the address of an input's domain (`std::ptr::eq`) beside the set, and the classes grouped by `Rc::as_ptr` of their set of `x`; the entry holds the domain's `Rc` so that the address is not reused | `DomainMeets`, `split_classes` (`by_set`), `same_box` (`Rc::ptr_eq`) | Identity of values (the `ptr_eq` rows of S22-fwd-holes) | Numbered sets: each set made gets a number from the run, and the groups and the memo are keyed by numbers |
+| A box whose sets are borrowed from the context by read number or shared by `Rc`, copied once at the end by `Rc::unwrap_or_clone` | `RestBox`, `BoxSet`, `split_box`, `box_domains` | Shared values copied on demand; Zed values are immutable and shared already | The map of sets itself, with no copy |
+
 ## Entries from TY-sub-stack (`crates/zedc-types/src/ty.rs`)
 
 | Rust construct | Sites | Gap | At the port |

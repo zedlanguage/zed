@@ -676,7 +676,10 @@ fn split_residues(
     early: bool,
 ) -> Split {
     let mut deferred = false;
-    match split_classes(tx, root, dom, demand, marks, early, &mut deferred) {
+    *tx.split_meets.borrow_mut() = Some(DomainMeets::new());
+    let found = split_classes(tx, root, dom, demand, marks, early, &mut deferred);
+    *tx.split_meets.borrow_mut() = None;
+    match found {
         Some((d, None)) => Split::Exact(d),
         Some((d, Some(found))) => Split::Wide(d, found),
         None if deferred => Split::Deferred,
@@ -708,13 +711,26 @@ fn split_classes(
         return None;
     }
     let cuts: Rc<[i128]> = cuts.into();
-    let mut common: Option<IntervalSet> = None;
-    let mut rest: Option<Domains> = None;
-    let mut classes = Vec::with_capacity(cuts.len() - 1);
+    // The runs share the box's domains, made once ([`Tx::begin`]), and the meets of sets with
+    // them ([`Tx::meet_domain`]): the classes whose runs find one set of `x` share it, so that
+    // neither the domain nor that set is copied for each class.
+    //
+    // Complexity tradeoff: classes whose runs find different sets of `x` still build each set,
+    // `O(H)` for each class over a domain of `H` holes (for example arms that bound `x` by a
+    // different constant in each class), and the wide path below ([`residue_relation`],
+    // [`covers`]) reads each class's own part. Test:
+    // `l01_25_preimage_catalog::s22::split_classes_share_the_holes_scale` covers the shared case
+    // only; COMPLEXITY.md row S22-split-holes. A complete solution would keep a run's set as
+    // "this set within the domain" without meeting the two, so that classes that bound `x`
+    // differently share the domain's holes too.
+    let begun = tx.begin(dom);
+    let empty = Rc::new(IntervalSet::empty());
+    let mut sets: Vec<(Rc<IntervalSet>, IntervalSet)> = Vec::with_capacity(cuts.len() - 1);
+    let mut rest: Option<RestBox> = None;
     let mut marks = marks.clone();
     let mut kept = Kept::default();
     for (index, w) in cuts.windows(2).enumerate() {
-        tx.start(dom, marks);
+        tx.start_from(&begun, marks);
         // What the runs compute without reading the class is computed once for all of them.
         tx.run.restore(std::mem::take(&mut kept));
         tx.run.residue = Some(Residue {
@@ -737,54 +753,84 @@ fn split_classes(
         }
         kept = tx.run.keep();
         marks = std::mem::take(&mut tx.run.marks);
-        let mut d = tx.whole(&r);
-        let s = d.remove(&name).expect("the split input is an input");
+        let (s, d) = split_box(&begun.cx, &r, tx.none(&r), &name, &empty);
         if !s.is_empty() {
             match &rest {
-                Some(o) if *o != d => return None,
+                Some(o) if !same_box(&begun.cx, o, &d) => return None,
                 Some(_) => {}
                 None => rest = Some(d),
             }
         }
-        common = Some(match common {
-            Some(c) => c.meet(&s),
-            None => s.clone(),
-        });
-        classes.push((s, class));
+        sets.push((s, class));
     }
-    let common = common.expect("at least two classes");
+    // The classes that share a set, each set once, in the order of their first class.
+    let mut groups: Vec<(Rc<IntervalSet>, Vec<usize>)> = Vec::new();
+    let mut group = Vec::with_capacity(sets.len());
+    let mut by_set: HashMap<*const IntervalSet, usize> = HashMap::new();
+    for (j, (s, _)) in sets.iter().enumerate() {
+        let g = *by_set.entry(Rc::as_ptr(s)).or_insert_with(|| {
+            groups.push((s.clone(), Vec::new()));
+            groups.len() - 1
+        });
+        groups[g].1.push(j);
+        group.push(g);
+    }
+    let common = match &groups[..] {
+        [(s, _)] => s.clone(),
+        [(first, _), others @ ..] => {
+            let mut common = (**first).clone();
+            for (s, _) in others {
+                if common.is_empty() {
+                    break;
+                }
+                common = common.meet(s);
+            }
+            Rc::new(common)
+        }
+        [] => unreachable!("at least two classes"),
+    };
+    // What each set holds beyond the common part: the set itself where nothing is common.
+    let owns: Vec<Rc<IntervalSet>> = (groups.iter())
+        .map(|(s, _)| match common.is_empty() {
+            true => s.clone(),
+            false => Rc::new(common.complement_in(s)),
+        })
+        .collect();
     let mut pieces = common.pieces().to_vec();
     let mut wide = false;
-    let mut parts = Vec::new();
-    for (s, class) in &classes {
-        let own = common.complement_in(s);
+    for (own, (_, members)) in owns.iter().zip(&groups) {
         for (lo, hi) in own.pieces() {
-            // An end moves in to the nearest member of the class, which [`mod_pre`] leaves on
-            // a half-line.
-            let Some(within) = in_class(lo, hi, class, m) else {
-                continue;
-            };
-            let (hull, exact) = mod_pre(class, c, &within);
-            if exact {
-                pieces.extend_from_slice(hull.pieces());
-                continue;
+            // A piece is read for the classes whose remainders it holds, found by binary
+            // search, not for every class of its set ([`touched`]).
+            for &j in touched(lo, hi, members, &cuts, m).into_iter().flatten() {
+                let class = &sets[j].1;
+                // An end moves in to the nearest member of the class, which [`mod_pre`]
+                // leaves on a half-line.
+                let Some(within) = in_class(lo, hi, class, m) else {
+                    continue;
+                };
+                let (hull, exact) = mod_pre(class, c, &within);
+                if exact {
+                    pieces.extend_from_slice(hull.pieces());
+                    continue;
+                }
+                // The merged periods between the first and the last are read once more,
+                // which lists their own first and last, as the transfer's box split again
+                // did before.
+                for (a, b) in hull.pieces() {
+                    let (part, exact) =
+                        mod_pre(class, c, &IntervalSet::range(a.clone(), b.clone()));
+                    wide |= !exact;
+                    pieces.extend_from_slice(part.pieces());
+                }
             }
-            // The merged periods between the first and the last are read once more, which
-            // lists their own first and last, as the transfer's box split again did before.
-            for (a, b) in hull.pieces() {
-                let (part, exact) = mod_pre(class, c, &IntervalSet::range(a.clone(), b.clone()));
-                wide |= !exact;
-                pieces.extend_from_slice(part.pieces());
-            }
-        }
-        if !own.is_empty() {
-            parts.push((own, class));
         }
     }
-    let Some(mut rest) = rest else {
+    let Some(rest) = rest else {
         let none = dom.keys().map(|k| (k.clone(), IntervalSet::empty()));
         return Some((none.collect(), None));
     };
+    let mut rest = box_domains(&begun.cx, rest);
     rest.insert(name.clone(), IntervalSet::from_pieces(pieces));
     if !wide {
         return Some((rest, None));
@@ -793,16 +839,139 @@ fn split_classes(
     // piece for each; the box holds their hull, and the relation the remainders. The box is
     // narrowed to the relation's projection, which lists the periods within the box, and is
     // exact when every member lies in the set of its class ([`covers`]).
+    let parts: Vec<(&IntervalSet, &IntervalSet)> = (sets.iter().zip(&group))
+        .map(|((_, class), &g)| (&*owns[g], class))
+        .filter(|(own, _)| !own.is_empty())
+        .collect();
     let rel = residue_relation(&name, c, &common, &parts);
     let (out, why) = match project_classes(&rel, &rest) {
         Ok(found) => found,
         Err(why) => (rest, Some(why)),
     };
-    let sets: Vec<&IntervalSet> = classes.iter().map(|(s, _)| s).collect();
+    let sets: Vec<&IntervalSet> = sets.iter().map(|(s, _)| &**s).collect();
     if covers(&out[&name], &sets, &cuts, m) {
         return Some((out, None));
     }
     Some((out, Some((rel, why))))
+}
+
+/// The box of the inputs other than the split input in one class's run of [`split_classes`],
+/// as [`Tx::whole`] gives it, with no set copied.
+type RestBox = BTreeMap<Arc<str>, BoxSet>;
+
+/// The set of an input in a [`RestBox`]: shared with the run, or the domain of an input of the
+/// context's read number `i` ([`LetIn::read`]) that the run does not narrow.
+enum BoxSet {
+    Set(Rc<IntervalSet>),
+    Read(usize),
+}
+
+impl BoxSet {
+    fn get<'a>(&'a self, cx: &'a Cx, k: &str) -> &'a IntervalSet {
+        match self {
+            BoxSet::Set(s) => s,
+            BoxSet::Read(i) => cx.reads[*i].ints(k).expect("the read holds the input"),
+        }
+    }
+}
+
+/// [`Tx::whole`] of the box `r` of a class's run in the context `cx`, `none` when it holds no
+/// point ([`Tx::none`]): the set of the split input `name`, and the box of the others
+/// ([`RestBox`]). `O(n log n)` for the `n` inputs, however large their sets are.
+fn split_box(
+    cx: &Cx,
+    r: &Res,
+    none: bool,
+    name: &str,
+    empty: &Rc<IntervalSet>,
+) -> (Rc<IntervalSet>, RestBox) {
+    let of = |k: &Arc<str>, z: BoxSet| match r.dom.get(k) {
+        _ if none => BoxSet::Set(empty.clone()),
+        Some(n) => BoxSet::Set(n.clone()),
+        None => z,
+    };
+    let inputs = cx.inputs.iter();
+    let mut out: RestBox = inputs
+        .map(|(k, z)| (k.clone(), of(k, BoxSet::Set(z.clone()))))
+        .collect();
+    for (i, read) in cx.reads.iter().enumerate() {
+        for v in read.vars() {
+            if !out.contains_key(v) && read.ints(v).is_some() {
+                out.insert(v.clone(), of(v, BoxSet::Read(i)));
+            }
+        }
+    }
+    match out.remove(name) {
+        Some(BoxSet::Set(s)) => (s, out),
+        _ => unreachable!("the split input is an input"),
+    }
+}
+
+/// Whether two boxes of [`split_box`] in the context `cx` are equal: `O(1)` for each set they
+/// share, and the comparison of the sets for the others.
+fn same_box(cx: &Cx, a: &RestBox, b: &RestBox) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|((k, x), (l, y))| {
+            k == l
+                && match (x, y) {
+                    (BoxSet::Set(x), BoxSet::Set(y)) => Rc::ptr_eq(x, y) || x == y,
+                    (BoxSet::Read(i), BoxSet::Read(j)) if i == j => true,
+                    _ => x.get(cx, k) == y.get(cx, k),
+                }
+        })
+}
+
+/// The box of [`split_box`] as domains, each set copied once.
+fn box_domains(cx: &Cx, rest: RestBox) -> Domains {
+    (rest.into_iter())
+        .map(|(k, s)| {
+            let z = match s {
+                BoxSet::Set(s) => Rc::unwrap_or_clone(s),
+                BoxSet::Read(_) => s.get(cx, &k).clone(),
+            };
+            (k, z)
+        })
+        .collect()
+}
+
+/// Of the classes `members`, in increasing order, those whose remainders `cuts[j]..cuts[j +
+/// 1]` by `m` meet the remainders of the members of `lo..=hi`: one range of the classes, or
+/// two where the remainders of the piece wrap past `m`, and all of them where the piece spans
+/// a period or a half-line. They hold every class for which [`in_class`] finds a member of
+/// the piece. `O(log k)` for `k` members, by binary search.
+fn touched<'a>(
+    lo: &End,
+    hi: &End,
+    members: &'a [usize],
+    cuts: &[i128],
+    m: i128,
+) -> [&'a [usize]; 2] {
+    let (Fin(lo), Fin(hi)) = (lo, hi) else {
+        return [members, &[]];
+    };
+    if hi - lo >= Num::from(m - 1) {
+        return [members, &[]];
+    }
+    let rem = |x: &Num| {
+        let r = x.rem_euclid(&Num::from(m));
+        r.to_i128().expect("a remainder lies below the modulus")
+    };
+    let class = |r: i128| cuts.partition_point(|&c| c <= r) - 1;
+    let within = |a: usize, b: usize| {
+        let from = members.partition_point(|&j| j < a);
+        let to = members.partition_point(|&j| j <= b);
+        &members[from..to]
+    };
+    let (rl, rh) = (rem(lo), rem(hi));
+    let (a, b) = (class(rl), class(rh));
+    if rl <= rh {
+        [within(a, b), &[]]
+    } else if b < a {
+        [within(a, usize::MAX), within(0, b)]
+    } else {
+        // The remainders wrap past `m` back into the class they started in: every class.
+        [members, &[]]
+    }
 }
 
 /// The integers of `lo..=hi` from the first to the last whose remainder by `m` lies in `class`,
@@ -937,7 +1106,7 @@ fn residue_relation(
     name: &Arc<str>,
     c: i64,
     common: &IntervalSet,
-    parts: &[(IntervalSet, &IntervalSet)],
+    parts: &[(&IntervalSet, &IntervalSet)],
 ) -> Relation {
     use presburger::Atom;
     let x = Atom::Sym(name.clone());
@@ -2811,8 +2980,9 @@ struct Residue {
 
 /// What a run computes without reading its class of remainders, kept from one class's run to
 /// the next by [`split_residues`]: the forward values, constants, inputs read, clips and
-/// reaches, the summaries of calls by number with their forward values, and the summaries
-/// over every class ([`Walk::by_class`]).
+/// reaches, the summaries of calls by number with their forward values, the summaries over
+/// every class ([`Walk::by_class`]), and the forward transfer's shared sets of integers
+/// ([`SharedInts`]), which the runs find by the domains they share ([`Tx::begin`]).
 #[derive(Default)]
 struct Kept {
     sums: HashMap<Summary, u32>,
@@ -2824,6 +2994,7 @@ struct Kept {
     clip: HashMap<At, Entry<Option<IntervalSet>>>,
     by_class: HashMap<ClassKey, Entry<Option<ByClass>>>,
     reads_mod: HashMap<At, Entry<bool>>,
+    ints: SharedInts,
 }
 
 impl Run {
@@ -2840,6 +3011,7 @@ impl Run {
             clip: std::mem::take(&mut m.clip),
             by_class: std::mem::take(&mut m.by_class),
             reads_mod: std::mem::take(&mut m.reads_mod),
+            ints: std::mem::take(&mut self.ints),
         }
     }
 
@@ -2850,6 +3022,7 @@ impl Run {
         (m.fwd, m.constant, m.mentions) = (k.fwd, k.constant, k.mentions);
         (m.clip, m.by_class) = (k.clip, k.by_class);
         m.reads_mod = k.reads_mod;
+        self.ints = k.ints;
     }
 }
 
@@ -3691,8 +3864,18 @@ enum Logged {
 /// One of the memo's tables.
 type Table<K, V> = fn(&mut Memo) -> &mut HashMap<K, Entry<V>>;
 
+/// A box made ready for runs over it ([`Tx::begin`]): their context and the fields of [`Run`]
+/// that depend on the box alone.
+struct Begun {
+    cx: Cx,
+    marked: bool,
+    void: bool,
+    shadow: Vec<(Arc<str>, Rc<IntervalSet>)>,
+}
+
 /// A context: the inputs it reads, those of the transfer and the parameters of the summaries
 /// it is within.
+#[derive(Clone)]
 struct Cx {
     inputs: Sets,
     /// The inputs of the summaries of [`Lets`] that are read through a tree of their bounds
@@ -3751,6 +3934,21 @@ struct Tx<'t> {
     /// parameters passed as they are shares ([`identity_classes`]); a parameter of no class
     /// has its canonical atom ([`Tx::canonical`]).
     classes: HashMap<(Tid, usize), Arc<str>>,
+    /// Within [`split_classes`], each set met with an input's domain ([`Tx::meet_domain`]), so
+    /// that the classes whose runs meet one set with the domain share the result.
+    split_meets: RefCell<Option<DomainMeets>>,
+}
+
+/// The meets of sets with the inputs' domains, by the domain's address, which the entry keeps
+/// alive, and the set.
+type DomainMeets = HashMap<(*const IntervalSet, Rc<IntervalSet>), (Rc<IntervalSet>, Met)>;
+
+/// A set met with an input's domain: empty, the whole domain, or a part of it.
+#[derive(Clone)]
+enum Met {
+    Empty,
+    Whole,
+    Part(Rc<IntervalSet>),
 }
 
 /// What a body read under a [`Scoped`] scope made that depends on the body: the scopes made
@@ -3825,11 +4023,19 @@ impl<'t> Tx<'t> {
             fresh: None,
             lets: Lets::new(),
             classes: HashMap::new(),
+            split_meets: RefCell::new(None),
         }
     }
 
     /// Begins a run over the box `inputs`.
     fn start(&mut self, inputs: &Domains, marks: Landmarks) {
+        let begun = self.begin(inputs);
+        self.start_from(&begun, marks);
+    }
+
+    /// What [`Tx::start`] makes of the box `inputs`, which depends on the box alone: the
+    /// context, with each domain shared, and the run's fields found from it.
+    fn begin(&self, inputs: &Domains) -> Begun {
         let reads: Rc<[Arc<dyn SummaryRead>]> = (self.lets.values())
             .filter_map(|l| l.read.clone())
             .collect();
@@ -3844,25 +4050,37 @@ impl<'t> Tx<'t> {
                 .collect(),
             None => Vec::new(),
         };
+        // An input of a read of no value has none unless `inputs` gives it another domain.
+        let void = is_empty(inputs)
+            || reads.iter().any(|r| {
+                let given = (shadow.iter())
+                    .filter(|(k, _)| r.ints(k).is_some_and(IntervalSet::is_empty))
+                    .count();
+                r.total().void > given
+            });
+        Begun {
+            marked: reads.is_empty(),
+            void,
+            shadow,
+            cx: Cx {
+                inputs: own,
+                reads,
+                cut: usize::MAX,
+            },
+        }
+    }
+
+    /// Begins a run over the box [`Tx::begin`] made, which shares its domains: `O(s)` for its
+    /// `s` shadowed inputs, however large the domains are.
+    fn start_from(&mut self, begun: &Begun, marks: Landmarks) {
         self.run = Run {
             marks,
-            marked: reads.is_empty(),
-            // An input of a read of no value has none unless `inputs` gives it another domain.
-            void: is_empty(inputs)
-                || reads.iter().any(|r| {
-                    let given = (shadow.iter())
-                        .filter(|(k, _)| r.ints(k).is_some_and(IntervalSet::is_empty))
-                        .count();
-                    r.total().void > given
-                }),
-            shadow,
+            marked: begun.marked,
+            void: begun.void,
+            shadow: begun.shadow.clone(),
             ..Run::default()
         };
-        self.cx = Cx {
-            inputs: own,
-            reads,
-            cut: usize::MAX,
-        };
+        self.cx = begun.cx.clone();
     }
 
     /// The landmarks of the run ([`Tx::landmarks`]), with the ends of the domains of the
@@ -4660,14 +4878,23 @@ impl<'t> Tx<'t> {
         let root = pa.to_treap(dom)?;
         let mut pieces = Vec::new();
         invert_treap(&root, &Tag::ID, z, &mut pieces);
-        let within = if hull { &dom.hull() } else { dom };
-        let met = IntervalSet::from_pieces(pieces).meet(within);
-        if met.is_empty() {
-            return Some(Res::none());
-        }
+        let met = if hull {
+            let within = dom.hull();
+            match IntervalSet::from_pieces(pieces).meet(&within) {
+                met if met.is_empty() => Met::Empty,
+                met if met == within => Met::Whole,
+                met => Met::Part(Rc::new(met)),
+            }
+        } else {
+            self.meet_domain(var, Rc::new(IntervalSet::from_pieces(pieces)), dom, false)
+        };
         let mut r = Res::all();
-        if met != *within {
-            r.dom.insert(var.clone(), Rc::new(met));
+        match met {
+            Met::Empty => return Some(Res::none()),
+            Met::Whole => {}
+            Met::Part(s) => {
+                r.dom.insert(var.clone(), s);
+            }
         }
         Some(r)
     }
@@ -4689,16 +4916,49 @@ impl<'t> Tx<'t> {
                 dom.insert(k.clone(), s.clone());
                 continue;
             };
-            read_domain(s.pieces().len() + d.pieces().len());
-            let met = s.meet(d);
-            if met.is_empty() {
-                return Res::none();
-            }
-            if met != *d {
-                dom.insert(k.clone(), Rc::new(met));
+            match self.meet_domain(k, s.clone(), d, true) {
+                Met::Empty => return Res::none(),
+                Met::Whole => {}
+                Met::Part(met) => {
+                    dom.insert(k.clone(), met);
+                }
             }
         }
         Res { dom, ..r }
+    }
+
+    /// `s` met with `d`, the domain of the input `k`, `O(p + P)` for the `p` pieces of `s` and
+    /// the `P` of `d`, with `read` counting them ([`read_domain`]). Within [`split_classes`]
+    /// each set is met with one domain once: the runs of the classes share the domain
+    /// ([`Tx::begin`]), and those that meet one set with it share the result, in `O(p)` for
+    /// the search, so that `G` classes reading the same part of a domain with `H` holes cost
+    /// `O(G p + H)`, not `O(G H)`.
+    fn meet_domain(&self, k: &str, s: Rc<IntervalSet>, d: &IntervalSet, read: bool) -> Met {
+        let met = |s: &IntervalSet| {
+            if read {
+                read_domain(s.pieces().len() + d.pieces().len());
+            }
+            match s.meet(d) {
+                met if met.is_empty() => Met::Empty,
+                met if met == *d => Met::Whole,
+                met => Met::Part(Rc::new(met)),
+            }
+        };
+        let mut memo = self.split_meets.borrow_mut();
+        let (Some(memo), Some(shared)) = (memo.as_mut(), self.cx.inputs.get(k)) else {
+            return met(&s);
+        };
+        // A domain the context does not hold, as a scope's narrowing gives, is met each time.
+        if !std::ptr::eq(&**shared, d) {
+            return met(&s);
+        }
+        let key = (Rc::as_ptr(shared), s);
+        if let Some((_, m)) = memo.get(&key) {
+            return m.clone();
+        }
+        let m = met(&key.1);
+        memo.insert(key, (shared.clone(), m.clone()));
+        m
     }
 
     /// The inputs on which the sum `sep` takes a value in `z`, as a box. Over one input, that

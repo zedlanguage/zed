@@ -3085,3 +3085,30 @@ fn forward_sets_of_a_chain_share_the_holes_scale() {
         );
     });
 }
+
+/// COMPLEXITY.md S22-split-holes: the split of the levels of [`spread_remainder_chain`] by
+/// their `2k + 1` ranges of classes, with `64k` holes in the domain of `x`, in the second
+/// program of [`counted_shapes`], does work and allocates bytes of order `k log k` from `k` to
+/// `8k`: the classes' runs share the domain of `x`, and their sets of `x` are compared and
+/// joined without listing the holes once for each class. Copying the domain into each run,
+/// meeting each class's set with it and comparing the sets piece by piece made `O(k * H)`.
+/// Measured with `glibc.malloc.tcache_count=0`, load about 20: 10.1 times the instructions and
+/// 11.0 times the bytes from `k = 8` to `64`; main at 01eb1be0 took 19.3 times the instructions
+/// and 26.9 times the bytes (limit 17.6).
+#[test]
+fn split_classes_share_the_holes_scale() {
+    on_big_stack(|| {
+        let d = Demand::Bool(true);
+        let n = 8;
+        let t = scaling::inputs(n, |k| counted_shapes(spread_remainder_chain(k))[1].clone());
+        let ds = scaling::inputs(n, |k| x_with_holes(64 * k));
+        scaling::check(
+            "split of a spread remainder chain over a domain with holes",
+            n,
+            |k| {
+                let p = preimage(&t[&k], &ds[&k], &d);
+                assert!(p.exact, "the preimage at k = {k} is exact");
+            },
+        );
+    });
+}
