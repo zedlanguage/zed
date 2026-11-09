@@ -27,6 +27,10 @@ pub mod words;
 /// The scaling test of the rule of low complexity, shared with the step tests.
 #[cfg(test)]
 #[path = "../../../tests/src/scaling.rs"]
+#[expect(
+    dead_code,
+    reason = "the kernel's tests hold no radix conversion or gcd to the log-squared limit (`check_log_squared`)"
+)]
 mod scaling;
 
 pub use eval::{Evaluator, Global, Globals, Lookup, Schedule, World, eval, on_stack};

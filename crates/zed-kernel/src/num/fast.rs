@@ -1282,10 +1282,13 @@ pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
     let mut x = BigInt::from(a >> za);
     let mut y = BigInt::from(b >> zb) - &x;
     // Complexity tradeoff: the half gcd costs O(M(n) log n) = O(n log^2 n), a log factor above
-    // a product, accepted for NUM-subquad; num-bigint's Stein gcd below `GCD_LEAF` is O(n^2) in
-    // a leaf of bounded width. Measured on 2026-11-06: 1.8 s at 32768 words, 11.0 s at 131072;
-    // num-bigint's gcd is faster below about 300 words at load 1 (2026-11-06), 512 to 1024 at
-    // load 45 to 75 (2026-11-05); see `GCD_LEAF`. Test
+    // a product, accepted because no faster gcd is known: the subquadratic gcds (Schönhage 1971;
+    // the binary recursive gcd of Stehlé and Zimmermann, ANTS 2004, used here; Möller 2008)
+    // all take O(M(n) log n) (author decision A47, 2026-11-09; COMPLEXITY.md C31). The
+    // scaling test holds it to the limit of work of order n log^2 n. num-bigint's Stein gcd
+    // below `GCD_LEAF` is O(n^2) in a leaf of bounded width. Measured on 2026-11-06: 1.8 s at
+    // 32768 words, 11.0 s at 131072; num-bigint's gcd is faster below about 300 words at load
+    // 1 (2026-11-06), 512 to 1024 at load 45 to 75 (2026-11-05); see `GCD_LEAF`. Test
     // `a_gcd_of_wide_numbers_scales`.
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
@@ -1405,8 +1408,11 @@ pub fn to_decimal(x: &BigUint) -> String {
         return x.to_string();
     }
     // Complexity tradeoff: the digits are written by halves, each level of the recursion
-    // dividing by one power of ten, so the cost is O(M(n) log n) = O(n log^2 n), above
-    // num-bigint's multiplication but below its O(n^2) leaves. Tested by
+    // dividing by one power of ten, so the cost is O(M(n) log n) = O(n log^2 n), a log factor
+    // above a product, accepted because no faster radix conversion is known: the subquadratic
+    // method (Schönhage 1971; the scaled remainder tree of Bernstein, 2004; Brent and
+    // Zimmermann, Modern Computer Arithmetic, 2010, section 1.7) takes O(M(n) log n) (author
+    // decision A47, 2026-11-09; COMPLEXITY.md C31), against num-bigint's O(n^2). Tested by
     // `printing_a_wide_number_scales` and `writing_a_wide_end_scales` (COMPLEXITY.md K30,
     // K81).
     let n = top.bits();

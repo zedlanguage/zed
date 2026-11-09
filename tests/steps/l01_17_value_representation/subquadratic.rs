@@ -7,7 +7,7 @@ use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{One, Zero};
 use zed_kernel::Rat;
-use zed_tests::scaling::check;
+use zed_tests::scaling::{check, check_log_squared};
 
 /// A number of `words` 64-bit words drawn from `seed` (splitmix64), its top word not zero.
 fn random(words: usize, seed: u64) -> BigInt {
@@ -99,11 +99,13 @@ fn a_sparse_division_scales() {
 /// two products, O(n log n).
 #[test]
 fn dividing_a_wide_number_scales() {
-    // The reciprocal is built by Newton steps of halving widths, those of at most
-    // `fast::MUL_LEAF` = 6144 words with num-bigint's products, so a smaller run with few steps
-    // above it counts the change of method as growth: from 8,192 words 13.9 times against a
-    // limit of 10.8, from 16,384 11.1 against 10.7, from 32,768 10.1 against 10.6, in 9 s
-    // (SCALE-fix-crossover, 2026-11-07).
+    // The reciprocal is built by Newton steps of halving widths, the narrow ones with
+    // num-bigint's products (at most `fast::MUL_LEAF` = 512 words, and above it where
+    // `toom_cost` is the least of `fast::mul`'s computed costs), so a smaller run with few
+    // steps by transforms counts the change of method as growth. Measured with a leaf of 6144
+    // words (SCALE-fix-crossover, 2026-11-07): from 8,192 words 13.9 times against a limit of
+    // 10.8, from 16,384 11.1 against 10.7, from 32,768 10.1 against 10.6; with the cost model,
+    // 10.05 from 32,768 (2026-11-09), in 9 s.
     let n = 1 << 15;
     let inputs = built(n, |m| (int(random(2 * m, 3)), int(random(m, 4))));
     let (a, d) = at(&inputs, n, n);
@@ -130,7 +132,9 @@ fn dividing_a_wide_number_scales() {
 }
 
 /// `(a c) / (b c)` reduced to lowest terms, `a`, `b` and `c` of n/2 words: the half gcd, O(n
-/// log^2 n), and two exact quotients by it.
+/// log^2 n), and two exact quotients by it, held to that order's limit (COMPLEXITY.md C31). It
+/// still fails, 16.4 times the work against 13.3 (2026-11-09): the half gcd recurses
+/// `log2(n / GCD_LEAF)` deep, 4 levels at 8,192 words and 7 at 65,536, not `log2 n`.
 #[test]
 fn a_gcd_of_wide_numbers_scales() {
     let n = 1 << 13;
@@ -143,7 +147,7 @@ fn a_gcd_of_wide_numbers_scales() {
     let g = num.gcd(den);
     assert!(g.bits() >= 64 * (n as u64 / 2 - 1));
     assert_eq!(r, Rat::new(num / &g, den / &g).expect("not zero"));
-    check(
+    check_log_squared(
         "(a c) / (b c) in lowest terms, a, b and c of n/2 words",
         n,
         |m| {
@@ -158,12 +162,13 @@ fn a_gcd_of_wide_numbers_scales() {
 }
 
 /// The decimal text of a dense number of n words: by halves, each power of ten's reciprocal
-/// built once, O(n log^2 n). The smaller size, below 60,000 words, is written by num-bigint's
-/// printing, which is faster there (`zed_kernel::num::to_decimal`); 18.5 times the work on
-/// 2026-11-08 (COMPLEXITY.md K81).
+/// built once, O(n log^2 n), held to that order's limit (COMPLEXITY.md C31). Both sizes are
+/// above the 60,000 words below which num-bigint's printing, faster there, writes the text
+/// (`zed_kernel::num::to_decimal`): at 16,384 and 131,072 words the smaller was num-bigint's, and
+/// the change of method made 18.5 times the work (2026-11-08, COMPLEXITY.md K81).
 #[test]
 fn printing_a_wide_number_scales() {
-    let n = 1 << 14;
+    let n = 1 << 16;
     let inputs = built(n, |m| int(random(m, 8)));
     assert_eq!(at(&inputs, n, n).numer_text(), random(n, 8).to_string());
     assert_eq!(int(sparse(n)).numer_text(), sparse(n).to_string());
@@ -172,7 +177,7 @@ fn printing_a_wide_number_scales() {
         (sparse(n) - 1u32).to_string()
     );
     assert_eq!(int(BigInt::zero()).numer_text(), "0");
-    check("the decimal text of a number of n words", n, |m| {
+    check_log_squared("the decimal text of a number of n words", n, |m| {
         assert!(!at(&inputs, n, m).numer_text().is_empty());
     });
 }

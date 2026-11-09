@@ -1016,7 +1016,7 @@ fn a_binding_over_many_inputs_narrows_each_and_is_read_in_linear_time() {
     };
     let (small, large) = (counted(40), counted(320));
     assert!(
-        large as f64 <= scaling::RATIO * small as f64,
+        large as f64 <= scaling::limit(40, 320, 1) * small as f64,
         "leaves set: {small} at 40 tests, {large} at 320"
     );
     scaling::check("tests of a binding over many inputs", 40, |k| {
@@ -1085,7 +1085,7 @@ fn tests_of_a_name_over_many_inputs_take_the_bounds_of_the_inputs_they_narrow() 
     };
     let (small, large) = (counted(40), counted(320));
     assert!(
-        large as f64 <= scaling::RATIO * small as f64,
+        large as f64 <= scaling::limit(40, 320, 1) * small as f64,
         "term bounds: {small} at 40 tests, {large} at 320"
     );
 }
@@ -1166,7 +1166,7 @@ fn tests_of_summaries_over_one_input_read_that_input() {
     };
     let (small, large) = (given(40), given(320));
     assert!(
-        large as f64 <= scaling::RATIO * small as f64,
+        large as f64 <= scaling::limit(40, 320, 1) * small as f64,
         "inputs given: {small} at 40 tests, {large} at 320"
     );
 }

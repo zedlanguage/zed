@@ -7,7 +7,11 @@
 //! n = 50), and work of order `n^(k + 0.19)` from n = 500. The limit was a fixed `24 × 8^(k−1)`
 //! until 2026-11-07 (SCALE-ratio), which let work of order `n^1.5` (22.6 times) pass for k = 1.
 //! Below about n = 50 the orders cannot be told apart this way (at n = 6 the limit is `8^1.42`),
-//! so a test meant to catch `n^1.25` runs at a larger n. Setting the variable `ZED_SCALING_RATIOS`
+//! so a test meant to catch `n^1.25` runs at a larger n. Radix conversion and the gcd of numbers
+//! of n bits, whose best known algorithms cost `O(M(n) log n)` = `O(n log^2 n)` (author decision
+//! A47, 2026-11-09), are held to the ratio of work of order `n log^2 n` instead, derived the same
+//! way: `8 × (ln(8n) / ln(n))^2 × 1.1` ([`check_log_squared`], [`limit_logs`]), which catches
+//! `n^1.25` from n = 6589 on. Setting the variable `ZED_SCALING_RATIOS`
 //! ([`RATIOS_FILE`]) to a file name makes every check append its measurements to that file.
 //!
 //! Work is counted in instructions retired, in user mode, by this thread and the threads it
@@ -102,13 +106,22 @@ pub const TIME_ALLOWANCE: f64 = 2.0;
 /// `small` = n and `large` = 8n the log factor is 1.30 at n = 1000 and 1.53 at n = 50, so a
 /// power `k + 0.25` (`8^0.25` = 1.68) is caught from n = 52 on, and `k + 0.19` from n = 500.
 pub fn limit(small: usize, large: usize, power: u32) -> f64 {
+    limit_logs(small, large, power, 1)
+}
+
+/// [`limit`] for work of order `n^power log^logs n`: `(large / small)^power × (ln(large) /
+/// ln(small))^logs`, the ratio of that work, times [`SLACK`]. Only the sites where no algorithm
+/// of lower order is known take `logs` = 2 (DESIGN.md sec:plan; [`check_log_squared`]). At n
+/// and 8n the log factor squared is 1.69 at n = 1000 and 1.38 at n = 160,000, so a power
+/// `k + 0.25` is caught from n = 6589 on, and `k + 0.2` from n = 157,694.
+pub fn limit_logs(small: usize, large: usize, power: u32, logs: u32) -> f64 {
     assert!(
         2 <= small && small < large,
         "a scaling test compares a size of at least 2 with a larger one, not {small} and {large}: \
          the log factor of the limit is ln({large}) / ln({small})"
     );
     let (s, l) = (small as f64, large as f64);
-    (l / s).powi(power as i32) * l.ln() / s.ln() * SLACK
+    (l / s).powi(power as i32) * (l.ln() / s.ln()).powi(logs as i32) * SLACK
 }
 
 /// How many measurements of processor time must all be over the limit before the test fails.
@@ -452,42 +465,62 @@ pub fn check(what: &str, n: usize, run: impl Fn(usize) + Sync) {
     check_order(what, n, 1, run)
 }
 
+/// [`check`] for work of order `n log^2 n`, held to [`limit_logs`]`(n, FACTOR * n, 1, 2)`: only
+/// for radix conversion (reading and printing a number of n digits) and the gcd of numbers of n
+/// bits, whose best known algorithms cost `O(M(n) log n)`, `M(n)` the cost of a product of n
+/// bits (author decision A47, 2026-11-09; COMPLEXITY.md C31). Every other pass is held to
+/// [`check`].
+pub fn check_log_squared(what: &str, n: usize, run: impl Fn(usize) + Sync) {
+    check_by(&mut Meter::new(), Measures::Both, what, n, (1, 2), run)
+}
+
 /// Runs `run` at sizes `n` and `FACTOR * n` and panics when the larger does more than
 /// [`limit`]`(n, FACTOR * n, power)` times the work (as [`compare`] holds it), or allocates more
 /// than that many times the bytes, or allocates none on its thread. `power` is the power of n in
 /// the order the work is defined to have: for a Zed program, that of its own algorithm, so an O(n) operation in an
 /// O(n) loop has power 2. `what` names the pass and its size.
 pub fn check_order(what: &str, n: usize, power: u32, run: impl Fn(usize) + Sync) {
-    check_by(&mut Meter::new(), Measures::Both, what, n, power, run)
+    check_by(&mut Meter::new(), Measures::Both, what, n, (power, 1), run)
 }
 
 /// [`check_order`] without the bytes allocated, for a run that allocates nothing, or for a test
 /// whose bytes grow faster than its order for a known cause, recorded in COMPLEXITY.md with the
 /// item that fixes it; the call site names that item in a comment.
 pub fn check_instructions_only(what: &str, n: usize, power: u32, run: impl Fn(usize) + Sync) {
-    check_by(&mut Meter::new(), Measures::WorkOnly, what, n, power, run)
+    check_by(
+        &mut Meter::new(),
+        Measures::WorkOnly,
+        what,
+        n,
+        (power, 1),
+        run,
+    )
 }
 
-/// [`check_order`] by the given meter and measures.
+/// [`check_order`] by the given meter and measures, for work of order `n^power log^logs n`.
 fn check_by(
     meter: &mut Meter,
     measures: Measures,
     what: &str,
     n: usize,
-    power: u32,
+    (power, logs): (u32, u32),
     run: impl Fn(usize) + Sync,
 ) {
-    let limit = limit(n, FACTOR * n, power);
+    let limit = limit_logs(n, FACTOR * n, power, logs);
+    let order = match logs {
+        1 => format!("n^{power} or n^{power} log n"),
+        _ => format!("n^{power} log^{logs} n"),
+    };
     let why = format!(
-        "for work of order n^{power} or n^{power} log n the rule of low complexity allows at most \
-         {limit:.1} times (DESIGN.md Part G)"
+        "for work of order {order} the rule of low complexity allows at most {limit:.1} times \
+         (DESIGN.md Part G)"
     );
     let what = format!("{what}: sizes {n} and {}", FACTOR * n);
     let (small, large) = (|| run(n), || run(FACTOR * n));
     compare_by(
         meter,
         measures,
-        Some((n, power)),
+        Some((n, power, logs)),
         (&what, &why),
         limit,
         small,
@@ -535,7 +568,7 @@ pub fn compare(
 fn compare_by(
     meter: &mut Meter,
     measures: Measures,
-    order: Option<(usize, u32)>,
+    order: Option<(usize, u32, u32)>,
     (what, why): (&str, &str),
     limit: f64,
     small: impl Fn() + Sync,
@@ -653,8 +686,8 @@ fn compare_by(
 }
 
 /// The variable naming the file every check ([`check_order`], [`compare`] and the rest) appends a
-/// line to for each measurement, when it is set: the test, `what`, n and the power (`-` for
-/// [`compare`]), the limit, the work of the two sizes and its ratio, the unit, and the bytes of
+/// line to for each measurement, when it is set: the test, `what`, n and the power (`k log^2`
+/// for work of order `n^k log^2 n` ([`check_log_squared`]), `-` for [`compare`]), the limit, the work of the two sizes and its ratio, the unit, and the bytes of
 /// the two sizes and their ratio, separated by tabs. It lets the limit be set from the ratios the tests measure (SCALE-ratio).
 pub const RATIOS_FILE: &str = "ZED_SCALING_RATIOS";
 
@@ -662,7 +695,7 @@ pub const RATIOS_FILE: &str = "ZED_SCALING_RATIOS";
 /// line to a file opened for appending, so lines of tests running at once do not mix.
 fn record(
     what: &str,
-    order: Option<(usize, u32)>,
+    order: Option<(usize, u32, u32)>,
     limit: f64,
     (small, large, ratio, unit): (u64, u64, f64, &str),
     (small_bytes, large_bytes, bytes): (u64, u64, f64),
@@ -673,8 +706,12 @@ fn record(
     };
     let thread = std::thread::current();
     let test = thread.name().unwrap_or("-");
-    let (n, power) = order.map_or(("-".into(), "-".into()), |(n, p)| {
-        (n.to_string(), p.to_string())
+    let (n, power) = order.map_or(("-".into(), "-".into()), |(n, p, logs)| {
+        let power = match logs {
+            1 => p.to_string(),
+            _ => format!("{p} log^{logs}"),
+        };
+        (n.to_string(), power)
     });
     let line = format!(
         "{test}\t{what}\t{n}\t{power}\t{limit}\t{small}\t{large}\t{ratio:.3}\t{unit}\t{small_bytes}\t{large_bytes}\t{bytes:.3}\n"
@@ -763,21 +800,54 @@ mod tests {
         assert!(fails(|| _ = limit(1, 8, 1)));
     }
 
+    /// The limit of [`check_log_squared`] is the ratio of `n log^2 n` with the same slack, and
+    /// still catches `n^1.25` from n = 6589 on.
+    #[test]
+    fn the_limit_of_log_squared_work_is_its_ratio_with_its_slack() {
+        let log = 8000f64.ln() / 1000f64.ln();
+        let at = limit_logs(1000, 8000, 1, 2) / SLACK;
+        assert!((at - 8.0 * log * log).abs() < 1e-9);
+        assert!((limit_logs(1000, 8000, 1, 1) - limit(1000, 8000, 1)).abs() < 1e-12);
+        assert!(limit_logs(6589, 8 * 6589, 1, 2) < 8f64.powf(1.25));
+        assert!(limit_logs(6588, 8 * 6588, 1, 2) > 8f64.powf(1.25));
+        assert!(fails(|| _ = limit_logs(1, 8, 1, 2)));
+    }
+
+    /// Work of order `n log^2 n` passes the limit of its order and fails that of `n log n`, and
+    /// work of order `n^1.25` fails both, at n = 20,000.
+    #[test]
+    fn work_of_order_n_log_squared_n_passes_only_its_own_limit() {
+        let n = 20_000;
+        let log_squared = |n: usize| spin((n as f64 * (n as f64).log2().powi(2)) as u64);
+        let by = |order, run: &(dyn Fn(usize) + Sync)| {
+            check_by(&mut Meter::new(), Measures::WorkOnly, "work", n, order, run)
+        };
+        by((1, 2), &log_squared);
+        assert!(fails(|| by((1, 1), &log_squared)));
+        let quarter = |n: usize| spin(((n as f64).powf(1.25) * 50.0) as u64);
+        assert!(fails(|| by((1, 2), &quarter)));
+    }
+
     // Only Linux has a meter of processor time.
     #[cfg(target_os = "linux")]
     #[test]
     fn processor_time_tells_the_orders_apart_too() {
         let mut meter = Meter::of_cpu_time();
         let cpu = &mut meter;
-        check_by(cpu, Measures::WorkOnly, "linear work", 100_000, 1, |n| {
-            work(n, 1, 10)
-        });
+        check_by(
+            cpu,
+            Measures::WorkOnly,
+            "linear work",
+            100_000,
+            (1, 1),
+            |n| work(n, 1, 10),
+        );
         assert!(fails(|| check_by(
             cpu,
             Measures::WorkOnly,
             "quadratic work",
             1000,
-            1,
+            (1, 1),
             |n| { work(n, 2, 2) }
         )));
     }
@@ -805,7 +875,7 @@ mod tests {
                 Measures::WorkOnly,
                 "quadratic, by time",
                 1000,
-                1,
+                (1, 1),
                 quadratic
             )));
         }
@@ -937,7 +1007,10 @@ mod tests {
             format!(" {unit}, "),
             " times the work; allocated ".into(),
             " bytes, ".into(),
-            " times the bytes; the limit is 24".into(),
+            format!(
+                " times the bytes; the limit is {:.2}",
+                limit(10_000, 80_000, 1)
+            ),
             "; the first runs took ".into(),
         ] {
             assert!(line.contains(&part), "{part:?} not in {line:?}");
@@ -969,7 +1042,7 @@ mod tests {
                 Measures::Both,
                 "n² bytes on a thread, by time",
                 1000,
-                1,
+                (1, 1),
                 on_a_thread
             )));
         }
@@ -1200,7 +1273,7 @@ mod tests {
             Measures::WorkOnly,
             "linear passes",
             1000,
-            1,
+            (1, 1),
             linear,
         );
         let quadratic = |n: usize| counted_spin((n * n) as u64);
@@ -1210,7 +1283,7 @@ mod tests {
                 Measures::WorkOnly,
                 "quadratic passes",
                 1000,
-                1,
+                (1, 1),
                 quadratic,
             )
         });

@@ -388,15 +388,16 @@ fn a_kept_power_beside_its_built_successor_costs_n_log_n() {
     let s = p.add(&int(1)).unwrap();
     assert!(p < s && s > p && p != s);
     // `3^n` is built by squaring, so a run's work is a sum over squares of halving widths:
-    // those of at most `fast::MUL_LEAF` = 6144 words by num-bigint's Toom-3, which is the
-    // faster there, and the wider by transforms. The smaller run has three fewer squares by
-    // transforms than the larger, so its sum stops short and the ratio counts the change of
-    // method as growth: from n = 2^18 (the last square of 3,250 words, none by transforms) 14.6 times
-    // against a limit of 10.3, from 2^21 (three squares by transforms) 10.12 against 10.06,
-    // and from 2^22 (four) 9.72 against 10.0, in 20 s at load 47 (SCALE-fix-crossover,
-    // 2026-11-07). One comparison is timed, half the work of the three above, which builds
-    // `3^n` and the sum as they do. The SCALE-ratio limit tells num-bigint's O(n^1.47), 21
-    // times at 8n, from O(n log n), so the comparison at n and 64n that stood in for it is gone.
+    // those num-bigint's Toom-3 does faster (at most `fast::MUL_LEAF` = 512 words, and above
+    // it where `toom_cost` is the least of `fast::mul`'s computed costs), and the wider by
+    // transforms. The smaller run has three fewer squares by transforms than the larger, so
+    // its sum stops short and the ratio counts the change of method as growth. Measured with
+    // a leaf of 6144 words (SCALE-fix-crossover, 2026-11-07, load 47): from n = 2^18 (the
+    // last square of 3,250 words) 14.6 times against a limit of 10.3, from 2^21 10.12 against
+    // 10.06, from 2^22 9.72 against 10.0; with the cost model, 9.67 from 2^22 (2026-11-09).
+    // One comparison is timed, half the work of the three above, which builds `3^n` and the
+    // sum as they do. The SCALE-ratio limit tells num-bigint's O(n^1.47), 21 times at 8n,
+    // from O(n log n), so the comparison at n and 64n that stood in for it is gone.
     check_order(
         "3^n + 1 built and compared with the kept 3^n",
         1 << 22,

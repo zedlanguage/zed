@@ -1222,7 +1222,7 @@ fn tests_of_a_name_over_many_inputs_take_the_bounds_of_the_inputs_they_narrow() 
     });
     let ratio = b as f64 / a as f64;
     assert!(
-        a > 0 && ratio <= scaling::RATIO,
+        a > 0 && ratio <= scaling::limit(n, large, 1),
         "`pa_bounds` ran {a} times at k = {n} and {b} at k = {large}: {ratio:.2} times"
     );
 }

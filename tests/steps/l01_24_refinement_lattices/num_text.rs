@@ -101,14 +101,17 @@ fn a_text_that_is_not_an_integer_gets_num_bigints_error() {
     }
 }
 
-/// 160,000 and 1,280,000 digits, built before timing: read by halves, within n log n. These are
+/// 160,000 and 1,280,000 digits, built before timing: read by halves, within n log^2 n, the order
+/// of radix conversion (COMPLEXITY.md C31). These are
 /// the sizes of the kernel's own reading test (`l01_18_scalar_interpreter`), above the width
 /// where the kernel's product leaves num-bigint's Toom-3 for its transform; from 20,000 to
 /// 160,000 digits the products are Toom-3's, about n^1.46, and the reading measured 30.5 times.
+/// It still fails, 15.4 times against 12.1 (2026-11-09), as the kernel's reading test does
+/// (COMPLEXITY.md C31).
 #[test]
 fn reading_a_long_decimal_end_scales() {
     let texts = scaling::inputs(160_000, |n| digits(&mut Rng::new(n as u64), n));
-    scaling::check("reading a decimal end of n digits", 160_000, |n| {
+    scaling::check_log_squared("reading a decimal end of n digits", 160_000, |n| {
         let num: Num = texts[&n].parse().expect("digits");
         assert!(num > Num::from(0i64));
     });
@@ -193,12 +196,12 @@ fn a_written_end_is_num_bigints_text() {
 
 /// An end of 65,536 and 524,288 words (about 1.26 and 10.1 million digits) written in decimal,
 /// by the kernel's printer: O(M(n) log n) = O(n log^2 n), about 2.3 times the work per
-/// doubling, 12 times here (COMPLEXITY.md K81).
+/// doubling, 12 times here (COMPLEXITY.md K81, C31).
 #[test]
 fn writing_a_wide_end_scales() {
     let n = 1 << 16;
     let ends = scaling::inputs(n, |m| Num::from(wide(&mut Rng::new(m as u64), m)));
-    scaling::check("writing a decimal end of n words", n, |m| {
+    scaling::check_log_squared("writing a decimal end of n words", n, |m| {
         assert!(!ends[&m].to_string().is_empty());
     });
 }

@@ -1132,6 +1132,13 @@ fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
     let Some(top) = split_depth(digits.len(), leaf) else {
         return digits.parse().expect("ASCII decimal digits");
     };
+    // Complexity tradeoff: reading by halves costs one widest product per level of a recursion
+    // `log2(n / leaf)` deep, O(M(n) log n) = O(n log^2 n), a log factor above a product,
+    // accepted because no faster radix conversion is known: the subquadratic method (Schönhage
+    // 1971; Bernstein, "Scaled remainder trees", 2004; Brent and Zimmermann, Modern Computer
+    // Arithmetic, 2010, section 1.7) takes O(M(n) log n) (author decision A47, 2026-11-09;
+    // COMPLEXITY.md C31), against num-bigint's O(n^2). The scaling tests of reading hold it to
+    // the limit of work of order n log^2 n.
     let mut tens = vec![BigUint::from(10u32).pow(leaf as u32)];
     while tens.len() <= top {
         let last = tens.last().expect("the first power is built");
