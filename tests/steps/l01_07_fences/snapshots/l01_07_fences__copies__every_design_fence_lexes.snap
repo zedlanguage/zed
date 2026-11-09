@@ -43,7 +43,12 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | «type» Prime = ( p : int [ 2₍10₎ .. ] where isPrime ( p ) ) ;
   4 | «type» Short = ( s : Utf8String where s . len < 100₍10₎ ) ;
   5 | area ( a : int [ 1₍10₎ .. ] , b : int [ 1₍10₎ .. ] where a * b <= 99₍10₎ ) -> int = a * b ;
-== DESIGN.md [sec:constraints] 2 L10
+== DESIGN.md [sec:constraints] 2 L6
+  1 | parityFromIntervals = Reduction ( of : parity , reads : [ intervals ] ,
+  2 | reduce : ( e , r ) -> «if» r . intervals . isPoint { «if» r . intervals . lo «mod» 2₍10₎ == 0₍10₎ { #even } «else» { #odd } } «else» { e } ) ;
+  3 | intervalsFromParity = Reduction ( of : intervals , reads : [ parity ] ,
+  4 | reduce : ( e , r ) -> «if» r . parity == #even { e . roundInwardToEven } «else» { e } ) ;
+== DESIGN.md [sec:constraints] 3 L10
   1 | «type» Bound = int | Ast | #unbounded ;
   2 | «struct» Interval { min : Bound , max : Bound }
   3 | «struct» Congruence { modulus : int [ 0₍10₎ .. ] , residue : int }
