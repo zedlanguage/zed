@@ -301,8 +301,7 @@ pub(super) struct Show<'a> {
     pub(super) e: &'a Node,
     /// Whether a type that does not mention the group is written in the surface syntax (module
     /// `print`), as a message writes it, rather than by its name ([`Type::rope`]). One that
-    /// needs definitions of its own, a recursive type, or that the surface printer cannot write
-    /// (item SURFACE-cycle), is written by its name.
+    /// needs definitions of its own, as a recursive type does, is written by its name.
     pub(super) surface: bool,
 }
 
@@ -328,7 +327,7 @@ impl Show<'_> {
                         Rope::cat([Piece::from(self.defs[*i].name.as_str())])
                     }
                     Shape::Type(t) if self.surface => match t.surface_operand() {
-                        Some(s) if s.defs.is_empty() => Rope::cat([Piece::from(s.root)]),
+                        s if s.defs.is_empty() => Rope::cat([Piece::from(s.root)]),
                         _ => t.rope(),
                     },
                     Shape::Type(t) => t.rope(),

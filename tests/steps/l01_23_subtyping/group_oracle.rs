@@ -31,6 +31,8 @@ use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Type, Verdict};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
+use zedc::lex::lex_fence;
+use zedc::parse::{TOP, parse};
 
 // ---------------------------------------------------------------------------------------------
 // Systems
@@ -2229,4 +2231,121 @@ fn the_groups_of_a_system_are_built_in_its_size() {
     });
     let groups = scaling::inputs(n, |m| chain_of(&mut Rng::new(7), m));
     scaling::check("one group of n definitions", n, |m| build(&groups[&m]));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Printing the members (item SURFACE-cycle)
+// ---------------------------------------------------------------------------------------------
+
+/// Panics unless `t` prints in the surface syntax (`Type::surface`) as text the parser accepts:
+/// the type, each definition as a unit's statement, every name it uses defined. Returns the
+/// text.
+fn prints_as_syntax(t: &Type, what: &str) -> String {
+    let s = t.surface();
+    assert!(s.exact, "{what}: {s}");
+    let accepts = |text: &str, start: &str| {
+        let tokens = lex_fence(text).unwrap_or_else(|e| panic!("{what}: {text}: {e:?}"));
+        parse(text, &tokens, start, TOP).unwrap_or_else(|e| panic!("{what}: {text}: {e:?}"));
+    };
+    let is_name = |word: &str| {
+        word.len() > 1 && word.starts_with('T') && word[1..].bytes().all(|b| b.is_ascii_digit())
+    };
+    accepts(&s.root, "Type");
+    let defined: HashSet<&str> = s.defs.iter().map(|(name, _)| name.as_str()).collect();
+    for (name, body) in &s.defs {
+        accepts(&format!("type {name} = {body};"), "Unit");
+        // A definition that is only another name would be a second name for one type.
+        assert!(!is_name(body), "{what}: {name} = {body} in {s}");
+    }
+    for text in s.defs.iter().map(|(_, body)| body).chain([&s.root]) {
+        for word in text.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            assert!(
+                !is_name(word) || defined.contains(word),
+                "{what}: {word} in {s}"
+            );
+        }
+    }
+    s.to_string()
+}
+
+/// Every member of the systems of `meets_and_differences_are_never_called_empty_with_a_value`
+/// prints. A member's unfolding and a part of its body kept unevaluated, such as `#a | #b |
+/// R0` in `R0 = ((#a | #b), (#a | #b | R0)) \ (#b, #a)`, share the tuple part of `R0`, so the
+/// printer meets that part again below itself, through the recursive type of the part kept
+/// unevaluated: 503 of these 1364 members stopped the printer, which ordered the parts by the
+/// order its walk left them in.
+#[test]
+fn every_member_of_systems_of_meets_and_differences_prints_as_syntax() {
+    let mut members = 0;
+    for seed in 0..600 {
+        let sys = gen_cells(&mut Rng::new(seed));
+        for (form, sys) in [("", sys.clone()), ("-", undecided(sys))] {
+            let tag = format!("printed-cells{form}{seed}");
+            for (i, t) in kernel(&sys, &tag).iter().enumerate() {
+                let Some(t) = t else { continue };
+                prints_as_syntax(t, &format!("{tag}: R{i} of {}", show_system(&sys)));
+                members += 1;
+            }
+        }
+    }
+    assert_eq!(members, 1364);
+}
+
+#[test]
+fn a_member_whose_tuple_part_its_body_shares_prints_as_definitions() {
+    // R0 = ((#a | #b), (#a | #b | R0)) \ (#b, #a)
+    let ab = || E::Union(vec![E::Atom("a"), E::Atom("b")]);
+    let sys = [diff(
+        tup(vec![ab(), E::Union(vec![ab(), E::Ref(0)])]),
+        tup(vec![E::Atom("b"), E::Atom("a")]),
+    )];
+    let r0 = kernel(&sys, "shares").remove(0).expect("admitted");
+    assert_eq!(
+        prints_as_syntax(&r0, "R0"),
+        r"type T1 = #a | #b | T2; type T2 = (#a | #b, T1) \ (#b, #a); T2"
+    );
+    // Two such cycles: the shared `#a | #b` is named once, and each part names the other.
+    assert_eq!(
+        prints_as_syntax(&shared_chain(2, "chain-two"), "a chain of 2"),
+        concat!(
+            r"type T1 = #a | #b; type T2 = #a | #b | T4; ",
+            r"type T3 = #a | #b | ((T1, T2) \ (#b, #a)); type T4 = (T1, T3) \ (#b, #a); T4"
+        )
+    );
+}
+
+/// A chain of `n` definitions, each a pair whose second component is `#a | #b` or the next
+/// definition, the last's the first: `R(k) = ((#a | #b), (#a | #b | R(k + 1))) \ (#b, #a)`.
+fn shared_chain(n: usize, tag: &str) -> Type {
+    let ab = || E::Union(vec![E::Atom("a"), E::Atom("b")]);
+    let sys: Vec<E> = (0..n)
+        .map(|k| {
+            diff(
+                tup(vec![ab(), E::Union(vec![ab(), E::Ref((k + 1) % n)])]),
+                tup(vec![E::Atom("b"), E::Atom("a")]),
+            )
+        })
+        .collect();
+    kernel(&sys, tag).remove(0).expect("admitted")
+}
+
+/// The text of a chain of `n` cycles, each entered at a tuple part that a part kept
+/// unevaluated shares, takes time and bytes of order `n log n`: the parts are ordered by their
+/// contents, a sort.
+#[test]
+fn a_chain_of_shared_tuple_parts_prints_in_its_size() {
+    let chains = scaling::inputs(64, |n| {
+        let t = shared_chain(n, &format!("chain{n}"));
+        // The unfoldings are made once, before the runs.
+        prints_as_syntax(&t, &format!("a chain of {n}"));
+        t
+    });
+    for (&n, t) in &chains {
+        // `#a | #b`, the first pair and the part that names it, and one definition for each
+        // other cycle, its pair written inside it: n + 2 in all.
+        assert_eq!(t.surface().defs.len(), n + 2, "a chain of {n}");
+    }
+    scaling::check("the text of a chain of n shared tuple parts", 64, |n| {
+        std::hint::black_box(chains[&n].surface());
+    });
 }

@@ -2863,3 +2863,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Destructuring assignment `(r.size, r.seed, r.group) = (n, seed, group)` into fields of a borrowed record | `sweep` | Mutation (gap 11) | a new record in the fold |
 | A `&mut usize` counter threaded through a recursive walk to find the subterm at a preorder place | `replaced` | Mutation (gap 11) | the walk returns the place left with the new term |
 | A closure argument `impl Fn(&[T]) -> bool` for the property shrinking keeps | `shrink` | None | a function parameter |
+
+## Entries from SURFACE-cycle (`crates/zed-kernel/src/types/print.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::mem::replace(&mut entered[i], true)` as the test and the mark of a visited set in one step, and `Vec<Option<usize>>` heights written in place as the explicit stack leaves each node | `types/print.rs` `Printer::heights` (SURFACE-cycle) | Mutation (gap 11) | a persistent set of entered nodes and a map of heights threaded through the loop's state |
+| A `Vec<Option<Option<usize>>>` memo (not reached, reached with no name, reached with a name) and a `waiting` flag per node, filled from a path popped in place | `types/print.rs` `Printer::same_names` (SURFACE-cycle) | Mutation (gap 11) | a map from node to `#none | #name(usize)` threaded through the fold, absence for not reached |

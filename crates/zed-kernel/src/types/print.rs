@@ -5,8 +5,9 @@
 //! their tuple and morphism parts. Each node is visited once, keyed by its contents (a type, or
 //! a diagram node's interned id), never by its address. A node used twice or more, unless its
 //! text is one token, gets a definition `type Tk = …;`, numbered in the order the walk leaves
-//! the nodes; a recursive type always gets one, so a cycle prints as definitions that refer to
-//! each other. So the text is linear in the graph, however many paths its diagrams have.
+//! the nodes; a recursive type always gets one, or the name of the definition its text is, so
+//! a cycle prints as definitions that refer to each other. So the text is linear in the graph,
+//! however many paths its diagrams have.
 //!
 //! A diagram node over the tuple type `a`, with `hi` and `lo`, is `a & hi | (lo \ a)`, and
 //! the cases where `hi` or `lo` is a leaf drop the parts that are empty. A part kept as its
@@ -36,29 +37,23 @@ impl Type {
     }
 
     /// The type in the surface syntax as an operand of any connective, parenthesized unless it
-    /// is a tuple or one token; `None` where [`Type::surface`] panics, at a node whose text
-    /// names one the walk has not left and that is not a recursive type (item SURFACE-cycle).
-    pub(crate) fn surface_operand(&self) -> Option<Surface> {
-        self.try_surface_at(At::Prim)
+    /// is a tuple or one token.
+    pub(crate) fn surface_operand(&self) -> Surface {
+        self.surface_at(At::Prim)
     }
 
     fn surface_at(&self, at: At) -> Surface {
-        self.try_surface_at(at)
-            .expect("a node leaves after those it names, but a recursive type")
-    }
-
-    fn try_surface_at(&self, at: At) -> Option<Surface> {
         let mut p = Printer::default();
         let root = p.refer(Item::Ty(None, self.clone()));
         let Seg::Node(i, _) = root.segs[0] else {
             unreachable!("a reference is one node")
         };
         p.walk(i);
-        p.canon(i)?;
-        Some(p.render(Text {
+        p.canon(i);
+        p.render(Text {
             segs: vec![Seg::Node(i, at)],
             class: root.class,
-        }))
+        })
     }
 }
 
@@ -459,27 +454,12 @@ impl Printer {
     /// one. The walk's order is then found again, and with it the names' numbers.
     // Complexity tradeoff: the tokens of one height are sorted together, so the time is
     // `O(t log t)` in the tokens of all texts, against `O(t)` for the walk alone.
-    fn canon(&mut self, root: usize) -> Option<()> {
+    fn canon(&mut self, root: usize) {
         let n = self.texts.len();
-        let mut height: Vec<Option<usize>> =
-            self.forced.iter().map(|f| f.as_ref().map(|_| 0)).collect();
-        for &i in &self.post {
-            if height[i].is_some() {
-                continue;
-            }
-            let segs = &self.texts[i].as_ref().expect("visited").segs;
-            let mut h = 0;
-            for p in Pieces::new(segs) {
-                if let Piece::Node(j, _) = p {
-                    // A node leaves after those it names, but a recursive type; else `None`.
-                    h = h.max(height[j]?);
-                }
-            }
-            height[i] = Some(h + 1);
-        }
+        let height = self.heights();
         let mut levels: Vec<Vec<usize>> = Vec::new();
         for (i, h) in height.into_iter().enumerate() {
-            let h = h.expect("the walk leaves every node");
+            let h = h.expect("every node gets a height");
             if levels.len() <= h {
                 levels.resize_with(h + 1, Vec::new);
             }
@@ -505,7 +485,51 @@ impl Printer {
             }
         }
         self.order(root);
-        Some(())
+    }
+
+    /// Each node's height in the graph of the texts with the edges out of the recursive types
+    /// cut, a recursive type at height 0. Every cycle passes through a recursive type, so that
+    /// graph has no cycle. The walk's order is not an order of it in which a node comes after
+    /// those it names: the walk may enter a cycle at a node that is not a recursive type, such
+    /// as a tuple diagram that a recursive type's unfolding shares with a part of its body kept
+    /// unevaluated (`R0 = ((#a | #b), (#a | #b | R0)) \ (#b, #a)` enters at the diagram of
+    /// `R0`'s unfolding, which names the part `#a | #b | R0`, whose unfolding names the
+    /// diagram), and then the node that closes the cycle leaves before the one it names. So
+    /// the heights come from a search of their own, depth first with a stack, each node
+    /// entered once: time linear in the tokens of all texts.
+    fn heights(&self) -> Vec<Option<usize>> {
+        let mut height: Vec<Option<usize>> =
+            self.forced.iter().map(|f| f.as_ref().map(|_| 0)).collect();
+        let mut entered: Vec<bool> = height.iter().map(Option::is_some).collect();
+        let mut stack = Vec::new();
+        for &start in &self.post {
+            stack.push(Step::Enter(start));
+            while let Some(step) = stack.pop() {
+                let segs = |i: usize| &self.texts[i].as_ref().expect("visited").segs;
+                match step {
+                    Step::Enter(i) => {
+                        if std::mem::replace(&mut entered[i], true) {
+                            continue;
+                        }
+                        stack.push(Step::Leave(i));
+                        push_children(&mut stack, segs(i));
+                    }
+                    Step::Leave(i) => {
+                        let h = Pieces::new(segs(i))
+                            .filter_map(|p| match p {
+                                Piece::Node(j, _) => Some(
+                                    height[j].expect("every cycle passes through a recursive type"),
+                                ),
+                                Piece::Str(_) => None,
+                            })
+                            .max()
+                            .unwrap_or(0);
+                        height[i] = Some(h + 1);
+                    }
+                }
+            }
+        }
+        height
     }
 
     /// The tokens of node `i`, its children by `rank`.
@@ -928,18 +952,71 @@ impl Printer {
         }
     }
 
+    /// The node whose name each node's text is, or `None`: a node whose text is one reference
+    /// to another is that one's, and a named node whose text is not, or whose reference leads
+    /// to no name, is its own. A named node whose text is so another node's name takes that
+    /// name, rather than a definition `type T2 = T1;` of its own; each of its cycles passes
+    /// through the node it names, which keeps a name. Each node is followed once, with a list
+    /// of those whose answer waits on the next: time linear in the nodes.
+    fn same_names(&self) -> Vec<Option<usize>> {
+        let n = self.texts.len();
+        let mut found: Vec<Option<Option<usize>>> = vec![None; n];
+        let mut waiting: Vec<bool> = vec![false; n];
+        let mut path = Vec::new();
+        for &start in &self.post {
+            let mut i = start;
+            let mut end = loop {
+                if let Some(f) = found[i] {
+                    break f;
+                }
+                // A cycle of references alone, which a contractive group does not have.
+                if waiting[i] {
+                    break None;
+                }
+                match &self.texts[i].as_ref().expect("visited").segs[..] {
+                    [Seg::Node(j, _)] => {
+                        waiting[i] = true;
+                        path.push(i);
+                        i = *j;
+                    }
+                    _ => {
+                        let own = self.named(i).then_some(i);
+                        found[i] = Some(own);
+                        break own;
+                    }
+                }
+            };
+            while let Some(i) = path.pop() {
+                waiting[i] = false;
+                if self.named(i) {
+                    end = end.or(Some(i));
+                }
+                found[i] = Some(end);
+            }
+        }
+        found.into_iter().map(Option::flatten).collect()
+    }
+
     fn render(&self, root: Text) -> Surface {
         let mut named: Vec<Option<String>> = vec![None; self.texts.len()];
+        let same = self.same_names();
+        // Whether node `i` gets a definition: a named node whose name is its own.
+        let defined = |i: usize| self.named(i) && same[i].is_none_or(|j| j == i);
         let mut defs = Vec::new();
         let mut k = 0;
         for &i in &self.post {
-            if self.named(i) {
+            if defined(i) {
                 k += 1;
                 named[i] = Some(format!("T{k}"));
             }
         }
         for &i in &self.post {
-            if let Some(name) = &named[i] {
+            if let Some(j) = same[i].filter(|&j| self.named(i) && j != i) {
+                named[i] = named[j].clone();
+            }
+        }
+        for &i in &self.post {
+            if let Some(name) = named[i].as_ref().filter(|_| defined(i)) {
                 let mut body = String::new();
                 self.write(
                     &self.texts[i].as_ref().expect("visited").segs,
