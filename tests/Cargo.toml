@@ -172,6 +172,9 @@ path = "steps/l02_02_parser_match_imports/mod.rs"
 name = "l02_03_name_resolution"
 path = "steps/l02_03_name_resolution/mod.rs"
 [[test]]
+name = "l02_08_import_pinning"
+path = "steps/l02_08_import_pinning/mod.rs"
+[[test]]
 name = "l03_01_parser"
 path = "steps/l03_01_parser/mod.rs"
 [[test]]

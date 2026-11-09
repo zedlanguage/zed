@@ -202,6 +202,9 @@ fn a_problem_of_a_package_prints_its_address() {
     let d = shop("shop", SHOP_MAIN);
     let main = d.join("app/main.zed");
     let main = main.to_str().unwrap();
+    // The first run writes the import's pin (step L2.8), which changes the import's text, so the
+    // runs compared below are those after it.
+    zedc(&["run", main]);
     let (status, _, err) = zedc(&["run", main]);
     assert_eq!(status, 1, "{err}");
     let place = format!("{main}:1:1: the unit `pricing` defines no `gross`");
@@ -217,6 +220,7 @@ fn a_problem_of_a_package_prints_its_address() {
     let other = shop("shop2", SHOP_MAIN);
     let other = other.join("app/main.zed");
     let other = other.to_str().unwrap();
+    zedc(&["run", other]);
     let (_, _, there) = zedc(&["run", other]);
     assert_eq!(
         address_after(

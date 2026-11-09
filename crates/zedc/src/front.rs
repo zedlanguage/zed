@@ -23,9 +23,14 @@ use crate::{docs, interp, source};
 /// (`run::program`) holds the same unit.
 pub type Front = Result<(Vec<Stmt>, Arc<Unit>, Vec<Diagnostic>), Vec<Diagnostic>>;
 
-/// A unit's statements and its imports, each with the unit it names, in text order; or the
-/// errors of the first phase that rejects it.
-pub type Parsed = Result<(Vec<Stmt>, Vec<(Arc<str>, Span)>), Vec<ast::Error>>;
+/// A unit's statements and its imports, each with the unit it names, the statement's text and
+/// the content address it is pinned to, if written (step L2.8), in text order; or the errors of
+/// the first phase that rejects it.
+pub type Parsed = Result<(Vec<Stmt>, Vec<Imported>), Vec<ast::Error>>;
+
+/// An import statement of a unit: the unit it names, the statement's text, its `;` included,
+/// and the content address it is pinned to, if written.
+pub type Imported = (Arc<str>, Span, Option<ContentAddress>);
 
 /// A message of the compiler, at a line and column of the source, both counted from 1, with
 /// its derivation (DESIGN.md "Diagnostics").
@@ -542,8 +547,8 @@ pub(crate) fn error(span: Span, message: String) -> Error {
     }
 }
 
-/// The statements of the unit `text` and its imports, each with the unit it names, in text
-/// order; or the errors of the first phase that rejects it. What [`Query::Parse`] computes.
+/// The statements of the unit `text` and its imports ([`Imported`]), in text order; or the
+/// errors of the first phase that rejects it. What [`Query::Parse`] computes.
 ///
 /// [`Query::Parse`]: crate::query::Query::Parse
 pub(crate) fn parse_unit(text: &str) -> Parsed {

@@ -32,6 +32,7 @@ use std::sync::Arc;
 
 use imbl::Vector;
 
+use zedc_base::address::ContentAddress;
 use zedc_base::rejection::{Row, not_yet};
 use zedc_syntax::ast::{
     Annot, Arm, Error, Expr, ExprKind, Field, Import, ImportKind, Param, Pattern, Port, RangeEnd,
@@ -157,9 +158,10 @@ pub struct Resolution {
     /// The unit each import's binder comes from: for a qualifier, the unit it names; for a
     /// name a selective import brings in, the unit that defines it.
     pub imports: BTreeMap<usize, Arc<str>>,
-    /// Each import statement, in every scope, with the unit it names, in text order: what the
-    /// loader reads to find the units a unit needs.
-    pub units: Vec<(Arc<str>, Span)>,
+    /// Each import statement, in every scope, with the unit it names and the content address
+    /// it is pinned to, if written, in text order: what the loader reads to find the units a
+    /// unit needs and to check their pins.
+    pub units: Vec<(Arc<str>, Span, Option<ContentAddress>)>,
     /// The binders a `local` declaration binds, which no other unit sees.
     pub local: HashSet<usize>,
     /// What the unit's top level defines, which other units may import.
@@ -1101,7 +1103,7 @@ impl Resolver<'_> {
     /// their uses are not reported as well.
     fn import(&mut self, i: &Import, span: Span) {
         let unit: Arc<str> = i.path.as_str().into();
-        self.out.units.push((unit.clone(), span));
+        self.out.units.push((unit.clone(), span, i.pin));
         let exports = match self.units.map(|u| u.exports(&i.path)) {
             Some(Ok(e)) => Some(e),
             Some(Err(Refused::Because(why))) => {

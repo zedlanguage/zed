@@ -31,6 +31,7 @@ use crate::ast::{self, Error, ExprKind, Note, StmtKind, StrPart, Target};
 use crate::front::{self, Diagnostic, Parsed, error};
 use crate::lex::{self, Span, Tok};
 use crate::parse::{TOP, parse};
+use crate::pin::{self, Check, Edit, PIN_FILE, PRELUDE, Pins};
 use crate::place::{MANIFEST, Place};
 use crate::query::{self, Db};
 use crate::resolve::{self, Exports, Refused, Resolved, Units};
@@ -297,6 +298,21 @@ pub struct Package {
     /// each unit's own errors and forms of later steps. In order of their files, each file's in
     /// an order fixed by its text and the package.
     pub problems: Vec<Problem>,
+    /// The pin file's text ([`PIN_FILE`]), or why it cannot be read; `None` when there is none.
+    pub pins: Option<Result<Arc<str>, Unreadable>>,
+    /// The pins the build writes ([`Package::write_pins`]).
+    pub writes: Writes,
+}
+
+/// The pins a build writes: those of the imports that have none, into their units' files, and
+/// the pin file, when its pins change (step L2.8).
+#[derive(Debug, Default)]
+pub struct Writes {
+    /// Each unit that gains a pin, by its index in [`Package::units`], with the text of each of
+    /// its import statements that gains one and the edit that writes it, in text order.
+    pub units: Vec<(usize, Vec<(Span, Edit)>)>,
+    /// The pin file's new text, when its pins change.
+    pub pin_file: Option<String>,
 }
 
 impl Package {
@@ -345,6 +361,8 @@ impl Package {
         for (i, p) in self.problems.iter().enumerate() {
             let text = if p.file == MANIFEST {
                 self.manifest.as_ref()
+            } else if p.file == PIN_FILE {
+                self.pins.as_ref()
             } else {
                 self.unit_of_file(&p.file).and_then(|u| u.text.as_ref())
             };
@@ -406,6 +424,67 @@ impl Package {
     fn unit_of_file(&self, file: &str) -> Option<&Loaded> {
         unit_of(file).ok().and_then(|p| self.unit(&p))
     }
+
+    /// The text of the unit `path` with the pins the build writes into it, if it writes any.
+    pub fn pinned(&self, path: &str) -> Option<String> {
+        let &u = self.index.get(path)?;
+        let (_, edits) = self.writes.units.iter().find(|(v, _)| *v == u)?;
+        let Some(Ok(text)) = &self.units[u].text else {
+            unreachable!("a unit that gains a pin has text")
+        };
+        Some(pin::apply(text, edits.iter().map(|(_, e)| e)))
+    }
+
+    /// Writes the pins the build writes ([`Package::writes`]) into the package's files, which
+    /// lie under `root` and are shown under `shown`, the root as the command line reached it:
+    /// each unit file's own bytes kept around its pins, and the pin file as the toolchain writes
+    /// it. Each file that could not be written, as `file: why` and the repair. O(b + k log k)
+    /// for files of b bytes in all and k pins.
+    pub fn write_pins(&self, root: &Path, shown: &Path) -> Vec<String> {
+        let mut failed = Vec::new();
+        for (u, edits) in &self.writes.units {
+            let unit = &self.units[*u];
+            let Some(Ok(text)) = &unit.text else {
+                unreachable!("a unit that gains a pin has text")
+            };
+            if let Err(why) =
+                pin::write_edits(&root.join(&unit.file), text, edits.iter().map(|(_, e)| e))
+            {
+                let pinned: Vec<String> = edits
+                    .iter()
+                    .map(|(span, e)| {
+                        let stmt = &text[span.start..span.end];
+                        let at = e.at - span.start;
+                        format!("`{}{}{}`", &stmt[..at], e.text, &stmt[at..])
+                    })
+                    .collect();
+                failed.push(format!(
+                    "{}: zedc could not write the pins of this file's imports: {why}. Each import \
+                     is pinned to the content address of the unit it names, so that the next \
+                     build checks it. Repairs: make the file writable and build again, or write \
+                     the pins yourself: {}.",
+                    shown.join(&unit.file).display(),
+                    pinned.join(", ")
+                ));
+            }
+        }
+        if let Some(text) = &self.writes.pin_file {
+            // A pin file that cannot be read gives the build no new pins to write.
+            let read = match &self.pins {
+                Some(Ok(read)) => Some(&**read),
+                _ => None,
+            };
+            if let Err(why) = pin::write_file(&root.join(PIN_FILE), read, text) {
+                failed.push(format!(
+                    "{}: zedc could not write the pin file: {why}. It holds the content address \
+                     of the package's prelude unit, which each build checks. Repair: make the \
+                     package's directory and this file writable, and build again.",
+                    shown.join(PIN_FILE).display()
+                ));
+            }
+        }
+        failed
+    }
 }
 
 /// The index of the unit `path` in `pkg`, which is added and put on `todo` to be read when the
@@ -456,6 +535,13 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
             }
         }
     };
+    pkg.pins = files.read(PIN_FILE);
+    if let Some(Err(u)) = &pkg.pins {
+        pkg.problems.push(Problem {
+            file: PIN_FILE.into(),
+            error: error(NOWHERE, u.sentence()),
+        });
+    }
     // Read every unit the roots and the prelude reach, once each: `index` is the visited set.
     let mut edges: Vec<Vec<(usize, Span)>> = Vec::new();
     let mut todo: Vec<Arc<str>> = Vec::new();
@@ -476,7 +562,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
             let parsed = db.parse(t);
             match &*parsed {
                 Ok((_, imports)) => {
-                    for (unit, span) in imports {
+                    for (unit, span, _) in imports {
                         let j = add(&mut pkg, &mut todo, unit);
                         edges[i].push((j, *span));
                     }
@@ -613,11 +699,180 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         numbers[u] = db.exports_number(&r.res.exports).to_le_bytes();
         pkg.units[u].resolved = Some(r);
     }
+    pin_units(db, &mut pkg, prelude);
     // The problems were met in an order that follows the roots (the units read, those that do
     // not parse, the roots with no file); by file, each file's in the order it was given them,
     // they are the same for every order of the roots. A stable sort, O(P log P).
     pkg.problems.sort_by(|a, b| a.file.cmp(&b.file));
     pkg
+}
+
+/// Checks and writes the pins of `pkg` (step L2.8): each import is checked against, or pinned
+/// to, the address of the unit it names, and the `prelude` unit, with the text of the manifest's
+/// string that names it, against its pin in the pin file. A stale pin is a problem at the import,
+/// or at the manifest's string; the pins to write go in [`Package::writes`]. Each unit is
+/// addressed at most once, and only when an import or the manifest names it: O(t log t) for the
+/// definitions of those units, of size t in all, the canonicalizer's cost, then O(s) for
+/// import statements of s bytes and O(p log p) for p pins in the pin file.
+fn pin_units(db: &mut Db, pkg: &mut Package, prelude: Option<(usize, Span)>) {
+    let mut memo: Vec<Option<Arc<pin::Address>>> = vec![None; pkg.units.len()];
+    for k in 0..pkg.order.len() {
+        let u = pkg.order[k];
+        let Some(parsed) = pkg.units[u].parsed.clone() else {
+            continue;
+        };
+        let Ok((_, imports)) = &*parsed else {
+            continue;
+        };
+        let Some(Ok(text)) = pkg.units[u].text.clone() else {
+            unreachable!("a parsed unit has text")
+        };
+        let mut edits = Vec::new();
+        for (path, span, pinned) in imports {
+            let v = pkg.index[path];
+            let address = unit_address(db, pkg, &mut memo, v);
+            let now = match &*address {
+                None => continue,
+                Some(Err(too)) => {
+                    let error = too_large(*span, &pkg.units[v].path, too);
+                    pkg.problems.push(Problem {
+                        file: pkg.units[u].file.clone(),
+                        error,
+                    });
+                    continue;
+                }
+                Some(Ok(now)) => now.unit,
+            };
+            match pin::check(*pinned, now) {
+                Check::Fresh => {}
+                Check::Unpinned => {
+                    edits.extend(pin::pin_import(&text, *span, now).map(|e| (*span, e)));
+                }
+                Check::Stale(old) => {
+                    let dep = &pkg.units[v];
+                    let repinned = pin::unpinned(&text, *span).unwrap_or_default();
+                    let error = error(
+                        *span,
+                        format!(
+                            "the import of the unit `{}` is pinned to the content address {old}, \
+                             and the unit now has the address {now}: its exports, or a \
+                             declaration they use, changed in `{}` after the pin was written. A \
+                             pinned import is checked and never resolved again, so the build \
+                             stops here. Repairs: to build with the unit as it is now, remove \
+                             the pin, as `{repinned}`, and the next build writes the new \
+                             address; or, to build with the unit as it was pinned, restore \
+                             `{}` to that version.",
+                            dep.path, dep.file, dep.file
+                        ),
+                    );
+                    pkg.problems.push(Problem {
+                        file: pkg.units[u].file.clone(),
+                        error,
+                    });
+                }
+            }
+        }
+        if !edits.is_empty() {
+            pkg.writes.units.push((u, edits));
+        }
+    }
+    // The pin file: a file that cannot be read, or holds a line that is no pin, is reported and
+    // left as it is, and its pins are not checked.
+    let mut pins = match &pkg.pins {
+        None => Pins::default(),
+        Some(Err(_)) => return,
+        Some(Ok(text)) => match Pins::parse(text) {
+            Ok(pins) => pins,
+            Err(errors) => {
+                pkg.problems.extend(errors.into_iter().map(|error| Problem {
+                    file: PIN_FILE.into(),
+                    error,
+                }));
+                return;
+            }
+        },
+    };
+    let mut changed = false;
+    match prelude {
+        // With no prelude unit, a pin of one is stale and goes.
+        None => changed |= pins.drop_kind(PRELUDE, None),
+        Some((p, span)) => {
+            let path = pkg.units[p].path.clone();
+            changed |= pins.drop_kind(PRELUDE, Some(&path));
+            let address = unit_address(db, pkg, &mut memo, p);
+            match &*address {
+                None => {}
+                Some(Err(too)) => pkg.problems.push(Problem {
+                    file: MANIFEST.into(),
+                    error: too_large(span, &path, too),
+                }),
+                Some(Ok(now)) => match pin::check(pins.get(PRELUDE, &path), now.unit) {
+                    Check::Fresh => {}
+                    Check::Unpinned => changed |= pins.set(PRELUDE, &path, now.unit, true),
+                    Check::Stale(old) => {
+                        let file = &pkg.units[p].file;
+                        let error = error(
+                            span,
+                            format!(
+                                "the prelude unit `{path}` is pinned in the pin file \
+                                 `{PIN_FILE}` to the content address {old}, and it now has the \
+                                 address {}: its exports, or a declaration they use, changed in \
+                                 `{file}` after the pin was written. A pinned unit is checked \
+                                 and never read afresh, so the build stops here. Repairs: to \
+                                 build with the prelude as it is now, delete the line \
+                                 `{PRELUDE} {old} {path}` from `{PIN_FILE}`, and the next build \
+                                 writes the new address; or, to build with the prelude as it \
+                                 was pinned, restore `{file}` to that version.",
+                                now.unit
+                            ),
+                        );
+                        pkg.problems.push(Problem {
+                            file: MANIFEST.into(),
+                            error,
+                        });
+                    }
+                },
+            }
+        }
+    }
+    if changed {
+        pkg.writes.pin_file = Some(pins.text());
+    }
+}
+
+/// The address of the unit `v` of `pkg`, kept in `memo` once found: `None` when it has no text,
+/// is not resolved, or does not compile alone.
+fn unit_address(
+    db: &mut Db,
+    pkg: &Package,
+    memo: &mut [Option<Arc<pin::Address>>],
+    v: usize,
+) -> Arc<pin::Address> {
+    if let Some(a) = &memo[v] {
+        return a.clone();
+    }
+    let u = &pkg.units[v];
+    let a = match (&u.text, &u.resolved) {
+        (Some(Ok(text)), Some(r)) => db.address(text, &r.res.exports),
+        _ => Arc::new(None),
+    };
+    memo[v] = Some(a.clone());
+    a
+}
+
+/// The rejection at `span` of a pin of the unit `path`, whose address zedc could not compute
+/// for want of memory, `too` saying how much.
+fn too_large(span: Span, path: &str, too: &zed_kernel::num::TooLarge) -> Error {
+    error(
+        span,
+        format!(
+            "zedc could not compute the content address of the unit `{path}`, which the build \
+             pins here: one of its constants takes {} bytes, and the system refused zedc that \
+             much memory to write the constant out. The program is not wrong. Repair: free \
+             memory and build again.",
+            too.bytes()
+        ),
+    )
 }
 
 /// Puts the units of `pkg` in `pkg.order` by the strongly connected components of the import
@@ -875,7 +1130,8 @@ impl Units for Linked {
 /// imports nothing and its manifest names no prelude unit; otherwise each problem of the
 /// package its unit reaches, the files written under the root as `file`'s directory names it,
 /// with its address, and a line for each problem whose address `suppress` names
-/// ([`Package::report_on_disk`]).
+/// ([`Package::report_on_disk`]), after the pins the build writes are written into the files
+/// ([`Package::write_pins`]), followed by each file they could not be written into.
 pub fn package_report(
     file: &Path,
     place: Place,
@@ -900,7 +1156,13 @@ pub fn package_report(
     // The root as the command line reached it: the file's directory, and up from there.
     let depth = path.matches('.').count();
     let shown = file.parent().and_then(|p| p.ancestors().nth(depth));
-    Ok(Some(pkg.report_on_disk(shown.unwrap_or(&dir.0), suppress)))
+    let shown = shown.unwrap_or(&dir.0);
+    // The pins are written before anything is reported, so that a build stopped by another
+    // problem still pins the imports it could.
+    let failed = pkg.write_pins(&dir.0, shown);
+    let mut report = pkg.report_on_disk(shown, suppress);
+    report.extend(failed);
+    Ok(Some(report))
 }
 
 #[cfg(test)]

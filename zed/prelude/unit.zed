@@ -8,12 +8,12 @@
 // changed export, or a changed local declaration an export uses, gives a new
 // address, and an unused local declaration or the unit's path does not. An
 // import's pin names this address; the prelude is pinned as an ordinary unit
-// (step L2.8). The canonicalization VERSION is hashed in, so a change to the
-// canonical form changes every address.
+// (step L2.8, in the package's `zed.pins`). The canonicalization VERSION is
+// hashed in, so a change to the canonical form changes every address.
 //
 // blake3 is Zed source (row STD-blake3; a primitive only if a stage build shows
 // it too slow), and the 8-byte little-endian `word` is a checker core built-in
-// (step S.3); `version` is the canonicalization VERSION, 1.
+// (step S.3); `version` is the canonicalization VERSION.
 
 struct Export { name: String, address: Bytes }
 

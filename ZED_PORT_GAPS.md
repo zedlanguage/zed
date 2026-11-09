@@ -885,6 +885,17 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `binary_search_by` on a sorted `Vec` of imported units | `Linked::exports` | None | A map from path to resolution |
 | `let … else { unreachable!(…) }` for a unit with imports that has text | `unit::cycle_error` | Broken invariants | A type that carries the text with the parsed unit |
 
+## Entries from L2.8 (`zedc/src/pin.rs`, `unit.rs`, `query.rs`, `canon/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A temporary file written beside the target and renamed over it, its permissions copied first, the target's symlink followed | `pin::replace` | Host file system (gap: no atomic rename in the `Files` port) | A `Files` port operation that replaces a file whole, added with PORTABLE-rt |
+| `split_inclusive('\n')` with a running byte offset, and `split_once(' ')` twice to read a pin line | `pin::Pins::parse`, `pin::pin_line` | None | `Lines` of the file and a grammar or `split` on its text |
+| A `BTreeMap<(String, String), ContentAddress>` read by `range` from a key and `take_while` | `pin::Pins::drop_kind` | None | A sorted map with a range read from a key |
+| A memo `Vec<Option<Arc<Address>>>` indexed by unit, filled as units are met | `unit::pin_units`, `unit::unit_address` | Mutation | A map from unit to address built by a fold over the imports |
+| Byte offsets of the normalized text mapped back to the raw bytes in one pass over `\r\n` | `pin::raw_offsets` | None | The same pass over the file's bytes |
+| `let … else { unreachable!(…) }` for a unit that gains a pin and has text | `Package::pinned`, `Package::write_pins`, `unit::pin_units` | Broken invariants | A type that carries the text with each unit that gains a pin |
+
 ## Entries from T4 (`zedc-solvers/src/utvpi.rs`, `presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |

@@ -9,7 +9,9 @@
 //! key as its path, a tag byte (resolved import, failed import, or prelude) and then the number
 //! of its exports or why the import failed. The front end (lexing through elaboration) is keyed by the
 //! unit's text, since every structure before the kernel terms carries byte spans and so
-//! changes with any edit. A row of a function's `test` table is keyed by its check and the
+//! changes with any edit. Step L2.8 adds a unit's content address, keyed by its text as the front
+//! end is and computed from the front end's result, so a build that checks or writes the pins of
+//! many importers of one unit addresses it once. A row of a function's `test` table is keyed by its check and the
 //! definitions the check reaches, and a row of `main`'s table by its key, its value, the
 //! ports, and the definitions `main` and those terms reach: kernel terms carry no spans, so
 //! an edit that leaves those definitions alone (a comment, another function, another row)
@@ -40,6 +42,7 @@ use zed_kernel::Term;
 
 use crate::elab::Cones;
 use crate::front::{self, Front, Parsed};
+use crate::pin::{self, Address};
 use crate::resolve::{Exports, Resolved};
 
 /// A query's key: its inputs, encoded.
@@ -75,6 +78,9 @@ pub enum Query {
     /// A unit's resolution (step L2.3), keyed by its text and the exports of the units it
     /// imports and of the prelude unit it sees.
     Resolve,
+    /// A unit's content address (step L2.8), keyed by its text, of which its exports and their
+    /// values are functions.
+    Address,
 }
 
 /// The memoized results, and how many times each query was computed rather than reused.
@@ -84,6 +90,7 @@ pub struct Db {
     rows: HashMap<Query, HashMap<Key, Result<(), String>>>,
     parsed: HashMap<Key, Arc<Parsed>>,
     resolved: HashMap<Key, Arc<Resolved>>,
+    addresses: HashMap<Key, Arc<Address>>,
     computed: HashMap<Query, usize>,
     /// The number given to each definition's text, for a row's key.
     texts: HashMap<Box<str>, u64>,
@@ -104,6 +111,7 @@ impl Default for Db {
             rows: HashMap::new(),
             parsed: HashMap::new(),
             resolved: HashMap::new(),
+            addresses: HashMap::new(),
             computed: HashMap::new(),
             texts: HashMap::new(),
             exports: HashMap::new(),
@@ -120,6 +128,7 @@ impl Clone for Db {
             rows: self.rows.clone(),
             parsed: self.parsed.clone(),
             resolved: self.resolved.clone(),
+            addresses: self.addresses.clone(),
             computed: self.computed.clone(),
             texts: self.texts.clone(),
             exports: self.exports.clone(),
@@ -168,6 +177,24 @@ impl Db {
         let r = Arc::new(compute());
         self.resolved.insert(k, r.clone());
         r
+    }
+
+    /// The content address of the unit `text` (step L2.8), whose top level defines `exports`:
+    /// `None` when the unit does not compile alone. Keyed by the text alone, since `exports` is
+    /// a function of it.
+    pub fn address(&mut self, text: &str, exports: &Exports) -> Arc<Address> {
+        let k = key("address", &[text.as_bytes()]);
+        if let Some(a) = self.addresses.get(&k) {
+            return a.clone();
+        }
+        let front = self.front(text);
+        *self.computed.entry(Query::Address).or_default() += 1;
+        let a = Arc::new(match &*front {
+            Ok((_, unit, _)) => Some(pin::address(unit, exports)),
+            Err(_) => None,
+        });
+        self.addresses.insert(k, a.clone());
+        a
     }
 
     /// The result of the table row `q` under `k`, computing it with `check` when no result

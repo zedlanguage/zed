@@ -32,6 +32,7 @@ pub mod domain;
 
 mod serial;
 use zed_kernel::num::TooLarge;
+use zed_kernel::term::Term;
 use zed_kernel::value::Value;
 
 pub use def::{Def, Facet};
@@ -175,11 +176,38 @@ pub fn address_at(
     d: &Def,
     refs: &dyn Fn(&str) -> Option<ContentAddress>,
 ) -> Result<ContentAddress, TooLarge> {
+    hashed(version, &canonicalize(d), refs)
+}
+
+/// The address under rule-set version `version` of `normal`, a definition in normal form.
+fn hashed(
+    version: u32,
+    normal: &Def,
+    refs: &dyn Fn(&str) -> Option<ContentAddress>,
+) -> Result<ContentAddress, TooLarge> {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-canon\0");
     h.update(&version.to_le_bytes());
-    h.update(&serialize(&canonicalize(d), refs)?);
+    h.update(&serialize(normal, refs)?);
     Ok(ContentAddress::hashed(&h))
+}
+
+/// The content address of the definition `name` whose body is `body`, with no domain and no
+/// facets: [`address`] of that definition, read from `body` in place, so that a definition an
+/// elaboration holds is addressed without first being copied into a [`Def`] (a unit's exports,
+/// step L2.8). O(t log t) for a body of size t, the canonicalizer's cost.
+pub fn address_of_body(
+    name: &str,
+    body: &Term,
+    refs: &dyn Fn(&str) -> Option<ContentAddress>,
+) -> Result<ContentAddress, TooLarge> {
+    let normal = Def {
+        name: name.into(),
+        domain: None,
+        facets: Vec::new(),
+        body: binders::canonical(body),
+    };
+    hashed(VERSION, &normal, refs)
 }
 
 /// The serialization of a definition already in normal form: a self-delimiting byte string,
@@ -211,4 +239,32 @@ pub fn unit_address(exports: &[(&str, ContentAddress)]) -> ContentAddress {
         h.update(&address.0);
     }
     ContentAddress::hashed(&h)
+}
+
+#[cfg(test)]
+mod tests {
+    use zed_kernel::term::build::{lam, lit, var};
+
+    use super::*;
+
+    #[test]
+    fn a_body_is_addressed_as_its_definition_is() {
+        let body = lam(&["x"], var("x"));
+        let def = Def {
+            name: "id".into(),
+            domain: None,
+            facets: Vec::new(),
+            body: body.clone(),
+        };
+        let refs = |_: &str| None;
+        assert_eq!(address_of_body("id", &body, &refs), address(&def, &refs));
+        // A name an earlier definition binds is hashed as its address.
+        let uses = lam(&["y"], var("rate"));
+        let known = |x: &str| (x == "rate").then(|| address(&def, &refs).unwrap());
+        let other = |x: &str| (x == "rate").then(|| address_of_body("r", &lit(1), &refs).unwrap());
+        assert_ne!(
+            address_of_body("tax", &uses, &known),
+            address_of_body("tax", &uses, &other)
+        );
+    }
 }
