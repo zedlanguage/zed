@@ -1557,7 +1557,11 @@ fn an_equation_held_once_twice_or_negated_gives_one_answer() {
 
 /// Parts on which the projection of the whole part answered differently as written, negated,
 /// held twice or split (seeds 12, 13, 16 and 17 of 400 random parts, before item
-/// PROJECT-each-canon), each with its boxes and the one answer of all four ways.
+/// PROJECT-each-canon), each with its boxes and the one answer of all four ways. The fourth's
+/// `c` was refused before item PRES-project-each-cost, with the box stage's bounds `[-3,6]`;
+/// its ends are exact: `c >= -3` from `a + 2 * c >= -4` and `a <= 3`, reached at
+/// `a=2 b=5 c=-3 z1=0 z2=-4`; `c <= 6` from `a + b + 2 * c == z2 + 5`, `z2 <= 6`, `a >= 2`
+/// and `b >= -4`, reached at `a=3 b=-4 c=6 z1=3 z2=6`.
 const WRITTEN: &[(&str, &str, &str)] = &[
     (
         "a + b >= -2 && b + z2 <= 2 * c + 6 && !(a + 2 * b == z0 - 1) && !(a + z3 == 2 * c) && 2 * a + 2 * c >= b - 2 && 2 * a + 2 * b + c + z0 >= 5 && a + c >= -2 && b + c + z0 >= 3 && a + b + c + z3 == 0",
@@ -1577,7 +1581,7 @@ const WRITTEN: &[(&str, &str, &str)] = &[
     (
         "a + 2 * c >= -4 && (2 * a + b >= 7 || z2 <= 8) && a + 2 * b + c + z1 >= 4 && a >= b + z1 - 6 && (b >= c - 11 || z2 <= 4) && a + b + c >= z1 + 2 && a + z1 <= b + c + 9 && a + c >= z0 - 12 && a + b + 2 * c == z2 + 5",
         "a=[2,3] b=[-4,inf] c=[-inf,8] z0=[-6,-4] z1=[-7,13] z2=[-10,6]",
-        "a=[2,3] b=[-4,16] refused: Growth c=[-3,6] refused: Growth z0=[-6,-4] z1=[-7,13] refused: Growth z2=[-10,6] refused: Growth left out: [Growth]",
+        "a=[2,3] b=[-4,16] refused: Growth c=[-3,6] z0=[-6,-4] z1=[-7,13] refused: Growth z2=[-10,6] refused: Growth left out: [Growth]",
     ),
     (
         "(2 * a >= b + 2 || z0 <= 4) && !(a + b + z0 == 2 * c - 8) && (2 * a + b + 2 * c >= -9 || z1 <= 6) && 2 * a + b == c + z0 - 1",
@@ -1708,10 +1712,11 @@ fn shown_set(text: &str) -> IntervalSet {
 }
 
 /// Case 272 of seed 17 (`WRITTEN`), which the solver refuses with four live variables or more
-/// (`Refusal::Growth`), within its boxes: `b`, `c`, `z1` and `z2` keep the bounds of the box
-/// stage over its rows, `b` and `c` narrower than their boxes, and each holds the exact hull
-/// that brute force finds; the answer is the same with the names reversed, in each of the four
-/// writings of [`four_ways`] and in six random writings ([`rewritten`], [`scaled`]).
+/// (`Refusal::Growth`), within its boxes: `b`, `z1` and `z2` keep the bounds of the box stage
+/// over its rows, `b` narrower than its box, and each holds the exact hull that brute force
+/// finds; `c`, refused until item PRES-project-each-cost with the box stage's `[-3,6]`, is now
+/// answered, with that exact hull. The answer is the same with the names reversed, in each of
+/// the four writings of [`four_ways`] and in six random writings ([`rewritten`], [`scaled`]).
 #[test]
 fn refused_projections_keep_the_box_of_their_rows() {
     let (part, bx, _) = WRITTEN[3];
@@ -1726,7 +1731,7 @@ fn refused_projections_keep_the_box_of_their_rows() {
         .collect();
     assert_eq!(
         shown.join(" "),
-        "a=[2,3] b=[-4,16]! c=[-3,6]! z0=[-6,-4] z1=[-7,13]! z2=[-10,6]!"
+        "a=[2,3] b=[-4,16]! c=[-3,6] z0=[-6,-4] z1=[-7,13]! z2=[-10,6]!"
     );
     let exact = brute(&items, &bs);
     assert_eq!(
@@ -1884,20 +1889,23 @@ fn refused_projections_of_random_parts_keep_sound_boxes_first_half() {
     assert_eq!(count, (2, 2, 1));
 }
 
-/// Seeds 15 to 18 (of item PROJECT-each-canon), checked by [`refused_names_in`].
+/// Seeds 15 to 18 (of item PROJECT-each-canon), checked by [`refused_names_in`]. Item
+/// PRES-project-each-cost answers one name refused before, with the hull brute force finds.
 #[test]
 fn refused_projections_of_random_parts_keep_sound_boxes_second_half() {
     let count = refused_names_in(15..19, false);
     eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
-    assert_eq!(count, (2, 11, 8));
+    assert_eq!(count, (2, 10, 8));
 }
 
 /// Seeds 11 and 12 with each part two random parts joined, checked by [`refused_names_in`].
+/// Item PRES-project-each-cost answers the one refused name of one part, narrower than its
+/// box, with the hull brute force finds.
 #[test]
 fn refused_projections_of_joined_random_parts_keep_sound_boxes() {
     let count = refused_names_in(11..13, true);
     eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
-    assert_eq!(count, (8, 31, 15));
+    assert_eq!(count, (7, 30, 14));
 }
 
 /// A random part of seed 0xca17, its boxes, and six other writings of it with the same

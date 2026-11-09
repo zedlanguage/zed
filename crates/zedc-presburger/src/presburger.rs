@@ -8656,9 +8656,21 @@ fn tighten(
         rows.pop();
         held
     };
+    // Where no such point is found, the question of the end itself, `sym <= lo` (or
+    // `sym >= hi`), is asked first: a point of it shows the end is the bound, as the search
+    // below would find, since every question of that side then has a point. One question
+    // where the end is the bound, in place of about `log2 w` that all have a point (item
+    // PRES-project-each-cost); one more where it is not. A refusal or `false` leaves the
+    // search as it was.
+    let has = |con: Con, points: &mut Vec<Model>| {
+        matches!(
+            ask(&Formula::and(vec![f.clone(), Formula::Con(con)]), points),
+            Ok(true)
+        )
+    };
     // The least `v` in `lo..=hi` with no proof that `f` has no point where `sym <= v`, and the
     // greatest with none where `sym >= v`.
-    let new_lo = if at_end(&lo, points) {
+    let new_lo = if at_end(&lo, points) || has(Con::ge(&Lin::constant(lo.clone()), &x), points) {
         lo
     } else {
         let (mut a, mut b) = (lo, hi.clone());
@@ -8675,7 +8687,7 @@ fn tighten(
         }
         a
     };
-    if at_end(&hi, points) {
+    if at_end(&hi, points) || has(Con::ge(&x, &Lin::constant(hi.clone())), points) {
         return Ok(set.meet(&IntervalSet::range(
             End::Fin(Num::from(&new_lo)),
             End::Fin(Num::from(&hi)),
@@ -8797,19 +8809,18 @@ pub fn hull_sides_asked() -> u64 {
 }
 
 /// The greatest value (`dir` 1) or the least (`dir` -1) of a symbol over a formula, given a
-/// point `m` of it; `None` when there is none. A side with no bound is found by one question,
-/// [`unbounded`]. A bound is then found by the monotone question "is there a point with the
-/// symbol at least `v`" (or at most), searched outward from the point's value with steps that
+/// point `m` of it; `None` when there is none. A bound is found by the monotone question "is
+/// there a point with the symbol at least `v`" (or at most). Where `c`'s constraints with the
+/// symbol alone bound that side ([`alone_end`]), the bound lies between the point's value and
+/// that end, and it is searched from both, [`side_within`]: no question of an unbounded side
+/// is asked, and a bound at the end, or a few steps inside it, is found by a few questions
+/// whatever the point's distance. Otherwise a side with no bound is found by one question,
+/// [`unbounded`], and a bound by a search outward from the point's value with steps that
 /// double, then by bisection, so it takes O(log d) questions for a bound at distance d, each
 /// on integers of O(log d) bits. Every bound is exact at any magnitude.
 fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>, Refusal> {
     SIDES.set(SIDES.get() + 1);
-    if unbounded(c, sym, dir)? {
-        return Ok(None);
-    }
     let x = Lin::atom(sym.clone());
-    let at = m.get(sym).cloned().unwrap_or(Int::ZERO);
-    let step_dir = Int::from(dir);
     // Whether some point has the symbol at `v` or beyond it, going `dir`: false far enough
     // that way, since the side is bounded, and true at the point's value.
     let holds = |v: &Int| -> Result<bool, Refusal> {
@@ -8820,6 +8831,22 @@ fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>
         };
         decide_inner(&Formula::and(vec![c.clone(), Formula::Con(beyond)]))
     };
+    // The search from both ends answers what the search below answers, the one bound, where
+    // its questions are answered; where one is refused, the search below is run as before
+    // (item PRES-project-each-cost: a disjunct `1024 * q <= x`, `1024 * q >= x - 1023`,
+    // `x == 2 * e`, `x` in a gap's bounds, read about 20 questions for each side, and now 3).
+    if let Some(end) = alone_end(c, sym, dir)
+        && let Some(at) = m.get(sym)
+        && (if dir > 0 { *at <= end } else { *at >= end })
+        && let Ok(side) = side_within(&holds, at.clone(), end, dir)
+    {
+        return Ok(Some(side));
+    }
+    if unbounded(c, sym, dir)? {
+        return Ok(None);
+    }
+    let at = m.get(sym).cloned().unwrap_or(Int::ZERO);
+    let step_dir = Int::from(dir);
     let (mut good, mut step) = (at, Int::ONE);
     let bad = loop {
         let next = &good + &(&step_dir * &step);
@@ -8836,6 +8863,78 @@ fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>
         if holds(&mid)? { good = mid } else { bad = mid }
     }
     Ok(Some(good))
+}
+
+/// The last value `v` going `dir` from `good`, where `holds(good)`, with `holds(v)`, given that
+/// `holds` is false past `end` and monotone (true up to the side, false past it). The questions
+/// alternate between one inward from the false end, at `end` first, and one outward from the
+/// true end, each side's step doubling while its answers move that end; a question that would
+/// pass the other end bisects instead. A side `e` inside `end` and `d` past the point is then
+/// found by O(log min(d, e)) questions plus a bisection of the last step's width, at most about
+/// twice the questions of the search outward alone. The first refusal is returned.
+fn side_within(
+    holds: &impl Fn(&Int) -> Result<bool, Refusal>,
+    good: Int,
+    end: Int,
+    dir: i64,
+) -> Result<Int, Refusal> {
+    let way = Int::from(dir);
+    let two = Int::from(2);
+    let (mut good, mut bad) = (good, &end + &way);
+    let (mut outward, mut inward) = (Int::ONE, Int::ONE);
+    let mut from_end = true;
+    while (&bad - &good).abs() > Int::ONE {
+        let v = if from_end {
+            &bad - &(&way * &inward)
+        } else {
+            &good + &(&way * &outward)
+        };
+        let between = if dir > 0 {
+            v > good && v < bad
+        } else {
+            v < good && v > bad
+        };
+        let v = if between {
+            v
+        } else {
+            &good + &(&bad - &good).div_floor(&two)
+        };
+        if holds(&v)? {
+            good = v;
+            if !from_end {
+                outward = &outward + &outward;
+            }
+        } else {
+            bad = v;
+            if from_end {
+                inward = &inward + &inward;
+            }
+        }
+        from_end = !from_end;
+    }
+    Ok(good)
+}
+
+/// The greatest value (`dir` 1) or the least (`dir` -1) of `sym` that the constraints of `c`
+/// with `sym` alone allow, `c` read as a conjunction: a constraint of it, or one directly
+/// inside it. `None` when they give none that way, or have no point. Every point of `c` holds
+/// them, so the side of `sym` over `c` is no further out. One pass over `c`'s parts.
+fn alone_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
+    let cons: Vec<&Con> = match c {
+        Formula::Con(k) => vec![k],
+        Formula::And(fs) => (fs.iter())
+            .filter_map(|f| match f {
+                Formula::Con(k) => Some(k),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let alone = (cons.into_iter())
+        .filter(|k| k.lin.terms.len() == 1)
+        .filter_map(|k| Some((k.lin.terms.get(sym)?.clone(), k.lin.constant.clone(), k.rel)));
+    let (lo, hi) = int_bounds(alone)?;
+    if dir > 0 { hi } else { lo }
 }
 
 /// The hull of every atom of `cons`, constraints with a point `m`, when each is a difference
