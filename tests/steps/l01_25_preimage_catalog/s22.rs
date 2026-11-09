@@ -26,8 +26,8 @@ use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::lattice::Congruence;
 use zedc::store::preimage::{
-    Classes, Demand, Domains, Listed, Preimage, class_domain_reads, exact_preimage, forward_pieces,
-    preimage, preimage_listed,
+    Classes, Demand, Domains, Listed, Preimage, TouchedPaths, class_domain_reads, exact_preimage,
+    forward_pieces, preimage, preimage_listed, touched_paths,
 };
 use zedc::store::preimage_ref as before;
 use zedc::store::presburger::{Atom, Model, Refusal};
@@ -3110,5 +3110,152 @@ fn split_classes_share_the_holes_scale() {
                 assert!(p.exact, "the preimage at k = {k} is exact");
             },
         );
+    });
+}
+
+/// The cases of [`split_pieces_reach_each_kind_of_touched`]: programs split by the remainder of
+/// `x` over domains whose pieces were placed so that, per modulus, some piece of a class's set
+/// has an infinite end, spans a period (`hi - lo = |m| - 1` exactly, and longer), keeps its
+/// remainders in one range, wraps past `m` into an earlier class, or wraps past `m` back into
+/// the class it started in. `m = -5` reads its remainders by `5`, as `in_class` does.
+fn touched_cases() -> Vec<(String, Term, Domains, Demand)> {
+    let ite = |g: Term, a: Term, b: Term| Term::If(Shared::new(g), Shared::new(a), Shared::new(b));
+    let tt = || Term::Lit(Value::Bool(true));
+    let ff = || Term::Lit(Value::Bool(false));
+    let rem = |m: i64| prim(Prim::Mod, var("x"), int(m));
+    // The pieces `ps` with a half-line below and above.
+    let half = |ps: &[(i64, i64)]| {
+        let mut all: Vec<(End, End)> = ps.iter().map(|&(a, b)| (End::of(a), End::of(b))).collect();
+        all.insert(0, (End::NegInf, End::of(-200)));
+        all.push((End::of(5000), End::PosInf));
+        IntervalSet::from_pieces(all)
+    };
+    // `m = 10`: true where the remainder is 3 or 8. The pieces: remainders 8 to 3 (wrapping
+    // past `m`), 3 alone, 7 to 4 (wrapping past `m` back into the class of [4, 7]), 6 to 3, a
+    // whole period, 5 to 8, 5 to 3 (`hi - lo = m - 2`), and `hi - lo = m - 1`.
+    let ten_ps = [
+        (-32, -27),
+        (13, 13),
+        (17, 24),
+        (26, 33),
+        (40, 49),
+        (55, 58),
+        (65, 73),
+        (81, 90),
+    ];
+    let ten = ite(
+        prim(Prim::Eq, rem(10), int(3)),
+        tt(),
+        prim(Prim::Eq, rem(10), int(8)),
+    );
+    // `m = -5`: the remainders by 5. The pieces: remainders 4 to 2, 2 to 0, one point,
+    // [-20, 20], 4 to 2 again, 0 to 3, 1 to 2, 4 to 1 (`hi - lo = 2`), and `hi - lo = |m| - 1`.
+    let five_ps = [
+        (-61, -58),
+        (-53, -50),
+        (-45, -45),
+        (-20, 20),
+        (44, 47),
+        (50, 53),
+        (56, 57),
+        (59, 61),
+        (70, 74),
+    ];
+    // Each class bounds `x` on another side, so the classes' sets differ outside [-40, 40].
+    let five = ite(
+        prim(Prim::Ge, rem(-5), int(2)),
+        prim(Prim::Le, var("x"), int(40)),
+        prim(Prim::Ge, var("x"), int(-40)),
+    );
+    // One guard, true in the class [1, 4]: a piece whose remainders run from 4 past `m` to 1
+    // or 2 wraps back into that class.
+    let five_bare = prim(Prim::Ne, rem(-5), int(0));
+    // `m = -5` chained, over `x` unbounded and over the pieces above.
+    let five_chain = ite(
+        prim(Prim::Eq, rem(-5), int(4)),
+        prim(Prim::Ge, var("x"), int(3)),
+        ite(
+            prim(Prim::Lt, rem(-5), int(2)),
+            ff(),
+            prim(Prim::Le, var("x"), int(-8)),
+        ),
+    );
+    // `m = 7`, the arms moving and reflecting `x`: the classes' sets are half-lines.
+    let seven = prim(
+        Prim::Le,
+        ite(
+            prim(Prim::Eq, rem(7), int(2)),
+            prim(Prim::Add, var("x"), int(3)),
+            prim(Prim::Sub, int(5), var("x")),
+        ),
+        int(20),
+    );
+    let seven_ps = [(-150, -140), (-30, -26), (16, 19), (24, 40)];
+    let mut cases = Vec::new();
+    for (name, t, x) in [
+        ("ten bounded", ten.clone(), pieces(&ten_ps)),
+        ("ten", ten, half(&ten_ps)),
+        ("five bounded", five.clone(), pieces(&five_ps)),
+        ("five", five, half(&five_ps)),
+        ("five_bare bounded", five_bare.clone(), pieces(&five_ps)),
+        ("five_bare", five_bare, half(&five_ps)),
+        (
+            "five_chain unbounded",
+            five_chain.clone(),
+            IntervalSet::top(),
+        ),
+        ("five_chain", five_chain, half(&five_ps)),
+        ("seven", seven, half(&seven_ps)),
+    ] {
+        for b in [true, false] {
+            cases.push((
+                format!("{name} {b}"),
+                t.clone(),
+                over(&[("x", x.clone())]),
+                Demand::Bool(b),
+            ));
+        }
+    }
+    cases
+}
+
+/// COMPLEXITY.md S22-split-holes: the split of programs over domains whose pieces wrap past
+/// the modulus, span a whole period or have an infinite end, for `m = 10`, `m = -5` and `m = 7`
+/// ([`touched_cases`]), gives byte for byte the preimage that main gave at 01eb1be0, before the
+/// classes shared the domain (`touched_cases.txt`, one line per case, written by main then).
+/// For `m = 10` and for `m = -5`, each kind of answer of `touched` occurs at least once.
+#[test]
+fn split_pieces_reach_each_kind_of_touched() {
+    on_big_stack(|| {
+        let want = include_str!("touched_cases.txt");
+        let cases = touched_cases();
+        assert_eq!(cases.len(), want.lines().count());
+        let mut sums = [TouchedPaths::default(); 2];
+        touched_paths();
+        for ((name, t, ds, d), w) in cases.into_iter().zip(want.lines()) {
+            let p = preimage(&t, &ds, &d);
+            assert_eq!(format!("{name}\t{p:?}"), w, "{name}");
+            let c = touched_paths();
+            let s = match name.split(' ').next() {
+                Some("ten") => &mut sums[0],
+                Some("five" | "five_bare" | "five_chain") => &mut sums[1],
+                _ => continue,
+            };
+            s.half_line += c.half_line;
+            s.period += c.period;
+            s.one_range += c.one_range;
+            s.two_ranges += c.two_ranges;
+            s.wrapped_into_its_class += c.wrapped_into_its_class;
+        }
+        for (m, s) in [10, -5].into_iter().zip(sums) {
+            assert!(
+                s.half_line > 0
+                    && s.period > 0
+                    && s.one_range > 0
+                    && s.two_ranges > 0
+                    && s.wrapped_into_its_class > 0,
+                "m = {m}: {s:?}"
+            );
+        }
     });
 }

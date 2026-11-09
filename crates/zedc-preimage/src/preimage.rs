@@ -938,7 +938,8 @@ fn box_domains(cx: &Cx, rest: RestBox) -> Domains {
 /// 1]` by `m` meet the remainders of the members of `lo..=hi`: one range of the classes, or
 /// two where the remainders of the piece wrap past `m`, and all of them where the piece spans
 /// a period or a half-line. They hold every class for which [`in_class`] finds a member of
-/// the piece. `O(log k)` for `k` members, by binary search.
+/// the piece. `O(log k)` for `k` members, by binary search. Each answer is counted by its
+/// kind ([`touched_paths`]).
 fn touched<'a>(
     lo: &End,
     hi: &End,
@@ -947,9 +948,11 @@ fn touched<'a>(
     m: i128,
 ) -> [&'a [usize]; 2] {
     let (Fin(lo), Fin(hi)) = (lo, hi) else {
+        count_touched(|t| &mut t.half_line);
         return [members, &[]];
     };
     if hi - lo >= Num::from(m - 1) {
+        count_touched(|t| &mut t.period);
         return [members, &[]];
     }
     let rem = |x: &Num| {
@@ -965,13 +968,58 @@ fn touched<'a>(
     let (rl, rh) = (rem(lo), rem(hi));
     let (a, b) = (class(rl), class(rh));
     if rl <= rh {
+        count_touched(|t| &mut t.one_range);
         [within(a, b), &[]]
     } else if b < a {
+        count_touched(|t| &mut t.two_ranges);
         [within(a, usize::MAX), within(0, b)]
     } else {
         // The remainders wrap past `m` back into the class they started in: every class.
+        count_touched(|t| &mut t.wrapped_into_its_class);
         [members, &[]]
     }
+}
+
+/// How many pieces [`touched`] answered by each of its five kinds on this thread since the
+/// last call of [`touched_paths`] (COMPLEXITY.md S22-split-holes).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TouchedPaths {
+    /// A piece with an infinite end: every class.
+    pub half_line: u64,
+    /// A piece of `m` or more integers: every class.
+    pub period: u64,
+    /// A piece whose remainders run up from its low end's to its high end's: one range.
+    pub one_range: u64,
+    /// A piece whose remainders wrap past `m` into an earlier class: two ranges.
+    pub two_ranges: u64,
+    /// A piece whose remainders wrap past `m` back into the class they start in or a later
+    /// one: every class.
+    pub wrapped_into_its_class: u64,
+}
+
+thread_local! {
+    static TOUCHED: std::cell::Cell<TouchedPaths> = const {
+        std::cell::Cell::new(TouchedPaths {
+            half_line: 0,
+            period: 0,
+            one_range: 0,
+            two_ranges: 0,
+            wrapped_into_its_class: 0,
+        })
+    };
+}
+
+/// The counts of [`TouchedPaths`] on this thread since the last call, which resets them.
+pub fn touched_paths() -> TouchedPaths {
+    TOUCHED.replace(TouchedPaths::default())
+}
+
+fn count_touched(kind: impl FnOnce(&mut TouchedPaths) -> &mut u64) {
+    TOUCHED.with(|c| {
+        let mut t = c.get();
+        *kind(&mut t) += 1;
+        c.set(t);
+    });
 }
 
 /// The integers of `lo..=hi` from the first to the last whose remainder by `m` lies in `class`,
