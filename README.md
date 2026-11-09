@@ -609,7 +609,7 @@ main(fs: Files) -> (stdout: Lines) {
   text = fs["input.txt"] else "";
   counts = text.split(" ").group(w -> w.lower).count;
   lines = counts as (w -> n) into (desc n -> w -> "${w}: ${n}");
-  stdout <- lines.rank;
+  stdout <- lines.orderedValues;
 }
 ```
 
@@ -630,7 +630,7 @@ The `as ... into ...` line reshapes the counts, and the last line writes them ou
 > [!NOTE]
 > **`desc k`**, in the key position of an `into` pattern, orders by `k` from high to low and adds a level keyed by *rank*, the position in that order, where equal values share one rank. **`asc k`** orders from low to high.
 >
-> **`"${e}"`** writes the value of `e` into a string. **`m.rank`** flattens an ordered multi-level map into one array, numbered in that order. **`port <- v`** pushes the value `v` out of a port.
+> **`"${e}"`** writes the value of `e` into a string. **`m.orderedValues`** gives the values of `m` in order, as one array numbered `0..<n`; the keys are dropped. **`port <- v`** pushes the value `v` out of a port.
 
 Keeping `w` as a level below `desc n` means that two words with the same count don't collide. These tables show the data after each step, for a file whose whole text is `to be or not to be`.
 
@@ -678,7 +678,7 @@ Keeping `w` as a level below `desc n` means that two words with the same count d
 <tr><td><code>or</code></td><td><code>or: 1</code></td></tr>
 </table>
 
-**`lines.rank`**
+**`lines.orderedValues`**
 
 <table>
 <tr><th><code>i</code></th><th><code>line</code></th></tr>

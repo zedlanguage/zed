@@ -186,7 +186,7 @@ table `lines`
 | 0 | to | to: 2 |
 | 1 | not | not: 1 |
 | 1 | or | or: 1 |
-table `lines.rank`
+table `lines.orderedValues`
 | i | line |
 | 0 | be: 2 |
 | 1 | to: 2 |

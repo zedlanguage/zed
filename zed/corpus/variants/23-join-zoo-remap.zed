@@ -22,5 +22,5 @@ main(stdin: Lines) -> (stdout: Lines) {
   left   = (orders, pays) into (i && ?j -> "left ${i} ${orders[i]} ${opt(pays[j])}");
   right  = (orders, pays) into (j && ?i -> "right ${j} ${opt(orders[i])} ${pays[j]}");
   outer  = (orders, pays) into (i || j -> "outer ${i} ${opt(orders[i])} ${opt(pays[j])}");
-  stdout <- inner.rank ++ left.rank ++ right.rank ++ outer.rank;
+  stdout <- inner.orderedValues ++ left.orderedValues ++ right.orderedValues ++ outer.orderedValues;
 }

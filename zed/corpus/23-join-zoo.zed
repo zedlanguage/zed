@@ -31,7 +31,7 @@ main(stdin: Lines) -> (stdout: Lines) {
   onlyR  = pays::domain.diff(orders::domain);
   low    = for k -> a in orders where k < 10 { a };
   high   = for k -> a in orders where k >= 10 { a };
-  stdout <- inner.rank ++ left.rank ++ right.rank ++ outer.rank
+  stdout <- inner.orderedValues ++ left.orderedValues ++ right.orderedValues ++ outer.orderedValues
          ++ ["unpaid ${ids(onlyL)}", "unordered ${ids(onlyR)}", "symdiff ${ids(onlyL ++ onlyR)}",
              "rejoined ${if low ++ high == orders { "equal" } else { "different" }}"];
 }

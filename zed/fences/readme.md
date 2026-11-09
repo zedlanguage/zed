@@ -107,13 +107,13 @@ sales: Utf8String ->? [Utf8String ->? int];
 prices: Utf8String ->? int;
 ```
 
-<!-- README.md:607 layer L8: ring L8, word L5 (rank), label none; section [A complete program] 1 -->
+<!-- README.md:607 layer L8: ring L8, word L5 (orderedValues), label none; section [A complete program] 1 -->
 ```zed
 main(fs: Files) -> (stdout: Lines) {
   text = fs["input.txt"] else "";
   counts = text.split(" ").group(w -> w.lower).count;
   lines = counts as (w -> n) into (desc n -> w -> "${w}: ${n}");
-  stdout <- lines.rank;
+  stdout <- lines.orderedValues;
 }
 ```
 

@@ -16,14 +16,14 @@ main(stdin: Lines) -> (stdout: Lines) {
 }
 ```
 
-<!-- EXAMPLES.md:40 layer L8: ring L8, word L5 (rank), label none; section [1. Programs and ports] 3 -->
+<!-- EXAMPLES.md:40 layer L8: ring L8, word L5 (orderedValues), label none; section [1. Programs and ports] 3 -->
 ```zed
 // [d4] sec:grouping, sec:remap_law (Ranking) — word frequencies, most common first
 main(fs: Files) -> (stdout: Lines) {          // fs : Path ->? Utf8String | #ioError, the file port (sec:ports)
   text   = fs["input.txt"] else "";            // else strips #ioError and #notFound alike
   counts = text.split(" ").group(w -> w.lower).count;          // Lower ->? int
   lines  = counts as (w -> n) into (desc n -> w -> "${w}: ${n}"); // rank -> (w -> Utf8String); ties share a rank
-  stdout <- lines.rank;                                        // the rank pass: one dense rank per line
+  stdout <- lines.orderedValues;                                        // the rank pass: one dense rank per line
 }
 ```
 
@@ -114,13 +114,13 @@ esc = "tab\t quote\" newline\n";
 isComment = line::codepoints[0] == char32("#");   // a string literal is always a Utf8String
 ```
 
-<!-- EXAMPLES.md:144 layer L8: ring L8, word L5 (rank), label none; section [4. Strings] 3 -->
+<!-- EXAMPLES.md:144 layer L8: ring L8, word L5 (orderedValues), label none; section [4. Strings] 3 -->
 ```zed
 // [d4*] [lib] sec:remap_law, sec:order — a string is a collection; upper on a char32 is a library word
 chars    = for ch in s { ch };                            // the string itself, key by key
 shouted  = s.map(ch -> ch.upper);                          // int[0..<len] -> char32: a Utf8String again
 reversed = s as (i -> ch) into (s::len - 1 - i -> ch);     // a bijective rekey
-noSpaces = s.where(ch -> ch != char32(" ")).rank;                  // where leaves gaps; the rank pass closes them
+noSpaces = s.where(ch -> ch != char32(" ")).orderedValues;                  // where leaves gaps; the rank pass closes them
 ```
 
 <!-- EXAMPLES.md:152 layer L5: ring L3, word L5 (slice), label none; section [4. Strings] 4 -->
@@ -271,7 +271,7 @@ some  = xs.any(x -> x > 4);
 every = xs.all(x -> x > 0);
 tk    = xs.take(2);   dr = xs.drop(2);   tw = xs.takeWhile(x -> x < 4);
 idx   = xs.indexOf(4);                  // [lib] int | #none
-flat  = [[1, 2], [3]].rank;             // [1, 2, 3]: the rank pass over the lexicographic order
+flat  = [[1, 2], [3]].orderedValues;             // [1, 2, 3]: the rank pass over the lexicographic order
 ```
 
 <!-- EXAMPLES.md:311 layer L8: ring L8, word L5 (patch), label none; section [8. Maps and sets] 1 -->
@@ -313,7 +313,7 @@ one     = best?.first;
 ```zed
 // [d4] sec:order — every level has an order, and a sort is placed only where a fold reads it
 struct Entry { score: int with order(#desc), name: Utf8String with order(collate: "de"), id: int }
-board = entrySet.rank;                        // entrySet : a set of Entry; [Entry] by score high to low, then name in German collation, then id
+board = entrySet.orderedValues;                        // entrySet : a set of Entry; [Entry] by score high to low, then name in German collation, then id
 total = ages >< (+);                          // + is commutative: read in storage order, no sort
 line  = ages.map(a -> "${a} ") >< (++);       // ++ is not: the ages in the code point order of the names, one sort
 least = ages.first;                           // int | #none: the same order of the same map, so the same sorted view; a top-1 selection

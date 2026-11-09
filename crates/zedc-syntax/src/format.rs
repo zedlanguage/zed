@@ -126,7 +126,7 @@ fn level(e: &Expr) -> u8 {
         // A `loop` has no head, so like a block it takes a suffix as written: `loop { … }.v`.
         | ExprKind::Loop { .. } => PRIMARY,
         // A `for` is a primary of the grammar, but its body block ends it, so as the operand of
-        // an operator it is written in parentheses: `(for x in xs { x }).rank`.
+        // an operator it is written in parentheses: `(for x in xs { x }).orderedValues`.
         ExprKind::For { .. } => ELSE,
     }
 }

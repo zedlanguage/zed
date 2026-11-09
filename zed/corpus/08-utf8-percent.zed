@@ -29,7 +29,7 @@ decode(positional s) = {
     with skip[-1] = 0;                                     // skip[i]: characters after i that belong to i's escape
   toks = (for i -> c in s where skip[i - 1] == 0 {
     if c == "%" { #byte(b: hexVal(s[i + 1]) * 16 + hexVal(s[i + 2])) } else { #char(c:) }
-  }).rank;
+  }).orderedValues;
   st[k in 0..<toks::len] = step(st[k - 1], toks[k]) with st[-1] = Dec(need: 0, cp: 0, out: "");
   st.map(d -> d.out).concat("")
 };

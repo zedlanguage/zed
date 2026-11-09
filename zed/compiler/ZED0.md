@@ -35,7 +35,7 @@ that uses a word of a layer after row S (L25 or above) audits to that word, abov
 | L2 | `Arm#0` `AtomApply#0` `Decl#2` `Decl#3` `Decl#4` `Field#1` `Import#0` `Match#0` `NamePat#0` `Pattern#2` `Pattern#7` `Primary#8` `Struct#0` `StructField#1` `TypeDecl#0` `TypePrimary#2` `WildPat#0` | — |
 | L3 | `ArrayExpr#0` `Binder#0` `For#0` `Generator#0` `InPattern#0` `Primary#9` `Primary#11` `ReadSuffix#0` `Suffix#5` | `concat` `foldl` `map` `split` `where` |
 | L4 | — | `#collision` `flatMap` `group` |
-| L5 | — | `drop` `last` `rank` `take` |
+| L5 | — | `drop` `last` `orderedValues` `take` |
 | L6 | `Boundary#0` `BoundaryItem#0` `Decl#10` `Loop#0` `Primary#10` `Until#0` | — |
 
 Program 31 also needs two things no parser sees: general recursion through named functions
@@ -60,7 +60,7 @@ step that uses it.
 | the types the checker's units share | `Ast` (the node kinds of every layer before row S), `Facet`, `Rejection`, `Interval`, `Congruence`, `Bound`, as plain types with no reads | L6 | step S.1b |
 | search a family | `.any`, `.all`, `.find`, short-circuiting in key order | L3 | step L3.15a |
 | symbol and bound tables | `group` with a `#collision` fold, `rekey` | L4 | as program 31 |
-| deterministic output order | `sort`, `rank` | L5 | as program 31 |
+| deterministic output order | `sort`, `orderedValues` | L5 | as program 31 |
 | nearest key, priority queues | `m.upTo(k)` and `m.from(k)` on an ordered family, each O(log n) | L5 | step L5.8a |
 | memoized parsing, worklists, inference, the ordered rewriter | indexed definitions `f[i] = e`, `loop` with `until`, the definedness `fix` | L6 | steps L6.1, L6.4 |
 | folds over trees | `.fold` on a recursive union | L6 | step L6.5 |

@@ -119,8 +119,8 @@ programs use instead:
 
 - **Keyed push below L7.** `hist[s.len] <- 1` is a keyed push, L7 in the
   grammar, and several pushes to one port are L7.2. Programs below L7 push
-  once per port and build the whole output with `++` of `.rank`ed families
-  (13, 19, 23, 31).
+  once per port and build the whole output with `++` of `.orderedValues`
+  families (13, 19, 23, 31).
 - **`-> Type` results and typed bindings** are L10, so no program below L10
   writes them; types appear only as struct field types and in `type`
   declarations.
@@ -170,14 +170,14 @@ so a different decision changes the named `.out` files.
    prelude type of layer L7 (sec:type_notation), and resolution reports its
    use with that layer.
 10. **Pushing a nested family to `stdout`** writes it in keypath order, and
-    `.rank` of a keyed or two-level family densifies it in keypath order (19,
-    23, 31).
+    `.orderedValues` of a keyed or two-level family densifies it in keypath
+    order (19, 23, 31).
 11. **`++` of two int-keyed sets** (23, `onlyL ++ onlyR`, `low ++ high`) is the
     disjoint union (overlap `#assertEmpty`), keyed by the original keys and so
     read in int order, not left-then-right.
 12. **`zip` of rank families with different domains** (25) is the inner
     equality join, keeping the intersection 0..<n - l; `drop` keeps the
-    source keys (DESIGN line 546), hence `.drop(l).rank`.
+    source keys (DESIGN line 546), hence `.drop(l).orderedValues`.
 13. **A missing key reads as `#notFound`** (23, 30, 31), as EXAMPLES' `unpaid2`
     does. Where the looked-up value's own type holds atoms (31's type lattice
     `#unknown`, `#int`, `#bool`, `#error`; 23's and 30's printed absence), the

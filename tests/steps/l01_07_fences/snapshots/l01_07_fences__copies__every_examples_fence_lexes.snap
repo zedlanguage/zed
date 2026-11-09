@@ -15,7 +15,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   3 | text = fs [ str["input.txt"] ] «else» str[] ;
   4 | counts = text . split ( str[" "] ) . group ( w -> w . lower ) . count ;
   5 | lines = counts «as» ( w -> n ) «into» ( «desc» n -> w -> str[${w} ": " ${n}] ) ;
-  6 | stdout <- lines . rank ;
+  6 | stdout <- lines . orderedValues ;
   7 | }
 == EXAMPLES.md [1. Programs and ports] 4 L8
   2 | main ( stdin : Lines ) -> ( stdout : Lines ) {
@@ -76,7 +76,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | chars = «for» ch «in» s { ch } ;
   3 | shouted = s . map ( ch -> ch . upper ) ;
   4 | reversed = s «as» ( i -> ch ) «into» ( s :: len - 1₍10₎ - i -> ch ) ;
-  5 | noSpaces = s . where ( ch -> ch != char32 ( str[" "] ) ) . rank ;
+  5 | noSpaces = s . where ( ch -> ch != char32 ( str[" "] ) ) . orderedValues ;
 == EXAMPLES.md [4. Strings] 4 L5
   2 | sub = s . slice ( 0₍10₎ ..< 5₍10₎ ) ;
   3 | has = s . contains ( str["world"] ) ;
@@ -168,7 +168,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | every = xs . all ( x -> x > 0₍10₎ ) ;
   5 | tk = xs . take ( 2₍10₎ ) ; dr = xs . drop ( 2₍10₎ ) ; tw = xs . takeWhile ( x -> x < 4₍10₎ ) ;
   6 | idx = xs . indexOf ( 4₍10₎ ) ;
-  7 | flat = [ [ 1₍10₎ , 2₍10₎ ] , [ 3₍10₎ ] ] . rank ;
+  7 | flat = [ [ 1₍10₎ , 2₍10₎ ] , [ 3₍10₎ ] ] . orderedValues ;
 == EXAMPLES.md [8. Maps and sets] 1 L8
   2 | ages = { str["ann"] -> 31₍10₎ , str["bob"] -> 27₍10₎ } ;
   3 | a = ages [ str["ann"] ] ;
@@ -194,7 +194,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   7 | one = best ?. first ;
 == EXAMPLES.md [8. Maps and sets] 4 L7
   2 | «struct» Entry { score : int «with» order ( #desc ) , name : Utf8String «with» order ( collate : str["de"] ) , id : int }
-  3 | board = entrySet . rank ;
+  3 | board = entrySet . orderedValues ;
   4 | total = ages >< ( + ) ;
   5 | line = ages . map ( a -> str[${a} " "] ) >< ( ++ ) ;
   6 | least = ages . first ;

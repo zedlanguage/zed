@@ -18,7 +18,7 @@ other = T3(a: 0, b: 1, c: 0);
 fields(positional l) = {
   after = l.map(c -> if c == "\"" { quote } else { other }).scan(compose).map(t -> t.a);
   sep   = for i -> c in l { c == "," && (after[i - 1] else 0) != 1 };   // the state before i
-  cuts  = [-1] ++ (for i -> s in sep where s { i }).rank ++ [l::len];
+  cuts  = [-1] ++ (for i -> s in sep where s { i }).orderedValues ++ [l::len];
   for k in 0..<cuts::len - 1 { l.slice((cuts[k] else 0) + 1, cuts[k + 1] else 0) }
 };
 

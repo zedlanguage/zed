@@ -238,7 +238,7 @@ pub fn rank_of(
     count(discard_with(group_by(family, f), |q, _| less(key(q, 0), x)))
 }
 
-/// `F.rank` by sort key `f`: the widen `k -> (rank(f(v)), k)` of (sec:order), keeping the
+/// `F.orderedValues` by sort key `f`: the widen `k -> (rank(f(v)), k)` of (sec:order), keeping the
 /// original key beneath the rank so that tied entries stay a group in key order.
 pub fn rank_widen(
     family: Term,

@@ -383,7 +383,7 @@ pub const WORDS: &[(&str, u32)] = &[
     ("flatMap", 4),
     ("tag", 4),
     ("sort", 5),
-    ("rank", 5),
+    ("orderedValues", 5),
     ("scan", 5),
     ("zip", 5),
     ("patch", 5),

@@ -43,6 +43,6 @@ main(stdin: Lines) -> (stdout: Lines) {
   };
   closing = book.accts;
   good    = closing.where(v -> v is int);
-  report  = (for id -> v in closing { show(id, v) }).rank;
+  report  = (for id -> v in closing { show(id, v) }).orderedValues;
   stdout <- report ++ ["total ${good.sum} over ${good::card} accounts, ${closing::card - good::card} failed"];
 }

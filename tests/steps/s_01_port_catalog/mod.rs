@@ -269,7 +269,10 @@ fn check_zed_takes_missing_plan_rows_and_zed_texts_in_zed0_only() {
             "names `q`, which is no operand, parameter or word",
         ),
         ("`(y -> y)(a)`, `y`", "names `y`"),
-        ("`xs.rank`", "whose arguments the check does not know"),
+        (
+            "`xs.orderedValues`",
+            "whose arguments the check does not know",
+        ),
     ];
     for (cell, want) in bad {
         let p = check_zed(cell, &spec, &words, &rows).unwrap_or_default();

@@ -58,5 +58,5 @@ main(stdin: Lines) -> (stdout: Lines) {
   };
 
   typings = for n -> _ in syms { "${n} : ${tyName(ty[n])}" };
-  stdout <- typings.rank ++ decls.flatMap(d -> diagsOf(d)).rank;
+  stdout <- typings.orderedValues ++ decls.flatMap(d -> diagsOf(d)).orderedValues;
 }
