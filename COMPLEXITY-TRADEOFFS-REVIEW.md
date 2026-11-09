@@ -24,6 +24,7 @@ change for a site that had no comment. Rows cite COMPLEXITY.md by ID; "cx" stand
 | module doc | 44d370e7 | split of the box in every component (DPLL over tuple types), exponential | narrowing and one split per branch, polynomial in the types | parts only a multi-component split proves empty refused `TupleSplit` (K1, K2) | complete | none |
 | `STORES` | eefe4060 | search of its own per reader, O(m·n) (K62) | kept values read by index, O(1) per read | memory O(all values built) until the unit ends | partial: no naive version or complexity | added naive (K62) and read cost |
 | `group_verdicts` (`Some(false)` arm) | 97774885 | search per member, O(n²) (K56) | one shared search; own search only for a missed member | a missed member may read the whole group again | partial: no naive or complexities | added naive (K56) and used |
+| `group_verdicts` (refused member, reference) | 188fc1c3 | as `Type::verdict_alone` | as `Type::verdict_alone` | member refused, its message names definitions, cycles and tuple | complete (reference to `Type::verdict_alone`, completed in this review) | none |
 | `group_verdicts` (`Refusal::Group`) | 4af5c326 | game solver, quadratic in the component | linear decider, then the search | member refused `Group` | complete | none |
 | `optimistic_values` | 0e312b27 | drop the closure and search again, quadratic | one more search, at most twice the cost | gives up whole when one closure has no value | complete | none |
 | `Type::is_empty` (`refuse_forks`) | 8abbc466 | subset construction, exponential (NFA universality, PSPACE) | stop at the fork, polynomial | fork counted inhabited; answers not kept | partial: no used complexity | added used complexity |
@@ -430,3 +431,22 @@ The 302 markers counted by the item are in `.rs` files. Eleven more `// Complexi
 | `zed/prelude/revision.zed:17` | 44d370e7 | k·m pairs | stated "at most k + m pairs"; the code (Rust copy `map2`) and COMPLEXITY.md S4, S14 take at most 4(k + 2) once both operands are split at 0 | | stale | corrected to 4(k + 2), here and in the description above it |
 
 The doc comment above `revision.rs` `map2` said the same "at most `k + m`" pairs, against the `4(k + 2)` of its own tradeoff paragraph and of the code (`shrink` caps the smaller operand to at most 2 pieces, `sign_parts` then splits both at 0); it is corrected too.
+
+## Summary
+
+| Status before | Rust markers (302) | Outside (11) | After this review |
+|---|---|---|---|
+| complete (references counted when their target is complete) | 253 | 10 | complete |
+| partial | 48 | 0 | complete: the missing costs added |
+| missing | 0 found | 0 | |
+| stale | 1 (`tests/.../extend.rs:129` named `Extending::answers`) | 1 (`revision.zed` pair bound) | complete: pointer and bound fixed |
+
+COMPLEXITY.md rows that disagree with the code: none found. S4 and S14 give the `map2` pair
+bound as 4(k + 2), as the code does; the comments in `revision.zed` and above `revision.rs`
+`map2` said k + m and were fixed.
+
+Not done: a search for missing comments by COMPLEXITY.md K row. For each K row whose fix is
+below the naive complexity, the code site should carry a comment. Rows not yet checked for a
+comment at their site: K1, K3–K12, K14–K16, K18–K21, K23, K24, K26, K29, K31–K33, K35, K38,
+K39, K42, K44, K45, K47–K51, K55, K58, K65, K66, K70, K73–K75, K79, K83, K95. Until then,
+"missing: 0" means none found among the sites read, not none in the tree.
