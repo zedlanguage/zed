@@ -142,70 +142,80 @@ pub struct Tie {
     pub rows: Vec<String>,
 }
 
+/// The sentence that closes every refusal: how far the search got.
+const STOPPED: &str = "The checker stopped there, with no values found and none ruled out";
+
+/// The opening of a refusal met while removing variables.
+const REMOVING: &str = "to find whole numbers that meet these conditions, the checker removes \
+                        one variable at a time, putting in place of the conditions on it \
+                        conditions on the variables left";
+
+/// The opening of a refusal met while choosing among alternatives.
+const ALTERNATIVES: &str = "the conditions hold alternatives, where one of several cases is \
+                            enough (from `||`, from `!=`, which holds when either side is the \
+                            larger, or from a negated `&&`), and the checker looks for a \
+                            choice of one case from each alternative that can hold with the rest";
+
+/// `xs`, each in backquotes, joined by commas.
+fn quoted(xs: &[String]) -> String {
+    xs.iter()
+        .map(|x| format!("`{x}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// "the condition `a`" or "the conditions `a`, `b`".
+fn conditions(rows: &[String]) -> String {
+    let s = if rows.len() == 1 { "" } else { "s" };
+    format!("the condition{s} {}", quoted(rows))
+}
+
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Refusal::Growth => {
-                "the integer constraints have four variables or more, each of whose \
-                 elimination would enlarge them, so whether they hold at an integer point \
-                 is not decided"
-            }
-            Refusal::Shadows => {
-                "an integer point of the integer constraints could lie only in a splinter of their \
-                 projection that would have to be split again with as many variables left, so \
-                 whether one exists is not decided"
-            }
-            Refusal::Disjuncts => {
-                "no choice among the disjunctions of the integer constraints was settled"
-            }
-            Refusal::Tie(t) => {
-                let quote = |xs: &[String]| {
-                    xs.iter()
-                        .map(|x| format!("`{x}`"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                return write!(
-                    f,
-                    "variables that no structure tells apart would be eliminated in an order \
-                     chosen by name: {} occur alike in the integer constraints (the same \
-                     coefficients, in rows that occur alike), so the next step has no first \
-                     among them, and they share {}; so whether the constraints hold at an \
-                     integer point is not decided",
-                    quote(&t.vars),
-                    if t.rows.len() == 1 {
-                        format!("the row {}", quote(&t.rows))
-                    } else {
-                        format!("the rows {}", quote(&t.rows))
-                    }
-                );
-            }
-            Refusal::Unordered(t) => {
-                let quote = |xs: &[String]| {
-                    xs.iter()
-                        .map(|x| format!("`{x}`"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                return write!(
-                    f,
-                    "the disjunctions of the integer constraints would be searched in an order \
-                     chosen by name: {} occur alike in the constraints (the same coefficients, \
-                     in rows that occur alike), so no order of the search is fixed by their \
-                     structure, and {} {} left after every disjunct with no point is removed, \
-                     with no choice of one disjunct in each, fixed by the structure, that has a \
-                     point with the rest; so whether the constraints hold at an integer point is \
-                     not decided",
-                    quote(&t.vars),
-                    if t.rows.len() == 1 {
-                        format!("the disjunction {}", quote(&t.rows))
-                    } else {
-                        format!("the disjunctions {}", quote(&t.rows))
-                    },
-                    if t.rows.len() == 1 { "is" } else { "are" }
-                );
-            }
-        })
+        match self {
+            Refusal::Growth => write!(
+                f,
+                "{REMOVING}. Here four variables or more are left, and removing any one of \
+                 them would leave more conditions than there are now, so the work could grow \
+                 without end. {STOPPED}"
+            ),
+            Refusal::Shadows => write!(
+                f,
+                "{REMOVING}. Where the values a variable can take have gaps, it splits the \
+                 conditions into cases, one for each gap. Here the only values could lie in a \
+                 case that would have to be split again with as many variables left as before, \
+                 so the splitting need not end. {STOPPED}"
+            ),
+            Refusal::Disjuncts => write!(
+                f,
+                "{ALTERNATIVES}; no choice it tried has values that meet every condition, \
+                 and it could rule out none of the cases. {STOPPED}"
+            ),
+            Refusal::Tie(t) => write!(
+                f,
+                "{REMOVING}. Its next step must choose among the variables {}, which occur \
+                 alike in the conditions (with the same coefficients, in conditions that are \
+                 alike) and share {}, so only their names could order them, and the checker \
+                 never lets a name change an answer. {STOPPED}",
+                quoted(&t.vars),
+                conditions(&t.rows)
+            ),
+            Refusal::Unordered(t) => write!(
+                f,
+                "{ALTERNATIVES}. After every case that cannot hold is removed, {} {} left, \
+                 and the variables {} occur alike in them (with the same coefficients, in \
+                 conditions that are alike), so only their names could order the search, and \
+                 the checker never lets a name change an answer; the one choice the conditions \
+                 alone fix, if there is one, has no values that meet the rest. {STOPPED}",
+                if t.rows.len() == 1 {
+                    format!("the alternative {}", quoted(&t.rows))
+                } else {
+                    format!("the alternatives {}", quoted(&t.rows))
+                },
+                if t.rows.len() == 1 { "is" } else { "are" },
+                quoted(&t.vars)
+            ),
+        }
     }
 }
 

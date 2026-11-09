@@ -100,8 +100,10 @@ fn a_driver_that_gives_no_version_is_refused() {
     assert_eq!(
         why,
         format!(
-            "the linker `{failing}` gave no version: `{failing} --version` failed (exit \
-             status: 3):\ncc: unknown option"
+            "zedc cannot use the linker `{failing}`: `{failing} --version` failed (exit \
+             status: 3), and zedc needs the linker's version to tell its links from another \
+             linker's. Repair: name in CC a C compiler that gives its version. The linker \
+             printed:\ncc: unknown option"
         )
     );
 
@@ -113,15 +115,19 @@ fn a_driver_that_gives_no_version_is_refused() {
     assert_eq!(
         why,
         format!(
-            "the linker `{silent}` wrote nothing for `{silent} --version`, so its links cannot \
-             be told from another linker's: name a C compiler that gives its version in CC"
+            "zedc cannot use the linker `{silent}`: it wrote nothing for `{silent} --version`, \
+             so its links cannot be told from another linker's. Repair: name in CC a C \
+             compiler that gives its version"
         )
     );
 
     let (status, why) = of(&d.join("no-such-cc"));
     assert_eq!(status, 2, "a missing linker is a usage error");
     assert!(
-        why.ends_with("is missing: install a C compiler, or name one in CC"),
+        why.ends_with(
+            "is missing. Repairs: install a C compiler, or name one in the environment \
+             variable CC"
+        ),
         "{why}"
     );
 }

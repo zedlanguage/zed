@@ -162,8 +162,10 @@ fn a_build_refuses_a_library_of_another_build() {
             Err((
                 2,
                 format!(
-                    "the runtime library {} is from another build of zed-native than {}: build \
-                     both with `cargo build -p zed-native`, or name the matching one in ZED_RUNTIME",
+                    "zedc cannot build an executable: the runtime library {} comes from another \
+                     build of zed-native than this zedc, {}, and code one build makes does not \
+                     run with another's library. Repairs: build both again with `cargo build -p \
+                     zed-native`, or name the library built with this zedc in ZED_RUNTIME",
                     decoy.display(),
                     exe.display()
                 )
@@ -192,7 +194,9 @@ fn no_library_of_this_build_is_an_error_naming_the_directory() {
     assert_eq!(
         runtime_of(&exe, &d),
         Err(format!(
-            "no runtime library in {} was built with {}: build it with `cargo build -p zed-native`",
+            "none of the runtime libraries in {} was built with {}, and code one build makes \
+             does not run with another's library. Repair: build them together with `cargo \
+             build -p zed-native`",
             d.display(),
             exe.display()
         ))
@@ -221,9 +225,9 @@ fn a_file_without_the_section_is_an_error_naming_it() {
     assert_eq!(
         build_id(&exe),
         Err(format!(
-            "{} has no section .zed_native.build, which names the build of zed-native it \
-             holds, so the runtime library built with it cannot be found: it does not hold \
-             zed-native",
+            "{} is not zedc or a file built with it: it has no section .zed_native.build, \
+             where every build of zed-native names itself, so the runtime library built with \
+             it cannot be found",
             exe.display()
         ))
     );

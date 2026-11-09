@@ -52,7 +52,7 @@ use zed_kernel::types::Type;
 
 use super::legalize::{Swapped, written};
 use super::validate::validate;
-use super::{Edge, Node, Op, Region, RegionKind, Src, canon, kind_name, op_name};
+use super::{Edge, Node, Op, Region, RegionKind, Src, canon, op_name};
 use crate::canon::Facet;
 use zedc_base::address::ContentAddress;
 
@@ -73,6 +73,8 @@ enum Val<'t> {
 
 /// A `let`-bound lambda whose body uses `ports`, in the order of their first use.
 struct Closure<'t> {
+    /// The name `let` binds it to.
+    name: &'t Arc<str>,
     params: &'t [Arc<str>],
     ports: Vec<Arc<str>>,
     call: Call<'t>,
@@ -245,8 +247,9 @@ pub fn lower(t: &Term) -> Result<Region, String> {
     // A refused constant is the error, whatever lowering found after it.
     if let Some(e) = l.refused {
         return Err(format!(
-            "a constant is so large that the system refused the {} bytes of memory asked to \
-             build and write it for its content address",
+            "zedc could not compile the program: one of its constants takes {} bytes, and the \
+             system refused zedc that much memory to write the constant out and compute its \
+             content address. The program is not wrong. Repair: free memory and build again",
             bytes_of(&e.bits)
         ));
     }
@@ -263,7 +266,7 @@ pub fn lower(t: &Term) -> Result<Region, String> {
     if root.args.iter().any(Edge::is_state) {
         root.kind = RegionKind::Port;
     }
-    validate(&root).map_err(|e| format!("the lowered graph is invalid: {e}"))?;
+    validate(&root).map_err(|e| bug(format_args!("the lowered graph is invalid: {e}")))?;
     Ok(root)
 }
 
@@ -298,10 +301,10 @@ impl<'t> Lower<'t> {
     fn lookup(&self, x: &str) -> Result<Val<'t>, String> {
         match self.scope.get(x) {
             Some(v) => Ok(v.clone()),
-            None => Err(format!(
+            None => Err(bug(format_args!(
                 "`{x}` is not bound, and a term lowers only when every name it reads is bound \
                  in it or is a prelude word"
-            )),
+            ))),
         }
     }
 
@@ -310,17 +313,30 @@ impl<'t> Lower<'t> {
         match v {
             Val::Src(s, at) => Ok(self.bring(s, at)),
             Val::Prim(p) => self.prim_fn(p),
-            Val::Closure(c) => Err(format!(
-                "a function of {} that uses the ports {} is used as a value: a call threads \
-                 the states of those ports, and only a call by the function's name knows them, \
-                 so such a function is only called",
-                plural(c.params.len(), "parameter"),
-                c.ports
+            Val::Closure(c) => {
+                let ports = c
+                    .ports
                     .iter()
                     .map(|p| format!("`{p}`"))
                     .collect::<Vec<_>>()
-                    .join(", ")
-            )),
+                    .join(", ");
+                let name = c.name;
+                Err(format!(
+                    "{CANNOT_BUILD}: the function `{name}`, of {}, reads or pushes {} {ports}, \
+                     and the program uses `{name}` as a value (it passes, stores or returns it) \
+                     instead of calling it. Built code carries the state of a port only \
+                     through a call that names the function, so `{name}` can only be called \
+                     by its name. Repairs: call `{name}` by its name where it is used; move \
+                     the reads and pushes out of `{name}` and pass the values in or out; or \
+                     run the program with `zedc run`, which has no such limit",
+                    plural(c.params.len(), "parameter"),
+                    if c.ports.len() == 1 {
+                        "the port"
+                    } else {
+                        "the ports"
+                    },
+                ))
+            }
         }
     }
 
@@ -366,12 +382,21 @@ impl<'t> Lower<'t> {
         while from > 0 && !self.frames[from].states.contains_key(p) {
             let kind = self.frames[from].region.kind;
             if !matches!(kind, RegionKind::Match | RegionKind::Port) {
+                let (inside, out) = match kind {
+                    RegionKind::Loop => ("inside a loop or a family", "the loop or family"),
+                    RegionKind::Rec => ("inside a recursive function", "the recursive function"),
+                    _ => (
+                        "inside a function that is not bound by `let` and called by its name",
+                        "the function",
+                    ),
+                };
                 return Err(format!(
-                    "port `{p}` is used inside a {} region, and a state edge enters only a \
-                     match or port region or the region of a `let`-bound lambda (step L1.31): \
-                     a port is read or pushed outside loops and families, and a function that \
-                     uses one is bound by `let` and called by its name",
-                    kind_name(kind)
+                    "{CANNOT_BUILD}: it reads or pushes the port `{p}` {inside}. Built code \
+                     carries the state of a port only into the arms of a `match` and into a \
+                     function bound by `let` and called by its name. Repairs: move the reads \
+                     and pushes of `{p}` out of {out} and pass the values in or out; bind the \
+                     function with `let` and call it by its name; or run the program with \
+                     `zedc run`, which has no such limit"
                 ));
             }
             from -= 1;
@@ -535,12 +560,14 @@ impl<'t> Lower<'t> {
 
     /// A prelude word as a function value: a `prim` node with no inputs.
     fn prim_fn(&mut self, p: Prim) -> Result<Src, String> {
+        // The words of any number of arguments build tuples, keypaths and atoms, which a
+        // program writes as syntax, so a checked program never passes one as a value.
         if p.arity().is_none() {
-            return Err(format!(
+            return Err(bug(format_args!(
                 "the primitive `{}` takes any number of arguments, so with no inputs its node \
-                 is a call, not the function; call it instead of passing it as a value",
+                 is a call, not the function",
                 p.written()
-            ));
+            )));
         }
         let Val::Src(s, _) = self.leaf(Op::Prim(p), Vec::new()) else {
             unreachable!("a leaf is an edge")
@@ -627,6 +654,7 @@ impl<'t> Lower<'t> {
                                 env: self.scope.clone(),
                             };
                             s.vals.push(Val::Closure(Arc::new(Closure {
+                                name: x,
                                 params: ps,
                                 ports,
                                 call,
@@ -635,6 +663,7 @@ impl<'t> Lower<'t> {
                             // Two owners: the region returns the ports' states, and the closure
                             // threads them through each call.
                             s.jobs.push(Job::Closure {
+                                name: x,
                                 params: ps,
                                 ports: ports.clone(),
                             });
@@ -667,12 +696,12 @@ impl<'t> Lower<'t> {
                 if let Some(k) = p.arity()
                     && k != args.len()
                 {
-                    return Err(format!(
+                    return Err(bug(format_args!(
                         "the primitive `{}` takes {} and is given {}",
                         p.written(),
                         plural(k, "argument"),
                         args.len()
-                    ));
+                    )));
                 }
                 s.jobs.push(Job::Leaf(Op::Prim(*p), args.len()));
                 s.args(Args::Terms(args, self.places.first(here)), true);
@@ -881,11 +910,12 @@ impl<'t> Lower<'t> {
             }
             Val::Closure(c) => {
                 if c.params.len() != n {
-                    return Err(format!(
-                        "a function of {} that uses a port is called with {}",
+                    return Err(bug(format_args!(
+                        "the function `{}`, of {}, that reads or pushes a port is called with {}",
+                        c.name,
                         plural(c.params.len(), "parameter"),
                         plural(n, "argument")
-                    ));
+                    )));
                 }
                 let fun = match &c.call {
                     Call::Inline { .. } => None,
@@ -984,12 +1014,17 @@ impl<'t> Lower<'t> {
                 s.jobs.push(Job::Restore(mark));
                 s.jobs.push(Job::Term(body));
             }
-            Job::Closure { params, ports } => {
+            Job::Closure {
+                name,
+                params,
+                ports,
+            } => {
                 let built = s.built.pop().expect("the function's region");
                 let Val::Src(fun, at) = self.node(Op::Lambda, Vec::new(), vec![built]) else {
                     unreachable!("a node's output")
                 };
                 s.vals.push(Val::Closure(Arc::new(Closure {
+                    name,
                     params,
                     ports,
                     call: Call::Node { fun, at },
@@ -1148,6 +1183,7 @@ enum Job<'t> {
     },
     /// The closure of a `let`-bound function from its built region: a `lambda` node.
     Closure {
+        name: &'t Arc<str>,
         params: &'t [Arc<str>],
         ports: Vec<Arc<str>>,
     },
@@ -1241,6 +1277,19 @@ fn captured(s: &Src) -> (usize, usize) {
 fn top() -> Edge {
     Edge::value(Type::top())
 }
+
+/// The message for a condition a checked program cannot reach: a bug in zedc, with `detail`
+/// for the report.
+fn bug(detail: impl std::fmt::Display) -> String {
+    format!(
+        "zedc could not compile the program because of a bug in zedc, not in the program. \
+         Please report it to the Zed developers with the program's source and this line: \
+         {detail}. Until it is fixed, `zedc run` runs the program without compiling it"
+    )
+}
+
+/// The opening of a refusal for a program `zedc build` cannot compile yet but `zedc run` runs.
+const CANNOT_BUILD: &str = "`zedc build` cannot compile this program";
 
 fn plural(n: usize, thing: &str) -> String {
     if n == 1 {

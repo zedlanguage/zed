@@ -576,7 +576,7 @@ fn a_tie_that_shares_a_row_is_refused() {
     let message = Refusal::Tie(t).to_string();
     assert!(
         message.contains(
-            "variables that no structure tells apart would be eliminated in an order chosen by name"
+            "which occur alike in the conditions (with the same coefficients, in conditions that are alike)"
         ),
         "{message}"
     );
@@ -784,7 +784,7 @@ fn batch_and_single_file_checking_agree_on_a_tie() {
     eprintln!("{message}");
     assert!(
         message.contains(
-            "variables that no structure tells apart would be eliminated in an order chosen by name"
+            "which occur alike in the conditions (with the same coefficients, in conditions that are alike)"
         ),
         "{message}"
     );
@@ -799,7 +799,7 @@ fn batch_and_single_file_checking_agree_on_a_tie() {
     for b in &batch {
         assert!(
             b.as_ref()
-                .is_some_and(|m| m.contains("order chosen by name")),
+                .is_some_and(|m| m.contains("so only their names could order them")),
             "{b:?}"
         );
     }

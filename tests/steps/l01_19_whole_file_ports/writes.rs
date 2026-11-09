@@ -118,9 +118,11 @@ fn only_strings_are_written_as_lines() {
         out.stderr
     );
     // The writer checks again what it is given.
-    assert_eq!(
-        join_lines("stdout", &Value::Int(42)),
-        Err("port `stdout` takes strings; 42 was pushed".to_string())
+    let e = join_lines("stdout", &Value::Int(42)).unwrap_err();
+    assert!(
+        e.starts_with("port `stdout` writes lines of text, and the program pushed 42 to it")
+            && e.contains("`Utf8String(…)`"),
+        "{e}"
     );
 }
 

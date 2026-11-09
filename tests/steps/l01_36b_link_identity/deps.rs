@@ -315,11 +315,12 @@ fn a_linker_that_lists_no_files_is_refused() {
     assert_eq!(
         why,
         format!(
-            "the linker `{}` wrote no list of the files it read for {} (No such file or \
-             directory (os error 2)): name in CC a C compiler whose linker takes \
-             --dependency-file, as GNU ld 2.35 and later and LLD do",
-            driver.display(),
-            out.display()
+            "zedc could not finish {}: the linker `{}` wrote no list of the files it read (No \
+             such file or directory (os error 2)), and zedc needs that list to tell when the \
+             executable must be linked again. Repair: name in CC a C compiler whose linker \
+             takes --dependency-file, as GNU ld 2.35 and later and LLD do",
+            out.display(),
+            driver.display()
         )
     );
 }
@@ -343,10 +344,13 @@ fn a_listed_file_that_cannot_be_read_is_refused() {
     assert_eq!(
         why,
         format!(
-            "{}: No such file or directory (os error 2): the linker `{}` read this file, and it \
-             cannot be read now",
-            gone.display(),
-            driver.display()
+            "zedc could not finish {}: the linker `{}` read a file that cannot be read now ({}: \
+             No such file or directory (os error 2)), and zedc reads every file a link read to \
+             tell when the executable must be linked again. Repair: build again, after putting \
+             back the file if it was moved or removed",
+            out.display(),
+            driver.display(),
+            gone.display()
         )
     );
 }
@@ -368,10 +372,11 @@ fn a_linker_that_writes_no_build_id_is_refused() {
     assert_eq!(
         why,
         format!(
-            "the linker `{}` wrote its output for {} without the build ID it was given: name in \
-             CC a C compiler whose linker takes --build-id",
-            driver.display(),
-            out.display()
+            "zedc could not finish {}: the linker `{}` wrote it without the build ID zedc gave \
+             it, where zedc records which files the executable was linked from. Repair: name \
+             in CC a C compiler whose linker takes --build-id",
+            out.display(),
+            driver.display()
         )
     );
 }

@@ -120,6 +120,11 @@ impl Toolchain {
     }
 }
 
+/// The message of a `zedc build` command line that is not one.
+pub const USAGE: &str = "zedc build takes the program's file and, after `-o`, the executable to \
+                         write: `zedc build <file> -o <out> [--suppress <address> …]`, as in \
+                         `zedc build hello.zed -o hello`";
+
 /// `zedc build <file> -o <out> [--suppress <address> …]`, with `args` the words after
 /// `build`; a warning whose address is named is not printed (DESIGN.md sec:diagnostics).
 /// Returns the exit status: 0; 1 when the program is rejected, does not compile or does not
@@ -129,10 +134,7 @@ pub fn command(args: &[String], tools: &Toolchain, stderr: &mut dyn Write) -> u8
     let outcome = Suppress::take(&words).map_err(|why| (2, why)).and_then(
         |(mut suppress, rest)| match rest[..] {
             [file, "-o", out] => build(file, Path::new(out), &mut suppress, tools, stderr),
-            _ => Err((
-                2,
-                "usage: zedc build <file> -o <out> [--suppress <address> …]".to_string(),
-            )),
+            _ => Err((2, USAGE.to_string())),
         },
     );
     match outcome {
@@ -158,8 +160,10 @@ pub fn build(
         return Err((
             2,
             format!(
-                "the runtime library {} is missing: build it with `cargo build -p zed-native`, \
-                 or name it in ZED_RUNTIME",
+                "zedc cannot build an executable: the runtime library {}, which every executable \
+                 is linked with, is missing. Repairs: build it with `cargo build -p zed-native`, \
+                 which writes it beside zedc, or name its path in the environment variable \
+                 ZED_RUNTIME",
                 tools.runtime.display()
             ),
         ));
@@ -172,13 +176,34 @@ pub fn build(
     // its bytes in the file compare with the library's; reading `BUILD` here keeps the part of
     // this crate that holds it in every executable that can build.
     std::hint::black_box(&BUILD);
-    let exe = std::env::current_exe().map_err(|e| (2, format!("this compiler's own path: {e}")))?;
-    if !holds(&tools.runtime, &build_id(&exe).map_err(|e| (2, e))?).map_err(|e| (2, e))? {
+    let exe = std::env::current_exe().map_err(|e| {
+        (
+            2,
+            format!(
+                "zedc cannot build an executable: it could not find its own file, which it reads \
+                 to check that the runtime library was built with it ({e}). Repair: run zedc by \
+                 its path"
+            ),
+        )
+    })?;
+    let unchecked = |e: String| {
+        (
+            2,
+            format!(
+                "zedc cannot build an executable: it could not check that the runtime library {} \
+                 was built with it: {e}",
+                tools.runtime.display()
+            ),
+        )
+    };
+    if !holds(&tools.runtime, &build_id(&exe).map_err(unchecked)?).map_err(unchecked)? {
         return Err((
             2,
             format!(
-                "the runtime library {} is from another build of zed-native than {}: build \
-                 both with `cargo build -p zed-native`, or name the matching one in ZED_RUNTIME",
+                "zedc cannot build an executable: the runtime library {} comes from another build \
+                 of zed-native than this zedc, {}, and code one build makes does not run with \
+                 another's library. Repairs: build both again with `cargo build -p zed-native`, \
+                 or name the library built with this zedc in ZED_RUNTIME",
                 tools.runtime.display(),
                 exe.display()
             ),
@@ -212,7 +237,7 @@ pub fn build(
         named(".d"),
         named(".zed-link"),
     );
-    std::fs::write(&at, &object).map_err(|e| (1, format!("{}: {e}", at.display())))?;
+    std::fs::write(&at, &object).map_err(|e| unwritable(&at, &e, out))?;
     // The files the link reads are known only once it has read them, so the link writes the
     // key without them in its build ID, and the key with them replaces it after.
     let partial = identity.key(&object, &[]);
@@ -240,7 +265,10 @@ pub fn build(
             return Err((
                 1,
                 format!(
-                    "the linker `{linker}` failed ({}):\n{}",
+                    "zedc could not link {}: the linker `{linker}` failed ({}). Repair: check \
+                     that `{linker}` links C programs, or name another C compiler in the \
+                     environment variable CC. The linker printed:\n{}",
+                    out.display(),
                     o.status,
                     String::from_utf8_lossy(&o.stderr).trim_end()
                 ),
@@ -252,9 +280,10 @@ pub fn build(
         (
             1,
             format!(
-                "the linker `{linker}` wrote no list of the files it read for {} ({e}): name in \
-                 CC a C compiler whose linker takes --dependency-file, as GNU ld 2.35 and later \
-                 and LLD do",
+                "zedc could not finish {}: the linker `{linker}` wrote no list of the files it \
+                 read ({e}), and zedc needs that list to tell when the executable must be linked \
+                 again. Repair: name in CC a C compiler whose linker takes --dependency-file, as \
+                 GNU ld 2.35 and later and LLD do",
                 out.display()
             ),
         )
@@ -262,36 +291,56 @@ pub fn build(
     let inputs = Inputs::of(dependencies(&listed), &[&at, &tools.runtime]).map_err(|e| {
         (
             1,
-            format!("{e}: the linker `{linker}` read this file, and it cannot be read now"),
+            format!(
+                "zedc could not finish {}: the linker `{linker}` read a file that cannot be read \
+                 now ({e}), and zedc reads every file a link read to tell when the executable \
+                 must be linked again. Repair: build again, after putting back the file if it \
+                 was moved or removed",
+                out.display()
+            ),
         )
     })?;
     let key = identity.key(&object, &inputs.hashes);
-    if !write_build_id(&linked_at, &partial, &key).map_err(|e| (1, e))? {
+    let unfinished = |e: String| (1, format!("zedc could not finish {}: {e}", out.display()));
+    if !write_build_id(&linked_at, &partial, &key).map_err(unfinished)? {
         return Err((
             1,
             format!(
-                "the linker `{linker}` wrote its output for {} without the build ID it was \
-                 given: name in CC a C compiler whose linker takes --build-id",
+                "zedc could not finish {}: the linker `{linker}` wrote it without the build ID \
+                 zedc gave it, where zedc records which files the executable was linked from. \
+                 Repair: name in CC a C compiler whose linker takes --build-id",
                 out.display()
             ),
         ));
     }
     let record = Record {
-        output: hash_file(&linked_at).map_err(|e| (1, e))?,
+        output: hash_file(&linked_at).map_err(unfinished)?,
         inputs: inputs.paths,
     };
-    std::fs::write(&record_at, record.to_bytes())
-        .map_err(|e| (1, format!("{}: {e}", record_at.display())))?;
+    std::fs::write(&record_at, record.to_bytes()).map_err(|e| unwritable(&record_at, &e, out))?;
     // Each in one step, so that a build reading `out` at the same time, for its key or to run
     // it, reads the executable before or the one after, never one half written. The record
     // follows the executable: a build that finds one with the other's predecessor, after a
     // build stopped between the two, or two builds of `out` at once, finds that the
     // executable's bytes are not the record's, and links again.
-    let rename = |from: &Path, to: &Path| {
-        std::fs::rename(from, to).map_err(|e| (1, format!("{}: {e}", to.display())))
-    };
+    let rename =
+        |from: &Path, to: &Path| std::fs::rename(from, to).map_err(|e| unwritable(to, &e, out));
     rename(&linked_at, out)?;
     rename(&record_at, &Record::path(out))
+}
+
+/// The error of a file `path` of the build of `out` that could not be written.
+fn unwritable(path: &Path, e: &std::io::Error, out: &Path) -> (u8, String) {
+    (
+        1,
+        format!(
+            "zedc could not write {} while building {}: {e}. Repair: check that the directory \
+             of {} exists and can be written, and that the disk has room",
+            path.display(),
+            out.display(),
+            out.display()
+        ),
+    )
 }
 
 /// Whether the executable `out` can be kept as the link of `object` by the toolchain of
@@ -546,7 +595,9 @@ impl Scratch {
             (
                 2,
                 format!(
-                    "the output {} names a directory, not a file: name the executable to build",
+                    "zedc cannot build {}: the path after `-o` names a directory, not a file. \
+                     Repair: name the executable to write, as in `-o {}/program`",
+                    out.display(),
                     out.display()
                 ),
             )
@@ -559,7 +610,7 @@ impl Scratch {
                 ATTEMPT.fetch_add(1, Ordering::Relaxed)
             ));
             let path = PathBuf::from(path);
-            let failed = |e: std::io::Error| (1, format!("{}: {e}", path.display()));
+            let failed = |e: std::io::Error| unwritable(&path, &e, out);
             match std::fs::create_dir(&path) {
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 made => made.map_err(failed)?,
@@ -649,10 +700,19 @@ fn not_run(linker: &str, e: &std::io::Error) -> (u8, String) {
     if e.kind() == std::io::ErrorKind::NotFound {
         (
             2,
-            format!("the linker `{linker}` is missing: install a C compiler, or name one in CC"),
+            format!(
+                "zedc cannot link an executable: the linker `{linker}` is missing. Repairs: \
+                 install a C compiler, or name one in the environment variable CC"
+            ),
         )
     } else {
-        (1, format!("the linker `{linker}`: {e}"))
+        (
+            1,
+            format!(
+                "zedc could not run the linker `{linker}`: {e}. Repair: name in the environment \
+                 variable CC a C compiler that can be run"
+            ),
+        )
     }
 }
 
@@ -698,7 +758,10 @@ impl Identity {
                 return Err((
                     1,
                     format!(
-                        "the linker `{linker}` gave no version: `{linker} {arg}` failed ({}):\n{}",
+                        "zedc cannot use the linker `{linker}`: `{linker} {arg}` failed ({}), and zedc \
+                         needs the linker's version to tell its links from another linker's. \
+                         Repair: name in CC a C compiler that gives its version. The linker \
+                         printed:\n{}",
                         o.status,
                         String::from_utf8_lossy(&o.stderr).trim_end()
                     ),
@@ -708,9 +771,9 @@ impl Identity {
                 return Err((
                     1,
                     format!(
-                        "the linker `{linker}` wrote nothing for `{linker} {arg}`, so its links \
-                         cannot be told from another linker's: name a C compiler that gives \
-                         its version in CC"
+                        "zedc cannot use the linker `{linker}`: it wrote nothing for `{linker} {arg}`, \
+                         so its links cannot be told from another linker's. Repair: name in CC a \
+                         C compiler that gives its version"
                     ),
                 ));
             }
@@ -799,7 +862,9 @@ pub fn runtime_of(exe: &Path, dir: &Path) -> Result<PathBuf, String> {
         }
     }
     Err(format!(
-        "no runtime library in {} was built with {}: build it with `cargo build -p zed-native`",
+        "none of the runtime libraries in {} was built with {}, and code one build makes \
+         does not run with another's library. Repair: build them together with `cargo build \
+         -p zed-native`",
         dir.display(),
         exe.display()
     ))
@@ -847,8 +912,9 @@ pub fn build_id(exe: &Path) -> Result<Vec<u8>, String> {
     let cache = object::ReadCache::new(file);
     section(&cache, exe)?.ok_or_else(|| {
         format!(
-            "{} has no section {SECTION}, which names the build of zed-native it holds, so \
-             the runtime library built with it cannot be found: it does not hold zed-native",
+            "{} is not zedc or a file built with it: it has no section {SECTION}, where \
+             every build of zed-native names itself, so the runtime library built with it \
+             cannot be found",
             exe.display()
         )
     })

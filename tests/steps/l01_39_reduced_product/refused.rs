@@ -72,9 +72,17 @@ fn texts(s: &Scope) -> Vec<String> {
     s.warnings().iter().map(|w| w.to_string()).collect()
 }
 
-const GROWTH: &str = "the integer constraints have four variables or more, each of whose \
-                      elimination would enlarge them, so whether they hold at an integer point \
-                      is not decided";
+const GROWTH: &str = "to find whole numbers that meet these conditions, the checker removes one \
+                      variable at a time, putting in place of the conditions on it conditions on \
+                      the variables left. Here four variables or more are left, and removing any \
+                      one of them would leave more conditions than there are now, so the work \
+                      could grow without end. The checker stopped there, with no values found and \
+                      none ruled out";
+
+/// The first line of every warning.
+const WIDER: &str = "warning: the checker knows less here about the values of some variables \
+                     than the program's conditions say, so it may reject or warn about code that \
+                     is correct; it does not accept code that is wrong";
 
 /// A test whose integer points the solver does not decide gives the arm it guards one
 /// warning, which names the test's constraints, what was not decided and why, and what the
@@ -87,10 +95,10 @@ fn a_refused_test_gives_one_warning_at_its_test() {
     assert_eq!(
         texts(&s),
         vec![format!(
-            "warning: the scope is wider than its constraints make it\
-             \n  [1] the constraints `{constraints}` hold in the scope\
-             \n  [2] their projection onto their names is not decided: {GROWTH}\
-             \n  [3] the names of the constraints are not narrowed by them"
+            "{WIDER}\
+             \n  [1] here the conditions `{constraints}` hold\
+             \n  [2] the checker could not work out which values each of their variables can take: {GROWTH}\
+             \n  [3] so the conditions do not narrow the values of their variables here"
         )]
     );
 }
@@ -112,10 +120,10 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
     let test = "g(x, y, z, w)";
     let at = |outcome: bool| {
         format!(
-            "warning: the scope is wider than its constraints make it\
-                 \n  [1] the test `{test}` is assumed {outcome}\
-                 \n  [2] whether its names can take each value is not decided: {GROWTH}\
-                 \n  [3] the names of the test are not narrowed by it"
+            "{WIDER}\
+                 \n  [1] here the test `{test}` is {outcome}\
+                 \n  [2] the checker could not work out which values its variables can take when it is {outcome}: {GROWTH}\
+                 \n  [3] so the test does not narrow the values of its variables here"
         )
     };
     // Taken true, the helper's constraints also hold in the scope, and their projection is
@@ -125,10 +133,10 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
                        && 4 * w + 10 * x >= 10 * y + 11 * z + 28 \
                        && 11 * w + 4 * x + 12 * z >= y + 28";
     let projection = format!(
-        "warning: the scope is wider than its constraints make it\
-         \n  [1] the constraints `{constraints}` hold in the scope\
-         \n  [2] their projection onto their names is not decided: {GROWTH}\
-         \n  [3] the names of the constraints are not narrowed by them"
+        "{WIDER}\
+         \n  [1] here the conditions `{constraints}` hold\
+         \n  [2] the checker could not work out which values each of their variables can take: {GROWTH}\
+         \n  [3] so the conditions do not narrow the values of their variables here"
     );
     assert_eq!(
         texts(&super::arm(&arms, "g(", true).scope),
@@ -155,10 +163,10 @@ fn a_refused_projection_onto_each_name_gives_one_warning_for_each() {
     let expected: Vec<String> = ["w", "x", "y", "z"]
         .map(|n| {
             format!(
-                "warning: the scope is wider than its constraints make it\
-                 \n  [1] the constraints `{constraints}` hold in the scope\
-                 \n  [2] their projection onto `{n}` is not decided: {GROWTH}\
-                 \n  [3] that name is not narrowed by them"
+                "{WIDER}\
+                 \n  [1] here the conditions `{constraints}` hold\
+                 \n  [2] the checker could not work out which values `{n}` can take: {GROWTH}\
+                 \n  [3] so the conditions do not narrow the values of that variable here"
             )
         })
         .into();
@@ -201,7 +209,7 @@ fn two_refused_arms_joined_give_both_warnings_in_one_order() {
     let either = texts(&arm_scope(&format!("({g1}) || ({g2})"), true));
     assert_eq!(either.len(), 3, "{either:#?}");
     assert!(
-        either[0].contains("a disjunction among them is left out of their projection"),
+        either[0].contains("so it set that case aside"),
         "{either:#?}"
     );
     assert_eq!(either[1..], joined[..]);

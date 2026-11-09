@@ -172,15 +172,24 @@ fn a_word_kept_past_the_free_of_its_cell_is_reported_after_the_cell_is_taken_aga
     assert_ne!(old, new, "with another generation");
     assert_eq!(
         h.value(old).unwrap_err(),
-        "runtime: cell 0 is used after it was freed"
+        zed_rt::bug(
+            "read a value after it had released the value's memory",
+            "the heap's cell 0 was read after it was freed"
+        )
     );
     assert_eq!(
         h.dec(old).unwrap_err(),
-        "runtime: cell 0 is dropped after it was freed"
+        zed_rt::bug(
+            "released a value's memory twice",
+            "the heap's cell 0 was dropped after it was freed"
+        )
     );
     assert_eq!(
         h.inc(old).unwrap_err(),
-        "runtime: cell 0 is shared after it was freed"
+        zed_rt::bug(
+            "kept one more reference to a value after it had released the value's memory",
+            "the heap's cell 0 was given a new reference after it was freed"
+        )
     );
     assert_eq!(h.value(new).unwrap(), Value::str("new"));
     assert_eq!(h.live(), 1);
@@ -268,7 +277,10 @@ fn a_literal_pattern_on_a_state_word_is_an_error() {
         .unwrap_err();
     assert_eq!(
         e,
-        format!("runtime: a word tagged {} is not data", Word::STATE)
+        zed_rt::bug(
+            "treated something that is not a value as a data value",
+            &format!("a word tagged {} was read as data", Word::STATE)
+        )
     );
 }
 

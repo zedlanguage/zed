@@ -421,9 +421,11 @@ fn a_wrong_plan_deep_in_the_term_names_the_path() {
     let at = p.find(arm).expect("the arm's plan");
     let (up, k, _) = p.regions[at].up.expect("an arm is under a node");
     p.regions[up].nodes[k].regions.clear();
-    assert_eq!(
-        zed_native::object(&g, &p).unwrap_err(),
-        format!("native: arm `{arm}` has no plan")
+    let e = zed_native::object(&g, &p).unwrap_err();
+    assert!(
+        e.starts_with("zedc could not make machine code for the program because of a bug in zedc")
+            && e.contains(&format!("this line: arm `{arm}` has no plan.")),
+        "{e}"
     );
 }
 

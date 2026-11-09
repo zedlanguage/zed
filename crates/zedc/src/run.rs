@@ -626,7 +626,12 @@ pub fn join_lines(port: &str, v: &Value) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     for line in lines {
         let Value::Str(s) = line else {
-            return Err(format!("port `{port}` takes strings; {line} was pushed"));
+            return Err(format!(
+                "port `{port}` writes lines of text, and the program pushed {line} to it, which is \
+                     not a string: a `Lines` port takes a `Utf8String`, written as one line, or a \
+                     family of strings, written one line per entry in key order. Repair: push the \
+                     value's text in its place, made with `Utf8String(…)`"
+            ));
         };
         s.chunks().for_each(|c| out.extend_from_slice(c.as_bytes()));
         out.push(b'\n');

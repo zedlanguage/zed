@@ -50,8 +50,10 @@ pub(crate) fn data(
     let text = ports.to_text();
     let zir = zedc::zir::binary::encode(graph).map_err(|e| {
         format!(
-            "a constant is so large that the system refused the {} bytes of memory asked to \
-             write it into the executable",
+            "zedc could not build the executable: a constant of the program is so large that \
+             the system refused the {} bytes of memory needed to write it into the executable. \
+             Repairs: free memory and build again, or run the program with `zedc run`, which \
+             writes no executable",
             zed_kernel::num::bytes_of(&e.bits)
         )
     })?;
@@ -59,8 +61,9 @@ pub(crate) fn data(
     let mut out = Vec::new();
     out.try_reserve_exact(len).map_err(|_| {
         format!(
-            "the program's data for the executable is {len} bytes, and the system refused the \
-             memory to write it"
+            "zedc could not build the executable: the program's data in it is {len} bytes, and \
+             the system refused that much memory. Repairs: free memory and build again, or run \
+             the program with `zedc run`, which writes no executable"
         )
     })?;
     out.push(u8::from(fuse));
@@ -71,10 +74,15 @@ pub(crate) fn data(
     Ok(out)
 }
 
+/// The message of an executable whose stored program cannot be read back.
+const DAMAGED: &str = "this executable cannot run: the program stored in it is damaged, so the file \
+                       was changed after `zedc build` wrote it. Repair: build it again with \
+                       `zedc build`";
+
 impl Program {
     /// The program `data` holds, as [`data`] writes it, legalized for this back end.
     fn decode(data: &[u8]) -> Result<Program, String> {
-        let bad = || "the program data of this executable is damaged".to_string();
+        let bad = || DAMAGED.to_string();
         let (&fuse, rest) = data.split_first().ok_or_else(bad)?;
         let (address, rest) = rest.split_first_chunk::<32>().ok_or_else(bad)?;
         let address = ContentAddress(*address);
@@ -83,7 +91,8 @@ impl Program {
         let (text, zir) = rest.split_at_checked(len).ok_or_else(bad)?;
         let text = std::str::from_utf8(text).map_err(|_| bad())?;
         let ports = Ports::from_text(text)?;
-        let graph = crate::legal::legalize(zedc::zir::binary::decode(zir)?);
+        let graph = zedc::zir::binary::decode(zir).map_err(|e| format!("{DAMAGED} ({e})"))?;
+        let graph = crate::legal::legalize(graph);
         let plan = plan(graph.graph(), fuse != 0);
         Ok(Program {
             ports,
@@ -97,7 +106,7 @@ impl Program {
 /// Defines, in `m`, the data `data` and a C `main(argc, argv)` that returns
 /// `zed_main(argc, argv, data, its length, root)`.
 pub(crate) fn define_main<M: Module>(m: &mut M, root: FuncId, data: &[u8]) -> Result<(), String> {
-    let err = |e: cranelift_module::ModuleError| format!("native: {e}");
+    let err = |e: cranelift_module::ModuleError| crate::bug(e);
     let at = m
         .declare_data("zed_program", Linkage::Local, false, false)
         .map_err(err)?;
@@ -174,6 +183,18 @@ pub extern "C" fn zed_main(
 /// Runs the program in `data` on the command line `words`, the first word the executable's
 /// name, and gives the exit status.
 fn start(words: &[OsString], data: &[u8], root: extern "C" fn() -> Word) -> u8 {
+    // A panic is a broken check of zedc's own code: say so in the program's terms, not as
+    // Rust's panic text alone (DESIGN.md sec:diagnostics).
+    std::panic::set_hook(Box::new(|info| {
+        let _ = writeln!(
+            std::io::stderr(),
+            "{}",
+            zed_rt::bug(
+                "reached a state that zedc's own checks rule out",
+                &info.to_string()
+            )
+        );
+    }));
     let (mut stdin, mut stdout, mut stderr) =
         (std::io::stdin(), std::io::stdout(), std::io::stderr());
     let program = match Program::decode(data) {
@@ -240,7 +261,7 @@ mod tests {
         for cut in [0, 1, 5, 37, 41, 44] {
             assert_eq!(
                 Program::decode(&bytes[..cut]).err().as_deref(),
-                Some("the program data of this executable is damaged"),
+                Some(DAMAGED),
                 "cut at {cut}"
             );
         }

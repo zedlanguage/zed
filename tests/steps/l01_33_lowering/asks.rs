@@ -47,7 +47,7 @@ fn two_lambdas(c: &Value) -> Term {
 
 /// The bytes a refusal of the lowering names.
 fn refused_bytes(e: &str) -> u64 {
-    let Some((_, rest)) = e.split_once("refused the ") else {
+    let Some((_, rest)) = e.split_once("one of its constants takes ") else {
         panic!("another error: {e}");
     };
     rest.split(' ')

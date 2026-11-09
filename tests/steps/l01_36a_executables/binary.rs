@@ -117,8 +117,10 @@ fn a_missing_tool_is_a_usage_error_naming_it() {
         (
             Some(2),
             format!(
-                "the runtime library {} is missing: build it with `cargo build -p zed-native`, \
-                 or name it in ZED_RUNTIME\n",
+                "zedc cannot build an executable: the runtime library {}, which every executable \
+                 is linked with, is missing. Repairs: build it with `cargo build -p zed-native`, \
+                 which writes it beside zedc, or name its path in the environment variable \
+                 ZED_RUNTIME\n",
                 missing.display()
             )
         )
@@ -127,7 +129,8 @@ fn a_missing_tool_is_a_usage_error_naming_it() {
         failed(&zedc_build(&src, &out, &[("CC", "no-such-cc")])),
         (
             Some(2),
-            "the linker `no-such-cc` is missing: install a C compiler, or name one in CC\n"
+            "zedc cannot link an executable: the linker `no-such-cc` is missing. Repairs: \
+             install a C compiler, or name one in the environment variable CC\n"
                 .to_string()
         )
     );
@@ -155,8 +158,10 @@ fn a_runtime_library_of_another_build_is_a_usage_error() {
         (
             Some(2),
             format!(
-                "the runtime library {} is from another build of zed-native than {}: build \
-                 both with `cargo build -p zed-native`, or name the matching one in ZED_RUNTIME\n",
+                "zedc cannot build an executable: the runtime library {} comes from another build \
+                 of zed-native than this zedc, {}, and code one build makes does not run with \
+                 another's library. Repairs: build both again with `cargo build -p zed-native`, \
+                 or name the library built with this zedc in ZED_RUNTIME\n",
                 other.display(),
                 env!("CARGO_BIN_EXE_zedc")
             )
@@ -218,10 +223,7 @@ fn a_stripped_zedc_builds() {
 
 #[test]
 fn a_wrong_command_line_is_a_usage_error() {
-    let usage = (
-        Some(2),
-        "usage: zedc build <file> -o <out> [--suppress <address> …]\n".to_string(),
-    );
+    let usage = (Some(2), format!("{}\n", zed_native::link::USAGE));
     for words in [
         &["build"][..],
         &["build", "a.zed"],
@@ -316,4 +318,39 @@ fn a_build_killed_while_linking_blocks_no_later_build() {
         (Some(0), "again\n".to_string())
     );
     assert_eq!(working(&d, "killed"), Vec::<String>::new());
+}
+
+/// A function that pushes to a port and is used as a value, here passed to another function
+/// that calls it, runs under `zedc run`; `zedc build` refuses it with status 1, naming the
+/// function, its port and the repairs, and writes nothing.
+#[test]
+fn a_pushing_function_used_as_a_value_is_refused_by_the_build() {
+    let d = dir();
+    let src = d.join("passed.zed");
+    std::fs::write(
+        &src,
+        "say(positional s) -> (stdout: Lines) {\n  stdout <- s;\n}\n\
+         apply(g, s) = g(s);\n\
+         main() -> (stdout: Lines) {\n  a = apply(g: say, s: \"one\");\n}\n",
+    )
+    .unwrap();
+    let out = d.join("passed");
+    // A file left by an earlier run would hide a build that wrote one.
+    let _ = std::fs::remove_file(&out);
+    let (status, stderr) = failed(&zedc_build(&src, &out, &[]));
+    assert_eq!(status, Some(1), "{stderr}");
+    assert_eq!(
+        stderr,
+        format!(
+            "{}: `zedc build` cannot compile this program: the function `say`, of 1 \
+             parameter, reads or pushes the port `stdout`, and the program uses `say` as a \
+             value (it passes, stores or returns it) instead of calling it. Built code carries \
+             the state of a port only through a call that names the function, so `say` can \
+             only be called by its name. Repairs: call `say` by its name where it is used; \
+             move the reads and pushes out of `say` and pass the values in or out; or run the \
+             program with `zedc run`, which has no such limit\n",
+            src.display()
+        )
+    );
+    assert!(!out.exists());
 }

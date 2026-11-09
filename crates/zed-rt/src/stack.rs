@@ -40,18 +40,19 @@ impl Stack {
         // memory in use; `mprotect` covers its first page only, which nothing else refers to.
         unsafe {
             let page = usize::try_from(libc::sysconf(libc::_SC_PAGESIZE))
-                .map_err(|_| "runtime: the system gives no page size".to_string())?;
+                .map_err(|_| unable("the system did not report its memory page size"))?;
             let mut info: libc::sysinfo = std::mem::zeroed();
             if libc::sysinfo(&mut info) != 0 {
-                return Err(format!(
-                    "runtime: cannot read the size of memory for the stack of a run: {}",
+                return Err(unable(&format!(
+                    "the system did not report how much memory and swap the machine has ({})",
                     io::Error::last_os_error()
-                ));
+                )));
             }
             let unit = u64::from(info.mem_unit);
             let bytes = (info.totalram + info.totalswap) * unit;
-            let bytes = usize::try_from(bytes)
-                .map_err(|_| "runtime: memory exceeds the address space".to_string())?;
+            let bytes = usize::try_from(bytes).map_err(|_| {
+                unable("the machine's memory and swap together are more than a program can address")
+            })?;
             let len = bytes.div_ceil(page) * page + page;
             let base = libc::mmap(
                 ptr::null_mut(),
@@ -73,18 +74,15 @@ impl Stack {
             // not fit, calls the runtime to map a new segment and continue on it, so only the
             // stack in use is reserved, at the cost of a compare and branch per call.
             if base == libc::MAP_FAILED {
-                return Err(format!(
-                    "runtime: cannot reserve a stack of {} bytes for a run: {}",
-                    len - page,
-                    io::Error::last_os_error()
-                ));
+                return Err(reserve(len - page, &io::Error::last_os_error()));
             }
             let s = Stack { base, len, page };
             if libc::mprotect(base, page, libc::PROT_NONE) != 0 {
-                return Err(format!(
-                    "runtime: cannot protect the guard page below the stack of a run: {}",
+                return Err(unable(&format!(
+                    "the system refused to make the page below that stack unreadable, the page \
+                     that stops a run which uses all of it ({})",
                     io::Error::last_os_error()
-                ));
+                )));
             }
             Ok(s)
         }
@@ -128,6 +126,29 @@ impl Drop for Stack {
             libc::munmap(self.base, self.len);
         }
     }
+}
+
+/// The opening every refusal to set up the stack shares: the program never started.
+const START: &str = "the program could not start: before it runs, it reserves address space for \
+                     a stack as large as the machine's memory and swap together, so that deep \
+                     recursion is limited by memory alone";
+
+/// The message for a stack that could not be set up for `why`, a fault of the system.
+fn unable(why: &str) -> String {
+    format!(
+        "{START}, and {why}. Repairs: run the program again; if it fails the same way, run it \
+         with `zedc run`, which does not reserve this stack"
+    )
+}
+
+/// The message for a reservation of `bytes` the system refused with `err`.
+fn reserve(bytes: usize, err: &io::Error) -> String {
+    format!(
+        "{START}, and the system refused to reserve {bytes} bytes ({err}). The usual cause is a \
+         limit on the address space of a process, set with `ulimit -v`. Repairs: lift the limit \
+         with `ulimit -v unlimited` and run the program again, or run it with `zedc run`, which \
+         does not reserve this stack"
+    )
 }
 
 #[cfg(test)]
@@ -180,7 +201,8 @@ mod tests {
         if std::env::var_os(CHILD).is_some() {
             let e = Stack::new().unwrap_err();
             assert!(
-                e.starts_with("runtime: cannot reserve a stack of "),
+                e.starts_with("the program could not start: before it runs, it reserves")
+                    && e.contains("ulimit -v unlimited"),
                 "unexpected error: {e}"
             );
             return;

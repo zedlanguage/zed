@@ -42,6 +42,17 @@ pub use legal::{EXPANSIONS, legalize};
 pub use outcome::Outcome;
 use outcome::call;
 
+/// The message for a failure of zedc's own making of machine code, which is a bug in zedc and
+/// never the program's fault (DESIGN.md sec:diagnostics): `detail` is the one part meant for
+/// zedc's developers.
+pub(crate) fn bug(detail: impl std::fmt::Display) -> String {
+    format!(
+        "zedc could not make machine code for the program because of a bug in zedc, not in the \
+         program. Please report it to the Zed developers with the program's source and this \
+         line: {detail}. Until it is fixed, `zedc run` runs the program without machine code"
+    )
+}
+
 /// Cranelift's `opt_level`, with the register allocator that goes with it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptLevel {
@@ -55,7 +66,7 @@ pub enum OptLevel {
 
 fn isa(pic: bool, level: OptLevel) -> Result<Arc<dyn cranelift_codegen::isa::TargetIsa>, String> {
     let mut flags = settings::builder();
-    let set = |f: &mut settings::Builder, k, v| f.set(k, v).map_err(|e| format!("native: {e}"));
+    let set = |f: &mut settings::Builder, k, v| f.set(k, v).map_err(bug);
     // Cranelift's e-graph optimizer and its backtracking register allocator take time growing
     // faster than the size of a function (n^1.6 and n^1.4 measured); with neither, each pass is
     // linear (COMPLEXITY.md Z15).
@@ -78,9 +89,13 @@ fn isa(pic: bool, level: OptLevel) -> Result<Arc<dyn cranelift_codegen::isa::Tar
     // stack; without probes its first write could land past that page, in other memory.
     set(&mut flags, "enable_probestack", "true")?;
     set(&mut flags, "probestack_strategy", "inline")?;
-    let host = cranelift_native::builder().map_err(|e| format!("native: {e}"))?;
-    host.finish(settings::Flags::new(flags))
-        .map_err(|e| format!("native: {e}"))
+    let host = cranelift_native::builder().map_err(|e| {
+        format!(
+            "zedc cannot make machine code for this machine: {e}. Repair: run the program with \
+             `zedc run`, which needs no machine code"
+        )
+    })?;
+    host.finish(settings::Flags::new(flags)).map_err(bug)
 }
 
 /// A JIT module whose code and data are freed when it is dropped, on every way out of [`run`]:
@@ -148,8 +163,7 @@ fn run_in(
     }
     let mut m = Jit(ManuallyDrop::new(JITModule::new(b)));
     let f = codegen::define(&mut *m.0, &t, &plans)?;
-    m.0.finalize_definitions()
-        .map_err(|e| format!("native: {e}"))?;
+    m.0.finalize_definitions().map_err(bug)?;
     let code = m.0.get_finalized_function(f.root);
     // SAFETY: `code` is `zed_root`, which the generator defines with no parameters and two
     // `i64` results under the host's calling convention, as `Word` is laid out.
@@ -169,7 +183,7 @@ pub fn object(g: &Legalized, plan: &Plan) -> Result<Vec<u8>, String> {
     let (t, plans) = Tables::new(g, plan)?;
     let mut m = object_module()?;
     codegen::define(&mut m, &t, &plans)?;
-    m.finish().emit().map_err(|e| format!("native: {e}"))
+    m.finish().emit().map_err(bug)
 }
 
 /// The object file of an executable that runs the lowered graph `g`, planned with `fuse`, with
@@ -192,13 +206,13 @@ pub fn executable_object(
     let mut m = object_module()?;
     let f = codegen::define(&mut m, &t, &plans)?;
     exe::define_main(&mut m, f.root, &data)?;
-    m.finish().emit().map_err(|e| format!("native: {e}"))
+    m.finish().emit().map_err(bug)
 }
 
 /// An empty object module for the host, its code position-independent.
 fn object_module() -> Result<ObjectModule, String> {
     let b = ObjectBuilder::new(isa(true, OptLevel::None)?, "zed", default_libcall_names())
-        .map_err(|e| format!("native: {e}"))?;
+        .map_err(bug)?;
     Ok(ObjectModule::new(b))
 }
 

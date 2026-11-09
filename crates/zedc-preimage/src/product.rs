@@ -1202,28 +1202,40 @@ impl Refused {
         };
         let (given, asked, kept) = match &self.asked {
             Asked::Test { outcome } => (
-                format!("the test `{c}` is assumed {outcome}"),
-                format!("whether its names can take each value is not decided: {cause}"),
-                "the names of the test are not narrowed by it",
+                format!("here the test `{c}` is {outcome}"),
+                format!(
+                    "the checker could not work out which values its variables can take when \
+                     it is {outcome}: {cause}"
+                ),
+                "so the test does not narrow the values of its variables here",
             ),
             Asked::Projection => (
-                format!("the constraints `{c}` hold in the scope"),
-                format!("their projection onto their names is not decided: {cause}"),
-                "the names of the constraints are not narrowed by them",
+                format!("here the conditions `{c}` hold"),
+                format!(
+                    "the checker could not work out which values each of their variables can \
+                     take: {cause}"
+                ),
+                "so the conditions do not narrow the values of their variables here",
             ),
             Asked::Disjunct => (
-                format!("the constraints `{c}` hold in the scope"),
-                format!("a disjunction among them is left out of their projection: {cause}"),
-                "the names of the constraints are narrowed without that disjunction",
+                format!("here the conditions `{c}` hold"),
+                format!(
+                    "the checker could not work out which values one case of an alternative \
+                     among them allows (a side of a `||`), so it set that case aside: {cause}"
+                ),
+                "so the conditions narrow the values of their variables without that case",
             ),
             Asked::Onto(n) => (
-                format!("the constraints `{c}` hold in the scope"),
-                format!("their projection onto `{n}` is not decided: {cause}"),
-                "that name is not narrowed by them",
+                format!("here the conditions `{c}` hold"),
+                format!("the checker could not work out which values `{n}` can take: {cause}"),
+                "so the conditions do not narrow the values of that variable here",
             ),
         };
         Warning {
-            message: "the scope is wider than its constraints make it".to_string(),
+            message: "the checker knows less here about the values of some variables than \
+                      the program's conditions say, so it may reject or warn about code that \
+                      is correct; it does not accept code that is wrong"
+                .to_string(),
             steps: vec![given, asked, kept.to_string()],
         }
     }

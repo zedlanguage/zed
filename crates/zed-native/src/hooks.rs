@@ -305,10 +305,16 @@ extern "C" fn rt_pending() -> Word {
 )]
 extern "C" fn rt_error(id: i64) -> Word {
     with(|t, s| {
-        let e = t.nodes[id as usize].error.clone();
+        let e = t.nodes[id as usize]
+            .error
+            .as_deref()
+            .unwrap_or("a node raised no error");
         word(
             s,
-            Err(e.unwrap_or_else(|| "native: an error with no message".into())),
+            Err(zed_rt::bug(
+                "passed a value to a function that releases it, without a reference of its own",
+                e,
+            )),
         )
     })
 }
@@ -476,7 +482,15 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
             }),
             None => {
                 let v = s.ev.run(&Term::Read(p.clone()));
-                Err(v.map_or_else(|e| e.to_string(), |_| "a read".into()))
+                Err(v.map_or_else(
+                    |e| e.to_string(),
+                    |_| {
+                        zed_rt::bug(
+                            "read a port the run was not given",
+                            &format!("port `{p}` is neither an input nor a source of the run"),
+                        )
+                    },
+                ))
             }
         },
         _ => slow(t, s, ni, ins),
@@ -657,9 +671,13 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
         None => match kernel_match(t, s, ps, scrut)? {
             Ok((i, n)) => {
                 if !function {
-                    return Err(format!(
-                        "native: {}: no pattern matches natively, and the kernel picks arm {i}",
-                        t.path(id)
+                    return Err(zed_rt::bug(
+                        "matched a value against the patterns of a `match` and found no arm, where the \
+                         program's own semantics pick one",
+                        &format!(
+                            "{}: no pattern matches natively, and the kernel picks arm {i}",
+                            t.path(id)
+                        ),
                     ));
                 }
                 // A pattern that matches a function binds it whole or not at all (data holds
@@ -701,9 +719,12 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
     } else {
         for (b, (w, _)) in binders.iter().enumerate() {
             if arm[b] == Mode::Owned {
-                return Err(format!(
-                    "memory: {}: the scrutinee is borrowed, and arm {i} owns binder {b}",
-                    t.path(id)
+                return Err(zed_rt::bug(
+                    "took ownership of a part of a value that the `match` only borrows",
+                    &format!(
+                        "{}: the scrutinee is borrowed, and arm {i} owns binder {b}",
+                        t.path(id)
+                    ),
                 ));
             }
             words.push(*w);
@@ -823,7 +844,10 @@ fn result(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> {
         return Err(e);
     }
     if w.tag == Word::ERR {
-        return Err("native: the run failed and recorded no message".into());
+        return Err(zed_rt::bug(
+            "failed and recorded no reason",
+            "the result is the error word, and no message was recorded",
+        ));
     }
     let function = s.heap.is_function(w)?;
     let v = if function {
@@ -841,9 +865,12 @@ fn result(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> {
             let _ = t;
             ""
         };
-        return Err(format!(
-            "memory: {n} cell{} live after the result is dropped{which}",
-            if n == 1 { "" } else { "s" }
+        return Err(zed_rt::bug(
+            "kept values in memory that nothing uses after the program's result was made",
+            &format!(
+                "{n} cell{} live after the result is dropped{which}",
+                if n == 1 { "" } else { "s" }
+            ),
         ));
     }
     v.ok_or_else(|| KernelError::Type("the program's result is a function".into()).to_string())
@@ -976,7 +1003,8 @@ mod tests {
         })
     }
 
-    const SHARED_AFTER_FREE: &str = "runtime: cell 0 is shared after it was freed";
+    const SHARED_AFTER_FREE: &str =
+        "the heap's cell 0 was given a new reference after it was freed";
 
     #[test]
     fn an_inc_that_fails_as_the_last_write_ends_the_run_with_its_error() {
@@ -986,10 +1014,8 @@ mod tests {
         rt_dec(new.tag, new.bits);
         rt_inc(old.tag, old.bits);
         let mut s = remove();
-        assert_eq!(
-            finish(&s.t, &mut s.run, Word::err()).unwrap_err(),
-            SHARED_AFTER_FREE
-        );
+        let e = finish(&s.t, &mut s.run, Word::err()).unwrap_err();
+        assert!(e.contains(SHARED_AFTER_FREE), "{e}");
     }
 
     #[test]
@@ -999,10 +1025,8 @@ mod tests {
         rt_dec(new.tag, new.bits);
         let mut s = remove();
         assert_eq!(s.run.heap.live(), 0, "the drop was written");
-        assert_eq!(
-            finish(&s.t, &mut s.run, Word::int(0)).unwrap_err(),
-            SHARED_AFTER_FREE
-        );
+        let e = finish(&s.t, &mut s.run, Word::int(0)).unwrap_err();
+        assert!(e.contains(SHARED_AFTER_FREE), "{e}");
     }
 
     #[test]

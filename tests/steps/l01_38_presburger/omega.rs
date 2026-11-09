@@ -138,8 +138,11 @@ fn each_cause_of_a_refusal_has_its_own_message() {
             ge(&[("w", -8), ("x", -5), ("y", 12), ("z", -1)], 31),
         ]),
         Refusal::Growth,
-        "the integer constraints have four variables or more, each of whose elimination \
-         would enlarge them, so whether they hold at an integer point is not decided",
+        "to find whole numbers that meet these conditions, the checker removes one variable \
+         at a time, putting in place of the conditions on it conditions on the variables left. \
+         Here four variables or more are left, and removing any one of them would leave more \
+         conditions than there are now, so the work could grow without end. The checker \
+         stopped there, with no values found and none ruled out",
     );
     // A splinter of the dark elimination takes a dark shadow of its own that has no point,
     // over four live variables, as many as the elimination it came from: splitting it again
@@ -154,9 +157,12 @@ fn each_cause_of_a_refusal_has_its_own_message() {
             ge(&[("x", -10), ("y", 4), ("z", -6), ("w", -4)], 22),
         ]),
         Refusal::Shadows,
-        "an integer point of the integer constraints could lie only in a splinter of their \
-         projection that would have to be split again with as many variables left, so whether \
-         one exists is not decided",
+        "to find whole numbers that meet these conditions, the checker removes one variable \
+         at a time, putting in place of the conditions on it conditions on the variables left. \
+         Where the values a variable can take have gaps, it splits the conditions into cases, \
+         one for each gap. Here the only values could lie in a case that would have to be \
+         split again with as many variables left as before, so the splitting need not end. The \
+         checker stopped there, with no values found and none ruled out",
     );
     // Four tasks, three slots, each pair in different slots: no slot assignment, which the
     // search through the disjunctions does not show by propagation. Each task has a row of
@@ -178,7 +184,12 @@ fn each_cause_of_a_refusal_has_its_own_message() {
     refused(
         pigeons(true),
         Refusal::Disjuncts,
-        "no choice among the disjunctions of the integer constraints was settled",
+        "the conditions hold alternatives, where one of several cases is enough (from `||`, \
+         from `!=`, which holds when either side is the larger, or from a negated `&&`), and \
+         the checker looks for a choice of one case from each alternative that can hold with \
+         the rest; no choice it tried has values that meet every condition, and it could rule \
+         out none of the cases. The checker stopped there, with no values found and none ruled \
+         out",
     );
     // With no such rows the tasks occur alike, so the search would take them in an order
     // chosen by name, and the disjunctions left are named.
@@ -193,8 +204,15 @@ fn each_cause_of_a_refusal_has_its_own_message() {
     let text = e.to_string();
     assert!(
         text.starts_with(
-            "refused: the disjunctions of the integer constraints would be searched in an \
-             order chosen by name: `a`, `b`, `c`, `d` occur alike"
+            "refused: the conditions hold alternatives, where one of several cases is enough"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "and the variables `a`, `b`, `c`, `d` occur alike in them (with the same \
+             coefficients, in conditions that are alike), so only their names could order the \
+             search"
         ),
         "{text}"
     );

@@ -38,7 +38,10 @@ fn a_missed_drop_leaves_a_cell_live() {
     p["r"].nodes[2].drops.clear();
     assert_eq!(
         run(&g, &p).unwrap_err(),
-        "memory: 1 cell live after the result is dropped: 1 String allocated by node r.0"
+        zed_rt::bug(
+            "kept values in memory that nothing uses after the program's result was made",
+            "1 cell live after the result is dropped: 1 String allocated by node r.0"
+        )
     );
 }
 
@@ -96,7 +99,12 @@ fn a_borrowed_argument_to_a_consuming_parameter_is_the_machines_error() {
     p.regions[callee].args[0] = Mode::Owned;
     let mut ev = Evaluator::new(World::new());
     let want = zedc::zir::memory::run(g.graph(), &p, &mut ev).unwrap_err();
-    assert_eq!(run(&g, &p).unwrap_err(), want);
+    let got = run(&g, &p).unwrap_err();
+    assert!(
+        got.starts_with("the program stopped because of a bug in zedc")
+            && got.ends_with(want.trim_start_matches("memory: ")),
+        "{got}"
+    );
     assert!(want.contains("is passed borrowed to"), "{want}");
 }
 

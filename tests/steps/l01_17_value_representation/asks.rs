@@ -465,8 +465,10 @@ fn addressing_a_wide_constant_is_refused_when_memory_is_short() {
         assert_eq!(
             zedc::zir::lower::lower(t).err(),
             Some(format!(
-                "a constant is so large that the system refused the {bytes} bytes of memory \
-                 asked to build and write it for its content address"
+                "zedc could not compile the program: one of its constants takes {bytes} bytes, \
+                 and the system refused zedc that much memory to write the constant out and \
+                 compute its content address. The program is not wrong. Repair: free memory \
+                 and build again"
             )),
             "k = {k}"
         );

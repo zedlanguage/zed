@@ -313,7 +313,13 @@ fn a_closure_below_a_value_is_not_data() {
     });
     let w = h.alloc(Obj::Tuple(vec![Word::int(1), f]));
     let e = h.value(w).unwrap_err();
-    assert_eq!(e, "runtime: a closure is not data");
+    assert_eq!(
+        e,
+        zed_rt::bug(
+            "treated a function as a data value such as a number, a string, a tuple or a family",
+            "a closure cell was read as data"
+        )
+    );
 }
 
 #[test]
@@ -323,7 +329,13 @@ fn a_freed_cell_below_a_value_is_reported() {
     let w = h.alloc(Obj::Tuple(vec![s]));
     h.dec(s).unwrap();
     let e = h.value(w).unwrap_err();
-    assert_eq!(e, "runtime: cell 0 is used after it was freed");
+    assert_eq!(
+        e,
+        zed_rt::bug(
+            "read a value after it had released the value's memory",
+            "the heap's cell 0 was read after it was freed"
+        )
+    );
 }
 
 #[test]
@@ -333,7 +345,10 @@ fn a_state_word_is_not_data() {
     let e = h.value(w).unwrap_err();
     assert_eq!(
         e,
-        format!("runtime: a word tagged {} is not data", Word::STATE)
+        zed_rt::bug(
+            "treated something that is not a value as a data value",
+            &format!("a word tagged {} was read as data", Word::STATE)
+        )
     );
 }
 

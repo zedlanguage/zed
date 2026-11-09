@@ -149,7 +149,7 @@ impl Tables {
         lambda_at: &mut [Option<usize>],
     ) -> Result<usize, String> {
         let rp = plan.regions.first().ok_or_else(|| {
-            "native: region `r` has no plan; only the root, lambda bodies and arms do".to_string()
+            crate::bug("region `r` has no plan; only the root, lambda bodies and arms do")
         })?;
         plans.push(rp);
         self.regions.push(RegionInfo {
@@ -217,7 +217,10 @@ impl Tables {
                                 Op::Lambda => "lambda body",
                                 _ => "arm",
                             };
-                            format!("native: {what} `{}.{k}/{i}` has no plan", plan.path(pat))
+                            crate::bug(format_args!(
+                                "{what} `{}.{k}/{i}` has no plan",
+                                plan.path(pat)
+                            ))
                         })?;
                         let rp = &plan.regions[sub];
                         let at = self.regions.len();
@@ -276,11 +279,11 @@ impl Tables {
             return Ok(());
         };
         let li = lambda_at.get(want).copied().flatten().ok_or_else(|| {
-            format!(
-                "native: {}: the plan calls `{}`, no lambda",
+            crate::bug(format_args!(
+                "{}: the plan calls `{}`, no lambda",
                 self.path(id),
                 plan.path(want)
-            )
+            ))
         })?;
         let l = &self.lambdas[li];
         let mut error = None;
@@ -288,7 +291,7 @@ impl Tables {
             for i in 0..l.params {
                 if ni.modes[1 + i] == Mode::Borrowed && l.modes[i] == Mode::Owned {
                     error = Some(format!(
-                        "memory: {}: argument {i} is passed borrowed to `{}`, which consumes it",
+                        "{}: argument {i} is passed borrowed to `{}`, which consumes it",
                         self.path(id),
                         plan.path(want)
                     ));

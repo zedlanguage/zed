@@ -6,6 +6,15 @@ use zed_tests::kernel::fold;
 use zedc::zir::lower::{lower, raise};
 use zedc::zir::{Region, RegionKind, Src};
 
+/// The message for a term no checked program lowers to: a bug in zedc, with `detail`.
+fn bug(detail: &str) -> String {
+    format!(
+        "zedc could not compile the program because of a bug in zedc, not in the program. \
+         Please report it to the Zed developers with the program's source and this line: \
+         {detail}. Until it is fixed, `zedc run` runs the program without compiling it"
+    )
+}
+
 fn push(port: &str, v: Term) -> Term {
     Term::Push(port.into(), v.into())
 }
@@ -16,10 +25,12 @@ fn a_port_inside_a_fold_is_refused() {
     let leak = fold(xs, lam(&["a", "b"], push("stdout", var("a"))), None);
     assert_eq!(
         lower(&leak).unwrap_err(),
-        "port `stdout` is used inside a function region, and a state edge enters only a match \
-         or port region or the region of a `let`-bound lambda (step L1.31): a port is read or \
-         pushed outside loops and families, and a function that uses one is bound by `let` \
-         and called by its name"
+        "`zedc build` cannot compile this program: it reads or pushes the port `stdout` inside \
+         a function that is not bound by `let` and called by its name. Built code carries the \
+         state of a port only into the arms of a `match` and into a function bound by `let` \
+         and called by its name. Repairs: move the reads and pushes of `stdout` out of the \
+         function and pass the values in or out; bind the function with `let` and call it by \
+         its name; or run the program with `zedc run`, which has no such limit"
     );
 }
 
@@ -29,9 +40,12 @@ fn a_function_that_pushes_is_only_called() {
     let as_value = let_("say", say(), prim(Prim::Tuple, vec![var("say")]));
     assert_eq!(
         lower(&as_value).unwrap_err(),
-        "a function of 1 parameter that uses the ports `stdout` is used as a value: a call \
-         threads the states of those ports, and only a call by the function's name knows them, \
-         so such a function is only called"
+        "`zedc build` cannot compile this program: the function `say`, of 1 parameter, reads or \
+         pushes the port `stdout`, and the program uses `say` as a value (it passes, stores or \
+         returns it) instead of calling it. Built code carries the state of a port only through \
+         a call that names the function, so `say` can only be called by its name. Repairs: \
+         call `say` by its name where it is used; move the reads and pushes out of `say` and \
+         pass the values in or out; or run the program with `zedc run`, which has no such limit"
     );
     let two = let_(
         "say",
@@ -40,7 +54,9 @@ fn a_function_that_pushes_is_only_called() {
     );
     assert_eq!(
         lower(&two).unwrap_err(),
-        "a function of 1 parameter that uses a port is called with 2 arguments"
+        bug(
+            "the function `say`, of 1 parameter, that reads or pushes a port is called with 2 arguments"
+        )
     );
 }
 
@@ -64,7 +80,7 @@ fn a_name_bound_inside_a_function_is_not_the_function_of_that_name_outside() {
     lower(&h(true)).unwrap();
     assert!(
         lower(&h(false)).unwrap_err().starts_with(
-            "a function of 1 parameter that uses the ports `stdout` is used as a value"
+            "`zedc build` cannot compile this program: the function `h`, of 1 parameter, reads or pushes the port `stdout`"
         )
     );
 }
@@ -73,20 +89,21 @@ fn a_name_bound_inside_a_function_is_not_the_function_of_that_name_outside() {
 fn names_and_primitives_are_checked() {
     assert_eq!(
         lower(&var("ghost")).unwrap_err(),
-        "`ghost` is not bound, and a term lowers only when every name it reads is bound in it \
-         or is a prelude word"
+        bug(
+            "`ghost` is not bound, and a term lowers only when every name it reads is bound in it or is a prelude word"
+        )
     );
     let tuple = let_("t", Term::PrimFn(Prim::Tuple), var("t"));
     assert!(
         lower(&tuple)
             .unwrap_err()
-            .ends_with("takes any number of arguments, so with no inputs its node is a call, not the function; call it instead of passing it as a value")
+            .ends_with("takes any number of arguments, so with no inputs its node is a call, not the function. Until it is fixed, `zedc run` runs the program without compiling it")
     );
     let neg = prim(Prim::Neg, vec![lit(1), lit(2)]);
     assert!(
         lower(&neg)
             .unwrap_err()
-            .ends_with("takes 1 argument and is given 2")
+            .ends_with("takes 1 argument and is given 2. Until it is fixed, `zedc run` runs the program without compiling it")
     );
 }
 

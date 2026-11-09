@@ -45,7 +45,7 @@ enum Loc {
 }
 
 fn err(e: impl std::fmt::Display) -> String {
-    format!("native: {e}")
+    crate::bug(e)
 }
 
 fn args(ws: &[W]) -> Vec<BlockArg> {
@@ -226,8 +226,8 @@ impl<M: Module> Gen<'_, M> {
             .filter(|a| a.is_state())
             .count();
         if region.results.len() != 1 + states {
-            return Err(format!(
-                "native: lambda body `{}` has {} results; a body returns one value and the \
+            return Err(crate::bug(format_args!(
+                "lambda body `{}` has {} results; a body returns one value and the \
                  states of the {} it takes",
                 self.t.region_path(l.body),
                 region.results.len(),
@@ -236,7 +236,7 @@ impl<M: Module> Gen<'_, M> {
                 } else {
                     format!("{states} ports")
                 }
-            ));
+            )));
         }
         let caps = node.inputs.len();
         self.function(self.bodies[i], 1 + l.params, 1, |cg, fx, ps| {
@@ -493,12 +493,12 @@ impl<M: Module> Gen<'_, M> {
                 } else {
                     Expansion::Ge
                 };
-                return Err(format!(
-                    "native: `prim {}` has no lowering here; legalization expands it ({}), and \
+                return Err(crate::bug(format_args!(
+                    "`prim {}` has no lowering here; legalization expands it ({}), and \
                      this back end does not declare that expansion",
                     p.printed(),
                     x.name()
-                ));
+                )));
             }
             Op::Prim(p) if inline(*p, ins.len()) => {
                 let w = self.inline(fx, *p, id, ins);

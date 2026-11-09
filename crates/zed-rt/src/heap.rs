@@ -339,10 +339,7 @@ fn obj_in(cells: &[Cell], w: Word) -> Result<Option<&Obj>, String> {
     let c = &cells[w.index()];
     match &c.obj {
         Some(o) if c.generation == w.generation() => Ok(Some(o)),
-        _ => Err(format!(
-            "runtime: cell {} is used after it was freed",
-            w.index()
-        )),
+        _ => Err(freed(Freed::Used, w.index())),
     }
 }
 
@@ -662,10 +659,10 @@ impl Heap {
                     return Ok(None);
                 }
                 Some(Obj::Data(v)) => v.clone(),
-                Some(Obj::Clo { .. }) => return Err("runtime: a closure is not data".into()),
+                Some(Obj::Clo { .. }) => return Err(closure_as_data()),
                 None => unreachable!("obj_in checks the cell is live"),
             },
-            t => return Err(format!("runtime: a word tagged {t} is not data")),
+            t => return Err(not_data(t)),
         }))
     }
 
@@ -678,18 +675,12 @@ impl Heap {
         }
         let c = &mut self.cells[w.index()];
         if c.count == 0 || c.generation != w.generation() {
-            return Err(format!(
-                "runtime: cell {} is shared after it was freed",
-                w.index()
-            ));
+            return Err(freed(Freed::Shared, w.index()));
         }
-        c.count = c.count.checked_add(1).ok_or_else(|| {
-            format!(
-                "runtime: cell {} has {} references, the most a count holds",
-                w.index(),
-                u32::MAX
-            )
-        })?;
+        c.count = c
+            .count
+            .checked_add(1)
+            .ok_or_else(|| full_count(w.index()))?;
         self.stats.increments += 1;
         if c.count == 2 && !c.shared {
             c.shared = true;
@@ -731,10 +722,7 @@ impl Heap {
         self.stats.decrements += 1;
         let c = &mut self.cells[w.index()];
         if c.count == 0 || c.generation != w.generation() {
-            return Err(format!(
-                "runtime: cell {} is dropped after it was freed",
-                w.index()
-            ));
+            return Err(freed(Freed::Dropped, w.index()));
         }
         c.count -= 1;
         if c.count > 0 {
@@ -786,9 +774,12 @@ impl Heap {
             for kid in at.iter().flat_map(|&x| tree.kids(x)) {
                 let i = tree.part(kid);
                 let Some(s) = sub.get_mut(i) else {
-                    return Err(format!(
-                        "runtime: a kept path reads part {i} of a cell of {} parts",
-                        parts.len()
+                    return Err(crate::bug(
+                        "released a value and kept a part of it that the value does not have",
+                        &format!(
+                            "a kept path reads part {i} of a cell of {} parts",
+                            parts.len()
+                        ),
                     ));
                 };
                 s.push(kid);
@@ -822,9 +813,9 @@ impl Heap {
             let part = match self.obj(holder)? {
                 Some(o) => o.parts()[tree.part(k)],
                 None => {
-                    return Err(format!(
-                        "runtime: a word tagged {} has no parts",
-                        holder.tag
+                    return Err(crate::bug(
+                        "kept a part of a value that has no parts",
+                        &format!("a word tagged {} has no parts", holder.tag),
                     ));
                 }
             };
@@ -841,7 +832,10 @@ impl Heap {
     pub fn capture(&self, w: Word, i: usize) -> Result<Word, String> {
         match self.obj(w)? {
             Some(Obj::Clo { caps, .. }) => Ok(caps[i]),
-            _ => Err(format!("runtime: a word tagged {} is not a closure", w.tag)),
+            _ => Err(crate::bug(
+                "called something that is not a function",
+                &format!("a word tagged {} is not a closure", w.tag),
+            )),
         }
     }
 
@@ -936,10 +930,10 @@ impl Heap {
                         }
                         _ => false,
                     },
-                    Some(Obj::Clo { .. }) => return Err("runtime: a closure is not data".into()),
+                    Some(Obj::Clo { .. }) => return Err(closure_as_data()),
                     None => unreachable!("obj_in checks the cell is live"),
                 },
-                t => return Err(format!("runtime: a word tagged {t} is not data")),
+                t => return Err(not_data(t)),
             };
             if !same {
                 return Ok(false);
@@ -1106,6 +1100,62 @@ impl Heap {
     }
 }
 
+/// What the compiled code did with a cell after freeing it.
+enum Freed {
+    Used,
+    Shared,
+    Dropped,
+}
+
+/// The message for a cell reached after it was freed: a bug in zedc, since the program's own
+/// code never holds a released value.
+fn freed(how: Freed, i: usize) -> String {
+    let (what, did) = match how {
+        Freed::Used => (
+            "read a value after it had released the value's memory",
+            "read",
+        ),
+        Freed::Shared => (
+            "kept one more reference to a value after it had released the value's memory",
+            "given a new reference",
+        ),
+        Freed::Dropped => ("released a value's memory twice", "dropped"),
+    };
+    crate::bug(
+        what,
+        &format!("the heap's cell {i} was {did} after it was freed"),
+    )
+}
+
+/// The message for a function read where a data value was expected.
+fn closure_as_data() -> String {
+    crate::bug(
+        "treated a function as a data value such as a number, a string, a tuple or a family",
+        "a closure cell was read as data",
+    )
+}
+
+/// The message for a word that holds no value read as a data value.
+fn not_data(tag: i64) -> String {
+    crate::bug(
+        "treated something that is not a value as a data value",
+        &format!("a word tagged {tag} was read as data"),
+    )
+}
+
+/// The message for a value held in more places than a reference count can count: a limit of
+/// the native runtime, not a bug and not a fault of the program.
+fn full_count(i: usize) -> String {
+    format!(
+        "the program stopped: one of its values is held in {} places at once, the most the \
+         native runtime of a built executable can count for one value (the heap's cell {i}). The \
+         program is not wrong; the limit is the runtime's. Repairs: run the program with `zedc \
+         run`, which counts without this limit, or make fewer copies of that value live at the \
+         same time, for example by passing it once to a function that does the repeated work",
+        u32::MAX
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1163,10 +1213,7 @@ mod tests {
         let mut h = Heap::new();
         let s = h.fresh(&Value::str("a")).unwrap();
         let w = h.alloc(Obj::Tuple(vec![s, s]));
-        assert_eq!(
-            h.dec(w).unwrap_err(),
-            format!("runtime: cell {} is dropped after it was freed", s.bits)
-        );
+        assert_eq!(h.dec(w).unwrap_err(), freed(Freed::Dropped, s.index()));
         assert!(h.todo.is_empty());
         let w = h.fresh(&Value::tuple(vec![Value::str("b")])).unwrap();
         h.dec(w).unwrap();
@@ -1213,7 +1260,10 @@ mod tests {
         let (paths, end) = one_path(&[0, 0]);
         assert_eq!(
             h.release(t, &paths, &[end]).unwrap_err(),
-            "runtime: a word tagged 0 has no parts"
+            crate::bug(
+                "kept a part of a value that has no parts",
+                "a word tagged 0 has no parts"
+            )
         );
     }
 
@@ -1238,7 +1288,8 @@ mod tests {
         let mut h = Heap::new();
         let w = h.alloc(Obj::Str("a".into()));
         h.cells[0].count = u32::MAX;
-        let full = "runtime: cell 0 has 4294967295 references, the most a count holds";
+        let full = full_count(0);
+        assert!(full.contains("held in 4294967295 places at once") && full.contains("`zedc run`"));
         assert_eq!(h.inc(w).unwrap_err(), full);
         assert_eq!(h.cells[0].count, u32::MAX);
         // A drop after the fault is an ordinary drop: the fault was not kept for it.
@@ -1258,9 +1309,6 @@ mod tests {
         h.dec(last).unwrap();
         let next = h.alloc(Obj::Str("c".into()));
         assert_eq!((next.index(), next.generation()), (1, 0));
-        assert_eq!(
-            h.dec(last).unwrap_err(),
-            "runtime: cell 0 is dropped after it was freed"
-        );
+        assert_eq!(h.dec(last).unwrap_err(), freed(Freed::Dropped, 0));
     }
 }

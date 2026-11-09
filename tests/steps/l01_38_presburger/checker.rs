@@ -140,7 +140,10 @@ fn a_refused_question_over_disjunctions_prints_the_menu_and_an_equality_repairs_
             "x, y, z, w",
             "0 <= x && x <= 2 && 0 <= y && y <= 2 && 0 <= z && z <= 2 && 0 <= w && w <= 2 && x \
              != y && x != z && y != z && x != w && y != w && z != w",
-            "no choice among the disjunctions of the integer constraints was settled",
+            "the conditions hold alternatives, where one of several cases is enough (from \
+             `||`, from `!=`, which holds when either side is the larger, or from a negated \
+             `&&`), and the checker looks for a choice of one case from each alternative that \
+             can hold with the rest; no choice it tried has values",
             "x == 0",
             "x: a, y: a, z: a, w: a",
             ["out\n", "out\n"],
@@ -153,8 +156,11 @@ fn a_refused_question_over_disjunctions_prints_the_menu_and_an_equality_repairs_
             "x, y",
             "0 <= x && x <= 9 && 0 <= y && y <= 9 && x + y <= 10 && (x <= 2 || x >= 7) && (y \
              <= 2 || y >= 7)",
-            "the disjunctions of the integer constraints would be searched in an order chosen \
-             by name",
+            "the conditions hold alternatives, where one of several cases is enough (from \
+             `||`, from `!=`, which holds when either side is the larger, or from a negated \
+             `&&`), and the checker looks for a choice of one case from each alternative that \
+             can hold with the rest. After every case that cannot hold is removed, the \
+             alternative",
             "x == 1",
             "x: a, y: a",
             ["in\n", "out\n"],
@@ -237,9 +243,12 @@ fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
     assert_eq!(
         rejection("growth-alone", &src),
         format!(
-            "1:1: whether `ok` can hold is not decided: the integer constraints have four \
-             variables or more, each of whose elimination would enlarge them, so whether they \
-             hold at an integer point is not decided\n  \
+            "1:1: whether `ok` can hold is not decided: to find whole numbers that meet these \
+             conditions, the checker removes one variable at a time, putting in place of the \
+             conditions on it conditions on the variables left. Here four variables or more \
+             are left, and removing any one of them would leave more conditions than there are \
+             now, so the work could grow without end. The checker stopped there, with no \
+             values found and none ruled out\n  \
              [1] 1:18: the constraints: 12 * w + 10 * y + 12 * z <= 4 * x + 11 && 4 * w + 10 * \
              x >= 10 * y + 11 * z + 28 && 11 * w + 4 * x + 12 * z >= y + 28 && 8 * w + 5 * x + \
              z <= 12 * y + 31\n  {MENU}"
@@ -262,12 +271,15 @@ fn a_refused_question_names_the_parameters_as_written_when_other_functions_share
     assert_eq!(
         rejection("tie-alone", &src),
         format!(
-            "1:1: whether `ok` can hold is not decided: variables that no structure tells apart \
-             would be eliminated in an order chosen by name: `w`, `x`, `z`, `y` occur alike in \
-             the integer constraints (the same coefficients, in rows that occur alike), so the \
-             next step has no first among them, and they share the rows `-w + 3 * x - 10 >= 0`, \
-             `3 * w - z - 10 >= 0`, `-x + 3 * y - 10 >= 0`, `3 * z - y - 10 >= 0`; so whether \
-             the constraints hold at an integer point is not decided\n  \
+            "1:1: whether `ok` can hold is not decided: to find whole numbers that meet these \
+             conditions, the checker removes one variable at a time, putting in place of the \
+             conditions on it conditions on the variables left. Its next step must choose among \
+             the variables `w`, `x`, `z`, `y`, which occur alike in the conditions (with the \
+             same coefficients, in conditions that are alike) and share the conditions \
+             `-w + 3 * x - 10 >= 0`, `3 * w - z - 10 >= 0`, `-x + 3 * y - 10 >= 0`, \
+             `3 * z - y - 10 >= 0`, so only their names could order them, and the checker never \
+             lets a name change an answer. The checker stopped there, with no values found and \
+             none ruled out\n  \
              [1] 1:18: the constraints: x <= 3 * y - 10 && y <= 3 * z - 10 && 3 * w >= z + 10 \
              && w <= 3 * x - 10\n  {MENU}"
         )
@@ -285,9 +297,13 @@ fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
     assert_eq!(
         rejection("shadows-alone", &src),
         format!(
-            "1:1: whether `ok` can hold is not decided: an integer point of the integer \
-             constraints could lie only in a splinter of their projection that would have to be \
-             split again with as many variables left, so whether one exists is not decided\n  \
+            "1:1: whether `ok` can hold is not decided: to find whole numbers that meet these \
+             conditions, the checker removes one variable at a time, putting in place of the \
+             conditions on it conditions on the variables left. Where the values a variable can \
+             take have gaps, it splits the conditions into cases, one for each gap. Here the \
+             only values could lie in a case that would have to be split again with as many \
+             variables left as before, so the splitting need not end. The checker stopped \
+             there, with no values found and none ruled out\n  \
              [1] 1:18: the constraints: 8 * w + 4 * y <= 9 * x - 3 && 9 * w + 5 * x + 11 * y >= \
              9 && 8 * w >= 7 * x + 12 * y + 2 * z + 1 && 9 * x <= 8 * y + 7 * z && 4 * w + 10 * \
              x + 6 * z <= 4 * y + 22\n  {MENU}"

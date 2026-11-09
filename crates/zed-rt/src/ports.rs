@@ -54,7 +54,14 @@ pub fn write(port: &str, v: &Value) -> Result<Vec<u8>, String> {
                 s.chunks().for_each(|c| out.extend_from_slice(c.as_bytes()));
                 out.push(b'\n');
             }
-            other => return Err(format!("port `{port}` takes strings; {other} was pushed")),
+            other => {
+                return Err(format!(
+                    "port `{port}` writes lines of text, and the program pushed {other} to it, which is \
+                     not a string: a `Lines` port takes a `Utf8String`, written as one line, or a \
+                     family of strings, written one line per entry in key order. Repair: push the \
+                     value's text in its place, made with `Utf8String(…)`"
+                ));
+            }
         }
     }
     Ok(out)
@@ -85,6 +92,11 @@ mod tests {
             ]
         );
         assert_eq!(write("o", &Value::str("x")).unwrap(), b"x\n");
-        assert!(write("o", &Value::Int(1)).is_err());
+        let e = write("o", &Value::Int(1)).unwrap_err();
+        assert!(
+            e.starts_with("port `o` writes lines of text, and the program pushed 1 to it")
+                && e.contains("`Utf8String(…)`"),
+            "{e}"
+        );
     }
 }
