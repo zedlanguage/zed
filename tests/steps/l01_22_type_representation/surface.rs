@@ -273,6 +273,33 @@ fn the_types_of_everyday_values_print_as_written() {
             Type::exact(tuple(&[Type::int(), Type::int()]), Type::int()),
             "((int, int)) -> int",
         ),
+        // A tuple of one component is a key as it is: `(int,)` reads as no parameter list.
+        (
+            Type::exact(tuple(&[Type::int()]), Type::int()),
+            "(int,) -> int",
+        ),
+        (
+            Type::partial(tuple(&[Type::int()]), Type::int()),
+            "(int,) ->? int",
+        ),
+        // A morphism type is bare as a component and a value, parenthesized as a key, a bound
+        // and an operand of `|`.
+        (
+            tuple(&[Type::exact(Type::int(), Type::bool()), Type::int()]),
+            "(int -> bool, int)",
+        ),
+        (
+            Type::exact(Type::int(), Type::exact(Type::int(), Type::bool())),
+            "int -> int -> bool",
+        ),
+        (
+            Type::partial(Type::exact(Type::int(), Type::bool()), Type::int()),
+            "(int -> bool) ->? int",
+        ),
+        (
+            &Type::exact(Type::int(), Type::bool()) | &Type::string(),
+            "String | (int -> bool)",
+        ),
     ] {
         let s = round_trip(&t);
         assert_eq!(s.to_string(), text);
@@ -514,7 +541,7 @@ fn the_empty_type_prints_as_never() {
         (Type::exact(Type::int(), never.clone()), "int -> Never"),
         (
             Type::exact(tuple(&[Type::int()]), never.clone()),
-            "((int,)) -> Never",
+            "(int,) -> Never",
         ),
         (Type::partial(Type::int(), never.clone()), "int ->? Never"),
         (Type::universe(Universe::Morphism), "Never .. _ -> _"),

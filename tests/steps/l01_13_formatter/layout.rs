@@ -228,6 +228,44 @@ fn a_type_prints_as_it_is_written() {
     }
 }
 
+/// A function type is printed with the parentheses the grammar needs and no others (DESIGN.md
+/// sec:grammar), whatever the program wrote: bare as a tuple component, a parameter, a payload
+/// and a result; parenthesized as an operand of `|` and as a key. `(int)` is a grouped key, not
+/// a parameter list, so `(int) -> int` parses to the same tree as `int -> int` and prints so. The
+/// second check is the round trip: the printed text parses back to a tree that prints the same.
+#[test]
+fn a_function_type_prints_with_only_the_parentheses_it_needs() {
+    for (text, shown) in [
+        ("(((int) -> int), String)", "(int -> int, String)"),
+        ("((int) -> int) | String", "(int -> int) | String"),
+        ("(int) -> ((String) -> bool)", "int -> String -> bool"),
+        (
+            "(((int) -> Never), int) -> Never",
+            "(int -> Never, int) -> Never",
+        ),
+        (
+            "(((((int) -> int)) -> int)) -> int",
+            "((int -> int) -> int) -> int",
+        ),
+        ("(int) -> (int | String)", "int -> int | String"),
+        (
+            "(int) -> (((int) -> int) | String)",
+            "int -> (int -> int) | String",
+        ),
+        ("#a(((int) -> int))", "#a(int -> int)"),
+        ("((int) -> int) ->? int", "(int -> int) ->? int"),
+        ("((int, int)) ->? int", "((int, int)) ->? int"),
+        ("((int,)) ->? int", "(int,) ->? int"),
+        (
+            "(int) -> ((T) -> T for T in int | f64)",
+            "int -> (T -> T for T in int | f64)",
+        ),
+    ] {
+        assert_eq!(type_printed(text), shown, "{text}");
+        assert_eq!(type_printed(shown), shown, "{shown}");
+    }
+}
+
 /// `#a0 | #a1 | …`, `n` atoms.
 fn union_of(n: usize) -> String {
     (0..n)

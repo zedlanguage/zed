@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, PoisonError, Weak};
 
 use super::{At, Def, Env, Key, Node, Shape, same};
+use crate::types::print::{At as Place, Class};
 use crate::types::{self, Piece, Rope, Type};
 
 /// The units begun, over all threads.
@@ -308,17 +309,19 @@ pub(super) struct Show<'a> {
 impl Show<'_> {
     /// The text as a rope, which holds the texts of the types it names without copying them,
     /// so that the name of `Tree(Tree(..))` takes time linear in its text.
-    /// Each expression's rope is built once its parts' are, from a stack.
+    /// Each expression's rope is built once its parts' are, from a stack. Each part is
+    /// parenthesized only where the type grammar (DESIGN.md sec:grammar) would not read it as
+    /// one operand of the part around it.
     fn rope(&self) -> Rope {
         enum Step<'a> {
-            Visit(&'a Node),
-            Build(&'a Node),
+            Visit(&'a Node, Place),
+            Build(&'a Node, Place),
         }
-        let mut todo = vec![Step::Visit(self.e)];
+        let mut todo = vec![Step::Visit(self.e, Place::Any)];
         let mut done: Vec<Rope> = Vec::new();
         while let Some(step) = todo.pop() {
             let r = match step {
-                Step::Visit(e) => match &e.e {
+                Step::Visit(e, at) => match &e.e {
                     Shape::Param(i) => match self.args {
                         Some(args) => args[*i].rope(),
                         None => Rope::cat([Piece::from(self.params[*i].as_str())]),
@@ -326,39 +329,36 @@ impl Show<'_> {
                     Shape::Ref(i, args) if args.is_empty() => {
                         Rope::cat([Piece::from(self.defs[*i].name.as_str())])
                     }
-                    Shape::Type(t) if self.surface => match t.surface_operand() {
+                    Shape::Type(t) if self.surface => match t.surface_at(at) {
                         s if s.defs.is_empty() => Rope::cat([Piece::from(s.root)]),
                         _ => t.rope(),
                     },
                     Shape::Type(t) => t.rope(),
                     _ => {
-                        todo.push(Step::Build(e));
-                        todo.extend(e.e.kids().rev().map(|c| Step::Visit(c)));
+                        todo.push(Step::Build(e, at));
+                        let n = e.e.kids().count();
+                        todo.extend(
+                            (e.e.kids().rev().zip((0..n).rev()))
+                                .map(|(c, i)| Step::Visit(c, kid_place(&e.e, i))),
+                        );
                         continue;
                     }
                 },
-                Step::Build(e) => {
+                Step::Build(e, at) => {
                     let parts = done.split_off(done.len() - e.e.kids().count());
-                    if let Shape::Ref(i, _) = &e.e {
-                        // An argument is written without parentheses.
+                    let r = if let Shape::Ref(i, _) = &e.e {
                         Rope::joined(&format!("{}(", self.defs[*i].name), parts, ", ", ")")
                     } else {
-                        let mut parts: Vec<Rope> = parts
-                            .into_iter()
-                            .zip(e.e.kids())
-                            .map(|(r, c)| match c.e {
-                                Shape::Union(_)
-                                | Shape::And(_)
-                                | Shape::Diff(..)
-                                | Shape::Morphism(..) => Rope::joined("(", [r], "", ")"),
-                                _ => r,
-                            })
-                            .collect();
+                        let mut parts = parts;
                         match &e.e {
                             Shape::Union(_) => Rope::joined("", parts, " | ", ""),
                             Shape::And(_) => Rope::joined("", parts, " & ", ""),
                             Shape::Not(_) => Rope::joined("!", parts, "", ""),
                             Shape::Diff(..) => Rope::joined("", parts, " \\ ", ""),
+                            // A tuple of one component is written `(T,)`: `(T)` is `T`.
+                            Shape::Tuple(_) if parts.len() == 1 => {
+                                Rope::joined("(", parts, "", ",)")
+                            }
                             Shape::Tuple(_) => Rope::joined("(", parts, ", ", ")"),
                             Shape::Atom(name, _) => {
                                 Rope::joined(&format!("#{name}("), parts, ", ", ")")
@@ -385,6 +385,10 @@ impl Show<'_> {
                                 unreachable!("a leaf is not built")
                             }
                         }
+                    };
+                    match at.admits(class(&e.e)) {
+                        true => r,
+                        false => Rope::joined("(", [r], "", ")"),
                     }
                 }
             };
@@ -392,6 +396,51 @@ impl Show<'_> {
         }
         done.pop().expect("the rope of the expression")
     }
+}
+
+/// How the text of an expression of shape `s` that is not a leaf binds, for parenthesizing it
+/// as an operand: a leaf's text is parenthesized where it stands as it is made.
+fn class(s: &Shape) -> Class {
+    match s {
+        Shape::Union(_) => Class::Union,
+        Shape::And(_) => Class::And,
+        Shape::Diff(..) => Class::Diff,
+        Shape::Morphism(..) => Class::Arrow,
+        // `(T,)` cannot read as parameters, so it is a primary even as a key.
+        Shape::Tuple(ps) if ps.len() != 1 => Class::Tuple,
+        Shape::Tuple(_)
+        | Shape::Not(_)
+        | Shape::Atom(..)
+        | Shape::Ref(..)
+        | Shape::Param(_)
+        | Shape::Type(_) => Class::Prim,
+    }
+}
+
+/// Where part `i` of the parts directly below an expression of shape `s` stands: `\` takes no `&` or `|` on either side and no `\` on its right, an arrow's key no
+/// arrow and no tuple, which would read as its parameters, and its bounds no arrow (DESIGN.md
+/// sec:grammar). A guarantee equal to the permission is written in parentheses, `(K) -> V`,
+/// so it may be any type.
+fn kid_place(s: &Shape, i: usize) -> Place {
+    let (each, fixed): (Place, [Option<Place>; 3]) = match s {
+        Shape::Union(_) => (Place::Union, [None; 3]),
+        Shape::And(_) => (Place::And, [None; 3]),
+        Shape::Not(_) => (Place::Prim, [None; 3]),
+        Shape::Diff(..) => (Place::Any, [Some(Place::DiffLeft), Some(Place::Prim), None]),
+        Shape::Morphism(l, u, _) if same(l, u) => (Place::Any, [None; 3]),
+        Shape::Morphism(l, _, _) if l.e == Shape::Type(Type::empty()) => (
+            Place::Any,
+            [Some(Place::Any), Some(Place::Key), Some(Place::Any)],
+        ),
+        Shape::Morphism(..) => (
+            Place::Any,
+            [Some(Place::Bound), Some(Place::Bound), Some(Place::Any)],
+        ),
+        Shape::Tuple(_) | Shape::Atom(..) | Shape::Ref(..) | Shape::Param(_) | Shape::Type(_) => {
+            (Place::Any, [None; 3])
+        }
+    };
+    fixed.get(i).copied().flatten().unwrap_or(each)
 }
 
 impl fmt::Display for Show<'_> {

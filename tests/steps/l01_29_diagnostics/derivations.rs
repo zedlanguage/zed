@@ -38,7 +38,7 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
   [7]  2:7: this `else` gives int
   [8]  2:7: this call of `int` gives int | #invalid | #notFound | #ioError(op: String, path: String, why: String)
   [9]  2:11: this expression gives String | #notFound | #ioError(op: String, path: String, why: String)
-  [10] 2:11: `stdin` is ((int) -> String | #notFound | #ioError(op: String, path: String, why: String)) here
+  [10] 2:11: `stdin` is (int) -> String | #notFound | #ioError(op: String, path: String, why: String) here
   [11] 1:6: `stdin` is declared `Lines`
        1 | main(stdin: Lines) -> (stdout: Lines) {
          |      ^^^^^^^^^^^^
@@ -305,20 +305,20 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
     assert_eq!(
         out,
         "3:8: `==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth
-  [1] 3:8: `boxed` is #box(((int) -> int)) here
+  [1] 3:8: `boxed` is #box((int) -> int) here
       3 | same = boxed == boxed;
         |        ^^^^^ [1]
         |        ^^^^^^^^^^^^^^ [7, 8]
-  [2] 2:9: `boxed` is defined as this expression, #box(((int) -> int))
+  [2] 2:9: `boxed` is defined as this expression, #box((int) -> int)
       2 | boxed = #box(inc);
         |         ^^^^^^^^^ [2, 3]
         |              ^^^ [4]
-  [3] 2:9: this atom `#box` with its payload gives #box(((int) -> int))
-  [4] 2:14: `inc` is ((int) -> int) here
-  [5] 1:7: `inc` is defined as this expression, ((int) -> int)
+  [3] 2:9: this atom `#box` with its payload gives #box((int) -> int)
+  [4] 2:14: `inc` is (int) -> int here
+  [5] 1:7: `inc` is defined as this expression, (int) -> int
       1 | inc = x -> x + 1;
         |       ^^^^^^^^^^
-  [6] 1:7: this expression is ((int) -> int)
+  [6] 1:7: this expression is (int) -> int
   [7] 3:8: repair: call the function before the value gets here, so that the value holds its result and not the function
   [8] 3:8: repair: keep the function under its own name, out of the value"
     );

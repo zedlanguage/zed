@@ -209,7 +209,7 @@ fn curried_lambdas_using_every_parameter_check_in_linear_time() {
     // signatures inside (`VarFacts::held`), so merging them costs O(log n) per variable.
     assert_eq!(
         sig(&curried(3), "g"),
-        "(_) -> ((_) -> ((_) -> ((_) -> (_, _, _, _))))"
+        "(_) -> (_) -> (_) -> (_) -> (_, _, _, _)"
     );
     let n = 100;
     let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
@@ -247,7 +247,7 @@ fn curried_lambdas_whose_parameters_take_a_carrier_check_in_linear_time() {
     // instructions, 101619 and 481807 bytes.
     assert_eq!(
         sig(&curried_sums(2), "g"),
-        "(int) -> ((int) -> ((int) -> (int, int, int)))"
+        "(int) -> (int) -> (int) -> (int, int, int)"
     );
     let n = 100;
     let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
@@ -319,33 +319,33 @@ fn nested_lambdas_name_their_variables_as_before() {
     for (text, want) in [
         (
             "g(positional a) = (b) -> (c) -> (a, b, c);\n",
-            "(_) -> ((_) -> ((_) -> (_, _, _)))",
+            "(_) -> (_) -> (_) -> (_, _, _)",
         ),
         (
             "g(positional a) = (b) -> (c) -> (d) -> (e) -> (f) -> (h) -> (a, b, c, d, e, f, h);\n",
-            "(_) -> ((_) -> ((_) -> ((_) -> ((_) -> ((_) -> ((_) -> (_, _, _, _, _, _, _)))))))",
+            "(_) -> (_) -> (_) -> (_) -> (_) -> (_) -> (_) -> (_, _, _, _, _, _, _)",
         ),
         (
             "g(positional a) = (T) -> (b) -> (c) -> a;\n",
-            "(_) -> ((_) -> ((_) -> ((_) -> _)))",
+            "(_) -> (_) -> (_) -> (_) -> _",
         ),
         (
             "g(positional f) = (x) -> (y) -> f(x, y) + x;\n",
-            "(_) -> ((U) -> ((_) -> U)) for U in int | f64 | rat",
+            "(_) -> (U) -> (_) -> U for U in int | f64 | rat",
         ),
         (
             "g(positional a, positional b) = ((c) -> (d) -> (c, d), a + b);\n",
-            "(V, V) -> (((_) -> ((_) -> (_, _))), V) for V in int | f64 | rat",
+            "(V, V) -> ((_) -> (_) -> (_, _), V) for V in int | f64 | rat",
         ),
         // The results of `h(x)` and `f(x)` are classes of `g`'s level that first appear
         // inside the lambdas, and are named in the order they appear there.
         (
             "g(positional f, positional h) = (x) -> (y) -> (h(y, x), f(x), y);\n",
-            "(_, _) -> ((_) -> ((_) -> (_, _, _)))",
+            "(_, _) -> (_) -> (_) -> (_, _, _)",
         ),
         (
             "g(positional f) = ((x) -> f(x), (y) -> (f(y), y));\n",
-            "(_) -> (((_) -> _), ((_) -> (_, _)))",
+            "(_) -> ((_) -> _, (_) -> (_, _))",
         ),
     ] {
         assert_eq!(sig(text, "g"), want, "{text}");

@@ -126,7 +126,7 @@ fn a_call_outside_the_bound_is_an_error() {
 fn the_signature_holds_the_bound() {
     assert_eq!(
         sig(TWICE, "twice"),
-        "(int, g: ((x: T) -> T for T in int | f64)) -> int"
+        "(int, g: (x: T) -> T for T in int | f64) -> int"
     );
 }
 
@@ -241,20 +241,17 @@ fn elab_errors(text: &str) -> Vec<String> {
 
 #[test]
 fn a_printed_bounded_type_reads_back() {
-    // The printer writes each function type in parentheses, and a function-typed parameter in
-    // the parameter list's own; what it writes reads back to the same type.
+    // The printer writes a function type in parentheses only where the grammar needs them
+    // (DESIGN.md sec:grammar); what it writes reads back to the same type.
     for (text, want) in [
-        (
-            "(T) -> T for T in int | f64",
-            "((T) -> T for T in int | f64)",
-        ),
+        ("(T) -> T for T in int | f64", "(T) -> T for T in int | f64"),
         (
             "(T, U) -> T for T in int, U in String | bool",
-            "((T, U) -> T for T in int, U in String | bool)",
+            "(T, U) -> T for T in int, U in String | bool",
         ),
         (
             "((T) -> T for T in rat) -> int",
-            "((((T) -> T for T in rat)) -> int)",
+            "((T) -> T for T in rat) -> int",
         ),
     ] {
         let first = parse_type(text).unwrap_or_else(|e| panic!("{e}"));
@@ -310,7 +307,7 @@ fn printing_and_reading_a_signature_of_many_bounds_scales() {
     let first = parse_type(&many_bounds(3)).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(
         first.to_string(),
-        "((x0: T0, x1: T1, x2: T2) -> T0 for T0 in int | f64, T1 in String, T2 in rat | bool)"
+        "(x0: T0, x1: T1, x2: T2) -> T0 for T0 in int | f64, T1 in String, T2 in rat | bool"
     );
     // Each size's type and printed text built before timing; printing and reading are timed
     // apart.
@@ -503,7 +500,7 @@ fn a_bounded_function_passes_where_its_bound_holds_the_expected_one() {
     let text = format!("{P}q(f: (x: U) -> U for U in int | f64) = p_wide(g: f);\n");
     assert_eq!(
         sig(&text, "q"),
-        "(f: ((x: U) -> U for U in int | f64)) -> f64"
+        "(f: (x: U) -> U for U in int | f64) -> f64"
     );
 }
 
@@ -546,7 +543,7 @@ fn a_bounded_variable_only_in_the_result_gives_its_whole_bound() {
     assert!(type_errors(text).is_empty(), "{:?}", type_errors(text));
     assert_eq!(
         sig(text, "h"),
-        "(g: (() -> T for T in int | f64)) -> int | f64"
+        "(g: () -> T for T in int | f64) -> int | f64"
     );
 }
 

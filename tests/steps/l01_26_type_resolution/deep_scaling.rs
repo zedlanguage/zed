@@ -292,11 +292,11 @@ fn curried_refusal(d: usize, uses: usize, at: usize, last: &str) -> String {
 fn curried_refusal_message(d: usize, uses: usize, at: usize, result: &str) -> String {
     let given = (0..d).fold(result.to_string(), |r, i| {
         let p = if d - 1 - i == uses { "int" } else { "_" };
-        format!("({p}) -> {}", if i == 0 { r } else { format!("({r})") })
+        format!("({p}) -> {r}")
     });
     let expected = (0..d).fold("(int, int)".to_string(), |r, i| {
         let p = if d - 1 - i == at { "String" } else { "int" };
-        format!("({p}) -> {}", if i == 0 { r } else { format!("({r})") })
+        format!("({p}) -> {r}")
     });
     format!(
         "`g` is `{given}`, not `{expected}`: it is passed where a function of that type is \

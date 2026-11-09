@@ -270,7 +270,7 @@ fn a_merged_failure_reads_back() {
 fn a_partial_map_reads_back_with_its_miss() {
     let partial = back("String ->? int");
     assert_eq!(partial, back("(String) -> int | #notFound"));
-    assert_eq!(partial.to_string(), "(String ->? int)");
+    assert_eq!(partial.to_string(), "String ->? int");
     assert_ne!(partial, back("String -> int"));
     let built = zedc::check::ty::errs_of(back("#a | #b"));
     let shown = built.to_string();
@@ -334,10 +334,12 @@ fn a_bound_clause_reads_back_onto_its_signature() {
     let mask = Carrier::Int.bit() | Carrier::F64.bit() | Carrier::Rat.bit();
     assert_eq!(t.fns.len(), 1);
     assert_eq!(t.fns[0].bounds, [("T".into(), mask)].into());
-    // A signature bounded inside a tuple: the clause ends at its group's parenthesis.
+    // A signature bounded inside a tuple: the clause ends at the comma, so it is printed bare.
     let t = back("(((T) -> T for T in int | rat), int)");
     assert_eq!(t.tuples[0][0].fns[0].bounds.len(), 1);
-    assert_eq!(t.to_string(), "(((T) -> T for T in int | rat), int)");
+    let shown = t.to_string();
+    assert_eq!(shown, "((T) -> T for T in int | rat, int)");
+    assert_eq!(mismatch(&t, &shown), None, "{shown}");
 }
 
 /// An intersection of function types is one function's list of arrows, an overload, as the
@@ -641,46 +643,139 @@ fn reading_an_overload_nested_in_parentheses_back_scales() {
 #[test]
 fn morphism_types_print_as_written_and_read_back_in_every_position() {
     for (text, shown) in [
-        ("String ->? int", "(String ->? int)"),
-        ("(String) -> int | #notFound", "(String ->? int)"),
-        ("(String) -> #notFound", "((String) -> #notFound)"),
+        ("String ->? int", "String ->? int"),
+        ("(String) -> int | #notFound", "String ->? int"),
+        ("(String) -> #notFound", "(String) -> #notFound"),
         ("(String ->? int) | int", "int | (String ->? int)"),
-        ("(String ->? int, int)", "((String ->? int), int)"),
-        ("int ->? (String ->? int)", "(int ->? (String ->? int))"),
-        ("(int ->? int) ->? int", "((int ->? int) ->? int)"),
-        ("((int, int)) ->? int", "(((int, int)) ->? int)"),
-        ("((int) -> int) ->? int", "(((int) -> int) ->? int)"),
+        ("(String ->? int, int)", "(String ->? int, int)"),
+        ("int ->? (String ->? int)", "int ->? String ->? int"),
+        ("(int ->? int) ->? int", "(int ->? int) ->? int"),
+        ("((int, int)) ->? int", "((int, int)) ->? int"),
+        ("((int) -> int) ->? int", "((int) -> int) ->? int"),
         (
             "(k: String) -> int | #notFound",
-            "((k: String) -> int | #notFound)",
+            "(k: String) -> int | #notFound",
         ),
-        ("T ->? T for T in int | f64", "(T ->? T for T in int | f64)"),
-        (
-            "int .. int | String -> bool",
-            "(int .. int | String -> bool)",
-        ),
-        ("#a .. #a | #b -> int", "(#a .. #a | #b -> int)"),
-        ("int .. int -> bool", "((int) -> bool)"),
-        ("Never .. int -> bool", "(int ->? bool)"),
+        ("T ->? T for T in int | f64", "T ->? T for T in int | f64"),
+        ("int .. int | String -> bool", "int .. int | String -> bool"),
+        ("#a .. #a | #b -> int", "#a .. #a | #b -> int"),
+        ("int .. int -> bool", "(int) -> bool"),
+        ("Never .. int -> bool", "int ->? bool"),
         (
             "((int) -> bool) & ((int | String) -> bool | #notFound)",
-            "(int .. int | String -> bool)",
+            "int .. int | String -> bool",
         ),
         (
             "((int) -> bool) & ((String) -> bool | #notFound)",
-            "(((int) -> bool) & ((String) -> bool | #notFound))",
+            "((int) -> bool) & ((String) -> bool | #notFound)",
         ),
         (
             "(int .. int | String -> bool, int)",
-            "((int .. int | String -> bool), int)",
+            "(int .. int | String -> bool, int)",
         ),
         (
             "int .. int | String -> (int .. int | String -> bool)",
-            "(int .. int | String -> (int .. int | String -> bool))",
+            "int .. int | String -> int .. int | String -> bool",
         ),
         (
             "(x: int .. int | String -> bool) -> int",
-            "((x: (int .. int | String -> bool)) -> int)",
+            "(x: int .. int | String -> bool) -> int",
+        ),
+    ] {
+        let t = back(text);
+        assert_eq!(t.to_string(), shown, "{text}");
+        assert_eq!(mismatch(&t, shown), None, "{text}");
+    }
+}
+
+/// A function type is printed with the parentheses the grammar needs and no others (DESIGN.md
+/// sec:grammar): bare where a whole type stands, as a tuple component, a parameter, a payload
+/// and an arrow's result; parenthesized as an operand of `|` and `&` and as the key of `->?`,
+/// and as a result when it has a bounds clause. Each text reads back to the type printed.
+#[test]
+fn function_types_print_with_only_the_parentheses_the_grammar_needs() {
+    for (text, shown) in [
+        // In a tuple.
+        ("(((int) -> int), String)", "((int) -> int, String)"),
+        ("(((int) -> int),)", "((int) -> int,)"),
+        // In a union, alone and inside a tuple.
+        ("((int) -> int) | String", "String | ((int) -> int)"),
+        (
+            "((int) -> int) | ((String) -> String)",
+            "((int) -> int) | ((String) -> String)",
+        ),
+        (
+            "(((int) -> int) | String, bool)",
+            "(String | ((int) -> int), bool)",
+        ),
+        // As a result: `->` groups to the right.
+        ("(int) -> ((String) -> bool)", "(int) -> (String) -> bool"),
+        ("((int) -> (String) -> bool)", "(int) -> (String) -> bool"),
+        // As a parameter, alone, with another, and by name.
+        ("(((int) -> Never)) -> Never", "((int) -> Never) -> Never"),
+        (
+            "(((int) -> Never), int) -> Never",
+            "((int) -> Never, int) -> Never",
+        ),
+        ("(f: ((int) -> int)) -> int", "(f: (int) -> int) -> int"),
+        // Nested functions, to the left and to the right.
+        (
+            "(((((int) -> int)) -> int)) -> int",
+            "(((int) -> int) -> int) -> int",
+        ),
+        (
+            "(((int) -> int)) -> ((int) -> ((int) -> int))",
+            "((int) -> int) -> (int) -> (int) -> int",
+        ),
+        // A union inside a function's result, of plain types and with a function.
+        ("(int) -> (int | String)", "(int) -> int | String"),
+        (
+            "(int) -> (((int) -> int) | String)",
+            "(int) -> String | ((int) -> int)",
+        ),
+        // A payload.
+        ("#a(((int) -> int))", "#a((int) -> int)"),
+        ("#a(f: ((int) -> int))", "#a(f: (int) -> int)"),
+        // An intersection of arrows: each arrow parenthesized, the whole bare where it stands.
+        (
+            "(((int) -> int) & ((String) -> String), bool)",
+            "(((int) -> int) & ((String) -> String), bool)",
+        ),
+        (
+            "(((int) -> int) & ((String) -> String)) | bool",
+            "bool | ((int) -> int) & ((String) -> String)",
+        ),
+        // A bounds clause: bare where a whole type stands, parenthesized as a result.
+        (
+            "((T) -> T for T in int | f64, int)",
+            "((T) -> T for T in int | f64, int)",
+        ),
+        (
+            "(int) -> ((T) -> T for T in int | f64)",
+            "(int) -> ((T) -> T for T in int | f64)",
+        ),
+        // The key of `->?`: a function and a tuple of other than one component parenthesized.
+        ("((int) -> int) ->? int", "((int) -> int) ->? int"),
+        ("((int, int)) ->? int", "((int, int)) ->? int"),
+        ("(int,) ->? int", "(int,) ->? int"),
+        ("int ->? (int ->? int)", "int ->? int ->? int"),
+        // A union as the key: each operand as in any union.
+        (
+            "(((int, int)) | String) ->? int",
+            "String | (int, int) ->? int",
+        ),
+        (
+            "(((int) -> int) | String) ->? int",
+            "String | ((int) -> int) ->? int",
+        ),
+        // A bounds clause as the value of `->?`, and in a list of parameters before another.
+        (
+            "int ->? ((T) -> T for T in int | f64)",
+            "int ->? ((T) -> T for T in int | f64)",
+        ),
+        (
+            "(((T) -> T for T in int | f64), int) -> int",
+            "((T) -> T for T in int | f64, int) -> int",
         ),
     ] {
         let t = back(text);
@@ -702,7 +797,7 @@ fn the_empty_type_prints_as_never_and_reads_back() {
     assert_eq!(union.to_string(), "int");
     let f = back("(int) -> Never");
     let shown = f.to_string();
-    assert_eq!(shown, "((int) -> Never)");
+    assert_eq!(shown, "(int) -> Never");
     assert_eq!(mismatch(&f, &shown), None, "{shown}");
     assert_eq!(back(&shown), f);
 }
@@ -755,7 +850,7 @@ fn an_empty_product_prints_as_never_and_reads_back() {
     assert_eq!(union.to_string(), "bool");
     let f = back("(int) -> (Never, int)");
     let shown = f.to_string();
-    assert_eq!(shown, "((int) -> Never)");
+    assert_eq!(shown, "(int) -> Never");
     assert_eq!(mismatch(&f, &shown), None, "{shown}");
     assert_eq!(back(&shown), f);
 }

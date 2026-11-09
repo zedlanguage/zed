@@ -121,7 +121,7 @@ fn a_bounded_variable_inside_a_function_parameter_is_printed_in_its_own_clause()
     let s = sig(src, "ap");
     assert_eq!(
         s.to_string(),
-        "(((T) -> T for T in int | rat), U, U) -> U for U in int | f64 | rat"
+        "((T) -> T for T in int | rat, U, U) -> U for U in int | f64 | rat"
     );
     writes_back(&s.to_string());
     // A higher-order parameter that is called: its type is `_`, and so is the call's result.
@@ -146,13 +146,13 @@ fn a_signature_that_bounds_a_name_already_bounded_around_it_takes_a_fresh_name()
     // only from a type built of two signatures; the resolver rejects `T` bounded twice, so the
     // printer renames the inner one.
     let text = shadowing("(T) -> T for T in int").to_string();
-    assert_eq!(text, "(((U) -> U for U in int), T) -> T for T in int | rat");
+    assert_eq!(text, "((U) -> U for U in int, T) -> T for T in int | rat");
     writes_back(&text);
     // A fresh name avoids the inner signature's other names too: `U` is its own already.
     let text = shadowing("(T, U) -> (T, U) for T in int, U in rat").to_string();
     assert_eq!(
         text,
-        "(((V, U) -> (V, U) for V in int, U in rat), T) -> T for T in int | rat"
+        "((V, U) -> (V, U) for V in int, U in rat, T) -> T for T in int | rat"
     );
     writes_back(&text);
     // An inner signature's own variable that no carriers bound is `_`, not the outer `T`.
@@ -165,7 +165,7 @@ fn a_signature_that_bounds_a_name_already_bounded_around_it_takes_a_fresh_name()
     let mut s = shadowing("(int) -> int");
     s.arrows[0].params[0] = Ty::func(Arc::new(inner));
     let text = s.to_string();
-    assert_eq!(text, "(((_) -> _), T) -> T for T in int | rat");
+    assert_eq!(text, "((_) -> _, T) -> T for T in int | rat");
     writes_back(&text);
 }
 
@@ -211,8 +211,7 @@ fn printing_signatures_of_many_variables_scales() {
     let text = nested(4).to_string();
     assert_eq!(
         text,
-        "((((((((W) -> W for W in int), V) -> V for V in int | rat), U) -> U for U in int | rat), \
-         T) -> T for T in int | rat)"
+        "((((W) -> W for W in int, V) -> V for V in int | rat, U) -> U for U in int | rat, T) -> T for T in int | rat"
     );
     writes_back(&text);
     scaling::check(

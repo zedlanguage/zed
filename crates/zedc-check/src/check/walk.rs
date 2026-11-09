@@ -1556,8 +1556,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let shown = self.show(t);
                         let mut notes = self.derive(&[d.span]);
                         notes.extend(self.reasons(t));
+                        let both =
+                            format!("{} | {}", self.show_in_union(t), self.text_in_union(&dt));
                         let dt = self.text(&dt);
-                        notes.extend(default_repairs(&p.name, &dt, &shown, d.span));
+                        notes.extend(default_repairs(&p.name, &dt, &shown, &both, d.span));
                         self.error_with(
                             d.span,
                             format!(
@@ -1571,8 +1573,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => {
                     if !self.subtype(&dt, t) {
                         let why = dt.refused(t);
+                        let both =
+                            format!("{} | {}", self.text_in_union(t), self.text_in_union(&dt));
                         let (dt, t) = (self.text(&dt), self.text(t));
-                        let menu = default_repairs(&p.name, &dt, &t, d.span);
+                        let menu = default_repairs(&p.name, &dt, &t, &both, d.span);
                         self.error_offering(
                             d.span,
                             format!(
@@ -6696,11 +6700,14 @@ impl<'t, 'a> Ck<'t, 'a> {
 }
 
 /// The repairs of a default of type `got` for the parameter `name` of type `want`, each placed
-/// at the default, `span`.
-fn default_repairs(name: &str, got: &str, want: &str, span: Span) -> Vec<Note> {
+/// at the default, `span`; `both` is the text of their union, `want | got`, each operand
+/// parenthesized where it needs to be.
+fn default_repairs(name: &str, got: &str, want: &str, both: &str, span: Span) -> Vec<Note> {
     [
         format!("repair: write a default of type {want}"),
-        format!("repair: declare `{name}` with a type that holds {got} as well, as `{name}: {want} | {got}`"),
+        format!(
+            "repair: declare `{name}` with a type that holds {got} as well, as `{name}: {both}`"
+        ),
     ]
     .into_iter()
     .map(|text| Note { span, text })

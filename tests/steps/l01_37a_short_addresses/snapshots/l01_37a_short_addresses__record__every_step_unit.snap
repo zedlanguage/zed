@@ -162,7 +162,7 @@ l01_21_test_runner/zed/labels.zed
             Step {
                 line: 4,
                 col: 1,
-                text: "`stamp` is declared here, `(int, handler: ((grams: int) -> String)) -> String`",
+                text: "`stamp` is declared here, `(int, handler: (grams: int) -> String) -> String`",
                 source: "stamp(positional weight: int, handler: (grams: int) -> String) = handler(grams: weight);",
                 width: 88,
             },

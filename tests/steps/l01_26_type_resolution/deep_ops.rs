@@ -353,6 +353,35 @@ fn meet_meets_and_contains_of_shared_tuples_take_linear_time() {
     );
 }
 
+/// A type `n` levels deep in which the level below stands, in turn, as a function's parameter,
+/// in a union in a function's result, as a tuple component and as a member of a union: the
+/// places where a function type needs or does not need parentheses (PRINT-fn-parens).
+fn functions(n: usize) -> Ty {
+    (0..n).fold(z(), |t, k| match k % 4 {
+        0 => func(t, z()),
+        1 => func(z(), t.union(&y())),
+        2 => Ty::tuple(vec![t, z()]),
+        _ => t.union(&y()),
+    })
+}
+
+#[test]
+fn printing_a_type_with_a_function_at_every_place_takes_linear_time_in_the_depth() {
+    // The printer decides each part's parentheses from where it stands, once per part, and
+    // what it writes reads back as the type it printed.
+    let printed = functions(5).to_string();
+    assert_eq!(printed, "(#y | ((#z) -> #y | ((#z) -> #z), #z)) -> #z");
+    let again = zedc::check::read::parse_type(&printed).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(again.to_string(), printed);
+    assert!(again.subtype(&functions(5)) && functions(5).subtype(&again));
+    linear(
+        "printing a type n deep with a function at every place",
+        2000,
+        functions,
+        |t| assert!(!t.to_string().is_empty()),
+    );
+}
+
 #[test]
 fn debug_of_a_type_takes_linear_time_in_the_depth() {
     linear(

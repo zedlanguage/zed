@@ -1283,14 +1283,14 @@ impl Shape {
                 [s] if name == "errs" && s.is_family() && *t == Ty::func(s.clone()) => {
                     parts.push(Print::Family(s));
                 }
-                _ => parts.push(Print::Ty(t)),
+                _ => parts.push(Print::Ty(t, PrintAt::Any)),
             }
         }
         for (f, t) in &self.fields {
             between(parts, &mut first, ", ");
             parts.push(Print::Text(f));
             parts.push(Print::Text(": "));
-            parts.push(Print::Ty(t));
+            parts.push(Print::Ty(t, PrintAt::Any));
         }
         parts.push(Print::Text(")"));
     }
@@ -7506,13 +7506,26 @@ impl Ty {
     /// string and copied into the whole: copying cost the depth of each part, so O(n^2) for a
     /// function type n deep. A variable `scope` does not name is printed `_`, once.
     fn write(&self, out: &mut String, scope: &mut Scope) {
-        write_parts(Print::Ty(self), out, scope);
+        write_parts(Print::Ty(self, PrintAt::Any), out, scope);
+    }
+
+    /// Its text, in type syntax, as one operand of a union: a function in it is parenthesized,
+    /// as in `((int) -> int) | String`, since `->` binds looser than `|`.
+    pub fn text_in_union(&self) -> String {
+        let mut out = String::new();
+        write_parts(
+            Print::Ty(self, PrintAt::Union),
+            &mut out,
+            &mut Scope::default(),
+        );
+        out
     }
 
     /// Writes the start of its text to `out`, and pushes the parts that follow to `parts`, in
     /// order; with `found`, without its atom `#notFound`, as the value type of a morphism type
-    /// is written ([`Sig::morphism`]).
-    fn parts<'a>(&'a self, out: &mut String, parts: &mut Vec<Print<'a>>, found: bool) {
+    /// is written ([`Sig::morphism`]). It stands at `at`, which decides its parentheses; of two
+    /// members or more, each stands as an operand of `|`.
+    fn parts<'a>(&'a self, out: &mut String, parts: &mut Vec<Print<'a>>, found: bool, at: PrintAt) {
         let mut first = true;
         // An atom whose payloads are known prints each payload's type, `#ioError(op: String,
         // path: String, why: String)` (L29-print); the kernel set holds it with any payload.
@@ -7531,9 +7544,24 @@ impl Ty {
         let set = rest.as_ref().unwrap_or(&self.set);
         let kept = found.then(|| set - &KType::atom("notFound"));
         let set = kept.as_ref().unwrap_or(set);
+        let members = usize::from(!set.is_empty())
+            + shaped.iter().map(|(_, ss)| ss.len()).sum::<usize>()
+            + self.tuples.len()
+            + self.fns.len()
+            + usize::from(!self.vars.is_empty() || self.dynamic);
+        let at = match members {
+            0 | 1 => at,
+            _ => PrintAt::Union,
+        };
         if !set.is_empty() {
             first = false;
-            out.push_str(&set.surface_in_union().to_string());
+            let text = match at {
+                PrintAt::Any | PrintAt::Result => set.surface(),
+                PrintAt::Key => set.surface_key(),
+                PrintAt::Bound => set.surface_bound(),
+                PrintAt::Union => set.surface_in_union(),
+            };
+            out.push_str(&text.to_string());
         }
         for (n, ss) in shaped {
             for s in ss {
@@ -7543,19 +7571,24 @@ impl Ty {
         }
         for cs in &self.tuples {
             between(parts, &mut first, " | ");
-            parts.push(Print::Text("("));
+            // A tuple alone as an arrow's key is parenthesized, `((int, int)) ->? V`, since
+            // `(int, int) ->? V` has two parameters; `(int,) ->? V` has one.
+            let wrap = at == PrintAt::Key && cs.len() != 1;
+            parts.push(Print::Text(if wrap { "((" } else { "(" }));
             let mut one = true;
             for c in cs {
                 between(parts, &mut one, ", ");
-                parts.push(Print::Ty(c));
+                parts.push(Print::Ty(c, PrintAt::Any));
             }
-            parts.push(Print::Text(if cs.len() == 1 { ",)" } else { ")" }));
+            parts.push(Print::Text(match (cs.len() == 1, wrap) {
+                (true, _) => ",)",
+                (false, true) => "))",
+                (false, false) => ")",
+            }));
         }
         for s in &self.fns {
             between(parts, &mut first, " | ");
-            parts.push(Print::Text("("));
-            parts.push(Print::Sig(s));
-            parts.push(Print::Text(")"));
+            parts.push(Print::Sig(s, at));
         }
         parts.push(Print::Vars(self, first));
     }
@@ -7587,9 +7620,10 @@ impl Ty {
 /// A part of the text of a type still to be written, on the stack [`write_parts`] keeps.
 enum Print<'a> {
     Text(&'a str),
-    Ty(&'a Ty),
-    Sig(&'a Sig),
-    /// The value type of a morphism type: a type without its atom `#notFound`.
+    Ty(&'a Ty, PrintAt),
+    Sig(&'a Sig, PrintAt),
+    /// The value type of a morphism type, which stands as a result: a type without its atom
+    /// `#notFound`.
     Found(&'a Ty),
     /// A signature written as a family ([`Sig::family_parts`]).
     Family(&'a Sig),
@@ -7597,6 +7631,23 @@ enum Print<'a> {
     Vars(&'a Ty, bool),
     /// The bounds clause of a signature, which closes the variables it opened.
     Bounds(&'a Sig, Vec<(Arc<str>, u8)>),
+}
+
+/// Where the text of a type stands, which decides the parentheses it needs to read back as one
+/// type (DESIGN.md sec:grammar, `Type`, `Arrow`, `TypeUnion`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PrintAt {
+    /// Where a whole `Type` stands: a tuple component, a parameter, a payload, the top.
+    Any,
+    /// An arrow's result, an `Arrow`: a function with a bounds clause is parenthesized.
+    Result,
+    /// The key of `K -> V` or `K ->? V`, a `TypeUnion`: a function is parenthesized, and so is a
+    /// tuple of other than one component, which would read as the parameters.
+    Key,
+    /// A bound of `L .. U -> V`, a `TypeUnion`: a function is parenthesized.
+    Bound,
+    /// An operand of `|`: a function is parenthesized.
+    Union,
 }
 
 /// A signature written as a morphism type ([`Sig::morphism`]).
@@ -7612,28 +7663,28 @@ enum Morphism<'a> {
 }
 
 impl<'a> Morphism<'a> {
-    /// Pushes the parts of its text to `parts`, in order. A key type that holds a tuple is
-    /// parenthesized, so that `((int, int)) ->? V` is not read as two parameters.
+    /// Pushes the parts of its text to `parts`, in order. The key stands at [`PrintAt::Key`],
+    /// so that `((int, int)) ->? V` is not read as two parameters.
     fn parts(&self, parts: &mut Vec<Print<'a>>) {
-        let key = |t: &'a Ty, parts: &mut Vec<Print<'a>>| {
-            if t.tuples.is_empty() {
-                parts.push(Print::Ty(t));
-            } else {
-                parts.extend([Print::Text("("), Print::Ty(t), Print::Text(")")]);
-            }
-        };
         match *self {
-            Morphism::Partial { key: k, value } => {
-                key(k, parts);
-                parts.extend([Print::Text(" ->? "), Print::Found(value)]);
+            Morphism::Partial { key, value } => {
+                parts.extend([
+                    Print::Ty(key, PrintAt::Key),
+                    Print::Text(" ->? "),
+                    Print::Found(value),
+                ]);
             }
             Morphism::Bounded {
                 lower,
                 upper,
                 value,
             } => {
-                parts.extend([Print::Ty(lower), Print::Text(" .. "), Print::Ty(upper)]);
-                parts.extend([Print::Text(" -> "), Print::Ty(value)]);
+                parts.extend([
+                    Print::Ty(lower, PrintAt::Bound),
+                    Print::Text(" .. "),
+                    Print::Ty(upper, PrintAt::Bound),
+                ]);
+                parts.extend([Print::Text(" -> "), Print::Ty(value, PrintAt::Result)]);
             }
         }
     }
@@ -7649,9 +7700,9 @@ fn write_parts<'a>(start: Print<'a>, out: &mut String, scope: &mut Scope) {
         let from = stack.len();
         match part {
             Print::Text(text) => out.push_str(text),
-            Print::Ty(t) => t.parts(out, &mut stack, false),
-            Print::Found(t) => t.parts(out, &mut stack, true),
-            Print::Sig(s) => s.parts(scope, &mut stack),
+            Print::Ty(t, at) => t.parts(out, &mut stack, false, at),
+            Print::Found(t) => t.parts(out, &mut stack, true, PrintAt::Result),
+            Print::Sig(s, at) => s.parts(scope, &mut stack, at),
             Print::Family(s) => s.family_parts(scope, &mut stack),
             Print::Vars(t, first) => t.write_vars(first, out, scope),
             Print::Bounds(s, bounds) => {
@@ -7690,38 +7741,52 @@ impl Sig {
     /// Writes its text, in type syntax, to `out`: its variables bounded by carriers by name, in
     /// a bounds clause after the arrows, and the others `_`.
     fn write(&self, out: &mut String, scope: &mut Scope) {
-        write_parts(Print::Sig(self), out, scope);
+        write_parts(Print::Sig(self, PrintAt::Any), out, scope);
     }
 
-    /// Opens its variables in `scope` and pushes the parts of its text to `parts`, in order.
-    fn parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>) {
+    /// Opens its variables in `scope` and pushes the parts of its text to `parts`, in order. It
+    /// stands at `at`: a text with a bounds clause is parenthesized anywhere but where a whole
+    /// type stands, and an arrow also as a key, a bound or an operand of `|`; an intersection of
+    /// arrows, each parenthesized, binds tighter than `|` and needs nothing more.
+    fn parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>, at: PrintAt) {
         let bounds = scope.open(self);
-        if let Some(m) = self.morphism() {
-            m.parts(parts);
-            parts.push(Print::Bounds(self, bounds));
-            return;
+        let morphism = self.morphism();
+        let several = morphism.is_none() && self.arrows.len() != 1;
+        let wrap = match at {
+            PrintAt::Any => false,
+            PrintAt::Result => !bounds.is_empty(),
+            PrintAt::Key | PrintAt::Bound | PrintAt::Union => !bounds.is_empty() || !several,
+        };
+        if wrap {
+            parts.push(Print::Text("("));
         }
-        let several = self.arrows.len() != 1;
-        let mut first = true;
-        for a in &self.arrows {
-            between(parts, &mut first, " & ");
-            parts.push(Print::Text(if several { "((" } else { "(" }));
-            let mut one = true;
-            for (p, t) in self.params.iter().zip(&a.params) {
-                between(parts, &mut one, ", ");
-                if !p.positional {
-                    parts.push(Print::Text(&p.name));
-                    parts.push(Print::Text(": "));
+        if let Some(m) = morphism {
+            m.parts(parts);
+        } else {
+            let mut first = true;
+            for a in &self.arrows {
+                between(parts, &mut first, " & ");
+                parts.push(Print::Text(if several { "((" } else { "(" }));
+                let mut one = true;
+                for (p, t) in self.params.iter().zip(&a.params) {
+                    between(parts, &mut one, ", ");
+                    if !p.positional {
+                        parts.push(Print::Text(&p.name));
+                        parts.push(Print::Text(": "));
+                    }
+                    parts.push(Print::Ty(t, PrintAt::Any));
                 }
-                parts.push(Print::Ty(t));
-            }
-            parts.push(Print::Text(") -> "));
-            parts.push(Print::Ty(&a.result));
-            if several {
-                parts.push(Print::Text(")"));
+                parts.push(Print::Text(") -> "));
+                parts.push(Print::Ty(&a.result, PrintAt::Result));
+                if several {
+                    parts.push(Print::Text(")"));
+                }
             }
         }
         parts.push(Print::Bounds(self, bounds));
+        if wrap {
+            parts.push(Print::Text(")"));
+        }
     }
 
     /// The morphism type it is written as, if it is one: a function of one unnamed positional
@@ -7782,9 +7847,9 @@ impl Sig {
     fn family_parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>) {
         let bounds = scope.open(self);
         let key = &self.arrows[0].params[0];
-        parts.push(Print::Ty(key));
+        parts.push(Print::Ty(key, PrintAt::Key));
         parts.push(Print::Text(" ->? "));
-        parts.push(Print::Ty(key));
+        parts.push(Print::Ty(key, PrintAt::Result));
         parts.push(Print::Bounds(self, bounds));
     }
 }

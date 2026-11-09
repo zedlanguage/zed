@@ -1473,8 +1473,9 @@ impl<'a> Formatter<'a> {
                         TypeParam {
                             name: None, ty: p, ..
                         },
-                    ] => match p.kind {
-                        TypeKind::Tuple(_) => {
+                    ] => match &p.kind {
+                        // `(T,)` cannot read as a parameter list, so a 1-tuple key needs no pair.
+                        TypeKind::Tuple(ts) if ts.len() != 1 => {
                             self.put("(");
                             then![stack; Job::Ty { t: p, min: 0 }, put(")")];
                         }

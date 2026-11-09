@@ -10,7 +10,7 @@ use super::{sig, type_errors};
 fn a_function_type_may_declare_the_result_never() {
     let text = "apply(positional h: (int) -> Never, positional n: int) = h(n);\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
-    assert_eq!(sig(text, "apply"), "(((int) -> Never), int) -> Never");
+    assert_eq!(sig(text, "apply"), "((int) -> Never, int) -> Never");
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn a_tuple_with_an_empty_component_is_never() {
         // A function whose result has no value returns no value.
         (
             "f(positional g: (int) -> (Never, int)) = g(1);\n",
-            "(((int) -> Never)) -> Never",
+            "((int) -> Never) -> Never",
         ),
         // The empty tuple has one value, and is no `Never`.
         ("f(positional x: ()) = x;\n", "(()) -> ()"),

@@ -196,7 +196,7 @@ fn arms() -> Vec<(&'static str, String, String)> {
             refusal(&["H"], &["A"], vec![m(h(), h(), diff(int(), p()))]),
             outside(
                 "H",
-                "a recursive occurrence stands in the guarantee of `(H(A)) -> (int \\ A)`, whose \
+                "a recursive occurrence stands in the guarantee of `(H(A)) -> int \\ A`, whose \
                  value type `int \\ A` has a parameter under a complement or to the right of \
                  `\\`, where a larger argument gives a smaller type, so it may be empty",
             ),
@@ -206,7 +206,7 @@ fn arms() -> Vec<(&'static str, String, String)> {
             refusal(&["T"], &[], vec![m(r(0), r(0), ab)]),
             outside(
                 "T",
-                "a recursive occurrence stands in the guarantee of `(T) -> (#a & #b)`, whose \
+                "a recursive occurrence stands in the guarantee of `(T) -> #a & #b`, whose \
                  value type `#a & #b` is empty",
             ),
         ),

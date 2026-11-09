@@ -151,11 +151,78 @@ fn the_plans_definitions() {
     assert_eq!(
         rejected(vec![def("T", &[], t)]),
         "the type `T` is outside the form the checker accepts: a recursive occurrence stands in \
-         the guarantee of `(T) -> (#a & #b)`, whose value type `#a & #b` is empty; the check is \
+         the guarantee of `(T) -> #a & #b`, whose value type `#a & #b` is empty; the check is \
          sufficient, not necessary, so a type it refuses may still be monotone in emptiness. To repair it, write the type so that no recursive occurrence \
          stands there; one inside a tuple, an atom's payload, a union or a function's value \
          type is always accepted"
     );
+}
+
+/// A recursive occurrence in a message is written with the parentheses the grammar needs and
+/// no others (DESIGN.md sec:grammar): an argument is a whole type, so a union stands bare in
+/// it; a tuple of one component is `(A,)`; a tuple as the key of `->?` is parenthesized, or it
+/// would read as two parameters. Each text parses as a type.
+#[test]
+fn an_irregular_occurrence_is_written_with_only_the_parentheses_it_needs() {
+    let a = || Expr::Param(0);
+    let pair = || Expr::Tuple(vec![a(), a()]);
+    for (arg, shown) in [
+        (Expr::Tuple(vec![a()]), "Nest((A,))"),
+        (or(vec![a(), bare("x")]), "Nest(A | #x)"),
+        (
+            Expr::Morphism(Box::new(ty(Type::empty())), Box::new(pair()), Box::new(a())),
+            "Nest(((A, A)) ->? A)",
+        ),
+        (
+            Expr::Tuple(vec![Expr::exact(a(), a()), or(vec![a(), bare("x")])]),
+            "Nest(((A) -> A, A | #x))",
+        ),
+    ] {
+        let nest = def(
+            "Nest",
+            &["A"],
+            or(vec![
+                atom("leaf", vec![a()]),
+                atom("node", vec![r(0, vec![arg])]),
+            ]),
+        );
+        let message = rejected(vec![nest]);
+        assert!(
+            message.contains(&format!("its recursive occurrence `{shown}` changes")),
+            "{message}"
+        );
+        let tokens = zedc::lex::lex_fence(shown).expect("tokens");
+        zedc::parse::parse(shown, &tokens, "Type", zedc::parse::TOP)
+            .unwrap_or_else(|e| panic!("{shown}: {e:?}"));
+    }
+}
+
+/// Writing an irregular occurrence whose argument is `d` levels deep, a function's result, a
+/// tuple component and a member of a union in turn, decides each part's parentheses once.
+#[test]
+fn writing_an_irregular_occurrence_scales_with_its_depth() {
+    let a = || Expr::Param(0);
+    let arg = |d: usize| {
+        (0..d).fold(a(), |x, k| match k % 3 {
+            0 => Expr::exact(a(), x),
+            1 => Expr::Tuple(vec![x, a()]),
+            _ => or(vec![x, bare("x")]),
+        })
+    };
+    let nest = |d: usize| {
+        def(
+            "Nest",
+            &["A"],
+            or(vec![
+                atom("leaf", vec![a()]),
+                atom("node", vec![r(0, vec![arg(d)])]),
+            ]),
+        )
+    };
+    assert!(rejected(vec![nest(3)]).contains("`Nest(((A) -> A, A) | #x)`"));
+    zed_tests::scaling::check("writing an irregular occurrence, by depth", 200, |d| {
+        assert!(!rejected(vec![nest(d)]).is_empty());
+    });
 }
 
 #[test]

@@ -576,7 +576,7 @@ fn show_with(t: &Ty, masks: &Masks) -> String {
         rest.vars.remove(v);
     }
     if !rest.is_empty() {
-        parts.push(rest.to_string());
+        parts.push(rest.text_in_union());
     }
     let text = parts.join(" | ");
     #[cfg(feature = "printed-types")]
@@ -2231,6 +2231,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The text of `t` in a message.
     fn text(&self, t: &Ty) -> String {
         self.settled(t).to_string()
+    }
+
+    /// The text of `t` in a message as one operand of a union, `T | U`: a function in it is
+    /// parenthesized.
+    fn text_in_union(&self, t: &Ty) -> String {
+        self.settled(t).text_in_union()
+    }
+
+    /// [`Self::show`] as one operand of a union, `T | U`: a function in it is parenthesized.
+    fn show_in_union(&self, t: &Ty) -> String {
+        let t = &self.settled(t);
+        match self.masks(t) {
+            masks if masks.is_empty() => t.text_in_union(),
+            masks => show_with(t, &masks),
+        }
     }
 
     /// The text of `s` in a message.

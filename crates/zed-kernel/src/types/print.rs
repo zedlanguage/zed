@@ -42,7 +42,21 @@ impl Type {
         self.surface_at(At::Prim)
     }
 
-    fn surface_at(&self, at: At) -> Surface {
+    /// The type in the surface syntax as the key of an arrow, `K -> V` or `K ->? V`, parenthesized
+    /// where it would not be one: an arrow, and a tuple, which would read as the parameters.
+    pub fn surface_key(&self) -> Surface {
+        self.surface_at(At::Key)
+    }
+
+    /// The type in the surface syntax as a bound of `L .. U -> V`, parenthesized where it would
+    /// not be one: an arrow.
+    pub fn surface_bound(&self) -> Surface {
+        self.surface_at(At::Bound)
+    }
+
+    /// The type in the surface syntax at `at`, parenthesized where the text would not be read
+    /// there as one operand.
+    pub(crate) fn surface_at(&self, at: At) -> Surface {
         let mut p = Printer::default();
         let root = p.refer(Item::Ty(None, self.clone()));
         let Seg::Node(i, _) = root.segs[0] else {
@@ -59,7 +73,7 @@ impl Type {
 
 /// How a text binds, for parenthesizing it as an operand.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-enum Class {
+pub(crate) enum Class {
     Arrow,
     Union,
     Diff,
@@ -73,7 +87,7 @@ enum Class {
 
 /// Where a text stands, and so which classes it may have there unparenthesized.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-enum At {
+pub(crate) enum At {
     Any,
     Union,
     And,
@@ -84,7 +98,7 @@ enum At {
 }
 
 impl At {
-    fn admits(self, c: Class) -> bool {
+    pub(crate) fn admits(self, c: Class) -> bool {
         use Class as C;
         match self {
             At::Any => true,
@@ -724,9 +738,10 @@ impl Printer {
         segs.push(Seg::Str(if one { ",)" } else { ")" }.into()));
         Text {
             segs,
-            class: match ctx {
-                None => Class::Tuple,
-                Some(_) => Class::Prim,
+            // `(T,)` cannot read as parameters, so it is a primary even as a key.
+            class: match ctx.is_none() && !one {
+                true => Class::Tuple,
+                false => Class::Prim,
             },
         }
     }

@@ -98,7 +98,7 @@ fn a_type_variable_used_as_a_tuple_gives_a_variable_each_call_binds() {
 fn a_declared_type_is_kept() {
     assert_eq!(
         sig("apply(positional x, f: (int) -> int) = f(x);\n", "apply"),
-        "(int, f: ((int) -> int)) -> int"
+        "(int, f: (int) -> int) -> int"
     );
     assert_eq!(
         sig(
