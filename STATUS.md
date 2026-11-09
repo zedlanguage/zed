@@ -1670,10 +1670,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| GROUP-refusal | impl attempt 1 | 2026-11-05 04:07 | GROUP-refusal-share done at 6156609c on wt/group-refusal; GROUP-refusal and REFUSE-group-site ready at 6156609c; 82 pieces 0 failed |
+| GROUP-refusal | repair attempt 1 | 2026-11-05 04:07 | follow-up feeds corrected to GROUP-cycle-dup; dag-overrides notNeeds on VERDICT-fork-value and MSG-audit-check removes the cycle I caused; board-check-docs: onl |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
+| LIT-bare | impl attempt 1 | 2026-11-09 05:01 | rerunning 43 failing pieces after the kn sweep |
 | REFUSE-group-site | impl attempt 1 | 2026-11-05 04:07 | ready 39d523eb on wt/group-refusal: refused check names the head group and lists its definitions; group_site 3 tests, control fails both pins |
-| SCALE-casts-spread | impl attempt 1 | 2026-11-09 04:01 | ready: wt/scale-casts-spread 47061376 on b4e3e5e8; cause glibc tcache, run_tests.sh sets tcache_count=0, retry removed, spread 0.034% alone / 3.5% in group; cub |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
