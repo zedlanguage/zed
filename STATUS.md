@@ -1640,18 +1640,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ATOM-payload-unify | impl attempt 1 | 2026-11-08 05:12 | started; worktree wt/atom-payload-unify from origin/main a70df51b |
-| C2-chain-general | impl attempt 2 | 2026-11-08 02:58 | shadow() projection onto factors in part_bounds: two-level slow class (open_side_chain) now 0 hull sides, 11.7x at 16->128 (was 89.5x bytes, 24->192 sides, fail |
-| LOAD-holes-mod | impl attempt 1 | 2026-11-07 17:30 | ready: wt/load-holes-mod 5f3d02ac on a70df51b; fmt, clippy clean; groups 284 pieces 0 failed (with doc check); COMPLEXITY/STATUS/ZED_PORT_GAPS updated |
-| MSG-audit-check | impl attempt 1 | 2026-11-09 00:16 | baseline: 654 pieces, 1 failed (l01_21_test_runner), load 21-53 |
+| C2-chain-general | impl attempt 2 | 2026-11-08 02:58 | review items started: name-tie test, top-level // in products, Tier::Local sharing |
+| MSG-audit-check | impl attempt 1 | 2026-11-09 00:16 | in progress: commit d629cdea (rebased on origin/main, includes l01_21 fix: Row::LoopedAlternatives + sync unescape); affected-group run 5 going; next: missing-a |
 | MSG-audit-front | impl attempt 1 | 2026-11-09 00:16 | started: worktree /home/luke/Work/wt/msg-audit-front on 89c189c0 |
-| MSG-audit-solve-rt | impl attempt 1 | 2026-11-09 00:16 | ready fa4295f7: runtime, native build, lowering, Omega refusal and Scope warning messages rewritten; final run 42 pieces 0 failed with docs (load 29-59), earlie |
-| REFUSAL-nfa-refuse | impl attempt 1 | 2026-11-07 17:30 | reproduced on a70df51b release: nfa 59M..10.6G instr n 2..8, 73.9G n 10; cost is verdict_alone second value search Search{strict}.rep (114..20521 types, 300..16 |
+| MSG-audit-solve-rt | repair attempt 1 | 2026-11-09 00:16 | red: new test the_split_repair_names_functions_the_program_does_not_define fails on 21528083 (ok1 already declared with these parameter types); fix: free_names  |
+| REFUSAL-nfa-refuse | impl attempt 1 | 2026-11-07 17:30 | checker groups 662 pieces: 661 pass, l01_36b_link_identity failed once at load 48-65, passed 3 times alone (load 19-26), does not reach the type checker: timing |
 | SCALE-fix-wide | impl attempt 1 | 2026-11-07 11:37 | returned at cd875d85a49c693bdf3b639b207f6caef4d440b1: cube and equality fixed, 8 returned with evidence; load 17.52 23.82 25.89 |
-| ST-B4 | impl attempt 2 | 2026-11-07 18:55 | ready: commit adb30524 on wt/st-b4 (not merged, not pushed); ^l01_39 75 pieces 444 passed 0 failed 15 ignored; perf data and profiling build deleted |
-| TABLE-short-scan | impl attempt 1 | 2026-11-07 12:26 | ready: wt/table-short-scan 5d46e24c on a4feb3a2; slow test 145 s -> 7.5 s alone, piece 8.1 s alone at load 20; groups 153 pieces 0 failed with doc check; negati |
+| TABLE-short-scan | impl attempt fix | 2026-11-07 12:26 | ready 9b959ecd on 780e1e1d: join worst case explained (triangle question, AGM bound) at site and F103; plan row IMPORTS-untyped-join feeds SCALE-cover, plan exi |
 | TEST-audit | audit attempt 1 | 2026-11-08 13:02 | done: REPORT.md complete (Part 1: 156 checks, 89 committed, 46 partial, 13 missing; Part 2: 93.9% lines, 93.6% regions, 718 never-run functions; Part 3: 882 beh |
-| TRIVIAL-models-study | impl attempt 1 | 2026-11-09 01:16 | started: worktree /home/luke/Work/wt/trivial-models-study on 881d52b6, seeded; prototype goes in tests/steps/l22_08_vacuity (L22 not built yet) |
+| TRIVIAL-models-study | impl attempt 1 | 2026-11-09 01:16 | ready: impl 0cc90c14+a3f52b58 on 881d52b6 (14 tests pass), spec 076234e on zed 9bf5aaf (sec:theories item 3, L22.8, DOCS-TODO 36); check OK, spec groups 23 piec |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
