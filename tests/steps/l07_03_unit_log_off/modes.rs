@@ -30,6 +30,7 @@ const NOT_MODES: &[&str] = &[
     "per",
     "no",
     "two",
+    "three",
     "other",
     "first",
     "next",
@@ -74,6 +75,7 @@ const NOT_MODES: &[&str] = &[
     "runtime",
     "source",
     "compiler",
+    "itself",
     "number",
     "doubling",
     "sqlite",
@@ -213,10 +215,12 @@ fn the_table_has_the_two_modes_and_each_keeps_the_values() {
             "checked",
             "counting",
             "debug",
+            "default",
             "full",
             "guard-page",
             "optimized",
-            "precise"
+            "precise",
+            "strict"
         ]
     );
 }

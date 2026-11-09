@@ -142,10 +142,16 @@ impl WordTable {
         for (col, cell) in [c1, c2, c3].into_iter().enumerate() {
             for w in spans(cell) {
                 // A named argument (`nodes:`) is read with its call, which the row names, and a
-                // call (`target(…)`) refers to a word its own row counts.
+                // call (`target(…)`) refers to a word its own row counts. A command line, such as
+                // `zedc build --total`, names a compiler mode and is not a word of source.
                 let argument = w.strip_suffix(':').is_some_and(is_word);
                 let call = w.strip_suffix("(…)").is_some_and(is_word);
-                if UNCOUNTED.contains(&w) || w.starts_with("with ") || argument || call {
+                if UNCOUNTED.contains(&w)
+                    || w.starts_with("with ")
+                    || w.starts_with("zedc ")
+                    || argument
+                    || call
+                {
                     continue;
                 }
                 let (map, word) = if w.starts_with('@') {
