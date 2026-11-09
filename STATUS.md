@@ -1718,12 +1718,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CX-tradeoff-review | impl attempt 1 | 2026-11-09 15:11 | started; worktree made from origin/main 1aae48fb |
 | GROUP-overlaps-unfold | running | 2026-11-09 12:48 | deletes: none run, tried or canceled in this task; files I want removed (scratchpad): old_overlaps.rs new_overlaps.rs new_overlaps2.rs overlaps_doc.txt overlaps |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | MSG-fresh-name-clash | running | 2026-11-09 13:30 | noted for batch 88 (DOCS-TODO 54 and COMPLEXITY F140 renumber); deletes: none |
 | MSG-growth-projection-cause | impl attempt 1 | 2026-11-09 12:41 | ready at 2e4d1da9 on wt/growth-cause; 491 test pieces pass, load 17 to 37; deletes: none |
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | ready f7e39a3e on wt/if-shortcut-diff: differential tests, no difference; l01_39+s_01f 59 pieces 0 failed; clippy, fmt, docs (with preimage-ref) clean |
-| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | B2 (B1 + cgu=1 zed-kernel, zedc-lattice, zedc-int, zedc-presburger, zedc-stage) rebuild 415 s: block 600M, fees1 1000 874M, fees1 4000 3728M, fees100 736M, boun |
+| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | B2 one-line edit rebuild of l01_39 binary: zedc-preimage 77/92 s, zed-kernel 243/212 s (19 crates) at load 19-32: whole-crate cgu=1 on large workspace crates re |
 | PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | negative control on merged 5fcc15f1: new test deep_let::the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block fails, 1000 blocks peak 6.53 MB left 6 |
 | PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | random test (4000 cases; 60000 once: 49692 points, 46249 leave atoms out, 0 fail holds) finds no soundness bug; atoms lost in absorb/repair (own 49990, other di |
 | PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | differential vs main's tighten/hull_side test by test: 1,078,090 + 25,046 calls identical, 60 differ (all hull_side refusals Growth/Shadows on main now exact bo |
