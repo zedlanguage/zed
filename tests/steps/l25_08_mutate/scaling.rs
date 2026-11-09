@@ -103,7 +103,7 @@ fn chain_with_row(n: usize) -> String {
 
 /// [`chain_with_row`] with `x` undeclared: each `1` takes the carrier of `x` (DESIGN.md L1.26a),
 /// one `match` on it per literal, and each mutant runs about 6 times the work of the `int`
-/// chain's (COMPLEXITY.md F133).
+/// chain's (COMPLEXITY.md F135).
 fn generic_chain_with_row(n: usize) -> String {
     format!(
         "f(positional x) = x{} test {{ 0 -> {n} }}\n",

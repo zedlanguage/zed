@@ -153,7 +153,7 @@ main(stdin: Lines) -> (stdout: Lines) {
     assert!(
         out.contains(
             "      1 | badge(positional x) = \"#\" ++ x * -2;
-        |       ^^^^^^^^^^^^^^ [4]       ^ [3]
+        |       ^^^^^^^^^^^^ [4]       ^ [3]
         |                       ^^^ [1]    ^^ [5, 7]
 "
         ),
