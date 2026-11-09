@@ -216,7 +216,13 @@ fn a_refused_member_with_a_value_built_is_inhabited() {
 /// A refused member read through a meet: its message names the tuple, not the meet, and the
 /// repair it offers leaves it to the search, since the decider's "inhabited" does not decide a
 /// member read through a meet (GROUP-setop); applied, the repair has the decider decide the
-/// component and leave the member to the search, as the message says.
+/// component and leave the member to the search, as the message says, which finds a value:
+/// the value it builds for `Pair & (top, top)` holds a function built for `Thunk`, and a value
+/// built for a function is in each function type equal to its own (GROUP-refusal-meet-witness);
+/// before that item, whether it was in `Thunk` was not known, and the verdict was
+/// `Refusal::NoWitness`. `Pair` is written before the meet, so that before the repair the
+/// search tries `Pair` on its own first and builds no value of it (see [`pairs`]); written
+/// after it, the search builds one through the meet, and every member is inhabited.
 #[test]
 fn a_refused_member_read_through_a_meet_is_left_to_the_search_by_its_repair() {
     Type::forget_emptiness();
@@ -225,10 +231,13 @@ fn a_refused_member_read_through_a_meet_is_left_to_the_search_by_its_repair() {
         "Both".into(),
         atom(
             "both",
-            vec![Expr::And(vec![
+            vec![
                 r(0),
-                Expr::Type(Type::tuple(vec![Type::top(), Type::top()])),
-            ])],
+                Expr::And(vec![
+                    r(0),
+                    Expr::Type(Type::tuple(vec![Type::top(), Type::top()])),
+                ]),
+            ],
         ),
     ));
     let types = group(defs.clone());
@@ -250,10 +259,7 @@ fn a_refused_member_read_through_a_meet_is_left_to_the_search_by_its_repair() {
     let types = group(defs);
     assert_eq!(types[0].decided_by_group(), Some(false));
     assert_eq!(types[4].decided_by_group(), None);
-    // Whatever the search finds, the group's refusal is gone. (Today it builds no value: a
-    // value of `Pair` holds a function returning `Tree`, which it builds only once it has a
-    // value of `Tree`, which holds a `Pair`; so it gives `Refusal::NoWitness`.)
-    assert_ne!(types[4].verdict(), Verdict::Refused(Refusal::Group));
+    assert_eq!(types[4].verdict(), Verdict::Inhabited);
 }
 
 /// A member that reads a refused component is refused with it, and a type outside the group
@@ -565,4 +571,212 @@ fn refused_members_sharing_a_decided_part_scale() {
             std::hint::black_box(t.refusal_site(Refusal::Group));
         }
     });
+}
+
+/// The group, found by a random search over groups of four definitions (seed 138 of
+/// `group_oracle`'s generator, with the names shortened),
+///
+/// ```text
+/// type P = (P,) | (P & S,)
+/// type Q = ((int) -> P) | ((int) -> R) | (S,)
+/// type R = (S & R,) | (S & Q,) | ((int) -> S)
+/// type S = (Q & R,) | (S,)
+/// ```
+///
+/// with the repair `| #end` added to `R` when `repaired`. Its tuples have one component each,
+/// so the obstacle the message names is a meet: GROUP-setop reads a meet as a conjunction of its
+/// operands.
+fn meets(repaired: bool) -> Vec<(String, Expr)> {
+    let and = |a: Expr, b: Expr| Expr::And(vec![a, b]);
+    let one = |a: Expr| Expr::Tuple(vec![a]);
+    let mut r_body = vec![one(and(r(3), r(2))), one(and(r(3), r(1))), f(r(3))];
+    if repaired {
+        r_body.push(atom("end", vec![]));
+    }
+    vec![
+        ("P".into(), or(vec![one(r(0)), one(and(r(0), r(3)))])),
+        ("Q".into(), or(vec![f(r(0)), f(r(2)), one(r(3))])),
+        ("R".into(), or(r_body)),
+        ("S".into(), or(vec![one(and(r(1), r(2))), one(r(3))])),
+    ]
+}
+
+/// A refused member whose undecided part is a meet: the message names the meet, the definition
+/// it is written in and its operands, and offers the repair the re-check confirms, which leaves
+/// the member to the search for a value since it reads meets (GROUP-refusal-meet-wording). The
+/// one-tuple in the repair prints as `(x,)`; before this item it printed as `(x)`, which reads
+/// as `x` in parentheses.
+#[test]
+fn a_refused_member_read_through_a_meet_names_the_meet() {
+    Type::forget_emptiness();
+    let types = group(meets(false));
+    assert_eq!(types[0].decided_by_group(), Some(true));
+    assert_eq!(types[0].verdict(), Verdict::Empty);
+    let tail = |member: &str| {
+        format!(
+            "these references make 6 independent cycles; some of these cycles pass through a \
+             tuple, which no value can go around forever since a value is finite, and some \
+             through the result of a function type, which a value can, since a function can \
+             return without calling itself; the meet `S & Q` in `R` needs a value in each of \
+             `S` and `Q`, and whether they have one is still open; the known ways to settle \
+             such a group take time that grows with the square of its size, while the checker \
+             decides each group in time linear in it, so it does not settle this one; a search \
+             for a value of `{member}` then neither finds one nor shows that there is none, so \
+             the checker counts `{member}` as possibly having a value; adding the case `| #end` \
+             to `R`, as in `type R = (S & R,) | (S & Q,) | ((int) -> S) | #end`, removes \
+             this obstacle, and whether `{member}` has a value is then left to the search for \
+             one"
+        )
+    };
+    assert_eq!(
+        message(&types[1]),
+        "deciding whether `Q` has a value needs the definitions `Q`, `R` and `S` together; `Q` \
+         refers to `R` and `S`; `R` refers to `Q`, `S` and itself; `S` refers to `Q`, `R` and \
+         itself; "
+            .to_owned()
+            + &tail("Q")
+    );
+    assert_eq!(
+        message(&types[2]),
+        "deciding whether `R` has a value needs the definitions `R`, `Q` and `S` together; `R` \
+         refers to `Q`, `S` and itself; `Q` refers to `R` and `S`; `S` refers to `Q`, `R` and \
+         itself; "
+            .to_owned()
+            + &tail("R")
+    );
+    assert_eq!(
+        message(&types[3]),
+        "deciding whether `S` has a value needs the definitions `S`, `Q` and `R` together; `S` \
+         refers to `Q`, `R` and itself; `Q` refers to `R` and `S`; `R` refers to `Q`, `S` and \
+         itself; "
+            .to_owned()
+            + &tail("S")
+    );
+    Type::forget_emptiness();
+    let types = group(meets(true));
+    let verdicts: Vec<_> = types
+        .iter()
+        .map(|t| (t.decided_by_group(), t.verdict()))
+        .collect();
+    // After the repair the decider leaves `Q`, `R` and `S` to the search, as the message says:
+    // it builds values of `Q` and `R`, and refuses `S`, which reads the meet `Q & R`, with
+    // `Refusal::Fork` (COMPLEXITY.md K35); so the group refusal is gone, and the search's own
+    // refusal of `S` is what remains.
+    assert_eq!(
+        verdicts,
+        vec![
+            (Some(true), Verdict::Empty),
+            (None, Verdict::Inhabited),
+            (None, Verdict::Inhabited),
+            (None, Verdict::Refused(Refusal::Fork)),
+        ]
+    );
+}
+
+/// `n` copies of the refused component of [`pairs`]; a ring of `n` definitions `Opt{k} = #none |
+/// #some(Pair{k}, Opt{k+1})`, each decided inhabited by its case `#none` though it reads the
+/// refused copy `k`; and `m` members `Box{j} = (Pair0, Opt0)`, each refused since it reads
+/// `Pair0`, and each reaching every `Opt{k}` and through it every refused copy.
+fn reach(m: usize, n: usize) -> Vec<(String, Expr)> {
+    let mut defs: Vec<(String, Expr)> = (0..n)
+        .flat_map(|c| pairs(&c.to_string(), [4 * c, 4 * c + 1, 4 * c + 2, 4 * c + 3]))
+        .collect();
+    let opt = defs.len();
+    for k in 0..n {
+        defs.push((
+            format!("Opt{k}"),
+            or(vec![
+                atom("none", vec![]),
+                atom("some", vec![r(4 * k), r(opt + (k + 1) % n)]),
+            ]),
+        ));
+    }
+    for j in 0..m {
+        defs.push((format!("Box{j}"), pair(r(0), r(opt))));
+    }
+    defs
+}
+
+/// m refused members, each reaching n decided nodes that each reach another refused component:
+/// their messages together cost O(m + n) at (m, n) and (8m, 8n) (GROUP-refusal-reach). The
+/// message of each names only the definitions its refusal rests on, those of `Pair0`'s copy.
+#[test]
+fn refused_members_reaching_many_refused_components_scale() {
+    let n = 64;
+    Type::forget_emptiness();
+    let types = group(reach(n, n));
+    let opt = 4 * n;
+    assert!((types[..opt].iter()).all(|t| t.verdict() == Verdict::Refused(Refusal::Group)));
+    assert!((types[opt..opt + n].iter()).all(|t| t.decided_by_group() == Some(false)));
+    for t in &types[opt + n..] {
+        assert_eq!(t.verdict(), Verdict::Refused(Refusal::Group));
+        let site = t.refusal_site(Refusal::Group).expect("a refused member");
+        assert!(site.head.starts_with("Box"), "{site:?}");
+        assert_eq!(site.defs.len(), 5, "{site:?}");
+    }
+    scaling::check_order(
+        "m refused members reaching n refused components",
+        n,
+        1,
+        |n| {
+            Type::forget_emptiness();
+            let types = group(reach(n, n));
+            for t in &types[4 * n + n..] {
+                std::hint::black_box(t.refusal_site(Refusal::Group));
+            }
+        },
+    );
+}
+
+/// Each refused member's message is the same when it is the first asked for in its group and
+/// when the messages of the members before it were asked for first, which re-checked repairs
+/// that the later ones read part of (GROUP-refusal-reach): the answers a re-check keeps and
+/// reads again are the ones a re-check of its own finds.
+#[test]
+fn a_message_is_the_same_asked_for_first_or_after_the_others() {
+    let mut both = placed(IN_ORDER);
+    both.push((
+        "Both".into(),
+        atom(
+            "both",
+            vec![
+                r(0),
+                Expr::And(vec![
+                    r(0),
+                    Expr::Type(Type::tuple(vec![Type::top(), Type::top()])),
+                ]),
+            ],
+        ),
+    ));
+    // Two refused copies and members reading both, so that the repair of one copy that a
+    // message re-checks leaves the other refused, and the next message's walk meets it kept.
+    let mut crossed: Vec<(String, Expr)> = (0..2)
+        .flat_map(|c| pairs(&c.to_string(), [4 * c, 4 * c + 1, 4 * c + 2, 4 * c + 3]))
+        .collect();
+    for j in 0..3 {
+        crossed.push((format!("Box{j}"), or(vec![pair(r(0), int()), r(4)])));
+    }
+    for defs in [
+        both,
+        meets(false),
+        copies(3),
+        boxes(3, 3),
+        reach(3, 3),
+        crossed,
+    ] {
+        Type::forget_emptiness();
+        let types = group(defs.clone());
+        let refused: Vec<usize> = (0..types.len())
+            .filter(|&j| types[j].verdict() == Verdict::Refused(Refusal::Group))
+            .collect();
+        assert!(!refused.is_empty());
+        let in_turn: Vec<_> = (refused.iter())
+            .map(|&j| types[j].refusal_site(Refusal::Group))
+            .collect();
+        for (&j, site) in refused.iter().zip(&in_turn).rev() {
+            Type::forget_emptiness();
+            let types = group(defs.clone());
+            assert_eq!(&types[j].refusal_site(Refusal::Group), site);
+        }
+    }
 }

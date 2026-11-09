@@ -1326,7 +1326,7 @@ fn layered_groups_agree_with_the_values_1() {
 
 #[test]
 fn meets_and_differences_agree_with_the_values_0() {
-    sweep("cells", gen_cells, 0..150, 1);
+    sweep("cells", gen_cells, 0..150, 0);
 }
 
 #[test]

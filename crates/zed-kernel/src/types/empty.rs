@@ -1379,9 +1379,11 @@ enum Rep {
         at: usize,
         of: Option<Type>,
     },
-    /// A closure; it may be recursive. Whether it is in a type is known only when that type
-    /// holds all morphisms or none.
-    Closure,
+    /// A closure of the morphism type it was shown for; it may be recursive. It is in that
+    /// morphism type; which of its morphisms it is, is not kept, so whether it is in a morphism
+    /// part is known only when the part holds all morphisms or none, or names no morphism type
+    /// but that one ([`Searching::closure_member`]).
+    Closure(Morphism),
     Struct,
 }
 
@@ -3288,14 +3290,14 @@ impl<'m> Searching<'m> {
             };
             for (m, keys) in &meets {
                 if keys.iter().all(known_empty) {
-                    return Some(self.s().show(Rep::Closure));
+                    return Some(self.s().show(Rep::Closure(m.clone())));
                 }
                 let permitted = m.guarantee == m.permission
                     || m.guarantee == Type::empty()
                     || m.permission == Type::top();
                 if !permitted {
                     if self.no_keys(keys).await {
-                        return Some(self.s().show(Rep::Closure));
+                        return Some(self.s().show(Rep::Closure(m.clone())));
                     }
                     continue;
                 }
@@ -3303,7 +3305,7 @@ impl<'m> Searching<'m> {
                 let mark = {
                     let mut s = self.s();
                     let mark = s.built.len();
-                    let closure = s.show(Rep::Closure);
+                    let closure = s.show(Rep::Closure(m.clone()));
                     s.reps.insert(t.clone(), Some(closure));
                     mark
                 };
@@ -3312,14 +3314,14 @@ impl<'m> Searching<'m> {
                     let mut s = self.s();
                     s.reps.insert(t.clone(), None);
                     if returns {
-                        return Some(s.show(Rep::Closure));
+                        return Some(s.show(Rep::Closure(m.clone())));
                     }
                     for x in s.built.split_off(mark) {
                         s.reps.remove(&x);
                     }
                 }
                 if self.no_keys(keys).await {
-                    return Some(self.s().show(Rep::Closure));
+                    return Some(self.s().show(Rep::Closure(m.clone())));
                 }
             }
         }
@@ -3697,12 +3699,16 @@ impl<'m> Searching<'m> {
                     Tuple(Part<Row>),
                     Payload(usize, &'u Type),
                     List(usize),
+                    Closure(Morphism, &'u Part<Morphism>),
                 }
                 let up = u.p();
                 let shape = match &self.s().shown[v] {
                     Rep::Value(_) => unreachable!("a value was read above"),
                     Rep::Of { .. } => unreachable!("a value of another search was read in above"),
-                    Rep::Closure => Shape::Known(up.morphisms.is_leaf()),
+                    Rep::Closure(m) => match up.morphisms.is_leaf() {
+                        Some(b) => Shape::Known(Some(b)),
+                        None => Shape::Closure(m.clone(), &up.morphisms),
+                    },
                     Rep::Struct => Shape::Known(Some(up.structs)),
                     Rep::Tuple(vs) => Shape::Tuple(up.tuples.get(vs.len())),
                     Rep::Atom(name, payload) => match up.atoms.names.get(name) {
@@ -3716,11 +3722,22 @@ impl<'m> Searching<'m> {
                     Shape::Tuple(f) => self.holds_known(|s, i| s.tuple_item(v, i), &f).await,
                     Shape::Payload(payload, a) => self.member_known(payload, a).await,
                     Shape::List(item) => self.list_member(v, item, u).await,
+                    Shape::Closure(m, f) => Self::closure_member(&m, f),
                 }
             };
             self.s().members.insert(key, b);
             b
         })
+    }
+
+    /// Whether a closure shown for the morphism type `m` is in the morphism part `f`, or `None`
+    /// when that is not known. It is in each morphism type of `f` equal to `m`; for another,
+    /// whether `m` lies within it or apart from it is an emptiness check, which inside this
+    /// search may rest on an answer still being decided, while a value found is kept for good;
+    /// so membership is known only when every morphism type of `f` is `m`.
+    fn closure_member(m: &Morphism, f: &Part<Morphism>) -> Option<bool> {
+        let atoms = f.distinct_atoms();
+        (atoms.iter().all(|a| a == m)).then(|| f.eval(&|a| a == m))
     }
 
     /// Whether every morphism `m` admits is in `n`, by the variance law. With no value, the

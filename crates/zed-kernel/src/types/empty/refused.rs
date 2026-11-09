@@ -13,7 +13,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, PoisonError};
 
 use super::super::bes::{Answer, Bes, Kind, decide};
-use super::super::rec::{self, Env, Group, Recheck, Why};
+use super::super::rec::{self, Env, Group, Recheck, Rechecked, Why};
 use super::super::{GroupSite, Node, Refusal, Type, Verdict};
 use super::settled;
 
@@ -29,49 +29,86 @@ impl Why {
     ///
     /// The re-check is shared. A node that reaches no refused node is not walked: it stands as
     /// `Top` or `Bot`, its answer in each run, since its answer reads only nodes the repair does
-    /// not change (each member of `which` reaches a refused node of its own). And every member
-    /// the re-check from `i` reaches gets its answer kept, under `which`, since all it reaches
-    /// lies inside what `i` reaches and the decider decides each component from the components
-    /// below it alone; a later message for that member reads it from there.
+    /// not change (each member of `which` reaches a refused node of its own). Every member the
+    /// re-check from `i` reaches gets its answers kept, under `which`, since all it reaches lies
+    /// inside what `i` reaches and the decider decides each component from the components below
+    /// it alone; a later message for that member reads them from there. A later re-check under
+    /// `which` does not walk such a member again when it is decided in both runs: it stands as
+    /// `Top` or `Bot` as above (GROUP-refusal-reach). A node on a cycle with it is reached only
+    /// through a member on that cycle, kept with it and so a leaf too, unless refused in a run;
+    /// a walk that meets a member kept refused is made again with no member a leaf.
     fn recheck(&self, i: u32, which: &BTreeSet<usize>) -> Recheck {
         let key: Vec<usize> = which.iter().copied().collect();
-        let checked = || self.checked.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(&known) = checked().get(&key).and_then(|m| m.get(&i)) {
-            return known;
+        let mut checked = self.checked.lock().unwrap_or_else(PoisonError::into_inner);
+        let kept = checked.entry(key).or_default();
+        if let Some(&answers) = kept.get(&i) {
+            return self.read(i, answers);
         }
         debug_assert!(
             which.iter().all(|&d| self.open[d]),
             "each member given `| #end` reaches a refused node"
         );
-        let mut local: HashMap<u32, u32> = HashMap::from([(i, 0)]);
-        let mut order = vec![i];
-        let mut k = 0;
-        while k < order.len() {
-            let v = order[k];
-            if self.open[v as usize] {
-                for &w in self.graph.children(v) {
-                    if let Entry::Vacant(e) = local.entry(w) {
-                        e.insert(order.len() as u32);
-                        order.push(w);
+        // The answers a re-check under `which` kept for member `v`, when decided in both runs.
+        let decided = |kept: &Rechecked, v: u32| {
+            (kept.get(&v))
+                .filter(|a| a.iter().all(|&x| x != Answer::Refused))
+                .copied()
+        };
+        // The nodes `i` reaches through nodes that reach a refused node, by their new numbers,
+        // with the kept members decided in both runs as leaves when `cut`; `None` when a cut
+        // walk meets a kept member refused in a run, which may share a cycle with a leaf.
+        let walk = |cut: bool| {
+            let mut local: HashMap<u32, u32> = HashMap::from([(i, 0)]);
+            let mut order = vec![i];
+            let mut k = 0;
+            while k < order.len() {
+                let v = order[k];
+                let leaf = cut && decided(kept, v).is_some();
+                if cut && !leaf && kept.contains_key(&v) {
+                    return None;
+                }
+                if self.open[v as usize] && !leaf {
+                    for &w in self.graph.children(v) {
+                        if let Entry::Vacant(e) = local.entry(w) {
+                            e.insert(order.len() as u32);
+                            order.push(w);
+                        }
                     }
                 }
+                k += 1;
             }
-            k += 1;
-        }
+            Some((local, order))
+        };
+        // Complexity tradeoff: a walk with cuts that meets a member kept refused is made again
+        // whole, O(nodes reached) for this message alone; m refused members whose re-checks
+        // under one repair each meet such a member, and reach n nodes, cost O(m n) together.
+        // Cutting there too needs the decider's cycles of the whole system, kept with `Why`.
+        let (cut, (local, order)) = match walk(true) {
+            Some(w) => (true, w),
+            None => (
+                false,
+                walk(false).expect("a walk without cuts is never stopped"),
+            ),
+        };
+        let leaf = |v: u32| if cut { decided(kept, v) } else { None };
         // The nodes walked, by their new numbers; each node not walked into stands as a node
         // with no children, set to its answer in each run below.
         let mut b = Bes::new();
-        let mut fixed: Vec<(u32, u32)> = Vec::new();
+        let mut fixed: Vec<(u32, [Answer; 2])> = Vec::new();
         for &v in &order {
-            if self.open[v as usize] {
+            if let Some(a) = leaf(v) {
+                fixed.push((b.add(Kind::Bot, vec![]), a));
+            } else if self.open[v as usize] {
                 let children = self.graph.children(v).iter().map(|w| local[w]).collect();
                 b.add(self.graph.kind(v), children);
             } else {
-                fixed.push((b.add(Kind::Bot, vec![]), v));
+                let a = [0, 1]
+                    .map(|run: usize| self.runs[run.min(self.runs.len() - 1)].answers[v as usize]);
+                fixed.push((b.add(Kind::Bot, vec![]), a));
             }
         }
         for &v in &order {
-            if v < self.members && which.contains(&(v as usize)) {
+            if v < self.members && which.contains(&(v as usize)) && leaf(v).is_none() {
                 let at = local[&v];
                 let old = b.add(self.graph.kind(v), b.children(at).to_vec());
                 let end = b.add(Kind::Top, vec![]);
@@ -81,11 +118,10 @@ impl Why {
         b.seal();
         let mut answers = Vec::new();
         for run in 0..2 {
-            let d = &self.runs[run.min(self.runs.len() - 1)];
             // A node set here has no children either way, so the parents `seal` filled stay
             // right.
-            for &(at, v) in &fixed {
-                let kind = if d.answers[v as usize] == Answer::Inhabited {
+            for &(at, a) in &fixed {
+                let kind = if a[run] == Answer::Inhabited {
                     Kind::Top
                 } else {
                     Kind::Bot
@@ -94,23 +130,22 @@ impl Why {
             }
             answers.push(decide(&b).answers);
         }
-        let mut checked = checked();
-        let kept = checked.entry(key).or_default();
         for &v in order.iter().filter(|&&v| v < self.members) {
             let at = local[&v] as usize;
-            let (low, high) = (answers[0][at], answers[1][at]);
-            kept.insert(
-                v,
-                if settled(low, high, self.wide[v as usize]).is_some() {
-                    Recheck::Decided
-                } else if low == Answer::Refused || high == Answer::Refused {
-                    Recheck::Refused
-                } else {
-                    Recheck::Searched
-                },
-            );
+            kept.entry(v).or_insert([answers[0][at], answers[1][at]]);
         }
-        kept[&i]
+        self.read(i, kept[&i])
+    }
+
+    /// What the answers of member `i` in the two runs of a re-check make of it.
+    fn read(&self, i: u32, [low, high]: [Answer; 2]) -> Recheck {
+        if settled(low, high, self.wide[i as usize]).is_some() {
+            Recheck::Decided
+        } else if low == Answer::Refused || high == Answer::Refused {
+            Recheck::Refused
+        } else {
+            Recheck::Searched
+        }
     }
 }
 
@@ -308,7 +343,6 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
         },
     );
     let mut fixes: Vec<BTreeSet<usize>> = vec![taking.clone()];
-    let mut parts_of = "the tuple's components";
     if let Some((meet, owner, t, v)) = &tuple {
         let def = why.origin[*v as usize].0;
         let parts = match &why.origin[*v as usize].1.e {
@@ -321,7 +355,6 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
             .take(2)
             .collect();
         let (what, needs) = if *meet {
-            parts_of = "the meet's operands";
             ("meet", "a value in each of")
         } else {
             ("tuple", "a value of both")
@@ -341,17 +374,27 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
         name(i)
     );
     // A repair is offered when the decider, run again with it, decides the member; failing
-    // that, one with which it no longer refuses the member, said to leave it to the search.
-    let outcomes: Vec<Recheck> = (fixes.iter()).map(|w| why.recheck(i as u32, w)).collect();
-    let pick = |want: Recheck| {
-        (fixes.iter().zip(&outcomes))
-            .find(|&(_, &o)| o == want)
-            .map(|(w, _)| w.iter().copied().collect::<Vec<_>>())
-    };
-    let (repaired, effect) = match pick(Recheck::Decided) {
-        Some(w) => (Some(w), "lets the checker decide it".to_owned()),
+    // that, one with which it no longer refuses the member, said to leave it to the search. The
+    // last repair adds `| #end` to every definition taking part, the member's among them, which
+    // makes the member a union with a case that has a value: inhabited in both runs, so decided,
+    // or left to the search when it reaches a meet or a difference, and never refused
+    // ([`Why::recheck`], [`settled`]). So a repair is always offered.
+    // The repairs are re-checked in turn up to the first decided, since the last, which holds
+    // this member, is re-checked under a key of its own (GROUP-refusal-reach).
+    let mut searched = None;
+    let decided = fixes.iter().find(|&w| match why.recheck(i as u32, w) {
+        Recheck::Decided => true,
+        Recheck::Searched => {
+            searched.get_or_insert(w);
+            false
+        }
+        Recheck::Refused => false,
+    });
+    let set = |w: &BTreeSet<usize>| w.iter().copied().collect::<Vec<_>>();
+    let (mut w, effect) = match decided {
+        Some(w) => (set(w), "lets the checker decide it".to_owned()),
         None => (
-            pick(Recheck::Searched),
+            set(searched.expect("adding `| #end` to the member never leaves it refused")),
             format!(
                 "removes this obstacle, and whether {} has a value is then left to the search \
                  for one",
@@ -359,23 +402,18 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
             ),
         ),
     };
-    text += &match repaired {
-        Some(w) if w.len() == 1 => format!(
+    text += &if let [d] = w[..] {
+        format!(
             "; adding the case `| #end` to {}, as in `{} | #end`, {effect}",
-            name(w[0]),
-            written(group, w[0])
-        ),
-        Some(mut w) => {
-            w.sort_by(|&a, &b| defs[a].name.cmp(&defs[b].name));
-            format!(
-                "; adding the case `| #end` to each of {} {effect}",
-                listed(&w.into_iter().map(name).collect::<Vec<_>>())
-            )
-        }
-        None => format!(
-            "; adding the case `| #end` to these definitions does not settle it either, so \
-             {parts_of} must be written so that they do not both lead back into the group"
-        ),
+            name(d),
+            written(group, d)
+        )
+    } else {
+        w.sort_by(|&a, &b| defs[a].name.cmp(&defs[b].name));
+        format!(
+            "; adding the case `| #end` to each of {} {effect}",
+            listed(&w.into_iter().map(name).collect::<Vec<_>>())
+        )
     };
     GroupSite {
         head: defs[i].name.clone(),

@@ -5110,7 +5110,7 @@ pub mod rec {
     use std::sync::atomic::AtomicU64;
     use std::sync::{Arc, Mutex, OnceLock};
 
-    use super::bes::{Bes, Decision};
+    use super::bes::{Answer, Bes, Decision};
     use super::{Type, bytes, mix};
     use crate::deep;
 
@@ -5803,10 +5803,13 @@ pub mod rec {
         /// decided in every run, and a repair, which changes only refused members, cannot
         /// change it.
         pub(in crate::types) open: Vec<bool>,
-        /// For each set of members given `| #end`, whether the decider then decides each member
-        /// already re-checked with it.
-        pub(in crate::types) checked: Mutex<HashMap<Vec<usize>, HashMap<u32, Recheck>>>,
+        /// For each set of members given `| #end`, the answers of the two runs of the decider
+        /// then for each member already re-checked with it, or reached by such a re-check.
+        pub(in crate::types) checked: Mutex<HashMap<Vec<usize>, Rechecked>>,
     }
+
+    /// The answers of the two runs of the decider in a re-check (`Why::recheck`), by member.
+    pub(in crate::types) type Rechecked = HashMap<u32, [Answer; 2]>;
 
     /// What the decider makes of a refused member once a repair is written (`Why::recheck`).
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
