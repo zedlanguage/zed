@@ -32,7 +32,8 @@ fn a_bare_name_is_a_value() {
 fn a_field_named_twice_is_still_refused() {
     check(&[(
         "r = { a: b, a: c };",
-        "error: the field `a` is given twice; the first field `a` at byte 6",
+        "error: the field `a` is given twice, and each field is given once. Remove one of \
+             the two.; the first field `a` at byte 6",
     )]);
 }
 

@@ -119,30 +119,66 @@ fn run_on(text: &str, pos: usize, end: usize, radix: u32) -> Error {
         .find(|&(_, c)| !is_xid_continue(c))
         .map_or(text.len(), |(i, _)| end + i);
     let next = text[end..].chars().next().expect("a character follows");
-    let base = if radix == 2 { "a binary" } else { "an octal" };
-    let why = if matches!(next, 'e' | 'E') && radix == 10 && !text[pos..end].contains(['e', 'E']) {
-        "an exponent needs digits: `1e3`, `1e-3`".to_string()
-    } else if next == 'r' && radix != 10 {
-        "a rational is written in decimal: `16r`, not `0x10r`".to_string()
-    } else if next == 'n'
-        && radix == 10
-        && !text[pos..end].ends_with('r')
-        && text[pos..end].contains(['.', 'e', 'E'])
-    {
-        let d = &text[pos..end];
+    let d = &text[pos..end];
+    let why = if matches!(next, 'e' | 'E') && radix == 10 && !d.contains(['e', 'E']) {
         format!(
-            "only an integer takes `n`: write `{d}` for a float or `{d}r` for an exact rational; \
-             a decimal has a different value in f64 and in rat, an integer the same in every carrier"
+            "the number `{d}{next}` has an exponent mark `{next}` with no digits after it, and an \
+             exponent needs digits, as in `1e3` or `1e-3`. Write the exponent's digits after \
+             `{next}`, or remove the `{next}`."
+        )
+    } else if next == 'r' && radix != 10 {
+        format!(
+            "the number `{d}r` is a rational written in another base, and a rational is written \
+             in decimal, as `16r` for the value of `0x10`. Write its value in decimal digits \
+             before the `r`."
+        )
+    } else if next == 'n' && radix == 10 && !d.ends_with('r') && d.contains(['.', 'e', 'E']) {
+        format!(
+            "the number `{d}n` puts the suffix `n` on a decimal, and only an integer takes `n`: \
+             an integer has the same value in every number type, while a decimal has one value \
+             in f64 and another in rat. Write `{d}` for a float or `{d}r` for an exact rational."
         )
     } else if next == '_' {
-        "`_` goes only between two digits".to_string()
-    } else if radix == 10 && end == pos + 1 && text[pos..].starts_with('0') && "xob".contains(next)
-    {
-        format!("`0{next}` must be followed by a digit")
+        let whole = &text[pos..run];
+        format!(
+            "the number `{whole}` has a `_` that does not stand between two digits, and `_` may \
+             stand only between two digits, as in `1_000_000`. Remove that `_`."
+        )
+    } else if radix == 10 && d == "0" && "XOB".contains(next) {
+        let lower = next.to_ascii_lowercase();
+        format!(
+            "`0{next}` is written with a capital `{next}`, and a number's base is marked with a \
+             small letter: `0x`, `0o` or `0b`. Write `0{lower}`."
+        )
+    } else if radix == 10 && d == "0" && "xob".contains(next) {
+        let (base, example) = match next {
+            'x' => ("16", "0x1F"),
+            'o' => ("8", "0o17"),
+            _ => ("2", "0b101"),
+        };
+        format!(
+            "`0{next}` starts a number in base {base}, and no digit of base {base} follows it. \
+             Write the digits after `0{next}`, as in `{example}`."
+        )
     } else if radix < 10 && next.is_ascii_digit() {
-        format!("{next} is not {base} digit")
+        let whole = &text[pos..run];
+        let (prefix, digits) = if radix == 2 {
+            ("0b", "0 and 1")
+        } else {
+            ("0o", "0 to 7")
+        };
+        format!(
+            "the number `{whole}` starts with `{prefix}`, whose digits are {digits}, and `{next}` \
+             is not one of them. Write the number with those digits, or in decimal without \
+             `{prefix}`."
+        )
     } else {
-        format!("a number must not run into a name: `{}`", &text[end..run])
+        let name = &text[end..run];
+        format!(
+            "the number `{d}` runs into the name `{name}` with nothing between them, and a number \
+             must not run into a name. Put an operator or a space between them, as in \
+             `{d} * {name}`."
+        )
     };
     Error {
         kind: ErrorKind::BadNumber(why),

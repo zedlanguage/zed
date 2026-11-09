@@ -91,7 +91,11 @@ pub fn unit_all_errors(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<
                 Ok(s) if matches!(s.kind, StmtKind::Return(_)) => errors.push(Error {
                     row: None,
                     span: s.span,
-                    message: "`return` exports from a block; a unit's top level has none".into(),
+                    message:
+                        "`return` gives the value a block exports, and this one stands at the top \
+                              level of the unit, outside every block. Write it inside the block \
+                              whose value it gives, or remove it."
+                            .into(),
                     notes: Vec::new(),
                 }),
                 Ok(s) => out.push(s),
@@ -525,7 +529,10 @@ impl<'a, 's> Builder<'a, 's> {
                 return Err(Error {
                     row: None,
                     span,
-                    message: format!("the field `{path}` is updated twice"),
+                    message: format!(
+                        "the field `{path}` is updated twice in one `with`, and a `with` updates \
+                         each field once. Remove one of the two updates."
+                    ),
                     notes: vec![Note {
                         span: first,
                         text: format!("the first update of `{path}`"),
@@ -612,8 +619,9 @@ impl<'a, 's> Builder<'a, 's> {
                 row: None,
                 span: self.span(odd),
                 message: format!(
-                    "{this} in a display whose first entry is a {that}: a display is a set \
-                     or a map, not both"
+                    "{this} stands in a display whose first entry is a {that}, and a display \
+                     is a set or a map, not both. Write every entry as a {that}, or write the \
+                     entries in two displays."
                 ),
                 notes: vec![Note {
                     span: self.span(first),

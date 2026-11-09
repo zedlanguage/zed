@@ -8,9 +8,10 @@
 
 use super::check;
 
-const EMPTY: &str = "error: this `{}` is an empty block, which exports nothing: a brace after \
-                     `->`, `else`, or the head of an `if` or a `for` is a block; the empty family \
-                     there is `{ {} }`, or `({})` after `->` or a fallback's `else`";
+const EMPTY: &str = "error: this `{}` is an empty block, and a block gives a value, so it must export \
+                     one: a brace after `->`, `else`, or the head of an `if` or a `for` is a \
+                     block. To write the empty family there, write `{ {} }`, or `({})` after `->` \
+                     or a fallback's `else`.";
 
 #[test]
 fn the_empty_family_outside_body_position() {
@@ -77,7 +78,8 @@ fn a_brace_after_an_arm_arrow_is_a_block_whatever_it_holds() {
         // A block that binds and exports nothing keeps the general message.
         (
             "match tx { #bad -> { n = 1; } }",
-            "error: this block exports nothing: end it with an expression or `return e;`",
+            "error: this block exports nothing, and a block gives a value, so it must export one. \
+             End it with an expression, or with `return e;` to give the value `e`.",
         ),
     ]);
     // Without the grouping, the brace reads as the one-entry map and is rejected.

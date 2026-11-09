@@ -3,24 +3,24 @@ source: tests/steps/l01_05_lexer_strings/strings.rs
 expression: "out.join(\"\\n\")"
 ---
 "\"unclosed"
-    [0..9] malformed string: the string is not closed
+    [0..9] this string is not closed before the end of the file. Write the closing `"` where its text ends.
 "\"two\nlines\""
-    [0..4] malformed string: a `"` string ends on its line; a string over several lines is written `"""`
+    [0..4] this `"` string reaches the end of its line without its closing `"`, and a `"` string ends on its line. Close it on this line, or write a string over several lines as `"""`.
 "\"\"\"never closed\n"
-    [0..16] malformed string: the string is not closed
+    [0..16] this string is not closed before the end of the file. Write the closing `"""` where its text ends.
 "\"\\q is not an escape\""
-    [1..3] malformed string: no such escape; the escapes are \n \t \r \0 \\ \" \$ \u{…}
+    [1..3] `\q` is no escape. The escapes are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\$` and `\u{…}`. Write `\\` for a backslash itself.
 "\"\\u{110000}\""
-    [1..11] malformed string: this is no Unicode scalar value: a code point is at most 10FFFF and not a surrogate (D800 to DFFF)
+    [1..11] `\u{110000}` names no Unicode character: a code point is at most 10FFFF and is not a surrogate, D800 to DFFF. Write the code point of the character meant.
 "\"\\u{D800}\""
-    [1..9] malformed string: this is no Unicode scalar value: a code point is at most 10FFFF and not a surrogate (D800 to DFFF)
+    [1..9] `\u{D800}` names no Unicode character: a code point is at most 10FFFF and is not a surrogate, D800 to DFFF. Write the code point of the character meant.
 "\"\\u0041\""
-    [1..3] malformed string: a code point is written `\u{1F600}`
+    [1..3] `\u` starts a code point, written as hexadecimal digits in braces, as `\u{1F600}`, and no braced digits follow it. Write the code point in braces, or `\\u` for a backslash followed by `u`.
 "\"\\u{}\""
-    [1..3] malformed string: a code point is written `\u{1F600}`
+    [1..3] `\u` starts a code point, written as hexadecimal digits in braces, as `\u{1F600}`, and no braced digits follow it. Write the code point in braces, or `\\u` for a backslash followed by `u`.
 "\"\"\"\n    in\n  out\n    \"\"\""
-    [11..13] malformed string: this line is indented less than the closing `"""`
+    [11..13] this line of a `"""` string is indented less than the closing `"""`, whose indentation is removed from every line of the string. Indent this line at least as far as the closing `"""`, or move the closing `"""` left.
 "\"\"\"\n    in\n\tout\n    \"\"\""
-    [11..12] malformed string: this line is indented less than the closing `"""`
+    [11..12] this line of a `"""` string is indented less than the closing `"""`, whose indentation is removed from every line of the string. Indent this line at least as far as the closing `"""`, or move the closing `"""` left.
 "\"ends in a backslash\\"
-    [20..21] malformed string: no such escape; the escapes are \n \t \r \0 \\ \" \$ \u{…}
+    [20..21] the file ends after a `\`, which starts an escape in a string. Write the escape, or `\\` for a backslash itself, and close the string.

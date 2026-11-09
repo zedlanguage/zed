@@ -11,7 +11,9 @@ fn the_operator_of_a_reduction_is_resolved() {
     assert_eq!(describe(text, &alone(text), "max", 0), ["prelude max"]);
     assert_eq!(
         errors("f(xs) = xs >< maks;\n"),
-        ["`maks` is not defined [maks]"]
+        [
+            "`maks` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `maks`, or correct the name if it is misspelled. [maks]"
+        ]
     );
 }
 
@@ -30,7 +32,7 @@ fn a_name_inside_a_display_range_or_test_is_resolved() {
     ] {
         assert_eq!(
             errors(text),
-            [format!("`{name}` is not defined [{name}]")],
+            [format!("{} [{name}]", zed_tests::undefined(name))],
             "{text}"
         );
     }
@@ -47,7 +49,9 @@ fn a_sort_key_is_resolved() {
     assert_eq!(describe(text, &alone(text), "x", 1), ["param x"]);
     assert_eq!(
         errors("g(k) = k;\nf(x) = g(asc y);\n"),
-        ["`y` is not defined [y]"]
+        [
+            "`y` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `y`, or correct the name if it is misspelled. [y]"
+        ]
     );
 }
 
@@ -62,14 +66,20 @@ fn a_for_binds_its_pattern_in_its_where_and_body_only() {
     // The source is read outside the pattern's scope, and the pattern binds nothing after it.
     assert_eq!(
         errors("f() = for v in v { v };\n"),
-        ["`v` is not defined [v]"]
+        [
+            "`v` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `v`, or correct the name if it is misspelled. [v]"
+        ]
     );
     assert_eq!(
         errors("f(m) = for k -> _ in m { k };\ng() = k;\n"),
-        ["`k` is not defined [k]"]
+        [
+            "`k` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `k`, or correct the name if it is misspelled. [k]"
+        ]
     );
     assert_eq!(
         errors("f(m) = for v in m { w };\n"),
-        ["`w` is not defined [w]"]
+        [
+            "`w` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `w`, or correct the name if it is misspelled. [w]"
+        ]
     );
 }

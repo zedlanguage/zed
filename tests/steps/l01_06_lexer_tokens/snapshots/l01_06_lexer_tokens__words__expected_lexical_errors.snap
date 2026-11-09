@@ -2,11 +2,11 @@
 source: tests/steps/l01_06_lexer_tokens/words.rs
 expression: "out.join(\"\\n\")"
 ---
-# none       [0..1] no token starts with '#' (U+0023)
-x = @        [4..5] no token starts with '@' (U+0040)
-#pаypal      [1..8] the name "pаypal" mixes scripts: Latin, Cyrillic
-cost = $5    [7..8] no token starts with '$' (U+0024)
-a % b        [2..3] no token starts with '%' (U+0025)
-x ~ y        [2..3] no token starts with '~' (U+007E)
-`cmd`        [0..1] no token starts with '`' (U+0060)
-x''          [2..3] no token starts with '\'' (U+0027)
+# none       [0..1] `#` starts an atom, and the atom's name must follow it at once, as in `#none`. Write the name right after the `#`, with no space between.
+x = @        [4..5] `@` starts an annotation, and the annotation's name must follow it at once, as in `@test`. Write the name right after the `@`, with no space between.
+#pаypal      [1..8] the name `pаypal` mixes letters of the scripts Latin and Cyrillic, and a name is written in one script, so that no name looks like another and is a different one. Write it in one script: a letter that looks Latin may be, for instance, a Cyrillic or Greek letter of the same shape.
+cost = $5    [7..8] the character `$` (U+0024) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"$"`.
+a % b        [2..3] the character `%` (U+0025) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"%"`.
+x ~ y        [2..3] the character `~` (U+007E) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"~"`.
+`cmd`        [0..1] the character `` ` `` (U+0060) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `` "`" ``.
+x''          [2..3] `'` stands only right after a name, once, as in `x'`, and starts nothing by itself. Remove this `'`, or write it right after the name it marks.

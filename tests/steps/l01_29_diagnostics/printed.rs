@@ -475,7 +475,10 @@ fn the_names_of_positional_parameters_are_not_compared() {
 #[test]
 fn what_is_no_printed_type_is_an_error() {
     let cases = [
-        ("$0", "`$0`: no token starts with '$' (U+0024)"),
+        (
+            "$0",
+            "`$0`: the character `$` (U+0024) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"$\"`.",
+        ),
         ("!int", "`!int`: `!` stands before no `_`"),
         ("{x: int}", "`{x: int}` holds a form of layer L2"),
         ("[int]", "`[int]` holds a form of layer L3"),

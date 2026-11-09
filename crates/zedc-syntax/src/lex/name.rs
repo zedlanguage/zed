@@ -71,7 +71,7 @@ pub fn is_single_script(name: &str) -> bool {
 }
 
 /// The scripts of the characters of `name` other than Common and Inherited, in order of
-/// first use, as `Latin, Cyrillic`.
+/// first use, as `Latin and Cyrillic` or `Latin, Greek and Cyrillic`.
 pub(super) fn scripts_of(name: &str) -> String {
     let mut seen: Vec<Script> = Vec::new();
     for c in name.chars() {
@@ -80,8 +80,9 @@ pub(super) fn scripts_of(name: &str) -> String {
             seen.push(s);
         }
     }
-    seen.iter()
-        .map(|s| s.full_name())
-        .collect::<Vec<_>>()
-        .join(", ")
+    let names: Vec<&str> = seen.iter().map(|s| s.full_name()).collect();
+    match names.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => names.concat(),
+    }
 }

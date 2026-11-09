@@ -248,14 +248,15 @@ fn a_parenthesized_target_list_is_not_a_binding_at_layer_l1() {
 #[test]
 fn a_match_arm_is_a_pattern_not_a_dropped_binding() {
     // DESIGN.md's table of `_`: in patterns it matches anything, in binding targets it
-    // discards. `match` arrives at step L2.4; its arm `_ ->` is refused only as that.
+    // discards. This zedc does not compile `match` yet, and its arm `_ ->` is refused only as
+    // that.
     let text = "f(positional x: int | #notFound) = match x { #notFound -> 0, _ -> 1 };\n";
     let tokens = zedc::lex::lex_fence(text).unwrap();
     let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).unwrap();
     let stmts = zedc::ast::unit(text, &tokens, &tree).unwrap();
     let err = zedc::resolve::resolve(&stmts).unwrap_err();
     let shown = format!("{err:?}");
-    assert!(shown.contains("L2.4"), "{shown}");
+    assert!(zed_tests::is_not_yet(&shown), "{shown}");
     assert!(!shown.contains("drops"), "{shown}");
 }
 

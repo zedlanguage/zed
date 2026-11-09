@@ -73,7 +73,12 @@ impl Reject {
                     .iter()
                     .map(|b| format!("{b:02X}"))
                     .collect();
-                format!("{self}: {}", hex.join(" "))
+                format!(
+                    "a Zed file is UTF-8 text, and the bytes here, {} in hexadecimal, are not a \
+                     UTF-8 character, so the file cannot be read. Save the file as UTF-8 in your \
+                     editor, or replace these bytes with the character they were meant to be.",
+                    hex.join(" ")
+                )
             }
             _ => self.to_string(),
         }
@@ -83,16 +88,37 @@ impl Reject {
 impl fmt::Display for Reject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Reject::NotUtf8 { .. } => write!(f, "not UTF-8"),
-            Reject::ByteOrderMark { .. } => write!(f, "the file starts with a byte order mark"),
-            Reject::NotNfc { nfc, .. } => {
-                write!(
-                    f,
-                    "not in Unicode Normalization Form C; write {}",
-                    scalars(nfc)
-                )
-            }
+            Reject::NotUtf8 { .. } => write!(
+                f,
+                "a Zed file is UTF-8 text, and the bytes here are not a UTF-8 character, so the \
+                 file cannot be read. Save the file as UTF-8 in your editor, or replace these \
+                 bytes with the character they were meant to be."
+            ),
+            Reject::ByteOrderMark { .. } => write!(
+                f,
+                "the file starts with a byte order mark (the bytes EF BB BF), and a Zed file may \
+                 not, since the same program would then be stored in two ways. Save the file as \
+                 UTF-8 without a byte order mark (in many editors this is \"UTF-8\" rather than \
+                 \"UTF-8 with BOM\")."
+            ),
+            Reject::NotNfc { nfc, .. } => write!(
+                f,
+                "these characters are not in Unicode Normalization Form C (NFC), which spells \
+                 them as {}. A Zed file must be in NFC, so that two names that look the same are \
+                 the same name. Retype the characters, or have your editor save the file in NFC.",
+                scalars(nfc)
+            ),
         }
+    }
+}
+
+/// The reason the system gave for an input or output error `e`, in words, without the system's
+/// own error number: `No such file or directory`, not `No such file or directory (os error 2)`.
+pub fn io_reason(e: &std::io::Error) -> String {
+    let text = e.to_string();
+    match text.rfind(" (os error ") {
+        Some(at) if text.ends_with(')') => text[..at].to_string(),
+        _ => text,
     }
 }
 

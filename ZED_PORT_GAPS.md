@@ -2837,3 +2837,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `BTreeMap::entry` matched on `Occupied` and `Vacant` to claim a bucket once | `Comparing::search` | Mutation (gap 11) | a lookup, then an insert into the map returned |
 | An enum constructor passed as a function (`point.map_or(k, ShapeKey::Point)`) | `Choices::new` | None | `if p is #some(v) { #Point(v) } else { k }` |
 | A `#[cfg(test)]` `thread_local!` `Cell<bool>` that switches a search to the full scan | `SCAN_ALL`, `Comparing::search` | No test-only state | a parameter of the search, or a test build of the module |
+
+## Entries from MSG-audit-front (`crates/zedc/src/main.rs`, `crates/zedc-base/src/rejection.rs`, `tests/src/lib.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::panic::set_hook` with a payload read by `downcast_ref::<&str>` and `downcast_ref::<String>` | `main.rs` `bug_report` | No panic hook and no dynamic downcast | a broken invariant is the member `#bug(message)` (author, S.1d); the driver prints `rejection::bug` for it |
+| `macro_rules!` that expand to string literals inside `concat!` (`not_yet!`, `import_not_yet!`) | `tests/src/lib.rs` and the step tests | No macros | the texts are made by `rejection::not_yet` at run time, or written out |

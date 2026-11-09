@@ -81,6 +81,8 @@ fn a_unit_has_the_item_once() {
     let text = "@log(#off);\nf(x) = x;\n@log(#off);\n";
     assert_eq!(
         resolved(text).unwrap_err(),
-        ["3:1: the unit has `@log(#off);` twice; note 1:1: the first `@log(#off);`"]
+        [
+            "3:1: the unit has `@log(#off);` twice, and a unit turns its log off once. Remove one of the two.; note 1:1: the first `@log(#off);`"
+        ]
     );
 }

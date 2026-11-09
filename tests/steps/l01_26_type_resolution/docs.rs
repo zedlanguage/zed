@@ -78,7 +78,8 @@ fn a_link_that_names_nothing_is_rejected() {
     assert_eq!(
         load_errors(&src),
         "1:22: the doc link `[discount]` names nothing: no binding or function of this unit and \
-         no prelude word or type is `discount`"
+         no prelude word or type is `discount`. Correct the name if it is misspelled, or write \
+         `discount` in backticks if it is not meant as a link."
     );
 }
 
@@ -101,7 +102,10 @@ fn doc_errors_join_the_elaboration_errors() {
     let e = load_errors(&src);
     assert_eq!(e.lines().count(), 2, "{e}");
     assert!(e.starts_with("1:9: the doc link `[nowhere]`"), "{e}");
-    assert!(e.contains("3:7: `1e400` rounds to infinity"), "{e}");
+    assert!(
+        e.contains("3:7: `1e400` is larger than the largest f64"),
+        "{e}"
+    );
 }
 
 #[test]

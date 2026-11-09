@@ -264,7 +264,8 @@ fn grouped(written: &str) -> bool {
 /// (step L1.39).
 ///
 /// Complexity tradeoff: a function whose question the solver refuses is rejected, though the
-/// program may be correct; the message is "whether `f` can hold is not decided: <cause>". Why:
+/// program may be correct; the message names the function, its condition as written and the
+/// cause. Why:
 /// the solver decides only the fragment it can decide without exponential search (the
 /// causes, their costs and their triggers are at `presburger::Refusal`'s raise sites:
 /// Growth in `Omega::run`, Shadows in `splinters`, Disjuncts in `pick`). Tests:
@@ -390,7 +391,17 @@ pub fn linear_questions(
                     answers.fails =
                         presburger::decide(&with(presburger::Formula::negate(w.body.clone())));
                 }
-                for (can, answer) in [("hold", answers.holds), ("fail", answers.fails)] {
+                // On one line, as the message is: a condition written over several lines has its
+                // line breaks and indentation read as single spaces.
+                let condition = text[f.body.span.start..f.body.span.end]
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let params = (f.params.iter())
+                    .map(|p| format!("`{}`", p.name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                for (can, answer) in [("true", answers.holds), ("false", answers.fails)] {
                     if let Err(why) = answer {
                         let constraints = scoped.written(&r).to_string();
                         // The menu rewrites the function as written, on one line: its
@@ -446,11 +457,17 @@ pub fn linear_questions(
                             span: f.body.span,
                             text,
                         });
+                        // A cause that ends in a sentence of its own, such as a repair, keeps
+                        // its full stop, and the message adds none.
+                        let why = why.to_string();
+                        let stop = if why.ends_with('.') { "" } else { "." };
                         out.push(ast::Error {
                             row: Some(crate::rejection::Row::NonLinearQuestion),
                             span: s.span,
                             message: format!(
-                                "whether `{}` can {can} is not decided: {why}",
+                                "zedc could not decide whether the condition of `{}`, written \
+                                 `{condition}`, can be {can} for whole-number values of {params}, \
+                                 which it works out for every test function: {why}{stop}",
                                 f.name
                             ),
                             notes: std::iter::once(ast::Note {

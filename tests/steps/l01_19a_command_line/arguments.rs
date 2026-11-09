@@ -68,6 +68,15 @@ fn a_program_without_the_port_ignores_its_arguments() {
     assert_eq!((out.status, out.stdout.as_str()), (0, "hello\n"));
 }
 
+/// The message for argument `n` after `--` that is not UTF-8.
+fn not_utf8(n: usize) -> String {
+    format!(
+        "command-line argument {n} (counted from the first word after `--`) is not UTF-8, and a \
+         `CommandLine` port gives the program each argument as a string, which must be UTF-8 \
+         text. Pass the argument as UTF-8 text, or pass the path of a file that holds it.\n"
+    )
+}
+
 /// `zedc run <prog> -- <before…> <bad> <after…>`, `bad` a word that is not UTF-8.
 fn with_bad_argument(prog: &OsString, before: &[&str], after: &[&str]) -> Vec<OsString> {
     let mut words = run_words(prog, &["--"]);
@@ -83,24 +92,26 @@ fn an_argument_that_is_not_utf8_is_a_usage_error_naming_its_position() {
     let out = zedc(&with_bad_argument(&prog, &[], &[]));
     assert_eq!(
         (out.status, out.stderr.as_str(), out.stdout.as_str()),
-        (2, "command-line argument 1 is not UTF-8\n", "")
+        (2, &*not_utf8(1), "")
     );
     let out = zedc(&with_bad_argument(
         &prog,
         &["fine", "also fine"],
         &["later"],
     ));
-    assert_eq!(
-        (out.status, out.stderr.as_str()),
-        (2, "command-line argument 3 is not UTF-8\n")
-    );
+    assert_eq!((out.status, out.stderr.as_str()), (2, &*not_utf8(3)));
     // Before `--` a word that is not UTF-8 is named by its place among the words.
     let mut words = vec![OsString::from("run"), OsString::from_vec(vec![255])];
     words.push(prog);
     let out = zedc(&words);
     assert_eq!(
         (out.status, out.stderr.as_str()),
-        (2, "word 2 of the command line is not UTF-8\n")
+        (
+            2,
+            "word 2 of the command line is not UTF-8, and the words before `--` (files, ports \
+             and options) are read as UTF-8 text. Name each file by a path written in UTF-8, or \
+             rename the file.\n"
+        )
     );
 }
 
@@ -123,6 +134,11 @@ fn a_command_line_port_is_an_input() {
     let src = "main() -> (args: CommandLine) {\n  args <- \"a\";\n}\n";
     assert_eq!(
         zedc::run::load(src.as_bytes()).err().as_deref(),
-        Some("1:12: output port `args` of `main` is `Lines` at layer L1")
+        Some(
+            "1:12: the output port `args` of `main` is declared as `CommandLine`, and an \
+             output port writes lines of text, so its type must be `Lines`. Write `args: Lines`, \
+             and push to it a string, which writes one line, or a family of strings, which \
+             writes one line per entry, such as `args <- String(x);`."
+        )
     );
 }

@@ -51,7 +51,16 @@ fn block_comments_nest() {
     assert_eq!((e.span.start, e.span.end), (2, src.len()));
     assert_eq!(
         e.to_string(),
-        "the block comment is not closed (1 `*/` missing)"
+        "this block comment, opened with `/*`, is not closed before the end of the file. Write `*/` \
+         where the comment should end."
+    );
+    // Two comments open inside it: each needs its own `*/`, and the message counts them.
+    let src = "x /* /* /* only the innermost closes */ y";
+    assert_eq!(
+        lex(src).unwrap_err().to_string(),
+        "this block comment, opened with `/*`, is not closed before the end of the file: block \
+         comments nest, so each `/*` inside it needs its own `*/`, and 2 `*/` are missing. Write \
+         the missing `*/`, the last where the comment should end."
     );
 }
 

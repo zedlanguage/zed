@@ -55,11 +55,13 @@ fn names_declared_twice_are_errors() {
     check(&[
         (
             "type Pair(A, A) = (A, A);",
-            "error: the type parameter `A` is declared twice; the first type parameter `A` at byte 10",
+            "error: the type parameter `A` is declared twice, and each type parameter is declared once. Remove one of \
+             the two.; the first type parameter `A` at byte 10",
         ),
         (
             "f(p: { x: f64, x: int }) = p;",
-            "error: the field `x` is declared twice; the first field `x` at byte 7",
+            "error: the field `x` is declared twice, and each field is declared once. Remove one of \
+             the two.; the first field `x` at byte 7",
         ),
     ]);
 }

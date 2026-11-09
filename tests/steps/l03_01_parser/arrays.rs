@@ -101,12 +101,12 @@ fn resolution_names_the_array_forms() {
     assert_eq!(
         refused("grid(m: [[int]]) = [m];"),
         [
-            "a family type `[T]` is compiled from step L3.2 [[[int]]]",
-            "an array display is compiled from step L3.2 [[m]]",
+            concat!(zed_tests::not_yet!("a family type `[T]`"), " [[[int]]]"),
+            concat!(zed_tests::not_yet!("an array display"), " [[m]]"),
         ]
     );
     assert_eq!(
         refused("none(x) = [];"),
-        ["an array display is compiled from step L3.2 [[]]"]
+        [concat!(zed_tests::not_yet!("an array display"), " [[]]")]
     );
 }

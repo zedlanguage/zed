@@ -29,6 +29,100 @@ pub fn too_long() -> String {
     format!("{}\"a\"{}", "twice(".repeat(64), ")".repeat(64))
 }
 
+/// The message for `what`, a string literal naming a form or prelude name of Zed that this
+/// zedc does not compile yet, as a `&'static str`, for a list of expected messages:
+/// `not_yet!("a `match`")`. Written out here, so a test checks the text, not a call.
+#[macro_export]
+macro_rules! not_yet {
+    ($what:literal) => {
+        concat!(
+            $what,
+            " is part of the Zed language, and this version of zedc does not compile it yet. \
+             Write the program without it, with the forms this zedc compiles."
+        )
+    };
+}
+
+/// [`not_yet!`] for `what` built at run time, as `the prelude word `any``.
+pub fn not_yet(what: &str) -> String {
+    format!("{what}{}", not_yet!(""))
+}
+
+/// The message for the use of `what`, a definition in another unit, as
+/// ``"`shapes.area`, a definition of another unit,"``.
+pub fn not_linked(what: &str) -> String {
+    format!(
+        "{what} is used here, and this version of zedc does not yet link a use to a definition \
+         in another unit. Write the definition in this file instead, and use it from there."
+    )
+}
+
+/// The message for an `import` statement, which this zedc does not link yet, as a literal, for
+/// `concat!`.
+#[macro_export]
+macro_rules! import_not_yet {
+    () => {
+        "an import is part of the Zed language, and this version of zedc does not yet tie a name \
+         an import brings in to the other unit's definition. Write the definitions this file \
+         uses in it, and remove the import."
+    };
+}
+
+/// [`import_not_yet!`] as a constant.
+pub const IMPORT_NOT_YET: &str = import_not_yet!();
+
+/// The message for the use of `name`, which nothing in scope and nothing in the prelude defines.
+pub fn undefined(name: &str) -> String {
+    format!(
+        "`{name}` is not defined: no definition, parameter or binding in scope has this name, and \
+         the prelude has none. Define `{name}`, or correct the name if it is misspelled."
+    )
+}
+
+/// The message for the type `name`, which no type in scope and no prelude type has as its name.
+pub fn undefined_type(name: &str) -> String {
+    format!(
+        "the type `{name}` is not defined: no type in scope has this name, and the prelude has \
+         none. Correct the name if it is misspelled, or write a type of the prelude, such as \
+         `int` or `String`."
+    )
+}
+
+/// Whether `message` reports a form or a link this zedc does not compile yet ([`not_yet`],
+/// [`not_linked`] and [`IMPORT_NOT_YET`]).
+pub fn is_not_yet(message: &str) -> bool {
+    message.contains("this version of zedc does not compile it yet")
+        || message.contains("this version of zedc does not yet link")
+        || message.contains("this version of zedc does not yet tie")
+}
+
+/// The message for the parameter `name` of `main` whose type `written` is no input port:
+/// `written` is ``is declared as `T` `` or `has no type`.
+pub fn input_port_message(name: &str, written: &str) -> String {
+    format!(
+        "the parameter `{name}` of `main` {written}, and each parameter of `main` is an input \
+         port, which the program reads from outside when it runs, so its type must be one of \
+         these: `{name}: Lines` reads the lines of a file named on the command line as \
+         `{name}=path`, or of standard input for `stdin`; `{name}: Files` reads files by their \
+         paths as the program asks for them; `{name}: CommandLine` reads the words after `--` \
+         on the command line; `{name}: String ->? String` reads environment variables by name. \
+         Write the one that holds the input and compute the value from what it reads; or, to \
+         try `main` on given values, move its work into a function and test that function with \
+         `zedc test`."
+    )
+}
+
+/// The message for the output port `port` of `function`, declared as `ty`, which is not
+/// `Lines`.
+pub fn output_port_message(port: &str, function: &str, ty: &str) -> String {
+    format!(
+        "the output port `{port}` of `{function}` is declared as `{ty}`, and an output port \
+         writes lines of text, so its type must be `Lines`. Write `{port}: Lines`, and push to \
+         it a string, which writes one line, or a family of strings, which writes one line per \
+         entry, such as `{port} <- String(x);`."
+    )
+}
+
 /// The folder that holds every step folder.
 pub fn steps_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("steps")

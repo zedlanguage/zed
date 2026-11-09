@@ -92,12 +92,21 @@ impl Scan {
                 return Ok(None);
             }
             match rest.chars().next() {
-                None => return Err(bad(self.pos, i, "the string is not closed")),
+                None => {
+                    let close = if self.triple { "\"\"\"" } else { "\"" };
+                    let why = format!(
+                        "this string is not closed before the end of the file. Write the closing \
+                         `{close}` where its text ends."
+                    );
+                    return Err(bad(self.pos, i, &why));
+                }
                 Some('\n') if !self.triple => {
                     return Err(bad(
                         self.pos,
                         i,
-                        "a `\"` string ends on its line; a string over several lines is written `\"\"\"`",
+                        "this `\"` string reaches the end of its line without its closing `\"`, \
+                         and a `\"` string ends on its line. Close it on this line, or write a \
+                         string over several lines as `\"\"\"`.",
                     ));
                 }
                 Some('\\') => self.i = escape(text, i)?,
@@ -211,17 +220,36 @@ fn escape(text: &str, i: usize) -> Result<usize, Error> {
                         None => Err(bad(
                             i,
                             close + 1,
-                            "this is no Unicode scalar value: a code point is at most 10FFFF and not a surrogate (D800 to DFFF)",
+                            &format!(
+                                "`{}` names no Unicode character: a code point is at most 10FFFF \
+                                 and is not a surrogate, D800 to DFFF. Write the code point of \
+                                 the character meant.",
+                                &text[i..close + 1]
+                            ),
                         )),
                     }
                 }
-                _ => Err(bad(i, i + 2, "a code point is written `\\u{1F600}`")),
+                _ => Err(bad(
+                    i,
+                    i + 2,
+                    "`\\u` starts a code point, written as hexadecimal digits in braces, as \
+                     `\\u{1F600}`, and no braced digits follow it. Write the code point in \
+                     braces, or `\\\\u` for a backslash followed by `u`.",
+                )),
             }
         }
         other => Err(bad(
             i,
             i + 1 + other.map_or(0, char::len_utf8),
-            "no such escape; the escapes are \\n \\t \\r \\0 \\\\ \\\" \\$ \\u{…}",
+            &match other {
+                Some(c) => format!(
+                    "`\\{c}` is no escape. The escapes are `\\n`, `\\t`, `\\r`, `\\0`, `\\\\`, \
+                     `\\\"`, `\\$` and `\\u{{…}}`. Write `\\\\` for a backslash itself."
+                ),
+                None => "the file ends after a `\\`, which starts an escape in a string. Write \
+                         the escape, or `\\\\` for a backslash itself, and close the string."
+                    .to_string(),
+            },
         )),
     }
 }
@@ -275,7 +303,10 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
                         return Err(bad(
                             start,
                             nl,
-                            "a `\"\"\"` string in a hole of a `\"` string closes on its line",
+                            "this `\"\"\"` string is inside a `${…}` hole of a `\"` string, and \
+                             everything in that hole ends on the line of the `\"` string, which \
+                             is one line. Close the `\"\"\"` string on this line, or make the \
+                             outer string a `\"\"\"` string.",
                         ));
                     }
                     i = end;
@@ -288,7 +319,15 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
             } => {
                 let rest = &text[i..];
                 let next = match rest.chars().next() {
-                    None => return Err(bad(*open, i, "the `${` hole is not closed")),
+                    None => {
+                        return Err(bad(
+                            *open,
+                            i,
+                            "this `${` opens a hole in a string, and the file ends before the \
+                             `}` that closes it. Write `}` after the expression in the hole, or \
+                             `\\${` for the text `${` itself.",
+                        ));
+                    }
                     Some('}') if *depth == 0 => {
                         holes.ends.insert(*open, i);
                         stack.pop();
@@ -321,7 +360,10 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
                         return Err(bad(
                             i,
                             text[i..].find('\n').map_or(text.len(), |k| i + k),
-                            "a `//` comment in a hole of a `\"` string runs to the end of the line, past the `}`; write `/* … */`",
+                            "this `//` comment is inside a `${…}` hole of a `\"` string, and a \
+                             `//` comment runs to the end of the line, past the `}` that closes \
+                             the hole. Write the comment as `/* … */`, or move it out of the \
+                             string.",
                         ));
                     }
                     Some('/') if let Some(end) = comment::comment(text, i) => {
@@ -330,13 +372,23 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
                             return Err(bad(
                                 i,
                                 nl,
-                                "a `/* … */` comment in a hole of a `\"` string closes on its line",
+                                "this `/* … */` comment is inside a `${…}` hole of a `\"` \
+                                 string, and everything in that hole ends on the line of the \
+                                 `\"` string, which is one line. Close the comment on this line, \
+                                 or move it out of the string.",
                             ));
                         }
                         end
                     }
                     Some('\n') if *one_line => {
-                        return Err(bad(*open, i, "a hole in a `\"` string closes on its line"));
+                        return Err(bad(
+                            *open,
+                            i,
+                            "this `${` hole of a `\"` string reaches the end of the line without \
+                             its closing `}`, and a `\"` string, with its holes, is one line. \
+                             Write the `}` on this line, or make the string a `\"\"\"` string, \
+                             which may run over several lines.",
+                        ));
                     }
                     Some(c) => i + c.len_utf8(),
                 };
@@ -389,7 +441,9 @@ fn strip(text: &str, content: usize, raw: &[Raw]) -> Result<Vec<(usize, usize)>,
             return Err(bad(
                 p,
                 p + ws,
-                "this line is indented less than the closing `\"\"\"`",
+                "this line of a `\"\"\"` string is indented less than the closing `\"\"\"`, \
+                 whose indentation is removed from every line of the string. Indent this line \
+                 at least as far as the closing `\"\"\"`, or move the closing `\"\"\"` left.",
             ));
         }
     }

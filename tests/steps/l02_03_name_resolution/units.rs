@@ -52,8 +52,9 @@ fn local_marks_a_top_level_definition_only() {
     assert_eq!(
         errors("f(x) = {\n  local y = x;\n  y\n};\n"),
         [
-            "`local` stands at a unit's top level or in a loop body; a declaration in this block \
-          is seen by no other unit already [local y = x;]"
+            "`local` keeps a declaration from other units, and a declaration in a block is seen \
+             by no other unit already, so `local` stands only at a unit's top level or in a \
+             loop body. Remove the `local`. [local y = x;]"
         ]
     );
     assert_eq!(
@@ -61,8 +62,9 @@ fn local_marks_a_top_level_definition_only() {
         [
             "the unit `billing` cannot be imported: no manifest `zed.manifest` marks a package \
              root at or above this unit, so it imports no unit [import billing;]",
-            "`local` marks a binding, a function, a struct, a type or a method, and not an \
-             import, whose names are not definitions of the unit [local import billing;]",
+            "`local` stands before an import, whose names are not definitions of the unit, and \
+             `local` marks only a binding, a function, a struct, a type or a method. Remove the \
+             `local`, or write it before one of those. [local import billing;]",
         ]
     );
 }

@@ -93,7 +93,7 @@ fn every_atom_and_every_tuple_resolve_and_the_l2_forms_wait_for_l2_5() {
     for (text, form) in [("f(x: {..}) = x;", "{..}"), ("f(x: #a(..)) = x;", "#a(..)")] {
         let es = resolve_errors(text);
         assert_eq!(es.len(), 1, "{es:?}");
-        assert!(es[0].contains("L2.5"), "{es:?}");
+        assert!(zed_tests::is_not_yet(&es[0]), "{es:?}");
         assert!(es[0].ends_with(&format!("[{form}]")), "{es:?}");
     }
 }

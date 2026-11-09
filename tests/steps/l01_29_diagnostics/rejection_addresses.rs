@@ -11,10 +11,13 @@ use zedc::suppress::{InFile, Suppress};
 
 use super::widen_test::unit;
 
-/// `zedc <words>` through `zedc::run::command`, with no input: status, stdout and stderr.
+/// `zedc <words>` through `zedc::run::command`, with no input and `--addresses` after the
+/// file: status, stdout and stderr.
 fn zedc(words: &[&str]) -> (u8, String, String) {
+    let mut words = words.to_vec();
+    words.insert(2.min(words.len()), "--addresses");
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let status = zedc::run::command(words, &mut "".as_bytes(), &mut out, &mut err);
+    let status = zedc::run::command(&words, &mut "".as_bytes(), &mut out, &mut err);
     (
         status,
         String::from_utf8(out).unwrap(),
@@ -22,9 +25,12 @@ fn zedc(words: &[&str]) -> (u8, String, String) {
     )
 }
 
-/// `zedc test <words>`: status, stdout and stderr.
+/// `zedc test --addresses <words>`: status, stdout and stderr.
 fn zedc_test(words: &[&str]) -> (u8, String, String) {
-    let args: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+    let args: Vec<String> = std::iter::once(&"--addresses")
+        .chain(words)
+        .map(|w| w.to_string())
+        .collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let status = zedc::testing::command(&args, &mut out, &mut err);
     (
@@ -32,6 +38,11 @@ fn zedc_test(words: &[&str]) -> (u8, String, String) {
         String::from_utf8(out).unwrap(),
         String::from_utf8(err).unwrap(),
     )
+}
+
+/// A `Suppress` that suppresses nothing and prints each address, as `--addresses` asks.
+fn addressed() -> Suppress {
+    Suppress::take(&["--addresses"]).unwrap().0
 }
 
 /// The address printed on the line after the line that starts with `place`, in `text`.
@@ -45,6 +56,15 @@ fn address_after(text: &str, place: &str) -> String {
         .find_map(|l| l.strip_prefix("  address: "))
         .unwrap_or_else(|| panic!("no address after {place}:\n{text}"))
         .to_string()
+}
+
+/// The line refusing `--suppress <address>` at `place`, where the error it names is printed.
+fn refusal(place: &str, address: &str) -> String {
+    format!(
+        "{place}: `--suppress {address}` names the error printed above at this place, and an \
+         error cannot be suppressed, since the program it rejects cannot be built; only a warning \
+         can be. Correct the program as that error describes, or remove `--suppress {address}`."
+    )
 }
 
 /// The lines of `text` that are addresses.
@@ -108,12 +128,12 @@ fn a_main_that_zedc_run_refuses_prints_its_place_and_address() {
     let file = unit("addresses", "port.zed", PORT);
     let (status, _, err) = zedc(&["run", &file]);
     assert_eq!(status, 1);
-    let a = address_after(&err, &format!("{file}:2:6: port `n` of `main` is `Lines`"));
+    let a = address_after(&err, &format!("{file}:2:6: the parameter `n` of `main`"));
     assert_eq!(
         err,
         format!(
-            "{file}:2:6: port `n` of `main` is `Lines`, `Files`, `CommandLine` or `String ->? String` at layer L1\n  \
-             address: {a}\n"
+            "{file}:2:6: {}\n  address: {a}\n",
+            zed_tests::input_port_message("n", "is declared as `int`")
         )
     );
     // `zedc test` prints it the same way, address and all.
@@ -121,7 +141,7 @@ fn a_main_that_zedc_run_refuses_prints_its_place_and_address() {
     let tested = unit("addresses", "port_test.zed", &tested);
     let (status, out, _) = zedc_test(&[&tested]);
     assert_eq!(status, 1, "{out}");
-    let b = address_after(&out, &format!("{tested}:2:6: port `n` of `main`"));
+    let b = address_after(&out, &format!("{tested}:2:6: the parameter `n` of `main`"));
     let (_, _, run) = zedc(&["run", &tested]);
     assert_eq!(address_after(&run, &format!("{tested}:2:6: ")), b);
     // Naming it is an error, under both commands.
@@ -129,19 +149,18 @@ fn a_main_that_zedc_run_refuses_prints_its_place_and_address() {
     assert_eq!(status, 1);
     assert_eq!(
         refused,
-        format!(
-            "{err}{file}:2:6: `--suppress {a}` names a rejection, which cannot be suppressed\n"
-        )
+        format!("{err}{}\n", refusal(&format!("{file}:2:6"), &a))
     );
     let (status, out, err) = zedc_test(&["--suppress", &b, &tested]);
     assert_eq!(status, 1);
     assert!(
-        out.contains(&format!(
-            "{tested}:2:6: `--suppress {b}` names a rejection, which cannot be suppressed"
-        )),
+        out.contains(&refusal(&format!("{tested}:2:6"), &b)),
         "{out}"
     );
-    assert!(!err.contains("no diagnostic has this address"), "{err}");
+    assert!(
+        !err.contains("no warning or error of this run has this address"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -149,11 +168,16 @@ fn a_unit_with_no_main_is_refused_at_its_start_with_an_address() {
     let file = unit("addresses", "nomain.zed", "helper = 1;\n");
     let (status, _, err) = zedc(&["run", &file]);
     assert_eq!(status, 1);
-    let a = address_after(&err, &format!("{file}:1:1: a program declares one `main`"));
+    let a = address_after(&err, &format!("{file}:1:1: this file is run as a program"));
     assert_eq!(
         err,
         format!(
-            "{file}:1:1: a program declares one `main` function; this one declares 0\n  \
+            "{file}:1:1: this file is run as a program, and a program starts at a function named \
+             `main`, which this file does not declare. Declare one, such as\n    \
+             main(stdin: Lines) -> (stdout: Lines) {{\n      \
+             stdout <- \"hello\";\n    \
+             }}\nor, if the file holds definitions to test and is not a program, run `zedc test` \
+             on it instead of `zedc run`.\n  \
              address: {a}\n"
         )
     );
@@ -206,9 +230,7 @@ fn a_problem_of_a_package_prints_its_address() {
     assert_eq!(status, 1);
     assert_eq!(
         refused,
-        format!(
-            "{err}{main}:1:1: `--suppress {a}` names a rejection, which cannot be suppressed\n"
-        )
+        format!("{err}{}\n", refusal(&format!("{main}:1:1"), &a))
     );
 }
 
@@ -233,7 +255,7 @@ fn a_unit_a_package_names_and_has_no_file_prints_an_address() {
         let (status, _, refused) = zedc(&["run", main.to_str().unwrap(), "--suppress", a]);
         assert_eq!(status, 1);
         assert!(
-            refused.contains(&format!("`--suppress {a}` names a rejection")),
+            refused.contains(&format!("`--suppress {a}` names the error printed above")),
             "{refused}"
         );
     }
@@ -276,7 +298,7 @@ fn addressing_the_problems_of_a_package_scales() {
                 &zedc::unit::Dir(d.clone()),
                 &["main"],
             );
-            let lines = pkg.report_on_disk(&d, &mut Suppress::default());
+            let lines = pkg.report_on_disk(&d, &mut addressed());
             assert!(lines.len() >= m, "{}", lines.len());
             let words = lines
                 .iter()
@@ -309,10 +331,7 @@ fn refused_at_counts_its_address_as_matched() {
     assert_eq!(s.refused_at("f.zed", pb), None);
     assert_eq!(
         s.refused_at("f.zed:1:2", pa).as_deref(),
-        Some(
-            format!("f.zed:1:2: `--suppress {a}` names a rejection, which cannot be suppressed")
-                .as_str()
-        )
+        Some(refusal("f.zed:1:2", &a).as_str())
     );
     assert!(s.unmatched().is_empty());
 }
@@ -332,7 +351,7 @@ fn a_root_unit_with_no_file_has_an_address_from_its_name_under_the_root() {
             &zedc::unit::Dir(root.to_path_buf()),
             &["gone"],
         )
-        .report_on_disk(root, &mut Suppress::default())
+        .report_on_disk(root, &mut addressed())
     };
     let lines = report(&d);
     assert_eq!(lines.len(), 1, "{lines:?}");

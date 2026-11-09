@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use imbl::Vector;
 
-use zedc_base::rejection::Row;
+use zedc_base::rejection::{Row, not_yet};
 use zedc_syntax::ast::{
     Annot, Arm, Error, Expr, ExprKind, Field, Import, ImportKind, Param, Pattern, Port, RangeEnd,
     Stmt, StmtKind, StrPart, Struct, Target, TypeDecl,
@@ -636,6 +636,18 @@ pub fn resolve_in(unit: &[Stmt], units: &dyn Units) -> Resolved {
     }
 }
 
+/// The message for the output port `port` of the function `function`, declared with the type
+/// `ty`, which is not `Lines` (DESIGN.md step L1.19: every output port writes lines of text).
+pub fn output_port_message(port: &str, function: &str, ty: &Type) -> String {
+    let ty = zedc_syntax::format::format_type(ty);
+    format!(
+        "the output port `{port}` of `{function}` is declared as `{ty}`, and an output port \
+         writes lines of text, so its type must be `Lines`. Write `{port}: Lines`, and push to \
+         it a string, which writes one line, or a family of strings, which writes one line per \
+         entry, such as `{port} <- String(x);`."
+    )
+}
+
 /// The errors name resolution finds in the type `t`, read as a type the checker printed
 /// (OSP-diag, DESIGN.md "Printed types are syntax"): the walk a written type gets, the names in
 /// `leaves` standing for the leaves of layer L10 a printed type holds (`_`, `!_`, a literal),
@@ -775,17 +787,22 @@ impl Resolver<'_> {
                 let (message, note) = match &signature {
                     Some(_) if first.kind == Kind::Function => (
                         format!(
-                            "`{name}` is already declared in this scope with these parameter \
-                             types"
+                            "`{name}` is already declared in this scope with these parameter types, and a \
+                             scope declares a function once for each list of parameter types"
                         ),
                         format!("the first `{name}` with these parameter types"),
                     ),
                     _ if b.imported => (
-                        format!("`{name}` is already bound in this scope, by an import"),
+                        format!(
+                            "`{name}` is already bound in this scope, by an import, and a scope \
+                             binds each name once"
+                        ),
                         format!("the import that brings `{name}` into this scope"),
                     ),
                     _ => (
-                        format!("`{name}` is already bound in this scope"),
+                        format!(
+                            "`{name}` is already bound in this scope, and a scope binds each name once"
+                        ),
                         format!("the first binding of `{name}`"),
                     ),
                 };
@@ -864,7 +881,9 @@ impl Resolver<'_> {
                 self.errors.push(Error {
                     row: Some(Row::Rebinding),
                     span,
-                    message: format!("`{name}` is already bound in this scope"),
+                    message: format!(
+                        "`{name}` is already bound in this scope, and a scope binds each name once"
+                    ),
                     notes: vec![
                         Note {
                             span: self.out.binders[first].span,
@@ -994,11 +1013,11 @@ impl Resolver<'_> {
                 self.out.uses.insert(span, Ref::Prelude(name.into()));
                 return;
             }
-            Some(Found::Word(layer)) => format!("`{name}` is a prelude word of layer L{layer}"),
+            Some(Found::Word(_)) => not_yet(&format!("the prelude word `{name}`")),
             // A prelude struct of a later layer is named as a value to build one.
             None => match later_type_layer(name) {
-                Some(layer) => format!("`{name}` is a prelude type of layer L{layer}"),
-                None => format!("`{name}` is not defined"),
+                Some(_) => not_yet(&format!("the prelude type `{name}`")),
+                None => undefined(name),
             },
         };
         self.errors.push(Error {
@@ -1186,7 +1205,7 @@ impl Resolver<'_> {
                 }
                 Task::Member(span, name) => {
                     if name.ends_with('\'') {
-                        self.later(span, &format!("the primed field `{name}`"), "L6.3");
+                        self.later(span, &format!("the primed field `{name}`"));
                     } else if let Some(Found::Bound(ids)) = self.find(name)
                         && !self.dead.contains(&ids[0])
                     {
@@ -1351,8 +1370,9 @@ impl Resolver<'_> {
                 self.errors.push(Error {
                     row: None,
                     span: s.span,
-                    message: "`local` stands at a unit's top level or in a loop body; a \
-                              declaration in this block is seen by no other unit already"
+                    message: "`local` keeps a declaration from other units, and a declaration in a block is \
+                              seen by no other unit already, so `local` stands only at a unit's top \
+                              level or in a loop body. Remove the `local`."
                         .into(),
                     notes: Vec::new(),
                 });
@@ -1367,14 +1387,15 @@ impl Resolver<'_> {
             StmtKind::While(_) | StmtKind::Until(_) => "a loop guard",
             StmtKind::Expr(_) => "an expression statement",
             StmtKind::Annotated { .. } | StmtKind::UnitAnnot(_) => {
-                "an annotated declaration; write the annotation before `local`"
+                "an annotated declaration. Write the annotation before `local`"
             }
         };
         self.errors.push(Error {
             row: None,
             span: s.span,
             message: format!(
-                "`local` marks a binding, a function, a struct, a type or a method, and not {what}"
+                "`local` stands before {what}, and `local` marks only a binding, a function, a \
+                 struct, a type or a method. Remove the `local`, or write it before one of those."
             ),
             notes: Vec::new(),
         });
@@ -1386,12 +1407,12 @@ impl Resolver<'_> {
     fn stmt<'a>(&mut self, s: &'a Stmt, top: bool, todo: &mut Vec<Task<'a>>) {
         match &s.kind {
             StmtKind::Bind { boundary, .. } if !boundary.is_empty() => {
-                self.later(s.span, "a boundary `with`", "L6.2")
+                self.later(s.span, "a boundary `with`")
             }
             StmtKind::Bind { value, .. } => todo.push(Task::Expr(value)),
             StmtKind::Return(es) => todo.extend(es.iter().rev().map(Task::Expr)),
             StmtKind::Push { port, .. } if port.ends_with('\'') => {
-                self.later(s.span, "a generation push `x' <- e`", "L6.3")
+                self.later(s.span, "a generation push `x' <- e`")
             }
             StmtKind::Push { port, value } => {
                 self.name(port, s.span);
@@ -1408,10 +1429,7 @@ impl Resolver<'_> {
                             self.errors.push(Error {
                                 row: None,
                                 span: p.span,
-                                message: format!(
-                                    "output port `{}` of `{}` is `Lines` at layer L1",
-                                    p.name, f.name
-                                ),
+                                message: output_port_message(&p.name, &f.name, &p.ty),
                                 notes: Vec::new(),
                             });
                         }
@@ -1430,7 +1448,7 @@ impl Resolver<'_> {
                 todo.extend(ports.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
             StmtKind::Struct(st) => {
-                self.later(s.span, "a struct declaration", "L2.4");
+                self.later(s.span, "a struct declaration");
                 self.fields(st, s.span, todo);
             }
             // A primed name is of layer L6 wherever it stands (DESIGN.md sec:grammar).
@@ -1439,7 +1457,7 @@ impl Resolver<'_> {
                 self.primed(&m.function.name, s.span)
             }
             StmtKind::Method(m) => {
-                self.later(s.span, "a method", "L2.4");
+                self.later(s.span, "a method");
                 let f = &m.function;
                 let ports: &[Port] = f.ports.as_deref().unwrap_or_default();
                 todo.push(Task::Function {
@@ -1456,28 +1474,30 @@ impl Resolver<'_> {
                 todo.push(Task::TypeName(&m.receiver, s.span));
             }
             StmtKind::Type(t) => {
-                self.later(s.span, "a type declaration", "L2.5");
+                self.later(s.span, "a type declaration");
                 self.type_decl(t, s.span, todo);
             }
             StmtKind::Import(_) => {
                 self.later.push(Error {
                     row: None,
                     span: s.span,
-                    message: "an import is linked from step L2.4, which ties each name it \
-                              brings in to the other unit's definition"
+                    message: "an import is part of the Zed language, and this version of zedc \
+                              does not yet tie a name an import brings in to the other unit's \
+                              definition. Write the definitions this file uses in it, and \
+                              remove the import."
                         .into(),
                     notes: Vec::new(),
                 });
             }
             StmtKind::Local(decl) => {
-                self.later(s.span, "a `local` declaration", "L2.4");
+                self.later(s.span, "a `local` declaration");
                 todo.push(Task::Stmt(decl, top));
             }
-            StmtKind::Mutable(_) => self.later(s.span, "a `mutable` binding", "L6.3"),
-            StmtKind::IndexedDef(_) => self.later(s.span, "an indexed definition", "L6.2"),
-            StmtKind::While(_) => self.later(s.span, "a `while` guard", "L6.3"),
-            StmtKind::Until(_) => self.later(s.span, "an `until` guard", "L6.3"),
-            StmtKind::Expr(_) => self.later(s.span, "an expression statement", "L6.3"),
+            StmtKind::Mutable(_) => self.later(s.span, "a `mutable` binding"),
+            StmtKind::IndexedDef(_) => self.later(s.span, "an indexed definition"),
+            StmtKind::While(_) => self.later(s.span, "a `while` guard"),
+            StmtKind::Until(_) => self.later(s.span, "an `until` guard"),
+            StmtKind::Expr(_) => self.later(s.span, "an expression statement"),
             StmtKind::Annotated { annots, decl } => {
                 annots.iter().for_each(|a| self.annotation(a));
                 todo.push(Task::Stmt(decl, false));
@@ -1504,7 +1524,8 @@ impl Resolver<'_> {
                             row: None,
                             span: *at,
                             message: format!(
-                                "the struct `{}` has the field `{name}` twice",
+                                "the struct `{}` has the field `{name}` twice, and a struct has each field once. \
+                                 Remove one of the two.",
                                 st.name
                             ),
                             notes: vec![Note {
@@ -1550,7 +1571,7 @@ impl Resolver<'_> {
             Some(2) => "`@hash` pins an import and follows its unit path, as in \
                  `import geometry.shapes @hash(\"…\");`; it annotates no declaration"
                 .into(),
-            Some(layer) => format!("`@{name}` is an annotation of layer L{layer}"),
+            Some(_) => not_yet(&format!("the annotation `@{name}`")),
         };
         self.errors.push(Error {
             row: None,
@@ -1601,7 +1622,11 @@ impl Resolver<'_> {
                         span: first,
                         text: "the first `@log(#off);`".into(),
                     }],
-                    ..fail("the unit has `@log(#off);` twice".into())
+                    ..fail(
+                        "the unit has `@log(#off);` twice, and a unit turns its log off once. \
+                         Remove one of the two."
+                            .into(),
+                    )
                 },
             },
         };
@@ -1610,7 +1635,7 @@ impl Resolver<'_> {
 
     /// The primed name `name`, which names a loop step's output.
     fn primed(&mut self, name: &str, span: Span) {
-        self.later(span, &format!("the primed name `{name}`"), "L6.3");
+        self.later(span, &format!("the primed name `{name}`"));
     }
 
     /// A new region that handles `handles`.
@@ -1695,12 +1720,12 @@ impl Resolver<'_> {
         }
     }
 
-    /// The form `what`, which the parser builds, has its meaning from step `step`.
-    fn later(&mut self, span: Span, what: &str, step: &str) {
+    /// The form `what`, which the parser builds and this zedc does not compile yet.
+    fn later(&mut self, span: Span, what: &str) {
         self.errors.push(Error {
             row: None,
             span,
-            message: format!("{what} is compiled from step {step}"),
+            message: not_yet(what),
             notes: Vec::new(),
         });
     }
@@ -1740,12 +1765,16 @@ impl Resolver<'_> {
         });
     }
 
-    /// The use at `span` of `what`, a name another unit defines, which step L2.4 links.
+    /// The use at `span` of `what`, a name another unit defines, which this zedc does not link yet.
     fn linked(&mut self, span: Span, what: &str) {
         self.later.push(Error {
             row: None,
             span,
-            message: format!("{what} is linked from step L2.4"),
+            message: format!(
+                "{what} is used here, and this version of zedc does not yet link a use to a \
+                 definition in another unit. Write the definition in this file instead, and use \
+                 it from there."
+            ),
             notes: Vec::new(),
         });
     }
@@ -1764,7 +1793,7 @@ impl Resolver<'_> {
         // Step L2.4 elaborates a tuple-destructuring parameter; its names are binders of a
         // pattern, which this step resolves (DESIGN.md L2.3), so the body is walked with them.
         if let Some(p) = params.iter().find(|p| p.tuple.is_some()) {
-            self.later(p.span, "a tuple-destructuring parameter", "L2.4");
+            self.later(p.span, "a tuple-destructuring parameter");
         }
         self.open();
         if let Some(at) = this {
@@ -1909,16 +1938,16 @@ impl Resolver<'_> {
                 todo.push(Task::Expr(of));
             }
             ExprKind::Record(fields) => {
-                self.later(e.span, "a record display", "L2.4");
+                self.later(e.span, "a record display");
                 todo.extend(fields.iter().rev().map(|(_, v)| Task::Expr(v)));
             }
             ExprKind::With { of, updates } => {
-                self.later(e.span, "a `with` clause", "L2.4");
+                self.later(e.span, "a `with` clause");
                 todo.extend(updates.iter().rev().map(|u| Task::Expr(&u.value)));
                 todo.push(Task::Expr(of));
             }
             ExprKind::This => {
-                self.later(e.span, "`this`", "L2.4");
+                self.later(e.span, "`this`");
                 match self.find("this") {
                     Some(Found::Bound(ids)) => {
                         self.out.uses.insert(e.span, Ref::Bound(ids));
@@ -1934,42 +1963,42 @@ impl Resolver<'_> {
                 }
             }
             ExprKind::Match { of, arms } => {
-                self.later(e.span, "a `match`", "L2.4");
+                self.later(e.span, "a `match`");
                 todo.extend(arms.iter().rev().map(Task::Arm));
                 todo.push(Task::Expr(of));
             }
             // The forms below are compiled from a later step, and their parts are resolved here
             // as `match`'s are, so a name in them is recorded or reported.
             ExprKind::Range(from, to) => {
-                self.later(e.span, "a range", "L3.2");
+                self.later(e.span, "a range");
                 todo.extend(to.bound().map(|b| Task::Expr(b)));
                 todo.push(Task::Expr(from));
             }
             ExprKind::In { of, set, .. } => {
-                self.later(e.span, "an `in` test", "L3.2");
+                self.later(e.span, "an `in` test");
                 todo.push(Task::Expr(set));
                 todo.push(Task::Expr(of));
             }
             ExprKind::Reduce { of, op } => {
-                self.later(e.span, "a reduction `><`", "L3.2");
+                self.later(e.span, "a reduction `><`");
                 todo.push(Task::Expr(op));
                 todo.push(Task::Expr(of));
             }
             ExprKind::Read { of, .. } => {
-                self.later(e.span, "a metadata read `::`", "L3.2");
+                self.later(e.span, "a metadata read `::`");
                 todo.push(Task::Expr(of));
             }
-            ExprKind::Section(_) => self.later(e.span, "an operator section", "L3.2"),
+            ExprKind::Section(_) => self.later(e.span, "an operator section"),
             ExprKind::Array(items) => {
-                self.later(e.span, "an array display", "L3.2");
+                self.later(e.span, "an array display");
                 todo.extend(items.iter().rev().map(Task::Expr));
             }
             ExprKind::Set(items) => {
-                self.later(e.span, "a set display", "L3.2");
+                self.later(e.span, "a set display");
                 todo.extend(items.iter().rev().map(Task::Expr));
             }
             ExprKind::Map(entries) => {
-                self.later(e.span, "a map display", "L3.2");
+                self.later(e.span, "a map display");
                 for (k, v) in entries.iter().rev() {
                     todo.push(Task::Expr(v));
                     todo.push(Task::Expr(k));
@@ -1983,7 +2012,7 @@ impl Resolver<'_> {
                 guard,
                 body,
             } => {
-                self.later(e.span, "a `for`", "L3.2");
+                self.later(e.span, "a `for`");
                 todo.push(Task::For {
                     binders,
                     guard: guard.as_deref(),
@@ -1994,18 +2023,18 @@ impl Resolver<'_> {
             // A loop body's bare and primed names are the frames of step L6.3, which a
             // `mutable` or a `with` boundary declares and resolution does not bind yet, so the
             // body is not walked: its names would be reported as not defined.
-            ExprKind::Loop { .. } => self.later(e.span, "a `loop`", "L6.3"),
+            ExprKind::Loop { .. } => self.later(e.span, "a `loop`"),
             ExprKind::Break(value) => {
-                self.later(e.span, "a `break`", "L6.3");
+                self.later(e.span, "a `break`");
                 todo.push(Task::Expr(value));
             }
             ExprKind::Spread { of, name } => {
-                self.later(e.span, "a call `*.` that writes its receiver", "L6.3");
+                self.later(e.span, "a call `*.` that writes its receiver");
                 todo.push(Task::Member(e.span, name));
                 todo.push(Task::Expr(of));
             }
             ExprKind::SortKey { key, .. } => {
-                self.later(e.span, "a sort key `asc` or `desc`", "L5.1");
+                self.later(e.span, "a sort key `asc` or `desc`");
                 todo.push(Task::Expr(key));
             }
         }
@@ -2019,15 +2048,15 @@ impl Resolver<'_> {
     fn pattern<'a>(&mut self, p: &'a Pattern, report: bool, todo: &mut Vec<Task<'a>>) {
         let later = match p {
             Pattern::Atom { .. } => None,
-            Pattern::Is { .. } => Some(("a type pattern `n is T`", "L2.4")),
-            Pattern::Lit(_) => Some(("a literal pattern", "L2.4")),
-            Pattern::Range { .. } => Some(("a range pattern", "L3.2")),
+            Pattern::Is { .. } => Some("a type pattern `n is T`"),
+            Pattern::Lit(_) => Some("a literal pattern"),
+            Pattern::Range { .. } => Some("a range pattern"),
             Pattern::Struct { .. } | Pattern::Name(..) | Pattern::Wild(_) | Pattern::Tuple(..) => {
-                Some(("a struct, name, `_` or tuple pattern", "L2.4"))
+                Some("a struct, name, `_` or tuple pattern")
             }
         };
-        if report && let Some((what, step)) = later {
-            self.later(p.span(), what, step);
+        if report && let Some(what) = later {
+            self.later(p.span(), what);
         }
         let bind = |(f, sub): &'a (String, Option<Pattern>), span| match sub {
             Some(sub) => Task::Pattern(sub, report),
@@ -2097,7 +2126,11 @@ impl Resolver<'_> {
                         self.errors.push(Error {
                             row: None,
                             span: b.span,
-                            message: format!("the type variable `{}` is bounded twice", b.name),
+                            message: format!(
+                                "the type variable `{}` is bounded twice, and a type variable \
+                                 has one bound. Remove one of the two bounds.",
+                                b.name
+                            ),
                             notes: vec![Note {
                                 span: outer.span,
                                 text: format!("the first bound of `{}`", b.name),
@@ -2158,23 +2191,21 @@ impl Resolver<'_> {
             }
             TypeKind::AtomAny(_) | TypeKind::Every(Every::Struct) if self.printed.is_some() => {}
             TypeKind::Apply(name, ps) => {
-                self.later(t.span, "an applied type", "L2.5");
+                self.later(t.span, "an applied type");
                 todo.extend(ps.iter().rev().map(|p| Task::Ty(&p.ty)));
                 todo.push(Task::TypeName(name, name_at(t.span, name)));
             }
             TypeKind::AtomApply(_, ps) => {
-                self.later(t.span, "an atom type with a payload", "L2.5");
+                self.later(t.span, "an atom type with a payload");
                 todo.extend(ps.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
-            TypeKind::AtomAny(_) => self.later(t.span, "an atom type with any payload", "L2.5"),
-            TypeKind::Every(Every::Struct) => {
-                self.later(t.span, "the type of every struct", "L2.5")
-            }
+            TypeKind::AtomAny(_) => self.later(t.span, "an atom type with any payload"),
+            TypeKind::Every(Every::Struct) => self.later(t.span, "the type of every struct"),
             TypeKind::Record(fields) => {
-                self.later(t.span, "a record type", "L2.5");
+                self.later(t.span, "a record type");
                 todo.extend(fields.iter().rev().map(|(_, t)| Task::Ty(t)));
             }
-            TypeKind::Array(_) => self.later(t.span, "a family type `[T]`", "L3.2"),
+            TypeKind::Array(_) => self.later(t.span, "a family type `[T]`"),
         }
     }
 
@@ -2226,11 +2257,11 @@ impl Resolver<'_> {
                 if kind.is_some_and(Kind::is_type) {
                     return self.prelude_unit(n, span, unit);
                 }
-                format!("the type `{n}` is not defined")
+                undefined_type(n)
             }
             Some(Found::Word(_)) | None => match later_type_layer(n) {
-                Some(layer) => format!("the type `{n}` is a prelude type of layer L{layer}"),
-                None => format!("the type `{n}` is not defined"),
+                Some(_) => not_yet(&format!("the prelude type `{n}`")),
+                None => undefined_type(n),
             },
         };
         self.errors.push(Error {
@@ -2370,7 +2401,8 @@ impl Resolver<'_> {
                     row: None,
                     span: b.span,
                     message: format!(
-                        "the bound names `{}`, which the type before `for` does not hold",
+                        "the bound names `{0}`, and the type before `for` does not hold `{0}`, so the \
+                         bound constrains nothing. Remove the bound, or write `{0}` in the type.",
                         b.name
                     ),
                     notes: vec![Note {
@@ -2473,4 +2505,21 @@ enum Task<'a> {
     ArrowEnd,
     /// The end of the type of a bounds clause, and the clause's bounds.
     ForEnd(&'a Type, &'a [TypeBound]),
+}
+
+/// The message for the use of `name`, which nothing in scope and nothing in the prelude defines.
+fn undefined(name: &str) -> String {
+    format!(
+        "`{name}` is not defined: no definition, parameter or binding in scope has this name, and \
+         the prelude has none. Define `{name}`, or correct the name if it is misspelled."
+    )
+}
+
+/// The message for the type `name`, which no type in scope and no prelude type has as its name.
+fn undefined_type(name: &str) -> String {
+    format!(
+        "the type `{name}` is not defined: no type in scope has this name, and the prelude has \
+         none. Correct the name if it is misspelled, or write a type of the prelude, such as \
+         `int` or `String`."
+    )
 }

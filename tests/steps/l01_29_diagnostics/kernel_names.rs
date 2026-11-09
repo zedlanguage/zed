@@ -115,8 +115,11 @@ fn each_overload_asks_its_own_question() {
     let out = rejected(&src);
     assert_eq!(kernel_name(&out), None, "{out}");
     let firsts: Vec<&str> = (out.lines())
-        .filter(|l| l.contains("is not decided"))
+        .filter(|l| l.contains("zedc could not decide whether"))
         .collect();
     assert_eq!(firsts.len(), 1, "{out}");
-    assert!(firsts[0].starts_with("1:1: whether `ok` can hold"), "{out}");
+    assert!(
+        firsts[0].starts_with("1:1: zedc could not decide whether the condition of `ok`,"),
+        "{out}"
+    );
 }

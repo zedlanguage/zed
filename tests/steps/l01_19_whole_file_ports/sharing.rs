@@ -86,10 +86,10 @@ fn rows_still_run_when_the_program_is_refused() {
         [
             (
                 1,
-                Some(
-                    "port `count` of `main` is `Lines`, `Files`, `CommandLine` or `String ->? String` at layer L1"
-                        .to_string()
-                )
+                Some(zed_tests::input_port_message(
+                    "count",
+                    "is declared as `int`"
+                ))
             ),
             (6, None),
             (7, Some("`2 -> 4` of `next`: the result is 3".to_string())),

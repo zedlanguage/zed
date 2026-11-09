@@ -121,20 +121,54 @@ pub struct Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
-            ErrorKind::Unexpected(c) => {
-                write!(f, "no token starts with {c:?} (U+{:04X})", *c as u32)
+            ErrorKind::Unexpected(c) => f.write_str(&unexpected(*c)),
+            ErrorKind::BadNumber(why) | ErrorKind::BadString(why) | ErrorKind::BadComment(why) => {
+                write!(f, "{why}")
             }
-            ErrorKind::BadNumber(why) => write!(f, "malformed number: {why}"),
-            ErrorKind::BadString(why) => write!(f, "malformed string: {why}"),
-            ErrorKind::BadComment(why) => write!(f, "{why}"),
             ErrorKind::Unread(r) => write!(f, "{}", unread_literal(r)),
-            ErrorKind::MixedScript(name) => {
-                write!(
-                    f,
-                    "the name {name:?} mixes scripts: {}",
-                    name::scripts_of(name)
-                )
-            }
+            ErrorKind::MixedScript(name) => write!(
+                f,
+                "the name `{name}` mixes letters of the scripts {}, and a name is written in one \
+                 script, so that no name looks like another and is a different one. Write it in \
+                 one script: a letter that looks Latin may be, for instance, a Cyrillic or Greek \
+                 letter of the same shape.",
+                name::scripts_of(name)
+            ),
+        }
+    }
+}
+
+/// The message for the character `c`, which starts no token where it stands. `#` and `@`
+/// start an atom and an annotation only before a name, and `'` ends a name, so each of those
+/// has its own text.
+fn unexpected(c: char) -> String {
+    match c {
+        '#' => "`#` starts an atom, and the atom's name must follow it at once, as in `#none`. \
+                Write the name right after the `#`, with no space between."
+            .into(),
+        '@' => "`@` starts an annotation, and the annotation's name must follow it at once, as \
+                in `@test`. Write the name right after the `@`, with no space between."
+            .into(),
+        '\'' => "`'` stands only right after a name, once, as in `x'`, and starts nothing by \
+                 itself. Remove this `'`, or write it right after the name it marks."
+            .into(),
+        _ => {
+            let code = c as u32;
+            let quoted = match c {
+                '`' => "`` ` ``".to_string(),
+                _ => format!("`{c}`"),
+            };
+            let text = match c {
+                '\\' => "`\"\\\\\"`".to_string(),
+                '`' => "`` \"`\" ``".to_string(),
+                _ if c.is_control() || c.is_whitespace() => format!("`\"\\u{{{code:X}}}\"`"),
+                _ => format!("`\"{c}\"`"),
+            };
+            format!(
+                "the character {quoted} (U+{code:04X}) starts no name, number, operator or \
+                 other part of a Zed program. Remove it, or, if it is meant as text, write it \
+                 inside a string, as {text}."
+            )
         }
     }
 }
@@ -143,9 +177,9 @@ impl fmt::Display for Error {
 /// does not quote the literal, which may be millions of digits long.
 pub fn unread_literal(r: &TooLarge) -> String {
     format!(
-        "this literal has so many digits that the system refused the {} bytes of memory asked \
-         to read them; a literal has no size limit, but this machine cannot hold this one's \
-         value; write fewer digits",
+        "this literal has so many digits that the system refused the {} bytes of memory zedc \
+         asked for to read it. A literal has no size limit, but this machine cannot hold this \
+         one's value. Write it with fewer digits.",
         bytes_of(&r.bits)
     )
 }

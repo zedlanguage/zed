@@ -13,7 +13,7 @@ fn every_unit_builds_or_names_its_layer() {
         let tree = parse(&f.text, &tokens, "Unit", TOP).unwrap();
         match unit(&f.text, &tokens, &tree) {
             Ok(_) => built += 1,
-            Err(e) if e.message.contains(" is built from layer L") => later += 1,
+            Err(e) if zed_tests::is_not_yet(&e.message) => later += 1,
             Err(e) => wrong.push(format!("{}: {e}", f.at)),
         }
     }

@@ -138,13 +138,18 @@ impl<'a> Elab<'a> {
             Some(Ref::Bound(ids)) if ids.len() > 1 => self.error(
                 span,
                 format!(
-                    "`{n}` names {} overloads; choosing among them arrives at L2",
+                    "`{n}` names {} definitions, and this version of zedc does not yet choose among \
+                     definitions that share a name. Give each of them a name of its own.",
                     ids.len()
                 ),
             ),
             Some(Ref::Bound(ids)) if self.t.res.binders[ids[0]].kind == Kind::Port => self.error(
                 span,
-                format!("`{n}` is an output port, written with `{n} <- e`, not a value"),
+                format!(
+                    "`{n}` is an output port, and a port is written to, not read, so it is no \
+                     value here. Push to it with `{n} <- e;`, and use the value `e` itself where \
+                     it is needed."
+                ),
             ),
             Some(Ref::Bound(ids)) => Some(Term::Var(self.names[ids[0]].clone())),
             Some(Ref::Prelude(w)) => Some(Term::Var(w.as_str().into())),
@@ -261,10 +266,21 @@ impl<'a> Elab<'a> {
             return None;
         }
         if !items.is_empty() {
-            return Some(self.error(*span, "an atom's payload is all by position or all by name"));
+            return Some(self.error(
+                *span,
+                "this atom's payload gives some values by position and some by name, and a \
+                 payload is given all by position or all by name. Write every value by position, \
+                 or every value with its name.",
+            ));
         }
         if let Some(f) = repeated(fields.iter().map(|(f, _)| f.as_str())) {
-            return Some(self.error(*span, format!("the pattern names `{f}` twice")));
+            return Some(self.error(
+                *span,
+                format!(
+                    "the pattern names `{f}` twice, and a pattern names each field of the \
+                     payload once. Remove one of the two."
+                ),
+            ));
         }
         stack.push(OpenPattern::Fields {
             name,

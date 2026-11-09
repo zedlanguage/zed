@@ -16,6 +16,7 @@ use zed_kernel::num::{LiteralRounding, bytes_of, literal_f64, show_f64};
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Value};
 
+use zedc_base::rejection::not_yet;
 use zedc_check::check::{self, Fit, Misfit};
 use zedc_resolve::resolve::topo::topo;
 use zedc_resolve::resolve::{Ref, prelude_layer};
@@ -355,7 +356,11 @@ impl<'a> Elab<'a> {
                     };
                     self.error::<()>(
                         items[named[0].1].span,
-                        format!("{message}: recursion arrives at layer L6"),
+                        format!(
+                            "{message}, which is recursion. Recursion is part of the Zed \
+                             language, and this version of zedc does not compile it yet. Write \
+                             the computation without a definition that uses itself."
+                        ),
                     );
                 }
                 m.ret = Ret::Scope(None);
@@ -617,25 +622,28 @@ impl<'a> Elab<'a> {
                 Err(LiteralRounding::Infinite) => self.error(
                     e.span,
                     format!(
-                        "`{s}` rounds to infinity as an f64; the largest f64 is {}",
+                        "`{s}` is larger than the largest f64, {}, so as an f64 it rounds to \
+                         infinity. Write `{s}r` for the exact rational, or a number within the \
+                         range of f64.",
                         show_f64(f64::MAX)
                     ),
                 ),
                 Err(LiteralRounding::Zero) => self.error(
                     e.span,
                     format!(
-                        "`{s}` is not zero but rounds to zero as an f64; the least positive \
-                         f64 is {}",
+                        "`{s}` is not zero, and it lies nearer to zero than to the least positive \
+                         f64, {}, so as an f64 it rounds to zero. Write `{s}r` for the exact rational, or \
+                         `0.0` if zero is meant.",
                         show_f64(f64::from_bits(1))
                     ),
                 ),
                 Err(LiteralRounding::TooLarge(t)) => self.error(
                     e.span,
                     format!(
-                        "this literal lies so near a rounding boundary of f64 that telling \
-                         which side it is on needs more of its digits than the system \
-                         gives: it refused the {} bytes of memory asked to read them; \
-                         write fewer digits",
+                        "this literal lies so near the midpoint of two f64 values that zedc \
+                         must read more of its digits to tell which is nearer, and the system \
+                         refused the {} bytes of memory zedc asked for to read them. Write the \
+                         literal with fewer digits.",
                         bytes_of(&t.bits)
                     ),
                 ),
@@ -914,13 +922,19 @@ impl<'a> Elab<'a> {
         if curry {
             let t = self.error(
                 span,
-                "`...` curries a function's named parameters; an atom has none",
+                "`...` leaves a function's other named parameters open, and an atom has no \
+                 parameters to leave open. Remove the `...`.",
             );
             m.give(t);
             return;
         }
         if !positional.is_empty() && !named.is_empty() {
-            let t = self.error(span, "an atom's payload is all by position or all by name");
+            let t = self.error(
+                span,
+                "this atom's payload gives some values by position and some by name, and a \
+                 payload is given all by position or all by name. Write every value by position, \
+                 or every value with its name.",
+            );
             m.give(t);
             return;
         }
@@ -1189,7 +1203,11 @@ impl<'a> Elab<'a> {
                     .collect();
                 let t = self.error(
                     ff.call.span,
-                    format!("the defaults of {} read each other", names.join(", ")),
+                    format!(
+                        "the defaults of {} read each other in a cycle, so none of them can be \
+                         computed first. Write one of them without reading the others.",
+                        names.join(", ")
+                    ),
                 );
                 m.give(t);
             }
@@ -1289,7 +1307,8 @@ impl<'a> Elab<'a> {
         };
         let error = match self.t.res.uses.get(&member) {
             Some(Ref::Bound(ids)) if ids.len() > 1 => format!(
-                "`{name}` names {} overloads; choosing among them arrives at L2",
+                "`{name}` names {} definitions, and this version of zedc does not yet choose among \
+                 definitions that share a name. Give each of them a name of its own.",
                 ids.len()
             ),
             Some(Ref::Bound(ids)) if self.t.funcs.contains_key(&ids[0]) => {
@@ -1311,9 +1330,13 @@ impl<'a> Elab<'a> {
                     self.call_value(m, f, Some(receiver), call);
                     return;
                 }
-                Some(layer) => format!("`{name}` is a prelude word of layer L{layer}"),
+                Some(_) => not_yet(&format!("the prelude word `{name}`")),
                 None => {
-                    format!("`{name}` is not a function in scope, and fields arrive at L2")
+                    format!(
+                        "`{name}` is not a function in scope, and reading a field with `.{name}` \
+                         is part of the Zed language that this version of zedc does not compile \
+                         yet. Call a function in scope, or correct the name if it is misspelled."
+                    )
                 }
             },
         };
@@ -1640,7 +1663,15 @@ impl<'a> Elab<'a> {
                     Some(k) => {
                         let f = self.t.funcs[&id];
                         match f.params.len() {
-                            0 => self.error(of.span, format!("`{}` takes no arguments", f.name)),
+                            0 => self.error(
+                                of.span,
+                                format!(
+                                    "`{0}` takes no arguments, and this indexes it with one. \
+                                     Write `{0}` without the index, or give `{0}` a parameter \
+                                     for it.",
+                                    f.name
+                                ),
+                            ),
                             1 => Some(Term::App(self.fv(id), vec![k])),
                             n => {
                                 let rest: Vec<Arc<str>> = (1..n).map(|_| self.temp()).collect();
@@ -1723,7 +1754,7 @@ impl<'a> Elab<'a> {
             "mod" => Prim::Mod,
             "^" => Prim::Pow,
             "++" => Prim::Concat,
-            _ => return self.error(e.span, format!("`{op}` is not an L1 operator")),
+            _ => return self.error(e.span, not_yet(&format!("the operator `{op}`"))),
         };
         let mut args = vec![a, b];
         if let Some(marks) = &mut self.marks
@@ -1786,7 +1817,9 @@ impl<'a> Elab<'a> {
         if !t.decidable() {
             return self.error(
                 at,
-                "`is` cannot test a value against a function type at run time",
+                "`is` tests a value against a type when the program runs, and a function \
+                 value does not show its type then. Test against a type that is not a \
+                 function type, or remove the `is`.",
             );
         }
         let arms = [(KPattern::Is(t), true), (KPattern::Wild, false)];

@@ -53,12 +53,26 @@ pub struct Unreadable {
     pub why: String,
 }
 
-/// The file `file` cannot be read, for `u`: `file:line:col: the file cannot be read: why`, or
-/// ``the file `file` cannot be read: why`` when `u` has no place in it.
+impl Unreadable {
+    /// The whole message, with no position: a rejection of the text explains itself, and a
+    /// file the system would not give zedc says so, with the repair.
+    pub fn sentence(&self) -> String {
+        match self.at {
+            Some(_) => self.why.clone(),
+            None => format!(
+                "zedc could not read this file: {}. Check the path and that you may read the file.",
+                self.why
+            ),
+        }
+    }
+}
+
+/// The file `file` cannot be read, for `u`: `file:line:col: why`, or `file: ` and
+/// [`Unreadable::sentence`] when `u` has no place in it.
 fn unreadable(file: &str, u: &Unreadable) -> String {
     match u.at {
-        Some((line, col)) => format!("{file}:{line}:{col}: the file cannot be read: {}", u.why),
-        None => format!("the file `{file}` cannot be read: {}", u.why),
+        Some((line, col)) => format!("{file}:{line}:{col}: {}", u.why),
+        None => format!("{file}: {}", u.sentence()),
     }
 }
 
@@ -77,7 +91,7 @@ impl Files for Dir {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => Some(Err(Unreadable {
                 at: None,
-                why: e.to_string(),
+                why: source::io_reason(&e),
             })),
         }
     }
@@ -160,7 +174,10 @@ pub fn manifest(text: &str) -> Result<Manifest, Vec<Error>> {
             errors.push(Error {
                 row: None,
                 span: *at,
-                message: format!("the manifest binds `{name}` twice"),
+                message: format!(
+                    "the manifest binds `{name}` twice, and a manifest binds each name once. \
+                     Remove one of the two."
+                ),
                 notes: vec![Note {
                     span: first,
                     text: format!("`{name}` is first bound here"),
@@ -298,8 +315,8 @@ impl Package {
     }
 
     /// Each problem as `zedc` prints it, the package's files lying under `root`, the path the
-    /// command line reached the root by: as [`Package::report`], each followed by its address on
-    /// a line of its own, `  address: <hex>`, as every diagnostic prints it, its file's part
+    /// command line reached the root by: as [`Package::report`], each followed, under `--addresses`, by its
+    /// address on a line of its own, `  address: <hex>`, as every diagnostic prints it, its file's part
     /// found from the file's path under the package root ([`InFile::named`]), never from
     /// `root`; then a line for each problem whose address `suppress` names, since a rejection
     /// cannot be suppressed. After [`Package::report`], O(t) for problems whose files' names
@@ -310,7 +327,7 @@ impl Package {
         let mut refused = Vec::new();
         for (p, r) in self.problems.iter().zip(self.reported(root)) {
             let address = InFile::named(&p.file).join(r.part);
-            out.push(format!("{}\n  address: {address}", r.text));
+            out.push(format!("{}{}", r.text, suppress.address_line(address)));
             refused.extend(suppress.refused_at(&r.place, address));
         }
         out.extend(refused);
@@ -419,7 +436,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         Some(Err(u)) => {
             pkg.problems.push(Problem {
                 file: MANIFEST.into(),
-                error: error(NOWHERE, format!("the manifest cannot be read: {}", u.why)),
+                error: error(NOWHERE, u.sentence()),
             });
             pkg.manifest = Some(Err(u));
             return pkg;
@@ -489,7 +506,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
             }),
             Some(Err(why)) => pkg.problems.push(Problem {
                 file: u.file.clone(),
-                error: error(NOWHERE, format!("the file cannot be read: {}", why.why)),
+                error: error(NOWHERE, why.sentence()),
             }),
             Some(Ok(_)) => {}
         }

@@ -498,7 +498,7 @@ fn each_answer_through_arguments_that_are_not_names_is_the_answer_of_the_relatio
     // that it shares the callee's translation; each answer is the one the body closed over
     // the definitions it reaches has, decided whole over the names the user wrote.
     // No cycle of substitutions is written here: a function defined in terms of itself is
-    // rejected below layer L6 ("recursion arrives at layer L6").
+    // rejected below layer L6 ("which is recursion").
     let units = [
         // A chain whose links move the argument, each by another constant.
         "s0(x: int) = x > 0 && x < 50;\ns1(x: int) = s0(x: x + 1) && x mod 3 == 0;\n\

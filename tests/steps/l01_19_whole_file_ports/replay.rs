@@ -44,7 +44,13 @@ fn a_read_the_record_lacks_stops_the_replay() {
     let e = p.replay(&record).err();
     assert_eq!(
         e.as_deref(),
-        Some("port `fs`: the record holds no read of \"a.txt\"")
+        Some(
+            "port `fs`: the program reads \"a.txt\" here, and the record holds no read of it, so \
+             the replay cannot go on: a replay reads nothing from outside, only what the record \
+             holds. The run that wrote the record did not read \"a.txt\", so its inputs differed \
+             from these, or the record has been changed. Replay with the inputs of the recorded \
+             run, or make a new record with `zedc run <file> --record <out>`."
+        )
     );
 }
 
@@ -80,16 +86,30 @@ fn a_record_round_trips_any_bytes() {
 fn a_damaged_record_is_rejected() {
     let good = b"zed record 1\nlines 5 3\nstdinab\n\n".to_vec();
     assert!(Record::from_bytes(&good).is_ok());
+    assert_eq!(
+        Record::from_bytes(b"zed record 2\n"),
+        Err(
+            "this file is not a record that `zedc run --record` writes: such a record starts \
+             with the line `zed record 1`, and this file does not. Name the file `--record` \
+             wrote, or make a record with `zedc run <file> --record <out>`."
+                .to_string()
+        )
+    );
+    // Each is refused at its one entry, which starts at byte 13, just after `zed record 1`.
     for bad in [
-        &b"zed record 2\n"[..],
-        b"zed record 1\nlines 5 9\nstdinab\n\n",
+        &b"zed record 1\nlines 5 9\nstdinab\n\n"[..],
         b"zed record 1\nlines 5 3\nstdinab\n",
         b"zed record 1\nsocket 1\nx\n",
         b"zed record 1\nmissing 2 1 4\nfsa\n",
     ] {
         assert_eq!(
             Record::from_bytes(bad),
-            Err("not a Zed record".to_string()),
+            Err(
+                "this record, which `zedc run --record` writes, cannot be read from byte 13 on: \
+                 the entry that starts there is cut short or has been changed. A record is read \
+                 only as it was written; make it again with `zedc run <file> --record <out>`."
+                    .to_string()
+            ),
             "{}",
             String::from_utf8_lossy(bad)
         );

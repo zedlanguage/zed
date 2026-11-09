@@ -240,8 +240,8 @@ impl Builder<'_, '_> {
                         row: Some(Row::PositionalAfterNamed),
                         span: p.span,
                         message: format!(
-                            "the positional parameter `{}` comes after the named parameter \
-                             `{}`: a declaration lists its positional parameters first",
+                            "the positional parameter `{}` comes after the named parameter `{}`, and a \
+                             declaration lists its positional parameters first.",
                             p.name, named.name
                         ),
                         notes: vec![

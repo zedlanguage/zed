@@ -44,9 +44,12 @@ fn package(fs: &[(&str, &str)]) -> Package {
     load(&mut Db::new(), &files(fs), &["main"])
 }
 
-/// Whether `message` is a form a later step compiles or links, which this step only reaches.
+/// Whether `message` is a form a later step compiles or links, which this step only reaches. A
+/// prelude word or type of a later layer is this step's own error, so it is kept.
 fn later(message: &str) -> bool {
-    message.contains(" is compiled from step L") || message.contains(" is linked from step L2.4")
+    zed_tests::is_not_yet(message)
+        && !message.starts_with("the prelude word ")
+        && !message.starts_with("the prelude type ")
 }
 
 /// The problems of the package `p` as `zedc` prints them, but for the forms of later steps.

@@ -300,8 +300,8 @@ fn a_long_decimal_literal_is_refused_when_memory_is_short() {
         a_literal_near_a_boundary_refused_under(16 << 20),
         format!(
             "this literal has so many digits that the system refused the {} bytes of memory \
-             asked to read them; a literal has no size limit, but this machine cannot hold \
-             this one's value; write fewer digits",
+             zedc asked for to read it. A literal has no size limit, but this machine cannot \
+             hold this one's value. Write it with fewer digits.",
             literal_read_bytes()
         )
     );
@@ -319,10 +319,14 @@ fn a_literal_near_a_rounding_boundary_is_refused_below_the_peak_of_a_round() {
     let message = a_literal_near_a_boundary_refused_under(48 << 20);
     let bytes = message
         .strip_prefix(
-            "this literal lies so near a rounding boundary of f64 that telling which side it \
-             is on needs more of its digits than the system gives: it refused the ",
+            "this literal lies so near the midpoint of two f64 values that zedc must read more of \
+             its digits to tell which is nearer, and the system refused the ",
         )
-        .and_then(|e| e.strip_suffix(" bytes of memory asked to read them; write fewer digits"))
+        .and_then(|e| {
+            e.strip_suffix(
+                " bytes of memory zedc asked for to read them. Write the literal with fewer digits.",
+            )
+        })
         .unwrap_or_else(|| panic!("another message: {message}"));
     let bytes: u64 = bytes.parse().expect("a size in bytes");
     assert!(bytes > 1 << 19, "{bytes} bytes");

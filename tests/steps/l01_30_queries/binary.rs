@@ -156,7 +156,14 @@ fn a_reported_command_that_fails_keeps_its_status_and_still_reports() {
     let out = zedc(&[Path::new("--report"), Path::new("fmt")]);
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(stderr.starts_with("usage: zedc [--report] "), "{stderr}");
+    assert!(
+        stderr.starts_with(
+            "`zedc fmt` takes one word after it, the file to print in the standard layout, and \
+             was given 0 words. Write `zedc fmt <file>`, once for each file.\n\n\
+             The commands of zedc are:\n"
+        ),
+        "{stderr}"
+    );
     let (rows, _, _) = report(&stderr);
     assert_eq!(
         rows.len(),

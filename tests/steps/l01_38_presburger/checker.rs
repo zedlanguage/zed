@@ -38,6 +38,54 @@ fn stated(printed: &str) -> String {
         .join("\n")
 }
 
+/// The start of the refusal of `ok(params) = rows;`, up to its cause: the condition on one line,
+/// as the message prints it, and the parameters each quoted.
+fn head(rows: &str, params: &str) -> String {
+    let condition = rows.split_whitespace().collect::<Vec<_>>().join(" ");
+    let names = (params.split(", "))
+        .map(|p| format!("`{p}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "1:1: zedc could not decide whether the condition of `ok`, written `{condition}`, can be \
+         true for whole-number values of {names}, which it works out for every test function: "
+    )
+}
+
+/// `text` without the condition each refusal in it quotes as written, so that a question
+/// written through a call and the same question written out compare equal.
+fn unwritten(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(from) = rest.find(", written `") {
+        let Some(to) = rest[from..].find("`, can be ") else {
+            break;
+        };
+        out.push_str(&rest[..from]);
+        rest = &rest[from + to + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The condition of the definition `def` as written: the body of an equation without its `;`,
+/// or the whole block.
+fn condition_of(def: &str) -> &str {
+    match def.split_once(") = ") {
+        Some((_, body)) => body.strip_suffix(';').expect("one equation"),
+        None => &def[def.find('{').expect("a block")..],
+    }
+}
+
+/// [`head`] for the `ok` defined on the first line of `src`, as `ok(x, y) = rows;`.
+fn head_in(src: &str) -> String {
+    let def = src.lines().next().expect("a definition");
+    let (params, rest) = (def.strip_prefix("ok("))
+        .and_then(|d| d.split_once(") = "))
+        .expect("`ok` first");
+    head(rest.strip_suffix(';').expect("one line"), params)
+}
+
 /// The repairs of a printed refusal's menu, each after `repair: `.
 fn repairs(printed: &str) -> Vec<&str> {
     (printed.lines())
@@ -222,9 +270,7 @@ fn following_each_repair_of_the_menu_makes_the_program_check() {
         let args = args.join(", ");
         let printed = rejection(name, &program(&def, &args));
         assert!(
-            printed.starts_with(&format!(
-                "1:1: whether `ok` can hold is not decided: {cause}"
-            )),
+            printed.starts_with(&format!("{}{cause}", head(condition_of(&def), params))),
             "{printed}"
         );
         let menu = repairs(&printed);
@@ -337,7 +383,8 @@ fn a_function_that_joins_the_split_questions_asks_the_joined_question_again() {
     let o = run("joined", &src, "3\n", &[]);
     assert_eq!(o.status, 1, "{}", o.stderr);
     assert!(
-        o.stderr.contains("whether `ok` can hold is not decided"),
+        o.stderr
+            .contains("zedc could not decide whether the condition of `ok`"),
         "{}",
         o.stderr
     );
@@ -376,15 +423,16 @@ fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
     assert_eq!(
         rejection("growth-alone", &src),
         format!(
-            "1:1: whether `ok` can hold is not decided: to find whole numbers that meet these \
+            "{}to find whole numbers that meet these \
              conditions, the checker removes one variable at a time, putting in place of the \
              conditions on it conditions on the variables left. Here four variables or more \
              are left, and removing any one of them would leave more conditions than there are \
              now, so the work could grow without end. The checker stopped there, with no \
-             values found and none ruled out\n  \
+             values found and none ruled out.\n  \
              [1] 1:18: the constraints: 12 * w + 10 * y + 12 * z <= 4 * x + 11 && 4 * w + 10 * \
              x >= 10 * y + 11 * z + 28 && 11 * w + 4 * x + 12 * z >= y + 28 && 8 * w + 5 * x + \
              z <= 12 * y + 31\n  {}",
+            head_in(&src),
             menu("x", None, &REFUSED[0].rows.join(" && "), REFUSED[0].rows)
         )
     );
@@ -405,7 +453,7 @@ fn a_refused_question_names_the_parameters_as_written_when_other_functions_share
     assert_eq!(
         rejection("tie-alone", &src),
         format!(
-            "1:1: whether `ok` can hold is not decided: to find whole numbers that meet these \
+            "{}to find whole numbers that meet these \
              conditions, the checker removes one variable at a time, putting in place of the \
              conditions on it conditions on the variables left. Its next step must choose among \
              the variables `w`, `x`, `z`, `y`, which occur alike in the conditions (with the \
@@ -413,9 +461,10 @@ fn a_refused_question_names_the_parameters_as_written_when_other_functions_share
              `-w + 3 * x - 10 >= 0`, `3 * w - z - 10 >= 0`, `-x + 3 * y - 10 >= 0`, \
              `3 * z - y - 10 >= 0`, so only their names could order them, and the checker never \
              lets a name change an answer. The checker stopped there, with no values found and \
-             none ruled out\n  \
+             none ruled out.\n  \
              [1] 1:18: the constraints: x <= 3 * y - 10 && y <= 3 * z - 10 && 3 * w >= z + 10 \
              && w <= 3 * x - 10\n  {}",
+            head_in(&src),
             menu(
                 "w",
                 Some(("w", "x")),
@@ -440,16 +489,17 @@ fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
     assert_eq!(
         rejection("shadows-alone", &src),
         format!(
-            "1:1: whether `ok` can hold is not decided: to find whole numbers that meet these \
+            "{}to find whole numbers that meet these \
              conditions, the checker removes one variable at a time, putting in place of the \
              conditions on it conditions on the variables left. Where the values a variable can \
              take have gaps, it splits the conditions into cases, one for each gap. Here the \
              only values could lie in a case that would have to be split again with as many \
              variables left as before, so the splitting need not end. The checker stopped \
-             there, with no values found and none ruled out\n  \
+             there, with no values found and none ruled out.\n  \
              [1] 1:18: the constraints: 8 * w + 4 * y <= 9 * x - 3 && 9 * w + 5 * x + 11 * y >= \
              9 && 8 * w >= 7 * x + 12 * y + 2 * z + 1 && 9 * x <= 8 * y + 7 * z && 4 * w + 10 * \
              x + 6 * z <= 4 * y + 22\n  {}",
+            head_in(&src),
             menu("x", None, &REFUSED[1].rows.join(" && "), REFUSED[1].rows)
         )
     );
@@ -590,8 +640,8 @@ fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints
             .replace("2:1: ", "1:1: ")
             .replace("2:18: ", "1:18: ");
         assert_eq!(
-            called,
-            stated(&rejection(&format!("{}-written", r.name), &written)),
+            unwritten(&called),
+            unwritten(&stated(&rejection(&format!("{}-written", r.name), &written))),
             "{}",
             r.name
         );
@@ -652,12 +702,12 @@ fn a_question_read_in_its_callees_coordinates_is_answered_and_printed_over_its_o
             &format!("coordinates-alone-{i}"),
             &program(&format!("{tie}\n{alone}"), "a: a, b: a, c: a, d: a"),
         );
-        assert_eq!(stated(&through), stated(&expected), "{call}");
-        assert!(through.contains("whether `tie` can hold"), "{through}");
+        assert_eq!(unwritten(&stated(&through)), unwritten(&stated(&expected)), "{call}");
+        assert!(through.contains("the condition of `tie`"), "{through}");
         // Passed the parameters unchanged, `ok` asks `tie`'s question and is refused too; its
         // menu rewrites the call as written, and each repair ends `ok`'s refusal. Shifted,
         // the names no longer occur alike, and `ok`'s question is decided.
-        let Some(at) = through.find("whether `ok` can hold") else {
+        let Some(at) = through.find("the condition of `ok`") else {
             assert_eq!(i, 1, "{through}");
             continue;
         };
@@ -678,12 +728,12 @@ fn a_question_read_in_its_callees_coordinates_is_answered_and_printed_over_its_o
             );
             // `tie` itself is still refused, which shows the program reached the checker.
             assert!(
-                o.stderr.contains("whether `tie` can hold"),
+                o.stderr.contains("the condition of `tie`"),
                 "{def}: {}",
                 o.stderr
             );
             assert!(
-                !o.stderr.contains("whether `ok` can hold"),
+                !o.stderr.contains("the condition of `ok`"),
                 "{def}: {}",
                 o.stderr
             );
@@ -737,11 +787,11 @@ fn a_question_refused_through_a_call_by_a_map_of_its_parameters_names_its_parame
             let called = stated(&rejection(&format!("{}-map-{i}-called", r.name), &called))
                 .replace("2:1: ", "1:1: ")
                 .replace("2:18: ", "1:18: ");
-            assert!(called.contains("whether `ok` can hold"), "{called}");
+            assert!(called.contains("the condition of `ok`"), "{called}");
             assert!(!called.contains(['#', '@']), "{called}");
             assert_eq!(
-                called,
-                stated(&rejection(&format!("{}-map-{i}-written", r.name), &written)),
+                unwritten(&called),
+                unwritten(&stated(&rejection(&format!("{}-map-{i}-written", r.name), &written))),
                 "{} at {x}",
                 r.name
             );

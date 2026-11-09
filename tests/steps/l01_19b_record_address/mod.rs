@@ -104,8 +104,11 @@ fn a_record_of_another_program_is_refused() {
     assert_eq!(
         err,
         format!(
-            "{rec}: the record is of the program with content address {ours}, not of this \
-             program, {theirs}\n"
+            "{rec}: this record was written by a run of a different program: `main` or a \
+             definition it uses, or a port of `main`, has changed since. A replay must run the \
+             program that wrote the record. Replay it with the source as it was when the record \
+             was written, or run this program again with `--record <out>` to make a record of \
+             it.\n"
         )
     );
     // The library refuses it as the command does.
@@ -133,8 +136,9 @@ fn a_record_that_names_no_program_is_refused() {
     assert_eq!(
         err,
         format!(
-            "{old}: the record names no program, as records written before programs were \
-             named in them do; run the program again with `--record`\n"
+            "{old}: this record does not name the program that wrote it, so it cannot be \
+             checked against this one; it was written by an older zedc. Run the program again \
+             with `--record <out>` to make a record that names it.\n"
         )
     );
     assert_eq!(
@@ -144,8 +148,9 @@ fn a_record_that_names_no_program_is_refused() {
             .err()
             .as_deref(),
         Some(
-            "the record names no program, as records written before programs were named in \
-             them do; run the program again with `--record`"
+            "this record does not name the program that wrote it, so it cannot be checked \
+             against this one; it was written by an older zedc. Run the program again with \
+             `--record <out>` to make a record that names it."
         )
     );
 }
@@ -172,22 +177,35 @@ fn a_program_entry_must_be_first_and_well_formed() {
         ..Record::default()
     };
     assert_eq!(Record::from_bytes(&record.to_bytes()), Ok(record));
-    let bad = Err("not a Zed record".to_string());
-    for text in [
+    // Each is refused at the byte where its bad entry starts: 13 is just after `zed record 1`.
+    let bad = |at: usize| {
+        Err(format!(
+            "this record, which `zedc run --record` writes, cannot be read from byte {at} on: the \
+             entry that starts there is cut short or has been changed. A record is read only as \
+             it was written; make it again with `zedc run <file> --record <out>`."
+        ))
+    };
+    for (text, at) in [
         // After another entry.
-        format!("zed record 1\narg 1\nx\nprogram 64\n{hex}\n"),
+        (format!("zed record 1\narg 1\nx\nprogram 64\n{hex}\n"), 21),
         // Twice.
-        format!("zed record 1\nprogram 64\n{hex}\nprogram 64\n{hex}\n"),
+        (
+            format!("zed record 1\nprogram 64\n{hex}\nprogram 64\n{hex}\n"),
+            89,
+        ),
         // Not 64 hexadecimal digits.
-        format!("zed record 1\nprogram 63\n{}\n", &hex[1..]),
-        format!(
-            "zed record 1\nprogram 64\n{}\n",
-            hex.replace(|c: char| c.is_ascii_digit(), "g")
+        (format!("zed record 1\nprogram 63\n{}\n", &hex[1..]), 13),
+        (
+            format!(
+                "zed record 1\nprogram 64\n{}\n",
+                hex.replace(|c: char| c.is_ascii_digit(), "g")
+            ),
+            13,
         ),
         // Without its field.
-        "zed record 1\nprogram\n\n".to_string(),
+        ("zed record 1\nprogram\n\n".to_string(), 13),
     ] {
-        assert_eq!(Record::from_bytes(text.as_bytes()), bad, "{text:?}");
+        assert_eq!(Record::from_bytes(text.as_bytes()), bad(at), "{text:?}");
     }
     // Every address prints as 64 digits that parse back to it.
     for a in [ContentAddress([0; 32]), ContentAddress([255; 32]), a] {

@@ -40,7 +40,9 @@ impl Builder<'_, '_> {
                     return Err(Error {
                         row: None,
                         span: s.span,
-                        message: "a block exports once".into(),
+                        message: "this block exports a second time, and a block exports one value, once. \
+                                  Remove one of the two exports."
+                            .into(),
                         notes: vec![Note {
                             span: first,
                             text: "the block's first export".into(),
@@ -132,7 +134,9 @@ impl Builder<'_, '_> {
                         row: None,
                         span: self.span(n),
                         message: format!(
-                            "the arguments of `@{name}` end in `...`, which only a call takes"
+                            "the arguments of `@{name}` end in `...`, and only a call takes `...`, to \
+                             leave its other arguments open; an annotation is given all of its \
+                             arguments. Remove the `...`."
                         ),
                         notes: Vec::new(),
                     });

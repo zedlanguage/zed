@@ -76,11 +76,13 @@ fn a_path_updated_twice_is_an_error() {
     check(&[
         (
             "q = p with { x = 1, y = 2, x = 3 };",
-            "error: the field `x` is updated twice; the first update of `x` at byte 13",
+            "error: the field `x` is updated twice in one `with`, and a `with` updates each field \
+             once. Remove one of the two updates.; the first update of `x` at byte 13",
         ),
         (
             "q = s with { c.x = 1, c.x = 2 };",
-            "error: the field `c.x` is updated twice; the first update of `c.x` at byte 13",
+            "error: the field `c.x` is updated twice in one `with`, and a `with` updates each field \
+             once. Remove one of the two updates.; the first update of `c.x` at byte 13",
         ),
     ]);
 }
@@ -89,6 +91,9 @@ fn a_path_updated_twice_is_an_error() {
 fn keyed_paths_are_of_layer_5() {
     check(&[(
         "m2 = m with { [k].bal = 0 };",
-        "error: this form (Update) is built from layer L5",
+        concat!(
+            "error: ",
+            zed_tests::not_yet!("the field update `[k].bal = 0`")
+        ),
     )]);
 }

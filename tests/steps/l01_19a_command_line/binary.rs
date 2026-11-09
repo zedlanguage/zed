@@ -40,7 +40,68 @@ fn zedc_names_the_argument_that_is_not_utf8() {
     assert_eq!(out.status.code(), Some(2));
     assert_eq!(
         String::from_utf8_lossy(&out.stderr),
-        "command-line argument 2 is not UTF-8\n"
+        "command-line argument 2 (counted from the first word after `--`) is not UTF-8, and a \
+         `CommandLine` port gives the program each argument as a string, which must be UTF-8 \
+         text. Pass the argument as UTF-8 text, or pass the path of a file that holds it.\n"
     );
     assert!(out.stdout.is_empty());
+}
+
+/// `zedc <words>`, with standard input empty.
+fn zedc(words: &[OsString]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_zedc"))
+        .args(words)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap()
+}
+
+/// The list of commands zedc prints after the reason for a usage error.
+const COMMANDS: &str = "\n\nThe commands of zedc are:\n  zedc fmt <file>\n";
+
+#[test]
+fn zedc_names_a_word_that_is_no_command() {
+    let out = zedc(&["frmat".into(), "a.zed".into()]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let why = "`frmat` is not a command of zedc. The commands are `fmt`, `run`, `replay`, `build` \
+               and `test`, and `--report` may come before any of them.";
+    assert!(stderr.starts_with(&format!("{why}{COMMANDS}")), "{stderr}");
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
+fn zedc_fmt_counts_the_words_after_it() {
+    let out = zedc(&["fmt".into(), "a.zed".into(), "b.zed".into()]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let why = "`zedc fmt` takes one word after it, the file to print in the standard layout, and \
+               was given 2 words. Write `zedc fmt <file>`, once for each file.";
+    assert!(stderr.starts_with(&format!("{why}{COMMANDS}")), "{stderr}");
+}
+
+#[test]
+fn zedc_fmt_says_why_it_could_not_read_the_file() {
+    let file = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("command_line_no_such_file.zed");
+    let out = zedc(&["fmt".into(), file.clone().into()]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        format!(
+            "{}: zedc could not read the file: No such file or directory. Check \
+             the path and that you may read the file.\n",
+            file.display()
+        )
+    );
+}
+
+#[test]
+fn zedc_names_a_file_word_that_is_not_utf8() {
+    let out = zedc(&["fmt".into(), OsString::from_vec(vec![b'a', 255])]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let why = "zedc reads the words after `fmt`, `build` and `test` as UTF-8 text, and a word of \
+               this command line is not UTF-8. Name each file by a path written in UTF-8, or \
+               rename the file.";
+    assert!(stderr.starts_with(&format!("{why}{COMMANDS}")), "{stderr}");
 }

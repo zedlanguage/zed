@@ -206,7 +206,12 @@ fn an_import_in_a_block_is_seen_in_that_block_only() {
              disk(r) = area(r);\n",
         ),
     ]);
-    assert_eq!(mistakes(&p), ["main.zed:5:11: `area` is not defined"]);
+    assert_eq!(
+        mistakes(&p),
+        [
+            "main.zed:5:11: `area` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `area`, or correct the name if it is misspelled."
+        ]
+    );
     assert_eq!(
         use_of(&p, "main", "area", 1),
         ["function import geometry.shapes.{area}; from geometry.shapes"]

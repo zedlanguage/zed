@@ -385,16 +385,11 @@ fn every_rule_of_the_grammar_that_writes_a_name_is_classified_and_its_binders_re
     for (rule, site) in SITES {
         match site {
             Site::L1(text, binder) => names_type(text, binder),
-            // Layer L1 refuses the form whole, naming its layer or step; the row lands with
-            // that layer (DESIGN.md step L1.29).
+            // Layer L1 refuses the form whole, as one this zedc does not compile yet; the row
+            // lands with the layer that compiles it (DESIGN.md step L1.29).
             Site::Later(text) => {
                 let out = rejected(text);
-                assert!(
-                    out.contains("is compiled from step")
-                        || out.contains("is linked from step")
-                        || out.contains("is built from layer"),
-                    "{rule}: {out}"
-                );
+                assert!(zed_tests::is_not_yet(&out), "{rule}: {out}");
             }
             Site::NotBinder(why) => assert!(!why.is_empty()),
         }

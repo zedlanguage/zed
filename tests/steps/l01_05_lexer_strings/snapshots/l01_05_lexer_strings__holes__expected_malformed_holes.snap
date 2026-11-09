@@ -3,14 +3,14 @@ source: tests/steps/l01_05_lexer_strings/holes.rs
 expression: "out.join(\"\\n\")"
 ---
 "\"${name\""
-    [7..8] malformed string: the string is not closed
+    [7..8] this string is not closed before the end of the file. Write the closing `"` where its text ends.
 "\"${x // c}\""
-    [5..11] malformed string: a `//` comment in a hole of a `"` string runs to the end of the line, past the `}`; write `/* … */`
+    [5..11] this `//` comment is inside a `${…}` hole of a `"` string, and a `//` comment runs to the end of the line, past the `}` that closes the hole. Write the comment as `/* … */`, or move it out of the string.
 "\"${x\n}\""
-    [1..4] malformed string: a hole in a `"` string closes on its line
+    [1..4] this `${` hole of a `"` string reaches the end of the line without its closing `}`, and a `"` string, with its holes, is one line. Write the `}` on this line, or make the string a `"""` string, which may run over several lines.
 "\"${\"inner}\""
-    [1..11] malformed string: the `${` hole is not closed
+    [1..11] this `${` opens a hole in a string, and the file ends before the `}` that closes it. Write `}` after the expression in the hole, or `\${` for the text `${` itself.
 "\"${x /* open }\""
-    [5..15] the block comment is not closed (1 `*/` missing)
+    [5..15] this block comment, opened with `/*`, is not closed before the end of the file. Write `*/` where the comment should end.
 "\"\"\"\n  ${x}\n    \"\"\""
-    [4..6] malformed string: this line is indented less than the closing `"""`
+    [4..6] this line of a `"""` string is indented less than the closing `"""`, whose indentation is removed from every line of the string. Indent this line at least as far as the closing `"""`, or move the closing `"""` left.

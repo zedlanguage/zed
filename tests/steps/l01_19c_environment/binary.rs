@@ -12,6 +12,12 @@ use std::process::{Command, Output, Stdio};
 const READ: &str = "main(env: String ->? String) -> (stdout: Lines) {\n  \
     stdout <- env[\"ZED_ENV_TEST\"] else \"unset\";\n}\n";
 
+/// What `zedc run`, and an executable `zedc build` wrote, print when [`READ`] reads a value
+/// that is not UTF-8.
+const NOT_UTF8: &str = "the program reads the environment variable `ZED_ENV_TEST`, and its value \
+    is not UTF-8 text, which a Zed string must be. Set `ZED_ENV_TEST` to UTF-8 text before \
+    running, or unset it, which the program reads as `#notFound`.\n";
+
 /// A file of its own for test `name` and `what`.
 fn file(name: &str, what: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
@@ -71,10 +77,7 @@ fn zedc_names_the_variable_that_is_not_utf8() {
     );
     std::fs::remove_file(&prog).unwrap();
     assert_eq!(out.status.code(), Some(2));
-    assert_eq!(
-        String::from_utf8_lossy(&out.stderr),
-        "environment variable `ZED_ENV_TEST` is not UTF-8\n"
-    );
+    assert_eq!(String::from_utf8_lossy(&out.stderr), NOT_UTF8);
     assert!(out.stdout.is_empty());
 }
 
@@ -124,10 +127,7 @@ fn an_executable_reads_its_own_variables() {
     assert_eq!(String::from_utf8_lossy(&run(None, &[]).stdout), "unset\n");
     let bad = run(Some(OsString::from_vec(vec![255])), &[]);
     assert_eq!(bad.status.code(), Some(2));
-    assert_eq!(
-        String::from_utf8_lossy(&bad.stderr),
-        "environment variable `ZED_ENV_TEST` is not UTF-8\n"
-    );
+    assert_eq!(String::from_utf8_lossy(&bad.stderr), NOT_UTF8);
     let replayed = zedc_run(&["replay".as_ref(), prog.as_ref(), rec.as_ref()], None);
     assert_eq!(String::from_utf8_lossy(&replayed.stdout), "set\n");
     for f in [&prog, &exe, &rec] {

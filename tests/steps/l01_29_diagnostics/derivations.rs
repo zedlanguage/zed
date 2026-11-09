@@ -114,7 +114,7 @@ fn a_rebinding_points_at_the_first_binding() {
     );
     assert_eq!(
         out,
-        "3:3: `rate` is already bound in this scope
+        "3:3: `rate` is already bound in this scope, and a scope binds each name once
   [1] 2:3: the first binding of `rate`
       2 |   rate = 3;
         |   ^^^^^^^^^

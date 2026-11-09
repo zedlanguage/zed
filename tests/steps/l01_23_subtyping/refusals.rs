@@ -358,7 +358,7 @@ fn a_morphism_type_whose_bound_check_was_refused_says_why() {
     assert_eq!(
         zed_tests::step_helpers::l01_16_elaboration::errors(src),
         [
-            "`is` cannot test a value against a function type at run time \
+            "`is` tests a value against a type when the program runs, and a function value does not show its type then. Test against a type that is not a function type, or remove the `is`. \
              [((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int)]"
                 .to_string(),
             format!(

@@ -24,12 +24,16 @@ fn a_price_reads_as_the_nearest_f64() {
 fn a_literal_beyond_the_largest_f64_is_an_error() {
     assert_eq!(
         errors("distance = 1e400;\n"),
-        ["`1e400` rounds to infinity as an f64; the largest f64 is 1.7976931348623157e308 [1e400]"]
+        [
+            "`1e400` is larger than the largest f64, 1.7976931348623157e308, so as an f64 it rounds to infinity. Write `1e400r` for the exact rational, or a number within the range of f64. [1e400]"
+        ]
     );
     // The sign is not part of the literal: `-1e400` fails on `1e400`.
     assert_eq!(
         errors("debt = -1e400;\n"),
-        ["`1e400` rounds to infinity as an f64; the largest f64 is 1.7976931348623157e308 [1e400]"]
+        [
+            "`1e400` is larger than the largest f64, 1.7976931348623157e308, so as an f64 it rounds to infinity. Write `1e400r` for the exact rational, or a number within the range of f64. [1e400]"
+        ]
     );
     // Just above the largest f64, but nearer it than to the next power of two: it rounds down.
     assert_eq!(x("1.7976931348623158e308"), "1.7976931348623157e308");
@@ -44,7 +48,9 @@ fn a_nonzero_literal_below_the_least_subnormal_is_an_error() {
     assert_eq!(
         errors("tolerance = 1e-400;\n"),
         [
-            "`1e-400` is not zero but rounds to zero as an f64; the least positive f64 is 5.0e-324 [1e-400]"
+            "`1e-400` is not zero, and it lies nearer to zero than to the least positive f64, \
+             5.0e-324, so as an f64 it rounds to zero. Write `1e-400r` for the exact rational, \
+             or `0.0` if zero is meant. [1e-400]"
         ]
     );
     // Below half the least subnormal it rounds to zero; above half, up to it.

@@ -1,7 +1,7 @@
 //! The address of a diagnostic and its suppression (DESIGN.md sec:diagnostics, items
 //! DIAG-suppress, DIAG-suppress-rest and DIAG-addr-root). Each diagnostic has an address,
-//! printed under it as `address: <hex>`, that is the same on every run of the same file, from
-//! any directory; `--suppress <address>` on `zedc run`, `replay`, `build` and `test` leaves the
+//! printed under it as `address: <hex>` only with `--addresses`, that is the same on every run of
+//! the same file, from any directory; `--suppress <address>` on `zedc run`, `replay`, `build` and `test` leaves the
 //! warning at that address unprinted. The program is the same with or without it: suppression changes
 //! only what is printed. A rejection cannot be suppressed, and an address that names nothing
 //! is reported.
@@ -92,36 +92,63 @@ impl InFile {
     }
 }
 
-/// The addresses `--suppress` names on a command line, each with whether a diagnostic had it.
+/// What a command line says about addresses: the addresses `--suppress` names, each with
+/// whether a diagnostic had it, and whether `--addresses` asks for each diagnostic's address to
+/// be printed under it (DESIGN.md sec:diagnostics: the default text holds no address).
 #[derive(Default, Debug)]
 pub struct Suppress {
     named: Vec<ContentAddress>,
     matched: HashMap<ContentAddress, bool>,
+    print: bool,
 }
 
+/// How a diagnostic's address is written, for the messages about `--suppress`.
+const ADDRESS_FORM: &str = "an address is the 64 lowercase hexadecimal digits that `zedc` prints \
+     under a warning when run with `--addresses`";
+
 impl Suppress {
-    /// The words of `words` other than each `--suppress <address>`, and the addresses those
-    /// name; or why a word after `--suppress` is not an address, or is missing.
+    /// The words of `words` other than each `--suppress <address>` and each `--addresses`, and
+    /// what those say; or why a word after `--suppress` is not an address, or is missing.
     pub fn take<'a>(words: &[&'a str]) -> Result<(Suppress, Vec<&'a str>), String> {
         let mut suppress = Suppress::default();
         let mut rest = Vec::with_capacity(words.len());
         let mut words = words.iter();
         while let Some(&w) = words.next() {
+            if w == "--addresses" {
+                suppress.print = true;
+                continue;
+            }
             if w != "--suppress" {
                 rest.push(w);
                 continue;
             }
-            let hex = words
-                .next()
-                .ok_or("`--suppress` needs an address, 64 lowercase hex digits")?;
+            let hex = words.next().ok_or_else(|| {
+                format!(
+                    "`--suppress` is the last word of the command line, and it needs the \
+                     address of the warning to leave unprinted after it; {ADDRESS_FORM}. \
+                     Write `--suppress <address>`, or remove `--suppress`."
+                )
+            })?;
             let a = ContentAddress::parse(hex).ok_or_else(|| {
-                format!("`--suppress {hex}`: an address is 64 lowercase hex digits")
+                format!(
+                    "`--suppress {hex}`: `{hex}` is not an address; {ADDRESS_FORM}. Copy the \
+                     address from that line whole, or remove `--suppress {hex}`."
+                )
             })?;
             if suppress.matched.insert(a, false).is_none() {
                 suppress.named.push(a);
             }
         }
         Ok((suppress, rest))
+    }
+
+    /// The line a diagnostic whose address is `address` prints under it: `\n  address: <hex>`
+    /// when `--addresses` was given, and nothing otherwise.
+    pub fn address_line(&self, address: ContentAddress) -> String {
+        match self.print {
+            true => format!("\n  address: {address}"),
+            false => String::new(),
+        }
     }
 
     /// Whether the warning whose address ([`InFile::address`]) is `address` is suppressed;
@@ -154,7 +181,10 @@ impl Suppress {
         let m = self.matched.get_mut(&address)?;
         *m = true;
         Some(format!(
-            "{place}: `--suppress {address}` names a rejection, which cannot be suppressed"
+            "{place}: `--suppress {address}` names the error printed above at this place, and \
+             an error cannot be suppressed, since the program it rejects cannot be built; \
+             only a warning can be. Correct the program as that error describes, or remove \
+             `--suppress {address}`."
         ))
     }
 
@@ -163,7 +193,15 @@ impl Suppress {
         self.named
             .iter()
             .filter(|a| !self.matched[*a])
-            .map(|a| format!("`--suppress {a}`: no diagnostic has this address"))
+            .map(|a| {
+                format!(
+                    "`--suppress {a}`: no warning or error of this run has this address, so it \
+                     suppresses nothing. An address changes when the warning's text, the \
+                     declaration it lies in or the file's path from its package root changes. \
+                     Run with `--addresses` to see each warning's address now, and remove or \
+                     replace `--suppress {a}`."
+                )
+            })
             .collect()
     }
 }

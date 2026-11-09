@@ -50,8 +50,8 @@ fn a_unit_with_imports_reports_its_package_in_the_files_of_its_units() {
     );
     assert!(
         err.contains(&format!(
-            "{root}/app/main.zed:1:1: an import is linked from step L2.4, which ties each name \
-             it brings in to the other unit's definition"
+            "{root}/app/main.zed:1:1: {}",
+            zed_tests::IMPORT_NOT_YET
         )),
         "{err}"
     );

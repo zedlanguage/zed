@@ -43,7 +43,8 @@ fn malformed_annotations() {
     check(&[
         (
             "@cost(n, ...)\nf(x) = x;",
-            "error: the arguments of `@cost` end in `...`, which only a call takes",
+            "error: the arguments of `@cost` end in `...`, and only a call takes `...`, to leave its \
+             other arguments open; an annotation is given all of its arguments. Remove the `...`.",
         ),
         ("@log", "syntax"),
         ("@log(\nf(x) = x;", "syntax"),
@@ -51,17 +52,32 @@ fn malformed_annotations() {
 }
 
 /// An annotation on an operand (rule AnnotExpr, layer L7, as in `d = @fpsafe (x - y);`)
-/// parses, and is refused with its layer until it is built; before, such a unit reached an
+/// parses, and is refused as not compiled yet until it is built; before, such a unit reached an
 /// `unreachable!` in the builder of `Prefix`.
 #[test]
 fn annotated_operands() {
-    let later = "error: this form (AnnotExpr) is built from layer L7";
+    macro_rules! later {
+        ($form:literal) => {
+            concat!(
+                "error: the annotated expression `",
+                $form,
+                "`",
+                zed_tests::not_yet!("")
+            )
+        };
+    }
     check(&[
-        ("x = @log 1;", later),
-        ("d = @fpsafe (x - y);", later),
-        ("d = @fpsafe x - y;", later),
-        ("r = @approx(relErr: 0.001) rsqrt(x) * 2.0;", later),
-        ("r = -@approx(relErr: 0.001) rsqrt(x);", later),
-        ("f(x) = !@fpsafe x;", later),
+        ("x = @log 1;", later!("@log 1")),
+        ("d = @fpsafe (x - y);", later!("@fpsafe (x - y)")),
+        ("d = @fpsafe x - y;", later!("@fpsafe x - y")),
+        (
+            "r = @approx(relErr: 0.001) rsqrt(x) * 2.0;",
+            later!("@approx(relErr: 0.001) rsqrt(x) * 2.0"),
+        ),
+        (
+            "r = -@approx(relErr: 0.001) rsqrt(x);",
+            later!("@approx(relErr: 0.001) rsqrt(x)"),
+        ),
+        ("f(x) = !@fpsafe x;", later!("@fpsafe x")),
     ]);
 }

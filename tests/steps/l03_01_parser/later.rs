@@ -20,80 +20,111 @@ fn each_form_names_the_step_that_compiles_it() {
     check(&[
         (
             "f(x) = 0..<x;",
-            &["a range is compiled from step L3.2 [0..<x]"],
+            &[concat!(zed_tests::not_yet!("a range"), " [0..<x]")],
         ),
         (
             "f(x, s) = x not in s;",
-            &["an `in` test is compiled from step L3.2 [x not in s]"],
+            &[concat!(
+                zed_tests::not_yet!("an `in` test"),
+                " [x not in s]"
+            )],
         ),
         (
             "f(m, g) = m >< g;",
-            &["a reduction `><` is compiled from step L3.2 [m >< g]"],
+            &[concat!(
+                zed_tests::not_yet!("a reduction `><`"),
+                " [m >< g]"
+            )],
         ),
         (
             "f(x) = x::len;",
-            &["a metadata read `::` is compiled from step L3.2 [x::len]"],
+            &[concat!(
+                zed_tests::not_yet!("a metadata read `::`"),
+                " [x::len]"
+            )],
         ),
         (
             "f(x) = (+);",
-            &["an operator section is compiled from step L3.2 [(+)]"],
+            &[concat!(
+                zed_tests::not_yet!("an operator section"),
+                " [(+)]"
+            )],
         ),
         (
             "f(x) = [x];",
-            &["an array display is compiled from step L3.2 [[x]]"],
+            &[concat!(zed_tests::not_yet!("an array display"), " [[x]]")],
         ),
         (
             "f(x) = { x };",
-            &["a set display is compiled from step L3.2 [{ x }]"],
+            &[concat!(zed_tests::not_yet!("a set display"), " [{ x }]")],
         ),
         (
             "f(x) = {};",
-            &["a map display is compiled from step L3.2 [{}]"],
+            &[concat!(zed_tests::not_yet!("a map display"), " [{}]")],
         ),
         (
             "f(x) = { x -> 1 };",
-            &["a map display is compiled from step L3.2 [{ x -> 1 }]"],
+            &[concat!(
+                zed_tests::not_yet!("a map display"),
+                " [{ x -> 1 }]"
+            )],
         ),
         (
             "f(m) = for x in m { x };",
-            &["a `for` is compiled from step L3.2 [for x in m { x }]"],
+            &[concat!(
+                zed_tests::not_yet!("a `for`"),
+                " [for x in m { x }]"
+            )],
         ),
         (
             "f(x) = match x { 0..<10 -> 1, _ -> 0 };",
-            &["a `match` is compiled from step L2.4 [match x { 0..<10 -> 1, _ -> 0 }]"],
+            &[concat!(
+                zed_tests::not_yet!("a `match`"),
+                " [match x { 0..<10 -> 1, _ -> 0 }]"
+            )],
         ),
         (
             "f(r) = r else #ok(v: 0..<10) -> 0;",
-            &["a range pattern is compiled from step L3.2 [0..<10]"],
+            &[concat!(zed_tests::not_yet!("a range pattern"), " [0..<10]")],
         ),
         (
             "f(x: [int]) = x;",
-            &["a family type `[T]` is compiled from step L3.2 [[int]]"],
+            &[concat!(
+                zed_tests::not_yet!("a family type `[T]`"),
+                " [[int]]"
+            )],
         ),
         (
             "f(x: [int]) = [x];",
             &[
-                "a family type `[T]` is compiled from step L3.2 [[int]]",
-                "an array display is compiled from step L3.2 [[x]]",
+                concat!(zed_tests::not_yet!("a family type `[T]`"), " [[int]]"),
+                concat!(zed_tests::not_yet!("an array display"), " [[x]]"),
             ],
         ),
     ]);
 }
 
 #[test]
-fn later_parts_name_their_layer() {
+fn later_parts_are_refused_as_not_compiled_yet() {
     check_sx(&[
         (
             "f(m) = for x in m, y in m { x };",
-            "error: this form (MoreGen) is built from layer L5",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the inner generator `, y in m`")
+            ),
         ),
         (
             "f(m) = m >< (+) unordered;",
-            "error: this form (ReducePolicy) is built from layer L9",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the reduction order `unordered`")
+            ),
         ),
         (
             "f(m) = for x in m { g(x); };",
-            "error: this block exports nothing: end it with an expression or `return e;`",
+            "error: this block exports nothing, and a block gives a value, so it must export one. \
+             End it with an expression, or with `return e;` to give the value `e`.",
         ),
     ]);
 }

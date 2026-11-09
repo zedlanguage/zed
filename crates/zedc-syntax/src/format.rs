@@ -49,6 +49,18 @@ pub fn format(text: &str, tokens: &[Token], unit: &[Stmt]) -> String {
     })
 }
 
+/// The type `t` as a program writes it, in the formatter's layout, for a message: a type holds
+/// no expression and no comment, so no source text is needed. O(size of `t`).
+pub fn format_type(t: &Type) -> String {
+    let f = Formatter {
+        text: "",
+        comments: BTreeMap::new(),
+        pieces: Vec::new(),
+        breaks: 0,
+    };
+    f.run(Job::Ty { t, min: 0 })
+}
+
 /// The source file `bytes` in the formatter's layout, or why it could not be read, at its
 /// line and column.
 pub fn format_source(bytes: &[u8]) -> Result<String, String> {

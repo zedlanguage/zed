@@ -30,7 +30,9 @@ fn a_manifest_names_the_prelude_unit_or_nothing() {
 fn a_manifest_holds_only_its_entries_each_once_bound_to_a_plain_string() {
     assert_eq!(
         refused("prelude = \"std.prelude\";\nprelude = \"std.base\";\n"),
-        ["the manifest binds `prelude` twice [prelude]; `prelude` is first bound here [prelude]"]
+        [
+            "the manifest binds `prelude` twice, and a manifest binds each name once. Remove one of the two. [prelude]; `prelude` is first bound here [prelude]"
+        ]
     );
     assert_eq!(
         refused("version = \"1.0\";\n"),
@@ -87,7 +89,12 @@ fn every_unit_but_the_prelude_and_what_it_reaches_sees_the_prelude_unit() {
     ]);
     // `main` sees the prelude's `double`; `std.math`, which the prelude reaches, does not.
     assert_eq!(use_of(&p, "main", "double", 0), ["std.prelude.double"]);
-    assert_eq!(mistakes(&p), ["std/math.zed:2:11: `double` is not defined"]);
+    assert_eq!(
+        mistakes(&p),
+        [
+            "std/math.zed:2:11: `double` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `double`, or correct the name if it is misspelled."
+        ]
+    );
 }
 
 #[test]

@@ -135,7 +135,7 @@ fn an_unbounded_name_is_an_error() {
     assert_eq!(
         resolve_errors("f(g: (T) -> U for T in int) = 0;\n"),
         [
-            "the type `U` is not defined [U]; a type variable is bounded by the clause after its \
+            "the type `U` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [U]; a type variable is bounded by the clause after its \
              type, as `for U in int | f64`; this clause does not bound `U` \
              [(T) -> U for T in int]"
         ]
@@ -147,7 +147,8 @@ fn a_bound_on_a_variable_the_type_does_not_hold_is_an_error() {
     assert_eq!(
         resolve_errors("f(g: (T) -> T for T in int, U in f64) = 0;\n"),
         [
-            "the bound names `U`, which the type before `for` does not hold [U]; \
+            "the bound names `U`, and the type before `for` does not hold `U`, so the bound \
+             constrains nothing. Remove the bound, or write `U` in the type. [U]; \
              the type [(T) -> T]"
         ]
     );
@@ -157,7 +158,9 @@ fn a_bound_on_a_variable_the_type_does_not_hold_is_an_error() {
 fn a_repeated_variable_is_an_error() {
     assert_eq!(
         resolve_errors("f(g: ((T) -> T for T in int) -> T for T in f64) = 0;\n"),
-        ["the type variable `T` is bounded twice [T]; the first bound of `T` [T]"]
+        [
+            "the type variable `T` is bounded twice, and a type variable has one bound. Remove one of the two bounds. [T]; the first bound of `T` [T]"
+        ]
     );
 }
 

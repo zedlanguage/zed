@@ -37,15 +37,17 @@ fn names_in_one_script_lex() {
 fn lookalike_letters_from_another_script_are_rejected() {
     let cases = [
         // `а` is CYRILLIC SMALL LETTER A.
-        ("p\u{430}ypal", "Latin, Cyrillic"),
+        ("p\u{430}ypal", "Latin and Cyrillic"),
         // `е` and `х` Cyrillic, the rest Latin.
-        ("\u{435}\u{445}ample", "Cyrillic, Latin"),
+        ("\u{435}\u{445}ample", "Cyrillic and Latin"),
         // `ο` is GREEK SMALL LETTER OMICRON.
-        ("c\u{3bf}unt", "Latin, Greek"),
+        ("c\u{3bf}unt", "Latin and Greek"),
         // A physics name mixing Greek and Latin is rejected too: write `deltaT` or `ΔΘ`.
-        ("\u{394}T", "Greek, Latin"),
+        ("\u{394}T", "Greek and Latin"),
         // Hangul with kana is no one writing system.
-        ("사용자ユーザー", "Hangul, Katakana"),
+        ("사용자ユーザー", "Hangul and Katakana"),
+        // Three scripts are listed with commas and a last `and`.
+        ("p\u{430}\u{3bf}l", "Latin, Cyrillic and Greek"),
     ];
     for (name, scripts) in cases {
         let text = format!("total {name}");
@@ -54,7 +56,12 @@ fn lookalike_letters_from_another_script_are_rejected() {
         assert_eq!((e.span.start, e.span.end), (6, text.len()));
         assert_eq!(
             e.to_string(),
-            format!("the name {name:?} mixes scripts: {scripts}")
+            format!(
+                "the name `{name}` mixes letters of the scripts {scripts}, and a name is written \
+                 in one script, so that no name looks like another and is a different one. \
+                 Write it in one script: a letter that looks Latin may be, for instance, a \
+                 Cyrillic or Greek letter of the same shape."
+            )
         );
     }
 }

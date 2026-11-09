@@ -19,7 +19,10 @@ fn placing_a_diagnostic_on_every_line_scales() {
         let last = n - 1;
         let col = format!("h{last} = ").len() + 1;
         assert_eq!(out.lines().count(), n);
-        let want = format!("{n}:{col}: `missing{last}` is not defined");
+        let want = format!(
+            "{n}:{col}: {}",
+            zed_tests::undefined(&format!("missing{last}"))
+        );
         assert_eq!(out.lines().last(), Some(want.as_str()));
     });
 }

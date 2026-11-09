@@ -35,7 +35,7 @@ fn writes_back(text: &str) {
     let only_the_layer = !errors.is_empty()
         && errors
             .iter()
-            .all(|l| l.ends_with(": this form (InferType) is built from layer L10"));
+            .all(|l| l.ends_with(zed_tests::not_yet!("the wildcard type `_`")));
     assert!(
         out.starts_with("2:24: missing argument") || only_the_layer,
         "`{text}` as a written type:\n{out}"

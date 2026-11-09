@@ -2,13 +2,13 @@
 source: tests/steps/l01_04_lexer_floats_and_rationals/mod.rs
 expression: "out.join(\"\\n\")"
 ---
-1e     [0..2] malformed number: an exponent needs digits: `1e3`, `1e-3`
-1e+    [0..2] malformed number: an exponent needs digits: `1e3`, `1e-3`
-1.5e   [0..4] malformed number: an exponent needs digits: `1e3`, `1e-3`
-1.5f   [0..4] malformed number: a number must not run into a name: `f`
-3R     [0..2] malformed number: a number must not run into a name: `R`
-0x10r  [0..5] malformed number: a rational is written in decimal: `16r`, not `0x10r`
-1.5_   [0..4] malformed number: `_` goes only between two digits
-2.5ms  [0..5] malformed number: a number must not run into a name: `ms`
-1e3x   [0..4] malformed number: a number must not run into a name: `x`
-1rr    [0..3] malformed number: a number must not run into a name: `r`
+1e     [0..2] the number `1e` has an exponent mark `e` with no digits after it, and an exponent needs digits, as in `1e3` or `1e-3`. Write the exponent's digits after `e`, or remove the `e`.
+1e+    [0..2] the number `1e` has an exponent mark `e` with no digits after it, and an exponent needs digits, as in `1e3` or `1e-3`. Write the exponent's digits after `e`, or remove the `e`.
+1.5e   [0..4] the number `1.5e` has an exponent mark `e` with no digits after it, and an exponent needs digits, as in `1e3` or `1e-3`. Write the exponent's digits after `e`, or remove the `e`.
+1.5f   [0..4] the number `1.5` runs into the name `f` with nothing between them, and a number must not run into a name. Put an operator or a space between them, as in `1.5 * f`.
+3R     [0..2] the number `3` runs into the name `R` with nothing between them, and a number must not run into a name. Put an operator or a space between them, as in `3 * R`.
+0x10r  [0..5] the number `0x10r` is a rational written in another base, and a rational is written in decimal, as `16r` for the value of `0x10`. Write its value in decimal digits before the `r`.
+1.5_   [0..4] the number `1.5_` has a `_` that does not stand between two digits, and `_` may stand only between two digits, as in `1_000_000`. Remove that `_`.
+2.5ms  [0..5] the number `2.5` runs into the name `ms` with nothing between them, and a number must not run into a name. Put an operator or a space between them, as in `2.5 * ms`.
+1e3x   [0..4] the number `1e3` runs into the name `x` with nothing between them, and a number must not run into a name. Put an operator or a space between them, as in `1e3 * x`.
+1rr    [0..3] the number `1r` runs into the name `r` with nothing between them, and a number must not run into a name. Put an operator or a space between them, as in `1r * r`.

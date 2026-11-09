@@ -25,7 +25,12 @@ fn a_report_goes_to_a_file_bound_on_the_command_line() {
     let out = run("report", src, "", &[]);
     assert_eq!(
         (out.status, out.stderr.as_str()),
-        (2, "output port `report` needs a file: `report=path`\n")
+        (
+            2,
+            "the output port `report` of `main` needs a file to write to, and none is named: \
+             only `stdout` and `stderr` write to the process's own streams. Add \
+             `report=<path>` to the command line.\n"
+        )
     );
 }
 
@@ -56,8 +61,10 @@ fn a_port_pushed_twice_in_one_wave_is_an_error() {
     assert_eq!(out.status, 1);
     assert_eq!(
         out.stderr,
-        "port `stdout` is pushed 2 times in one wave; several pushes to one port arrive at \
-         layer L7\n"
+        "the output port `stdout` was pushed to 2 times in this run, and a port takes one push \
+         per run, which holds everything it writes. Gather the lines into one family of strings \
+         and push it once, as `stdout <- lines;`, where `lines` holds one entry per line; a push \
+         in a branch that does not run does not count.\n"
     );
     assert_eq!(out.stdout, "", "nothing is written");
     // Two push sites on different branches are fine: one of them runs.
@@ -163,12 +170,22 @@ fn the_first_failed_write_aborts_the_rest() {
         &["log2=/nonexistent-dir-l01-19/x.txt"],
     );
     assert_eq!(out.status, 1);
-    assert!(
-        out.stderr
-            .starts_with("writing port `log2` failed: #ioError(op: \"write\", path: \"/nonexistent-dir-l01-19/x.txt\", why: \"No such file or directory (os error 2)\")"),
-        "{}",
-        out.stderr
+    assert_eq!(
+        out.stderr,
+        "the program wrote to the output port `log2`, and zedc could not write it to the file \
+         /nonexistent-dir-l01-19/x.txt: No such file or directory. Name a file in a directory you \
+         may write to, as `log2=<path>`.\n"
     );
+}
+
+/// The message for `port=path` naming a file for the input port `port`, which reads none.
+fn reads_no_file(port: &str, path: &str) -> String {
+    format!(
+        "`{port}={path}` names a file for the input port `{port}`, and `{port}` reads no file \
+         named on the command line: a `Files` port reads files by the paths the program gives \
+         it, a `CommandLine` port reads the words after `--`, and an environment port reads the \
+         environment. Remove `{port}={path}`.\n"
+    )
 }
 
 #[test]
@@ -177,23 +194,38 @@ fn usage_errors_exit_2() {
     let out = run("usage", src, "", &["nosuch=x"]);
     assert_eq!(
         (out.status, out.stderr.as_str()),
-        (2, "`main` has no port `nosuch`\n")
+        (
+            2,
+            "`nosuch=x` names a file for the port `nosuch`, and `main` has no port `nosuch`; \
+             its ports are `stdin` and `stdout`. Write the name of one of them before `=`, or \
+             remove `nosuch=x`.\n"
+        )
     );
     let files = "main(fs: Files) -> (stdout: Lines) {\n  stdout <- fs[\"a\"] else \"\";\n}\n";
     let out = run("usage", files, "", &["fs=x"]);
     assert_eq!(
         (out.status, out.stderr.as_str()),
-        (2, "input port `fs` reads no file: remove `fs=x`\n")
+        (2, &*reads_no_file("fs", "x"))
     );
     let args = "main(args: CommandLine) -> (stdout: Lines) {\n  stdout <- args[1] else \"\";\n}\n";
     let out = run("usage", args, "", &["args=x"]);
     assert_eq!(
         (out.status, out.stderr.as_str()),
-        (2, "input port `args` reads no file: remove `args=x`\n")
+        (2, &*reads_no_file("args", "x"))
     );
     let out = run("usage", src, "", &["--bogus"]);
     assert_eq!(out.status, 2);
-    assert!(out.stderr.starts_with("usage: zedc run"), "{}", out.stderr);
+    assert_eq!(
+        out.stderr,
+        "`--bogus` is not understood here: before `--` come only `port=path`, which names the \
+         file a port reads or writes, and `--record <out>`, which writes a record of the run; \
+         after `--` come the program's own arguments. If `--bogus` is meant for the program, put \
+         it after `--`.\n\nThe forms are:\n  \
+         zedc run <file> [port=path …] [--record <out>] [--suppress <address> …] [--addresses] \
+         [-- arg …]\n  \
+         zedc replay <file> <record> [port=path …] [--suppress <address> …] [--addresses] \
+         [-- arg …]\n"
+    );
     let out = run("usage", "main( = ;\n", "", &[]);
     assert_eq!(
         out.status, 1,
@@ -231,4 +263,102 @@ fn an_empty_level_pushed_writes_no_line() {
     let only = Value::Family(Family::from_leaves([(vec![Value::Int(1)], empty())]).unwrap());
     assert_eq!(join_lines("stdout", &only), Ok(Vec::new()));
     assert_eq!(zed_rt::ports::write("stdout", &only), Ok(Vec::new()));
+}
+
+/// A file zedc cannot read or write is named with the system's reason and a repair: the
+/// program's file, a file bound to an input port, the file `--record` names, and standard
+/// input.
+#[test]
+fn a_file_zedc_cannot_use_is_named_with_the_reason() {
+    let missing = "/nonexistent-dir-l01-19/in.txt";
+    let src = "main(stdin: Lines, extra: Lines) -> (stdout: Lines) {\n  \
+               stdout <- extra[1] else \"\";\n}\n";
+    let out = super::zedc(&["run", missing], "");
+    assert_eq!(
+        (out.status, out.stderr.as_str()),
+        (
+            2,
+            "/nonexistent-dir-l01-19/in.txt: zedc could not read this file: No such file or \
+             directory. Check the path and that you may read the file.\n"
+        )
+    );
+    let bind = format!("extra={missing}");
+    let out = run("unreadable", src, "", &[&bind]);
+    assert_eq!(
+        (out.status, out.stderr.as_str()),
+        (
+            2,
+            "/nonexistent-dir-l01-19/in.txt: zedc could not read this file: No such file or \
+             directory. Check the path and that you may read the file.\n"
+        )
+    );
+    let extra = dir("unreadable").join("extra.txt");
+    std::fs::write(&extra, "x\n").unwrap();
+    let bind = format!("extra={}", extra.display());
+    let record = "/nonexistent-dir-l01-19/run.record";
+    let out = run("unreadable", src, "", &[&bind, "--record", record]);
+    assert_eq!(
+        (out.status, out.stderr.as_str()),
+        (
+            1,
+            "/nonexistent-dir-l01-19/run.record: zedc could not write the record of this run to \
+             this file: No such file or directory. Name a file in a directory you may write to.\n"
+        )
+    );
+    assert_eq!(out.stdout, "", "nothing is written when the record is not");
+    /// Standard input that refuses every read.
+    struct Refusing;
+    impl std::io::Read for Refusing {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("the device is gone"))
+        }
+    }
+    let prog = dir("unreadable").join("prog.zed");
+    let args = ["run".to_string(), prog.display().to_string(), bind];
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let status = zedc::run::command(&args, &mut Refusing, &mut out, &mut err);
+    assert_eq!(
+        (status, String::from_utf8(err).unwrap().as_str()),
+        (
+            2,
+            "zedc could not read standard input, which the port `stdin` reads: the device is \
+             gone. Give zedc a standard input it may read, or name a file for the port as \
+             `stdin=<path>`.\n"
+        )
+    );
+}
+
+/// A program file in a package whose path under the package root is not UTF-8, reached through
+/// a link with a UTF-8 name, cannot be named as a unit, and the message names the root.
+#[test]
+fn a_unit_whose_path_is_not_utf8_is_named_with_its_root() {
+    use std::os::unix::ffi::OsStrExt;
+    let root = dir("not_utf8_root");
+    std::fs::write(root.join("zed.manifest"), "").unwrap();
+    let real = root.join(std::ffi::OsStr::from_bytes(b"caf\xe9.zed"));
+    std::fs::write(
+        &real,
+        "main() -> (stdout: Lines) {\n  stdout <- \"hi\";\n}\n",
+    )
+    .unwrap();
+    let link = dir("not_utf8_link").join("prog.zed");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let args = ["run".to_string(), link.display().to_string()];
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let status = zedc::run::command(&args, &mut std::io::empty(), &mut out, &mut err);
+    let root = std::fs::canonicalize(&root).unwrap();
+    assert_eq!(
+        (status, String::from_utf8(err).unwrap()),
+        (
+            2,
+            format!(
+                "the path of `{}` under its package root `{}` is not UTF-8 text, and a unit is \
+                 named by that path. Rename the file and the directories between it and the \
+                 package root with UTF-8 names.\n",
+                link.display(),
+                root.display()
+            )
+        )
+    );
 }

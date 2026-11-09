@@ -62,37 +62,46 @@ fn the_unit_top_level_exports_nothing_and_block_bodies_still_export_once() {
     check(&[
         (
             "return 1;",
-            "error: `return` exports from a block; a unit's top level has none",
+            "error: `return` gives the value a block exports, and this one stands at the top level of \
+             the unit, outside every block. Write it inside the block whose value it gives, or \
+             remove it.",
         ),
         (
             "f(x) { return x; x }",
-            "error: a block exports once; the block's first export at byte 7",
+            "error: this block exports a second time, and a block exports one value, once. Remove one \
+             of the two exports.; the block's first export at byte 7",
         ),
     ]);
 }
 
 #[test]
-fn a_form_of_a_later_layer_names_that_layer() {
+fn a_form_of_a_later_layer_is_refused_as_not_compiled_yet() {
     check(&[
         (
             "f(x) -> int = x;",
-            "error: this form (ResultType) is built from layer L10",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the declared result type `-> int`")
+            ),
         ),
         (
             "t[i] <- 1;",
-            "error: this form (KeyedPush) is built from layer L7",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the push at a key `t[i] <- 1;`")
+            ),
         ),
         (
             "p(x) = x is 1;",
-            "error: this form (LitType) is built from layer L10",
+            concat!("error: ", zed_tests::not_yet!("the literal type `1`")),
         ),
         (
             "p(x) = x is -1;",
-            "error: this form (LitType) is built from layer L10",
+            concat!("error: ", zed_tests::not_yet!("the literal type `-1`")),
         ),
         (
             "p(x) = x is (\"h\");",
-            "error: this form (LitType) is built from layer L10",
+            concat!("error: ", zed_tests::not_yet!("the literal type `\"h\"`")),
         ),
     ]);
 }

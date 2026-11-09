@@ -122,19 +122,20 @@ fn the_lexer_reads_the_suffix_after_an_integer_only() {
     let err = |s: &str| lex_fence(s).unwrap_err().to_string();
     assert_eq!(
         err("1.5n"),
-        "malformed number: only an integer takes `n`: write `1.5` for a float or `1.5r` for an \
-         exact rational; a decimal has a different value in f64 and in rat, an integer the same \
-         in every carrier"
+        "the number `1.5n` puts the suffix `n` on a decimal, and only an integer takes `n`: an \
+         integer has the same value in every number type, while a decimal has one value in f64 \
+         and another in rat. Write `1.5` for a float or `1.5r` for an exact rational."
     );
     assert_eq!(
         err("1e3n"),
-        "malformed number: only an integer takes `n`: write `1e3` for a float or `1e3r` for an \
-         exact rational; a decimal has a different value in f64 and in rat, an integer the same \
-         in every carrier"
+        "the number `1e3n` puts the suffix `n` on a decimal, and only an integer takes `n`: an \
+         integer has the same value in every number type, while a decimal has one value in f64 \
+         and another in rat. Write `1e3` for a float or `1e3r` for an exact rational."
     );
     assert_eq!(
         err("1nx"),
-        "malformed number: a number must not run into a name: `x`"
+        "the number `1n` runs into the name `x` with nothing between them, and a number must not \
+         run into a name. Put an operator or a space between them, as in `1n * x`."
     );
 }
 

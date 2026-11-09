@@ -30,7 +30,7 @@ fn function_types_are_curried_one_level_per_parameter() {
     assert_eq!(
         errs,
         [
-            "`is` cannot test a value against a function type at run time [((a: int, b: int) -> int)]"
+            "`is` tests a value against a type when the program runs, and a function value does not show its type then. Test against a type that is not a function type, or remove the `is`. [((a: int, b: int) -> int)]"
         ]
     );
 }
@@ -43,7 +43,9 @@ fn port_types_and_function_bounds_are_rejected() {
     );
     assert_eq!(
         elab("f(x) = x is (int, String ->? int);").unwrap_err(),
-        ["`is` cannot test a value against a function type at run time [(int, String ->? int)]"]
+        [
+            "`is` tests a value against a type when the program runs, and a function value does not show its type then. Test against a type that is not a function type, or remove the `is`. [(int, String ->? int)]"
+        ]
     );
 }
 
@@ -54,14 +56,16 @@ fn a_one_tuple_and_a_morphism_type_with_two_bounds_elaborate() {
     // The guarantee lies within the permission: a morphism type, which `is` cannot test.
     assert_eq!(
         elab("f(x) = x is (#a .. #a | #b -> int);").unwrap_err(),
-        ["`is` cannot test a value against a function type at run time [(#a .. #a | #b -> int)]"]
+        [
+            "`is` tests a value against a type when the program runs, and a function value does not show its type then. Test against a type that is not a function type, or remove the `is`. [(#a .. #a | #b -> int)]"
+        ]
     );
     // A guarantee outside its permission promises keys the type forbids. The `is` is still an
     // error of its own.
     assert_eq!(
         elab("f(x) = x is (#a | #c .. #a | #b -> int);").unwrap_err(),
         [
-            "`is` cannot test a value against a function type at run time [(#a | #c .. #a | #b -> int)]",
+            "`is` tests a value against a type when the program runs, and a function value does not show its type then. Test against a type that is not a function type, or remove the `is`. [(#a | #c .. #a | #b -> int)]",
             "the guarantee (left of `..`) of this morphism type is not within its permission (right of `..`) [(#a | #c .. #a | #b -> int)]"
         ]
     );

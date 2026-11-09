@@ -71,7 +71,7 @@ fn a_parameter_whose_morphism_bound_fails_is_rejected_on_every_path() {
     rejected_everywhere(
         "f(x: int) = x is (#a .. #b -> int);\nmain() = 0;\n",
         &[
-            "1:18: `is` cannot test a value against a function type at run time".to_string(),
+            "1:18: `is` tests a value against a type when the program runs, and a function value does not show its type then. Test against a type that is not a function type, or remove the `is`.".to_string(),
             format!("1:18: {BAD}"),
         ],
     );
@@ -134,7 +134,12 @@ fn a_port_whose_morphism_bound_fails_is_rejected() {
     );
     assert_eq!(
         through_load("f() -> (out: #a .. #b -> int) { 0 }\nmain() = 0;\n"),
-        ["1:9: output port `out` of `f` is `Lines` at layer L1"]
+        [
+            "1:9: the output port `out` of `f` is declared as `#a .. #b -> int`, and an output \
+          port writes lines of text, so its type must be `Lines`. Write `out: Lines`, and push to \
+          it a string, which writes one line, or a family of strings, which writes one line per \
+          entry, such as `out <- String(x);`."
+        ]
     );
 }
 

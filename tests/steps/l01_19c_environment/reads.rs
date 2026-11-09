@@ -47,7 +47,13 @@ fn a_value_that_is_not_utf8_is_a_usage_error_naming_it() {
     );
     assert_eq!(
         (out.status, out.stdout.as_str(), out.stderr.as_str()),
-        (2, "", "environment variable `ZED_B` is not UTF-8\n")
+        (
+            2,
+            "",
+            "the program reads the environment variable `ZED_B`, and its value is not UTF-8 \
+             text, which a Zed string must be. Set `ZED_B` to UTF-8 text before running, or \
+             unset it, which the program reads as `#notFound`.\n"
+        )
     );
 }
 
@@ -90,10 +96,10 @@ fn only_a_string_lookup_of_strings_is_the_environment() {
         let out = run("other_lookup", &src, &[]);
         assert_eq!(out.status, 1, "{ty}");
         assert!(
-            out.stderr.contains(
-                "1:6: port `env` of `main` is `Lines`, `Files`, `CommandLine` or \
-                 `String ->? String` at layer L1"
-            ),
+            out.stderr.contains(&format!(
+                "1:6: the parameter `env` of `main` is declared as `{ty}`, and each parameter \
+                     of `main` is an input port"
+            )),
             "{ty}: {}",
             out.stderr
         );

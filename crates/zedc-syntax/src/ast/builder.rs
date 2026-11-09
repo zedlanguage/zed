@@ -12,7 +12,7 @@ use std::sync::Arc;
 use super::{Error, Expr, ExprKind, Note, Pattern, RangeEnd, Stmt, StmtKind, StrPart, Type};
 use crate::lex::{Part, Span, Tok, Token};
 use crate::parse::Tree;
-use zedc_base::rejection::Row;
+use zedc_base::rejection::{Row, not_yet};
 
 /// A tree to build from: a text's, or a string hole's.
 pub(super) struct Level<'t> {
@@ -109,16 +109,25 @@ impl<'a, 's> Builder<'a, 's> {
         &self.tree.nodes[n].kids
     }
 
-    /// The error for node `n`, of a form of a layer after L1.
+    /// The error for node `n`, a form this zedc parses and does not compile yet. The message
+    /// names the kind of form in plain words ([`kind_of`]) and quotes its first line, cut at
+    /// 60 characters, since a form may be a whole block.
     pub(super) fn later(&self, n: usize) -> Error {
+        let s = self.span(n);
+        let line = self.text[s.start..s.end]
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim_end();
+        let quoted = match line.char_indices().nth(60) {
+            Some((cut, _)) => format!("{}…", &line[..cut]),
+            None if line.len() < s.end - s.start => format!("{line} …"),
+            None => line.into(),
+        };
         Error {
             row: None,
-            span: self.span(n),
-            message: format!(
-                "this form ({}) is built from layer L{}",
-                self.tree.name(n),
-                self.tree.layer(n)
-            ),
+            span: s,
+            message: not_yet(&format!("{} `{quoted}`", kind_of(self.tree.name(n)))),
             notes: Vec::new(),
         }
     }
@@ -140,11 +149,12 @@ impl<'a, 's> Builder<'a, 's> {
             // an empty block; elsewhere `{}` is the empty family (sec:lexical), which is what a
             // writer of `{}` there most likely meant.
             let message = if stmts.is_empty() {
-                "this `{}` is an empty block, which exports nothing: a brace after `->`, `else`, or the \
-                 head of an `if` or a `for` is a block; the empty family there is `{ {} }`, or \
-                 `({})` after `->` or a fallback's `else`"
+                "this `{}` is an empty block, and a block gives a value, so it must export one: a brace \
+                 after `->`, `else`, or the head of an `if` or a `for` is a block. To write the empty \
+                 family there, write `{ {} }`, or `({})` after `->` or a fallback's `else`."
             } else {
-                "this block exports nothing: end it with an expression or `return e;`"
+                "this block exports nothing, and a block gives a value, so it must export one. End it \
+                 with an expression, or with `return e;` to give the value `e`."
             };
             return Err(Error {
                 row: None,
@@ -215,7 +225,10 @@ impl<'a, 's> Builder<'a, 's> {
             return Err(Error {
                 row: None,
                 span,
-                message: format!("the {what} `{name}` is {done} twice"),
+                message: format!(
+                    "the {what} `{name}` is {done} twice, and each {what} is {done} once. Remove \
+                     one of the two."
+                ),
                 notes: vec![Note {
                     span: first,
                     text: format!("the first {what} `{name}`"),
@@ -248,8 +261,8 @@ impl<'a, 's> Builder<'a, 's> {
                     row: Some(Row::NamedBeforePositional),
                     span: self.span(k),
                     message: format!(
-                        "a positional argument after the named argument `{word}`: a call \
-                         passes its positional arguments first, then its named ones"
+                        "this positional argument comes after the named argument `{word}`, and a \
+                         call passes its positional arguments first, then its named ones."
                     ),
                     notes: vec![
                         Note {
@@ -293,7 +306,10 @@ impl<'a, 's> Builder<'a, 's> {
                 return Err(Error {
                     row: None,
                     span,
-                    message: format!("the argument `{word}` is named twice"),
+                    message: format!(
+                        "the argument `{word}` is named twice in this call, and a call names \
+                         each argument once. Remove one of the two."
+                    ),
                     notes: vec![Note {
                         span: *first,
                         text: format!("the first argument named `{word}`"),
@@ -345,5 +361,31 @@ impl<'a, 's> Builder<'a, 's> {
             _ => unreachable!("Literal = INT | FLOAT | RAT | STRING | 'true' | 'false'"),
         };
         Ok(Expr { kind, span })
+    }
+}
+
+/// The kind of form the grammar rule `rule` reads, in plain words, for the message of a form
+/// this zedc does not compile yet; `the form` for a rule with no plainer name.
+fn kind_of(rule: &str) -> &'static str {
+    match rule {
+        "ReduceTail" => "the reduction",
+        "ReducePolicy" => "the reduction order",
+        "TypeSuffix" => "the refinement",
+        "ResultType" => "the declared result type",
+        "Law" => "the law",
+        "TypeFacet" => "the facet",
+        "Interface" => "the interface",
+        "Signature" => "the signature",
+        "TypedBinding" => "the binding with a declared type",
+        "InferType" => "the wildcard type",
+        "FieldType" => "the named type",
+        "Struct" => "the struct declaration",
+        "MoreGen" => "the inner generator",
+        "KeyedPush" => "the push at a key",
+        "LitType" => "the literal type",
+        "ArrayType" => "the array type",
+        "Update" => "the field update",
+        "AnnotExpr" => "the annotated expression",
+        _ => "the form",
     }
 }

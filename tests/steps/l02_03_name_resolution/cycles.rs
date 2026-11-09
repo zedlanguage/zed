@@ -662,7 +662,10 @@ fn names_brought_in_on_a_cycle_are_bound_and_other_imports_are_still_checked() {
         m[1].starts_with("report.zed:1:1: the unit `stock` defines no `refund`"),
         "{m:?}"
     );
-    assert_eq!(m[2], "report.zed:2:22: `missing` is not defined");
+    assert_eq!(
+        m[2],
+        "report.zed:2:22: `missing` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `missing`, or correct the name if it is misspelled."
+    );
     assert!(
         m[3].starts_with("stock.zed:2:1: the unit `tax` defines no `levy`"),
         "{m:?}"

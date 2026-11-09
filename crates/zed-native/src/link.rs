@@ -122,10 +122,10 @@ impl Toolchain {
 
 /// The message of a `zedc build` command line that is not one.
 pub const USAGE: &str = "zedc build takes the program's file and, after `-o`, the executable to \
-                         write: `zedc build <file> -o <out> [--suppress <address> …]`, as in \
+                         write: `zedc build <file> -o <out> [--suppress <address> …] [--addresses]`, as in \
                          `zedc build hello.zed -o hello`";
 
-/// `zedc build <file> -o <out> [--suppress <address> …]`, with `args` the words after
+/// `zedc build <file> -o <out> [--suppress <address> …] [--addresses]`, with `args` the words after
 /// `build`; a warning whose address is named is not printed (DESIGN.md sec:diagnostics).
 /// Returns the exit status: 0; 1 when the program is rejected, does not compile or does not
 /// link; 2 for a usage error, among them a missing linker or runtime library.

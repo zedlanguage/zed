@@ -24,12 +24,12 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
         (
             "constructor-called-by-position",
             "6: the mark names the row \"Positional constructor call or pattern\", and the \
-             diagnostic is in no row of the rejection table: `Point` is not defined"
+             diagnostic is in no row of the rejection table: `Point` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Point`, or correct the name if it is misspelled."
                 .into(),
         ),
         (
             "dot-never-mutates",
-            "8: this form (ResultType) is built from layer L10".into(),
+            format!("8: {}", zed_tests::not_yet!("the declared result type `-> int`")),
         ),
         ("nullable-column-missing-none", none(36)),
         // L1.26b rejects it: 2.0 is an f16 and h an f64.
@@ -42,7 +42,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             // The unit parses from step L2.2; resolution refuses its `type` declaration, which
             // comes before the marked line.
             "payload-built-by-position",
-            "3: a type declaration is compiled from step L2.5".into(),
+            format!("3: {}", zed_tests::not_yet!("a type declaration")),
         ),
         (
             "taint-reaches-clean-sink",
@@ -55,13 +55,13 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
         ("taint-through-concatenation", none(44)),
         (
             "two-writers-of-one-generation",
-            "8: this form (ResultType) is built from layer L10".into(),
+            format!("8: {}", zed_tests::not_yet!("the declared result type `-> int`")),
         ),
         ("unit-mismatch-force-energy", none(49)),
         ("unit-mismatch-in-sum", none(47)),
         (
             "value-binding-has-no-next-generation",
-            "8: this form (ResultType) is built from layer L10".into(),
+            format!("8: {}", zed_tests::not_yet!("the declared result type `-> int`")),
         ),
     ];
     let names: Vec<String> = std::fs::read_dir(DIR)
@@ -90,7 +90,7 @@ fn two_variants_are_rejected_for_a_reason_other_than_their_documented_error() {
     };
     assert_eq!(
         rejected("constructor-called-by-position"),
-        "6:5: `Point` is not defined"
+        "6:5: `Point` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Point`, or correct the name if it is misspelled."
     );
     let e = rejected("taint-reaches-clean-sink");
     assert!(e.starts_with("50:1: expected "), "{e}");

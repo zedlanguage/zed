@@ -156,8 +156,8 @@ fn a_positional_argument_after_a_named_one_names_its_row() {
     assert_eq!(
         why,
         "\
-2:18: a positional argument after the named argument `rate`: a call passes its positional \
-arguments first, then its named ones
+2:18: this positional argument comes after the named argument `rate`, and a call passes its \
+positional arguments first, then its named ones.
   [1] 2:9: the first named argument, `rate`
       2 | f = fee(rate: 3, 5);
         |         ^^^^
@@ -202,8 +202,8 @@ fn a_positional_parameter_after_a_named_one_names_its_row() {
     assert_eq!(
         why,
         "\
-1:22: the positional parameter `base` comes after the named parameter `rate`: a declaration \
-lists its positional parameters first
+1:22: the positional parameter `base` comes after the named parameter `rate`, and a \
+declaration lists its positional parameters first.
   [1] 1:11: the first named parameter, `rate`
       1 | surcharge(rate: int, positional base: int) = base * rate;
         |           ^^^^^^^^^

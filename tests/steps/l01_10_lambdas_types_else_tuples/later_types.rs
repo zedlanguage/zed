@@ -1,7 +1,7 @@
 //! The type `_` and the named type `(n: T)` (item INFER-FIELD-desugar). sec:grammar desugars
 //! `InferType` to the type `_` of every value and `FieldType` to the type `T`, whose `where`
-//! predicate reads its value by the name `n`; both are forms of layer L10, so the parser builds
-//! neither and names that layer. A named parameter of a function type, `(n: int) -> int`, is
+//! predicate reads its value by the name `n`; this zedc compiles neither, so the parser builds
+//! neither and reports each as not compiled yet. A named parameter of a function type, `(n: int) -> int`, is
 //! no `FieldType` and builds at L1.
 
 use super::check;
@@ -34,42 +34,48 @@ fn the_desugaring_rules_read_the_spec() {
 }
 
 #[test]
-fn the_type_of_every_value_is_built_from_layer_10() {
+fn the_type_of_every_value_is_not_compiled_yet() {
     check(&[
         (
             "x is _",
-            "error: this form (InferType) is built from layer L10",
+            concat!("error: ", zed_tests::not_yet!("the wildcard type `_`")),
         ),
         // Inside a union, a tuple and parentheses alike.
         (
             "reading is _ | #missing",
-            "error: this form (InferType) is built from layer L10",
+            concat!("error: ", zed_tests::not_yet!("the wildcard type `_`")),
         ),
         (
             "row is (String, _)",
-            "error: this form (InferType) is built from layer L10",
+            concat!("error: ", zed_tests::not_yet!("the wildcard type `_`")),
         ),
         (
             "x is (_)",
-            "error: this form (InferType) is built from layer L10",
+            concat!("error: ", zed_tests::not_yet!("the wildcard type `_`")),
         ),
     ]);
 }
 
 #[test]
-fn a_named_type_is_built_from_layer_10() {
+fn a_named_type_is_not_compiled_yet() {
     check(&[
         (
             "age is (years: int)",
-            "error: this form (FieldType) is built from layer L10",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the named type `(years: int)`")
+            ),
         ),
         (
             "age is (years: int | #unknown)",
-            "error: this form (FieldType) is built from layer L10",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the named type `(years: int | #unknown)`")
+            ),
         ),
         (
             "pair is ((lo: int), int)",
-            "error: this form (FieldType) is built from layer L10",
+            concat!("error: ", zed_tests::not_yet!("the named type `(lo: int)`")),
         ),
         // A function type's named parameter is not a named type.
         (

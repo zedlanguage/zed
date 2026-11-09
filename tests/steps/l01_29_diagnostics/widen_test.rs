@@ -23,9 +23,12 @@ pub(super) fn unit(name: &str, file: &str, src: &str) -> String {
     path.display().to_string()
 }
 
-/// `zedc test <files>`: its status, standard output and standard error.
+/// `zedc test --addresses <files>`: its status, standard output and standard error.
 fn test(files: &[&str]) -> (u8, String, String) {
-    let args: Vec<String> = files.iter().map(|a| a.to_string()).collect();
+    let args: Vec<String> = std::iter::once(&"--addresses")
+        .chain(files)
+        .map(|a| a.to_string())
+        .collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let status = zedc::testing::command(&args, &mut out, &mut err);
     (
@@ -35,9 +38,9 @@ fn test(files: &[&str]) -> (u8, String, String) {
     )
 }
 
-/// `zedc run <file>` with no input: its status and standard error.
+/// `zedc run <file> --addresses` with no input: its status and standard error.
 fn run(file: &str) -> (u8, String) {
-    let args = vec!["run".to_string(), file.to_string()];
+    let args = ["run", file, "--addresses"];
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let status = zedc::run::command(&args, &mut "".as_bytes(), &mut out, &mut err);
     (status, String::from_utf8(err).unwrap())
@@ -347,7 +350,10 @@ fn a_unit_whose_main_ports_are_rejected_prints_no_warning() {
     let (status, out, err) = test(&[&file]);
     assert_eq!(status, 1, "{out}");
     assert!(
-        out.contains(&format!("{file}:2:6: port `stdin` of `main`")),
+        out.contains(&format!(
+            "{file}:2:6: {}",
+            zed_tests::input_port_message("stdin", "is declared as `int`")
+        )),
         "{out}"
     );
     assert_eq!(err, "");

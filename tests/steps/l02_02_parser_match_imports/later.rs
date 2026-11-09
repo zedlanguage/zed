@@ -1,5 +1,6 @@
-//! The parser builds every form of this step; name resolution refuses each one, with the step
-//! that compiles it, and refuses each annotation with its layer, or as no annotation at all.
+//! The parser builds every form of this step; name resolution refuses each one as a form this
+//! zedc does not compile yet, and refuses each annotation as not compiled yet, or as no
+//! annotation at all.
 
 use super::refused;
 
@@ -23,38 +24,49 @@ fn each_form_names_the_step_that_compiles_it() {
             &[
                 "the unit `geometry.shapes` cannot be imported: no manifest `zed.manifest` marks a \
                  package root at or above this unit, so it imports no unit [import geometry.shapes;]",
-                "an import is linked from step L2.4, which ties each name it brings in to the \
-                 other unit's definition [import geometry.shapes;]",
+                concat!(zed_tests::import_not_yet!(), " [import geometry.shapes;]"),
             ],
         ),
         (
             "size(t) = match t { _ -> 0 };",
-            &["a `match` is compiled from step L2.4 [match t { _ -> 0 }]"],
+            &[concat!(
+                zed_tests::not_yet!("a `match`"),
+                " [match t { _ -> 0 }]"
+            )],
         ),
         (
             "f(r) = r else #ok(v: n is int) -> 0;",
-            &["a type pattern `n is T` is compiled from step L2.4 [n is int]"],
+            &[concat!(
+                zed_tests::not_yet!("a type pattern `n is T`"),
+                " [n is int]"
+            )],
         ),
         (
             "g(r) = r else #ok(v: -1) -> 0;",
-            &["a literal pattern is compiled from step L2.4 [-1]"],
+            &[concat!(zed_tests::not_yet!("a literal pattern"), " [-1]")],
         ),
     ]);
 }
 
 #[test]
-fn each_annotation_names_its_layer() {
+fn each_annotation_of_a_later_layer_is_not_compiled_yet() {
     check(&[
         (
             "@memoized\nfib(n) = n;",
-            &["`@memoized` is an annotation of layer L18 [@memoized]"],
+            &[concat!(
+                zed_tests::not_yet!("the annotation `@memoized`"),
+                " [@memoized]"
+            )],
         ),
         (
             "@log @exact @exhaustive\nf(x) = x;",
             &[
-                "`@log` is an annotation of layer L7 [@log]",
-                "`@exact` is an annotation of layer L15 [@exact]",
-                "`@exhaustive` is an annotation of layer L15 [@exhaustive]",
+                concat!(zed_tests::not_yet!("the annotation `@log`"), " [@log]"),
+                concat!(zed_tests::not_yet!("the annotation `@exact`"), " [@exact]"),
+                concat!(
+                    zed_tests::not_yet!("the annotation `@exhaustive`"),
+                    " [@exhaustive]"
+                ),
             ],
         ),
         (
@@ -76,13 +88,22 @@ fn each_annotation_names_its_layer() {
         // The annotated function is still bound: only the annotation is refused.
         (
             "@memoized\nfib(n) = fib(n);\nk = fib(3);",
-            &["`@memoized` is an annotation of layer L18 [@memoized]"],
+            &[concat!(
+                zed_tests::not_yet!("the annotation `@memoized`"),
+                " [@memoized]"
+            )],
         ),
         (
             "@decides(p) @require(n > 0)\nf(n) = n;",
             &[
-                "`@decides` is an annotation of layer L22 [@decides(p)]",
-                "`@require` is an annotation of layer L24 [@require(n > 0)]",
+                concat!(
+                    zed_tests::not_yet!("the annotation `@decides`"),
+                    " [@decides(p)]"
+                ),
+                concat!(
+                    zed_tests::not_yet!("the annotation `@require`"),
+                    " [@require(n > 0)]"
+                ),
             ],
         ),
     ]);

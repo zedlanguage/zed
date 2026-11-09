@@ -36,8 +36,8 @@ fn a_prelude_word_of_a_later_layer_is_an_error_naming_the_layer() {
     assert_eq!(
         errors(text),
         [
-            "`where` is a prelude word of layer L3 [where]",
-            "`sort` is a prelude word of layer L5 [sort]",
+            concat!(zed_tests::not_yet!("the prelude word `where`"), " [where]"),
+            concat!(zed_tests::not_yet!("the prelude word `sort`"), " [sort]"),
         ]
     );
 }
@@ -53,14 +53,21 @@ fn statement_order_does_not_matter() {
 fn a_name_bound_nowhere_is_an_error() {
     assert_eq!(
         errors("total = price + 1; shown = total.price;"),
-        ["`price` is not defined [price]"]
+        [
+            "`price` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `price`, or correct the name if it is misspelled. [price]"
+        ]
     );
 }
 
 #[test]
 fn a_type_name_resolves_to_the_prelude_and_a_unit_declares_none_at_l1() {
     let r = run("half(n: int) = n div 2; ok(p: Point) = p;");
-    assert_eq!(r.unwrap_err(), ["the type `Point` is not defined [Point]"]);
+    assert_eq!(
+        r.unwrap_err(),
+        [
+            "the type `Point` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [Point]"
+        ]
+    );
     let text = "main(stdin: Lines) -> (stdout: Lines) { stdout <- stdin; }";
     assert!(run(text).is_ok());
 }

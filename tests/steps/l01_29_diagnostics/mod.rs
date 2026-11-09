@@ -6,6 +6,7 @@
 mod batch;
 mod binder_type;
 mod body_display;
+mod bug;
 mod casts;
 mod derivations;
 mod kernel_names;

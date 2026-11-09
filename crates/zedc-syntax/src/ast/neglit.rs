@@ -60,9 +60,9 @@ impl Builder<'_, '_> {
             row: Some(Row::PrefixMinus),
             span: whole,
             message: format!(
-                "a prefix `-` on a postfix chain whose base is the numeric literal `{num}`: \
-                 the chain binds tighter, so this is `{last}`{w_last}, not `{first}`{w_first}; \
-                 write the grouping you mean"
+                "a prefix `-` stands before a postfix chain whose base is the number \
+                 `{num}`, and the chain binds tighter than the `-`, so this is \
+                 `{last}`{w_last}, not `{first}`{w_first}. Write the grouping you mean."
             ),
             notes: vec![
                 Note {

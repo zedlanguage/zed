@@ -119,11 +119,17 @@ fn a_keyed_push_stays_refused() {
     check(&[
         (
             "f(x) = { x[i + 1] <- 3; 0 };",
-            "error: this form (KeyedPush) is built from layer L7",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the push at a key `x[i + 1] <- 3;`")
+            ),
         ),
         (
             "f(x) = loop i { x[i][0] <- 3; };",
-            "error: this form (KeyedPush) is built from layer L7",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the push at a key `x[i][0] <- 3;`")
+            ),
         ),
     ]);
 }

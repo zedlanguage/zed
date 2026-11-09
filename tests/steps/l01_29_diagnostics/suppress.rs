@@ -1,5 +1,5 @@
 //! Items DIAG-suppress, DIAG-suppress-rest and DIAG-addr-root (DESIGN.md sec:diagnostics): each
-//! diagnostic prints its address, the same on every run of the same file from any directory and
+//! diagnostic prints its address under `--addresses`, and only then, the same on every run of the same file from any directory and
 //! different in each file; `--suppress <address>` leaves that warning unprinted and the program
 //! unchanged; naming a rejection is an error and the run still fails; an address that names
 //! nothing is reported.
@@ -14,8 +14,16 @@ use zedc::suppress::{InFile, Suppress};
 
 use super::widen_test::{checked_program, many_squares, unit};
 
-/// `zedc <words>` through `zedc::run::command`, with no input: status, stdout and stderr.
+/// `zedc <words>` through `zedc::run::command`, with no input and with `--addresses` after the
+/// file, so each diagnostic prints its address: status, stdout and stderr.
 fn zedc(words: &[&str]) -> (u8, String, String) {
+    let mut words = words.to_vec();
+    words.insert(2.min(words.len()), "--addresses");
+    plain(&words)
+}
+
+/// `zedc <words>` through `zedc::run::command`, with no input: status, stdout and stderr.
+fn plain(words: &[&str]) -> (u8, String, String) {
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let status = zedc::run::command(words, &mut "".as_bytes(), &mut out, &mut err);
     (
@@ -25,9 +33,12 @@ fn zedc(words: &[&str]) -> (u8, String, String) {
     )
 }
 
-/// `zedc test <words>`: status, stdout and stderr.
+/// `zedc test --addresses <words>`: status, stdout and stderr.
 fn zedc_test(words: &[&str]) -> (u8, String, String) {
-    let args: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+    let args: Vec<String> = std::iter::once("--addresses")
+        .chain(words.iter().copied())
+        .map(str::to_string)
+        .collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let status = zedc::testing::command(&args, &mut out, &mut err);
     (
@@ -50,9 +61,13 @@ fn area() -> String {
 }
 
 /// The ZIR of the program in `file`, loaded as `zedc run` and `zedc build` load it with the
-/// addresses `words` suppressed, printed; and what was written to standard error.
+/// addresses `words` suppressed, printed; and what was written to standard error, each address
+/// printed.
 fn zir(file: &str, words: &[&str]) -> (String, String) {
-    let (mut suppress, rest) = Suppress::take(words).unwrap();
+    let words: Vec<&str> = std::iter::once("--addresses")
+        .chain(words.iter().copied())
+        .collect();
+    let (mut suppress, rest) = Suppress::take(&words).unwrap();
     assert!(rest.is_empty());
     let mut err = Vec::new();
     let program = load_file(file, &mut suppress, &mut err).unwrap();
@@ -271,17 +286,53 @@ fn suppressing_a_rejection_is_an_error_and_the_run_still_fails() {
     assert_eq!(
         refused,
         format!(
-            "{}{file}:3:7: `--suppress {a}` names a rejection, which cannot be suppressed\n",
-            err
+            "{err}{file}:3:7: `--suppress {a}` names the error printed above at this place, and \
+             an error cannot be suppressed, since the program it rejects cannot be built; only a \
+             warning can be. Correct the program as that error describes, or remove \
+             `--suppress {a}`.\n"
         )
     );
     // `zedc test` fails the run in the same way.
     let (status, out, _) = zedc_test(&["--suppress", &a, &file]);
     assert_eq!(status, 1);
     assert!(
-        out.contains(&format!("`--suppress {a}` names a rejection")),
+        out.contains(&format!(
+            "`--suppress {a}` names the error printed above at this place"
+        )),
         "{out}"
     );
+}
+
+/// The address line is printed only under `--addresses` (DESIGN.md sec:diagnostics: the
+/// default text holds no hash): a warning and a rejection without it end at their derivation,
+/// and `--suppress` still hides the warning by the address `--addresses` showed.
+#[test]
+fn an_address_is_printed_only_under_addresses() {
+    let file = unit("suppress", "quiet.zed", &area());
+    let (status, out, quiet) = plain(&["run", &file]);
+    assert_eq!(status, 0);
+    assert!(!quiet.contains("address"), "{quiet}");
+    assert!(quiet.ends_with("^^^^^^^^^^^\n"), "{quiet}");
+    let (_, _, loud) = zedc(&["run", &file]);
+    let a = printed(&loud)[0].to_string();
+    assert_eq!(loud, format!("{quiet}  address: {a}\n"));
+    assert_eq!(
+        plain(&["run", &file, "--suppress", &a]),
+        (0, out, String::new())
+    );
+    let rejected = unit(
+        "suppress",
+        "quiet_rejected.zed",
+        &checked_program("  y = missing + 1;\n"),
+    );
+    let (status, _, quiet) = plain(&["run", &rejected]);
+    assert_eq!(status, 1);
+    assert!(!quiet.contains("address"), "{quiet}");
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    zedc::testing::command(std::slice::from_ref(&file), &mut out, &mut err);
+    let printed = String::from_utf8(out).unwrap() + &String::from_utf8(err).unwrap();
+    assert!(printed.contains("`area` widens"), "{printed}");
+    assert!(!printed.contains("address"), "{printed}");
 }
 
 #[test]
@@ -291,16 +342,16 @@ fn an_address_that_names_nothing_is_reported() {
     let none = "0".repeat(64);
     let (status, _, more) = zedc(&["run", &file, "--suppress", &none]);
     assert_eq!(status, 0);
-    assert_eq!(
-        more,
-        format!("{err}{file}: `--suppress {none}`: no diagnostic has this address\n")
+    let why = format!(
+        "`--suppress {none}`: no warning or error of this run has this address, so it \
+         suppresses nothing. An address changes when the warning's text, the declaration it \
+         lies in or the file's path from its package root changes. Run with `--addresses` to \
+         see each warning's address now, and remove or replace `--suppress {none}`.\n"
     );
+    assert_eq!(more, format!("{err}{file}: {why}"));
     let (status, _, more) = zedc_test(&["--suppress", &none, &file]);
     assert_eq!(status, 0);
-    assert_eq!(
-        more,
-        format!("{err}`--suppress {none}`: no diagnostic has this address\n")
-    );
+    assert_eq!(more, format!("{err}{why}"));
 }
 
 #[test]
@@ -310,13 +361,18 @@ fn a_word_after_suppress_that_is_not_an_address_is_a_usage_error() {
     assert_eq!(status, 2);
     assert_eq!(
         err,
-        "`--suppress abc`: an address is 64 lowercase hex digits\n"
+        "`--suppress abc`: `abc` is not an address; an address is the 64 lowercase hexadecimal \
+         digits that `zedc` prints under a warning when run with `--addresses`. Copy the \
+         address from that line whole, or remove `--suppress abc`.\n"
     );
     let (status, _, err) = zedc(&["run", &file, "--suppress"]);
     assert_eq!(status, 2);
     assert_eq!(
         err,
-        "`--suppress` needs an address, 64 lowercase hex digits\n"
+        "`--suppress` is the last word of the command line, and it needs the address of the \
+         warning to leave unprinted after it; an address is the 64 lowercase hexadecimal digits \
+         that `zedc` prints under a warning when run with `--addresses`. Write \
+         `--suppress <address>`, or remove `--suppress`.\n"
     );
     assert_eq!(zedc_test(&["--suppress", "abc", &file]).0, 2);
 }

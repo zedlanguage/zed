@@ -118,12 +118,23 @@ fn a_source_that_does_not_load_is_reported_at_its_line_and_column() {
     // Saved as ISO-8859-1: `é` is the one byte E9.
     let latin1 = b"price = 1;\nname = \"caf\xe9\";\n";
     let e = zedc::format::format_source(latin1).unwrap_err();
-    assert_eq!(e, "2:12: not UTF-8: E9");
+    assert_eq!(
+        e,
+        "2:12: a Zed file is UTF-8 text, and the bytes here, E9 in hexadecimal, are not a UTF-8 \
+         character, so the file cannot be read. Save the file as UTF-8 in your editor, or replace \
+         these bytes with the character they were meant to be."
+    );
     // Running the file reports the same position.
     assert_eq!(zedc::run::load(latin1).err().as_deref(), Some(e.as_str()));
     let bom = "\u{feff}total = 1;\n".as_bytes();
     let e = zedc::format::format_source(bom).unwrap_err();
-    assert_eq!(e, "1:1: the file starts with a byte order mark");
+    assert_eq!(
+        e,
+        "1:1: the file starts with a byte order mark (the bytes EF BB BF), and a Zed file may \
+         not, since the same program would then be stored in two ways. Save the file as UTF-8 \
+         without a byte order mark (in many editors this is \"UTF-8\" rather than \"UTF-8 with \
+         BOM\")."
+    );
 }
 
 #[test]
@@ -192,4 +203,51 @@ fn a_blank_line_among_moved_comments_is_kept() {
         "// Section header.\n\n// What b is.\nb = 1;\n",
         "// Section header.\n\n// What b is.\nb = 1;\n",
     );
+}
+
+/// The type `text` parsed and printed back by `format_type`, as a message prints a type.
+fn type_printed(text: &str) -> String {
+    let tokens = zedc::lex::lex(text).unwrap();
+    let tree = zedc::parse::parse(text, &tokens, "Type", zedc::parse::TOP).unwrap();
+    let t = zedc::ast::ty(text, &tokens, &tree).unwrap();
+    zedc::format::format_type(&t)
+}
+
+/// A message prints a type as the program writes it, not as the tree the parser builds.
+#[test]
+fn a_type_prints_as_it_is_written() {
+    for text in [
+        "int",
+        "Lines",
+        "String ->? String",
+        "#a .. #b -> int",
+        "#yes | #no",
+        "(int, String)",
+    ] {
+        assert_eq!(type_printed(text), text);
+    }
+}
+
+/// `#a0 | #a1 | …`, `n` atoms.
+fn union_of(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("#a{i}"))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+#[test]
+fn printing_a_type_scales_with_its_size() {
+    let types: std::collections::HashMap<usize, zedc::ast::Type> = [200, 1600]
+        .into_iter()
+        .map(|n| {
+            let text = union_of(n);
+            let tokens = zedc::lex::lex(&text).unwrap();
+            let tree = zedc::parse::parse(&text, &tokens, "Type", zedc::parse::TOP).unwrap();
+            (n, zedc::ast::ty(&text, &tokens, &tree).unwrap())
+        })
+        .collect();
+    zed_tests::scaling::check("printing a union type, by atoms", 200, |n| {
+        zedc::format::format_type(&types[&n]);
+    });
 }

@@ -10,7 +10,7 @@ fn rebinding_in_one_scope_is_an_error_and_a_nested_scope_may_shadow() {
     assert_eq!(
         errors(text),
         [
-            "`y` is already bound in this scope [y = y * 2;]; the first binding of `y` \
+            "`y` is already bound in this scope, and a scope binds each name once [y = y * 2;]; the first binding of `y` \
              [y = x + 1;]; repair: give this binding a new name [y = y * 2;]; repair: move this \
              binding into a nested block, where it shadows the first [y = y * 2;]"
         ]
@@ -22,7 +22,7 @@ fn a_parameter_and_the_body_blocks_statements_share_one_scope() {
     assert_eq!(
         errors("clean(s) { s = trim(s); return s; }"),
         [
-            "`s` is already bound in this scope [s = trim(s);]; the first binding of `s` [s]; \
+            "`s` is already bound in this scope, and a scope binds each name once [s = trim(s);]; the first binding of `s` [s]; \
              repair: give this binding a new name [s = trim(s);]; repair: move this binding \
              into a nested block, where it shadows the first [s = trim(s);]"
         ]
@@ -44,7 +44,7 @@ fn functions_of_one_name_with_different_parameter_types_form_an_overload_set() {
     assert_eq!(
         errors("show(n: int) = n; show(m: int) = m;"),
         [
-            "`show` is already declared in this scope with these parameter types \
+            "`show` is already declared in this scope with these parameter types, and a scope declares a function once for each list of parameter types \
              [show(m: int) = m;]; the first `show` with these parameter types [show(n: int) = n;]; \
              repair: give this binding a new name [show(m: int) = m;]"
         ]
@@ -64,7 +64,9 @@ fn a_parameters_type_and_default_see_the_parameters_but_not_the_body() {
     assert_eq!(at(text, "lo", 1), ["param lo: int = 0"]);
     assert_eq!(
         errors("f(a: int = m) { m = 1; return a; }"),
-        ["`m` is not defined [m]"]
+        [
+            "`m` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `m`, or correct the name if it is misspelled. [m]"
+        ]
     );
 }
 
@@ -74,7 +76,9 @@ fn test_cases_are_read_in_the_scope_around_the_function() {
     assert_eq!(at(text, "two", 2), ["binding two = 2;"]);
     assert_eq!(
         errors("double(x) = 2 * x test { x -> 2 }"),
-        ["`x` is not defined [x]"]
+        [
+            "`x` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `x`, or correct the name if it is misspelled. [x]"
+        ]
     );
 }
 
@@ -92,7 +96,9 @@ fn a_push_names_an_output_port_of_its_function() {
     assert_eq!(at(text, "stdout", 1), ["port stdout: Lines"]);
     assert_eq!(
         errors("main() { stdout <- \"hi\"; }"),
-        ["`stdout` is not defined [stdout <- \"hi\";]"]
+        [
+            "`stdout` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `stdout`, or correct the name if it is misspelled. [stdout <- \"hi\";]"
+        ]
     );
 }
 
@@ -124,7 +130,13 @@ fn a_binding_that_names_itself_resolves_to_itself() {
 fn a_sort_key_names_the_step_that_compiles_it() {
     let es = super::run("top(xs) = pick(xs, desc x -> x);").unwrap_err();
     assert!(
-        es.contains(&"a sort key `asc` or `desc` is compiled from step L5.1 [desc x -> x]".into()),
+        es.contains(
+            &concat!(
+                zed_tests::not_yet!("a sort key `asc` or `desc`"),
+                " [desc x -> x]"
+            )
+            .into()
+        ),
         "{es:?}"
     );
 }

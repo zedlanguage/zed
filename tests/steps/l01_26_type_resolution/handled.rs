@@ -207,7 +207,10 @@ fn a_function_that_calls_itself_waits_for_layer_l6() {
     let (info, _) = info(text);
     assert!(info.sigs.is_empty());
     let e = zed_tests::step_helpers::l01_16_elaboration::errors(&format!("{text}y = r(#again);\n"));
-    assert!(e[0].contains("recursion arrives at layer L6"), "{e:?}");
+    assert!(
+        e[0].contains("which is recursion. Recursion is part of the Zed language"),
+        "{e:?}"
+    );
 }
 
 #[test]

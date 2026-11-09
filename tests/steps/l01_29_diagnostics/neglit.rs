@@ -37,8 +37,9 @@ fn a_negated_literal_made_absolute_shows_both_groupings_with_their_values() {
     let out = rejected(&printing("-1.abs"));
     assert_eq!(
         out,
-        "2:12: a prefix `-` on a postfix chain whose base is the numeric literal `1`: the chain \
-binds tighter, so this is `-(1.abs)`, which is -1, not `(-1).abs`, which is 1; write the grouping you mean
+        "2:12: a prefix `-` stands before a postfix chain whose base is the number `1`, and the \
+chain binds tighter than the `-`, so this is `-(1.abs)`, which is -1, not `(-1).abs`, which is 1. \
+Write the grouping you mean.
   [1] 2:13: the chain starts at the numeric literal `1`
       2 |   offset = -1.abs;
         |             ^
@@ -134,7 +135,7 @@ fn a_chain_whose_value_depends_on_what_it_names_shows_the_groupings_without_valu
         printing("-1.clamp(0, 8)")
     ));
     assert!(
-        out.contains("so this is `-(1.clamp(0, 8))`, not `(-1).clamp(0, 8)`; write"),
+        out.contains("so this is `-(1.clamp(0, 8))`, not `(-1).clamp(0, 8)`. Write"),
         "{out}"
     );
 }
@@ -147,7 +148,7 @@ fn a_unit_that_binds_the_word_shows_no_values() {
         printing("-1.abs")
     ));
     assert!(
-        out.contains("so this is `-(1.abs)`, not `(-1).abs`; write"),
+        out.contains("so this is `-(1.abs)`, not `(-1).abs`. Write"),
         "{out}"
     );
 }

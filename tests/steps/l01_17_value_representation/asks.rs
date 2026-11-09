@@ -265,8 +265,8 @@ fn literal_errors(texts: &[String], margin: u64, check_short: bool) -> Vec<Strin
 fn unread(bytes: usize) -> String {
     format!(
         "this literal has so many digits that the system refused the {bytes} bytes of memory \
-         asked to read them; a literal has no size limit, but this machine cannot hold this \
-         one's value; write fewer digits"
+         zedc asked for to read it. A literal has no size limit, but this machine cannot hold \
+         this one's value. Write it with fewer digits."
     )
 }
 
@@ -475,6 +475,22 @@ fn addressing_a_wide_constant_is_refused_when_memory_is_short() {
         assert_eq!(
             asked(zedc::canon::address(d, &none)),
             BigUint::from(bytes),
+            "k = {k}"
+        );
+        // The program's own address, which `zedc run` takes of `main` and its ports, is
+        // refused with the same count.
+        let ports = zedc::run::Ports {
+            inputs: Vec::new(),
+            outputs: vec!["stdout".into()],
+        };
+        assert_eq!(
+            ports.address(t.clone()).err(),
+            Some(format!(
+                "zedc could not compile the program: one of its constants takes {bytes} bytes, \
+                 and the system refused zedc that much memory to write the constant out and \
+                 compute the program's content address. The program is not wrong. Repair: \
+                 free memory and run again."
+            )),
             "k = {k}"
         );
     }

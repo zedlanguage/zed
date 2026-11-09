@@ -80,65 +80,93 @@ fn error(text: &str) -> String {
     format!("{:?}: {e}", &text[e.span.start..e.span.end])
 }
 
+/// The message for a `/* … */` comment in a hole of a `"` string that does not close on its line.
+macro_rules! comment_in_hole {
+    () => {
+        "this `/* … */` comment is inside a `${…}` hole of a `\"` string, and everything in that \
+         hole ends on the line of the `\"` string, which is one line. Close the comment on this \
+         line, or move it out of the string."
+    };
+}
+
+/// The message for a `"""` string in a hole of a `"` string that does not close on its line.
+macro_rules! triple_in_hole {
+    () => {
+        "this `\"\"\"` string is inside a `${…}` hole of a `\"` string, and everything in that \
+         hole ends on the line of the `\"` string, which is one line. Close the `\"\"\"` string \
+         on this line, or make the outer string a `\"\"\"` string."
+    };
+}
+
+/// The message for a hole of a `"` string that reaches the end of its line.
+macro_rules! open_hole {
+    () => {
+        "this `${` hole of a `\"` string reaches the end of the line without its closing `}`, and \
+         a `\"` string, with its holes, is one line. Write the `}` on this line, or make the \
+         string a `\"\"\"` string, which may run over several lines."
+    };
+}
+
+/// The message for a `//` comment in a hole of a `"` string.
+macro_rules! line_comment {
+    () => {
+        "this `//` comment is inside a `${…}` hole of a `\"` string, and a `//` comment runs to \
+         the end of the line, past the `}` that closes the hole. Write the comment as `/* … */`, \
+         or move it out of the string."
+    };
+}
+
 #[test]
 fn a_hole_of_a_one_line_string_holds_no_line_break() {
     // A `//` comment runs to the end of the line, so it takes the `}` with it, and a line break
     // before the `}` does not help: the hole would then hold the line break.
     assert_eq!(
         error("log(\"total: ${sum // all rows\n}\");"),
-        "\"// all rows\": malformed string: a `//` comment in a hole of a `\"` string runs to \
-         the end of the line, past the `}`; write `/* … */`"
+        concat!("\"// all rows\": ", line_comment!())
     );
     assert_eq!(
         error("log(\"total: ${sum /* all\n rows */}\");"),
-        "\"/* all\": malformed string: a `/* … */` comment in a hole of a `\"` string closes on \
-         its line"
+        concat!("\"/* all\": ", comment_in_hole!())
     );
     // A block comment nested in another is part of it.
     assert_eq!(
         error("log(\"${sum /* all /* the\n rows */ */}\");"),
-        "\"/* all /* the\": malformed string: a `/* … */` comment in a hole of a `\"` string \
-         closes on its line"
+        concat!("\"/* all /* the\": ", comment_in_hole!())
     );
     assert_eq!(
         error("log(\"total: ${sum +\n tax}\");"),
-        "\"${sum +\": malformed string: a hole in a `\"` string closes on its line"
+        concat!("\"${sum +\": ", open_hole!())
     );
     assert_eq!(
         error("log(\"${{ t = sum + tax;\n t }}\");"),
-        "\"${{ t = sum + tax;\": malformed string: a hole in a `\"` string closes on its line"
+        concat!("\"${{ t = sum + tax;\": ", open_hole!())
     );
     assert_eq!(
         error("log(\"${\"\"\"a\nb\"\"\" ++ name}\");"),
-        "\"\\\"\\\"\\\"a\": malformed string: a `\"\"\"` string in a hole of a `\"` string \
-         closes on its line"
+        concat!("\"\\\"\\\"\\\"a\": ", triple_in_hole!())
     );
     // A `"""` string in a hole of a `"` string closes on its line, so its own holes do too.
     assert_eq!(
         error("log(\"${\"\"\"${a /* c\n */}\"\"\"}\");"),
-        "\"/* c\": malformed string: a `/* … */` comment in a hole of a `\"` string closes on \
-         its line"
+        concat!("\"/* c\": ", comment_in_hole!())
     );
     assert_eq!(
         error("x = \"${\"\"\"${a // c}\"\"\"}\";\n"),
-        "\"// c}\\\"\\\"\\\"}\\\";\": malformed string: a `//` comment in a hole of a `\"` string \
-         runs to the end of the line, past the `}`; write `/* … */`"
+        concat!("\"// c}\\\"\\\"\\\"}\\\";\": ", line_comment!())
     );
     // A line break and a later `}"""}` do not end that `//` comment's hole either.
     assert_eq!(
         error("x = \"${\"\"\"${a // c\n}\"\"\"}\";"),
-        "\"// c\": malformed string: a `//` comment in a hole of a `\"` string runs to the end of \
-         the line, past the `}`; write `/* … */`"
+        concat!("\"// c\": ", line_comment!())
     );
     assert_eq!(
         error("x = \"${\"\"\"${a\n}\"\"\"}\";"),
-        "\"${a\": malformed string: a hole in a `\"` string closes on its line"
+        concat!("\"${a\": ", open_hole!())
     );
     // A `"` string in a `"""` string's hole is one-line again.
     assert_eq!(
         error("log(\"\"\"${\"${a /* c\n */}\"}\"\"\");"),
-        "\"/* c\": malformed string: a `/* … */` comment in a hole of a `\"` string closes on \
-         its line"
+        concat!("\"/* c\": ", comment_in_hole!())
     );
 }
 

@@ -89,7 +89,8 @@ fn malformed_imports() {
         ("import a @hash(\"x\", \"y\");", "syntax"),
         (
             "import a.b.{c, c};",
-            "error: the name `c` is imported twice; the first name `c` at byte 12",
+            "error: the name `c` is imported twice, and each name is imported once. Remove one of \
+             the two.; the first name `c` at byte 12",
         ),
     ]);
 }

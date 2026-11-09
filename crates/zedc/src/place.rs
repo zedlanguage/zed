@@ -34,7 +34,14 @@ impl Place {
     /// for a manifest names one part, and neither this process nor the kernel goes over the
     /// whole path again per directory.
     pub fn of(file: &Path) -> Result<Place, String> {
-        let full = std::fs::canonicalize(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let full = std::fs::canonicalize(file).map_err(|e| {
+            format!(
+                "zedc cannot follow the path `{}` to the file it names, to find the package the \
+                 file belongs to: {e}. Name a file that exists, on a path whose directories zedc \
+                 may enter.",
+                file.display()
+            )
+        })?;
         let Some(parent) = full.parent() else {
             return Ok(Place::Loose(full));
         };
@@ -43,7 +50,9 @@ impl Place {
         let flags = OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC;
         let cannot = |e| {
             format!(
-                "{}: a directory above it cannot be opened: {e}",
+                "zedc cannot open a directory above `{}` to look there for the manifest \
+                 `zed.manifest` that marks a package: {e}. Let zedc enter the directories above \
+                 the file.",
                 file.display()
             )
         };
@@ -61,7 +70,15 @@ impl Place {
                     .components()
                     .map(|c| c.as_os_str().to_str())
                     .collect::<Option<_>>()
-                    .ok_or_else(|| format!("{}: the path is not UTF-8", file.display()))?;
+                    .ok_or_else(|| {
+                        format!(
+                            "the path of `{}` under its package root `{}` is not UTF-8 text, and \
+                             a unit is named by that path. Rename the file and the directories \
+                             between it and the package root with UTF-8 names.",
+                            file.display(),
+                            root.display()
+                        )
+                    })?;
                 return Ok(Place::Unit {
                     root: root.to_path_buf(),
                     name: name.join("/"),

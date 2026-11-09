@@ -397,7 +397,9 @@ fn an_overload_whose_arrows_overlap_is_checked_by_the_arrows_it_names() {
         );
         assert_eq!(
             errors(&text),
-            ["`h` names 2 overloads; choosing among them arrives at L2 [h]"],
+            [
+                "`h` names 2 definitions, and this version of zedc does not yet choose among definitions that share a name. Give each of them a name of its own. [h]"
+            ],
             "{result}"
         );
     }

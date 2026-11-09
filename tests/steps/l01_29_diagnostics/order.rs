@@ -512,8 +512,13 @@ fn at_l1_the_two_declarations_are_rejected_alike_in_either_order() {
         .iter()
         .map(|d| (d.at, d.message.as_str()))
         .collect();
-    let refinement = "this form (TypeSuffix) is built from layer L10";
-    assert_eq!(messages, [((0, 8), refinement), ((1, 8), refinement)]);
+    assert_eq!(
+        messages,
+        [
+            ((0, 8), zed_tests::not_yet!("the refinement `[0..]`")),
+            ((1, 8), zed_tests::not_yet!("the refinement `[_..=10]`"))
+        ]
+    );
 }
 
 /// A unit with a form of a later layer in each of two items: each item's error is reported,
@@ -530,8 +535,12 @@ high(r: int[50..]) = r;
     let out = super::rejected(unit);
     assert_eq!(
         out,
-        "2:11: this form (TypeSuffix) is built from layer L10\n\
-         3:12: this form (TypeSuffix) is built from layer L10"
+        concat!(
+            "2:11: ",
+            zed_tests::not_yet!("the refinement `[0..=50]`"),
+            "\n3:12: ",
+            zed_tests::not_yet!("the refinement `[50..]`")
+        )
     );
     let items = items(unit);
     let [reversed, _] = items.orders();
@@ -586,8 +595,9 @@ odd(positional n) = if n == 0 { false } else { even(n - 1) };
     let messages: Vec<(Place, &str)> = (answer.diagnostics.iter())
         .map(|d| (d.at, d.message.as_str()))
         .collect();
-    let message = "`even`, `odd` are defined in terms of each other: recursion arrives at \
-                   layer L6";
+    let message = "`even`, `odd` are defined in terms of each other, which is recursion. Recursion \
+                   is part of the Zed language, and this version of zedc does not compile it \
+                   yet. Write the computation without a definition that uses itself.";
     assert_eq!(messages, [((0, 43), message)]);
 }
 
@@ -601,7 +611,11 @@ fn every_cycle_is_reported_in_every_order() {
         .map(|d| (d.at, d.message.as_str()))
         .collect();
     let each = |names| {
-        format!("{names} are defined in terms of each other: recursion arrives at layer L6")
+        format!(
+            "{names} are defined in terms of each other, which is recursion. Recursion is part of \
+             the Zed language, and this version of zedc does not compile it yet. Write the \
+             computation without a definition that uses itself."
+        )
     };
     let (ab, cd) = (each("`a`, `b`"), each("`c`, `d`"));
     assert_eq!(messages, [((0, 0), ab.as_str()), ((2, 0), cd.as_str())]);

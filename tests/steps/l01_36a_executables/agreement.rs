@@ -164,7 +164,11 @@ fn files_named_by_arguments_agree() {
             Ran {
                 status: 2,
                 stdout: String::new(),
-                stderr: "command-line argument 2 is not UTF-8\n".into(),
+                stderr: "command-line argument 2 (counted from the first word after `--`) is not \
+                         UTF-8, and a `CommandLine` port gives the program each argument as a \
+                         string, which must be UTF-8 text. Pass the argument as UTF-8 text, or \
+                         pass the path of a file that holds it.\n"
+                    .into(),
             },
         ),
         (
@@ -172,7 +176,10 @@ fn files_named_by_arguments_agree() {
             Ran {
                 status: 2,
                 stdout: String::new(),
-                stderr: "`main` has no port `nope`\n".into(),
+                stderr: "`nope=x` names a file for the port `nope`, and `main` has no port \
+                         `nope`; its ports are `fs`, `args` and `stdout`. Write the name of one \
+                         of them before `=`, or remove `nope=x`.\n"
+                    .into(),
             },
         ),
     ];
@@ -187,7 +194,10 @@ fn files_named_by_arguments_agree() {
     assert_eq!(
         bad.stderr,
         format!(
-            "usage: {} [port=path …] [--record <out>] [-- arg …]\n",
+            "`bad` is not understood here: before `--` come only `port=path`, which names the \
+             file a port reads or writes, and `--record <out>`, which writes a record of the \
+             run; after `--` come the program's own arguments. If `bad` is meant for the \
+             program, put it after `--`.\n\nusage: {} [port=path …] [--record <out>] [-- arg …]\n",
             exe.display()
         )
     );

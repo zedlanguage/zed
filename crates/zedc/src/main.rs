@@ -15,10 +15,38 @@ use std::process::ExitCode;
 // into this executable only, not into the runtime library `zedc build` links into programs.
 use zed_alloc_count as _;
 
-const USAGE: &str = "usage: zedc [--report] [fmt <file> | run <file> … | replay <file> <record> … | \
-     build <file> -o <out> … | test [--mutate] [--suppress <address> …] <file> …]";
+const USAGE: &str = "The commands of zedc are:
+  zedc fmt <file>
+      print the file in the standard layout
+  zedc run <file> [port=path …] [--record <out>] [--suppress <address> …] [--addresses] [-- arg …]
+      run the program in the file
+  zedc replay <file> <record> [port=path …] [--suppress <address> …] [--addresses] [-- arg …]
+      run the program again on the inputs a record of an earlier run holds
+  zedc build <file> -o <out> [--suppress <address> …] [--addresses]
+      compile the program to an executable
+  zedc test [--mutate] [--suppress <address> …] [--addresses] <file> …
+      run the tests of each file
+  zedc --report <command> …
+      run the command, then print the work it did by stage
+  zedc
+      print the version";
+
+/// What zedc prints when it stops at a broken assumption of its own (a panic): that this is a
+/// bug in zedc and not in the program, what zedc expected, where in zedc that was, and how to
+/// report it (DESIGN.md sec:diagnostics).
+fn bug_report(info: &std::panic::PanicHookInfo<'_>) {
+    let payload = info.payload();
+    let expected = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("something it does not describe");
+    let place = info.location().map(|l| (l.file(), l.line()));
+    eprintln!("{}", zedc::rejection::bug(expected, place));
+}
 
 fn main() -> ExitCode {
+    std::panic::set_hook(Box::new(bug_report));
     // The words stay as the system gives them: a `CommandLine` argument need not be UTF-8 to
     // reach `zedc run`, which names the one that is not (step L1.19a).
     let mut os: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -48,14 +76,24 @@ fn command(os: Vec<OsString>) -> u8 {
         .collect::<Result<Vec<String>, _>>()
         .ok()
     else {
-        eprintln!("{USAGE}");
+        eprintln!(
+            "zedc reads the words after `fmt`, `build` and `test` as UTF-8 text, and a word of \
+             this command line is not UTF-8. Name each file by a path written in UTF-8, or rename \
+             the file.\n\n{USAGE}"
+        );
         return 2;
     };
     match &args[..] {
         [] => println!("zedc {}", env!("CARGO_PKG_VERSION")),
         [cmd, file] if cmd == "fmt" => {
             let out = std::fs::read(file)
-                .map_err(|e| e.to_string())
+                .map_err(|e| {
+                    format!(
+                        " zedc could not read the file: {}. Check the path and that you may \
+                         read the file.",
+                        zedc::source::io_reason(&e)
+                    )
+                })
                 .and_then(|bytes| zedc::format::format_source(&bytes));
             match out {
                 Ok(text) => print!("{text}"),
@@ -76,11 +114,27 @@ fn command(os: Vec<OsString>) -> u8 {
             return zedc::testing::command(files, &mut stdout, &mut stderr);
         }
         _ => {
-            eprintln!("{USAGE}");
+            eprintln!("{}\n\n{USAGE}", not_understood(&args));
             return 2;
         }
     }
     0
+}
+
+/// Why the words `args` after `zedc`, of which there is at least one, are not a command: the
+/// first word names none, or `fmt` is given other than one file.
+fn not_understood(args: &[String]) -> String {
+    match args[0].as_str() {
+        "fmt" => format!(
+            "`zedc fmt` takes one word after it, the file to print in the standard layout, and \
+             was given {} words. Write `zedc fmt <file>`, once for each file.",
+            args.len() - 1
+        ),
+        word => format!(
+            "`{word}` is not a command of zedc. The commands are `fmt`, `run`, `replay`, `build` \
+             and `test`, and `--report` may come before any of them."
+        ),
+    }
 }
 
 /// The counter `--report` reads: the instructions this thread and the threads and processes it
@@ -108,7 +162,11 @@ fn counter() -> (zedc::work::Counter, Option<String>) {
         Err(e) => (
             Box::new(bytes_only),
             Some(format!(
-                "perf_event_open: {e} (kernel.perf_event_paranoid must be 2 or less)"
+                "the system refused zedc the count of the instructions it runs ({}). Linux \
+                 allows it when the setting kernel.perf_event_paranoid is 2 or less: run `sudo \
+                 sysctl kernel.perf_event_paranoid=2`. Until then the report \
+                 counts only the bytes zedc allocates.",
+                zedc::source::io_reason(&e)
             )),
         ),
     }

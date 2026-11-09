@@ -21,7 +21,9 @@ fn a_diagnostic_off_the_marked_line_fails_and_so_does_the_mark() {
     let got = checks(&src);
     assert_eq!(got.len(), 2, "{got:?}");
     assert!(
-        got[0].starts_with("3:3: `y` is already bound in this scope"),
+        got[0].starts_with(
+            "3:3: `y` is already bound in this scope, and a scope binds each name once"
+        ),
         "{got:?}"
     );
     assert_eq!(got[1], "4:1: the line is marked ✗ and has no diagnostic");

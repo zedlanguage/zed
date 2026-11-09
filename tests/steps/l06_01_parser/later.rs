@@ -20,55 +20,91 @@ fn each_form_names_the_step_that_compiles_it() {
     check(&[
         (
             "f(n) = loop t { while t < n; };",
-            &["a `loop` is compiled from step L6.3 [loop t { while t < n; }]"],
+            &[concat!(
+                zed_tests::not_yet!("a `loop`"),
+                " [loop t { while t < n; }]"
+            )],
         ),
         (
             "f(c, x) = c || (break x);",
-            &["a `break` is compiled from step L6.3 [(break x)]"],
+            &[concat!(zed_tests::not_yet!("a `break`"), " [(break x)]")],
         ),
         (
             "f(x) = x*.h;",
-            &["a call `*.` that writes its receiver is compiled from step L6.3 [x*.h]"],
+            &[concat!(
+                zed_tests::not_yet!("a call `*.` that writes its receiver"),
+                " [x*.h]"
+            )],
         ),
         (
             "f(x) = { mutable y = x; y };",
-            &["a `mutable` binding is compiled from step L6.3 [mutable y = x;]"],
+            &[concat!(
+                zed_tests::not_yet!("a `mutable` binding"),
+                " [mutable y = x;]"
+            )],
         ),
         (
             "f(x) = { while x; 0 };",
-            &["a `while` guard is compiled from step L6.3 [while x;]"],
+            &[concat!(
+                zed_tests::not_yet!("a `while` guard"),
+                " [while x;]"
+            )],
         ),
         (
             "f(x) = { until x; 0 };",
-            &["an `until` guard is compiled from step L6.3 [until x;]"],
+            &[concat!(
+                zed_tests::not_yet!("an `until` guard"),
+                " [until x;]"
+            )],
         ),
         (
             "f(x) = { g(x); 0 };",
-            &["an expression statement is compiled from step L6.3 [g(x);]"],
+            &[concat!(
+                zed_tests::not_yet!("an expression statement"),
+                " [g(x);]"
+            )],
         ),
         (
             "f(x) = { out' <- x; 0 };",
-            &["a generation push `x' <- e` is compiled from step L6.3 [out' <- x;]"],
+            &[concat!(
+                zed_tests::not_yet!("a generation push `x' <- e`"),
+                " [out' <- x;]"
+            )],
         ),
         (
             "cdf[i] = cdf[i - 1] + 1;",
-            &["an indexed definition is compiled from step L6.2 [cdf[i] = cdf[i - 1] + 1;]"],
+            &[concat!(
+                zed_tests::not_yet!("an indexed definition"),
+                " [cdf[i] = cdf[i - 1] + 1;]"
+            )],
         ),
         (
             "x = 1 with x = 0;",
-            &["a boundary `with` is compiled from step L6.2 [x = 1 with x = 0;]"],
+            &[concat!(
+                zed_tests::not_yet!("a boundary `with`"),
+                " [x = 1 with x = 0;]"
+            )],
         ),
         (
             "f(x) = x' + 1;",
-            &["the primed name `x'` is compiled from step L6.3 [x']"],
+            &[concat!(
+                zed_tests::not_yet!("the primed name `x'`"),
+                " [x']"
+            )],
         ),
         (
             "x' = 1;",
-            &["the primed name `x'` is compiled from step L6.3 [x' = 1;]"],
+            &[concat!(
+                zed_tests::not_yet!("the primed name `x'`"),
+                " [x' = 1;]"
+            )],
         ),
         (
             "f(c) = c.y';",
-            &["the primed field `y'` is compiled from step L6.3 [c.y']"],
+            &[concat!(
+                zed_tests::not_yet!("the primed field `y'`"),
+                " [c.y']"
+            )],
         ),
     ]);
 }
@@ -81,23 +117,35 @@ fn declared_names_are_bound_and_refused_once() {
         (
             "x[i in 0..<4] = i;\nx[i in 4..<8] = 0;\ny = x;",
             &[
-                "an indexed definition is compiled from step L6.2 [x[i in 0..<4] = i;]",
-                "an indexed definition is compiled from step L6.2 [x[i in 4..<8] = 0;]",
+                concat!(
+                    zed_tests::not_yet!("an indexed definition"),
+                    " [x[i in 0..<4] = i;]"
+                ),
+                concat!(
+                    zed_tests::not_yet!("an indexed definition"),
+                    " [x[i in 4..<8] = 0;]"
+                ),
             ],
         ),
         (
             "a', b = (1, 2) with a = 0;\nc = b;",
-            &["a boundary `with` is compiled from step L6.2 [a', b = (1, 2) with a = 0;]"],
+            &[concat!(
+                zed_tests::not_yet!("a boundary `with`"),
+                " [a', b = (1, 2) with a = 0;]"
+            )],
         ),
         (
             "f(x) = { mutable y' = x; 0 };",
-            &["a `mutable` binding is compiled from step L6.3 [mutable y' = x;]"],
+            &[concat!(
+                zed_tests::not_yet!("a `mutable` binding"),
+                " [mutable y' = x;]"
+            )],
         ),
         (
             "x = 1;\nx[0] = 2;",
             &[
-                "`x` is already bound in this scope [x[0] = 2;]",
-                "an indexed definition is compiled from step L6.2 [x[0] = 2;]",
+                "`x` is already bound in this scope, and a scope binds each name once [x[0] = 2;]",
+                concat!(zed_tests::not_yet!("an indexed definition"), " [x[0] = 2;]"),
             ],
         ),
     ]);

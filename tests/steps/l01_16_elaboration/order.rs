@@ -66,8 +66,9 @@ fn a_cycle_through_an_overload_set() {
     assert_eq!(
         errors(src),
         [
-            "`f`, `g` are defined in terms of each other: recursion arrives at layer L6 \
-          [f(x: int) = g;]"
+            "`f`, `g` are defined in terms of each other, which is recursion. Recursion is \
+           part of the Zed language, and this version of zedc does not compile it yet. Write the \
+           computation without a definition that uses itself. [f(x: int) = g;]"
         ]
     );
 }
@@ -206,10 +207,12 @@ fn every_cycle_is_reported_each_by_name() {
     assert_eq!(
         errors(src),
         [
-            "`even`, `odd` are defined in terms of each other: recursion arrives at layer L6 \
-             [even(positional n) = if n == 0 { true } else { odd(n - 1) };]",
-            "`a`, `b` are defined in terms of each other: recursion arrives at layer L6 \
-             [a = b + 1;]",
+            "`even`, `odd` are defined in terms of each other, which is recursion. Recursion is \
+              part of the Zed language, and this version of zedc does not compile it yet. Write the \
+              computation without a definition that uses itself. [even(positional n) = if n == 0 { true } else { odd(n - 1) };]",
+            "`a`, `b` are defined in terms of each other, which is recursion. Recursion is \
+              part of the Zed language, and this version of zedc does not compile it yet. Write the \
+              computation without a definition that uses itself. [a = b + 1;]",
         ]
     );
 }

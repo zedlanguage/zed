@@ -87,7 +87,7 @@ fn a_usage_error_names_the_flag() {
         (
             2,
             "",
-            "usage: zedc test [--mutate] [--suppress <address> …] <file> …\n"
+            "usage: zedc test [--mutate] [--suppress <address> …] [--addresses] <file> …\n"
         )
     );
 }

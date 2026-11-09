@@ -12,7 +12,7 @@ fn one(src: &str) -> String {
 fn recursion_is_layer_l6() {
     let e = one("countdown(positional n) = if n == 0 { 0 } else { countdown(n - 1) };\n");
     assert!(
-        e.starts_with("`countdown` is defined in terms of itself: recursion arrives at layer L6"),
+        e.starts_with("`countdown` is defined in terms of itself, which is recursion."),
         "{e}"
     );
     let e = one("a = b + 1;\nb = a + 1;\n");
@@ -22,7 +22,7 @@ fn recursion_is_layer_l6() {
     );
     let e = one("total = { x = y; y = x; x };\n");
     assert!(
-        e.contains("are defined in terms of each other: recursion arrives at layer L6"),
+        e.contains("are defined in terms of each other, which is recursion. Recursion is part"),
         "{e}"
     );
 }
@@ -74,7 +74,10 @@ fn too_many_arguments() {
 #[test]
 fn defaults_that_read_each_other() {
     let e = one("f(a = b, b = a) = a;\ny = f();\n");
-    assert_eq!(e, "the defaults of `a`, `b` read each other [f()]");
+    assert_eq!(
+        e,
+        "the defaults of `a`, `b` read each other in a cycle, so none of them can be computed first. Write one of them without reading the others. [f()]"
+    );
 }
 
 #[test]
@@ -99,11 +102,11 @@ fn forms_of_later_steps_and_layers() {
     let cases = [
         (
             "p = 1;\nx = p.size;",
-            "`size` is not a function in scope, and fields arrive at L2 [p.size]",
+            "`size` is not a function in scope, and reading a field with `.size` is part of the Zed language that this version of zedc does not compile yet. Call a function in scope, or correct the name if it is misspelled. [p.size]",
         ),
         (
             "p = 1;\nx = p.map(1);",
-            "`map` is a prelude word of layer L3 [p.map]",
+            concat!(zed_tests::not_yet!("the prelude word `map`"), " [p.map]"),
         ),
         (
             "f = (x = 1) -> x;",
@@ -112,7 +115,7 @@ fn forms_of_later_steps_and_layers() {
         ),
         (
             "f(x: int) = 1;\nf(x: String) = 2;\ny = f(x: 1);",
-            "`f` names 2 overloads; choosing among them arrives at L2 [f]",
+            "`f` names 2 definitions, and this version of zedc does not yet choose among definitions that share a name. Give each of them a name of its own. [f]",
         ),
     ];
     for (src, want) in cases {

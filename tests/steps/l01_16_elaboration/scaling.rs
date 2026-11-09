@@ -622,7 +622,7 @@ fn errors_inside_types_and_patterns_keep_their_order() {
         super::errors("x = 1;\nt = x is (Lines, int \\ Lines) | Lines;\n"),
         [port, port, port]
     );
-    let twice = "the pattern names `k` twice [#c(k: #a, k: #b)]";
+    let twice = "the pattern names `k` twice, and a pattern names each field of the payload once. Remove one of the two. [#c(k: #a, k: #b)]";
     for p in [
         "#a(#c(k: #a, k: #b), #d(j: #a, j: #b))",
         "#a(f: #c(k: #a, k: #b), h: #d(j: #a, j: #b))",

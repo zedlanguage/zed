@@ -46,7 +46,8 @@ fn the_semicolon_rule() {
         // the block exports nothing.
         (
             "x -> { y = x; y; }",
-            "error: this block exports nothing: end it with an expression or `return e;`",
+            "error: this block exports nothing, and a block gives a value, so it must export one. \
+             End it with an expression, or with `return e;` to give the value `e`.",
         ),
         // A brace holding only an expression is a display (`{ x }` is a set), not a block.
         ("({ x })", "(set x)"),
@@ -58,33 +59,43 @@ fn a_block_exports_exactly_once() {
     check(&[
         (
             "x -> { return x; x + 1 }",
-            "error: a block exports once; the block's first export at byte 7",
+            "error: this block exports a second time, and a block exports one value, once. Remove one \
+             of the two exports.; the block's first export at byte 7",
         ),
         (
             "x -> { return x; return x + 1; }",
-            "error: a block exports once; the block's first export at byte 7",
+            "error: this block exports a second time, and a block exports one value, once. Remove one \
+             of the two exports.; the block's first export at byte 7",
         ),
         (
             "x -> { y = x * 2; return y; y + 1 }",
-            "error: a block exports once; the block's first export at byte 18",
+            "error: this block exports a second time, and a block exports one value, once. Remove one \
+             of the two exports.; the block's first export at byte 18",
         ),
         (
             "x -> { y = x; }",
-            "error: this block exports nothing: end it with an expression or `return e;`",
+            "error: this block exports nothing, and a block gives a value, so it must export one. \
+             End it with an expression, or with `return e;` to give the value `e`.",
         ),
     ]);
 }
 
 #[test]
-fn a_statement_of_a_later_layer_names_that_layer() {
+fn a_statement_of_a_later_layer_is_refused_as_not_compiled_yet() {
     check(&[
         (
             "x -> { n: int = x; n }",
-            "error: this form (TypedBinding) is built from layer L10",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the binding with a declared type `n: int = x;`")
+            ),
         ),
         (
             "x -> { y[x + 1] <- 1; y }",
-            "error: this form (KeyedPush) is built from layer L7",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the push at a key `y[x + 1] <- 1;`")
+            ),
         ),
         // `local` builds from step L2.3; name resolution refuses it in a block.
         (

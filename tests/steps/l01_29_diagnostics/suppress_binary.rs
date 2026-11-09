@@ -34,7 +34,9 @@ fn tree(name: &str, package: bool) -> PathBuf {
 fn zedc_in(dir: &Path, words: &[&str]) -> (Option<i32>, String, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_zedc"))
         .arg("run")
-        .args(words)
+        .args(&words[..1])
+        .arg("--addresses")
+        .args(&words[1..])
         .current_dir(dir)
         .stdin(Stdio::null())
         .output()

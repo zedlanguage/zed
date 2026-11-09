@@ -1,6 +1,6 @@
 //! The prelude words, facet words and types of later layers (DESIGN.md sec:grammar, "Defined
-//! words by layer"): a use of one that no program name shadows is reported with its layer, not
-//! as a name that is not defined.
+//! words by layer"): a use of one that no program name shadows is reported as a word this zedc
+//! does not compile yet, not as a name that is not defined.
 
 use std::collections::BTreeMap;
 
@@ -8,51 +8,78 @@ use super::errors;
 use zedc::resolve::{LATER_TYPES, WORDS, annotation_layer, prelude_layer};
 
 #[test]
-fn a_later_word_is_reported_with_its_layer() {
+fn a_later_word_is_reported_as_not_compiled_yet() {
     assert_eq!(
         errors("f(xs) = any(xs);\n"),
-        ["`any` is a prelude word of layer L3 [any]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude word `any`"),
+            " [any]"
+        )]
     );
     assert_eq!(
         errors("f(n) = upTo(n);\n"),
-        ["`upTo` is a prelude word of layer L5 [upTo]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude word `upTo`"),
+            " [upTo]"
+        )]
     );
     assert_eq!(
         errors("f(a, b) = merge(a, b);\n"),
-        ["`merge` is a prelude word of layer L7 [merge]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude word `merge`"),
+            " [merge]"
+        )]
     );
     assert_eq!(
         errors("f(g) = compile(g);\n"),
-        ["`compile` is a prelude word of layer L19 [compile]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude word `compile`"),
+            " [compile]"
+        )]
     );
     // A program's own name shadows the word at any layer.
     assert_eq!(errors("find = 0;\nf() = find;\n"), Vec::<String>::new());
 }
 
 /// A facet is a value of the prelude struct `Facet` bound to a name (DESIGN.md
-/// sec:checking_in_zed), so a prelude facet named below its layer is reported with the layer.
+/// sec:checking_in_zed), so a prelude facet named below its layer is reported as not compiled
+/// yet.
 #[test]
-fn a_facet_word_is_reported_with_its_layer() {
+fn a_facet_word_is_reported_as_not_compiled_yet() {
     assert_eq!(
         errors("f(x) = order(x);\n"),
-        ["`order` is a prelude word of layer L7 [order]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude word `order`"),
+            " [order]"
+        )]
     );
     assert_eq!(
         errors("f(s) = units(s);\n"),
-        ["`units` is a prelude word of layer L12 [units]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude word `units`"),
+            " [units]"
+        )]
     );
     assert_eq!(
         errors("f(n) = retry(n);\n"),
-        ["`retry` is a prelude word of layer L21 [retry]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude word `retry`"),
+            " [retry]"
+        )]
     );
     assert_eq!(
         errors("f() = target;\n"),
-        ["`target` is a prelude word of layer L24 [target]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude word `target`"),
+            " [target]"
+        )]
     );
     // A facet a program defines is its own name: not defined until the program binds it.
     assert_eq!(
         errors("f() = parity;\n"),
-        ["`parity` is not defined [parity]"]
+        [
+            "`parity` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `parity`, or correct the name if it is misspelled. [parity]"
+        ]
     );
     // A parameter or a binding shadows a facet word at any layer.
     assert_eq!(
@@ -62,27 +89,41 @@ fn a_facet_word_is_reported_with_its_layer() {
 }
 
 #[test]
-fn a_later_type_is_reported_with_its_layer() {
+fn a_later_type_is_reported_as_not_compiled_yet() {
     assert_eq!(
         errors("f(t: Instant) = t;\n"),
-        ["the type `Instant` is a prelude type of layer L7 [Instant]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude type `Instant`"),
+            " [Instant]"
+        )]
     );
     assert_eq!(
         errors("f(s: Seq(int)) = s;\n"),
-        ["the type `Seq` is a prelude type of layer L5 [Seq]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude type `Seq`"),
+            " [Seq]"
+        )]
     );
     assert_eq!(
         errors("f(z: complex(f64)) = z;\n"),
-        ["the type `complex` is a prelude type of layer L14 [complex]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude type `complex`"),
+            " [complex]"
+        )]
     );
     // A struct of the prelude is also named as a value, to build one.
     assert_eq!(
         errors("f() = Facet(1);\n"),
-        ["`Facet` is a prelude type of layer L6 [Facet]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude type `Facet`"),
+            " [Facet]"
+        )]
     );
     assert_eq!(
         errors("f() = Facett(1);\n"),
-        ["`Facett` is not defined [Facett]"]
+        [
+            "`Facett` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Facett`, or correct the name if it is misspelled. [Facett]"
+        ]
     );
 }
 
@@ -93,31 +134,39 @@ fn a_later_type_is_reported_with_its_layer() {
 fn the_fixed_width_aliases_are_types_of_l7_and_byte_is_none() {
     assert_eq!(
         errors("checksum(b: u8) = b;\n"),
-        ["the type `u8` is a prelude type of layer L7 [u8]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude type `u8`"),
+            " [u8]"
+        )]
     );
     assert_eq!(
         errors("status(rc: i32, flags: i8) = rc;\n"),
         [
-            "the type `i32` is a prelude type of layer L7 [i32]",
-            "the type `i8` is a prelude type of layer L7 [i8]"
+            concat!(zed_tests::not_yet!("the prelude type `i32`"), " [i32]"),
+            concat!(zed_tests::not_yet!("the prelude type `i8`"), " [i8]")
         ]
     );
     assert_eq!(
         errors("checksum(b: byte) = b;\n"),
-        ["the type `byte` is not defined [byte]"]
+        [
+            "the type `byte` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [byte]"
+        ]
     );
     assert_eq!(
         errors("checksum(b: u8 | byte) = b;\n"),
         [
-            "the type `u8` is a prelude type of layer L7 [u8]",
-            "the type `byte` is not defined [byte]"
+            concat!(zed_tests::not_yet!("the prelude type `u8`"), " [u8]"),
+            "the type `byte` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [byte]"
         ]
     );
     // The aliases are no value words: `u8(300)` builds nothing, so it is told the layer of the
     // type and not offered as a cast.
     assert_eq!(
         errors("f() = u8(300);\n"),
-        ["`u8` is a prelude type of layer L7 [u8]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude type `u8`"),
+            " [u8]"
+        )]
     );
     // A program's own name `byte`, `u8` or `i32` is an ordinary binding.
     assert_eq!(

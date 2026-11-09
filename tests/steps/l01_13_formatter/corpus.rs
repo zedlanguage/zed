@@ -1,7 +1,7 @@
 //! Every corpus program in `zed/corpus/` parses: its main file, the units in its folder
 //! `NN-name/`, and its other spellings in `variants/`, and what parses formats to a fixed point.
-//! The one error allowed is the refusal of a form a later layer builds ("this form (...) is
-//! built from layer Ln"); any other error is a defect in the program or in the parser. The
+//! The one error allowed is the refusal of a form a later layer builds, as one this zedc does
+//! not compile yet; any other error is a defect in the program or in the parser. The
 //! checker controls in `controls/` are left out, since some of them are meant not to parse.
 //! 19-bank-ledger wrote `#bad -> {}`, an empty block after a match arm's arrow, which exports
 //! nothing; the empty family there is `({})` (sec:lexical).
@@ -46,7 +46,7 @@ fn every_corpus_program_parses_or_is_refused_by_layer() {
                     Err(_) => failed.push(format!("{name}: no fixed point (see the panic above)")),
                 }
             }
-            Err(e) if e.contains(") is built from layer L") => refused.push(name),
+            Err(e) if zed_tests::is_not_yet(&e) => refused.push(name),
             Err(e) => failed.push(format!("{name}:{e}")),
         }
     }

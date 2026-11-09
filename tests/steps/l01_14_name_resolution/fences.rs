@@ -22,16 +22,9 @@ fn every_building_fence_resolves_but_for_its_free_names() {
             Ok(_) => resolved += 1,
             Err(es) => {
                 for e in es {
-                    let free = e.contains("is not defined [");
+                    let free = e.contains(" is not defined: no ");
                     let marked = e.contains("already bound") && f.text.contains('✗');
-                    let later = e.contains(" is compiled from step L2.")
-                        || e.contains(" is compiled from step L3.")
-                        || e.contains(" is compiled from step L5.")
-                        || e.contains(" is compiled from step L6.")
-                        || e.contains(" is linked from step L2.4")
-                        || e.contains(" is an annotation of layer L")
-                        || e.contains(" is a prelude word of layer L")
-                        || e.contains(" is a prelude type of layer L");
+                    let later = zed_tests::is_not_yet(&e);
                     // A fragment read alone has no package around it, so it imports no unit.
                     let alone = e.contains("cannot be imported: no manifest");
                     assert!(free || marked || later || alone, "{}: {e}", f.at);

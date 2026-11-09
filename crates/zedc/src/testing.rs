@@ -286,7 +286,7 @@ fn mark_failure(ds: &[&front::Diagnostic], named: Option<Row>) -> Option<String>
 
 /// `zedc test <file> …`, with `args` the words after `test`: writes the warnings of each unit
 /// that compiles to `stderr`, as `zedc run` does, and each failing check as `file:line:col: why`
-/// to `stdout`, followed by `  address: <hex>` when it reports a rejection, then the counts: checks passed and failed, and the rejection units
+/// to `stdout`, followed, under `--addresses`, by `  address: <hex>` when it reports a rejection, then the counts: checks passed and failed, and the rejection units
 /// run, those with a line marked ✗. A file with no table row and no ✗ mark fails, so a run
 /// that finds no tests fails. Returns the exit status: 0 when every check passes, 1 when
 /// one fails (a unit that does not compile, a row that fails or aborts, a marked line), 2 for
@@ -315,7 +315,7 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
     if args.is_empty() {
         let _ = writeln!(
             stderr,
-            "usage: zedc test [--mutate] [--suppress <address> …] <file> …"
+            "usage: zedc test [--mutate] [--suppress <address> …] [--addresses] <file> …"
         );
         return 2;
     }
@@ -328,7 +328,7 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
             Ok(bytes) => work::stage(Stage::Load, None, || source::load(&bytes))
                 .map_err(|e| e.render(&bytes)),
             Err(e) => {
-                let _ = writeln!(stderr, "{file}: {e}");
+                let _ = writeln!(stderr, "{}", crate::run::unreadable(file, &e));
                 return 2;
             }
         };
@@ -379,10 +379,9 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
             match o.failure {
                 None => passed += 1,
                 Some(why) => {
-                    let _ = writeln!(stdout, "{file}:{}:{}: {why}", o.line, o.col);
-                    if let Some(a) = o.address {
-                        let _ = writeln!(stdout, "  address: {}", at.join(a));
-                    }
+                    let address = o.address.map(|a| suppress.address_line(at.join(a)));
+                    let address = address.unwrap_or_default();
+                    let _ = writeln!(stdout, "{file}:{}:{}: {why}{address}", o.line, o.col);
                     failed += 1;
                 }
             }

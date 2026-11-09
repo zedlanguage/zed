@@ -64,15 +64,15 @@ fn payload_errors() {
     let cases = [
         (
             "x = #e(1, code: 2);",
-            "an atom's payload is all by position or all by name [#e(1, code: 2)]",
+            "this atom's payload gives some values by position and some by name, and a payload is given all by position or all by name. Write every value by position, or every value with its name. [#e(1, code: 2)]",
         ),
         (
             "x = #e(code: 1, ...);",
-            "`...` curries a function's named parameters; an atom has none [#e(code: 1, ...)]",
+            "`...` leaves a function's other named parameters open, and an atom has no parameters to leave open. Remove the `...`. [#e(code: 1, ...)]",
         ),
         (
             "x = #e(code: 1) else #e(code: #a, code: #b) -> 0;",
-            "the pattern names `code` twice [#e(code: #a, code: #b)]",
+            "the pattern names `code` twice, and a pattern names each field of the payload once. Remove one of the two. [#e(code: #a, code: #b)]",
         ),
     ];
     for (src, want) in cases {

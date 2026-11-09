@@ -73,7 +73,8 @@ fn a_display_in_body_position_is_parenthesized() {
 fn a_display_field_given_twice_is_an_error() {
     check(&[(
         "p = { x: 1, y: 2, x: 3 };",
-        "error: the field `x` is given twice; the first field `x` at byte 6",
+        "error: the field `x` is given twice, and each field is given once. Remove one of \
+             the two.; the first field `x` at byte 6",
     )]);
 }
 

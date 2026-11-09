@@ -25,6 +25,7 @@ use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::Unit;
 use crate::front::{Diagnostic, compile};
 use crate::lex::Span;
+use crate::source::io_reason;
 use crate::suppress::{InFile, Severity, Suppress};
 use crate::work::{self, Stage};
 use crate::{canon, interp, source, stage};
@@ -150,8 +151,10 @@ impl Ports {
         };
         let term = canon::address(&main, &|_| None).map_err(|e| {
             format!(
-                "a constant is so large that the system refused the {} bytes of memory asked \
-                 to take the program's content address",
+                "zedc could not compile the program: one of its constants takes {} bytes, and the \
+                 system refused zedc that much memory to write the constant out and compute \
+                 the program's content address. The program is not wrong. Repair: free memory \
+                 and run again.",
                 e.bytes()
             )
         })?;
@@ -178,7 +181,10 @@ impl Ports {
             match kind {
                 PortKind::Lines => {
                     let Some(bytes) = lines.get(name) else {
-                        return Err(format!("no input for port `{name}`"));
+                        return Err(format!(
+                            "the input port `{name}` was given nothing to read. Name a file for \
+                             it on the command line as `{name}=<path>`."
+                        ));
                     };
                     world = world.input(name, split_lines(name, bytes));
                     record.lines.insert(name.clone(), Arc::clone(bytes));
@@ -205,8 +211,11 @@ impl Ports {
                 [v] => writes.push((name.clone(), join_lines(name, v)?)),
                 pushes => {
                     return Err(format!(
-                        "port `{name}` is pushed {} times in one wave; several pushes to one \
-                         port arrive at layer L7",
+                        "the output port `{name}` was pushed to {} times in this run, and a \
+                         port takes one push per run, which holds everything it writes. Gather \
+                         the lines into one family of strings and push it once, as `{name} <- \
+                         lines;`, where `lines` holds one entry per line; a push in a branch \
+                         that does not run does not count.",
                         pushes.len()
                     ));
                 }
@@ -283,8 +292,8 @@ pub(crate) fn refusal(text: &str, stmts: &[Stmt], e: ast::Error) -> Vec<Diagnost
 }
 
 /// Writes each warning of `warnings`, of the unit read from `file`, which is `at`, that
-/// `suppress` does not name to `out` as `file:` then the warning, then its address on a line of
-/// its own: what `zedc run` and `zedc test` print before they run the unit.
+/// `suppress` does not name to `out` as `file:` then the warning, then, under `--addresses`, its address on a
+/// line of its own: what `zedc run` and `zedc test` print before they run the unit.
 pub(crate) fn write_warnings(
     out: &mut dyn Write,
     file: &str,
@@ -295,7 +304,7 @@ pub(crate) fn write_warnings(
     for w in warnings {
         let address = at.address(w);
         if !suppress.hides(address) {
-            writeln!(out, "{file}:{w}\n  address: {address}")?;
+            writeln!(out, "{file}:{w}{}", suppress.address_line(address))?;
         }
     }
     Ok(())
@@ -306,6 +315,27 @@ pub(crate) fn write_warnings(
 /// that declaration with each `main` a step of the derivation, and no `main` at the start of
 /// the unit. The caller places the error, so it prints a place and an address as every
 /// rejection does.
+/// The message for the parameter `p` of `main`, whose type is no input port's: what each input
+/// port reads, and the declaration rewritten with each.
+fn input_port_message(p: &ast::Param) -> String {
+    let name = &p.name;
+    let written = match &p.ty {
+        Some(t) => format!("is declared as `{}`", crate::format::format_type(t)),
+        None => "has no type".to_string(),
+    };
+    format!(
+        "the parameter `{name}` of `main` {written}, and each parameter of `main` is an input \
+         port, which the program reads from outside when it runs, so its type must be one of \
+         these: `{name}: Lines` reads the lines of a file named on the command line as \
+         `{name}=path`, or of standard input for `stdin`; `{name}: Files` reads files by their \
+         paths as the program asks for them; `{name}: CommandLine` reads the words after `--` \
+         on the command line; `{name}: String ->? String` reads environment variables by name. \
+         Write the one that holds the input and compute the value from what it reads; or, to \
+         try `main` on given values, move its work into a function and test that function with \
+         `zedc test`."
+    )
+}
+
 pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::Error> {
     let mains: Vec<(&Stmt, &Function)> = stmts
         .iter()
@@ -315,10 +345,19 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
         })
         .collect();
     let [(_, main)] = mains[..] else {
-        let message = format!(
-            "a program declares one `main` function; this one declares {}",
-            mains.len()
-        );
+        let message = match mains.len() {
+            0 => "this file is run as a program, and a program starts at a function named \
+                  `main`, which this file does not declare. Declare one, such as\n    \
+                  main(stdin: Lines) -> (stdout: Lines) {\n      stdout <- \"hello\";\n    }\n\
+                  or, if the file holds definitions to test and is not a program, run `zedc \
+                  test` on it instead of `zedc run`."
+                .to_string(),
+            n => format!(
+                "this file declares {n} functions named `main`, at the places listed below, and \
+                 a program starts at exactly one. Keep the `main` the program should start at, \
+                 and rename or remove each of the others."
+            ),
+        };
         return Err(ast::Error {
             row: None,
             span: mains
@@ -352,14 +391,7 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
         }) if is_string(result) && matches!(&params[..], [k] if is_string(&k.ty)) => {
             Ok(PortKind::Env)
         }
-        _ => Err(refused(
-            p.span,
-            format!(
-                "port `{}` of `main` is `Lines`, `Files`, `CommandLine` or `String ->? String` \
-                 at layer L1",
-                p.name
-            ),
-        )),
+        _ => Err(refused(p.span, input_port_message(p))),
     };
     let inputs = main
         .params
@@ -371,7 +403,7 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
         if !matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
             return Err(refused(
                 p.span,
-                format!("output port `{}` of `main` is `Lines` at layer L1", p.name),
+                crate::resolve::output_port_message(&p.name, "main", &p.ty),
             ));
         }
         outputs.push(p.name.clone());
@@ -537,13 +569,18 @@ impl Program {
         let ours = self.address()?;
         match record.program {
             Some(a) if a == ours => Ok(()),
-            Some(a) => Err(format!(
-                "the record is of the program with content address {a}, not of this program, \
-                 {ours}"
-            )),
+            Some(_) => Err(
+                "this record was written by a run of a different program: `main` \
+                 or a definition it uses, or a port of `main`, has changed since. A replay \
+                 must run the program that wrote the record. Replay it with the source as it \
+                 was when the record was written, or run this program again with `--record \
+                 <out>` to make a record of it."
+                    .to_string(),
+            ),
             None => Err(
-                "the record names no program, as records written before programs were \
-                 named in them do; run the program again with `--record`"
+                "this record does not name the program that wrote it, so it \
+                 cannot be checked against this one; it was written by an older zedc. Run the \
+                 program again with `--record <out>` to make a record that names it."
                     .to_string(),
             ),
         }
@@ -646,7 +683,11 @@ pub struct Disk;
 impl Lookup for Disk {
     fn get(&self, key: &Value) -> Result<Value, String> {
         let Value::Str(path) = key else {
-            return Err(format!("a path is a String, not {key}"));
+            return Err(format!(
+                "a `Files` port reads a file by its path, which is a string, and the program \
+                 read it with {key}, which is not one. Write the path as a string, such as \
+                 `\"data.txt\"`, or convert the value with `String(…)`."
+            ));
         };
         let path = path.flat();
         Ok(match std::fs::read(&*path) {
@@ -690,7 +731,9 @@ impl Lookup for Environment {
     fn get(&self, key: &Value) -> Result<Value, String> {
         let Value::Str(name) = key else {
             return Err(format!(
-                "an environment variable's name is a String, not {key}"
+                "an environment port reads a variable by its name, which is a string, and the \
+                 program read it with {key}, which is not one. Write the name as a string, \
+                 such as `\"HOME\"`."
             ));
         };
         let name = name.flat();
@@ -699,7 +742,11 @@ impl Lookup for Environment {
             Some(v) => match v.to_str() {
                 Some(v) => Ok(Value::str(v)),
                 None => {
-                    let why = format!("environment variable `{name}` is not UTF-8");
+                    let why = format!(
+                        "the program reads the environment variable `{name}`, and its value is \
+                         not UTF-8 text, which a Zed string must be. Set `{name}` to UTF-8 text \
+                         before running, or unset it, which the program reads as `#notFound`."
+                    );
                     // A second such read cannot happen: the first stops the wave.
                     let _ = self.not_utf8.set(why.clone());
                     Err(why)
@@ -746,10 +793,16 @@ struct Recorded(BTreeMap<Value, Value>);
 
 impl Lookup for Recorded {
     fn get(&self, key: &Value) -> Result<Value, String> {
-        self.0
-            .get(key)
-            .cloned()
-            .ok_or_else(|| format!("the record holds no read of {key}"))
+        self.0.get(key).cloned().ok_or_else(|| {
+            format!(
+                "the program reads {key} here, and the record holds no read of it, so the \
+                     replay cannot go on: a replay reads nothing from outside, only what the \
+                     record holds. The run that wrote the record did not read {key}, so its \
+                     inputs differed from these, or the record has been changed. Replay with \
+                     the inputs of the recorded run, or make a new record with `zedc run \
+                     <file> --record <out>`."
+            )
+        })
     }
 }
 
@@ -815,53 +868,75 @@ impl Record {
         out
     }
 
-    /// The record `bytes` holds, or why they are not one.
+    /// The record `bytes` holds, or why they are not one: where the first entry that cannot be
+    /// read starts. O(length of `bytes`).
     pub fn from_bytes(bytes: &[u8]) -> Result<Record, String> {
-        let bad = || "not a Zed record".to_string();
-        let mut rest = bytes.strip_prefix(MAGIC.as_bytes()).ok_or_else(bad)?;
+        let Some(mut rest) = bytes.strip_prefix(MAGIC.as_bytes()) else {
+            return Err(
+                "this file is not a record that `zedc run --record` writes: such a \
+                 record starts with the line `zed record 1`, and this file does not. Name the \
+                 file `--record` wrote, or make a record with `zedc run <file> --record <out>`."
+                    .to_string(),
+            );
+        };
         let mut record = Record::default();
         let mut first = true;
         while !rest.is_empty() {
-            let end = rest.iter().position(|b| *b == b'\n').ok_or_else(bad)?;
-            let head = std::str::from_utf8(&rest[..end]).map_err(|_| bad())?;
-            rest = &rest[end + 1..];
-            let mut words = head.split(' ');
-            let kind = words.next().ok_or_else(bad)?;
-            let mut fields = Vec::new();
-            for w in words {
-                let n: usize = w.parse().map_err(|_| bad())?;
-                let field = rest.get(..n).ok_or_else(bad)?;
-                fields.push(field);
-                rest = &rest[n..];
-            }
-            rest = rest.strip_prefix(b"\n").ok_or_else(bad)?;
-            let text = |f: &[u8]| String::from_utf8(f.to_vec()).map_err(|_| bad());
-            match (kind, &fields[..]) {
-                // One `program` entry, before every other.
-                ("program", [a]) if first => {
-                    let a = std::str::from_utf8(a).ok().and_then(ContentAddress::parse);
-                    record.program = Some(a.ok_or_else(bad)?);
-                }
-                ("lines", [p, b]) => {
-                    record.lines.insert(text(p)?, Arc::from(*b));
-                }
-                ("text" | "missing" | "error", [p, k, more @ ..]) => {
-                    let v = match (kind, more) {
-                        ("text", [b]) => Value::str(&text(b)?),
-                        ("missing", []) => Value::atom("notFound"),
-                        ("error", []) => Value::atom("ioError"),
-                        ("error", [o, w]) => Value::io_error(&text(o)?, &text(k)?, &text(w)?),
-                        _ => return Err(bad()),
-                    };
-                    let reads = record.files.entry(text(p)?).or_default();
-                    reads.insert(Value::str(&text(k)?), v);
-                }
-                ("arg", [a]) => record.args.push(text(a)?),
-                _ => return Err(bad()),
+            let at = bytes.len() - rest.len();
+            if Record::entry(&mut rest, &mut record, first).is_none() {
+                return Err(format!(
+                    "this record, which `zedc run --record` writes, cannot be read from byte \
+                     {at} on: the entry that starts there is cut short or has been changed. \
+                     A record is read only as it was written; make it again with `zedc run \
+                     <file> --record <out>`."
+                ));
             }
             first = false;
         }
         Ok(record)
+    }
+
+    /// Reads the entry at the start of `rest` into `record`, and moves `rest` past it; `first`
+    /// when it is the first entry, the only place a `program` entry may be. `None` when the
+    /// bytes are not an entry.
+    fn entry(rest: &mut &[u8], record: &mut Record, first: bool) -> Option<()> {
+        let end = rest.iter().position(|b| *b == b'\n')?;
+        let head = std::str::from_utf8(&rest[..end]).ok()?;
+        *rest = &rest[end + 1..];
+        let mut words = head.split(' ');
+        let kind = words.next()?;
+        let mut fields = Vec::new();
+        for w in words {
+            let n: usize = w.parse().ok()?;
+            fields.push(rest.get(..n)?);
+            *rest = &rest[n..];
+        }
+        *rest = rest.strip_prefix(b"\n")?;
+        let text = |f: &[u8]| String::from_utf8(f.to_vec()).ok();
+        match (kind, &fields[..]) {
+            // One `program` entry, before every other.
+            ("program", [a]) if first => {
+                let a = std::str::from_utf8(a).ok().and_then(ContentAddress::parse);
+                record.program = Some(a?);
+            }
+            ("lines", [p, b]) => {
+                record.lines.insert(text(p)?, Arc::from(*b));
+            }
+            ("text" | "missing" | "error", [p, k, more @ ..]) => {
+                let v = match (kind, more) {
+                    ("text", [b]) => Value::str(&text(b)?),
+                    ("missing", []) => Value::atom("notFound"),
+                    ("error", []) => Value::atom("ioError"),
+                    ("error", [o, w]) => Value::io_error(&text(o)?, &text(k)?, &text(w)?),
+                    _ => return None,
+                };
+                let reads = record.files.entry(text(p)?).or_default();
+                reads.insert(Value::str(&text(k)?), v);
+            }
+            ("arg", [a]) => record.args.push(text(a)?),
+            _ => return None,
+        }
+        Some(())
     }
 }
 
@@ -929,17 +1004,29 @@ fn words(args: &[impl AsRef<std::ffi::OsStr>]) -> Result<Words<'_>, String> {
         .copied()
         .enumerate()
         .map(|(i, w)| {
-            w.to_str()
-                .ok_or_else(|| format!("word {} of the command line is not UTF-8", i + 1))
+            w.to_str().ok_or_else(|| {
+                format!(
+                    "word {} of the command line is not UTF-8, and the words before `--` \
+                         (files, ports and options) are read as UTF-8 text. Name each file by \
+                         a path written in UTF-8, or rename the file.",
+                    i + 1
+                )
+            })
         })
         .collect::<Result<_, _>>()?;
     let args = after
         .iter()
         .enumerate()
         .map(|(i, w)| {
-            w.to_str()
-                .map(str::to_string)
-                .ok_or_else(|| format!("command-line argument {} is not UTF-8", i + 1))
+            w.to_str().map(str::to_string).ok_or_else(|| {
+                format!(
+                    "command-line argument {} (counted from the first word after `--`) is \
+                         not UTF-8, and a `CommandLine` port gives the program each argument \
+                         as a string, which must be UTF-8 text. Pass the argument as UTF-8 \
+                         text, or pass the path of a file that holds it.",
+                    i + 1
+                )
+            })
         })
         .collect::<Result<_, _>>()?;
     Ok(Words { command, args })
@@ -952,27 +1039,41 @@ fn command_inner(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<(), (u8, String)> {
-    let usage = || {
+    let usage = |why: String| {
         (
             2,
-            "usage: zedc run <file> [port=path …] [--record <out>] [--suppress <address> …] \
-             [-- arg …]\n       \
-             zedc replay <file> <record> [port=path …] [--suppress <address> …] [-- arg …]"
-                .to_string(),
+            format!(
+                "{why}\n\nThe forms are:\n  \
+                 zedc run <file> [port=path …] [--record <out>] [--suppress <address> …] \
+                 [--addresses] [-- arg …]\n  \
+                 zedc replay <file> <record> [port=path …] [--suppress <address> …] \
+                 [--addresses] [-- arg …]"
+            ),
         )
     };
     let (replay, file, rest) = match &words.command[..] {
         [cmd, file, rest @ ..] if *cmd == "run" => (None, file, rest),
         [cmd, file, record, rest @ ..] if *cmd == "replay" => (Some(record), file, rest),
-        _ => return Err(usage()),
+        [cmd, ..] if *cmd == "replay" => {
+            return Err(usage(
+                "`zedc replay` needs the file of the program and then the record of an earlier \
+                 run of it (written by `zedc run <file> --record <out>`) after it."
+                    .into(),
+            ));
+        }
+        _ => {
+            return Err(usage(
+                "`zedc run` needs the file of the program to run after it.".into(),
+            ));
+        }
     };
     let (mut suppress, rest) = Suppress::take(rest).map_err(|why| (2, why))?;
-    let options = Options::parse(&rest, replay.is_none()).ok_or_else(usage)?;
+    let options = Options::parse(&rest, replay.is_none()).map_err(usage)?;
     let program = load_file(file, &mut suppress, stderr)?;
     options.check(program.ports())?;
     let wave = match replay {
         Some(path) => {
-            let bytes = std::fs::read(path).map_err(|e| (2, format!("{path}: {e}")))?;
+            let bytes = std::fs::read(path).map_err(|e| (2, unreadable(path, &e)))?;
             let record = Record::from_bytes(&bytes).map_err(|e| (2, format!("{path}: {e}")))?;
             // A record of another program, or of none, is a usage error, as a damaged one is.
             program
@@ -997,15 +1098,15 @@ fn command_inner(
 /// or the exit status and message: 2 when the file cannot be read or resolved to the place its
 /// addresses name ([`crate::place::Place`]), 1 when the program is rejected (by its package, by
 /// the front end or by `program`), each rejection as `file:line:col: why` and its derivation,
-/// followed by its address, and then a line for each rejection `suppress` names, since a
-/// rejection cannot be suppressed.
+/// followed, under `--addresses`, by its address, and then a line for each rejection
+/// `suppress` names, since a rejection cannot be suppressed.
 pub fn load_file(
     file: &str,
     suppress: &mut Suppress,
     stderr: &mut dyn Write,
 ) -> Result<Program, (u8, String)> {
     work::unit(file);
-    let bytes = std::fs::read(file).map_err(|e| (2, format!("{file}: {e}")))?;
+    let bytes = std::fs::read(file).map_err(|e| (2, unreadable(file, &e)))?;
     let path = std::path::Path::new(file);
     let place = crate::place::Place::of(path).map_err(|e| (2, e))?;
     let at = InFile::at(&place);
@@ -1024,7 +1125,7 @@ pub fn load_file(
         Err(Unloaded::Rejected(ds)) => {
             let mut lines: Vec<String> = ds
                 .iter()
-                .map(|d| format!("{file}:{d}\n  address: {}", at.address(d)))
+                .map(|d| format!("{file}:{d}{}", suppress.address_line(at.address(d))))
                 .collect();
             lines.extend(suppress.refused(file, at, &ds));
             return Err((1, lines.join("\n")));
@@ -1036,7 +1137,15 @@ pub fn load_file(
             .iter()
             .try_for_each(|line| writeln!(stderr, "{file}: {line}"))
     });
-    written.map_err(|e| (2, format!("standard error: {e}")))?;
+    written.map_err(|e| {
+        (
+            2,
+            format!(
+                "zedc could not write its warnings to standard error: {}.",
+                io_reason(&e)
+            ),
+        )
+    })?;
     Ok(program)
 }
 
@@ -1047,10 +1156,37 @@ struct Options<'a> {
     record_to: Option<&'a str>,
 }
 
+/// Why zedc could not read the file at `path`, which the command line names, with the repair.
+pub(crate) fn unreadable(path: &str, e: &std::io::Error) -> String {
+    format!(
+        "{path}: zedc could not read this file: {}. Check the path and that you may read the file.",
+        io_reason(e)
+    )
+}
+
+/// Why zedc could not write what the output port `port` holds: to the file `path` it is bound
+/// to, or, with no file, to the process's own stream, the reason being `why`.
+fn write_failed(port: &str, path: Option<&String>, why: &str) -> String {
+    match path {
+        Some(path) => format!(
+            "the program wrote to the output port `{port}`, and zedc could not write it to the \
+             file {path}: {why}. Name a file in a directory you may write to, as `{port}=<path>`."
+        ),
+        None => {
+            let stream = if port == "stdout" { "output" } else { "error" };
+            format!(
+                "the program wrote to the output port `{port}`, and zedc could not write it to \
+                 the standard {stream} of this process: {why}. Send the standard {stream} to a \
+                 place that accepts it, or name a file for it as `{port}=<path>`."
+            )
+        }
+    }
+}
+
 impl<'a> Options<'a> {
-    /// The options `rest` holds, `--record <out>` among them only when `record`; `None` when a
-    /// word is neither.
-    fn parse(mut rest: &[&'a str], record: bool) -> Option<Options<'a>> {
+    /// The options `rest` holds, `--record <out>` among them only when `record`; or why a word
+    /// is neither.
+    fn parse(mut rest: &[&'a str], record: bool) -> Result<Options<'a>, String> {
         let mut options = Options {
             binds: BTreeMap::new(),
             record_to: None,
@@ -1059,17 +1195,33 @@ impl<'a> Options<'a> {
             rest = more;
             if *word == "--record" && record {
                 let [out, more @ ..] = rest else {
-                    return None;
+                    return Err(
+                        "`--record` is the last word before the program's arguments, \
+                         and it needs the file to write the record to after it: write \
+                         `--record <out>`."
+                            .into(),
+                    );
                 };
                 options.record_to = Some(out);
                 rest = more;
             } else if let Some((port, path)) = word.split_once('=') {
                 options.binds.insert(port.to_string(), path.to_string());
+            } else if *word == "--record" {
+                return Err(
+                    "`--record` is not an option of `zedc replay`, which writes no \
+                     record: a replay reads only the record it is given. Remove `--record`."
+                        .into(),
+                );
             } else {
-                return None;
+                return Err(format!(
+                    "`{word}` is not understood here: before `--` come only `port=path`, which names \
+                     the file a port reads or writes, and `--record <out>`, which writes a record \
+                     of the run; after `--` come the program's own arguments. If `{word}` is \
+                     meant for the program, put it after `--`."
+                ));
             }
         }
-        Some(options)
+        Ok(options)
     }
 
     /// Checks the bindings against `ports`: each names a port, binds no input that reads no
@@ -1079,7 +1231,27 @@ impl<'a> Options<'a> {
         let known =
             |p: &String| ports.inputs.iter().any(|(n, _)| n == p) || ports.outputs.contains(p);
         if let Some(p) = binds.keys().find(|p| !known(p)) {
-            return Err((2, format!("`main` has no port `{p}`")));
+            let names: Vec<String> = (ports.inputs.iter().map(|(n, _)| n))
+                .chain(&ports.outputs)
+                .map(|n| format!("`{n}`"))
+                .collect();
+            let bind = format!("{p}={}", binds[p]);
+            let names = match names.split_last() {
+                None => "it has no ports".to_string(),
+                Some((one, [])) => format!("its one port is {one}"),
+                Some((last, rest)) => format!("its ports are {} and {last}", rest.join(", ")),
+            };
+            let repair = match ports.inputs.is_empty() && ports.outputs.is_empty() {
+                true => format!("Remove `{bind}`."),
+                false => format!("Write the name of one of them before `=`, or remove `{bind}`."),
+            };
+            return Err((
+                2,
+                format!(
+                    "`{bind}` names a file for the port `{p}`, and `main` has no port `{p}`; \
+                     {names}. {repair}"
+                ),
+            ));
         }
         // A `Files` or `CommandLine` input reads no file, so a binding of one would be ignored.
         if let Some((p, _)) = ports
@@ -1089,14 +1261,24 @@ impl<'a> Options<'a> {
         {
             return Err((
                 2,
-                format!("input port `{p}` reads no file: remove `{p}={}`", binds[p]),
+                format!(
+                    "`{p}={}` names a file for the input port `{p}`, and `{p}` reads no file \
+                     named on the command line: a `Files` port reads files by the paths the \
+                     program gives it, a `CommandLine` port reads the words after `--`, and an \
+                     environment port reads the environment. Remove `{p}={}`.",
+                    binds[p], binds[p]
+                ),
             ));
         }
         for name in &ports.outputs {
             if !binds.contains_key(name) && name != "stdout" && name != "stderr" {
                 return Err((
                     2,
-                    format!("output port `{name}` needs a file: `{name}=path`"),
+                    format!(
+                        "the output port `{name}` of `main` needs a file to write to, and none \
+                         is named: only `stdout` and `stderr` write to the process's own \
+                         streams. Add `{name}=<path>` to the command line."
+                    ),
                 ));
             }
         }
@@ -1112,14 +1294,26 @@ impl<'a> Options<'a> {
                 continue;
             }
             let bytes = match self.binds.get(name) {
-                Some(path) => read_file(path).map_err(|e| (2, format!("{path}: {e}")))?,
+                Some(path) => read_file(path).map_err(|e| (2, unreadable(path, &e)))?,
                 None if name == "stdin" => {
-                    read_shared(stdin, 0).map_err(|e| (2, format!("standard input: {e}")))?
+                    read_shared(stdin, 0).map_err(|e| {
+                        let why = io_reason(&e);
+                        let why = format!(
+                            "zedc could not read standard input, which the port `stdin` \
+                             reads: {why}. Give zedc a standard input it may read, or name a \
+                             file for the port as `stdin=<path>`."
+                        );
+                        (2, why)
+                    })?
                 }
                 None => {
                     return Err((
                         2,
-                        format!("input port `{name}` needs a file: `{name}=path`"),
+                        format!(
+                            "the input port `{name}` of `main` needs a file to read, and none is \
+                             named: only `stdin` reads the process's standard input. Add \
+                             `{name}=<path>` to the command line."
+                        ),
                     ));
                 }
             };
@@ -1136,25 +1330,34 @@ impl<'a> Options<'a> {
         stderr: &mut dyn Write,
     ) -> Result<(), (u8, String)> {
         if let Some(out) = self.record_to {
-            std::fs::write(out, wave.record.to_bytes()).map_err(|e| (1, format!("{out}: {e}")))?;
+            std::fs::write(out, wave.record.to_bytes()).map_err(|e| {
+                let why = io_reason(&e);
+                let why = format!(
+                    "{out}: zedc could not write the record of this run to this file: {why}. \
+                     Name a file in a directory you may write to."
+                );
+                (1, why)
+            })?;
         }
-        let acks = commit(&wave.writes, |port, bytes| match self.binds.get(port) {
-            Some(path) => std::fs::write(path, bytes).map_err(|e| (path.clone(), e.to_string())),
-            None if port == "stdout" => stdout
-                .write_all(bytes)
-                .map_err(|e| ("stdout".into(), e.to_string())),
-            None => stderr
-                .write_all(bytes)
-                .map_err(|e| ("stderr".into(), e.to_string())),
-        });
-        for (port, ack) in acks {
-            if let Value::Atom(a) = &ack
-                && a.name.as_ref() == "ioError"
-            {
-                return Err((1, format!("writing port `{port}` failed: {ack}")));
+        let mut failed = None;
+        commit(&wave.writes, |port, bytes| {
+            let written = match self.binds.get(port) {
+                Some(path) => {
+                    std::fs::write(path, bytes).map_err(|e| (path.clone(), io_reason(&e)))
+                }
+                None if port == "stdout" => stdout
+                    .write_all(bytes)
+                    .map_err(|e| ("stdout".into(), io_reason(&e))),
+                None => stderr
+                    .write_all(bytes)
+                    .map_err(|e| ("stderr".into(), io_reason(&e))),
+            };
+            if let Err((_, why)) = &written {
+                failed = Some(write_failed(port, self.binds.get(port), why));
             }
-        }
-        Ok(())
+            written
+        });
+        failed.map_or(Ok(()), |why| Err((1, why)))
     }
 }
 
@@ -1181,10 +1384,10 @@ pub fn executable(
     run: impl FnOnce(&mut Evaluator) -> Result<Value, String>,
 ) -> u8 {
     let outcome = words(args).map_err(|why| (2, why)).and_then(|words| {
-        let options = Options::parse(&words.command, true).ok_or_else(|| {
+        let options = Options::parse(&words.command, true).map_err(|why| {
             (
                 2,
-                format!("usage: {name} [port=path …] [--record <out>] [-- arg …]"),
+                format!("{why}\n\nusage: {name} [port=path …] [--record <out>] [-- arg …]"),
             )
         })?;
         options.check(ports)?;

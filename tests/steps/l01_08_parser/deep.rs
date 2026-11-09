@@ -242,7 +242,10 @@ fn an_error_at_the_bottom_of_a_deep_nest_is_reported() {
     let e = build(&text, &tokens, &tree).unwrap_err();
     // The `unordered` starts 7 bytes after the `x`.
     assert_eq!(e.span.start, DEEP + 7);
-    assert_eq!(e.message, "this form (ReducePolicy) is built from layer L9");
+    assert_eq!(
+        e.message,
+        zed_tests::not_yet!("the reduction order `unordered`")
+    );
 }
 
 /// The block at the bottom exports nothing; each block around it exports it.

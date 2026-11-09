@@ -34,7 +34,7 @@ fn every_chain_in_the_fences_builds_or_names_its_step() {
                         wrong.push(format!("{}: span of {e}", f.at));
                     }
                 }
-                Err(e) if e.message.contains(" is built from ") => later += 1,
+                Err(e) if zed_tests::is_not_yet(&e.message) => later += 1,
                 Err(e) => wrong.push(format!("{}: {e}", f.at)),
             }
         }

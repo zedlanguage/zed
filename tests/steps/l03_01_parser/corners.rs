@@ -87,13 +87,15 @@ fn a_display_is_a_set_or_a_map() {
     check(&[
         (
             "f(x) = { 1, 2 -> 3 };",
-            "error: a map entry `k -> v` in a display whose first entry is a set element: \
-             a display is a set or a map, not both; the first entry, a set element at byte 9",
+            "error: a map entry `k -> v` stands in a display whose first entry is a set element, and a \
+             display is a set or a map, not both. Write every entry as a set element, or write the \
+             entries in two displays.; the first entry, a set element at byte 9",
         ),
         (
             "f(x) = { 1 -> 2, 3 };",
-            "error: a set element in a display whose first entry is a map entry `k -> v`: \
-             a display is a set or a map, not both; the first entry, a map entry `k -> v` at byte 9",
+            "error: a set element stands in a display whose first entry is a map entry `k -> v`, and a \
+             display is a set or a map, not both. Write every entry as a map entry `k -> v`, or \
+             write the entries in two displays.; the first entry, a map entry `k -> v` at byte 9",
         ),
     ]);
 }

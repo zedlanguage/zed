@@ -275,54 +275,77 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
     (
         "README.md:202",
         1,
-        "line 1: the mark names the row \"Collision\", and the diagnostic is in no row of the rejection table: this form (ReduceTail) is built from layer L8",
+        concat!(
+            "line 1: the mark names the row \"Collision\", and the diagnostic is in no row of the rejection table: ",
+            zed_tests::not_yet!("the reduction `as (region -> day -> sku -> r)`")
+        ),
     ),
     (
         "README.md:554",
         4,
-        "line 1: this form (ReduceTail) is built from layer L7",
+        concat!(
+            "line 1: ",
+            zed_tests::not_yet!("the reduction `with units(\"g\")`")
+        ),
     ),
     ("README.md:775", 7, "pass"),
     (
         "README.md:1063",
         7,
-        "line 1: an array display is compiled from step L3.2",
+        concat!("line 1: ", zed_tests::not_yet!("an array display")),
     ),
-    ("README.md:1128", 3, "line 2: `users` is not defined"),
+    (
+        "README.md:1128",
+        3,
+        "line 2: `users` is not defined: no definition, parameter or binding in scope has this \
+         name, and the prelude has none. Define `users`, or correct the name if it is misspelled.",
+    ),
     (
         "README.md:1164",
         4,
-        "line 1: this form (ReduceTail) is built from layer L8",
+        concat!(
+            "line 1: ",
+            zed_tests::not_yet!("the reduction `as (r -> c -> v)`")
+        ),
     ),
     (
         "README.md:1256",
         6,
-        "line 2: this form (ReduceTail) is built from layer L8",
+        concat!(
+            "line 2: ",
+            zed_tests::not_yet!("the reduction `as (region -> year -> sku -> amount)`")
+        ),
     ),
     (
         "README.md:1691",
         6,
-        "line 1: this form (ArrayType) is built from layer L14",
+        concat!("line 1: ", zed_tests::not_yet!("the array type `[T; n]`")),
     ),
     (
         "README.md:2108",
         4,
-        "line 1: this form (TypeSuffix) is built from layer L10",
+        concat!("line 1: ", zed_tests::not_yet!("the refinement `[lo..]`")),
     ),
     (
         "README.md:2108",
         9,
-        "line 1: this form (TypeSuffix) is built from layer L10",
+        concat!("line 1: ", zed_tests::not_yet!("the refinement `[lo..]`")),
     ),
     (
         "README.md:2138",
         4,
-        "line 1: this form (ReduceTail) is built from layer L7",
+        concat!(
+            "line 1: ",
+            zed_tests::not_yet!("the reduction `with units(\"m/s\")`")
+        ),
     ),
     (
         "README.md:2138",
         9,
-        "line 1: this form (ReduceTail) is built from layer L7",
+        concat!(
+            "line 1: ",
+            zed_tests::not_yet!("the reduction `with units(\"m/s\")`")
+        ),
     ),
 ];
 

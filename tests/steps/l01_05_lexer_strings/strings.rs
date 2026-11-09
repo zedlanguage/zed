@@ -91,6 +91,6 @@ fn an_unknown_escape_is_a_lexical_error_that_lists_the_escapes() {
     assert_eq!(&text[e.span.start..e.span.end], r"\q");
     assert_eq!(
         e.to_string(),
-        r#"malformed string: no such escape; the escapes are \n \t \r \0 \\ \" \$ \u{…}"#
+        r#"`\q` is no escape. The escapes are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\$` and `\u{…}`. Write `\\` for a backslash itself."#
     );
 }

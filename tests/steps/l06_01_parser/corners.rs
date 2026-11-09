@@ -79,11 +79,17 @@ fn primes_on_a_receiver_and_on_a_field() {
     ]);
     assert_eq!(
         refused("p'.x = 1;"),
-        ["the primed name `p'` is compiled from step L6.3 [p'.x = 1;]"]
+        [concat!(
+            zed_tests::not_yet!("the primed name `p'`"),
+            " [p'.x = 1;]"
+        )]
     );
     assert_eq!(
         refused("p.x' = 1;"),
-        ["the primed name `x'` is compiled from step L6.3 [p.x' = 1;]"]
+        [concat!(
+            zed_tests::not_yet!("the primed name `x'`"),
+            " [p.x' = 1;]"
+        )]
     );
 }
 
@@ -133,6 +139,9 @@ fn an_expression_statement_that_writes_no_generation() {
     )]);
     assert_eq!(
         refused("f(x) = { x + 1; 0 };"),
-        ["an expression statement is compiled from step L6.3 [x + 1;]"]
+        [concat!(
+            zed_tests::not_yet!("an expression statement"),
+            " [x + 1;]"
+        )]
     );
 }

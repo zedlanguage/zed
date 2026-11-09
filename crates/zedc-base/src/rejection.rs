@@ -113,3 +113,31 @@ impl Row {
         })
     }
 }
+
+/// The message for `what`, a form or prelude name of the Zed language that this version of
+/// zedc does not compile yet: one text for every such form, so that a reader is never sent to
+/// the plan that schedules it.
+pub fn not_yet(what: &str) -> String {
+    format!(
+        "{what} is part of the Zed language, and this version of zedc does not compile it yet. \
+         Write the program without it, with the forms this zedc compiles."
+    )
+}
+
+/// Where a bug in zedc is reported.
+pub const REPORT_TO: &str = "https://github.com/zedlanguage/zed/issues";
+
+/// What zedc prints when it stops at a broken assumption of its own (a panic): that this is a
+/// bug in zedc and not in the program, what zedc `expected`, the file and line of zedc where it
+/// stopped, and how to report it (DESIGN.md sec:diagnostics).
+pub fn bug(expected: &str, place: Option<(&str, u32)>) -> String {
+    let place = place.map_or(String::new(), |(file, line)| {
+        format!(" ({file}, line {line})")
+    });
+    format!(
+        "zedc stopped because of a bug in zedc itself, not in your program. zedc expected this \
+         to hold, and it did not: {expected}{place}.\n\
+         Please report it at {REPORT_TO}, with the command line you ran and the files it read, \
+         so that it can be repeated."
+    )
+}

@@ -60,8 +60,10 @@ fn an_imported_unit_that_is_not_utf8_is_refused_at_its_line_and_column() {
     assert_eq!(
         refused_import("utf8", b"net(g: f64) = g / 1.2;\n// caf\xE9 prices\n"),
         [
-            "app/main.zed:1:1: the unit `pricing` cannot be imported: pricing.zed:2:7: the file \
-          cannot be read: not UTF-8: E9"
+            "app/main.zed:1:1: the unit `pricing` cannot be imported: pricing.zed:2:7: a Zed \
+             file is UTF-8 text, and the bytes here, E9 in hexadecimal, are not a UTF-8 \
+             character, so the file cannot be read. Save the file as UTF-8 in your editor, or \
+             replace these bytes with the character they were meant to be."
         ]
     );
 }
@@ -72,8 +74,11 @@ fn an_imported_unit_with_a_byte_order_mark_is_refused() {
     assert_eq!(
         refused_import("bom", b"\xEF\xBB\xBFnet(g: f64) = g / 1.2;\n"),
         [
-            "app/main.zed:1:1: the unit `pricing` cannot be imported: pricing.zed:1:1: the file \
-          cannot be read: the file starts with a byte order mark"
+            "app/main.zed:1:1: the unit `pricing` cannot be imported: pricing.zed:1:1: the \
+             file starts with a byte order mark (the bytes EF BB BF), and a Zed file may not, \
+             since the same program would then be stored in two ways. Save the file as UTF-8 \
+             without a byte order mark (in many editors this is \"UTF-8\" rather than \"UTF-8 \
+             with BOM\")."
         ]
     );
 }
@@ -87,8 +92,10 @@ fn an_imported_unit_not_in_nfc_is_refused_at_the_first_sequence_nfc_changes() {
             "net(g: f64) = g / 1.2;\n// cafe\u{301} prices\n".as_bytes()
         ),
         [
-            "app/main.zed:1:1: the unit `pricing` cannot be imported: pricing.zed:2:7: the file \
-          cannot be read: not in Unicode Normalization Form C; write U+00E9"
+            "app/main.zed:1:1: the unit `pricing` cannot be imported: pricing.zed:2:7: these \
+             characters are not in Unicode Normalization Form C (NFC), which spells them as \
+             U+00E9. A Zed file must be in NFC, so that two names that look the same are the \
+             same name. Retype the characters, or have your editor save the file in NFC."
         ]
     );
 }
@@ -105,7 +112,11 @@ fn a_root_and_a_manifest_that_do_not_load_are_reported_with_their_position() {
     let p = load(&mut Db::new(), &Dir(d.clone()), &["main"]);
     assert_eq!(
         p.report(std::path::Path::new("")),
-        ["main.zed:2:6: the file cannot be read: not UTF-8: FF"]
+        [
+            "main.zed:2:6: a Zed file is UTF-8 text, and the bytes here, FF in hexadecimal, are not a \
+          UTF-8 character, so the file cannot be read. Save the file as UTF-8 in your editor, or \
+          replace these bytes with the character they were meant to be."
+        ]
     );
     let d = package_dir(
         "manifest",
@@ -118,8 +129,10 @@ fn a_root_and_a_manifest_that_do_not_load_are_reported_with_their_position() {
     assert_eq!(
         p.report(std::path::Path::new("")),
         [
-            "zed.manifest:1:1: the manifest cannot be read: the file starts with a byte order \
-             mark"
+            "zed.manifest:1:1: the file starts with a byte order mark (the bytes EF BB BF), and \
+             a Zed file may not, since the same program would then be stored in two ways. Save \
+             the file as UTF-8 without a byte order mark (in many editors this is \"UTF-8\" \
+             rather than \"UTF-8 with BOM\")."
         ]
     );
 }

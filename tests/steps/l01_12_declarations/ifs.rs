@@ -19,6 +19,7 @@ fn if_takes_both_branches_and_else_if_nests_on_the_right() {
 fn every_branch_block_exports() {
     check(&[(
         "f(x) = if x { y = 1; } else { 2 };",
-        "error: this block exports nothing: end it with an expression or `return e;`",
+        "error: this block exports nothing, and a block gives a value, so it must export one. \
+             End it with an expression, or with `return e;` to give the value `e`.",
     )]);
 }

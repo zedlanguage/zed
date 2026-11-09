@@ -7,24 +7,24 @@ constructor-called-by-position
     Diagnostic {
         line: 6,
         col: 5,
-        message: "`Point` is not defined",
+        message: "`Point` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Point`, or correct the name if it is misspelled.",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 6, col: 5, failure: Some("the mark names the row \"Positional constructor call or pattern\", and the diagnostic is in no row of the rejection table: `Point` is not defined") }]
+  checks: [Outcome { line: 6, col: 5, failure: Some("the mark names the row \"Positional constructor call or pattern\", and the diagnostic is in no row of the rejection table: `Point` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Point`, or correct the name if it is misspelled.") }]
 
 dot-never-mutates
   rejected: [
     Diagnostic {
         line: 8,
         col: 29,
-        message: "this form (ResultType) is built from layer L10",
+        message: "the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 30, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 30, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
 
 nullable-column-missing-none
   rejected: [
@@ -55,33 +55,33 @@ payload-built-by-position
     Diagnostic {
         line: 3,
         col: 1,
-        message: "a type declaration is compiled from step L2.5",
+        message: "a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
         row: None,
     },
     Diagnostic {
         line: 3,
         col: 13,
-        message: "an atom type with a payload is compiled from step L2.5",
+        message: "an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
         row: None,
     },
     Diagnostic {
         line: 3,
         col: 41,
-        message: "the type `Utf8String` is not defined",
+        message: "the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.",
         steps: [],
         row: None,
     },
     Diagnostic {
         line: 6,
         col: 21,
-        message: "a `match` is compiled from step L2.4",
+        message: "a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is compiled from step L2.5") }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is compiled from step L2.5") }, Outcome { line: 3, col: 41, failure: Some("the type `Utf8String` is not defined") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 21, failure: Some("a `match` is compiled from step L2.4") }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 41, failure: Some("the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 21, failure: Some("a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
 
 plain-decimal-other-format
   warnings: []
@@ -106,36 +106,36 @@ taint-through-concatenation
     Diagnostic {
         line: 75,
         col: 55,
-        message: "no token starts with '…' (U+2026)",
+        message: "the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 75, col: 55, failure: Some("no token starts with '…' (U+2026)") }]
+  checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 75, col: 55, failure: Some("the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.") }]
 
 two-writers-of-one-generation
   rejected: [
     Diagnostic {
         line: 8,
         col: 29,
-        message: "this form (ResultType) is built from layer L10",
+        message: "the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 29, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 29, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
 
 unit-mismatch-force-energy
   rejected: [
     Diagnostic {
         line: 76,
         col: 55,
-        message: "no token starts with '…' (U+2026)",
+        message: "the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 76, col: 55, failure: Some("no token starts with '…' (U+2026)") }]
+  checks: [Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 76, col: 55, failure: Some("the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.") }]
 
 unit-mismatch-in-sum
   rejected: [
@@ -154,9 +154,9 @@ value-binding-has-no-next-generation
     Diagnostic {
         line: 8,
         col: 29,
-        message: "this form (ResultType) is built from layer L10",
+        message: "the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 19, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 19, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]

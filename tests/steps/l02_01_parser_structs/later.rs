@@ -9,60 +9,84 @@ fn each_form_names_the_step_that_compiles_it() {
     let cases: &[(&str, &[&str])] = &[
         (
             "struct Point { x: f64, y: f64 }",
-            &["a struct declaration is compiled from step L2.4 [struct Point { x: f64, y: f64 }]"],
+            &[concat!(
+                zed_tests::not_yet!("a struct declaration"),
+                " [struct Point { x: f64, y: f64 }]"
+            )],
         ),
         (
             "Point.norm = 1;",
             &[
-                "a method is compiled from step L2.4 [Point.norm = 1;]",
-                "the type `Point` is not defined [Point.norm = 1;]",
+                concat!(zed_tests::not_yet!("a method"), " [Point.norm = 1;]"),
+                "the type `Point` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [Point.norm = 1;]",
             ],
         ),
         (
             "type Pos = { x: f64 };",
             &[
-                "a type declaration is compiled from step L2.5 [type Pos = { x: f64 };]",
-                "a record type is compiled from step L2.5 [{ x: f64 }]",
+                concat!(
+                    zed_tests::not_yet!("a type declaration"),
+                    " [type Pos = { x: f64 };]"
+                ),
+                concat!(zed_tests::not_yet!("a record type"), " [{ x: f64 }]"),
             ],
         ),
         (
             "p = { x: 1 };",
-            &["a record display is compiled from step L2.4 [{ x: 1 }]"],
+            &[concat!(
+                zed_tests::not_yet!("a record display"),
+                " [{ x: 1 }]"
+            )],
         ),
         (
             "q = 1 with { x = 2 };",
-            &["a `with` clause is compiled from step L2.4 [1 with { x = 2 }]"],
+            &[concat!(
+                zed_tests::not_yet!("a `with` clause"),
+                " [1 with { x = 2 }]"
+            )],
         ),
         (
             "f(x) = this;",
             &[
-                "`this` is compiled from step L2.4 [this]",
+                concat!(zed_tests::not_yet!("`this`"), " [this]"),
                 "`this` stands outside a method: it names the receiver of a method `T.m(…) = …`, \
                  in the method's body [this]",
             ],
         ),
         (
             "f = ((a, b)) -> a;",
-            &["a tuple-destructuring parameter is compiled from step L2.4 [(a, b)]"],
+            &[concat!(
+                zed_tests::not_yet!("a tuple-destructuring parameter"),
+                " [(a, b)]"
+            )],
         ),
         (
             "g(r) = r else #hit(_) -> 0;",
-            &["a struct, name, `_` or tuple pattern is compiled from step L2.4 [_]"],
+            &[concat!(
+                zed_tests::not_yet!("a struct, name, `_` or tuple pattern"),
+                " [_]"
+            )],
         ),
         (
             "f(t: Tree(int)) = t;",
             &[
-                "the type `Tree` is not defined [Tree]",
-                "an applied type is compiled from step L2.5 [Tree(int)]",
+                "the type `Tree` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [Tree]",
+                concat!(zed_tests::not_yet!("an applied type"), " [Tree(int)]"),
             ],
         ),
         (
             "f(t: #node(l: int)) = t;",
-            &["an atom type with a payload is compiled from step L2.5 [#node(l: int)]"],
+            &[concat!(
+                zed_tests::not_yet!("an atom type with a payload"),
+                " [#node(l: int)]"
+            )],
         ),
         (
             "f(t: { x: int }) = t;",
-            &["a record type is compiled from step L2.5 [{ x: int }]"],
+            &[concat!(
+                zed_tests::not_yet!("a record type"),
+                " [{ x: int }]"
+            )],
         ),
     ];
     let wrong: Vec<String> = cases

@@ -76,7 +76,11 @@ fn an_argument_named_twice_is_an_error_at_the_second() {
     let err = ast(text).unwrap_err();
     assert_eq!(&text[err.span.start..err.span.end], "w");
     assert_eq!(err.span.start, 17);
-    assert_eq!(err.message, "the argument `w` is named twice");
+    assert_eq!(
+        err.message,
+        "the argument `w` is named twice in this call, and a call names each argument once. \
+         Remove one of the two."
+    );
     let [first] = &err.notes[..] else {
         panic!("one note: {:?}", err.notes)
     };
@@ -85,10 +89,10 @@ fn an_argument_named_twice_is_an_error_at_the_second() {
 }
 
 #[test]
-fn a_form_of_a_later_layer_names_that_layer() {
+fn a_form_of_a_later_layer_is_refused_as_not_compiled_yet() {
     let cases = [(
         "data >< f unordered",
-        "this form (ReducePolicy) is built from layer L9",
+        zed_tests::not_yet!("the reduction order `unordered`"),
     )];
     for (text, want) in cases {
         assert_eq!(ast(text).unwrap_err().message, want, "{text}");

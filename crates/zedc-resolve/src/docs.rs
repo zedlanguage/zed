@@ -90,7 +90,8 @@ fn links(text: &str, span: Span, names: &HashSet<&str>, out: &mut Vec<Error>) {
                         },
                         message: format!(
                             "the doc link `[{name}]` names nothing: no binding or function of \
-                             this unit and no prelude word or type is `{name}`"
+                             this unit and no prelude word or type is `{name}`. Correct the name if it is misspelled, \
+                             or write `{name}` in backticks if it is not meant as a link."
                         ),
                         notes: Vec::new(),
                         row: None,

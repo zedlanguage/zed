@@ -270,7 +270,8 @@ fn the_checker_asks_no_integer_question_of_a_float_function() {
     let o = run("carrier-int", &growth("int", "1"), "", &[]);
     assert_eq!(o.status, 1, "{}", o.stderr);
     assert!(
-        o.stderr.contains("whether `ok` can hold is not decided"),
+        o.stderr
+            .contains("zedc could not decide whether the condition of `ok`"),
         "{}",
         o.stderr
     );

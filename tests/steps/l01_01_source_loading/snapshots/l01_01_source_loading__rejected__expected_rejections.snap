@@ -2,13 +2,13 @@
 source: tests/steps/l01_01_source_loading/rejected.rs
 expression: "out.join(\"\\n\")"
 ---
-latin1_comment: 1:15: not UTF-8: E9 [bytes 14..15]
-decomposed_name: 2:12: not in Unicode Normalization Form C; write U+00E9 [bytes 33..36]
-byte_order_mark: 1:1: the file starts with a byte order mark [bytes 0..3]
-truncated_download: 1:9: not UTF-8: E2 82 [bytes 8..10]
-cesu8_surrogates: 1:10: not UTF-8: ED [bytes 9..10]
-overlong_slash: 1:10: not UTF-8: C0 [bytes 9..10]
-angstrom_sign: 1:18: not in Unicode Normalization Form C; write U+00C5 [bytes 17..20]
-marks_out_of_order: 1:9: not in Unicode Normalization Form C; write U+1EA1 U+0301 [bytes 8..13]
-hangul_jamo: 1:4: not in Unicode Normalization Form C; write U+AC00 [bytes 3..9]
-crlf_then_decomposed: 2:6: not in Unicode Normalization Form C; write U+00F1 [bytes 13..16]
+latin1_comment: 1:15: a Zed file is UTF-8 text, and the bytes here, E9 in hexadecimal, are not a UTF-8 character, so the file cannot be read. Save the file as UTF-8 in your editor, or replace these bytes with the character they were meant to be. [bytes 14..15]
+decomposed_name: 2:12: these characters are not in Unicode Normalization Form C (NFC), which spells them as U+00E9. A Zed file must be in NFC, so that two names that look the same are the same name. Retype the characters, or have your editor save the file in NFC. [bytes 33..36]
+byte_order_mark: 1:1: the file starts with a byte order mark (the bytes EF BB BF), and a Zed file may not, since the same program would then be stored in two ways. Save the file as UTF-8 without a byte order mark (in many editors this is "UTF-8" rather than "UTF-8 with BOM"). [bytes 0..3]
+truncated_download: 1:9: a Zed file is UTF-8 text, and the bytes here, E2 82 in hexadecimal, are not a UTF-8 character, so the file cannot be read. Save the file as UTF-8 in your editor, or replace these bytes with the character they were meant to be. [bytes 8..10]
+cesu8_surrogates: 1:10: a Zed file is UTF-8 text, and the bytes here, ED in hexadecimal, are not a UTF-8 character, so the file cannot be read. Save the file as UTF-8 in your editor, or replace these bytes with the character they were meant to be. [bytes 9..10]
+overlong_slash: 1:10: a Zed file is UTF-8 text, and the bytes here, C0 in hexadecimal, are not a UTF-8 character, so the file cannot be read. Save the file as UTF-8 in your editor, or replace these bytes with the character they were meant to be. [bytes 9..10]
+angstrom_sign: 1:18: these characters are not in Unicode Normalization Form C (NFC), which spells them as U+00C5. A Zed file must be in NFC, so that two names that look the same are the same name. Retype the characters, or have your editor save the file in NFC. [bytes 17..20]
+marks_out_of_order: 1:9: these characters are not in Unicode Normalization Form C (NFC), which spells them as U+1EA1 U+0301. A Zed file must be in NFC, so that two names that look the same are the same name. Retype the characters, or have your editor save the file in NFC. [bytes 8..13]
+hangul_jamo: 1:4: these characters are not in Unicode Normalization Form C (NFC), which spells them as U+AC00. A Zed file must be in NFC, so that two names that look the same are the same name. Retype the characters, or have your editor save the file in NFC. [bytes 3..9]
+crlf_then_decomposed: 2:6: these characters are not in Unicode Normalization Form C (NFC), which spells them as U+00F1. A Zed file must be in NFC, so that two names that look the same are the same name. Retype the characters, or have your editor save the file in NFC. [bytes 13..16]

@@ -19,7 +19,7 @@ fn every_expression_in_the_fences_builds_or_names_its_step() {
             }
             match expr(&f.text, &tokens, &tree, n) {
                 Ok(_) => built += 1,
-                Err(e) if e.message.contains(" is built from ") => later += 1,
+                Err(e) if zed_tests::is_not_yet(&e.message) => later += 1,
                 Err(e) => wrong.push(format!("{}: {e}", f.at)),
             }
         }

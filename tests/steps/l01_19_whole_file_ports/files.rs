@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use zed_kernel::{Lookup, Value};
 use zedc::run::load;
 
+use zed_tests::{input_port_message, output_port_message};
+
 use super::{dir, run};
 
 #[test]
@@ -51,7 +53,12 @@ fn a_file_that_is_not_utf8_is_an_io_error() {
     );
     assert_eq!(
         zedc::run::Disk.get(&Value::Int(3)),
-        Err("a path is a String, not 3".to_string())
+        Err(
+            "a `Files` port reads a file by its path, which is a string, and the program read it \
+             with 3, which is not one. Write the path as a string, such as `\"data.txt\"`, or \
+             convert the value with `String(…)`."
+                .to_string()
+        )
     );
 }
 
@@ -92,25 +99,30 @@ fn ports_are_lines_or_files_at_l1() {
     let e = load(b"main(n: int) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n").err();
     assert_eq!(
         e.as_deref(),
-        Some(
-            "1:6: port `n` of `main` is `Lines`, `Files`, `CommandLine` or `String ->? String` at layer L1"
-        )
+        Some(format!("1:6: {}", input_port_message("n", "is declared as `int`")).as_str())
     );
     let e = load(b"main(fs: Files) -> (out: Files) {\n  out <- fs;\n}\n").err();
     assert_eq!(
         e.as_deref(),
-        Some("1:21: output port `out` of `main` is `Lines` at layer L1")
+        Some(format!("1:21: {}", output_port_message("out", "main", "Files")).as_str())
     );
     // An output port of a type that is no port at all says it is an output port.
     let e = load(b"main() -> (out: int) {\n  out <- \"x\";\n}\n").err();
     assert_eq!(
         e.as_deref(),
-        Some("1:12: output port `out` of `main` is `Lines` at layer L1")
+        Some(format!("1:12: {}", output_port_message("out", "main", "int")).as_str())
     );
     let e = load(b"helper = 1;\n").err();
     assert_eq!(
         e.as_deref(),
-        Some("1:1: a program declares one `main` function; this one declares 0")
+        Some(
+            "1:1: this file is run as a program, and a program starts at a function named \
+             `main`, which this file does not declare. Declare one, such as\n    \
+             main(stdin: Lines) -> (stdout: Lines) {\n      \
+             stdout <- \"hello\";\n    \
+             }\nor, if the file holds definitions to test and is not a program, run `zedc test` on \
+             it instead of `zedc run`."
+        )
     );
 }
 
@@ -122,7 +134,7 @@ fn a_helper_port_is_lines_at_l1() {
     let e = load(b"log(positional s) -> (out: Files) {\n  out <- s;\n}\nmain() = 0;\n").err();
     assert_eq!(
         e.as_deref(),
-        Some("1:23: output port `out` of `log` is `Lines` at layer L1")
+        Some(format!("1:23: {}", output_port_message("out", "log", "Files")).as_str())
     );
     let e = load(
         b"say(positional s) -> (stdout: Lines, err: int) {\n  stdout <- s;\n}\n\
@@ -131,7 +143,7 @@ fn a_helper_port_is_lines_at_l1() {
     .err();
     assert_eq!(
         e.as_deref(),
-        Some("1:38: output port `err` of `say` is `Lines` at layer L1")
+        Some(format!("1:38: {}", output_port_message("err", "say", "int")).as_str())
     );
     // Only the unit's own `main` is the program's; a `main` nested in a block is a helper.
     let e = load(
@@ -141,7 +153,7 @@ fn a_helper_port_is_lines_at_l1() {
     .err();
     assert_eq!(
         e.as_deref(),
-        Some("2:14: output port `out` of `main` is `Lines` at layer L1")
+        Some(format!("2:14: {}", output_port_message("out", "main", "Files")).as_str())
     );
     let ok = b"say(positional s) -> (stdout: Lines) {\n  stdout <- s;\n}\n\
                main() -> (stdout: Lines) {\n  a = say(\"one\");\n}\n";

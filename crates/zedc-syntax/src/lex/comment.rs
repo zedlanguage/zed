@@ -35,9 +35,16 @@ pub(super) fn comment(text: &str, pos: usize) -> Option<Result<usize, Error>> {
         }
     }
     Some(Err(Error {
-        kind: ErrorKind::BadComment(format!(
-            "the block comment is not closed ({depth} `*/` missing)"
-        )),
+        kind: ErrorKind::BadComment(match depth {
+            1 => "this block comment, opened with `/*`, is not closed before the end of the file. \
+                  Write `*/` where the comment should end."
+                .to_string(),
+            _ => format!(
+                "this block comment, opened with `/*`, is not closed before the end of the file: \
+                 block comments nest, so each `/*` inside it needs its own `*/`, and {depth} \
+                 `*/` are missing. Write the missing `*/`, the last where the comment should end."
+            ),
+        }),
         span: Span {
             start: pos,
             end: text.len(),

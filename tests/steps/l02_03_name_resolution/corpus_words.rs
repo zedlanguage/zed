@@ -37,7 +37,9 @@ fn min_and_max_in_the_corpus_are_prelude_words() {
 fn mix_is_the_staging_word_of_l19() {
     let errors = errors(&corpus("10-regex-matcher.zed"));
     assert!(
-        errors.contains(&"`mix` is a prelude word of layer L19 [mix]".to_string()),
+        errors.contains(
+            &concat!(zed_tests::not_yet!("the prelude word `mix`"), " [mix]").to_string()
+        ),
         "{errors:?}"
     );
     assert!(
@@ -51,17 +53,25 @@ fn stream_is_the_prelude_type_of_l7() {
     for path in ["18-socket-wordfreq.zed", "29-late-dedup.zed"] {
         assert_eq!(
             errors(&corpus(path)),
-            ["the type `Stream` is a prelude type of layer L7 [Stream]"],
+            [concat!(
+                zed_tests::not_yet!("the prelude type `Stream`"),
+                " [Stream]"
+            )],
             "{path}"
         );
     }
     assert_eq!(
         errors("f(s: Stream(int)) = s;\n"),
-        ["the type `Stream` is a prelude type of layer L7 [Stream]"]
+        [concat!(
+            zed_tests::not_yet!("the prelude type `Stream`"),
+            " [Stream]"
+        )]
     );
     assert_eq!(
         errors("f(s: Strem) = s;\n"),
-        ["the type `Strem` is not defined [Strem]"]
+        [
+            "the type `Strem` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [Strem]"
+        ]
     );
 }
 
@@ -72,7 +82,7 @@ fn a_type_of_the_program_named_stream_is_its_own() {
 }
 
 /// Every corpus file that reaches resolution names only defined words; a word of a later layer
-/// is reported with its layer instead. A file that does not reach resolution holds a form of a
+/// is reported as one this zedc does not compile yet. A file that does not reach resolution holds a form of a
 /// later layer, or is the control that does not parse; any other such file fails the test.
 #[test]
 fn no_corpus_file_uses_an_undefined_name() {
@@ -103,7 +113,7 @@ fn no_corpus_file_uses_an_undefined_name() {
         };
         let stmts = match unit(&text, &tokens, &tree) {
             Ok(stmts) => stmts,
-            Err(e) if e.to_string().contains(" is built from layer L") => {
+            Err(e) if zed_tests::is_not_yet(&e.to_string()) => {
                 later_layer += 1;
                 continue;
             }

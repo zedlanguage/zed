@@ -49,11 +49,13 @@ fn a_field_declared_twice_is_an_error() {
     check(&[
         (
             "struct Point { x: f64, y: f64, x: int }",
-            "error: the field `x` is declared twice; the first field `x` at byte 15",
+            "error: the field `x` is declared twice, and each field is declared once. Remove one of \
+             the two.; the first field `x` at byte 15",
         ),
         (
             "struct P { import geo.Datum, import geo.Datum }",
-            "error: the import `geo.Datum` is written twice; the first import `geo.Datum` at byte 18",
+            "error: the import `geo.Datum` is written twice, and each import is written once. Remove one of \
+             the two.; the first import `geo.Datum` at byte 18",
         ),
     ]);
 }
@@ -62,6 +64,11 @@ fn a_field_declared_twice_is_an_error() {
 fn a_grammar_struct_is_of_a_later_layer() {
     check(&[(
         "struct KeyVal grammar { key: JsonStr \":\" value: Json }",
-        "error: this form (Struct) is built from layer L20",
+        concat!(
+            "error: ",
+            zed_tests::not_yet!(
+                "the struct declaration `struct KeyVal grammar { key: JsonStr \":\" value: Json }`"
+            )
+        ),
     )]);
 }

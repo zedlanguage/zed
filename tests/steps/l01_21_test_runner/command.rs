@@ -62,7 +62,12 @@ fn a_file_that_is_not_utf8_fails_and_a_missing_file_is_a_usage_error() {
     assert_eq!(status, 1);
     assert_eq!(
         out,
-        format!("{bad}: 1:1: not UTF-8: FF\n0 passed, 1 failed, 0 rejection units\n")
+        format!(
+            "{bad}: 1:1: a Zed file is UTF-8 text, and the bytes here, FF in hexadecimal, are \
+             not a UTF-8 character, so the file cannot be read. Save the file as UTF-8 in your \
+             editor, or replace these bytes with the character they were meant to be.\n\
+             0 passed, 1 failed, 0 rejection units\n"
+        )
     );
     let (status, _, err) = run(&["/nonexistent/zed-l01-21.zed"]);
     assert_eq!(status, 2);
@@ -72,7 +77,7 @@ fn a_file_that_is_not_utf8_fails_and_a_missing_file_is_a_usage_error() {
         (
             2,
             String::new(),
-            "usage: zedc test [--mutate] [--suppress <address> …] <file> …\n".into()
+            "usage: zedc test [--mutate] [--suppress <address> …] [--addresses] <file> …\n".into()
         )
     );
 }
