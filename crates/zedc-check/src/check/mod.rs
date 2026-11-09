@@ -5640,7 +5640,9 @@ pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
 /// printed `Never` (DESIGN.md sec:diagnostics: a message names every step from the cause to
 /// what it prints). A part inside one so explained is explained only where it is the cause:
 /// each step names its cause, a part written `Never` by name or the part explained in the
-/// step before it, so the steps run from the cause to the part `t` holds.
+/// step before it, so the steps run from the cause to the part `t` holds. A part found to have
+/// no value for a reason no part of it shows gets a step that says what is known, and the walk
+/// never stops ([`explain_empty`]).
 ///
 /// Built only for a message that is printed. One denotation of `t` that keeps the span of
 /// each part with no value, and one walk of `t`, each with its own stack: the time is linear
@@ -5656,14 +5658,28 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
     };
     d.ty(t);
     let empty = d.empty.unwrap_or_default();
-    // A `for` clause has the value of the type it bounds.
-    fn bare(mut t: &Type) -> &Type {
-        while let TypeKind::For { ty, .. } = &t.kind {
-            t = ty;
-        }
-        t
+    explain_empty(t, |p| empty.contains(&p.span), out);
+}
+
+/// `t` with each `for` clause around it taken off: a clause has the value of the type it bounds.
+fn bare(mut t: &Type) -> &Type {
+    while let TypeKind::For { ty, .. } = &t.kind {
+        t = ty;
     }
-    let none = |t: &Type| empty.contains(&bare(t).span);
+    t
+}
+
+/// The steps of [`emptied`], with `found` saying which parts of `t`, each without the `for`
+/// clauses around it, the denotation found to have no value.
+///
+/// The walk is total: it asks `found` only about the part it is explaining and its own parts,
+/// and relies on no link between the answers. A tuple type or an atom with a payload found
+/// to have no value though no part of it was (which the present denotation never finds, since
+/// it empties such a type only for an empty part, but a meet, a recursive type or a named type
+/// read in full could), a union some member of which was not found empty, and a part of a
+/// kind that has values each get a step of their own, and the walk never stops.
+fn explain_empty(t: &Type, found: impl Fn(&Type) -> bool, out: &mut Vec<Note>) {
+    let none = |t: &Type| found(bare(t));
     // What the step after the one that explains `c` calls it.
     let cause = |c: &Type| match &bare(c).kind {
         TypeKind::Name(n) => format!("`{n}`"),
@@ -5671,7 +5687,8 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
         TypeKind::AtomApply(..) => "the atom type of the step before".into(),
         TypeKind::Union(_) => "the union of the step before".into(),
         TypeKind::And(_) => "the intersection of the step before".into(),
-        _ => "the difference of the step before".into(),
+        TypeKind::Diff(..) => "the difference of the step before".into(),
+        _ => "the type of the step before".into(),
     };
     enum Work<'t> {
         /// Explain the parts of this type with no value that no explained part holds.
@@ -5721,7 +5738,7 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
                     }
                     TypeKind::Record(fs) => fs.iter().map(|(_, t)| t).collect(),
                     TypeKind::Array(t) => vec![t],
-                    TypeKind::For { .. } => unreachable!("`bare` takes off each `for` clause"),
+                    TypeKind::For { ty, .. } => vec![ty],
                 };
                 stack.extend(parts.into_iter().rev().map(Work::Find));
                 continue;
@@ -5732,32 +5749,40 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
         // explained in turn, pushed reversed so that they pop first and in written order.
         let mut causes: Vec<&Type> = Vec::new();
         let why = match &t.kind {
-            TypeKind::Tuple(ts) => {
-                let (i, c) = (ts.iter().enumerate())
-                    .find(|(_, c)| none(c))
-                    .expect("a tuple type with no value has a component with none");
-                causes.push(c);
-                format!(
-                    "this tuple type has no value, since its component {i}, {}, has none",
-                    cause(c)
-                )
-            }
+            TypeKind::Tuple(ts) => match (ts.iter().enumerate()).find(|(_, c)| none(c)) {
+                Some((i, c)) => {
+                    causes.push(c);
+                    format!(
+                        "this tuple type has no value, since its component {i}, {}, has none",
+                        cause(c)
+                    )
+                }
+                // A tuple of values is a value, so one component has none, for a reason no
+                // part written in it shows.
+                None => "this tuple type has no value, since one of its components has none".into(),
+            },
             TypeKind::AtomApply(a, ps) => {
-                let (i, p) = (ps.iter().enumerate())
-                    .find(|(_, p)| none(&p.ty))
-                    .expect("an atom type with no value has a payload component with none");
-                causes.push(&p.ty);
-                let part = match &p.name {
-                    Some(n) if !p.positional => format!("field `{n}`"),
-                    _ => format!("component {i}"),
-                };
-                format!(
-                    "this atom type `#{a}` has no value, since its payload's {part}, {}, has none",
-                    cause(&p.ty)
-                )
+                match (ps.iter().enumerate()).find(|(_, p)| none(&p.ty)) {
+                    Some((i, p)) => {
+                        causes.push(&p.ty);
+                        let part = match &p.name {
+                            Some(n) if !p.positional => format!("field `{n}`"),
+                            _ => format!("component {i}"),
+                        };
+                        format!(
+                            "this atom type `#{a}` has no value, since its payload's {part}, {}, \
+                         has none",
+                            cause(&p.ty)
+                        )
+                    }
+                    None => format!(
+                        "this atom type `#{a}` has no value, since a part of its payload has none"
+                    ),
+                }
             }
+            // Each member is in the union, so each has no value; those found so are explained.
             TypeKind::Union(ts) => {
-                causes.extend(ts);
+                causes.extend(ts.iter().filter(|m| none(m)));
                 "this union has no value, since none of its members has one".into()
             }
             TypeKind::And(ts) => {
@@ -5793,7 +5818,10 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
                 format_type(a),
                 format_type(b)
             ),
-            _ => unreachable!("`Find` explains only a part written with parts"),
+            // A part of another kind, named as the cause of the part that holds it: an atom, a
+            // kind-wide type or a function type, each of which has values as this checker
+            // reads them.
+            _ => "this type has no value".into(),
         };
         stack.push(Work::Say(Note {
             span: t.span,
@@ -6377,15 +6405,125 @@ mod tests {
     /// The steps `emptied` gives for the written type `text`, each with the text it is placed
     /// at.
     fn why_none(text: &str) -> Vec<(String, String)> {
+        why_none_with(text, emptied)
+    }
+
+    /// The steps `explain` gives for the written type `text`, each with the text it is placed
+    /// at.
+    fn why_none_with(text: &str, explain: impl Fn(&Type, &mut Vec<Note>)) -> Vec<(String, String)> {
         let tokens = zedc_syntax::lex::lex(text).expect("lexing a type");
         let tree = zedc_syntax::parse::parse(text, &tokens, "Type", zedc_syntax::parse::TOP)
             .expect("parsing a type");
         let t = zedc_syntax::ast::ty(text, &tokens, &tree).expect("reading a type");
         let mut out = Vec::new();
-        emptied(&t, &mut out);
+        explain(&t, &mut out);
         (out.into_iter())
             .map(|n| (text[n.span.start..n.span.end].to_string(), n.text))
             .collect()
+    }
+
+    /// The steps `explain_empty` gives for the written type `text` when the denotation is
+    /// taken to have found exactly the parts written as `found` to have no value: what a
+    /// denotation that reads more than the parts (a meet, a recursive type, a named type read
+    /// in full) may find.
+    fn why_found(text: &str, found: &[&str]) -> Vec<(String, String)> {
+        why_none_with(text, |t, out| {
+            explain_empty(t, |p| found.contains(&&text[p.span.start..p.span.end]), out)
+        })
+    }
+
+    /// A pair of the text a step is placed at and the step.
+    fn step(at: &str, text: &str) -> (String, String) {
+        (at.to_string(), text.to_string())
+    }
+
+    /// A tuple type found to have no value, none of whose components was, gets a step that
+    /// says one of its components has none, and the walk does not stop.
+    #[test]
+    fn a_tuple_found_empty_with_no_empty_component_gets_a_step() {
+        assert_eq!(
+            why_found("(int, bool)", &["(int, bool)"]),
+            [step(
+                "(int, bool)",
+                "this tuple type has no value, since one of its components has none, so it is \
+                 `Never`"
+            )]
+        );
+        // The component found empty by a meet its parts do not show is explained in turn.
+        assert_eq!(
+            why_found(
+                "((int, int) & (bool, int), int)",
+                &[
+                    "((int, int) & (bool, int), int)",
+                    "(int, int) & (bool, int)"
+                ]
+            ),
+            [
+                step(
+                    "(int, int) & (bool, int)",
+                    "this intersection has no value, since no value is in all of `(int, int)` \
+                     and `(bool, int)`, so it is `Never`"
+                ),
+                step(
+                    "((int, int) & (bool, int), int)",
+                    "this tuple type has no value, since its component 0, the intersection of \
+                     the step before, has none, so it is `Never`"
+                ),
+            ]
+        );
+    }
+
+    /// The same for an atom with a payload.
+    #[test]
+    fn an_atom_found_empty_with_no_empty_payload_part_gets_a_step() {
+        assert_eq!(
+            why_found("#a(int, x: bool)", &["#a(int, x: bool)"]),
+            [step(
+                "#a(int, x: bool)",
+                "this atom type `#a` has no value, since a part of its payload has none, so it \
+                 is `Never`"
+            )]
+        );
+    }
+
+    /// A union found to have no value is explained by the members found so, and a member not
+    /// found so, here a function type, is not explained.
+    #[test]
+    fn a_union_explains_only_the_members_found_empty() {
+        assert_eq!(
+            why_found(
+                "(int, Never) | ((int) -> int)",
+                &["(int, Never) | ((int) -> int)", "(int, Never)", "Never"]
+            ),
+            [
+                step(
+                    "(int, Never)",
+                    "this tuple type has no value, since its component 1, `Never`, has none, so \
+                     it is `Never`"
+                ),
+                step(
+                    "(int, Never) | ((int) -> int)",
+                    "this union has no value, since none of its members has one, so it is `Never`"
+                ),
+            ]
+        );
+    }
+
+    /// A part of a kind that has values, found to have none as the cause of the part that
+    /// holds it, gets a step of its own at the part.
+    #[test]
+    fn a_part_of_a_kind_with_values_found_empty_gets_a_step() {
+        assert_eq!(
+            why_found("(#a, int)", &["(#a, int)", "#a"]),
+            [
+                step("#a", "this type has no value, so it is `Never`"),
+                step(
+                    "(#a, int)",
+                    "this tuple type has no value, since its component 0, the type of the step \
+                     before, has none, so it is `Never`"
+                ),
+            ]
+        );
     }
 
     /// An atom with a payload, which layer L1 programs cannot write yet, names the payload

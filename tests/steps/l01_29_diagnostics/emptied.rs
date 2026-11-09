@@ -148,6 +148,42 @@ before, has none, so it is `Never`",
 }
 
 #[test]
+fn a_component_emptied_by_a_meet_of_two_tuple_types_names_both() {
+    let out = rejected("f(positional x: ((int, int) & (bool, int), int)) = x;\nr = f(1);\n");
+    assert_eq!(
+        why_none(&out),
+        [
+            "this intersection has no value, since no value is in all of `(int, int)` and \
+`(bool, int)`, so it is `Never`",
+            "this tuple type has no value, since its component 0, the intersection of the step \
+before, has none, so it is `Never`",
+        ],
+        "{out}"
+    );
+}
+
+/// A component that a named type empties, by an alias of an empty type or by a recursion
+/// with no finite value, cannot reach the checker yet: a `type` declaration is refused before
+/// it (step L2.5 adds it). When that changes, this test fails, and the steps that say why a
+/// named type has no value, at its declaration, are due.
+#[test]
+fn a_component_emptied_by_a_named_type_is_refused_before_the_checker() {
+    for src in [
+        "type E = int & bool;\nf(positional x: (E, int)) = x;\nr = f(1);\n",
+        "type T = (T, int);\nf(positional x: (T, int)) = x;\nr = f(1);\n",
+    ] {
+        let out = rejected(src);
+        assert!(
+            out.contains(
+                "a type declaration is part of the Zed language, and this version of zedc does \
+not compile it yet"
+            ),
+            "{out}"
+        );
+    }
+}
+
+#[test]
 fn an_empty_tuple_inside_a_function_type_is_explained() {
     let out = rejected(
         "f(positional g: (int) -> (Never, int), positional y: int) = g(y);\nr = f(1, 2);\n",
