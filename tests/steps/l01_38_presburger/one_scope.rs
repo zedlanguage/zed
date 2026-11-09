@@ -295,12 +295,15 @@ fn the_questions_of_a_chain_of_calls_scale() {
         .into_iter()
         .map(|m| {
             let src = unit(m);
-            (m, (zed_tests::deep::statements(&src), elab(&src).unwrap()))
+            (
+                m,
+                (zed_tests::deep::statements(&src), elab(&src).unwrap(), src),
+            )
         })
         .collect();
     zed_tests::scaling::check("the linear questions of a chain of n calls", n, |m| {
-        let (stmts, unit) = &units[&m];
-        let refused = zedc::front::linear_questions(stmts, unit);
+        let (stmts, unit, src) = &units[&m];
+        let refused = zedc::front::linear_questions(src, stmts, unit);
         assert!(refused.is_empty(), "{refused:?}");
     });
 }
@@ -314,12 +317,15 @@ fn questions_scale(what: &str, n: usize, first: &str, link: fn(usize) -> String)
             let src: String = std::iter::once(first.to_string())
                 .chain((1..m).map(link))
                 .collect();
-            (m, (zed_tests::deep::statements(&src), elab(&src).unwrap()))
+            (
+                m,
+                (zed_tests::deep::statements(&src), elab(&src).unwrap(), src),
+            )
         })
         .collect();
     zed_tests::scaling::check(what, n, |m| {
-        let (stmts, unit) = &units[&m];
-        let refused = zedc::front::linear_questions(stmts, unit);
+        let (stmts, unit, src) = &units[&m];
+        let refused = zedc::front::linear_questions(src, stmts, unit);
         assert!(refused.is_empty(), "{refused:?}");
     });
 }
@@ -1618,15 +1624,18 @@ fn the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale() {
         .into_iter()
         .map(|m| {
             let src = unit(m);
-            (m, (zed_tests::deep::statements(&src), elab(&src).unwrap()))
+            (
+                m,
+                (zed_tests::deep::statements(&src), elab(&src).unwrap(), src),
+            )
         })
         .collect();
     zed_tests::scaling::check(
         "the linear questions of a chain with a second call of a large callee",
         n,
         |m| {
-            let (stmts, unit) = &units[&m];
-            let refused = zedc::front::linear_questions(stmts, unit);
+            let (stmts, unit, src) = &units[&m];
+            let refused = zedc::front::linear_questions(src, stmts, unit);
             assert!(refused.is_empty(), "{refused:?}");
         },
     );
@@ -1836,12 +1845,15 @@ fn questions_scale_unit(what: &str, n: usize, unit: fn(usize) -> String) {
         .into_iter()
         .map(|m| {
             let src = unit(m);
-            (m, (zed_tests::deep::statements(&src), elab(&src).unwrap()))
+            (
+                m,
+                (zed_tests::deep::statements(&src), elab(&src).unwrap(), src),
+            )
         })
         .collect();
     zed_tests::scaling::check(what, n, |m| {
-        let (stmts, unit) = &units[&m];
-        let refused = zedc::front::linear_questions(stmts, unit);
+        let (stmts, unit, src) = &units[&m];
+        let refused = zedc::front::linear_questions(src, stmts, unit);
         assert!(refused.is_empty(), "{refused:?}");
     });
 }

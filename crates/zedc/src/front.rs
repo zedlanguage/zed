@@ -140,7 +140,9 @@ pub(crate) fn compile(text: &str) -> Front {
             return Err(all(errors));
         }
     };
-    let refused = work::stage(Stage::Linear, None, || linear_questions(&stmts, &unit));
+    let refused = work::stage(Stage::Linear, None, || {
+        linear_questions(text, &stmts, &unit)
+    });
     if !refused.is_empty() {
         return Err(all(refused));
     }
@@ -154,23 +156,88 @@ pub(crate) fn compile(text: &str) -> Front {
     Ok((stmts, Arc::new(unit), warnings))
 }
 
-/// The menu of a refused linear question at L1 (DESIGN.md sec:diagnostics, row "Linear question
-/// outside the polynomial fragment"): the repairs an L1 program can follow. A written domain on
-/// a name and the check moved to a `refine` join it at L10, a `proof { }` at L15. Tests:
-/// `l01_38_presburger::checker::following_each_repair_of_the_menu_makes_the_program_check`.
-const NON_LINEAR_MENU: [&str; 2] = [
-    "repair: state an equality on one of the names, as `x == 4 && …`, so the solver removes \
-     that name from the question",
-    "repair: split the question into functions of fewer constraints each, and join their \
-     results where they are called; a function whose body joins them asks the joined question \
-     again",
-];
+/// The operands of the outermost `&&` of `e`, in written order, each as `text` writes it, a
+/// grouped operand with its parentheses: what the menu of a refused linear question rewrites
+/// (DESIGN.md sec:diagnostics, row "Linear question outside the polynomial fragment"; the
+/// menu is `presburger::Refusal::repairs`, tested by
+/// `l01_38_presburger::checker::following_each_repair_of_the_menu_makes_the_program_check`).
+/// An operand looser than `&&` (an `||`, an `else`, a lambda, a `for`) not written in
+/// parentheses is given them, so a repair that joins it to another condition by `&&` keeps
+/// its meaning. A walk with an explicit stack, O(the nodes).
+fn conjuncts(text: &str, e: &ast::Expr) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![e];
+    while let Some(e) = stack.pop() {
+        match &e.kind {
+            ast::ExprKind::Binary("&&", l, r) => {
+                stack.push(r);
+                stack.push(l);
+            }
+            kind => {
+                let written = &text[e.span.start..e.span.end];
+                let loose = matches!(
+                    kind,
+                    ast::ExprKind::Binary("||", ..)
+                        | ast::ExprKind::Else { .. }
+                        | ast::ExprKind::Lambda { .. }
+                        | ast::ExprKind::For { .. }
+                );
+                out.push(if loose && !grouped(written) {
+                    format!("({written})")
+                } else {
+                    written.to_string()
+                });
+            }
+        }
+    }
+    out
+}
+
+/// `written` with each run of white space that holds a line break made one space, so that a
+/// repair prints on one line.
+fn one_line(written: &str) -> String {
+    let mut out = String::with_capacity(written.len());
+    let mut run = String::new();
+    for c in written.chars() {
+        if c.is_whitespace() {
+            run.push(c);
+            continue;
+        }
+        out.push_str(if run.contains('\n') { " " } else { &run });
+        run.clear();
+        out.push(c);
+    }
+    out.push_str(if run.contains('\n') { " " } else { &run });
+    out
+}
+
+/// Whether `written` is one parenthesized group: it opens with `(` whose match is its last
+/// character.
+fn grouped(written: &str) -> bool {
+    let mut depth = 0usize;
+    for (i, c) in written.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return i + 1 == written.len();
+                }
+            }
+            _ if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
 
 /// The linear questions of the unit (step L1.38): for each function other than `main` whose
 /// body the linear-relation domain states over its parameters, whether the body can hold and
 /// whether it can fail. A question the solver refuses is a rejection at the function, with
-/// its cause and the constraints (DESIGN.md "Diagnostics"); a decided question rejects nothing,
-/// since a test that never holds is an unreachable arm (step L1.39).
+/// its cause and the constraints (DESIGN.md "Diagnostics") and the menu of repairs that
+/// `presburger::Refusal::repairs` builds from the cause and the function as `text` writes it;
+/// a decided question rejects nothing, since a test that never holds is an unreachable arm
+/// (step L1.39).
 ///
 /// Complexity tradeoff: a function whose question the solver refuses is rejected, though the
 /// program may be correct; the message is "whether `f` can hold is not decided: <cause>". Why:
@@ -187,7 +254,7 @@ const NON_LINEAR_MENU: [&str; 2] = [
 /// loading the unit of 64 functions there costs 3.5 times its questions, so a scaling test that
 /// times the whole load cannot see a quadratic here (COMPLEXITY.md F85).
 #[doc(hidden)]
-pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
+pub fn linear_questions(text: &str, stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
     use crate::store::{preimage, presburger};
     // The functions of the unit by name and written parameter names, so each overload of a name
     // finds its own definition; overloads alike in both, which differ in types only, are matched
@@ -290,6 +357,46 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
                 }
                 for (can, answer) in [("hold", answers.holds), ("fail", answers.fails)] {
                     if let Err(why) = answer {
+                        let constraints = scoped.written(&r).to_string();
+                        // The menu rewrites the function as written, on one line: its
+                        // parameters the question reads, in written order, and the conditions
+                        // of its value, the body of an equation or the value a block ends
+                        // with, with the text before and after them. O(the function's text)
+                        // per refused question.
+                        let found: std::collections::HashSet<&str> =
+                            presburger::names_in(&constraints).into_iter().collect();
+                        let names: Vec<&str> = (f.params.iter().map(|p| p.name.as_str()))
+                            .filter(|p| found.contains(p))
+                            .collect();
+                        let value = match &f.body.kind {
+                            ast::ExprKind::Block(body) if !f.equation => match body.last() {
+                                Some(Stmt {
+                                    kind: StmtKind::Return(v),
+                                    ..
+                                }) if v.len() == 1 => &v[0],
+                                _ => &f.body,
+                            },
+                            _ => &f.body,
+                        };
+                        let head = one_line(&text[s.span.start..value.span.start]);
+                        let tail = one_line(&text[value.span.end..s.span.end]);
+                        let parts: Vec<String> = (conjuncts(text, value).iter())
+                            .map(|c| one_line(c))
+                            .collect();
+                        let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
+                        let what = format!("`{}`", f.name);
+                        let written = presburger::Written {
+                            what: &what,
+                            head: &head,
+                            tail: &tail,
+                            name: Some(&f.name),
+                            conjuncts: &parts,
+                            names: &names,
+                        };
+                        let repairs = why.repairs(&written).into_iter().map(|text| ast::Note {
+                            span: f.body.span,
+                            text,
+                        });
                         out.push(ast::Error {
                             row: Some(crate::rejection::Row::NonLinearQuestion),
                             span: s.span,
@@ -297,21 +404,12 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
                                 "whether `{}` can {can} is not decided: {why}",
                                 f.name
                             ),
-                            notes: vec![
-                                ast::Note {
-                                    span: f.body.span,
-                                    text: format!("the constraints: {}", scoped.written(&r)),
-                                },
-                                // O(1): two constant lines per refused question.
-                                ast::Note {
-                                    span: f.body.span,
-                                    text: NON_LINEAR_MENU[0].into(),
-                                },
-                                ast::Note {
-                                    span: f.body.span,
-                                    text: NON_LINEAR_MENU[1].into(),
-                                },
-                            ],
+                            notes: std::iter::once(ast::Note {
+                                span: f.body.span,
+                                text: format!("the constraints: {constraints}"),
+                            })
+                            .chain(repairs)
+                            .collect(),
                         });
                     }
                 }

@@ -84,6 +84,16 @@ const WIDER: &str = "warning: the checker knows less here about the values of so
                      than the program's conditions say, so it may reject or warn about code that \
                      is correct; it does not accept code that is wrong";
 
+/// The repair a warning ends with: a value stated for `v`, put before `conditions`, which the
+/// warning calls `what`.
+fn value(v: &str, what: &str, conditions: &str) -> String {
+    format!(
+        "\n  [4] repair: if `{v}` is meant to take only one value in {what}, state that value, and \
+         the checker removes `{v}` from the question: `{v} == 0 && {conditions}`, with the value \
+         in place of `0`"
+    )
+}
+
 /// A test whose integer points the solver does not decide gives the arm it guards one
 /// warning, which names the test's constraints, what was not decided and why, and what the
 /// scope keeps.
@@ -98,7 +108,8 @@ fn a_refused_test_gives_one_warning_at_its_test() {
             "{WIDER}\
              \n  [1] here the conditions `{constraints}` hold\
              \n  [2] the checker could not work out which values each of their variables can take: {GROWTH}\
-             \n  [3] so the conditions do not narrow the values of their variables here"
+             \n  [3] so the conditions do not narrow the values of their variables here{}",
+            value("w", "the conditions", constraints)
         )]
     );
 }
@@ -123,7 +134,8 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
             "{WIDER}\
                  \n  [1] here the test `{test}` is {outcome}\
                  \n  [2] the checker could not work out which values its variables can take when it is {outcome}: {GROWTH}\
-                 \n  [3] so the test does not narrow the values of its variables here"
+                 \n  [3] so the test does not narrow the values of its variables here{}",
+            value("x", "the test", test)
         )
     };
     // Taken true, the helper's constraints also hold in the scope, and their projection is
@@ -136,7 +148,8 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
         "{WIDER}\
          \n  [1] here the conditions `{constraints}` hold\
          \n  [2] the checker could not work out which values each of their variables can take: {GROWTH}\
-         \n  [3] so the conditions do not narrow the values of their variables here"
+         \n  [3] so the conditions do not narrow the values of their variables here{}",
+        value("w", "the conditions", constraints)
     );
     assert_eq!(
         texts(&super::arm(&arms, "g(", true).scope),
@@ -166,7 +179,8 @@ fn a_refused_projection_onto_each_name_gives_one_warning_for_each() {
                 "{WIDER}\
                  \n  [1] here the conditions `{constraints}` hold\
                  \n  [2] the checker could not work out which values `{n}` can take: {GROWTH}\
-                 \n  [3] so the conditions do not narrow the values of that variable here"
+                 \n  [3] so the conditions do not narrow the values of that variable here{}",
+                value("w", "the conditions", constraints)
             )
         })
         .into();
@@ -227,6 +241,31 @@ fn a_scope_with_no_refusal_gives_no_warning() {
     for outcome in [true, false] {
         let s = arm_scope("x + y >= 3 && x - y <= 1 && a - b >= 0", outcome);
         assert!(texts(&s).is_empty(), "{s}");
+    }
+}
+
+/// The repair each warning above ends with, applied to the program's test, ends the warning
+/// on both arms: a value stated for one variable leaves the solver three, which it decides.
+#[test]
+fn following_the_repair_of_each_warning_ends_it() {
+    let g = growth_test(["x", "y", "z", "w"]);
+    let zero = "4 * x - 12 * w - 10 * y - 12 * z >= 0 && 4 * w + 10 * x - 10 * y - 11 * z >= 0 \
+                && 11 * w + 4 * x - y + 12 * z >= 0 && 0 - 8 * w - 5 * x + 12 * y - z >= 0";
+    for test in [g.clone(), zero.to_string()] {
+        assert!(!texts(&arm_scope(&test, true)).is_empty(), "{test}");
+        for outcome in [true, false] {
+            let s = arm_scope(&format!("w == 0 && {test}"), outcome);
+            assert!(texts(&s).is_empty(), "{test}, {outcome}: {s}");
+        }
+    }
+    let src = format!(
+        "g(positional x: int, positional y: int, positional z: int, positional w: int) = {g};\n\
+         ok(x, y, z, w) = if x == 0 && g(x, y, z, w) {{ 1 }} else {{ 0 }};"
+    );
+    let (_, _, arms) = super::arms_of(&src);
+    for outcome in [true, false] {
+        let s = &super::arm(&arms, "g(", outcome).scope;
+        assert!(texts(s).is_empty(), "{outcome}: {s}");
     }
 }
 

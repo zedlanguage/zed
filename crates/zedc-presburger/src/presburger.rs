@@ -170,6 +170,126 @@ fn conditions(rows: &[String]) -> String {
     format!("the condition{s} {}", quoted(rows))
 }
 
+/// Conditions whose question was refused, as the program wrote them: what the repairs of
+/// [`Refusal::repairs`] rewrite. The checker's front end has the program's text and gives a
+/// function's; a scope of the reduced product, built from kernel terms with no text, gives its
+/// conditions as printed.
+pub struct Written<'a> {
+    /// What the conditions belong to, as the repairs name it: `` `ok` ``, `the test`.
+    pub what: &'a str,
+    /// What comes before the conditions: `ok(x, y) = ` for a function, empty for a test.
+    pub head: &'a str,
+    /// What comes after them: `;` for a function, ` }` for one that ends its block with them,
+    /// empty for a test.
+    pub tail: &'a str,
+    /// The function's name, which the split repair renames; `None` for a test.
+    pub name: Option<&'a str>,
+    /// The operands of the conditions' outermost `&&`, in order, as written.
+    pub conjuncts: &'a [&'a str],
+    /// The variables of the conditions a program can fix, in written order.
+    pub names: &'a [&'a str],
+}
+
+/// The words of `text` that name variables, each once, in the order they first occur: a word
+/// not followed by `(`, which calls a function, and not an operator or literal word. O(the
+/// length of `text`).
+pub fn names_in(text: &str) -> Vec<&str> {
+    const WORDS: [&str; 10] = [
+        "mod", "div", "true", "false", "not", "in", "is", "as", "else", "with",
+    ];
+    let b = text.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut out: Vec<&str> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut i = 0;
+    while i < b.len() {
+        if ident(b[i]) && (i == 0 || !ident(b[i - 1])) {
+            let start = i;
+            while i < b.len() && ident(b[i]) {
+                i += 1;
+            }
+            let w = &text[start..i];
+            let call = text[i..].trim_start().starts_with('(');
+            if !b[start].is_ascii_digit() && !call && !WORDS.contains(&w) && seen.insert(w) {
+                out.push(w);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+impl Refusal {
+    /// The repairs of this refusal, each `repair: ` and the program's conditions `w` rewritten,
+    /// checkable first: a value stated for one variable, an order stated between two variables
+    /// the refusal found alike, and the conditions split between two functions. Each ended the
+    /// refusal of its kind in `l01_38_presburger::checker`; a repair the data does not support
+    /// (an order with fewer than two alike variables the program wrote, a split of one
+    /// condition) is left out. A law with a proof would end each too, from step L15 on, and is
+    /// not offered before it.
+    pub fn repairs(&self, w: &Written<'_>) -> Vec<String> {
+        let what = w.what;
+        let body = w.conjuncts.join(" && ");
+        let names: HashSet<&str> = w.names.iter().copied().collect();
+        let tied: Vec<&str> = match self {
+            Refusal::Tie(t) | Refusal::Unordered(t) => t
+                .vars
+                .iter()
+                .map(String::as_str)
+                .filter(|v| names.contains(v))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut out = Vec::new();
+        if let Some(v) = tied.first().or(w.names.first()) {
+            out.push(format!(
+                "repair: if `{v}` is meant to take only one value in {what}, state that value, and \
+                 the checker removes `{v}` from the question: `{}{v} == 0 && {body}{}`, with the \
+                 value in place of `0`",
+                w.head, w.tail
+            ));
+        }
+        if let [a, b, ..] = tied[..] {
+            out.push(format!(
+                "repair: if `{a} <= {b}` is meant to hold in {what}, state it, and the checker \
+                 can tell `{a}` and `{b}` apart: `{}{a} <= {b} && {body}{}`",
+                w.head, w.tail
+            ));
+        }
+        if let (Some(f), true) = (w.name, w.conjuncts.len() >= 2) {
+            // Alike variables go to separate functions, which ends their tie; with none, the
+            // conditions are halved.
+            let (first, second): (Vec<&str>, Vec<&str>) = match tied[..] {
+                [a, b, ..] => w.conjuncts.iter().partition(|c| {
+                    let n = names_in(c);
+                    n.contains(&a) && !n.contains(&b)
+                }),
+                _ => {
+                    let (x, y) = w.conjuncts.split_at(w.conjuncts.len().div_ceil(2));
+                    (x.to_vec(), y.to_vec())
+                }
+            };
+            if !first.is_empty() && !second.is_empty() {
+                let head = |k: u8| w.head.replacen(f, &format!("{f}{k}"), 1);
+                out.push(format!(
+                    "repair: split the conditions between two functions, `{f}1` and `{f}2`, \
+                     and where `{f}` is called, call `{f}1(…) && {f}2(…)` with the same \
+                     arguments; each asks a smaller question, and a function whose body joins \
+                     them asks the joined question again: `{}{}{}` and `{}{}{}`",
+                    head(1),
+                    first.join(" && "),
+                    w.tail,
+                    head(2),
+                    second.join(" && "),
+                    w.tail
+                ));
+            }
+        }
+        out
+    }
+}
+
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

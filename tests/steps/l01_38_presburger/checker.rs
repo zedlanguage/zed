@@ -28,22 +28,53 @@ fn rejection(name: &str, src: &str) -> String {
         .join("\n")
 }
 
-/// The menu a refused question prints at L1, numbered after its one note of constraints, both
-/// placed at the body that begins at column 18 of line 1 (that of `ok(x, y, z, w) = `): the
-/// repairs an L1 program can follow (DESIGN.md sec:diagnostics, row "Linear question outside the
-/// polynomial fragment").
-const MENU: &str = "[2] 1:18: repair: state an equality on one of the names, as `x == 4 && …`, \
-                    so the solver removes that name from the question\n  \
-                    [3] 1:18: repair: split the question into functions of fewer constraints \
-                    each, and join their results where they are called; a function whose body \
-                    joins them asks the joined question again";
+/// A printed refusal without its menu: the cause and the constraints, which a question asked
+/// through a call shares with the question written out, while the menu rewrites each function
+/// as it is written.
+fn stated(printed: &str) -> String {
+    (printed.lines())
+        .filter(|l| !l.contains(": repair: "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
-/// A refused `ok` over `x, y, z, w`, and, for each repair of the menu, `ok` repaired by it: an
-/// equality joined to the body, and the rows split into `first` and `second` joined at the call.
+/// The repairs of a printed refusal's menu, each after `repair: `.
+fn repairs(printed: &str) -> Vec<&str> {
+    (printed.lines())
+        .filter_map(|l| l.split_once(": repair: ").map(|(_, r)| r))
+        .collect()
+}
+
+/// The definitions a repair writes out: its code spans that define `ok`, `ok1` or `ok2` whole,
+/// up to the `;` or `}` that ends them.
+fn definitions(repair: &str) -> Vec<&str> {
+    (repair.split('`').skip(1).step_by(2))
+        .filter(|c| {
+            let rest = c.strip_prefix("ok").unwrap_or("");
+            let rest = rest.trim_start_matches(|d: char| d.is_ascii_digit());
+            rest.starts_with("(x") && (c.ends_with(';') || c.ends_with('}'))
+        })
+        .collect()
+}
+
+/// The program [`program`] gives at `args` once `repair` is followed as it says: a
+/// definition of `ok` in place of `ok`'s, or two definitions `ok1` and `ok2` whose results
+/// are joined where `ok` was called.
+fn repaired(repair: &str, args: &str) -> String {
+    match definitions(repair)[..] {
+        [d] => program(d, args),
+        [d1, d2] => program_testing(
+            &format!("{d1}\n{d2}"),
+            &format!("ok1({args}) && ok2({args})"),
+        ),
+        _ => panic!("a repair with no definitions to follow: {repair}"),
+    }
+}
+
+/// A refused `ok` over `x, y, z, w`, its conditions in two parts.
 struct Refused {
     name: &'static str,
     rows: [&'static str; 2],
-    equality: &'static str,
 }
 
 const REFUSED: [Refused; 3] = [
@@ -55,7 +86,6 @@ const REFUSED: [Refused; 3] = [
              >= 0",
             "11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y - z + 31 >= 0",
         ],
-        equality: "x == 4",
     },
     // Shadows: a point could lie only in a splinter that would be split again with as many
     // variables left.
@@ -66,7 +96,6 @@ const REFUSED: [Refused; 3] = [
              y - 2 * z + 8 * w - 1 >= 0",
             "-9 * x + 8 * y + 7 * z >= 0 && -10 * x + 4 * y - 6 * z - 4 * w + 22 >= 0",
         ],
-        equality: "w == 1",
     },
     // Tie: the cycle `3 * next - this >= 10`, whose four names occur alike and share rows.
     Refused {
@@ -75,9 +104,39 @@ const REFUSED: [Refused; 3] = [
             "3 * y - x - 10 >= 0 && 3 * z - y - 10 >= 0",
             "3 * w - z - 10 >= 0 && 3 * x - w - 10 >= 0",
         ],
-        equality: "x == 5",
     },
 ];
+
+/// The menu a refused `ok(x, y, z, w)` with conditions `body` prints at L1, numbered after its
+/// note of constraints and placed, as that note is, at the body, which begins at column 18 of
+/// line 1: a value stated for `v`, the order `a <= b` when one is given, and the conditions
+/// split into `split` (DESIGN.md sec:diagnostics, row "Linear question outside the polynomial
+/// fragment").
+fn menu(v: &str, order: Option<(&str, &str)>, body: &str, split: [&str; 2]) -> String {
+    const HEAD: &str = "ok(x, y, z, w) = ";
+    let mut lines = vec![format!(
+        "repair: if `{v}` is meant to take only one value in `ok`, state that value, and the \
+         checker removes `{v}` from the question: `{HEAD}{v} == 0 && {body};`, with the value in \
+         place of `0`"
+    )];
+    if let Some((a, b)) = order {
+        lines.push(format!(
+            "repair: if `{a} <= {b}` is meant to hold in `ok`, state it, and the checker can tell \
+             `{a}` and `{b}` apart: `{HEAD}{a} <= {b} && {body};`"
+        ));
+    }
+    lines.push(format!(
+        "repair: split the conditions between two functions, `ok1` and `ok2`, and where `ok` \
+         is called, call `ok1(…) && ok2(…)` with the same arguments; each asks a smaller \
+         question, and a function whose body joins them asks the joined question again: \
+         `ok1(x, y, z, w) = {};` and `ok2(x, y, z, w) = {};`",
+        split[0], split[1]
+    ));
+    (lines.iter().enumerate())
+        .map(|(i, l)| format!("[{}] 1:18: {l}", i + 2))
+        .collect::<Vec<_>>()
+        .join("\n  ")
+}
 
 /// A program like [`program`]'s whose `main` tests `test` in place of a call of `ok`.
 fn program_testing(defs: &str, test: &str) -> String {
@@ -87,104 +146,123 @@ fn program_testing(defs: &str, test: &str) -> String {
     )
 }
 
+/// A refused question of each kind, at L1: the cause's opening words, the menu's repairs in
+/// order (stating a value; for two variables alike, stating their order; splitting the
+/// conditions), and, followed as it is printed, each repair makes the program check and run.
 #[test]
 fn following_each_repair_of_the_menu_makes_the_program_check() {
-    const ARGS: &str = "x: a, y: a, z: a, w: a";
-    for r in &REFUSED {
-        let [first, second] = r.rows;
-        let refused = program(&format!("ok(x, y, z, w) = {first} && {second};"), ARGS);
-        let printed = rejection(r.name, &refused);
-        assert!(printed.ends_with(MENU), "{}: {printed}", r.name);
-        // The question with a name fixed by an equality is decided; each run prints whether
-        // `ok` held at the input, which the equality decides with the rows.
-        let equality = program(
-            &format!("ok(x, y, z, w) = {} && {first} && {second};", r.equality),
-            ARGS,
-        );
-        let split = program_testing(
-            &format!("first(x, y, z, w) = {first};\nsecond(x, y, z, w) = {second};"),
-            &format!("first({ARGS}) && second({ARGS})"),
-        );
-        for (repair, src) in [("equality", &equality), ("split", &split)] {
-            for input in ["3\n", "5\n"] {
-                let o = run(r.name, src, input, &[]);
-                assert_eq!(
-                    (o.status, o.stderr.as_str()),
-                    (0, ""),
-                    "{} {repair} {input}",
-                    r.name
-                );
-                // At x = y = z = w = 5 the cycle holds (3 * 5 - 5 = 10); every other case holds
-                // at no point x = y = z = w.
-                let held = r.name == "tie" && input == "5\n";
-                assert_eq!(
-                    o.stdout,
-                    if held { "in\n" } else { "out\n" },
-                    "{} {repair} {input}",
-                    r.name
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn a_refused_question_over_disjunctions_prints_the_menu_and_an_equality_repairs_it() {
-    // (name, parameters, rows, the cause's opening words, the equality, the arguments, and
-    // whether `ok` holds at inputs 1 and 3 once repaired).
+    const GROWTH: &str = "to find whole numbers that meet these conditions, the checker \
+                          removes one variable at a time, putting in place of the conditions \
+                          on it conditions on the variables left. Here four variables or more";
+    const SHADOWS: &str = "to find whole numbers that meet these conditions, the checker \
+                           removes one variable at a time, putting in place of the conditions \
+                           on it conditions on the variables left. Where the values";
+    const TIE: &str = "to find whole numbers that meet these conditions, the checker removes \
+                       one variable at a time, putting in place of the conditions on it \
+                       conditions on the variables left. Its next step must choose among";
+    const ALTERNATIVES: &str = "the conditions hold alternatives, where one of several cases \
+                                is enough (from `||`, from `!=`, which holds when either side \
+                                is the larger, or from a negated `&&`), and the checker looks \
+                                for a choice of one case from each alternative that can hold \
+                                with the rest";
+    // (name, parameters, the definition of `ok`, the cause's opening words, whether `ok` holds
+    // at input 0 and at input 5, the variables of the order repair if it is offered).
+    let both = |r: &Refused| format!("ok(x, y, z, w) = {} && {};", r.rows[0], r.rows[1]);
     let cases = [
+        ("growth", "x, y, z, w", both(&REFUSED[0]), GROWTH.to_string(), ["out\n", "out\n"], None),
+        ("shadows", "x, y, z, w", both(&REFUSED[1]), SHADOWS.to_string(), ["out\n", "out\n"], None),
+        // At x = y = z = w = 5 the cycle holds (3 * 5 - 5 = 10).
+        ("tie", "x, y, z, w", both(&REFUSED[2]), TIE.to_string(), ["out\n", "in\n"], Some(("w", "x"))),
         // Four names in 0..=2 that differ pairwise: no point, which the search through the
         // disjunctions of `!=` does not settle.
         (
             "disjuncts",
             "x, y, z, w",
-            "0 <= x && x <= 2 && 0 <= y && y <= 2 && 0 <= z && z <= 2 && 0 <= w && w <= 2 && x \
-             != y && x != z && y != z && x != w && y != w && z != w",
-            "the conditions hold alternatives, where one of several cases is enough (from \
-             `||`, from `!=`, which holds when either side is the larger, or from a negated \
-             `&&`), and the checker looks for a choice of one case from each alternative that \
-             can hold with the rest; no choice it tried has values",
-            "x == 0",
-            "x: a, y: a, z: a, w: a",
+            "ok(x, y, z, w) = 0 <= x && x <= 2 && 0 <= y && y <= 2 && 0 <= z && z <= 2 && 0 <= w \
+             && w <= 2 && x != y && x != z && y != z && x != w && y != w && z != w;"
+                .to_string(),
+            format!("{ALTERNATIVES}; no choice it tried has values"),
             ["out\n", "out\n"],
+            None,
         ),
         // Two shifts in 0..=9, each early or late, with a total of at most 10: `x` and `y`
-        // occur alike, so the search through the disjunctions would go in an order chosen by
-        // name (`l01_38_presburger::names`, the shifts with `x + y <= 10`).
+        // occur alike, so only their names could order the search
+        // (`l01_38_presburger::names`, the shifts with `x + y <= 10`).
         (
             "unordered",
             "x, y",
-            "0 <= x && x <= 9 && 0 <= y && y <= 9 && x + y <= 10 && (x <= 2 || x >= 7) && (y \
-             <= 2 || y >= 7)",
-            "the conditions hold alternatives, where one of several cases is enough (from \
-             `||`, from `!=`, which holds when either side is the larger, or from a negated \
-             `&&`), and the checker looks for a choice of one case from each alternative that \
-             can hold with the rest. After every case that cannot hold is removed, the \
-             alternative",
-            "x == 1",
-            "x: a, y: a",
+            "ok(x, y) = 0 <= x && x <= 9 && 0 <= y && y <= 9 && x + y <= 10 && (x <= 2 || x >= \
+             7) && (y <= 2 || y >= 7);"
+                .to_string(),
+            format!("{ALTERNATIVES}. After every case that cannot hold is removed"),
             ["in\n", "out\n"],
+            Some(("x", "y")),
+        ),
+        // The tie in a block that names a part of a condition and returns the conditions: the
+        // repairs rewrite the value it returns and keep the rest of the block.
+        (
+            "tie-block",
+            "x, y, z, w",
+            "ok(x, y, z, w) {\n  t = 3 * y - x - 10;\n  return t >= 0 && 3 * z - y - 10 >= 0 && 3 * w \
+             - z - 10 >= 0 && 3 * x - w - 10 >= 0;\n}"
+                .to_string(),
+            TIE.to_string(),
+            ["out\n", "in\n"],
+            Some(("w", "x")),
         ),
     ];
-    for (name, params, rows, cause, equality, args, outs) in cases {
-        let printed = rejection(name, &program(&format!("ok({params}) = {rows};"), args));
+    for (name, params, def, cause, outs, order) in cases {
+        let args: Vec<String> = params.split(", ").map(|p| format!("{p}: a")).collect();
+        let args = args.join(", ");
+        let printed = rejection(name, &program(&def, &args));
         assert!(
             printed.starts_with(&format!(
                 "1:1: whether `ok` can hold is not decided: {cause}"
             )),
             "{printed}"
         );
-        // The body begins after `ok(`, the parameters and `) = `.
-        let menu = MENU.replace("1:18", &format!("1:{}", params.len() + 8));
-        assert!(printed.ends_with(&menu), "{printed}");
-        let repaired = program(&format!("ok({params}) = {equality} && {rows};"), args);
-        for (input, out) in ["1\n", "3\n"].into_iter().zip(outs) {
-            let o = run(name, &repaired, input, &[]);
-            assert_eq!(
-                (o.status, o.stdout.as_str(), o.stderr.as_str()),
-                (0, out, ""),
-                "{name} {input}"
+        let menu = repairs(&printed);
+        let first = menu[0];
+        assert!(
+            first.starts_with("if `")
+                && first.contains("` is meant to take only one value in `ok`"),
+            "{name}: {first}"
+        );
+        let mut want = vec![first];
+        if let Some((a, b)) = order {
+            want.push(menu[1]);
+            assert!(
+                menu[1].starts_with(&format!(
+                    "if `{a} <= {b}` is meant to hold in `ok`, state it"
+                )),
+                "{name}: {}",
+                menu[1]
             );
+        }
+        let split = menu[want.len()];
+        assert!(
+            split.starts_with("split the conditions between two functions, `ok1` and `ok2`"),
+            "{name}: {split}"
+        );
+        want.push(split);
+        assert_eq!(menu, want, "{name}");
+        // Each repair, followed as printed, makes the question decided, and `ok` then holds
+        // where it held before, but for the stated value, `0`, which input 5 does not meet.
+        for (k, repair) in menu.iter().enumerate() {
+            let src = repaired(repair, &args);
+            for (input, out) in ["0\n", "5\n"].into_iter().zip(outs) {
+                let o = run(&format!("{name}-{k}"), &src, input, &[]);
+                let out = if k == 0 && input == "5\n" {
+                    "out\n"
+                } else {
+                    out
+                };
+                assert_eq!(
+                    (o.status, o.stdout.as_str(), o.stderr.as_str()),
+                    (0, out, ""),
+                    "{name} repair {k} at {input}{src}"
+                );
+            }
         }
     }
 }
@@ -251,7 +329,8 @@ fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
              values found and none ruled out\n  \
              [1] 1:18: the constraints: 12 * w + 10 * y + 12 * z <= 4 * x + 11 && 4 * w + 10 * \
              x >= 10 * y + 11 * z + 28 && 11 * w + 4 * x + 12 * z >= y + 28 && 8 * w + 5 * x + \
-             z <= 12 * y + 31\n  {MENU}"
+             z <= 12 * y + 31\n  {}",
+            menu("x", None, &REFUSED[0].rows.join(" && "), REFUSED[0].rows)
         )
     );
 }
@@ -281,7 +360,16 @@ fn a_refused_question_names_the_parameters_as_written_when_other_functions_share
              lets a name change an answer. The checker stopped there, with no values found and \
              none ruled out\n  \
              [1] 1:18: the constraints: x <= 3 * y - 10 && y <= 3 * z - 10 && 3 * w >= z + 10 \
-             && w <= 3 * x - 10\n  {MENU}"
+             && w <= 3 * x - 10\n  {}",
+            menu(
+                "w",
+                Some(("w", "x")),
+                &format!("{first} && {second}"),
+                [
+                    "3 * w - z - 10 >= 0",
+                    "3 * y - x - 10 >= 0 && 3 * z - y - 10 >= 0 && 3 * x - w - 10 >= 0"
+                ]
+            )
         )
     );
 }
@@ -306,7 +394,8 @@ fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
              there, with no values found and none ruled out\n  \
              [1] 1:18: the constraints: 8 * w + 4 * y <= 9 * x - 3 && 9 * w + 5 * x + 11 * y >= \
              9 && 8 * w >= 7 * x + 12 * y + 2 * z + 1 && 9 * x <= 8 * y + 7 * z && 4 * w + 10 * \
-             x + 6 * z <= 4 * y + 22\n  {MENU}"
+             x + 6 * z <= 4 * y + 22\n  {}",
+            menu("x", None, &REFUSED[1].rows.join(" && "), REFUSED[1].rows)
         )
     );
 }
@@ -363,12 +452,12 @@ fn the_linear_questions_of_a_unit_scale() {
         .map(|m| {
             let src = unit(m);
             let program = zedc::run::load(src.as_bytes()).unwrap();
-            (m, (zed_tests::deep::statements(&src), program))
+            (m, (zed_tests::deep::statements(&src), program, src))
         })
         .collect();
     zed_tests::scaling::check("the linear questions of a unit", 64, |m| {
-        let (stmts, program) = &units[&m];
-        let refused = zedc::front::linear_questions(stmts, program.unit());
+        let (stmts, program, src) = &units[&m];
+        let refused = zedc::front::linear_questions(src, stmts, program.unit());
         assert!(refused.is_empty(), "{refused:?}");
     });
 }
@@ -441,12 +530,12 @@ fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints
             }
             continue;
         }
-        let called = rejection(&format!("{}-called", r.name), &called)
+        let called = stated(&rejection(&format!("{}-called", r.name), &called))
             .replace("2:1: ", "1:1: ")
             .replace("2:18: ", "1:18: ");
         assert_eq!(
             called,
-            rejection(&format!("{}-written", r.name), &written),
+            stated(&rejection(&format!("{}-written", r.name), &written)),
             "{}",
             r.name
         );
@@ -489,10 +578,11 @@ fn a_question_read_in_its_callees_coordinates_is_answered_and_printed_over_its_o
         .into_iter()
         .enumerate()
     {
-        let call = format!(
-            "ok(a, b, c, d) = tie(x: {}, y: {}, z: {}, w: {});",
+        let call_body = format!(
+            "tie(x: {}, y: {}, z: {}, w: {})",
             args[0], args[1], args[2], args[3]
         );
+        let call = format!("ok(a, b, c, d) = {call_body};");
         let alone = format!(
             "ok(a, b, c, d) = {} && {};",
             substituted(first, args),
@@ -506,8 +596,42 @@ fn a_question_read_in_its_callees_coordinates_is_answered_and_printed_over_its_o
             &format!("coordinates-alone-{i}"),
             &program(&format!("{tie}\n{alone}"), "a: a, b: a, c: a, d: a"),
         );
-        assert_eq!(through, expected, "{call}");
+        assert_eq!(stated(&through), stated(&expected), "{call}");
         assert!(through.contains("whether `tie` can hold"), "{through}");
+        // Passed the parameters unchanged, `ok` asks `tie`'s question and is refused too; its
+        // menu rewrites the call as written, and each repair ends `ok`'s refusal. Shifted,
+        // the names no longer occur alike, and `ok`'s question is decided.
+        let Some(at) = through.find("whether `ok` can hold") else {
+            assert_eq!(i, 1, "{through}");
+            continue;
+        };
+        let of_ok = &through[at..];
+        let menu = repairs(of_ok);
+        assert_eq!(menu.len(), 2, "{of_ok}");
+        for r in menu {
+            let def = (r.split('`').skip(1).step_by(2))
+                .find(|c| {
+                    c.starts_with("ok(a, b, c, d) = ") && c.ends_with(&format!("{call_body};"))
+                })
+                .unwrap_or_else(|| panic!("no rewritten call in {r}"));
+            let o = run(
+                &format!("coordinates-repaired-{i}"),
+                &program(&format!("{tie}\n{def}"), "a: a, b: a, c: a, d: a"),
+                "3\n",
+                &[],
+            );
+            // `tie` itself is still refused, which shows the program reached the checker.
+            assert!(
+                o.stderr.contains("whether `tie` can hold"),
+                "{def}: {}",
+                o.stderr
+            );
+            assert!(
+                !o.stderr.contains("whether `ok` can hold"),
+                "{def}: {}",
+                o.stderr
+            );
+        }
     }
 }
 
@@ -554,14 +678,14 @@ fn a_question_refused_through_a_call_by_a_map_of_its_parameters_names_its_parame
                 continue;
             }
             refused += 1;
-            let called = rejection(&format!("{}-map-{i}-called", r.name), &called)
+            let called = stated(&rejection(&format!("{}-map-{i}-called", r.name), &called))
                 .replace("2:1: ", "1:1: ")
                 .replace("2:18: ", "1:18: ");
             assert!(called.contains("whether `ok` can hold"), "{called}");
             assert!(!called.contains(['#', '@']), "{called}");
             assert_eq!(
                 called,
-                rejection(&format!("{}-map-{i}-written", r.name), &written),
+                stated(&rejection(&format!("{}-map-{i}-written", r.name), &written)),
                 "{} at {x}",
                 r.name
             );

@@ -1174,8 +1174,23 @@ impl fmt::Display for Warning {
     }
 }
 
+/// Whether `text` has `||` outside every parenthesis, O(its length).
+fn or_outside_parentheses(text: &str) -> bool {
+    let mut depth = 0usize;
+    let b = text.as_bytes();
+    for (i, &c) in b.iter().enumerate() {
+        match c {
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            b'|' if depth == 0 && b.get(i + 1) == Some(&b'|') => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 impl Refused {
-    /// The warning that reports this refusal, with its derivation.
+    /// The warning that reports this refusal, with its derivation and its repairs.
     fn warning(&self) -> Warning {
         let c = &self.constraint;
         let cause = match &self.cause {
@@ -1231,12 +1246,37 @@ impl Refused {
                 "so the conditions do not narrow the values of that variable here",
             ),
         };
+        // The repairs rewrite the test or the conditions as printed: a scope is built from
+        // kernel terms and has no program text (the front end, which has it, rewrites a
+        // refused function as written). A printed `||` outside parentheses is grouped, so the
+        // stated value joins all of it.
+        let names = presburger::names_in(c);
+        let joined = if or_outside_parentheses(c) {
+            format!("({c})")
+        } else {
+            c.to_string()
+        };
+        let what = match self.asked {
+            Asked::Test { .. } => "the test",
+            _ => "the conditions",
+        };
+        let repairs = cause.repairs(&presburger::Written {
+            what,
+            head: "",
+            tail: "",
+            name: None,
+            conjuncts: &[joined.as_str()],
+            names: &names,
+        });
         Warning {
             message: "the checker knows less here about the values of some variables than \
                       the program's conditions say, so it may reject or warn about code that \
                       is correct; it does not accept code that is wrong"
                 .to_string(),
-            steps: vec![given, asked, kept.to_string()],
+            steps: [given, asked, kept.to_string()]
+                .into_iter()
+                .chain(repairs)
+                .collect(),
         }
     }
 }
