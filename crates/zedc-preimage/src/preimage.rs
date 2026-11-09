@@ -13089,8 +13089,14 @@ mod tests {
         (changed, decided, differ)
     }
 
-    /// The formulas and preimages of part `part` ([`PARTS`]) of 4,000 random programs whose
-    /// `&&` and `||` are each written half the time as the elaborator writes them, with
+    /// The number of tests [`or_ifs_hold_where_they_held_as_ifs`] is split into, twice
+    /// [`PARTS`]: its rounds cost several times those of the other families, most of it the
+    /// comparison of formulas at 169 points ([`same_points`]), and in eight parts each took 28
+    /// to 36 s at a load average of 16 to 40 on 32 cores (TEST-preimage-split, 2026-11-09).
+    const OR_IF_PARTS: usize = 16;
+
+    /// The formulas and preimages of part `part` ([`OR_IF_PARTS`]) of 4,000 random programs
+    /// whose `&&` and `||` are each written half the time as the elaborator writes them, with
     /// `if g { true } else { b }` read as `g || b` and as before [`Walk::or_if`], when it was
     /// read as any other `if`: [`holds_where_it_held_as_ifs`].
     fn or_ifs_hold_where_they_held_as_ifs(part: usize) {
@@ -13099,7 +13105,7 @@ mod tests {
         g.or_ifs = true;
         let (mut changed, mut decided, mut refused) = (0, 0, 0);
         let mut differ = std::collections::BTreeMap::<&str, usize>::new();
-        let only = part * 4000 / PARTS..(part + 1) * 4000 / PARTS;
+        let only = part * 4000 / OR_IF_PARTS..(part + 1) * 4000 / OR_IF_PARTS;
         for round in 0..only.end {
             let t = program(&mut g);
             if round < only.start {
@@ -13115,11 +13121,12 @@ mod tests {
             }
         }
         eprintln!("changed {changed}, decided {decided}, refused {refused}, preimages {differ:?}");
-        // Each part's 500 rounds have formulas that changed, and the solver decides nearly
-        // every comparison. Over the eight parts, about 1,000 pairs of preimages, the new
-        // shape gave 3 tighter domains and 1 looser, 2 fewer refusals and 1 more, and 1
-        // preimage exact that was not.
-        assert!(changed > 50, "changed {changed}");
+        // Each part's 250 rounds have formulas that changed (one in ten at least, as when the
+        // parts had 500 rounds and at least 50), and the solver decides nearly every
+        // comparison. Over all parts, about 1,000 pairs of preimages, the new shape gave 3
+        // tighter domains and 1 looser, 2 fewer refusals and 1 more, and 1 preimage exact that
+        // was not.
+        assert!(changed * 10 > only.len(), "changed {changed}");
         assert!(
             refused * 50 < decided,
             "decided {decided}, refused {refused}"
@@ -13164,6 +13171,46 @@ mod tests {
     #[test]
     fn or_ifs_hold_where_they_held_as_ifs_8() {
         or_ifs_hold_where_they_held_as_ifs(7);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_9() {
+        or_ifs_hold_where_they_held_as_ifs(8);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_10() {
+        or_ifs_hold_where_they_held_as_ifs(9);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_11() {
+        or_ifs_hold_where_they_held_as_ifs(10);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_12() {
+        or_ifs_hold_where_they_held_as_ifs(11);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_13() {
+        or_ifs_hold_where_they_held_as_ifs(12);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_14() {
+        or_ifs_hold_where_they_held_as_ifs(13);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_15() {
+        or_ifs_hold_where_they_held_as_ifs(14);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_16() {
+        or_ifs_hold_where_they_held_as_ifs(15);
     }
 
     /// Chains of `||` written as `if`s that test one name again, hold one `if` in two places,
