@@ -120,12 +120,16 @@ fn f64_bits_is_the_ieee_754_encoding() {
     let mut rng = Rng::new(64);
     for _ in 0..10_000 {
         let f = f64::from_bits(rng.next_u64());
-        if f.is_nan() {
-            continue;
-        }
+        // A NaN encodes as the canonical NaN, quiet with cleared sign and zero payload
+        // (DESIGN.md step L1.39a and sec:reduction); nan.rs tests every route to one.
+        let bits = if f.is_nan() {
+            0x7FF8_0000_0000_0000
+        } else {
+            f.to_bits()
+        };
         assert_eq!(
             run(Prim::F64Bits, &[Value::float(f)]),
-            v(u128::from(f.to_bits())),
+            v(u128::from(bits)),
             "{f}"
         );
     }

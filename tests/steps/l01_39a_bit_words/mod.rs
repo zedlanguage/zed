@@ -8,6 +8,9 @@ mod deep;
 mod errors;
 mod generic;
 mod kept_ends;
+// Runs executables built with the system C compiler driver, as step L1.36a does.
+#[cfg(target_os = "linux")]
+mod nan;
 mod narrowing;
 mod reference;
 mod scaling;
