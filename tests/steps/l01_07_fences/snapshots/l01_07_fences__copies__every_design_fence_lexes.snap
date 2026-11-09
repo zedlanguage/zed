@@ -132,20 +132,23 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  10 | | #assume ( why : Utf8String ) ;
 == DESIGN.md [sec:checking_in_zed] 1 L12
   1 | «type» Parity = #even | #odd | #either ;
-  2 | parity = Facet (
-  3 | kind : #evidence ,
-  4 | lattice : flat ( [ #even , #odd ] , top : #either ) ,
-  5 | holds : ( p , x : int ) -> «match» p { #even -> x «mod» 2₍10₎ == 0₍10₎ , #odd -> x «mod» 2₍10₎ == 1₍10₎ , #either -> «true» } ,
-  6 | transfer : ( op , a , b ) -> «match» op {
-  7 | #add -> «if» a == #either || b == #either { #either } «else» «if» a == b { #even } «else» { #odd } ,
-  8 | #mul -> «if» a == #even || b == #even { #even } «else» «if» a == #odd && b == #odd { #odd } «else» { #either } ,
-  9 | _ -> #either ,
- 10 | } ,
- 11 | ) ;
- 13 | half ( «positional» x : int «with» parity ( #even ) ) = x «div» 2₍10₎ ;
- 14 | g ( n : int «with» parity ( #odd ) ) = half ( n + n ) ;
- 15 | h ( n : int «with» parity ( #odd ) , m : int «with» parity ( #even ) ) = half ( n * m ) ;
- 16 | seven = 7₍10₎ «with» parity ( #odd ) ;
+  2 | parityHolds ( «positional» p : Parity , «positional» x : int ) -> bool =
+  3 | «match» p { #even -> x «mod» 2₍10₎ == 0₍10₎ , #odd -> x «mod» 2₍10₎ == 1₍10₎ , #either -> «true» } ;
+  4 | parityTransfer ( «positional» op , «positional» a : Parity , «positional» b : Parity ) -> Parity = «match» op {
+  5 | #add -> «if» a == #either || b == #either { #either } «else» «if» a == b { #even } «else» { #odd } ,
+  6 | #mul -> «if» a == #even || b == #even { #even } «else» «if» a == #odd && b == #odd { #odd } «else» { #either } ,
+  7 | _ -> #either ,
+  8 | } ;
+  9 | parity = Facet (
+ 10 | kind : #evidence ,
+ 11 | lattice : flat ( [ #even , #odd ] , top : #either ) ,
+ 12 | holds : parityHolds ,
+ 13 | transfer : parityTransfer ,
+ 14 | ) ;
+ 16 | half ( «positional» x : int «with» parity ( #even ) ) = x «div» 2₍10₎ ;
+ 17 | g ( n : int «with» parity ( #odd ) ) = half ( n + n ) ;
+ 18 | h ( n : int «with» parity ( #odd ) , m : int «with» parity ( #even ) ) = half ( n * m ) ;
+ 19 | seven = 7₍10₎ «with» parity ( #odd ) ;
 == DESIGN.md [sec:theories] 1 L22
   1 | «interface» Semigroup ( T ) {
   2 | mul : ( T , T ) -> T ,
