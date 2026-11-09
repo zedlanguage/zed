@@ -3933,6 +3933,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // still replaced at every depth, O(size of `sig`) at each level that binds one, so n
         // nested lambdas that each bind such a class would cost n^2 (no such family measured);
         // reading it lazily needs each reading site to follow class-to-class links too.
+        // Naive version, the one used for these classes: replaced at every depth, O(size of
+        // `sig`) per level; read lazily, replaced once, O(size of `sig`) in all (inferred).
         let mut deep = Binds::new();
         let mut outside = Binds::new();
         for k in done {

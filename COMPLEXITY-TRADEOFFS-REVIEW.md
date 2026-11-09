@@ -356,3 +356,24 @@ Observation, not changed (outside a comment-only item): in `group_oracle.rs` the
 | `revision.rs:488` | 007abbf8 | reference: `pow_end` | | root exact or bounded | complete (reference) | none |
 | `revision.rs:503` | 9e139638 | reference: `pow_end` | | | complete (reference) | none |
 | `revision.rs:538` `pow_end` | 9e139638 | kept-exponent atom, comparisons not specified; expansion squares terms 32 times | bound `2 ^ u32::MAX` or infinite, O(1) | end not exact | complete | none |
+
+## crates/zedc-check
+
+14 sites. Line numbers are those before the edits.
+
+| Site | Commit | Naive version, complexity | Used version, complexity | Tradeoffs | Before | Action |
+|---|---|---|---|---|---|---|
+| `arms.rs:20` (module) | 308f2f4e | structural comparison of subterms, O(size) per pair; hash-consing O(1) expected per node (inferred) | one pass per root, memoized by span, O(1) per node | equal calls are different atoms | partial | added naive/used sentence (`//!`) |
+| `mod.rs:1567` (`loose` vs empty) | ebbfd948 | `is_empty`, O(n) per lookup, O(n²) per chain | digest order, O(1) | unreduced empty payloads count as atoms | complete | none |
+| `mod.rs:2377` (settled message type) | a934e9cf | memo across messages | O(size of the type) per message | same order as printing | complete | none |
+| `mod.rs:4188` (decimal repair) | f45ecae1 | read as `rat`, O(n^1.47) | typed `rat`, O(n) | repairs needing the value not offered | complete | none |
+| `mod.rs:5260` (`Known` from text) | 308f2f4e | store fixpoint per call | O(1) per node | parameters read as any int | complete | none |
+| `mod.rs:5313` (`codePoint`) | 8d24cbde | each body per call site; memo linear | O(1) per node | results through functions read as any int | complete | none |
+| `mod.rs:5499` (handled atoms) | 55045d49 | own walk per binder, O(B + R + E) unions each (inferred) | Tarjan, O(B + R + E) unions | union cost grows with distinct atoms | partial | added naive/used sentence |
+| `mod.rs:6061` (explicit stack) | 81f3d848 | recursive, 52.8 G instructions | 54.1 G, same order | +2.6% | complete | none |
+| `mod.rs:6401` (joined tuple shapes) | bb07f93b | union of shapes, O(n²), 53.4 times | joined, linear | which components went together | complete | none |
+| `walk.rs:3072` (`lists_nothing`) | 3dae154f | kernel search, up to the type's size per test | O(1) | types empty by search stay reachable | complete | none |
+| `walk.rs:3216` (`Scope::reaches`) | 142c3aa0 | every arm asked, 19.8 times | arms that add a type, 16.6 times bytes per 8 times size | `Never` missed in one case; NARROW-negated-star | complete | none |
+| `walk.rs:3623` (lazy stars) | 961b304c | `k²` projections | O(k), measured | time only | complete | none |
+| `walk.rs:3925` (class replacement) | ff24610b | lazy read, O(size of `sig`) once (inferred) | every depth, O(size of `sig`) per level, n² worst | sites would follow class links | partial | added naive/used sentence |
+| `widen.rs:503` (word warnings) | c79fb5b4 | relational Presburger domain, exponential worst | O(1) per node, O(N) | no narrowing, operands independent | complete | none |

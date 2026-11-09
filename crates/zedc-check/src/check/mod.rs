@@ -5477,6 +5477,8 @@ impl Handled {
 // `Handle::Loose` gives every loose atom at once. Bounding it by the unit's size alone would
 // need sets keyed by the handlers rather than by their atoms, which the checker would then
 // have to expand at each parameter anyway.
+// Naive version: each binder's set gathered by its own walk of the graph, O(B + R + E)
+// unions per binder (inferred); used: one pass of Tarjan's algorithm, O(B + R + E) unions in all.
 fn handled(res: &Resolution) -> Handled {
     const NONE: usize = usize::MAX;
     let (b, total) = (res.binders.len(), res.binders.len() + res.regions.len());

@@ -28,6 +28,9 @@
 //! COMPLEXITY.md row C26. A complete solution names the repeated value
 //! (`m = f(n); if m >= 0 { popCount(m) }` works today), or hash-conses the translated terms
 //! so equal calls are one atom.
+//! Naive version: subterms compared by structure to find equal calls, O(size of the subterm)
+//! per pair; used: one pass per root, memoized by span, O(1) per node; hash-consing would make
+//! equal calls one atom at O(1) expected per node (inferred).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
