@@ -278,3 +278,20 @@ fn the_examples_of_the_guide() {
         assert_eq!(type_errors(text), want, "{text}");
     }
 }
+
+/// `max` of `Never` and a value of nested tuples that share their rows: each position of each
+/// row is checked once.
+#[test]
+fn max_of_never_and_shared_tuples_scales() {
+    // `t0 = (n, w)` and `t{i+1} = (t{i}, t{i})`, as in the test above.
+    let nested = |d: usize| {
+        let mut e = String::from("t0 = (n, w); ");
+        e.extend((0..d).map(|i| format!("t{} = (t{i}, t{i}); ", i + 1)));
+        body(&format!("{e}max(h(1), t{d})"))
+    };
+    let units = super::scaling::resolved(100, nested);
+    scaling::check_order("max of Never and a tuple of n shared rows", 100, 1, |n| {
+        let info = units[&n].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
