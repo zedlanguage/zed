@@ -623,8 +623,8 @@ impl<'a> Pieces<'a> {
                 .patterns(ps.iter().map(|p| (None, p)))
                 .text(")"),
             Pattern::AnyAtom => self.text("#_"),
-            // The type as a program writes it.
-            Pattern::Is(t) => self.text(format!("(is {})", t.surface_operand())),
+            // The type as a program writes it after `is`: only an arrow is parenthesized.
+            Pattern::Is(t) => self.text(format!("(is {})", t.surface_after_is())),
         };
     }
 

@@ -88,8 +88,8 @@ fn the_formatter_writes_the_clause_and_parenthesizes_it_inside_tighter_forms() {
         TWICE,
         "f(g: (T, U) -> T for T in int | f64, U in String) = 0;\n",
         "f(g: (T -> T for T in int) -> U for U in bool) = 0;\n",
-        "f(g: (T -> T for T in int, int)) = 0;\n",
-        "f(g: (T -> T for T in rat,)) = 0;\n",
+        "f(g: ((T -> T for T in int), int)) = 0;\n",
+        "f(g: ((T -> T for T in rat),)) = 0;\n",
         "y = 1 is (T -> T for T in int) | int;\n",
     ] {
         assert_eq!(fmt(text), text);
@@ -98,6 +98,15 @@ fn the_formatter_writes_the_clause_and_parenthesizes_it_inside_tighter_forms() {
     assert_eq!(
         fmt("f(g: (((T) -> T) for T in int)) = 0;\n"),
         "f(g: T -> T for T in int) = 0;\n"
+    );
+    // A clause before a comma is parenthesized, so a reader sees where it ends.
+    assert_eq!(
+        fmt("f(g: (T -> T for T in int, int)) = 0;\n"),
+        "f(g: ((T -> T for T in int), int)) = 0;\n"
+    );
+    assert_eq!(
+        fmt("f(g: (T -> T for T in rat,)) = 0;\n"),
+        "f(g: ((T -> T for T in rat),)) = 0;\n"
     );
 }
 

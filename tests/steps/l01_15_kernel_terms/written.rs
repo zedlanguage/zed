@@ -105,8 +105,8 @@ fn a_type_pattern_writes_its_type_in_type_syntax() {
     let shown = written(&t, before_at);
     assert_eq!(
         shown,
-        "match v { (is Never) -> \"none\", (is (int \\ 0)) -> \"nonzero\", \
-         (is (bool | int)) -> \"scalar\" }"
+        "match v { (is Never) -> \"none\", (is int \\ 0) -> \"nonzero\", \
+         (is bool | int) -> \"scalar\" }"
     );
     assert!(!shown.contains("(|") && !shown.contains("(\\"), "{shown}");
 }

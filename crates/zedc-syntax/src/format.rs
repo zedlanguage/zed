@@ -678,7 +678,10 @@ impl<'a> Formatter<'a> {
                                     Job::Expr { e, min: LAMBDA, ind },
                                 ];
                             } else {
-                                stack.push(Job::Ty { t: ty, min: 0 });
+                                stack.push(Job::Ty {
+                                    t: ty,
+                                    min: listed(!rest.is_empty()),
+                                });
                             }
                         }
                         Field::Import { path, .. } => self.put(format!("import {path}")),
@@ -713,7 +716,8 @@ impl<'a> Formatter<'a> {
                         ];
                     }
                     if let Some(t) = &p.ty {
-                        then![stack; put(": "), Job::Ty { t, min: 0 }];
+                        let min = listed(p.default.is_none() && !rest.is_empty());
+                        then![stack; put(": "), Job::Ty { t, min }];
                     }
                 }
             }
@@ -723,7 +727,8 @@ impl<'a> Formatter<'a> {
                         then![stack; put(", "), Job::Ports(rest)];
                     }
                     self.put(format!("{}: ", p.name));
-                    stack.push(Job::Ty { t: &p.ty, min: 0 });
+                    let min = listed(!rest.is_empty());
+                    stack.push(Job::Ty { t: &p.ty, min });
                 }
             }
             Job::Ty { t, min } => {
@@ -738,7 +743,11 @@ impl<'a> Formatter<'a> {
                     if !rest.is_empty() {
                         then![stack; put(sep), Job::Types { types: rest, min, sep }];
                     }
-                    stack.push(Job::Ty { t, min });
+                    let comma = sep.starts_with(',') && !rest.is_empty();
+                    stack.push(Job::Ty {
+                        t,
+                        min: min.max(listed(comma)),
+                    });
                 }
             }
             Job::TypeParams(params) => {
@@ -751,7 +760,8 @@ impl<'a> Formatter<'a> {
                         Some(n) => self.put(format!("{n}: ")),
                         None => {}
                     }
-                    stack.push(Job::Ty { t: &p.ty, min: 0 });
+                    let min = listed(!rest.is_empty());
+                    stack.push(Job::Ty { t: &p.ty, min });
                 }
             }
             Job::RecordType(fields) => {
@@ -760,7 +770,8 @@ impl<'a> Formatter<'a> {
                         then![stack; put(", "), Job::RecordType(rest)];
                     }
                     self.put(format!("{n}: "));
-                    stack.push(Job::Ty { t, min: 0 });
+                    let min = listed(!rest.is_empty());
+                    stack.push(Job::Ty { t, min });
                 }
             }
             Job::Pattern(p) => self.pattern(p, stack),
@@ -1446,7 +1457,8 @@ impl<'a> Formatter<'a> {
             TypeKind::Tuple(ts) => {
                 self.put("(");
                 let close = if ts.len() == 1 { ",)" } else { ")" };
-                then![stack; list(ts, 0, ", "), put(close)];
+                // The one component of `(T,)` is followed by a comma too.
+                then![stack; list(ts, listed(ts.len() == 1), ", "), put(close)];
             }
             TypeKind::Union(ts) => stack.push(list(ts, 3, " | ")),
             TypeKind::And(ts) => stack.push(list(ts, 4, " & ")),
@@ -1528,6 +1540,14 @@ impl<'a> Formatter<'a> {
             }
         }
     }
+}
+
+/// The least level ([`type_level`]) a type stands at unparenthesized as an item of a list, with
+/// a comma after it if `comma`: then a bounds clause is parenthesized, `(((T) -> T for T in
+/// int), int)`, since in `((T) -> T for T in int, int)` only the token after the comma tells
+/// that it does not begin another bound, `U in f64`.
+fn listed(comma: bool) -> u8 {
+    u8::from(comma)
 }
 
 /// Type precedence levels: a bounds clause, an arrow, a union or difference, an intersection, a

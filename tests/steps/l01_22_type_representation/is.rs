@@ -12,7 +12,7 @@ fn term(text: &str, name: &str) -> String {
 fn is_is_a_match_on_the_type() {
     let t = term("f(x) = x is int | (int, String);", "f");
     assert!(
-        t.contains("(is (int | (int, String))) -> true, _ -> false"),
+        t.contains("(is int | (int, String)) -> true, _ -> false"),
         "{t}"
     );
     let t = term("f(x) = x is not #none;", "f");

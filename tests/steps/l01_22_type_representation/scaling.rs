@@ -68,7 +68,7 @@ fn a_union_of_many_tuple_types_scales() {
     assert_eq!(units[&250].elab().defs, elab(&union(250)).unwrap().defs);
     scaling::check("elaborating `is` against a union of n pairs", 250, |n| {
         let u = units[&n].elab();
-        assert!(u.get("f").unwrap().to_string().contains("(is ((#a"));
+        assert!(u.get("f").unwrap().to_string().contains("(is (#a"));
     });
     let built: Mutex<BTreeMap<usize, Vec<Type>>> = Mutex::default();
     let get = |n| {

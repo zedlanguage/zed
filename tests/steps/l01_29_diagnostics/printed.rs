@@ -334,11 +334,12 @@ fn a_bound_clause_reads_back_onto_its_signature() {
     let mask = Carrier::Int.bit() | Carrier::F64.bit() | Carrier::Rat.bit();
     assert_eq!(t.fns.len(), 1);
     assert_eq!(t.fns[0].bounds, [("T".into(), mask)].into());
-    // A signature bounded inside a tuple: the clause ends at the comma, so it is printed bare.
+    // A signature bounded inside a tuple, before a comma: parenthesized, so the clause ends
+    // where a reader sees it end.
     let t = back("(((T) -> T for T in int | rat), int)");
     assert_eq!(t.tuples[0][0].fns[0].bounds.len(), 1);
     let shown = t.to_string();
-    assert_eq!(shown, "((T) -> T for T in int | rat, int)");
+    assert_eq!(shown, "(((T) -> T for T in int | rat), int)");
     assert_eq!(mismatch(&t, &shown), None, "{shown}");
 }
 
@@ -753,10 +754,11 @@ fn function_types_print_with_only_the_parentheses_the_grammar_needs() {
             "(((int) -> int) & ((String) -> String)) | bool",
             "bool | ((int) -> int) & ((String) -> String)",
         ),
-        // A bounds clause: bare where a whole type stands, parenthesized as a result.
+        // A bounds clause: bare where a whole type stands with no comma after it, parenthesized
+        // as a result and before a comma.
         (
             "((T) -> T for T in int | f64, int)",
-            "((T) -> T for T in int | f64, int)",
+            "(((T) -> T for T in int | f64), int)",
         ),
         (
             "(int) -> ((T) -> T for T in int | f64)",
@@ -783,12 +785,108 @@ fn function_types_print_with_only_the_parentheses_the_grammar_needs() {
         ),
         (
             "(((T) -> T for T in int | f64), int) -> int",
-            "((T) -> T for T in int | f64, int) -> int",
+            "(((T) -> T for T in int | f64), int) -> int",
         ),
     ] {
         let t = back(text);
         assert_eq!(t.to_string(), shown, "{text}");
         assert_eq!(mismatch(&t, shown), None, "{text}");
+    }
+}
+
+/// A function type with a bounds clause is parenthesized wherever a comma follows it: as a
+/// tuple component other than the last and as the one component of `(T,)`, as a parameter
+/// other than the last, positional or named, and as a payload other than the last. In `((T) ->
+/// T for T in int, int)` a reader cannot tell at the comma whether another bound, `U in f64`,
+/// follows; the grammar reads it only by looking past the next name. Where a closing
+/// parenthesis follows, the clause ends there and the text stays bare. Each text written either
+/// way reads back to the type printed, and the printed text prints itself again.
+#[test]
+fn a_bounds_clause_before_a_comma_is_parenthesized() {
+    for (text, shown) in [
+        // A tuple: first, only and last component, and two bounded components.
+        (
+            "((T) -> T for T in int | f64, int)",
+            "(((T) -> T for T in int | f64), int)",
+        ),
+        (
+            "(((T) -> T for T in int | f64), int)",
+            "(((T) -> T for T in int | f64), int)",
+        ),
+        (
+            "(((T) -> T for T in int | f64),)",
+            "(((T) -> T for T in int | f64),)",
+        ),
+        (
+            "(int, (T) -> T for T in int | f64)",
+            "(int, (T) -> T for T in int | f64)",
+        ),
+        (
+            "(int, ((T) -> T for T in int | f64))",
+            "(int, (T) -> T for T in int | f64)",
+        ),
+        (
+            "((T) -> T for T in int | f64, (U) -> U for U in String | bool)",
+            "(((T) -> T for T in int | f64), (U) -> U for U in String | bool)",
+        ),
+        // The same places with no bounds clause: no parentheses added.
+        ("((int) -> int, int)", "((int) -> int, int)"),
+        ("(((int) -> int),)", "((int) -> int,)"),
+        ("((int) -> int, int) -> int", "((int) -> int, int) -> int"),
+        ("#a((int) -> int, int)", "#a((int) -> int, int)"),
+        // Parameters: before another, last, alone, and by name.
+        (
+            "((T) -> T for T in int | f64, int) -> int",
+            "(((T) -> T for T in int | f64), int) -> int",
+        ),
+        (
+            "(int, (T) -> T for T in int | f64) -> int",
+            "(int, (T) -> T for T in int | f64) -> int",
+        ),
+        (
+            "(((T) -> T for T in int | f64)) -> int",
+            "((T) -> T for T in int | f64) -> int",
+        ),
+        (
+            "(f: (T) -> T for T in int | f64, n: int) -> int",
+            "(f: ((T) -> T for T in int | f64), n: int) -> int",
+        ),
+        (
+            "(n: int, f: (T) -> T for T in int | f64) -> int",
+            "(n: int, f: (T) -> T for T in int | f64) -> int",
+        ),
+        // Payloads: positional and by name, before another and last.
+        (
+            "#a((T) -> T for T in int | f64, int)",
+            "#a(((T) -> T for T in int | f64), int)",
+        ),
+        (
+            "#a(int, (T) -> T for T in int | f64)",
+            "#a(int, (T) -> T for T in int | f64)",
+        ),
+        (
+            "#a(f: (T) -> T for T in int | f64, n: int)",
+            "#a(f: ((T) -> T for T in int | f64), n: int)",
+        ),
+        // Nested: a bounded function whose result is a bounded function, in a tuple, as a
+        // parameter, and as the result of one in a tuple.
+        (
+            "((T) -> ((U) -> U for U in String | bool) for T in int | f64, int)",
+            "(((T) -> ((U) -> U for U in String | bool) for T in int | f64), int)",
+        ),
+        (
+            "((T) -> ((U) -> U for U in String | bool) for T in int | f64, int) -> int",
+            "(((T) -> ((U) -> U for U in String | bool) for T in int | f64), int) -> int",
+        ),
+        (
+            "((int) -> ((T) -> T for T in int | f64, int), bool)",
+            "((int) -> (((T) -> T for T in int | f64), int), bool)",
+        ),
+    ] {
+        let t = back(text);
+        assert_eq!(t.to_string(), shown, "{text}");
+        assert_eq!(mismatch(&t, shown), None, "{text}");
+        assert_eq!(back(shown).to_string(), shown, "{shown}");
     }
 }
 

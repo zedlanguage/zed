@@ -102,6 +102,10 @@ fn bounds_in(t: &Ty) -> HashSet<Arc<str>> {
     let mut stack = vec![t];
     while let Some(t) = stack.pop() {
         stack.extend(t.tuples.iter().flatten());
+        for s in t.payloads.values().flatten().flatten() {
+            stack.extend(&s.items);
+            stack.extend(s.fields.values());
+        }
         for s in &t.fns {
             out.extend(s.bounds.keys().cloned());
             for a in &s.arrows {

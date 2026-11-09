@@ -266,6 +266,85 @@ fn a_function_type_prints_with_only_the_parentheses_it_needs() {
     }
 }
 
+/// A type with a bounds clause is parenthesized wherever a comma follows it, whatever the
+/// program wrote: as a tuple component other than the last and the one component of `(T,)`, a
+/// parameter or a payload other than the last, a record field other than the last, a named
+/// parameter of a function and a port. In `((T) -> T for T in int, int)` a reader cannot tell at
+/// the comma whether another bound follows. Before a closing bracket it stays bare. The second
+/// check is the round trip: the printed text parses back to a tree that prints the same.
+#[test]
+fn a_bounds_clause_before_a_comma_is_parenthesized() {
+    for (text, shown) in [
+        (
+            "((T) -> T for T in int | f64, int)",
+            "((T -> T for T in int | f64), int)",
+        ),
+        (
+            "((T -> T for T in int | f64),)",
+            "((T -> T for T in int | f64),)",
+        ),
+        (
+            "(int, (T -> T for T in int | f64))",
+            "(int, T -> T for T in int | f64)",
+        ),
+        (
+            "(T -> T for T in int, U -> U for U in f64)",
+            "((T -> T for T in int), U -> U for U in f64)",
+        ),
+        (
+            "(T -> T for T in int | f64, int) -> int",
+            "((T -> T for T in int | f64), int) -> int",
+        ),
+        (
+            "((T -> T for T in int | f64)) -> int",
+            "(T -> T for T in int | f64) -> int",
+        ),
+        (
+            "(f: T -> T for T in int, n: int) -> int",
+            "(f: (T -> T for T in int), n: int) -> int",
+        ),
+        (
+            "#a(T -> T for T in int, int)",
+            "#a((T -> T for T in int), int)",
+        ),
+        (
+            "Pair(T -> T for T in int, int)",
+            "Pair((T -> T for T in int), int)",
+        ),
+        (
+            "{ f: T -> T for T in int, n: int }",
+            "{ f: (T -> T for T in int), n: int }",
+        ),
+        (
+            "{ n: int, f: T -> T for T in int }",
+            "{ n: int, f: T -> T for T in int }",
+        ),
+        // Nested: a bounded function whose result is a bounded function, in a tuple.
+        (
+            "(T -> (U -> U for U in f64) for T in int, int)",
+            "((T -> (U -> U for U in f64) for T in int), int)",
+        ),
+        // No bounds clause: nothing added.
+        ("(int -> int, int)", "(int -> int, int)"),
+    ] {
+        assert_eq!(type_printed(text), shown, "{text}");
+        assert_eq!(type_printed(shown), shown, "{shown}");
+    }
+    // In source: a parameter, a struct field and a port.
+    check(
+        "apply(f: T -> T for T in int, n: int) = f(n);\n",
+        "apply(f: (T -> T for T in int), n: int) = f(n);\n",
+    );
+    check(
+        "struct Op { f: T -> T for T in int, n: int }\n",
+        "struct Op { f: (T -> T for T in int), n: int }\n",
+    );
+    check(
+        "main() -> (log: T -> T for T in int, stdout: Lines) { }\n",
+        "main() -> (log: (T -> T for T in int), stdout: Lines) { }\n",
+    );
+}
+
 /// `#a0 | #a1 | …`, `n` atoms.
 fn union_of(n: usize) -> String {
     (0..n)

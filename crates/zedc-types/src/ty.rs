@@ -1293,22 +1293,25 @@ impl Shape {
         parts.push(Print::Text("#"));
         parts.push(Print::Text(name));
         parts.push(Print::Text("("));
+        let n = self.items.len() + self.fields.len();
         let mut first = true;
-        for t in &self.items {
+        for (i, t) in self.items.iter().enumerate() {
             between(parts, &mut first, ", ");
+            let at = PrintAt::item(i + 1 < n);
             // The family of an `#errs` is written bare, `#errs(#a | #b ->? #a | #b)`.
             match &t.fns[..] {
                 [s] if name == "errs" && s.is_family() && *t == Ty::func(s.clone()) => {
-                    parts.push(Print::Family(s));
+                    parts.push(Print::Family(s, at));
                 }
-                _ => parts.push(Print::Ty(t, PrintAt::Any)),
+                _ => parts.push(Print::Ty(t, at)),
             }
         }
-        for (f, t) in &self.fields {
+        for (i, (f, t)) in self.fields.iter().enumerate() {
             between(parts, &mut first, ", ");
             parts.push(Print::Text(f));
             parts.push(Print::Text(": "));
-            parts.push(Print::Ty(t, PrintAt::Any));
+            let at = PrintAt::item(self.items.len() + i + 1 < n);
+            parts.push(Print::Ty(t, at));
         }
         parts.push(Print::Text(")"));
     }
@@ -7605,7 +7608,7 @@ impl Ty {
         if !set.is_empty() {
             first = false;
             let text = match at {
-                PrintAt::Any | PrintAt::Result => set.surface(),
+                PrintAt::Any | PrintAt::Listed | PrintAt::Result => set.surface(),
                 PrintAt::Key => set.surface_key(),
                 PrintAt::Bound => set.surface_bound(),
                 PrintAt::Union => set.surface_in_union(),
@@ -7625,9 +7628,13 @@ impl Ty {
             let wrap = at == PrintAt::Key && cs.len() != 1;
             parts.push(Print::Text(if wrap { "((" } else { "(" }));
             let mut one = true;
-            for c in cs {
+            for (i, c) in cs.iter().enumerate() {
                 between(parts, &mut one, ", ");
-                parts.push(Print::Ty(c, PrintAt::Any));
+                // The one component of `(T,)` is followed by a comma too.
+                parts.push(Print::Ty(
+                    c,
+                    PrintAt::item(i + 1 < cs.len() || cs.len() == 1),
+                ));
             }
             parts.push(Print::Text(match (cs.len() == 1, wrap) {
                 (true, _) => ",)",
@@ -7674,8 +7681,8 @@ enum Print<'a> {
     /// The value type of a morphism type, which stands as a result: a type without its atom
     /// `#notFound`.
     Found(&'a Ty),
-    /// A signature written as a family ([`Sig::family_parts`]).
-    Family(&'a Sig),
+    /// A signature written as a family ([`Sig::family_parts`]), standing as a payload.
+    Family(&'a Sig, PrintAt),
     /// The end of a type's text ([`Ty::write_vars`]), and whether nothing of it is written yet.
     Vars(&'a Ty, bool),
     /// The bounds clause of a signature, which closes the variables it opened.
@@ -7686,8 +7693,15 @@ enum Print<'a> {
 /// type (DESIGN.md sec:grammar, `Type`, `Arrow`, `TypeUnion`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PrintAt {
-    /// Where a whole `Type` stands: a tuple component, a parameter, a payload, the top.
+    /// Where a whole `Type` stands and no comma follows: the last component of a tuple of two
+    /// or more, the last parameter, the last payload, the top.
     Any,
+    /// Where a whole `Type` stands followed by a comma: a component of a tuple other than the
+    /// last, and the one component of `(T,)`, a parameter or a payload other than the last. A
+    /// function with a bounds clause is parenthesized, `(((T) -> T for T in int), int)`, since
+    /// in `((T) -> T for T in int, int)` only the token after the comma tells that it does not
+    /// begin another bound, `U in f64`.
+    Listed,
     /// An arrow's result, an `Arrow`: a function with a bounds clause is parenthesized.
     Result,
     /// The key of `K -> V` or `K ->? V`, a `TypeUnion`: a function is parenthesized, and so is a
@@ -7697,6 +7711,17 @@ enum PrintAt {
     Bound,
     /// An operand of `|`: a function is parenthesized.
     Union,
+}
+
+impl PrintAt {
+    /// Where an item of a comma-separated list stands: [`PrintAt::Listed`] if a comma follows
+    /// it, [`PrintAt::Any`] if the list's closing bracket does.
+    fn item(comma: bool) -> PrintAt {
+        match comma {
+            true => PrintAt::Listed,
+            false => PrintAt::Any,
+        }
+    }
 }
 
 /// A signature written as a morphism type ([`Sig::morphism`]).
@@ -7752,7 +7777,7 @@ fn write_parts<'a>(start: Print<'a>, out: &mut String, scope: &mut Scope) {
             Print::Ty(t, at) => t.parts(out, &mut stack, false, at),
             Print::Found(t) => t.parts(out, &mut stack, true, PrintAt::Result),
             Print::Sig(s, at) => s.parts(scope, &mut stack, at),
-            Print::Family(s) => s.family_parts(scope, &mut stack),
+            Print::Family(s, at) => s.family_parts(scope, &mut stack, at),
             Print::Vars(t, first) => t.write_vars(first, out, scope),
             Print::Bounds(s, bounds) => {
                 for (i, (v, m)) in bounds.iter().enumerate() {
@@ -7795,15 +7820,16 @@ impl Sig {
 
     /// Opens its variables in `scope` and pushes the parts of its text to `parts`, in order. It
     /// stands at `at`: a text with a bounds clause is parenthesized anywhere but where a whole
-    /// type stands, and an arrow also as a key, a bound or an operand of `|`; an intersection of
-    /// arrows, each parenthesized, binds tighter than `|` and needs nothing more.
+    /// type stands with no comma after it, and an arrow also as a key, a bound or an operand of
+    /// `|`; an intersection of arrows, each parenthesized, binds tighter than `|` and needs
+    /// nothing more.
     fn parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>, at: PrintAt) {
         let bounds = scope.open(self);
         let morphism = self.morphism();
         let several = morphism.is_none() && self.arrows.len() != 1;
         let wrap = match at {
             PrintAt::Any => false,
-            PrintAt::Result => !bounds.is_empty(),
+            PrintAt::Listed | PrintAt::Result => !bounds.is_empty(),
             PrintAt::Key | PrintAt::Bound | PrintAt::Union => !bounds.is_empty() || !several,
         };
         if wrap {
@@ -7816,14 +7842,15 @@ impl Sig {
             for a in &self.arrows {
                 between(parts, &mut first, " & ");
                 parts.push(Print::Text(if several { "((" } else { "(" }));
+                let n = self.params.len().min(a.params.len());
                 let mut one = true;
-                for (p, t) in self.params.iter().zip(&a.params) {
+                for (i, (p, t)) in self.params.iter().zip(&a.params).enumerate() {
                     between(parts, &mut one, ", ");
                     if !p.positional {
                         parts.push(Print::Text(&p.name));
                         parts.push(Print::Text(": "));
                     }
-                    parts.push(Print::Ty(t, PrintAt::Any));
+                    parts.push(Print::Ty(t, PrintAt::item(i + 1 < n)));
                 }
                 parts.push(Print::Text(") -> "));
                 parts.push(Print::Ty(&a.result, PrintAt::Result));
@@ -7892,14 +7919,22 @@ impl Sig {
     /// Opens its variables in `scope` and pushes the parts of its text as a family, a partial
     /// map `K ->? K` (DESIGN.md sec:values_morphisms), to `parts`, in order: its key type, bare,
     /// as [`Sig::is_family`] leaves none that could be read as parameters, twice, since `->?`
-    /// adds the `#notFound` of its lookup (sec:type_language).
-    fn family_parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>) {
+    /// adds the `#notFound` of its lookup (sec:type_language). It stands as a payload at `at`:
+    /// with a bounds clause and a comma after it, it is parenthesized.
+    fn family_parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>, at: PrintAt) {
         let bounds = scope.open(self);
+        let wrap = at == PrintAt::Listed && !bounds.is_empty();
+        if wrap {
+            parts.push(Print::Text("("));
+        }
         let key = &self.arrows[0].params[0];
         parts.push(Print::Ty(key, PrintAt::Key));
         parts.push(Print::Text(" ->? "));
         parts.push(Print::Ty(key, PrintAt::Result));
         parts.push(Print::Bounds(self, bounds));
+        if wrap {
+            parts.push(Print::Text(")"));
+        }
     }
 }
 
