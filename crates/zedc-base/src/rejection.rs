@@ -75,8 +75,11 @@ rows! {
     CapitalizedFreeName => "Capitalized free name used once in a signature and nowhere in the body",
     UndeclaredNameInField =>
         "Capitalized name in a `struct` field that is neither a declared type parameter nor a name in scope",
-    UnusedStructParameter => "`struct` type parameter that no field uses",
+    UnusedTypeParameter =>
+        "Type parameter that no field of its `struct`, or the body of its `type`, uses",
     StructParameterNamesField => "`struct` type parameter with the name of a field",
+    // No diagnostic uses this row yet: plan row L12.0 emits it.
+    StructLawNotProved => "Struct law not proved at a value built, ascribed or passed at the struct type",
     RemapOutputName =>
         "Remap output name that names a source level and resolves to a value in scope",
     MethodOnValue => "Method declared on a value",

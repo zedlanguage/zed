@@ -53,11 +53,11 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   2 | «struct» Interval { min : Bound , max : Bound }
   3 | «struct» Congruence { modulus : int [ 0₍10₎ .. ] , residue : int }
   4 | «struct» FloatClass { min : f64 , max : f64 , nonNaN : bool , width : #f16 | #bf16 | #f32 | #f64 }
-  5 | «struct» Constraints {
+  5 | «struct» Constraints ( «positional» V ) {
   6 | subject : Ast ,
   7 | interval : Interval | [ Interval ] | #none ,
   8 | congruence : Congruence | #none ,
-  9 | values : [ _ ] | #unknown ,
+  9 | values : [ V ] | #unknown ,
  10 | length : Interval | #none ,
  11 | floats : FloatClass | #none ,
  12 | relations : [ Ast ] ,
@@ -130,37 +130,111 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   8 | | #implies ( assume : Ast , then : Proof )
   9 | | #reflect ( sound : LawId )
  10 | | #assume ( why : Utf8String ) ;
-== DESIGN.md [sec:checking_in_zed] 1 L10
-  1 | «struct» Facet ( «positional» E , «positional» V ) {
-  2 | kind : #semantic | #evidence | #hint ,
-  3 | lattice : _ ,
-  4 | holds : ( ( E , V ) -> bool ) | #none where ( holds «is» #none ) == ( kind != #evidence ) = #none ,
-  5 | transfer : ( _ , E , E ) -> E ,
-  6 | abstract : ( ( Ast , Ast , ( Ast ) -> E ) -> E ) | #none = #none ,
-  7 | project : ( ( _ , [ E ] , int [ 0₍10₎ .. ] ) -> E ) | #none = #none ,
-  8 | shares : ( E ) -> #constant ( V ) | #none = e -> #none ,
-  9 | show : ( ( E , Ast ) -> Ast ) | #none = #none ,
- 10 | reject : ( ( E , E , Ast ) -> Rejection ) | #none = #none ,
- 11 | printedForm : #annotation | #with = #with ,
- 12 | typeChange : ( Type ) -> Type = t -> t ,
- 13 | }
- 14 | «struct» Reduction ( «positional» E ) { of : Facet ( E , _ ) , reads : [ Facet ( _ , _ ) ] , reduce : ( E , Store ) -> E }
+== DESIGN.md [sec:checking_in_zed] 1 L12
+  1 | «struct» Lattice ( «positional» E ) {
+  2 | le : ( E , E ) -> bool ,
+  3 | join : ( E , E ) -> E ,
+  4 | top : E ,
+  5 | meet : ( ( E , E ) -> E | #empty ) | #none ,
+  6 | widen : ( E , E ) -> E = join ,
+  7 | narrow : ( E , E ) -> E = ( a , b ) -> b ,
+  8 | «law» reflexive ( a : E ) = le ( a , a ) ,
+  9 | «law» antisymmetric ( a : E , b : E ) = ( le ( a , b ) && le ( b , a ) ) . implies ( a == b ) ,
+ 10 | «law» transitive ( a : E , b : E , c : E ) = ( le ( a , b ) && le ( b , c ) ) . implies ( le ( a , c ) ) ,
+ 11 | «law» topAbove ( a : E ) = le ( a , top ) ,
+ 12 | «law» joinAbove ( a : E , b : E ) = le ( a , join ( a , b ) ) && le ( b , join ( a , b ) ) ,
+ 13 | «law» joinLeast ( a : E , b : E , c : E ) = ( le ( a , c ) && le ( b , c ) ) . implies ( le ( join ( a , b ) , c ) ) ,
+ 14 | «law» meetGreatest ( a : E , b : E , c : E ) = «match» meet {
+ 15 | #none -> «true» ,
+ 16 | m -> «match» m ( a , b ) {
+ 17 | #empty -> ! ( le ( c , a ) && le ( c , b ) ) ,
+ 18 | d -> le ( d , a ) && le ( d , b ) && ( le ( c , a ) && le ( c , b ) ) . implies ( le ( c , d ) ) ,
+ 19 | } ,
+ 20 | } ,
+ 21 | «law» widenAbove ( a : E , b : E ) = le ( a , widen ( a , b ) ) && le ( b , widen ( a , b ) ) ,
+ 22 | «law» narrowBetween ( a : E , b : E ) = le ( b , a ) . implies ( le ( b , narrow ( a , b ) ) && le ( narrow ( a , b ) , a ) ) ,
+ 23 | }
+ 25 | «struct» Facet ( «positional» E , «positional» V ) {
+ 26 | kind : #semantic | #evidence | #hint ,
+ 27 | lattice : Lattice ( E ) ,
+ 28 | holds : ( ( E , V ) -> bool ) | #none where ( holds «is» #none ) == ( kind != #evidence ) = #none ,
+ 29 | transfer : ( _ , ( E , ) | ( E , E ) ) -> E ,
+ 30 | abstract : ( ( Ast , Ast , ( Ast ) -> E ) -> E ) | #none = #none ,
+ 31 | project : ( _ , ( E , E ) | ( E , E , E ) , int [ 0₍10₎ ..= 2₍10₎ ] ) -> E = ( op , es , i ) -> «match» es {
+ 32 | ( a , _ ) -> «if» i == 1₍10₎ { transfer ( op , ( a , ) ) } «else» { lattice . top } ,
+ 33 | ( a , b , _ ) -> «if» i == 2₍10₎ { transfer ( op , ( a , b ) ) } «else» { lattice . top } ,
+ 34 | } ,
+ 35 | shares : ( E ) -> #constant ( V ) | #none = e -> #none ,
+ 36 | show : ( ( E , Ast ) -> Ast ) | #none = #none ,
+ 37 | reject : ( ( E , E , Ast ) -> Rejection ( _ ) ) | #none = #none ,
+ 38 | printedForm : #annotation | #with = #with ,
+ 39 | typeChange : ( Type ) -> Type = t -> t ,
+ 40 | «law» transferMono1 ( op : _ , a : E , c : E ) = lattice . le ( a , c ) . implies ( lattice . le ( transfer ( op , ( a , ) ) , transfer ( op , ( c , ) ) ) ) ,
+ 41 | «law» transferMono2 ( op : _ , a : E , b : E , c : E , d : E ) =
+ 42 | ( lattice . le ( a , c ) && lattice . le ( b , d ) ) . implies ( lattice . le ( transfer ( op , ( a , b ) ) , transfer ( op , ( c , d ) ) ) ) ,
+ 43 | «law» projectMono1 ( op : _ , a : E , r : E , c : E , s : E , i : int [ 0₍10₎ ..= 1₍10₎ ] ) =
+ 44 | ( lattice . le ( a , c ) && lattice . le ( r , s ) ) . implies ( lattice . le ( project ( op , ( a , r ) , i ) , project ( op , ( c , s ) , i ) ) ) ,
+ 45 | «law» projectMono2 ( op : _ , a : E , b : E , r : E , c : E , d : E , s : E , i : int [ 0₍10₎ ..= 2₍10₎ ] ) =
+ 46 | ( lattice . le ( a , c ) && lattice . le ( b , d ) && lattice . le ( r , s ) ) . implies ( lattice . le ( project ( op , ( a , b , r ) , i ) , project ( op , ( c , d , s ) , i ) ) ) ,
+ 47 | «law» topSound ( x : V ) = «match» holds { #none -> «true» , h -> h ( lattice . top , x ) } ,
+ 48 | «law» transferSound1 ( op : _ , a : E , x : V ) = «match» holds { #none -> «true» , h -> h ( a , x ) . implies ( h ( transfer ( op , ( a , ) ) , op ( x ) ) ) } ,
+ 49 | «law» transferSound2 ( op : _ , a : E , b : E , x : V , y : V ) = «match» holds {
+ 50 | #none -> «true» ,
+ 51 | h -> ( h ( a , x ) && h ( b , y ) ) . implies ( h ( transfer ( op , ( a , b ) ) , op ( x , y ) ) ) ,
+ 52 | } ,
+ 53 | «law» projectSound1 ( op : _ , a : E , r : E , x : V ) = «match» holds {
+ 54 | #none -> «true» ,
+ 55 | h -> ( h ( a , x ) && h ( r , op ( x ) ) ) . implies ( h ( project ( op , ( a , r ) , 0₍10₎ ) , x ) && h ( project ( op , ( a , r ) , 1₍10₎ ) , op ( x ) ) ) ,
+ 56 | } ,
+ 57 | «law» projectSound2 ( op : _ , a : E , b : E , r : E , x : V , y : V ) = «match» holds {
+ 58 | #none -> «true» ,
+ 59 | h -> ( h ( a , x ) && h ( b , y ) && h ( r , op ( x , y ) ) ) . implies (
+ 60 | h ( project ( op , ( a , b , r ) , 0₍10₎ ) , x ) && h ( project ( op , ( a , b , r ) , 1₍10₎ ) , y ) && h ( project ( op , ( a , b , r ) , 2₍10₎ ) , op ( x , y ) ) ) ,
+ 61 | } ,
+ 62 | «law» meetSound ( a : E , b : E , x : V ) = «match» ( holds , lattice . meet ) {
+ 63 | ( #none , _ ) -> «true» ,
+ 64 | ( _ , #none ) -> «true» ,
+ 65 | ( h , m ) -> ( h ( a , x ) && h ( b , x ) ) . implies ( «match» m ( a , b ) { #empty -> «false» , c -> h ( c , x ) } ) ,
+ 66 | } ,
+ 67 | «law» sharesSound ( e : E , x : V ) = «match» ( holds , shares ( e ) ) {
+ 68 | ( #none , _ ) -> «true» ,
+ 69 | ( _ , #none ) -> «true» ,
+ 70 | ( h , #constant ( c ) ) -> h ( e , x ) . implies ( x == c ) ,
+ 71 | } ,
+ 72 | }
+ 74 | «struct» Reduction ( «positional» E ) {
+ 75 | of : Facet ( E , _ ) ,
+ 76 | reads : [ Facet ( _ , _ ) ] ,
+ 77 | reduce : ( E , Store ) -> E ,
+ 78 | «law» reduceMono ( e : E , e2 : E , s : Store , s2 : Store ) =
+ 79 | ( of . lattice . le ( e , e2 ) && reads . all ( f -> f . lattice . le ( s . of ( f ) , s2 . of ( f ) ) ) ) . implies ( of . lattice . le ( reduce ( e , s ) , reduce ( e2 , s2 ) ) ) ,
+ 80 | «law» reduceSound ( e : E , s : Store , x : _ ) = «match» of . holds {
+ 81 | #none -> «true» ,
+ 82 | h -> ( h ( e , x ) && reads . all ( f -> «match» f . holds { #none -> «true» , g -> g ( s . of ( f ) , x ) } ) ) . implies ( h ( reduce ( e , s ) , x ) ) ,
+ 83 | } ,
+ 84 | }
+ 86 | «struct» Rejection ( «positional» W ) {
+ 87 | site : Ast ,
+ 88 | witness : W ,
+ 89 | menu : [ Ast ] ,
+ 90 | }
 == DESIGN.md [sec:checking_in_zed] 2 L12
   1 | «type» Parity = #even | #odd | #either ;
   2 | parity : Facet ( Parity , int ) = Facet (
   3 | kind : #evidence ,
   4 | lattice : flat ( [ #even , #odd ] , top : #either ) ,
   5 | holds : ( p , x ) -> «match» p { #even -> x «mod» 2₍10₎ == 0₍10₎ , #odd -> x «mod» 2₍10₎ == 1₍10₎ , #either -> «true» } ,
-  6 | transfer : ( op , a , b ) -> «match» op {
-  7 | #add -> «if» a == #either || b == #either { #either } «else» «if» a == b { #even } «else» { #odd } ,
-  8 | #mul -> «if» a == #even || b == #even { #even } «else» «if» a == #odd && b == #odd { #odd } «else» { #either } ,
-  9 | _ -> #either ,
- 10 | } ,
- 11 | ) ;
- 13 | half ( «positional» x : int «with» parity ( #even ) ) = x «div» 2₍10₎ ;
- 14 | g ( n : int «with» parity ( #odd ) ) = half ( n + n ) ;
- 15 | h ( n : int «with» parity ( #odd ) , m : int «with» parity ( #even ) ) = half ( n * m ) ;
- 16 | seven = 7₍10₎ «with» parity ( #odd ) ;
+  6 | transfer : ( op , es ) -> «match» ( op , es ) {
+  7 | ( #neg , ( a , ) ) -> a ,
+  8 | ( #add , ( a , b ) ) -> «if» a == #either || b == #either { #either } «else» «if» a == b { #even } «else» { #odd } ,
+  9 | ( #mul , ( a , b ) ) -> «if» a == #even || b == #even { #even } «else» «if» a == #odd && b == #odd { #odd } «else» { #either } ,
+ 10 | _ -> #either ,
+ 11 | } ,
+ 12 | ) ;
+ 14 | half ( «positional» x : int «with» parity ( #even ) ) = x «div» 2₍10₎ ;
+ 15 | g ( n : int «with» parity ( #odd ) ) = half ( n + n ) ;
+ 16 | h ( n : int «with» parity ( #odd ) , m : int «with» parity ( #even ) ) = half ( n * m ) ;
+ 17 | seven = 7₍10₎ «with» parity ( #odd ) ;
 == DESIGN.md [sec:theories] 1 L22
   1 | «interface» Semigroup ( «positional» T ) {
   2 | mul : ( T , T ) -> T ,

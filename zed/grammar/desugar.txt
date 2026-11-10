@@ -16,7 +16,7 @@ Import        : binds the listed names, or the unit under its name or alias, to 
 Path          : a qualified name, resolved to a unit or a binding
 Pin           : the BLAKE3-256 content address the imported unit must have (step M0.7)
 Struct        : a record type, and its constructor λ(f1, …). {#f1 -> f1, …}, a family keyed by field atoms; with type parameters, the parameterized record type `type S(X, …) = {…}` and the same constructor (sec:values_morphisms); the grammar form also derives the struct's parser and printer (sec:tour_grammar)
-StructField   : a field, with its default as the constructor's default argument; `import P(T, …)` copies the fields of P at those type arguments
+StructField   : a field, with its default as the constructor's default argument; `law` an obligation over the fields, of each value built, ascribed or passed at the struct type (sec:type_language); `import P(T, …)` copies the fields and law members of P at those type arguments
 Field         : a field name and type; `import P` copies the fields of P, a field it brings in twice counting once when the two are equal (sec:introspection)
 TypeDecl      : binds a type name, with its parameters, in the type environment; the atoms of a named atom family are data (sec:failure); no term
 TypeParams    : the type parameters of a declaration, each passed by name unless declared `positional` (sec:type_language)

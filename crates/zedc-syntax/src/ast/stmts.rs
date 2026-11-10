@@ -384,8 +384,13 @@ impl Builder<'_, '_> {
             if self.tree.name(k) == "TypeParams" {
                 return Err(self.later(k));
             }
-            // A `StructField` is a field with a default, an import with type arguments, or
-            // holds a `Field`.
+            // A law member (`law ordered() = lo <= hi`) is read by the parser and built at
+            // step L12.0; `law` is a keyword, so no field begins with it.
+            if self.word(self.tree.nodes[k].start) == "law" {
+                return Err(self.later_as(k, "the struct law member"));
+            }
+            // Any other `StructField` is a field with a default, an import with type arguments,
+            // or holds a `Field`.
             let (f, default) = match self.kids(k) {
                 [f] if self.tree.name(*f) == "TypeApply" => return Err(self.later(k)),
                 [f] => (*f, None),

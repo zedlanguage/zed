@@ -402,6 +402,10 @@ Item ::: type Tree(positional A) = #leaf(A); ::: (type Tree (( positional A )) =
 Item ::: struct S(A positional) { x: A } ::: ERROR
 Item ::: struct S { x: int } test { 1 -> 1 } ::: ERROR
 Item ::: law square(R: CommRing(T), a: T) = a * a == a * a proof { a * a == a * a == a * a } ::: (law square ( ((R : (CommRing ( T ))) , (a : T)) ) = ((a * a) == (a * a)) (proof ({ ((a * a) == (a * a) == (a * a)) })))
+# law members in a struct (L12): no proof clause
+Item ::: struct Span { lo: int, hi: int, law ordered() = lo <= hi } ::: (struct Span { (lo : int) , (hi : int) , (law ordered ( ) = (lo <= hi)) })
+Item ::: struct M { f: (int) -> int, law mono(x: int, y: int) = (x <= y).implies(f(x) <= f(y)) } ::: (struct M { (f : ((( int )) -> int)) , (law mono ( ((x : int) , (y : int)) ) = (((( (x <= y) )) (. implies)) (( ((f (( x ))) <= (f (( y )))) )))) })
+Item ::: struct S { x: int, law l() = x > 0 proof { x > 0 } } ::: ERROR
 Item ::: law l(a: int) = a == a test { 1 -> 1 } ::: ERROR
 Expr@21 ::: a < b < c ::: ERROR
 Expr@21 ::: a == b == c ::: ERROR

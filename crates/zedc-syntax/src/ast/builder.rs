@@ -117,6 +117,12 @@ impl<'a, 's> Builder<'a, 's> {
     /// names the kind of form in plain words ([`kind_of`]) and quotes its first line, cut at
     /// 60 characters, since a form may be a whole block.
     pub(super) fn later(&self, n: usize) -> Error {
+        self.later_as(n, kind_of(self.tree.name(n)))
+    }
+
+    /// [`Builder::later`] for node `n`, with the kind of form named `kind` where the node's name
+    /// alone does not tell it (a `StructField` that is a law member).
+    pub(super) fn later_as(&self, n: usize, kind: &str) -> Error {
         let s = self.span(n);
         let line = self.text[s.start..s.end]
             .lines()
@@ -131,7 +137,7 @@ impl<'a, 's> Builder<'a, 's> {
         Error {
             row: None,
             span: s,
-            message: not_yet(&format!("{} `{quoted}`", kind_of(self.tree.name(n)))),
+            message: not_yet(&format!("{kind} `{quoted}`")),
             notes: Vec::new(),
         }
     }

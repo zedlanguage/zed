@@ -44,7 +44,8 @@ Pin           = ANNOT '(' STRING ','? ')'                                       
 
 Struct        = 'struct' Name TypeParams? '{' (StructField % ',' ','?)? '}'        L2
               | 'struct' Name 'grammar' '{' GAlt '}'                               L20
-StructField   = Name ':' Type '=' Expr                                             L2
+StructField   = 'law' Name '(' Params? ')' '=' Expr                                L12
+              | Name ':' Type '=' Expr                                             L2
               | 'import' TypeApply                                                 L2
               | Field                                                              L2
 Field         = 'import' Path                                                      L2

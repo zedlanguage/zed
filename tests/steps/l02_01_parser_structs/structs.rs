@@ -103,3 +103,25 @@ fn a_grammar_struct_is_of_a_later_layer() {
         ),
     )]);
 }
+
+#[test]
+fn a_struct_law_member_is_of_a_later_layer() {
+    // With no parameters the member has two children, with parameters three; neither may be
+    // read as a field with a default (step L12.0 builds law members).
+    check(&[
+        (
+            "struct Span { lo: int, hi: int, law ordered() = lo <= hi }",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the struct law member `law ordered() = lo <= hi`")
+            ),
+        ),
+        (
+            "struct Span { lo: int, hi: int, law within(k: int) = hi - lo <= k }",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the struct law member `law within(k: int) = hi - lo <= k`")
+            ),
+        ),
+    ]);
+}
