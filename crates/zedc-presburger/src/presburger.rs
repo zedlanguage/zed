@@ -1580,7 +1580,7 @@ thread_local! {
     static REVERSED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// `f` run with the disjunctions of every [`project_parts`] call, and the disjuncts of each,
+/// `f` run with the disjunctions of every `project_parts` call, and the disjuncts of each,
 /// read in the reverse of their order, so that a test can check that the answer does not
 /// depend on that order (item PROJECT-canon-precision).
 pub fn with_parts_reversed<T>(f: impl FnOnce() -> T) -> T {
