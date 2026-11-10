@@ -998,6 +998,109 @@ fn the_first_and_last_credits_of_a_pipeline_scale() {
     }
 }
 
+/// Projecting every state and credit of an unchained pipeline of `n` stages costs
+/// O(n log n): each hull is tightened over its own stage, not the whole formula, which cost
+/// O(n) per symbol before, 56.1 times the bytes from 16 to 128 stages (item
+/// TIGHTEN-each-whole). The chained pipeline is left out: its tightening is now O(n log n),
+/// but each disjunct is still projected onto every symbol of the chain, O(n) per disjunction
+/// (item PROJECT-each-chain-all).
+#[test]
+fn every_state_and_credit_of_a_pipeline_scale() {
+    let syms = |n: usize| -> Vec<Atom> {
+        (0..n)
+            .flat_map(|k| [sym(&format!("z{k}")), sym(&format!("y{k}"))])
+            .collect()
+    };
+    let inputs = scaling::inputs(16, |n| (dead2(n, false, "z"), syms(n)));
+    scaling::check_order(
+        "every state and credit of a pipeline of stages",
+        16,
+        1,
+        |n| {
+            let (f, s) = &inputs[&n];
+            let _ = std::hint::black_box(zedc::store::presburger::project_each(f, s));
+        },
+    );
+}
+
+/// `n` stages that share no atom, each with `0 <= x[k]`, `x[k] <= 1 || x[k] == 2`,
+/// `y[k] == 0 || y[k] == 2` and `x[k] + y[k] == 1 || x[k] + y[k] == 3`. Each stage's points
+/// are `x[k] == 1` with `y[k]` 0 or 2: `x[k] == 0` needs `y[k]` 1 or 3, and `x[k] == 2` needs
+/// `y[k]` -1 or 1. The rows the disjunctions imply allow `0 <= x[k] <= 2`, so each end of
+/// `x[k]` is moved only by questions.
+fn joint_stages(n: usize) -> Formula {
+    let mut fs = Vec::new();
+    for k in 0..n {
+        let (x, y) = (format!("x{k}"), format!("y{k}"));
+        fs.push(ge(&[(&x, 1)], 0));
+        fs.push(Formula::or(vec![ge(&[(&x, -1)], 1), eq(&[(&x, 1)], -2)]));
+        fs.push(Formula::or(vec![eq(&[(&y, 1)], 0), eq(&[(&y, 1)], -2)]));
+        fs.push(Formula::or(vec![
+            eq(&[(&x, 1), (&y, 1)], -1),
+            eq(&[(&x, 1), (&y, 1)], -3),
+        ]));
+    }
+    Formula::and(fs)
+}
+
+/// The symbols `x[k]` and `y[k]` of [`joint_stages`] of `n` stages, in stage order.
+fn joint_syms(n: usize) -> Vec<Atom> {
+    (0..n)
+        .flat_map(|k| [sym(&format!("x{k}")), sym(&format!("y{k}"))])
+        .collect()
+}
+
+/// Every stage of [`joint_stages`] gives `x[k]` exactly `[1..=1]` and `y[k]` exactly
+/// `{0, 2}`, however many stages there are: each stage is asked alone, and the answer is the
+/// one the whole formula gives. The values are those of one stage's rows counted one by one
+/// over a box that holds all its points (the stages share no atom and each has a point).
+/// Before item TIGHTEN-each-whole each question was asked of the whole formula, and from 3
+/// stages on the solver refused them, leaving `x[k]` at `[0..=2]`.
+#[test]
+fn joint_stage_hulls_are_exact() {
+    let (mut xs, mut ys) = (Vec::new(), Vec::new());
+    for x in -4i128..=6 {
+        for y in -4i128..=6 {
+            let holds =
+                x >= 0 && (x <= 1 || x == 2) && (y == 0 || y == 2) && (x + y == 1 || x + y == 3);
+            if holds {
+                xs.push(x);
+                ys.push(y);
+            }
+        }
+    }
+    xs.sort_unstable();
+    xs.dedup();
+    ys.sort_unstable();
+    ys.dedup();
+    assert_eq!((xs, ys), (vec![1], vec![0, 2]), "one stage's points");
+    for n in [1, 2, 3, 16] {
+        let (each, skipped) = project_each(&joint_stages(n), &joint_syms(n)).expect("projected");
+        assert!(skipped.is_empty(), "n = {n}: {skipped:?}");
+        for (i, h) in each.into_iter().enumerate() {
+            let h = h.expect("a hull");
+            let want = if i % 2 == 0 {
+                "[1..=1]"
+            } else {
+                "[0..=0, 2..=2]"
+            };
+            assert_eq!(h.to_string(), want, "n = {n}, symbol {i}");
+        }
+    }
+}
+
+/// Projecting every symbol of [`joint_stages`] of `n` stages costs O(n log n): each end is
+/// asked of its own stage, not of the whole formula, which cost O(n) per question and O(n²)
+/// in all before (item TIGHTEN-each-whole).
+#[test]
+fn independent_stages_scale() {
+    let inputs = scaling::inputs(16, |n| (joint_stages(n), joint_syms(n)));
+    scaling::check_order("every symbol of stages that share no atom", 16, 1, |n| {
+        let (f, s) = &inputs[&n];
+        let _ = std::hint::black_box(project_each(f, s));
+    });
+}
+
 /// Projecting the first credit of a chained pipeline of `n` stages costs O(n log n): each
 /// choice is tested against the rows projected onto its own stage, not against the whole
 /// chain, which cost `n` solves of `n` rows before (40.6 times the instructions from 16 to

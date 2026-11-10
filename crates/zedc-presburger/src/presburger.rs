@@ -1067,7 +1067,7 @@ fn disjunction_hulls(ors: &[Vec<Rc<Parts>>]) -> Vec<Con> {
 /// disjunctions on one stage of a chain, `x[i + 1] - x[i]` in {3, 7} and
 /// `x[i + 1] - x[i] + y[i]` in {6, 9} with `1 <= y[i] <= 2`, lose 3 (the sum's rows allow 4 to
 /// 8 for the step) and then 6 (the step is 7), and then imply the stage exactly: rows that
-/// [`project_parts`] reads for its hulls and [`tighten`] for a point at each end, so that no
+/// [`project_parts`] reads for its hulls and [`tighten_each`] for a point at each end, so that no
 /// question is asked whose answer is no point (COMPLEXITY.md DISJ-incremental).
 // Complexity tradeoff: a pass costs one projection by halves, O((m + k) log k) for `m` terms
 // and `k` disjunctions where the projections of the ranges of the order stay small, as on a
@@ -8507,10 +8507,10 @@ fn project_parts(
             }
         }
     }
-    // Complexity tradeoff: each bound is tightened by about `2 log2 w` questions of the whole
-    // formula, `w` the hull's width, unless a point of the formula at the end shows it (see
-    // [`tighten`]). First each disjunct that the base and the rows the disjunctions imply show
-    // empty is removed ([`drop_jointly_empty`]), and the hull is met with the bounds that the
+    // Complexity tradeoff: each bound is tightened by about `2 log2 w` questions of the formula
+    // (of the symbol's group alone, where its groups have points), `w` the hull's width, unless a
+    // point of the formula at the end shows it (see [`tighten_each`]). First each disjunct that
+    // the base and the rows the disjunctions imply show empty is removed ([`drop_jointly_empty`]), and the hull is met with the bounds that the
     // base and the rows the disjunctions left imply ([`disjunction_hulls`]) give, below; where
     // those rows are exact (each disjunction alone, or a few on one stage once their empty
     // disjuncts are gone, decide what its forms may be) the point at each end is found and no
@@ -8543,7 +8543,7 @@ fn project_parts(
     // A bound is read from the rows of the projection with the symbol alone, so a projection
     // that keeps other atoms (a core, see [`shadow`]) gives what it gives and the questions
     // the rest. Rows with no point show the parts have none.
-    // The rows the disjuncts left imply, read below for the hulls and by [`tighten`] for a
+    // The rows the disjuncts left imply, read below for the hulls and by [`tighten_each`] for a
     // point at each end.
     let implied = if !sets && n_ors > 1 && !old_path() && out.iter().any(finite) {
         disjunction_hulls(&ors)
@@ -8575,26 +8575,20 @@ fn project_parts(
         }
     }
     if n_ors > 1 && out.iter().any(finite) {
-        let mut summary: Option<Formula> = None;
-        // The points of the formula that the questions found, shared by the symbols, which are
-        // asked of the one formula ([`tighten`]).
-        let mut points: Vec<Model> = Vec::new();
-        for (o, sym) in out.iter_mut().zip(syms) {
-            let Ok(s) = o else { continue };
-            let Some((End::Fin(_), End::Fin(_))) = s.bounds() else {
-                continue;
-            };
-            let f = match whole {
-                Some(f) => f,
-                None => summary.get_or_insert_with(|| summarize(&linked.cons, &seen, syms)),
-            };
-            let ask: fn(&Formula, &mut Vec<Model>) -> Result<bool, Refusal> = if sets {
-                |f, _| decide(f)
-            } else {
-                |f, kept| decide_kept(f, Some(kept))
-            };
-            *o = tighten(f, sym, s.clone(), &implied, ask, &mut points);
-        }
+        let summary;
+        let f = match whole {
+            Some(f) => f,
+            None => {
+                summary = summarize(&linked.cons, &seen, syms);
+                &summary
+            }
+        };
+        let ask: Ask = if sets {
+            |f, _| decide(f)
+        } else {
+            |f, kept| decide_kept(f, Some(kept))
+        };
+        tighten_each(f, syms, &mut out, &implied, ask);
     }
     skipped.sort_unstable();
     skipped.dedup();
@@ -8658,112 +8652,442 @@ fn summarize(cons: &[Con], seen: &[Option<Vec<Projected>>], syms: &[Atom]) -> Fo
     Formula::and(fs)
 }
 
-/// `set`, holding every value of `sym` over `f`'s points, with each finite bound raised or
-/// lowered by bisection to the nearest value at which `f` with `sym` past it is shown to have
-/// no point. A bound moves only on such a proof, so a refused question leaves it sound. Each
-/// question is asked of `ask`, [`decide_inner`] for a formula renamed or [`decide`] when its
-/// atoms may share a color. `hint` holds rows that the parts `f` stands for imply, read with
-/// `f`'s own to find a point at each end.
+/// A question of [`tighten_each`]: whether a formula has a point, [`decide_kept`] adding to
+/// the list a point of the formula it finds, or [`decide`], which adds none.
+type Ask = fn(&Formula, &mut Vec<Model>) -> Result<bool, Refusal>;
+
+/// Each hull of `out` with two finite bounds (the projection of `f` onto the symbol of `syms`
+/// at its place) with each bound raised or lowered by bisection to the nearest value at which
+/// `f` with the symbol past it is shown to have no point ([`Hull::tighten`]). A bound moves
+/// only on such a proof, so a refused question leaves it sound. Each question is asked of
+/// `ask`. `hint` holds rows that the parts `f` stands for imply, read with `f`'s own to find a
+/// point at each end.
 ///
-/// `points` holds points of `f` found so far, and `ask` adds a point of `f` it finds to it
-/// ([`decide_kept`]). A question whose constraint holds at one of them has a point, so it is
-/// not asked: `ask` would answer it `true` or refuse it, and either leaves the bound where a
-/// point leaves it; a point with `sym` at an end of `set` shows that end is its bound. Where the
-/// search refuses a question that [`probe`] finds a point of, the question was a refusal at
-/// the cost of two probes of the whole formula run to their end (item PREIMAGE-slow-rounds);
-/// it is now answered at the first point.
-fn tighten(
+/// The conjuncts of `f` are first put in groups linked by shared atoms
+/// ([`linked_conjuncts`]). When there are two groups or more and each is shown to have a
+/// point, each symbol is asked of its own group alone: `f` with a constraint on the symbol has
+/// a point exactly when the symbol's group with it has one, the other groups having points.
+/// When one group is shown to have none, `f` has none, and every such hull is empty. When the
+/// solver refuses to say whether a group has a point, every symbol is asked of `f`, as when
+/// there is one group.
+///
+/// Within a group the least and greatest value of each symbol over the points of the group
+/// found so far are kept ([`Hull`]): a question whose constraint holds at one of them has a
+/// point, so it is not asked (it would be answered `true` or refused, and either leaves the
+/// bound where the point does), and a point with the symbol at an end of its hull shows that
+/// end is its bound. The bounds of each hull are added to the rows, as `f` implies them.
+/// Before the questions, a point of the group's rows with every atom at its least value, and
+/// one with every atom at its greatest, are read ([`point_of`]); where the group holds at
+/// them, they show every end that the rows alone decide, at once.
+// Complexity tradeoff: each symbol was asked of the whole formula, its rows read again for each
+// symbol and a point of them searched for at each end, O(N) per symbol for a formula of size N,
+// so projecting the k symbols of a family cost O(k N), quadratic in the family (all states of a
+// pipeline of 16 and 128 stages, `l01_38_presburger::omega::dead2`: 56.1 times the bytes
+// unchained, 61.6 chained, item TIGHTEN-each-whole). Now the groups cost O(N log N) to find, the
+// rows of each group are read once, with each hull's bounds added to them so that the point
+// with every atom least (or greatest) puts each symbol at its hull's end where the group allows
+// it, and an end shown by a point found before costs O(1); one that no point shows costs a
+// point search of its group ([`point_of`]: a [`shadow`] of its rows and a solve), and the
+// questions of its bisection, each a question of the group. What is given up: no answer, only
+// time, on a group in which the ends of the symbols need points of their own, not the least or
+// greatest of every atom at once (`k` symbols each 0 or 1 whose sum is at most 1: each upper
+// end needs the point with that symbol 1 and the others 0): one point search of the whole
+// group per symbol, at least O(k m) for `m` rows, measured 2.9, 16 and 118 ms at k = 16, 32
+// and 64 (the code before: 6.2, 37 and 244 ms; the projection of each disjunct onto every
+// symbol before it, item PROJECT-each-chain-all, takes 71, 425 and 2830 ms there). Why: the
+// points at the ends are as many as the symbols, and each is searched for in the group's rows
+// from the start; a point that differs from one found before in one atom could be checked by
+// reading only the rows and disjunctions on that atom, with each row's value kept and changed
+// by the atom's coefficient, but [`point_of`] and [`Formula::holds`] read the whole group.
+// Trigger: one group whose symbols' ends are reached at different points. Tests:
+// `l01_38_presburger::omega::every_state_and_credit_of_a_pipeline_scale` (unchained; the
+// chained pipeline's tightening is O(n log n) too, but its projection of each disjunct onto
+// every symbol of the chain is not, item PROJECT-each-chain-all),
+// `l01_38_presburger::omega::independent_stages_scale` (ends shown only by questions);
+// COMPLEXITY.md row TIGHTEN-each-whole.
+fn tighten_each(
     f: &Formula,
-    sym: &Atom,
-    set: IntervalSet,
+    syms: &[Atom],
+    out: &mut [Result<IntervalSet, Refusal>],
     hint: &[Con],
-    ask: fn(&Formula, &mut Vec<Model>) -> Result<bool, Refusal>,
-    points: &mut Vec<Model>,
-) -> Result<IntervalSet, Refusal> {
-    let Some((End::Fin(lo), End::Fin(hi))) = set.bounds() else {
-        return Ok(set);
-    };
-    let x = Lin::atom(sym.clone());
-    let none = |con: Con, points: &mut Vec<Model>| {
-        !points.iter().any(|m| con.holds(m))
-            && matches!(
-                ask(&Formula::and(vec![f.clone(), Formula::Con(con)]), points),
-                Ok(false)
-            )
-    };
-    let (one, two) = (Int::ONE, Int::from(2));
-    let (lo, hi) = (Int::from(lo), Int::from(hi));
-    // A point of `f` where `sym` is at an end of `set` shows that end is its bound: each
-    // question of that side has a point, so none is asked, and the bound is the one the
-    // questions give. The point is one of `f`'s rows, the rows its disjunctions imply
-    // ([`disjunction_hulls`]) and `hint`, found by [`point_of`] and read on `f`. Where these
-    // are exact (each disjunct one stage of a chain) and give the bounds of `set`, the points
-    // are found, and no question is asked that the solver would refuse with the implied rows
-    // and send to a [`probe`] of every disjunct.
-    let mut parts = absorbed(f, &[]).0;
-    let mut rows = mem::take(&mut parts.cons);
-    rows.extend(disjunction_hulls(&parts.ors));
-    rows.extend(hint.iter().cloned());
-    let mut at_end = |v: &Int, points: &[Model]| {
-        let end = Con::eq(&x, &Lin::constant(v.clone()));
-        if points.iter().any(|m| end.holds(m)) {
-            return true;
+    ask: Ask,
+) {
+    let finite = |o: &Result<IntervalSet, Refusal>| matches!(o, Ok(s) if matches!(s.bounds(), Some((End::Fin(_), End::Fin(_)))));
+    let ks: Vec<usize> = (0..syms.len()).filter(|&k| finite(&out[k])).collect();
+    // Each hull holds the symbol at every point of `f`, so its bounds are rows `f` implies.
+    let mut rows = hint.to_vec();
+    for &k in &ks {
+        if let Ok(s) = &out[k]
+            && let Some((End::Fin(lo), End::Fin(hi))) = s.bounds()
+        {
+            let x = Lin::atom(syms[k].clone());
+            rows.push(Con::ge(&x, &Lin::constant(Int::from(lo))));
+            rows.push(Con::ge(&Lin::constant(Int::from(hi)), &x));
         }
-        rows.push(end);
-        let held = point_of(&rows).is_some_and(|m| f.holds(&m));
-        rows.pop();
-        held
-    };
-    // Where no such point is found, the question of the end itself, `sym <= lo` (or
-    // `sym >= hi`), is asked first: a point of it shows the end is the bound, as the search
-    // below would find, since every question of that side then has a point. One question
-    // where the end is the bound, in place of about `log2 w` that all have a point (item
-    // PRES-project-each-cost); one more where it is not. A refusal or `false` leaves the
-    // search as it was.
-    let has = |con: Con, points: &mut Vec<Model>| {
-        matches!(
-            ask(&Formula::and(vec![f.clone(), Formula::Con(con)]), points),
-            Ok(true)
-        )
-    };
-    // The least `v` in `lo..=hi` with no proof that `f` has no point where `sym <= v`, and the
-    // greatest with none where `sym >= v`.
-    let new_lo = if at_end(&lo, points) || has(Con::ge(&Lin::constant(lo.clone()), &x), points) {
-        lo
-    } else {
-        let (mut a, mut b) = (lo, hi.clone());
-        while a < b {
-            let mid = &a + &(&b - &a).div_floor(&two);
-            if none(Con::ge(&Lin::constant(mid.clone()), &x), points) {
-                a = &mid + &one
-            } else {
-                b = mid
+    }
+    let hint = &rows[..];
+    let groups = linked_conjuncts(f, hint, syms, &ks);
+    if groups.len() > 1 {
+        let mut ends: Vec<Hull> = (groups.into_iter())
+            .map(|(cs, rows, ks)| {
+                let g = Formula::and(cs.into_iter().cloned().collect());
+                Hull::new(g, rows.into_iter().cloned(), syms, ks, ask)
+            })
+            .collect();
+        let mut refused = false;
+        for e in &mut ends {
+            match e.has_point() {
+                Ok(true) => {}
+                // A group with no point: `f` has none.
+                Ok(false) => {
+                    for &k in &ks {
+                        out[k] = Ok(IntervalSet::empty());
+                    }
+                    return;
+                }
+                Err(_) => refused = true,
             }
         }
-        if none(Con::ge(&Lin::constant(a.clone()), &x), points) {
-            return Ok(IntervalSet::empty());
+        if !refused {
+            for e in &mut ends {
+                e.tighten_all(out);
+            }
+            return;
         }
-        a
+    }
+    let mut e = Hull::new(f.clone(), hint.iter().cloned(), syms, ks, ask);
+    e.seed();
+    e.tighten_all(out);
+}
+
+/// The top-level conjuncts of `f` ([`Formula::conjuncts`]) in groups linked by shared atoms, a
+/// product linked to its factors, each with the rows of `hint` on its atoms (a row with no atom
+/// is left out: the rows only help find points) and the symbols of `ks` (indices into `syms`)
+/// in it. A symbol in no conjunct and no row is a group of its own. The groups come in the
+/// order of their first conjunct, row or symbol. A part that two conjuncts hold is walked
+/// once, and links them, so the cost is O(N log N) for `f` of N distinct parts.
+fn linked_conjuncts<'f>(
+    f: &'f Formula,
+    hint: &'f [Con],
+    syms: &[Atom],
+    ks: &[usize],
+) -> Vec<(Vec<&'f Formula>, Vec<&'f Con>, Vec<usize>)> {
+    /// A union-find over the conjuncts, numbered first, and the atoms.
+    struct Sets {
+        parent: Vec<usize>,
+        ids: HashMap<Atom, usize>,
+    }
+    impl Sets {
+        fn find(&mut self, mut i: usize) -> usize {
+            while self.parent[i] != i {
+                self.parent[i] = self.parent[self.parent[i]];
+                i = self.parent[i];
+            }
+            i
+        }
+        fn union(&mut self, a: usize, b: usize) {
+            let (a, b) = (self.find(a), self.find(b));
+            self.parent[a.max(b)] = a.min(b);
+        }
+        /// The element of atom `a`, a product's linked to its factors'.
+        fn atom(&mut self, a: &Atom) -> usize {
+            if let Some(&e) = self.ids.get(a) {
+                return e;
+            }
+            let e = self.parent.len();
+            self.parent.push(e);
+            self.ids.insert(a.clone(), e);
+            if let Atom::Product(x, y) = a {
+                for g in [x.atom(), y.atom()] {
+                    let h = self.atom(&g);
+                    self.union(e, h);
+                }
+            }
+            e
+        }
+    }
+    let cs = f.conjuncts();
+    let mut sets = Sets {
+        parent: (0..cs.len()).collect(),
+        ids: HashMap::new(),
     };
-    if at_end(&hi, points) || has(Con::ge(&x, &Lin::constant(hi.clone())), points) {
-        return Ok(set.meet(&IntervalSet::range(
-            End::Fin(Num::from(&new_lo)),
-            End::Fin(Num::from(&hi)),
-        )));
-    }
-    let (mut a, mut b) = (new_lo.clone(), hi);
-    while a < b {
-        let mid = &b - &(&b - &a).div_floor(&two);
-        if none(Con::ge(&x, &Lin::constant(mid.clone())), points) {
-            b = &mid - &one
-        } else {
-            a = mid
+    // The conjunct that first reached each part shared by more than one holder.
+    let mut reached: HashMap<Id, usize> = HashMap::new();
+    for (j, c) in cs.iter().enumerate() {
+        let mut stack = vec![*c];
+        while let Some(g) = stack.pop() {
+            if let Formula::Con(con) = g {
+                for a in con.lin.terms.keys() {
+                    let e = sets.atom(a);
+                    sets.union(j, e);
+                }
+                continue;
+            }
+            if let Some(id) = Id::of(g) {
+                match reached.entry(id) {
+                    std::collections::hash_map::Entry::Occupied(o) => {
+                        let first = *o.get();
+                        sets.union(j, first);
+                        continue;
+                    }
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        v.insert(j);
+                    }
+                }
+            }
+            stack.extend(g.kids());
         }
     }
-    Ok(set.meet(&IntervalSet::range(
-        End::Fin(Num::from(&new_lo)),
-        End::Fin(Num::from(&a)),
-    )))
+    let rows: Vec<(usize, &Con)> = (hint.iter())
+        .filter_map(|r| {
+            let mut atoms = r.lin.terms.keys();
+            let first = sets.atom(atoms.next()?);
+            for a in atoms {
+                let e = sets.atom(a);
+                sets.union(first, e);
+            }
+            Some((first, r))
+        })
+        .collect();
+    let at: Vec<usize> = ks.iter().map(|&k| sets.atom(&syms[k])).collect();
+    let mut group: HashMap<usize, usize> = HashMap::new();
+    let mut out: Vec<(Vec<&Formula>, Vec<&Con>, Vec<usize>)> = Vec::new();
+    let mut place = |sets: &mut Sets, e: usize| {
+        let r = sets.find(e);
+        *group.entry(r).or_insert_with(|| {
+            out.push((Vec::new(), Vec::new(), Vec::new()));
+            out.len() - 1
+        })
+    };
+    let cs_at: Vec<usize> = (0..cs.len()).map(|j| place(&mut sets, j)).collect();
+    let rows_at: Vec<usize> = rows.iter().map(|(e, _)| place(&mut sets, *e)).collect();
+    let ks_at: Vec<usize> = at.iter().map(|&e| place(&mut sets, e)).collect();
+    for (c, g) in cs.into_iter().zip(cs_at) {
+        out[g].0.push(c);
+    }
+    for ((_, r), g) in rows.into_iter().zip(rows_at) {
+        out[g].1.push(r);
+    }
+    for (&k, g) in ks.iter().zip(ks_at) {
+        out[g].2.push(k);
+    }
+    out
+}
+
+/// A formula whose hulls [`tighten_each`] tightens, with the rows read to find its points and,
+/// for each symbol it tightens, the least and greatest value of the symbol over the points of
+/// the formula found so far.
+struct Hull {
+    f: Formula,
+    /// The rows of `f`'s parts ([`absorbed`]), the rows its disjunctions imply
+    /// ([`disjunction_hulls`]) and the rows given as a hint.
+    rows: Vec<Con>,
+    /// The symbols tightened, as indices into `syms`, each with its linear form.
+    ks: Vec<(usize, Lin)>,
+    /// For each of `ks`, the least and greatest value over the points found.
+    seen: Vec<Option<(Int, Int)>>,
+    /// The points that `ask` found and that are not yet read into `seen`.
+    found: Vec<Model>,
+    ask: Ask,
+}
+
+impl Hull {
+    fn new(
+        f: Formula,
+        hint: impl Iterator<Item = Con>,
+        syms: &[Atom],
+        ks: Vec<usize>,
+        ask: Ask,
+    ) -> Hull {
+        let mut parts = absorbed(&f, &[]).0;
+        let mut rows = mem::take(&mut parts.cons);
+        rows.extend(disjunction_hulls(&parts.ors));
+        rows.extend(hint);
+        let ks: Vec<(usize, Lin)> = (ks.into_iter())
+            .map(|k| (k, Lin::atom(syms[k].clone())))
+            .collect();
+        Hull {
+            f,
+            rows,
+            seen: vec![None; ks.len()],
+            ks,
+            found: Vec::new(),
+            ask,
+        }
+    }
+
+    /// Reads the point `m` of `f` into `seen`; an atom absent from it is zero, a product the
+    /// product of its factors' values, as [`Formula::holds`] reads them.
+    fn read(&mut self, m: &Model) {
+        for ((_, x), s) in self.ks.iter().zip(&mut self.seen) {
+            let v = x.eval(m);
+            *s = Some(match s.take() {
+                None => (v.clone(), v),
+                Some((lo, hi)) => (lo.min(v.clone()), hi.max(v)),
+            });
+        }
+    }
+
+    /// Reads the points `ask` found.
+    fn read_found(&mut self) {
+        for m in mem::take(&mut self.found) {
+            self.read(&m);
+        }
+    }
+
+    /// Reads a point of the rows with every atom at its least value, and one with every atom
+    /// at its greatest, where `f` holds at them; whether one did.
+    fn seed(&mut self) -> bool {
+        let mut held = false;
+        for greatest in [false, true] {
+            if let Some(m) = point_of(&self.rows, greatest)
+                && self.f.holds(&m)
+            {
+                self.read(&m);
+                held = true;
+            }
+        }
+        held
+    }
+
+    /// Whether `f` has a point: shown by [`Hull::seed`], or else asked.
+    fn has_point(&mut self) -> Result<bool, Refusal> {
+        if self.seed() {
+            return Ok(true);
+        }
+        let r = (self.ask)(&self.f, &mut self.found);
+        self.read_found();
+        r
+    }
+
+    /// The constraint that symbol `i` is at most `v` (`below`) or at least `v`.
+    fn side(&self, i: usize, below: bool, v: &Int) -> Con {
+        let (x, v) = (&self.ks[i].1, Lin::constant(v.clone()));
+        if below {
+            Con::ge(&v, x)
+        } else {
+            Con::ge(x, &v)
+        }
+    }
+
+    /// Whether a point found has symbol `i` at most `v` (`below`) or at least `v`.
+    fn known(&self, i: usize, below: bool, v: &Int) -> bool {
+        match &self.seen[i] {
+            Some((lo, hi)) => {
+                if below {
+                    lo <= v
+                } else {
+                    hi >= v
+                }
+            }
+            None => false,
+        }
+    }
+
+    /// The answer of `ask` to `f` with symbol `i` at most `v` (`below`) or at least `v`.
+    fn asked(&mut self, i: usize, below: bool, v: &Int) -> Result<bool, Refusal> {
+        let con = self.side(i, below, v);
+        let r = (self.ask)(
+            &Formula::and(vec![self.f.clone(), Formula::Con(con)]),
+            &mut self.found,
+        );
+        self.read_found();
+        r
+    }
+
+    /// Whether `f` with symbol `i` at most `v` (`below`) or at least `v` is shown to have no
+    /// point.
+    fn none(&mut self, i: usize, below: bool, v: &Int) -> bool {
+        !self.known(i, below, v) && matches!(self.asked(i, below, v), Ok(false))
+    }
+
+    /// Whether a point of `f` with symbol `i` at `v` is found: among those found, or as a point
+    /// of the rows with the symbol at `v` and every other atom at its least value (`below`) or
+    /// its greatest, where `f` holds.
+    fn at_end(&mut self, i: usize, below: bool, v: &Int) -> bool {
+        if self.known(i, below, v) {
+            return true;
+        }
+        self.rows
+            .push(Con::eq(&self.ks[i].1, &Lin::constant(v.clone())));
+        let m = point_of(&self.rows, !below);
+        self.rows.pop();
+        match m {
+            Some(m) if self.f.holds(&m) => {
+                self.read(&m);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The hull `set` of symbol `i`, each finite bound tightened. A point of `f` where the
+    /// symbol is at an end of `set` shows that end is its bound: each question of that side
+    /// has a point, so none is asked, and the bound is the one the questions give. Where the
+    /// rows read are exact (each disjunct one stage of a chain) and give the bounds of `set`,
+    /// the points are found, and no question is asked that the solver would refuse with the
+    /// implied rows and send to a [`probe`] of every disjunct. Where no such point is found,
+    /// the question of the end itself, the symbol at most `lo` (or at least `hi`), is asked
+    /// first: a point of it shows the end is the bound, as the search below would find, since
+    /// every question of that side then has a point. One question where the end is the bound,
+    /// in place of about `log2 w` that all have a point (item PRES-project-each-cost); one more
+    /// where it is not. A refusal or `false` leaves the search as it was.
+    fn tighten(&mut self, i: usize, set: IntervalSet) -> IntervalSet {
+        let Some((End::Fin(lo), End::Fin(hi))) = set.bounds() else {
+            return set;
+        };
+        let (one, two) = (Int::ONE, Int::from(2));
+        let (lo, hi) = (Int::from(lo), Int::from(hi));
+        // The least `v` in `lo..=hi` with no proof that `f` has no point where the symbol is
+        // at most `v`, and the greatest with none where it is at least `v`.
+        let new_lo = if self.at_end(i, true, &lo) || matches!(self.asked(i, true, &lo), Ok(true)) {
+            lo
+        } else {
+            let (mut a, mut b) = (lo, hi.clone());
+            while a < b {
+                let mid = &a + &(&b - &a).div_floor(&two);
+                if self.none(i, true, &mid) {
+                    a = &mid + &one
+                } else {
+                    b = mid
+                }
+            }
+            if self.none(i, true, &a) {
+                return IntervalSet::empty();
+            }
+            a
+        };
+        if self.at_end(i, false, &hi) || matches!(self.asked(i, false, &hi), Ok(true)) {
+            return set.meet(&IntervalSet::range(
+                End::Fin(Num::from(&new_lo)),
+                End::Fin(Num::from(&hi)),
+            ));
+        }
+        let (mut a, mut b) = (new_lo.clone(), hi);
+        while a < b {
+            let mid = &b - &(&b - &a).div_floor(&two);
+            if self.none(i, false, &mid) {
+                b = &mid - &one
+            } else {
+                a = mid
+            }
+        }
+        set.meet(&IntervalSet::range(
+            End::Fin(Num::from(&new_lo)),
+            End::Fin(Num::from(&a)),
+        ))
+    }
+
+    /// Tightens the hull in `out` of each symbol of `ks`.
+    fn tighten_all(&mut self, out: &mut [Result<IntervalSet, Refusal>]) {
+        for i in 0..self.ks.len() {
+            let k = self.ks[i].0;
+            if let Ok(s) = &out[k] {
+                let s = s.clone();
+                out[k] = Ok(self.tighten(i, s));
+            }
+        }
+    }
 }
 
 /// The values of `sym` that the rows of `rows` with `sym` alone allow; the other rows are not
@@ -8814,11 +9138,12 @@ fn int_bounds(
 /// An integer point of `rows`, or `None` when none is found so: [`shadow`] eliminates every
 /// atom it can, [`solve`] finds a point of the rows left, and each atom eliminated, the last
 /// first, takes the least value (or the greatest, with no least) that its rows allow at the
-/// values of the atoms eliminated after it and of those left. Each elimination is exact over
+/// values of the atoms eliminated after it and of those left; with `greatest`, the greatest
+/// value (or the least, with no greatest). Each elimination is exact over
 /// the integers, so such a value exists; `None` comes when the rows have no point or the
 /// solver refuses the rows left. Each atom of a row, a product too, is read as its own value,
 /// as the solver reads it. The cost is that of [`shadow`] and of one solve of the rows left.
-fn point_of(rows: &[Con]) -> Option<Model> {
+fn point_of(rows: &[Con], greatest: bool) -> Option<Model> {
     let mut log = Vec::new();
     let left = shadow_logged(rows, &|_| false, false, Some(&mut log))?;
     let mut model = solve(&left, true).ok()??;
@@ -8831,6 +9156,7 @@ fn point_of(rows: &[Con]) -> Option<Model> {
             (c.lin.terms[&x].clone(), k, c.rel)
         });
         let v = match int_bounds(at)? {
+            (_, Some(hi)) if greatest => hi,
             (Some(lo), _) => lo,
             (None, Some(hi)) => hi,
             (None, None) => Int::ZERO,
