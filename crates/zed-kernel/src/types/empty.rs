@@ -6601,7 +6601,9 @@ fn known_empty(k: &Type) -> bool {
 /// system with the arms dropped that a union also reaches through another union it names
 /// ([`names::absorb`], item GROUP-cycle-dup-names), the system with the nodes that play alike
 /// merged, among them equal parts of two definitions ([`names::merged`], item
-/// GROUP-cycle-dup-across), and that with those arms dropped. A member any of them decides is
+/// GROUP-cycle-dup-across), and that with those arms dropped; the system with arms dropped is
+/// merged too, after each union left with one arm is read as that arm ([`names::contracted`],
+/// item GROUP-arm-drop-merge), so parts equal once arms are dropped are one node. A member any of them decides is
 /// decided, since each answer is the type's. The refusal message reads the system as written,
 /// whose nodes keep the definition that wrote them. Time linear in the bodies, besides the
 /// emptiness of their closed parts, the O(m log m) of [`names::absorb`] and the O(m log n) of
@@ -6696,15 +6698,18 @@ fn settled(low: Answer, high: Answer, wide: bool) -> Option<bool> {
     }
 }
 
-/// The systems of a group's types beside `b`, for [`judge`]: `b` less the arms a union also
-/// reaches through names ([`names::absorb`]), `b` with the nodes that play alike merged
-/// ([`names::merged`]), and that less those arms. Each is decided with its leaves `Bot` and,
-/// when it has leaves, `Top`.
+/// The systems of a group's types beside `b`, for [`judge`]. First `b` with each union of one
+/// distinct arm read as that arm ([`names::contracted`]), as a member whose body is a name; then
+/// that less the arms a union also reaches through names ([`names::absorb`]); and each of the two
+/// with the nodes that play alike merged ([`names::merged`]), and that less the arms the merged
+/// copy shows a union also reaches. Merging after the drop decides parts that play alike only
+/// once a union's arm is dropped (item GROUP-arm-drop-merge). Each is decided with its leaves
+/// `Bot` and, when it has leaves, `Top`.
 struct Others {
-    /// Each system's runs, and whether its nodes are the classes of the merged system.
-    runs: Vec<(Decision, Option<Decision>, bool)>,
-    /// Each node of `b`'s class in the merged system.
-    at: Vec<u32>,
+    /// Each system's runs, and which of `maps` takes `b`'s nodes to its nodes, if any.
+    runs: Vec<(Decision, Option<Decision>, Option<usize>)>,
+    /// For each system with nodes of its own, its node for each node of `b`.
+    maps: Vec<Vec<u32>>,
 }
 
 impl Others {
@@ -6715,31 +6720,69 @@ impl Others {
         for &v in leaves {
             b.set(v, Kind::Bot, vec![]);
         }
-        let mut systems: Vec<(Bes, Vec<u32>, bool)> = Vec::new();
-        if let Some(a) = names::absorb(b, same, union) {
-            systems.push((a, leaves.to_vec(), false));
-        }
+        let mut systems: Vec<(Bes, Vec<u32>, Option<usize>)> = Vec::new();
+        let mut maps = Vec::new();
         let mut leaf = vec![false; b.len()];
         for &v in leaves {
             leaf[v as usize] = true;
         }
-        let mut at = Vec::new();
-        if let Some((m, node, union)) = names::merged(b, &leaf, union) {
-            let mut leaves: Vec<u32> = leaves.iter().map(|&v| node[v as usize]).collect();
-            leaves.sort_unstable();
-            leaves.dedup();
-            let types: Vec<u32> = (0..m.len() as u32).collect();
-            if let Some(a) = names::absorb(&m, &types, &union) {
-                systems.push((a, leaves.clone(), true));
+        // `b` with each union of one distinct arm read as that arm (`base`), so that a member
+        // whose body is a name is no second union over the member it names; `at` the place in
+        // `maps` of its node for each node of `b`, with its types, unions, leaves.
+        let mut contracted = names::contracted(b);
+        let (at, base_same, base_union, base_leaf, base_leaves) = match contracted.as_mut() {
+            None => (None, Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            Some((_, to, kept)) => {
+                let mut ls: Vec<u32> = leaves.iter().map(|&v| to[v as usize]).collect();
+                ls.sort_unstable();
+                ls.dedup();
+                let pick = |v: &u32| (same[*v as usize], union[*v as usize], leaf[*v as usize]);
+                let (s, (u, l)): (Vec<u32>, (Vec<bool>, Vec<bool>)) =
+                    kept.iter().map(pick).map(|(s, u, l)| (s, (u, l))).unzip();
+                maps.push(std::mem::take(to));
+                (Some(0), s, u, l, ls)
             }
-            systems.push((m, leaves, true));
-            at = node;
+        };
+        let (base, same, union, leaf, leaves_of_base): (&Bes, &[u32], &[bool], &[bool], &[u32]) =
+            match &contracted {
+                None => (&*b, same, union, &leaf, leaves),
+                Some((c, _, _)) => (c, &base_same, &base_union, &base_leaf, &base_leaves),
+            };
+        let dropped = names::absorb(base, same, union);
+        // `base`, and `base` less the arms `absorb` drops, which has `base`'s nodes, leaves and
+        // unions, each merged and then less the arms that the merged copy shows a union also
+        // reaches.
+        let mut base_merged = false;
+        for (k, g) in std::iter::once(base).chain(dropped.as_ref()).enumerate() {
+            if let Some((m, node, union)) = names::merged(g, leaf, union) {
+                base_merged |= k == 0;
+                let node: Vec<u32> = match at {
+                    Some(j) => maps[j].iter().map(|&v: &u32| node[v as usize]).collect(),
+                    None => node,
+                };
+                let mut leaves: Vec<u32> = leaves.iter().map(|&v| node[v as usize]).collect();
+                leaves.sort_unstable();
+                leaves.dedup();
+                let types: Vec<u32> = (0..m.len() as u32).collect();
+                if let Some(a) = names::absorb(&m, &types, &union) {
+                    systems.push((a, leaves.clone(), Some(maps.len())));
+                }
+                systems.push((m, leaves, Some(maps.len())));
+                maps.push(node);
+            }
+        }
+        if let Some(a) = dropped {
+            systems.push((a, leaves_of_base.to_vec(), at));
+        }
+        // `base` itself, when it is not `b` and no merged copy stands for it.
+        if let Some((c, _, _)) = contracted.filter(|_| !base_merged) {
+            systems.push((c, base_leaves, at));
         }
         for &v in leaves {
             b.set(v, Kind::Top, vec![]);
         }
         let runs = (systems.into_iter())
-            .map(|(mut g, leaves, merged)| {
+            .map(|(mut g, leaves, map)| {
                 let low = decide(&g);
                 let high = (!leaves.is_empty()).then(|| {
                     // A leaf has no children either way, so the parents `seal` filled stay right.
@@ -6748,17 +6791,17 @@ impl Others {
                     }
                     decide(&g)
                 });
-                (low, high, merged)
+                (low, high, map)
             })
             .collect();
-        Others { runs, at }
+        Others { runs, maps }
     }
 
     /// Member `i`'s emptiness by each system that settles it; `wide` as for [`settled`].
     fn answers(&self, i: usize, wide: bool) -> impl Iterator<Item = bool> + '_ {
-        self.runs.iter().filter_map(move |(low, high, merged)| {
+        self.runs.iter().filter_map(move |(low, high, map)| {
             let high = high.as_ref().unwrap_or(low);
-            let v = if *merged { self.at[i] as usize } else { i };
+            let v = map.map_or(i, |k| self.maps[k][i] as usize);
             settled(low.answers[v], high.answers[v], wide)
         })
     }

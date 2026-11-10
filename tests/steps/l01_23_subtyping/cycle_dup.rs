@@ -539,21 +539,169 @@ fn equal_parts_in_two_definitions_are_one() {
     assert_eq!(messages(seed_57360()), vec![None; 4]);
 }
 
+/// `Node | Tree` written `Node | Tree | (Tree, Node)`, the wider union of seed 34841.
+fn wider() -> Expr {
+    or(vec![r(NODE), r(TREE), pair(r(TREE), r(NODE))])
+}
+
 /// Seed 34841 written two more ways: `Node | Tree` in `Node` written
 /// `Node | Tree | (Tree, Node)`, and `Node | Tree` in `Tree` written `Node`. Each union is still
 /// `Node`, but the two `((int) -> Tree, …)` parts are equal only once arms are dropped:
 /// `Node | Tree | (Tree, Node)` against `Node | Tree` in the first, `Node | Tree` against `Node`
-/// in the second. Neither the union edge test nor the merge of nodes that play alike sees
-/// that; dropping arms and merging again until nothing changes is the open class of item
-/// GROUP-cycle-dup-across, with no bound within `m log m` found. The decider refuses the group,
-/// and the search finds every member's value, with no message.
+/// in the second. Neither the union edge test nor the merge of nodes that play alike sees that
+/// alone. Before item GROUP-arm-drop-merge the decider refused the group and the search found
+/// every member's value. Now the system with arms dropped (`names::absorb`) is merged too, after
+/// each union left with one arm is read as that arm (`names::contracted`): the two parts are one
+/// node there, and every member has a value and no message.
 #[test]
-fn parts_equal_only_once_arms_are_dropped_are_left_to_the_search() {
-    let wider = or(vec![r(NODE), r(TREE), pair(r(TREE), r(NODE))]);
-    let left = vec![(None, Verdict::Inhabited), (None, Verdict::Inhabited)];
-    assert_eq!(verdicts_of(seed_34841(wider, node_or_tree())), left);
-    assert_eq!(verdicts_of(seed_34841(node_or_tree(), r(NODE))), left);
-    assert_eq!(messages(seed_34841(node_or_tree(), r(NODE))), vec![None; 2]);
+fn parts_equal_only_once_arms_are_dropped_are_one() {
+    for (form, bodies) in [
+        ("wider", seed_34841(wider(), node_or_tree())),
+        ("Node", seed_34841(node_or_tree(), r(NODE))),
+    ] {
+        assert_eq!(verdicts_of(bodies.clone()), vec![HAS_A_VALUE; 2], "{form}");
+        assert_eq!(messages(bodies), vec![None; 2], "{form}");
+    }
+}
+
+/// Seed 34841 with `Tree`'s `Node | Tree` written through a name for `Node`, `Thunk`:
+///
+/// ```text
+/// type Tree = (Tree, Node) | ((int) -> Tree, inner)
+/// ```
+///
+/// with `inner` written `Thunk | Node` and `type Thunk = Node`; `Thunk | Node` and
+/// `type Thunk = A1`, `type A1 = Node`; or `Thunk` and `type Thunk = Node`. `Thunk` is a second
+/// union parent of `Node`, so no arm of `Thunk | Node` is dropped by dominance; read as one arm,
+/// each `inner` is `Node`, and `Tree`'s `((int) -> Tree, inner)` plays alike with `Node`'s
+/// `((int) -> Tree, Node | Tree)` once `Node | Tree` has dropped `Tree`. Before item
+/// GROUP-arm-drop-merge each was left to the search; now every member has a value and no message.
+#[test]
+fn a_name_for_a_member_is_read_as_that_member() {
+    let node_inner = node_or_tree();
+    let mut alias = seed_34841(node_inner.clone(), or(vec![r(THUNK), r(NODE)]));
+    alias.push(r(NODE));
+    let mut alias_chain = seed_34841(node_inner.clone(), or(vec![r(THUNK), r(NODE)]));
+    alias_chain.extend([r(A1), r(NODE)]);
+    let mut alias_only = seed_34841(node_inner, r(THUNK));
+    alias_only.push(r(NODE));
+    for (form, bodies) in [
+        ("alias", alias),
+        ("alias chain", alias_chain),
+        ("alias only", alias_only),
+    ] {
+        let len = bodies.len();
+        assert_eq!(
+            verdicts_of(bodies.clone()),
+            vec![HAS_A_VALUE; len],
+            "{form}"
+        );
+        assert_eq!(messages(bodies), vec![None; len], "{form}");
+    }
+}
+
+/// `n` copies of seed 34841 with `Node | Tree` in `Node` written as in [`wider`], copy `i` its
+/// definitions `2i` and `2i + 1`.
+fn copies(n: usize) -> Vec<Expr> {
+    let mut bodies = Vec::new();
+    for i in 0..n {
+        let (node, tree) = (|| r(2 * i), || r(2 * i + 1));
+        let wide = or(vec![node(), tree(), pair(tree(), node())]);
+        bodies.push(or(vec![
+            tree(),
+            pair(node(), tree()),
+            pair(int(), f(f(tree()))),
+            pair(tree(), node()),
+            pair(f(tree()), wide),
+        ]));
+        bodies.push(or(vec![
+            pair(tree(), node()),
+            pair(f(tree()), or(vec![node(), tree()])),
+        ]));
+    }
+    bodies
+}
+
+/// Every copy in [`copies`] is decided, as one copy is.
+#[test]
+fn copies_of_parts_equal_once_arms_are_dropped_are_decided() {
+    for n in [1, 2, 5] {
+        assert_eq!(verdicts_of(copies(n)), vec![HAS_A_VALUE; 2 * n], "n = {n}");
+        assert_eq!(messages(copies(n)), vec![None; 2 * n], "n = {n}");
+    }
+}
+
+/// Deciding [`copies`] of `n` and `8n`: one round of contraction, merging and dropping arms,
+/// within `m log m`.
+#[test]
+fn copies_of_parts_equal_once_arms_are_dropped_scale() {
+    let n = 64;
+    let groups = scaling::inputs(n, |m| named(copies(m)));
+    scaling::check_order("n copies of parts equal once arms are dropped", n, 1, |m| {
+        Type::forget_emptiness();
+        for t in &groups[&m].instance(vec![]) {
+            std::hint::black_box(t.decided_by_group());
+        }
+    });
+}
+
+/// `n` levels of seed 34841 in its wider form, level `k` its definitions `Nodek`, `Treek`, `Wk`
+/// and `Vk`, numbered `4k` to `4k + 3`:
+///
+/// ```text
+/// type Nodek = Treek | (Nodek, Treek) | (int, (int) -> (int) -> Treek) | (Treek, Nodek) | Wk
+/// type Treek = (Treek, Nodek) | Vk | (Treek, V(k-1))
+/// type Wk = ((int) -> Treek, Nodek | Treek | (Treek, W(k-1)))
+/// type Vk = ((int) -> Treek, Nodek | Treek)
+/// ```
+///
+/// with `(Treek, V(k-1))` absent and `W(k-1)` read as `Node0` at level 0. `Wk` and `Vk` are one
+/// type once the arm `(Treek, W(k-1))` is dropped, as at level 0; that arm is an arm of `Treek`,
+/// `(Treek, V(k-1))`, only once `W(k-1)` and `V(k-1)` are one node. So level `k` needs a round
+/// of dropping arms and merging after level `k - 1`'s.
+fn rounds(n: usize) -> Vec<Expr> {
+    let mut bodies = Vec::new();
+    for k in 0..n {
+        let at = |i: usize| move || r(4 * k + i);
+        let (node, tree, w, v) = (at(0), at(1), at(2), at(3));
+        bodies.push(or(vec![
+            tree(),
+            pair(node(), tree()),
+            pair(int(), f(f(tree()))),
+            pair(tree(), node()),
+            w(),
+        ]));
+        let mut tree_arms = vec![pair(tree(), node()), v()];
+        if k > 0 {
+            tree_arms.push(pair(tree(), r(4 * k - 1)));
+        }
+        bodies.push(or(tree_arms));
+        let below = if k == 0 { node() } else { r(4 * k - 2) };
+        bodies.push(pair(
+            f(tree()),
+            or(vec![node(), tree(), pair(tree(), below)]),
+        ));
+        bodies.push(pair(f(tree()), or(vec![node(), tree()])));
+    }
+    bodies
+}
+
+/// The decider takes one round of dropping arms and merging, so in [`rounds`] of 2 it decides
+/// level 0 and leaves level 1 to the search, which finds its values with no message
+/// (`// Complexity tradeoff:` at `names::contracted`; repeating the rounds until nothing changes
+/// costs a round per level). With the arm `(Tree0, Node0)` dropped from `W0` by hand, `W0` and
+/// `V0` are written alike, and one round decides level 1 too.
+#[test]
+fn parts_equal_only_after_two_rounds_are_left_to_the_search() {
+    let left = (None, Verdict::Inhabited);
+    assert_eq!(
+        verdicts_of(rounds(2)),
+        [vec![HAS_A_VALUE; 4], vec![left; 4]].concat()
+    );
+    assert_eq!(messages(rounds(2)), vec![None; 8]);
+    let mut dropped = rounds(2);
+    dropped[2] = pair(f(r(TREE)), node_or_tree());
+    assert_eq!(verdicts_of(dropped), vec![HAS_A_VALUE; 8]);
 }
 
 /// [`seed_57360`], whose group the decider refuses as written, with two chains of `n` names
@@ -606,16 +754,18 @@ fn two_chains_written_alike_scale() {
     });
 }
 
-/// The groups of item GROUP-cycle-dup-across: seed 34841 as written and in the two forms left
-/// to the search, seed 57360, and [`two_chains`] of 3.
+/// The groups of items GROUP-cycle-dup-across and GROUP-arm-drop-merge: seed 34841 as written
+/// and in the two forms equal once arms are dropped, seed 57360, [`two_chains`] of 3, [`copies`]
+/// of 2 and [`rounds`] of 2.
 fn item_groups() -> Vec<Vec<Expr>> {
-    let wider = or(vec![r(NODE), r(TREE), pair(r(TREE), r(NODE))]);
     vec![
         seed_34841(node_or_tree(), node_or_tree()),
-        seed_34841(wider, node_or_tree()),
+        seed_34841(wider(), node_or_tree()),
         seed_34841(node_or_tree(), r(NODE)),
         seed_57360(),
         two_chains(3),
+        copies(2),
+        rounds(2),
     ]
 }
 

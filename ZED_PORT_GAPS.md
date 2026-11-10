@@ -3087,6 +3087,13 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | The other systems built only when a member is left open or under `cfg!(debug_assertions)`, through `bool::then`, the leaves set to `Bot` and back to `Top` in the borrowed `&mut Bes` around the build | `judge`, `Others::new` | Mutation (gap 11) | the systems built from `b` as written, with the leaves `Bot` and `Top` as two values, and built lazily by a closure the loop calls on the first open member |
 | Kahn's order of a cycle's `Or` edges with a mutable in-degree vector and a stack, the `Scratch` and `Stamp` buffers of `refusal` reused for local numbers and to drop repeated children, reset after use | `bes::one_cycle_but_union_chords` | Mutation (gap 11) | a fold over the cycle's nodes with a persistent map of in-degrees; local numbers and first-seen children by a map built per cycle |
 
+## Entries from GROUP-arm-drop-merge (`crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/names.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A post-order of the unions by an explicit stack of `(node, ready)` pairs, each node's stand-in written into a `rep` vector set to `u32::MAX` while not read, and a `seen` stamp vector marking the stand-ins already counted among a union's arms | `names::contracted` | Mutation (gap 11) | a fold over the unions in a topological order of the union graph with a persistent map from node to stand-in; each union's arms as a set of stand-ins |
+| Node maps composed by indexing one `Vec<u32>` with another, the contracted system's maps borrowed or owned by matching on `Option<(Bes, Vec<u32>, Vec<u32>)>` | `names::merged`, `Others::new` | Mutation (gap 11) | the maps as persistent vectors composed by a map over the first |
+
 ## Entries from S22-shapes-linear (`crates/zedc-presburger/src/presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |

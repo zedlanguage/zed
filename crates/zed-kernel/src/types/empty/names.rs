@@ -48,11 +48,13 @@ use super::super::bes::{Bes, Kind};
 /// `B = (B, A) | ((int) -> B, A | B)`: each `A | B` reaches `B` through `A`, which both name, so
 /// neither dominates `A`. That group is decided all the same, since the edge from `A | B` to `B`
 /// runs along the cycle through `A` (`bes::one_cycle_but_union_chords`) and the two
-/// `((int) -> B, A | B)` play alike ([`merged`], item GROUP-cycle-dup-across). Left open: parts
-/// equal only once arms are dropped, as with `A`'s `A | B` written `A | B | (B, A)`. Cost: such a
-/// group keeps the extra cycle and may be refused, and goes to the search. COMPLEXITY.md K88.
-/// A complete solution needs the transitive reduction of the union graph, with the nodes that
-/// play alike merged again after it drops arms, until nothing changes.
+/// `((int) -> B, A | B)` play alike ([`merged`], item GROUP-cycle-dup-across). Parts equal
+/// only once arms are dropped are merged after one drop: [`super::Others`] merges the copy this
+/// returns, after [`contracted`] reads each union left with one arm as that arm (item
+/// GROUP-arm-drop-merge). Left open: parts equal only after several rounds of drop and merge,
+/// each round's drop needing the merge before it; such a group goes to the search
+/// (COMPLEXITY.md K88, K98). A complete solution needs the transitive reduction of the union
+/// graph, with the nodes that play alike merged again after it drops arms, until nothing changes.
 pub(super) fn absorb(b: &Bes, same: &[u32], union: &[bool]) -> Option<Bes> {
     // The union nodes, numbered 0..k; `k` is the virtual root of each tree.
     let unions: Vec<u32> = (0..b.len() as u32).filter(|&v| union[v as usize]).collect();
@@ -304,6 +306,112 @@ struct Intervals {
 /// is in a part handled at most log n times. Tradeoff: one count per node and part it has
 /// children in, and the edges into each node, held while the partition is refined.
 pub(super) fn merged(b: &Bes, leaf: &[bool], union: &[bool]) -> Option<(Bes, Vec<u32>, Vec<bool>)> {
+    let Some((c, to, kept)) = contracted(b) else {
+        return bisimilar(b, leaf, union);
+    };
+    let leaf: Vec<bool> = kept.iter().map(|&v| leaf[v as usize]).collect();
+    let union: Vec<bool> = kept.iter().map(|&v| union[v as usize]).collect();
+    Some(match bisimilar(&c, &leaf, &union) {
+        Some((m, node, union)) => (m, to.iter().map(|&v| node[v as usize]).collect(), union),
+        None => (c, to, union),
+    })
+}
+
+/// `b` with each union of one distinct arm replaced by that arm wherever it is a child, for
+/// each node of `b` its node in the copy, and the node of `b` each node of the copy is; `None`
+/// when no union has one arm (item GROUP-arm-drop-merge). Such a union's equation is `v = w`, so each
+/// node's answer in the copy is its answer in `b`. A union whose arms all stand for one node
+/// stands for it too: `A | B` with `B = A` written as a name is `A`. [`absorb`] leaves such
+/// unions when it drops all but one arm, as with `Node | Tree` in a definition where `Tree` is an
+/// arm of `Node`: the union is `Node`, and the parts written with it play alike with those
+/// written with `Node` only once it is read as `Node`. The unions form no cycle through their
+/// arms (a member's body is contractive), so each union is read once, after its arms that are
+/// unions, from an explicit stack. Time linear in the nodes and edges.
+///
+/// Complexity tradeoff: one round of contraction, merging and dropping decides the parts equal
+/// once one round of arms is dropped. The naive way to every such part repeats drop and merge
+/// until nothing changes, O(r·m log n) for r rounds, r up to n on n levels of definitions whose
+/// arms drop only once the level below is merged; reading every union as the set of
+/// its non-union descendants flattens the rounds into one but is the transitive closure of the
+/// union graph, O(n·m). Used: one round, O(m log n) with [`merged`]. Tradeoff: a chain needing
+/// two or more rounds is left to the search, which is linear on it (COMPLEXITY.md K98).
+pub(super) fn contracted(b: &Bes) -> Option<(Bes, Vec<u32>, Vec<u32>)> {
+    let n = b.len();
+    // Each node's stand-in: itself unless it is a union of one distinct arm after its arms'
+    // stand-ins; `u32::MAX` while not read.
+    let mut rep = vec![u32::MAX; n];
+    // `seen[w] == v` marks `w` as a stand-in already counted among `v`'s arms.
+    let mut seen = vec![u32::MAX; n];
+    let mut stack: Vec<(u32, bool)> = Vec::new();
+    for root in 0..n as u32 {
+        if rep[root as usize] != u32::MAX {
+            continue;
+        }
+        stack.push((root, false));
+        while let Some((v, ready)) = stack.pop() {
+            if rep[v as usize] != u32::MAX {
+                continue;
+            }
+            if b.kind(v) != Kind::Or {
+                rep[v as usize] = v;
+                continue;
+            }
+            if !ready {
+                stack.push((v, true));
+                stack.extend(
+                    (b.children(v).iter())
+                        .filter(|&&w| rep[w as usize] == u32::MAX)
+                        .map(|&w| (w, false)),
+                );
+                continue;
+            }
+            let mut only = None;
+            let mut distinct = 0;
+            for &w in b.children(v) {
+                let s = rep[w as usize];
+                debug_assert_ne!(s, u32::MAX, "unions form no cycle through their arms");
+                if seen[s as usize] != v {
+                    seen[s as usize] = v;
+                    distinct += 1;
+                    only = Some(s);
+                }
+            }
+            rep[v as usize] = match only {
+                Some(s) if distinct == 1 => s,
+                _ => v,
+            };
+        }
+    }
+    if (0..n).all(|v| rep[v] == v as u32) {
+        return None;
+    }
+    // The kept nodes, numbered in order.
+    let mut id = vec![u32::MAX; n];
+    let mut kept = Vec::new();
+    for v in 0..n {
+        if rep[v] == v as u32 {
+            id[v] = kept.len() as u32;
+            kept.push(v as u32);
+        }
+    }
+    let mut c = Bes::new();
+    for &v in &kept {
+        let mut children: Vec<u32> = (b.children(v).iter())
+            .map(|&w| id[rep[w as usize] as usize])
+            .collect();
+        if b.kind(v) != Kind::Mor {
+            children.sort_unstable();
+            children.dedup();
+        }
+        c.add(b.kind(v), children);
+    }
+    c.seal();
+    let to = rep.iter().map(|&s| id[s as usize]).collect();
+    Some((c, to, kept))
+}
+
+/// [`merged`] without reading unions of one arm as that arm: the partition and the copy.
+fn bisimilar(b: &Bes, leaf: &[bool], union: &[bool]) -> Option<(Bes, Vec<u32>, Vec<bool>)> {
     let n = b.len();
     // Each node's distinct children, and the edges into each node by their place in `child`.
     let mut at = Vec::with_capacity(n + 1);
