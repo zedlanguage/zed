@@ -1779,6 +1779,26 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
             "t(x: int, y: int) = h(x: x, y: y) >= 4;\n",
         )
         .to_string(),
+        // Cross-review round 3 (Gemini): a piece unbounded below, `a <= -5 && h >= -2 * a`, and
+        // one unbounded above, `a >= -3 && h >= 3 - a`, whose rests hold on each other; `a`
+        // never takes -4, which a merge of the two would add ([`merge_pieces`]).
+        concat!(
+            "k0(k: int) = if k >= 0 { k } else { k };\n",
+            "a(k: int) = if k0(k: k) <= 0 { k0(k: k) - 5 } else { k0(k: k) - 4 };\n",
+            "h(k: int, y: int) = if a(k: k) <= 0 - 5 { max(y, 0 - 2 * a(k: k)) } else { max(y, 3 - a(k: k)) };\n",
+            "t(k: int, y: int) = h(k: k, y: y) + a(k: k) == 4 && h(k: k, y: y) == 8;\n",
+        )
+        .to_string(),
+        // Cross-review round 3 (Gemini): two chains over the product `x * y`, which `t` does not
+        // write itself.
+        concat!(
+            "g1(x: int, y: int) = x * y;\n",
+            "g2(x: int, y: int) = g1(x: x, y: y) + 1;\n",
+            "p1(x: int, y: int) = x * y;\n",
+            "p2(x: int, y: int) = p1(x: x, y: y) + 1;\n",
+            "t(x: int, y: int) = g2(x: x, y: y) != p2(x: x, y: y);\n",
+        )
+        .to_string(),
     ];
     for src in &units {
         let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
