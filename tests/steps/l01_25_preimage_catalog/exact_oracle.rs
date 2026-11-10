@@ -300,6 +300,27 @@ fn exact(seeds: std::ops::Range<u64>) -> Vec<Run> {
 // keeps `y` in [1, 7] and `x` in (-inf, -3] or [-1, 22] instead of all of `x` up to 22. Each
 // new box is the term's whole solution set, which the interpreter confirmed at every point
 // checked. No case lost its exact mark, and the counts of `c - e` did not change.
+//
+// Five counts rose since PROJECT-canon-precision, which tests each disjunct for a point
+// whether or not the greedy search found one first, but for the pieces of a set of values of
+// one atom, so that the hulls no longer depend on the order of the parts:
+// s22_random_terms_3 4432 -> 4433, more_mixed_1 36153 -> 36160, more_mixed_2 36039 -> 36048,
+// more_deep_1 35184 -> 35186 and more_deep_2 35163 -> 35171, 27 exact marks in all. The
+// boxes of 30 cases changed: in 12 both transfers went from not exact to exact, in 4 the
+// transfer before became exact as the transfer was already, and in 12 the box narrowed and
+// stayed inexact. Two moved the other way, each to the answer the old call gives with the
+// parts reversed, so that the answer no longer depends on that order:
+// `abs(((g2((x + -1)) mod -4) + (x + -2)))` with `g2 = v -> ((v * -2) + ((-5)^1))`, demanded
+// in [-30, -27] or [4, 5], keeps `x` in [-5, -2] or [3, 6], not [-5, -4] or [3, 6], in both
+// transfers, inexact as before; and the transfer before of `abs(((x + x) * 3))`, demanded in
+// [-14, -13] or [20, 25], keeps all of `x`, inexact, not the exact {-4, 4} the transfer
+// still gives. In each the piece below zero of the demand has no point and is kept, as every
+// piece of a set of values of one atom is (`one_atom_set` in presburger.rs). The interpreter
+// met the demand at every point checked in each new box and at none checked outside the
+// exact ones, and the counts of `c - e` did not change. Measured against the old call (the
+// probe only on a failed search) at the same seeds, in both orders of the parts: with the
+// parts reversed the old call counts 36155 and 36041 for more_mixed_1 and _2, this one
+// 36160 and 36048 in both orders.
 
 #[test]
 fn s22_random_terms_match_the_interpreter_1() {
@@ -313,27 +334,27 @@ fn s22_random_terms_match_the_interpreter_2() {
 
 #[test]
 fn s22_random_terms_match_the_interpreter_3() {
-    check_runs(&RUNS[6..18], 4432, 0);
+    check_runs(&RUNS[6..18], 4433, 0);
 }
 
 #[test]
 fn more_mixed_terms_match_the_interpreter_1() {
-    check_runs(&mixed(10_000..10_010), 36153, 3);
+    check_runs(&mixed(10_000..10_010), 36160, 3);
 }
 
 #[test]
 fn more_mixed_terms_match_the_interpreter_2() {
-    check_runs(&mixed(10_010..10_020), 36039, 5);
+    check_runs(&mixed(10_010..10_020), 36048, 5);
 }
 
 #[test]
 fn more_deep_terms_match_the_interpreter_1() {
-    check_runs(&deep(2_000..2_100), 35184, 2);
+    check_runs(&deep(2_000..2_100), 35186, 2);
 }
 
 #[test]
 fn more_deep_terms_match_the_interpreter_2() {
-    check_runs(&deep(2_100..2_200), 35163, 1);
+    check_runs(&deep(2_100..2_200), 35171, 1);
 }
 
 #[test]

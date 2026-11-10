@@ -797,11 +797,11 @@ fn arms_of_case_236(name: &dyn Fn(&str) -> String, flip: &dyn Fn(usize) -> bool)
 }
 
 /// [`arms_of_case_236`] written 60 ways, its names permuted and its equations negated at
-/// random: `project_each` gives `i` the same set in every writing, one that holds each of its
-/// points, `{-4, 0, 4}` (found by asking each `i` in `[-6, 6]`). The set is `[-4, -3]`, `0`,
-/// `4`, not the points alone: the greedy search finds a point, so the search over disjuncts
-/// (`probe`) does not run and a disjunct with no point is kept (COMPLEXITY.md row
-/// PROJECT-canon-precision, where running it always is measured and found not `O(n log n)`).
+/// random: `project_each` gives `i` the same set in every writing, its points `{-4, 0, 4}`
+/// exactly (found by asking each `i` in `[-6, 6]`). Before item PROJECT-canon-precision the
+/// set was `[-4, -3]`, `0`, `4`: the greedy search found a point, so the search over
+/// disjuncts (`probe`) did not run and a disjunct with no point was kept; it now runs always,
+/// its searches batched (COMPLEXITY.md row PROJECT-canon-precision).
 #[test]
 fn a_disjunct_with_no_point_beside_a_point_gives_one_answer_in_every_writing() {
     let mut rng = Rng::new(0x236);
@@ -829,12 +829,7 @@ fn a_disjunct_with_no_point_beside_a_point_gives_one_answer_in_every_writing() {
         let (each, skipped) = project_each(&f, &[sym(i)]).expect("projected");
         assert!(skipped.is_empty(), "writing {w}: {f}");
         let got = each[0].as_ref().expect("a set");
-        assert_eq!(got.join(&points), *got, "writing {w}: {f}");
-        assert_eq!(
-            got.to_string(),
-            "[-4..=-3, 0..=0, 4..=4]",
-            "writing {w}: {f}"
-        );
+        assert_eq!(*got, points, "writing {w}: {f}");
     }
 }
 

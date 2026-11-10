@@ -600,18 +600,36 @@ fn a_choice_two_levels_inside_a_branch_is_read_by_its_projections_only() {
     // Inner as above with each sign of `y` one choice further in: `x <= 0 && (y >= 1 || y >=
     // 2) || x >= 10 && (y <= -1 || y <= -2)`. The level reads the inner choices by their own
     // constraints and the branch by its projections, `x` in `{0, 10}` and `y` not 0, which
-    // allow `x = 10` with `y = 1`, so `10` is kept, though no point of the test has it
-    // (tradeoff comment at `presburger::summarize`).
+    // allow `x = 10` with `y = 1` (tradeoff comment at `presburger::summarize`). The
+    // disjunct `y >= 1 && x >= 5` of the second choice has no point with the rest of the
+    // level, and the probe that removes it now runs whether or not the greedy search finds a
+    // point (item PROJECT-canon-precision), so `10`, which no point of the test has, is gone
+    // and the hull is exact: the interpreter at every `x` in `-5..=210`, `y` and `q` in
+    // `-3..=3` agrees.
     let ge = |n, v| cmp(Prim::Ge, n, v);
     let le = |n, v| cmp(Prim::Le, n, v);
     let inner = either(
         all(vec![le("x", 0), either(ge("y", 1), ge("y", 2))]),
         all(vec![ge("x", 10), either(le("y", -1), le("y", -2))]),
     );
-    assert_eq!(
-        then_x(accounts_paired(inner)),
-        "[3..=4, 10..=10, 100..=200]"
-    );
+    let test = accounts_paired(inner);
+    assert_eq!(then_x(test.clone()), "[3..=4, 100..=200]");
+    let holds = |x: i64, y: i64, q: i64| {
+        let t = let_(
+            "x",
+            lit(x),
+            let_("y", lit(y), let_("q", lit(q), test.clone())),
+        );
+        matches!(
+            zed_kernel::Evaluator::new(zed_kernel::World::new()).run(&t),
+            Ok(zed_kernel::Value::Bool(true))
+        )
+    };
+    let xs: Vec<i64> = (-5..=210)
+        .filter(|&x| (-3..=3).any(|y| (-3..=3).any(|q| holds(x, y, q))))
+        .collect();
+    let want: Vec<i64> = [3, 4].into_iter().chain(100..=200).collect();
+    assert_eq!(xs, want);
 }
 
 #[test]

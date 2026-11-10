@@ -1009,21 +1009,46 @@ type Counts = (
 );
 
 const GUARDED: [Counts; 16] = [
-    (0, (0, 0, 52), (10, &[]), 0),
-    (250, (0, 3, 41), (9, &[]), 0),
-    (500, (0, 0, 42), (8, &[]), 0),
-    (750, (0, 0, 45), (11, &[]), 0),
-    (1000, (0, 0, 52), (14, &[]), 0),
+    (0, (0, 0, 51), (10, &[]), 0),
+    (250, (0, 3, 40), (9, &[]), 0),
+    (
+        500,
+        (0, 0, 42),
+        (8, &["i [..=0] before i [..=-5, -3..=0]"]),
+        0,
+    ),
+    (750, (0, 0, 44), (11, &[]), 0),
+    (1000, (0, 0, 51), (14, &[]), 0),
     (1250, (0, 2, 50), (4, &[]), 0),
-    (1500, (0, 0, 42), (12, &[]), 0),
-    (1750, (0, 1, 49), (13, &[]), 0),
+    (
+        1500,
+        (0, 0, 42),
+        (
+            12,
+            &[
+                "i [..=0, 6..=7, 9..=10, 12..=13, 15..=16, 18..=18] before i [..=-11, -9..=0, 3..=4, 6..=18]",
+            ],
+        ),
+        0,
+    ),
+    (1750, (0, 1, 48), (13, &[]), 0),
     (2000, (0, 1, 51), (17, &[]), 0),
-    (2250, (0, 1, 41), (15, &[]), 0),
+    (
+        2250,
+        (0, 1, 41),
+        (15, &["i [3..] before i [3..=6, 9..]"]),
+        0,
+    ),
     (2500, (0, 0, 50), (10, &[]), 0),
     (2750, (0, 0, 46), (5, &[]), 0),
-    (3000, (0, 0, 57), (10, &[]), 0),
+    (
+        3000,
+        (0, 0, 55),
+        (10, &["i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]"]),
+        0,
+    ),
     (3250, (0, 0, 52), (7, &[]), 0),
-    (3500, (0, 0, 48), (5, &[]), 0),
+    (3500, (0, 0, 47), (5, &[]), 0),
     (
         3750,
         (0, 2, 51),
@@ -1032,6 +1057,7 @@ const GUARDED: [Counts; 16] = [
             &[
                 "i [2..] before i [2..=2, 5..]",
                 "i [4..] before i [4..=5, 7..]",
+                "i [..=-2, 0..=0, 2..] before i [..=0, 2..=8, 10..]",
             ],
         ),
         0,
@@ -1226,6 +1252,22 @@ guarded_ranges!(
 /// (empty, exact, made exact); the box before narrows from `[-16, 5]` to `[-15, 5]`, still inexact.
 /// No other row changes. Measured on the branch rebased on main 501a3330: with the new test
 /// of `settle_tied` turned off, the row counts 53 again and case 86 is refused as before.
+///
+/// Since PROJECT-canon-precision, which tests each disjunct for a point whether or not the
+/// greedy search found one first, so that a disjunct with no point no longer widens the hulls
+/// by an amount the order of the parts decides, the transfer before, which shares the solver,
+/// gives 8 of the boxes counted as made exact exactly as the transfer does, 5 in the first half
+/// (368) and 3 in the second (393): `i [-4, -3] ∪ {0, 4}` becomes the exact `{-4, 0, 4}`,
+/// `[-6, -3]` the exact `[-6, -5] ∪ {-3}`, `[-5, -4] ∪ [-1, 1]` the exact `{-5, 1}`. In 5
+/// more cases the box before is now narrower than the box of a split over many periods, which
+/// is listed as wider (rows 500, 1500, 2250, 3000 and 3750), its relation still exact on its
+/// box: `i [3..]` against `i [3..=6, 9..]` before. In 10 more the box before narrows and stays
+/// inexact. Two boxes before, both inexact, gain one point with no solution: in row 1750
+/// `[-17, -7] ∪ {4}` becomes `[-17, -7] ∪ {-1} ∪ {4}`, the domain `[-17, -7] ∪ [-1, 1] ∪ [3, 7]`
+/// being a set of values of `i` kept untested (`one_atom_set`), and in row 3000
+/// `[-13, -9] ∪ [7, 13]` gains `{-5}` the same way. The interpreter refutes no box; no box of
+/// the transfer here changes. Measured against the change with the old call (the probe only on a
+/// failed search) over all 4000 cases.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1246,17 +1288,33 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (0, 6, 373, 81, vec![], 0));
+    assert_eq!(
+        sum(&GUARDED[..8]),
+        (
+            0,
+            6,
+            368,
+            81,
+            vec![
+                "i [..=0] before i [..=-5, -3..=0]",
+                "i [..=0, 6..=7, 9..=10, 12..=13, 15..=16, 18..=18] before i [..=-11, -9..=0, 3..=4, 6..=18]",
+            ],
+            0
+        )
+    );
     assert_eq!(
         sum(&GUARDED[8..]),
         (
             0,
             4,
-            396,
+            393,
             80,
             vec![
+                "i [3..] before i [3..=6, 9..]",
+                "i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]",
                 "i [2..] before i [2..=2, 5..]",
-                "i [4..] before i [4..=5, 7..]"
+                "i [4..] before i [4..=5, 7..]",
+                "i [..=-2, 0..=0, 2..] before i [..=0, 2..=8, 10..]",
             ],
             0
         )
@@ -1452,7 +1510,15 @@ fn random_terms_keep_their_preimages() {
         // solver, gives one of those 6 narrower boxes as the transfer does (5). Five results
         // change, each inside the one before (`x` in `[0, ∞)` with `y` in `[3, 8]` to the
         // exact `[4, ∞)`, `y` in `(-∞, 22]` to `[11, 22]`), and the interpreter refutes none.
-        diffs.unlisted(1).none_but(6800, 5, 0, 25);
+        //
+        // 24, was 25, since PROJECT-canon-precision, which tests each disjunct for a point whether
+        // or not the greedy search found one first: the transfer before, which shares the solver,
+        // gives one more of those boxes exactly as the transfer does, `x` in `[-2, 2]` with `y` in
+        // `(-∞, 13]`, where it kept all of `x`. Two boxes of the transfer narrow, still inexact
+        // (`x` in `[-21, ∞)` for all of `x`; `y` in `[-47, -23] ∪ [-1, 23]` for `[-47, 23]`), and
+        // two exact boxes are read by both transfers without listing their points; the
+        // interpreter refutes none.
+        diffs.unlisted(1).none_but(6800, 5, 0, 24);
     });
 }
 
@@ -3428,8 +3494,17 @@ fn split_pieces_reach_each_kind_of_touched() {
 /// ([`zedc::store::presburger`]'s `has_point`) stops at its first point; probing to the end
 /// found a point for each of the `32k` pieces of `x`, each at the cost of the whole formula,
 /// `O(k^2)`.
-#[test]
-fn the_box_of_a_chain_over_many_holes_is_tested_in_linear_work() {
+///
+/// Since PROJECT-canon-precision the probe runs whether or not the first search found a point,
+/// and the domain of `x`, a set of values of one atom, is kept untested (`one_atom_set` in
+/// `zedc_presburger`). The probe still asks one search per case of the chain, `k` in all, and
+/// each search read the `64k` pieces of the domain: 9.4, 11.1 and 12.7 times (bytes, limit
+/// 11.73, failed) from 128, 256 and 512 holes to 8 times as many, `O(k^2)`. Testing each piece
+/// of the domain as well took 12.55 times from 128. A search now leaves the domain out and
+/// looks its point up in it by binary search: 7.4, 8.3 and 9.7 times, where the probe only on
+/// a failed search, which main ran, took 7.4, 8.5 and 9.2 times. The second test, at 512, is
+/// the one that failed.
+fn the_box_of_a_chain_over_holes_is_tested_in_linear_work(n: usize) {
     on_big_stack(|| {
         let d = Demand::Bool(true);
         let make = |holes: usize| {
@@ -3437,7 +3512,6 @@ fn the_box_of_a_chain_over_many_holes_is_tested_in_linear_work() {
             let t = counted_shapes(spread_remainder_chain(k))[0].clone();
             (t, x_with_holes(holes))
         };
-        let n = 128;
         let inputs = scaling::inputs(n, make);
         for (t, ds) in inputs.values() {
             assert!(
@@ -3454,6 +3528,16 @@ fn the_box_of_a_chain_over_many_holes_is_tested_in_linear_work() {
             },
         );
     });
+}
+
+#[test]
+fn the_box_of_a_chain_over_many_holes_is_tested_in_linear_work() {
+    the_box_of_a_chain_over_holes_is_tested_in_linear_work(128);
+}
+
+#[test]
+fn the_box_of_a_chain_over_more_holes_is_tested_in_linear_work() {
+    the_box_of_a_chain_over_holes_is_tested_in_linear_work(512);
 }
 
 /// Plan item SOUND-div-exact: `c^0` is 1 where `c` is defined and fails where `c` does
@@ -3502,4 +3586,79 @@ fn a_power_zero_of_a_quotient_by_a_term_is_not_exact_where_the_divisor_is_zero()
             "{t} before: {then:?}"
         );
     }
+}
+
+/// Cases `from..to` of [`random_guarded_chains`]' sequence, each run by the transfer and by
+/// the transfer before it ([`before`]) as written and with the disjunctions of every
+/// projection, and the disjuncts of each, read in reverse
+/// ([`zedc::store::presburger::with_parts_reversed`]): the boxes and their exactness are the
+/// same both ways (item PROJECT-canon-precision). Before that item, the transfer before gave
+/// 17 of the 4000 cases different boxes in reverse: a disjunct with no point stayed when the
+/// greedy search found a point first, and a disjunction left with one disjunct did not start
+/// another round of the propagation.
+fn reversed_parts_give_the_same_boxes(from: usize, to: usize) {
+    use zedc::store::presburger::with_parts_reversed as reversed;
+    on_big_stack(|| {
+        let mut rng = Rng::new(22);
+        let mut differ = Vec::new();
+        for i in 0..to {
+            let t = random_chain(&mut rng);
+            let ds = over(&[("i", chain_domain(&mut rng))]);
+            let (t, d) = if rng.below(3) == 0 {
+                let p = rng.pick(&[Prim::Ge, Prim::Le, Prim::Eq, Prim::Ne, Prim::Lt]);
+                (
+                    prim(p, t, int(rng.int(-10, 10))),
+                    Demand::Bool(rng.below(2) == 0),
+                )
+            } else {
+                (t, int_demand(&mut rng))
+            };
+            if i < from {
+                continue;
+            }
+            let (a, b) = (preimage(&t, &ds, &d), reversed(|| preimage(&t, &ds, &d)));
+            if a.domains != b.domains || a.exact != b.exact {
+                differ.push(format!(
+                    "case {i}: {:?} | reversed {:?}",
+                    a.domains, b.domains
+                ));
+            }
+            let d = old(&d);
+            let (a, b) = (
+                before::preimage(&t, &ds, &d),
+                reversed(|| before::preimage(&t, &ds, &d)),
+            );
+            if a.domains != b.domains || a.exact != b.exact {
+                differ.push(format!(
+                    "case {i} before: {:?} | reversed {:?}",
+                    a.domains, b.domains
+                ));
+            }
+        }
+        assert!(
+            differ.is_empty(),
+            "boxes that depend on the order:\n{}",
+            differ.join("\n")
+        );
+    });
+}
+
+#[test]
+fn reversed_parts_give_the_same_boxes_0() {
+    reversed_parts_give_the_same_boxes(0, 1000);
+}
+
+#[test]
+fn reversed_parts_give_the_same_boxes_1() {
+    reversed_parts_give_the_same_boxes(1000, 2000);
+}
+
+#[test]
+fn reversed_parts_give_the_same_boxes_2() {
+    reversed_parts_give_the_same_boxes(2000, 3000);
+}
+
+#[test]
+fn reversed_parts_give_the_same_boxes_3() {
+    reversed_parts_give_the_same_boxes(3000, 4000);
 }

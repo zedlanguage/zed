@@ -1577,6 +1577,17 @@ fn old_path() -> bool {
 
 thread_local! {
     static OLD_PATH: Cell<bool> = const { Cell::new(false) };
+    static REVERSED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// `f` run with the disjunctions of every [`project_parts`] call, and the disjuncts of each,
+/// read in the reverse of their order, so that a test can check that the answer does not
+/// depend on that order (item PROJECT-canon-precision).
+pub fn with_parts_reversed<T>(f: impl FnOnce() -> T) -> T {
+    let was = REVERSED.with(|r| r.replace(true));
+    let out = f();
+    REVERSED.with(|r| r.set(was));
+    out
 }
 
 /// `f` written one way whatever way an equal formula was written (items PROJECT-each-canon and
@@ -2615,14 +2626,24 @@ fn fresh_stamp() -> u64 {
 // group of `n` rows whose point needs an earlier choice undone, O(n²), as before this plan
 // item (DISJ-incremental). No answer is given up.
 fn pick(p: &Parts, deep: bool) -> Result<Model, Refusal> {
+    pick_taking(p, deep).map(|(m, _)| m)
+}
+
+/// [`pick`], with the disjuncts it took: each holds at the point, those below a disjunct taken
+/// included when `deep`. A disjunct holding at the point that the search did not take is not
+/// among them.
+fn pick_taking(p: &Parts, deep: bool) -> Result<(Model, Vec<&Parts>), Refusal> {
     if old_path() {
         return pick_by(p, deep, false);
     }
     pick_by(p, deep, true).or_else(|_| pick_by(p, deep, false))
 }
 
-/// [`pick`], reading the disjunctions by halves when `fast`.
-fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<Model, Refusal> {
+/// [`pick_taking`], reading the disjunctions by halves when `fast`.
+fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Refusal> {
+    // The disjuncts taken, each with its constraints among those taken, which the model is a
+    // point of at the end.
+    let mut took: Vec<&Parts> = Vec::new();
     let mut model = solve(&p.cons, true)?.ok_or(Refusal::Disjuncts)?;
     let mut acc = Linked::default();
     let mut near = Near::default();
@@ -2692,6 +2713,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<Model, Refusal> {
                         take(&h.cons, &mut acc, &mut near);
                         added.extend(h.cons.iter().cloned());
                     }
+                    took.extend(held.iter().copied());
                     continue 'next;
                 }
             }
@@ -2766,6 +2788,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<Model, Refusal> {
             }
             model.extend(m);
             take(&d.cons, &mut acc, &mut near);
+            took.push(d);
             added.extend(d.cons.iter().cloned());
             if deep {
                 queue.extend(d.ors.iter().map(Vec::as_slice));
@@ -2781,7 +2804,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<Model, Refusal> {
     if !valid {
         model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
     }
-    Ok(model)
+    Ok((model, took))
 }
 
 /// Adds the constraints of a disjunct taken, a bound taken again kept once ([`Linked::meet`]).
@@ -3571,8 +3594,191 @@ fn by_halves<E>(
 /// parts per disjunct cost `130` times the work at `8k` (ledger PRES-guarded-chain). The
 /// disjunctions are tested in the order of [`private_links`], cheapest linked test first, so
 /// that a definition is tested after the goal's disjuncts that its cases refute are gone.
-fn probe(p: Parts) -> Result<Option<Parts>, Refusal> {
-    probe_to(p, &mut Vec::new(), false)
+///
+/// Each disjunct in `kept` is kept untested, as if a point held it: neither removed nor
+/// searched for ([`probe_kept`]).
+fn probe(p: Parts, kept: &HashSet<*const Parts>) -> Result<Option<Parts>, Refusal> {
+    probe_kept(p, &mut Vec::new(), false, kept)
+}
+
+/// The parts of [`project_parts`] with two disjunctions or more, with each disjunct that has no
+/// point removed ([`probe`]) from each disjunction whose atoms' values [`forest_domains`] does
+/// not find exactly; `None` when they have no point. Also returned: the values
+/// [`forest_domains`] finds before the probe with, for each disjunction, whether its component
+/// was handled so (on the new path), and whether the probe ran. A disjunction handled is not
+/// tested by the probe: its atoms' values are exact whatever disjuncts without a point it
+/// keeps, so it is kept untested. Nor is a set of values of one atom ([`one_atom_set`]), as a
+/// domain with holes is written. With every disjunction kept so, the probe is not run.
+///
+/// Which disjunctions are kept depends only on their own form, never on their place, so the
+/// parts the probe leaves, and the hulls read from them, are the same in every order of the
+/// parts (the s22 reverse-order tests: 0 boxes of 4000 change; with the probe run only where
+/// the greedy search failed, 17 changed).
+///
+/// Complexity tradeoff: testing each piece of a set of values of one atom costs one search of
+/// the whole formula per piece that the rounds by halves cannot refute together, O(h·n) for a
+/// domain of `h` pieces over a formula of size `n` (holes of `x` on difference chains, 128 to
+/// 1024 pieces: 12.55 times the work for 8 times the pieces, limit 12.57; 66 to 1015 rounds
+/// for 128 to 2048). Keeping the set untested asks nothing of it (6 to 69 rounds; 7.4 times
+/// with the set left out of each search, [`search_by_halves`]),
+/// at the price of a piece with no point that the set keeps: it can widen a hull or leave it
+/// inexact, the same in every order. Measured against the probe of every piece over the
+/// preimage tests: 5 exact marks fewer in 82500 cases (exact_oracle) and 2 boxes counted as
+/// made exact more (s22, the transfer before less exact); against the probe only after a
+/// failed search, which main ran, every changed box is narrower or as exact but two, and each
+/// of those two is main's own answer with the parts reversed.
+///
+/// Kept out of [`project_parts`], which recurses once per level of a nest, so that its frame
+/// does not grow by this code's locals (`nest_empty` at depth 512 runs on the test thread's
+/// stack).
+#[inline(never)]
+#[allow(clippy::type_complexity)]
+fn probe_unhandled(
+    p: &mut Parts,
+) -> Result<Option<(Option<Box<(HashMap<Atom, IntervalSet>, Vec<bool>)>>, bool)>, Refusal> {
+    let mut kept: HashSet<*const Parts> = HashSet::new();
+    let mut early = None;
+    if !old_path() {
+        let Some(m) = solve(&p.cons, true)? else {
+            return Ok(None);
+        };
+        let (doms, handled) = forest_domains(&Linked::of(p.cons.clone()), &p.ors, &m);
+        kept = (p.ors.iter().zip(&handled))
+            .filter(|(o, h)| **h || one_atom_set(o))
+            .flat_map(|(o, _)| o.iter().map(Rc::as_ptr))
+            .collect();
+        early = Some(Box::new((doms, handled)));
+    }
+    if early.is_some()
+        && p.ors
+            .iter()
+            .flatten()
+            .all(|d| kept.contains(&Rc::as_ptr(d)))
+    {
+        return Ok(Some((early, false)));
+    }
+    Ok(probe(std::mem::take(p), &kept)?.map(|q| {
+        *p = q;
+        (early, true)
+    }))
+}
+
+/// Whether each disjunct of `o` is bounds on one atom, the same atom for all, with no
+/// disjunction inside: a set of values of that atom, as a domain with holes is written.
+fn one_atom_set(o: &[Rc<Parts>]) -> bool {
+    let mut atom = None;
+    o.iter().all(|d| {
+        d.ors.is_empty()
+            && d.cons
+                .iter()
+                .all(|c| one_bound(c).is_some_and(|(a, _, _)| *atom.get_or_insert(a) == a))
+    })
+}
+
+/// A set of values of one atom ([`one_atom_set`]) as its atom, `None` when no disjunct bounds
+/// one, and its pieces, sorted by their lower ends and merged, `None` an open end.
+struct OneAtomSet {
+    atom: Option<Atom>,
+    pieces: Vec<(Option<Int>, Option<Int>)>,
+}
+
+impl OneAtomSet {
+    /// The set that the disjunction `o`, for which [`one_atom_set`] holds, writes:
+    /// `O(h log h)` for `h` disjuncts.
+    fn of(o: &[Rc<Parts>]) -> OneAtomSet {
+        let mut atom = None;
+        let mut pieces: Vec<(Option<Int>, Option<Int>)> = Vec::with_capacity(o.len());
+        for d in o {
+            let (mut lo, mut hi): (Option<Int>, Option<Int>) = (None, None);
+            for (a, l, h) in d.cons.iter().filter_map(one_bound) {
+                atom.get_or_insert_with(|| a.clone());
+                if let Some(l) = l {
+                    lo = Some(lo.map_or(l.clone(), |x| x.max(l)));
+                }
+                if let Some(h) = h {
+                    hi = Some(hi.map_or(h.clone(), |x| x.min(h)));
+                }
+            }
+            if let (Some(l), Some(h)) = (&lo, &hi)
+                && l > h
+            {
+                continue;
+            }
+            pieces.push((lo, hi));
+        }
+        // `None` as a lower end is below every value.
+        pieces.sort_by(|a, b| match (&a.0, &b.0) {
+            (None, None) => Ordering::Equal,
+            (None, _) => Ordering::Less,
+            (_, None) => Ordering::Greater,
+            (Some(x), Some(y)) => x.cmp(y),
+        });
+        let mut merged: Vec<(Option<Int>, Option<Int>)> = Vec::with_capacity(pieces.len());
+        for (lo, hi) in pieces {
+            if let Some((_, last)) = merged.last_mut() {
+                // The piece meets or touches the last one: its lower end is at most one past it.
+                let joins = match (&*last, &lo) {
+                    (None, _) | (_, None) => true,
+                    (Some(l), Some(x)) => *x <= l + &Int::from(1),
+                };
+                if joins {
+                    *last = match (last.take(), hi) {
+                        (Some(l), Some(h)) => Some(l.max(h)),
+                        _ => None,
+                    };
+                    continue;
+                }
+            }
+            merged.push((lo, hi));
+        }
+        OneAtomSet {
+            atom,
+            pieces: merged,
+        }
+    }
+
+    /// Whether `m` lies in the set, by binary search on the pieces: `O(log h)`.
+    fn holds(&self, m: &Model) -> bool {
+        let Some(a) = &self.atom else {
+            return !self.pieces.is_empty();
+        };
+        let Some(v) = m.get(a) else {
+            return false;
+        };
+        // The pieces whose lower end is at most `v` come first.
+        let at = self
+            .pieces
+            .partition_point(|(lo, _)| lo.as_ref().is_none_or(|l| l <= v));
+        at > 0 && self.pieces[at - 1].1.as_ref().is_none_or(|h| v <= h)
+    }
+}
+
+/// The values [`forest_domains`] finds in [`project_parts`] for the parts after the probe, and
+/// for each disjunction whether it was handled so. Without a probe the parts are those
+/// [`forest_domains`] read before it ([`probe_unhandled`]), so `early`, its answer then, is
+/// taken as it is. After one, the values found before the probe are still those of the
+/// formula, and are met where the pass over the probed parts finds none. Not inlined, so that
+/// [`project_parts`], which recurses once per level of a nest, keeps its frame.
+#[inline(never)]
+#[allow(clippy::type_complexity)]
+fn tree_domains(
+    early: Option<Box<(HashMap<Atom, IntervalSet>, Vec<bool>)>>,
+    probed: bool,
+    linked: &Linked,
+    ors: &[Vec<Rc<Parts>>],
+    model: &Model,
+) -> (HashMap<Atom, IntervalSet>, Vec<bool>) {
+    match early {
+        Some(e) if !probed => *e,
+        _ if !old_path() && !ors.is_empty() => {
+            let (mut doms, handled) = forest_domains(linked, ors, model);
+            for (a, d) in early.map(|e| e.0).unwrap_or_default() {
+                doms.entry(a).or_insert(d);
+            }
+            (doms, handled)
+        }
+        _ => (HashMap::new(), vec![false; ors.len()]),
+    }
 }
 
 /// [`probe`], which pushes each point it finds onto `points`, so that its caller has them
@@ -3581,19 +3787,33 @@ fn probe(p: Parts) -> Result<Option<Parts>, Refusal> {
 /// holds a disjunct of the disjunction under test and every other part ([`point_with`]), so
 /// it is a point of `p`. Until that point it does what [`probe`] does, so without one it
 /// gives what [`probe`] gives.
-fn probe_to(mut p: Parts, points: &mut Vec<Model>, stop: bool) -> Result<Option<Parts>, Refusal> {
+fn probe_to(p: Parts, points: &mut Vec<Model>, stop: bool) -> Result<Option<Parts>, Refusal> {
+    probe_kept(p, points, stop, &HashSet::new())
+}
+
+/// [`probe_to`], with each disjunct in `kept` kept untested, as if a point held it: neither
+/// removed nor searched for. [`project_parts`] passes the disjuncts of the disjunctions whose
+/// atoms' values [`forest_domains`] finds exactly, whose hulls no disjunct left without a
+/// point widens.
+fn probe_kept(
+    mut p: Parts,
+    points: &mut Vec<Model>,
+    stop: bool,
+    kept: &HashSet<*const Parts>,
+) -> Result<Option<Parts>, Refusal> {
     // The bounds on single atoms that the formula implies, found by [`learn`]. The formula
     // only gains constraints or stays equal from round to round, so they hold to the end.
     let mut implied = Near::default();
     loop {
         let mut changed = false;
-        // For each disjunct of each disjunction, whether a point found so far holds it.
+        // For each disjunct of each disjunction, whether a point found so far holds it or it
+        // is kept untested.
         let mut held: Vec<Vec<bool>> = p
             .ors
             .iter()
             .map(|o| {
                 o.iter()
-                    .map(|d| points.iter().any(|m| d.holds(m)))
+                    .map(|d| kept.contains(&Rc::as_ptr(d)) || points.iter().any(|m| d.holds(m)))
                     .collect()
             })
             .collect();
@@ -3602,6 +3822,40 @@ fn probe_to(mut p: Parts, points: &mut Vec<Model>, stop: bool) -> Result<Option<
         // [`refuted_by_links`].
         let mut base = Near::default();
         take(&p.cons, &mut Linked::default(), &mut base);
+        // For each disjunct, whether the search with it forced found no point ([`search_by_halves`]).
+        let mut single_failed: Vec<Vec<bool>> =
+            p.ors.iter().map(|o| vec![false; o.len()]).collect();
+        let (order, links) = if stop {
+            (order, links)
+        } else {
+            // The tests that ask no search remove their disjuncts first, so that the
+            // batched searches below do not force a disjunct with no point.
+            for &i in &order {
+                let ds = std::mem::take(&mut p.ors[i]);
+                let hs = std::mem::take(&mut held[i]);
+                let n = ds.len();
+                let mut keep = Vec::with_capacity(n);
+                let mut keep_held = Vec::with_capacity(n);
+                for (at, (d, h)) in ds.into_iter().zip(hs).enumerate() {
+                    if !h
+                        && (implied.refutes(&d.cons)
+                            || refuted_by_links(&p, &links[i][at], &base, &d))
+                    {
+                        continue;
+                    }
+                    keep.push(d);
+                    keep_held.push(h);
+                }
+                changed |= keep.len() < n;
+                if keep.is_empty() {
+                    return Ok(None);
+                }
+                p.ors[i] = keep;
+                held[i] = keep_held;
+            }
+            single_failed = search_by_halves(&p, &mut held, points, &implied);
+            private_links(&p)
+        };
         for i in order {
             let ds = std::mem::take(&mut p.ors[i]);
             let flags = std::mem::take(&mut held[i]);
@@ -3623,7 +3877,13 @@ fn probe_to(mut p: Parts, points: &mut Vec<Model>, stop: bool) -> Result<Option<
                 if refuted_by_links(&p, &links[i][at], &base, &d) {
                     continue;
                 }
-                let mut point = point_with(&p, &held, &d, &implied, false);
+                // A disjunct whose forced search already failed in [`search_by_halves`] is not searched
+                // forward again; the propagation and the backward search below still test it.
+                let mut point = if single_failed[i][at] {
+                    None
+                } else {
+                    point_with(&p, &held, &d, &implied, false)
+                };
                 if point.is_none() {
                     // Complexity tradeoff: a disjunct that no point holds, no implied bound and
                     // no linked test ([`refuted_by_links`]) removes is still tested by one
@@ -4120,8 +4380,10 @@ fn narrow_to(b: &mut AtomBounds, a: &Atom, lo: Option<Int>, hi: Option<Int>) -> 
 /// disjunct of the disjunction that `p` lacks while it is tested, or `None` when [`pick`]
 /// finds none. In each other disjunction `pick` tries first the disjuncts that `held` marks as
 /// held by no point, so that the point holds as many of them as its search reaches. The point
-/// is checked against every part, so that a disjunct is kept by a point and not by trust in
-/// the search.
+/// is one of every part: [`pick`] takes a disjunct of each disjunction, below `d` and below
+/// each disjunct taken too, and gives a point of the constraints it took, so it is not
+/// checked again (a check cost a test of every disjunct per point; item
+/// PROJECT-canon-precision).
 /// The bounds in `implied`, which the formula implies, are added to the parts, so that the
 /// search does not choose a value of an atom that no point has.
 /// With `backward`, [`pick`] reads the disjunctions from the first, not from the last.
@@ -4156,11 +4418,182 @@ fn point_with(
     if backward {
         q.ors.reverse();
     }
-    let m = pick(&q, true).ok()?;
-    let meets = d.holds(&m)
-        && p.cons.iter().all(|c| c.holds_linear(&m))
-        && others().all(|(o, _)| o.iter().any(|e| e.holds(&m)));
-    meets.then_some(m)
+    pick(&q, true).ok()
+}
+
+/// Points for [`probe_to`] found by searches that force many disjuncts at once: first all the
+/// disjuncts of `p` that `held` marks as held by no point, each disjunction with its forced
+/// disjuncts all taken; when [`pick`] finds no point, each half of the forced disjuncts in
+/// turn, down to one. Each point is pushed onto `points`, and every disjunct it holds is
+/// marked in `held`: those forced and those [`pick`] took (each disjunction not forced is
+/// read with its unmarked disjuncts first, so that the point holds as many of them as the
+/// search reaches). Returns, for each disjunct, whether its search alone was made and found
+/// no point; [`probe_to`] does not search forward for such a disjunct again but still tests
+/// it by a propagation, so the disjuncts it removes are those it removed before, the ones with
+/// no point. The points are those of `p`: [`pick`] gives a point of every part it is asked of
+/// (each disjunction has a disjunct taken, and the model is a point of the constraints taken),
+/// and the parts asked are `p` with some disjuncts forced and the bounds that `p` implies.
+///
+/// Complexity tradeoff: one search per disjunct, as [`probe_to`] made before (item
+/// PROJECT-canon-precision, method (b)), costs `r` searches of the whole formula for `r`
+/// disjuncts no earlier point holds, `O(r n log n)`, which grew with `n` on the difference
+/// chain (37.3 times the bytes at `8n`), the three-atom chain (16.5 times) and the wide named
+/// disjunction (18.0 times). Here a set of `s` forced disjuncts that has a point costs one
+/// search, and one without costs two more, of its halves, so that `f` disjuncts with no point
+/// cost `O(f log r)` searches and the others `O(f log r + 1)` together: on those chains, where
+/// the disjuncts that no greedy point holds all have a point together, one search does all.
+/// The disjuncts are forced in rounds: one whose bounds of one atom exclude those of a
+/// disjunct forced before it in the round waits for the next, so a disjunction of `m` cases
+/// that exclude each other, each with a point, costs `m` rounds of one search each,
+/// `O(m n log n)`. On the remainder chains `m` stops at the classes of the modulus (spread and
+/// sliced chains, sizes 8 to 64: 6.8 and 7.5 times the work, limit 17.6; 32 to 256: 7.5 and
+/// 11.1 times). A set of values of one atom, which would cost a round per piece, is not
+/// tested here ([`one_atom_set`] in [`probe_unhandled`]).
+/// When most disjuncts have no point (`f` near `r`), the halving adds up to `2r` searches to
+/// the propagation each of them costs anyway, a constant factor. The held marks come from
+/// the disjuncts [`pick`] took, read once each, not from a test of every disjunct at each
+/// point (`O(n)` per point). Tests: the scaling tests of
+/// `l01_38_presburger::disj_groups`, `l01_39_reduced_product::named_test` and
+/// `l01_39_reduced_product::deep_condition`, and `ladder::a_chain_of_guarded_remainders_scales`
+/// (COMPLEXITY.md PROJECT-canon-precision).
+fn search_by_halves(
+    p: &Parts,
+    held: &mut [Vec<bool>],
+    points: &mut Vec<Model>,
+    implied: &Near,
+) -> Vec<Vec<bool>> {
+    let mut cons = p.cons.clone();
+    implied
+        .one
+        .keys()
+        .for_each(|a| implied.bounds(a, &mut cons));
+    // Complexity tradeoff: a set of values of one atom that is kept untested ([`one_atom_set`]
+    // in [`probe_unhandled`]), every disjunct of it held, was read by each search, so `r`
+    // searches over a set of `h` pieces cost `O(r h)` more: on a chain of `k` cases of one
+    // remainder over `x` with `64k` holes, `k` searches, one per case, `O(k^2)` (16 times the
+    // pieces at 8 times the holes from 512, the limit failed). Each such set is read here once,
+    // as its pieces sorted and merged (`O(h log h)`); a search leaves it out, and the point is
+    // looked up in it by binary search (`O(log h)`). Only when the point lies outside the set is
+    // the search made again with the set, as before, so the points are those of `p`.
+    let sets: Vec<Option<OneAtomSet>> = (p.ors.iter().zip(held.iter()))
+        .map(|(o, hs)| {
+            (!o.is_empty() && hs.iter().all(|h| *h) && one_atom_set(o)).then(|| OneAtomSet::of(o))
+        })
+        .collect();
+    // One search with the disjuncts in `forced` (by disjunction) all taken, and without the
+    // sets above when `bare`; a point and the disjuncts [`pick`] took.
+    let ask = |held: &[Vec<bool>], forced: &[Vec<usize>], bare: bool| {
+        let mut q = Parts {
+            cons: cons.clone(),
+            ors: Vec::new(),
+            atoms: OnceCell::new(),
+            hull: OnceCell::new(),
+            failed: Cell::new(0),
+            id: Cell::new(0),
+        };
+        for (((o, hs), fs), set) in p.ors.iter().zip(held).zip(forced).zip(&sets) {
+            if o.is_empty() || (bare && set.is_some()) {
+                continue;
+            }
+            if !fs.is_empty() {
+                fs.iter().for_each(|&at| q.put(&o[at]));
+                continue;
+            }
+            let new = o.iter().zip(hs).filter(|(_, h)| !**h);
+            let old = o.iter().zip(hs).filter(|(_, h)| **h);
+            q.ors.push(new.chain(old).map(|(e, _)| e.clone()).collect());
+        }
+        let (m, took) = pick_taking(&q, true).ok()?;
+        let took: HashSet<*const Parts> = took.into_iter().map(|t| t as *const Parts).collect();
+        Some((m, took))
+    };
+    // One search with the disjuncts in `forced` all taken; on a point, marks the disjuncts it
+    // holds and keeps it. Without a point when the sets are left out, there is none with them.
+    let mut search = |held: &mut [Vec<bool>], forced: &[Vec<usize>]| -> bool {
+        let Some((m, took)) = ask(held, forced, true) else {
+            return false;
+        };
+        let inside = sets.iter().flatten().all(|s| s.holds(&m));
+        let Some((m, took)) = (if inside {
+            Some((m, took))
+        } else {
+            ask(held, forced, false)
+        }) else {
+            return false;
+        };
+        for (((o, hs), fs), set) in p.ors.iter().zip(held.iter_mut()).zip(forced).zip(&sets) {
+            if set.is_some() {
+                continue;
+            }
+            for (e, h) in o.iter().zip(hs.iter_mut()) {
+                *h = *h || took.contains(&Rc::as_ptr(e));
+            }
+            fs.iter().for_each(|&at| hs[at] = true);
+        }
+        points.push(m);
+        true
+    };
+    let mut failed: Vec<Vec<bool>> = p.ors.iter().map(|o| vec![false; o.len()]).collect();
+    // The disjuncts not yet forced in a search, in the order of the parts.
+    let mut left: Vec<(usize, usize)> = (p.ors.iter().enumerate())
+        .flat_map(|(i, o)| (0..o.len()).map(move |at| (i, at)))
+        .collect();
+    while !left.is_empty() {
+        // One round: each disjunct no point holds is forced, but one whose bound of one atom
+        // the bounds of one atom of those forced before it in the round exclude, which waits
+        // for the next round: `y == 0` and `y == 10` of one disjunction are never forced
+        // together, a search that fails, and whose failure the solver proves at a cost that
+        // grows faster than the parts on a chain.
+        let mut near = Near::default();
+        let (mut round, mut later) = (Vec::new(), Vec::new());
+        for (i, at) in left {
+            if held[i][at] {
+                continue;
+            }
+            let d = &p.ors[i][at];
+            if !round.is_empty() && near.refutes(&d.cons) {
+                later.push((i, at));
+                continue;
+            }
+            for (a, lo, hi) in d.cons.iter().filter_map(one_bound) {
+                near.tighten(a, lo, hi);
+            }
+            round.push((i, at));
+        }
+        left = later;
+        by_halves_of(round, held, &mut failed, &mut search);
+    }
+    failed
+}
+
+/// [`search_by_halves`]'s searches of one round: all the disjuncts of `round` forced, and on
+/// a failure each half in turn, down to one, which is then marked in `failed`.
+fn by_halves_of(
+    round: Vec<(usize, usize)>,
+    held: &mut [Vec<bool>],
+    failed: &mut [Vec<bool>],
+    search: &mut impl FnMut(&mut [Vec<bool>], &[Vec<usize>]) -> bool,
+) {
+    let width = failed.len();
+    let mut stack = vec![round];
+    while let Some(s) = stack.pop() {
+        let s: Vec<(usize, usize)> = s.into_iter().filter(|&(i, at)| !held[i][at]).collect();
+        if s.is_empty() {
+            continue;
+        }
+        let mut forced: Vec<Vec<usize>> = vec![Vec::new(); width];
+        s.iter().for_each(|&(i, at)| forced[i].push(at));
+        if search(held, &forced) {
+            continue;
+        }
+        if let [(i, at)] = s[..] {
+            failed[i][at] = true;
+        } else {
+            let mid = s.len() / 2;
+            stack.push(s[mid..].to_vec());
+            stack.push(s[..mid].to_vec());
+        }
+    }
 }
 
 /// A formula in negation normal form as its top-level constraints and its top-level
@@ -5111,6 +5544,12 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                     0 => Err(()),
                     1 => {
                         let d = live.pop().expect("one");
+                        // The disjunct joins the base, so a disjunction tested before it in
+                        // this round is tested again with its rows: without that round the
+                        // result would depend on whether the disjunction came before or after
+                        // the ones its rows narrow, that is on the order of the parts (item
+                        // PROJECT-canon-precision).
+                        changed = true;
                         let repaired = match &point {
                             Some(pt) if d.cons.iter().all(|c| c.holds_linear(pt)) => None,
                             Some(pt) => Some(
@@ -8642,6 +9081,10 @@ fn project_parts(
 ) -> Result<Each, Refusal> {
     let none = || no_points(syms);
     let mut skipped: Vec<Refusal> = Vec::new();
+    if REVERSED.with(Cell::get) {
+        p.ors.reverse();
+        p.ors.iter_mut().for_each(|ds| ds.reverse());
+    }
     // Each disjunct whose own rows put a form outside the values that the base and the
     // disjunctions leave it is removed first, with or without `sets`, on either path
     // ([`values::drop_outside_values`]): `y == 1` of `y == 1 || z >= 0` where `y` is 0 or 2,
@@ -8663,14 +9106,19 @@ fn project_parts(
     {
         return Ok(none());
     }
-    // Whether [`probe`] changed the parts after that removal.
+    // Whether [`probe`] changed the parts after that removal. It runs whether or not a
+    // greedy search finds a point: when it ran only on a failed search, a disjunct with no
+    // point stayed whenever the search found a point first, and widened the hulls by an
+    // amount that the order of the parts decided (item PROJECT-canon-precision: the s22
+    // reverse-order tests counted 17 boxes of 4000 changing when the parts were reversed;
+    // now none change).
     let mut probed = false;
-    if !sets && p.ors.len() > 1 && pick(&p, whole.is_some()).is_err() {
-        let Some(q) = probe(p)? else {
+    let mut early = None;
+    if !sets && p.ors.len() > 1 {
+        let Some(r) = probe_unhandled(&mut p)? else {
             return Ok(none());
         };
-        p = q;
-        probed = true;
+        (early, probed) = r;
     }
     let Some(model) = solve(&p.cons, true)? else {
         return Ok(none());
@@ -8766,11 +9214,7 @@ fn project_parts(
     // answer (`x[k+1] - x[k]` in {0, 10} gives `x[n]` n + 1 intervals); a component with a
     // cycle, two disjunctions on one edge, a disjunction over three classes or more, or a
     // row that is not a difference row keeps the naive way.
-    let (tree_doms, tree_handled) = if !old_path() && !ors.is_empty() {
-        forest_domains(&linked, &ors, &model)
-    } else {
-        (HashMap::new(), vec![false; ors.len()])
-    };
+    let (tree_doms, tree_handled) = tree_domains(early, probed, &linked, &ors, &model);
     for (k, s) in syms.iter().enumerate() {
         if let (Some(d), Ok(o)) = (tree_doms.get(s), &mut out[k]) {
             *o = o.meet(d);
