@@ -32,7 +32,8 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
   zed-cert/           the independent certificate checker; depends on zed-kernel only
   zed-alloc-count/    the counting allocator the test binaries use to measure bytes allocated
   zed-tools/          the commands: check, cases, fences, fuzz, layer, ring, audit, sync,
-                      progress, catalog; each takes the spec directory, and shares `zedc::parse`
+                      progress, catalog; each takes the spec directory, and shares `zedc::parse`;
+                      conflicts writes the conflict lists of docs/plan_dag.md
 zed/                  Zed source code
   prelude/            the normative prelude (from step M0.5)
   corpus/             the 31 corpus programs (step M0.4): NN-name.zed with its .in and .out,

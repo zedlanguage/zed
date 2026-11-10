@@ -3365,3 +3365,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | The free conjuncts at a hub on each side compared with the first join's by a diff of persistent sets, which skips the subtrees they share by address | `Scope::join` (`within`, `cored`) | Identity (gap 1; see `Atoms::zip` above) | A diff of two persistent sets that skips shared nodes, from the runtime or by content digests |
 | A set of classes already checked, `BTreeSet<&Class>`, of borrows into the two sides' indexes, filled while the loop walks the classes at each name | `Scope::join` (`checked`) | Mutation (gap 11) | A fold over the classes that threads the set checked and the leaves due |
 | A return from the middle of the join when no class is due, after the first `join_settled` | `Scope::join` | Early exit (gap 12) | An `if` whose else branch settles the due leaves and joins again |
+
+## Entries from PLAN-conflict-lists-regen (`zed-tools/src/conflicts.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Vec` of (path, row, position) sorted in place by `sort_unstable`, made a set of (path, row) by `dedup_by`, then cut into runs of equal paths with `slice::partition_point`; each run copied into a reused `Vec` sorted by level and searched by level with `partition_point` | `compute` | Mutation (gap 11) | `sort` of the list into a new list, `group` for the runs, and a binary search by a predicate from the L3 library (as `docs::check`) |
+| The matches of pairs at one level pushed in place onto a `Vec`, sorted, cut into groups by pair with `slice::chunk_by`, each group copied into a reused `Vec` sorted and deduplicated in place | `add`, `compute` | Mutation (gap 11) | The matches as a list built by a fold, `sort` and `group` from the L3 library, and a dedup over each sorted group |
+| A reused `Vec<u32>` of the items that touch a path, sorted by (level, id) with `sort_unstable_by_key` and deduplicated in place | `compute` | Mutation (gap 11) | A fresh list per path, `sort` by a key and a dedup |
+| `std::fs::read_to_string` (through `text::read_text`) and `std::fs::write` of a path from the command line | `run` | Computed paths (gap 6) | The file ports of step L7.3f |

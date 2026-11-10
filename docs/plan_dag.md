@@ -2,7 +2,7 @@
 
 **Performance rule for every code agent (the author's order of 2026-11-05).** Every agent that writes or changes code must pass a performance test showing that the code is O(1), O(n) or O(n log n), or O(n log N) where O(n) is not possible (the author's decision of 2026-11-04). It may not exhibit O(n²) or worse without the author's explicit approval. An agent that finds such a cost must look for a better solution first, and if it cannot find one, must ask the author what to do. An item is not done until this holds. This rule applies to every item before Zed0 and after it, and no item has an edge for it. The test runs at n and 8n with inputs built before timing and stays within 24x, and a negative control that is run but not committed shows that it fails on a slower version. Code that is obviously O(1) instead carries a `// O(1):` comment giving the reason. The item SCALE-cover delivers the tool that fails the local test suite when code has neither.
 
-This file lists the remaining work on Zed and the order it must run in. It has 1100 items, 1750 edges and 97 levels (0 to 96). It covers the TODO items, the store fixes, the left-recursion work, the T14 and T11 findings and every unchecked step in `../zed/PROGRESS.md`.
+This file lists the remaining work on Zed and the order it must run in. It has 1100 items, 1749 edges and 97 levels (0 to 96). It covers the TODO items, the store fixes, the left-recursion work, the T14 and T11 findings and every unchecked step in `../zed/PROGRESS.md`.
 
 **Needs relaxed on 2026-11-02.** Items now run in parallel in their own worktrees, and a merge resolves a small overlap in a file. So the `needs` column keeps only three kinds of edge: code (one item uses or changes code the other writes), measure (one item measures code the other changes) and files-heavy (both rewrite the same functions). Edges of the other kinds were dropped: files-light (the same file, different functions), order (a preferred order with no technical cause), docs (one item only reads the other's text) and none (no reason found). Of the 1134 edges classified, 907 were code, 109 measure, 13 files-heavy, 52 files-light, 35 order, 3 docs and 15 none. Where the reviewer of the classification disagreed, its judgment was used. T11-fix was split into T11-fix-store and T11-fix-rest, X14 was added, and edges found missing were added after reading the cited code.
 
@@ -64,7 +64,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 0 | TRACE-conway | Model-check the four Conway axioms (naturality in the parameter, fixed point property, dinaturality, diagonal) for `fix`, over carriers with and without loose failure atoms and only on steps T-Fix admits, reading the operator as the least fixed point of `x -> x0 ⊔ x ⊔ s(x)` with the seed as parameter (DESIGN.md:4210, :4253); also check the form with the seed moved through the slid map, for join-preserving g, with the counterexample where g is not join-preserving; on a failure, report it and restate the trace paragraph of DESIGN:4281 to what holds | S | no | none | `tests/steps/` |
 | 0 | S.1f | Done: Step S.1f: the Rust compiler's file import graph made acyclic, every cycle in the current import graph, with a checked-in tool in crates/zed-tools/src/bin/ | M | no | none | `crates/zedc/src/`, `tests/steps/` |
 | 0 | L1.19a | Done: Step L1.19a: the `CommandLine` input port, the arguments after `--` keyed by position from 1; a non-UTF-8 argument is a usage error; recorded and replayed | S | no | none | `crates/zedc/src/run.rs`, `crates/zedc-check/src/check/`, `tests/steps/` |
-| 0 | SEMIRING-kerr | Done: Fetch Kerr 1970 (the Ω(n³) lower bound for min-plus matrix products) and check that it supports the DESIGN sentence that no algorithm of lower degree using only the semiring operations is known for the star; cite it there, or narrow the claim | S | yes | none | `../zed/DESIGN.md` |
+| 0 | SEMIRING-kerr | Done: Fetch Kerr 1970 (the Ω(n³) lower bound for min-plus matrix products) and check that it supports the DESIGN sentence that no algorithm of lower degree using only the semiring operations is known for the star; cite it there, or narrow the claim | S | yes | none | `DESIGN.md` |
 | 0 | L1.37a | Done: Step L1.37a, added after done step L1.37: a zed-kernel Cargo feature truncates content addresses so they collide, the corpus and enabled fences give unchanged results, and a counterexample is replayed (merges HASH-trunc, ORACLE-trunchash, ORACLE-cex) | M | no | none | `crates/zed-kernel/`, `tests/steps/` |
 | 0 | AND-fns | Done: An intersection of two function types, `((x: int) -> int) & ((y: f64) -> f64)`, is read by `check::read::parse_type` as its first part alone; decide whether `&` of arrows is an overload set at L1 and print it so | S | no | none | `crates/zedc-check/src/check/read.rs` |
 | 0 | ISSUE1-else-atoms | Done: GitHub issue 1: an inferred parameter used as the operand of `else`, or tested by `is #a`, keeps the atoms it handles in its inferred type, so a loose atom is not dropped at the call | M | no | none | `crates/zedc-check/src/check/` |
@@ -86,13 +86,13 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 0 | TEST-fence-lines | Done: Key the l01_07 fence snapshots by section label and place in the section, not by DESIGN line number, so an edit in one section changes no other section's expected output | S | no | none | `crates/zed-tools/src/spec.rs`, `crates/zed-tools/src/sync.rs`, `tests/src/fences.rs`, `tests/steps/l01_07_fences/`, `tests/steps/l01_21_test_runner/fences.rs`, `zed/fences/design.md`, `zed/fences/examples.md`, `COMPLEXITY.md` |
 | 0 | CASES-xr1 | Done: Cases for the 2026-10-09 cross-review forms that have no test | S | no | none | `zed/grammar/cases.txt`, `tests/steps/l01_08_parser/cases.rs` |
 | 0 | M0.10a | Finite-model tests of laws 21, 22 and 25: fusion, the build clause of law 21, `.last` of law 22, the star-join clause and the side conditions of law 25, each with the counterexample that makes its side condition necessary; DESIGN:4206 and :578 are made to agree | S | no | none | `tests/steps/m0_10_finite_model_harness/laws_21_28.rs`, `DESIGN.md` |
-| 0 | RUNG2-mod-symbol | Done: Rung 2 translates `a mod n` and `a div n` for a symbolic n whose sign a premise fixes, with `n*q` as a product atom (Lin::product extended to auxiliary atoms) and `0 <= r <= \|n\| - 1`; sentence at DESIGN:641 and :1036 | S | no | none | `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-presburger/src/presburger.rs`, `DESIGN.md`, `tests/steps` |
+| 0 | RUNG2-mod-symbol | Done: Rung 2 translates `a mod n` and `a div n` for a symbolic n whose sign a premise fixes, with `n*q` as a product atom (Lin::product extended to auxiliary atoms) and `0 <= r <= \|n\| - 1`; sentence at DESIGN:641 and :1036 | S | no | none | `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-presburger/src/presburger.rs`, `DESIGN.md`, `tests/steps/` |
 | 0 | LAYOUT-measure | Done: Record bytes per AST node, Term, ZIR Node and native value on real compilation units | M | no | none | `zed/compiler/MLIR.md`, `DESIGN.md` |
 | 0 | L1.35-inventory | Done: The MLIR study test reads the variants of Op, Derived and RegionKind from the text of crates/zedc-zir/src/zir/mod.rs and compares them with the rows of MLIR.md, with no hand lists | S | no | none | `tests/steps/l01_35_mlir_study/mod.rs` |
 | 0 | DART-SCALE | Done: Port the Dart-only scaling tests from cd2d30bc^:dart/test/steps/*/scaling_test.dart for L1.1, L1.2, L1.3, L1.4, L1.6, L1.9, L1.11, L1.12, L1.19 and L1.30 (source loading, lexers, postfix chains, statements, declarations, whole-file ports, queries); for L1.7 and L1.17 compare case by case and port what is missing | M | no | none | `tests/steps/l01_*/scaling.rs` |
 | 0 | DOC-links | Done: Fix the unresolved `[UTVPI]`, `[BFCT]` and any other broken intra-doc links, and add `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items` to tools/run_tests.sh | S | no | none | `crates/zedc-solvers/src/utvpi.rs`, `crates/zedc-presburger/src/presburger.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/value.rs`, `tests/src/scaling.rs`, `tools/run_tests.sh` |
-| 0 | TEST-mutants-flow | Done: Rejection and pass-through tests that kill two surviving mutants: `refuses`' bounded-variable branch (check/mod.rs:3643; weak-tests/m2.zed in l01_27_absences/loose.rs, plus a bound holding `_`) and `flow()` on a tuple (check/mod.rs:2190; weak-tests/m5.zed plus a nested function) | S | no | none | `tests/steps/l01_27_absences`, `tests/steps/l01_26_type_resolution/soundness.rs` |
-| 0 | CHK-need-uses | Done: Destructuring a value of a type-variable type records a need for a tuple of n | S | no | none | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs`, `tests/steps/l01_26_type_resolution`, `zed/fences/rejections.txt` |
+| 0 | TEST-mutants-flow | Done: Rejection and pass-through tests that kill two surviving mutants: `refuses`' bounded-variable branch (check/mod.rs:3643; weak-tests/m2.zed in l01_27_absences/loose.rs, plus a bound holding `_`) and `flow()` on a tuple (check/mod.rs:2190; weak-tests/m5.zed plus a nested function) | S | no | none | `tests/steps/l01_27_absences/`, `tests/steps/l01_26_type_resolution/soundness.rs` |
+| 0 | CHK-need-uses | Done: Destructuring a value of a type-variable type records a need for a tuple of n | S | no | none | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs`, `tests/steps/l01_26_type_resolution/`, `zed/fences/rejections.txt` |
 | 0 | EX-prop | Done: EXAMPLES: retag the fences at E:834 and E:870, add `with period(d)` to the clock, match `.window` to its signature (DESIGN:2229), drop 'merge' from the comment or add a merge fence; `http.get` tagged `[lib]` if it stays | S | no | none | `/home/luke/Work/zed/EXAMPLES.md`, `PROGRESS.md` |
 | 0 | STUDY-tests | Done: For each closed study in /home/luke/Work/wt (assoc-fast-study, assoc-infer-study, bend-study, h10-study, murail-study, nonlinear-study, push-study, trace-study, zig-study, study-linearlog, study-1503.03571): find where its battery went (corpus, random families, negative controls, scaling at n and 8n); a battery no row or test on main covers gets its own `<STUDY>-tests` row, or is ported here when small | M | no | none | `docs/plan_dag.md`, `tests/steps/` |
 | 0 | XT-residue-tests | Done: Tests only, from the code of the xt reviews that main lacks: a dense octagon's parity obstruction, a three-variable system on a tight plane, and the negchain scaling family | S | no | none | `tests/steps/l01_38_presburger/stages.rs`, `tests/steps/l01_38_presburger/live3.rs` |
@@ -137,19 +137,19 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 0 | SPEC-L3.21-ac | Certificates for AC and normal-form steps: the certificate cites the proof-grade laws at the arrow, and the checker recomputes the sorted multiset or normal form with its own code | S | no | none | `DESIGN.md` |
 | 0 | WAVE-theory | Theory of waves: state what a wave is for (author item 5, 2026-10-29), a study against [Naiad] and the FRP report, with the result written into sec:order as one definition: reconcile the product order [Naiad] with the outer arrival-counting component and the lexicographic port order of sec:ports | M | yes | none | `DESIGN.md`, `tests/steps/` |
 | 0 | MATHLIB-seed | Done: Commit the sixteen statements, helper definitions including the `minFac` helpers, both commits and lean_counts.txt to docs/mathlib-study.md in zed-impl | S | no | none | `docs/mathlib-study.md (new)` |
-| 0 | BEND-tt | Done: Study of Bend 2's type theory and proof side: BendTT.pdf, bendtt.lean, LAWS.bend, the `--verdict` kernel, bench/checker, guide/SHADERS.md, guide/EFFECTS.md and the bodies of issues #1393 and #1394, against DESIGN sec:verification, the table at DESIGN.md:1263, and L15 | S | no | none | `wt/bend/REPORT.md`, `verification/bib.md`, `DESIGN.md sec:alternatives` |
-| 0 | BIB-check | Done: Citations not yet read: verify the [WorkStealing] bound against Blumofe and Leiserson (doi:10.1145/324133.324234), and add entries for Goldberg-Radzik and Duong et al. cited at DESIGN.md:1896, through the allpapers skill | S | no | none | `DESIGN.md:1495`, `:1896`, `:4025 and the bibliography`, `verification/bib.md` |
+| 0 | BEND-tt | Done: Study of Bend 2's type theory and proof side: BendTT.pdf, bendtt.lean, LAWS.bend, the `--verdict` kernel, bench/checker, guide/SHADERS.md, guide/EFFECTS.md and the bodies of issues #1393 and #1394, against DESIGN sec:verification, the table at DESIGN.md:1263, and L15 | S | no | none | `wt/bend/REPORT.md`, `verification/bib.md`, `DESIGN.md` (sec:alternatives) |
+| 0 | BIB-check | Done: Citations not yet read: verify the [WorkStealing] bound against Blumofe and Leiserson (doi:10.1145/324133.324234), and add entries for Goldberg-Radzik and Duong et al. cited at DESIGN.md:1896, through the allpapers skill | S | no | none | `DESIGN.md` (lines 1495, 1896 and 4025, and the bibliography), `verification/bib.md` |
 | 0 | ZIR-family-key | Done: ZIR text and binary readers refuse a family literal that repeats a key, instead of panicking through Family::of | S | no | none | `crates/zedc-zir/src/zir/text.rs`, `crates/zedc-zir/src/zir/binary.rs`, `tests/steps/l01_31_zir/rejections.rs` |
 | 0 | ZIR-name-xid | Done: ZIR text reads every name the lexer accepts: `word` follows the lexer's rule (XID_Continue with one trailing prime) | S | no | none | `crates/zedc-zir/src/zir/text.rs`, `tests/steps/l01_31_zir/items.rs` |
 | 0 | FMT-load-pos | Done: format_source reports a load failure through Reject::render, so it has line and column; formatter tests that keep the parentheses of a non-chaining comparison | S | no | none | `crates/zedc-syntax/src/format.rs`, `tests/steps/l01_13_formatter/layout.rs` |
 | 0 | ORACLE-cones | Done: The oracle builds one Cones per unit and closes each binding from it; add the L1.37 scaling tests the deleted Dart port had | S | no | none | `tests/src/oracle.rs`, `tests/steps/l01_37_oracle/scaling.rs`, `tests/steps/l01_37a_short_addresses/record.rs` |
 | 0 | CITE-check | Done: A zed-tools check fails on any sec: label or step id cited in zed-impl or DESIGN.md with no definition in DESIGN.md; fix the five dead labels keys, numeric, checking, specificity and syntax (each written after `sec:`) | S | no | none | `crates/zed-tools/src/`, `crates/zed-kernel/src/value.rs`, `crates/zed-kernel/src/num.rs`, `crates/zedc-check/src/check/`, `tests/steps/`, `STATUS.md`, `DESIGN.md` |
 | 0 | M0d-suite | Done: M0(d) prediction suite: twenty ten-line programs (at least 5 with grouping, one float sum, one join), each with its expected output written from sec:syntax_tour alone and committed before the form it uses first runs; each labeled with its lowest layer and enabled by that layer's test | S | no | none | `tests/steps/`, `zed/fences/` |
-| 0 | LOWER-legalize | Done: One shared expansion pass on ZIR before lowering: each back end declares the set of operations it wants expanded, and the pass turns the rest into simpler ZIR, so a lowering is written once and not once per back end | M | no | none | `crates/zed-native`, `zed/compiler/MLIR.md`, `DESIGN.md step at :1441` |
+| 0 | LOWER-legalize | Done: One shared expansion pass on ZIR before lowering: each back end declares the set of operations it wants expanded, and the pass turns the rest into simpler ZIR, so a lowering is written once and not once per back end | M | no | none | `crates/zed-native/`, `zed/compiler/MLIR.md`, `DESIGN.md` (the step at line 1441) |
 | 0 | INCR-script | Done: Edit-script test format for the compiler's query cache: each edit step's verdicts and diagnostics equal a fresh build; check-only first | S | no | none | `tests/steps/l01_30_queries/reuse.rs` |
-| 0 | TIME-report | Done: `zedc` reports instructions and bytes by stage, unit and definition | M | no | none | `crates/zedc` |
+| 0 | TIME-report | Done: `zedc` reports instructions and bytes by stage, unit and definition | M | no | none | `crates/zedc/` |
 | 0 | FLOAT-tie-read | Done: Record why a float tie prints the larger magnitude: Grisu's `round_and_weed` returns None on a true tie, so `dragon.rs:245` decides (Rust 1.93.0); keep the sampling as a test | S | no | none | `STATUS.md`, `tests/steps/l01_18_scalar_interpreter/floats.rs` |
-| 0 | BUILD-modes | Done: Spec: a table of the build modes and what each changes (logging, checks, optimization), each mode preserving program values | S | no | none | `DESIGN.md:815`, `:816`, `:1491`, `:1668` |
+| 0 | BUILD-modes | Done: Spec: a table of the build modes and what each changes (logging, checks, optimization), each mode preserving program values | S | no | none | `DESIGN.md` (lines 815, 816, 1491 and 1668) |
 | 0 | OSP-order | Done: Osprey follow-up to done step M0.5: the weak topological order visits vertices by name, then content address, then canonical form, never source position; the a/b/c loop gives `c` at `int[1..=4]` in all six orders | M | no | none | `crates/zedc/src/store/`, `tests/steps/m0_05_widening_and_iteration/` |
 | 0 | OSP-lit | Done: Osprey follow-up to done steps L1.18, L1.19, L1.26: float literals correctly rounded at binary float carriers (error on rounding to infinity or a nonzero literal to zero), exact at `rat`; `#ioError(op, path, why)` payload; unknown backslash escape is a lexical error listing the valid ones; doc-comment blocks attach to the next declaration, unattached ones reported, unresolved `[name]` links rejected | M | no | none | `crates/zedc-syntax/src/lex/`, `crates/zedc-check/src/check/`, `crates/zed-kernel/src/`, `tests/steps/l01_26_type_resolution/`, `tests/steps/l01_18_scalar_interpreter/` |
 | 0 | OSP-diag | Done: Osprey follow-up to done steps L1.21, L1.29, L1.34, L1.37: a ✗ comment naming a rejection-table row passes only on that row (Diagnostic gets a row field); `zedc test` fails on no tests, a missing outside tool and a rejection fence that compiles, and reports the count of rejection fences; every printed type parses back to an equal type; a test build counts live reference-counted objects, arena slots and slab handles, zero after each corpus native run | L | no | none | `crates/zedc/src/run.rs`, `crates/zedc/src/testing.rs`, `crates/zedc-check/src/check/`, `crates/zed-native/src/hooks.rs`, `crates/zed-rt/src/`, `tests/steps/l01_07_fences/`, `tests/steps/l01_21_test_runner/`, `tests/steps/l01_29_diagnostics/` |
@@ -184,7 +184,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 1 | TD-ends | Done: Exact interval ends past `i64` (no-thresholds rule, from TRADEOFF-DOC) | M | no | TRADEOFF-DOC | `crates/zedc-lattice/src/interval.rs`, `crates/zedc-lattice/src/affine.rs`, `crates/zedc-presburger/src/presburger.rs`, `docs/reviews/tradeoffs.md` |
 | 1 | T2-native | Done: Explicit stacks in the native backend: Tables::visit and the code generator's walk of regions, plus the recursion on value depth in Heap::fresh and Heap::value | M | no | T3 | `crates/zed-native/src/tables.rs`, `crates/zed-native/src/codegen.rs`, `tests/steps/l01_36_cranelift/scaling.rs`, `crates/zed-rt/src/heap.rs` |
 | 1 | ST2 | Done: product.rs precision flaws: reduce loop sets projected right after project() so its own narrowings never re-project (~:1068-1071); project_due skips a part whose context alone grew (~:1176) | M | no | T4 | `crates/zedc-preimage/src/product.rs`, `tests/steps/l01_39_reduced_product/`, `DESIGN.md` |
-| 1 | LR2 | Done: Grammar rewrite: left-recursive rules for left-associative operators, AST-skip marks, named choice rules; rewrite the AST builder and all code that reads the old tree | L | no | LR1 | `../zed/DESIGN.md (sec:grammar`, `Notation paragraph`, `grammar comments`, `steps L1.8 and M0.3 wording)`, `crates/zed-tools/src/check.rs`, `crates/zed-tools/src/layer.rs`, `crates/zed-tools/src/ring.rs`, `../zed/tools/grammar/cases.txt`, `zed/grammar/syntax.peg`, `zed/grammar/notation.peg`, `zed/grammar/cases.txt`, `zed/fences/`, `crates/zedc-syntax/src/parse/grammar.rs`, `crates/zedc-syntax/src/parse/mod.rs`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-syntax/src/ast/types.rs`, `tests/steps/l01_08_parser/`, `tests/steps/l01_09_postfix_chains/`, `tests/steps/l01_10_lambdas_types_else_tuples/`, `tests/steps/l01_11_statements/`, `tests/steps/l01_12_declarations/`, `../zed/PROGRESS.md` |
+| 1 | LR2 | Done: Grammar rewrite: left-recursive rules for left-associative operators, AST-skip marks, named choice rules; rewrite the AST builder and all code that reads the old tree | L | no | LR1 | `DESIGN.md` (sec:grammar, Notation paragraph, grammar comments, steps L1.8 and M0.3 wording), `crates/zed-tools/src/check.rs`, `crates/zed-tools/src/layer.rs`, `crates/zed-tools/src/ring.rs`, `../zed/tools/grammar/cases.txt`, `zed/grammar/syntax.peg`, `zed/grammar/notation.peg`, `zed/grammar/cases.txt`, `zed/fences/`, `crates/zedc-syntax/src/parse/grammar.rs`, `crates/zedc-syntax/src/parse/mod.rs`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-syntax/src/ast/types.rs`, `tests/steps/l01_08_parser/`, `tests/steps/l01_09_postfix_chains/`, `tests/steps/l01_10_lambdas_types_else_tuples/`, `tests/steps/l01_11_statements/`, `tests/steps/l01_12_declarations/`, `../zed/PROGRESS.md` |
 | 1 | T14-bugs-kernel | Done: Two kernel bugs: the key of `f[k]` on a definedness fix is not normalized, and the Pow guard overestimates | S | no | T2-eval | `crates/zed-kernel/src/eval.rs`, `tests/steps/m0_09_kernel_evaluator/mod.rs` |
 | 1 | T11-preimage | Done: preimage.rs: `Domains` copied into each result, memo keys by address with a keep list, RefCell on every memo field | M | no | T2-eval | `crates/zedc-preimage/src/preimage.rs`, `tests/steps/l01_25_preimage_catalog/scaling.rs` |
 | 1 | T14-value | Done: Shared Value: `Tuple`, `Path` and Atom args held as `Arc<[Value]>` or a persistent vector, so a variable read is O(1), not O(n); Ty and the heap follow in T11-ty and T14-heap | L | no | T2-eval | `crates/zed-kernel/src/value.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/family.rs`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/print.rs`, `crates/zed-kernel/src/provenance.rs`, `crates/zed-rt/src/heap.rs`, `crates/zed-native/src/hooks.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/run.rs`, `crates/zedc/src/testing.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-zir/src/canon/mod.rs`, `crates/zedc-zir/src/canon/serial.rs`, `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zedc-zir/src/zir/binary.rs`, `crates/zedc-zir/src/zir/canon.rs`, `crates/zedc-zir/src/zir/text.rs`, `tests/steps/m0_07_canonicalization/`, `tests/steps/m0_09_kernel_evaluator/`, `tests/steps/m0_10_finite_model_harness/`, `tests/steps/m0_11_prelude_axioms_and_limits/`, `tests/steps/l01_20_provenance/`, `tests/steps/l01_22_type_representation/`, `tests/steps/l01_23_subtyping/`, `tests/steps/l01_33_lowering/`, `tests/steps/l01_34_memory/`, `tests/steps/l01_36_cranelift/`, `tests/steps/l01_37_oracle/` |
@@ -206,29 +206,29 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 1 | AXIOMS-gaps | Done: order axioms missing: > and >= at String, != at f64 and String (recorded only in STATUS); add entries to prelude/axioms.zed with every_axiom_holds coverage | S | no | AXIOMS-order |  |
 | 1 | TD-refusals | Done: from TRADEOFF-DOC: Scope::refusals reported as a warning, with tests | S | no | TRADEOFF-DOC |  |
 | 1 | NUM-subquad | Done: Subquadratic exact numbers: FFT multiplication, Newton division, half-gcd and printing by halves; closes the open parts of COMPLEXITY K41 (the lowest-terms check of two wide parts, 39x at 2.5k to 20k digits; ignored test `reading_a_rat_of_two_wide_parts_scales`) and K30 (`to_string`, gcd, division) | L | no | RAT-parse |  |
-| 1 | FOOTPRINT-overlap | A device's footprint counts together the regions the plan may run at once: the plan records its ordering; a static schedule's start and finish times give an exact sweep in O(r log r); for work-stealing, series-parallel composition over region nesting (parallel adds, sequence takes the peak) gives an upper bound in one pass, O(r); `// Complexity tradeoff:` at the site, since a DAG that is not series-parallel is judged at the upper bound, the exact maximum-weight antichain costing more than O(N log N) | M | yes | FOOTPRINT-peak | `crates/zedc-base/src/cost.rs`, `zed/prelude/cost.zed`, `tests/steps/m0_06_cost_scalarization`, `COMPLEXITY.md`, `DESIGN.md` |
+| 1 | FOOTPRINT-overlap | A device's footprint counts together the regions the plan may run at once: the plan records its ordering; a static schedule's start and finish times give an exact sweep in O(r log r); for work-stealing, series-parallel composition over region nesting (parallel adds, sequence takes the peak) gives an upper bound in one pass, O(r); `// Complexity tradeoff:` at the site, since a DAG that is not series-parallel is judged at the upper bound, the exact maximum-weight antichain costing more than O(N log N) | M | yes | FOOTPRINT-peak | `crates/zedc-base/src/cost.rs`, `zed/prelude/cost.zed`, `tests/steps/m0_06_cost_scalarization/`, `COMPLEXITY.md`, `DESIGN.md` |
 | 1 | FUZZ-neg | Done: Negative test for the grammar fuzzer's lookahead and derived-but-rejected checks, plus a test run of many rounds on the real grammar | S | no | DART-RS | `tests/steps/m0_03_grammar_tools/mod.rs` |
-| 1 | RUNG2-bit | Rung 2 relation for `bitAnd`: next to the Min/Max auxiliary case in preimage.rs, `bitAnd(a, b)` becomes an auxiliary x with `0 <= x`, `x <= a`, `x <= b` | S | no | BIT-words | `crates/zedc-preimage/src/preimage.rs`, `tests/steps/l01_39a_bit_words` |
-| 1 | ISSUE1-passby-scale | Done: Pass-by scaling tests a control can fail: a per-call clone of `Info::passes` must exceed the limit at n to 8n | S | no | ISSUE1-else-atoms | `tests/steps/l01_27_absences` |
+| 1 | RUNG2-bit | Rung 2 relation for `bitAnd`: next to the Min/Max auxiliary case in preimage.rs, `bitAnd(a, b)` becomes an auxiliary x with `0 <= x`, `x <= a`, `x <= b` | S | no | BIT-words | `crates/zedc-preimage/src/preimage.rs`, `tests/steps/l01_39a_bit_words/` |
+| 1 | ISSUE1-passby-scale | Done: Pass-by scaling tests a control can fail: a per-call clone of `Info::passes` must exceed the limit at n to 8n | S | no | ISSUE1-else-atoms | `tests/steps/l01_27_absences/` |
 | 1 | PASS-at-args | Done: `Ck::pass_at` clones the call's own Vec per argument, O(args^2) per call: borrow or index instead | S | no | ISSUE1-else-atoms | `crates/zedc-check/src/check/mod.rs` |
 | 1 | L1.19b | Done: `Record` stores its program's content address; `zedc replay` refuses another address or none | S | no | L1.19a | `crates/zedc/src/run.rs`, `tests/steps/` |
-| 1 | ENV-port | Done: An input port of type `Utf8String ->? Utf8String` holding the environment variables, recorded and replayed as `CommandLine` is; a non-UTF-8 value is a usage error, as in L1.19a; new DESIGN step L1.19c (L1.19b was taken by RECORD-address) | S | no | L1.19a | `crates/zedc/src/run.rs`, `zed/prelude/`, `DESIGN.md sec:plan and sec:ports`, `tests/steps/` |
-| 1 | T11-unit-share | Done: `Program` holds an `Arc<Unit>` and `run::program` takes one, so `testing` shares the unit; `Record.lines` and a wave's `lines` hold `Arc<[u8]>`, so the record shares the input | S | no | T11-elab, T14-low | `crates/zedc/src/run.rs and its callers`, `crates/zedc/src/testing.rs` |
+| 1 | ENV-port | Done: An input port of type `Utf8String ->? Utf8String` holding the environment variables, recorded and replayed as `CommandLine` is; a non-UTF-8 value is a usage error, as in L1.19a; new DESIGN step L1.19c (L1.19b was taken by RECORD-address) | S | no | L1.19a | `crates/zedc/src/run.rs`, `zed/prelude/`, `DESIGN.md` (sec:plan and sec:ports), `tests/steps/` |
+| 1 | T11-unit-share | Done: `Program` holds an `Arc<Unit>` and `run::program` takes one, so `testing` shares the unit; `Record.lines` and a wave's `lines` hold `Arc<[u8]>`, so the record shares the input | S | no | T11-elab, T14-low | `crates/zedc/src/run.rs` (and its callers), `crates/zedc/src/testing.rs` |
 | 1 | VARIANT-sync | Done: Test that each checked example in zed/fences/variants agrees with its spec fence; regenerate the 6 stale files | S | no | TEST-fence-lines | `tests/steps/l01_07_fences/copies.rs`, `zed/fences/variants/`, `tests/src/fences.rs` |
 | 1 | OSP-drop | Done: Osprey follow-up to done step L1.27 (author decision 2026-11-03, DESIGN a9bf7b4): `_` binds only a value with no loose failure member other than an `else` default the text writes; the rejection names the loose members and offers `else` or `match`; a statement `e else d;` drops only `d` | S | no | OSP-diag | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `tests/steps/l01_27_absences/` |
 | 1 | CAP-bits | Done: No-thresholds fix: `MAX_BITS = 2^20` (`num.rs`) removed; exact numbers have no size limit, and a build the system has no memory for stops with `NumberTooLarge` naming its width (zed-impl 2bf39d2, e3b51e9, 01fda12, 4692c3a; DESIGN c58d3d1, 1542e46, c825507) | L | no | OSP-lit | `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/value.rs`, `crates/zed-kernel/src/words.rs`, `crates/zed-kernel/src/deep.rs`, `crates/zed-kernel/src/error.rs`, `crates/zedc-zir/src/canon/serial.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-zir/src/zir/binary.rs`, `docs/thresholds.md`, `tests/src/check.rs`, `tests/steps/l01_17_value_representation/` |
 | 1 | L1.29a | Done: Step L1.29a, added after done step L1.29: printed types do not move between runs, and a warning appears only for a unit with no rejection | S | no | OSP-order, OSP-diag | `crates/zedc-check/src/check/`, `tests/steps/l01_29_diagnostics/` |
 | 1 | L29-print | Done: l01_29 every_printed_type_parses_back_to_itself fails since OSP-diag 4d82672 (#ioError(_) read as layer L2); blocks batch push | S | no | OSP-diag |  |
 | 1 | LIT-n | Done: Generic integer literals, DESIGN step L1.26a (author request, 2026-11-04): `1n` is that integer in whichever numeric carrier its use needs, so `inc(x) = x + 1n` takes `int`, `f64` and `rat`; lexer `Generic = Integer 'n'`, checker classes, elaboration by one `match` per literal | S | no | OSP-lit | `crates/zedc-syntax/src/lex/`, `crates/zedc-syntax/src/ast/`, `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab/walk.rs`, `crates/zed-tools/src/syntax.rs`, `zed/grammar/`, `tests/steps/l01_26a_generic_literals/` |
-| 1 | XMARK-rows | Done: Every live ✗ names its row of the rejection table; a table rejection raised at an enabled layer sets its row; each row raisable at the enabled layers has one near-miss program; remove the 'names no row' sentence at DESIGN:1661 and the 'where it names one' clauses at DESIGN:1850 and :2847 | M | no | OSP-diag | `DESIGN.md`, `EXAMPLES.md`, `tests/steps/l01_21_test_runner/rows.rs`, `zed/fences/rejections.txt`, `crates/zedc-base/src/rejection.rs`, `tests`, `zed/corpus` |
+| 1 | XMARK-rows | Done: Every live ✗ names its row of the rejection table; a table rejection raised at an enabled layer sets its row; each row raisable at the enabled layers has one near-miss program; remove the 'names no row' sentence at DESIGN:1661 and the 'where it names one' clauses at DESIGN:1850 and :2847 | M | no | OSP-diag | `DESIGN.md`, `EXAMPLES.md`, `tests/steps/l01_21_test_runner/rows.rs`, `zed/fences/rejections.txt`, `crates/zedc-base/src/rejection.rs`, `tests/`, `zed/corpus/` |
 | 1 | ORDER-rename | Done: Test that a unit and a copy with a local binding renamed have one address and the same heads, cells and verdict, with a search for a witness program on the a/b/c family; if it fails, put to the author: order vertices by content address for local bindings, or keep the order, correct DESIGN:1748 and name the exception at DESIGN:4055 | S | no | OSP-order | `tests/steps/m0_05_widening_and_iteration/order.rs`, `crates/zedc-lattice/src/wto.rs`, `DESIGN.md` |
 | 1 | P14-bits | Done: The 4b + 8 derivation for the in-circle determinant in `in_circle`'s doc comment and COMPLEXITY F39 | S | no | P14-MST | `zed/corpus/ref/src/p14/delaunay.rs`, `COMPLEXITY.md` |
 | 1 | P14-dup-scale | Done: Test only: `clustering_of_many_equal_points` gets input that really has many equal points, and its comment states what the input is | S | no | P14-MST | `tests/steps/m0_04_corpus_references/scaling.rs` |
 | 1 | P14-coord-scale | Done: Test only: clustering at n and 8n with coordinates of many digits, for the bound of COMPLEXITY F39 in coordinate size | S | no | P14-MST | `tests/steps/m0_04_corpus_references/scaling.rs` |
-| 1 | PROV-family-entries | Done: Measure Provenance::origins on n entries holding one set of m failures, and a family with a deep replacement per step; share the per-set result by set id if above O(N log N), or record a `// Complexity tradeoff:` comment | S | no | T14-occ | `crates/zed-kernel/src/`, `COMPLEXITY.md K25`, `STATUS.md:1127` |
-| 1 | MSG-words | Done: sec:diagnostics states that a message uses the surface language's words and names no kernel rule; a test over every rejection fence fails on a listed kernel rule name; the same change decides DESIGN.md:251's 'Boom obligations' (recommended: 'op's laws') | S | no | OSP-diag | `DESIGN.md sec:diagnostics`, `tests/steps/l01_21_test_runner/rows.rs` |
+| 1 | PROV-family-entries | Done: Measure Provenance::origins on n entries holding one set of m failures, and a family with a deep replacement per step; share the per-set result by set id if above O(N log N), or record a `// Complexity tradeoff:` comment | S | no | T14-occ | `crates/zed-kernel/src/`, `COMPLEXITY.md` (K25), `STATUS.md` (line 1127) |
+| 1 | MSG-words | Done: sec:diagnostics states that a message uses the surface language's words and names no kernel rule; a test over every rejection fence fails on a listed kernel rule name; the same change decides DESIGN.md:251's 'Boom obligations' (recommended: 'op's laws') | S | no | OSP-diag | `DESIGN.md` (sec:diagnostics), `tests/steps/l01_21_test_runner/rows.rs` |
 | 1 | UTVPI-NEAR | Done: XT3 B2: GOR raced step for step with a deterministic near-linear negative-weight shortest-path algorithm (Duong 2026), first to finish; design review first | L | yes | UTVPI-GOR | `crates/zedc-solvers/src/negsssp.rs`, `crates/zedc-solvers/src/utvpi.rs` |
-| 1 | PLAN-conflicts | Regenerate the two file-conflict tables of this file from the items table (219 of 245 same-level pairs name items no longer at that level) and extend `zed-tools plan` to check them | S | no | PLAN-sync | `docs/plan_dag.md`, `crates/zed-tools/src/plan.rs` |
+| 0 | PLAN-conflicts | Done: Regenerate the two file-conflict tables of this file from the items table (219 of 245 same-level pairs name items no longer at that level) and extend `zed-tools plan` to check them | S | no | none | `docs/plan_dag.md`, `crates/zed-tools/src/plan.rs` |
 | 1 | HULL3-subsumed | Done: LIVE3 decides every part with three live variables, so HULL3 is subsumed: measure `hull3::shadow` as a first try before `live3`; keep it if faster, else remove it and move its tests to `live3`; and correct the unit-side sentence of L1.38 if the stage goes | S | no | LIVE3 | `crates/zedc/src/store/hull3.rs`, `crates/zedc-solvers/src/live3.rs` |
 | 1 | LIVE3-TESTS | Done: Tests after LIVE3: the 10^6-coefficient slab, the system of `l01_38_presburger/checker.rs:71` and the parity slab; the growth message says four variables or more | S | no | LIVE3 | `tests/steps/l01_38_presburger/` |
 | 1 | NAME-ties | Done: Author decision of 2026-11-03, fix B: rank by (fill, color, index) and refuse at an indistinguishable tie that shares a row; tests over every naming of the four test systems, each with a control | M | yes | CANON-stable | `crates/zedc-presburger/src/presburger.rs` |
@@ -261,7 +261,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 2 | WIDE-copies | Done: At a 2^30-bit int, `1 - wide`, `wide div 3` and `wide mod 3` run out of memory because `Rat::sub` and the Euclid division copy; work in place, with a memory test at 2^30 bits | M | no | CAP-bits, L1.17a | `crates/zed-kernel/src/num.rs` |
 | 2 | ALLOC-refused | Done: zed-alloc-count counts refused allocations; l01_39a transfer test overflows u64 at lib.rs:32 | S | no | CAP-bits, BIT-words |  |
 | 2 | LIT-n-class | Done: A generic integer literal `kn` is generic wherever it joins the class of a parameter in scope, not only as an operand (DESIGN step L1.26a, orchestrator decision 2026-11-04): a call's argument at a generic parameter, a branch of an `if`, a component of a tuple argument, and an operation on generic literals alone, so `double(x) = scale(x: x, by: 2n)` and `relu(x) = if x < 0n { 0n } else { x }` take `int`, `f64` and `rat`; elaboration by one `match` on the parameter per literal | S | no | LIT-n | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-elab/src/elab/walk.rs`, `tests/steps/l01_26a_generic_literals/` |
-| 2 | DIAG-suppress | Done: Give each warning and rejection its fact address, as DESIGN sec:diagnostics and step L1.29 require, and suppress a warning by that address from the command line, leaving the build's output unchanged | M | no | WIDEN-WARN, L1.29a | `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs`, `DESIGN.md sec:diagnostics`, `tests/steps/` |
+| 2 | DIAG-suppress | Done: Give each warning and rejection its fact address, as DESIGN sec:diagnostics and step L1.29 require, and suppress a warning by that address from the command line, leaving the build's output unchanged | M | no | WIDEN-WARN, L1.29a | `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs`, `DESIGN.md` (sec:diagnostics), `tests/steps/` |
 | 3 | UTVPI-union | Done: The union family (BAD-GOR plus a fan) grows 60.5x for 8x; find an algorithm (own attempt, then cross-review), then remove the `#[ignore]` on its scaling test; before the attempt, a second reader checks wt/utvpi-near-design.md, each claim marked proved, from the paper, or inferred, recorded in the ledger; run the race per strongly connected component of the constraint graph (utvpi.rs:370 has Tarjan), or prove that `parts` plus a split after the eliminations gives the same bound; BCF is adopted or rejected with reasons in COMPLEXITY C24; if adopted, the seed comes from the input's content and the step states the bound as expected time, checked against DESIGN:1666 | M | yes | UTVPI-dag-test | `crates/zedc/src/store/` |
 | 2 | UTVPI-dag-test | Done: Scaling test in stages.rs through `raced`, not `empty`, on a family where all three racers are slow without the DAG pass: unaugmented `acyclic_bad_gor` from `wt/xt4/codex/R3_ZED_IMPL.patch` joined with the fan of `bad_gor_and_fan` (stages.rs:390) without its edges from leaf to `a` | S | no | UTVPI-NEAR | `tests/steps/l01_38_presburger/stages.rs`, `crates/zedc-solvers/src/utvpi.rs` |
 | 2 | UTVPI-model | Done: On unit two-variable rows with a point, find the point from the integer potentials instead of general elimination with fill allowed, or show why that fails | M | yes | UTVPI-NEAR | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-solvers/src/utvpi.rs`, `tests/steps/l01_38_presburger/scaling.rs` |
@@ -296,8 +296,8 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 3 | S22-more-scales | Done: Scaling tests for the S22 families with comparison cases only: le, rangeand, alt_live, eq0_live, range_live, cj_live, altj, altj_live, ne0, neg, mul | S | no | S22a | `tests/steps/l01_25_preimage_catalog/s22.rs`, `COMPLEXITY.md` |
 | 3 | S22-order | Done: RECHECK compares the Pa and by_class memos, on one-input if chains and remainder classes | S | no | S22a | `crates/zedc-preimage/src/preimage.rs` |
 | 4 | S22-chain-cost | Done: the preimage of a one-input `if` chain whose arms share the term below is read in work near its length (COMPLEXITY.md S22-order-chain): `min` and `max` across their constant, `0 * u` and `if` arms that read the remainder in different ways are summarized (`Pa::clamp`, `ByClass::clamp`, `cls_zip`), and a split found wide is run once more over the box it found | S | no | S22-order | `crates/zedc-preimage/src/preimage.rs`, `COMPLEXITY.md` |
-| 3 | HOOKS-term-dag | Done: hooks::term and the memory interpreter's term build each closure's term once: a memo keyed by the cell word on the native path and by `Clo::cell` on the memory path, not by an address | M | no | T2-native, T14-hooks | `crates/zed-native/src/hooks.rs`, `crates/zedc-zir/src/zir/memory.rs`, `COMPLEXITY.md R9` |
-| 3 | L1.36b | Done: Linker, runtime and toolchain identity in cache keys and stage records | S | no | L1.36a | `crates/zedc`, `DESIGN.md:187` |
+| 3 | HOOKS-term-dag | Done: hooks::term and the memory interpreter's term build each closure's term once: a memo keyed by the cell word on the native path and by `Clo::cell` on the memory path, not by an address | M | no | T2-native, T14-hooks | `crates/zed-native/src/hooks.rs`, `crates/zedc-zir/src/zir/memory.rs`, `COMPLEXITY.md` (R9) |
+| 3 | L1.36b | Done: Linker, runtime and toolchain identity in cache keys and stage records | S | no | L1.36a | `crates/zedc/`, `DESIGN.md` (line 187) |
 | 3 | LIT-plain | Done: Plain literals adopt no carrier (DESIGN sec:domains, steps L1.26 and L10.2, author decision 2026-11-04): `1` is always `int`, a decimal always `f64`, and `1` at an expected `f64` or `rat` is rejected with the menu `1.0`, `1r`, `1n` (only those the type holds); `0.1` at `rat` names `0.1r`; `1n` at one declared carrier takes that carrier, at `f64 \ \| rat` is rejected; `x == 1` with `x: f64` is rejected and `x == 1n` is `true` at `1.0`; the tests of L1.26, L1.26a and L10.2 change, and every fence and corpus program that relied on adoption is rewritten; Zed converts no value implicitly, with must-fail tests; remove the `// Complexity tradeoff:` comment at `check::resolve`, since the rule is now a language rule; reword docs/thresholds.md:71-72 and the same paragraph of replacement 1; add a dated note under tradeoffs.md's finding list | M | no | LIT-n-class | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab/walk.rs`, `zed/fences/`, `zed/corpus/`, `zed/prelude/`, `tests/steps/l01_26a_generic_literals/`, `tests/steps/` |
 | 4 | S22b-rest | Done: the summary reads `c - u` for every constant `c` (`pa_prim`), and the clip reads `c - x` by `reflect` (no rounding flag at `c = i64::MIN` or `MAX`); j−t live 63.4 → 10.6 times at 256 and 2,048 | S | no | S22b | `crates/zedc-preimage/src/preimage.rs`, `tests/steps/l01_25_preimage_catalog/` |
 | 4 | LINK-obj-leftover | Done: `zedc build` writes the object file and links in a directory of its own beside the output, locked while the build lives and removed on every exit it sees; the executable is renamed to the output; a build killed between writing and removing it blocks no later build, and the next build that links removes what it left but never a running build's directory | S | no | L1.36b | `crates/zed-native/src/link.rs`, `tests/steps/l01_36b_link_identity/leftover.rs`, `tests/steps/l01_36a_executables/binary.rs` |
@@ -322,13 +322,13 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 4 | F44-forced | Done: types/bdd.rs Part::forced on an expression is O(atoms*size): l01_23 scaling::the_parts_scale 48.0x on fresh runs (limit 24), ignored on wt/f44-memo; T6 one-pass forced fixes it (passes on wt/t6 24ad3e4 with the new ... | S | no | T6 |  |
 | 4 | TYPE-forms | Done: grammar from zed 9c85a19 parses (T,) one-tuple, L .. U -> V morphism type and TypeBounds 'for X in U'; checker elaboration and tests (correctness, corner cases, scaling) missing; kinds #_ (..) {..} #a(..) are T6-kinds | S | no | T6 |  |
 | 4 | VERDICT-route | Done: `subtype_verdict` and `(a - b).verdict()` compared over the oracle.rs generators: Simulation may decide only what the search refuses, never contradict it; re-measure with wt/xv/Q1Q7/scripts; record in K37 that SYNTHESIS.md:60's 'agree on every case' is amended and why, or remove the first route if the comparison shows more | S | no | T6 | `crates/zed-kernel/src/types/empty.rs`, `tests/steps/l01_23_subtyping/oracle.rs`, `COMPLEXITY.md` |
-| 4 | REFUSE-group-site | Done: a refusal in a recursive type group points at the group's head definition and lists its definitions, beside the use site | S | no | T6 | `crates/zed-kernel/src/types/empty.rs`, `crates/zedc-types/src/ty.rs`, `tests/steps/l01_29_diagnostics` |
+| 4 | REFUSE-group-site | Done: a refusal in a recursive type group points at the group's head definition and lists its definitions, beside the use site | S | no | T6 | `crates/zed-kernel/src/types/empty.rs`, `crates/zedc-types/src/ty.rs`, `tests/steps/l01_29_diagnostics/` |
 | 4 | ST-exact-enum | Done: Bring `enumerate_exactly` under `@exact` to O(n log n) over many reduces: replace the `groups.retain` scan with a union-find over open names, and visit only constraints whose names changed since the last reduce, as `enumerate_on` does; otherwise a kept COMPLEXITY.md row and a `// Complexity tradeoff:` comment at the site | S | no | ST | `crates/zedc-preimage/src/product.rs`, `tests/steps/l01_39_reduced_product/scaling.rs`, `COMPLEXITY.md` |
-| 4 | GROUP-admit | Done: Random sweep of the admission check of recursive type groups: a witness-pool evaluator (ported from wt/xs2/gemini/xs_proto/src/lib.rs `eval_ty_mask`) in the test tree, seeded random groups, asserting no group the evaluator calls non-monotone is accepted, and printing the false-rejection count | S | no | T6 | `tests/steps/l01_23_subtyping` |
+| 4 | GROUP-admit | Done: Random sweep of the admission check of recursive type groups: a witness-pool evaluator (ported from wt/xs2/gemini/xs_proto/src/lib.rs `eval_ty_mask`) in the test tree, seeded random groups, asserting no group the evaluator calls non-monotone is accepted, and printing the false-rejection count | S | no | T6 | `tests/steps/l01_23_subtyping/` |
 | 4 | GROUP-admit-msg | Done: The admission wrapper at rec.rs:387 says the type is outside the form the checker accepts, with the arm's reason, and says 'not monotone' only in arms where that is proved; DESIGN:1826 says the check is sufficient, not necessary | S | no | T6 | `crates/zed-kernel/src/types/rec.rs`, `tests/steps/l01_23_subtyping/admission.rs`, `DESIGN.md` |
-| 4 | GROUP-oracle | Done: Kernel verdicts on recursive type groups against reference answers: port the finite-value oracle into tests/steps/l01_23_subtyping as Rust; expose a seeded `random(seed, rate, n)` from bes_families and run many seeds and rates through `decide` against reference::answers and through Group::new with `Type::verdict` | M | no | T6 | `crates/zed-kernel/src/types/rec.rs`, `tests/steps/l01_23_subtyping` |
-| 4 | GROUP-refusal | Done: what the type-group decider cannot decide is refused with its own message: the undecided part becomes a leaf of the decider system (a new Kind, or two runs with the leaf at Top and at Bot where equal answers decide), not a whole-group exit to the search; `is_empty` counts it inhabited, `verdict` gives a new Refusal cause with the definitions map, the cycles and the tuple kept beside the verdict; primary span the queried definition, contributors secondary; zedc adds spans at L2.5. L2.5's note gains: a recursive `type` lowers to rec::Group after split by strongly connected components, its Rejection becoming a diagnostic at the definition. STATUS.md:396 points to this row and to L2.5 | M | no | T6 | `crates/zed-kernel/src/types/bes.rs`, `crates/zed-kernel/src/types/rec.rs`, `crates/zed-kernel/src/types/empty.rs`, `tests/steps/l01_23_subtyping`, `STATUS.md` |
-| 4 | MINMAX-tuples | Done: `min` and `max` of two tuples of one length (the first differing component decides; refused across lengths, kinds and atoms); `>< min` and `.max`, `.min` over tuples (corpus 14) rechecked against the new min and max rules of 2026-11-04, and widened or refused by them | S | no | FLOAT-minmax | `crates/zedc-check/src/check`, `zed/prelude` |
+| 4 | GROUP-oracle | Done: Kernel verdicts on recursive type groups against reference answers: port the finite-value oracle into tests/steps/l01_23_subtyping as Rust; expose a seeded `random(seed, rate, n)` from bes_families and run many seeds and rates through `decide` against reference::answers and through Group::new with `Type::verdict` | M | no | T6 | `crates/zed-kernel/src/types/rec.rs`, `tests/steps/l01_23_subtyping/` |
+| 4 | GROUP-refusal | Done: what the type-group decider cannot decide is refused with its own message: the undecided part becomes a leaf of the decider system (a new Kind, or two runs with the leaf at Top and at Bot where equal answers decide), not a whole-group exit to the search; `is_empty` counts it inhabited, `verdict` gives a new Refusal cause with the definitions map, the cycles and the tuple kept beside the verdict; primary span the queried definition, contributors secondary; zedc adds spans at L2.5. L2.5's note gains: a recursive `type` lowers to rec::Group after split by strongly connected components, its Rejection becoming a diagnostic at the definition. STATUS.md:396 points to this row and to L2.5 | M | no | T6 | `crates/zed-kernel/src/types/bes.rs`, `crates/zed-kernel/src/types/rec.rs`, `crates/zed-kernel/src/types/empty.rs`, `tests/steps/l01_23_subtyping/`, `STATUS.md` |
+| 4 | MINMAX-tuples | Done: `min` and `max` of two tuples of one length (the first differing component decides; refused across lengths, kinds and atoms); `>< min` and `.max`, `.min` over tuples (corpus 14) rechecked against the new min and max rules of 2026-11-04, and widened or refused by them | S | no | FLOAT-minmax | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 4 | TD-finite | Done: A `// Complexity tradeoff:` comment at `Type::finite` naming COMPLEXITY C22, with what is given up, why, the trigger, the test and the complete solution | S | no | T6 | `crates/zed-kernel/src/types.rs` |
 | 4 | REFUSAL-cost | Done: Scaling test for each refusal cause (Fork, Residues, TupleSplit, MorphismSplit, NoWitness) and the nfa family (list against not-1, nth(1..n) and far), and fix anything above O(n log n) | S | no | T6 | `tests/steps/l01_23_subtyping/refusals.rs`, `COMPLEXITY.md` |
 | 4 | GROUP-same | Done: Hash each bound once when the tree is built, as COMPLEXITY K27 says | S | no | T6 | `crates/zed-kernel/src/types/rec.rs`, `COMPLEXITY.md` |
@@ -336,13 +336,13 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 4 | T6-2sat | Done: Decide tuple parts whose clauses fix at most two finite Boolean columns by an implication graph and strongly connected components, recognized by that structure, with witness extraction; first run the x_tail.rs cnf probe (r2, chain, chainsat, xorcycle) on main | M | no | T6 | `crates/zed-kernel/src/types/empty.rs`, `tests/steps/l01_23_subtyping/`, `COMPLEXITY.md` |
 | 4 | T6-refusal-cost | Scaling tests of `verdict` and `subtype_verdict` on types that end in a refusal (the x_tail.rs nfa family and random r3 CNF); bring anything above O(N log N) within it or record a `// Complexity tradeoff:` comment and a COMPLEXITY row | L | yes | T6 | `crates/zed-kernel/src/types/`, `tests/steps/l01_23_subtyping/`, `COMPLEXITY.md` |
 | 4 | BDD-xor-parity | Done: Scaling test of odd_tuples(n) equiv odd_tuples(n+1), false, and of equal parity families; add XOR nodes for pure parity diagrams only (is_parity in Part::choose, linear with a visited set) if above O(N log N), otherwise record the rejection with the numbers. Rejected, no XOR nodes (COMPLEXITY.md K57): from c 64 to 512 the false comparison takes 7.1 to 8.4 times the instructions and the equal one 11.8 times, under O(N log N) | M | no | T6 | `crates/zed-kernel/src/types/bdd.rs`, `tests/steps/l01_23_subtyping/scaling.rs`, `docs/reviews/xe-round3.md`, `COMPLEXITY.md` |
-| 4 | POW-kept-exp | Done: Hold the factor count exactly (part 1 of the item; keeping a kept value as the exponent of a kept power, `s ^ k` as an atom and removing the `u32` case in `pow_end` moved to POW-tower, orchestrator 2026-11-05) | M | no | TD-cong | `crates/zedc-lattice/src/revision.rs`, `COMPLEXITY.md S30b and S36` |
+| 4 | POW-kept-exp | Done: Hold the factor count exactly (part 1 of the item; keeping a kept value as the exponent of a kept power, `s ^ k` as an atom and removing the `u32` case in `pow_end` moved to POW-tower, orchestrator 2026-11-05) | M | no | TD-cong | `crates/zedc-lattice/src/revision.rs`, `COMPLEXITY.md` (S30b and S36) |
 | 4 | MATCH-fn-binder | Done: A function scrutinee bound by a name gives the kernel's answer in the counting machine and natively | S | no | T14-heap-rest | `crates/zed-native/src/hooks.rs`, `crates/zedc-zir/src/zir/memory.rs`, `tests/steps/` |
 | 4 | HEAP-binder-paths | Done: Heap::matches records binder paths with no copy each (one shared buffer of parts, or a parent index per binder), read by release | S | no | T14-heap-rest | `crates/zed-rt/src/heap.rs`, `crates/zed-native/src/hooks.rs`, `tests/steps/l01_36_cranelift/scaling.rs` |
 | 4 | REC-canon | Done: Canonical form for recursive type groups by partition refinement over the group, so renamed and reordered copies are one node, with the method of CANON-stable (COMPLEXITY S32) moved or rewritten, since zed-kernel does not depend on zedc | M | no | T6 | `crates/zed-kernel/src/types/rec.rs`, `tests/steps/l01_23_subtyping/witnesses.rs`, `tests/steps/l01_23_subtyping/judgments.rs`, `COMPLEXITY.md` |
 | 5 | IF-union | `if` as a union with no conversion and literals through `if` (DESIGN sec:type_resolution rule 3, step L1.26a, author decisions 2026-11-04 and 2026-11-09, A14 answer B): `if c { 1 } else { 2.5f64 }` is `1 \| f64`, each value keeping its carrier in the interpreter and native code, and `g(positional c: bool) = if c { 1 } else { 2.5 }` is `(bool) -> 1 \| 2.5`, each literal settled at its use; `if x > 0 { 2 } else { 1 }` is generic with its carrier fixed where the result is used, so `z: f64 = if c { 2 } else { 1 }` reads both branches at `f64`; where one branch has a carrier the literal one is fixed as it would be alone; scaling on nested `if`s at d and 8d | M | no | LIT-bare | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab/walk.rs`, `crates/zed-native/src/`, `tests/steps/l01_26a_generic_literals/`, `tests/steps/` |
 | 4 | STR-types | Takes its names out of `PENDING` in tests/steps/l02_03_name_resolution/later_words.rs. The string and character types (DESIGN sec:order, step L1.39c as revised, author decision 2026-11-04): `U8String`, `Utf8String`, `Utf16String`, `Utf32String`, with `String` removed and no alias; `char8`, `char16`, `char32` as carriers with no arithmetic, `int(c)` and the checked casts giving `#invalid`, replacing `codePoint`, `scalar` and `#notScalar` of the done step L1.39c; a string literal is always a `Utf8String`; conversions between the types by applying the target type, `#badUtf8` on failure; order by code point, by unit at `U8String`, all keyable; `len` in units at `U8String`, code points at the others; `++` within one type; a bare `text[i]` refused with the menu of views; the fence lines refused only because these names are not built are accepted again, which are EXAMPLES [6. Functions] 3 line 7, [10. Structs and updates] 7 line 3, [11. Unions, atoms, match] 3 line 2, [24. Small programs] 4 line 2 and DESIGN [sec:verification] 2 line 10 for `Utf8String` and EXAMPLES [4. Strings] 2 line 3 for `char32`, with their records in `tests/steps/l01_37a_short_addresses/` updated; scaling of each conversion at n and 8n, with must-fail tests; zed/grammar/cases.txt lines 77, 232, 233, 266, 269, 277, 291, 318, 387, 388, 418 respell `String` as `Utf8String`, in the input and the expected tree; zed/compiler/ZED0.md and ZED_PORT_GAPS.md use the new names; rerun the grammar tools; `char8`, `char16`, `char32` and the four string types as class carriers in `Carrier` (`crates/zedc-types/src/ty.rs:2273-2284`, DESIGN step L1.26), and the step tests that pin the old API rewritten, among them `tests/steps/l01_39c_code_points/values.rs:15` (`scalar(55296)` is `#notScalar`, now `char32(55296)` is `#invalid`) and the `codePoint` cases beside it (test audit 2026-11-08) | L | no | U8-rename, LIT-plain | `crates/zed-kernel/src/`, `crates/zedc-check/src/check/`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab/walk.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-rt/src/`, `zed/prelude/`, `zed/fences/`, `zed/corpus/`, `tests/steps/`, `crates/zedc-types/src/ty.rs` |
-| 4 | CAST-menu | Done: A row in the sec:diagnostics table for two numeric values with no common carrier: show both operands and their carriers; the menu is the casts | S | no | LIT-plain | `DESIGN.md sec:diagnostics`, `crates/zedc-check/src/check/mod.rs`, `tests/steps/` |
+| 4 | CAST-menu | Done: A row in the sec:diagnostics table for two numeric values with no common carrier: show both operands and their carriers; the menu is the casts | S | no | LIT-plain | `DESIGN.md` (sec:diagnostics), `crates/zedc-check/src/check/mod.rs`, `tests/steps/` |
 | 4 | LIT-bare | Done: (carriers `int`, `f64`, `rat`; `bf16`, `f16`, `f32` in FLOAT-f32, declared bindings and the other open parts in the follow-up rows of wt/ledger.jsonl) Bare numeric literals take the carrier of their use (DESIGN sec:lexical, sec:domains, sec:type_resolution rule 3, steps L1.26, L1.26a and L10.2 as rewritten by LIT-bare-spec; author decisions 2026-11-09, A14 answer B and A15 answer A): the lexer drops the `n` suffix (rule `Generic` is gone), so `1n` and `2.5n` are numbers running into a name, lexical errors naming the bare literal; every bare literal is what `kn` was, joining the class of its use (operand, declared type, argument at a generic parameter, branch of an `if` or `match`, tuple component, operations on literals alone, `==`/`!=` taking a class's carrier without narrowing it); an integer literal takes `int`, `bf16`, `f16`, `f32`, `f64` or `rat` exactly or not at all (`bf16` added to the set; `x: f64 = 9007199254740993` and `257` at `bf16` rejected), so `inc(x) = x + 1` is `(x: T) -> T for T in int \| bf16 \| f16 \| f32 \| f64 \| rat`; a decimal literal never takes `int` (`x * 2.0` with `x: int` rejected, menu `x * 2` and `f64(x) * 2.0`); where nothing fixes the carrier an integer literal and operations on integer literals alone are `int` (`three() = 1 + 2` is `() -> int`), and a decimal literal or a `/` of integer literals alone is rejected with its menu (`f64(1) / 2`, `1.0f64 / 2`, a declared type; `1 == 1.0` alone too); `g(positional c: bool) = if c { 1 } else { 2.5 }` is `(bool) -> 1 \| 2.5`; `x == 1` with `x` a string is rejected (menu `x == "1"`, `int(x) == 1`), `==` with an atom or a failure stays legal; the diagnostics use the rows `LiteralCarrier` ("Numeric literal at a carrier that cannot take it") and `UnfixedDecimal` ("Decimal literal, or `/` of integer literals, that nothing gives a carrier"), declared in crates/zedc-base/src/rejection.rs and unused until this item, in place of `NoCommonCarrier` for a literal, with messages per sec:diagnostics (worked examples in sec:domains); the l01_29 pin of the variant `decimal-literal-at-int`, the l01_07 README pin and `RAISED_LATER` entry of README.md:775 line 7, and the l01_37a snapshot `every_rejected_variant` move to the new row; every `kn` in zed-impl rewritten bare (zed/prelude/iteration.zed, tests/steps/l01_26_type_resolution/zed/readings.zed, tests/steps/l01_26a_generic_literals/, the README text and the enabled README fence [Numbers] 1, which may then write `1.0f64` and `half = 1.0 / 2.0` rejected as in DESIGN), and `1n ::: ERROR` added to zed/grammar/cases.txt; correctness, corner-case (each carrier, `bf16` edges, 2^53 + 1, 2^24 + 1 at `f32`, 2049 at `f16`, 257 at `bf16`) and scaling tests at n and 8n literals in one class and in n classes, within the limit of the scaling test (Part G) | M | no | LIT-plain | `crates/zedc-syntax/src/lex/number.rs`, `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab/walk.rs`, `crates/zedc-base/src/rejection.rs`, `zed/prelude/`, `zed/grammar/cases.txt`, `README.md`, `tests/steps/l01_26_type_resolution/`, `tests/steps/l01_26a_generic_literals/`, `tests/steps/` |
 | 5 | L1.26b | Step L1.26b, decimal literals (DESIGN sec:domains and step L1.26b, author decisions 2026-11-07, rewritten 2026-11-09 by LIT-bare-spec, A14 and A15: the chain `f16`, `f32`, `f64` by fit, decimal `n`, "`x * 2.0` with `x: f64` is rejected" and "`bf16` is never in the chain" are removed): a decimal literal is read once, straight into the carrier its use fixes (LIT-bare), by the reading of SCALE-fix-round-literal ([MushtakLemire23]: at most 19 significant digits by one 64 × 128-bit product, a longer significand by `w'` and `w' + 1` and a halfway comparison; `f16` and `bf16` from the same product, rounded once): exact at `rat`, the nearest value at a float format, ties to even; at a format it does not fit by the fit test (strictly within half a unit of its last written digit) it is that nearest value with a warning naming the literal and the value, with the menu of its `r` form and the shortest suffixed literal that reads as the value, `#lossOfPrecision` in a `@fpwarn` body; one that rounds to infinity, or a nonzero one that rounds to zero, is rejected; in a class it removes `int` and each format it does not fit; suffixes `f16`, `bf16`, `f32`, `f64` in the lexer, with `1f64` a lexical error naming `1.0f64` and `1`; every fix a rejected literal's message offers is applied in turn and checks, with the binder holding the value the message states, and each fix it leaves out fails; add to zed/grammar/cases.txt the case `0.1f64 + 0.5f32 + 1e-3f16 + 0.5bf16` (held back while the lexer rejects it; the count in l01_08 cases.rs rises with it); the tests listed in DESIGN step L1.26b; scaling at n and 8n literals of 19 digits and at one literal of n and 8n digits | M | no | LIT-bare | `crates/zedc-syntax/src/lex/number.rs`, `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab/walk.rs`, `crates/zed-kernel/src/`, `zed/fences/`, `zed/grammar/cases.txt`, `tests/steps/l01_26a_generic_literals/`, `tests/steps/` |
 | 5 | ST-ladder | Done: From ST repair 5: the ladder block grows one test at a time, O(k²) per test and O(k³) in all; the shared-name walk is Θ(n²); B4 depends on order. Own attempt first, then cross-review | L | yes | ST-arms-quad | `crates/zedc-preimage/src/product.rs`, `tests/steps/l01_39_reduced_product/` |
@@ -351,7 +351,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 5 | T2-mid | Done: Explicit stacks in zedc middle passes: resolve, elab, check, canon, stage, zir lowering and memory planning, zir text and binary, store recursion | XL | no | T3, T11-elab, ST-deep-stack, T11-preimage, T2-parse, T11-fix-rest, L2.1 | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-zir/src/canon/`, `crates/zedc-stage/src/stage.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zedc-zir/src/zir/text.rs`, `crates/zedc-zir/src/zir/binary.rs`, `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/preimage.rs`, `tests/steps/l01_14_name_resolution/scaling.rs`, `tests/steps/l01_16_elaboration/scaling.rs`, `tests/steps/l01_33_lowering/scaling.rs`, `tests/steps/l01_26_type_resolution/scaling.rs`, `tests/steps/l01_28_staging/scaling.rs`, `tests/steps/l01_27_absences/scaling.rs`, `crates/zedc-presburger/src/presburger.rs` |
 | 5 | BOUNDS-parse | Done: Parse and print the bounds clause `TypeBounds` (`for X in T, ...`) of a printed signature; remove the pre-parse strip in `check/read.rs` lines 1-7; accept and reject cases in `zed/grammar/cases.txt`; regenerate `syntax.peg` | M | no | TYPE-forms | `crates/zedc-syntax/src/parse/`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-check/src/check/read.rs`, `crates/zed-kernel/src/types/print.rs`, `zed/grammar/` |
 | 5 | SEQ-desugar | Done: A `Seq` type and literal lower to rank-keyed arrays: sync `zed/grammar/desugar.txt` (about lines 100 and 157) and the `TypeKind::Seq` lowering (`ast/types.rs:255`) | S | no | ADDITIVE-desugar | `zed/grammar/desugar.txt`, `crates/zedc-syntax/src/ast/types.rs` |
-| 5 | L6.1 | Done: Parser and AST for mutable, loop, while/until, break, indexed and piecewise definitions, boundary clauses, primes, pushes, *. | M | no | L3.1 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-resolve/src/resolve.rs`, `tests/steps/`, `zed-impl STATUS.md` |
+| 5 | L6.1 | Done: Parser and AST for mutable, loop, while/until, break, indexed and piecewise definitions, boundary clauses, primes, pushes, *. | M | no | L3.1 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-resolve/src/resolve.rs`, `tests/steps/`, `STATUS.md` |
 | 5 | ELAB-namedarg | Done: For a named parameter the checker accepts the call `dbl(x)` and the elaborator rejects it; make both follow DESIGN, with accept and reject tests | S | no | TYPE-forms | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
 | 5 | PINWHEEL-cofinite-scale | Done: A scaling test at n and 8n for a cofinite scalar end beside `#e`/`#f` payload ends, which has correctness tests only | S | no | T6-payload-pinwheel |  |
 | 5 | PTR-memo | Done: The memo at `types.rs:818` is keyed by `xs.as_ptr().addr()`; key it by a stable id, with a test (worked inside ADDR-keys) | S | no | TD-values, L1.17a | `crates/zedc/src/types.rs` |
@@ -363,7 +363,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 5 | UNITANNOT-fix | Done: UNITANNOT-L7 merge moved the UnitAnnot arm onto T2-mid's explicit-stack elab walk with an empty body; Frame::Scope panicked (elab/walk.rs:1362), l07_03 run:: 2 tests failed on main 2fc3c236; fix sets ... | S | no | UNITANNOT-L7 |  |
 | 5 | PA-affine-i128 | Done: left by S22b-rest: Pa::affine keeps its constant in i64, so i64::MIN - (u + 3) is not summarized although every value fits in i64; hold the constant in i128 (as reflect() does) with tests at the i64 ends | S | no | S22b-rest |  |
 | 5 | GROUP-setop | Done: Recursive members under `&` and `\`: record a decision in DESIGN and docs/reviews/xs.md between keeping the search and Gemini's positive skeleton (an And node for `A & B`); the skeleton is adopted only if GROUP-oracle's sweep shows no wrong Empty and a search counter shows the search was skipped; measure meets of k groups, add a COMPLEXITY row, and name the refusal for the exponential case | M | yes | GROUP-oracle | `crates/zed-kernel/src/types/rec.rs`, `crates/zed-kernel/src/types/empty.rs`, `DESIGN.md`, `COMPLEXITY.md` |
-| 5 | T11-preimage-rest | What T11-preimage left in store/preimage.rs: `close` keeps a visited set keyed by (term number, scope number, number of `local`) and returns a shared DAG, with a bound term run once; `Stop` holds its term as `Shared` and its kind, text made only when read, `seen` keyed by (kind, term number); each box changes only the inputs it touches | M | yes | T11-preimage, PRE-stack-explicit | `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-preimage/src/preimage_ref.rs`, `COMPLEXITY.md S21`, `STATUS.md:322` |
+| 5 | T11-preimage-rest | What T11-preimage left in store/preimage.rs: `close` keeps a visited set keyed by (term number, scope number, number of `local`) and returns a shared DAG, with a bound term run once; `Stop` holds its term as `Shared` and its kind, text made only when read, `seen` keyed by (kind, term number); each box changes only the inputs it touches | M | yes | T11-preimage, PRE-stack-explicit | `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-preimage/src/preimage_ref.rs`, `COMPLEXITY.md` (S21), `STATUS.md` (line 322) |
 | 5 | S15-calls | Preimage summaries for calls whose arguments read an input and may fail or are not integers, and for calls whose arguments have no linear form: measure first, then extend the summary key with an abstraction of the argument (booleans and interval it may hold, a may-fail flag and its atoms), key the linear translation on the argument's term and scope, remember a None result too | M | yes | PRE-stack-explicit | `crates/zedc-preimage/src/preimage.rs`, `tests/steps/l01_25/scaling.rs` |
 | 5 | LIST-parity-quad | Done: `Type::each_value` on an exclusive or of `c` tuple types was order `c²` (each value checked on the whole expression; COMPLEXITY.md K57): each tuple is now checked on the part restricted to the tuple types that may hold it, found by its components (a column of tuples by their first components), through a tree of restrictions by halves built on demand, and against the earlier boxes that may hold it; from `c` 64 to 512, 18.5M to 230.8M instructions (12.5 times), nested `((i, i),)` 21.5M to 254.1M (11.8 times) | M | no | BDD-xor-parity | `crates/zed-kernel/src/types.rs`, `tests/steps/l01_23_subtyping/scaling.rs`, `tests/steps/l01_23_subtyping/listing.rs`, `COMPLEXITY.md` |
 | 5 | INST-bucket | Done: Make `Group::instance` cost O(args) per call, apart from the one Type per definition it returns. Number each distinct definition list once in `Group::new`, confirming equal text by Def equality, and keep the number in Checked. Key INSTANCES by (number, args), with Type hashed by digest and compared exactly, so no text or hash decides equality | S | no | T2-types |  |
@@ -393,13 +393,13 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 6 | ADDR-keys | Done: Memos keyed by pointer address become keyed by stable ids (group item covering LOWER-addr and PTR-memo; spawned ADDR-stage, ADDR-preimage, ADDR-cell, ADDR-memory) | S | no | TD-values, T2-mid, L1.17a |  |
 | 6 | L38-chain-end | Done: l01_38 repair::a_chain_whose_point_is_at_an_end_scales fails on main 3626624 at 24.7x/29.9x bytes (CANON-stable verify#2, T6-payload-pinwheel repair#1); passes on b0811c3+CATCHUP fix; CATCHUP-cross asked to check on its ... | S | no | CATCHUP-cross |  |
 | 6 | S22-cross-scaling | Done: fail on main 88c51bb, found in the TEST-split suite (steps sources identical to main; counts are per thread): l01_25 s22::chain_cross_within_its_width_scales 134.7M -> 3.53G instructions at k=6/48, 26.2x > 24; ... | S | no | CATCHUP-cross |  |
-| 6 | NARROW-hub-settle | Done: A hub settles its scopes in time linear in the tests: close the three open questions in wt/narrow-hub-settle-design.md by cross-review if they do not close, built on branch wt/narrow-if, taking in NARROW-notes-quad; then merge commit 22e2a728 for `^` | L | yes | ST-ladder | `crates/zedc-check/src/check/arms.rs on wt/narrow-if`, `crates/zedc-preimage/src/product.rs` |
-| 0 | ST-wider | Re-measure the 300 random three-name narrowing tests, identify why results are wider than at e658011, then close the loss with ST-ladder's incremental projection at no quadratic cost, or record the known precision limit beside B4 in COMPLEXITY.md S25 and STATUS | M | no | none | `crates/zedc-preimage/src/product.rs`, `tests/steps/l01_39_reduced_product`, `COMPLEXITY.md`, `STATUS.md` |
-| 6 | SETTLE-rounds | `Part::settle`: measure the worst case of E trials each changing G nodes over several rounds, add a COMPLEXITY row, and make it O(N log N) or record why not with a `// Complexity tradeoff:` comment | M | yes | F44-memo, T2-types-rest | `crates/zed-kernel/src/types/bdd.rs`, `COMPLEXITY.md`, `DESIGN.md`, `tests/steps/l01_23_subtyping` |
+| 6 | NARROW-hub-settle | Done: A hub settles its scopes in time linear in the tests: close the three open questions in wt/narrow-hub-settle-design.md by cross-review if they do not close, built on branch wt/narrow-if, taking in NARROW-notes-quad; then merge commit 22e2a728 for `^` | L | yes | ST-ladder | `crates/zedc-check/src/check/arms.rs` (on wt/narrow-if), `crates/zedc-preimage/src/product.rs` |
+| 0 | ST-wider | Re-measure the 300 random three-name narrowing tests, identify why results are wider than at e658011, then close the loss with ST-ladder's incremental projection at no quadratic cost, or record the known precision limit beside B4 in COMPLEXITY.md S25 and STATUS | M | no | none | `crates/zedc-preimage/src/product.rs`, `tests/steps/l01_39_reduced_product/`, `COMPLEXITY.md`, `STATUS.md` |
+| 6 | SETTLE-rounds | `Part::settle`: measure the worst case of E trials each changing G nodes over several rounds, add a COMPLEXITY row, and make it O(N log N) or record why not with a `// Complexity tradeoff:` comment | M | yes | F44-memo, T2-types-rest | `crates/zed-kernel/src/types/bdd.rs`, `COMPLEXITY.md`, `DESIGN.md`, `tests/steps/l01_23_subtyping/` |
 | 6 | PRODUCT-nested-chain | Done: `store::product::arms` on d nested conditions costs Θ(d^3) (248 MB at d = 48, 3.76 GB at d = 128; F70-rerun found the cost in the Presburger projection of the outer test's preimage, d settles × d disjuncts × d rows): option (a), read each inner `if` once, bottom up, as (its value's product, the scope on each outcome), and let the level above read that, O(d); a `// Complexity tradeoff:` comment wherever a summary widens a hull; a test comparing the hulls with today's answers for d ≤ 12 | M | no | ST-ladder, ST-formula-share, F70-rerun | `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-presburger/src/presburger.rs` |
 | 6 | BREAK-cases | Done: Grammar cases for `break` in operand position: an unparenthesized `break` value does not extend past its tail | S | no | L6.1 | `zed/grammar/cases.txt`, `tests/steps/l01_08_parser/cases.rs` |
 | 6 | L6.1a | Done: `with initial x = e` (WITH-initial, author 2026-11-09): the parser reads a boundary item as `initial x = e` or an indexed entry `x[k] = e`, `initial` a word reserved by position; a bare `with x = e` is rejected (row BareBoundary, menu `with initial x = e` and, over a known low edge, `with x[lo - 1] = e`); a second `with initial` for one variable in one block or unit is rejected wherever it stands (row TwoInitials), O(k) by a map from name to first item; the formatter and AST printer print `initial` (COMPLEXITY.md WITH-initial) | S | no | L6.1 | `crates/zedc-syntax/src/parse/mod.rs`, `crates/zedc-syntax/src/ast/`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-base/src/rejection.rs`, `crates/zedc/src/front.rs`, `tests/steps/l06_01_parser/` |
-| 6 | FINITE-type | Done: The finite facet keeps a named finite type as its type and lists values only for a set written as a list; enumeration runs only on a listed set, with no rule that compares sizes | M | yes | EACH-collect | `crates/zedc-preimage/src/product.rs`, `crates/zedc-lattice/src/lattice.rs`, `COMPLEXITY.md S34`, `DESIGN.md:1898` |
+| 6 | FINITE-type | Done: The finite facet keeps a named finite type as its type and lists values only for a set written as a list; enumeration runs only on a listed set, with no rule that compares sizes | M | yes | EACH-collect | `crates/zedc-preimage/src/product.rs`, `crates/zedc-lattice/src/lattice.rs`, `COMPLEXITY.md` (S34), `DESIGN.md` (line 1898) |
 | 6 | RT-sites | A table from node to source span, built at lowering and kept outside ZIR text and Term; kernel and native errors print their site in the Diagnostic layout; L30.3 reuses the table | L | no | T2-mid, T14-rope-len | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc/src/run.rs`, `crates/zed-native/src/`, `tests/steps/` |
 | 6 | TABLE-life | Done: Diagram node tables TUPLES and MORPHISMS (bdd.rs:80), the Expr complement cycle (bdd.rs:617) and the rec.rs INSTANCES and GROUPS tables keep every node for the life of the thread or process: per-program arena or weak-valued entries swept at the end of a unit, a Weak on one side of the cycle, no size threshold, and no live definition ever taking a new id | M | yes | T2-types-rest | `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/rec.rs`, `tests/steps/` |
 | 6 | CHAIN-zip-size | Done: `Part::zip` built a chain as a diagram, quadratic in its length, and `zip_chain` joined the longer chain into the shorter, O(m²) (a forced chain took 57 s); chains are now decision lists built in O(m log m) (0.9 s), with one hash-consed exclusive-or node per sorted atom set and constant bit (COMPLEXITY K63; batch 16, f2cd0724..761e743f) | M | no | LIST-parity-quad | `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/bdd/list.rs`, `COMPLEXITY.md` |
@@ -408,7 +408,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 7 | CHOICE-both-chains | Done: `choice_of` listed both chains on each zip, O(k) per zip (58.1 times the bytes at 8n); the shorter chain is listed and the longer one looked up in its block, O(log k) per literal, and `or_literal` looks a one-block list up in its block. The complement `Arc` cycle was already broken by TABLE-life; now tested (COMPLEXITY.md K67) | S | no | CHAIN-zip-size | `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/bdd/list.rs` |
 | 7 | XOR-cross-thread | Done: an exclusive or hash-consed on another thread was not recognized by `xor_of` and `xor_choice` (per-thread tables, compared by set id); sets of one digest and different ids are now compared by contents (`set::same`), so no global table or lock is needed (COMPLEXITY.md K67) | S | no | CHAIN-zip-size | `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/bdd/set.rs` |
 | 7 | NARROW-hub-rest | Done: The two cases NARROW-hub-settle left above linear time reach O(N log N): a leaf of two hubs, `ai >= n && ai >= m` (about k²), and a bound on a sum of names, `ai >= n + m` (about k³), with every note kept | M | yes | NARROW-hub-settle | `crates/zedc-presburger/src/conjuncts.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-check/src/check/arms.rs`, `tests/steps/l01_39_reduced_product/lazy.rs`, `tests/steps/l01_39_reduced_product/linked.rs`, `tests/steps/l01_39a_bit_words/scaling.rs` |
-| 7 | SCALE-cover | Deliver `cargo run -p zed-tools --bin scaling_coverage`, run by the local test suite, which fails when a pub fn or pass that is not obviously O(1) has neither a scaling test naming it nor a `// O(1):` reason comment at its site. Run it over the code merged when this item starts and add each missing scaling test with its negative control. Anything above O(n log n) that this finds gets its own row, or goes to the author under the performance rule at the top of this file. Three named checks: `cost::frontier`, `empty::overlaps` (K36), `bdd::settle` (through SETTLE-rounds) | L | no | SETTLE-rounds, ENDS-dag, TY-diff-meet, IMPORTS-untyped-join, ST-walk-implicit, DISJ-incremental, LIST-parity-quad, K36-study, STAGE-joined-eq, C2-local-tier, RADIX-depth, PRINT-below-whole, MINMAX-chain-rows, GROUP-decide-bytes, HULL-join-depth, PRODUCT-lin-rows, PROBE-guards, CORPUS-read-radix, PDEP-bytes, SCALE-log-offset, CUBE-root-alloc | `tests/steps/*/scaling.rs`, `tests/src/ (scaling harness)`, `crates/zedc/src/`, `crates/zed-kernel/src/`, `crates/zed-native/src/`, `crates/zed-rt/src/`, `crates/zed-tools/src/bin/`, `COMPLEXITY.md`, `crates/zed-tools/src/scaling_coverage.rs (new)`, `crates/zed-tools/src/bin/scaling_coverage.rs (new)`, `tests/steps/m0_03_grammar_tools/scaling_coverage.rs (new)` |
+| 7 | SCALE-cover | Deliver `cargo run -p zed-tools --bin scaling_coverage`, run by the local test suite, which fails when a pub fn or pass that is not obviously O(1) has neither a scaling test naming it nor a `// O(1):` reason comment at its site. Run it over the code merged when this item starts and add each missing scaling test with its negative control. Anything above O(n log n) that this finds gets its own row, or goes to the author under the performance rule at the top of this file. Three named checks: `cost::frontier`, `empty::overlaps` (K36), `bdd::settle` (through SETTLE-rounds) | L | no | SETTLE-rounds, ENDS-dag, TY-diff-meet, IMPORTS-untyped-join, ST-walk-implicit, DISJ-incremental, LIST-parity-quad, K36-study, STAGE-joined-eq, C2-local-tier, RADIX-depth, PRINT-below-whole, MINMAX-chain-rows, GROUP-decide-bytes, HULL-join-depth, PRODUCT-lin-rows, PROBE-guards, CORPUS-read-radix, PDEP-bytes, SCALE-log-offset, CUBE-root-alloc | `tests/steps/*/scaling.rs`, `tests/src/` (scaling harness), `crates/zedc/src/`, `crates/zed-kernel/src/`, `crates/zed-native/src/`, `crates/zed-rt/src/`, `crates/zed-tools/src/bin/`, `COMPLEXITY.md`, `crates/zed-tools/src/scaling_coverage.rs (new)`, `crates/zed-tools/src/bin/scaling_coverage.rs (new)`, `tests/steps/m0_03_grammar_tools/scaling_coverage.rs (new)` |
 | 7 | REC-cycle | Done: a recursive instance in `types/rec.rs` was a cycle of strong handles (its members held their instance, and a member's unfolding held the member), so every recursive group checked stayed allocated; the end of each unit (`Type::forget_emptiness`) now drops the recursive members and unfoldings the unit made, and a member kept past its unit unfolds again when read (COMPLEXITY K68). `Key::group` names an instance by a counter, never reused, instead of its address | M | yes | TABLE-life | `crates/zed-kernel/src/types/rec.rs`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/empty.rs`, `tests/steps/l01_22_type_representation/` |
 | 7 | L1.40d | Done: Step L1.40d, kind-wide types as written types: done when plan item T6-kinds merges | S | no | T6-kinds |  |
 | 7 | T14-paths | Done: String node paths left after T3: the memory planner keys plans and parameter modes by `format!` paths, and finding a plan compares them | M | no | T12-Z4 | `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-native/src/tables.rs`, `crates/zed-native/src/codegen.rs`, `tests/steps/l01_34_memory/`, `tests/steps/l01_36_cranelift/scaling.rs` |
@@ -420,14 +420,14 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 7 | ADDR-preimage | Done: found by ADDR-keys step 1: zedc-preimage/src/preimage.rs:859-874 and preimage_ref.rs:609-624 seen: HashMap<*const Term, Tid>; key by occurrence ids or a term id, with a determinism test | S | no | ADDR-keys |  |
 | 7 | ADDR-cell | Done: found by ADDR-keys step 1: zedc-lattice/src/cell.rs:113 seen.insert(Arc::as_ptr(n)) as a visited set; key by an id, keeping linear cost on shared nodes | S | no | ADDR-keys |  |
 | 7 | ADDR-memory | Done: found by ADDR-keys step 1: zedc-zir/src/zir/memory.rs:839,1443 alone: HashMap<*const Node, Region>; SYNTHESIS Q10 decides occurrence ids with a memoized resolve | S | no | ADDR-keys |  |
-| 7 | NARROW-if | Done: Narrowing by `if` tests reaches the checker: `f(n: int) = if n >= 0 { popCount(n) } else { 0 }` is accepted, and so is the repair DESIGN gives for `^`. Rebase branch wt/narrow-if and merge it | S | no | NARROW-hub-settle | `crates/zedc-check/src/check/arms.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `tests/steps/l01_39a_bit_words/errors.rs`, `COMPLEXITY.md C26` |
+| 7 | NARROW-if | Done: Narrowing by `if` tests reaches the checker: `f(n: int) = if n >= 0 { popCount(n) } else { 0 }` is accepted, and so is the repair DESIGN gives for `^`. Rebase branch wt/narrow-if and merge it | S | no | NARROW-hub-settle | `crates/zedc-check/src/check/arms.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `tests/steps/l01_39a_bit_words/errors.rs`, `COMPLEXITY.md` (C26) |
 | 7 | ISSUE1-print | Done: Signatures print loose atoms as `(String \| #_) -> String`, built with ISSUE1-else-atoms; run the targeted test, and close the row if it passes | S | no | T6-kinds |  |
 | 7 | LIN-probe | Done: LIN-cross impl#1: with the fix, S22 family cross_dead k=8 -> 64 takes 158x instructions (0.24G -> 38.4G; probe() about w^2.4 above the width), kept as an #[ignore] scaling test. Bring it within 24x (O(n log n)) and ... | S | no | LIN-cross, S22-cross-scaling |  |
 | 7 | ADDR-presburger | Done: The Presburger store's identity keys (`BelowKey`, `Id`, the `seen` sets in `Formula::conjuncts` and `and_held`) either become ids at no cost in shared walks, or each gets a named exception to fact 2 at its site and in COMPLEXITY K40, as `Type::contains` and ADDR-stage did | S | no | ST-formula-wide, ADDR-keys | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/conjuncts.rs`, `crates/zedc-presburger/src/presburger/deep.rs`, `COMPLEXITY.md` |
 | 7 | ST-formula-shift | Done: `Formula::cmp` on one sequence grouped differently on each side, 2^d to O(d^2) by a canonical parse (9e80c1c5) | M | no | ST-formula-wide | `crates/zedc-presburger/src/presburger/deep.rs`, `crates/zedc-presburger/src/presburger/deep/canon.rs` |
-| 7 | CHK-held-cascade | Done: A held function at the bottom of n nested tuples gives n errors with O(n)-character derivation notes, n^2; `Ck::bind` prints types eagerly; `Ty::write` recursion overflows 2 MiB below 8000 deep (COMPLEXITY F67) | M | no | CHK-cost | `crates/zedc-check/src/check` |
+| 7 | CHK-held-cascade | Done: A held function at the bottom of n nested tuples gives n errors with O(n)-character derivation notes, n^2; `Ck::bind` prints types eagerly; `Ty::write` recursion overflows 2 MiB below 8000 deep (COMPLEXITY F67) | M | no | CHK-cost | `crates/zedc-check/src/check/` |
 | 8 | MSG-shared-print | Rejection text linear in the derivation (author, QUESTIONS A3 and A4, 2026-11-07; COMPLEXITY F89): n errors that share a derivation print each shared step once, and a later error names the earlier error and the step it continues from; a note inside nested tuples names its position by path (`.0.1.0`), and the tuple is printed once. Every constraint still appears once. Test: n separate tuples each holding a held function, and one error through n nested tuples, at n and 8n within 24x in bytes and time; corner: n = 1 prints as today | M | no | CHK-held-cascade | `crates/zedc-check/src/check/`, `tests/steps/l01_29_diagnostics/` |
-| 7 | SCALE-first-run | Done: `scaling::compare_by` also holds the first run of each size to the same limit (the warm-up at n against the first run at 8n), before taking the least of the runs, so memos that outlive a thread (`rec::INSTANCES`) or sit in a test's input cannot hide work; correct the 'no longer reproduce' wording of COMPLEXITY F44 and point it at `l01_08 deep.rs` and `l01_37a` | S | no | SCALE-threads | `tests/src/scaling.rs`, `COMPLEXITY.md:156` |
+| 7 | SCALE-first-run | Done: `scaling::compare_by` also holds the first run of each size to the same limit (the warm-up at n against the first run at 8n), before taking the least of the runs, so memos that outlive a thread (`rec::INSTANCES`) or sit in a test's input cannot hide work; correct the 'no longer reproduce' wording of COMPLEXITY F44 and point it at `l01_08 deep.rs` and `l01_37a` | S | no | SCALE-threads | `tests/src/scaling.rs`, `COMPLEXITY.md` (line 156) |
 | 5 | L1.40 | A product of k factors that are one value read as its k-th power | S | no | POW-kept-exp, ST-wider, CK-data-memo | `crates/zedc-preimage/src/product.rs`, `crates/zedc-lattice/src/revision.rs`, `crates/zedc-preimage/src/preimage.rs`, `zed/prelude/revision.zed`, `tests/steps/l01_40_interval_revision/`, `COMPLEXITY.md` |
 | 8 | NARROW-notes-name | Done: The notes of a read under a bound on a sum of two hubs (`ai >= n + m`) name every test the bound rests on: the bound on `n` below the sum, and a link that carried a bound from `n` to `m`, as DESIGN step L1.29 asks; four notes at every `k` | S | yes | NARROW-hub-rest | `crates/zedc-check/src/check/arms.rs`, `tests/steps/l01_39a_bit_words/scaling.rs` |
 | 8 | NARROW-hub-related | Done: Two hubs related to each other, a test like `n >= m` above `ai >= n && ai >= m` or `ai >= n + m`, reach O(N log N) with the diagnostics unchanged (about k² before) | M | yes | NARROW-hub-rest | `crates/zedc-presburger/src/conjuncts.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-check/src/check/arms.rs`, `tests/steps/l01_39_reduced_product/lazy.rs`, `tests/steps/l01_39_reduced_product/linked.rs`, `tests/steps/l01_39a_bit_words/scaling.rs` |
@@ -440,17 +440,17 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 8 | LIN-probe-refute | Done: presburger probe() refutes each disjunct that no found point holds with one full settle of the formula: cross k=51..99 costs about k*(k-50) (9, 89, 185 settles per probe call; 2.0, 15.1, 52.8 G instructions at k=52, 72, ... | S | no | LIN-probe |  |
 | 8 | TERM-id | Done: `zedc-stage/src/stage.rs` `Reader::ids` keys `Part<'t>(&Term)` by pointer identity under a borrow; keying by occurrence ids, as `Places` does, is exponential on parts shared by the arms of nested `if`s; give each shared Term node a stable id, as `Items` and `Family` carry one, and key `Reader::ids` by it; test: the shared-if case at n and 8n within 24x, and an allocation-order test | M | no | ADDR-stage | `crates/zed-kernel/src/term.rs`, `crates/zedc-stage/src/stage.rs`, `tests/steps/l01_28_staging/` |
 | 8 | BUILD-const | A constant of the build's target and the build's options, read from the build description, replacing `cfg!` and the `short-addresses` feature (DESIGN step L2.8d) | S | no | L2.8 | `crates/zedc-stage/src/stage.rs`, `crates/zedc-resolve/src/resolve.rs`, `tests/steps/` |
-| 8 | WARN-refused | A refused Presburger question in a checked program reaches `zedc` output as a placed warning with its derivation, through `Unit.warnings` and `run::write_warnings`; map a refused test back to a source position | S | no | NARROW-if | `crates/zedc-check/src/check`, `crates/zedc/src/run.rs`, `crates/zedc-preimage/src/product.rs` |
+| 8 | WARN-refused | A refused Presburger question in a checked program reaches `zedc` output as a placed warning with its derivation, through `Unit.warnings` and `run::write_warnings`; map a refused test back to a source position | S | no | NARROW-if | `crates/zedc-check/src/check/`, `crates/zedc/src/run.rs`, `crates/zedc-preimage/src/product.rs` |
 | 8 | ST-formula-sig | Done: closed with no code by author decision (a), O(n log N) accepted (905cd706) | S | no | ST-formula-shift | `crates/zedc/src/store/` |
 | 8 | IS-chain-quad | Done: A chain of k `is` tests checks in 12.86 s at k = 4000 against 0.36 s at 500; check/walk.rs CondAnd1 narrows by all the left side's facts at each level, and CondAnd2 copies them; keep the left side narrowed and extend one Vec in place or a persistent list | S | no | NARROW-if | `crates/zedc-check/src/check/walk.rs` |
 | 8 | PREIMAGE-and-chain | Done: The else arm of a k-sided `&&` chain on k names is quadratic with no narrowed read (8.8x time for 4x; 64% of cycles in `Tx::formula_at` to `Formula::and`) | M | no | NARROW-if | `crates/zedc-preimage/src/preimage.rs` |
-| 8 | CHK-need-bound | Done: `^` on an int and the bit words with `int[0..]` operands (`bitAnd bitOr bitXor bitNot shl shr popCount leadingZeros trailingZeros rotl rotr`) record a need for at least 0 on a value of a type-variable type, checked at each call with the caller's ints (absorbs GENERIC-bitword) | S | no | NARROW-if | `crates/zedc-check/src/check/mod.rs`, `tests/steps/l01_39a_bit_words` |
+| 8 | CHK-need-bound | Done: `^` on an int and the bit words with `int[0..]` operands (`bitAnd bitOr bitXor bitNot shl shr popCount leadingZeros trailingZeros rotl rotr`) record a need for at least 0 on a value of a type-variable type, checked at each call with the caller's ints (absorbs GENERIC-bitword) | S | no | NARROW-if | `crates/zedc-check/src/check/mod.rs`, `tests/steps/l01_39a_bit_words/` |
 | 8 | L2.8b | Rejection rows: a pinned address the package graph does not hold; a pinned import whose name now resolves to another address, reported at re-pin | S | no | L2.8 | `crates/zedc-base/src/rejection.rs`, `zed/fences/rejections.txt`, `DESIGN.md`, `tests/steps/l02_08b_pin_rows/` |
 | 8 | DIAG-control | A diagnostic printed to a terminal shows a control character from source text in Zed's escape form `\u{1B}` | S | no | L2.8 | `crates/zedc-base/src/rejection.rs`, `tests/steps/diag_control/` |
 | 8 | GROUP-e2e | Recursive `type` declarations lower to rec::Group; Group::new's rejection and a refused decision become diagnostics at the span of the group's head definition | M | no | L2.5 | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab/`, `crates/zedc-base/src/rejection.rs`, `tests/steps/group_e2e/` |
 | 8 | PLAN-shared-regions | Memory plans keyed by physical region, argument modes and resolved callees of captures, read by the machine and native code too, so a region shared by k uses is planned once per distinct key | L | yes | T14-paths | `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-native/src/tables.rs`, `crates/zed-native/src/codegen.rs`, `tests/steps/l01_34_memory/` |
-| 8 | L2.8c | Byte hash per package in the pin file; state what normalization changes do to pins; settle the inconsistency at plan_dag.md:1195 | S | yes | L2.8 | `crates/zedc`, `DESIGN.md:791`, `:1437` |
-| 8 | NARROW-notes-quad | Done: Narrowing notes keep only tests that share a name with the operand; the code is on branch wt/narrow-if, and this row closes when it merges and the test passes | S | no | NARROW-if | `crates/zedc-check/src/check/arms.rs`, `COMPLEXITY.md C26` |
+| 8 | L2.8c | Byte hash per package in the pin file; state what normalization changes do to pins; settle the inconsistency at plan_dag.md:1195 | S | yes | L2.8 | `crates/zedc/`, `DESIGN.md` (lines 791 and 1437) |
+| 8 | NARROW-notes-quad | Done: Narrowing notes keep only tests that share a name with the operand; the code is on branch wt/narrow-if, and this row closes when it merges and the test passes | S | no | NARROW-if | `crates/zedc-check/src/check/arms.rs`, `COMPLEXITY.md` (C26) |
 | 6 | L1.40a | The cell as a table of layers: one entry per registered domain, keyed by content address; a layer interface usable by a domain known only at compile time of a unit; each `Reduction` (prelude value `Reduction(of, reads, reduce)`, Q21 A) registered beside the domains, its `reduce` over its `reads`, in content-address order of the reductions; interval revision is one projection per predicate in a round | L | yes | T2-mid, L1.40, L1.39a | `crates/zedc/src/store/layer.rs (new)`, `crates/zedc-lattice/src/cell.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-lattice/src/lattice.rs`, `tests/steps/l01_40a_layer_table/`, `COMPLEXITY.md` |
 | 6 | S22-R2-chains | Done: Join of the preimages of remainder and if chains before S22-R2: the tests of these items pass together on one main commit before S22-R2 starts | S | no | S22c, S22d, S22e-wide, S22-chain-cost | `tests/steps/` |
 | 9 | S22-R2 | Cross-review xs22 round 2 (SYNTH_R1 section 4): for inputs that share terms on wide domains (cross_live, cross below the width; `indep_1` and `indep_2j`; min is fixed by the clip of `min`), extend Pa to a guard and a value variable, refuse by a structural criterion, or return a sound inexact result, stating what an inexact result means for `exact_preimage` and the scope reductions of `product.rs`; a refusal is by a structural criterion, never a size, with its message and repair in DESIGN; and a refusal criterion separating `subset` from `subset_hard`, or a proof that none exists | M | yes | XS22-R1, S22-WIDE, PRE-stack-explicit, S22-merge, LIN-probe-refute, S22-R2-chains | `crates/zedc-preimage/src/preimage.rs`, `COMPLEXITY.md` |
@@ -458,10 +458,10 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 9 | L2.8a | Step L2.8a: the re-pin report lists each export whose type, grade or port set changed when a build writes a new `@hash` | S | no | L2.8c |  |
 | 9 | STAGE-dag | Done: `zedc-stage/src/stage.rs` `free`, the effects of a part and `mix` read a term as a tree and `mix` builds a tree, 2^d on d nested `if`s whose two arms are one node (free 22.4 ms, mix 948 ms at d = 18); read each shared part once keyed by `Shared::id` as `Reader::ids` does, and give `mix` a shared output; test: the shared-if case at n and 8n with `check_order` for free, effects and mix, output equal to the tree walk's at small d, and a negative control; functions rebound on each path (`let f = (y) -> f(y) + 1` / `+ 2`) at d and 8d, O(d^2) nodes (COMPLEXITY F83) | M | no | TERM-id | `crates/zedc-stage/src/stage.rs`, `tests/steps/l01_28_staging/` |
 | 9 | ST-formula-set | Done: Decide how `&&` and `\|\|` runs compare in `Formula`: exact parse as now (author decision (a) already accepts O(n log N)); a hash filter on `==` only, as a hash proves inequality and gives no order; a set form built from sorted part lists or from hash-consed treaps; or an order-free sum. No hash decides equality without an exact check or the author's acceptance. Rerun the two prototypes first, wt/ac-exp/crates/zedc/examples/acform.rs and setform.rs (kept at wt/zed0-review/pass2/setform.rs: copy it beside acform.rs), and save their output in COMPLEXITY S31b; default recommendation is the exact parse plus the filter if the scaling test shows a gain. Any implementation uses explicit stacks. Move the staircase, staircase_regrouped, random_dag and pairs builders to tests/steps/l01_38_presburger/shared.rs | M | yes | ST-formula-sig | `crates/zedc-presburger/src/presburger/deep.rs`, `crates/zedc-presburger/src/presburger/deep/canon.rs`, `crates/zedc-presburger/src/presburger.rs`, `tests/steps/l01_38_presburger/shared.rs`, `COMPLEXITY.md` |
-| 9 | ISSUE1-payload | Handle case for the payload forms `is #e(int)` and `else #e(v) -> d` | S | no | L2.4, ISSUE1-else-atoms | `crates/zedc-check/src/check` |
+| 9 | ISSUE1-payload | Handle case for the payload forms `is #e(int)` and `else #e(v) -> d` | S | no | L2.4, ISSUE1-else-atoms | `crates/zedc-check/src/check/` |
 | 9 | SOUND-random | The random soundness test fails on any KernelError::Type from an accepted program and generates tuples, destructuring, generic calls, lambdas, `^` and bit words | S | no | CHK-need-uses, CHK-need-bound | `tests/steps/l01_26_type_resolution/random.rs` |
-| 9 | STRUCT-key | Step L2.5a: a computed struct key outside the guarantee types as `_`, and otherwise gives the union of the field types | S | no | L2.4 | `crates/zedc-check/src/check`, `tests/steps`, `DESIGN.md` |
-| 10 | T10 | Documentation states the constraints and current measured scaling; fix the stale budget rows | M | no | T2, SCALE-cover, DOC-links, CITE-check, L1.40 | `COMPLEXITY.md`, `STATUS.md`, `README.md`, `docs/thresholds.md`, `docs/layout.md`, `tests/steps/*/ (comments)`, `crates/ (Dart mentions in 7 source or test files)`, `../zed/DESIGN.md` |
+| 9 | STRUCT-key | Step L2.5a: a computed struct key outside the guarantee types as `_`, and otherwise gives the union of the field types | S | no | L2.4 | `crates/zedc-check/src/check/`, `tests/steps/`, `DESIGN.md` |
+| 10 | T10 | Documentation states the constraints and current measured scaling; fix the stale budget rows | M | no | T2, SCALE-cover, DOC-links, CITE-check, L1.40 | `COMPLEXITY.md`, `STATUS.md`, `README.md`, `docs/thresholds.md`, `docs/layout.md`, `tests/steps/*/` (comments), `crates/` (Dart mentions in 7 source or test files), `DESIGN.md` |
 | 10 | T14-lints | Adopt the guide's section 9.1 workspace lints and fix what they report | L | no | T2, DOC-links | `Cargo.toml`, `clippy.toml`, `crates/zed-native/Cargo.toml`, `crates/zedc/src/`, `crates/zed-kernel/src/`, `crates/zed-native/src/`, `crates/zed-rt/src/`, `tests/` |
 | 7 | L1.40c | Binding time as a layer: stage coloring and mix read the store's binding-time domain; the checker's separate stage record removed; The Trick as a reduction with the finite-set domain | M | no | L1.40a | `crates/zedc-stage/src/stage.rs`, `crates/zedc-preimage/src/product.rs`, `tests/steps/l01_40c_binding_time_layer/`, `COMPLEXITY.md` |
 | 9 | L2.7 | Exhaustiveness with witness values from the emptiness check | L | yes | L1.40a, L2.4, ERRS-precise, A5-print | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/exhaust.rs (new)`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/preimage.rs`, `tests/steps/l02_07_exhaustiveness/`, `DESIGN.md` |
@@ -471,23 +471,23 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 10 | T14-rest | Review against WRITING_GOOD_RUST.md of all T14 did not read in full, after the rewrites of those files; reports findings only | L | no | T14-low, T11-fix-store, T14-bring, T2, T11-check, T14-paths, T11-preimage-rest |  |
 | 10 | PRE-abs-output | Exponential exact output of the abs chain: refuse or give a sound inexact result, decided by the term's structure with no count, and a `// Complexity tradeoff:` comment at the site | M | yes | S22-R2 | `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-lattice/src/interval.rs`, `tests/steps/l01_25_preimage_catalog/s22.rs`, `COMPLEXITY.md` |
 | 10 | ST-formula-sibling | k named limits in each of d side-by-side tiers cost d*k in Parts::of (50.7x bytes at d = 30 to 240): a projection that reads a shared part once, or an author decision on precision if factoring changes answers (refusal text, projection `[..=0,5..]` to `[..]`, s22 16 to 15 exact boxes) | M | yes | ST-formula-set | `crates/zedc-presburger/src/presburger.rs`, `COMPLEXITY.md` |
-| 10 | STAGE-print | Print a term DAG (stage Report::left, Term Display and Debug) in user-writable syntax within O(n log n) text and time; a `let` at the common ancestor is valid only where the names the shared part reads resolve alike at every place; cross-review if the attempt finds no method | M | yes | STAGE-dag | `crates/zed-kernel/src`, `crates/zedc-stage/src/stage.rs` |
+| 10 | STAGE-print | Print a term DAG (stage Report::left, Term Display and Debug) in user-writable syntax within O(n log n) text and time; a `let` at the common ancestor is valid only where the names the shared part reads resolve alike at every place; cross-review if the attempt finds no method | M | yes | STAGE-dag | `crates/zed-kernel/src/`, `crates/zedc-stage/src/stage.rs` |
 | 10 | ST-formula-parse-keep | Keep each shared part's parse across calls of `Formula::cmp` in one arena, so a pair compared again is not parsed again; close with no code if ST-formula-set replaces the parse | M | no | ST-formula-set | `crates/zedc-presburger/src/presburger/deep/canon.rs`, `COMPLEXITY.md` |
-| 10 | LOWER-dag | Lowering numbers and walks each shared term once per distinct pair of Shared::id and the bindings of the names it reads, as stage::Mixer does; memory planning takes the same test; remove the tradeoff comment at Places | M | yes | T14-bring, STAGE-dag | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `tests/steps/l01_33_lowering/`, `COMPLEXITY.md K40` |
-| 10 | STAGE-ends-cone | Done: One `Reader` per mix, keyed by `Shared::id`, keeps what each part needs across evaluations; `needs` and `closed` are measured with it and fixed or recorded with a `// Complexity tradeoff:` comment | S | no | STAGE-dag | `crates/zedc-stage/src/stage.rs`, `COMPLEXITY.md F43` |
+| 10 | LOWER-dag | Lowering numbers and walks each shared term once per distinct pair of Shared::id and the bindings of the names it reads, as stage::Mixer does; memory planning takes the same test; remove the tradeoff comment at Places | M | yes | T14-bring, STAGE-dag | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `tests/steps/l01_33_lowering/`, `COMPLEXITY.md` (K40) |
+| 10 | STAGE-ends-cone | Done: One `Reader` per mix, keyed by `Shared::id`, keeps what each part needs across evaluations; `needs` and `closed` are measured with it and fixed or recorded with a `// Complexity tradeoff:` comment | S | no | STAGE-dag | `crates/zedc-stage/src/stage.rs`, `COMPLEXITY.md` (F43) |
 | 7 | L1.40b-chk | Done: Join of the checker fixes on tuples, lambdas, nodes, dynamic indices and carrier sets before L1.40b: the scaling tests of these items pass together on one main commit with their negative controls, and each one's measured growth is in COMPLEXITY.md, as the baseline the Zed checker of S.3 is compared with | S | no | CHK-tuple, CHK-lambda, CHK-node-cost | `COMPLEXITY.md` |
 | 10 | L1.40b | The checker reads the store: integer facts from forward transfer, classes as store equalities, carrier sets as a finite-set domain; several fitting arrows give the intersection of their codomains, not the first arrow's result; prototype first, listing every L1.26 and L1.27 test whose result changes | XL | yes | T11-check, IF-union, STR-types, SOUND-random, L1.40b-sparse, L1.40b-chk, SPEC-soundness-static | `crates/zedc-check/src/check/`, `crates/zedc/src/store/eq.rs (new)`, `crates/zedc-preimage/src/product.rs`, `tests/steps/l01_40b_checker_store/`, `tests/steps/l01_26_type_resolution/`, `tests/steps/l01_27_absences/`, `STATUS.md`, `COMPLEXITY.md` |
-| 8 | STATIC-assert | `@static` on a binding: the build fails if its value needs anything not known at the compile stage, and the failure prints the dependency path to the first cause | S | no | L1.40c | `crates/zedc-check/src/check`, `zed/prelude`, `DESIGN.md:1156`, `:1425 and the words table :3937` |
+| 8 | STATIC-assert | `@static` on a binding: the build fails if its value needs anything not known at the compile stage, and the failure prints the dependency path to the first cause | S | no | L1.40c | `crates/zedc-check/src/check/`, `zed/prelude/`, `DESIGN.md` (lines 1156 and 1425, and the words table at line 3937) |
 | 11 | L2.6 | Overloads: arrow-intersection application, no-arrow errors, most-specific and written-rank dispatch, overlap coherence, cross-unit overlap rejection | L | yes | L2.4, L1.40b, LIST-size, A9-path-words | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/overload.rs (new)`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-stage/src/stage.rs`, `tests/steps/l02_06_overloads/`, `DESIGN.md` |
 | 11 | L1.40e | The checker's `Ty` and the store's types domain become one representation, or each part left outside is recorded with its reason in STATUS.md | L | yes | L1.40b | `crates/zedc-types/src/ty.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zed-kernel/src/types.rs`, `DESIGN.md` |
-| 11 | L1.40f | The linear questions of `front::linear_questions` read the linear-relation entries of the store's cell, or keep a separate pass that reads the store and records why | M | no | L1.40b | `crates/zedc/src/front.rs`, `crates/zedc/src/store` |
-| 11 | RAT-domain | `rat` domains (DESIGN sec:domains, QUESTIONS Q14, author 2026-11-08): a `rat` value's domain holds its numerator's range and its denominator's range, each an integer domain, the denominator's excluding 0 (reduced form, positive denominator); written `rat[num a..=b, den c..=d]`, each part optional, and printed in that form; forward transfer from the unreduced integer formula, narrowing on `rat` tests as for `int`; the bound that chooses the primes of a `rat` convolution (L5.13) — test: `a/b + c/d` with each part's range known gives ranges that hold every result the interpreter computes over the domain, `x > 0r` narrows the numerator to `1..`, `x >= 1r && x <= 2r` with the denominator in `1..=4` leaves the numerator in `1..=8`, and a denominator range never holds 0; `rat[num 1..=8, den 1..=4]` parses, prints back unchanged and holds `3r / 2r`, `rat[den 0..=4]` is rejected naming the range; scaling at n and 8n | M | no | L1.40b | `crates/zedc-lattice/src/`, `crates/zedc/src/store/`, `crates/zedc-check/src/check/`, `DESIGN.md sec:domains`, `tests/steps/` |
-| 10 | TEST-fuzz | Fuzzing beside `test` with fixed seeds, using the `zedc cover` study's generators, plus a reducer that shrinks a failing program while the oracle difference holds, and a check that runs each arm's witness from the store and fails when the run does not confirm it | M | no | L2.7, L1.37a | `crates/zed-tools/src/fuzz.rs`, `crates/zedc` |
+| 11 | L1.40f | The linear questions of `front::linear_questions` read the linear-relation entries of the store's cell, or keep a separate pass that reads the store and records why | M | no | L1.40b | `crates/zedc/src/front.rs`, `crates/zedc/src/store/` |
+| 11 | RAT-domain | `rat` domains (DESIGN sec:domains, QUESTIONS Q14, author 2026-11-08): a `rat` value's domain holds its numerator's range and its denominator's range, each an integer domain, the denominator's excluding 0 (reduced form, positive denominator); written `rat[num a..=b, den c..=d]`, each part optional, and printed in that form; forward transfer from the unreduced integer formula, narrowing on `rat` tests as for `int`; the bound that chooses the primes of a `rat` convolution (L5.13) — test: `a/b + c/d` with each part's range known gives ranges that hold every result the interpreter computes over the domain, `x > 0r` narrows the numerator to `1..`, `x >= 1r && x <= 2r` with the denominator in `1..=4` leaves the numerator in `1..=8`, and a denominator range never holds 0; `rat[num 1..=8, den 1..=4]` parses, prints back unchanged and holds `3r / 2r`, `rat[den 0..=4]` is rejected naming the range; scaling at n and 8n | M | no | L1.40b | `crates/zedc-lattice/src/`, `crates/zedc/src/store/`, `crates/zedc-check/src/check/`, `DESIGN.md` (sec:domains), `tests/steps/` |
+| 10 | TEST-fuzz | Fuzzing beside `test` with fixed seeds, using the `zedc cover` study's generators, plus a reducer that shrinks a failing program while the oracle difference holds, and a check that runs each arm's witness from the store and fails when the run does not confirm it | M | no | L2.7, L1.37a | `crates/zed-tools/src/fuzz.rs`, `crates/zedc/` |
 | 12 | HKT-2 | Where a need resolves, building DESIGN step L2.6a (HKT study item 2): a function's need is met by the arrows its defining unit resolves, stated and tested across units; the new diagnostics row naming a caller-scope arrow and the two repairs; the code checks the defining unit's arrows today (check/mod.rs:3947-3954; `into` at mod.rs:2094), with no caller-arrow diagnostic; keep, in the signature that crosses units, the callee's use site for a parameter narrowed by a named function, with printed types unchanged | S | no | L2.6 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-base/src/rejection.rs`, `tests/steps/l02_06a_need_scope/ (new)` |
 | 12 | L2.9 | Codegen: struct layouts, match lowering, dispatch | L | no | L2.6 | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zedc-zir/src/zir/text.rs`, `crates/zedc-zir/src/zir/binary.rs`, `crates/zedc-zir/src/zir/canon.rs`, `crates/zedc-zir/src/zir/mod.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/tables.rs`, `crates/zed-rt/src/heap.rs`, `tests/src/oracle.rs`, `tests/steps/l02_09_codegen/` |
 | 12 | L2.12 | Diagnostics rows for L2 rejections with their menus, including a capitalized name in a `struct` field that is no declared parameter (menu `struct Pair(A, B) { … }`, FACET-typed), an unused type parameter of a `struct` or a `type` (STRUCT-laws: one rule for both) and a parameter named like a field; test: `struct Pair { fst: A, snd: B }` rejected with that menu, `struct Pair(A, B) { fst: A, snd: B }` accepted, `struct One(A, B) { x: A }` and `struct Box(A) { A: int, b: A }` rejected; `type Tag(A) = int` rejected with the menu `type Tag = int`; `S(int)` for `struct S(X)` rejected by the row for an argument in the wrong form, with the menu `S(X: int)` or `positional X` in the declaration; takes the dead-arm warning from WARN-dead-arm | M | no | L2.6, L2.7, GROUP-e2e, L1.29e | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/overload.rs`, `crates/zedc-check/src/check/exhaust.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc/src/run.rs`, `crates/zedc-preimage/src/product.rs`, `tests/steps/l02_12_diagnostics/` |
 | 12 | L2.6b | Step L2.6b: loose atoms pass out of an argument at struct fields, tuple components and atom payloads, for types that are not recursive (rule 6, the author's answer to Q1 of 2026-11-07): removal per position, arrow selection on the rest, one run-time pass, merged failures with top-level atoms | L | yes | L2.6 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/overload.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zed-kernel/src/eval.rs`, `tests/steps/l02_06b_atoms_pass_out/ (new)` |
-| 12 | OVERLOAD-name-type | A name with overloads gets its type at L2.6: the arrows with the overlap removed from each that does not run there (rule 6); `Ty::empty()` is no longer its type | S | no | L2.6 | `crates/zedc-check/src/check` |
+| 12 | OVERLOAD-name-type | A name with overloads gets its type at L2.6: the arrows with the overlap removed from each that does not run there (rule 6); `Ty::empty()` is no longer its type | S | no | L2.6 | `crates/zedc-check/src/check/` |
 | 12 | SOUND-random-l2 | The same random soundness test generates structs, match and overloads | M | no | L2.6, L2.7 | `tests/steps/l01_26_type_resolution/random.rs` |
 | 1 | L1.41-runner | Done: Join of the test runner and step index before L1.41-harness: the tests of these items pass together on one main commit, and each fence, message or ZIR text they changed is among those L1.41 runs under the oracle | S | no | RUN-only, STEPS-binary-orphan | `tests/steps/` |
 | 3 | L1.41-tests | Done: Join of tests and documentation kept from reviews before L1.41-harness: the tests of these items pass together on one main commit, and each fence, message or ZIR text they changed is among those L1.41 runs under the oracle | S | no | TEST-heavy-zero, XT-residue-tests, ALLOC-refused, GOLDEN-rename, TD-tests | `tests/steps/` |
@@ -509,14 +509,14 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 13 | GLAM-diamond | Struct `import` diamond, building DESIGN step L2.12a (Glam study P1): a field brought in twice counts once when the canonical forms are equal, else the new diagnostics row; field order by first occurrence; a map from member name to content address, linear in the members, with a scaling test | S | no | L2.12 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `tests/steps/l02_12a_import_diamond/ (new)` |
 | 13 | L2.12b | Step L2.12b: the rejection row for a match binder unused in its guard and its arm, with the nearest type name as a repair | S | no | L2.12 | `crates/zedc-check/src/check/` |
 | 13 | CONTIFY | Non-escaping lambda with all calls saturated in tail position lowers to a block (DESIGN step L2.9a) | M | no | L2.9 | `crates/zedc-zir/src/zir/lower.rs`, `tests/steps/` |
-| 13 | OR-PAT | Or-patterns at L2, with a sec:grammar edit; alternatives that bind different names are rejected; no `name @ pat` form | M | no | L2.7, L2.9 | `zed/grammar/syntax.peg`, `zed/grammar/cases.txt`, `crates/zedc-syntax/src/parse/`, `crates/zedc-check/src/check/exhaust.rs`, `../zed/DESIGN.md`, `tests/steps/` |
+| 13 | OR-PAT | Or-patterns at L2, with a sec:grammar edit; alternatives that bind different names are rejected; no `name @ pat` form | M | no | L2.7, L2.9 | `zed/grammar/syntax.peg`, `zed/grammar/cases.txt`, `crates/zedc-syntax/src/parse/`, `crates/zedc-check/src/check/exhaust.rs`, `DESIGN.md`, `tests/steps/` |
 | 13 | SCOPE-warn | `Scope::warnings` reaches the unit's warnings once the checker reads the store; add the warning to the list at DESIGN:1302 or remove it if L1.40b makes these refusals rejections under DESIGN:1349 | S | no | L2.12, TD-refusals | `crates/zedc-preimage/src/product.rs`, `crates/zedc/src/run.rs`, `DESIGN.md` |
 | 13 | L2.7a | Reject an unreachable `match` arm from the emptiness check on its residue, naming the earlier arms that cover it | S | no | L2.12 | `crates/zedc-check/src/check/`, `crates/zedc-base/src/rejection.rs`, `tests/steps/l02_07a_unreachable_arm/` |
 | 14 | L2.11 | Standard library catalog: survey of the standard libraries of major languages and of Zed's own Rust (the std and crate routines it calls, and the compiler code of general use, such as big integers); catalog in the repository; each entry compares implementations | L | no | L2.10, MINMAX-tuples | `docs/stdlib-catalog.md (new)`, `zed/compiler/CATALOG.md`, `DESIGN.md` |
 | 14 | L3.2 | Elaboration of data forms: map, where, lookup with #notFound and #outOfBounds, `in` and `not in`, range patterns, `><`, operator sections, displays, ranges, split, lines, concat, for to fam, discard, fold, .reduce | XL | no | L3.1, L2.10, MINMAX-tuples | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-base/src/interp.rs`, `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/run.rs`, `crates/zed-kernel/src/term.rs`, `crates/zed-kernel/src/words.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/provenance.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zed-native/src/hooks.rs`, `zed/prelude/`, `DESIGN.md`, `tests/steps/l03_02_elaboration/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md` |
 | 14 | L2.12a | Step L2.12a, a member reached twice through struct `import`: done when plan item GLAM-diamond merges | S | no | GLAM-diamond |  |
 | 14 | L2.10a | Step L2.10a: `String` of a family atom with its payload, and the reading cast `T(text)` giving `#invalid` for text that is no `T` | S | no | L2.10 |  |
-| 14 | FLOAT-sqrt | `sqrt` and `fma` on the float carriers as primitives, IEEE-exact, with no multiply-add contraction in any back end | S | no | L2.10, L1.36a | `crates/zed-kernel/src`, `crates/zed-rt/src`, `crates/zed-native`, `zed/prelude`, `tests/steps/l01_31_zir/rejections.rs` |
+| 14 | FLOAT-sqrt | `sqrt` and `fma` on the float carriers as primitives, IEEE-exact, with no multiply-add contraction in any back end | S | no | L2.10, L1.36a | `crates/zed-kernel/src/`, `crates/zed-rt/src/`, `crates/zed-native/`, `zed/prelude/`, `tests/steps/l01_31_zir/rejections.rs` |
 | 14 | SCALE-zed | Extend scaling_coverage to zed/prelude and zed/compiler: an exported definition that is not obviously O(1) needs a scaling test naming it or a `// O(1):` comment | M | no | SCALE-cover, L2.10 | `crates/zed-tools/src/scaling_coverage.rs`, `tests/steps/m0_03_grammar_tools/scaling_coverage.rs` |
 | 15 | L1.39g | Step L1.39g: the float machine operations `rsqrt`, `copySign`, `logB`, `significand`, `scaleB`, `roundIntegral` with its five mode atoms, `minNum` and `maxNum` on each float format, correctly rounded (DESIGN sec:linalg, machine operations); rsqrt(±0) is ±inf; tests: the step's special values, `rsqrt` against `rat` on every `f32` in [1.0, 4.0) and random `f64` and subnormal inputs, a non-constant mode a type error, `minNum` against `min` on NaN and on -0.0, n and 8n values O(n) | S | no | FLOAT-sqrt | `zed/prelude/`, `crates/zed-kernel/src/`, `crates/zed-rt/src/`, `crates/zed-native/`, `tests/steps/l01_39g_float_machine_ops/` (new) |
 | 14 | L2.14-diag | Join of L2 rejection rows and diagnostics before L2.14: the tests of these items pass together on one main commit before L2.14 starts | S | no | L2.8b, DIAG-control, L2.12b, SCOPE-warn, L2.7a, BUBBLE-msg, TESTS-L2.1-spaced-duplicate-import, TESTS-messages-never-produced | `tests/steps/` |
@@ -538,18 +538,18 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 17 | L6.4 | General recursion as definedness fix; divergence classification of calls through function values | L | yes | L6.1, L6.7 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-stage/src/stage.rs`, `crates/zed-kernel/src/types/rec.rs`, `tests/steps/` |
 | 18 | L3.6 | Reduction transfer rule forward (count/card, n*[lo,hi], group classes) and the sufficient backward +-fold bound | M | no | L3.5 | `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-lattice/src/interval.rs`, `crates/zedc-lattice/src/cell.rs`, `crates/zedc-check/src/check/mod.rs`, `tests/steps/l03_06_reduction_transfer/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md` |
 | 18 | L3.19 | Corpus programs 9 and 21 enabled and run under the oracle | M | no | L3.5, FLOAT-sqrt | `zed/corpus/`, `tests/src/oracle.rs`, `tests/steps/l03_19_corpus/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md` |
-| 18 | LOWER-stack | Design question, DESIGN step L6.13d (a study): how the code Zed's lowering generates manages stack depth for deep or unbounded recursion in user programs: segmented or growable stacks, frames on the heap, explicit stacks, continuation-passing style, guaranteed tail calls, a guard page with its own fault; time per call, memory per frame, determinism, and what the wasm, MLIR and microcontroller targets allow; the record `zed/compiler/STACK.md` | M | no | R10-stack, L6.4 | `zed/compiler/STACK.md (new)`, `../zed/DESIGN.md` |
+| 18 | LOWER-stack | Design question, DESIGN step L6.13d (a study): how the code Zed's lowering generates manages stack depth for deep or unbounded recursion in user programs: segmented or growable stacks, frames on the heap, explicit stacks, continuation-passing style, guaranteed tail calls, a guard page with its own fault; time per call, memory per frame, determinism, and what the wasm, MLIR and microcontroller targets allow; the record `zed/compiler/STACK.md` | M | no | R10-stack, L6.4 | `zed/compiler/STACK.md (new)`, `DESIGN.md` |
 | 19 | L3.7 | Bound propagation: the [L, U] table rows for L3 forms, with the interpreter-observed property test | L | no | L3.6 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-lattice/src/cell.rs`, `crates/zedc-presburger/src/presburger.rs`, `DESIGN.md`, `tests/steps/l03_07_bound_propagation/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md`, `COMPLEXITY.md` |
-| 19 | RT-exhaust-report | Heap allocation failure gives a Zed message and a defined exit status, not a Rust abort | S | no | LOWER-stack | `crates/zed-rt`, `DESIGN.md:1418` |
+| 19 | RT-exhaust-report | Heap allocation failure gives a Zed message and a defined exit status, not a Rust abort | S | no | LOWER-stack | `crates/zed-rt/`, `DESIGN.md` (line 1418) |
 | 20 | L3.8 | Obligation record and evidence grades, the refutations built-in types record (`addAssoc` at `f64`), rungs 1, 2, 5, 7 on core obligations, the changing-carrier rule | XL | no | L2.14, L3.7, CORPUS-oracle, AXIOMS-fmt, ITEM-order, RUNG2-mod-symbol, RUNG2-bit, RUNG2-definedness, RUNG2-carrier | `crates/zedc/src/oblig/`, `crates/zedc/src/lib.rs`, `crates/zedc-base/src/axioms.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/testing.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zed-kernel/src/term.rs`, `crates/zed-kernel/src/print.rs`, `crates/zedc-zir/src/canon/serial.rs`, `tests/steps/l03_08_obligations/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md`, `COMPLEXITY.md`, `zed/prelude/` |
 | 20 | L3.13 | Codegen: dense array, hash and ordered tree representations from domain facets, canonical-tree folds, plain and compensated, wrapping intermediates under the ring-homomorphism rule | XL | no | L3.7 | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/tables.rs`, `crates/zed-native/src/lib.rs`, `crates/zed-rt/src/heap.rs`, `crates/zed-rt/src/lib.rs`, `crates/zed-rt/src/morph.rs`, `crates/zed-rt/src/exact.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zedc-zir/src/zir/mod.rs`, `DESIGN.md`, `tests/steps/l03_13_codegen/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md`, `COMPLEXITY.md` |
 | 21 | L3.15a | Step L3.15a: the quantifiers `.any`, `.all`, `.find` on a family, in key order, short-circuiting, with a scaling test at a fixed position k | M | no | L3.13 | `crates/zedc-elab/src/elab.rs`, `crates/zed-kernel/src/`, `crates/zed-native/src/`, `zed/prelude/`, `tests/steps/` |
 | 21 | L3.8a | Step L3.8a: Light's associativity test in `CheckedExhaustive` on a finite carrier, by a generating set | S | no | L3.8 |  |
 | 21 | L3.8b | Step L3.8b: naturality grades for law 20, each generic body classified by its uses of `T` | M | no | L3.8, L3.2a |  |
 | 21 | FLOAT-f32 | The `f32` type: name, value form, casts, literal cast `f32(0.5)`, arithmetic, printing, ZIR tag, the canonical-tree and compensated sums; `f32` as a class carrier in `Carrier` (`crates/zedc-types/src/ty.rs:2273-2284`, DESIGN step L1.26), with the step tests that pin the carriers `int`, `f64` and `rat` (`tests/steps/l01_26a_generic_literals/mod.rs:171`, `:178`) updated (test audit 2026-11-08) | M | no | L3.13 | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zedc-lattice/src/float.rs`, `DESIGN.md`, `crates/zedc-types/src/ty.rs` |
-| 21 | BIT-repr | A value of `int[0..<2 ^ 64]` is stored in one unsigned word with no big-integer allocation, with a DESIGN rule for storing a 64-bit wrapping value, and `fromBits` converts bits back to f64; bit words take the wrapping-intermediates rule, and a domain spanning at most 2^w integers takes one word; `bits` and `trailing_zeros` as kernel built-ins at O(1) and O(words) | M | no | L3.13 | `crates/zedc/src/store`, `crates/zed-kernel/src/eval.rs`, `crates/zed-rt/src`, `crates/zed-native`, `DESIGN.md` |
+| 21 | BIT-repr | A value of `int[0..<2 ^ 64]` is stored in one unsigned word with no big-integer allocation, with a DESIGN rule for storing a 64-bit wrapping value, and `fromBits` converts bits back to f64; bit words take the wrapping-intermediates rule, and a domain spanning at most 2^w integers takes one word; `bits` and `trailing_zeros` as kernel built-ins at O(1) and O(words) | M | no | L3.13 | `crates/zedc/src/store/`, `crates/zed-kernel/src/eval.rs`, `crates/zed-rt/src/`, `crates/zed-native/`, `DESIGN.md` |
 | 21 | WIDE-product | A product of two word-sized operands reduced by a word-sized modulus is computed in a double word, raising no widening warning | S | no | L3.13 | `crates/zedc-zir/src/zir/`, `crates/zed-native/`, `DESIGN.md`, `tests/steps/wide_product/` |
-| 21 | HASH-repr | Hash family representation: dense entries plus an index, no tombstones | M | no | L3.13 | `crates/zed-rt`, `DESIGN.md:2000` |
+| 21 | HASH-repr | Hash family representation: dense entries plus an index, no tombstones | M | no | L3.13 | `crates/zed-rt/`, `DESIGN.md` (line 2000) |
 | 21 | ASSOC-select | The selection rule (DESIGN sec:property_tracking, Derived; sec:verification selection rule; REPORT /home/luke/Work/wt/assoc-fast-study/REPORT.md §1): a body returning `a` or `b`, chosen by comparisons of the same linear key on both sides, bool fields and one-sided linear tests, compiled to an ordered decision diagram over its keys (hash-consed, the graph reduced before the key order is taken); when it is a decision list, associativity, commutativity, idempotence and an identity decided by a product over its levels (at most 27 × 5 states per level), O(n log n) in the body; refusals ORDER, WIDTH, KEYMIX, OFFSET, SHARE, REALIZE, FIELDMIX, NONLIN, ATOM, NAN; records componentwise; never at a float key without the NaN rule | M | yes | L3.8, ASSOC-fast-study | `crates/zedc/src/oblig/`, `tests/steps/assoc_select/` (new) |
 | 21 | ASSOC-lattice | Rung 2 lattice normal forms (REPORT /home/luke/Work/wt/assoc-fast-study/REPORT.md §3.2, §3.7): the unit tropical form (`+`, constants, one of `min`/`max`, coefficients 0 and 1; a term kept only where it is strictly best at its own corner of the carrier box; canonical) and the chain-lattice corner table (`min`, `max`, literals; 2^v corner values, canonical); `min(a + b, 100)` proved at `int[0..=100]`, refuted on `int` at `(802, 802, -802)`; refusals MIXED, COEF, RANGE, DEGENERATE; O(n) in the body | M | yes | L3.8, ASSOC-fast-study | `crates/zedc/src/oblig/`, `crates/zedc-base/src/axioms.rs`, `tests/steps/assoc_lattice/` (new) |
 | 21 | ASSOC-gf2 | Rung 2 for `bool` and bits: algebraic normal form over GF(2) (xor of conjunctions), canonical, and the bit form (REPORT /home/luke/Work/wt/assoc-fast-study/REPORT.md §3.4: `bitAnd`, `bitOr`, `bitXor`, `bitNot` on `int` and `int[0..<2^w]`, an ANF whose coefficients are two's-complement bit strings; refusals SHIFT, NOTBITWISE, RANGE); xor proved associative and commutative with identity `false`, implication refuted at `(false, false, false)`; polynomial normal form over `rat` (`(a + b) / 2` refuted at `(0, -1, -1)`) | S | yes | L3.8, ASSOC-fast-study | `crates/zedc/src/oblig/`, `tests/steps/assoc_gf2/` (new) |
@@ -586,7 +586,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 24 | L3.12 | Builder fusion: loop+builder selection, multi-builder single pass, complementary-where fusion | L | no | L3.11, L1.35-inventory | `crates/zedc/src/opt/`, `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-zir/src/zir/text.rs`, `crates/zedc-zir/src/zir/binary.rs`, `crates/zedc-zir/src/zir/canon.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `tests/steps/l03_12_builder_fusion/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md`, `COMPLEXITY.md` |
 | 24 | L3.18 | Diagnostics rows: fold operator lacking evidence, out-of-domain lookup, unlifted carrier, inner-domain dependency outside the fragment | M | no | L3.10 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/oblig/`, `crates/zedc-syntax/src/ast/mod.rs`, `tests/steps/l03_18_diagnostics/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md` |
 | 24 | MATCH-commute | Ordered-pass rewrite that moves an eliminator (`if`, `match`, `else`, application, projection) into arms where an inner arm has a known member, carrying a certificate; not a rung 3 law, so the 28-law count stays | M | no | L3.11, CONTIFY | `crates/zedc/src/opt/`, `tests/steps/` |
-| 24 | PROP-per-arrow | A property read answers at the arrow the context selects, and a fold reads the evidence for its own carrier's arrow; a read with no selected arrow is the overload error (new sentence for the author's eye) | S | no | L3.10 | `crates/zedc-check/src/check`, `tests/steps`, `DESIGN.md` |
+| 24 | PROP-per-arrow | A property read answers at the arrow the context selects, and a fold reads the evidence for its own carrier's arrow; a read with no selected arrow is the overload error (new sentence for the author's eye) | S | no | L3.10 | `crates/zedc-check/src/check/`, `tests/steps/`, `DESIGN.md` |
 | 24 | ZIR-check-passes | Test builds call zir::validate after every ZIR pass, through one pass runner that later passes also use; in tests/full, Valgrind memcheck on the ahead-of-time executables of the whole corpus | S | no | L3.11 | `crates/zedc-zir/src/zir/`, `tests/full/`, `tests/steps/zir_check_passes/` |
 | 24 | SEMIRING-values | Semirings as prelude struct values: operations, zero, one, star where closed, stability index; `+` over `max` and `min` axioms at `int` | M | no | L3.10 | `zed/prelude/lattice.zed`, `zed/prelude/axioms.zed`, `crates/zedc-base/src/axioms.rs`, `tests/steps/` |
 | 24 | FOLD-zero | A fold whose operator carries `zero(z)`, over an atom-free carrier, stops at the first absorber in the interpreter and native code | M | no | L3.10, L3.15a | `crates/zedc-zir/src/zir/`, `crates/zed-native/src/`, `tests/steps/` |
@@ -596,29 +596,29 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 25 | L3.23 | Cost model: symbolic work/depth tier with the M0.6 scalarization, choosing representations and fusions | L | no | L3.22, L3.13, L3.12, FOOTPRINT-overlap | `crates/zedc-base/src/cost.rs`, `crates/zedc/src/opt/`, `crates/zedc/src/store/costdom.rs`, `crates/zed-native/src/tables.rs`, `crates/zed-native/src/codegen.rs`, `DESIGN.md`, `tests/steps/l03_23_cost_model/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md`, `COMPLEXITY.md` |
 | 25 | L3.18a | Step L3.18a: a float is a key, sort key or ranking key only when its class excludes NaN, otherwise rejected with the menu `.where(x -> !x.isNaN)` (part of NAN-keys) | S | no | L3.18 | `crates/zedc-lattice/src/float.rs`, `crates/zedc-check/src/check/` |
 | 25 | L3.18b | Step L3.18b: a defaulting lookup on a map whose value type holds `#none` warns, with its derivation and two repairs | S | no | L3.18 | `crates/zedc-check/src/check/` |
-| 25 | KEYABLE-reject | A key or widened key component with no decidable equality is rejected at the definition, with its diagnostics row | S | no | L4.1, L3.18 | `crates/zedc-check/src/check`, `crates/zedc-base/src/rejection.rs`, `DESIGN.md`, `zed/fences/rejections.txt` |
+| 25 | KEYABLE-reject | A key or widened key component with no decidable equality is rejected at the definition, with its diagnostics row | S | no | L4.1, L3.18 | `crates/zedc-check/src/check/`, `crates/zedc-base/src/rejection.rs`, `DESIGN.md`, `zed/fences/rejections.txt` |
 | 26 | L3.16 | RC atomicity by static share analysis: non-atomic in single-owner regions, merged at joins | L | no | L3.17 | `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-rt/src/heap.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/tables.rs`, `tests/steps/l03_16_rc_atomicity/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md` |
 | 26 | L4.2 | Interpreter: reindex with full keypath bookkeeping; collision assertions | L | no | L4.1, L3.17 | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/family.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-rt/src/`, `tests/steps/l04_02_reindex/` |
 | 26 | L5.8 | Ordered-collection substrate: join-based balanced trees with the algebra augmentation slot; `.diff` at O(k log n), with a scaling test | L | no | L3.17 | `crates/zed-rt/src/ordtree.rs (new)`, `crates/zed-rt/src/heap.rs`, `crates/zed-rt/src/lib.rs`, `crates/zed-native/src/tables.rs`, `tests/steps/l05_08_ordered_trees/` |
 | 26 | UNIT-modes | Store each exported function's inferred parameter modes with its compiled unit and read them at call sites in other units; a caller's cached product is keyed on those modes | M | no | L3.17 | `crates/zedc-zir/src/zir/memory.rs`, `crates/zedc-zir/src/zir/unit.rs`, `tests/steps/` |
-| 26 | LAYOUT-soa | Column layout for dense `[Struct]` and `[Union]`, as an extension of the `layout(l1,…,ln)` facet and its copy-free transpose (DESIGN.md:899) under the L3.23 cost model: per-variant tables, narrow scalars by domain, atom-keyed dense tables; chosen by cost in bytes touched, with no size switch | L | yes | L3.23, LAYOUT-measure | `crates/zed-native`, `crates/zed-rt`, `DESIGN.md sec:memory` |
-| 27 | L5.1 | Parser and elaboration: orderedValues, sort, asc/desc, sorted views, first/last/minBy/maxBy, slice/take/drop/takeWhile | XL | yes | L4.2 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/term.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/canon/`, `crates/zedc/src/opt/ (the L3.11 pass`, `not yet written)`, `crates/zed-native/src/codegen.rs`, `zed/prelude/`, `tests/steps/l05_01_rank_and_sort/` |
+| 26 | LAYOUT-soa | Column layout for dense `[Struct]` and `[Union]`, as an extension of the `layout(l1,…,ln)` facet and its copy-free transpose (DESIGN.md:899) under the L3.23 cost model: per-variant tables, narrow scalars by domain, atom-keyed dense tables; chosen by cost in bytes touched, with no size switch | L | yes | L3.23, LAYOUT-measure | `crates/zed-native/`, `crates/zed-rt/`, `DESIGN.md` (sec:memory) |
+| 27 | L5.1 | Parser and elaboration: orderedValues, sort, asc/desc, sorted views, first/last/minBy/maxBy, slice/take/drop/takeWhile | XL | yes | L4.2 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/term.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/canon/`, `crates/zedc/src/opt/` (the L3.11 pass, not yet written), `crates/zed-native/src/codegen.rs`, `zed/prelude/`, `tests/steps/l05_01_rank_and_sort/` |
 | 27 | L3.14 | Work-stealing scheduler over region instances, heartbeat promotion, strategy field on every region | XL | yes | L3.16, BIB-check | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/heap.rs`, `crates/zed-rt/src/lib.rs`, `crates/zed-rt/Cargo.toml`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/tables.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zedc-zir/src/zir/mod.rs`, `Cargo.toml`, `Cargo.lock`, `tests/steps/l03_14_work_stealing/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md` |
 | 27 | L4.4 | Witness catalog: the eight entries that need no layer | L | yes | L4.2, RUNG2-flat3 | `crates/zedc-check/src/check/witness.rs (new)`, `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/term.rs`, `crates/zedc-presburger/src/presburger.rs`, `tests/steps/l04_04_witness_catalog/` |
-| 27 | UNION-spare | Union tags stored in spare domain values: non-canonical NaN patterns, so `f64 \| #none` has no separate tag, and the unused values of an integer word, so `int[0..<100] \| #unknown \| #bad` is one `u8` | M | no | LAYOUT-soa | `crates/zed-native`, `DESIGN.md sec:memory` |
+| 27 | UNION-spare | Union tags stored in spare domain values: non-canonical NaN patterns, so `f64 \| #none` has no separate tag, and the unused values of an integer word, so `int[0..<100] \| #unknown \| #bad` is one `u8` | M | no | LAYOUT-soa | `crates/zed-native/`, `DESIGN.md` (sec:memory) |
 | 28 | L5.2 | ++ on Seq and rank keys, zip | L | no | L5.1 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/value.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/family.rs`, `crates/zed-native/src/codegen.rs`, `zed/prelude/`, `tests/steps/l05_02_concat_and_zip/` |
 | 28 | L5.3 | scan, .chunkBy | M | no | L5.1 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/term.rs`, `crates/zedc-zir/src/zir/lower.rs`, `zed/prelude/`, `tests/steps/l05_03_scan_and_chunkby/` |
 | 28 | L3.15 | Parallel canonical-tree float folds, plain and compensated sums included, bit-identical at 1, 8, 16 threads | M | no | L3.14, FLOAT-f32 | `crates/zed-rt/src/exact.rs`, `crates/zed-rt/src/sched.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-kernel/src/exact.rs`, `tests/steps/l03_15_parallel_float_folds/`, `tests/Cargo.toml`, `tests/steps/m0_01_scaffolding/`, `STATUS.md`, `COMPLEXITY.md` |
 | 28 | L4.6 | Parallel grouping; deterministic-reservation library | L | no | L4.2, L3.14 | `crates/zed-rt/src/group.rs (new)`, `crates/zed-rt/src/reservation.rs (new)`, `crates/zed-rt/src/lib.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `zed/prelude/`, `tests/steps/l04_06_parallel_grouping/` |
 | 28 | L4.3 | Backward transfer through reindex: the injective-reindex entry of the preimage catalog | M | no | L4.4 | `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-preimage/src/product.rs`, `tests/steps/l04_03_reindex_preimage/` |
-| 28 | L4.5 | Collision rule end to end: rekey vs group vs written residue, core repairs, checked computed-key group+fold | M | no | L4.4, KEYABLE-reject | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/witness.rs (new)`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-types/src/ty.rs`, `tests/steps/l04_05_collision_rule/`, `tests/steps/l03_06_*/ (the group class card >= 1 test the L3.6 text defers to L4)` |
+| 28 | L4.5 | Collision rule end to end: rekey vs group vs written residue, core repairs, checked computed-key group+fold | M | no | L4.4, KEYABLE-reject | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/witness.rs (new)`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-types/src/ty.rs`, `tests/steps/l04_05_collision_rule/`, `tests/steps/l03_06_*/` (the group class card >= 1 test the L3.6 text defers to L4) |
 | 28 | L4.1a | Step L4.1a: `m.inverse` on a written display rejects a repeated value at build, naming both keys; otherwise its type has `#collision` | S | no | L4.4 |  |
 | 28 | LAW20-move | Law 20 rewrites: `map(g)` moves past `first`, a generic duplicate-removing body and `sort`, as graded by L3.8b | S | no | L5.1 | `crates/zedc/src/opt/`, `tests/steps/law20_move/` |
 | 29 | L5.4 | Join triple algebra with .diff and #assertEmpty, .patch, keyed steps of a with update | XL | no | L4.4, L5.2 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zedc-zir/src/zir/lower.rs`, `zed/prelude/`, `tests/steps/l05_04_joins/` |
 | 29 | L4.7 | Corpus programs 1 and 2 enabled and run under the oracle | S | no | L4.5 | `zed/corpus/`, `tests/steps/l04_07_corpus/` |
 | 29 | L5.1c | Step L5.1c: the reverse of a delivered order: `take(k)` on `rev(o)` and backward suffix scans | M | no | L5.3 |  |
-| 29 | CSR-bounds | `++` cardinality as an axiom beside axioms.zed:41-43, for strings and rank keys, and for Seq under the disjointness at DESIGN:375; offsets typed with `edges::card` bound their ranges with no run-time check | S | no | L5.2 | `zed/prelude/axioms.zed`, `crates/zedc/src/store`, `tests/steps` |
-| 29 | EVID-dynamic | The planner's choice by grade: a fold over a bag level at proof grade may take the any-order combine, and one below proof grade is rejected, except under `@assume` (written trust), which gets one fixed tree | M | yes | L3.10, L3.15 | `crates/zedc-base/src/cost.rs`, `crates/zedc-zir/src/zir`, `tests/steps` |
+| 29 | CSR-bounds | `++` cardinality as an axiom beside axioms.zed:41-43, for strings and rank keys, and for Seq under the disjointness at DESIGN:375; offsets typed with `edges::card` bound their ranges with no run-time check | S | no | L5.2 | `zed/prelude/axioms.zed`, `crates/zedc/src/store/`, `tests/steps/` |
+| 29 | EVID-dynamic | The planner's choice by grade: a fold over a bag level at proof grade may take the any-order combine, and one below proof grade is rejected, except under `@assume` (written trust), which gets one fixed tree | M | yes | L3.10, L3.15 | `crates/zedc-base/src/cost.rs`, `crates/zedc-zir/src/zir/`, `tests/steps/` |
 | 29 | L1.18a | Step L1.18a, float formats `f16` and `bf16`, completing the four native formats f16, bf16, f32, f64 (DESIGN steps L1.17, L1.18a and L1.39a, sec:linalg machine operations; author decision 2026-11-07, item FLOAT-half-spec, which moved L14.1a here): the values, order and `==`; `+ - * /` and `sqrt` by the machine instruction where the target has it, else in f32 rounded once [Figueroa1995]; `fma` exact with one rounding, never through f32; `f16(s)`, `bf16(s)` rounded once from the digits; shortest printing; the canonical NaN; casts exact or `#inexact`; the canonical-tree and compensated sums; the ZIR binary tag; the Bits words of L1.39a; tests as DESIGN step L1.18a lists, with the fma case that gives 7772; `f16` and `bf16` as class carriers in `Carrier` (`crates/zedc-types/src/ty.rs:2273-2284`, DESIGN step L1.26), and `f32Bits`, `f16Bits`, `bf16Bits` (DESIGN step L1.39a) taken out of `PENDING` in `tests/steps/l02_03_name_resolution/later_words.rs:166-168` (test audit 2026-11-08) | M | no | L3.15 | `crates/zed-kernel/src/`, `crates/zedc-zir/src/zir/binary.rs`, `crates/zed-rt/src/`, `crates/zedc-types/src/ty.rs` |
 | 30 | FLOAT-interval | Float classes as intervals (DESIGN sec:domains and sec:constraints, author, QUESTIONS Q17, 2026-11-08): the class of a float is an interval of its format's values in IEEE 754 `totalOrder` (`-0.0` below `0.0`, the infinities as bounds) plus a may-be-NaN bit, replacing the kinds set; exact forward transfer by endpoints in the same format for every monotone float operation and cast, four corners split at zero for `*` and `/`, the NaN bit set exactly where an operation can make one; backward transfer and narrowing by comparisons (`w >= 0.0` gives `[-0.0, hi]` and excludes NaN); widening as the integer interval; `::constraints` shows `FloatClass { min, max, nonNaN, width }`; every reader of the old kinds (keys, sorts, `@fpwarn`, NaN bubbling, literals, reductions) reads the new class | L | yes | L1.18a, L1.39g | `crates/zedc-lattice/src/float.rs`, `crates/zedc-check/src/check/`, `zed/prelude/`, `tests/steps/float_interval/`, `COMPLEXITY.md` |
 | 30 | NAN-cast-atoms | The float casts `f16`, `bf16`, `f32` and `f64` take the atoms `#NaN` and `#inf` (DESIGN sec:corner_cases and step L1.18a; author decision 2026-11-07, item NAN-spell-l139g): `f64(#NaN)` is the canonical NaN and `f64(#inf)` the positive infinity of the format, exact, typed the format alone outside `@fpwarn` code (in a `@fpwarn` body the cast gives the atom itself, item FPWARN; author decision 2026-11-07, item NAN-inf-atom); negative infinity is `-f64(#inf)`; an argument whose type holds either atom is accepted; a cast of any other atom, and `int` or `rat` of either, is a type error naming the atom and the cast; the step L1.18a test of these, all four formats; O(1) per cast | S | no | L1.18a | `crates/zedc-check/src/check/`, `crates/zed-kernel/src/`, `tests/steps/` |
@@ -632,7 +632,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 30 | L6.2 | Elaboration of indexed and piecewise definitions and with boundary clauses to disjoint families | L | no | L6.6, L6.4, L5.4 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `tests/steps/` |
 | 30 | BOUND-L5 | Bound table rows for sort, orderedValues, zip, scan and patch, each checked against interpreter-observed domains | M | no | L5.3, L5.4 | `crates/zedc-check/src/check/`, `crates/zedc/src/store/`, `tests/steps/bound_l5/` |
 | 30 | LAW19-join | Law 19 at joins: star-join aggregate pushdown and contraction chain reordering by the cost model | L | no | L3.23, L5.4 | `crates/zedc/src/opt/`, `tests/steps/law19_join/` |
-| 31 | L4.8 | L4 end-of-layer test: word count in 3 lines or fewer; histogram converges; L1-L3 ZIR unchanged | M | no | L4.6, L4.3, L3.24, L4.7, L4.1a, BOUND-L4 | `crates/zedc/src/opt/ (the L3.11 pass`, `not yet written)`, `tests/steps/l03_11_*/ (the plans L3.11 defers to L4)`, `tests/steps/l04_08_layer_test/` |
+| 31 | L4.8 | L4 end-of-layer test: word count in 3 lines or fewer; histogram converges; L1-L3 ZIR unchanged | M | no | L4.6, L4.3, L3.24, L4.7, L4.1a, BOUND-L4 | `crates/zedc/src/opt/` (the L3.11 pass, not yet written), `tests/steps/l03_11_*/` (the plans L3.11 defers to L4), `tests/steps/l04_08_layer_test/` |
 | 31 | L5.9 | Parallel joins; union-find as a certified primitive | L | yes | L3.21, L5.6 | `crates/zed-rt/src/ordtree.rs`, `crates/zed-rt/src/join.rs (new)`, `crates/zed-rt/src/union_find.rs (new)`, `crates/zed-cert/src/`, `crates/zed-native/src/hooks.rs`, `zed/prelude/`, `tests/steps/l05_09_parallel_joins_union_find/` |
 | 31 | L5.13 | Transform form of a convolution over k integer keys, on int and rat: cost model chooses loop or number-theoretic transform, per level or Kronecker-packed; rat scaled by the common denominator L and divided by L² (QUESTIONS Q14, author 2026-11-08) — test: a 2-key int convolution and a rat convolution planned as transforms equal the loop value for value; one on f64 never takes the transforms | L | no | L3.21, L3.23, L4.5, L5.5, L5.6, RAT-domain | `crates/zedc/src/opt/convolution.rs (new)`, `crates/zedc/src/opt/`, `crates/zed-rt/src/ntt.rs (new)`, `crates/zed-rt/src/lib.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-cert/src/`, `tests/steps/l05_13_convolution/` |
 | 31 | L6.3 | Elaborate loop to gen with guard timing, primed receiver, generation pushes, *., expression statements that write a generation; the dropped-result rules for `c*.m();`, `_ = c*.m();` and `else`; in a loop body a name is used only below its definition, the bare generation variable `x` excepted (DBU-scope's check, with its row and menu) | L | no | OSP-drop, L6.2, DBU-scope | `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-stage/src/stage.rs`, `tests/steps/` |
@@ -640,15 +640,15 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 31 | L5.1b | Step L5.1b: a consumer that needs only a prefix of an order accepts any view whose order begins with it; `map` by an order-preserving function keeps the order | M | no | L5.6 |  |
 | 31 | L5.5a | Symmetric all-pairs halving: a fold over D x D of a commutative pairwise f planned on the diagonal and strict upper triangle | M | no | L5.5 | `crates/zedc/src/opt/`, `DESIGN.md`, `tests/steps/l05_05a_halving/` |
 | 31 | ENUM-perm | Test of order invariance: a test-only seed permutes a level's stored order in the kernel fold and in `zed-rt` hash iteration | M | no | L5.6 | `crates/zed-kernel/src/eval.rs`, `crates/zed-rt/src/`, `tests/steps/l05_06a_enum_perm/ (new)` |
-| 31 | SORTED-dense | Sorted dense array for families built once and never updated | M | no | L5.8a | `crates/zed-rt`, `DESIGN.md:2000` |
-| 32 | L5.7 | Scan synthesis: finite-table path, permutation case with law 13, affine path, sequential island; bisection (law 22) | XL | yes | L3.21, L3.23, L5.1b, M0.10a, ASSOC-demand | `crates/zedc/src/opt/synth.rs (new`, `under the L3.11 pass)`, `crates/zedc/src/opt/`, `crates/zed-rt/src/scan.rs (new`, `from L5.6)`, `crates/zed-cert/src/`, `zed/prelude/`, `tests/steps/l05_07_scan_synthesis/` |
+| 31 | SORTED-dense | Sorted dense array for families built once and never updated | M | no | L5.8a | `crates/zed-rt/`, `DESIGN.md` (line 2000) |
+| 32 | L5.7 | Scan synthesis: finite-table path, permutation case with law 13, affine path, sequential island; bisection (law 22) | XL | yes | L3.21, L3.23, L5.1b, M0.10a, ASSOC-demand | `crates/zedc/src/opt/synth.rs` (new, under the L3.11 pass), `crates/zedc/src/opt/`, `crates/zed-rt/src/scan.rs` (new, from L5.6), `crates/zed-cert/src/`, `zed/prelude/`, `tests/steps/l05_07_scan_synthesis/` |
 | 32 | L6.8 | Typing of gen: T-Gen, guard timing, union results, frame types | L | no | L6.3 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `tests/steps/` |
 | 32 | L6.11 | Widening and resolution rule 5 for loop heads, recursive results and fold carriers | L | yes | L4.5, L6.3, ORDER-keypath | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-lattice/src/iterate.rs`, `crates/zedc-lattice/src/wto.rs`, `crates/zedc/src/query.rs`, `zed/prelude/iteration.zed`, `tests/steps/` |
 | 32 | L6.14 | Native code for fix and gen as real loops; field-wise return of a call inside a fix, found by one strongly-connected-components search; finite closure families | XL | no | L6.3, LOWER-stack, CONTIFY | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/tables.rs`, `crates/zed-rt/src/`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `tests/steps/`, `COMPLEXITY.md` |
 | 32 | TRACE-gen-laws | Model-check the guarded claims on `gen` at DESIGN:4281 and mark that paragraph as DESIGN:4241 requires: '(standard)' for the unguarded results of the citations, 'model-checked' with counts for the guarded form | S | no | L6.3 | `tests/steps/m0_10_finite_model_harness/laws_21_28.rs`, `DESIGN.md` |
 | 32 | L5.1d | Merge join and sort-based grouping as plans the L3.23 cost model chooses against hash forms, building a sorted view no consumer requires when the model says it pays | M | no | L3.23, L5.1b | `crates/zedc-zir/src/zir/`, `crates/zed-native/src/`, `tests/steps/` |
 | 33 | L5.10 | Diagnostics rows for L5's rejections; zed build --explain-plan | L | no | L4.7, L5.5, L5.1a, L5.1d | `crates/zedc/src/main.rs`, `crates/zedc/src/opt/explain.rs (new)`, `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/mod.rs`, `tests/steps/l05_10_diagnostics_explain_plan/` |
-| 33 | L6.11a | Solved landmarks: a contracting affine component of integer loop cells adds ±M to its cells' landmarks (DESIGN step L6.11a); the bound is the hull of the start domain and ±M, and with no domain on the start value no bound is proved and the widening warning stays (author correction 2026-11-07) | M | no | L6.11 | `crates/zedc-lattice/src/iterate.rs`, `zed/prelude/iteration.zed`, `tests/steps/l06_11a_solved_landmarks/ (new)`, `../zed/DESIGN.md`, `COMPLEXITY.md` |
+| 33 | L6.11a | Solved landmarks: a contracting affine component of integer loop cells adds ±M to its cells' landmarks (DESIGN step L6.11a); the bound is the hull of the start domain and ±M, and with no domain on the start value no bound is proved and the widening warning stays (author correction 2026-11-07) | M | no | L6.11 | `crates/zedc-lattice/src/iterate.rs`, `zed/prelude/iteration.zed`, `tests/steps/l06_11a_solved_landmarks/ (new)`, `DESIGN.md`, `COMPLEXITY.md` |
 | 33 | L6.9 | Typing of fix: T-Fix evidence, ACC and stability obligations | L | yes | L6.8, SEMIRING-values | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc/src/store/`, `tests/steps/` |
 | 33 | INLINE-zir | General call inlining and closure-argument specialization on ZIR: a non-recursive callee with one call site, or a body no larger than the call; at most one copy per call site; scaling test (DESIGN step L6.14b) | L | no | L3.23, L6.14 | `crates/zedc-zir/src/zir/`, `crates/zedc/src/opt/`, `tests/steps/` |
 | 33 | LAW14-gen | DESIGN step L6.10a: law 14, counted gen: a step applied a counted number of times becomes repeated squaring where finite-table or affine | M | no | L5.7, L6.8 | `crates/zedc/src/opt/`, `DESIGN.md`, `tests/steps/l06_10a_law14/` |
@@ -659,7 +659,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 34 | L5.12 | Corpus programs 4, 5, 6, 11, 22, 23, 25 enabled and run under the oracle | M | no | L5.7a | `zed/corpus/`, `tests/steps/l05_12_corpus/` |
 | 34 | L6.8a | Self-reads at bounded distances elaborate to a gen over a k-frame window; a read below the domain with no boundary entry is a static error; `with initial x = e` is the entry `x[lo-1]`, given once for each variable on any statement that defines or reads it; `p[t] = …` in a loop body rejected (DESIGN step L6.8a, BOUND-static) | M | no | L6.11, L6.9 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc/src/store/`, `tests/steps/` |
 | 34 | L6.10 | Elaborate monotone-evidenced loops to lattice fix, with until x' == x as the termination test | M | no | L6.9 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `tests/steps/` |
-| 35 | L5.11 | Memory benchmark vs a hand-written baseline on three corpus programs | M | no | L5.12 | `zed/corpus/rust/ (new`, `proposed location for hand-written Rust baselines)`, `tests/steps/l05_11_memory_benchmark/` |
+| 35 | L5.11 | Memory benchmark vs a hand-written baseline on three corpus programs | M | no | L5.12 | `zed/corpus/rust/` (new, proposed location for hand-written Rust baselines), `tests/steps/l05_11_memory_benchmark/` |
 | 35 | SPECULATE | Speculative execution with cancellation, building DESIGN step L5.12a: a pure region with termination evidence runs at low priority before its result is demanded and is canceled once unused; a region writing a port, other than a line of the as-observed log (built by GLAM-logspec), and reads of non-idempotent ports are never speculated; test on corpus program 5 at one core and at many | L | yes | L5.12 | `crates/zed-rt/src/sched.rs`, `crates/zedc-zir/src/zir/`, `crates/zed-native/src/codegen.rs`, `tests/steps/l05_12a_speculation/ (new)` |
 | 35 | L6.14a | No load below storage: the k-frame window lowered as a ring or state tuple preloaded with the boundary entries, `::frames` entries below frame 0 of the same allocation, peeling and the choice among these lowerings by the cost model, no run-time index test at a static distance; guard-page runtime test build (DESIGN step L6.14a, BOUND-codegen) | M | no | L3.23, L6.14, L6.8a | `crates/zed-native/src/codegen.rs`, `crates/zed-rt/src/heap.rs`, `crates/zedc-zir/src/zir/lower.rs`, `tests/steps/`, `tests/full/`, `crates/zedc-base/src/cost.rs` |
 | 35 | L6.12 | Discharge ladder rung 4 (induction) and termination evidence with lexicographic descent | XL | yes | L6.11, L6.10 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/ladder.rs`, `crates/zedc-stage/src/stage.rs`, `tests/steps/` |
@@ -669,12 +669,12 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 36 | L6.19 | Costs of recursion and loops | M | no | L3.23, L6.12 | `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/mod.rs`, `zed/prelude/cost.zed`, `tests/steps/` |
 | 36 | L6.5 | .fold over recursive unions and mutual groups (law 21), build recognition and build-fold fusion, folds at a function carrier; the record of a receiver's application `N(A1, …, An)`, kept by the checker through bindings, `.map` results and joins of equal applications, read by `.fold` and `.map`, playing no part in subtyping; DESIGN:578-579 state one rule for both; any other receiver is rejected with an annotated parameter as the repair | XL | yes | L3.21, L3.23, L6.14, L6.12, M0.10a | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/term.rs`, `crates/zedc/src/opt/`, `crates/zedc-zir/src/zir/lower.rs`, `tests/steps/` |
 | 36 | DESCENT-sum | Sum entry in the descent catalog: the integer arguments, or a loop's integer variables, bounded below, each less its bound, summed and proved strictly decreasing by one Presburger entailment per site, with no search over weights, building new DESIGN step L6.12c after L6.12b; DESIGN:909 gains: a loop variable's lower bound counts only where the Presburger layer proves it of the seed and of the update under the guard; and the sentence of the question on recursive groups | S | no | L6.12 | `crates/zedc-check/src/check/`, `crates/zedc-presburger/src/presburger.rs`, `tests/steps/` |
-| 36 | EQ-tabulate | Morphism `==` by tabulation on a finite domain, for a body with termination evidence, rejected otherwise | M | no | L6.12 | `crates/zedc-check/src/check`, `crates/zed-kernel/src/eval.rs`, `tests/steps/l01_17_value_representation/equality.rs`, `DESIGN.md` |
+| 36 | EQ-tabulate | Morphism `==` by tabulation on a finite domain, for a body with termination evidence, rejected otherwise | M | no | L6.12 | `crates/zedc-check/src/check/`, `crates/zed-kernel/src/eval.rs`, `tests/steps/l01_17_value_representation/equality.rs`, `DESIGN.md` |
 | 34 | L5.14-laws | Join of L5 laws, bounds and specialized forms before L5.14: the tests of these items pass together on one main commit before L5.14 starts | S | no | LAW20-move, LAW19-join, BOUND-L5, SORTED-select, L5.5a, L5.13 | `tests/steps/` |
 | 36 | L5.14-orders | Join of L5 orders, joins, diagnostics and memory before L5.14: the tests of these items pass together on one main commit before L5.14 starts | S | no | L5.1c, L5.8a, ENUM-perm, L5.9, L5.10, L5.11 | `tests/steps/` |
 | 36 | ASSOC-fold | Combiner derivation for `.foldl`: the prelude theorem `xs.foldl(init, (acc, x) -> acc ⊕ g(x)) == init ⊕ (xs.map(g) >< ⊕)` for associative `⊕`, and the semiring-affine recognizer (the step evaluated with the accumulator as unknowns, read as `[[M(x), v(x)], [0, 1]]`), so max-subarray runs as a `(max, +)` scan with no annotation; `acc * acc + x` stays serial | M | yes | L5.7a, L6.12 | `crates/zedc/src/opt/`, `zed/prelude/`, `tests/steps/assoc_fold/` (new) |
 | 33 | L5.14a | Amdahl report: speedup interval from L3.23 work and depth for every corpus program and every p, critical-path stages, unbounded terms with reasons, measured speedup beside it (no pass or fail on the distance; Q15 A) | S | no | L5.7, L5.9 | `tools/`, `tests/steps/l05_14a_amdahl/` |
-| 37 | L5.14 | L5 end-of-layer test: at most 3x Rust baselines, 60% efficiency at 16 threads, determinism, L1-L4 ZIR unchanged | L | no | L4.8, L5.12a, L5.14-laws, L5.14-orders, L5.14a | `zed/corpus/rust/ (new)`, `tests/steps/l05_14_layer_test/`, `crates/zedc/src/opt/ (whatever the measurements require)`, `crates/zed-rt/src/ (whatever the measurements require)` |
+| 37 | L5.14 | L5 end-of-layer test: at most 3x Rust baselines, 60% efficiency at 16 threads, determinism, L1-L4 ZIR unchanged | L | no | L4.8, L5.12a, L5.14-laws, L5.14-orders, L5.14a | `zed/corpus/rust/ (new)`, `tests/steps/l05_14_layer_test/`, `crates/zedc/src/opt/` (whatever the measurements require), `crates/zed-rt/src/` (whatever the measurements require) |
 | 37 | L6.13a | Step L6.13a: the digest of its content kept in each shared object, computed once from its children's, and the `==` shortcut on two digests | M | yes | L6.13 | `crates/zed-rt/src/heap.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/codegen.rs`, `tests/steps/` |
 | 37 | L6.13b | Step L6.13b: updates whose old value is still read copy nothing (author 2026-11-09: avoid every copy that can be avoided; make the unavoidable ones with no warning): a read at a key independent of the update runs before it; a read at a key that depends on it reads the entries the update saved; two versions both updated further share a persistent tree; the native build counts the structures an update copies | M | no | L6.13, L5.8 | `crates/zedc-zir/src/zir/memory.rs`, `crates/zedc/src/main.rs`, `tests/steps/` |
 | 37 | L6.13c | Step L6.13c: release by a work list in the runtime, O(n) time and constant stack for a chain of n nodes | S | no | L6.13 | `crates/zed-rt/src/heap.rs`, `crates/zed-native/src/hooks.rs`, `tests/steps/` |
@@ -694,7 +694,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 37 | HEAP-rank | The counting machine gives each cell a rank at creation or reuse and reports an owned edge to a cell of equal or higher rank | S | no | L6.13 | `crates/zedc-zir/src/zir/memory.rs`, `tests/steps/l01_34_memory/` |
 | 37 | ASSOC-scale | Scaling of law inference (REPORT §6 of ASSOC-infer-study; REPORT /home/luke/Work/wt/assoc-fast-study/REPORT.md §1.6, §2.5, §3, each at n and 8n with its control): every rung of law checking O(n log n) in the description size at n and 8n, no N³ evaluation over a finite carrier (A53, 2026-11-08), pathological cases refused structurally with their own message | M | no | ASSOC-fold, HULL-tests, STUDY-tests, H10-tests, ASSOC-infer-tests | `crates/zedc/src/oblig/`, `tests/steps/assoc_scale/` (new) |
 | 37 | AUX-homsynth | Auxiliary-state synthesis for `.foldl` (DESIGN sec:optimizer, Q47 2026-11-08): in a closed fragment with no search limit, a running conjunction or disjunction of a linear test on an affine component is carried as that component's prefix minimum or maximum, so `balanced` (`ok && c + x >= 0`) runs as a `(min, +)`-affine scan; a fold outside the fragment stays a sequential island and `--explain-plan` names the reason | M | no | ASSOC-fold | `crates/zedc/src/opt/`, `tests/steps/` |
-| 38 | BEND-contract | Tree contraction for `.fold` over a recursive union whose one-hole actions lie in a closed composition class (DESIGN step L6.5b): heavy paths, two Euler-tour rankings by pointer jumping, balanced reduction per path, depth O(log² n), work O(n log n); cost-model choice against the layer row | L | yes | L6.19, L5.7a, FOLD-layers | `crates/zedc/src/opt/ (from L3.11 and L5.7)`, `crates/zed-rt/src/scan.rs (from L5.6)`, `crates/zed-rt/src/sched.rs`, `crates/zedc-base/src/cost.rs`, `zed/prelude/cost.zed`, `tests/steps/l06_05b_tree_contraction/ (new)` |
+| 38 | BEND-contract | Tree contraction for `.fold` over a recursive union whose one-hole actions lie in a closed composition class (DESIGN step L6.5b): heavy paths, two Euler-tour rankings by pointer jumping, balanced reduction per path, depth O(log² n), work O(n log n); cost-model choice against the layer row | L | yes | L6.19, L5.7a, FOLD-layers | `crates/zedc/src/opt/` (from L3.11 and L5.7), `crates/zed-rt/src/scan.rs` (from L5.6), `crates/zed-rt/src/sched.rs`, `crates/zedc-base/src/cost.rs`, `zed/prelude/cost.zed`, `tests/steps/l06_05b_tree_contraction/ (new)` |
 | 38 | L6.5a | Step L6.5a, the derived parameter map: done when plan item HKT-1 merges | S | no | HKT-1 |  |
 | 38 | L6.16 | String ropes in the standard library, written in Zed, for each string type | L | yes | L6.15, STR-views | `zed/prelude/`, `crates/zed-kernel/src/text.rs`, `crates/zed-native/src/hooks.rs`, `crates/zedc/src/opt/`, `tests/steps/` |
 | 38 | RT-layout | Runtime value layout independent of the kernel, or the written statement that the kernel's value layer stays Rust; move runtime hooks out of the Cranelift crate; a word view of `int`; an allocator query (DESIGN step L6.13f) | L | no | L6.13a | `crates/zed-rt/src/heap.rs`, `crates/zed-rt/src/ports.rs`, `crates/zed-rt/Cargo.toml`, `crates/zed-native/src/hooks.rs`, `tests/steps/` |
@@ -712,27 +712,27 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 39 | L6.20-laws | Join of laws, witnesses and descent before L6.20: the tests of these items pass together on one main commit before L6.20 starts | S | no | TRACE-conway, TRACE-gen-laws, LAW14-gen, WITNESS-widened, CSR-bounds, DESCENT-sum, EQ-tabulate, FOLD-unique | `tests/steps/` |
 | 39 | L6.20-native | Join of native memory, recursion and folds before L6.20: the tests of these items pass together on one main commit before L6.20 starts | S | no | L6.13e, HEAP-rank, DEEP-native-eq, RECLAIM-pulse, BEND-contract, ARM-split, L6.5c, L6.11b | `tests/steps/` |
 | 41 | L6.20 | Layer L6 end-of-layer test | M | no | L6.17, L6.18, STR-cursor, L6.20-laws, L6.20-native, L6.5d, MIX-callsite | `tests/steps/` |
-| 40 | PRELUDE-rules-run | The prelude units `lattice`, `iteration` and `revision` check under the Rust-hosted compiler, and each widening, narrowing and revision rule is run against its Rust copy | S | no | L6.17, PRELUDE-words | `zed/prelude/lattice.zed`, `zed/prelude/iteration.zed`, `zed/prelude/revision.zed`, `tests/steps/`, `STATUS.md:251` |
+| 40 | PRELUDE-rules-run | The prelude units `lattice`, `iteration` and `revision` check under the Rust-hosted compiler, and each widening, narrowing and revision rule is run against its Rust copy | S | no | L6.17, PRELUDE-words | `zed/prelude/lattice.zed`, `zed/prelude/iteration.zed`, `zed/prelude/revision.zed`, `tests/steps/`, `STATUS.md` (line 251) |
 | 42 | S.1d | Step S.1d: stopping at a broken invariant (gap 8), the member the author chose on 2026-11-04: `#bug(message)` in the prelude, the checker deleting it wherever the index or invariant is proved, every build warning at each unproved site and `--strict` rejecting it (no separate command, author 2026-11-09), and the test that `v[i] else #bug("…")` has no `#bug` with `i` proved in range and keeps it and is warned at with `i` unproved | M | no | L6.20 | `DESIGN.md`, `zed/prelude/`, `crates/zedc-check/src/check/`, `tests/steps/` |
 | 40 | TRIVIAL-or-cnf | The trivial-model report decides a law with `\|\|` through its conjunctive normal form, linear unless an `\|\|` has `&&` operands, whose clause counts multiply; writing the form out is charged one step per comparison written by distributing an `\|\|` over an `&&`, against a stand-in for A54's compile-time budget of 2^20 steps (`trivial.rs` `BUDGET`), and a law whose writing reaches it is refused with its own message (the compile-time work limit was reached for this law; split it into laws whose `\|\|`s hold no `&&`s, or state it as a theorem with a proof). A law with no such `\|\|` spends nothing, whatever its size (`hardness::the_work_limit_is_not_a_size_limit`). Deciding such a law is coNP-complete in its size even with no field (`hardness::an_or_of_ands_is_refused`, the reduction from 3-SAT checked against brute force on 42 formulas; twelve clauses over six variables, 12 * 3^12 = 6,377,292 comparisons, refused), so the cost is exponential in the input and a refusal is required. When L22.8 moves the report into the checker: charge the same steps to MIX-budget's compile-time budget in place of `BUDGET`, keep the message, and keep `scaling::one_long_or_scales` (one `\|\|` of k comparisons, 8.3 and 8.5 times at k = 1,000 and 8,000; negative control, checking the clause after every removal, 40.1 times). COMPLEXITY C32 (2) | S | no | MIX-budget | `tests/steps/l22_08_vacuity/trivial.rs`, `crates/zedc-check/src/check/mod.rs`, `COMPLEXITY.md` |
 | 42 | S.1e | Step S.1e: each prelude unit at its stated cost, a scaling test at n and 8n each; first `iteration.zed` against O((V + E) log V) | M | no | L6.20 | `zed/prelude/`, `tests/steps/`, `COMPLEXITY.md` |
 | 42 | L7.1 | Facet clause `with name(args)` on values and in types: reducer, order, finite | L | no | L6.20 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-zir/src/canon/`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/text.rs`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/term.rs`, `zed/prelude/`, `tests/steps/` |
 | 42 | L8.1 | Parser to AST: as/into, >< in patterns, asc/desc, join regions, tuple sources | M | no | L6.20 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-syntax/src/format.rs`, `tests/steps/` |
 | 42 | L28.1a | ZIR to MLIR to LLVM IR to native x86-64 by text through mlir-opt, mlir-translate and llc, for the L1-L6 forms; link with the retained runtime as L1.36a does; inline the reference-count fast path; LLVM probe-stack test (zed-rt/src/stack.rs:11-13); oracle over L1-L6 fences | XL | no | L6.20, LOWER-legalize | `crates/zedc/src/mlir/ (new)`, `crates/zed-rt/src/stack.rs`, `zed/compiler/MLIR.md`, `tests/full/` |
-| 42 | REFUSAL-census | Count Growth, Shadows, Disjuncts, Tie and Unordered refusals over the step tests, the enabled fences and the corpus programs enabled through L6, loaded through `zedc::run::load`, recorded in STATUS.md; if any non-test program is rejected for a refusal, put the choice to the author with the numbers | S | no | L6.20 | `tests/steps`, `STATUS.md` |
+| 42 | REFUSAL-census | Count Growth, Shadows, Disjuncts, Tie and Unordered refusals over the step tests, the enabled fences and the corpus programs enabled through L6, loaded through `zedc::run::load`, recorded in STATUS.md; if any non-test program is rejected for a refusal, put the choice to the author with the numbers | S | no | L6.20 | `tests/steps/`, `STATUS.md` |
 | 43 | S.1a | Step S.1a: the MLIR back-end port, a built-in output port in zed-rt taking whole-value MLIR text; the host runs mlir-opt, mlir-translate and llc and links per L1.36a; tool errors return as `#ioError` | L | no | L28.1a | `crates/zedc/src/run.rs`, `crates/zed-native/src/`, `zed/prelude/`, `tests/steps/` |
 | 43 | L7.1a | Declared orders: field `order(...)` with `#desc`, `normalize:` and `collate:`; union `order(#declared)` with its disjointness check; the type error where two orders meet in one key type | L | no | L7.1, COLLATE-data | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zed-kernel/src/family.rs`, `crates/zed-kernel/src/value.rs` |
 | 43 | L7.2 | Keyed and multi-site pushes, indexed generation push, Stream, port declarations, handshake fingerprints, Stream keypath state edges, `with commutes(c)` and the commute rejection, read and write views (direction subtyping) | XL | no | L7.1 | `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/run.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-kernel/src/term.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/types.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-rt/src/ports.rs`, `tests/steps/` |
 | 43 | L8.2 | Elaboration of as/into and join patterns; collision menus; bounds of a key-function widen | L | yes | L8.1, L5.4a | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `tests/steps/` |
 | 43 | L10.1 | Parser to AST: interface, binding with type, result types, where, not, refinement, singleton and literal sets, wildcard | M | no | L7.1 | `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-syntax/src/format.rs`, `tests/steps/` |
-| 43 | ROD-data | Build-computed tables, parsed grammars and automata go in the executable's read-only data, marked never released and never unique, on Cranelift AOT and on the MLIR path | M | no | L28.1a | `crates/zed-native`, `crates/zedc/src/mlir lowering`, `crates/zed-rt/src/heap.rs`, `DESIGN.md` |
+| 43 | ROD-data | Build-computed tables, parsed grammars and automata go in the executable's read-only data, marked never released and never unique, on Cranelift AOT and on the MLIR path | M | no | L28.1a | `crates/zed-native/`, `crates/zedc/src/` (the MLIR lowering), `crates/zed-rt/src/heap.rs`, `DESIGN.md` |
 | 44 | L7.2a | Step L7.2a: a port-fed forward-only `Seq` read through `rev` as a right fold on the function carrier (moved from L5.1c) | M | no | L7.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/run.rs`, `tests/steps/` |
 | 44 | L7.3 | Wave stamps as the first sub-slice of the waves work; Full ports: log modes, @log on a definition and as the unit item `@log(#off);`, `x::keypath`, ack morphisms and the bubbling of unread acknowledgment failures, timeout, bound, replay, capacity-wait cycle report, `#full` overflow (the push fails with `#full` in its acknowledgment, under the port's failure policy); clock port, Instant and Duration; causality rejection at the push; random bits as an input port, replayed, with `#ioError` on an entropy failure; the build's list of allowed port kinds; the obligations report lists each blocking access with no timeout, which the `total` tier rejects (soundness survey gap 8) | XL | yes | L7.2, WAVE-theory | `crates/zedc/src/run.rs`, `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/provenance.rs`, `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/`, `crates/zed-native/src/hooks.rs`, `tests/steps/` |
 | 45 | TIMEOUT-annot | `@timeout(d) e` (DESIGN sec:robustness, rule `AnnotExpr`, Q18 2026-11-08): builds rule AnnotExpr at L7, an annotation covering everything to its right up to `else`; one deadline for the port operations inside `e`, `#timeout` added by the fact's typeChange; the warning for a `@timeout` over code that makes no port operation, with its menu (the ninth warning); `@timeout(d)` before a port declaration as the same fact as `with timeout(d)` | M | no | L7.3 | `crates/zedc-parse/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/`, `tests/steps/timeout_annot/` (new) |
 | 44 | L9.1 | Unordered | M | no | L7.1, L8.2 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-zir/src/zir/`, `crates/zed-kernel/src/types.rs`, `crates/zed-native/src/`, `tests/steps/` |
 | 44 | L15.1 | Parser and syntax trees: law with where-narrowed binders and proof clause, @invariant/@ensure/@exhaustive/@exact, ? holes | M | no | L10.1, BEND-tt | `crates/zedc-syntax/src/ast/`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/main.rs`, `crates/zedc/src/`, `tests/steps/l15_01_*` |
 | 44 | L10.4a | Step L10.4a: the rejection row for a capitalized name written once in an interface member's signature | S | no | L10.1 | `crates/zedc-check/src/check/` |
-| 44 | L8.2a | Step L8.2a: the row Binder naming a type at the binders of `as` and `into` patterns | S | no | L8.2 | `crates/zedc-resolve/src/resolve.rs`, `tests/steps`, `DESIGN.md` |
+| 44 | L8.2a | Step L8.2a: the row Binder naming a type at the binders of `as` and `into` patterns | S | no | L8.2 | `crates/zedc-resolve/src/resolve.rs`, `tests/steps/`, `DESIGN.md` |
 | 44 | FINITE-prop | Meaning of `finite()`: `==` on two `K ->? V` values with non-enumerable `K` accepted when both carry it, comparing present domains and then values; carried by displays and stored or port collections, not by a `Stream` port without it or a function widened to `->?`; every-input rule for collection operations, one-input rule for inner join and `zip`; inferred on a parameter from `==`; `K ->? V` as a key | M | no | L7.2 | `crates/zedc-check/src/check/`, `crates/zedc/src/store/`, `tests/steps/` |
 | 45 | L8.3 | L8 layer test: programs 6 and 23; scaling-coverage check passes | S | no | L8.2a | `tests/steps/`, `zed/corpus/` |
 | 45 | L7.4 | FFI: foreign structs, signature declarations, @foreign, the `with commutes(#none)` default for a library without `@stateless`, copy at return, release, @borrowed, @stateless, out fields, transfer, handles, callbacks, concurrency, @after, @export; per-target library-name table, linker argument vector, content address of the exported signatures, exported release functions | XL | yes | L7.3 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/run.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-native/src/`, `crates/zed-rt/src/`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/value.rs`, `Cargo.toml`, `tests/steps/` |
@@ -747,8 +747,8 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 45 | UNORD-keep | Unordered float reductions keep one grouping once read: the row's own test covers CSE and the compiler's rule; the rematerialization case runs at L23.1 and the recovery case at L27.2 | M | no | L9.1 | `crates/zedc-zir/src/zir/`, `crates/zed-rt/src/`, `tests/steps/` |
 | 45 | FILE-bytes | An input port of type `Path ->? U8String \| #ioError`, an output port with a path computed at run time, and a program's exit status from main's failure member; correct `Bytes` at unit.zed:17 and rewrite ZED0.md:78-80 | M | no | L7.3 | `crates/zed-rt/src/ports.rs`, `crates/zed-native/src/hooks.rs`, `crates/zedc/src/run.rs`, `zed/prelude/unit.zed`, `zed/compiler/ZED0.md`, `tests/steps/` |
 | 45 | TARGET-native | The native target states the port kinds it provides and keeps its hand-edited list of rejected corpus programs, each with its exact diagnostic | S | no | L7.3 | `crates/zedc/src/`, `tests/steps/` |
-| 45 | PORT-why | Extend the `why` of `#ioError` (DESIGN.md:2179) with a small family `#denied \| #noSpace \| #exists \| #busy \| #interrupted \| #other(code)`, keeping the text; `retry` retries only `#busy` and `#interrupted` | M | no | L7.3 | `crates/zed-rt`, `DESIGN.md:520`, `:1524`, `:2179` |
-| 45 | TEST-failinject | Test tool: fail the k-th port operation or allocation, for every k | M | no | L7.3, RT-exhaust-report | `tests/src` |
+| 45 | PORT-why | Extend the `why` of `#ioError` (DESIGN.md:2179) with a small family `#denied \| #noSpace \| #exists \| #busy \| #interrupted \| #other(code)`, keeping the text; `retry` retries only `#busy` and `#interrupted` | M | no | L7.3 | `crates/zed-rt/`, `DESIGN.md` (lines 520, 1524 and 2179) |
+| 45 | TEST-failinject | Test tool: fail the k-th port operation or allocation, for every k | M | no | L7.3, RT-exhaust-report | `tests/src/` |
 | 45 | QUANT-finite | The checker raises the rejection row QuantifierNotFinite ("Quantifier in a law over a domain that is not finite", DESIGN:1313) on an `any` in a law over a domain that is not finite (DESIGN:1024), with the law and the unbounded domain as context and a bound on the domain, such as `(0..=n + 1)`, as the repair; `QuantifierNotFinite` in rejection.rs gets its diagnostic | S | no | L15.1, FINITE-prop | `crates/zedc-check/src/check/`, `crates/zedc-base/src/rejection.rs`, `tests/steps/l15_08a_quantifier_finite/ (new)` |
 | 46 | L9.2 | L9 layer test; scaling-coverage check passes | S | no | UNORD-keep, FLOAT-sum-policy | `tests/steps/` |
 | 46 | L7.5a | Port facets `priority`, `coalesce` and `cancel` (DESIGN sec:ports, Event classes), with replay of combined and dropped entries, and round-robin fairness across waves and input ports at each heartbeat pulse | M | no | L7.4, L7.5 | `crates/zed-rt/src/` |
@@ -756,7 +756,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 46 | L21.2 | Port policies: `retry`, `hedge`, `breaker`/`#unavailable`, `rate`, `bound` on a port, `peers` | L | no | L7.4, L7.3d, PORT-why, TEST-failinject | `zed/prelude/ports.zed`, `crates/zed-kernel/src/words.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs`, `crates/zed-native/src/hooks.rs`, `tests/steps/l21_02_port_policies/` |
 | 46 | L7.3a | Step L7.3a, discarded speculation in the as-observed log: done when plan item GLAM-logspec merges | S | no | GLAM-logspec |  |
 | 46 | L28.1 | L28.1a extended to L7 ports, `@foreign`, `@stateless`, the foreign array read in place, and C linked as LLVM IR | XL | no | L7.4, L7.5, L28.1a | `crates/zedc/src/mlir/ (new)`, `crates/zed-rt/src/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs`, `zed/compiler/MLIR.md`, `tests/src/oracle.rs`, `Cargo.toml`, `tests/Cargo.toml`, `tests/steps/l28_01_mlir/ (new)`, `tests/full/l28_01_mlir/ (new)`, `STATUS.md`, `COMPLEXITY.md`, `DESIGN.md` |
-| 46 | OOM-wave | A refused allocation or guard-page fault aborts the wave with a message and leaves the output of earlier waves written; state whether L1.17a's stopped number build is a wave abort after L7; state how replay treats an abort | S | no | L7.5 | `crates/zed-rt/src`, `crates/zedc/src/run.rs`, `DESIGN.md` |
+| 46 | OOM-wave | A refused allocation or guard-page fault aborts the wave with a message and leaves the output of earlier waves written; state whether L1.17a's stopped number build is a wave abort after L7; state how replay treats an abort | S | no | L7.5 | `crates/zed-rt/src/`, `crates/zedc/src/run.rs`, `DESIGN.md` |
 | 46 | L7.5b | Completion across cascaded watermarking ports: state the rule (DESIGN sec:order's window paragraph: a window closes when every watermarking port with a path to it has passed its end); two programs joined by a socket close the window by it, the same on replay | M | yes | L7.5 | `DESIGN.md`, `crates/zedc/src/incr/`, `tests/steps/` |
 | 46 | L7.4b | Rejection row for a capitalized name written once in a `@foreign` signature or a signature declaration `name: T;`, with the menu `_` and the nearest type in scope | S | no | L7.4 | `DESIGN.md`, `crates/zedc-check/src/check/`, `tests/steps/` |
 | 46 | INT-128 | Takes `i128`, `u16`, `u32`, `u64` and `u128` out of `PENDING` in tests/steps/l02_03_name_resolution/later_words.rs. Machine words of 8 to 128 bits (DESIGN sec:domains, steps L3.13 and L7.4, author request 2026-11-07): the presets `i8`…`i128` and `u8`…`u128` as type names of L7; a 128-bit value in two 64-bit words with carry and the widening 64 × 64 → 128 product; the widening warning at 128 bits; `mod 2 ^ k` with `k` at most 128; foreign fields of `__int128`, `uint16_t`…`uint64_t` and `unsigned __int128`; the binary grammars' scalar items at those widths; scaling at n and 8n operations | L | no | L7.4, BIT-repr | `crates/zedc/src/store/`, `crates/zedc-resolve/src/resolve.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-rt/src/`, `crates/zed-kernel/src/`, `zed/prelude/`, `tests/steps/` |
@@ -764,13 +764,13 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 46 | L7.3e | Server socket: a listening port is `Stream(Stream(U8String))`, one inner wave component per connection, replayed; a sentence in DESIGN sec:ports | M | yes | L7.5 | `DESIGN.md`, `crates/zedc/src/`, `tests/steps/` |
 | 46 | FFI-headertest | `zed.manifest` gains an entry naming each foreign struct's header comparison test as a string literal, and a named test that does not exist is a build error; the obligations report names the test beside the obligation (DESIGN step, DESIGN:779 and 1559; no grammar added) | S | no | L7.4 | `crates/zedc/src/unit.rs`, `crates/zedc-resolve/src/resolve.rs`, `tests/steps/ffi_headertest/ (new)`, `DESIGN.md` |
 | 46 | LAWS-stream | Stream operations: generated property tests that each operation's semantic function commutes with its laws, over prefixes of a run | S | no | L7.5 | `tests/steps/`, `zed/fences/` |
-| 46 | FFI-status | A foreign signature maps a C status field to atoms in its declaration, so a failing status reaches Zed as a loose union member; rewrite the `getaddrinfo` example at DESIGN.md:1548 | S | no | L7.4 | `DESIGN.md sec:ffi`, `crates/zedc/src/`, `tests/steps/` |
+| 46 | FFI-status | A foreign signature maps a C status field to atoms in its declaration, so a failing status reaches Zed as a loose union member; rewrite the `getaddrinfo` example at DESIGN.md:1548 | S | no | L7.4 | `DESIGN.md` (sec:ffi), `crates/zedc/src/`, `tests/steps/` |
 | 46 | EXPORT-unique | Two `@export` declarations with one C symbol in a build are an error naming both | S | no | L7.4 | `crates/zedc/src/`, `tests/steps/` |
-| 46 | RT-exhaust-wave | A supervisor restarts a killed process from the last committed generation | M | yes | L7.5, RT-exhaust-report | `crates/zed-rt`, `DESIGN.md:522`, `:1418`, `:1530` |
+| 46 | RT-exhaust-wave | A supervisor restarts a killed process from the last committed generation | M | yes | L7.5, RT-exhaust-report | `crates/zed-rt/`, `DESIGN.md` (lines 522, 1418 and 1530) |
 | 47 | L7.6 | Incremental engine: memo cache, cutoff, modalities, history compaction, log lines in entries | L | yes | L7.5b, INCR-script | `crates/zedc/src/incr/`, `crates/zedc/src/query.rs`, `crates/zedc-zir/src/zir/`, `crates/zed-rt/src/`, `crates/zed-kernel/src/provenance.rs`, `tests/steps/` |
 | 47 | L10.3 | refine, opaque, @checked | L | no | L10.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-zir/src/zir/`, `crates/zed-native/src/`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/num.rs`, `tests/steps/` |
-| 47 | ROUND-words | Take `round`, `floor`, `ceil`, `trunc` into Defined words by layer and PENDING, then write them in the prelude from catalog entries at int, rat and f64, `round` ties to even, carrier from the expected type | M | no | L10.2 | `zed/prelude`, `DESIGN.md`, `tests/steps` |
-| 47 | MLIR-noalias | Array and family pointers in the emitted LLVM IR carry `noalias` or scoped alias metadata wherever reuse in place does not write the same object | S | no | L28.1 | `crates/zedc/src/mlir lowering`, `zed/compiler/MLIR.md` |
+| 47 | ROUND-words | Take `round`, `floor`, `ceil`, `trunc` into Defined words by layer and PENDING, then write them in the prelude from catalog entries at int, rat and f64, `round` ties to even, carrier from the expected type | M | no | L10.2 | `zed/prelude/`, `DESIGN.md`, `tests/steps/` |
+| 47 | MLIR-noalias | Array and family pointers in the emitted LLVM IR carry `noalias` or scoped alias metadata wherever reuse in place does not write the same object | S | no | L28.1 | `crates/zedc/src/` (the MLIR lowering), `zed/compiler/MLIR.md` |
 | 47 | L10.2a | Interface types: a struct satisfies a named structural type where each required name is a field or an in-scope function taking the struct first, resolved in the caller's scope and elaborated to the widened struct | M | no | L10.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab/`, `DESIGN.md`, `tests/steps/l10_02a_interface_semantics/` |
 | 48 | L7.7 | Canonical memo keys | M | no | L7.6 | `crates/zedc-zir/src/canon/`, `crates/zedc/src/incr/`, `crates/zedc/src/query.rs`, `tests/steps/` |
 | 48 | L7.8 | Delta path | L | yes | L7.6 | `crates/zedc/src/incr/`, `crates/zed-rt/src/`, `crates/zedc-zir/src/zir/`, `crates/zed-cert/`, `tests/steps/` |
@@ -781,7 +781,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 48 | L28.2 | L28 end-of-layer test: oracle on the MLIR back end; scalar and fold-heavy programs measured; scaling-coverage check passes | M | no | MLIR-noalias | `tests/Cargo.toml`, `tests/full/l28_02_layer_test/ (new)`, `tests/src/oracle.rs`, `STATUS.md`, `COMPLEXITY.md`, `../zed/PROGRESS.md` |
 | 48 | L7.3c | Step L7.3c: a build names the units whose log lines it keeps, and an evaluation reused, replayed or computed at build writes its log lines as a fresh one would | S | no | L7.6 |  |
 | 48 | L7.6a | Step L7.6a: under incremental maintenance a sorted view is an ordered index updated per changed entry, never sorted again | M | no | L7.6 |  |
-| 48 | LIVE-clocks | Each output's clocks read from the dependence summaries | S | no | L7.6 | `crates/zedc/src`, `tests/steps` |
+| 48 | LIVE-clocks | Each output's clocks read from the dependence summaries | S | no | L7.6 | `crates/zedc/src/`, `tests/steps/` |
 | 48 | L12.0 | Step L12.0: law members in a struct (STRUCT-laws, author 2026-11-09): `struct Span { lo: int, hi: int, law ordered() = lo <= hi }`, a law over the fields with no proof clause, an obligation of each value built, ascribed or passed at the struct type, keyed by the value's content address and the law and checked once per address; a site whose field values vary at run time proves the law for every value reaching it or is rejected with the row "Struct law not proved at a value built, ascribed or passed at the struct type" and its menu; the AST builder now reports a law member as not built yet (stmts.rs); test: `Span(lo: 1, hi: 3)` and `Span(lo: a, hi: a + n)` with `n : int[0..]` accepted; `Span(lo: a, hi: b)` with `a, b : int` rejected naming `ordered`, the call and `a = 1`, `b = 0`, with the menu that guards the call with `if a <= b`, and the guarded call accepted; the record `{lo: 3, hi: 1}` ascribed to `Span` rejected by the same row; `Monotone(f: x -> x + 1)` accepted and `Monotone(f: x -> -x)` rejected naming `mono`; `s = Span(lo: 1, hi: 3)` passed at `Span` to ten functions checked once (count 1); scaling: n distinct `Span` values, each built at four sites and passed to four functions, at n = 1,000 and 8,000, check count n, ratio at most 8, work counted not timed | M | no | L22.1, L10.3, L2.12 | `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-check/src/check/`, `crates/zedc-base/src/rejection.rs`, `tests/steps/l12_00_struct_laws/` |
 | 49 | L7.9 | Fold updates on deltas | M | no | L7.8 | `crates/zedc/src/incr/`, `crates/zed-rt/src/`, `tests/steps/` |
 | 49 | L7.10 | Semi-naive fix, dioid conditions, squaring choice | L | yes | L7.8 | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs`, `tests/steps/` |
@@ -795,8 +795,8 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 49 | FPWARN | Renames and widens NONAN. Takes `fpwarn` out of `PENDING` in tests/steps/l02_03_name_resolution/later_words.rs, where the `later_words` entry `("noNaN", "NONAN")` becomes `("fpwarn", "FPWARN")`. `@fpwarn` on a function, replacing `@noNaN` (DESIGN sec:failure and step L10.3b, author decisions 2026-11-04 and 2026-11-07): the six atoms `#NaN`, `#inf`, `#overflow`, `#divByZero`, `#underflow` and `#lossOfPrecision`, tested per operation on each float an operation produces that the facets do not prove clean, each float a call returns and each float read from outside, `#inf` for an infinity not made in the body from finite values, and a float cast of `#NaN` or `#inf` giving that atom as its type (`f64(#inf)` has type `#inf`, so `-f64(#inf)` is refused until handled; author decision 2026-11-07, item NAN-inf-atom), with the tests of CHECKED-float; `lost: k` with the per-format default; the sum cancellation test; the library functions' atoms by the table of sec:failure; the atoms do not pass through an operation; `@fpsafe e` on an expression (rule `AnnotExpr`, whose second alternative takes a prefix expression, so `@fpsafe -f64(#inf)` is negative infinity with no atom), which turns `@fpwarn` off for `e` with no test in a debug or an optimized build, and its warning outside `@fpwarn` code; takes `fpsafe` out of `PENDING` in later_words.rs; parameters are not tested; a function without the annotation has unchanged ZIR; `@noNaN` is not defined; scaling of checking and of the run at n and 8n floats | M | no | CHECKED-float, NAN-cast-atoms | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab/walk.rs`, `crates/zedc-zir/src/zir/`, `crates/zedc-resolve/src/resolve.rs`, `tests/steps/` |
 | 49 | SELFINT-design | Written design for a self-interpreter whose residual has the program's own f::cost and f::depth with union-typed values, or a corrected L19.2 test at DESIGN:2435 if that cannot hold; the self-interpreter itself stays after S.4 | M | no | L11.1 | `docs/`, `DESIGN.md` |
 | 49 | ITEM-order-dispatch | Step L1.29b, the parts left after ITEM-order: un-ignore `swapping_two_declarations_of_one_name_changes_which_arrow_runs`, with Utf8String results; replace the panic in `across_items_by_verdict` with the check that each reported witness set is minimal, and add a unit whose unsatisfiable constraints span two items so that check runs | S | no | L10.4 | `tests/steps/l01_29_diagnostics/order.rs` |
-| 49 | EDGE-class | Edge classes: a direction chosen per edge from the certified class of the sec:push_pull table, and a composite edge certified at the meet of its edges' classes | M | no | L7.11 | `crates/zedc-zir/src/zir/`, `crates/zedc/src/store/`, `DESIGN.md sec:push_pull`, `tests/steps/` |
-| 49 | READ-arms | every build warns at each arm of a generic function checked at no instance | M | no | L11.1 | `crates/zedc`, `DESIGN.md:970` |
+| 49 | EDGE-class | Edge classes: a direction chosen per edge from the certified class of the sec:push_pull table, and a composite edge certified at the meet of its edges' classes | M | no | L7.11 | `crates/zedc-zir/src/zir/`, `crates/zedc/src/store/`, `DESIGN.md` (sec:push_pull), `tests/steps/` |
+| 49 | READ-arms | every build warns at each arm of a generic function checked at no instance | M | no | L11.1 | `crates/zedc/`, `DESIGN.md` (line 970) |
 | 50 | L10.3d | Step L10.3d: `@approx(relErr: e)` and `@approx(absErr: e)` on a call of `rsqrt`, `sqrt`, `exp`, `log`, `sin`, `cos` or a division (rule `AnnotExpr`), `e` a constant at least the format's unit roundoff, lowering to the correctly rounded function until L24.2a; takes `approx` out of `PENDING` in later_words.rs; tests: the step's accepted and rejected programs, the bound checked with `rat` on every `f32` in [1.0, 4.0) and random and subnormal inputs, a plain `rsqrt` bit-identical across interpreter and codegen, n and 8n calls O(n) | M | no | FPWARN, L1.39g, TIMEOUT-annot | `crates/zedc-check/src/check/`, `crates/zedc-syntax/src/parse/`, `crates/zedc-zir/src/zir/`, `tests/steps/l10_03d_approx/` (new) |
 | 50 | L7.10a | Best-first fix: `selective` in the property record, superiority fact, ties in content-address order, choice against semi-naive by the cost model | M | yes | L7.10, FLOAT-interval | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs`, `tests/steps/l07_10a_best_first/`, `COMPLEXITY.md` |
 | 50 | L10.5 | L10 layer test; scaling-coverage check passes | S | no | L10.4a, L10.4b, BIT-checker-ranges, FPWARN, ROUND-words, ITEM-order-dispatch, L10.2a, MENU-linear-L10 | `tests/steps/`, `zed/corpus/` |
@@ -820,15 +820,15 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 51 | FACT-prelude | The prelude facets written with the user's `Facet` mechanism (DESIGN sec:facets): units, taint, order, reducer, bits, endian, layout, store; associative, commutative, idempotent, injective; cost, fused, memoized, noalloc, preallocated; each with printedForm `#annotation`; every earlier built-in reading of these gives the same verdicts and messages | L | no | FACT-unify, L12.2 | `zed/prelude/`, `crates/zedc-check/src/check/`, `tests/steps/fact_prelude/` (new) |
 | 51 | FACT-claims | Writing a fact is a checked claim (DESIGN sec:facets, Q18 2026-11-08): `@cost(b)` checked against the derived bound, a written law checked by the ladder (ASSOC-demand), `@require(f)` turning any hint fact `f` into a demand, `@assume(@f)` the only waiver, recorded with its site | M | no | FACT-unify | `crates/zedc/src/oblig/`, `crates/zedc-check/src/check/`, `tests/steps/fact_claims/` (new) |
 | 53 | L14.1 | Linear algebra: shape sugar, matmul, solve, layout, division-algebra axioms | XL | yes | L8.2, L12.2b | `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-check/src/check/`, `crates/zedc-base/src/axioms.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-zir/src/zir/`, `crates/zed-native/src/`, `zed/prelude/`, `tests/steps/` |
-| 51 | L19.1 | compile: signature and staging contract, closure stages; run-time specialization, recompile per wave, taint rejection | XL | yes | L7.6, L11.1a, L13.1, SELFINT-design | `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/run.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-rt/src/lib.rs`, `zed/prelude/`, `DESIGN.md sec:staging`, `tests/steps/l19_01_*` |
+| 51 | L19.1 | compile: signature and staging contract, closure stages; run-time specialization, recompile per wave, taint rejection | XL | yes | L7.6, L11.1a, L13.1, SELFINT-design | `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/run.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-rt/src/lib.rs`, `zed/prelude/`, `DESIGN.md` (sec:staging), `tests/steps/l19_01_*` |
 | 51 | L15.3 | Forward confirmation of a backward result before use as a precondition; relation carried in the signature; cycle rejection | M | yes | L15.2, L11.2a | `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-check/src/check/`, `zed/prelude/`, `tests/steps/l15_03_*` |
 | 51 | L15.4 | @invariant traces from bounded model checking; proofs, tactics and law bodies compile-time-stage and erased | M | no | L15.2 | `crates/zedc-stage/src/stage.rs`, `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zed-kernel/src/provenance.rs`, `zed/prelude/`, `tests/steps/l15_04_*` |
-| 51 | L15.5 | Proof checking rules written, obligation normal form, pin file format; proof kernel in zed-cert; Proved(certificate) as rung 8 | XL | yes | L15.2 | `crates/zed-cert/src/`, `crates/zed-kernel/src/`, `crates/zedc-zir/src/canon/`, `crates/zedc-check/src/check/`, `zed/prelude/`, `DESIGN.md sec:verification`, `DESIGN.md sec:checking_in_zed`, `tests/steps/l15_05_*` |
+| 51 | L15.5 | Proof checking rules written, obligation normal form, pin file format; proof kernel in zed-cert; Proved(certificate) as rung 8 | XL | yes | L15.2 | `crates/zed-cert/src/`, `crates/zed-kernel/src/`, `crates/zedc-zir/src/canon/`, `crates/zedc-check/src/check/`, `zed/prelude/`, `DESIGN.md` (sec:verification), `DESIGN.md` (sec:checking_in_zed), `tests/steps/l15_05_*` |
 | 52 | PROOF-alg | Rung 8 certificates for laws outside the rung-2 fragments: a Positivstellensatz or ideal-membership certificate the author supplies, checked by the kernel; a diagonal ternary quadratic by its Legendre certificate (H10-study); a factorization certificate for a number a conic premise needs factored (QUESTIONS A56): the factors, which the kernel multiplies out, each proved prime by a Pratt certificate [Pratt] (the checker supplies one below 2^128, the author's `Proof` one at 2^128 or more), and the kernel also checks the Pratt certificates HULL-conic builds | M | yes | L15.5 | `crates/zed-cert/src/`, `tests/steps/proof_alg/` (new) |
 | 52 | KERNEL-check-tests | The fast checker against the proof kernel (author, QUESTIONS A18a and A18d, 2026-11-07; DESIGN L15.9): over the corpus's laws each law is classed agree, false accept, false reject or timeout; a false accept fails, a false reject is listed; and a checker benchmark: n and 8n laws within 24x, under 60 s, with the growth ratio recorded in COMPLEXITY | M | no | L15.5 | `tests/steps/l15_09_*`, `crates/zed-cert/src/`, `COMPLEXITY.md` |
 | 51 | L16.1 | Algebraic claims as short spellings of laws; @assume(p) with certificate marks (rung 9); `zedc test` evaluates each `@assume` on the values its tests reach, a false one a test failure, and the build has no check of it (soundness survey gap 6) | M | no | L15.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zed-cert/src/`, `zed/prelude/`, `tests/steps/l16_01_*` |
-| 51 | L17.1 | total-mode checks with fuel transform; written @measure in the descent catalog as a graded obligation | L | yes | L15.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/main.rs`, `zed/prelude/`, `DESIGN.md sec:staging`, `tests/steps/l17_01_*` |
-| 51 | L16.3 | Uniqueness facet unique at proof grade: tenth catalog entry, from the program's own evidence only | M | no | L15.2 | `crates/zedc-check/src/check/`, `zed/prelude/`, `DESIGN.md sec:values_morphisms`, `tests/steps/l16_03_*` |
+| 51 | L17.1 | total-mode checks with fuel transform; written @measure in the descent catalog as a graded obligation | L | yes | L15.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/main.rs`, `zed/prelude/`, `DESIGN.md` (sec:staging), `tests/steps/l17_01_*` |
+| 51 | L16.3 | Uniqueness facet unique at proof grade: tenth catalog entry, from the program's own evidence only | M | no | L15.2 | `crates/zedc-check/src/check/`, `zed/prelude/`, `DESIGN.md` (sec:values_morphisms), `tests/steps/l16_03_*` |
 | 51 | LAW-shape | Shape-instance reduction of a law's binder over a type variable T in rungs 1, 6 and 7: both sides in the moves class with structural `==`, run at T := int on the index instance (DESIGN sec:verification, step L15.2b) | M | no | L15.2 | `crates/zedc-check/src/check/`, `tests/steps/` |
 | 51 | THIRDHOM-law | Third homomorphism: a proved `law` that a `.foldl` and a `.foldr` agree yields a synthesized combiner | S | no | L15.2 | `crates/zedc/src/opt/`, `tests/steps/l15_02b_thirdhom/ (new)` |
 | 51 | STAGE-reads | The metadata reads of the property record (`(+)::associative`, `f::inverse`), and rejection of a run-time value that depends on a hint or evidence read | M | no | L11.1a, L18.1 | `crates/zedc-stage/src/stage.rs`, `crates/zedc-check/src/check/`, `zed/fences/rejections.txt`, `tests/steps/l01_21_test_runner/rows.rs`, `DESIGN.md`, `tests/steps/` |
@@ -845,7 +845,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 54 | MATH-names | Takes `csqrt`, `cexp`, `clog` and `cpow` out of `PENDING` in tests/steps/l02_03_name_resolution/later_words.rs. The function names of DESIGN sec:linalg (division algebras), steps L1.39e and L14.1b, author request 2026-11-07: `csqrt`, `cexp`, `clog`, `cpow` returning `complex(T)` on the principal branch, the plain `sqrt`, `exp`, `log`, `pow` staying real; `isqrt`, `iroot`, `ilog2`, `ilog` exact with domain-typed parameters; `log1p`, `expm1`, `hypot`; STD-num takes its integer roots from here; scaling at n and 8n arguments and bits | M | no | L14.1 | `zed/prelude/`, `crates/zed-kernel/src/`, `crates/zedc-resolve/src/resolve.rs`, `tests/steps/` |
 | 52 | L18.2a | Plan assertions @cost, @fused, @memoized, @noalloc: each a failing check on the plan the planner chose, never a request that changes it | L | yes | L7.6, L18.1, L17.1 | `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/main.rs`, `tests/steps/l18_02a_*` |
 | 52 | L20.2 | Serializer generation with canonical emission; struct grammar derived from a foreign struct; emission-disjointness check; round-trip property tests; choice/emission warning | L | yes | L15.2, L20.1a | `zed/prelude/grammar.zed`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/value.rs`, `tests/steps/l20_02_serializers/`, `DESIGN.md` |
-| 52 | L15.6 | reflect: the formula types it may reify into, and the reification contract; #reflect rule | M | yes | L15.5 | `crates/zed-cert/src/`, `zed/prelude/`, `DESIGN.md sec:checking_in_zed`, `DESIGN.md sec:verification`, `tests/steps/l15_06_*` |
+| 52 | L15.6 | reflect: the formula types it may reify into, and the reification contract; #reflect rule | M | yes | L15.5 | `crates/zed-cert/src/`, `zed/prelude/`, `DESIGN.md` (sec:checking_in_zed), `DESIGN.md` (sec:verification), `tests/steps/l15_06_*` |
 | 52 | L16.2 | @injective: ninth catalog entry at proof grade; sub-proof form elaborates to checked group+fold with `\ \| #collision` | M | no | L16.1 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `zed/prelude/`, `tests/steps/l16_02_*` |
 | 52 | L22.2 | Models and their obligations keyed by content address; theorems with theory binders, hypotheses at rung 3, termination premise, grade of a use; a refuted obligation a type records about itself (`addAssoc` at `f64`) accepted as a fact, a use that needs it rejected | XL | no | L22.1, L15.5, LAW-shape, L12.0 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-zir/src/canon/mod.rs`, `crates/zed-cert/src/lib.rs`, `zed/prelude/theories.zed`, `crates/zedc/src/`, `tests/steps/l22_02_models/` |
 | 52 | L12.3a | Equalities shared through the store: one union-find over cells fed by `shares`, linear-relation equalities and carrier equalities; an author's constant reaches only authors' domains | M | yes | L12.3 | `crates/zedc/src/store/eq.rs`, `crates/zedc/src/store/`, `zed/prelude/`, `tests/steps/l12_03a_shared_equalities/`, `COMPLEXITY.md` |
@@ -854,9 +854,9 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 52 | L15.7a | Step L15.7a: the published soundness defects of other proof kernels collected, each that applies to a rule of the kernel turned into a test (KERNEL-defects) | M | no | L15.5 |  |
 | 52 | MENU-linear-L15 | The `NonLinearQuestion` menu gains its L15 line, a `proof { }` (DESIGN sec:diagnostics, row "Linear question outside the polynomial fragment") | M | no | MENU-linear-L10, L15.5 | `crates/zedc/src/run.rs`, `tests/steps/` |
 | 52 | L21.0 | Stores without a database: `store(...)` schema elaboration to two-bound types, primed stored collections, `#transactional` collision carry, Assumed-grade uniqueness, on an in-memory and a file backend | M | no | L20.1, L16.3 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/ports.rs`, `tests/steps/l21_00_stores/ (new)` |
-| 52 | L17.1b | Speculation widened to regions with termination evidence (the clause of step L5.12a that names L17.1) | S | no | L17.1 | `crates/zedc/src/opt`, `tests/steps`, `DESIGN.md` |
-| 52 | COMPILE-data | `compile` on a grammar read from a port, and on a query and a rule set through small interpreters in Zed, each matching the interpreted result with no residual node reading the input's tree | S | no | L20.1, L19.1 | `tests/steps`, `zed/fences` |
-| 54 | REPACK-tile | Tiling, blocking, level transposition and layout change as repacks: legality checked by the affine-packing witness, choice made by the cost model | M | no | L14.1 | `crates/zedc-zir/src/zir/`, `DESIGN.md sec:plan`, `tests/steps/` |
+| 52 | L17.1b | Speculation widened to regions with termination evidence (the clause of step L5.12a that names L17.1) | S | no | L17.1 | `crates/zedc/src/opt`, `tests/steps/`, `DESIGN.md` |
+| 52 | COMPILE-data | `compile` on a grammar read from a port, and on a query and a rule set through small interpreters in Zed, each matching the interpreted result with no residual node reading the input's tree | S | no | L20.1, L19.1 | `tests/steps/`, `zed/fences/` |
+| 54 | REPACK-tile | Tiling, blocking, level transposition and layout change as repacks: legality checked by the affine-packing witness, choice made by the cost model | M | no | L14.1 | `crates/zedc-zir/src/zir/`, `DESIGN.md` (sec:plan), `tests/steps/` |
 | 53 | GLAM-diamond-iface | Interface `import P(T, …)` diamond, building DESIGN step L22.1a (Glam study P1): the L2.12a rule for fields and law members after the type arguments are substituted; obligations counted once per model | S | no | L22.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `tests/steps/l22_01a_interface_diamond/ (new)` |
 | 53 | L13.2 | L13 layer test: corpus program 20; scaling-coverage check passes | S | no | L13.1a | `tests/steps/`, `zed/corpus/20-taint.zed`, `zed/prelude/` |
 | 55 | L14.2 | L14 layer test: division-algebra tests, corpus program 06 `a.matmul(b)`; scaling-coverage check passes | S | no | REPACK-tile | `tests/steps/`, `zed/corpus/` |
@@ -906,7 +906,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 58 | LAYERS-L7-L14 | Join of the layer tests L7 to L14 before L28.3 and L6.17a: the tests of these items pass together on one main commit before L28.3 and L6.17a starts | S | no | L7.15, L8.3, L9.2, L10.5, L11.3, L12.4, L14.2 | `tests/steps/` |
 | 60 | LAYERS-L15-L23 | Join of the layer tests L15 to L23 before L28.3 and L6.17a: the tests of these items pass together on one main commit before L28.3 and L6.17a starts | S | no | L15.9, L16.4, L17.2, L18.3, L20.2b, L22.10a, L23.6 | `tests/steps/` |
 | 61 | L28.3 | Corpus and fences enabled at S.1 pass the differential oracle on the MLIR back end, with saturation plans | L | no | L28.2, L24.9a, LAYERS-L7-L14, LAYERS-L15-L23 | `tests/full/`, `STATUS.md` |
-| 61 | L6.17a | Audit the compiler code added by L7 to L24 under L6.17's rule, and move to `zed/prelude` the code run at compile time that Zed can express at the same cost, keeping the Rust copy as oracle | XL | yes | L24.9a, LAYERS-L7-L14, LAYERS-L15-L23 | `crates/zedc`, `crates/zed-rt`, `zed/prelude`, `zed/compiler`, `../zed/DESIGN.md` |
+| 61 | L6.17a | Audit the compiler code added by L7 to L24 under L6.17's rule, and move to `zed/prelude` the code run at compile time that Zed can express at the same cost, keeping the Rust copy as oracle | XL | yes | L24.9a, LAYERS-L7-L14, LAYERS-L15-L23 | `crates/zedc/`, `crates/zed-rt/`, `zed/prelude/`, `zed/compiler/`, `DESIGN.md` |
 | 14 | S.1-grammar | Join of grammar and ZIR text before S.1: the tests of these items pass together on one main commit before S.1 starts | S | no | RULE-decide, ZIR-family-key, ZIR-name-xid, ZIR-canon-sort, FUZZ-neg, BREAK-cases, TEST-fuzz, OR-PAT | `tests/steps/` |
 | 39 | S.1-repr | Join of value representations before S.1: the tests of these items pass together on one main commit before S.1 starts | S | no | BIT-repr, WIDE-product, HASH-repr, UNION-spare, SORTED-dense, RT-layout, INTERN-threaded, MEMO-cross | `tests/steps/` |
 | 43 | S.1-rust | Join of the Rust code, its lints and its documentation that the audit reads before S.1: the tests of these items pass together on one main commit before S.1 starts | S | no | T10, T14-lints, PLAN-conflicts, PRELUDE-rules-run, REFUSAL-census | `tests/steps/` |
@@ -920,7 +920,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 1 | Q1-LOCAL | Done: Study (author, Q3, 2026-11-07): rational emptiness with four or more live variables. (1) Measure how the Presburger layer grows today: the hub family (the_box_stage_with_a_hub_in_one_row_per_block_scales), the 18 rationally empty systems of oracle.rs, the fresh-seed systems, and chain, grid, band and random sparse families at n to 8n; (2) find the cause of every growth above n log n by profiling and by tracing the code; (3) a method that is O(n log n) on the normal cases and refuses only pathological ones by structure, with its own error; designed first by the orchestrator, then cross-review of at most 8 rounds if no method is found | L | yes | Q1-ROWBOX | `crates/zed-kernel/src/presburger.rs`, `tests/steps/l01_38_presburger/`, `COMPLEXITY.md` |
 | 0 | EMPTY-level | Done: Author, Q4, 2026-11-07: an empty inner level keeps its key (DESIGN M0.9 (d), (e); sec:remap_law). `Family` stops dropping a level emptied by `discard`; `{"a" -> {}} >< max` is `{"a" -> #empty}`; `{"a" -> {}}::domain` holds `"a"` and differs from `{}`; `{"a" -> {}, "b" -> {1 -> true}}.count` is `{"a" -> 0, "b" -> 1}`; a remap whose output keypath starts with levels computed from the outer key alone keeps it (`into (k.upper -> j -> v)` gives `{"A" -> {}}`), and orderedValues or sort over the outer level ranks it. Change family.rs:58, :215, :254, the test at :502, `tests/steps/m0_09_kernel_evaluator/mod.rs:158`, laws_01_10.rs:70; scaling test at n and 8n | M | yes | none | `crates/zed-kernel/src/family.rs`, `tests/steps/m0_09_kernel_evaluator/`, `crates/zed-kernel/tests/` |
 | 44 | EMPTY-level-swap | Author, Q4, 2026-11-07, second half: a transpose of `{"a" -> {}}` is `{}`, and the checker warns `#emptyLevelDropped` at a move that puts an unbound level ahead of a short keypath, unless the inner level is known nonempty (`card >= 1`); a swap there and back over a possibly empty level is not rewritten to its source, and after `group` (`card >= 1`) it is | S | yes | L8.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `tests/steps/` |
-| 0 | SPEC-soundness-static | Done: Author, Q6, 2026-11-07, with the correction the same day. DESIGN sec:checking_in_zed states the principle: a soundness or safety check (written types, signature refinements, evidence facets, hoisted preconditions, laws, @invariant, @ensure) is finished by partial evaluation at compile time or the program is rejected with the full derivation and a menu, never left as an inserted test with #invalid; other computation may stay residual; tests the program writes (is, if, match, refine, checked casts, else #bug) stay program logic; every class of run-time error is to be preventable statically, explicit stops rejected unless a compiler switch allows them (details left to SPEC-soundness-survey). --strict, @strict; and @proved are removed; grades below proof (Bounded, Obligated) are reported and license nothing; @assume and foreign assertions are listed written trust pending Q27; the parity fence h is rejected unless proved (Q7). Rewritten: sec:constraints, Soundness, the non-goal, the words table, the grade table and soundness split, the pins, the obligations report, unproved refinements, the extension rule and evidence-facet demand, models (the built-in witness of f64 `+` refutes addAssoc: 0.1, 0.2, 0.3), the diagnostics rows, the capacity obligation (now a rejection with menu), the constructor check of sec:tooling, L3.20, L12, L15, L16.1, L22.2, EXAMPLES sections 20 and 21, and the README; L15.2 tests `g(y: _) = f(y)` and `g(y: int) = f(y)` as rejections and `h(z: int[1..=5]) = f(z)` as accepted with no test | M | yes | none | `../zed/DESIGN.md`, `../zed/EXAMPLES.md`, `../zed/README.md`, `docs/plan_dag.md` |
+| 0 | SPEC-soundness-static | Done: Author, Q6, 2026-11-07, with the correction the same day. DESIGN sec:checking_in_zed states the principle: a soundness or safety check (written types, signature refinements, evidence facets, hoisted preconditions, laws, @invariant, @ensure) is finished by partial evaluation at compile time or the program is rejected with the full derivation and a menu, never left as an inserted test with #invalid; other computation may stay residual; tests the program writes (is, if, match, refine, checked casts, else #bug) stay program logic; every class of run-time error is to be preventable statically, explicit stops rejected unless a compiler switch allows them (details left to SPEC-soundness-survey). --strict, @strict; and @proved are removed; grades below proof (Bounded, Obligated) are reported and license nothing; @assume and foreign assertions are listed written trust pending Q27; the parity fence h is rejected unless proved (Q7). Rewritten: sec:constraints, Soundness, the non-goal, the words table, the grade table and soundness split, the pins, the obligations report, unproved refinements, the extension rule and evidence-facet demand, models (the built-in witness of f64 `+` refutes addAssoc: 0.1, 0.2, 0.3), the diagnostics rows, the capacity obligation (now a rejection with menu), the constructor check of sec:tooling, L3.20, L12, L15, L16.1, L22.2, EXAMPLES sections 20 and 21, and the README; L15.2 tests `g(y: _) = f(y)` and `g(y: int) = f(y)` as rejections and `h(z: int[1..=5]) = f(z)` as accepted with no test | M | yes | none | `DESIGN.md`, `../zed/EXAMPLES.md`, `../zed/README.md`, `docs/plan_dag.md` |
 | 46 | STOP-switch | The stop switch `--allow-stops` and `#bug` under it, and the foreign trust switch (`--allow-foreign`, `foreign trust: m`), as QUESTIONS Q53 and Q27 decide them (soundness survey Part 3 and gap 7; DESIGN sec:checking_in_zed names this row). Tests: the survey's Part 3 programs under the chosen answers; a program holding a foreign assertion is accepted or rejected as Q27 decides, and the report lists it at `Assumed(site)` | M | no | S.1d, L7.4 | `crates/zedc/src/main.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/store/`, `tests/steps/` |
 | 20 | RT-alloc-refusal | Fallible allocation in zed-rt and zed-native: a refused allocation aborts the wave and reports the resource, the size that failed and the site, never an atom the program handles (DESIGN sec:checking_in_zed, machine resources; soundness survey Part 4). Test: a program run under `RLIMIT_AS` below its need reports the size and the site and exits with the wave aborted; scaling at n and 8n allocations | M | no | RT-exhaust-report | `crates/zed-rt/src/`, `crates/zed-native/src/`, `tests/steps/` |
 | 19 | RT-guard-fault | An alternate signal stack and a SIGSEGV handler that recognizes the guard page of a stack: overflow aborts the wave and reports the depth and the site, not a crash (DESIGN sec:checking_in_zed, machine resources; soundness survey Part 4). Test: a recursion deeper than the stack reports the depth; a fault outside a guard page is not taken for one | M | yes | LOWER-stack | `crates/zed-rt/src/`, `crates/zed-native/src/`, `tests/steps/` |
@@ -935,7 +935,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 63 | STD-num | Seed library, numbers: parseInt with radix, toHex, padLeft, padRight, bit, gcd, modpow, the integer roots and logarithms `isqrt`, `iroot`, `ilog2` and `ilog` of DESIGN step L1.39e from MATH-names (`nthRoot` is `iroot`), digit iteration, to and from little-endian and big-endian bytes, f64 is_nan | L | no | S.1, RAT-parse-scale, FLOAT-tie-read, MATH-names | `zed/stdlib/ (new)`, `crates/zed-kernel/src/`, `tests/steps/` |
 | 63 | ADVISORY | Advisory metadata on content addresses (DESIGN:1622) | M | no | S.1 | `crates/zedc/src/package.rs`, `tests/steps/` |
 | 63 | LAYOUT-adopt | Measure hybrid return of large failure payloads and packed union tapes on fold-heavy corpus programs; adopt or close with numbers | M | no | S.1 | `COMPLEXITY.md`, `tests/steps/` |
-| 63 | NATIVE-cache | Native code cache keyed by the ZIR address: a second build of an unchanged unit runs neither mlir-opt nor mlir-translate; a changed unit reruns only its own lowering; DESIGN.md:1880's 'stays keyed' becomes 'is keyed (step NATIVE-cache)' | M | no | S.1 | `crates/zedc/src/query.rs`, `crates/zedc-zir/src/zir/`, `DESIGN.md:1880`, `tests/steps/` |
+| 63 | NATIVE-cache | Native code cache keyed by the ZIR address: a second build of an unchanged unit runs neither mlir-opt nor mlir-translate; a changed unit reruns only its own lowering; DESIGN.md:1880's 'stays keyed' becomes 'is keyed (step NATIVE-cache)' | M | no | S.1 | `crates/zedc/src/query.rs`, `crates/zedc-zir/src/zir/`, `DESIGN.md` (line 1880), `tests/steps/` |
 | 64 | S.2 | Lexer and parser written in Zed for every form before S.1; differential test against the Rust front end, including L15's forms; a source nested to depth n and 8n parses on the runtime's one stack | L | no | S.1c, STD-text, DART-SCALE, S.1h, L20-grammar-params | `zed/compiler/`, `tests/steps/` |
 | 64 | STD-blake3 | BLAKE3 in Zed, bit-identical to the Rust crate on the official test vectors; scaling test | M | no | STD-num, BYTES-wide | `zed/stdlib/blake3.zed (new)`, `tests/steps/` |
 | 0 | S.3-cost-load | Join of loading chains of definitions into the store (Extending, Summaries) before S.3-cost-store: the scaling tests of these items pass together on one main commit with their negative controls, and each one's measured growth is in COMPLEXITY.md, as the baseline the Zed checker of S.3 is compared with | S | no | none | `COMPLEXITY.md` |
@@ -964,7 +964,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 66 | S.3-forms | Checker and elaborator written in Zed cover every layer before S.1 beyond the subset and L1 to L6 that S.3 covers | XL | yes | S.3, S.2-forms | `zed/compiler/`, `tests/full/`, `DESIGN.md` |
 | 67 | S.4 | ZIR lowering, the ordered rewriter and MLIR text emission written in Zed, through the S.1a port; output byte-compared with the Rust emitter | XL | yes | S.3a | `zed/compiler/`, `crates/zedc/src/run.rs`, `crates/zed-native/src/` |
 | 67 | L21.1c | Store query plans: the probe-versus-scan decision hands a pushed-down predicate or an index to the store, and an index's order is delivered to the sorted-view planner | L | no | L21.1 | `crates/zedc/src/`, `tests/steps/` |
-| 68 | S.5 | Three-stage fixpoint build through ZIR, MLIR and LLVM IR to native x86-64, with a pinned LLVM (22.1.8) | M | no | S.4 | `tools/`, `tests/full/`, `CI configuration` |
+| 68 | S.5 | Three-stage fixpoint build through ZIR, MLIR and LLVM IR to native x86-64, with a pinned LLVM (22.1.8) | M | no | S.4 | `tools/`, `tests/full/`, the CI configuration |
 | 69 | S.5b | Step S.5b: the compiler's own source builds under `--total` (TERM-stall), which makes every check of `--strict` (STRICT-build): no `#bug` site, no `@assume`, no memory or stack use without a proved bound, no recursion or loop without checked termination (because the checker must always finish), and no failure member reaching `main`'s output other than the rejections and `#ioError` that answer the program and its inputs; each check S.1h listed matched to the proof that replaced it (author, 2026-11-09) | M | no | S.5, STRICT-build, TERM-stall | `zed/compiler/`, `tests/steps/` |
 | 68 | L19.2 | Prelude's and an author's facet checker specialized; self-interpreter specialized | XL | yes | S.4 | `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/query.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/tables.rs`, `zed/compiler/`, `zed/prelude/`, `zed/corpus/10-regex-matcher.zed`, `tests/steps/l19_02_*` |
 | 68 | L24.2 | Vectorization on Presburger-proved independence with the canonical float tree | L | no | S.4 | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/tables.rs`, `zed/compiler/`, `tests/steps/l24_02_vectorization/` |
@@ -976,45 +976,45 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 69 | L20.3 | JSON and CSV serdes in the prelude; decode specialized to a struct | M | no | L19.2, L20.1b | `zed/prelude/json.zed`, `zed/prelude/csv.zed`, `zed/prelude/grammar.zed`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-types/src/ty.rs`, `tests/steps/l20_03_json_csv/` |
 | 69 | L24.6 | Plans cached by content address and hardware identity; ratio and gap reporting; parametric plans dispatching on the identity | M | no | L24.5 | `zed/compiler/`, `crates/zedc/src/query.rs`, `crates/zed-rt/src/`, `tests/steps/l24_06_plan_cache/`, `DESIGN.md` |
 | 69 | L24.10 | Bounded unfolding of generation loops: oldest step first, step i after step i-k, k from the solver; ring preallocation | M | yes | L24.5 | `crates/zed-rt/src/`, `zed/compiler/`, `tests/steps/l24_10_bounded_unfolding/` |
-| 69 | L22.7a | Time the `CommRing` normalizer, generic and specialized by `mix`, against a hand-written Rust normalizer; record the ratios in COMPLEXITY.md and at DESIGN.md:1296 | S | no | L19.2 | `tests/steps/`, `COMPLEXITY.md`, `DESIGN.md:1296` |
-| 69 | S.5a | Record compile speed, peak memory and cache misses for the Rust compiler, stage1 and stage2 | S | no | S.5 | `COMPLEXITY.md`, `row S` |
-| 69 | S.6a | Stage build at 1 and 32 compiler workers on one fixed target hardware identity, with output bytes compared | S | no | S.5 | `row S`, `DESIGN.md:2547` |
-| 69 | S.6b | Diverse compiling: build stage1 from one source twice with the Rust compiler, by Cranelift and by the MLIR path; each stage1 compiles the same source by S.4's path, and the outputs must be byte-identical | M | no | S.5 | `row S` |
+| 69 | L22.7a | Time the `CommRing` normalizer, generic and specialized by `mix`, against a hand-written Rust normalizer; record the ratios in COMPLEXITY.md and at DESIGN.md:1296 | S | no | L19.2 | `tests/steps/`, `COMPLEXITY.md`, `DESIGN.md` (line 1296) |
+| 69 | S.5a | Record compile speed, peak memory and cache misses for the Rust compiler, stage1 and stage2 | S | no | S.5 | `COMPLEXITY.md`, row S |
+| 69 | S.6a | Stage build at 1 and 32 compiler workers on one fixed target hardware identity, with output bytes compared | S | no | S.5 | row S, `DESIGN.md` (line 2547) |
+| 69 | S.6b | Diverse compiling: build stage1 from one source twice with the Rust compiler, by Cranelift and by the MLIR path; each stage1 compiles the same source by S.4's path, and the outputs must be byte-identical | M | no | S.5 | row S |
 | 70 | S.6 | Triage determinism differences in the stage builds; the Zed compiler becomes the default; the Rust-hosted compiler stays as bootstrap root and differential oracle; rerun every layer test on the Zed compiler | L | yes | S.3-forms, S.5a, S.6a, S.6b, S.5b | `zed/compiler/`, `crates/`, `tests/steps/`, `tests/full/` |
 | 70 | L24.7 | Measured pins: profiles written beside the source, checked on the next build; stale pins reported | M | no | L24.6 | `crates/zedc-base/src/source.rs`, `zed/compiler/`, `crates/zed-rt/src/`, `tests/steps/l24_07_measured_pins/` |
 | 70 | LIB-schema | Libraries for Avro, Protobuf, JSON Schema, GraphQL | L | no | L20.3 | `zed/lib/`, `tests/steps/` |
-| 71 | QUOT-classes | Quotient by a generated equivalence, building DESIGN step L5.9a (study of arXiv:1503.03571, I1): the catalog's `classes(links) : K -> K`, each key to the least key of its class in the key order, by union-find in O((n + m) α(n)); an unordered key level gets the `orderedValues` error menu; tests: the same result under every permutation of the links, a differential check against a min-label lattice `fix` in the M0.9 evaluator, scaling at n and 8n within 24x | M | no | S.6 | `zed/prelude/`, `crates/zed-rt/src/union_find.rs (from L5.9)`, `docs/stdlib-catalog.md`, `tests/steps/l05_09a_classes/ (new)`, `COMPLEXITY.md` |
+| 71 | QUOT-classes | Quotient by a generated equivalence, building DESIGN step L5.9a (study of arXiv:1503.03571, I1): the catalog's `classes(links) : K -> K`, each key to the least key of its class in the key order, by union-find in O((n + m) α(n)); an unordered key level gets the `orderedValues` error menu; tests: the same result under every permutation of the links, a differential check against a min-label lattice `fix` in the M0.9 evaluator, scaling at n and 8n within 24x | M | no | S.6 | `zed/prelude/`, `crates/zed-rt/src/union_find.rs` (from L5.9), `docs/stdlib-catalog.md`, `tests/steps/l05_09a_classes/ (new)`, `COMPLEXITY.md` |
 | 71 | L25.1 | LSP on incremental queries: diagnostics views, provenance hovers, grouping/materialization inlays, work/depth badges | L | no | S.6, REC-cycle | `crates/zedc/src/lsp/ (new)`, `crates/zedc/src/main.rs`, `crates/zedc/src/lib.rs`, `crates/zedc/src/query.rs`, `crates/zedc/src/run.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc/Cargo.toml`, `tests/Cargo.toml`, `tests/steps/l25_01_lsp/ (new)`, `STATUS.md`, `COMPLEXITY.md`, `DESIGN.md` |
 | 71 | L23.5a | Newton's method for a nonlinear fix over a stable semiring, each round's linear system by closure by components; low priority | M | yes | S.6 | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/`, `tests/steps/l23_05a_newton/`, `COMPLEXITY.md` |
 | 71 | L21.3 | L21 end-of-layer test: column round trips on each backend; programs without stores or policies keep their ZIR; S.6 rerun; scaling-coverage check passes | S | no | S.6, L21.1c | `tests/steps/l21_03_layer_test/`, `STATUS.md` |
 | 71 | TERM-3 | Wire formats in the standard library, building DESIGN step L20.3a: PNG chunks and the gzip member header as binary struct grammars from the PNG specification and RFC 1952, catalog entries of L2.11; differential tests against libpng and zlib `inflateGetHeader` in tests/full under Podman | L | no | S.6 | `zed/prelude/png.zed (new)`, `zed/prelude/gzip.zed (new)`, `docs/stdlib-catalog.md`, `tests/full/l20_03a_wire_formats/ (new)`, `tools/fetch_test_deps.sh` |
 | 71 | L22.9 | First symbolic library slice: `expand`, `simplify`, `substitute`, `derivative`, each carrying a proof | L | no | S.6 | `zed/prelude/symbolic.zed`, `crates/zedc-resolve/src/resolve.rs`, `tests/steps/l22_09_symbolic/` |
-| 71 | L26.1 | wasm backend, target value #wasm, cross-target determinism suite | XL | no | S.6, L24.2 | `crates/zed-wasm/ (new crate) or crates/zedc/src/wasm/ (new)`, `crates/zed-rt/src/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `tests/src/oracle.rs`, `tests/Cargo.toml`, `Cargo.toml`, `Cargo.lock`, `tests/steps/l26_01_wasm/ (new)`, `docs/layout.md`, `STATUS.md`, `COMPLEXITY.md`, `DESIGN.md` |
+| 71 | L26.1 | wasm backend, target value #wasm, cross-target determinism suite | XL | no | S.6, L24.2 | `crates/zed-wasm/` (new crate) or `crates/zedc/src/wasm/` (new), `crates/zed-rt/src/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `tests/src/oracle.rs`, `tests/Cargo.toml`, `Cargo.toml`, `Cargo.lock`, `tests/steps/l26_01_wasm/ (new)`, `docs/layout.md`, `STATUS.md`, `COMPLEXITY.md`, `DESIGN.md` |
 | 71 | L31.1 | Microcontroller study: the Arduino ecosystem, embedded Rust, MicroPython, TinyGo and Zephyr; facets of the hardware port kinds named | L | no | S.6 | `DESIGN.md`, `docs/mcu-study.md (new)` |
-| 71 | FLOAT-elem | Correctly rounded `exp`, `log`, `sin` and the rest of the L2.11 catalog's elementary functions as Zed software, and `log1p`, `expm1`, `hypot`, `csqrt`, `cexp`, `clog` and `cpow` of DESIGN steps L1.39e and L14.1b, correctly rounded | L | no | S.6 | `zed/prelude`, `tests/steps`, `DESIGN.md` |
-| 71 | INTEROP-study | Study of calling CPython, a JavaScript engine and the JVM through their C APIs, with accessor IR inlined per L28.1 and specialized to a static layout; the record says what is adopted or rejected | M | no | S.6 | `docs/`, `DESIGN.md sec:alternatives` |
+| 71 | FLOAT-elem | Correctly rounded `exp`, `log`, `sin` and the rest of the L2.11 catalog's elementary functions as Zed software, and `log1p`, `expm1`, `hypot`, `csqrt`, `cexp`, `clog` and `cpow` of DESIGN steps L1.39e and L14.1b, correctly rounded | L | no | S.6 | `zed/prelude/`, `tests/steps/`, `DESIGN.md` |
+| 71 | INTEROP-study | Study of calling CPython, a JavaScript engine and the JVM through their C APIs, with accessor IR inlined per L28.1 and specialized to a static layout; the record says what is adopted or rejected | M | no | S.6 | `docs/`, `DESIGN.md` (sec:alternatives) |
 | 71 | PORT-pointer-keys | Declare the `Pointer` and `Keys` port kinds of sec:ports, with replay of a recorded stream | S | no | S.6 | `zed/lib/ (new)`, `tests/steps/`, `DESIGN.md` |
 | 71 | L28.4 | The LLVM back end for AArch64 and RV64: cross builds through llc, zed-rt built for each target, the corpus under qemu-aarch64 and qemu-riscv64 | M | no | S.6 | `crates/zed-rt/`, `tests/full/`, `DESIGN.md` |
 | 71 | S.7 | Time the Zed checker of S.3 against the Rust checker on every corpus program and record the per-program ratio in COMPLEXITY.md; repeat after L19.3 by a line in L19.4's test | S | no | S.6 | `tests/steps/`, `COMPLEXITY.md` |
 | 71 | L2.13 | Coverage report (zedc cover), written once in Zed after the port: each arm reached with a least-magnitude test row confirmed by provenance, unreachable with its derivation, or undecided with its stop | M | no | S.6 | `zed/compiler/cover.zed (new)`, `zed/compiler/`, `tests/steps/l02_13_coverage_report/`, `STATUS.md` |
-| 71 | PKG-fetch | Separate tool: mirrors, a local store by hash, fork override, contradictory-hash error | M | no | S.6 | `new tool`, `DESIGN.md sec:units` |
+| 71 | PKG-fetch | Separate tool: mirrors, a local store by hash, fork override, contradictory-hash error | M | no | S.6 | a new tool, `DESIGN.md` (sec:units) |
 | 72 | L25.3 | Agent API: explain(value) | M | no | L25.1 | `DESIGN.md`, `zed/prelude/agent.zed (new)`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zed-kernel/src/provenance.rs`, `crates/zedc/src/lsp/`, `tests/Cargo.toml`, `tests/steps/l25_03_explain/ (new)`, `STATUS.md` |
 | 72 | L19.4 | L19 end-of-layer test: corpus 10 specializes to a matcher; specialized checker agrees; fused compiler output identical; self-interpreter cost and depth; others unchanged; S.6 rerun; scaling-coverage check passes | M | no | L19.3, S.7 | `tests/steps/l19_04_*`, `zed/corpus/`, `STATUS.md`, `COMPLEXITY.md` |
 | 72 | L25.2 | Quick fixes wired from the closed repair menus | M | no | L25.1 | `crates/zedc/src/lsp/`, `crates/zedc/src/run.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-stage/src/stage.rs`, `tests/Cargo.toml`, `tests/steps/l25_02_quick_fixes/ (new)`, `STATUS.md` |
 | 72 | L20.3a | Step L20.3a, wire formats in the standard library: done when plan item TERM-3 merges | S | no | TERM-3 |  |
 | 72 | L22.10 | L22 end-of-layer test: theories fences at proof grade, proofs of `expand` and `derivative`, `f64` refuted, unchanged ZIR, clean audit; S.6 rerun; scaling-coverage check passes | S | no | L22.9, L22.7a | `tests/steps/l22_10_layer_test/`, `zed/fences/`, `STATUS.md` |
-| 72 | L27.3 | HDL subset study: total tier exported, one combinator synthesized and simulated | L | yes | L24.3, L26.1 | `crates/zedc/src/hdl/ (new) or crates/zed-hdl/ (new)`, `zed/compiler/HDL.md (new)`, `zed/corpus/`, `tests/src/oracle.rs`, `tests/Cargo.toml`, `tests/steps/l27_03_hdl/ (new)`, `docs/layout.md`, `STATUS.md`, `DESIGN.md` |
+| 72 | L27.3 | HDL subset study: total tier exported, one combinator synthesized and simulated | L | yes | L24.3, L26.1 | `crates/zedc/src/hdl/` (new) or `crates/zed-hdl/` (new), `zed/compiler/HDL.md (new)`, `zed/corpus/`, `tests/src/oracle.rs`, `tests/Cargo.toml`, `tests/steps/l27_03_hdl/ (new)`, `docs/layout.md`, `STATUS.md`, `DESIGN.md` |
 | 72 | L26.2 | L26 end-of-layer test: every enabled program passes the oracle on wasm, bit-identical where promised; S.6 rerun; scaling-coverage check passes | M | no | L26.1 | `tests/Cargo.toml`, `tests/steps/l26_02_layer_test/ (new)`, `tests/src/oracle.rs`, `STATUS.md`, `COMPLEXITY.md`, `../zed/PROGRESS.md` |
-| 72 | L29.1 | Replace the host's mlir-opt passes and llc with Zed, pass by pass; linear-scan register allocator | XL | yes | L28.4 | `zed/compiler/lower/ (new) or zed/prelude/lower/ (new)`, `zed/compiler/MLIR.md`, `crates/zed-rt/src/`, `tests/src/oracle.rs`, `tests/Cargo.toml`, `tests/steps/l29_01_lowering/ (new)`, `STATUS.md`, `COMPLEXITY.md`, `DESIGN.md` |
+| 72 | L29.1 | Replace the host's mlir-opt passes and llc with Zed, pass by pass; linear-scan register allocator | XL | yes | L28.4 | `zed/compiler/lower/` (new) or `zed/prelude/lower/` (new), `zed/compiler/MLIR.md`, `crates/zed-rt/src/`, `tests/src/oracle.rs`, `tests/Cargo.toml`, `tests/steps/l29_01_lowering/ (new)`, `STATUS.md`, `COMPLEXITY.md`, `DESIGN.md` |
 | 72 | L31.1a | Step L31.1a: `compile` on a target with no run-time code loading returns the unspecialized function with its static input bound (COMPILE-noload) | S | no | L31.1 |  |
 | 72 | STD-full | Build the rest of the standard library from the L2.11 catalog, in Zed, after the seed rows | XL | no | QUOT-classes, L10.3a, FLOAT-elem | `zed/stdlib/`, `tests/steps/` |
-| 72 | TARGET-mcu | Add `#mcu` to the layer tool's target atoms, and check that every atom the table names as a target value is in TARGET_ATOMS | S | no | L31.1 | `crates/zed-tools/src/layer.rs`, `tests/steps/m0_03_grammar_tools` |
+| 72 | TARGET-mcu | Add `#mcu` to the layer tool's target atoms, and check that every atom the table names as a target value is in TARGET_ATOMS | S | no | L31.1 | `crates/zed-tools/src/layer.rs`, `tests/steps/m0_03_grammar_tools/` |
 | 72 | DIAG-json | `zedc --json`: each diagnostic with its derivation and each test result as one record with the same fields as the text form | S | no | L25.1 | `crates/zedc/src/`, `tests/steps/`, `DESIGN.md` |
 | 72 | AD-reverse | Specify and write reverse-mode `derivative` over array programs and `gen` loops | L | no | L22.9 | `zed/lib/ (new)`, `tests/full/`, `DESIGN.md` |
 | 73 | LIB-linkage | Record linkage and entity resolution in the sec:libraries list (Python: dedupe, recordlinkage), on joins (L5), `classes` (QUOT-classes) and stores (L21); written by the rules of step L33.1 | M | no | L21.1, STD-full | `zed/lib/ (new)`, `DESIGN.md` |
 | 73 | L20.5 | L20 end-of-layer test: round-trip and error-recovery suites; corpus programs 7 and 30 enabled; S.6 rerun; scaling-coverage check passes | S | no | L20.4, L20.3, L20.3a | `tests/steps/l20_05_layer_test/`, `zed/corpus/07-json-parser.zed`, `zed/corpus/07-json-parser/json.zed`, `zed/corpus/30-client-server.zed`, `zed/corpus/30-client-server/`, `zed/corpus/LEDGER.md`, `STATUS.md` |
 | 73 | L25.4 | Agent API: obligations(unit) | S | no | L25.3 | `DESIGN.md`, `zed/prelude/agent.zed`, `crates/zedc/src/lsp/`, `crates/zedc-elab/src/elab.rs`, `tests/Cargo.toml`, `tests/steps/l25_04_obligations/ (new)`, `STATUS.md` |
-| 73 | L30.1 | VS Code extension and standard language-server features; TextMate grammar generated from the PEG | XL | no | L20.4, L25.2 | `editors/vscode/ (new`, `TypeScript`, `the one place JS is unavoidable)`, `crates/zed-tools/src/bin/textmate.rs (new)`, `crates/zedc/src/lsp/`, `crates/zedc-resolve/src/resolve.rs`, `docs/layout.md`, `tests/Cargo.toml`, `tests/steps/l30_01_extension/ (new)`, `STATUS.md` |
+| 73 | L30.1 | VS Code extension and standard language-server features; TextMate grammar generated from the PEG | XL | no | L20.4, L25.2 | `editors/vscode/` (new, TypeScript, the one place JS is unavoidable), `crates/zed-tools/src/bin/textmate.rs (new)`, `crates/zedc/src/lsp/`, `crates/zedc-resolve/src/resolve.rs`, `docs/layout.md`, `tests/Cargo.toml`, `tests/steps/l30_01_extension/ (new)`, `STATUS.md` |
 | 73 | L25.5 | Agent API: check(proof) | S | no | L25.3 | `DESIGN.md`, `zed/prelude/agent.zed`, `crates/zed-cert/src/`, `crates/zedc/src/lsp/`, `crates/zedc-elab/src/elab.rs`, `tests/Cargo.toml`, `tests/steps/l25_05_check/ (new)`, `STATUS.md` |
 | 73 | L29.2 | L29 end-of-layer test: corpus compiles to native through lowering in Zed, LLVM kept as oracle; S.6 rerun; scaling-coverage check passes | L | no | L29.1 | `tests/Cargo.toml`, `tests/steps/l29_02_layer_test/ (new)`, `tests/src/oracle.rs`, `STATUS.md`, `COMPLEXITY.md`, `../zed/PROGRESS.md` |
 | 73 | L31.2 | Bare-metal runtime: static memory and no allocator for static schedules; startup, vectors and the event loop without an OS | XL | yes | TARGET-mcu | `crates/zed-rt/src/mcu/ (new)`, `crates/zedc/src/run.rs`, `DESIGN.md` |
@@ -1028,25 +1028,25 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 75 | L30.3 | Dependency margin: value-graph arrows between lines, cones on click | L | no | L30.2 | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zed-kernel/src/term.rs`, `crates/zedc/src/lsp/`, `editors/vscode/`, `tests/Cargo.toml`, `tests/steps/l30_03_margin/ (new)`, `STATUS.md`, `COMPLEXITY.md` |
 | 75 | L25.7 | Machine-written-refactor demo certified end to end, with an N-line semantic delta | L | yes | L25.4, L25.6 | `DESIGN.md`, `crates/zedc/src/delta.rs (new)`, `zed/corpus/`, `tests/Cargo.toml`, `tests/steps/l25_07_refactor_demo/ (new)`, `STATUS.md` |
 | 75 | L34.9 | Abstraction actions: literal to binding, binding to parameter, connect two literals, repeated blocks to one loop; certified by verify | M | no | L30.1, L25.6 | `crates/zedc/src/lsp/`, `zed/prelude/agent.zed`, `tests/steps/l34_09_actions/ (new)` |
-| 75 | L27.1 | GPU lowering and #gpu: flattening to segmented operations, multi-versioned kernels, strict-float path | XL | yes | L26.1, L24.6, L24.8, FLOAT-elem | `crates/zed-gpu/ (new crate`, `heavy dependency)`, `crates/zed-rt/src/`, `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs`, `zed/prelude/cost.zed`, `crates/zedc/src/run.rs`, `tests/src/oracle.rs`, `Cargo.toml`, `tests/Cargo.toml`, `tests/steps/l27_01_gpu/ (new)`, `docs/layout.md`, `STATUS.md`, `COMPLEXITY.md`, `DESIGN.md` |
-| 75 | L27.2 | Distributed execution and #cluster: waves, lineage, leases, epochs, recovery, nodes: | XL | yes | L24.6, L24.8 | `crates/zed-rt/src/ (cluster transport`, `leases`, `epochs`, `lineage)`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/provenance.rs`, `zed/prelude/`, `crates/zedc/src/run.rs`, `tests/Cargo.toml`, `tests/steps/l27_02_distributed/ (new)`, `docs/layout.md`, `STATUS.md`, `COMPLEXITY.md`, `DESIGN.md` |
+| 75 | L27.1 | GPU lowering and #gpu: flattening to segmented operations, multi-versioned kernels, strict-float path | XL | yes | L26.1, L24.6, L24.8, FLOAT-elem | `crates/zed-gpu/` (new crate, heavy dependency), `crates/zed-rt/src/`, `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs`, `zed/prelude/cost.zed`, `crates/zedc/src/run.rs`, `tests/src/oracle.rs`, `Cargo.toml`, `tests/Cargo.toml`, `tests/steps/l27_01_gpu/ (new)`, `docs/layout.md`, `STATUS.md`, `COMPLEXITY.md`, `DESIGN.md` |
+| 75 | L27.2 | Distributed execution and #cluster: waves, lineage, leases, epochs, recovery, nodes: | XL | yes | L24.6, L24.8 | `crates/zed-rt/src/` (cluster transport, leases, epochs, lineage), `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/provenance.rs`, `zed/prelude/`, `crates/zedc/src/run.rs`, `tests/Cargo.toml`, `tests/steps/l27_02_distributed/ (new)`, `docs/layout.md`, `STATUS.md`, `COMPLEXITY.md`, `DESIGN.md` |
 | 75 | L24.9 | L24 end-of-layer test: every placement and strategy passes the oracle; L5 scaling curves hold with the solver; S.6 rerun; scaling-coverage check passes | M | no | L24.2, L24.3, L24.8, L24.10, L24.7 | `tests/steps/l24_09_layer_test/`, `STATUS.md` |
 | 75 | L31.4 | Microcontroller examples (blink, debounced button, serial echo, PWM fade, I2C sensor read, timer interrupt) on each board or emulator; flash and RAM measured against C++ Arduino builds | L | no | L31.3 | `zed/examples/mcu/ (new)`, `tests/steps/l31_04_examples/ (new)` |
 | 75 | L31.3a | Step L31.3a: the whole corpus on the microcontroller targets: each board states its port kinds, and a program reaching another is rejected at build | M | no | L31.3 |  |
 | 75 | PICTURE-type | The `Picture` type alone: a family of drawn elements keyed by fact address, its element kinds open to extension by L32.1 | S | no | L30.2 | `zed/lib/ (new)`, `tests/steps/`, `DESIGN.md` |
 | 75 | L30.2a | An edit that removes a store fact: the hover no longer shows it and equals a fresh run's hover at that address | S | no | L30.2 | `tests/steps/` |
-| 75 | MCU-period | An input port facet giving a minimum period; report a wave whose f::cost, converted with the board's cycle figures, exceeds it | M | no | L31.3 | `DESIGN.md:526 and sec:plan`, `crates/zedc/src/`, `tests/steps/` |
+| 75 | MCU-period | An input port facet giving a minimum period; report a wave whose f::cost, converted with the board's cycle figures, exceeds it | M | no | L31.3 | `DESIGN.md` (line 526 and sec:plan), `crates/zedc/src/`, `tests/steps/` |
 | 76 | L27.1b | Step L27.1b: PTX instruction selection for the machine operations (DESIGN sec:linalg, the table's PTX column; [PTX], [CUDAMath]): `popc`, `clz`, `brev`, `prmt`, `shf`, `mul.hi`, `add.cc` and `addc`, `dp4a`, `add.sat`, `sad`, `min.NaN`, `copysign`, `cvt` with its rounding, and `@approx` as the `.approx` instruction plus the Newton steps the bound needs; tests: each row's instruction named in the emitted PTX and its results on a device equal to the interpreter's on every 8-bit operand and random 32-, 64-bit and float operands, `rsqrt.approx.f32` with no step at 2^-20, `pdep` as its loop, n and 8n operands O(n) | M | no | L27.1, L24.2a | `crates/zed-native/src/gpu/`, `tests/full/` |
 | 76 | L30.4 | Recomputation: pinned inputs, incremental rerun, dirty nodes shown in the margin | L | yes | L30.3 | `crates/zedc/src/lsp/`, `crates/zedc/src/run.rs`, `crates/zedc/src/query.rs`, `editors/vscode/`, `tests/Cargo.toml`, `tests/steps/l30_04_recompute/ (new)`, `STATUS.md`, `COMPLEXITY.md`, `DESIGN.md` |
-| 76 | BEND-gpufold | Device `.fold` over a recursive union with no device recursion (DESIGN step L27.1a): contraction as segmented scans where it applies; elsewhere a stable sort by (height, constructor), one segmented operation per group | M | no | L27.1 | `crates/zed-gpu/src/fold.rs (new`, `in the crate L27.1 creates)`, `tests/steps/l27_01a_gpu_fold/ (new)` |
+| 76 | BEND-gpufold | Device `.fold` over a recursive union with no device recursion (DESIGN step L27.1a): contraction as segmented scans where it applies; elsewhere a stable sort by (height, constructor), one segmented operation per group | M | no | L27.1 | `crates/zed-gpu/src/fold.rs` (new, in the crate L27.1 creates), `tests/steps/l27_01a_gpu_fold/ (new)` |
 | 76 | L25.9 | L25 end-of-layer test: LSP latency on the corpus repo; refactor demo; checker audits clean; S.6 rerun; scaling-coverage check passes | M | no | L25.8, L25.2, L25.4a, L25.7, DIAG-json, L2.13, TESTS-L25.8-neighbors | `DESIGN.md`, `tests/Cargo.toml`, `tests/steps/l25_09_layer_test/ (new)`, `STATUS.md`, `COMPLEXITY.md`, `../zed/PROGRESS.md` |
 | 76 | L31.5 | L31 end-of-layer test: examples agree with the interpreter on each board or emulator; flash and RAM no larger than the C++ builds; S.6 rerun; scaling-coverage check passes | M | no | L31.4, L31.1a, L31.3a, MCU-period | `tests/Cargo.toml`, `tests/steps/l31_05_layer_test/ (new)` |
-| 76 | FFI-inline-proc | A fold with a foreign call placed in a process other than the one that loaded the library keeps the call instruction and gives the same results | S | no | L27.2 | `tests/full (L27.2 machines are Podman containers)`, `crates/zedc/src/mlir lowering` |
+| 76 | FFI-inline-proc | A fold with a foreign call placed in a process other than the one that loaded the library keeps the call instruction and gives the same results | S | no | L27.2 | `tests/full/` (L27.2 machines are Podman containers), `crates/zedc/src/` (the MLIR lowering) |
 | 76 | L27.2a | `recovery` with `#snapshot(every: w)` and `#replicate(k)`; stale function and stale value read in place | M | yes | L27.2 | `crates/zed-rt/src/`, `tests/full/`, `DESIGN.md` |
 | 76 | L27.2b | Partitions: the wave waits or aborts and reads no stale value, `within:` limits the wait, monotone regions run on both sides with no barrier and agree on heal | L | yes | L27.2 | `crates/zed-rt/src/`, `tests/full/`, `DESIGN.md` |
 | 76 | L27.2c | Elastic sizing: only keys whose owner changed move, the machine count derived from the cost model, `load:` optional, `assign:` on `target` and `@require` | M | no | L27.2 | `crates/zed-rt/src/`, `tests/full/`, `DESIGN.md` |
 | 76 | L30.3a | Folding to a value's cone: the text folded to the selected line's upstream and downstream dependencies | S | no | L30.3 | `crates/zedc/src/lsp/`, `editors/vscode/`, `DESIGN.md` |
-| 76 | L30.3b | Node drags in the margin that reorder lines within the partial order; a drag crossing a read order is reported as a rank edit | M | no | L30.3 | `tools/`, `DESIGN.md:1621` |
+| 76 | L30.3b | Node drags in the margin that reorder lines within the partial order; a drag crossing a read order is reported as a rank edit | M | no | L30.3 | `tools/`, `DESIGN.md` (line 1621) |
 | 77 | L30.5 | Values in place and visualizers chosen by type | L | no | L30.4, PICTURE-type | `zed/prelude/editor.zed (new)`, `crates/zedc/src/lsp/`, `editors/vscode/`, `tests/Cargo.toml`, `tests/steps/l30_05_values/ (new)`, `STATUS.md` |
 | 77 | L34.10 | Completion previews: each expression candidate shown with its value, arguments from its first test row or field defaults | S | no | L30.4 | `crates/zedc/src/lsp/`, `tests/steps/l34_10_previews/ (new)` |
 | 77 | L27.4 | L27 end-of-layer test: every placement and strategy passes the oracle; HDL synthesizable fraction reported; S.6 rerun; scaling-coverage check passes | M | no | L27.3, BEND-gpufold, FFI-inline-proc, L27.2a, L27.2b, L27.2c | `tests/Cargo.toml`, `tests/steps/l27_04_layer_test/ (new)`, `tests/src/oracle.rs`, `STATUS.md`, `COMPLEXITY.md`, `../zed/PROGRESS.md` |
@@ -1083,9 +1083,9 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 92 | L36.3 | The paper: L36.2 written up for a programming-languages venue, citing [Adams] and the prior work L36.2's search found, with the scaling tests as its measurements; a test that every claim cites a proof in L36.2 or a recorded measurement | L | no | L36.2 | `docs/paper/ (new)`, `tests/steps/l36_03_paper/ (new)` |
 | 93 | L36.4 | L36 end-of-layer test: the methods document covers every method; the formal statement's proofs and tests pass; the paper's claims each cite a proof or a measurement; scaling-coverage check passes | M | no | L36.3 | `tests/Cargo.toml`, `tests/steps/l36_04_layer_test/ (new)` |
 | 94 | L37.1 | Step L37.1, static linking for release (DESIGN layer L37, author request 2026-11-07): a documented command that links every Zed crate statically into one executable with link-time optimization across the crates; test: the executable needs no Zed dynamic library (only the system's C and math libraries and the loader), the whole test suite passes against it, and the lowering tests (l01_33) and the step groups' run times are recorded against the dynamically linked compiler, none slower | M | no | L36.4 | `Cargo.toml`, `docs/`, `tests/steps/l37_01_static_build/ (new)` |
-| 95 | META-self-check | DESIGN step L38.1 (Q43 answered A, author 2026-11-09): once Zed is fully implemented and bootstrapped, analyze exactly what Zed's own checker proves, in the sense of metatheory, of Zed's own implementation (each sec:kernel metatheory theorem and each property the checker relies on: proved with grade and certificate, or a gap with its reason); compare each gap with Lean: acceptable only where Lean also needs high-degree polynomial or exponential proof work; name the reasonable and useful checker extensions that would close the rest; test: checked-in report with a verdict for every theorem, certificates accepted by both proof kernels, Lean statements and times under a pinned Lean version, and a rerun that fails when a verdict changes | L | yes | L37.1 | `docs/meta-self-check.md (new)`, `tests/steps/l38_01_self_check/ (new)`, `tests/full/l38_01_self_check/ (new, needs lean)` |
+| 95 | META-self-check | DESIGN step L38.1 (Q43 answered A, author 2026-11-09): once Zed is fully implemented and bootstrapped, analyze exactly what Zed's own checker proves, in the sense of metatheory, of Zed's own implementation (each sec:kernel metatheory theorem and each property the checker relies on: proved with grade and certificate, or a gap with its reason); compare each gap with Lean: acceptable only where Lean also needs high-degree polynomial or exponential proof work; name the reasonable and useful checker extensions that would close the rest; test: checked-in report with a verdict for every theorem, certificates accepted by both proof kernels, Lean statements and times under a pinned Lean version, and a rerun that fails when a verdict changes | L | yes | L37.1 | `docs/meta-self-check.md (new)`, `tests/steps/l38_01_self_check/ (new)`, `tests/full/l38_01_self_check/` (new, needs lean) |
 | 96 | L38.2 | Step L38.2: the checker extensions META-self-check decides on, then its analysis rerun; test: each gap marked not acceptable is proved or re-marked acceptable with the Lean measurement; no corpus result changes and no law's grade drops under the differential oracle | L | yes | META-self-check | `zed/compiler/`, `tests/steps/l38_02_extensions/ (new)` |
-| 0 | SPEC-audit-sentences | Done: zed 1d0ef91 (the (a) sentence corrected: `0.0` only at or below half the smallest subnormal, the nearest subnormal otherwise; (b) adds a hole's code; DOCS-TODO 37, 38). Three DESIGN sentences the test audit of 2026-11-08 found missing, each decided by rules DESIGN already states (spec repo only; then the grammar tools): (a) step L1.18: `f64(s)` of a finite text whose value is below the smallest subnormal is correctly rounded like any other text, to `0.0`, or `-0.0` after `-`, with no atom, since `#inexact` is for a finite text beyond the largest finite value and `#underflow` is an `@fpwarn` atom (sec:failure, step L10.3); (b) sec:lexical: a Unicode `Bidi_Control` character (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069) is accepted inside a comment or a string literal, where the grammar's `ANY` takes it, and is a lexical error anywhere else, being neither `Space` nor an `XID` character; (c) step L1.19: in a `Lines` input a lone `\r` does not end a line and stays in the line's text, since a line ends only at `\n` and only a `\r` right before it is dropped, unlike source text, where a lone `\r` is a line break (sec:lexical) | S | no | none | `../zed/DESIGN.md`, `docs/plan_dag.md` |
+| 0 | SPEC-audit-sentences | Done: zed 1d0ef91 (the (a) sentence corrected: `0.0` only at or below half the smallest subnormal, the nearest subnormal otherwise; (b) adds a hole's code; DOCS-TODO 37, 38). Three DESIGN sentences the test audit of 2026-11-08 found missing, each decided by rules DESIGN already states (spec repo only; then the grammar tools): (a) step L1.18: `f64(s)` of a finite text whose value is below the smallest subnormal is correctly rounded like any other text, to `0.0`, or `-0.0` after `-`, with no atom, since `#inexact` is for a finite text beyond the largest finite value and `#underflow` is an `@fpwarn` atom (sec:failure, step L10.3); (b) sec:lexical: a Unicode `Bidi_Control` character (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069) is accepted inside a comment or a string literal, where the grammar's `ANY` takes it, and is a lexical error anywhere else, being neither `Space` nor an `XID` character; (c) step L1.19: in a `Lines` input a lone `\r` does not end a line and stays in the line's text, since a line ends only at `\n` and only a `\r` right before it is dropped, unlike source text, where a lone `\r` is a line break (sec:lexical) | S | no | none | `DESIGN.md`, `docs/plan_dag.md` |
 | 0 | TESTS-L2.1-spaced-duplicate-import | Done: Fix the duplicate-import check: `crates/zedc-syntax/src/ast/stmts.rs:386-388` compares the raw source text of the path while :389 stores the words joined by `.`, so `import a.B; import a .B;` passes; compare the joined words, then test `import a.B; import a .B;`, `import a. B` and `import a . B` (each kept once) and `import a.B; import a.C;` (no error) (test audit 2026-11-08, row 1) (reworked: DESIGN 1048 merges equal imports, so repeats are accepted) | S | no | none | `crates/zedc-syntax/src/ast/stmts.rs`, `tests/steps/l02_02_parser_match_imports/` |
 | 0 | MSG-split-imports | The split repair of a refused linear question (`presburger::free_names`) avoids only the names written in its own unit; a unit that imports it and already defines `ok1` would clash after the repair. Count the names visible in every importing unit too, with a test of an importer that defines `ok1` (MSG-audit-solve-rt, 2026-11-09) | S | no | none | `crates/zedc/src/front.rs`, `crates/zedc-presburger/src/presburger.rs`, `tests/steps/l01_38_presburger/checker.rs` |
 | 0 | REFUSAL-front-quadratic | The value search of `crates/zed-kernel/src/types/empty.rs` grows as n² on the nfa family one place from the front (49.6M to 2.29G instructions for 8n, 46x) and as about n^1.7 on the far family (69.5M to 2.48G, 36x); make both O(n log n) or prove the class hard; also check whether `refine()`, which turns fork refusal off for its own narrowing, can still follow forks (REFUSAL-nfa-refuse, 2026-11-09) | M | no | none | `crates/zed-kernel/src/types/empty.rs`, `tests/steps/l01_23_subtyping/refusals.rs` |
@@ -1149,181 +1149,126 @@ The levels and conflict list that the planning script produced were wrong, and w
 
 ## File conflicts at the same level
 
-Each pair below is at one level, shares a file and is not yet done. Under the rule of 2026-11-02 the two may run in parallel and the merge resolves the overlap; run them apart where possible. There are 772 pairs. Regenerated on 2026-11-05 for the reduced needs of L1.40, L1.41, S.1 and S.3, and on 2026-11-07 for the eight rows of the soundness survey and the widened MOD-residue only, and for POLY-nf (Q10 withdrawn), each row of those listing every pair it is in; files under `tests/` are not compared. On 2026-11-09 each row naming L18.2 was split between L18.2a and L18.2b. On 2026-11-10 (item PLAN-L18.2-rest) a node script recomputed the level column from the items table above (440 of the 760 rows kept had a stale level); the 13 pairs whose two items are now at different levels, both open and with no path between them, moved to the end of the cross-level list, and 16 such pairs with a done item were dropped; the rows of L18.2a and L18.2b were recomputed from the items table by the rule of the cross-level list. The other rows were not recomputed: by that rule the items table now gives 909 pairs at one level, of which 363 are missing here, and 226 rows here are no longer such a pair.
+Each pair below is at one level, shares a file and is not yet done. No path of needs joins two items at one level, since each level is one more than the highest level among the item's needs. Under the rule of 2026-11-02 the two may run in parallel and the merge resolves the overlap; run them apart where possible. There are 1090 pairs. This section and the next are written by `cargo run -q -p zed-tools --bin conflicts` from the items table above (with `--check` it only compares them with it); edit the table and rerun it, not the lists. Two items share a file when a path of one equals a path of the other or lies inside a directory path of the other, one that ends in `/`. Paths are compared as written, less a trailing ` (new)`; files under `tests/` and the files every step touches are not compared. The two items of a row are in the order of their rows in the table, and the shared paths are the longer path of each match.
 
 | Level | Items | Shared paths |
 |---|---|---|
-| 0 | S.1f, RUNG2-mod-symbol | `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-presburger/src/presburger.rs` |
-| 0 | S.1f, DOC-links | `crates/zedc-solvers/src/utvpi.rs`, `crates/zedc-presburger/src/presburger.rs` |
-| 0 | S.1f, CHK-need-uses | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 0 | S.1f, ZIR-family-key | `crates/zedc-zir/src/zir/text.rs`, `crates/zedc-zir/src/zir/binary.rs` |
-| 0 | S.1f, ZIR-name-xid | `crates/zedc-zir/src/zir/text.rs` |
-| 0 | S.1f, FMT-load-pos | `crates/zedc-syntax/src/format.rs` |
-| 0 | S.1f, CITE-check | `crates/zedc-check/src/check/` |
-| 0 | S.1f, TIME-report | `crates/zedc/src/` |
-| 0 | M0.10a, RUNG2-mod-symbol | `DESIGN.md` |
-| 0 | M0.10a, LAYOUT-measure | `DESIGN.md` |
+| 0 | M0.10a, QUESTIONS-answered | `DESIGN.md` |
 | 0 | M0.10a, SPEC-L3.9-tests | `DESIGN.md` |
 | 0 | M0.10a, SPEC-L3.21-ac | `DESIGN.md` |
 | 0 | M0.10a, WAVE-theory | `DESIGN.md` |
-| 0 | M0.10a, CITE-check | `DESIGN.md` |
-| 0 | RUNG2-mod-symbol, LAYOUT-measure | `DESIGN.md` |
-| 0 | RUNG2-mod-symbol, DOC-links | `crates/zedc-presburger/src/presburger.rs` |
-| 0 | RUNG2-mod-symbol, SPEC-L3.9-tests | `DESIGN.md` |
-| 0 | RUNG2-mod-symbol, SPEC-L3.21-ac | `DESIGN.md` |
-| 0 | RUNG2-mod-symbol, WAVE-theory | `DESIGN.md` |
-| 0 | RUNG2-mod-symbol, CITE-check | `DESIGN.md` |
-| 0 | RUNG2-mod-symbol, TIME-report | `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-presburger/src/presburger.rs` |
-| 0 | LAYOUT-measure, SPEC-L3.9-tests | `DESIGN.md` |
-| 0 | LAYOUT-measure, SPEC-L3.21-ac | `DESIGN.md` |
-| 0 | LAYOUT-measure, WAVE-theory | `DESIGN.md` |
-| 0 | LAYOUT-measure, CITE-check | `DESIGN.md` |
-| 0 | LAYOUT-measure, LOWER-legalize | `zed/compiler/MLIR.md` |
-| 0 | DOC-links, TIME-report | `crates/zedc-solvers/src/utvpi.rs`, `crates/zedc-presburger/src/presburger.rs` |
-| 0 | CHK-need-uses, CITE-check | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 0 | CHK-need-uses, M0d-suite | `zed/fences/rejections.txt` |
-| 0 | CHK-need-uses, TIME-report | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | M0.10a, S4-hub-mixed | `DESIGN.md` |
+| 0 | RADIX-depth, PRINT-below-whole | `crates/zed-kernel/src/num/fast.rs` |
+| 0 | MINMAX-chain-rows, GROUP-decide-bytes | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | MINMAX-chain-rows, K36-study | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | MINMAX-chain-rows, REFUSAL-front-quadratic | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | MINMAX-chain-rows, REFUSAL-periodic-split | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | MINMAX-chain-rows, TESTS-L1.23-refusal-text | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | MINMAX-chain-rows, L1.29e | `crates/zedc-check/src/check/walk.rs` |
+| 0 | GROUP-decide-bytes, K36-study | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-decide-bytes, REFUSAL-front-quadratic | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-decide-bytes, REFUSAL-periodic-split | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-decide-bytes, TESTS-L1.23-refusal-text | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PRODUCT-lin-rows, PROBE-guards | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRODUCT-lin-rows, ST-walk-implicit | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRODUCT-lin-rows, ST-K3-narrow | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRODUCT-lin-rows, C2-local-tier | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRODUCT-lin-rows, ST-wider | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRODUCT-lin-rows, MSG-split-imports | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PROBE-guards, C2-local-tier | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PROBE-guards, MSG-split-imports | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | ST-walk-implicit, ST-K3-narrow | `crates/zedc-preimage/src/product.rs` |
+| 0 | ST-walk-implicit, ST-wider | `crates/zedc-preimage/src/product.rs` |
+| 0 | ST-K3-narrow, ST-wider | `crates/zedc-preimage/src/product.rs` |
+| 0 | QUESTIONS-answered, SPEC-L3.9-tests | `DESIGN.md` |
+| 0 | QUESTIONS-answered, SPEC-L3.21-ac | `DESIGN.md` |
+| 0 | QUESTIONS-answered, WAVE-theory | `DESIGN.md` |
+| 0 | QUESTIONS-answered, PLAN-sync | `docs/plan_dag.md` |
+| 0 | QUESTIONS-answered, S4-hub-mixed | `DESIGN.md` |
+| 0 | C2-local-tier, MSG-split-imports | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | SPEC-L3.9-tests, SPEC-L3.21-ac | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, WAVE-theory | `DESIGN.md` |
-| 0 | SPEC-L3.9-tests, CITE-check | `DESIGN.md` |
+| 0 | SPEC-L3.9-tests, S4-hub-mixed | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, WAVE-theory | `DESIGN.md` |
-| 0 | SPEC-L3.21-ac, CITE-check | `DESIGN.md` |
-| 0 | WAVE-theory, CITE-check | `DESIGN.md` |
-| 0 | BEND-tt, BIB-check | `verification/bib.md` |
-| 0 | ZIR-family-key, ZIR-name-xid | `crates/zedc-zir/src/zir/text.rs` |
-| 0 | ZIR-family-key, TIME-report | `crates/zedc-zir/src/zir/text.rs`, `crates/zedc-zir/src/zir/binary.rs` |
-| 0 | ZIR-name-xid, TIME-report | `crates/zedc-zir/src/zir/text.rs` |
-| 0 | FMT-load-pos, TIME-report | `crates/zedc-syntax/src/format.rs` |
-| 0 | CITE-check, TIME-report | `crates/zedc-check/src/check/` |
-| 0 | CITE-check, PORT-catalog | `crates/zed-tools/src/bin/catalog.rs` |
-| 1 | FOOTPRINT-overlap, ENV-port | `zed/prelude/cost.zed` |
-| 1 | FOOTPRINT-overlap, XMARK-rows | `DESIGN.md` |
-| 1 | FOOTPRINT-overlap, ORDER-rename | `DESIGN.md` |
-| 1 | L1.19b, ENV-port | `crates/zedc/src/run.rs` |
-| 1 | XMARK-rows, ORDER-rename | `DESIGN.md` |
-| 1 | XMARK-rows, P14-bits | `zed/corpus/ref/src/p14/delaunay.rs` |
-| 2 | L1.36a, DIAG-suppress | `crates/zedc/src/main.rs` |
-| 2 | VALUE-one-tuple, FAMILY-eq-dag | `crates/zed-kernel/src/deep.rs` |
-| 2 | DIAG-suppress, MENU-linear | `crates/zedc/src/run.rs` |
-| 2 | UTVPI-dag-test, UTVPI-model | `crates/zedc-solvers/src/utvpi.rs` |
-| 2 | UTVPI-model, DECIDE-disj-chain | `crates/zedc-presburger/src/presburger.rs` |
-| 2 | UTVPI-model, NAME-ties-orient | `crates/zedc-presburger/src/presburger.rs` |
-| 2 | DECIDE-disj-chain, NAME-ties-orient | `crates/zedc-presburger/src/presburger.rs` |
-| 3 | U8-rename, FLOAT-minmax | `crates/zedc-check/src/check/mod.rs`, `zed/prelude/axioms.zed` |
-| 3 | U8-rename, L1.36b | `crates/zedc-check/src/check/`, `crates/zedc-resolve/src/resolve.rs` |
-| 3 | U8-rename, LIT-plain | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 3 | FLOAT-minmax, HOOKS-term-dag | `crates/zed-native/src/hooks.rs` |
-| 3 | FLOAT-minmax, L1.36b | `crates/zedc-base/src/axioms.rs`, `crates/zedc-base/src/interp.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 3 | FLOAT-minmax, LIT-plain | `zed/prelude/axioms.zed`, `crates/zedc-check/src/check/mod.rs` |
-| 3 | PREIMAGE-ref-tests, L1.36b | `crates/zedc/src/store/mod.rs`, `crates/zedc/Cargo.toml` |
-| 3 | S22-order, L1.36b | `crates/zedc-preimage/src/preimage.rs` |
-| 3 | HOOKS-term-dag, L1.36b | `crates/zedc-zir/src/zir/memory.rs` |
-| 3 | L1.36b, LIT-plain | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab/walk.rs` |
-| 4 | VERDICT-route, REFUSE-group-site | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | VERDICT-route, GROUP-refusal | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | VERDICT-route, T6-2sat | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | VERDICT-route, T6-refusal-cost | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | VERDICT-route, STR-types | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | REFUSE-group-site, GROUP-refusal | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | REFUSE-group-site, MINMAX-tuples | `crates/zedc-types/src/ty.rs` |
-| 4 | REFUSE-group-site, T6-2sat | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | REFUSE-group-site, T6-refusal-cost | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | REFUSE-group-site, STR-types | `crates/zed-kernel/src/types/empty.rs`, `crates/zedc-types/src/ty.rs` |
-| 4 | GROUP-admit-msg, GROUP-oracle | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-admit-msg, GROUP-refusal | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-admit-msg, GROUP-same | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-admit-msg, T6-refusal-cost | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-admit-msg, REC-canon | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-admit-msg, STR-types | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-oracle, GROUP-refusal | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-oracle, GROUP-same | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-oracle, T6-refusal-cost | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-oracle, REC-canon | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-oracle, STR-types | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-refusal, GROUP-same | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-refusal, T6-2sat | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | GROUP-refusal, T6-refusal-cost | `crates/zed-kernel/src/types/bes.rs`, `crates/zed-kernel/src/types/rec.rs`, `crates/zed-kernel/src/types/empty.rs` |
-| 4 | GROUP-refusal, REC-canon | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-refusal, STR-types | `crates/zed-kernel/src/types/bes.rs`, `crates/zed-kernel/src/types/rec.rs`, `crates/zed-kernel/src/types/empty.rs` |
-| 4 | MINMAX-tuples, STR-types | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 4 | MINMAX-tuples, CAST-menu | `crates/zedc-check/src/check/mod.rs` |
-| 4 | TD-finite, STR-types | `crates/zed-kernel/src/types.rs` |
-| 4 | GROUP-same, T6-refusal-cost | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-same, REC-canon | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | GROUP-same, STR-types | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | HEAP-fresh-dag, MATCH-fn-binder | `crates/zedc-zir/src/zir/memory.rs` |
-| 4 | HEAP-fresh-dag, HEAP-binder-paths | `crates/zed-rt/src/heap.rs` |
-| 4 | HEAP-fresh-dag, STR-types | `crates/zed-rt/src/heap.rs` |
-| 4 | T6-2sat, T6-refusal-cost | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | T6-2sat, STR-types | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | T6-refusal-cost, BDD-xor-parity | `crates/zed-kernel/src/types/bdd.rs` |
-| 4 | T6-refusal-cost, REC-canon | `crates/zed-kernel/src/types/rec.rs` |
+| 0 | SPEC-L3.21-ac, S4-hub-mixed | `DESIGN.md` |
+| 0 | WAVE-theory, S4-hub-mixed | `DESIGN.md` |
+| 0 | K36-study, REFUSAL-front-quadratic | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | K36-study, REFUSAL-periodic-split | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | K36-study, TESTS-L1.23-refusal-text | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | REFUSAL-front-quadratic, REFUSAL-periodic-split | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | REFUSAL-front-quadratic, TESTS-L1.23-refusal-text | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | REFUSAL-periodic-split, TESTS-L1.23-refusal-text | `crates/zed-kernel/src/types/empty.rs` |
+| 1 | L1.14a, L1.29c | `crates/zedc-check/src/check/` |
 | 4 | T6-refusal-cost, STR-types | `crates/zed-kernel/src/types/` |
-| 4 | BDD-xor-parity, STR-types | `crates/zed-kernel/src/types/bdd.rs` |
-| 4 | MATCH-fn-binder, HEAP-binder-paths | `crates/zed-native/src/hooks.rs` |
-| 4 | MATCH-fn-binder, STR-types | `crates/zed-native/src/hooks.rs` |
-| 4 | HEAP-binder-paths, STR-types | `crates/zed-rt/src/heap.rs`, `crates/zed-native/src/hooks.rs` |
-| 4 | REC-canon, STR-types | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | STR-types, CAST-menu | `crates/zedc-check/src/check/mod.rs` |
-| 5 | T2-types-rest, GROUP-setop | `crates/zed-kernel/src/types/rec.rs`, `crates/zed-kernel/src/types/empty.rs` |
+| 5 | IF-union, L1.26b | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab/walk.rs` |
 | 5 | T11-preimage-rest, S15-calls | `crates/zedc-preimage/src/preimage.rs` |
+| 5 | T11-preimage-rest, L1.40 | `crates/zedc-preimage/src/preimage.rs` |
+| 5 | S15-calls, L1.40 | `crates/zedc-preimage/src/preimage.rs` |
 | 6 | T14-bring, RT-sites | `crates/zedc-zir/src/zir/lower.rs` |
-| 6 | NARROW-hub-settle, PRODUCT-nested-chain | `crates/zedc-preimage/src/product.rs` |
-| 6 | NARROW-hub-settle, FINITE-type | `crates/zedc-preimage/src/product.rs` |
-| 6 | SETTLE-rounds, TABLE-life | `crates/zed-kernel/src/types/bdd.rs` |
-| 6 | PRODUCT-nested-chain, FINITE-type | `crates/zedc-preimage/src/product.rs` |
-| 7 | SCALE-cover, T14-paths | `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-native/src/tables.rs`, `crates/zed-native/src/codegen.rs` |
-| 7 | SCALE-cover, L2.5 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec.rs` |
-| 7 | SCALE-cover, L2.8 | `crates/zedc-zir/src/canon/mod.rs`, `crates/zedc/src/unit.rs`, `crates/zedc/src/pin.rs`, `crates/zedc/src/query.rs`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs`, `crates/zedc-syntax/src/format.rs` |
-| 7 | SCALE-cover, T2-ty | `crates/zedc-types/src/ty.rs`, `crates/zedc/src/store/` |
-| 7 | SCALE-cover, ADDR-presburger | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/conjuncts.rs`, `crates/zedc-presburger/src/presburger/deep.rs` |
-| 7 | SCALE-cover, CHK-held-cascade | `crates/zedc-check/src/check` |
-| 7 | L2.5, L2.8 | `DESIGN.md` |
-| 7 | L2.5, T2-ty | `crates/zedc-types/src/ty.rs` |
-| 7 | L2.5, CHK-held-cascade | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
-| 7 | T2-ty, ADDR-presburger | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/conjuncts.rs`, `crates/zedc-presburger/src/presburger/deep.rs` |
-| 7 | T2-ty, CHK-held-cascade | `crates/zedc-types/src/ty.rs` |
-| 7 | RT-internal-fault, SCALE-cover | `crates/zed-rt/src/`, `crates/zed-native/src/` |
-| 8 | T11-ty, WARN-refused | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 8 | T11-ty, CHK-need-bound | `crates/zedc-check/src/check/mod.rs` |
-| 8 | T11-ty, L2.8c | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 7 | SCALE-cover, L2.5 | `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec.rs` |
+| 7 | SCALE-cover, RT-internal-fault | `crates/zed-native/src/`, `crates/zed-rt/src/` |
+| 7 | SCALE-cover, L2.12c | `crates/zedc/src/unit.rs` |
+| 7 | L2.5, L1.40b-sparse | `crates/zedc-check/src/check/mod.rs` |
+| 7 | L1.40c, L1.40b-sparse | `crates/zedc-preimage/src/product.rs` |
+| 8 | MSG-shared-print, T11-ty | `crates/zedc-check/src/check/mod.rs` |
+| 8 | MSG-shared-print, WARN-refused | `crates/zedc-check/src/check/` |
+| 8 | MSG-shared-print, STATIC-assert | `crates/zedc-check/src/check/` |
+| 8 | T11-ty, WARN-refused | `crates/zedc-check/src/check/mod.rs` |
+| 8 | T11-ty, STATIC-assert | `crates/zedc-check/src/check/mod.rs` |
 | 8 | L2.4, BUILD-const | `crates/zedc-stage/src/stage.rs` |
 | 8 | L2.4, WARN-refused | `crates/zedc/src/run.rs` |
 | 8 | L2.4, L2.8b | `DESIGN.md` |
-| 8 | L2.4, L2.8c | `crates/zedc-elab/src/elab.rs`, `crates/zedc-zir/src/canon/serial.rs`, `crates/zedc-stage/src/stage.rs`, `crates/zedc-base/src/interp.rs`, `crates/zedc/src/run.rs` |
+| 8 | L2.4, L2.8c | `crates/zedc/src/run.rs`, `DESIGN.md` |
+| 8 | L2.4, STATIC-assert | `DESIGN.md` |
 | 8 | BUILD-const, GROUP-e2e | `crates/zedc-resolve/src/resolve.rs` |
-| 8 | BUILD-const, L2.8c | `crates/zedc-stage/src/stage.rs`, `crates/zedc-resolve/src/resolve.rs` |
-| 8 | WARN-refused, IS-chain-quad | `crates/zedc-check/src/check/walk.rs` |
-| 8 | WARN-refused, CHK-need-bound | `crates/zedc-check/src/check/mod.rs` |
-| 8 | WARN-refused, L2.8c | `crates/zedc-check/src/check`, `crates/zedc/src/run.rs`, `crates/zedc-preimage/src/product.rs` |
-| 8 | WARN-refused, NARROW-notes-quad | `crates/zedc-check/src/check/arms.rs` |
-| 8 | IS-chain-quad, L2.8c | `crates/zedc-check/src/check/walk.rs` |
-| 8 | PREIMAGE-and-chain, L2.8c | `crates/zedc-preimage/src/preimage.rs` |
-| 8 | CHK-need-bound, L2.8c | `crates/zedc-check/src/check/mod.rs` |
+| 8 | WARN-refused, L2.8c | `crates/zedc/src/run.rs` |
+| 8 | WARN-refused, STATIC-assert | `crates/zedc-check/src/check/` |
 | 8 | L2.8b, DIAG-control | `crates/zedc-base/src/rejection.rs` |
 | 8 | L2.8b, GROUP-e2e | `crates/zedc-base/src/rejection.rs` |
-| 8 | L2.8b, L2.8c | `crates/zedc-base/src/rejection.rs` |
+| 8 | L2.8b, L2.8c | `DESIGN.md` |
+| 8 | L2.8b, STATIC-assert | `DESIGN.md` |
 | 8 | DIAG-control, GROUP-e2e | `crates/zedc-base/src/rejection.rs` |
-| 8 | DIAG-control, L2.8c | `crates/zedc-base/src/rejection.rs` |
-| 8 | GROUP-e2e, L2.8c | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab/`, `crates/zedc-base/src/rejection.rs` |
-| 8 | PLAN-shared-regions, L2.8c | `crates/zedc-zir/src/zir/memory.rs` |
-| 8 | L2.8c, NARROW-notes-quad | `crates/zedc-check/src/check/arms.rs` |
+| 8 | L2.8c, STATIC-assert | `DESIGN.md` |
 | 9 | S22-R2, L2.7 | `crates/zedc-preimage/src/preimage.rs` |
-| 9 | T11-check, ISSUE1-payload | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
-| 9 | T11-check, STRUCT-key | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
+| 9 | T11-check, ISSUE1-payload | `crates/zedc-check/src/check/mod.rs` |
+| 9 | T11-check, STRUCT-key | `crates/zedc-check/src/check/mod.rs` |
 | 9 | T11-check, L2.7 | `crates/zedc-check/src/check/mod.rs` |
-| 9 | ISSUE1-payload, STRUCT-key | `crates/zedc-check/src/check` |
+| 9 | ISSUE1-payload, STRUCT-key | `crates/zedc-check/src/check/` |
 | 9 | ISSUE1-payload, L2.7 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/exhaust.rs` |
 | 9 | STRUCT-key, L2.7 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/exhaust.rs`, `DESIGN.md` |
-| 10 | STAGE-print, STAGE-ends-cone | `crates/zedc-stage/src/stage.rs` |
+| 10 | T10, T14-lints | `crates/zed-native/Cargo.toml`, `crates/zedc/src/`, `crates/zed-kernel/src/`, `crates/zed-native/src/`, `crates/zed-rt/src/` |
+| 10 | T10, PRE-abs-output | `crates/zedc-preimage/src/preimage.rs`, `crates/zedc-lattice/src/interval.rs` |
+| 10 | T10, ST-formula-sibling | `crates/zedc-presburger/src/presburger.rs` |
+| 10 | T10, STAGE-print | `crates/zed-kernel/src/`, `crates/zedc-stage/src/stage.rs` |
+| 10 | T10, ST-formula-parse-keep | `crates/zedc-presburger/src/presburger/deep/canon.rs` |
+| 10 | T10, LOWER-dag | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs` |
+| 10 | T10, L1.40b | `crates/zedc-check/src/check/`, `crates/zedc/src/store/eq.rs`, `crates/zedc-preimage/src/product.rs` |
+| 10 | T10, TEST-fuzz | `crates/zed-tools/src/fuzz.rs`, `crates/zedc/` |
+| 10 | T10, L2.8e | `crates/zedc/src/pin.rs`, `crates/zedc/src/testing.rs` |
+| 10 | T14-lints, STAGE-print | `crates/zed-kernel/src/` |
+| 10 | T14-lints, L1.40b | `crates/zedc/src/store/eq.rs` |
+| 10 | T14-lints, TEST-fuzz | `crates/zedc/src/` |
+| 10 | T14-lints, L2.8e | `crates/zedc/src/pin.rs`, `crates/zedc/src/testing.rs` |
+| 10 | L1.40b, TEST-fuzz | `crates/zedc/src/store/eq.rs` |
+| 10 | TEST-fuzz, L2.8e | `crates/zedc/src/pin.rs`, `crates/zedc/src/testing.rs` |
 | 11 | L2.6, L1.40e | `DESIGN.md` |
-| 11 | L1.40e, L1.40f | `crates/zedc-preimage/src/product.rs` |
+| 11 | L2.6, RAT-domain | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/overload.rs`, `DESIGN.md` |
+| 11 | L1.40e, RAT-domain | `DESIGN.md` |
+| 11 | L1.40f, RAT-domain | `crates/zedc/src/store/` |
 | 12 | HKT-2, L2.12 | `crates/zedc-check/src/check/mod.rs` |
-| 12 | HKT-2, OVERLOAD-name-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
+| 12 | HKT-2, L2.6b | `crates/zedc-check/src/check/mod.rs` |
+| 12 | HKT-2, OVERLOAD-name-type | `crates/zedc-check/src/check/mod.rs` |
 | 12 | L2.9, L1.41 | `crates/zedc-zir/src/zir/text.rs` |
+| 12 | L2.12, L2.6b | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/overload.rs` |
 | 12 | L2.12, OVERLOAD-name-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/overload.rs`, `crates/zedc-check/src/check/exhaust.rs` |
+| 12 | L2.6b, OVERLOAD-name-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/overload.rs` |
+| 13 | BUBBLE-msg, L2.10 | `crates/zedc-check/src/check/mod.rs` |
+| 13 | BUBBLE-msg, GLAM-diamond | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/overload.rs` |
+| 13 | BUBBLE-msg, L2.12b | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/overload.rs` |
+| 13 | BUBBLE-msg, L2.7a | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/overload.rs` |
 | 13 | L2.10, GLAM-diamond | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 13 | L2.10, L2.12b | `crates/zedc-check/src/check/mod.rs` |
+| 13 | L2.10, OR-PAT | `DESIGN.md` |
 | 13 | L2.10, SCOPE-warn | `crates/zedc/src/run.rs`, `crates/zedc-preimage/src/product.rs`, `DESIGN.md` |
 | 13 | L2.10, L2.7a | `crates/zedc-check/src/check/mod.rs` |
 | 13 | GLAM-diamond, L2.12b | `crates/zedc-check/src/check/` |
@@ -1331,32 +1276,174 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 13 | GLAM-diamond, L2.7a | `crates/zedc-check/src/check/` |
 | 13 | L2.12b, OR-PAT | `crates/zedc-check/src/check/exhaust.rs` |
 | 13 | L2.12b, L2.7a | `crates/zedc-check/src/check/` |
+| 13 | OR-PAT, SCOPE-warn | `DESIGN.md` |
 | 13 | OR-PAT, L2.7a | `crates/zedc-check/src/check/exhaust.rs` |
 | 14 | L2.11, L3.2 | `DESIGN.md` |
 | 14 | L3.2, FLOAT-sqrt | `crates/zed-kernel/src/term.rs`, `crates/zed-kernel/src/words.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/provenance.rs`, `crates/zed-native/src/hooks.rs`, `zed/prelude/` |
+| 15 | L1.39g, L3.2b | `crates/zed-kernel/src/eval.rs` |
+| 15 | L1.39g, L3.3 | `crates/zed-kernel/src/family.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/provenance.rs` |
+| 15 | L1.39g, L4.1 | `zed/prelude/`, `crates/zed-kernel/src/term.rs` |
+| 15 | L1.39g, STR-views | `zed/prelude/`, `crates/zed-kernel/src/`, `crates/zed-native/src/hooks.rs` |
 | 15 | L2.14, L4.1 | `DESIGN.md` |
+| 15 | L3.2b, L3.3 | `crates/zedc-elab/src/elab.rs`, `crates/zed-kernel/src/eval.rs` |
+| 15 | L3.2b, L4.1 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-elab/src/elab.rs` |
+| 15 | L3.2b, STR-views | `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/eval.rs` |
 | 15 | L3.3, L4.1 | `crates/zedc-elab/src/elab.rs` |
 | 15 | L3.3, STR-views | `crates/zed-kernel/src/family.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/provenance.rs` |
-| 15 | L4.1, STR-views | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zed-kernel/src/term.rs`, `zed/prelude/` |
+| 15 | L4.1, STR-views | `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/term.rs`, `zed/prelude/` |
 | 16 | L3.4, L6.6 | `crates/zed-kernel/src/term.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/text.rs`, `crates/zedc-zir/src/zir/binary.rs` |
 | 16 | L3.4, L6.7 | `crates/zed-kernel/src/term.rs`, `crates/zed-kernel/src/eval.rs` |
 | 16 | L6.6, L6.7 | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/term.rs` |
 | 17 | L3.5, L6.4 | `crates/zedc-elab/src/elab.rs` |
-| 19 | RT-guard-fault, RT-exhaust-report | `crates/zed-rt/src/` |
-| 20 | RT-alloc-refusal, L3.13 | `crates/zed-rt/src/exact.rs`, `crates/zed-rt/src/heap.rs`, `crates/zed-rt/src/lib.rs`, `crates/zed-rt/src/morph.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/lib.rs`, `crates/zed-native/src/tables.rs` |
+| 19 | L3.7, RT-exhaust-report | `DESIGN.md` |
+| 19 | RT-exhaust-report, RT-guard-fault | `crates/zed-rt/src/` |
+| 20 | L3.13, RT-alloc-refusal | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/tables.rs`, `crates/zed-native/src/lib.rs`, `crates/zed-rt/src/heap.rs`, `crates/zed-rt/src/lib.rs`, `crates/zed-rt/src/morph.rs`, `crates/zed-rt/src/exact.rs` |
 | 21 | L3.15a, FLOAT-f32 | `crates/zed-kernel/src/eval.rs` |
 | 21 | L3.15a, BIT-repr | `crates/zed-kernel/src/eval.rs`, `crates/zed-native/src/` |
 | 21 | L3.15a, WIDE-product | `crates/zed-native/src/` |
-| 21 | FLOAT-f32, BIT-repr | `crates/zed-kernel/src/eval.rs`, `crates/zedc-lattice/src/float.rs`, `DESIGN.md` |
+| 21 | FLOAT-f32, BIT-repr | `crates/zed-kernel/src/eval.rs`, `DESIGN.md` |
 | 21 | FLOAT-f32, WIDE-product | `DESIGN.md` |
+| 21 | FLOAT-f32, HASH-repr | `DESIGN.md` |
 | 21 | BIT-repr, WIDE-product | `crates/zed-native/`, `DESIGN.md` |
-| 21 | BIT-repr, HASH-repr | `crates/zed-rt/src` |
+| 21 | BIT-repr, HASH-repr | `crates/zed-rt/src/`, `DESIGN.md` |
+| 21 | WIDE-product, HASH-repr | `DESIGN.md` |
+| 21 | ASSOC-select, ASSOC-lattice | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-select, ASSOC-gf2 | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-select, ASSOC-mod | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-select, ASSOC-table | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-select, RAT-lin | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-lattice, ASSOC-gf2 | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-lattice, ASSOC-mod | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-lattice, ASSOC-table | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-lattice, RAT-lin | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-gf2, ASSOC-mod | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-gf2, ASSOC-table | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-gf2, RAT-lin | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-mod, ASSOC-table | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-mod, RAT-lin | `crates/zedc/src/oblig/` |
+| 21 | ASSOC-table, RAT-lin | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, ASSOC-sets | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, RAT-div | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, RAT-split | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, RAT-pin | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, RAT-point | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, HULL-norm | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, HULL-lp | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, HULL-key | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, HULL-elim | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, HULL-binom | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, HULL-conic | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-gcd, L3.20 | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, RAT-div | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, RAT-split | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, RAT-pin | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, RAT-point | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, HULL-norm | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, HULL-lp | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, HULL-key | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, HULL-elim | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, HULL-binom | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, HULL-conic | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | ASSOC-sets, L3.20 | `crates/zedc/src/oblig/` |
+| 22 | RAT-div, RAT-split | `crates/zedc/src/oblig/` |
+| 22 | RAT-div, RAT-pin | `crates/zedc/src/oblig/` |
+| 22 | RAT-div, RAT-point | `crates/zedc/src/oblig/` |
+| 22 | RAT-div, HULL-norm | `crates/zedc/src/oblig/` |
+| 22 | RAT-div, HULL-lp | `crates/zedc/src/oblig/` |
+| 22 | RAT-div, HULL-key | `crates/zedc/src/oblig/` |
+| 22 | RAT-div, HULL-elim | `crates/zedc/src/oblig/` |
+| 22 | RAT-div, HULL-binom | `crates/zedc/src/oblig/` |
+| 22 | RAT-div, HULL-conic | `crates/zedc/src/oblig/` |
+| 22 | RAT-div, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | RAT-div, L3.20 | `crates/zedc/src/oblig/` |
+| 22 | RAT-split, RAT-pin | `crates/zedc/src/oblig/` |
+| 22 | RAT-split, RAT-point | `crates/zedc/src/oblig/` |
+| 22 | RAT-split, HULL-norm | `crates/zedc/src/oblig/` |
+| 22 | RAT-split, HULL-lp | `crates/zedc/src/oblig/` |
+| 22 | RAT-split, HULL-key | `crates/zedc/src/oblig/` |
+| 22 | RAT-split, HULL-elim | `crates/zedc/src/oblig/` |
+| 22 | RAT-split, HULL-binom | `crates/zedc/src/oblig/` |
+| 22 | RAT-split, HULL-conic | `crates/zedc/src/oblig/` |
+| 22 | RAT-split, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | RAT-split, L3.20 | `crates/zedc/src/oblig/` |
+| 22 | RAT-pin, RAT-point | `crates/zedc/src/oblig/` |
+| 22 | RAT-pin, HULL-norm | `crates/zedc/src/oblig/` |
+| 22 | RAT-pin, HULL-lp | `crates/zedc/src/oblig/` |
+| 22 | RAT-pin, HULL-key | `crates/zedc/src/oblig/` |
+| 22 | RAT-pin, HULL-elim | `crates/zedc/src/oblig/` |
+| 22 | RAT-pin, HULL-binom | `crates/zedc/src/oblig/` |
+| 22 | RAT-pin, HULL-conic | `crates/zedc/src/oblig/` |
+| 22 | RAT-pin, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | RAT-pin, L3.20 | `crates/zedc/src/oblig/` |
+| 22 | RAT-point, HULL-norm | `crates/zedc/src/oblig/` |
+| 22 | RAT-point, HULL-lp | `crates/zedc/src/oblig/` |
+| 22 | RAT-point, HULL-key | `crates/zedc/src/oblig/` |
+| 22 | RAT-point, HULL-elim | `crates/zedc/src/oblig/` |
+| 22 | RAT-point, HULL-binom | `crates/zedc/src/oblig/` |
+| 22 | RAT-point, HULL-conic | `crates/zedc/src/oblig/` |
+| 22 | RAT-point, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | RAT-point, L3.20 | `crates/zedc/src/oblig/` |
+| 22 | HULL-norm, HULL-lp | `crates/zedc/src/oblig/` |
+| 22 | HULL-norm, HULL-key | `crates/zedc/src/oblig/` |
+| 22 | HULL-norm, HULL-elim | `crates/zedc/src/oblig/` |
+| 22 | HULL-norm, HULL-binom | `crates/zedc/src/oblig/` |
+| 22 | HULL-norm, HULL-conic | `crates/zedc/src/oblig/` |
+| 22 | HULL-norm, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | HULL-norm, L3.20 | `crates/zedc/src/oblig/` |
+| 22 | HULL-lp, HULL-key | `crates/zedc/src/oblig/` |
+| 22 | HULL-lp, HULL-elim | `crates/zedc/src/oblig/` |
+| 22 | HULL-lp, HULL-binom | `crates/zedc/src/oblig/` |
+| 22 | HULL-lp, HULL-conic | `crates/zedc/src/oblig/` |
+| 22 | HULL-lp, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | HULL-lp, L3.20 | `crates/zedc/src/oblig/` |
+| 22 | HULL-key, HULL-elim | `crates/zedc/src/oblig/` |
+| 22 | HULL-key, HULL-binom | `crates/zedc/src/oblig/` |
+| 22 | HULL-key, HULL-conic | `crates/zedc/src/oblig/` |
+| 22 | HULL-key, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | HULL-key, L3.20 | `crates/zedc/src/oblig/` |
+| 22 | HULL-elim, HULL-binom | `crates/zedc/src/oblig/` |
+| 22 | HULL-elim, HULL-conic | `crates/zedc/src/oblig/` |
+| 22 | HULL-elim, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | HULL-elim, L3.20 | `crates/zedc/src/oblig/` |
+| 22 | HULL-binom, HULL-conic | `crates/zedc/src/oblig/` |
+| 22 | HULL-binom, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | HULL-binom, L3.20 | `crates/zedc/src/oblig/` |
+| 22 | HULL-conic, L3.9 | `crates/zedc/src/oblig/` |
+| 22 | HULL-conic, L3.20 | `crates/zedc/src/oblig/` |
 | 22 | L3.9, L3.20 | `crates/zedc/src/oblig/` |
+| 23 | HULL-pos, HULL-gf2 | `crates/zedc/src/oblig/` |
+| 23 | HULL-pos, HULL-atoms | `crates/zedc/src/oblig/` |
+| 23 | HULL-pos, HULL-trop | `crates/zedc/src/oblig/` |
+| 23 | HULL-pos, HULL-int | `crates/zedc/src/oblig/` |
+| 23 | HULL-pos, L3.10 | `crates/zedc/src/oblig/` |
+| 23 | HULL-pos, ASSOC-word | `crates/zedc/src/oblig/` |
+| 23 | HULL-gf2, HULL-atoms | `crates/zedc/src/oblig/` |
+| 23 | HULL-gf2, HULL-trop | `crates/zedc/src/oblig/` |
+| 23 | HULL-gf2, HULL-int | `crates/zedc/src/oblig/` |
+| 23 | HULL-gf2, L3.10 | `crates/zedc/src/oblig/` |
+| 23 | HULL-gf2, ASSOC-word | `crates/zedc/src/oblig/` |
+| 23 | HULL-atoms, HULL-trop | `crates/zedc/src/oblig/` |
+| 23 | HULL-atoms, HULL-int | `crates/zedc/src/oblig/` |
+| 23 | HULL-atoms, L3.10 | `crates/zedc/src/oblig/` |
+| 23 | HULL-atoms, ASSOC-word | `crates/zedc/src/oblig/` |
+| 23 | HULL-trop, HULL-int | `crates/zedc/src/oblig/` |
+| 23 | HULL-trop, L3.10 | `crates/zedc/src/oblig/` |
+| 23 | HULL-trop, ASSOC-word | `crates/zedc/src/oblig/` |
+| 23 | HULL-int, L3.10 | `crates/zedc/src/oblig/` |
+| 23 | HULL-int, ASSOC-word | `crates/zedc/src/oblig/` |
+| 23 | L3.10, ASSOC-word | `crates/zedc/src/oblig/` |
+| 24 | H10-refuse, L3.18 | `crates/zedc/src/oblig/` |
 | 24 | L3.12, MATCH-commute | `crates/zedc/src/opt/` |
 | 24 | L3.12, ZIR-check-passes | `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-zir/src/zir/text.rs`, `crates/zedc-zir/src/zir/binary.rs`, `crates/zedc-zir/src/zir/canon.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs` |
 | 24 | L3.12, FOLD-zero | `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-zir/src/zir/text.rs`, `crates/zedc-zir/src/zir/binary.rs`, `crates/zedc-zir/src/zir/canon.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs` |
 | 24 | L3.18, PROP-per-arrow | `crates/zedc-check/src/check/mod.rs` |
 | 24 | ZIR-check-passes, FOLD-zero | `crates/zedc-zir/src/zir/` |
+| 25 | HULL-tests, ASSOC-demand | `crates/zedc/src/oblig/` |
+| 25 | ASSOC-demand, L3.18a | `crates/zedc-check/src/check/` |
+| 25 | ASSOC-demand, L3.18b | `crates/zedc-check/src/check/` |
+| 25 | ASSOC-demand, KEYABLE-reject | `crates/zedc-check/src/check/` |
 | 25 | L3.17, L3.23 | `crates/zed-native/src/codegen.rs` |
 | 25 | L3.21, L3.23 | `crates/zedc/src/opt/` |
 | 25 | L3.23, KEYABLE-reject | `DESIGN.md` |
@@ -1384,25 +1471,43 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 28 | L3.15, L4.6 | `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/codegen.rs` |
 | 29 | L5.4, CSR-bounds | `zed/prelude/axioms.zed` |
 | 29 | L5.4, EVID-dynamic | `crates/zedc-zir/src/zir/lower.rs` |
-| 29 | L5.4, BOUND-L4 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
+| 29 | L5.4, L1.18a | `crates/zedc-types/src/ty.rs`, `crates/zed-kernel/src/eval.rs` |
+| 29 | L5.4, BOUND-L4 | `crates/zedc-check/src/check/mod.rs` |
 | 29 | CSR-bounds, BOUND-L4 | `crates/zedc/src/store/` |
+| 29 | EVID-dynamic, L1.18a | `crates/zedc-zir/src/zir/binary.rs` |
+| 30 | FLOAT-interval, NAN-cast-atoms | `crates/zedc-check/src/check/` |
+| 30 | FLOAT-interval, L5.5 | `crates/zedc-check/src/check/mod.rs` |
+| 30 | FLOAT-interval, L5.4a | `crates/zedc-check/src/check/mod.rs`, `zed/prelude/` |
+| 30 | FLOAT-interval, L6.2 | `crates/zedc-check/src/check/mod.rs` |
+| 30 | FLOAT-interval, BOUND-L5 | `crates/zedc-check/src/check/` |
+| 30 | NAN-cast-atoms, L5.5 | `crates/zedc-check/src/check/mod.rs` |
+| 30 | NAN-cast-atoms, L5.4a | `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/eval.rs` |
+| 30 | NAN-cast-atoms, L5.6 | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/family.rs`, `crates/zed-kernel/src/text.rs` |
+| 30 | NAN-cast-atoms, L6.2 | `crates/zedc-check/src/check/mod.rs` |
+| 30 | NAN-cast-atoms, BOUND-L5 | `crates/zedc-check/src/check/` |
 | 30 | L5.8a, L5.5 | `crates/zedc-elab/src/elab.rs` |
+| 30 | L5.8a, L5.4a | `crates/zedc-elab/src/elab.rs` |
 | 30 | L5.8a, L5.6 | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/tables.rs` |
 | 30 | L5.8a, L6.2 | `crates/zedc-elab/src/elab.rs` |
+| 30 | L5.5, L5.4a | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 30 | L5.5, L6.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 30 | L5.5, BOUND-L5 | `crates/zedc-check/src/check/mod.rs` |
-| 30 | L6.2, BOUND-L5 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
-| 31 | L4.8, L5.13 | `crates/zedc/src/opt/ (the L3.11 pass` |
-| 31 | L4.8, L5.5a | `crates/zedc/src/opt/ (the L3.11 pass` |
+| 30 | L5.4a, L5.6 | `crates/zed-kernel/src/eval.rs`, `crates/zedc-zir/src/zir/lower.rs` |
+| 30 | L5.4a, L6.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
+| 30 | L5.4a, BOUND-L5 | `crates/zedc-check/src/check/mod.rs` |
+| 30 | L6.2, BOUND-L5 | `crates/zedc-check/src/check/mod.rs` |
+| 31 | L4.8, L5.13 | `crates/zedc/src/opt/convolution.rs`, `crates/zedc/src/opt/` |
+| 31 | L4.8, L5.5a | `crates/zedc/src/opt/` |
 | 31 | L5.9, L5.13 | `crates/zed-cert/src/`, `crates/zed-native/src/hooks.rs` |
 | 31 | L5.9, ENUM-perm | `crates/zed-rt/src/ordtree.rs`, `crates/zed-rt/src/join.rs`, `crates/zed-rt/src/union_find.rs` |
 | 31 | L5.9, SORTED-dense | `crates/zed-rt/src/ordtree.rs`, `crates/zed-rt/src/join.rs`, `crates/zed-rt/src/union_find.rs` |
 | 31 | L5.13, L5.5a | `crates/zedc/src/opt/convolution.rs`, `crates/zedc/src/opt/` |
 | 31 | L5.13, ENUM-perm | `crates/zed-rt/src/ntt.rs`, `crates/zed-rt/src/lib.rs` |
 | 31 | L5.13, SORTED-dense | `crates/zed-rt/src/ntt.rs`, `crates/zed-rt/src/lib.rs` |
+| 31 | L5.5a, SORTED-dense | `DESIGN.md` |
 | 31 | ENUM-perm, SORTED-dense | `crates/zed-rt/src/` |
 | 32 | L5.7, L6.11 | `zed/prelude/iteration.zed` |
-| 32 | L5.7, L6.14 | `crates/zed-rt/src/scan.rs (new` |
+| 32 | L5.7, L6.14 | `crates/zed-rt/src/scan.rs` |
 | 32 | L6.8, L6.11 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
 | 32 | L6.14, L5.1d | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/tables.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs` |
 | 33 | L5.10, L6.9 | `crates/zedc-check/src/check/mod.rs` |
@@ -1410,9 +1515,9 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 33 | L5.10, LAW14-gen | `crates/zedc/src/opt/explain.rs` |
 | 33 | L5.10, WITNESS-widened | `crates/zedc-check/src/check/mod.rs` |
 | 33 | L5.10, L5.7a | `crates/zedc/src/opt/explain.rs` |
-| 33 | L6.11a, L6.9 | `crates/zedc-lattice/src/iterate.rs` |
-| 33 | L6.11a, WITNESS-widened | `crates/zedc-lattice/src/iterate.rs` |
-| 33 | L6.9, WITNESS-widened | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc/src/store/` |
+| 33 | L6.11a, LAW14-gen | `DESIGN.md` |
+| 33 | L6.11a, WITNESS-widened | `DESIGN.md` |
+| 33 | L6.9, WITNESS-widened | `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/store/` |
 | 33 | INLINE-zir, LAW14-gen | `crates/zedc/src/opt/` |
 | 33 | INLINE-zir, L5.7a | `crates/zedc/src/opt/` |
 | 33 | LAW14-gen, WITNESS-widened | `DESIGN.md` |
@@ -1426,12 +1531,18 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 36 | L6.19, L6.5 | `crates/zedc-check/src/check/mod.rs` |
 | 36 | L6.19, DESCENT-sum | `crates/zedc-check/src/check/mod.rs` |
 | 36 | L6.19, EQ-tabulate | `crates/zedc-check/src/check/mod.rs` |
+| 36 | L6.19, ASSOC-fold | `zed/prelude/cost.zed` |
 | 36 | L6.5, DESCENT-sum | `crates/zedc-check/src/check/mod.rs` |
 | 36 | L6.5, EQ-tabulate | `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/eval.rs` |
+| 36 | L6.5, ASSOC-fold | `crates/zedc/src/opt/` |
 | 36 | DESCENT-sum, EQ-tabulate | `crates/zedc-check/src/check/` |
-| 37 | L5.14, L6.15 | `crates/zedc/src/opt/ (whatever the measurements require)` |
-| 37 | L5.14, L6.5c | `crates/zedc/src/opt/ (whatever the measurements require)` |
-| 37 | L5.14, FOLD-layers | `crates/zedc/src/opt/ (whatever the measurements require)` |
+| 37 | L5.14, L6.13a | `crates/zed-rt/src/heap.rs` |
+| 37 | L5.14, L6.13c | `crates/zed-rt/src/heap.rs` |
+| 37 | L5.14, L6.15 | `crates/zedc/src/opt/` |
+| 37 | L5.14, L6.5c | `crates/zedc/src/opt/` |
+| 37 | L5.14, FOLD-layers | `crates/zedc/src/opt/`, `crates/zed-rt/src/sched.rs` |
+| 37 | L5.14, L6.13e | `crates/zed-rt/src/heap.rs` |
+| 37 | L5.14, AUX-homsynth | `crates/zedc/src/opt/` |
 | 37 | L6.13a, L6.13c | `crates/zed-rt/src/heap.rs`, `crates/zed-native/src/hooks.rs` |
 | 37 | L6.13a, L6.15 | `crates/zed-native/src/codegen.rs` |
 | 37 | L6.13a, FOLD-layers | `crates/zed-native/src/codegen.rs` |
@@ -1439,17 +1550,27 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 37 | L6.13b, L6.15 | `crates/zedc-zir/src/zir/memory.rs` |
 | 37 | L6.13b, HEAP-rank | `crates/zedc-zir/src/zir/memory.rs` |
 | 37 | L6.13c, L6.13e | `crates/zed-rt/src/heap.rs` |
+| 37 | L6.12b, RUNG2-recurrence | `crates/zedc-check/src/check/` |
+| 37 | L6.12b, NO-RUN-audit | `crates/zedc-check/src/check/`, `crates/zedc/src/refine/` |
 | 37 | L6.12b, HKT-1 | `crates/zedc-check/src/check/mod.rs` |
 | 37 | L6.12b, L6.5c | `crates/zedc-check/src/check/mod.rs` |
+| 37 | RUNG2-recurrence, NO-RUN-audit | `crates/zedc-check/src/check/` |
+| 37 | RUNG2-recurrence, HKT-1 | `crates/zedc-check/src/check/mod.rs` |
+| 37 | RUNG2-recurrence, L6.5c | `crates/zedc-check/src/check/mod.rs` |
+| 37 | NO-RUN-audit, HKT-1 | `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/eval.rs` |
+| 37 | NO-RUN-audit, L6.5c | `crates/zedc-check/src/check/mod.rs` |
 | 37 | HKT-1, L6.5c | `crates/zedc-check/src/check/mod.rs` |
 | 37 | L6.15, L6.5c | `crates/zedc/src/opt/` |
 | 37 | L6.15, FOLD-layers | `crates/zedc/src/opt/`, `crates/zed-native/src/codegen.rs` |
 | 37 | L6.15, HEAP-rank | `crates/zedc-zir/src/zir/memory.rs` |
+| 37 | L6.15, AUX-homsynth | `crates/zedc/src/opt/` |
 | 37 | PRELUDE-words, COST-patch | `zed/prelude/cost.zed` |
 | 37 | L6.5c, FOLD-layers | `crates/zedc/src/opt/` |
-| 38 | BEND-contract, L6.16 | `crates/zedc/src/opt/ (from L3.11 and L5.7)`, `zed/prelude/cost.zed` |
-| 38 | BEND-contract, MEMO-cross | `crates/zedc/src/opt/ (from L3.11 and L5.7)`, `crates/zedc-base/src/cost.rs` |
-| 38 | BEND-contract, RECLAIM-pulse | `crates/zed-rt/src/scan.rs (from L5.6)`, `crates/zed-rt/src/sched.rs` |
+| 37 | L6.5c, AUX-homsynth | `crates/zedc/src/opt/` |
+| 37 | FOLD-layers, AUX-homsynth | `crates/zedc/src/opt/` |
+| 38 | BEND-contract, L6.16 | `crates/zedc/src/opt/`, `zed/prelude/cost.zed` |
+| 38 | BEND-contract, MEMO-cross | `crates/zedc/src/opt/` |
+| 38 | BEND-contract, RECLAIM-pulse | `crates/zed-rt/src/scan.rs`, `crates/zed-rt/src/sched.rs` |
 | 38 | L6.16, RT-layout | `crates/zed-native/src/hooks.rs` |
 | 38 | L6.16, MEMO-cross | `crates/zedc/src/opt/` |
 | 38 | RT-layout, DEEP-native-eq | `crates/zed-rt/src/heap.rs` |
@@ -1458,176 +1579,288 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 38 | FOLD-unique, MEMO-cross | `crates/zedc/src/oblig/` |
 | 38 | INTERN-threaded, MEMO-cross | `ZED_PORT_GAPS.md` |
 | 38 | MEMO-cross, ARM-split | `crates/zedc/src/store/`, `DESIGN.md` |
+| 39 | MIX-budget, L6.17 | `crates/zedc/src/`, `crates/zed-kernel/src/eval.rs` |
+| 39 | MIX-budget, L6.5d | `crates/zed-kernel/src/eval.rs` |
+| 39 | MIX-budget, STR-cursor | `crates/zedc/src/opt/` |
+| 39 | L6.17, L6.5d | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zed-kernel/src/eval.rs` |
 | 39 | L6.17, STR-cursor | `crates/zedc/src/opt/`, `crates/zedc-zir/src/zir/`, `crates/zed-kernel/src/text.rs`, `crates/zed-native/src/hooks.rs` |
 | 42 | S.1d, S.1e | `zed/prelude/` |
 | 42 | S.1d, L7.1 | `zed/prelude/`, `crates/zedc-check/src/check/` |
 | 42 | S.1e, L7.1 | `zed/prelude/` |
 | 42 | L7.1, L8.1 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-syntax/src/format.rs` |
 | 43 | S.1a, L7.2 | `crates/zedc/src/run.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs` |
-| 43 | S.1a, ROD-data | `crates/zed-native/src/` |
+| 43 | S.1a, ROD-data | `crates/zedc/src/run.rs`, `crates/zed-native/src/` |
 | 43 | L7.1a, L7.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
 | 43 | L7.1a, L8.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
 | 43 | L7.2, L8.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
 | 43 | L7.2, L10.1 | `crates/zedc-syntax/src/ast/stmts.rs` |
-| 43 | L7.2, ROD-data | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs` |
+| 43 | L7.2, ROD-data | `crates/zedc/src/run.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs` |
 | 44 | L7.2a, L7.3 | `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/run.rs` |
 | 44 | L7.2a, L9.1 | `crates/zedc-elab/src/elab.rs` |
 | 44 | L7.2a, L15.1 | `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/run.rs` |
+| 44 | L7.2a, EMPTY-level-swap | `crates/zedc-elab/src/elab.rs` |
 | 44 | L7.3, L9.1 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/`, `crates/zed-native/src/hooks.rs` |
-| 44 | L7.3, L15.1 | `crates/zedc/src/run.rs`, `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/` |
+| 44 | L7.3, L15.1 | `crates/zedc/src/run.rs`, `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs` |
 | 44 | L7.3, L10.4a | `crates/zedc-check/src/check/` |
 | 44 | L7.3, FINITE-prop | `crates/zedc-check/src/check/` |
-| 44 | L9.1, L15.1 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-zir/src/zir/` |
+| 44 | L7.3, EMPTY-level-swap | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
+| 44 | L7.3, PORT-key-static | `crates/zedc-check/src/check/` |
+| 44 | L9.1, L15.1 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-syntax/src/format.rs` |
 | 44 | L9.1, L10.4a | `crates/zedc-check/src/check/` |
 | 44 | L9.1, FINITE-prop | `crates/zedc-check/src/check/` |
-| 44 | L15.1, L10.4a | `crates/zedc-check/src/check/` |
+| 44 | L9.1, EMPTY-level-swap | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
+| 44 | L9.1, PORT-key-static | `crates/zedc-check/src/check/` |
 | 44 | L15.1, L8.2a | `crates/zedc-resolve/src/resolve.rs` |
-| 44 | L15.1, FINITE-prop | `crates/zedc-check/src/check/`, `crates/zedc/src/store/` |
+| 44 | L15.1, FINITE-prop | `crates/zedc/src/store/` |
+| 44 | L15.1, EMPTY-level-swap | `crates/zedc-elab/src/elab.rs` |
 | 44 | L10.4a, FINITE-prop | `crates/zedc-check/src/check/` |
-| 44 | PORT-key-static, L7.3 | `crates/zedc-check/src/check/` |
-| 44 | PORT-key-static, L9.1 | `crates/zedc-check/src/check/` |
-| 44 | PORT-key-static, L10.4a | `crates/zedc-check/src/check/` |
-| 44 | PORT-key-static, FINITE-prop | `crates/zedc-check/src/check/` |
-| 44 | PORT-key-static, EMPTY-level-swap | `crates/zedc-check/src/check/` |
-| 45 | L7.4, L22.1 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-types/src/ty.rs` |
+| 44 | L10.4a, EMPTY-level-swap | `crates/zedc-check/src/check/` |
+| 44 | L10.4a, PORT-key-static | `crates/zedc-check/src/check/` |
+| 44 | FINITE-prop, EMPTY-level-swap | `crates/zedc-check/src/check/` |
+| 44 | FINITE-prop, PORT-key-static | `crates/zedc-check/src/check/` |
+| 44 | EMPTY-level-swap, PORT-key-static | `crates/zedc-check/src/check/` |
+| 45 | TIMEOUT-annot, L7.4 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/` |
+| 45 | TIMEOUT-annot, L22.1 | `crates/zedc-elab/src/elab.rs` |
+| 45 | TIMEOUT-annot, L7.14 | `crates/zedc-check/src/check/` |
+| 45 | TIMEOUT-annot, L7.3g | `crates/zedc-check/src/check/` |
+| 45 | TIMEOUT-annot, GLAM-logspec | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
+| 45 | TIMEOUT-annot, L7.5 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/` |
+| 45 | TIMEOUT-annot, FLOAT-sum-policy | `crates/zedc-check/src/check/`, `crates/zed-rt/src/exact.rs` |
+| 45 | TIMEOUT-annot, UNORD-keep | `crates/zed-rt/src/` |
+| 45 | TIMEOUT-annot, FILE-bytes | `crates/zed-rt/src/ports.rs` |
+| 45 | TIMEOUT-annot, PORT-why | `crates/zed-rt/src/` |
+| 45 | TIMEOUT-annot, QUANT-finite | `crates/zedc-check/src/check/` |
+| 45 | TIMEOUT-annot, PORT-ack-name | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/ports.rs` |
+| 45 | L7.4, L22.1 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-elab/src/elab.rs` |
 | 45 | L7.4, L7.14 | `crates/zedc-check/src/check/` |
+| 45 | L7.4, L7.3g | `crates/zedc-check/src/check/` |
 | 45 | L7.4, GLAM-logspec | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
 | 45 | L7.4, L7.5 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/run.rs`, `crates/zed-native/src/`, `crates/zed-rt/src/` |
+| 45 | L7.4, FLOAT-sum-policy | `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-rt/src/exact.rs` |
 | 45 | L7.4, UNORD-keep | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-rt/src/` |
 | 45 | L7.4, FILE-bytes | `crates/zedc/src/run.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-rt/src/ports.rs` |
-| 45 | L7.4, TARGET-native | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/run.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs` |
+| 45 | L7.4, TARGET-native | `crates/zedc/src/run.rs` |
 | 45 | L7.4, PORT-why | `crates/zed-rt/src/` |
-| 45 | L22.1, L7.14 | `crates/zedc-types/src/ty.rs` |
-| 45 | L22.1, L7.5 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-types/src/ty.rs` |
-| 45 | L22.1, TARGET-native | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-types/src/ty.rs` |
+| 45 | L7.4, QUANT-finite | `crates/zedc-check/src/check/` |
+| 45 | L7.4, PORT-ack-name | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/ports.rs` |
+| 45 | L22.1, L7.5 | `crates/zedc-elab/src/elab.rs` |
+| 45 | L22.1, PORT-ack-name | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-syntax/src/format.rs` |
+| 45 | L7.14, L7.3g | `crates/zedc-check/src/check/` |
 | 45 | L7.14, L7.5 | `crates/zedc-check/src/check/` |
-| 45 | L7.14, TARGET-native | `crates/zedc-check/src/check/`, `crates/zedc/src/store/` |
+| 45 | L7.14, FLOAT-sum-policy | `crates/zedc-check/src/check/` |
+| 45 | L7.14, TARGET-native | `crates/zedc/src/store/` |
+| 45 | L7.14, QUANT-finite | `crates/zedc-check/src/check/` |
+| 45 | L7.14, PORT-ack-name | `crates/zedc-check/src/check/` |
+| 45 | L7.3g, L7.5 | `crates/zedc-check/src/check/`, `crates/zed-kernel/src/eval.rs` |
+| 45 | L7.3g, FLOAT-sum-policy | `crates/zedc-check/src/check/` |
+| 45 | L7.3g, QUANT-finite | `crates/zedc-check/src/check/` |
+| 45 | L7.3g, PORT-ack-name | `crates/zedc-check/src/check/` |
 | 45 | GLAM-logspec, L7.5 | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
 | 45 | GLAM-logspec, UNORD-keep | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
 | 45 | GLAM-logspec, FILE-bytes | `crates/zed-rt/src/ports.rs` |
 | 45 | GLAM-logspec, PORT-why | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
+| 45 | GLAM-logspec, PORT-ack-name | `crates/zed-rt/src/ports.rs` |
+| 45 | L7.5, FLOAT-sum-policy | `crates/zedc-check/src/check/`, `crates/zed-rt/src/exact.rs`, `crates/zed-native/src/hooks.rs` |
 | 45 | L7.5, UNORD-keep | `crates/zed-rt/src/` |
 | 45 | L7.5, FILE-bytes | `crates/zedc/src/run.rs`, `crates/zed-rt/src/ports.rs`, `crates/zed-native/src/hooks.rs` |
-| 45 | L7.5, TARGET-native | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/run.rs` |
-| 45 | L7.5, PORT-why | `crates/zed-rt/src/` |
+| 45 | L7.5, TARGET-native | `crates/zedc/src/run.rs` |
+| 45 | L7.5, PORT-why | `DESIGN.md`, `crates/zed-rt/src/` |
+| 45 | L7.5, QUANT-finite | `crates/zedc-check/src/check/` |
+| 45 | L7.5, PORT-ack-name | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zed-rt/src/ports.rs` |
+| 45 | FLOAT-sum-policy, UNORD-keep | `crates/zedc-zir/src/zir/`, `crates/zed-rt/src/exact.rs` |
+| 45 | FLOAT-sum-policy, FILE-bytes | `crates/zed-native/src/hooks.rs` |
+| 45 | FLOAT-sum-policy, PORT-why | `crates/zed-rt/src/exact.rs` |
+| 45 | FLOAT-sum-policy, QUANT-finite | `crates/zedc-check/src/check/` |
+| 45 | FLOAT-sum-policy, PORT-ack-name | `crates/zedc-syntax/src/parse/`, `crates/zedc-check/src/check/` |
 | 45 | UNORD-keep, FILE-bytes | `crates/zed-rt/src/ports.rs` |
-| 45 | UNORD-keep, TARGET-native | `crates/zedc-zir/src/zir/` |
 | 45 | UNORD-keep, PORT-why | `crates/zed-rt/src/` |
+| 45 | UNORD-keep, PORT-ack-name | `crates/zed-rt/src/ports.rs` |
 | 45 | FILE-bytes, TARGET-native | `crates/zedc/src/run.rs` |
 | 45 | FILE-bytes, PORT-why | `crates/zed-rt/src/ports.rs` |
-| 45 | PORT-ack-name, L7.4 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/ports.rs` |
-| 45 | PORT-ack-name, L22.1 | `crates/zedc-syntax/src/format.rs`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs` |
-| 45 | PORT-ack-name, L7.14 | `crates/zedc-check/src/check/` |
-| 45 | PORT-ack-name, GLAM-logspec | `crates/zed-rt/src/ports.rs` |
-| 45 | PORT-ack-name, L7.5 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/ports.rs` |
-| 45 | PORT-ack-name, UNORD-keep | `crates/zed-rt/src/ports.rs` |
-| 45 | PORT-ack-name, QUANT-finite | `crates/zedc-check/src/check/` |
+| 45 | FILE-bytes, PORT-ack-name | `crates/zed-rt/src/ports.rs` |
+| 45 | PORT-why, PORT-ack-name | `crates/zed-rt/src/ports.rs` |
+| 45 | QUANT-finite, PORT-ack-name | `crates/zedc-check/src/check/` |
 | 46 | L7.5a, L21.2 | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
 | 46 | L7.5a, L28.1 | `crates/zed-rt/src/` |
 | 46 | L7.5a, OOM-wave | `crates/zed-rt/src/` |
+| 46 | L7.5a, INT-128 | `crates/zed-rt/src/` |
 | 46 | L7.5a, RT-exhaust-wave | `crates/zed-rt/src/` |
 | 46 | L10.2, L21.2 | `crates/zedc-check/src/check/mod.rs` |
-| 46 | L10.2, L7.4b | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
-| 46 | L10.2, L7.3e | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-elab/src/elab.rs` |
-| 46 | L10.2, FFI-status | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-elab/src/elab.rs` |
-| 46 | L10.2, EXPORT-unique | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-elab/src/elab.rs` |
+| 46 | L10.2, L7.4b | `crates/zedc-check/src/check/mod.rs` |
+| 46 | L10.2, INT-128 | `crates/zed-kernel/src/types.rs` |
+| 46 | L10.2, BYTES-wide | `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/types.rs` |
+| 46 | L10.2, STOP-switch | `crates/zedc-check/src/check/mod.rs` |
 | 46 | L21.2, L28.1 | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
 | 46 | L21.2, OOM-wave | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
 | 46 | L21.2, L7.4b | `crates/zedc-check/src/check/mod.rs` |
-| 46 | L21.2, L7.3e | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 46 | L21.2, INT-128 | `zed/prelude/ports.zed`, `crates/zed-kernel/src/words.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
+| 46 | L21.2, BYTES-wide | `zed/prelude/ports.zed`, `crates/zed-kernel/src/words.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 46 | L21.2, FFI-headertest | `crates/zedc-resolve/src/resolve.rs` |
-| 46 | L21.2, FFI-status | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 46 | L21.2, EXPORT-unique | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 46 | L21.2, RT-exhaust-wave | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
+| 46 | L21.2, STOP-switch | `crates/zedc-check/src/check/mod.rs` |
 | 46 | L28.1, OOM-wave | `crates/zed-rt/src/`, `crates/zedc/src/run.rs`, `DESIGN.md` |
 | 46 | L28.1, L7.5b | `DESIGN.md` |
 | 46 | L28.1, L7.4b | `DESIGN.md` |
+| 46 | L28.1, INT-128 | `crates/zed-rt/src/` |
 | 46 | L28.1, L7.3e | `crates/zedc/src/mlir/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs`, `DESIGN.md` |
 | 46 | L28.1, FFI-headertest | `DESIGN.md` |
-| 46 | L28.1, FFI-status | `crates/zedc/src/mlir/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs` |
+| 46 | L28.1, FFI-status | `crates/zedc/src/mlir/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs`, `DESIGN.md` |
 | 46 | L28.1, EXPORT-unique | `crates/zedc/src/mlir/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs` |
-| 46 | L28.1, RT-exhaust-wave | `crates/zed-rt/src/` |
+| 46 | L28.1, RT-exhaust-wave | `crates/zed-rt/src/`, `DESIGN.md` |
+| 46 | L28.1, STOP-switch | `crates/zedc/src/main.rs` |
 | 46 | OOM-wave, L7.5b | `DESIGN.md` |
 | 46 | OOM-wave, L7.4b | `DESIGN.md` |
+| 46 | OOM-wave, INT-128 | `crates/zed-rt/src/` |
 | 46 | OOM-wave, L7.3e | `crates/zedc/src/run.rs`, `DESIGN.md` |
 | 46 | OOM-wave, FFI-headertest | `DESIGN.md` |
-| 46 | OOM-wave, FFI-status | `crates/zedc/src/run.rs` |
+| 46 | OOM-wave, FFI-status | `crates/zedc/src/run.rs`, `DESIGN.md` |
 | 46 | OOM-wave, EXPORT-unique | `crates/zedc/src/run.rs` |
-| 46 | OOM-wave, RT-exhaust-wave | `crates/zed-rt/src` |
+| 46 | OOM-wave, RT-exhaust-wave | `crates/zed-rt/src/`, `DESIGN.md` |
 | 46 | L7.5b, L7.4b | `DESIGN.md` |
 | 46 | L7.5b, L7.3e | `DESIGN.md`, `crates/zedc/src/incr/` |
 | 46 | L7.5b, FFI-headertest | `DESIGN.md` |
-| 46 | L7.5b, FFI-status | `crates/zedc/src/incr/` |
+| 46 | L7.5b, FFI-status | `DESIGN.md`, `crates/zedc/src/incr/` |
 | 46 | L7.5b, EXPORT-unique | `crates/zedc/src/incr/` |
-| 46 | L7.4b, L7.3e | `DESIGN.md`, `crates/zedc-check/src/check/` |
+| 46 | L7.5b, RT-exhaust-wave | `DESIGN.md` |
+| 46 | L7.4b, BYTES-wide | `crates/zedc-check/src/check/` |
+| 46 | L7.4b, L7.3e | `DESIGN.md` |
 | 46 | L7.4b, FFI-headertest | `DESIGN.md` |
-| 46 | L7.4b, FFI-status | `crates/zedc-check/src/check/` |
-| 46 | L7.4b, EXPORT-unique | `crates/zedc-check/src/check/` |
-| 46 | L7.3e, FFI-headertest | `DESIGN.md`, `crates/zedc/src/unit.rs`, `crates/zedc-resolve/src/resolve.rs` |
-| 46 | L7.3e, FFI-status | `crates/zedc/src/` |
+| 46 | L7.4b, FFI-status | `DESIGN.md` |
+| 46 | L7.4b, RT-exhaust-wave | `DESIGN.md` |
+| 46 | L7.4b, STOP-switch | `crates/zedc-check/src/check/` |
+| 46 | INT-128, BYTES-wide | `crates/zed-kernel/src/`, `zed/prelude/` |
+| 46 | INT-128, L7.3e | `crates/zedc/src/store/` |
+| 46 | INT-128, FFI-headertest | `crates/zedc-resolve/src/resolve.rs` |
+| 46 | INT-128, FFI-status | `crates/zedc/src/store/` |
+| 46 | INT-128, EXPORT-unique | `crates/zedc/src/store/` |
+| 46 | INT-128, RT-exhaust-wave | `crates/zed-rt/src/` |
+| 46 | INT-128, STOP-switch | `crates/zedc/src/store/` |
+| 46 | BYTES-wide, STOP-switch | `crates/zedc-check/src/check/` |
+| 46 | L7.3e, FFI-headertest | `DESIGN.md`, `crates/zedc/src/unit.rs` |
+| 46 | L7.3e, FFI-status | `DESIGN.md`, `crates/zedc/src/` |
 | 46 | L7.3e, EXPORT-unique | `crates/zedc/src/` |
-| 46 | FFI-headertest, FFI-status | `crates/zedc/src/unit.rs`, `crates/zedc-resolve/src/resolve.rs` |
-| 46 | FFI-headertest, EXPORT-unique | `crates/zedc/src/unit.rs`, `crates/zedc-resolve/src/resolve.rs` |
+| 46 | L7.3e, RT-exhaust-wave | `DESIGN.md` |
+| 46 | L7.3e, STOP-switch | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
+| 46 | FFI-headertest, FFI-status | `crates/zedc/src/unit.rs`, `DESIGN.md` |
+| 46 | FFI-headertest, EXPORT-unique | `crates/zedc/src/unit.rs` |
+| 46 | FFI-headertest, RT-exhaust-wave | `DESIGN.md` |
 | 46 | FFI-status, EXPORT-unique | `crates/zedc/src/` |
-| 46 | STOP-switch, L10.2 | `crates/zedc-check/src/check/mod.rs` |
-| 46 | STOP-switch, L21.2 | `crates/zedc-check/src/check/mod.rs` |
-| 46 | STOP-switch, L28.1 | `crates/zedc/src/main.rs` |
-| 46 | STOP-switch, L7.4b | `crates/zedc-check/src/check/` |
-| 46 | STOP-switch, INT-128 | `crates/zedc/src/store/` |
-| 46 | STOP-switch, BYTES-wide | `crates/zedc-check/src/check/` |
-| 46 | STOP-switch, L7.3e | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
-| 46 | STOP-switch, FFI-status | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
-| 46 | STOP-switch, EXPORT-unique | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
+| 46 | FFI-status, RT-exhaust-wave | `DESIGN.md` |
+| 46 | FFI-status, STOP-switch | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
+| 46 | EXPORT-unique, STOP-switch | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
 | 47 | L7.6, L10.3 | `crates/zedc-zir/src/zir/` |
+| 47 | L7.6, MLIR-noalias | `crates/zedc/src/incr/`, `crates/zedc/src/query.rs` |
 | 47 | L10.3, L10.2a | `crates/zedc-check/src/check/` |
 | 47 | ROUND-words, L10.2a | `DESIGN.md` |
 | 48 | L7.7, L7.8 | `crates/zedc/src/incr/` |
 | 48 | L7.7, L7.11 | `crates/zedc/src/incr/` |
-| 48 | L7.7, LIVE-clocks | `crates/zedc-zir/src/canon/`, `crates/zedc/src/incr/`, `crates/zedc/src/query.rs` |
+| 48 | L7.7, LIVE-clocks | `crates/zedc/src/incr/`, `crates/zedc/src/query.rs` |
 | 48 | L7.8, L7.11 | `crates/zedc/src/incr/`, `crates/zed-rt/src/` |
-| 48 | L7.8, LIVE-clocks | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/` |
+| 48 | L7.8, CHECKED-float | `crates/zedc-zir/src/zir/` |
+| 48 | L7.8, LIVE-clocks | `crates/zedc/src/incr/` |
 | 48 | L7.11, LIVE-clocks | `crates/zedc/src/incr/` |
+| 48 | L10.4, CHECKED-float | `crates/zedc-check/src/check/` |
 | 48 | L10.4, L11.1 | `crates/zedc-check/src/check/` |
-| 48 | L10.4, LIVE-clocks | `crates/zedc/src/store/`, `crates/zedc-check/src/check/` |
-| 48 | L11.1, LIVE-clocks | `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/introspect/`, `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs` |
+| 48 | L10.4, LIVE-clocks | `crates/zedc/src/store/` |
+| 48 | L10.4, L12.0 | `crates/zedc-check/src/check/` |
+| 48 | CHECKED-float, L11.1 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zed-kernel/src/value.rs` |
+| 48 | CHECKED-float, L12.0 | `crates/zedc-check/src/check/` |
+| 48 | L11.1, LIVE-clocks | `crates/zedc/src/introspect/` |
+| 48 | L11.1, L12.0 | `crates/zedc-check/src/check/` |
+| 49 | PASSES-vars-test, L12.1 | `crates/zedc-check/src/check/mod.rs` |
+| 49 | PASSES-vars-test, BIT-checker-ranges | `crates/zedc-check/src/check/mod.rs` |
+| 49 | PASSES-vars-test, FPWARN | `crates/zedc-check/src/check/mod.rs` |
 | 49 | L7.9, L7.10 | `crates/zedc/src/incr/` |
 | 49 | L7.9, L7.12 | `crates/zedc/src/incr/` |
 | 49 | L7.9, L7.13 | `crates/zedc/src/incr/` |
+| 49 | L7.9, READ-arms | `crates/zedc/src/incr/` |
 | 49 | L7.10, L7.12 | `crates/zedc/src/incr/` |
 | 49 | L7.10, L7.13 | `crates/zedc/src/incr/` |
 | 49 | L7.10, FPWARN | `crates/zedc-zir/src/zir/` |
 | 49 | L7.10, EDGE-class | `crates/zedc-zir/src/zir/` |
+| 49 | L7.10, READ-arms | `crates/zedc/src/incr/` |
 | 49 | L7.12, L7.13 | `crates/zedc/src/incr/` |
+| 49 | L7.12, READ-arms | `crates/zedc/src/testing.rs`, `crates/zedc/src/incr/` |
 | 49 | L11.2, L12.1 | `zed/prelude/` |
 | 49 | L11.2, EDGE-class | `crates/zedc/src/store/` |
+| 49 | L11.2, READ-arms | `crates/zedc/src/store/`, `crates/zedc/src/introspect/` |
 | 49 | L12.1, BIT-checker-ranges | `crates/zedc-check/src/check/` |
 | 49 | L12.1, FPWARN | `crates/zedc-check/src/check/` |
+| 49 | L12.1, READ-arms | `crates/zedc/src/facet/` |
+| 49 | L7.13, READ-arms | `crates/zedc/src/query.rs`, `crates/zedc/src/incr/` |
+| 49 | MENU-linear-L10, READ-arms | `crates/zedc/src/run.rs` |
 | 49 | BIT-checker-ranges, FPWARN | `crates/zedc-check/src/check/` |
 | 49 | FPWARN, EDGE-class | `crates/zedc-zir/src/zir/` |
+| 49 | SELFINT-design, EDGE-class | `DESIGN.md` |
+| 49 | SELFINT-design, READ-arms | `DESIGN.md` |
+| 49 | EDGE-class, READ-arms | `crates/zedc/src/store/`, `DESIGN.md` |
+| 50 | L10.3d, L7.10a | `crates/zedc-zir/src/zir/` |
+| 50 | L10.3d, FLOAT-pitfall-lints | `crates/zedc-check/src/check/` |
+| 50 | L10.3d, KNOWN-mix | `crates/zedc-check/src/check/` |
+| 50 | L10.3d, MOD-residue | `crates/zedc-check/src/check/` |
+| 50 | L10.3d, L12.2 | `crates/zedc-check/src/check/` |
+| 50 | L10.3d, FACT-unify | `crates/zedc-check/src/check/` |
+| 50 | L10.3d, L13.1 | `crates/zedc-check/src/check/` |
+| 50 | L10.3d, L18.1 | `crates/zedc-check/src/check/` |
+| 50 | L10.3d, L20.1 | `crates/zedc-check/src/check/mod.rs` |
+| 50 | L10.3d, L15.2 | `crates/zedc-check/src/check/` |
+| 50 | L10.3d, L11.2a | `crates/zedc-check/src/check/` |
 | 50 | L7.10a, L18.1 | `crates/zedc-base/src/cost.rs` |
-| 50 | L7.10a, L20.1 | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs` |
-| 50 | L7.10a, L15.2 | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs` |
+| 50 | L7.10a, L20.1 | `crates/zedc/src/incr/` |
+| 50 | L7.10a, L15.2 | `crates/zedc/src/incr/` |
 | 50 | L7.10a, L7.9a | `crates/zedc/src/incr/` |
 | 50 | L7.10a, MEMO-edit | `crates/zedc/src/incr/` |
+| 50 | FLOAT-pitfall-lints, KNOWN-mix | `crates/zedc-check/src/check/` |
+| 50 | FLOAT-pitfall-lints, MOD-residue | `crates/zedc-check/src/check/` |
+| 50 | FLOAT-pitfall-lints, L12.2 | `crates/zedc-check/src/check/` |
+| 50 | FLOAT-pitfall-lints, FACT-unify | `crates/zedc-check/src/check/` |
+| 50 | FLOAT-pitfall-lints, L13.1 | `crates/zedc-check/src/check/` |
+| 50 | FLOAT-pitfall-lints, L18.1 | `crates/zedc-check/src/check/` |
+| 50 | FLOAT-pitfall-lints, L20.1 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/lints/` |
+| 50 | FLOAT-pitfall-lints, L15.2 | `crates/zedc-check/src/check/`, `crates/zedc/src/lints/` |
+| 50 | FLOAT-pitfall-lints, L11.2a | `crates/zedc-check/src/check/` |
+| 50 | KNOWN-mix, MOD-residue | `crates/zedc-check/src/check/` |
+| 50 | KNOWN-mix, L12.2 | `crates/zedc-check/src/check/` |
+| 50 | KNOWN-mix, FACT-unify | `crates/zedc-check/src/check/` |
+| 50 | KNOWN-mix, L13.1 | `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs` |
+| 50 | KNOWN-mix, L18.1 | `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs` |
+| 50 | KNOWN-mix, L20.1 | `crates/zedc-check/src/check/mod.rs` |
+| 50 | KNOWN-mix, L15.2 | `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs` |
+| 50 | KNOWN-mix, L11.2a | `crates/zedc-check/src/check/` |
 | 50 | L11.1a, L12.2 | `zed/prelude/` |
+| 50 | L11.1a, FACT-unify | `zed/prelude/` |
 | 50 | L11.1a, L13.1 | `zed/prelude/` |
 | 50 | L11.1a, L18.1 | `zed/prelude/cost.zed` |
 | 50 | L11.1a, L20.1 | `crates/zedc/src/introspect/` |
 | 50 | L11.1a, L15.2 | `crates/zedc/src/introspect/`, `zed/prelude/` |
+| 50 | MOD-residue, L12.2 | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, FACT-unify | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, L13.1 | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, L18.1 | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, L20.1 | `crates/zedc-check/src/check/mod.rs` |
+| 50 | MOD-residue, L15.2 | `crates/zedc-check/src/check/`, `crates/zed-kernel/src/term.rs` |
+| 50 | MOD-residue, L11.2a | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, L7.9a | `crates/zed-kernel/src/exact.rs` |
+| 50 | L12.2, FACT-unify | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 50 | L12.2, L13.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 50 | L12.2, L18.1 | `crates/zedc-check/src/check/`, `zed/prelude/cost.zed` |
-| 50 | L12.2, L20.1 | `crates/zedc/src/store/`, `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
+| 50 | L12.2, L20.1 | `crates/zedc/src/store/`, `crates/zedc-check/src/check/mod.rs` |
 | 50 | L12.2, L15.2 | `crates/zedc/src/store/`, `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 50 | L12.2, L11.2a | `crates/zedc-check/src/check/` |
+| 50 | FACT-unify, L13.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 50 | FACT-unify, L18.1 | `crates/zedc-check/src/check/`, `zed/prelude/cost.zed` |
+| 50 | FACT-unify, L20.1 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/fmt/` |
+| 50 | FACT-unify, L15.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/fmt/`, `zed/prelude/` |
+| 50 | FACT-unify, L11.2a | `crates/zedc-check/src/check/` |
 | 50 | L13.1, L18.1 | `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs`, `zed/prelude/cost.zed` |
-| 50 | L13.1, L20.1 | `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc/src/facet/`, `crates/zedc-stage/src/stage.rs` |
+| 50 | L13.1, L20.1 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/facet/` |
 | 50 | L13.1, L15.2 | `crates/zedc-check/src/check/`, `crates/zedc/src/facet/`, `crates/zedc-stage/src/stage.rs`, `zed/prelude/` |
 | 50 | L13.1, L11.2a | `crates/zedc-check/src/check/` |
-| 50 | L18.1, L20.1 | `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-stage/src/stage.rs` |
-| 50 | L18.1, L15.2 | `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs`, `zed/prelude/cost.zed` |
+| 50 | L18.1, L20.1 | `crates/zedc-check/src/check/mod.rs` |
+| 50 | L18.1, L15.2 | `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs`, `zed/prelude/cost.zed` |
 | 50 | L18.1, L11.2a | `crates/zedc-check/src/check/` |
-| 50 | L20.1, L15.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc/src/store/`, `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/main.rs`, `crates/zedc/src/`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-syntax/src/format.rs` |
-| 50 | L20.1, L11.2a | `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
+| 50 | L20.1, L15.2 | `crates/zedc/src/store/`, `crates/zedc/src/main.rs`, `crates/zedc/src/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 50 | L20.1, L11.2a | `crates/zedc-check/src/check/mod.rs` |
 | 50 | L20.1, L7.13a | `DESIGN.md` |
 | 50 | L20.1, L7.9a | `crates/zedc/src/incr/` |
 | 50 | L20.1, MEMO-edit | `crates/zedc/src/incr/`, `DESIGN.md` |
@@ -1636,46 +1869,55 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 50 | L15.2, MEMO-edit | `crates/zedc/src/incr/` |
 | 50 | L7.13a, MEMO-edit | `DESIGN.md` |
 | 50 | L7.9a, MEMO-edit | `crates/zedc/src/incr/` |
-| 50 | MOD-residue, L10.3d | `crates/zedc-check/src/check/` |
-| 50 | MOD-residue, FLOAT-pitfall-lints | `crates/zedc-check/src/check/` |
-| 50 | MOD-residue, KNOWN-mix | `crates/zedc-check/src/check/` |
-| 50 | MOD-residue, L12.2 | `crates/zedc-check/src/check/` |
-| 50 | MOD-residue, L13.1 | `crates/zedc-check/src/check/` |
-| 50 | MOD-residue, L18.1 | `crates/zedc-check/src/check/` |
-| 50 | MOD-residue, L20.1 | `crates/zedc-check/src/check/mod.rs` |
-| 50 | MOD-residue, L15.2 | `crates/zedc-check/src/check/`, `crates/zed-kernel/src/term.rs` |
-| 50 | MOD-residue, L11.2a | `crates/zedc-check/src/check/` |
-| 50 | MOD-residue, L7.9a | `crates/zed-kernel/src/exact.rs` |
-| 51 | L7.10b, L14.1 | `crates/zedc-zir/src/zir/` |
 | 51 | L7.10b, L15.4 | `crates/zedc-zir/src/zir/lower.rs` |
 | 51 | L7.10b, EDIT-run | `crates/zedc/src/incr/` |
-| 51 | L12.3, L14.1 | `zed/prelude/` |
+| 51 | L7.10b, L20.1b | `crates/zedc/src/incr/` |
+| 51 | L12.3, FACT-prelude | `zed/prelude/` |
 | 51 | L12.3, L19.1 | `zed/prelude/` |
-| 51 | L12.3, L15.3 | `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/preimage.rs`, `zed/prelude/` |
+| 51 | L12.3, L15.3 | `crates/zedc-preimage/src/product.rs`, `zed/prelude/` |
 | 51 | L12.3, L15.4 | `zed/prelude/` |
 | 51 | L12.3, L15.5 | `zed/prelude/` |
 | 51 | L12.3, L16.1 | `zed/prelude/` |
 | 51 | L12.3, L17.1 | `zed/prelude/` |
 | 51 | L12.3, L16.3 | `zed/prelude/` |
-| 51 | L14.1, L19.1 | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `zed/prelude/` |
-| 51 | L14.1, L15.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 51 | L14.1, L15.4 | `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/lower.rs`, `zed/prelude/` |
-| 51 | L14.1, L15.5 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 51 | L14.1, L16.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 51 | L14.1, L17.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 51 | L14.1, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 51 | L14.1, LAW-shape | `crates/zedc-check/src/check/` |
-| 51 | L14.1, STAGE-reads | `crates/zedc-check/src/check/` |
-| 51 | L14.1, L20.1a | `crates/zedc-syntax/src/ast/types.rs` |
-| 51 | L14.1, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | L12.3, L20.1b | `crates/zedc/src/store/`, `zed/prelude/grammar.zed` |
+| 51 | L12.3, L12.2a | `zed/prelude/` |
+| 51 | FACT-prelude, FACT-claims | `crates/zedc-check/src/check/` |
+| 51 | FACT-prelude, L19.1 | `zed/prelude/` |
+| 51 | FACT-prelude, L15.3 | `zed/prelude/`, `crates/zedc-check/src/check/` |
+| 51 | FACT-prelude, L15.4 | `zed/prelude/`, `crates/zedc-check/src/check/` |
+| 51 | FACT-prelude, L15.5 | `zed/prelude/`, `crates/zedc-check/src/check/` |
+| 51 | FACT-prelude, L16.1 | `zed/prelude/`, `crates/zedc-check/src/check/` |
+| 51 | FACT-prelude, L17.1 | `zed/prelude/`, `crates/zedc-check/src/check/` |
+| 51 | FACT-prelude, L16.3 | `zed/prelude/`, `crates/zedc-check/src/check/` |
+| 51 | FACT-prelude, LAW-shape | `crates/zedc-check/src/check/` |
+| 51 | FACT-prelude, STAGE-reads | `crates/zedc-check/src/check/` |
+| 51 | FACT-prelude, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | FACT-prelude, L20.1b | `zed/prelude/grammar.zed` |
+| 51 | FACT-prelude, L12.2a | `zed/prelude/`, `crates/zedc-check/src/check/` |
+| 51 | FACT-claims, L15.3 | `crates/zedc-check/src/check/` |
+| 51 | FACT-claims, L15.4 | `crates/zedc-check/src/check/` |
+| 51 | FACT-claims, L15.5 | `crates/zedc-check/src/check/` |
+| 51 | FACT-claims, L16.1 | `crates/zedc-check/src/check/` |
+| 51 | FACT-claims, L17.1 | `crates/zedc-check/src/check/` |
+| 51 | FACT-claims, L16.3 | `crates/zedc-check/src/check/` |
+| 51 | FACT-claims, LAW-shape | `crates/zedc-check/src/check/` |
+| 51 | FACT-claims, STAGE-reads | `crates/zedc-check/src/check/` |
+| 51 | FACT-claims, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | FACT-claims, L20.1b | `crates/zedc/src/oblig/` |
+| 51 | FACT-claims, L12.2a | `crates/zedc-check/src/check/` |
 | 51 | L19.1, L15.3 | `zed/prelude/` |
 | 51 | L19.1, L15.4 | `crates/zedc-stage/src/stage.rs`, `zed/prelude/` |
-| 51 | L19.1, L15.5 | `crates/zed-kernel/src/eval.rs`, `zed/prelude/` |
+| 51 | L19.1, L15.5 | `crates/zed-kernel/src/eval.rs`, `zed/prelude/`, `DESIGN.md` |
 | 51 | L19.1, L16.1 | `zed/prelude/` |
-| 51 | L19.1, L17.1 | `crates/zedc-stage/src/stage.rs`, `zed/prelude/`, `DESIGN.md sec:staging` |
-| 51 | L19.1, L16.3 | `zed/prelude/` |
-| 51 | L19.1, STAGE-reads | `crates/zedc-stage/src/stage.rs` |
-| 51 | L19.1, EDIT-run | `crates/zedc/src/run.rs` |
+| 51 | L19.1, L17.1 | `crates/zedc-stage/src/stage.rs`, `zed/prelude/`, `DESIGN.md` |
+| 51 | L19.1, L16.3 | `zed/prelude/`, `DESIGN.md` |
+| 51 | L19.1, STAGE-reads | `crates/zedc-stage/src/stage.rs`, `DESIGN.md` |
+| 51 | L19.1, L20.1a | `DESIGN.md` |
+| 51 | L19.1, EDIT-run | `crates/zedc/src/run.rs`, `DESIGN.md` |
+| 51 | L19.1, L20-grammar-params | `DESIGN.md` |
+| 51 | L19.1, L20.1b | `crates/zedc/src/run.rs`, `zed/prelude/grammar.zed` |
+| 51 | L19.1, L12.2a | `zed/prelude/` |
 | 51 | L15.3, L15.4 | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 51 | L15.3, L15.5 | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 51 | L15.3, L16.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
@@ -1684,6 +1926,8 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 51 | L15.3, LAW-shape | `crates/zedc-check/src/check/` |
 | 51 | L15.3, STAGE-reads | `crates/zedc-check/src/check/` |
 | 51 | L15.3, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | L15.3, L20.1b | `zed/prelude/grammar.zed` |
+| 51 | L15.3, L12.2a | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 51 | L15.4, L15.5 | `crates/zedc-check/src/check/`, `crates/zed-kernel/src/provenance.rs`, `zed/prelude/` |
 | 51 | L15.4, L16.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 51 | L15.4, L17.1 | `crates/zedc-stage/src/stage.rs`, `crates/zedc-check/src/check/`, `zed/prelude/` |
@@ -1691,97 +1935,171 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 51 | L15.4, LAW-shape | `crates/zedc-check/src/check/` |
 | 51 | L15.4, STAGE-reads | `crates/zedc-stage/src/stage.rs`, `crates/zedc-check/src/check/` |
 | 51 | L15.4, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | L15.4, L20.1b | `zed/prelude/grammar.zed` |
+| 51 | L15.4, L12.2a | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 51 | L15.5, L16.1 | `crates/zed-cert/src/`, `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 51 | L15.5, L17.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 51 | L15.5, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.5, L17.1 | `crates/zedc-check/src/check/`, `zed/prelude/`, `DESIGN.md` |
+| 51 | L15.5, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/`, `DESIGN.md` |
 | 51 | L15.5, LAW-shape | `crates/zedc-check/src/check/` |
-| 51 | L15.5, STAGE-reads | `crates/zedc-check/src/check/` |
+| 51 | L15.5, STAGE-reads | `crates/zedc-check/src/check/`, `DESIGN.md` |
+| 51 | L15.5, L20.1a | `DESIGN.md` |
 | 51 | L15.5, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | L15.5, EDIT-run | `DESIGN.md` |
+| 51 | L15.5, L20-grammar-params | `DESIGN.md` |
+| 51 | L15.5, L20.1b | `zed/prelude/grammar.zed` |
+| 51 | L15.5, L12.2a | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 51 | L16.1, L17.1 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `zed/prelude/` |
 | 51 | L16.1, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 51 | L16.1, LAW-shape | `crates/zedc-check/src/check/` |
 | 51 | L16.1, STAGE-reads | `crates/zedc-check/src/check/` |
 | 51 | L16.1, L20.1a | `crates/zedc-elab/src/elab.rs` |
 | 51 | L16.1, TOKEN-types | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
-| 51 | L17.1, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L16.1, L20.1b | `zed/prelude/grammar.zed` |
+| 51 | L16.1, L12.2a | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L17.1, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/`, `DESIGN.md` |
 | 51 | L17.1, LAW-shape | `crates/zedc-check/src/check/` |
-| 51 | L17.1, STAGE-reads | `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs` |
-| 51 | L17.1, L20.1a | `crates/zedc-elab/src/elab.rs` |
+| 51 | L17.1, STAGE-reads | `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs`, `DESIGN.md` |
+| 51 | L17.1, L20.1a | `crates/zedc-elab/src/elab.rs`, `DESIGN.md` |
 | 51 | L17.1, TOKEN-types | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
+| 51 | L17.1, EDIT-run | `DESIGN.md` |
+| 51 | L17.1, L20-grammar-params | `DESIGN.md` |
+| 51 | L17.1, L20.1b | `crates/zedc/src/main.rs`, `zed/prelude/grammar.zed` |
+| 51 | L17.1, L12.2a | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 51 | L16.3, LAW-shape | `crates/zedc-check/src/check/` |
-| 51 | L16.3, STAGE-reads | `crates/zedc-check/src/check/` |
+| 51 | L16.3, STAGE-reads | `crates/zedc-check/src/check/`, `DESIGN.md` |
+| 51 | L16.3, L20.1a | `DESIGN.md` |
 | 51 | L16.3, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | L16.3, EDIT-run | `DESIGN.md` |
+| 51 | L16.3, L20-grammar-params | `DESIGN.md` |
+| 51 | L16.3, L20.1b | `zed/prelude/grammar.zed` |
+| 51 | L16.3, L12.2a | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 51 | LAW-shape, STAGE-reads | `crates/zedc-check/src/check/` |
 | 51 | LAW-shape, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | LAW-shape, L12.2a | `crates/zedc-check/src/check/` |
+| 51 | THIRDHOM-law, L20.1b | `crates/zedc/src/opt/` |
 | 51 | STAGE-reads, L20.1a | `DESIGN.md` |
 | 51 | STAGE-reads, TOKEN-types | `crates/zedc-check/src/check/` |
 | 51 | STAGE-reads, EDIT-run | `DESIGN.md` |
+| 51 | STAGE-reads, L20-grammar-params | `DESIGN.md` |
+| 51 | STAGE-reads, L12.2a | `crates/zedc-check/src/check/` |
 | 51 | L20.1a, TOKEN-types | `crates/zedc-elab/src/elab.rs` |
 | 51 | L20.1a, EDIT-run | `DESIGN.md` |
+| 51 | L20.1a, L20-grammar-params | `DESIGN.md` |
+| 51 | TOKEN-types, L12.2a | `crates/zedc-check/src/check/` |
+| 51 | EDIT-run, L20-grammar-params | `DESIGN.md` |
+| 51 | EDIT-run, L20.1b | `crates/zedc/src/incr/`, `crates/zedc/src/run.rs` |
+| 51 | L20.1b, L12.2a | `zed/prelude/grammar.zed` |
+| 52 | PROOF-alg, KERNEL-check-tests | `crates/zed-cert/src/` |
+| 52 | PROOF-alg, L15.6 | `crates/zed-cert/src/` |
+| 52 | PROOF-alg, L22.2 | `crates/zed-cert/src/lib.rs` |
+| 52 | KERNEL-check-tests, L15.6 | `crates/zed-cert/src/` |
+| 52 | KERNEL-check-tests, L22.2 | `crates/zed-cert/src/lib.rs` |
 | 52 | L18.2a, L20.2 | `crates/zedc-check/src/check/mod.rs` |
 | 52 | L18.2a, L16.2 | `crates/zedc-check/src/check/` |
 | 52 | L18.2a, L22.2 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/main.rs` |
 | 52 | L18.2a, L21.0 | `crates/zedc-check/src/check/` |
-| 52 | L18.2a, REPACK-tile | `crates/zedc-zir/src/zir/mod.rs` |
 | 52 | L18.2a, TERM-stall | `crates/zedc-check/src/check/` |
 | 52 | L18.2a, LAW-shape-eq | `crates/zedc-check/src/check/` |
-| 53 | L18.2b, GLAM-diamond-iface | `crates/zedc-check/src/check/` |
-| 53 | L18.2b, L13.2 | `zed/prelude/` |
-| 53 | L18.2b, TERM-1 | `crates/zedc-check/src/check/`, `zed/prelude/grammar.zed` |
-| 53 | L18.2b, L22.8 | `crates/zedc-check/src/check/mod.rs`, `zed/prelude/theories.zed` |
-| 53 | L18.2b, L15.2c | `crates/zedc-check/src/check/` |
-| 52 | S.1b, L20.2 | `zed/prelude/grammar.zed` |
-| 52 | S.1b, L15.6 | `zed/prelude/` |
-| 52 | S.1b, L16.2 | `zed/prelude/` |
-| 52 | S.1b, L22.2 | `zed/prelude/theories.zed` |
-| 52 | S.1b, L12.3a | `zed/prelude/` |
-| 52 | L20.2, L15.6 | `zed/prelude/grammar.zed` |
+| 52 | L18.2a, L12.2b | `crates/zedc-check/src/check/` |
+| 52 | L20.2, L15.6 | `zed/prelude/grammar.zed`, `DESIGN.md` |
 | 52 | L20.2, L16.2 | `zed/prelude/grammar.zed`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 52 | L20.2, L22.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 52 | L20.2, L12.3a | `zed/prelude/grammar.zed` |
 | 52 | L20.2, L21.0 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 52 | L20.2, L17.1b | `DESIGN.md` |
+| 52 | L20.2, TERM-stall | `crates/zedc-check/src/check/mod.rs` |
+| 52 | L20.2, LAW-shape-eq | `crates/zedc-check/src/check/mod.rs` |
+| 52 | L20.2, L12.2b | `zed/prelude/grammar.zed`, `crates/zedc-check/src/check/mod.rs` |
 | 52 | L15.6, L16.2 | `zed/prelude/` |
 | 52 | L15.6, L22.2 | `crates/zed-cert/src/lib.rs`, `zed/prelude/theories.zed` |
 | 52 | L15.6, L12.3a | `zed/prelude/` |
-| 52 | L16.2, L22.2 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `zed/prelude/theories.zed` |
+| 52 | L15.6, L17.1b | `DESIGN.md` |
+| 52 | L15.6, L12.2b | `zed/prelude/` |
+| 52 | L16.2, L22.2 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-elab/src/elab.rs`, `zed/prelude/theories.zed` |
 | 52 | L16.2, L12.3a | `zed/prelude/` |
 | 52 | L16.2, L21.0 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
+| 52 | L16.2, TERM-stall | `crates/zedc-check/src/check/` |
+| 52 | L16.2, LAW-shape-eq | `crates/zedc-check/src/check/` |
+| 52 | L16.2, L12.2b | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 52 | L22.2, L12.3a | `zed/prelude/theories.zed`, `crates/zedc/src/store/eq.rs`, `crates/zedc/src/store/` |
-| 52 | L22.2, L21.0 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
+| 52 | L22.2, MENU-linear-L15 | `crates/zedc/src/run.rs` |
+| 52 | L22.2, L21.0 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-elab/src/elab.rs` |
 | 52 | L22.2, L17.1b | `crates/zedc/src/opt` |
-| 52 | L22.2, REPACK-tile | `crates/zedc-zir/src/zir/` |
-| 52 | TERM-stall, L20.2 | `crates/zedc-check/src/check/mod.rs` |
-| 52 | TERM-stall, L22.2 | `crates/zedc-check/src/check/mod.rs` |
-| 52 | TERM-stall, L21.0 | `crates/zedc-check/src/check/` |
+| 52 | L22.2, TERM-stall | `crates/zedc-check/src/check/mod.rs` |
+| 52 | L22.2, LAW-shape-eq | `crates/zedc-check/src/check/mod.rs` |
+| 52 | L22.2, L12.2b | `crates/zedc-check/src/check/mod.rs`, `zed/prelude/theories.zed` |
+| 52 | L12.3a, L12.2b | `zed/prelude/` |
+| 52 | L21.0, TERM-stall | `crates/zedc-check/src/check/` |
+| 52 | L21.0, LAW-shape-eq | `crates/zedc-check/src/check/` |
+| 52 | L21.0, L12.2b | `crates/zedc-check/src/check/` |
+| 52 | TERM-stall, LAW-shape-eq | `crates/zedc-check/src/check/` |
+| 52 | TERM-stall, L12.2b | `crates/zedc-check/src/check/` |
+| 52 | LAW-shape-eq, L12.2b | `crates/zedc-check/src/check/` |
+| 53 | L14.1, GLAM-diamond-iface | `crates/zedc-check/src/check/` |
+| 53 | L14.1, L13.2 | `zed/prelude/` |
+| 53 | L14.1, L18.2b | `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/src/tables.rs`, `zed/prelude/` |
+| 53 | L14.1, TERM-1 | `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-check/src/check/`, `zed/prelude/grammar.zed` |
+| 53 | L14.1, L22.8 | `crates/zedc-check/src/check/mod.rs`, `zed/prelude/theories.zed` |
+| 53 | L14.1, L15.2c | `crates/zedc-check/src/check/` |
+| 53 | L14.1, L12.2c | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 53 | GLAM-diamond-iface, L18.2b | `crates/zedc-check/src/check/` |
 | 53 | GLAM-diamond-iface, TERM-1 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
 | 53 | GLAM-diamond-iface, L22.8 | `crates/zedc-check/src/check/mod.rs` |
 | 53 | GLAM-diamond-iface, L15.2c | `crates/zedc-check/src/check/` |
-| 53 | L13.2, L14.2 | `zed/corpus/20-taint.zed` |
+| 53 | GLAM-diamond-iface, L12.2c | `crates/zedc-check/src/check/` |
+| 53 | L13.2, L18.2b | `zed/prelude/` |
 | 53 | L13.2, TERM-1 | `zed/prelude/grammar.zed` |
 | 53 | L13.2, L22.8 | `zed/prelude/theories.zed` |
-| 53 | L13.2, L12.4 | `zed/corpus/20-taint.zed` |
-| 53 | L14.2, L12.4 | `zed/corpus/` |
+| 53 | L13.2, L12.2c | `zed/prelude/` |
+| 53 | L18.2b, TERM-1 | `crates/zedc-check/src/check/`, `zed/prelude/grammar.zed` |
+| 53 | L18.2b, L22.8 | `crates/zedc-check/src/check/mod.rs`, `zed/prelude/theories.zed` |
+| 53 | L18.2b, L15.2c | `crates/zedc-check/src/check/` |
+| 53 | L18.2b, L12.2c | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 53 | TERM-1, L22.8 | `crates/zedc-check/src/check/mod.rs` |
 | 53 | TERM-1, L15.2c | `crates/zedc-check/src/check/` |
+| 53 | TERM-1, L12.2c | `zed/prelude/grammar.zed`, `crates/zedc-check/src/check/` |
 | 53 | L22.8, L15.2c | `crates/zedc-check/src/check/mod.rs` |
-| 54 | L23.1, L15.7 | `crates/zedc-check/src/check/`, `crates/zedc/src/main.rs` |
-| 54 | L23.1, L19.2a | `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/query.rs` |
+| 53 | L22.8, L12.2c | `crates/zedc-check/src/check/mod.rs`, `zed/prelude/theories.zed` |
+| 53 | L15.2c, L12.2c | `crates/zedc-check/src/check/` |
+| 54 | S.1b, MATH-names | `zed/prelude/` |
+| 54 | S.1b, L15.7 | `zed/prelude/` |
+| 54 | S.1b, L12.2d | `zed/prelude/` |
+| 54 | MATH-names, L15.7 | `zed/prelude/` |
+| 54 | MATH-names, L12.2d | `zed/prelude/` |
+| 54 | REPACK-tile, L23.1 | `crates/zedc-zir/src/zir/` |
+| 54 | L23.1, L15.7 | `crates/zedc/src/main.rs` |
+| 54 | L23.1, L19.2a | `crates/zedc/src/query.rs` |
+| 54 | L15.7, L12.2d | `zed/prelude/`, `crates/zedc-check/src/check/` |
 | 55 | L15.8, L15.7b | `crates/zedc-check/src/check/`, `crates/zedc/src/main.rs` |
+| 55 | L15.8, L12.2e | `crates/zedc-check/src/check/` |
 | 55 | L15.7b, L23.5c | `DESIGN.md` |
+| 55 | L15.7b, L12.2e | `crates/zedc-check/src/check/` |
+| 56 | LIST-exact-overlap, TERM-2a | `crates/zedc-check/src/check/overload.rs` |
+| 56 | LIST-exact-overlap, NOINST-report | `crates/zedc-check/src/check/overload.rs`, `DESIGN.md` |
+| 56 | LIST-exact-overlap, L15.8a | `crates/zedc-check/src/check/overload.rs` |
+| 56 | LIST-exact-overlap, L12.2f | `crates/zedc-check/src/check/overload.rs` |
 | 56 | L22.3, TERM-2a | `crates/zedc-check/src/check/mod.rs` |
 | 56 | L22.3, NOINST-report | `crates/zedc-check/src/check/mod.rs` |
+| 56 | L22.3, L15.8a | `crates/zedc-check/src/check/mod.rs` |
+| 56 | L22.3, L12.2f | `crates/zedc-check/src/check/mod.rs` |
 | 56 | TERM-2a, NOINST-report | `crates/zedc-check/src/check/` |
-| 57 | L23.4, L22.4 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-zir/src/zir/lower.rs` |
-| 57 | L23.4, L22.5 | `crates/zedc-check/src/check/mod.rs` |
+| 56 | TERM-2a, L15.8a | `crates/zedc-check/src/check/` |
+| 56 | TERM-2a, L12.2f | `crates/zedc-check/src/check/` |
+| 56 | NOINST-report, L15.8a | `crates/zedc-check/src/check/` |
+| 56 | NOINST-report, L12.2f | `crates/zedc-check/src/check/` |
+| 56 | L15.8a, L12.2f | `crates/zedc-check/src/check/` |
+| 57 | STRICT-build, L23.4 | `crates/zedc/src/main.rs` |
+| 57 | STRICT-build, L22.4 | `crates/zedc-check/src/check/mod.rs` |
+| 57 | STRICT-build, L22.5 | `crates/zedc-check/src/check/mod.rs` |
+| 57 | STRICT-build, STORE-check-off | `crates/zedc-check/src/check/` |
+| 57 | L23.4, L22.4 | `crates/zedc-zir/src/zir/lower.rs` |
+| 57 | L23.4, STORE-check-off | `crates/zedc/src/store/` |
 | 57 | L22.4, L22.5 | `crates/zedc-check/src/check/mod.rs`, `crates/zed-cert/src/lib.rs` |
-| 57 | STORE-check-off, L23.4 | `crates/zedc/src/store/` |
-| 57 | STORE-check-off, L22.4 | `crates/zedc-check/src/check/mod.rs` |
-| 57 | STORE-check-off, L22.5 | `crates/zedc-check/src/check/mod.rs` |
+| 57 | L22.4, STORE-check-off | `crates/zedc-check/src/check/mod.rs` |
+| 57 | L22.5, STORE-check-off | `crates/zedc-check/src/check/mod.rs` |
 | 58 | L23.5, L24.1 | `crates/zedc/src/opt/` |
-| 58 | L24.1, L22.6 | `crates/zedc-check/src/check/mod.rs` |
-| 58 | L24.1, L22.7 | `crates/zedc-check/src/check/mod.rs` |
 | 58 | L22.6, L22.7 | `crates/zedc-check/src/check/mod.rs` |
+| 63 | S.1h, NATIVE-cache | `DESIGN.md` |
 | 63 | STD-seq, STD-text | `zed/stdlib/` |
 | 63 | STD-seq, STD-num | `zed/stdlib/` |
 | 63 | STD-text, STD-num | `zed/stdlib/` |
@@ -1794,53 +2112,70 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 68 | L24.2, L24.3 | `crates/zed-native/src/codegen.rs`, `zed/compiler/` |
 | 68 | L24.2, L24.5 | `zed/compiler/` |
 | 68 | L24.3, L24.5 | `zed/compiler/` |
+| 69 | S.5b, L19.3 | `zed/compiler/` |
+| 69 | S.5b, L20.4 | `zed/compiler/` |
+| 69 | S.5b, L24.6 | `zed/compiler/` |
+| 69 | S.5b, L24.10 | `zed/compiler/` |
 | 69 | L19.3, L20.4 | `zed/compiler/` |
 | 69 | L19.3, L20.3 | `zed/prelude/json.zed`, `zed/prelude/csv.zed`, `zed/prelude/grammar.zed` |
 | 69 | L19.3, L24.6 | `zed/compiler/` |
 | 69 | L19.3, L24.10 | `zed/compiler/` |
 | 69 | L20.4, L24.6 | `zed/compiler/`, `DESIGN.md` |
 | 69 | L20.4, L24.10 | `zed/compiler/` |
+| 69 | L20.4, L22.7a | `DESIGN.md` |
+| 69 | L20.4, S.6a | `DESIGN.md` |
 | 69 | L24.6, L24.10 | `zed/compiler/`, `crates/zed-rt/src/` |
-| 69 | S.5a, S.6a | `row S` |
-| 69 | S.5a, S.6b | `row S` |
-| 69 | S.6a, S.6b | `row S` |
+| 69 | L24.6, L22.7a | `DESIGN.md` |
+| 69 | L24.6, S.6a | `DESIGN.md` |
+| 69 | L22.7a, S.6a | `DESIGN.md` |
 | 70 | S.6, L24.7 | `zed/compiler/`, `crates/zedc-base/src/source.rs`, `crates/zed-rt/src/` |
 | 71 | QUOT-classes, TERM-3 | `zed/prelude/png.zed`, `zed/prelude/gzip.zed`, `docs/stdlib-catalog.md` |
 | 71 | QUOT-classes, L22.9 | `zed/prelude/symbolic.zed` |
-| 71 | QUOT-classes, L26.1 | `crates/zed-rt/src/union_find.rs (from L5.9)` |
+| 71 | QUOT-classes, L26.1 | `crates/zed-rt/src/union_find.rs` |
 | 71 | QUOT-classes, FLOAT-elem | `zed/prelude/` |
 | 71 | QUOT-classes, INTEROP-study | `docs/stdlib-catalog.md` |
-| 71 | QUOT-classes, L28.4 | `crates/zed-rt/src/union_find.rs (from L5.9)` |
+| 71 | QUOT-classes, L28.4 | `crates/zed-rt/src/union_find.rs` |
 | 71 | L25.1, L26.1 | `crates/zedc/src/main.rs`, `crates/zedc/src/run.rs`, `DESIGN.md` |
 | 71 | L25.1, L31.1 | `DESIGN.md` |
 | 71 | L25.1, FLOAT-elem | `DESIGN.md` |
+| 71 | L25.1, INTEROP-study | `DESIGN.md` |
 | 71 | L25.1, PORT-pointer-keys | `DESIGN.md` |
 | 71 | L25.1, L28.4 | `DESIGN.md` |
+| 71 | L25.1, PKG-fetch | `DESIGN.md` |
 | 71 | TERM-3, FLOAT-elem | `zed/prelude/png.zed`, `zed/prelude/gzip.zed` |
 | 71 | TERM-3, INTEROP-study | `docs/stdlib-catalog.md` |
 | 71 | L22.9, L26.1 | `crates/zedc-resolve/src/resolve.rs` |
 | 71 | L22.9, FLOAT-elem | `zed/prelude/symbolic.zed` |
 | 71 | L26.1, L31.1 | `DESIGN.md` |
 | 71 | L26.1, FLOAT-elem | `DESIGN.md` |
-| 71 | L26.1, INTEROP-study | `docs/layout.md` |
+| 71 | L26.1, INTEROP-study | `docs/layout.md`, `DESIGN.md` |
 | 71 | L26.1, PORT-pointer-keys | `DESIGN.md` |
 | 71 | L26.1, L28.4 | `crates/zed-rt/src/`, `DESIGN.md` |
+| 71 | L26.1, PKG-fetch | `DESIGN.md` |
 | 71 | L31.1, FLOAT-elem | `DESIGN.md` |
-| 71 | L31.1, INTEROP-study | `docs/mcu-study.md` |
+| 71 | L31.1, INTEROP-study | `DESIGN.md`, `docs/mcu-study.md` |
 | 71 | L31.1, PORT-pointer-keys | `DESIGN.md` |
 | 71 | L31.1, L28.4 | `DESIGN.md` |
+| 71 | L31.1, PKG-fetch | `DESIGN.md` |
+| 71 | FLOAT-elem, INTEROP-study | `DESIGN.md` |
 | 71 | FLOAT-elem, PORT-pointer-keys | `DESIGN.md` |
 | 71 | FLOAT-elem, L28.4 | `DESIGN.md` |
+| 71 | FLOAT-elem, PKG-fetch | `DESIGN.md` |
+| 71 | INTEROP-study, PORT-pointer-keys | `DESIGN.md` |
+| 71 | INTEROP-study, L28.4 | `DESIGN.md` |
+| 71 | INTEROP-study, PKG-fetch | `DESIGN.md` |
 | 71 | PORT-pointer-keys, L28.4 | `DESIGN.md` |
+| 71 | PORT-pointer-keys, PKG-fetch | `DESIGN.md` |
+| 71 | L28.4, PKG-fetch | `DESIGN.md` |
 | 72 | L25.3, L25.2 | `crates/zedc/src/lsp/` |
 | 72 | L25.3, L27.3 | `DESIGN.md` |
 | 72 | L25.3, L29.1 | `DESIGN.md` |
-| 72 | L25.3, DIAG-json | `DESIGN.md`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/lsp/` |
+| 72 | L25.3, DIAG-json | `DESIGN.md`, `crates/zedc/src/lsp/` |
 | 72 | L25.3, AD-reverse | `DESIGN.md` |
 | 72 | L19.4, L27.3 | `zed/corpus/` |
-| 72 | L25.2, DIAG-json | `crates/zedc/src/lsp/`, `crates/zedc/src/run.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-stage/src/stage.rs` |
+| 72 | L25.2, DIAG-json | `crates/zedc/src/lsp/`, `crates/zedc/src/run.rs` |
 | 72 | L27.3, L29.1 | `DESIGN.md` |
-| 72 | L27.3, DIAG-json | `crates/zedc/src/hdl/ (new) or crates/zed-hdl/`, `DESIGN.md` |
+| 72 | L27.3, DIAG-json | `crates/zedc/src/hdl/`, `DESIGN.md` |
 | 72 | L27.3, AD-reverse | `DESIGN.md` |
 | 72 | L29.1, DIAG-json | `DESIGN.md` |
 | 72 | L29.1, AD-reverse | `DESIGN.md` |
@@ -1860,33 +2195,42 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 75 | L30.3, L34.9 | `crates/zedc/src/lsp/` |
 | 75 | L30.3, L27.1 | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/mod.rs` |
 | 75 | L30.3, L27.2 | `crates/zedc-elab/src/elab.rs` |
-| 75 | L30.3, MCU-period | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/lsp/` |
+| 75 | L30.3, MCU-period | `crates/zedc/src/lsp/` |
 | 75 | L25.7, L27.1 | `DESIGN.md` |
 | 75 | L25.7, L27.2 | `DESIGN.md` |
 | 75 | L25.7, PICTURE-type | `DESIGN.md` |
-| 75 | L25.7, MCU-period | `crates/zedc/src/delta.rs` |
+| 75 | L25.7, MCU-period | `DESIGN.md`, `crates/zedc/src/delta.rs` |
 | 75 | L34.9, L27.2 | `zed/prelude/agent.zed` |
 | 75 | L34.9, MCU-period | `crates/zedc/src/lsp/` |
-| 75 | L27.1, L27.2 | `crates/zed-rt/src/ (cluster transport`, `zed/prelude/cost.zed`, `crates/zedc/src/run.rs`, `docs/layout.md`, `DESIGN.md` |
+| 75 | L27.1, L27.2 | `crates/zed-rt/src/`, `zed/prelude/cost.zed`, `crates/zedc/src/run.rs`, `docs/layout.md`, `DESIGN.md` |
 | 75 | L27.1, PICTURE-type | `DESIGN.md` |
-| 75 | L27.1, MCU-period | `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs`, `crates/zedc/src/run.rs` |
+| 75 | L27.1, MCU-period | `crates/zedc/src/run.rs`, `DESIGN.md` |
 | 75 | L27.2, PICTURE-type | `DESIGN.md` |
-| 75 | L27.2, MCU-period | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/run.rs` |
+| 75 | L27.2, MCU-period | `crates/zedc/src/run.rs`, `DESIGN.md` |
+| 75 | PICTURE-type, MCU-period | `DESIGN.md` |
 | 76 | L30.4, L25.9 | `DESIGN.md` |
+| 76 | L30.4, FFI-inline-proc | `crates/zedc/src/lsp/`, `crates/zedc/src/run.rs`, `crates/zedc/src/query.rs` |
 | 76 | L30.4, L27.2a | `DESIGN.md` |
 | 76 | L30.4, L27.2b | `DESIGN.md` |
 | 76 | L30.4, L27.2c | `DESIGN.md` |
 | 76 | L30.4, L30.3a | `crates/zedc/src/lsp/`, `editors/vscode/`, `DESIGN.md` |
+| 76 | L30.4, L30.3b | `DESIGN.md` |
 | 76 | L25.9, L27.2a | `DESIGN.md` |
 | 76 | L25.9, L27.2b | `DESIGN.md` |
 | 76 | L25.9, L27.2c | `DESIGN.md` |
 | 76 | L25.9, L30.3a | `DESIGN.md` |
+| 76 | L25.9, L30.3b | `DESIGN.md` |
+| 76 | FFI-inline-proc, L30.3a | `crates/zedc/src/lsp/` |
 | 76 | L27.2a, L27.2b | `crates/zed-rt/src/`, `DESIGN.md` |
 | 76 | L27.2a, L27.2c | `crates/zed-rt/src/`, `DESIGN.md` |
 | 76 | L27.2a, L30.3a | `DESIGN.md` |
+| 76 | L27.2a, L30.3b | `DESIGN.md` |
 | 76 | L27.2b, L27.2c | `crates/zed-rt/src/`, `DESIGN.md` |
 | 76 | L27.2b, L30.3a | `DESIGN.md` |
+| 76 | L27.2b, L30.3b | `DESIGN.md` |
 | 76 | L27.2c, L30.3a | `DESIGN.md` |
+| 76 | L27.2c, L30.3b | `DESIGN.md` |
+| 76 | L30.3a, L30.3b | `DESIGN.md` |
 | 77 | L30.5, L34.10 | `crates/zedc/src/lsp/` |
 | 77 | L30.5, L34.1 | `crates/zedc/src/lsp/` |
 | 77 | L34.10, L34.1 | `crates/zedc/src/lsp/` |
@@ -1899,520 +2243,158 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 85 | L34.6, L35.1 | `crates/zedc/src/lsp/`, `editors/vscode/` |
 | 85 | L34.7, L35.1 | `crates/zedc/src/lsp/`, `editors/vscode/` |
 | 85 | L33.2, L33.3 | `DESIGN.md` |
-| 71 | L2.13, L25.1 | `STATUS.md` |
-| 71 | L2.13, L21.3 | `STATUS.md` |
-| 10 | TEST-fuzz, T14-lints | `crates/zedc/src` |
-| 49 | READ-arms, L7.9 | `crates/zedc/src/incr` |
-| 49 | READ-arms, L7.10 | `crates/zedc/src/incr` |
-| 49 | READ-arms, L7.12 | `crates/zedc/src/testing.rs`, `crates/zedc/src/incr` |
-| 49 | READ-arms, L11.2 | `crates/zedc/src/store`, `crates/zedc/src/introspect` |
-| 49 | READ-arms, L7.13 | `crates/zedc/src/query.rs`, `crates/zedc/src/incr` |
-| 49 | READ-arms, MENU-linear-L10 | `crates/zedc/src/run.rs` |
-| 49 | READ-arms, SELFINT-design | `DESIGN.md` |
-| 49 | READ-arms, EDGE-class | `crates/zedc/src/store` |
-| 0 | POLY-nf, K36-study | `COMPLEXITY.md` |
-| 0 | POLY-nf, STAGE-joined-eq | `COMPLEXITY.md` |
-| 0 | POLY-nf, KEY-written-addr | `COMPLEXITY.md` |
-| 0 | POLY-nf, ST-wider | `STATUS.md`, `COMPLEXITY.md` |
-| 0 | POLY-nf, S.3-cost-load | `COMPLEXITY.md` |
-| 0 | LIST-size, M0.10a | `DESIGN.md` |
-| 0 | LIST-size, QUESTIONS-answered | `DESIGN.md` |
-| 0 | LIST-size, SPEC-L3.9-tests | `DESIGN.md` |
-| 0 | LIST-size, SPEC-L3.21-ac | `DESIGN.md` |
-| 0 | LIST-size, WAVE-theory | `DESIGN.md` |
-| 0 | LIST-size, KEY-written-addr | `crates/zedc-preimage/src/product.rs` |
-| 0 | LIST-size, POLY-nf | `STATUS.md` |
-| 0 | LIST-size, ST-wider | `crates/zedc-preimage/src/product.rs`, `STATUS.md` |
-| 56 | LIST-exact-overlap, TERM-2a | `crates/zedc-check/src/check/overload.rs` |
-| 56 | LIST-exact-overlap, NOINST-report | `crates/zedc-check/src/check/overload.rs`, `DESIGN.md` |
 
 ## File conflicts across levels
 
-These 13168 pairs (distinct pairs of items, counted on 2026-11-10; the earlier figure here, 12779, was 299 below the 13078 the lines then held) are at different levels, have no directed path between them, are not yet done and share a file, so the same rule applies: they may run in parallel, and the merge resolves the overlap. Regenerated on 2026-11-05 for the reduced needs of L1.40, L1.41, S.1 and S.3, and on 2026-11-07 for the eight rows of the soundness survey and the widened MOD-residue only, whose lines at the end name every item each conflicts with; and on 2026-11-07 for L2.13, TEST-fuzz, READ-arms and L2.14-diag after the answer to Q8, and for POLY-nf when Q10 was withdrawn, likewise at the end, with a directory path matched only at a `/` (the older lines also pair `crates/zedc` with `crates/zedc-check`); files under `tests/` are not compared. On 2026-11-10 (item PLAN-L18.2-rest) every entry naming L18.2, L18.2a or L18.2b (107) was removed, and the lines of L18.2a and L18.2b at the end were recomputed from the items table by that rule (78 and 106 items), followed by the 13 pairs moved from the same-level table. The other lines were not recomputed: by that rule the items table now gives 10385 pairs across levels, of which 3829 are missing here, and 6612 pairs here are no longer such a pair. Each line names an item and the items it conflicts with.
+Each line below names a path and the open items that touch it, by level, when they lie at two or more levels. An item touches a path when it lists the path or, for a directory, a path inside it, compared as above. Two items of a line that no path of needs joins may run in parallel, and the merge resolves the overlap; two that needs join run in order. There are 147 lines.
 
-- S.1f: FOOTPRINT-overlap, RUNG2-bit, PASS-at-args, L1.19b, T11-unit-share, ENV-port, XMARK-rows, ORDER-rename, HULL3-subsumed, L1.36a, T11-preimage-log, VALUE-one-tuple, DIAG-suppress, UTVPI-union, UTVPI-dag-test, UTVPI-model, DECIDE-disj-chain, NAME-ties-orient, MENU-linear, U8-rename, FLOAT-minmax, PREIMAGE-ref-tests, S22-order, HOOKS-term-dag, L1.36b, LIT-plain, PRE-stack-explicit, REFUSE-group-site, ST-exact-enum, MINMAX-tuples, HEAP-fresh-dag, POW-kept-exp, MATCH-fn-binder, IF-union, STR-types, CAST-menu, ST-ladder, T11-preimage-rest, S15-calls, T14-bring, T12-Z4, BOUNDS-other, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, RT-sites, SCALE-cover, T14-paths, L2.5, L2.8, T2-ty, ADDR-presburger, CHK-held-cascade, L1.40, T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, PREIMAGE-and-chain, CHK-need-bound, L2.8b, DIAG-control, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, L1.40a, S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L3.5, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, UNIT-modes, L5.1, L3.14, L4.4, L5.2, L5.3, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.13, L6.3, L5.5a, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13b, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, COST-patch, HEAP-rank, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
-- CASES-xr1: BREAK-cases, OR-PAT
-- M0.10a: FOOTPRINT-overlap, XMARK-rows, ORDER-rename, GROUP-admit-msg, GROUP-setop, SETTLE-rounds, L2.5, L2.8, L2.4, L2.8b, STRUCT-key, L2.7, L2.6, L1.40e, L1.41, L2.10, SCOPE-warn, L2.11, L3.2, L2.14, L4.1, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product, L3.11, PROP-per-arrow, L3.23, KEYABLE-reject, L3.24, L5.5a, TRACE-gen-laws, WITNESS-widened, EQ-tabulate, MEMO-cross, ARM-split
-- RUNG2-mod-symbol: FOOTPRINT-overlap, RUNG2-bit, XMARK-rows, ORDER-rename, T11-preimage-log, UTVPI-union, UTVPI-model, DECIDE-disj-chain, NAME-ties-orient, S22-order, L1.36b, PRE-stack-explicit, GROUP-admit-msg, GROUP-setop, T11-preimage-rest, S15-calls, SETTLE-rounds, PRODUCT-nested-chain, SCALE-cover, L2.5, L2.8, T2-ty, ADDR-presburger, L1.40, L2.4, PREIMAGE-and-chain, L2.8b, L2.8c, S22-R2, ST-formula-set, STRUCT-key, T14-lints, L2.7, PRE-abs-output, ST-formula-sibling, L2.6, L1.40e, L1.40f, L1.41, L2.10, SCOPE-warn, L2.11, L3.2, L2.14, L4.1, COLLATE-data, L3.6, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
-- LAYOUT-measure: FOOTPRINT-overlap, XMARK-rows, ORDER-rename, GROUP-admit-msg, GROUP-setop, SETTLE-rounds, L2.5, L2.8, L2.4, L2.8b, STRUCT-key, L2.7, L2.6, L1.40e, L1.41, L2.10, SCOPE-warn, L2.11, L3.2, L2.14, L4.1, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product, L3.11, PROP-per-arrow, L3.23, KEYABLE-reject, L3.24, L5.5a, TRACE-gen-laws, LAW14-gen, WITNESS-widened, EQ-tabulate, MEMO-cross, ARM-split, L6.17, S.1d, L28.1a, ROD-data, L8.2a, L7.5, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, ROUND-words, MLIR-noalias, L10.2a, SELFINT-design, L20.1, L7.13a, MEMO-edit, STAGE-reads, L20.1a, EDIT-run, L20.2, L17.1b, L15.2c, L15.7b, L23.5c, NOINST-report, L6.17a
-- DOC-links: PROV-family-entries, UTVPI-union, UTVPI-dag-test, UTVPI-model, DECIDE-disj-chain, NAME-ties-orient, FLOAT-minmax, L1.36b, STR-types, SCALE-cover, T2-ty, ADDR-presburger, L2.4, L2.8c, ST-formula-set, ST-formula-sibling, STAGE-print, L1.40f, L2.10, L3.2, FLOAT-sqrt, L3.3, STR-views, L3.4, L6.6, L6.7, L3.5, L3.7, L3.15a, FLOAT-f32, BIT-repr, L4.2, L5.1, L4.4, L5.2, L5.3, L5.4, CSR-bounds, BOUND-L4, L5.6, BOUND-L5, ENUM-perm, L6.9, WITNESS-widened, L6.8a, L6.5, DESCENT-sum, EQ-tabulate, HKT-1, MEMO-cross, ARM-split, L6.17, L7.2, L7.3, L15.1, FINITE-prop, L7.14, L7.5, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L19.1, L15.5, L1.18a, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, HULL3-GEN, S.1c, STD-num, L21.1c, S.5, L19.2, S.6, DIAG-json, MCU-period, L30.3b
-- CHK-need-uses: PASS-at-args, XMARK-rows, U8-rename, FLOAT-minmax, L1.36b, LIT-plain, REFUSE-group-site, MINMAX-tuples, IF-union, STR-types, CAST-menu, BOUNDS-other, SCALE-cover, L2.5, T2-ty, CHK-held-cascade, T11-ty, WARN-refused, CHK-need-bound, L2.8b, L2.8c, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STATIC-assert
-- SPEC-L3.9-tests: FOOTPRINT-overlap, XMARK-rows, ORDER-rename, GROUP-admit-msg, GROUP-setop, SETTLE-rounds, L2.5, L2.8, L2.4, L2.8b, STRUCT-key, L2.7, L2.6, L1.40e, L1.41, L2.10, SCOPE-warn, L2.11, L3.2, L2.14, L4.1, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
-- SPEC-L3.21-ac: FOOTPRINT-overlap, XMARK-rows, ORDER-rename, GROUP-admit-msg, GROUP-setop, SETTLE-rounds, L2.5, L2.8, L2.4, L2.8b, STRUCT-key, L2.7, L2.6, L1.40e, L1.41, L2.10, SCOPE-warn, L2.11, L3.2, L2.14, L4.1, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
-- WAVE-theory: FOOTPRINT-overlap, XMARK-rows, ORDER-rename, GROUP-admit-msg, GROUP-setop, SETTLE-rounds, L2.5, L2.8, L2.4, L2.8b, STRUCT-key, L2.7, L2.6, L1.40e, L1.41, L2.10, SCOPE-warn, L2.11, L3.2, L2.14, L4.1, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product, L3.11, PROP-per-arrow, L3.23, KEYABLE-reject, L3.24, L5.5a, TRACE-gen-laws, LAW14-gen, WITNESS-widened, EQ-tabulate, MEMO-cross, ARM-split, L6.17, S.1d, ROD-data, L8.2a
-- MATHLIB-seed: SELFINT-design, INTEROP-study
-- ZIR-family-key: VALUE-one-tuple, L1.36b, SCALE-cover, L2.8c, T14-lints, L2.9, L1.41, L2.10, L3.4, L6.6, WIDE-product, L3.20, L3.12, ZIR-check-passes, FOLD-zero, EVID-dynamic, L5.1d, INLINE-zir, SPECULATE, L6.15, MEMO-cross, L6.17, STR-cursor, L7.1, L7.3, L9.1, L15.1, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L6.17a
-- ZIR-name-xid: VALUE-one-tuple, L1.36b, SCALE-cover, L2.8c, T14-lints, L2.9, L1.41, L2.10, L3.4, L6.6, WIDE-product, L3.20, L3.12, ZIR-check-passes, FOLD-zero, EVID-dynamic, L5.1d, INLINE-zir, SPECULATE, L6.15, MEMO-cross, L6.17, STR-cursor, L7.1, L7.3, L9.1, L15.1, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L6.17a
-- FMT-load-pos: L1.36b, SCALE-cover, L2.8, L2.8c, T14-lints, L4.1, L5.1, L5.4, L5.5, MEMO-cross, L6.17, L7.1, L8.1, L10.1, L9.1, L15.1, L22.1, TARGET-native, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L20.1, L15.2, L22.2, L23.1, L23.4, L24.1, L6.17a
-- CITE-check: FOOTPRINT-overlap, PASS-at-args, XMARK-rows, ORDER-rename, PROV-family-entries, PLAN-conflicts, U8-rename, FLOAT-minmax, L1.36b, LIT-plain, REFUSE-group-site, GROUP-admit-msg, MINMAX-tuples, IF-union, STR-types, CAST-menu, GROUP-setop, BOUNDS-other, NARROW-hub-settle, SETTLE-rounds, SCALE-cover, L2.5, L2.8, T2-ty, CHK-held-cascade, T11-ty, L2.4, WARN-refused, IS-chain-quad, CHK-need-bound, L2.8b, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STAGE-print, L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, OR-PAT, SCOPE-warn, L2.7a, L2.11, L3.2, FLOAT-sqrt, SCALE-zed, L2.14, L4.1, STR-views, L3.4, COLLATE-data, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.10, L3.11, L3.18, PROP-per-arrow, L3.23, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, BOUND-L4, L3.24, L5.5, L6.2, BOUND-L5, L5.5a, L6.8, L6.11, TRACE-gen-laws, L5.10, L6.9, LAW14-gen, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, ROD-data, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L21.0, L17.1b, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L16.4, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, STD-num, S.2-forms, L21.1, S.3-forms, L21.1c, L24.5, L20.4, L20.3, L24.6, S.6, L25.1, L26.1, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L25.3, L25.2, L27.3, L29.1, TARGET-mcu, DIAG-json, AD-reverse, LIB-linkage, L25.4, L30.1, L25.5, L31.2, TERM-2, L30.2, L25.6, L31.3, L25.7, L27.1, L27.2, PICTURE-type, MCU-period, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2, L33.1, L33.2, L33.3, L33.1a, USER-guide
-- M0d-suite: VARIANT-sync, XMARK-rows, LIT-plain, STR-types, L2.8b
-- LOWER-legalize: L1.36a, FLOAT-minmax, HOOKS-term-dag, MATCH-fn-binder, HEAP-binder-paths, IF-union, STR-types, RT-sites, SCALE-cover, T14-paths, PLAN-shared-regions, T14-lints, L2.9, L3.2, FLOAT-sqrt, STR-views, L3.13, L3.15a, BIT-repr, WIDE-product, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, L6.14, L5.1d, SPECULATE, L6.14a, L6.13, L6.13a, L6.13c, L6.15, FOLD-layers, L6.16, RT-layout, L6.17, STR-cursor, L7.2, L7.3, L9.1, L7.4, L7.5, FILE-bytes, L21.2, L10.3, L14.1, L19.1, L24.1
-- TIME-report: FOOTPRINT-overlap, RUNG2-bit, PASS-at-args, L1.19b, T11-unit-share, ENV-port, XMARK-rows, ORDER-rename, HULL3-subsumed, L1.36a, T11-preimage-log, VALUE-one-tuple, DIAG-suppress, UTVPI-union, UTVPI-dag-test, UTVPI-model, DECIDE-disj-chain, NAME-ties-orient, MENU-linear, U8-rename, FLOAT-minmax, PREIMAGE-ref-tests, S22-order, HOOKS-term-dag, L1.36b, LIT-plain, PRE-stack-explicit, REFUSE-group-site, ST-exact-enum, MINMAX-tuples, HEAP-fresh-dag, POW-kept-exp, MATCH-fn-binder, IF-union, STR-types, CAST-menu, ST-ladder, T11-preimage-rest, S15-calls, T14-bring, T12-Z4, BOUNDS-other, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, RT-sites, SCALE-cover, T14-paths, L2.5, L2.8, T2-ty, ADDR-presburger, CHK-held-cascade, L1.40, T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, PREIMAGE-and-chain, CHK-need-bound, L2.8b, DIAG-control, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, L1.40a, S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L3.5, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, UNIT-modes, L5.1, L3.14, L4.4, L5.2, L5.3, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.13, L6.3, L5.5a, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13b, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, COST-patch, HEAP-rank, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
-- PORT-catalog: SCALE-cover, COLLATE-data, L6.17, L16.4, L6.17a
-- PLAN-sync: SELFINT-design, INTEROP-study
-- FOOTPRINT-overlap: U8-rename, L1.36b, LIT-plain, GROUP-admit-msg, MINMAX-tuples, STR-types, GROUP-setop, SETTLE-rounds, SCALE-cover, L2.5, L2.8, L2.4, L2.8b, L2.8c, STRUCT-key, T14-lints, L2.7, STATIC-assert, L2.6, L1.40e, L1.41, L2.10, SCOPE-warn, L2.11, L3.2, FLOAT-sqrt, L2.14, L4.1, STR-views, COLLATE-data, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.11, PROP-per-arrow, KEYABLE-reject, L5.1, L5.2, L5.3, L4.6, L5.4, EVID-dynamic, L5.9, L5.5a, TRACE-gen-laws, WITNESS-widened, EQ-tabulate, ARM-split
-- RUNG2-bit: T11-preimage-log, UTVPI-union, S22-order, L1.36b, PRE-stack-explicit, T11-preimage-rest, S15-calls, PRODUCT-nested-chain, SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, S22-R2, T14-lints, L2.7, PRE-abs-output, L1.40f, L2.10, L3.6, BIT-repr
-- PASS-at-args: U8-rename, FLOAT-minmax, L1.36b, LIT-plain, MINMAX-tuples, IF-union, STR-types, CAST-menu, SCALE-cover, L2.5, CHK-held-cascade, T11-ty, WARN-refused, CHK-need-bound, L2.8c, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, L1.40b, STATIC-assert, L2.6, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, L2.7a, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, L3.8, FLOAT-f32, L3.10, L3.18, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, BOUND-L4, L5.5, L6.2, BOUND-L5, L6.8, L6.11, L5.10, L6.9, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1
-- L1.19b: DIAG-suppress, MENU-linear, L1.36b, RT-sites, SCALE-cover, L2.8, L2.4, WARN-refused, L2.8c, T14-lints, L1.40f, L2.12, L2.10, SCOPE-warn, L3.2
-- T11-unit-share: L1.36b, SCALE-cover, L2.8c, T14-lints, L3.8, MEMO-cross, L6.17, L15.1, TARGET-native, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L7.12, L20.1, L15.2, L22.2, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1, L21.1c, S.6, DIAG-json, MCU-period
-- ENV-port: DIAG-suppress, MENU-linear, U8-rename, FLOAT-minmax, L1.36b, LIT-plain, MINMAX-tuples, STR-types, RT-sites, SCALE-cover, L2.8, L1.40, L2.4, WARN-refused, L2.8c, T14-lints, STATIC-assert, L1.40f, L2.12, L2.10, SCOPE-warn, L3.2, FLOAT-sqrt, L4.1, STR-views, COLLATE-data, L3.15a
-- VARIANT-sync: LIT-plain, STR-types
-- XMARK-rows: L1.36b, LIT-plain, GROUP-admit-msg, STR-types, GROUP-setop, SETTLE-rounds, SCALE-cover, L2.5, L2.8, L2.4, L2.8b, DIAG-control, GROUP-e2e, L2.8c, STRUCT-key, T14-lints, L2.7, L2.6, L1.40e, HKT-2, L2.10, SCOPE-warn, L2.7a, L2.11, L3.2, L4.1, CORPUS-oracle, COLLATE-data, CORPUS-input-errors, L3.19, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
-- ORDER-rename: UTVPI-union, L1.36b, GROUP-admit-msg, GROUP-setop, SETTLE-rounds, SCALE-cover, L2.5, L2.8, T2-ty, L2.4, L2.8b, L2.8c, STRUCT-key, T14-lints, L2.7, L2.6, L1.40e, L1.40f, L2.10, SCOPE-warn, L2.11, L3.2, L4.1, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
-- P14-bits: LIT-plain, STR-types, CORPUS-oracle, CORPUS-input-errors, L3.19, L4.7, L5.12, L6.18, L8.3, L7.13, L10.5, L11.3, L7.15, L14.2, L12.4, L16.4, L19.4, L27.3, L25.7
-- PROV-family-entries: VALUE-one-tuple, FAMILY-eq-dag, FLOAT-minmax, VERDICT-route, REFUSE-group-site, GROUP-admit-msg, GROUP-oracle, GROUP-refusal, TD-finite, GROUP-same, T6-2sat, T6-refusal-cost, BDD-xor-parity, REC-canon, STR-types, T2-types-rest, GROUP-setop, SETTLE-rounds, TABLE-life, SCALE-cover, L2.5, T2, L2.4, T14-lints, L2.7, STAGE-print, L1.40e, L2.10, L3.2, FLOAT-sqrt, L3.3, L4.1, STR-views, L3.4, L6.6, L6.7, L3.5, L6.4, L3.7, L3.8, L3.15a, FLOAT-f32, BIT-repr, L3.20, L3.21, L4.2, L5.1, L4.4, L5.2, L5.3, L3.15, L5.4, L5.6, ENUM-perm, L6.5, EQ-tabulate, HKT-1, L6.16, FOLD-unique, L6.17, STR-cursor, L7.1, L7.1a, L7.2, L7.3, L9.1, L7.4, L7.5, L10.2, L21.2, L7.6, L10.3, L11.1, L15.2, L7.9a, L19.1, L15.4, L15.5, L1.18a, L20.2, L22.7, L24.4, STD-num
-- MSG-words: DIAG-suppress, CAST-menu
-- PLAN-conflicts: COLLATE-data, L6.17, SELFINT-design, S.6, INTEROP-study
-- HULL3-subsumed: UTVPI-union, L1.36b, SCALE-cover, T2-ty, L2.8c, T14-lints, L1.40f, BIT-repr, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1
-- L1.36a: HOOKS-term-dag, HEAP-fresh-dag, MATCH-fn-binder, HEAP-binder-paths, IF-union, STR-types, RT-sites, SCALE-cover, T14-paths, L2.8, T2, PLAN-shared-regions, L2.8c, T14-lints, L2.9
-- T11-preimage-log: S22-order, L1.36b, PRE-stack-explicit, T11-preimage-rest, S15-calls, PRODUCT-nested-chain, SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, S22-R2, T14-lints, L2.7, PRE-abs-output, L1.40f, L2.10, L3.6, BIT-repr, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, INTERN-threaded, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1
-- VALUE-one-tuple: FLOAT-minmax, L1.36b, STR-types, SCALE-cover, L2.8c, T14-lints, STAGE-print, L2.9, L2.10, FLOAT-sqrt, STR-views, L3.4, L6.6, L3.15a, WIDE-product
-- FAMILY-eq-dag: FLOAT-minmax, STR-types, SCALE-cover, T14-lints, STAGE-print, FLOAT-sqrt, STR-views, L3.15a, L6.17, L15.5, L1.18a, STD-num
-- DIAG-suppress: L1.36b, CAST-menu, RT-sites, SCALE-cover, L2.8, T2, L2.4, WARN-refused, L2.8c, T14-lints, L1.40f, L2.12, L2.10, SCOPE-warn, L3.2, L3.11, L3.21, L5.10, L6.13b, MEMO-cross, L6.17, S.1a, L7.2, L7.2a, L7.3, L15.1, L7.4, L7.5, FILE-bytes, TARGET-native, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L20.1, L15.2, L19.1, L17.1, EDIT-run, L22.2, L23.1, L15.7, L15.8, L15.7b, L23.4, L24.1, L6.17a
-- UTVPI-union: PREIMAGE-ref-tests, S22-order, L1.36b, PRE-stack-explicit, ST-exact-enum, POW-kept-exp, ST-ladder, T11-preimage-rest, S15-calls, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, SCALE-cover, T2-ty, ADDR-presburger, L1.40, WARN-refused, PREIMAGE-and-chain, L2.8c, L1.40a, S22-R2, ST-formula-set, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, ST-formula-parse-keep, L1.40b, L1.40e, L1.40f, L2.12, L2.10, SCOPE-warn, L3.22, L3.6, L3.7, L3.8, FLOAT-f32, BIT-repr, L3.23, L3.18a, L4.4, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.11, L6.11a, L6.9, WITNESS-widened, L6.8a, DESCENT-sum, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1, HULL3-GEN
-- UTVPI-dag-test: L1.36b, SCALE-cover, T2-ty, L2.8c, T14-lints, L1.40f, BIT-repr, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, L21.1c, S.6, DIAG-json, MCU-period
-- UTVPI-model: L1.36b, PRODUCT-nested-chain, SCALE-cover, T2-ty, ADDR-presburger, L2.8c, ST-formula-set, T14-lints, ST-formula-sibling, L1.40f, L3.7, BIT-repr, L4.4, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, DESCENT-sum, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, HULL3-GEN
-- DECIDE-disj-chain: L1.36b, PRODUCT-nested-chain, SCALE-cover, T2-ty, ADDR-presburger, L2.8c, ST-formula-set, T14-lints, ST-formula-sibling, L1.40f, L3.7, BIT-repr, L4.4, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, DESCENT-sum, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, HULL3-GEN
-- NAME-ties-orient: L1.36b, PRODUCT-nested-chain, SCALE-cover, T2-ty, ADDR-presburger, L2.8c, ST-formula-set, T14-lints, ST-formula-sibling, L1.40f, L3.7, BIT-repr, L4.4, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, DESCENT-sum, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, HULL3-GEN, L21.1c, S.6, DIAG-json, MCU-period
-- MENU-linear: L1.36b, RT-sites, SCALE-cover, L2.8, L2.4, WARN-refused, L2.8c, T14-lints, L1.40f, L2.12, L2.10, SCOPE-warn, L3.2
-- U8-rename: REFUSE-group-site, MINMAX-tuples, IF-union, CAST-menu, BOUNDS-other, NARROW-hub-settle, SCALE-cover, L2.5, L2.8, T2-ty, CHK-held-cascade, L1.40, T11-ty, BUILD-const, WARN-refused, IS-chain-quad, CHK-need-bound, GROUP-e2e, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STATIC-assert
-- FLOAT-minmax: VERDICT-route, REFUSE-group-site, GROUP-admit-msg, GROUP-oracle, GROUP-refusal, TD-finite, GROUP-same, T6-2sat, T6-refusal-cost, BDD-xor-parity, MATCH-fn-binder, HEAP-binder-paths, REC-canon, IF-union, STR-types, CAST-menu, T2-types-rest, GROUP-setop, SETTLE-rounds, RT-sites, TABLE-life, SCALE-cover, T14-paths, L2.5, L2.8, CHK-held-cascade, T11-ty, T2, L2.4, WARN-refused, CHK-need-bound, PLAN-shared-regions, L2.8c, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STAGE-print, L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, L2.7a, FLOAT-sqrt
-- PREIMAGE-ref-tests: PRE-stack-explicit, SCALE-cover, T2-ty, L2.8c, T14-lints, L1.40f, L3.22, BIT-repr, L3.9, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, L21.1c, S.6, L25.1, DIAG-json, L30.2, MCU-period
-- S22-order: PRE-stack-explicit, T11-preimage-rest, S15-calls, PRODUCT-nested-chain, SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, T14-lints, L2.7, L1.40f, L2.10, L3.6, BIT-repr
-- HOOKS-term-dag: HEAP-fresh-dag, MATCH-fn-binder, HEAP-binder-paths, IF-union, STR-types, T12-Z4, RT-sites, SCALE-cover, T14-paths, PLAN-shared-regions, L2.8c, T14-lints, LOWER-dag, L2.9, L3.2, FLOAT-sqrt, STR-views, L3.4, L3.13, L3.15a, BIT-repr, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.16, L4.2, UNIT-modes, LAYOUT-soa, L3.14, UNION-spare, L3.15, L4.6, EVID-dynamic, L5.8a, L5.6, L5.9, L5.13, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.13, L6.13a, L6.13b, L6.13c, L6.15, HEAP-rank, L6.16, RT-layout, MEMO-cross, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L21.2, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L6.17a, S.1, NATIVE-cache, L21.1, S.4, L21.1c, S.6, L23.5a, DIAG-json, L24.8, L27.1, MCU-period
-- L1.36b: PRE-stack-explicit, REFUSE-group-site, ST-exact-enum, MINMAX-tuples, HEAP-fresh-dag, POW-kept-exp, MATCH-fn-binder, IF-union, STR-types, CAST-menu, ST-ladder, T11-preimage-rest, S15-calls, T14-bring, T12-Z4, BOUNDS-other, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, RT-sites, SCALE-cover, T14-paths, L2.5, L2.8, T2-ty, ADDR-presburger, CHK-held-cascade, L1.40, T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, PREIMAGE-and-chain, CHK-need-bound, L2.8b, DIAG-control, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, L1.40a, S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L3.5, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, UNIT-modes, L5.1, L3.14, L4.4, L5.2, L5.3, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.13, L6.3, L5.5a, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13b, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, COST-patch, HEAP-rank, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
-- LIT-plain: REFUSE-group-site, MINMAX-tuples, BOUNDS-other, NARROW-hub-settle, SCALE-cover, L2.5, L2.8, T2-ty, CHK-held-cascade, L1.40, T11-ty, WARN-refused, IS-chain-quad, CHK-need-bound, L2.8b, GROUP-e2e, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STATIC-assert
-- PRE-stack-explicit: SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, L2.7, L1.40f, L2.10, L3.6, BIT-repr
-- VERDICT-route: T2-types-rest, GROUP-setop, SCALE-cover, L2.5, T14-lints, L2.7, STAGE-print, FLOAT-sqrt, STR-views, L3.7, L3.15a
-- REFUSE-group-site: T2-types-rest, GROUP-setop, BOUNDS-other, SCALE-cover, L2.5, T2-ty, CHK-held-cascade, T11-ty, WARN-refused, L2.8c, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STAGE-print, L1.40b, STATIC-assert, L1.40e, HKT-2, OVERLOAD-name-type, GLAM-diamond, L2.12b, L2.7a, L3.2, FLOAT-sqrt, L4.1, STR-views, L3.7, L3.15a
-- ST-exact-enum: ST-ladder, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, SCALE-cover, T2-ty, L1.40, WARN-refused, L2.8c, L1.40a, T14-lints, L1.40c, L2.7, L1.40b, L1.40e, L1.40f, L2.12, L2.10, SCOPE-warn, L3.6, L3.7, L3.8, BIT-repr, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1
-- GROUP-admit-msg: T2-types-rest, GROUP-setop, SETTLE-rounds, TABLE-life, SCALE-cover, L2.8, L2.8b, T14-lints, STAGE-print, L1.40e, L1.41
-- GROUP-oracle: T2-types-rest, TABLE-life, SCALE-cover, T14-lints, STAGE-print
-- GROUP-refusal: T2-types-rest, GROUP-setop, TABLE-life, SCALE-cover, T14-lints, STAGE-print
-- MINMAX-tuples: BOUNDS-other, NARROW-hub-settle, SCALE-cover, L2.5, L2.8, T2-ty, CHK-held-cascade, L1.40, T11-ty, WARN-refused, IS-chain-quad, CHK-need-bound, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, OR-PAT, L2.7a, FLOAT-sqrt
-- TD-finite: SCALE-cover, L2.5, T14-lints, L2.7, STAGE-print, L1.40e, FLOAT-sqrt, STR-views, L3.7, L3.15a, L5.2, L6.17, L7.1, L7.2, L9.1, L7.4, L10.2, L10.3, L15.5, L1.18a, STD-num, S.6
-- GROUP-same: T2-types-rest, GROUP-setop, TABLE-life, SCALE-cover, L2.5, T14-lints, STAGE-print, FLOAT-sqrt, STR-views, L6.4, L3.7, L3.15a, L6.17, L15.5, L1.18a, STD-num
-- HEAP-fresh-dag: T12-Z4, SCALE-cover, T14-paths, PLAN-shared-regions, L2.8c, T14-lints, LOWER-dag, L2.9, FLOAT-sqrt, L3.4, RT-exhaust-report, L3.13, BIT-repr, WIDE-product, HASH-repr, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L3.14, EVID-dynamic, L5.6, ENUM-perm, SORTED-dense, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.13a, L6.13b, L6.13c, L6.15, L6.13e, HEAP-rank, RT-layout, DEEP-native-eq, MEMO-cross, RECLAIM-pulse, L6.17, STR-cursor, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, TARGET-native, PORT-why, L7.5a, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, LIVE-clocks, L7.9, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L24.4, L6.17a, S.1, NATIVE-cache, L21.1c, L24.3, L24.6, L24.10, S.6, L24.7, L23.5a, L26.1, L28.4, L29.1, DIAG-json, L27.1, MCU-period, L27.2a, L27.2b, L27.2c, L34.5
-- T6-2sat: T2-types-rest, GROUP-setop, SCALE-cover, L2.5, T14-lints, L2.7, STAGE-print, FLOAT-sqrt, STR-views, L3.7, L3.15a, L6.17, L15.5, L1.18a, STD-num
-- T6-refusal-cost: T2-types-rest, GROUP-setop, SETTLE-rounds, TABLE-life, SCALE-cover, L2.5, T2, T14-lints, L2.7, STAGE-print, FLOAT-sqrt, STR-views, L6.4, L3.7, L3.15a, L6.17, L15.5, L1.18a, STD-num
-- BDD-xor-parity: T2-types-rest, SETTLE-rounds, TABLE-life, SCALE-cover, L2.5, T2, T14-lints, STAGE-print, FLOAT-sqrt, STR-views, L3.7, L3.15a, L6.17, SELFINT-design, L15.5, L1.18a, STD-num
-- POW-kept-exp: SCALE-cover, T2-ty, L2.8c, T14-lints
-- MATCH-fn-binder: T12-Z4, RT-sites, SCALE-cover, T14-paths, PLAN-shared-regions, L2.8c, T14-lints, LOWER-dag, L2.9, L3.2, FLOAT-sqrt, STR-views, L3.4, L3.13, L3.15a, BIT-repr, WIDE-product
-- HEAP-binder-paths: RT-sites, SCALE-cover, T14-lints, L2.9, L3.2, FLOAT-sqrt, STR-views, RT-exhaust-report, L3.13, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.16, L4.2, L5.8, LAYOUT-soa, L3.14, UNION-spare, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L6.14, L5.1d, L6.14a, L6.13, L6.13a, L6.13c, L6.13e, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L1.18a, L24.1, L24.4, L6.17a, L21.1, S.4, L24.3, L24.6, L24.10, S.6, L24.7, L26.1, L28.4, L29.1, L24.8, L27.1, L27.2a, L27.2b, L27.2c, L34.5
-- REC-canon: T2-types-rest, GROUP-setop, TABLE-life, SCALE-cover, T14-lints, STAGE-print
-- IF-union: BOUNDS-other, NARROW-hub-settle, RT-sites, SCALE-cover, T14-paths, L2.5, T2-ty, CHK-held-cascade, T11-ty, WARN-refused, IS-chain-quad, CHK-need-bound, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STATIC-assert
-- STR-types: T2-types-rest, GROUP-setop, BOUNDS-other, NARROW-hub-settle, SETTLE-rounds, RT-sites, TABLE-life, SCALE-cover, L2.5, L2.8, T2-ty, CHK-held-cascade, L1.40, T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, CHK-need-bound, L2.8b, GROUP-e2e, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STAGE-print, STATIC-assert
-- CAST-menu: SCALE-cover, L2.5, CHK-held-cascade, T11-ty, WARN-refused, CHK-need-bound, L2.8c, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, L1.40b, STATIC-assert, L2.6, HKT-2, OVERLOAD-name-type, L2.10, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32
-- ST-ladder: FINITE-type, SCALE-cover, T2-ty, L2.8c, T14-lints
-- T2-types-rest: L2.5, L2.7, STAGE-print
-- GROUP-setop: SETTLE-rounds, TABLE-life, SCALE-cover, L2.8, L2.8b, T14-lints, STAGE-print, L1.40e, L1.41
-- T11-preimage-rest: PRODUCT-nested-chain, SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, S22-R2, T14-lints, L2.7, PRE-abs-output, L1.40f, L2.10, L3.6, BIT-repr, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1
-- S15-calls: PRODUCT-nested-chain, SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, S22-R2, T14-lints, L2.7, PRE-abs-output, L1.40f, L2.10, L3.6, BIT-repr, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1
-- T14-bring: SCALE-cover, L2.8c, T14-lints, L2.9, CONTIFY, L3.2, L3.4, L6.6, WIDE-product
-- T12-Z4: SCALE-cover, L2.8c, T14-lints, LOWER-dag, L2.9, L3.4, L3.13, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.16, L4.2, UNIT-modes, L3.14, EVID-dynamic, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.13, L6.13b, L6.15, HEAP-rank, MEMO-cross, L6.17, STR-cursor, L7.2, L7.3, L9.1, L15.1, L7.4, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L22.2, REPACK-tile
-- BOUNDS-other: SCALE-cover, L2.5, T2-ty, CHK-held-cascade, T11-ty, WARN-refused, L2.8c, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L1.40b, STATIC-assert, L1.40e, HKT-2, OVERLOAD-name-type, GLAM-diamond, L2.12b, L2.7a, L3.2, L4.1, STR-views, L3.7
-- NARROW-hub-settle: SCALE-cover, T2-ty, CHK-held-cascade, L1.40, L2.8c, L1.40a, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, STATIC-assert
-- ST-wider: SCALE-cover, T2-ty, WARN-refused, L2.8c, T14-lints
-- SETTLE-rounds: L2.5, L2.8, T2, L2.4, L2.8b, STRUCT-key, T14-lints, L2.7, STAGE-print, L2.6, L1.40e, L1.41, L2.10, SCOPE-warn, L2.11, L3.2, FLOAT-sqrt, L4.1, STR-views, COLLATE-data, L3.7, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product
-- PRODUCT-nested-chain: SCALE-cover, T2-ty, ADDR-presburger, L1.40, WARN-refused, PREIMAGE-and-chain, L2.8c, L1.40a, S22-R2, ST-formula-set, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, L1.40b, L1.40e, L1.40f, L2.12, L2.10, SCOPE-warn, L3.6, L3.7, L3.8, BIT-repr, L4.4, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, DESCENT-sum, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1, HULL3-GEN
-- BREAK-cases: OR-PAT, TERM-1
-- FINITE-type: SCALE-cover, T2-ty, L1.40, WARN-refused, L2.8c, L1.40a, T14-lints, L1.40c, L2.7, L1.40b, L1.40e, L1.40f, L2.12, L2.10, SCOPE-warn, L3.6, L3.7, BIT-repr
-- RT-sites: SCALE-cover, T14-paths, L2.8, L2.4, WARN-refused, PLAN-shared-regions, L2.8c, T14-lints, LOWER-dag, L1.40f, L2.9, L2.12, L2.10, CONTIFY, SCOPE-warn, L3.2, FLOAT-sqrt, STR-views, L3.4, L6.6, L3.13, L3.15a, BIT-repr, WIDE-product
-- TABLE-life: SCALE-cover, L2.5, T2, T14-lints, STAGE-print, FLOAT-sqrt, STR-views, L6.4, L3.7, L3.15a, L6.17, L15.5, L1.18a, STD-num
-- SCALE-cover: T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, PREIMAGE-and-chain, CHK-need-bound, L2.8b, DIAG-control, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, L1.40a, S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, FLOAT-sqrt, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L6.7, COLLATE-data, L3.5, L6.4, L3.6, L3.7, RT-exhaust-report, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr
-- T14-paths: L2.8c, T14-lints, LOWER-dag, L2.9, FLOAT-sqrt, L3.4, L3.13, L3.15a, BIT-repr, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L3.15, L4.6, EVID-dynamic, L5.8a, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.13a, L6.13b, L6.15, FOLD-layers, HEAP-rank, MEMO-cross, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L22.2, REPACK-tile, L19.2a
-- L2.5: T11-ty, T2, WARN-refused, CHK-need-bound, L2.8b, L2.8c, T11-check, T14-lints, STAGE-print, L1.40b, STATIC-assert, L1.40e, L1.41
-- L2.8: T2, L2.4, WARN-refused, STRUCT-key, T14-lints, L2.7, STATIC-assert, L2.6, L1.40e, L1.40f, L2.12, L1.41, SCOPE-warn
-- T2-ty: WARN-refused, PREIMAGE-and-chain, L2.8c, L1.40a, S22-R2, ST-formula-set, ISSUE1-payload, STRUCT-key, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, ST-formula-parse-keep, STATIC-assert
-- ADDR-presburger: L2.8c, ST-formula-set, T14-lints, ST-formula-sibling, L1.40f, L3.7, BIT-repr, L4.4, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, DESCENT-sum, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, HULL3-GEN
-- CHK-held-cascade: T11-ty, WARN-refused, IS-chain-quad, CHK-need-bound, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32
-- L1.40: WARN-refused, PREIMAGE-and-chain, L2.8c, S22-R2, T14-lints, PRE-abs-output
-- T11-ty: ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STATIC-assert
-- T2: STAGE-print, FLOAT-sqrt, STR-views, L3.7, L3.15a, L3.11, L3.21, L5.10, L6.13b, MEMO-cross, L6.17, L15.1, TARGET-native, L28.1, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L20.1, L15.2, L15.5, L17.1, L1.18a, L22.2, L23.1, L15.7, L15.8, L15.7b, L23.4, L24.1, L6.17a, S.1, STD-num
-- L2.4: T14-lints, L1.40c, STAGE-print, STAGE-ends-cone, L1.40e, L1.40f, L1.41
-- BUILD-const: T14-lints, L1.40c, STAGE-print, STAGE-ends-cone, L2.6, L2.12, L2.10, L3.2, L4.1, L6.4, L3.8, FLOAT-f32, L5.1, L5.5, L6.3, SORTED-select, L6.12, MEMO-cross, L6.17, L7.1, L15.1, L8.2a, L22.1, TARGET-native, L21.2, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L11.1, LIVE-clocks, L12.1, L13.1, L18.1, L20.1, L15.2, L14.1, L19.1, L15.4, L17.1, STAGE-reads, L22.2, GLAM-pin, L23.1, L19.2a, L22.3, L23.4, L24.1, L24.4, L6.17a
-- WARN-refused: T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, OR-PAT, SCOPE-warn, L2.7a, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32, BIT-repr
-- IS-chain-quad: ISSUE1-payload, STRUCT-key, T14-lints, L1.40b, STATIC-assert, OVERLOAD-name-type, GLAM-diamond, L2.12b, L2.7a, STR-views, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, BOUND-L4, BOUND-L5, WITNESS-widened, L6.12a, DESCENT-sum, EQ-tabulate, L6.12b, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L6.17a, S.1
-- PREIMAGE-and-chain: S22-R2, T14-lints, L2.7, PRE-abs-output, L1.40f, L2.10, L3.6, BIT-repr, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1
-- CHK-need-bound: T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STATIC-assert
-- L2.8b: STRUCT-key, T14-lints, L2.7, L2.6, L1.40e, HKT-2, L1.41, L2.10, SCOPE-warn, L2.7a, L2.11, L3.2, L4.1, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
-- DIAG-control: T14-lints, HKT-2, L2.7a
-- GROUP-e2e: T14-lints, L2.6, HKT-2, L2.10, L3.2, L4.1, STR-views, L6.4, FLOAT-f32
-- PLAN-shared-regions: T14-lints, LOWER-dag, L2.9, FLOAT-sqrt, L3.4, L3.13, L3.15a, BIT-repr, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L3.15, L4.6, EVID-dynamic, L5.8a, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.13a, L6.13b, L6.15, FOLD-layers, HEAP-rank, MEMO-cross, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L22.2, REPACK-tile, L19.2a
-- L2.8c: S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L3.5, L6.4, L3.6, L3.7, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product
-- NARROW-notes-quad: ISSUE1-payload, STRUCT-key, T14-lints, L1.40b, STATIC-assert, OVERLOAD-name-type, GLAM-diamond, L2.12b, L2.7a, STR-views, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, BOUND-L4, BOUND-L5, WITNESS-widened, L6.12a, DESCENT-sum, EQ-tabulate, L6.12b, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L6.17a, S.1
-- L1.40a: T14-lints
-- S22-R2: L1.40f, L2.10, L3.6, BIT-repr
-- T11-check: STATIC-assert
-- ST-formula-set: L1.40f, L3.7, BIT-repr, L4.4, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, DESCENT-sum, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, HULL3-GEN
-- ISSUE1-payload: L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32
-- STRUCT-key: L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, OR-PAT, SCOPE-warn, L2.7a, L2.11, L3.2, L4.1, STR-views, COLLATE-data, L6.4, L3.6, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
-- T10: OR-PAT, LOWER-stack, L6.11a, L6.17, SELFINT-design, L6.17a, S.6, L26.1, INTEROP-study, L27.3, L30.1, L27.1, L27.2
-- T14-lints: PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, FLOAT-sqrt, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L6.7, L3.5, L6.4, L3.6, L3.7, RT-exhaust-report, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, L4.4, UNION-spare, L5.2, L5.3, L3.15, L4.6, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.9, L5.13, L6.3, L5.5a, ENUM-perm, SORTED-dense, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13a, L6.13b, L6.13c, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, L6.13e, COST-patch, HEAP-rank, BEND-contract, L6.16, RT-layout, DEEP-native-eq, FOLD-unique, MEMO-cross, ARM-split, RECLAIM-pulse, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, TARGET-native, PORT-why, L7.5a, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, HULL3-GEN, STD-num, ADVISORY, NATIVE-cache, L21.1, S.4, L21.1c, L19.2, L24.2, L24.3, L19.3, L20.4, L20.3, L24.6, L24.10, S.6, L24.7, QUOT-classes, L25.1, L23.5a, L22.9, L26.1, L28.4, L25.3, L25.2, L27.3, L29.1, DIAG-json, L25.4, L30.1, L25.5, L31.2, TERM-2, L30.2, L25.6, L24.8, L31.3, L30.3, L25.7, L34.9, L27.1, L27.2, MCU-period, L30.4, FFI-inline-proc, L27.2a, L27.2b, L27.2c, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.2, L32.4, L34.5, L34.2, L34.4, L34.8, L34.3, L34.6, L34.7, L35.1, PORTABLE-rt
-- L1.40c: STAGE-print, STAGE-ends-cone, L1.40b, L2.6, L1.40e, L1.40f, L2.12, L2.10, SCOPE-warn, L3.2, L6.4, L3.6, L3.7, BIT-repr
-- L2.7: PRE-abs-output, STAGE-print, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, OVERLOAD-name-type, L1.41, L2.10, L2.11, L3.2, FLOAT-sqrt, L4.1, STR-views, COLLATE-data, L6.4, L3.6, L3.7, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product
-- PRE-abs-output: L1.40f, L2.10, L3.6, BIT-repr
-- ST-formula-sibling: L1.40f, L3.7, BIT-repr, L4.4, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, DESCENT-sum, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, HULL3-GEN
-- STAGE-print: L2.6, L1.40e, L2.10, L3.2, FLOAT-sqrt, L3.3, L4.1, STR-views, L3.4, L6.6, L6.7, L3.5, L6.4, L3.7, L3.15a, FLOAT-f32, BIT-repr
-- ST-formula-parse-keep: L1.40f, BIT-repr, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1
-- LOWER-dag: L2.9, CONTIFY, L3.2, L3.4, L6.6, L3.13, WIDE-product
-- STAGE-ends-cone: L2.6, L3.2, L6.4, L3.8, L6.3, SORTED-select, L6.12, MEMO-cross, L6.17, L15.1, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L11.1, LIVE-clocks, L12.1, L13.1, L18.1, L20.1, L15.2, L19.1, L15.4, L17.1, STAGE-reads, L22.2, GLAM-pin, L23.1, L19.2a, L23.4, L24.1, L6.17a, S.1
-- STATIC-assert: L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.2, FLOAT-sqrt, L4.1, STR-views, COLLATE-data, L6.4, L3.6, L3.7, L3.8, L3.15a, FLOAT-f32, L3.10, L3.18, PROP-per-arrow, SEMIRING-values, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.6, L4.5, L5.4, CSR-bounds, BOUND-L4, L5.5, L6.2, BOUND-L5, L5.9, L5.7, L6.8, L6.11, L5.10, L6.11a, L6.9, WITNESS-widened, L5.7a, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, PRELUDE-words, L6.5c, COST-patch, BEND-contract, L6.16, MEMO-cross, L6.17, PRELUDE-rules-run, S.1d, S.1e, L7.1, S.1a, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, FILE-bytes, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a
-- L2.6: L1.41
-- L1.40e: HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, SCOPE-warn, L2.7a, L2.11, L3.2, FLOAT-sqrt, L4.1, STR-views, COLLATE-data, L3.6, L3.7, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product
-- L1.40f: L2.12, L2.10, SCOPE-warn, L3.2, L3.22, L3.6, L3.7, FLOAT-f32, BIT-repr
-- HKT-2: L2.10, GLAM-diamond, L2.12b, L2.7a, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32
-- L2.12: L2.10, OR-PAT, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32, BIT-repr
-- OVERLOAD-name-type: L2.10, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32
-- L1.41: L2.10, SCOPE-warn, L2.11, L3.2, L4.1, L3.4, L6.6, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
-- GLAM-diamond: L3.2, L3.3, L4.1, STR-views, L3.4, L3.5, L6.4, L3.6, L3.7, L3.15a, FLOAT-f32
-- L2.12b: L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32
-- CONTIFY: L3.2, L3.4, L6.6, WIDE-product, L3.11, L3.12, ZIR-check-passes, FOLD-zero, L4.2, L5.1, L5.3, L5.4, EVID-dynamic, L5.6, L5.1d
-- OR-PAT: STR-views, LOWER-stack, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, BOUND-L4, BOUND-L5, L6.11a, WITNESS-widened, L6.12a, DESCENT-sum, EQ-tabulate, L6.12b, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L6.17a
-- SCOPE-warn: L2.11, L3.2, L4.1, COLLATE-data, L3.6, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
-- L2.7a: L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32
-- L2.11: L4.1, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
-- L3.2: L2.14
-- FLOAT-sqrt: L3.3, L4.1, STR-views, L3.4, L6.6, L6.7, COLLATE-data, L3.5, L6.4, L3.7, RT-exhaust-report, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr, L3.20, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L4.4, UNION-spare, L5.2, L5.3, L3.15, L4.6, L5.4, CSR-bounds, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.11, L6.14, L5.1d, L6.11a, L5.7a, SPECULATE, L6.14a, L6.13, L6.19, L6.5, EQ-tabulate, L6.13a, L6.13c, HKT-1, L6.15, PRELUDE-words, FOLD-layers, L6.13e, COST-patch, BEND-contract, L6.16, RT-layout, DEEP-native-eq, FOLD-unique, RECLAIM-pulse, STR-cursor
-- SCALE-zed: COLLATE-data
-- L2.14: COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
-- L3.22: BIT-repr, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, ARM-split
-- L4.1: L3.4, L6.6, L6.7, COLLATE-data, L3.5, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.20, L3.10, L3.11, L3.18, PROP-per-arrow, SEMIRING-values, L3.21, L3.23, L3.18a, L3.18b, L3.24
-- CORPUS-oracle: L3.19
-- STR-views: L3.4, L6.6, L6.7, L3.5, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.20, L3.10, L3.18, PROP-per-arrow, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, LAYOUT-soa, L5.1, L3.14, L4.4, UNION-spare, L5.2, L5.3, L3.15, L4.6, L4.5, L5.4, CSR-bounds, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, L5.9, L5.13, ENUM-perm, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, WITNESS-widened, L5.7a, L6.8a, L6.10, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.13a, L6.13c, L6.12b, HKT-1, PRELUDE-words, L6.5c, COST-patch, BEND-contract, RT-layout, FOLD-unique, MEMO-cross
-- L3.4: L6.4
-- L6.6: L3.5, L3.8, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.20, L3.11, L3.12, ZIR-check-passes, FOLD-zero, L3.21, L4.2, L5.1, L4.4, L5.2, L5.3, L5.4, EVID-dynamic, L5.6, ENUM-perm, L5.1d, SPECULATE
-- L6.7: L3.5, L3.8, L3.15a, FLOAT-f32, BIT-repr, L3.20, L3.21, L4.2, L5.1, L4.4, L5.2, L5.3, L5.4, L5.6, ENUM-perm
-- COLLATE-data: L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.11, PROP-per-arrow, SEMIRING-values, L3.23, KEYABLE-reject, L5.1, L5.2, L5.3, L4.6, L5.4, CSR-bounds, L3.24, L5.9, L5.5a, L5.7, L6.11, TRACE-gen-laws, L6.11a, LAW14-gen, WITNESS-widened, L5.7a, L6.19, EQ-tabulate, PRELUDE-words, COST-patch, BEND-contract, L6.16, MEMO-cross, ARM-split, L6.17, PRELUDE-rules-run, S.1d, S.1e, L7.1, S.1a, ROD-data, L8.2a, L7.5, FILE-bytes, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, ROUND-words, L10.2a, L20.1, L7.13a, MEMO-edit, EDIT-run
-- CORPUS-input-errors: L3.19, L4.7, L5.12, L5.11, L5.14, L6.18, L8.3, L10.5, L11.3, L13.2, L14.2, L12.4
-- L6.4: L3.6, L3.7, L3.8, L3.15a, FLOAT-f32, L3.10, L3.18, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, BOUND-L4, L5.8a, L5.5, BOUND-L5, L5.10, SORTED-select
-- L3.19: L4.7, L5.12, L5.11, L6.18
-- LOWER-stack: L6.11a
-- RT-exhaust-report: L3.13, BIT-repr, HASH-repr, L3.17, L3.16, L4.2, L5.8, LAYOUT-soa, L3.14, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, FOLD-layers, L6.13e, BEND-contract, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, L28.1a, L7.2, ROD-data, L7.3, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L28.1, OOM-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4
-- L3.8: L3.15a, FLOAT-f32, BIT-repr
-- L3.13: L3.11, L3.12, PROP-per-arrow, ZIR-check-passes, KEYABLE-reject
-- L3.15a: L3.20, L3.10, SEMIRING-values, L3.17, L3.21, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L4.4, UNION-spare, L5.2, L5.3, L3.15, L4.6, L4.5, L5.4, CSR-bounds, L5.8a, L5.5, L5.6, L6.2, L5.9, L5.13, L6.3, ENUM-perm, L5.7, L6.11, L6.14, L5.1d, L6.11a, L5.7a, L6.8a, L6.10, SPECULATE, L6.14a, L6.13, L6.19, L6.5, EQ-tabulate, L6.13a, L6.13c, HKT-1, L6.15, FOLD-layers, COST-patch, BEND-contract, L6.16, RT-layout, FOLD-unique, MEMO-cross, STR-cursor
-- FLOAT-f32: L3.10, L3.11, L3.18, PROP-per-arrow, L3.23, L3.18a, L3.18b, KEYABLE-reject, L4.2, L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, CSR-bounds, BOUND-L4, L5.5, L6.2, BOUND-L5, L6.3, L5.5a, L6.8, L6.11, TRACE-gen-laws, L6.9, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split
-- BIT-repr: L3.11, PROP-per-arrow, FOLD-zero, L3.17, L3.23, L3.18a, KEYABLE-reject, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L4.4, UNION-spare, L5.2, L5.3, L3.15, L4.6, L4.3, L5.4, CSR-bounds, BOUND-L4, L5.8a, L3.24, L5.6, BOUND-L5, L5.9, L5.13, L5.5a, ENUM-perm, SORTED-dense, L5.7, L6.11, L6.14, TRACE-gen-laws, L5.1d, L6.11a, L6.9, LAW14-gen, WITNESS-widened, L5.7a, L6.8a, SPECULATE, L6.14a, L6.13, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13a, L6.13c, HKT-1, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, MEMO-cross, ARM-split, RECLAIM-pulse, L6.17, STR-cursor, S.1d, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L8.2a, FINITE-prop, L7.4, L7.14, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, TARGET-native, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, ROUND-words, L10.2a, L7.8, L7.11, L10.4, LIVE-clocks, L7.9, L11.2, SELFINT-design, EDGE-class, L12.2, L20.1, L15.2, L7.13a, MEMO-edit, L12.3, L14.1, L19.1, L15.3, L15.5, STAGE-reads, L20.1a, EDIT-run, L1.18a, L20.2, L22.2, L12.3a, L21.0, L17.1b, L15.2c, L23.1, L19.2a, L15.8, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4, L6.17a
-- WIDE-product: L3.20, L3.11, L3.12, PROP-per-arrow, ZIR-check-passes, FOLD-zero, L3.17, L3.23, KEYABLE-reject, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L5.3, L3.15, L4.6, L5.4, EVID-dynamic, L5.8a, L3.24, L5.6, L5.9, L5.13, L5.5a, L6.14, TRACE-gen-laws, L5.1d, INLINE-zir, LAW14-gen, WITNESS-widened, SPECULATE, L6.14a, L6.13, L6.5, EQ-tabulate, L6.13a, L6.13b, L6.13c, L6.15, FOLD-layers, HEAP-rank, L6.16, RT-layout, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L8.2a, L7.4, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, ROUND-words, L10.2a, L7.8, LIVE-clocks, L7.10, FPWARN, SELFINT-design, EDGE-class, L7.10a, L20.1, L15.2, L7.13a, MEMO-edit, L7.10b, L14.1, L19.1, L15.4, STAGE-reads, L20.1a, EDIT-run, L1.18a, L20.2, L22.2, L17.1b, REPACK-tile, L15.2c, L23.1, L19.2a, L15.7b, L23.5c, NOINST-report, L23.4, L22.4, L24.1, L6.17a
-- HASH-repr: L3.17, L3.16, L4.2, L5.8, LAYOUT-soa, L3.14, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, FOLD-layers, L6.13e, BEND-contract, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, L28.1a, L7.2, ROD-data, L7.3, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4, L6.17a
-- L3.20: L3.12, ZIR-check-passes, L3.21, L5.1, L4.4, L5.3, L5.1d, INLINE-zir
-- L3.10: L5.1, L4.4, L5.2, L5.3, L5.4, L5.8a, L5.5, L6.2, BOUND-L5, L6.3, L6.8
-- L3.11: PROP-per-arrow, FOLD-zero, KEYABLE-reject
-- L3.18: L5.1, L4.4, L5.2, L5.3, L5.4, L5.5, L6.2, BOUND-L5, L6.8, L6.9, L6.10
-- MATCH-commute: L3.23, L5.1, LAW20-move, LAW19-join, L5.5a, L5.10, INLINE-zir, MEMO-cross
-- PROP-per-arrow: L3.23, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, BOUND-L4, L5.5, L6.2, BOUND-L5, L5.5a, L6.8, L6.11, TRACE-gen-laws, L5.10, L6.9, LAW14-gen, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split
-- ZIR-check-passes: L3.17, L3.16, L4.2, UNIT-modes, L5.1, L3.14, L5.3, L5.4, EVID-dynamic, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.5, L6.13b, L6.15, HEAP-rank, MEMO-cross, STR-cursor
-- SEMIRING-values: L5.1, L5.2, L5.3, L4.6, L5.4, CSR-bounds, L5.9, L5.7, L5.7a
-- FOLD-zero: L3.17, L3.23, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L5.3, L3.15, L4.6, L5.4, EVID-dynamic, L5.8a, L5.6, L5.9, L5.13, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.5, L6.13a, L6.13b, L6.13c, L6.15, FOLD-layers, HEAP-rank, L6.16, RT-layout, MEMO-cross, STR-cursor
-- L3.17: LAYOUT-soa, UNION-spare
-- L3.21: L5.1, L4.4, L5.3, LAW20-move, LAW19-join, L5.5a, L5.10, INLINE-zir, L6.13b, MEMO-cross
-- L3.23: L3.16, L4.2, L5.8, L5.1, L3.14, L5.2, L3.15, L4.6, LAW20-move, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.6, BOUND-L5, L5.5a, L6.14, TRACE-gen-laws, L6.9, WITNESS-widened, L6.8a, EQ-tabulate, ARM-split
-- L3.18a: L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, CSR-bounds, BOUND-L4, L5.5, L6.2, BOUND-L5, L6.8, L6.11, L6.9, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split
-- L3.18b: L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, BOUND-L4, L5.5, L6.2, BOUND-L5, L6.8, L6.11, L5.10, L6.9, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross
-- KEYABLE-reject: L5.1, L4.4, L5.2, L5.3, L5.4, L3.24, L5.5, L6.2, BOUND-L5, L5.5a, L6.8, TRACE-gen-laws, L6.9, LAW14-gen, L6.10
-- L3.16: L5.1, UNION-spare, L5.2, L5.8a, SORTED-dense, L6.14, INLINE-zir, L6.14a
-- L4.2: L3.14, UNION-spare, L3.15, EVID-dynamic
-- L5.8: L3.14, UNION-spare, L4.6, L6.14, L6.14a, L6.13, L6.13a, L6.13c, L6.13e, RT-layout, DEEP-native-eq, RECLAIM-pulse
-- UNIT-modes: L3.14, EVID-dynamic, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.15, STR-cursor
-- LAYOUT-soa: L5.1, L3.14, L5.2, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L1.18a, L21.0, L19.2a, L24.1, L24.4, L6.17a
-- L5.1: L3.15, L4.6, L4.5, EVID-dynamic, BOUND-L4, L4.8
-- L3.14: L5.2, L5.8a, SORTED-dense, L6.14, INLINE-zir, L6.14a, L6.13, L6.13a, L6.13b, L6.13c, L6.13e, HEAP-rank, RT-layout, DEEP-native-eq, MEMO-cross
-- L4.4: L5.2, L5.3, CSR-bounds
-- UNION-spare: L5.2, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, L6.14, L5.1d, SPECULATE, L6.14a, L6.13, L6.13a, L6.13c, L6.15, FOLD-layers, L6.16, RT-layout, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, L7.5, FILE-bytes, L21.2, L10.3, L14.1, L19.1, L19.2a, L24.1
-- L5.2: BOUND-L4
-- L5.3: L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L6.2, L6.3, L6.8, L6.11, L6.14, L6.11a, L6.9, INLINE-zir, WITNESS-widened, L6.8a, L6.10, L6.14a, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, PRELUDE-words, L6.5c, COST-patch, FOLD-unique, MEMO-cross
-- L3.15: L5.8a, SORTED-dense, L6.14, L6.14a, L6.13, L6.13a, L6.13c, FOLD-layers, RT-layout, RECLAIM-pulse
-- L4.6: L5.4, CSR-bounds, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.11, L6.14, L5.1d, L6.11a, L5.7a, SPECULATE, L6.14a, L6.13, L6.19, L6.13a, L6.13c, L6.15, PRELUDE-words, FOLD-layers, COST-patch, BEND-contract, L6.16, RT-layout, RECLAIM-pulse, STR-cursor
-- L4.3: CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split
-- L4.5: L5.4, L5.8a, L5.5, L6.2, BOUND-L5, L6.3, L6.8, L6.9, L6.10
-- LAW20-move: LAW19-join, L4.8, L5.13, L5.5a, L5.7, L5.10, INLINE-zir, LAW14-gen, L5.7a, L6.5, L6.15, L6.5c, FOLD-layers, BEND-contract, L6.16, MEMO-cross, STR-cursor
-- L4.7: L5.12, L5.11, L6.18
-- CSR-bounds: BOUND-L5, L5.9, L5.7, L6.11, L6.11a, L6.9, WITNESS-widened, L5.7a, L6.8a, DESCENT-sum, L6.16, MEMO-cross, ARM-split, L6.17
-- EVID-dynamic: L5.6, L6.14, L5.1d, L5.10, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.19, L6.5, L6.13b, L6.15, COST-patch, HEAP-rank, BEND-contract, MEMO-cross, STR-cursor
-- BOUND-L4: L5.5, L6.2, BOUND-L5, L6.8, L6.11, L5.10, L6.11a, L6.9, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split
-- L5.8a: L5.9, L5.13, L6.3, ENUM-perm, L6.14, L5.1d, L6.8a, L6.10, SPECULATE, L6.14a, L6.13, L6.5, L6.13a, L6.13c, HKT-1, L6.15, FOLD-layers, L6.16, RT-layout, MEMO-cross, RECLAIM-pulse, STR-cursor
-- L3.24: L5.5a, TRACE-gen-laws, LAW14-gen, WITNESS-widened, EQ-tabulate, MEMO-cross, ARM-split
-- L5.5: L6.3, L6.8, L6.11, L6.9, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross
-- L5.6: SORTED-dense, L6.14, INLINE-zir, L6.14a, L6.13, L6.5, EQ-tabulate, L6.13a, L6.13b, L6.13c, HKT-1, FOLD-layers, HEAP-rank, RT-layout, MEMO-cross, RECLAIM-pulse
-- L6.2: L5.10
-- BOUND-L5: L6.8, L6.11, L5.10, L6.11a, L6.9, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split
-- LAW19-join: L4.8, L5.13, L5.5a, L5.7, L5.10, INLINE-zir, LAW14-gen, L5.7a, L6.5, L6.15, L6.5c, FOLD-layers, BEND-contract, L6.16, MEMO-cross, STR-cursor
-- L4.8: L5.7, INLINE-zir, LAW14-gen, L5.7a, L6.5, L6.15, L6.5c, FOLD-layers, L6.16, MEMO-cross, STR-cursor
-- L5.9: L5.7, L6.11, L6.14, L5.1d, L6.11a, L5.7a, L6.13, L6.19, L6.13a, L6.13c, PRELUDE-words, COST-patch, BEND-contract, L6.16, RT-layout, RECLAIM-pulse, STR-cursor
-- L5.13: L5.7, L6.14, L5.1d, L5.10, INLINE-zir, LAW14-gen, L5.7a, L6.13, L6.5, L6.13a, L6.13c, L6.15, L6.5c, FOLD-layers, BEND-contract, L6.16, RT-layout, MEMO-cross, RECLAIM-pulse, STR-cursor
-- L6.3: SORTED-select
-- L5.5a: L5.7, TRACE-gen-laws, L5.10, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, L6.5, EQ-tabulate, L6.15, L6.5c, FOLD-layers, BEND-contract, L6.16, MEMO-cross, ARM-split, STR-cursor
-- ENUM-perm: L5.7, L6.14, L5.7a, SPECULATE, L6.14a, L6.13, L6.5, EQ-tabulate, L6.13a, L6.13c, HKT-1, FOLD-layers, L6.13e, BEND-contract, RT-layout, DEEP-native-eq, RECLAIM-pulse
-- SORTED-dense: L5.7, L6.14, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, FOLD-layers, L6.13e, BEND-contract, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, L28.1a, L7.2, ROD-data, L7.3, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4, L6.17a
-- L5.7: L5.10, L6.11a, INLINE-zir, L6.19, L6.5, L6.15, PRELUDE-words, L6.5c, FOLD-layers, COST-patch, L6.16, MEMO-cross, RECLAIM-pulse, STR-cursor
-- L6.8: L5.10, WITNESS-widened
-- L6.11: L5.10, L6.9, L6.10
-- L6.14: L5.7a, SPECULATE, L5.14
-- TRACE-gen-laws: LAW14-gen, WITNESS-widened, EQ-tabulate, MEMO-cross, ARM-split, L6.17
-- L5.1d: INLINE-zir, SPECULATE, L6.14a, L6.13, L6.5, L6.13a, L6.13b, L6.13c, L6.15, FOLD-layers, HEAP-rank, L6.16, RT-layout, MEMO-cross, STR-cursor
-- L5.10: L6.8a, L6.10, L6.14a, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.13b, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, COST-patch, BEND-contract, L6.16, MEMO-cross, STR-cursor
-- L6.11a: L6.8a, PRELUDE-words, L6.16, MEMO-cross, ARM-split
-- INLINE-zir: SPECULATE, L6.14a, L6.13, L6.5, L5.14, L6.13b, L6.5c, FOLD-layers, HEAP-rank, BEND-contract, MEMO-cross
-- LAW14-gen: L6.5, EQ-tabulate, L5.14, L6.15, L6.5c, FOLD-layers, BEND-contract, L6.16, MEMO-cross, ARM-split, L6.17, STR-cursor
-- WITNESS-widened: L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split, L6.17
-- L5.7a: L6.5, L6.15, L6.5c, FOLD-layers, L6.16, MEMO-cross, RECLAIM-pulse, STR-cursor
-- SORTED-select: L6.12, MEMO-cross
-- L5.12: L6.18
-- L6.8a: L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, ARM-split
-- L6.10: MEMO-cross
-- L5.11: L6.18
-- SPECULATE: L6.13, L6.5, L6.13a, L6.13b, L6.15, FOLD-layers, HEAP-rank, BEND-contract, MEMO-cross, RECLAIM-pulse, STR-cursor
-- L6.14a: L6.19, L6.5, FOLD-layers, BEND-contract
-- L6.12: MEMO-cross
-- L6.13: L6.15, FOLD-layers, L6.16, STR-cursor
-- L6.12a: HKT-1, L6.5c, MEMO-cross
-- L6.19: L6.12b, HKT-1, PRELUDE-words, L6.5c, L6.16, MEMO-cross
-- L6.5: L5.14, L6.12b, MEMO-cross
-- DESCENT-sum: L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split, L6.17
-- EQ-tabulate: L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split, L6.17
-- L5.14: L6.16, MEMO-cross, RECLAIM-pulse, L6.18, STR-cursor
-- L6.13a: L6.16, RECLAIM-pulse, STR-cursor
-- L6.13b: MEMO-cross, STR-cursor
-- L6.13c: L6.16, RT-layout, DEEP-native-eq, STR-cursor
-- L6.12b: MEMO-cross
-- HKT-1: MEMO-cross
-- L6.15: BEND-contract, MEMO-cross
-- PRELUDE-words: BEND-contract, L6.16, L6.17, S.1d, L7.1, S.1a, FILE-bytes, ROUND-words, L11.1, L11.2, L12.1, L11.1a, L12.2, L13.1, L18.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L15.6, L16.2, L12.3a, L13.2, L15.7, L15.8, L6.17a
-- L6.5c: BEND-contract, L6.16, MEMO-cross, L6.17, STR-cursor
-- FOLD-layers: L6.16, MEMO-cross, RECLAIM-pulse, L6.17, STR-cursor
-- L6.13e: RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17
-- COST-patch: BEND-contract, L6.16, MEMO-cross, L6.17, S.1d, S.1e, L7.1, S.1a, L15.1, TARGET-native, L7.3e, FFI-status, EXPORT-unique, ROUND-words, L11.1, LIVE-clocks, L7.10, L11.2, L12.1, L7.10a, L11.1a, L12.2, L13.1, L20.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, L15.6, L16.2, L22.2, L12.3a, L13.2, L23.1, L15.7, L15.8
-- HEAP-rank: MEMO-cross, L6.17, STR-cursor
-- BEND-contract: L6.17, STR-cursor
-- RT-layout: L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L1.18a, L21.0, L24.1, L24.4, L6.17a
-- DEEP-native-eq: L6.17
-- FOLD-unique: L6.17
-- INTERN-threaded: L6.17, FILE-bytes, L6.17a
-- MEMO-cross: L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, ROUND-words, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, SELFINT-design, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
-- ARM-split: L6.17
-- RECLAIM-pulse: L6.17
-- PRELUDE-rules-run: S.1d, S.1e, L7.1, S.1a, ROUND-words, L11.1, L11.2, L12.1, L11.1a, L12.2, L13.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L15.6, L16.2, L12.3a, L13.2, L15.7, L15.8, L6.17a
-- S.1d: S.1a, L7.1a, L7.2, L8.2, ROD-data, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, L17.1b, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a
-- S.1e: S.1a, FILE-bytes, L21.2, ROUND-words, L11.1, L11.2, L12.1, L11.1a, L12.2, L13.1, L18.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L15.7, L15.8, L22.3, L22.5, L22.6, L22.7, L6.17a
-- L7.1: S.1a, L8.2, L8.2a
-- L8.1: L10.1, L7.3, L15.1, L7.4, L22.1, TARGET-native, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L20.1, L15.2, L20.1a, L22.2, TERM-1
-- L28.1a: L7.3, L15.1, L7.4, L7.5, UNORD-keep, TARGET-native, PORT-why, L7.5a, OOM-wave, L7.3e, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L7.8, L7.11, LIVE-clocks, L7.9, L20.1, L15.2, L1.18a, L22.2, L23.1, L23.4, L24.1, L24.4
-- S.1a: L7.2a, L7.3, L9.1, L15.1, L7.4, L7.5, FILE-bytes, TARGET-native, L21.2, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, L10.3, ROUND-words, L11.1, LIVE-clocks, L11.2, L12.1, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, EDIT-run, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L23.1, L15.7, L19.2a, L15.8, L22.3, L23.4, L22.5, L24.1, L22.6, L22.7, L6.17a
-- L7.1a: L7.2a, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, LIVE-clocks, BIT-checker-ranges, FPWARN, L20.1, TOKEN-types
-- L7.2: L9.1, L15.1, L10.4a, L22.1, UNORD-keep
-- L8.2: L7.2a, L7.3, L15.1, L10.4a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L20.1, L15.2, L11.2a, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, L20.1a, TOKEN-types, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7
-- L10.1: L7.3, L9.1, L7.4, TARGET-native, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks
-- ROD-data: L7.3, L9.1, L15.1, L8.2a, L7.4, L7.5, UNORD-keep, FILE-bytes, TARGET-native, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, ROUND-words, MLIR-noalias, L10.2a, L7.8, L7.11, LIVE-clocks, L7.9, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L14.1, L19.1, STAGE-reads, L20.1a, EDIT-run, L1.18a, L20.2, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4
-- L7.2a: L7.4, L22.1, L7.5, FILE-bytes, TARGET-native, L10.2, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, L10.3, L11.1, LIVE-clocks, L20.1, L15.2, L19.1, L16.1, L17.1, L20.1a, TOKEN-types, EDIT-run, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L23.1, L22.3, L23.4, L22.4, L24.1, L24.4
-- L7.3: L22.1, UNORD-keep
-- L9.1: L7.4, L22.1, L7.14, L7.5, FILE-bytes, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L10.2a, L7.8, L10.4, L11.1, LIVE-clocks, L7.10, L12.1, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L12.2, L13.1, L20.1, L15.2, L11.2a, L7.10b, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, L20.1a, TOKEN-types, L1.18a, L20.2, L16.2, L22.2, L21.0, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L19.2a, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7
-- L15.1: L7.4, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L12.3a, REPACK-tile
-- L10.4a: L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L8.2a: L22.1, L7.5, TARGET-native, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, ROUND-words, L10.2a, L11.1, LIVE-clocks, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L14.1, STAGE-reads, L20.1a, EDIT-run, L20.2, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, L22.3, NOINST-report, L23.4, L24.1, L24.4
-- FINITE-prop: L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, EDGE-class, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L8.3: L7.13, L10.5, L11.3, L7.15, L13.2, L14.2, L12.4, L16.4
-- L7.4: OOM-wave, L7.3e, RT-exhaust-wave, L7.6, L7.8, L7.11, LIVE-clocks, L7.9, L7.10, EDGE-class, L7.10a, L7.10b, EDIT-run
-- L22.1: L10.2, L21.2, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, L20.2, L16.2, L21.0, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L24.4
-- L7.14: L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, EDGE-class, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- GLAM-logspec: L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L7.8, L7.11, L7.9, L1.18a, L21.0, L24.1, L24.4
-- L7.5: L10.2, L21.2, L7.4b, FFI-headertest, FFI-status, EXPORT-unique, L10.3, ROUND-words, L10.2a, L10.4, L11.1, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L12.2, L13.1, L18.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L1.18a, L16.2, L22.2, L17.1b, GLAM-diamond-iface, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.7
-- UNORD-keep: L7.5a, L21.2, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, LIVE-clocks, L7.9, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L15.4, L1.18a, L22.2, L21.0, REPACK-tile, L22.4
-- FILE-bytes: L7.5a, L21.2, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, ROUND-words, L7.8, L7.11, L11.1, LIVE-clocks, L7.9, L11.2, L12.1, L11.1a, L12.2, L13.1, L20.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, EDIT-run, S.1b, L1.18a, L15.6, L16.2, L22.2, L12.3a, L21.0, L13.2, L23.1, L15.7, L15.8, L23.4, L24.1, L24.4, L6.17a
-- TARGET-native: L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
-- PORT-why: L7.5a, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4
-- L7.5a: L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4
-- L10.2: LIVE-clocks
-- L21.2: L7.6, L10.3, ROUND-words, L10.2a, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L11.2, L12.1, BIT-checker-ranges, FPWARN, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, S.1b, L1.18a, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L28.1: L7.6, ROUND-words, L10.2a, L7.8, L7.11, LIVE-clocks, L7.9, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L19.1, L17.1, STAGE-reads, L20.1a, EDIT-run, L1.18a, L20.2, L22.2, L21.0, L17.1b, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4, L6.17a
-- OOM-wave: L7.6, ROUND-words, L10.2a, L7.8, L7.11, LIVE-clocks, L7.9, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L19.1, STAGE-reads, L20.1a, EDIT-run, L1.18a, L20.2, L22.2, L21.0, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4
-- L7.5b: ROUND-words, L10.2a, SELFINT-design, L15.2, STAGE-reads, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report
-- L7.4b: L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L20.2, L16.2, L22.2, L21.0, L17.1b, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L7.3e: L7.6, L10.3, ROUND-words, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, SELFINT-design, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
-- FFI-headertest: ROUND-words, L10.2a, L11.1, LIVE-clocks, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L14.1, STAGE-reads, L20.1a, EDIT-run, L20.2, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, L22.3, NOINST-report, L23.4, L24.1, L24.4
-- LAWS-stream: STAGE-reads, COMPILE-data, TERM-1, L15.8, L15.9
-- FFI-status: L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
-- EXPORT-unique: L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
-- RT-exhaust-wave: L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4
-- L7.6: FPWARN, L15.2, L14.1, L15.4, L15.5, L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L22.4
-- L10.3: L7.8, LIVE-clocks, L7.10, EDGE-class, L7.10a, L7.10b
-- ROUND-words: L11.1, L11.2, L12.1, SELFINT-design, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L7.13a, MEMO-edit, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, STAGE-reads, L20.1a, EDIT-run, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L17.1b, L13.2, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L23.5c, L22.3, NOINST-report, L22.5, L22.6, L22.7
-- MLIR-noalias: LIVE-clocks, L20.1, L15.2, L22.2, L23.1, L23.4, L24.1, L6.17a
-- L10.2a: L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L20.2, L16.2, L22.2, L21.0, L17.1b, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L7.7: L7.9, L7.10, L7.10a, L20.1, L15.2, L7.9a, L7.10b, L15.5, L22.2, L23.1, L23.4, L24.1
-- L7.8: L7.12, L7.13, FPWARN, EDGE-class, L15.2, MEMO-edit, L14.1, L19.1, L15.4, L15.5, L16.1, EDIT-run, L1.18a, L15.6, L22.2, REPACK-tile, L23.1, L23.5c, L23.3, L23.4, L22.4, L22.5, L24.1, L22.7, L24.4
-- L7.11: L7.9, L7.10, L7.10a, L15.2, L7.9a, L7.10b, L19.1, L1.18a, L22.2, L23.1, L23.4, L24.1, L24.4
-- L10.4: EDGE-class, L20.1, TOKEN-types
-- L11.1: BIT-checker-ranges, FPWARN, L20.1, TOKEN-types
-- LIVE-clocks: L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
-- L7.9: L7.10a, L20.1, L15.2, MEMO-edit, L7.10b, L19.1, EDIT-run, L1.18a, L22.2, L21.0, L23.1, L23.4, L24.1, L24.4
-- L7.10: L18.1, L15.2, L7.9a, MEMO-edit, L14.1, L15.4, EDIT-run, L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L22.4, L24.1
-- L7.12: L7.10a, L20.1, L15.2, L7.9a, MEMO-edit, L7.10b, EDIT-run, L22.2, L23.1, L15.8, L23.4, L24.1
-- L11.2: L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L12.3, L14.1, L19.1, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L23.1, L15.7, L23.4, L24.1
-- L12.1: L20.1, L11.2a, TOKEN-types
-- L7.13: L7.10a, L10.5, L20.1, L15.2, L7.9a, L7.10b, L11.3, L22.2, L13.2, L14.2, L12.4, L23.1, L23.4, L24.1
-- BIT-checker-ranges: L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- FPWARN: L7.10a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.10b, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L1.18a, L20.2, L16.2, L22.2, L21.0, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- SELFINT-design: L20.1, L7.13a, MEMO-edit, STAGE-reads, L20.1a, EDIT-run, L20.2, L17.1b, L15.2c, L15.7b, L23.5c, NOINST-report
-- EDGE-class: L7.10a, L12.2, L20.1, L15.2, L7.10b, L12.3, L14.1, L15.3, L15.4, L1.18a, L22.2, L12.3a, REPACK-tile, L23.1, L15.8, L23.5c, L23.4, L22.4, L24.1
-- L7.10a: L14.1, L15.4, EDIT-run, L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L22.4, L24.1
-- L10.5: L11.3, L7.15, L13.2, L14.2, L12.4, L16.4
-- L11.1a: L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L23.1, L15.7, L15.8, L22.3, L23.4, L22.5, L24.1, L22.7
-- L12.2: L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L15.6, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.7, L24.4
-- L13.1: L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.7, L24.4
-- L18.1: L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, TOKEN-types, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7
-- L20.1: L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, EDIT-run, L1.18a, L16.2, L22.2, L12.3a, L17.1b, REPACK-tile, GLAM-diamond-iface, L22.8, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
-- L15.2: L7.10b, L12.3, L14.1, L19.1, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L12.3a, REPACK-tile
-- L11.2a: L14.1, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.7b, L23.4, L24.1, L24.4
-- L7.13a: STAGE-reads, L20.1a, EDIT-run, L20.2, L17.1b, L15.2c, L15.7b, L23.5c, NOINST-report
-- L7.9a: L7.10b, L15.5, EDIT-run, L1.18a, L22.2, L23.1, L23.4, L24.1
-- MEMO-edit: L7.10b, STAGE-reads, L20.1a, L20.2, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report, L23.4, L24.1
-- L7.10b: L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L22.4, L24.1
-- L11.3: L7.15, L13.2, L14.2, L12.4, L16.4
-- L12.3: L20.2, L15.6, L16.2, L22.2, L13.2, TERM-1, L22.8, L23.1, L15.7, L15.8, L22.3, L23.4, L22.5, L24.1, L22.6, L22.7
-- L14.1: L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L19.2a, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L19.1: S.1b, L1.18a, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, GLAM-pin, L23.1, L15.7, L15.8, L22.3, L23.4, L22.5, L24.1, L22.7, L24.4
-- L15.3: S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.7b, L23.4, L24.1, L24.4
-- L15.4: S.1b, L1.18a, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, REPACK-tile, GLAM-diamond-iface, L13.2, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L15.7b, L23.5c, L23.4, L24.1, L24.4
-- L15.5: S.1b, L1.18a, L20.2, L16.2, L12.3a, L21.0, L13.2, TERM-1
-- L16.1: L20.2, L15.6, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L17.1: L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.7
-- L16.3: S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- LAW-shape: L20.2, L16.2, L21.0, TERM-1, L15.2c, L23.1, L15.7, L15.7b, L23.4, L24.1, L24.4
-- THIRDHOM-law: L22.2, L17.1b, L23.1, L23.2, L23.3, L23.4, L23.5, L24.1
-- STAGE-reads: L20.2, L16.2, L22.2, L21.0, L17.1b, COMPILE-data, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L15.9, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L20.1a: L16.2, L22.2, L21.0, L17.1b, GLAM-diamond-iface, L15.2c, L23.1, L15.7b, L23.5c, L22.3, NOINST-report, L23.4, L22.4, L24.1, L24.4
-- TOKEN-types: L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a
-- EDIT-run: L20.2, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report, L23.4, L24.1
-- S.1b: L13.2, TERM-1, L22.8, L15.7, L15.8, L22.3, L22.5, L22.6, L22.7, L6.17a
-- L7.15: L13.2, L14.2, L12.4, L16.4
-- L1.18a: L20.2, L22.2, L21.0, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L22.7, L24.4
-- L20.2: GLAM-diamond-iface, L13.2, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L15.6: L13.2, TERM-1, L22.8, L15.7, L15.8, L23.3, L22.3, L22.4, L22.5, L22.6
-- L16.2: GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L22.2: L13.2, TERM-1, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, TERM-2a, NOINST-report, L23.4, L23.5, L24.1, L24.4
-- L12.3a: L13.2, TERM-1, L22.8, L23.1, L15.7, L15.8, L22.3, L23.4, L22.5, L24.1, L22.6, L22.7
-- L21.0: GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L17.1b: L15.2c, L23.1, L23.2, L15.7b, L23.5c, L23.3, NOINST-report, L23.4, L23.5, L24.1
-- COMPILE-data: TERM-1, L15.8, L15.9
-- REPACK-tile: L23.1, L23.5c, L23.4, L22.4, L24.1
-- GLAM-diamond-iface: L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L13.2: L15.7, L15.8, L22.3, L22.5, L22.7
-- L14.2: L16.4
-- TERM-1: L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L15.9, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L22.8: L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L12.4: L16.4
-- GLAM-pin: L23.1, L19.2a, L23.4, L24.1, L6.17a
-- L23.1: L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7
-- L15.7: L23.4, L24.1, L24.4
-- L19.2a: L23.4, L24.1
-- L15.8: L23.4, L24.1, L24.4
-- L15.7b: L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L23.5c: NOINST-report, L23.4, L22.4, L24.1
-- L23.3: L22.4, L22.5, L22.7
-- L22.3: L23.4, L24.1, L24.4
-- TERM-2a: L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- NOINST-report: L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L23.4: L22.6, L22.7
-- L22.4: L24.1, L22.6, L22.7, L24.4
-- L22.5: L24.1, L24.4
-- L22.6: L24.4
-- L22.7: L24.4
-- HULL3-GEN: L21.1c, S.6, DIAG-json, MCU-period
-- STD-seq: STD-blake3
-- STD-text: STD-blake3
-- ADVISORY: L21.1c, S.6, DIAG-json, MCU-period
-- NATIVE-cache: L21.1c, L19.2, L24.6, S.6, L25.1, L23.5a, DIAG-json, L30.3, L27.1, MCU-period, L30.4
-- S.2-forms: L21.1, S.4, L19.2, L24.2, L24.3, L24.5, L19.3, L20.4, L24.6, L24.10, L24.7
-- L21.1: S.4, L19.2, L24.3, L24.5, L19.3, L20.4, L20.3, L24.6, L24.10, S.6, L24.7, QUOT-classes, L25.1, L22.9, L26.1, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L25.3, L25.2, L27.3, L29.1, DIAG-json, AD-reverse, L25.4, L30.1, L25.5, L31.2, TERM-2, L30.2, L25.6, L24.8, L31.3, L30.3, L25.7, L27.1, L27.2, PICTURE-type, MCU-period, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2, L34.5
-- S.3-forms: S.4, L19.2, L24.2, L24.3, L24.5, L19.3, L20.4, L24.6, L24.10, L24.7
-- L21.1c: L19.2, L19.3, L20.4, L20.3, L24.6, S.6, L24.7, L25.1, L23.5a, L22.9, L26.1, L25.3, L25.2, L27.3, DIAG-json, L25.4, L30.1, L25.5, L31.2, TERM-2, L30.2, L25.6, L30.3, L25.7, L34.9, L27.1, L27.2, MCU-period, L30.4, FFI-inline-proc, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.2, L32.4, L34.2, L34.4, L34.3, L34.6, L34.7, L35.1
-- L19.2: L24.6, L24.10, S.6, L24.7, QUOT-classes, L25.1, TERM-3, L22.9, FLOAT-elem, L25.3, L25.2, L27.3, L29.1, DIAG-json, L25.4, L25.5, TERM-2, L25.6, L31.3, L25.7, MCU-period
-- L24.2: L19.3, L20.4, L24.6, L24.10, S.6, L24.7, L29.1, L24.8
-- L24.3: L19.3, L20.4, L24.6, L24.10, S.6, L24.7, QUOT-classes, L26.1, L28.4, L29.1, L31.2, L24.8, L31.3, L27.1, L27.2, L27.2a, L27.2b, L27.2c
-- L24.5: L19.3, L20.4, S.6, QUOT-classes, L25.1, L26.1, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L25.3, L27.3, L29.1, DIAG-json, AD-reverse, LIB-linkage, L25.4, L25.5, L31.2, L25.6, L31.3, L25.7, PICTURE-type, L30.4, L25.9, L30.3a
-- L19.3: S.6, L24.7, QUOT-classes, TERM-3, L22.9, FLOAT-elem, L25.3, L25.2, L27.3, L29.1, DIAG-json, L25.4, L25.5, TERM-2, L25.6, L24.8, L31.3, L34.9, L27.1, L27.2, MCU-period, L30.5, L32.2, L32.3, L34.5, L34.2, L34.4, L34.8, L34.3, L34.6, L35.1
-- L20.4: S.6, L24.7, L25.1, L26.1, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L25.3, L27.3, L29.1, DIAG-json, AD-reverse, LIB-linkage, L25.4, L25.5, L31.2, L25.6, L31.3, L25.7, MCU-period, L25.9
-- L20.3: S.6, QUOT-classes, L22.9, L26.1, FLOAT-elem, L25.3, DIAG-json, L30.1, TERM-2, MCU-period
-- L24.6: S.6, QUOT-classes, L25.1, L26.1, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L25.3, L27.3, L29.1, DIAG-json, AD-reverse, LIB-linkage, L25.4, L25.5, L31.2, L25.6, L24.8, L31.3, L25.7, PICTURE-type, MCU-period, L30.4, L25.9, L30.3a
-- L24.10: S.6, L24.7, QUOT-classes, L26.1, L28.4, L27.3, L29.1, L31.2, L24.8, L31.3, L27.1, L27.2, L27.2a, L27.2b, L27.2c
-- L24.7: QUOT-classes, L26.1, L28.4, L27.3, L29.1, DIAG-json, L31.2, L24.8, L31.3, L27.1, L27.2, MCU-period, L27.2a, L27.2b, L27.2c
-- LIB-schema: PORT-pointer-keys, AD-reverse, LIB-linkage, PICTURE-type
-- QUOT-classes: L25.3, L29.1, L25.4, L25.5, TERM-2, L25.6, L24.8, L31.3, L34.9, L27.1, L27.2, L27.2a, L27.2b, L27.2c, L30.5, L32.2, L32.3, L34.5, L34.4, L34.8, L34.3, L34.6, L35.1
-- L25.1: L27.3, L29.1, AD-reverse, LIB-linkage, L31.2, L31.3, L27.1, L27.2, MCU-period, L27.2a, L27.2b, L27.2c
-- L23.5a: DIAG-json, L30.3, L27.1, MCU-period, L34.1
-- TERM-3: L30.3b
-- L22.9: L25.3, DIAG-json, L30.1, L27.2, MCU-period
-- L26.1: L25.3, L25.2, L29.1, DIAG-json, AD-reverse, LIB-linkage, L25.4, L30.1, L25.5, L31.2, TERM-2, L25.6, L24.8, L31.3, L30.3, L25.7, L27.2, PICTURE-type, MCU-period, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L34.1
-- L31.1: L25.3, L27.3, L29.1, DIAG-json, AD-reverse, LIB-linkage, L25.4, L25.5, L25.6, L25.7, L27.1, L27.2, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2
-- FLOAT-elem: L25.3, L27.3, L29.1, DIAG-json, AD-reverse, L25.4, L25.5, L31.2, TERM-2, L25.6, L24.8, L31.3, L25.7, L34.9, L27.2, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L30.5, L32.1, L32.2, L32.3, L34.5, L34.4, L34.8, L34.3, L34.6, L35.1
-- INTEROP-study: L27.3, L30.1, L27.1, L27.2, L32.1, L33.3
-- PORT-pointer-keys: L25.3, L27.3, L29.1, DIAG-json, AD-reverse, LIB-linkage, L25.4, L25.5, L31.2, L25.6, L31.3, L25.7, L27.1, L27.2, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1
-- L28.4: L25.3, L27.3, DIAG-json, AD-reverse, LIB-linkage, L25.4, L25.5, L31.2, L25.6, L24.8, L31.3, L25.7, L27.1, L27.2, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2, L34.5, L33.1, L34.8, L33.2, L33.3, L33.1a
-- L25.3: LIB-linkage, L30.1, L31.2, L30.2, L31.3, L30.3, L27.1, L27.2, PICTURE-type, MCU-period, L30.4, L27.2a, L27.2b, L27.2c, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.1, L32.2, L34.2, L34.4, L33.1, L34.3, L34.6, L34.7, L35.1, L33.2, L33.3, L33.1a
-- L19.4: L20.5, L24.8, L25.7
-- L25.2: L25.4, L25.5, L31.2, TERM-2, L25.6, L27.1, L27.2, MCU-period
-- L27.3: LIB-linkage, L20.5, L25.4, L30.1, L25.5, L31.2, L25.6, L24.8, L31.3, L25.7, L27.1, L27.2, PICTURE-type, MCU-period, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2
-- L29.1: LIB-linkage, L25.4, L25.5, L31.2, L25.6, L24.8, L31.3, L25.7, L27.1, L27.2, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2, L34.5, L33.1, L34.8, L33.2, L33.3, L33.1a
-- DIAG-json: LIB-linkage, L25.4, L30.1, L25.5, L31.2, TERM-2, L30.2, L25.6, L31.3, L30.3, L25.7, L34.9, L27.1, L27.2, PICTURE-type, MCU-period, L30.4, FFI-inline-proc, L27.2a, L27.2b, L27.2c, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.1, L32.2, L32.4, L34.2, L34.4, L33.1, L34.3, L34.6, L34.7, L35.1, L33.2, L33.3, L33.1a
-- AD-reverse: LIB-linkage, L25.4, L25.5, L31.2, L25.6, L31.3, L25.7, L27.1, L27.2, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2
-- LIB-linkage: L25.6, L31.3, L25.7, L27.1, L27.2, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2
-- L20.5: L25.7
-- L25.4: L30.2, L25.6, L31.3, L30.3, L34.9, L27.1, L27.2, PICTURE-type, MCU-period, L30.4, L27.2a, L27.2b, L27.2c, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.1, L32.2, L34.2, L34.4, L33.1, L34.3, L34.6, L34.7, L35.1, L33.2, L33.3, L33.1a
-- L30.1: TERM-2, L25.6, L27.1, L27.2, MCU-period
-- L25.5: TERM-2, L30.2, L31.3, L30.3, L27.1, L27.2, PICTURE-type, MCU-period, L30.4, L27.2a, L27.2b, L27.2c, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.1, L32.2, L34.2, L34.4, L33.1, L34.3, L34.6, L34.7, L35.1, L33.2, L33.3, L33.1a
-- L31.2: L25.6, L25.7, L27.1, L27.2, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L34.1, L32.1, L32.2, L34.5
-- TERM-2: L30.3, L34.9, L27.2, MCU-period, L30.4, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.2, L34.2, L34.4, L34.3, L34.6, L34.7, L35.1
-- L30.2: L34.9, L27.2, MCU-period
-- L25.6: L30.3, L27.1, L27.2, PICTURE-type, MCU-period, L30.4, L27.2a, L27.2b, L27.2c, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.1, L32.2, L34.2, L34.4, L33.1, L34.3, L34.6, L34.7, L35.1, L33.2, L33.3, L33.1a
-- L24.8: L25.7
-- L31.3: L25.7, L27.1, L27.2, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2, L34.5
-- L25.7: L30.4, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2, L33.1, L33.2, L33.3, L33.1a
-- L34.9: L30.4, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.2, L34.2, L34.4, L34.3, L34.6, L34.7, L35.1
-- L27.1: L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L34.1, L32.1, L32.2, L34.5, L34.8
-- L27.2: L30.4, L25.9, L30.3a, L30.5, L34.1, L32.1, L32.2, L32.3, L34.5, L34.4, L34.8, L34.3, L34.6, L35.1
-- PICTURE-type: L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a
-- MCU-period: L30.4, FFI-inline-proc, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.2, L32.4, L34.2, L34.4, L34.3, L34.6, L34.7, L35.1
-- L25.9: L32.1, L32.2, L33.1, L33.2, L33.3, L33.1a
-- L27.2a: L32.1, L32.2, L34.5, L34.8
-- L27.2b: L32.1, L32.2, L34.5, L34.8
-- L27.2c: L32.1, L32.2, L34.5, L34.8
-- L30.3a: L30.5, L34.10, L34.1, L34.11
-- L34.10: L34.11, L32.2, L34.2, L34.4, L34.3, L34.6, L34.7, L35.1
-- L34.1: L34.11
-- L34.11: L32.2, L32.4, L34.2, L34.4, L34.3, L34.6, L34.7, L35.1
-- L34.5: L34.8
-- L34.2: L34.3
-- L33.2: L33.1a
-- STOP-switch: PASSES-vars-test, L1.26b, SCALE-cover, MSG-shared-print, T2, WARN-refused, L2.8c, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STATIC-assert, L1.40f, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.8, BIT-repr, INT-twos, NAN-cast-atoms, HKT-1, MEMO-cross, L7.1a, L8.2, L9.1, L15.1, L10.4a, FINITE-prop, L7.14, L7.5, TARGET-native, QUANT-finite, L10.3, L10.2a, L10.4, CHECKED-float, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, EDGE-class, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, EMPTY-level-swap, TERM-stall, PORT-ack-name, STORE-check-off, PORT-key-static, L21.1, L21.1c, S.6, L25.1, L26.1, L25.2, DIAG-json, TERM-2, L30.2, L27.2, MCU-period, L32.4
-- RT-alloc-refusal: RT-sites, SCALE-cover, PLAN-shared-regions, T10, T14-lints, FLOAT-sqrt, L1.39g, STR-views, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L5.2, L3.15, L4.6, L1.18a, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, L7.5a, L21.2, L28.1, OOM-wave, INT-128, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L21.0, L19.2a, L24.1, L24.4, L6.17a, RT-guard-fault, PORT-ack-name, RT-internal-fault, L21.1, S.4, L19.2, L24.2, L24.3, L24.2a, L24.6, L24.10, S.6, L24.7, QUOT-classes, L26.1, L28.4, L29.1, L31.2, L24.8, L31.3, L27.1, L27.2, L27.1b, L27.2a, L27.2b, L27.2c, L34.5, L34.8, PORTABLE-rt
-- RT-guard-fault: RT-sites, SCALE-cover, PLAN-shared-regions, T10, T14-lints, FLOAT-sqrt, L1.39g, STR-views, L3.13, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L5.2, L3.15, L4.6, L1.18a, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, L7.5a, L21.2, L28.1, OOM-wave, INT-128, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L21.0, L19.2a, L24.1, L24.4, L6.17a, PORT-ack-name, RT-internal-fault, L21.1, S.4, L19.2, L24.2, L24.3, L24.2a, L24.6, L24.10, S.6, L24.7, QUOT-classes, L26.1, L28.4, L29.1, L31.2, L24.8, L31.3, L27.1, L27.2, L27.1b, L27.2a, L27.2b, L27.2c, L34.5, L34.8, PORTABLE-rt
-- TERM-stall: PASSES-vars-test, STAGE-joined-eq, L1.26b, MSG-shared-print, BUILD-const, WARN-refused, ISSUE1-payload, STRUCT-key, T10, L1.40c, L2.7, STAGE-print, STATIC-assert, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.8, NAN-cast-atoms, HKT-1, S.1d, L8.2, L9.1, L10.4a, FINITE-prop, L7.14, L7.5, QUANT-finite, L21.2, L7.4b, BYTES-wide, L10.2a, CHECKED-float, BIT-checker-ranges, FPWARN, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L11.2a, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L15.7, L19.2a, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7, L24.4, EMPTY-level-swap, PORT-ack-name, STORE-check-off, PORT-key-static, L21.1, L19.2, L19.3, S.6, L25.1, L25.2, TERM-2, L30.2, L27.2, L34.2
-- PORT-ack-name: PASSES-vars-test, PARSE-one-tuple, L1.26b, SCALE-cover, MSG-shared-print, BUILD-const, WARN-refused, GROUP-e2e, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STATIC-assert, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L1.39g, RT-exhaust-report, L3.8, BIT-repr, HASH-repr, LAYOUT-soa, L1.18a, NAN-cast-atoms, SORTED-dense, HKT-1, RT-layout, S.1d, L8.1, L7.1a, L8.2, L10.1, L7.2a, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.5a, L10.2, L21.2, L28.1, OOM-wave, L7.4b, INT-128, BYTES-wide, FFI-headertest, RT-exhaust-wave, L7.6, L10.3, L10.2a, L7.8, L7.11, L10.4, CHECKED-float, L11.1, L7.9, L12.1, BIT-checker-ranges, FPWARN, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, MATH-names, L20.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, EMPTY-level-swap, STORE-check-off, PORT-key-static, RT-internal-fault, L21.1, L24.3, L20.4, L20.3, L24.6, L24.10, S.6, L24.7, L25.1, L22.9, L26.1, L28.4, L25.3, L25.2, L29.1, L25.4, L30.1, L25.5, TERM-2, L30.2, L25.6, L24.8, L30.3, L27.1, L27.2, L27.2a, L27.2b, L27.2c, L34.5
-- STORE-check-off: PASSES-vars-test, L1.26b, SCALE-cover, MSG-shared-print, WARN-refused, L2.8c, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STATIC-assert, L1.40f, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.8, BIT-repr, INT-twos, NAN-cast-atoms, HKT-1, MEMO-cross, S.1d, L8.2, L9.1, L10.4a, L7.14, L7.5, TARGET-native, L21.2, L7.4b, INT-128, BYTES-wide, L7.3e, FFI-status, EXPORT-unique, L10.2a, CHECKED-float, LIVE-clocks, BIT-checker-ranges, FPWARN, EDGE-class, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L12.3, L14.1, L15.5, L17.1, L16.3, STAGE-reads, TOKEN-types, L20.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L23.1, L15.7b, L22.3, NOINST-report, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, EMPTY-level-swap, PORT-key-static, L21.1, L21.1c, S.6, L25.1, L25.2, DIAG-json, TERM-2, L30.2, L27.2, MCU-period
-- PORT-key-static: PASSES-vars-test, L1.26b, MSG-shared-print, WARN-refused, ISSUE1-payload, STRUCT-key, T10, L2.7, STATIC-assert, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.8, NAN-cast-atoms, HKT-1, S.1d, L7.1a, L8.2, L7.4, L7.14, L7.5, QUANT-finite, L10.2, L21.2, L7.4b, BYTES-wide, L10.3, L10.2a, L10.4, CHECKED-float, L11.1, L12.1, BIT-checker-ranges, FPWARN, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7, L24.4, L21.1, S.6, L25.1, L25.2, TERM-2, L30.2, L27.2
-- RT-internal-fault: STR-types, PLAN-shared-regions, T10, T14-lints, L2.9, L3.2, FLOAT-sqrt, L1.39g, STR-views, RT-exhaust-report, L3.13, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L5.2, L3.15, L4.6, L1.18a, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, L7.5a, L21.2, L28.1, OOM-wave, INT-128, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L21.0, L19.2a, L24.1, L24.4, L6.17a, L21.1, S.4, L19.2, L24.2, L24.3, L24.2a, L24.6, L24.10, S.6, L24.7, QUOT-classes, L26.1, L28.4, L29.1, L31.2, L24.8, L31.3, L27.1, L27.2, L27.1b, L27.2a, L27.2b, L27.2c, L34.5, L34.8, PORTABLE-rt
-- MOD-residue: PASSES-vars-test, K36-study, STAGE-joined-eq, VERDICT-route, REFUSE-group-site, T6-refusal-cost, L1.26b, SETTLE-rounds, SCALE-cover, MSG-shared-print, T2, WARN-refused, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STAGE-print, ST-formula-parse-keep, STATIC-assert, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L1.39g, L3.8, BIT-repr, INT-twos, L1.18a, NAN-cast-atoms, HKT-1, S.1d, L8.2, L9.1, L10.4a, FINITE-prop, L7.14, L7.5, QUANT-finite, L21.2, L7.4b, INT-128, BYTES-wide, L7.6, L10.2a, CHECKED-float, BIT-checker-ranges, FPWARN, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, MATH-names, L20.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7, L24.4, Q1-LOCAL, EMPTY-level-swap
-- L2.13: GROUP-refusal, T11-preimage-rest, T10, L1.41, L2.14, L3.3, L3.22, L3.4, L3.5, L3.6, L3.19, LOWER-stack, L3.7, L3.20, L3.10, L3.12, L3.18, L3.17, L3.21, L3.23, L3.16, L3.15, L3.24, INTERN-threaded, PRELUDE-rules-run, REFUSAL-census, L7.14, FILE-bytes, MLIR-noalias, L28.2, L7.15, L18.3, L17.2, L16.4, L20.2b, L15.9, L23.6, L22.10a, L24.9a, L28.3, S.1, S.2, S.2-forms, L24.2, L24.3, L24.6, L24.10, L24.7, L25.3, L19.4, L25.2, L22.10, L27.3, L26.2, L20.5, L25.4, L25.5, L29.2, L30.2, L25.6, L30.3, L25.7, L24.9, L30.4, L30.5, L27.4, L30.6
-- TEST-fuzz: RT-sites, SCALE-cover, L2.8, T2-ty, T2, WARN-refused, L2.8c, L1.40f, L2.12, L2.10, SCOPE-warn, L3.22, COLLATE-data, BIT-repr, L3.20, INT-twos, L3.10, L3.12, L3.18, MATCH-commute, L3.21, L3.23, LAW20-move, CSR-bounds, BOUND-L4, BOUND-L5, LAW19-join, L4.8, L5.13, L5.5a, L6.11, L5.10, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, L6.8a, L6.12a, L5.14, L6.13b, L6.12b, L6.5c, FOLD-layers, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, STR-cursor, S.1a, ROD-data, L7.2a, L15.1, FINITE-prop, L7.14, L7.5, FILE-bytes, TARGET-native, OOM-wave, L7.5b, INT-128, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, MLIR-noalias, L7.7, L7.8, L7.11, L10.4, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L7.13, MENU-linear-L10, EDGE-class, READ-arms, L7.10a, FLOAT-pitfall-lints, L11.1a, L12.2, L13.1, L7.9a, MEMO-edit, L7.10b, L12.3, L17.1, THIRDHOM-law, EDIT-run, L12.3a, MENU-linear-L15, L17.1b, GLAM-pin, L15.2c, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.3, NOINST-report, L23.4, L23.5, L24.1, STOP-switch, STORE-check-off, L21.1c, L24.6, L25.1, L23.5a, L25.3, L25.2, L27.3, DIAG-json, L25.4, L25.5, TERM-2, L30.2, L25.6, L30.3, L25.7, L34.9, MCU-period, L30.4, FFI-inline-proc, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.2, L32.4, L34.2, L34.4, L34.3, L34.6, L34.7, L35.1
-- READ-arms: M0.10a, QUESTIONS-answered, SPEC-L3.9-tests, SPEC-L3.21-ac, WAVE-theory, FOOTPRINT-overlap, ORDER-rename, GROUP-setop, SETTLE-rounds, FINITE-type, RT-sites, SCALE-cover, L2.8, T2-ty, T2, WARN-refused, L2.8b, L2.8c, L1.40a, STRUCT-key, T14-lints, L2.7, STATIC-assert, L2.6, L1.40e, L1.40f, L2.12, L1.41, L2.10, SCOPE-warn, L2.11, L2.14, L3.22, L4.1, COLLATE-data, L3.7, RT-exhaust-report, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr, L3.20, INT-twos, L3.10, L3.12, L3.18, MATCH-commute, PROP-per-arrow, L3.21, L3.23, KEYABLE-reject, LAW20-move, CSR-bounds, BOUND-L4, L3.24, BOUND-L5, LAW19-join, L4.8, L5.13, L5.5a, SORTED-dense, L6.11, TRACE-gen-laws, L5.10, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, L6.8a, L6.12a, EQ-tabulate, L5.14, L6.13b, L6.12b, L6.5c, FOLD-layers, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, STR-cursor, S.1d, S.1a, ROD-data, L7.2a, L15.1, L8.2a, FINITE-prop, L7.14, L7.5, FILE-bytes, TARGET-native, PORT-why, OOM-wave, L7.5b, L7.4b, INT-128, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, ROUND-words, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, LIVE-clocks, L7.10a, FLOAT-pitfall-lints, L11.1a, L12.2, L13.1, L7.13a, L7.9a, MEMO-edit, L7.10b, L12.3, L17.1, THIRDHOM-law, STAGE-reads, L20.1a, EDIT-run, L20.2, L12.3a, MENU-linear-L15, L17.1b, GLAM-pin, L15.2c, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, NOINST-report, L23.4, L23.5, L24.1, STOP-switch, STORE-check-off, L21.1c, L24.6, L22.7a, S.6a, L25.1, L23.5a, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L25.3, L25.2, L27.3, DIAG-json, AD-reverse, LIB-linkage, L25.4, L25.5, TERM-2, L30.2, L25.6, L30.3, L25.7, L34.9, PICTURE-type, MCU-period, L30.4, L25.9, FFI-inline-proc, L27.2a, L27.2b, L27.2c, L30.3a, L30.3b, L30.5, L34.10, L34.1, L34.11, L32.1, L32.2, L32.4, L34.2, L34.4, L34.3, L34.6, L34.7, L35.1, L33.2, L33.1a
-- POLY-nf: FOOTPRINT-overlap, VERDICT-route, GROUP-refusal, T6-refusal-cost, STR-types, L1.26b, GROUP-setop, T11-preimage-rest, SETTLE-rounds, SCALE-cover, SCALE-first-run, L1.40, L1.40a, S22-R2, ST-formula-set, T10, T14-lints, L1.40c, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, L1.41, FLOAT-sqrt, L1.39g, L2.14, L3.3, L3.22, STR-views, L3.4, L3.5, L3.6, L3.19, L3.7, L3.15a, L3.20, L3.10, L3.12, L3.18, L3.17, L3.21, L3.23, L3.16, L3.15, L1.18a, NAN-cast-atoms, L3.24, L6.11a, L6.11b, PRELUDE-rules-run, S.1e, REFUSAL-census, L7.14, INT-128, BYTES-wide, CHECKED-float, L28.2, L7.10a, L7.13a, L7.10b, KERNEL-check-tests, L7.15, MATH-names, L12.3a, L18.3, L15.2c, L17.2, L16.4, L23.2, L20.2b, L23.5c, L15.9, L23.5, L23.6, L22.10a, L24.9a, Q1-LOCAL, S.3-cost-utvpi, S.3-cost-refusal, S.3-cost-preimage, S.3-cost-groups, S.3-cost-presburger, S.3-cost-intern, S.3-cost-types, S.3-cost-narrow, S.3-cost-check, S.3-cost-store, L24.2a, L22.7a, S.5a, QUOT-classes, L25.1, L23.5a, L21.3, S.7, L2.13, L25.3, L19.4, L25.2, L22.10, L27.3, L26.2, L20.5, L25.4, L25.5, L29.2, L30.2, L25.6, L30.3, L25.7, L24.9, L30.4, L25.9, L30.5, L27.4, L30.6
-- LIST-size: FOOTPRINT-overlap, RUNG2-bit, ORDER-rename, T11-preimage-log, GROUP-refusal, GROUP-setop, T11-preimage-rest, S15-calls, SETTLE-rounds, FINITE-type, L2.8, L1.40, WARN-refused, L2.8b, L2.8c, L1.40a, S22-R2, STRUCT-key, T10, L1.40c, L2.7, L1.40b-sparse, PRE-abs-output, STATIC-assert, L1.40e, L3.3, L3.22, L4.1, L3.4, COLLATE-data, L3.5, L3.6, L3.7, RT-exhaust-report, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr, L3.20, L3.12, L3.17, L3.23, L3.16, L3.15, L4.3, L5.5a, SORTED-dense, TRACE-gen-laws, LAW14-gen, EQ-tabulate, ARM-split, PRELUDE-rules-run, ROD-data, L7.14, L7.5, PORT-why, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, RT-exhaust-wave, L28.2, SELFINT-design, READ-arms, L7.13a, MEMO-edit, L12.3, L20.1a, EDIT-run, L20.2, L17.1b, L15.2c, L16.4, L20.2b, L15.7b, L23.5c, L23.6, L24.9a, L24.6, L22.7a, S.6a, L25.1, L21.3, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L2.13, L25.3, L19.4, L25.2, L22.10, L27.3, L26.2, DIAG-json, AD-reverse, LIB-linkage, L20.5, L25.4, L25.5, L29.2, L30.2, L25.6, L30.3, L25.7, L24.9, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L30.3b, L30.5, L27.4, L30.6, L32.1, L32.2, L33.2, L33.1a
-- LIST-exact-overlap: M0.10a, QUESTIONS-answered, SPEC-L3.9-tests, SPEC-L3.21-ac, WAVE-theory, CK-data-memo, POLY-nf, ORDER-rename, GROUP-refusal, IF-union, STR-types, L1.26b, GROUP-setop, T11-preimage-rest, ST-wider, SETTLE-rounds, FINITE-type, L2.8, MSG-shared-print, WARN-refused, L2.8b, L2.8c, ISSUE1-payload, STRUCT-key, T10, L2.7, L1.40b-sparse, STATIC-assert, L1.40e, L2.12, OVERLOAD-name-type, L1.41, BUBBLE-msg, L2.10, GLAM-diamond, L2.12b, SCOPE-warn, L2.7a, L2.11, L2.14, L3.4, COLLATE-data, L3.5, L3.6, L3.19, L3.7, RT-exhaust-report, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr, PROP-per-arrow, L3.18a, L3.18b, L3.15, NAN-cast-atoms, BOUND-L4, L3.24, BOUND-L5, L5.5a, SORTED-dense, MEMO-cross, PRELUDE-rules-run, S.1d, REFUSAL-census, L7.1a, L8.2, ROD-data, L9.1, L10.4a, L8.2a, L7.14, L7.5, FLOAT-sum-policy, PORT-why, OOM-wave, L7.5b, L7.4b, BYTES-wide, L7.3e, FFI-headertest, RT-exhaust-wave, ROUND-words, L10.2a, CHECKED-float, L28.2, BIT-checker-ranges, FPWARN, SELFINT-design, READ-arms, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L7.13a, MEMO-edit, L16.1, L17.1, L16.3, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L7.15, L20.2, L16.2, L21.0, L17.1b, GLAM-diamond-iface, L18.3, TERM-1, L17.2, L16.4, L20.2b, L15.7b, L23.5c, L15.9, L23.6, L22.10a, L24.9a, L28.3, S.1, EMPTY-level-swap, STOP-switch, TERM-stall, PORT-ack-name, STORE-check-off, PORT-key-static, NATIVE-cache, S.2-forms, L24.6, L22.7a, S.6a, L25.1, L21.3, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L2.13, L25.3, L19.4, L25.2, L22.10, L27.3, L26.2, DIAG-json, AD-reverse, LIB-linkage, L20.5, L25.4, L25.5, L29.2, TERM-2, L30.2, L25.6, L30.3, L25.7, L24.9, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L30.3b, L30.5, L27.4, L30.6, L32.1, L32.2, L33.2, L33.1a
-- L18.2a: PASSES-vars-test, MSG-shared-print, T2, T14-lints, OR-PAT, WIDE-product, FLOAT-interval, NAN-cast-atoms, MEMO-cross, S.1d, TRIVIAL-or-cnf, TIMEOUT-annot, L10.4a, FINITE-prop, L7.14, L7.3g, FLOAT-sum-policy, UNORD-keep, TARGET-native, QUANT-finite, L21.2, L28.1, L7.4b, BYTES-wide, L7.3e, FFI-status, EXPORT-unique, L10.2a, L7.8, CHECKED-float, L7.10, BIT-checker-ranges, FPWARN, EDGE-class, L10.3d, L7.10a, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, FACT-unify, L13.1, L20.1, L11.2a, L7.10b, FACT-prelude, FACT-claims, L14.1, L15.3, L15.4, L15.5, L16.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, LIST-exact-overlap, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7, EMPTY-level-swap, STOP-switch, PORT-ack-name, STORE-check-off, PORT-key-static
-- L18.2b: PASSES-vars-test, MSG-shared-print, PLAN-shared-regions, T14-lints, OR-PAT, L1.39g, WIDE-product, INT-twos, L1.18a, FLOAT-interval, NAN-cast-atoms, ASSOC-fold, PRELUDE-words, RT-layout, PRELUDE-rules-run, S.1d, TRIVIAL-or-cnf, S.1e, S.1a, ROD-data, TIMEOUT-annot, L10.4a, FINITE-prop, L7.14, L7.3g, FLOAT-sum-policy, UNORD-keep, FILE-bytes, QUANT-finite, L7.5a, L21.2, L28.1, L7.4b, INT-128, BYTES-wide, L10.2a, L7.8, L7.11, CHECKED-float, L7.9, L7.10, L11.2, BIT-checker-ranges, FPWARN, EDGE-class, L10.3d, L7.10a, FLOAT-pitfall-lints, KNOWN-mix, L11.1a, MOD-residue, L12.2, FACT-unify, L13.1, L20.1, L11.2a, L7.10b, L12.3, FACT-prelude, FACT-claims, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, S.1b, MATH-names, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, REPACK-tile, L23.1, L15.7, L19.2a, L15.8, LIST-exact-overlap, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, EMPTY-level-swap, STOP-switch, RT-alloc-refusal, RT-guard-fault, TERM-stall, LAW-shape-eq, PORT-ack-name, STORE-check-off, PORT-key-static, RT-internal-fault
-- IF-union: STR-types
-- SCALE-cover: L1.40
-- T2: L2.8c
-- WARN-refused: L1.40a
-- L2.8c: L1.40a
-- S22-R2: T14-lints
-- T11-check: T14-lints
-- ISSUE1-payload: T14-lints
-- STRUCT-key: T14-lints
-- T14-lints: L1.40c, L2.7
-- L1.40c: L2.7
-- L1.40b: STATIC-assert
+- `Cargo.lock`: level 27: L3.14; level 71: L26.1
+- `Cargo.toml`: level 10: T14-lints; level 27: L3.14; level 45: L7.4; level 46: L28.1; level 71: L26.1; level 75: L27.1; level 94: L37.1
+- `DESIGN.md`: level 0: M0.10a, QUESTIONS-answered, S4-hub-mixed, SPEC-L3.21-ac, SPEC-L3.9-tests, WAVE-theory; level 1: FOOTPRINT-overlap; level 6: SETTLE-rounds; level 7: L2.5; level 8: L2.4, L2.8b, L2.8c, STATIC-assert; level 9: L2.7, STRUCT-key; level 10: T10; level 11: L1.40e, L2.6, RAT-domain; level 12: L1.41; level 13: L2.10, OR-PAT, SCOPE-warn; level 14: L2.11, L3.2; level 15: L2.14, L4.1; level 16: COLLATE-data; level 18: LOWER-stack; level 19: L3.7, RT-exhaust-report; level 20: L3.13; level 21: BIT-repr, FLOAT-f32, HASH-repr, WIDE-product; level 23: L3.11; level 24: PROP-per-arrow; level 25: KEYABLE-reject, L3.23; level 26: LAYOUT-soa; level 27: UNION-spare; level 30: L3.24; level 31: L5.5a, SORTED-dense; level 32: TRACE-gen-laws; level 33: L6.11a, LAW14-gen, WITNESS-widened; level 36: EQ-tabulate; level 38: ARM-split, MEMO-cross; level 39: L6.17; level 42: S.1d; level 43: ROD-data; level 44: L8.2a; level 45: L7.5, PORT-why; level 46: FFI-headertest, FFI-status, L28.1, L7.3e, L7.4b, L7.5b, OOM-wave, RT-exhaust-wave; level 47: L10.2a, ROUND-words; level 49: EDGE-class, READ-arms, SELFINT-design; level 50: L20.1, L7.13a, MEMO-edit; level 51: EDIT-run, L15.5, L16.3, L17.1, L19.1, L20-grammar-params, L20.1a, STAGE-reads; level 52: L15.6, L17.1b, L20.2; level 53: L15.2c; level 54: REPACK-tile; level 55: L15.7b, L23.5c; level 56: LIST-exact-overlap, NOINST-report; level 61: L6.17a; level 62: S.1; level 63: NATIVE-cache, S.1h; level 65: S.2-forms; level 66: L21.1, S.3-forms; level 68: L24.5; level 69: L20.4, L22.7a, L24.6, S.6a; level 71: FLOAT-elem, INTEROP-study, L25.1, L26.1, L28.4, L31.1, PKG-fetch, PORT-pointer-keys; level 72: AD-reverse, DIAG-json, L25.3, L27.3, L29.1; level 73: L25.4, L25.5, L31.2, LIB-linkage; level 74: L25.6, L31.3; level 75: L25.7, L27.1, L27.2, MCU-period, PICTURE-type; level 76: L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L30.3b, L30.4; level 79: L32.1; level 80: L32.2; level 84: L33.1; level 85: L33.2, L33.3; level 87: L33.1a
+- `ZED_PORT_GAPS.md`: level 2: T11-preimage-log; level 38: INTERN-threaded, MEMO-cross; level 39: L6.17
+- `crates/`: level 0: C2-local-tier, GROUP-decide-bytes, HULL-join-depth, IMPORTS-untyped-join, K36-study, L1.29d, L1.29e, MINMAX-chain-rows, MSG-split-imports, PDEP-bytes, POLY-nf, PRINT-below-whole, PROBE-guards, PRODUCT-lin-rows, RADIX-depth, REFUSAL-front-quadratic, REFUSAL-periodic-split, ST-K3-narrow, ST-walk-implicit, ST-wider, STAGE-joined-eq, TESTS-L1.23-refusal-text; level 1: FOOTPRINT-overlap, L1.14a, L1.29c, REFUSAL-reverse-words, RUNG2-bit; level 2: L1.19d, T11-preimage-log; level 3: A5-print; level 4: STR-types, T6-refusal-cost; level 5: IF-union, L1.26b, L1.40, S15-calls, T11-preimage-rest; level 6: L1.40a, RT-sites, SETTLE-rounds, T14-bring; level 7: L1.40b-sparse, L1.40c, L2.12c, L2.5, RT-internal-fault, SCALE-cover; level 8: BUILD-const, DIAG-control, GROUP-e2e, L2.4, L2.8b, L2.8c, MSG-shared-print, PLAN-shared-regions, STATIC-assert, T11-ty, WARN-refused; level 9: ISSUE1-payload, L2.7, S22-R2, STRUCT-key, T11-check, T2; level 10: L1.40b, L2.8e, LOWER-dag, PRE-abs-output, ST-formula-parse-keep, ST-formula-sibling, STAGE-print, T10, T14-lints, TEST-fuzz; level 11: L1.40e, L1.40f, L2.6, RAT-domain; level 12: HKT-2, L1.41, L2.12, L2.6b, L2.9, OVERLOAD-name-type; level 13: BUBBLE-msg, CONTIFY, GLAM-diamond, L2.10, L2.12b, L2.7a, OR-PAT, SCOPE-warn; level 14: FLOAT-sqrt, L3.2, SCALE-zed; level 15: L1.39g, L3.22, L3.2b, L3.3, L4.1, STR-views; level 16: COLLATE-data, L3.4, L6.6, L6.7; level 17: L3.5, L6.4; level 18: L3.6; level 19: L3.7, RT-exhaust-report, RT-guard-fault; level 20: L3.13, L3.8, RT-alloc-refusal; level 21: ASSOC-gf2, ASSOC-lattice, ASSOC-mod, ASSOC-select, ASSOC-table, BIT-repr, FLOAT-f32, HASH-repr, L3.15a, RAT-lin, WIDE-product; level 22: ASSOC-gcd, ASSOC-sets, HULL-binom, HULL-conic, HULL-elim, HULL-key, HULL-lp, HULL-norm, INT-twos, L3.20, L3.9, RAT-div, RAT-pin, RAT-point, RAT-split; level 23: ASSOC-word, HULL-atoms, HULL-gf2, HULL-int, HULL-pos, HULL-trop, L3.10, L3.11; level 24: FOLD-zero, H10-refuse, L3.12, L3.18, MATCH-commute, PROP-per-arrow, SEMIRING-values, ZIR-check-passes; level 25: ASSOC-demand, HULL-tests, KEYABLE-reject, L3.17, L3.18a, L3.18b, L3.21, L3.23; level 26: L3.16, L4.2, L5.8, LAYOUT-soa, UNIT-modes; level 27: L3.14, L4.4, L5.1, UNION-spare; level 28: L3.15, L4.3, L4.5, L4.6, L5.2, L5.3, LAW20-move; level 29: BOUND-L4, CSR-bounds, EVID-dynamic, L1.18a, L5.4; level 30: BOUND-L5, FLOAT-interval, L5.4a, L5.5, L5.6, L5.8a, L6.2, LAW19-join, NAN-cast-atoms; level 31: ENUM-perm, L4.8, L5.13, L5.5a, L5.9, L6.3, SORTED-dense; level 32: L5.1d, L5.7, L6.11, L6.14, L6.8; level 33: INLINE-zir, L5.10, L5.7a, L6.11a, L6.9, LAW14-gen, SORTED-select, WITNESS-widened; level 34: L6.10, L6.11b, L6.8a; level 35: L6.12, L6.14a, SPECULATE; level 36: ASSOC-fold, DESCENT-sum, EQ-tabulate, L6.12a, L6.13, L6.19, L6.5; level 37: ASSOC-scale, AUX-homsynth, COST-patch, FOLD-layers, HEAP-rank, HKT-1, L5.14, L6.12b, L6.13a, L6.13b, L6.13c, L6.13e, L6.15, L6.5c, NO-RUN-audit, RUNG2-recurrence; level 38: ARM-split, BEND-contract, DEEP-native-eq, FOLD-unique, L6.16, MEMO-cross, RECLAIM-pulse, RECUR-monotone, RT-layout; level 39: L6.17, L6.5d, MIX-budget, STR-cursor; level 40: MIX-callsite, TRIVIAL-or-cnf; level 42: L28.1a, L7.1, L8.1, S.1d; level 43: L10.1, L7.1a, L7.2, L8.2, ROD-data, S.1a; level 44: EMPTY-level-swap, FINITE-prop, L10.4a, L15.1, L7.2a, L7.3, L8.2a, L9.1, PORT-key-static; level 45: FILE-bytes, FLOAT-sum-policy, GLAM-logspec, L22.1, L7.14, L7.3g, L7.4, L7.5, PORT-ack-name, PORT-why, QUANT-finite, TARGET-native, TIMEOUT-annot, UNORD-keep; level 46: BYTES-wide, EXPORT-unique, FFI-headertest, FFI-status, INT-128, L10.2, L21.2, L28.1, L7.3e, L7.4b, L7.5a, L7.5b, OOM-wave, RT-exhaust-wave, STOP-switch; level 47: L10.2a, L10.3, L7.6, MLIR-noalias; level 48: CHECKED-float, L10.4, L11.1, L12.0, L7.11, L7.7, L7.8, LIVE-clocks; level 49: BIT-checker-ranges, EDGE-class, FPWARN, L11.2, L12.1, L7.10, L7.12, L7.13, L7.9, MENU-linear-L10, PASSES-vars-test, READ-arms; level 50: FACT-unify, FLOAT-pitfall-lints, KNOWN-mix, L10.3d, L11.1a, L11.2a, L12.2, L13.1, L15.2, L18.1, L20.1, L7.10a, L7.9a, MEMO-edit, MOD-residue; level 51: EDIT-run, FACT-claims, FACT-prelude, L12.2a, L12.3, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L19.1, L20.1a, L20.1b, L7.10b, LAW-shape, STAGE-reads, THIRDHOM-law, TOKEN-types; level 52: KERNEL-check-tests, L12.2b, L12.3a, L15.6, L16.2, L17.1b, L18.2a, L20.2, L21.0, L22.2, LAW-shape-eq, MENU-linear-L15, PROOF-alg, TERM-stall; level 53: GLAM-diamond-iface, GLAM-pin, L12.2c, L14.1, L15.2c, L18.2b, L22.8, TERM-1; level 54: L12.2d, L15.7, L16.4, L19.2a, L23.1, MATH-names, REPACK-tile; level 55: L12.2e, L15.7b, L15.8, L23.2, L23.5c; level 56: L12.2f, L15.8a, L22.3, L23.3, LIST-exact-overlap, NOINST-report, TERM-2a; level 57: L22.4, L22.5, L23.4, STORE-check-off, STRICT-build; level 58: L22.6, L22.7, L23.5, L24.1; level 59: L24.4; level 61: L6.17a; level 62: S.1; level 63: ADVISORY, HULL3-GEN, NATIVE-cache, S.1h, STD-num; level 66: L21.1; level 67: L21.1c, S.4; level 68: L19.2, L24.2, L24.3; level 69: L19.3, L20.3, L20.4, L24.10, L24.2a, L24.6; level 70: L24.7, S.6; level 71: L22.9, L23.5a, L25.1, L26.1, L28.4, QUOT-classes; level 72: DIAG-json, L25.2, L25.3, L27.3, L29.1, TARGET-mcu; level 73: L25.4, L25.5, L30.1, L31.2; level 74: L24.8, L25.6, L30.2, L31.3, TERM-2; level 75: L25.7, L27.1, L27.2, L30.3, L34.9, MCU-period; level 76: BEND-gpufold, FFI-inline-proc, L27.1b, L27.2a, L27.2b, L27.2c, L30.3a, L30.4; level 77: L30.5, L34.1, L34.10; level 78: L34.11; level 80: L32.2; level 82: L32.4; level 84: L34.2, L34.4, L34.5; level 85: L34.3, L34.6, L34.7, L34.8, L35.1; level 89: PORTABLE-rt, USER-guide
+- `crates/zed-cert/`: level 25: L3.21; level 31: L5.13, L5.9; level 32: L5.7; level 48: L7.8; level 51: L15.5, L16.1; level 52: KERNEL-check-tests, L15.6, L22.2, PROOF-alg; level 56: L23.3; level 57: L22.4, L22.5; level 58: L22.7; level 73: L25.5; level 74: L25.6
+- `crates/zed-cert/src/`: level 25: L3.21; level 31: L5.13, L5.9; level 32: L5.7; level 51: L15.5, L16.1; level 52: KERNEL-check-tests, L15.6, L22.2, PROOF-alg; level 56: L23.3; level 57: L22.4, L22.5; level 58: L22.7; level 73: L25.5; level 74: L25.6
+- `crates/zed-cert/src/lib.rs`: level 52: L22.2; level 56: L23.3; level 57: L22.4, L22.5; level 58: L22.7
+- `crates/zed-gpu/`: level 75: L27.1; level 76: BEND-gpufold
+- `crates/zed-kernel/src/`: level 0: GROUP-decide-bytes, K36-study, MINMAX-chain-rows, PDEP-bytes, POLY-nf, PRINT-below-whole, RADIX-depth, REFUSAL-front-quadratic, REFUSAL-periodic-split, STAGE-joined-eq, TESTS-L1.23-refusal-text; level 1: REFUSAL-reverse-words; level 3: A5-print; level 4: STR-types, T6-refusal-cost; level 5: L1.26b; level 6: SETTLE-rounds; level 7: L2.5, SCALE-cover; level 8: L2.4; level 9: L2.7, T2; level 10: STAGE-print, T14-lints; level 11: L1.40e; level 12: L2.6b; level 13: L2.10; level 14: FLOAT-sqrt, L3.2; level 15: L1.39g, L3.2b, L3.3, L4.1, STR-views; level 16: L3.4, L6.6, L6.7; level 17: L3.5, L6.4; level 19: L3.7; level 20: L3.8; level 21: BIT-repr, FLOAT-f32, L3.15a; level 22: INT-twos, L3.20; level 25: L3.21; level 26: L4.2; level 27: L4.4, L5.1; level 28: L3.15, L5.2, L5.3; level 29: L1.18a, L5.4; level 30: L5.4a, L5.6, NAN-cast-atoms; level 31: ENUM-perm; level 36: EQ-tabulate, L6.5; level 37: HKT-1, NO-RUN-audit; level 38: FOLD-unique, L6.16; level 39: L6.5d, MIX-budget, STR-cursor; level 42: L7.1; level 43: L7.1a, L7.2; level 44: L7.3, L9.1; level 45: L7.3g, L7.4, L7.5; level 46: BYTES-wide, INT-128, L10.2, L21.2; level 47: L10.3, L7.6; level 48: CHECKED-float, L11.1; level 50: L15.2, L7.9a, MOD-residue; level 51: L15.4, L15.5, L19.1; level 52: L20.2; level 54: MATH-names; level 55: L12.2e; level 58: L22.7; level 59: L24.4; level 63: STD-num; level 66: L21.1; level 68: L19.2; level 72: L25.3; level 74: L24.8; level 75: L27.2, L30.3
+- `crates/zed-kernel/src/eval.rs`: level 8: L2.4; level 12: L2.6b; level 13: L2.10; level 14: L3.2; level 15: L3.2b, L3.3; level 16: L3.4, L6.6, L6.7; level 17: L3.5; level 21: BIT-repr, FLOAT-f32; level 22: INT-twos; level 26: L4.2; level 27: L5.1; level 28: L5.2, L5.3; level 29: L5.4; level 30: L5.4a, L5.6; level 31: ENUM-perm; level 36: EQ-tabulate, L6.5; level 37: HKT-1, NO-RUN-audit; level 39: L6.5d, MIX-budget; level 43: L7.2; level 44: L7.3; level 45: L7.3g, L7.5; level 51: L19.1; level 68: L19.2
+- `crates/zed-kernel/src/exact.rs`: level 17: L3.5; level 28: L3.15; level 50: L7.9a
+- `crates/zed-kernel/src/family.rs`: level 15: L3.3; level 16: L3.4; level 26: L4.2; level 28: L5.2; level 30: L5.6; level 43: L7.1a
+- `crates/zed-kernel/src/num.rs`: level 0: RADIX-depth; level 47: L10.3
+- `crates/zed-kernel/src/print.rs`: level 8: L2.4; level 13: L2.10; level 16: L3.4; level 20: L3.8
+- `crates/zed-kernel/src/provenance.rs`: level 8: L2.4; level 14: L3.2; level 15: L3.3; level 16: L6.7; level 44: L7.3; level 47: L7.6; level 51: L15.4; level 72: L25.3; level 75: L27.2
+- `crates/zed-kernel/src/term.rs`: level 8: L2.4; level 13: L2.10; level 14: L3.2; level 15: L4.1; level 16: L3.4, L6.6, L6.7; level 20: L3.8; level 22: L3.20; level 25: L3.21; level 27: L4.4, L5.1; level 28: L5.3; level 36: L6.5; level 38: FOLD-unique; level 42: L7.1; level 43: L7.2; level 50: L15.2; level 75: L30.3
+- `crates/zed-kernel/src/text.rs`: level 0: STAGE-joined-eq; level 30: L5.6; level 38: L6.16; level 39: STR-cursor
+- `crates/zed-kernel/src/types.rs`: level 1: REFUSAL-reverse-words; level 7: L2.5; level 9: L2.7; level 11: L1.40e; level 19: L3.7; level 28: L5.2; level 42: L7.1; level 43: L7.2; level 44: L9.1; level 45: L7.4; level 46: L10.2; level 47: L10.3
+- `crates/zed-kernel/src/types/`: level 0: GROUP-decide-bytes, K36-study, MINMAX-chain-rows, REFUSAL-front-quadratic, REFUSAL-periodic-split, TESTS-L1.23-refusal-text; level 1: REFUSAL-reverse-words; level 3: A5-print; level 4: T6-refusal-cost; level 6: SETTLE-rounds; level 7: L2.5; level 9: L2.7, T2; level 17: L6.4; level 19: L3.7; level 55: L12.2e
+- `crates/zed-kernel/src/types/bdd.rs`: level 6: SETTLE-rounds; level 7: L2.5; level 9: T2
+- `crates/zed-kernel/src/types/empty.rs`: level 0: GROUP-decide-bytes, K36-study, MINMAX-chain-rows, REFUSAL-front-quadratic, REFUSAL-periodic-split, TESTS-L1.23-refusal-text; level 1: REFUSAL-reverse-words; level 7: L2.5; level 9: L2.7
+- `crates/zed-kernel/src/types/print.rs`: level 3: A5-print; level 55: L12.2e
+- `crates/zed-kernel/src/types/rec.rs`: level 0: GROUP-decide-bytes; level 7: L2.5; level 17: L6.4
+- `crates/zed-kernel/src/value.rs`: level 8: L2.4; level 16: L3.4; level 28: L5.2; level 43: L7.1a; level 45: L7.4; level 48: L11.1; level 52: L20.2
+- `crates/zed-kernel/src/words.rs`: level 13: L2.10; level 14: L3.2; level 46: L21.2; level 58: L22.7; level 59: L24.4; level 66: L21.1; level 74: L24.8
+- `crates/zed-native/`: level 4: STR-types; level 5: IF-union; level 6: RT-sites; level 7: RT-internal-fault, SCALE-cover; level 8: PLAN-shared-regions; level 10: T14-lints; level 12: L2.9; level 14: FLOAT-sqrt, L3.2; level 15: L1.39g, STR-views; level 19: RT-guard-fault; level 20: L3.13, RT-alloc-refusal; level 21: BIT-repr, L3.15a, WIDE-product; level 24: FOLD-zero; level 25: L3.17, L3.23; level 26: L3.16, L4.2, L5.8, LAYOUT-soa; level 27: L3.14, L5.1, UNION-spare; level 28: L3.15, L4.6, L5.2; level 30: L5.6, L5.8a; level 31: L5.13, L5.9; level 32: L5.1d, L6.14; level 35: L6.14a, SPECULATE; level 36: L6.13; level 37: FOLD-layers, L6.13a, L6.13c, L6.15; level 38: L6.16, RT-layout; level 39: STR-cursor; level 43: L7.2, ROD-data, S.1a; level 44: L7.3, L9.1; level 45: FILE-bytes, FLOAT-sum-policy, L7.4, L7.5; level 46: INT-128, L21.2; level 47: L10.3; level 51: L19.1; level 53: L14.1, L18.2b; level 54: L19.2a; level 58: L24.1; level 66: L21.1; level 67: S.4; level 68: L19.2, L24.2, L24.3; level 69: L24.2a; level 74: L24.8; level 76: L27.1b
+- `crates/zed-native/src/`: level 4: STR-types; level 5: IF-union; level 6: RT-sites; level 7: RT-internal-fault, SCALE-cover; level 8: PLAN-shared-regions; level 10: T14-lints; level 12: L2.9; level 14: L3.2; level 15: STR-views; level 19: RT-guard-fault; level 20: L3.13, RT-alloc-refusal; level 21: L3.15a; level 24: FOLD-zero; level 25: L3.17, L3.23; level 26: L3.16, L4.2, L5.8; level 27: L3.14, L5.1; level 28: L3.15, L4.6, L5.2; level 30: L5.6, L5.8a; level 31: L5.13, L5.9; level 32: L5.1d, L6.14; level 35: L6.14a, SPECULATE; level 36: L6.13; level 37: FOLD-layers, L6.13a, L6.13c, L6.15; level 38: L6.16, RT-layout; level 39: STR-cursor; level 43: L7.2, S.1a; level 44: L7.3, L9.1; level 45: FILE-bytes, FLOAT-sum-policy, L7.4, L7.5; level 46: INT-128, L21.2; level 47: L10.3; level 51: L19.1; level 53: L14.1, L18.2b; level 54: L19.2a; level 58: L24.1; level 66: L21.1; level 67: S.4; level 68: L19.2, L24.2, L24.3; level 69: L24.2a; level 74: L24.8; level 76: L27.1b
+- `crates/zed-native/src/codegen.rs`: level 8: PLAN-shared-regions; level 12: L2.9; level 20: L3.13; level 25: L3.17, L3.23; level 26: L3.16, L4.2; level 27: L3.14, L5.1; level 28: L3.15, L4.6, L5.2; level 30: L5.6; level 32: L6.14; level 35: L6.14a, SPECULATE; level 36: L6.13; level 37: FOLD-layers, L6.13a, L6.15; level 43: L7.2; level 46: INT-128; level 51: L19.1; level 53: L18.2b; level 58: L24.1; level 68: L19.2, L24.2, L24.3; level 69: L24.2a
+- `crates/zed-native/src/hooks.rs`: level 4: STR-types; level 12: L2.9; level 14: L3.2; level 15: STR-views; level 20: L3.13; level 25: L3.17; level 26: L3.16, L4.2; level 27: L3.14; level 28: L3.15, L4.6; level 30: L5.6; level 31: L5.13, L5.9; level 32: L6.14; level 36: L6.13; level 37: L6.13a, L6.13c; level 38: L6.16, RT-layout; level 39: STR-cursor; level 43: L7.2; level 44: L7.3; level 45: FILE-bytes, FLOAT-sum-policy; level 46: L21.2; level 51: L19.1; level 53: L18.2b; level 66: L21.1; level 74: L24.8
+- `crates/zed-native/src/tables.rs`: level 8: PLAN-shared-regions; level 12: L2.9; level 20: L3.13; level 25: L3.23; level 26: L3.16, L5.8; level 27: L3.14; level 30: L5.6; level 32: L6.14; level 53: L18.2b; level 54: L19.2a; level 68: L19.2, L24.2
+- `crates/zed-rt/`: level 4: STR-types; level 7: RT-internal-fault, SCALE-cover; level 10: T14-lints; level 12: L2.9; level 14: FLOAT-sqrt; level 15: L1.39g; level 19: RT-exhaust-report, RT-guard-fault; level 20: L3.13, RT-alloc-refusal; level 21: BIT-repr, HASH-repr; level 25: L3.17; level 26: L3.16, L4.2, L5.8, LAYOUT-soa; level 27: L3.14; level 28: L3.15, L4.6; level 29: L1.18a; level 30: L5.6, L5.8a; level 31: ENUM-perm, L5.13, L5.9, SORTED-dense; level 32: L5.7, L6.14; level 33: L5.7a; level 35: L6.14a, SPECULATE; level 36: L6.13; level 37: FOLD-layers, L5.14, L6.13a, L6.13c, L6.13e; level 38: BEND-contract, DEEP-native-eq, RECLAIM-pulse, RT-layout; level 42: L28.1a; level 43: L7.2, ROD-data; level 44: L7.3; level 45: FILE-bytes, FLOAT-sum-policy, GLAM-logspec, L7.4, L7.5, PORT-ack-name, PORT-why, TIMEOUT-annot, UNORD-keep; level 46: INT-128, L21.2, L28.1, L7.5a, OOM-wave, RT-exhaust-wave; level 47: L7.6; level 48: L7.11, L7.8; level 49: L7.9; level 51: L19.1; level 52: L21.0; level 53: L18.2b; level 58: L24.1; level 59: L24.4; level 61: L6.17a; level 66: L21.1; level 68: L24.3; level 69: L24.10, L24.6; level 70: L24.7; level 71: L26.1, L28.4, QUOT-classes; level 72: L29.1; level 73: L31.2; level 74: L24.8, L31.3; level 75: L27.1, L27.2; level 76: L27.2a, L27.2b, L27.2c; level 84: L34.5; level 85: L34.8; level 89: PORTABLE-rt
+- `crates/zed-rt/Cargo.toml`: level 27: L3.14; level 38: RT-layout
+- `crates/zed-rt/src/`: level 4: STR-types; level 7: RT-internal-fault, SCALE-cover; level 10: T14-lints; level 12: L2.9; level 14: FLOAT-sqrt; level 15: L1.39g; level 19: RT-guard-fault; level 20: L3.13, RT-alloc-refusal; level 21: BIT-repr; level 25: L3.17; level 26: L3.16, L4.2, L5.8; level 27: L3.14; level 28: L3.15, L4.6; level 29: L1.18a; level 30: L5.6, L5.8a; level 31: ENUM-perm, L5.13, L5.9; level 32: L5.7, L6.14; level 33: L5.7a; level 35: L6.14a, SPECULATE; level 36: L6.13; level 37: FOLD-layers, L5.14, L6.13a, L6.13c, L6.13e; level 38: BEND-contract, DEEP-native-eq, RECLAIM-pulse, RT-layout; level 42: L28.1a; level 43: L7.2, ROD-data; level 44: L7.3; level 45: FILE-bytes, FLOAT-sum-policy, GLAM-logspec, L7.4, L7.5, PORT-ack-name, TIMEOUT-annot, UNORD-keep; level 46: INT-128, L21.2, L28.1, L7.5a, OOM-wave; level 47: L7.6; level 48: L7.11, L7.8; level 49: L7.9; level 51: L19.1; level 52: L21.0; level 53: L18.2b; level 58: L24.1; level 59: L24.4; level 66: L21.1; level 68: L24.3; level 69: L24.10, L24.6; level 70: L24.7; level 71: L26.1, QUOT-classes; level 72: L29.1; level 73: L31.2; level 74: L24.8, L31.3; level 75: L27.1, L27.2; level 76: L27.2a, L27.2b, L27.2c; level 84: L34.5; level 85: L34.8; level 89: PORTABLE-rt
+- `crates/zed-rt/src/exact.rs`: level 20: L3.13; level 28: L3.15; level 45: FLOAT-sum-policy
+- `crates/zed-rt/src/heap.rs`: level 12: L2.9; level 20: L3.13; level 25: L3.17; level 26: L3.16, L5.8; level 27: L3.14; level 35: L6.14a; level 36: L6.13; level 37: L6.13a, L6.13c, L6.13e; level 38: DEEP-native-eq, RT-layout; level 43: ROD-data; level 53: L18.2b
+- `crates/zed-rt/src/lib.rs`: level 20: L3.13; level 26: L5.8; level 27: L3.14; level 28: L4.6; level 30: L5.6; level 31: L5.13; level 46: L21.2; level 51: L19.1
+- `crates/zed-rt/src/mcu/`: level 73: L31.2; level 74: L31.3; level 85: L34.8
+- `crates/zed-rt/src/morph.rs`: level 20: L3.13; level 25: L3.17
+- `crates/zed-rt/src/ordtree.rs`: level 26: L5.8; level 30: L5.8a; level 31: L5.9
+- `crates/zed-rt/src/ports.rs`: level 38: RT-layout; level 43: L7.2; level 44: L7.3; level 45: FILE-bytes, GLAM-logspec, PORT-ack-name; level 46: L21.2; level 52: L21.0; level 66: L21.1; level 74: L24.8
+- `crates/zed-rt/src/scan.rs`: level 30: L5.6; level 32: L5.7; level 33: L5.7a; level 38: BEND-contract
+- `crates/zed-rt/src/sched.rs`: level 27: L3.14; level 28: L3.15; level 35: SPECULATE; level 37: FOLD-layers; level 38: BEND-contract; level 45: GLAM-logspec
+- `crates/zed-rt/src/stack.rs`: level 42: L28.1a; level 89: PORTABLE-rt
+- `crates/zed-rt/src/union_find.rs`: level 31: L5.9; level 71: QUOT-classes
+- `crates/zed-tools/`: level 0: IMPORTS-untyped-join; level 7: SCALE-cover; level 10: TEST-fuzz; level 14: SCALE-zed; level 16: COLLATE-data; level 54: L16.4; level 63: S.1h; level 69: L20.4; level 72: TARGET-mcu; level 73: L30.1; level 89: USER-guide
+- `crates/zed-tools/src/bin/`: level 7: SCALE-cover; level 54: L16.4; level 63: S.1h; level 69: L20.4; level 73: L30.1
+- `crates/zed-tools/src/scaling_coverage.rs`: level 7: SCALE-cover; level 14: SCALE-zed
+- `crates/zedc-base/src/axioms.rs`: level 20: L3.8; level 21: ASSOC-lattice; level 24: SEMIRING-values; level 33: L5.7a; level 53: L14.1
+- `crates/zedc-base/src/cost.rs`: level 1: FOOTPRINT-overlap; level 25: L3.23; level 29: EVID-dynamic; level 33: L5.10; level 35: L6.14a; level 36: L6.19; level 37: COST-patch; level 38: BEND-contract; level 49: L7.10; level 50: L18.1, L7.10a; level 52: L18.2a; level 75: L27.1
+- `crates/zedc-base/src/interp.rs`: level 8: L2.4; level 13: L2.10; level 14: L3.2; level 15: L3.3
+- `crates/zedc-base/src/rejection.rs`: level 0: L1.29d; level 8: DIAG-control, GROUP-e2e, L2.8b; level 12: HKT-2; level 13: L2.7a; level 25: KEYABLE-reject; level 37: HKT-1; level 45: QUANT-finite; level 48: L12.0; level 51: L12.2a; level 53: L12.2c; level 54: L12.2d; level 56: L12.2f
+- `crates/zedc-check/src/`: level 0: L1.29e, MINMAX-chain-rows; level 1: L1.14a, L1.29c; level 4: STR-types; level 5: IF-union, L1.26b; level 7: L1.40b-sparse, L2.5; level 8: MSG-shared-print, STATIC-assert, T11-ty, WARN-refused; level 9: ISSUE1-payload, L2.7, STRUCT-key, T11-check; level 10: L1.40b; level 11: L2.6, RAT-domain; level 12: HKT-2, L2.12, L2.6b, OVERLOAD-name-type; level 13: BUBBLE-msg, GLAM-diamond, L2.10, L2.12b, L2.7a, OR-PAT; level 14: L3.2; level 15: L3.2b, L4.1, STR-views; level 17: L6.4; level 18: L3.6; level 19: L3.7; level 20: L3.8; level 21: FLOAT-f32; level 23: L3.10; level 24: L3.18, PROP-per-arrow; level 25: ASSOC-demand, KEYABLE-reject, L3.18a, L3.18b; level 27: L4.4, L5.1; level 28: L4.5, L5.2, L5.3; level 29: BOUND-L4, L5.4; level 30: BOUND-L5, FLOAT-interval, L5.4a, L5.5, L6.2, NAN-cast-atoms; level 32: L6.11, L6.8; level 33: L5.10, L6.9, WITNESS-widened; level 34: L6.10, L6.8a; level 35: L6.12; level 36: DESCENT-sum, EQ-tabulate, L6.12a, L6.19, L6.5; level 37: HKT-1, L6.12b, L6.5c, NO-RUN-audit, RUNG2-recurrence; level 38: RECUR-monotone; level 39: L6.5d; level 40: TRIVIAL-or-cnf; level 42: L7.1, S.1d; level 43: L7.1a, L7.2, L8.2; level 44: EMPTY-level-swap, FINITE-prop, L10.4a, L7.3, L9.1, PORT-key-static; level 45: FLOAT-sum-policy, L7.14, L7.3g, L7.4, L7.5, PORT-ack-name, QUANT-finite, TIMEOUT-annot; level 46: BYTES-wide, L10.2, L21.2, L7.4b, STOP-switch; level 47: L10.2a, L10.3; level 48: CHECKED-float, L10.4, L11.1, L12.0; level 49: BIT-checker-ranges, FPWARN, L12.1, PASSES-vars-test; level 50: FACT-unify, FLOAT-pitfall-lints, KNOWN-mix, L10.3d, L11.2a, L12.2, L13.1, L15.2, L18.1, L20.1, MOD-residue; level 51: FACT-claims, FACT-prelude, L12.2a, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, LAW-shape, STAGE-reads, TOKEN-types; level 52: L12.2b, L16.2, L18.2a, L20.2, L21.0, L22.2, LAW-shape-eq, TERM-stall; level 53: GLAM-diamond-iface, L12.2c, L14.1, L15.2c, L18.2b, L22.8, TERM-1; level 54: L12.2d, L15.7; level 55: L12.2e, L15.7b, L15.8; level 56: L12.2f, L15.8a, L22.3, LIST-exact-overlap, NOINST-report, TERM-2a; level 57: L22.4, L22.5, STORE-check-off, STRICT-build; level 58: L22.6, L22.7; level 59: L24.4; level 66: L21.1; level 71: L25.1; level 72: L25.2; level 74: L30.2, TERM-2; level 75: L27.2
+- `crates/zedc-check/src/check/`: level 0: L1.29e, MINMAX-chain-rows; level 1: L1.14a, L1.29c; level 4: STR-types; level 5: IF-union, L1.26b; level 7: L1.40b-sparse, L2.5; level 8: MSG-shared-print, STATIC-assert, T11-ty, WARN-refused; level 9: ISSUE1-payload, L2.7, STRUCT-key, T11-check; level 10: L1.40b; level 11: L2.6, RAT-domain; level 12: HKT-2, L2.12, L2.6b, OVERLOAD-name-type; level 13: BUBBLE-msg, GLAM-diamond, L2.10, L2.12b, L2.7a, OR-PAT; level 14: L3.2; level 15: L3.2b, L4.1, STR-views; level 17: L6.4; level 18: L3.6; level 19: L3.7; level 20: L3.8; level 21: FLOAT-f32; level 23: L3.10; level 24: L3.18, PROP-per-arrow; level 25: ASSOC-demand, KEYABLE-reject, L3.18a, L3.18b; level 27: L4.4, L5.1; level 28: L4.5, L5.2, L5.3; level 29: BOUND-L4, L5.4; level 30: BOUND-L5, FLOAT-interval, L5.4a, L5.5, L6.2, NAN-cast-atoms; level 32: L6.11, L6.8; level 33: L5.10, L6.9, WITNESS-widened; level 34: L6.10, L6.8a; level 35: L6.12; level 36: DESCENT-sum, EQ-tabulate, L6.12a, L6.19, L6.5; level 37: HKT-1, L6.12b, L6.5c, RUNG2-recurrence; level 38: RECUR-monotone; level 39: L6.5d; level 40: TRIVIAL-or-cnf; level 42: L7.1, S.1d; level 43: L7.1a, L7.2, L8.2; level 44: EMPTY-level-swap, FINITE-prop, L10.4a, L7.3, L9.1, PORT-key-static; level 45: FLOAT-sum-policy, L7.14, L7.3g, L7.4, L7.5, PORT-ack-name, QUANT-finite, TIMEOUT-annot; level 46: BYTES-wide, L10.2, L21.2, L7.4b, STOP-switch; level 47: L10.2a, L10.3; level 48: CHECKED-float, L10.4, L11.1, L12.0; level 49: BIT-checker-ranges, FPWARN, L12.1, PASSES-vars-test; level 50: FACT-unify, FLOAT-pitfall-lints, KNOWN-mix, L10.3d, L11.2a, L12.2, L13.1, L15.2, L18.1, L20.1, MOD-residue; level 51: FACT-claims, FACT-prelude, L12.2a, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, LAW-shape, STAGE-reads, TOKEN-types; level 52: L12.2b, L16.2, L18.2a, L20.2, L21.0, L22.2, LAW-shape-eq, TERM-stall; level 53: GLAM-diamond-iface, L12.2c, L14.1, L15.2c, L18.2b, L22.8, TERM-1; level 54: L12.2d, L15.7; level 55: L12.2e, L15.7b, L15.8; level 56: L12.2f, L15.8a, L22.3, LIST-exact-overlap, NOINST-report, TERM-2a; level 57: L22.4, L22.5, STORE-check-off, STRICT-build; level 58: L22.6, L22.7; level 59: L24.4; level 66: L21.1; level 71: L25.1; level 72: L25.2; level 74: L30.2, TERM-2; level 75: L27.2
+- `crates/zedc-check/src/check/exhaust.rs`: level 9: L2.7; level 12: L2.12; level 13: OR-PAT
+- `crates/zedc-check/src/check/mod.rs`: level 7: L2.5; level 8: T11-ty; level 9: L2.7, T11-check; level 11: L2.6; level 12: HKT-2, L2.12, L2.6b; level 13: BUBBLE-msg, L2.10; level 14: L3.2; level 15: L3.2b, L4.1; level 17: L6.4; level 18: L3.6; level 19: L3.7; level 20: L3.8; level 21: FLOAT-f32; level 23: L3.10; level 24: L3.18; level 27: L4.4, L5.1; level 28: L4.5, L5.2, L5.3; level 29: L5.4; level 30: L5.4a, L5.5, L6.2; level 32: L6.11, L6.8; level 33: L5.10, L6.9; level 34: L6.10, L6.8a; level 35: L6.12; level 36: L6.19, L6.5; level 37: HKT-1, L6.5c; level 39: L6.5d; level 40: TRIVIAL-or-cnf; level 46: L10.2, L21.2; level 49: PASSES-vars-test; level 50: L20.1; level 52: L20.2, L22.2; level 53: L22.8; level 56: L22.3; level 57: L22.4, L22.5; level 58: L22.6, L22.7; level 59: L24.4; level 66: L21.1; level 71: L25.1; level 72: L25.2; level 74: L30.2; level 75: L27.2
+- `crates/zedc-check/src/check/overload.rs`: level 11: L2.6; level 12: L2.12, L2.6b; level 13: BUBBLE-msg; level 56: LIST-exact-overlap
+- `crates/zedc-check/src/check/witness.rs`: level 27: L4.4; level 28: L4.5
+- `crates/zedc-elab/src/elab.rs`: level 8: L2.4; level 11: L2.6; level 12: L2.6b; level 13: GLAM-diamond, L2.10; level 14: L3.2; level 15: L3.2b, L3.3, L4.1; level 16: L3.4; level 17: L3.5, L6.4; level 20: L3.8; level 21: L3.15a; level 23: L3.10; level 25: ASSOC-demand; level 27: L5.1; level 28: L4.5, L5.2, L5.3; level 29: L5.4; level 30: L5.4a, L5.5, L5.8a, L6.2; level 31: L6.3; level 34: L6.10, L6.8a; level 36: L6.5; level 37: HKT-1; level 39: L6.5d; level 42: L7.1; level 43: L7.1a, L7.2, L8.2; level 44: EMPTY-level-swap, L15.1, L7.2a, L7.3, L9.1; level 45: L22.1, L7.4, L7.5, PORT-ack-name, TIMEOUT-annot; level 46: L10.2; level 47: L10.3; level 48: CHECKED-float, L11.1; level 50: FACT-unify, L15.2, L20.1; level 51: L16.1, L17.1, L20.1a, TOKEN-types; level 52: L16.2, L20.2, L21.0, L22.2; level 53: GLAM-diamond-iface, TERM-1; level 56: L22.3; level 57: L22.4; level 59: L24.4; level 66: L21.1; level 71: L26.1; level 72: L25.3; level 73: L25.4, L25.5; level 74: L25.6, TERM-2; level 75: L27.2, L30.3
+- `crates/zedc-elab/src/elab/`: level 4: STR-types; level 5: IF-union, L1.26b; level 8: GROUP-e2e; level 15: STR-views; level 47: L10.2a; level 49: FPWARN
+- `crates/zedc-elab/src/elab/walk.rs`: level 4: STR-types; level 5: IF-union, L1.26b; level 15: STR-views; level 49: FPWARN
+- `crates/zedc-lattice/src/`: level 0: PRODUCT-lin-rows; level 5: L1.40; level 6: L1.40a; level 10: PRE-abs-output; level 11: RAT-domain; level 18: L3.6; level 19: L3.7; level 21: FLOAT-f32; level 25: L3.18a; level 30: FLOAT-interval; level 32: L6.11; level 33: L6.11a; level 34: L6.11b; level 74: L30.2
+- `crates/zedc-lattice/src/cell.rs`: level 6: L1.40a; level 18: L3.6; level 19: L3.7; level 74: L30.2
+- `crates/zedc-lattice/src/float.rs`: level 21: FLOAT-f32; level 25: L3.18a; level 30: FLOAT-interval
+- `crates/zedc-lattice/src/interval.rs`: level 0: PRODUCT-lin-rows; level 10: PRE-abs-output; level 18: L3.6
+- `crates/zedc-lattice/src/iterate.rs`: level 32: L6.11; level 33: L6.11a; level 34: L6.11b
+- `crates/zedc-preimage/src/preimage.rs`: level 1: RUNG2-bit; level 2: T11-preimage-log; level 5: L1.40, S15-calls, T11-preimage-rest; level 9: L2.7, S22-R2; level 10: PRE-abs-output; level 13: L2.10; level 18: L3.6; level 28: L4.3; level 49: MENU-linear-L10; level 51: L15.3; level 55: L15.8
+- `crates/zedc-preimage/src/product.rs`: level 0: PRODUCT-lin-rows, ST-K3-narrow, ST-walk-implicit, ST-wider; level 5: L1.40; level 6: L1.40a; level 7: L1.40b-sparse, L1.40c; level 8: WARN-refused; level 9: L2.7; level 10: L1.40b; level 11: L1.40e; level 12: L2.12; level 13: L2.10, SCOPE-warn; level 18: L3.6; level 19: L3.7; level 20: L3.8; level 28: L4.3; level 51: L12.3, L15.3; level 55: L15.8
+- `crates/zedc-presburger/src/presburger.rs`: level 0: C2-local-tier, MSG-split-imports, PROBE-guards, PRODUCT-lin-rows; level 10: ST-formula-sibling; level 19: L3.7; level 27: L4.4; level 36: DESCENT-sum; level 63: HULL3-GEN
+- `crates/zedc-presburger/src/presburger/`: level 10: ST-formula-parse-keep; level 50: MOD-residue
+- `crates/zedc-resolve/src/resolve.rs`: level 1: L1.14a; level 4: STR-types; level 7: L2.12c; level 8: BUILD-const, GROUP-e2e; level 11: L2.6; level 12: L2.12; level 13: L2.10; level 14: L3.2; level 15: L4.1; level 17: L6.4; level 21: FLOAT-f32; level 27: L5.1; level 30: L5.5; level 31: L6.3; level 42: L7.1; level 44: L15.1, L8.2a; level 45: L22.1, PORT-ack-name; level 46: FFI-headertest, INT-128, L21.2; level 48: L11.1; level 49: FPWARN; level 50: L15.2, L20.1; level 51: L12.2a; level 53: L14.1; level 54: MATH-names; level 56: L22.3; level 59: L24.4; level 66: L21.1; level 69: L20.3; level 71: L22.9, L26.1; level 72: L25.3; level 73: L30.1; level 75: L27.2
+- `crates/zedc-stage/src/`: level 0: STAGE-joined-eq; level 7: L1.40c; level 8: BUILD-const, L2.4; level 10: STAGE-print; level 11: L2.6; level 14: L3.2; level 17: L6.4; level 20: L3.8; level 31: L6.3; level 33: SORTED-select; level 35: L6.12; level 40: MIX-callsite; level 48: L11.1; level 49: L12.1; level 50: KNOWN-mix, L13.1, L15.2, L18.1; level 51: L15.4, L17.1, L19.1, STAGE-reads; level 52: TERM-stall; level 53: GLAM-pin; level 54: L19.2a; level 68: L19.2; level 69: L19.3; level 72: L25.2; level 84: L34.2
+- `crates/zedc-stage/src/stage.rs`: level 0: STAGE-joined-eq; level 7: L1.40c; level 8: BUILD-const, L2.4; level 10: STAGE-print; level 11: L2.6; level 14: L3.2; level 17: L6.4; level 20: L3.8; level 31: L6.3; level 33: SORTED-select; level 35: L6.12; level 40: MIX-callsite; level 48: L11.1; level 49: L12.1; level 50: L13.1, L15.2, L18.1; level 51: L15.4, L17.1, L19.1, STAGE-reads; level 52: TERM-stall; level 53: GLAM-pin; level 54: L19.2a; level 68: L19.2; level 69: L19.3; level 72: L25.2; level 84: L34.2
+- `crates/zedc-syntax/src/`: level 0: L1.29d; level 5: L1.26b; level 13: OR-PAT; level 15: L4.1; level 24: L3.18; level 27: L5.1; level 29: L5.4; level 30: L5.5; level 42: L7.1, L8.1; level 43: L10.1, L7.2; level 44: L15.1, L7.3, L9.1; level 45: FLOAT-sum-policy, L22.1, L7.4, PORT-ack-name; level 48: L12.0; level 50: L10.3d, L20.1; level 51: L20.1a; level 53: L14.1, TERM-1; level 69: L20.4; level 72: L25.2
+- `crates/zedc-syntax/src/ast/`: level 15: L4.1; level 24: L3.18; level 27: L5.1; level 29: L5.4; level 30: L5.5; level 42: L7.1, L8.1; level 43: L10.1, L7.2; level 44: L15.1, L7.3, L9.1; level 45: L22.1, L7.4; level 48: L12.0; level 50: L20.1; level 51: L20.1a; level 53: L14.1, TERM-1; level 72: L25.2
+- `crates/zedc-syntax/src/ast/mod.rs`: level 15: L4.1; level 24: L3.18; level 27: L5.1; level 29: L5.4; level 30: L5.5; level 42: L8.1; level 45: L22.1; level 50: L20.1; level 72: L25.2
+- `crates/zedc-syntax/src/ast/stmts.rs`: level 15: L4.1; level 27: L5.1; level 29: L5.4; level 30: L5.5; level 43: L10.1, L7.2; level 48: L12.0; level 50: L20.1
+- `crates/zedc-syntax/src/ast/types.rs`: level 42: L8.1; level 43: L10.1; level 45: L22.1; level 50: L20.1; level 53: L14.1, TERM-1
+- `crates/zedc-syntax/src/format.rs`: level 15: L4.1; level 27: L5.1; level 29: L5.4; level 30: L5.5; level 42: L7.1, L8.1; level 43: L10.1; level 44: L15.1, L9.1; level 45: L22.1; level 50: L20.1
+- `crates/zedc-syntax/src/parse/`: level 0: L1.29d; level 13: OR-PAT; level 45: FLOAT-sum-policy; level 50: L10.3d; level 69: L20.4
+- `crates/zedc-types/src/ty.rs`: level 4: STR-types; level 7: L2.5; level 8: T11-ty; level 9: T11-check; level 11: L1.40e; level 12: HKT-2; level 14: L3.2; level 15: L4.1; level 19: L3.7; level 21: FLOAT-f32; level 27: L5.1; level 28: L4.5, L5.2, L5.3; level 29: L1.18a, L5.4; level 30: L5.4a, L6.2; level 32: L6.11, L6.8; level 33: L6.9; level 34: L6.8a; level 45: L22.1; level 46: L10.2; level 50: L20.1; level 66: L21.1; level 69: L20.3
+- `crates/zedc-zir/src/canon/`: level 8: L2.4; level 16: L3.4, L6.6; level 20: L3.8; level 22: L3.20; level 27: L5.1; level 42: L7.1; level 48: L7.7; level 51: L15.5; level 52: L22.2; level 74: L25.6
+- `crates/zedc-zir/src/canon/serial.rs`: level 8: L2.4; level 16: L3.4; level 20: L3.8; level 22: L3.20
+- `crates/zedc-zir/src/zir/`: level 6: RT-sites, T14-bring; level 8: PLAN-shared-regions; level 10: LOWER-dag; level 12: L1.41, L2.9; level 13: CONTIFY, L2.10; level 14: L3.2; level 16: L3.4, L6.6; level 20: L3.13; level 21: WIDE-product; level 22: L3.20; level 23: L3.11; level 24: FOLD-zero, L3.12, ZIR-check-passes; level 25: L3.17; level 26: L3.16, L4.2, UNIT-modes; level 27: L3.14, L5.1; level 28: L5.3; level 29: EVID-dynamic, L1.18a, L5.4; level 30: L5.4a, L5.6; level 32: L5.1d, L6.14; level 33: INLINE-zir; level 35: L6.14a, SPECULATE; level 36: L6.13, L6.5; level 37: HEAP-rank, L6.13b, L6.15; level 39: STR-cursor; level 42: L7.1; level 43: L7.2; level 44: L7.3, L9.1; level 45: FLOAT-sum-policy, L7.4, UNORD-keep; level 47: L10.3, L7.6; level 48: CHECKED-float, L7.8; level 49: EDGE-class, FPWARN, L7.10; level 50: L10.3d, L7.10a; level 51: L15.4, L7.10b; level 52: L18.2a; level 53: L14.1, L18.2b; level 54: L23.1, REPACK-tile; level 55: L23.5c; level 57: L22.4, L23.4; level 58: L24.1; level 63: NATIVE-cache; level 71: L23.5a; level 75: L27.1, L30.3
+- `crates/zedc-zir/src/zir/binary.rs`: level 12: L2.9; level 13: L2.10; level 16: L3.4, L6.6; level 22: L3.20; level 24: L3.12; level 29: L1.18a
+- `crates/zedc-zir/src/zir/canon.rs`: level 12: L2.9; level 24: L3.12
+- `crates/zedc-zir/src/zir/lower.rs`: level 6: RT-sites, T14-bring; level 10: LOWER-dag; level 12: L2.9; level 13: CONTIFY; level 14: L3.2; level 16: L3.4, L6.6; level 23: L3.11; level 24: L3.12; level 26: L4.2; level 27: L5.1; level 28: L5.3; level 29: L5.4; level 30: L5.4a, L5.6; level 32: L6.14; level 35: L6.14a; level 36: L6.5; level 42: L7.1; level 43: L7.2; level 45: L7.4; level 51: L15.4; level 57: L22.4; level 75: L30.3
+- `crates/zedc-zir/src/zir/memory.rs`: level 8: PLAN-shared-regions; level 10: LOWER-dag; level 12: L2.9; level 16: L3.4; level 20: L3.13; level 24: L3.12; level 25: L3.17; level 26: L3.16, L4.2, UNIT-modes; level 27: L3.14; level 30: L5.6; level 32: L6.14; level 36: L6.13; level 37: HEAP-rank, L6.13b; level 43: L7.2; level 45: L7.4; level 53: L18.2b
+- `crates/zedc-zir/src/zir/mod.rs`: level 12: L2.9; level 16: L3.4; level 20: L3.13; level 23: L3.11; level 24: L3.12; level 27: L3.14; level 52: L18.2a; level 75: L30.3
+- `crates/zedc-zir/src/zir/text.rs`: level 12: L1.41, L2.9; level 13: L2.10; level 16: L3.4, L6.6; level 22: L3.20; level 24: L3.12; level 42: L7.1
+- `crates/zedc/`: level 0: L1.29d, MSG-split-imports; level 2: L1.19d; level 6: L1.40a, RT-sites; level 7: L2.12c, SCALE-cover; level 8: L2.4, L2.8c, WARN-refused; level 9: T2; level 10: L1.40b, L2.8e, T14-lints, TEST-fuzz; level 11: L1.40f, RAT-domain; level 12: L2.12; level 13: L2.10, SCOPE-warn; level 14: L3.2; level 15: L3.22; level 20: L3.8; level 21: ASSOC-gf2, ASSOC-lattice, ASSOC-mod, ASSOC-select, ASSOC-table, BIT-repr, RAT-lin; level 22: ASSOC-gcd, ASSOC-sets, HULL-binom, HULL-conic, HULL-elim, HULL-key, HULL-lp, HULL-norm, INT-twos, L3.20, L3.9, RAT-div, RAT-pin, RAT-point, RAT-split; level 23: ASSOC-word, HULL-atoms, HULL-gf2, HULL-int, HULL-pos, HULL-trop, L3.10, L3.11; level 24: H10-refuse, L3.12, L3.18, MATCH-commute; level 25: ASSOC-demand, HULL-tests, L3.21, L3.23; level 27: L5.1; level 28: LAW20-move; level 29: BOUND-L4, CSR-bounds; level 30: BOUND-L5, LAW19-join; level 31: L4.8, L5.13, L5.5a; level 32: L5.7, L6.11; level 33: INLINE-zir, L5.10, L5.7a, L6.9, LAW14-gen, WITNESS-widened; level 34: L6.8a; level 36: ASSOC-fold, L6.12a, L6.5; level 37: ASSOC-scale, AUX-homsynth, FOLD-layers, L5.14, L6.12b, L6.13b, L6.15, L6.5c, NO-RUN-audit; level 38: ARM-split, BEND-contract, FOLD-unique, L6.16, MEMO-cross; level 39: MIX-budget, STR-cursor; level 40: MIX-callsite; level 42: L28.1a; level 43: L7.2, ROD-data, S.1a; level 44: FINITE-prop, L15.1, L7.2a, L7.3; level 45: FILE-bytes, L7.14, L7.4, L7.5, TARGET-native; level 46: EXPORT-unique, FFI-headertest, FFI-status, INT-128, L28.1, L7.3e, L7.5b, OOM-wave, STOP-switch; level 47: L7.6, MLIR-noalias; level 48: L10.4, L11.1, L7.11, L7.7, L7.8, LIVE-clocks; level 49: EDGE-class, L11.2, L12.1, L7.10, L7.12, L7.13, L7.9, MENU-linear-L10, READ-arms; level 50: FACT-unify, FLOAT-pitfall-lints, L11.1a, L12.2, L13.1, L15.2, L20.1, L7.10a, L7.9a, MEMO-edit; level 51: EDIT-run, FACT-claims, L12.3, L17.1, L19.1, L20.1b, L7.10b, THIRDHOM-law; level 52: L12.3a, L17.1b, L18.2a, L22.2, MENU-linear-L15; level 53: GLAM-pin, L15.2c; level 54: L15.7, L19.2a, L23.1; level 55: L15.7b, L15.8, L23.2; level 56: L15.8a, L23.3, NOINST-report; level 57: L23.4, STORE-check-off, STRICT-build; level 58: L23.5, L24.1; level 61: L6.17a; level 62: S.1; level 63: ADVISORY, NATIVE-cache; level 67: L21.1c, S.4; level 68: L19.2; level 69: L24.6; level 71: L23.5a, L25.1, L26.1; level 72: DIAG-json, L25.2, L25.3, L27.3; level 73: L25.4, L25.5, L30.1, L31.2; level 74: L25.6, L30.2, TERM-2; level 75: L25.7, L27.1, L27.2, L30.3, L34.9, MCU-period; level 76: FFI-inline-proc, L30.3a, L30.4; level 77: L30.5, L34.1, L34.10; level 78: L34.11; level 80: L32.2; level 82: L32.4; level 84: L34.2, L34.4; level 85: L34.3, L34.6, L34.7, L35.1
+- `crates/zedc/Cargo.toml`: level 22: L3.9; level 71: L25.1
+- `crates/zedc/src/`: level 0: L1.29d, MSG-split-imports; level 2: L1.19d; level 6: L1.40a, RT-sites; level 7: L2.12c, SCALE-cover; level 8: L2.4, WARN-refused; level 9: T2; level 10: L1.40b, L2.8e, T14-lints; level 11: L1.40f, RAT-domain; level 12: L2.12; level 13: L2.10, SCOPE-warn; level 14: L3.2; level 15: L3.22; level 20: L3.8; level 21: ASSOC-gf2, ASSOC-lattice, ASSOC-mod, ASSOC-select, ASSOC-table, BIT-repr, RAT-lin; level 22: ASSOC-gcd, ASSOC-sets, HULL-binom, HULL-conic, HULL-elim, HULL-key, HULL-lp, HULL-norm, INT-twos, L3.20, L3.9, RAT-div, RAT-pin, RAT-point, RAT-split; level 23: ASSOC-word, HULL-atoms, HULL-gf2, HULL-int, HULL-pos, HULL-trop, L3.10, L3.11; level 24: H10-refuse, L3.12, L3.18, MATCH-commute; level 25: ASSOC-demand, HULL-tests, L3.21, L3.23; level 27: L5.1; level 28: LAW20-move; level 29: BOUND-L4, CSR-bounds; level 30: BOUND-L5, LAW19-join; level 31: L4.8, L5.13, L5.5a; level 32: L5.7, L6.11; level 33: INLINE-zir, L5.10, L5.7a, L6.9, LAW14-gen, WITNESS-widened; level 34: L6.8a; level 36: ASSOC-fold, L6.12a, L6.5; level 37: ASSOC-scale, AUX-homsynth, FOLD-layers, L5.14, L6.12b, L6.13b, L6.15, L6.5c, NO-RUN-audit; level 38: ARM-split, BEND-contract, FOLD-unique, L6.16, MEMO-cross; level 39: MIX-budget, STR-cursor; level 40: MIX-callsite; level 42: L28.1a; level 43: L7.2, ROD-data, S.1a; level 44: FINITE-prop, L15.1, L7.2a, L7.3; level 45: FILE-bytes, L7.14, L7.4, L7.5, TARGET-native; level 46: EXPORT-unique, FFI-headertest, FFI-status, INT-128, L28.1, L7.3e, L7.5b, OOM-wave, STOP-switch; level 47: L7.6, MLIR-noalias; level 48: L10.4, L11.1, L7.11, L7.7, L7.8, LIVE-clocks; level 49: EDGE-class, L11.2, L12.1, L7.10, L7.12, L7.13, L7.9, MENU-linear-L10; level 50: FACT-unify, FLOAT-pitfall-lints, L11.1a, L12.2, L13.1, L15.2, L20.1, L7.10a, L7.9a, MEMO-edit; level 51: EDIT-run, FACT-claims, L12.3, L17.1, L19.1, L20.1b, L7.10b, THIRDHOM-law; level 52: L12.3a, L17.1b, L18.2a, L22.2, MENU-linear-L15; level 53: GLAM-pin, L15.2c; level 54: L15.7, L19.2a, L23.1; level 55: L15.7b, L15.8, L23.2; level 56: L15.8a, L23.3, NOINST-report; level 57: L23.4, STORE-check-off, STRICT-build; level 58: L23.5, L24.1; level 62: S.1; level 63: ADVISORY, NATIVE-cache; level 67: L21.1c, S.4; level 68: L19.2; level 69: L24.6; level 71: L23.5a, L25.1, L26.1; level 72: DIAG-json, L25.2, L25.3, L27.3; level 73: L25.4, L25.5, L30.1, L31.2; level 74: L25.6, L30.2, TERM-2; level 75: L25.7, L27.1, L27.2, L30.3, L34.9, MCU-period; level 76: FFI-inline-proc, L30.3a, L30.4; level 77: L30.5, L34.1, L34.10; level 78: L34.11; level 80: L32.2; level 82: L32.4; level 84: L34.2, L34.4; level 85: L34.3, L34.6, L34.7, L35.1
+- `crates/zedc/src/egraph/`: level 22: L3.9; level 25: L3.21
+- `crates/zedc/src/facet/`: level 49: L12.1; level 50: L13.1
+- `crates/zedc/src/front.rs`: level 0: MSG-split-imports; level 11: L1.40f
+- `crates/zedc/src/incr/`: level 46: L7.5b; level 47: L7.6; level 48: L7.11, L7.7, L7.8; level 49: L7.10, L7.12, L7.13, L7.9; level 50: L7.10a, L7.9a, MEMO-edit; level 51: EDIT-run, L7.10b; level 71: L23.5a; level 77: L34.1
+- `crates/zedc/src/introspect/`: level 48: L11.1; level 49: L11.2; level 50: L11.1a
+- `crates/zedc/src/laws.rs`: level 22: L3.9; level 23: L3.11
+- `crates/zedc/src/lib.rs`: level 20: L3.8; level 22: L3.9; level 23: L3.11; level 71: L25.1
+- `crates/zedc/src/lsp/`: level 71: L25.1; level 72: L25.2, L25.3; level 73: L25.4, L25.5, L30.1; level 74: L25.6, L30.2, TERM-2; level 75: L30.3, L34.9; level 76: L30.3a, L30.4; level 77: L30.5, L34.1, L34.10; level 78: L34.11; level 80: L32.2; level 84: L34.2, L34.4; level 85: L34.3, L34.6, L34.7, L35.1
+- `crates/zedc/src/main.rs`: level 2: L1.19d; level 9: T2; level 23: L3.11; level 25: L3.21; level 33: L5.10; level 37: L6.13b; level 44: L15.1; level 46: L28.1, STOP-switch; level 50: L15.2; level 51: L17.1; level 52: L18.2a; level 54: L15.7; level 55: L15.7b, L15.8; level 57: STRICT-build; level 71: L25.1, L26.1; level 82: L32.4
+- `crates/zedc/src/mlir/`: level 42: L28.1a; level 46: L28.1
+- `crates/zedc/src/oblig/`: level 20: L3.8; level 21: ASSOC-gf2, ASSOC-lattice, ASSOC-mod, ASSOC-select, ASSOC-table, RAT-lin; level 22: ASSOC-gcd, ASSOC-sets, HULL-binom, HULL-conic, HULL-elim, HULL-key, HULL-lp, HULL-norm, L3.20, L3.9, RAT-div, RAT-pin, RAT-point, RAT-split; level 23: ASSOC-word, HULL-atoms, HULL-gf2, HULL-int, HULL-pos, HULL-trop, L3.10; level 24: H10-refuse, L3.18; level 25: ASSOC-demand, HULL-tests; level 37: ASSOC-scale; level 38: FOLD-unique; level 51: FACT-claims; level 56: NOINST-report
+- `crates/zedc/src/opt/`: level 23: L3.11; level 24: L3.12, MATCH-commute; level 25: L3.21, L3.23; level 27: L5.1; level 28: LAW20-move; level 30: LAW19-join; level 31: L4.8, L5.13, L5.5a; level 32: L5.7; level 33: INLINE-zir, L5.10, L5.7a, LAW14-gen; level 36: ASSOC-fold, L6.5; level 37: AUX-homsynth, FOLD-layers, L5.14, L6.15, L6.5c; level 38: BEND-contract, L6.16; level 39: STR-cursor; level 51: THIRDHOM-law; level 54: L23.1; level 55: L23.2; level 56: L23.3; level 58: L23.5
+- `crates/zedc/src/pin.rs`: level 10: L2.8e; level 53: GLAM-pin; level 56: L15.8a
+- `crates/zedc/src/query.rs`: level 13: L2.10; level 32: L6.11; level 47: L7.6; level 48: L7.7; level 49: L7.13; level 54: L19.2a; level 63: NATIVE-cache; level 68: L19.2; level 69: L24.6; level 71: L25.1; level 76: L30.4
+- `crates/zedc/src/refine/`: level 36: L6.12a; level 37: L6.12b, NO-RUN-audit; level 53: L15.2c
+- `crates/zedc/src/run.rs`: level 0: L1.29d; level 2: L1.19d; level 6: RT-sites; level 8: L2.4, WARN-refused; level 12: L2.12; level 13: L2.10, SCOPE-warn; level 14: L3.2; level 23: L3.11; level 43: L7.2, S.1a; level 44: L7.2a, L7.3; level 45: FILE-bytes, L7.4, L7.5; level 46: L28.1, OOM-wave; level 49: MENU-linear-L10; level 51: EDIT-run, L19.1; level 52: MENU-linear-L15; level 67: S.4; level 71: L25.1, L26.1; level 72: L25.2; level 73: L31.2; level 75: L27.1, L27.2; level 76: L30.4; level 77: L34.1
+- `crates/zedc/src/store/`: level 6: L1.40a; level 10: L1.40b; level 11: L1.40f, RAT-domain; level 15: L3.22; level 21: BIT-repr; level 22: INT-twos; level 25: L3.23; level 29: BOUND-L4, CSR-bounds; level 30: BOUND-L5; level 33: L6.9, WITNESS-widened; level 34: L6.8a; level 38: ARM-split; level 44: FINITE-prop; level 45: L7.14; level 46: INT-128, STOP-switch; level 48: L10.4; level 49: EDGE-class, L11.2; level 50: L12.2, L15.2; level 51: L12.3; level 52: L12.3a; level 57: STORE-check-off; level 74: L30.2
+- `crates/zedc/src/store/costdom.rs`: level 15: L3.22; level 25: L3.23
+- `crates/zedc/src/store/eq.rs`: level 10: L1.40b; level 52: L12.3a
+- `crates/zedc/src/store/mod.rs`: level 15: L3.22; level 74: L30.2
+- `crates/zedc/src/testing.rs`: level 10: L2.8e; level 20: L3.8; level 49: L7.12; level 55: L15.8
+- `crates/zedc/src/unit.rs`: level 7: L2.12c; level 46: FFI-headertest
+- `docs/`: level 0: PLAN-sync, QUESTIONS-answered, SETS-study; level 10: T10; level 14: L2.11; level 49: SELFINT-design; level 71: INTEROP-study, L26.1, L31.1, QUOT-classes, TERM-3; level 72: L27.3; level 73: L30.1; level 75: L27.1, L27.2; level 79: L32.1; level 85: L33.2, L33.3; level 89: USER-guide; level 90: L36.1; level 91: L36.2; level 92: L36.3; level 94: L37.1; level 95: META-self-check
+- `docs/layout.md`: level 10: T10; level 71: L26.1; level 72: L27.3; level 73: L30.1; level 75: L27.1, L27.2
+- `docs/stdlib-catalog.md`: level 14: L2.11; level 71: QUOT-classes, TERM-3
+- `editors/vscode/`: level 73: L30.1; level 74: L30.2; level 75: L30.3; level 76: L30.3a, L30.4; level 77: L30.5; level 78: L30.6, L34.11; level 82: L32.4; level 84: L34.2, L34.4; level 85: L34.3, L34.6, L34.7, L35.1
+- `tools/`: level 33: L5.14a; level 63: S.1c; level 68: S.5; level 71: TERM-3; level 76: L30.3b
+- `zed/compiler/`: level 14: L2.11; level 18: LOWER-stack; level 38: INTERN-threaded; level 42: L28.1a; level 45: FILE-bytes; level 46: L28.1; level 47: MLIR-noalias; level 61: L6.17a; level 62: S.1; level 63: S.1h; level 64: S.2; level 65: S.2-forms, S.3; level 66: S.3-forms; level 67: S.4; level 68: L19.2, L24.2, L24.3, L24.5; level 69: L19.3, L20.4, L24.10, L24.6, S.5b; level 70: L24.7, S.6; level 71: L2.13; level 72: L27.3, L29.1; level 74: L24.8; level 96: L38.2
+- `zed/compiler/MLIR.md`: level 42: L28.1a; level 46: L28.1; level 47: MLIR-noalias; level 72: L29.1
+- `zed/compiler/ZED0.md`: level 38: INTERN-threaded; level 45: FILE-bytes; level 62: S.1
+- `zed/corpus/`: level 0: CORPUS-read-radix; level 4: STR-types; level 15: CORPUS-oracle; level 16: CORPUS-input-errors; level 18: L3.19; level 29: L4.7; level 34: L5.12; level 35: L5.11; level 37: L5.14; level 39: L6.18; level 45: L8.3; level 49: L7.13; level 50: L10.5; level 51: L11.3; level 52: L7.15; level 53: L13.2; level 54: L16.4; level 55: L14.2; level 57: L12.4; level 68: L19.2; level 72: L19.4, L27.3; level 73: L20.5; level 74: L24.8; level 75: L25.7
+- `zed/corpus/30-client-server.zed`: level 73: L20.5; level 74: L24.8
+- `zed/corpus/rust/`: level 35: L5.11; level 37: L5.14
+- `zed/fences/`: level 4: STR-types; level 5: L1.26b; level 8: L2.8b; level 25: KEYABLE-reject; level 30: L3.24; level 46: LAWS-stream; level 51: STAGE-reads; level 52: COMPILE-data; level 53: TERM-1; level 55: L15.8; level 57: L15.9; level 72: L22.10
+- `zed/fences/rejections.txt`: level 8: L2.8b; level 25: KEYABLE-reject; level 51: STAGE-reads
+- `zed/grammar/cases.txt`: level 5: L1.26b; level 13: OR-PAT; level 53: TERM-1
+- `zed/grammar/syntax.peg`: level 13: OR-PAT; level 50: L20.1; level 51: L20.1a; level 53: TERM-1; level 69: L20.4
+- `zed/lib/`: level 70: LIB-schema; level 71: PORT-pointer-keys; level 72: AD-reverse; level 73: LIB-linkage; level 75: PICTURE-type; level 84: L33.1; level 85: L33.3; level 87: L33.1a
+- `zed/prelude/`: level 1: FOOTPRINT-overlap; level 4: STR-types; level 5: L1.40; level 8: STATIC-assert; level 13: L2.10; level 14: FLOAT-sqrt, L3.2; level 15: L1.39g, L4.1, STR-views; level 16: COLLATE-data; level 20: L3.8; level 21: L3.15a; level 22: INT-twos; level 24: SEMIRING-values; level 27: L5.1; level 28: L4.6, L5.2, L5.3; level 29: CSR-bounds, L5.4; level 30: FLOAT-interval, L5.4a; level 31: L5.9; level 32: L5.7, L6.11; level 33: L5.7a, L6.11a; level 36: ASSOC-fold, L6.19; level 37: COST-patch, NO-RUN-audit, PRELUDE-words; level 38: BEND-contract, L6.16; level 39: L6.17; level 40: PRELUDE-rules-run; level 42: L7.1, S.1d, S.1e; level 43: S.1a; level 45: FILE-bytes; level 46: BYTES-wide, INT-128, L21.2; level 47: ROUND-words; level 48: L11.1; level 49: L11.2, L12.1; level 50: FACT-unify, L11.1a, L12.2, L13.1, L15.2, L18.1; level 51: FACT-prelude, L12.2a, L12.3, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L19.1, L20.1b; level 52: L12.2b, L12.3a, L15.6, L16.2, L20.2, L22.2; level 53: L12.2c, L13.2, L14.1, L18.2b, L22.8, TERM-1; level 54: L12.2d, L15.7, MATH-names, S.1b; level 55: L15.8; level 56: L22.3; level 57: L22.5; level 58: L22.6, L22.7; level 61: L6.17a; level 63: S.1c; level 65: S.3; level 66: L21.1, S.3a; level 68: L19.2, L24.5; level 69: L19.3, L20.3; level 71: FLOAT-elem, L22.9, QUOT-classes, TERM-3; level 72: L25.3, L29.1; level 73: L25.4, L25.5; level 74: L24.8, L25.6, L31.3, TERM-2; level 75: L27.1, L27.2, L34.9; level 77: L30.5; level 80: L32.2; level 81: L32.3; level 84: L34.4, L34.5; level 85: L34.3, L34.6, L34.8, L35.1
+- `zed/prelude/agent.zed`: level 72: L25.3; level 73: L25.4, L25.5; level 74: L25.6, TERM-2; level 75: L34.9
+- `zed/prelude/axioms.zed`: level 22: INT-twos; level 24: SEMIRING-values; level 29: CSR-bounds; level 33: L5.7a
+- `zed/prelude/cost.zed`: level 1: FOOTPRINT-overlap; level 36: L6.19; level 37: COST-patch, PRELUDE-words; level 38: BEND-contract; level 50: L18.1; level 75: L27.1
+- `zed/prelude/draw/`: level 81: L32.3; level 84: L34.4
+- `zed/prelude/editor.zed`: level 77: L30.5; level 84: L34.4; level 85: L34.3
+- `zed/prelude/grammar.zed`: level 51: L20.1b; level 52: L20.2; level 53: TERM-1; level 69: L20.3
+- `zed/prelude/iteration.zed`: level 32: L6.11; level 33: L6.11a; level 37: PRELUDE-words; level 40: PRELUDE-rules-run
+- `zed/prelude/lattice.zed`: level 24: SEMIRING-values; level 37: PRELUDE-words; level 40: PRELUDE-rules-run
+- `zed/prelude/mcu/`: level 74: L31.3; level 85: L34.8
+- `zed/prelude/placement.zed`: level 68: L24.5; level 74: L24.8
+- `zed/prelude/revision.zed`: level 5: L1.40; level 37: PRELUDE-words; level 40: PRELUDE-rules-run
+- `zed/prelude/symbolic.zed`: level 71: L22.9; level 85: L34.6
+- `zed/prelude/theories.zed`: level 52: L22.2; level 53: L22.8; level 56: L22.3; level 57: L22.5; level 58: L22.6
+- `zed/prelude/unit.zed`: level 37: PRELUDE-words; level 45: FILE-bytes
+- `zed/stdlib/`: level 63: STD-num, STD-seq, STD-text; level 64: STD-blake3; level 72: STD-full
 
 ## T14 and T11 findings
 
@@ -2969,7 +2951,7 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **MSG-operand-print.** L1.17a: found by its verify run. From the ledger. *Note:* Added 2026-11-03 by the plan audit. Feeds L1.41.
 - **NAME-ties.** CANON-stable: the stable names it ranks. From the ledger. *Note:* Added 2026-11-03 by the plan audit. Feeds L1.40.
 - **PINWHEEL-cofinite-scale.** No needs: T6-payload-pinwheel is done. From the ledger. *Note:* Added 2026-11-03 by the plan audit. Feeds L1.41.
-- **PLAN-conflicts.** No needs: PLAN-hygiene is done. From the ledger. *Note:* Added 2026-11-03 by the plan audit. Feeds L1.41. *Changed 2026-11-05:* Companion of DAG-order-check. Also correct note :1556, which says 'No needs: PLAN-hygiene is done' while the row lists PLAN-audit-apply. *Needs now:* PLAN-sync.
+- **PLAN-conflicts.** No needs: PLAN-hygiene is done. From the ledger. *Note:* Added 2026-11-03 by the plan audit. Feeds L1.41. *Changed 2026-11-05:* Companion of DAG-order-check. Also correct note :1556, which says 'No needs: PLAN-hygiene is done' while the row lists PLAN-audit-apply. *Needs now:* PLAN-sync. *Done 2026-11-10* by PLAN-conflict-lists-regen (commit "PLAN-conflict-lists-regen: the conflicts tool writes and checks the conflict lists of docs/plan_dag.md"): `cargo run -q -p zed-tools --bin conflicts` writes both lists from the items table and `--check` compares them with it, in the zed-tools crate as a tool of its own beside `plan`. The need on PLAN-sync is dropped: it held because PLAN-sync changes levels after which the lists had to be rewritten by hand, and the tool now rewrites them after any change of levels. *Needs now:* none.
 - **PRE-stack.** R10-stack: it may already cover this. From the ledger. *Note:* Added 2026-11-03 by the plan audit. Feeds L1.40. It did not: on a 2 MiB thread the transfer overflowed between depths 1,000 and 3,000 (COMPLEXITY.md PRE-stack); the fix runs each recursion through `stacker::maybe_grow`, a temporary form until PRE-stack-explicit.
 - **PRE-stack-explicit.** PRE-stack: it rewrites the same functions of `store/preimage.rs`, and keeps PRE-stack's deep tests (`l01_25_preimage_catalog::deep`, depth 100,000 on a 2 MiB stack) as its check. *Note:* Added 2026-11-04 by the author's decision on PRE-stack (b): "do (b) for now, and look at stack management as a question for Zed lowering later". The stacker fix merged as PRE-stack; the rule that recursion on input size uses explicit stacks still holds, so the rewrite of the analyses (about 15, about 200 recursive calls) is this item, a need of T2, the closing explicit-stacks item. Done when `stacker` no longer appears in `preimage.rs`, the `// Complexity tradeoff:` comment at `deeper` and the four notes naming this item are gone, the deep tests and the scaling tests at n and 8n pass, and COMPLEXITY.md row PRE-stack records the new form.
 - **LOWER-stack.** L6.4: general recursion as the definedness `fix`, whose depth in user programs grows with the input; the study measures the code generated for it. R10-stack: the runtime stack that native code runs on now (`zed_rt::Stack`, a mapping as large as memory and swap with a guard page below it), the form the study starts from and compares the others with. *Note:* Added 2026-11-04 by the author's decision on PRE-stack (b), "look at stack management as a question for Zed lowering later": how the code Zed's lowering generates manages stack depth for deep or unbounded recursion in user programs, as distinct from the Rust compiler's own recursion (T2, PRE-stack-explicit). DESIGN step L6.13d. Placed after L6.4 and not ahead of current work, as the author asked for it later. Feeds L6.14 (native code for recursion and loops) and L31.2 (a microcontroller's fixed stack), whose needs columns name it; L26.1 and L28.1 also follow its record and reach it through L6.14. *Test added 2026-11-05:* Depth is measured with a structural recursive function; the `.fold` repeat of the measure is in L6.5's test. Also: zed/compiler/STACK.md records Zig's approach for comparison (bootstrap.c:232, 256 MiB) and states the message and status when the guard page is hit, run on deep recursion.

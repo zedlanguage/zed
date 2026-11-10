@@ -6,6 +6,7 @@
 //! functions the commands call.
 
 mod cite;
+mod conflicts;
 mod plan;
 mod scaling;
 

@@ -13,20 +13,24 @@ use crate::{Outcome, impl_root, say};
 const TABLE: &str = "## Items by level";
 
 /// One row of the table.
-struct Row<'a> {
+pub(crate) struct Row<'a> {
     /// The line number in the file, from 1.
-    line: usize,
+    pub(crate) line: usize,
     /// The level column as written.
-    level: &'a str,
+    pub(crate) level: &'a str,
     /// The id.
-    id: &'a str,
+    pub(crate) id: &'a str,
+    /// The start of the title column: the text after the id, up to the first `|`.
+    pub(crate) title: &'a str,
     /// The ids in the `needs` column; empty for `none`.
-    needs: Vec<&'a str>,
+    pub(crate) needs: Vec<&'a str>,
+    /// The paths column as written.
+    pub(crate) paths: &'a str,
 }
 
 /// The rows of the table in `text`. The title column may hold a `|`, so `needs` is read from the
 /// right: it is the second-last cell, before the paths.
-fn rows(text: &str) -> Result<Vec<Row<'_>>, String> {
+pub(crate) fn rows(text: &str) -> Result<Vec<Row<'_>>, String> {
     let mut lines = text.lines().enumerate();
     lines
         .by_ref()
@@ -49,7 +53,9 @@ fn rows(text: &str) -> Result<Vec<Row<'_>>, String> {
             line: i + 1,
             level: cells[0],
             id: cells[1],
+            title: cells[2],
             needs,
+            paths: cells[cells.len() - 1],
         });
     }
     Ok(rows)

@@ -2,8 +2,9 @@
 //! fences of a spec checkout and report the layers of programs; `sync` copies the spec's fences
 //! and grammar into this repository; `progress` writes the spec's PROGRESS.md; `cite` checks
 //! that every section label and step id cited is defined in DESIGN.md; `plan` checks this
-//! repository's plan DAG; `step_targets` writes the test target of each step folder into
-//! `tests/Cargo.toml`; `imports` names every cycle of a Rust crate's file import graph.
+//! repository's plan DAG; `conflicts` writes the plan's file-conflict lists; `step_targets`
+//! writes the test target of each step folder into `tests/Cargo.toml`; `imports` names every
+//! cycle of a Rust crate's file import graph.
 //!
 //! Each tool is a module with a `run` function over its arguments, and a thin `main` in
 //! `src/bin/`. Grammar reading and matching are the compiler's (`zedc::parse`), so a rule of the
@@ -15,6 +16,7 @@ pub mod cases;
 pub mod catalog;
 pub mod check;
 pub mod cite;
+pub mod conflicts;
 pub mod fences;
 pub mod fuzz;
 pub mod imports;
