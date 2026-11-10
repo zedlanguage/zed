@@ -26,6 +26,14 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
 == DESIGN.md [sec:joins] 1 L8
   1 | matmul ( «positional» a : ( r -> c -> f64 ) , «positional» b : ( c -> k -> f64 ) ) =
   2 | ( a , b ) «into» ( r -> k -> c >< ( + ) -> a [ r ] [ c ] * b [ c ] [ k ] ) ;
+== DESIGN.md [sec:joins] 2 L8
+  1 | r1 = ( a , b , c ) «into» ( a || b || c -> v ) ;
+  2 | r2 = ( a , b , c ) «into» ( a && b && c -> v ) ;
+  3 | r3 = ( a , b , c ) «into» ( a && ? b && ? c -> v ) ;
+  4 | r4 = ( a , b , c ) «into» ( a && ! b && c -> v ) ;
+  5 | r5 = ( a , b , c ) «into» ( a && ? ( b && ? c ) -> v ) ;
+  6 | ab = ( a , b ) «into» ( a || b -> v ) ;
+  7 | r6 = ( ab , c ) «into» ( ab || c -> v ) ;
 == DESIGN.md [sec:generations] 1 L6
   1 | sim = «loop» {
   2 | pos' = pos + vel * dt «with» initial pos = p0 ;

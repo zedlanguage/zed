@@ -130,7 +130,7 @@ OutPattern    : the output keypath of an `into`, the key map of its reindex leve
 Level         : one output level: several sort keys are one rank level; `asc k` or `desc k` a rank level; `k >< op` a fold of the level k collapses
 SortKey       : a rank by the key, ascending or descending
 JoinTerm      : a join region (sec:joins): `&&` inner, `||` outer, `&& ?` left, `&& !` difference, `==` an equality assertion; a discard over the union of the operands' keyspaces
-AndJoin       : `a && b`, `a && ?b`, `a && !b`: inner, left, difference; a chain joins from the left, so `a && !b && !c` is (a && !b) && !c
+AndJoin       : `a && b`, `a && ?b`, `a && !b`: inner, left, difference; a chain keeps the keys of joining from the left, so `a && !b && !c` keeps those of (a && !b) && !c, and gives one flat value with a slot per operand (sec:joins)
 KeyTerm       : a key, or a parenthesized join term
 JoinExpr      : a lookahead only; no term; a group it matches in key position, with no postfix or arithmetic operator after it, is rejected
 Key           : a key expression over the source's level names; `_` the leaf value
