@@ -224,7 +224,20 @@ impl Premises {
 impl Drop for Premises {
     /// Drops a long chain of unions without one stack frame per union.
     fn drop(&mut self) {
-        let mut todo: Vec<Arc<Node>> = self.0.take().into_iter().collect();
+        // Complexity tradeoff: naive version, a list of the unions to drop made at each drop,
+        // one allocation even for a set another holds too or a single premise (COMPLEXITY.md
+        // row PA-bind-cost). Used: such a set is dropped at once, `O(1)`; the list is made only
+        // for a union this set alone holds, which it drops as before.
+        let Some(n) = self.0.take() else {
+            return;
+        };
+        let Ok(mut n) = Arc::try_unwrap(n) else {
+            return;
+        };
+        let Kind::Both(a, b) = &mut n.kind else {
+            return;
+        };
+        let mut todo: Vec<Arc<Node>> = a.0.take().into_iter().chain(b.0.take()).collect();
         while let Some(n) = todo.pop() {
             if let Ok(mut n) = Arc::try_unwrap(n)
                 && let Kind::Both(a, b) = &mut n.kind

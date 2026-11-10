@@ -58,10 +58,44 @@ pub struct Report {
 /// a part held in one [`Shared`] node reached from two places is read once (`Frees`), and
 /// the parts still to read wait on a heap stack, so a deep term does not grow the thread's
 /// stack.
+// Complexity tradeoff: naive version, every term read through `Frees`, whose maps, sets and
+// memo of shared nodes are made and dropped for each call, about 13,000 instructions for a
+// test such as `n > 3` (COMPLEXITY.md row PA-bind-cost). Used: a term built of names,
+// literals, primitives and `if`s alone, which binds no name, is read into the set at once,
+// each shared node once (a set of the node ids met), O(s log s) for `s` distinct parts; any
+// other term goes through `Frees`, after the parts read before its first other form, at
+// most O(s log s) more. Test:
+// `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`.
 pub fn free(t: &Term) -> BTreeSet<Arc<str>> {
+    if let Some(names) = free_of_primitives(t) {
+        return names;
+    }
     let mut f = Frees::default();
     let s = f.summary(Part::inline(t));
     f.names_in(s.free).into_iter().cloned().collect()
+}
+
+/// The names `t` reads, when it is built of names, literals, primitives and `if`s alone: then
+/// it binds no name, so each name it holds is free, and a node shared by two of its parts
+/// reads the same names from each, so it is read once. `None` when it holds any other form.
+fn free_of_primitives(t: &Term) -> Option<BTreeSet<Arc<str>>> {
+    let mut out = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    let mut todo = vec![t];
+    while let Some(t) = todo.pop() {
+        match t {
+            Term::Var(x) => {
+                out.insert(x.clone());
+            }
+            Term::Lit(_) | Term::PrimFn(_) | Term::Read(_) => {}
+            Term::Prim(_, args) => todo.extend(args),
+            Term::If(c, a, b) => {
+                todo.extend([c, a, b].into_iter().filter(|s| seen.insert(s.id())).map(|s| &**s))
+            }
+            _ => return None,
+        }
+    }
+    Some(out)
 }
 
 impl Unit {

@@ -196,6 +196,18 @@ fn reading_nested_ifs_whose_arms_are_one_part_scales() {
             1,
             |d| assert_eq!(free(&units[&d].defs[1].term).len(), 1, "`f`"),
         );
+        // No `lam` or call above or below: the term of names, literals, primitives and `if`s
+        // alone, read without `Frees`, each shared node once.
+        let bare: BTreeMap<usize, Term> = [n, FACTOR * n]
+            .into_iter()
+            .map(|d| (d, ifs(d, true, &var("m"))))
+            .collect();
+        scaling::check_order(
+            "stage::free on d nested ifs of names alone whose two arms are one part",
+            n,
+            1,
+            |d| assert_eq!(free(&bare[&d]).len(), 2, "`m` and `n`"),
+        );
         scaling::check_order(
             "stage::color, free names and effects, on d nested ifs whose two arms are one part",
             n,
@@ -209,6 +221,68 @@ fn reading_nested_ifs_whose_arms_are_one_part_scales() {
             |d| assert_eq!(passed(&units[&d], "f", 1).len(), 1),
         );
     });
+}
+
+/// `free` of a term of names, literals, primitives and `if`s, some nodes shared and some terms
+/// holding a `let` that binds one of the names, is what `Frees` gives: the term read as the
+/// callee of a call of no arguments, which `free` always reads through `Frees`.
+#[test]
+fn the_names_of_a_term_of_primitives_and_ifs_are_those_frees_gives() {
+    /// A pseudo-random number generator (xorshift64), with the count of `let`s made.
+    struct Rng(u64, usize);
+    impl Rng {
+        fn below(&mut self, n: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % n
+        }
+    }
+    fn term(r: &mut Rng, pool: &mut Vec<Shared>, depth: u32) -> Term {
+        let names = ["a", "b", "c", "d"];
+        let pick = if depth == 0 { r.below(3) } else { r.below(7) };
+        match pick {
+            0 => var(names[r.below(4) as usize]),
+            1 => lit(r.below(5) as i64),
+            2 => Term::Read("stdin".into()),
+            3 | 4 => {
+                let p = [Prim::Add, Prim::Ge, Prim::Lt][r.below(3) as usize];
+                prim(p, vec![term(r, pool, depth - 1), term(r, pool, depth - 1)])
+            }
+            5 => {
+                let part = |r: &mut Rng, pool: &mut Vec<Shared>| {
+                    if !pool.is_empty() && r.below(2) == 0 {
+                        pool[r.below(pool.len() as u64) as usize].clone()
+                    } else {
+                        let s = Shared::new(term(r, pool, depth - 1));
+                        pool.push(s.clone());
+                        s
+                    }
+                };
+                Term::If(part(r, pool), part(r, pool), part(r, pool))
+            }
+            _ => {
+                r.1 += 1;
+                let e = Shared::new(term(r, pool, depth - 1));
+                let body = Shared::new(term(r, pool, depth - 1));
+                Term::Let(names[r.below(4) as usize].into(), e, body)
+            }
+        }
+    }
+    let mut r = Rng(0x3c6e_f372_fe94_f82b, 0);
+    let (mut fast, mut lets) = (0, 0);
+    for _ in 0..4000 {
+        let mut pool = Vec::new();
+        let t = term(&mut r, &mut pool, 5);
+        let general = free(&Term::App(Shared::new(t.clone()), Vec::new()));
+        assert_eq!(free(&t), general, "{t}");
+        if std::mem::take(&mut r.1) > 0 {
+            lets += 1;
+        } else {
+            fast += 1;
+        }
+    }
+    assert!(fast > 1000 && lets > 1000, "{fast} without a let, {lets} with");
 }
 
 /// `main = (x, c) -> nd` with `n0 = x` and `nj = if c { let x = x + 1; n(j-1) } else { let x =

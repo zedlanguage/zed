@@ -585,6 +585,14 @@ pub struct Pieces<'a> {
     front: Vec<&'a Node>,
     /// The nodes still to give from the back: each with its right subtree given.
     back: Vec<&'a Node>,
+    /// The root, until the first piece is taken from the back, which pushes its right spine
+    /// onto `back`.
+    // Complexity tradeoff: naive version, the right spine pushed when the iterator is made,
+    // a second vector allocated and filled, O(log p), for each iterator, though most are read
+    // from the front alone (18 a binding of the fee test, COMPLEXITY.md row PA-bind-cost).
+    // Used: the spine pushed at the first `next_back`, the same O(log p) then and nothing for
+    // a front-only read. Test: `set_operations_agree_with_the_vec_version_on_random_sets`.
+    root: Option<&'a Node>,
     /// The count of pieces not yet given.
     left: usize,
 }
@@ -635,6 +643,9 @@ impl DoubleEndedIterator for Pieces<'_> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.left == 0 {
             return None;
+        }
+        if let Some(root) = self.root.take() {
+            self.push_right_spine(Some(root));
         }
         let n = self.back.pop()?;
         self.push_right_spine(n.left.as_deref());
@@ -768,10 +779,10 @@ impl IntervalSet {
         let mut it = Pieces {
             front: Vec::new(),
             back: Vec::new(),
+            root: self.root.as_deref(),
             left: self.len(),
         };
         it.push_left_spine(self.root.as_deref());
-        it.push_right_spine(self.root.as_deref());
         it
     }
 
@@ -787,6 +798,7 @@ impl IntervalSet {
         let mut it = Pieces {
             front: Vec::new(),
             back: Vec::new(),
+            root: self.root.as_deref(),
             left: self.len(),
         };
         let mut t = self.root.as_deref();
@@ -799,7 +811,6 @@ impl IntervalSet {
                 t = n.right.as_deref();
             }
         }
-        it.push_right_spine(self.root.as_deref());
         it
     }
 
@@ -967,6 +978,19 @@ impl IntervalSet {
     /// for `m <= n` pieces, and `O(d log p)` for sets of `p` pieces that differ on `d` of the
     /// paths of their shared tree, as a set and the same set narrowed by one fact do.
     pub fn is_subset(&self, other: &Self) -> bool {
+        // Complexity tradeoff: naive version, every pair of sets walked, an allocation for the
+        // walk's stack each time (COMPLEXITY.md row PA-bind-cost). Used: an empty set, one
+        // shared tree and two sets of one piece each are answered at once, `O(1)`, as the walk
+        // answers them. Any other pair is walked as before.
+        match (&self.root, &other.root) {
+            (None, _) => return true,
+            (Some(_), None) => return false,
+            (Some(x), Some(y)) if Arc::ptr_eq(x, y) => return true,
+            (Some(x), Some(y)) if x.count == 1 && y.count == 1 => {
+                return y.piece.0 <= x.piece.0 && x.piece.1 <= y.piece.1;
+            }
+            _ => {}
+        }
         let (mut a, mut b) = (Walk::of(&self.root), Walk::of(&other.root));
         while let Some(x) = a.next() {
             let Some(y) = b.next() else {
@@ -1257,6 +1281,15 @@ impl PartialEq for IntervalSet {
         };
         if x.count != y.count || x.hash != y.hash {
             return false;
+        }
+        // Complexity tradeoff: naive version, the trees walked, the walk's stack allocated.
+        // Used: one shared tree, or one piece each, compared at once, `O(1)`, as the walk
+        // compares them (COMPLEXITY.md row PA-bind-cost).
+        if Arc::ptr_eq(x, y) {
+            return true;
+        }
+        if x.count == 1 {
+            return x.piece == y.piece;
         }
         let (mut a, mut b) = (Walk::of(&self.root), Walk::of(&other.root));
         loop {
@@ -1903,14 +1936,26 @@ mod tests {
             assert_eq!(from, want[i..].iter().collect::<Vec<_>>());
             // From both ends at once: a front and a back that meet.
             let mut it = s.pieces_from(&e);
-            let mut both = Vec::new();
+            let (mut front, mut back) = (Vec::new(), Vec::new());
             while let Some(p) = it.next() {
-                both.push(p);
+                front.push(p);
                 if let Some(q) = it.next_back() {
-                    both.push(q);
+                    back.push(q);
                 }
             }
-            assert_eq!(both.len(), want.len() - i);
+            front.extend(back.into_iter().rev());
+            assert_eq!(front, want[i..].iter().collect::<Vec<_>>());
+            // From the back first, then the front.
+            let mut it = s.pieces();
+            let (mut front, mut back) = (Vec::new(), Vec::new());
+            while let Some(q) = it.next_back() {
+                back.push(q);
+                if let Some(p) = it.next() {
+                    front.push(p);
+                }
+            }
+            front.extend(back.into_iter().rev());
+            assert_eq!(front, want.iter().collect::<Vec<_>>());
         }
     }
 

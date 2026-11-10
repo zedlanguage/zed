@@ -720,7 +720,17 @@ impl View<'_> {
         let limit = vars.len().min(self.names.len());
         let leaf = |v: &Arc<str>, q: &Product| held.leaf(self.orders, v, q);
         let mut last = held.last();
-        let tree = {
+        // Complexity tradeoff: naive version, a summary over one input is read from the last
+        // read too, by the differences of up to four pairs of persistent maps, about 6,000
+        // instructions each on the 1,000 names of the fee test, and these reach the one input
+        // at the second difference, so the tree is then made afresh anyway. Used: a summary
+        // over one input is read afresh at once, one lookup, `O(log n)` as a walk to the first
+        // difference is, and the same tree, whose shape the keys fix; about 28,000
+        // instructions a binding fewer (COMPLEXITY.md row PA-bind-cost). Test:
+        // `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`.
+        let tree = if vars.len() == 1 {
+            None
+        } else {
             match &last.held {
                 Some(r) => images::updated(&r.tree, here(r, *self), vars, self.names, limit, leaf),
                 None => (held.widest.as_ref().and_then(Weak::upgrade)).and_then(|base| {
@@ -4289,15 +4299,63 @@ impl Scope {
         let empty = |names: &imbl::OrdMap<Arc<str>, Product>, last: &imbl::OrdMap<_, _>| {
             changed(last, names).any(|(_, p)| p.is_empty())
         };
+        // Whether the names may differ from `last`: not after a round whose enumeration
+        // changed nothing, since `last` is the names just before it.
+        //
+        // Complexity tradeoff: naive version, the names are compared with `last` at the top of
+        // each round and after the loop, and with those at the start of the round by a check
+        // that no name rose and again by `==`: each a walk of the two maps' paths to the
+        // changes, about 4,000 to 8,000 instructions on the 1,000 names of the fee test. Used:
+        // the comparison with `last` is skipped when the enumeration reports no change, and the
+        // check and `==` share one walk, O(changes) each as before, about 25,000 instructions a
+        // binding fewer (COMPLEXITY.md row PA-bind-cost). Test:
+        // `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`.
+        let mut moved_since = true;
         loop {
-            if self.bottom || self.relation.is_bottom() || empty(&self.names, &last) {
+            if self.bottom || self.relation.is_bottom() {
                 self.bottom = true;
                 break;
+            }
+            // The names that differ from `last`, found by the walk that checks none is empty:
+            // `since`, those the names have, taken below as those to reduce when nothing
+            // between changed the names, and `differ`, those and the names gone, in key order,
+            // taken as the names moved since the last projection when that projection was of
+            // `last`.
+            //
+            // Complexity tradeoff: naive version, the names that differ from `last` found
+            // three times a round, by the check that none is empty, for the names moved since
+            // the last projection, and again after the projection: walks of the same two maps
+            // when the last projection and the one now changed no name, about 9,000
+            // instructions each a binding of the fee test. Used: the names the check found,
+            // kept when the maps are those it walked (`ptr_eq`), the same names, O(changes) as
+            // before (COMPLEXITY.md row PA-bind-cost). Test:
+            // `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`.
+            let mut since = Vec::new();
+            let mut differ = Vec::new();
+            if moved_since {
+                for d in last.diff(&self.names) {
+                    let n = match d {
+                        DiffItem::Add(n, p) | DiffItem::Update { new: (n, p), .. } => {
+                            if p.is_empty() {
+                                self.bottom = true;
+                                break;
+                            }
+                            since.push(n.clone());
+                            n
+                        }
+                        DiffItem::Remove(n, _) => n,
+                    };
+                    differ.push(n.clone());
+                }
+                if self.bottom {
+                    break;
+                }
             }
             let before = self.names.clone();
             // The names whose bounds may have changed since the last projection, so that the
             // stars it finds are those of the bounds as they are.
             let moved: Vec<Arc<str>> = match &self.seen.projection {
+                Some((names, _)) if moved_since && names.ptr_eq(&last) => differ,
                 Some((names, _)) => names
                     .diff(&self.names)
                     .map(|d| match d {
@@ -4311,17 +4369,33 @@ impl Scope {
             self.sync_bounds(&moved);
             // The names and conjuncts as projected are those before the projection, so that a
             // projection that moves a bound is followed by another, until none moves one.
-            if let Some(due) = self.due(whole, force) {
+            if let Some(due) = self.due(whole, force, &moved) {
                 force = false;
                 self.seen.projection = Some((self.names.clone(), self.relation.clone()));
                 self.project(due, whole);
             }
-            let dirty: Vec<Arc<str>> = changed(&last, &self.names)
-                .map(|(n, _)| n.clone())
-                .collect();
+            let dirty: Vec<Arc<str>> = if moved_since && self.names.ptr_eq(&before) {
+                since
+            } else {
+                (changed(&last, &self.names))
+                    .map(|(n, _)| n.clone())
+                    .collect()
+            };
+            // Complexity tradeoff: naive version, each name reduced in place (`get_mut`), which
+            // copies the map's path to it even when the reduction changes nothing, so the walks
+            // that compare the names with `before` and `last`, here and at the next reduction,
+            // walk that path: about 4,000 instructions for the copy and as many for each walk,
+            // on the 1,000 names of the fee test. Used: the reduction made on a copy of the
+            // product (one `Arc`), put back only when it changed a domain, which every change
+            // of `reduce_domains` reports (each is an `Entry::meet`): the same names, the same
+            // `O(log n)` a name changed, nothing copied for one unchanged (COMPLEXITY.md row
+            // PA-bind-cost). Test: `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`.
             for n in &dirty {
-                if let Some(p) = self.names.get_mut(n) {
-                    p.reduce_domains();
+                if let Some(p) = self.names.get(n) {
+                    let mut p = p.clone();
+                    if p.reduce_domains() {
+                        self.names.insert(n.clone(), p);
+                    }
                 }
             }
             last = self.names.clone();
@@ -4332,19 +4406,25 @@ impl Scope {
                 self.bottom = true;
                 break;
             }
-            self.enumerate();
-            debug_assert!(
-                before.diff(&self.names).all(|d| matches!(
-                    d,
-                    DiffItem::Update { old: (_, a), new: (_, b) } if b.leq(a)
-                )),
-                "a reduction rose"
-            );
-            if self.names == before {
+            moved_since = self.enumerate();
+            // `before == names` is the diff being empty (`imbl`'s `PartialEq`), so one walk
+            // finds both that and, in a debug build, that no name rose.
+            let mut same = true;
+            for d in before.diff(&self.names) {
+                same = false;
+                debug_assert!(
+                    matches!(d, DiffItem::Update { old: (_, a), new: (_, b) } if b.leq(a)),
+                    "a reduction rose"
+                );
+                if !cfg!(debug_assertions) {
+                    break;
+                }
+            }
+            if same {
                 break;
             }
         }
-        if self.bottom || empty(&self.names, &last) {
+        if self.bottom || (moved_since && empty(&self.names, &last)) {
             self.bottom = true;
         } else {
             self.reduced.0 = last;
@@ -4356,9 +4436,17 @@ impl Scope {
     /// conjunct added since the last projection, of each conjunct that shared a block with
     /// one removed since, and of each conjunct that mentions a name changed since, found by
     /// the persistent maps' difference. A conjunct removed has its parts' projections
-    /// forgotten, so that it is projected again if it comes back.
-    fn due(&mut self, whole: bool, force: bool) -> Option<Due> {
-        let Some((names, old)) = &self.seen.projection else {
+    /// forgotten, so that it is projected again if it comes back. `moved` is the names that
+    /// differ between the names as last projected and the names now, in key order, as
+    /// [`Scope::reduce_with`] found them.
+    // Complexity tradeoff: naive version, the difference of the names as last projected and
+    // the names now found here again, after `reduce_with` found it for `moved` with neither map
+    // changed between, one more walk of the two maps' paths to the changes per round, about
+    // 3,300 instructions a binding of the fee test (COMPLEXITY.md row PA-bind-cost). Used: the
+    // names `reduce_with` found, O(changes). Test:
+    // `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`.
+    fn due(&mut self, whole: bool, force: bool, moved: &[Arc<str>]) -> Option<Due> {
+        let Some((_, old)) = &self.seen.projection else {
             return Some(Due::All);
         };
         if force {
@@ -4368,10 +4456,7 @@ impl Scope {
         let mut seeds = Seeds::default();
         let mut any = false;
         let blocks = self.relation.blocks();
-        for d in names.diff(&self.names) {
-            let (DiffItem::Add(n, _)
-            | DiffItem::Remove(n, _)
-            | DiffItem::Update { new: (n, _), .. }) = d;
+        for n in moved {
             any = true;
             seeds.names.insert(n.clone());
             seeds.changed.insert(n.clone());
@@ -6357,7 +6442,11 @@ impl Scope {
     /// (`@exact` does, by branch and prune), at a cost exponential in the open names, and a
     /// termination proof stronger than the form of the term (size-change termination,
     /// PSPACE-complete in the call graph).
-    fn enumerate(&mut self) {
+    ///
+    /// Returns whether the names may have changed: false only when no constraint was
+    /// enumerated and the scope is not exact, so that [`Scope::reduce_with`] need not look
+    /// for the names it changed.
+    fn enumerate(&mut self) -> bool {
         let now = (
             self.names.clone(),
             self.written.clone(),
@@ -6413,9 +6502,10 @@ impl Scope {
             })
             .collect();
         if pending.is_empty() {
-            return;
+            return self.exact;
         }
         self.enumerate_on(pending);
+        true
     }
 
     fn enumerate_on(&mut self, pending: Vec<(Term, Vec<Arc<str>>, Enumerated)>) {
@@ -6850,6 +6940,13 @@ impl<'a> Tree<'a> {
             };
         }
         // The nodes by height, each node after the nodes below it; an atom's text once.
+        // Complexity tradeoff: naive version, each atom's text written, about 10,000
+        // instructions for `n > 3`, though texts are read only to order two atoms of one
+        // height. Used: a tree of one atom writes none, the order of one node being fixed;
+        // a tree of two atoms or more writes each once, as before, O(s) for `s` parts. Test:
+        // `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`, COMPLEXITY.md
+        // row PA-bind-cost.
+        let ordered = nodes.iter().filter(|n| matches!(n.kind, Kind::Atom)).count() > 1;
         let mut height = vec![0usize; nodes.len()];
         let mut texts = vec![String::new(); nodes.len()];
         for i in (0..nodes.len()).rev() {
@@ -6858,7 +6955,9 @@ impl<'a> Tree<'a> {
                 Kind::Nest(_, sides) => sides.iter().map(below).max().unwrap_or(1),
                 Kind::If(arms) => arms.iter().map(below).max().unwrap_or(1),
                 Kind::Atom => {
-                    texts[i] = nodes[i].term.to_string();
+                    if ordered {
+                        texts[i] = nodes[i].term.to_string();
+                    }
                     0
                 }
                 Kind::Lit(_) => 0,
@@ -7469,11 +7568,21 @@ impl<'m> Run<'m> {
         let prem = Premises::one(Premise::Constraint(at));
         self.premises.borrow_mut().push(prem.clone());
         let mut out = [(false, None), (false, None)];
+        // Complexity tradeoff: naive version, the test printed for each arm, twice an `if`,
+        // about 10,000 instructions each for `(n > 37)`. Used: printed once and copied for the
+        // true arm, the same text. Test:
+        // `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`, COMPLEXITY.md row
+        // PA-bind-cost.
+        let mut guard = c.to_string();
         for (i, (o, arm)) in [(true, a), (false, b)].into_iter().enumerate() {
             let s = self.scope(|s| s.assume(c, o, &prem));
             out[i].0 = !s.bottom;
             self.out.borrow_mut().push(Arm {
-                guard: c.to_string(),
+                guard: if o {
+                    guard.clone()
+                } else {
+                    std::mem::take(&mut guard)
+                },
                 outcome: o,
                 scope: s.clone(),
             });

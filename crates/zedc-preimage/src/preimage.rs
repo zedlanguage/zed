@@ -230,9 +230,85 @@ pub fn preimage_listed(
 
 /// The work of [`preimage`] and [`preimage_listed`].
 fn preimage_of(term: &Term, inputs: &Domains, listed: &Listed, demand: &Demand) -> Preimage {
+    if let Some(p) = order_with_literal(term, inputs, demand) {
+        return p;
+    }
     let mut tx = Tx::new();
     let root = tx.terms.add(term);
     preimage_in(&mut tx, root, term, inputs, listed, demand)
+}
+
+/// The preimage of the outcome `demand` under `term` when the term orders its one input
+/// against an integer literal (`x < k`, `k >= x`), the input's domain not empty: the domain
+/// met with the half-line on which the test has that outcome, exact; the box holds no point,
+/// every input empty, when that meet is empty. `None` for any other term or demand.
+// Complexity tradeoff: naive version, the term read by the general path ([`preimage_in`]):
+// a transfer state made, the split by remainders tried, the backward transfer run, about
+// 68,000 instructions a test (COMPLEXITY.md row PA-bind-cost). Used: this form of one input
+// is read at once, one meet, O(p) for `p` pieces of the domain; it gives what the general path
+// gives, compared in `an_order_with_a_literal_has_the_preimage_of_the_general_path`. Any other
+// form takes the general path as before.
+fn order_with_literal(term: &Term, inputs: &Domains, demand: &Demand) -> Option<Preimage> {
+    let Demand::Bool(outcome) = demand else {
+        return None;
+    };
+    let (x, half) = order_set(term, *outcome)?;
+    let Some((name, dom)) = inputs.iter().next() else {
+        return None;
+    };
+    if inputs.len() != 1 || name != x || dom.is_empty() {
+        return None;
+    }
+    Some(Preimage {
+        domains: Domains::from([(x.clone(), dom.meet(&half))]),
+        exact: true,
+        enumerated: false,
+        stops: Vec::new(),
+        relation: None,
+        refusal: None,
+    })
+}
+
+/// For a test `x op k` or `k op x` of a name `x` against an integer literal `k` by an order
+/// `op`, the name and the integers on which the test has the outcome `outcome`: the half-line
+/// the backward transfer finds ([`Walk::back_compare`] after [`Walk::back_prim`]). `None` for
+/// any other term.
+fn order_set(term: &Term, outcome: bool) -> Option<(&Arc<str>, IntervalSet)> {
+    let Term::Prim(p @ (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge), a) = term else {
+        return None;
+    };
+    let p = if outcome { *p } else { negate(*p) };
+    match a.as_slice() {
+        [Term::Var(x), Term::Lit(Value::Int(k))] => Some((x, ray(p, *k))),
+        [Term::Lit(Value::Int(k)), Term::Var(x)] => Some((x, ray(mirror(p), *k))),
+        _ => None,
+    }
+}
+
+/// The summary ([`Pa`]) of `if x op k then a else b` for a test of an input `x` among
+/// `inputs` against an integer literal by an order ([`order_set`]) and integer literals `a`
+/// and `b`, as the transfer finds it ([`Walk::pa_if`]): the constant of the one arm taken
+/// over `x`'s domain, or both sliced to the stretches that take each ([`select`]); the inner
+/// `None` where the transfer finds no summary. `None` for any other term. The caller checks
+/// that the box holds a point (`Begun::void`), as [`Walk::pa`] does.
+fn order_if(t: &Term, inputs: &Domains) -> Option<Option<Pa>> {
+    let Term::If(g, a, b) = t else {
+        return None;
+    };
+    let (Term::Lit(Value::Int(a)), Term::Lit(Value::Int(b))) = (&**a, &**b) else {
+        return None;
+    };
+    let (x, yes) = order_set(g, true)?;
+    let dom = inputs.get(x)?;
+    let (_, no) = order_set(g, false)?;
+    let (yes, no) = (dom.meet(&yes), dom.meet(&no));
+    let (pa, pb) = (Pa::Const(Int::from(*a)), Pa::Const(Int::from(*b)));
+    Some(match (yes.is_empty(), no.is_empty()) {
+        (false, true) => Some(pa),
+        (true, false) => Some(pb),
+        (false, false) => select(x, dom, [Some((&yes, &pa)), Some((&no, &pb))]),
+        (true, true) => None,
+    })
 }
 
 /// The inputs on which the piecewise-affine summary of `term` ([`Pa`]) takes a value in `z`,
@@ -328,15 +404,41 @@ pub fn let_summary(e: &Term, inputs: &Domains, lets: Lets) -> Option<LetPa> {
         }
     }
     let mut sum = Sep::constant(constant);
-    if !rest.is_empty() {
-        let mut tx = Tx::new();
-        tx.lets = lets;
-        let roots: Vec<Tid> = rest.iter().map(|(_, t)| tx.terms.add(t)).collect();
-        let marks = tx.landmarks(inputs, &Demand::Bool(true));
-        tx.start(inputs, marks);
-        for ((c, _), root) in rest.iter().zip(roots) {
-            sum.add_pa(tx.pa(root, ROOT)?.affine(c.clone(), 0), None);
-        }
+    if rest.is_empty() {
+        return Some(LetPa::new(parts, sum));
+    }
+    // A box of no point has no summary ([`Walk::pa`]).
+    let begun = begin(&lets, inputs);
+    if begun.void {
+        return None;
+    }
+    // Complexity tradeoff: naive version, every term read by the transfer: a transfer state
+    // made, the landmarks of its integers found, the terms added and walked, about 170,000
+    // instructions a binding `t_j = t_(j-1) + if n > j then 2 else 1` (COMPLEXITY.md row
+    // PA-bind-cost). Used: an `if` of two integer literals guarded by an order of an input
+    // against an integer literal is summarized at once ([`order_if`]), two meets and the
+    // slicing of [`Walk::pa_select`], O(p) for `p` pieces of the input's domain; the
+    // transfer is made, as before and over every term, only when some term is not of that
+    // form. The summary is the transfer's, compared in
+    // `an_if_of_literals_on_an_order_has_the_summary_of_the_transfer`.
+    let mut lets = Some(lets);
+    let mut transfer: Option<(Tx, Vec<Tid>)> = None;
+    for (i, (c, t)) in rest.iter().enumerate() {
+        let pa = match order_if(t, inputs) {
+            Some(pa) => pa?,
+            None => {
+                let (tx, roots) = transfer.get_or_insert_with(|| {
+                    let mut tx = Tx::new();
+                    tx.lets = lets.take().expect("the transfer is made once");
+                    let roots = rest.iter().map(|(_, t)| tx.terms.add(t)).collect();
+                    let marks = tx.landmarks(inputs, &Demand::Bool(true));
+                    tx.start_from(&begun, marks);
+                    (tx, roots)
+                });
+                tx.pa(roots[i], ROOT)?
+            }
+        };
+        sum.add_pa(pa.affine(c.clone(), 0), None);
     }
     Some(LetPa::new(parts, sum))
 }
@@ -4008,6 +4110,43 @@ struct Begun {
     shadow: Vec<(Arc<str>, Rc<IntervalSet>)>,
 }
 
+/// What [`Tx::start`] makes of the box `inputs` under the summaries `lets`, which depends on
+/// the box alone: the context, with each domain shared, and the run's fields found from it.
+fn begin(lets: &Lets, inputs: &Domains) -> Begun {
+    let reads: Rc<[Arc<dyn SummaryRead>]> = (lets.values())
+        .filter_map(|l| l.read.clone())
+        .collect();
+    let own: Sets = (inputs.iter())
+        .map(|(k, v)| (k.clone(), Rc::new(v.clone())))
+        .collect();
+    // The reads of a run are made in one scope (`let_narrowing`).
+    let shadow: Vec<_> = match reads.first() {
+        Some(r) => (own.iter())
+            .filter(|(k, d)| r.scope_ints(k).is_some_and(|w| *w != ***d))
+            .map(|(k, d)| (k.clone(), d.clone()))
+            .collect(),
+        None => Vec::new(),
+    };
+    // An input of a read of no value has none unless `inputs` gives it another domain.
+    let void = is_empty(inputs)
+        || reads.iter().any(|r| {
+            let given = (shadow.iter())
+                .filter(|(k, _)| r.ints(k).is_some_and(IntervalSet::is_empty))
+                .count();
+            r.total().void > given
+        });
+    Begun {
+        marked: reads.is_empty(),
+        void,
+        shadow,
+        cx: Cx {
+            inputs: own,
+            reads,
+            cut: usize::MAX,
+        },
+    }
+}
+
 /// A context: the inputs it reads, those of the transfer and the parameters of the summaries
 /// it is within.
 #[derive(Clone)]
@@ -4171,43 +4310,10 @@ impl<'t> Tx<'t> {
         self.start_from(&begun, marks);
     }
 
-    /// What [`Tx::start`] makes of the box `inputs`, which depends on the box alone: the
-    /// context, with each domain shared, and the run's fields found from it.
+    /// What [`Tx::start`] makes of the box `inputs` ([`begin`]).
     fn begin(&self, inputs: &Domains) -> Begun {
-        let reads: Rc<[Arc<dyn SummaryRead>]> = (self.lets.values())
-            .filter_map(|l| l.read.clone())
-            .collect();
-        let own: Sets = (inputs.iter())
-            .map(|(k, v)| (k.clone(), Rc::new(v.clone())))
-            .collect();
-        // The reads of a run are made in one scope (`let_narrowing`).
-        let shadow: Vec<_> = match reads.first() {
-            Some(r) => (own.iter())
-                .filter(|(k, d)| r.scope_ints(k).is_some_and(|w| *w != ***d))
-                .map(|(k, d)| (k.clone(), d.clone()))
-                .collect(),
-            None => Vec::new(),
-        };
-        // An input of a read of no value has none unless `inputs` gives it another domain.
-        let void = is_empty(inputs)
-            || reads.iter().any(|r| {
-                let given = (shadow.iter())
-                    .filter(|(k, _)| r.ints(k).is_some_and(IntervalSet::is_empty))
-                    .count();
-                r.total().void > given
-            });
-        Begun {
-            marked: reads.is_empty(),
-            void,
-            shadow,
-            cx: Cx {
-                inputs: own,
-                reads,
-                cut: usize::MAX,
-            },
-        }
+        begin(&self.lets, inputs)
     }
-
     /// Begins a run over the box [`Tx::begin`] made, which shares its domains: `O(s)` for its
     /// `s` shadowed inputs, however large the domains are.
     fn start_from(&mut self, begun: &Begun, marks: Marks) {
@@ -6821,48 +6927,9 @@ impl<'m, 't> Walk<'m, 't> {
                 };
             };
             let dom = tx.cx.get(var)?;
-            // Each arm's treap, and the stretches of inputs that take each arm, in order.
-            let mut trees = Vec::with_capacity(2);
-            let mut spans: Vec<(&End, &End, usize)> = Vec::new();
-            for (taken, r, arm) in [(yes, &gt, pa), (no, &gf, pb)] {
-                if !taken {
-                    continue;
-                }
-                let set = r.dom.get(var).map_or(dom, |s| &**s);
-                if !in_range(set) {
-                    return None;
-                }
-                spans.extend(set.pieces().map(|(lo, hi)| (lo, hi, trees.len())));
-                trees.push(arm.to_treap(dom)?);
-            }
-            spans.sort_by_key(|&(lo, ..)| key(lo));
-            // A hole of the domain between two stretches, where no input lies, is given to
-            // the stretch before it, and two stretches of one arm so joined are one slice, so
-            // that the summary is cut where the arm changes and not at each hole of the
-            // domain ([`Pa::to_treap`]): its values there are read by no one.
-            let mut slices: Vec<(End, End, usize)> = Vec::with_capacity(spans.len());
-            for (lo, hi, arm) in spans {
-                if let Some(last) = slices.last_mut()
-                    && no_input_between(dom, &last.1, lo)
-                {
-                    if last.2 == arm {
-                        last.1 = hi.clone();
-                        continue;
-                    }
-                    last.1 = lo.pred();
-                }
-                slices.push((lo.clone(), hi.clone(), arm));
-            }
-            let mut root = None;
-            for (lo, hi, arm) in slices {
-                if let Some(s) = slice_treap(trees[arm].clone(), &lo, &hi) {
-                    root = join_treap(root, Some(s));
-                }
-            }
-            Some(Pa::Piecewise {
-                var: var.clone(),
-                root,
-            })
+            let (st, sf) = (gt.dom.get(var), gf.dom.get(var));
+            let (st, sf) = (st.map_or(dom, |s| &**s), sf.map_or(dom, |s| &**s));
+            select(var, dom, [yes.then_some((st, pa)), no.then_some((sf, pb))])
         })
     }
 
@@ -10604,6 +10671,55 @@ fn key(e: &End) -> i128 {
     }
 }
 
+/// The summary of the input `var`, of domain `dom`, that is each taken arm's summary on the
+/// inputs of its set ([`Walk::pa_select`], [`order_if`]): the arms' treaps sliced to the
+/// stretches of their sets and joined in order; `None` when a set or the domain has an end
+/// outside [`in_range`].
+fn select(
+    var: &Arc<str>,
+    dom: &IntervalSet,
+    arms: [Option<(&IntervalSet, &Pa)>; 2],
+) -> Option<Pa> {
+    // Each arm's treap, and the stretches of inputs that take each arm, in order.
+    let mut trees = Vec::with_capacity(2);
+    let mut spans: Vec<(&End, &End, usize)> = Vec::new();
+    for (set, arm) in arms.into_iter().flatten() {
+        if !in_range(set) {
+            return None;
+        }
+        spans.extend(set.pieces().map(|(lo, hi)| (lo, hi, trees.len())));
+        trees.push(arm.to_treap(dom)?);
+    }
+    spans.sort_by_key(|&(lo, ..)| key(lo));
+    // A hole of the domain between two stretches, where no input lies, is given to the
+    // stretch before it, and two stretches of one arm so joined are one slice, so that the
+    // summary is cut where the arm changes and not at each hole of the domain
+    // ([`Pa::to_treap`]): its values there are read by no one.
+    let mut slices: Vec<(End, End, usize)> = Vec::with_capacity(spans.len());
+    for (lo, hi, arm) in spans {
+        if let Some(last) = slices.last_mut()
+            && no_input_between(dom, &last.1, lo)
+        {
+            if last.2 == arm {
+                last.1 = hi.clone();
+                continue;
+            }
+            last.1 = lo.pred();
+        }
+        slices.push((lo.clone(), hi.clone(), arm));
+    }
+    let mut root = None;
+    for (lo, hi, arm) in slices {
+        if let Some(s) = slice_treap(trees[arm].clone(), &lo, &hi) {
+            root = join_treap(root, Some(s));
+        }
+    }
+    Some(Pa::Piecewise {
+        var: var.clone(),
+        root,
+    })
+}
+
 /// Whether no member of `dom` lies strictly between `a` and `b`, for `a < b`: `O(log P)` for
 /// the `P` pieces of `dom`.
 fn no_input_between(dom: &IntervalSet, a: &End, b: &End) -> bool {
@@ -13849,6 +13965,127 @@ mod tests {
         }
         let root = (0..nodes).map(|v| find(&mut parent, v)).collect();
         (root, joined)
+    }
+
+    /// The preimage of an order of one input with an integer literal read at once
+    /// ([`order_with_literal`]) is that of the general path ([`preimage_in`]), over random
+    /// domains of one to three pieces, some ends infinite, literals among them the ends of
+    /// `i64`, the four orders, the literal on either side, and both outcomes.
+    #[test]
+    fn an_order_with_a_literal_has_the_preimage_of_the_general_path() {
+        let mut rng = Rng(0x6a09_e667_f3bc_c908);
+        let x: Arc<str> = "x".into();
+        let ops = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge];
+        let (mut read, mut empty) = (0, 0);
+        for _ in 0..4000 {
+            let mut pieces = Vec::new();
+            for _ in 0..1 + rng.below(3) {
+                let lo = rng.below(41) as i64 - 20;
+                let hi = lo + rng.below(10) as i64;
+                let lo = if rng.below(8) == 0 { NegInf } else { End::of(lo) };
+                let hi = if rng.below(8) == 0 { PosInf } else { End::of(hi) };
+                pieces.push((lo, hi));
+            }
+            let inputs = Domains::from([(x.clone(), IntervalSet::from_pieces(pieces))]);
+            let k = match rng.below(20) {
+                0 => i64::MIN,
+                1 => i64::MAX,
+                _ => rng.below(51) as i64 - 25,
+            };
+            let (v, l) = (Term::Var(x.clone()), Term::Lit(Value::Int(k)));
+            let op = ops[rng.below(4) as usize];
+            let term = if rng.below(2) == 0 {
+                Term::Prim(op, vec![v, l])
+            } else {
+                Term::Prim(op, vec![l, v])
+            };
+            let demand = Demand::Bool(rng.below(2) == 0);
+            let Some(fast) = order_with_literal(&term, &inputs, &demand) else {
+                assert!(inputs[&x].is_empty(), "{term} over {inputs:?} is read at once");
+                continue;
+            };
+            let mut tx = Tx::new();
+            let root = tx.terms.add(&term);
+            let general = preimage_in(&mut tx, root, &term, &inputs, NONE_LISTED, &demand);
+            assert_eq!(fast, general, "{term} over {inputs:?}, {demand:?}");
+            read += 1;
+            empty += usize::from(fast.domains[&x].is_empty());
+        }
+        assert!(read > 3000 && empty > 300, "{read} read at once, {empty} empty");
+    }
+
+    /// The summary of an `if` of two integer literals guarded by an order of an input against
+    /// an integer literal, read at once ([`order_if`]), is the transfer's ([`Walk::pa`]),
+    /// over random domains of one to three pieces, some ends infinite or at the end of `i128`
+    /// that [`in_range`] refuses, literals among them the ends of `i64`, the four orders, the
+    /// literal on either side, and a second input the term does not read.
+    #[test]
+    fn an_if_of_literals_on_an_order_has_the_summary_of_the_transfer() {
+        let mut rng = Rng(0xbb67_ae85_84ca_a73b);
+        let (x, y): (Arc<str>, Arc<str>) = ("x".into(), "y".into());
+        let ops = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge];
+        let (mut both, mut one, mut none) = (0, 0, 0);
+        for _ in 0..4000 {
+            let mut pieces = Vec::new();
+            for _ in 0..1 + rng.below(3) {
+                let lo = rng.below(41) as i64 - 20;
+                let hi = lo + rng.below(10) as i64;
+                let end = |v: i64, inf: End, rng: &mut Rng| match rng.below(16) {
+                    0 | 1 => inf,
+                    2 => Fin(Num::from(i128::MAX)),
+                    _ => End::of(v),
+                };
+                let lo = end(lo, NegInf, &mut rng);
+                let hi = end(hi, PosInf, &mut rng);
+                if lo <= hi {
+                    pieces.push((lo, hi));
+                }
+            }
+            let dom = IntervalSet::from_pieces(pieces);
+            if dom.is_empty() {
+                continue;
+            }
+            let mut inputs = Domains::from([(x.clone(), dom)]);
+            if rng.below(4) == 0 {
+                inputs.insert(y.clone(), IntervalSet::range(End::of(0), End::of(5)));
+            }
+            let k = match rng.below(20) {
+                0 => i64::MIN,
+                1 => i64::MAX,
+                _ => rng.below(51) as i64 - 25,
+            };
+            let (v, l) = (Term::Var(x.clone()), Term::Lit(Value::Int(k)));
+            let op = ops[rng.below(4) as usize];
+            let guard = if rng.below(2) == 0 {
+                Term::Prim(op, vec![v, l])
+            } else {
+                Term::Prim(op, vec![l, v])
+            };
+            let arm = |rng: &mut Rng| Term::Lit(Value::Int(rng.below(7) as i64 - 3));
+            let (a, b) = (arm(&mut rng), arm(&mut rng));
+            let term = Term::If(Shared::new(guard), Shared::new(a), Shared::new(b));
+            let fast = order_if(&term, &inputs).expect("the form read at once");
+            let mut tx = Tx::new();
+            let root = tx.terms.add(&term);
+            let marks = tx.landmarks(&inputs, &Demand::Bool(true));
+            tx.start(&inputs, marks);
+            let general = tx.pa(root, ROOT);
+            assert!(
+                fast == general,
+                "{term} over {inputs:?}: {:?} read at once, {:?} by the transfer",
+                fast.as_ref().map(pa_pieces),
+                general.as_ref().map(pa_pieces),
+            );
+            match &fast {
+                Some(Pa::Piecewise { .. }) => both += 1,
+                Some(_) => one += 1,
+                None => none += 1,
+            }
+        }
+        assert!(
+            both > 1000 && one > 500 && none > 100,
+            "{both} sliced, {one} constant, {none} with no summary"
+        );
     }
 
     /// [`unite`] gives the classes of the union that looks for a shared function at each join,

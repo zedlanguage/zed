@@ -237,7 +237,21 @@ fn corners(op: &Op, a: &(End, End), b: &(End, End)) -> (End, End) {
 /// Forward transfer: an interval containing `op` of every choice of members of the operands.
 /// For every operator but `mod`, the hull of the result is the hull of the exact image when
 /// each operand is one interval.
+// Complexity tradeoff: naive version, every operand split at zero and each pair of parts
+// mapped, the images grouped by sign, capped and joined ([`map2`]), with eight vectors made
+// and freed, about 22,000 instructions for `x + 2` over one interval each (COMPLEXITY.md row
+// PA-bind-cost). Used: for `+` and `-` of two operands of one piece each, the two corners of
+// the pieces, O(1): the images of the parts' pairs then fill the one interval between those
+// corners, so the general path gives that interval. Test:
+// `a_sum_or_difference_of_two_pieces_is_what_the_parts_give`.
 pub fn forward(op: &Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
+    if let (Op::Add | Op::Sub, Some(a), Some(b)) = (op, x.first(), y.first())
+        && x.len() == 1
+        && y.len() == 1
+    {
+        let (lo, hi) = corners(op, a, b);
+        return IntervalSet::range(lo, hi);
+    }
     let (xs, ys) = (x.sign_parts(), y.sign_parts());
     let one = [(End::of(0), End::of(0))];
     match op {
@@ -684,6 +698,52 @@ mod tests {
             Op::Min,
             Op::Max,
         ]
+    }
+
+    /// `+` and `-` of two sets of one piece each, read from the pieces' corners, are what the
+    /// general path of [`forward`] gives from the parts split at zero, on every pair of
+    /// operands and on random pieces with large and infinite ends.
+    #[test]
+    fn a_sum_or_difference_of_two_pieces_is_what_the_parts_give() {
+        let general = |op: &Op, x: &IntervalSet, y: &IntervalSet| {
+            map2(&x.sign_parts(), &y.sign_parts(), |a, b| {
+                vec![corners(op, a, b)]
+            })
+        };
+        let mut pairs = Vec::new();
+        for x in operands() {
+            for y in operands() {
+                pairs.push((x.clone(), y));
+            }
+        }
+        let mut seed = 0x510e_527f_ade6_82d1_u64;
+        let mut below = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let end = |below: &mut dyn FnMut(u64) -> u64| match below(10) {
+            0 => NegInf,
+            1 => PosInf,
+            2 => End::from(i128::MAX - below(5) as i128),
+            3 => End::from(i128::MIN + below(5) as i128),
+            _ => End::of(below(41) as i64 - 20),
+        };
+        for _ in 0..4000 {
+            let (a, b, c, d) = (end(&mut below), end(&mut below), end(&mut below), end(&mut below));
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            let (lo2, hi2) = if c <= d { (c, d) } else { (d, c) };
+            pairs.push((IntervalSet::range(lo, hi), IntervalSet::range(lo2, hi2)));
+        }
+        let mut one = 0;
+        for op in [Op::Add, Op::Sub] {
+            for (x, y) in &pairs {
+                one += usize::from(x.len() == 1 && y.len() == 1);
+                assert_eq!(forward(&op, x, y), general(&op, x, y), "{op:?} {x:?} {y:?}");
+            }
+        }
+        assert!(one > 8000, "{one} pairs of one piece each");
     }
 
     #[test]
