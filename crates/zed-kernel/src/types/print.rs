@@ -416,7 +416,7 @@ fn signed<A: super::bdd::Literal>(p: &Part<A>, not: bool) -> (Part<A>, bool) {
     loop {
         match p {
             Part::Bdd(b) => return (Part::Bdd(if not { b.not() } else { b.clone() }), false),
-            Part::Expr(e) => match (&e.form, not) {
+            Part::Expr(e) => match (e.form(), not) {
                 (Form::Not(q), true) => {
                     p = q;
                     not = false;

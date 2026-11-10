@@ -1053,8 +1053,14 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             if key.0 == key.1 || equal.contains(&key) {
                 return Ordering::Equal;
             }
-            let (x, y) = (a.form.operands(), b.form.operands());
-            let c = a.digest.cmp(&b.digest).then_with(|| x.0.cmp(&y.0));
+            // The digests are compared first: an exclusive or's halves are made only when the
+            // digests tie (`Expr::form`).
+            let c = a.digest.cmp(&b.digest);
+            if c != Ordering::Equal {
+                return c;
+            }
+            let (x, y) = (a.form().operands(), b.form().operands());
+            let c = x.0.cmp(&y.0);
             if c == Ordering::Equal {
                 steps.push(Step::Equal(key.0, key.1));
                 if let (Some(p), Some(q)) = (x.2, y.2) {

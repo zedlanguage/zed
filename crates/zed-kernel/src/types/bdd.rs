@@ -161,8 +161,8 @@ impl<A: Literal> set::Atom for A {
     }
 }
 /// An expression leaves its thread's table of exclusive ors, or of the exclusive ors inside a
-/// tree node's, if it is in one, and its operands and complement are freed in a loop, as a
-/// cell's next cell is.
+/// tree node's, if it is in one, and its operands, if they were made, and complement are freed
+/// in a loop, as a cell's next cell is.
 impl<A: Literal> Drop for Expr<A> {
     fn drop(&mut self) {
         let is_self = |w: &Weak<Expr<A>>| std::ptr::eq(w.as_ptr(), self);
@@ -179,7 +179,9 @@ impl<A: Literal> Drop for Expr<A> {
                 None => {}
             }
         }
-        free_form(&mut self.form);
+        if let Some(mut f) = self.form.take() {
+            free_form(&mut f);
+        }
         if let Some(Source::Form(mut f)) = self.source.take() {
             free_form(&mut f);
         }
@@ -566,7 +568,10 @@ pub(super) struct Expr<A: Literal> {
     /// The node's id, unique among the nodes of the process.
     pub(super) id: u64,
     pub(super) digest: u64,
-    pub(super) form: Form<A>,
+    /// The connective and its operands ([`Expr::form`]). An exclusive or's two halves are made
+    /// when the form is first read, from `xor` (module `xor`); every other form is set when the
+    /// expression is made.
+    form: std::sync::OnceLock<Form<A>>,
     /// The complement, made once and held, so that a chain of choices is negated in steps, not
     /// walked. It is not set when the complement holds the expression (`!e` made as `Not(e)`,
     /// or the complement made first and holding it); `back` then finds it.
@@ -590,6 +595,23 @@ pub(super) struct Expr<A: Literal> {
 }
 
 impl<A: Literal> Expr<A> {
+    /// The connective and its operands, an exclusive or's halves made on the first read.
+    pub(super) fn form(&self) -> &Form<A> {
+        self.form.get_or_init(|| {
+            let (pair, constant) = (self.xor.as_ref())
+                .expect("only an exclusive or is made without its form (`xor::half`)");
+            let form = xor::halves(pair, *constant);
+            debug_assert!(form.digest() == self.digest, "{}", self.id);
+            form
+        })
+    }
+
+    /// Whether the form is `Or`, read without making an exclusive or's halves: an exclusive or
+    /// made without its form is the union of its halves.
+    fn is_or(&self) -> bool {
+        self.form.get().is_none_or(|f| matches!(f, Form::Or(..)))
+    }
+
     /// The complement as kept: held, or made earlier and still held by someone.
     fn known(&self) -> Option<Part<A>> {
         self.complement.get().cloned().or_else(|| {
@@ -612,7 +634,9 @@ impl<A: Literal> Expr<A> {
     /// Whether the expression holds `e` as its operand or its complement.
     fn holds(&self, e: &Arc<Expr<A>>) -> bool {
         let is_e = |p: &Part<A>| matches!(p, Part::Expr(x) if Arc::ptr_eq(x, e));
-        matches!(&self.form, Form::Not(q) if is_e(q)) || self.complement.get().is_some_and(is_e)
+        // A form not yet made is an exclusive or's `Or`, so no `Not`.
+        matches!(self.form.get(), Some(Form::Not(q)) if is_e(q))
+            || self.complement.get().is_some_and(is_e)
     }
 
     /// Keeps `n`, made as the complement of the expression, as its complement:
@@ -648,7 +672,26 @@ pub(super) enum Form<A: Literal> {
     And(Part<A>, Part<A>),
 }
 
+/// The digest of the expression `a | b` (`Op::Or`) or `a & b` (`Op::And`) whose operands, in
+/// that order, have the digests `a` and `b`.
+fn joined_digest(op: Op, a: u64, b: u64) -> u64 {
+    let tag = match op {
+        Op::Or => 9,
+        Op::And => 10,
+    };
+    mix(mix(tag, a), b)
+}
+
 impl<A: Literal> Form<A> {
+    /// The digest of an expression of the form, made from its operands' digests.
+    fn digest(&self) -> u64 {
+        match self {
+            Form::Not(p) => mix(8, p.digest()),
+            Form::Or(a, b) => joined_digest(Op::Or, a.digest(), b.digest()),
+            Form::And(a, b) => joined_digest(Op::And, a.digest(), b.digest()),
+        }
+    }
+
     /// Whether `e` is an operand of the form.
     fn holds(&self, e: &Arc<Expr<A>>) -> bool {
         let is_e = |p: &Part<A>| matches!(p, Part::Expr(x) if Arc::ptr_eq(x, e));
@@ -716,11 +759,21 @@ impl<A: Literal> Part<A> {
 
     /// The expression of `form`, the one form of the exclusive or `xor` when given.
     fn expr_xor(form: Form<A>, xor: Option<(Arc<xor::Pair<A>>, bool)>) -> Part<A> {
-        let digest = match &form {
-            Form::Not(p) => mix(8, p.digest()),
-            Form::Or(a, b) => mix(mix(9, a.digest()), b.digest()),
-            Form::And(a, b) => mix(mix(10, a.digest()), b.digest()),
-        };
+        Part::made(form.digest(), std::sync::OnceLock::from(form), xor)
+    }
+
+    /// The exclusive or `xor` of the digest `digest`, its halves made when its form is first
+    /// read ([`Expr::form`]).
+    fn expr_unmade(digest: u64, xor: (Arc<xor::Pair<A>>, bool)) -> Part<A> {
+        Part::made(digest, std::sync::OnceLock::new(), Some(xor))
+    }
+
+    /// The expression of `digest` and `form`, the exclusive or `xor` when given.
+    fn made(
+        digest: u64,
+        form: std::sync::OnceLock<Form<A>>,
+        xor: Option<(Arc<xor::Pair<A>>, bool)>,
+    ) -> Part<A> {
         Part::Expr(Arc::new(Expr {
             id: NEXT.fetch_add(1, Atomic::Relaxed),
             digest,
@@ -788,11 +841,13 @@ impl<A: Literal> Part<A> {
     /// under `op`.
     fn operands(&self, op: Op) -> Option<Operands<'_, A>> {
         match (self, op) {
-            (Part::Expr(e), Op::And) => match &e.form {
+            // An `Or` is no `And`, read without making an exclusive or's halves.
+            (Part::Expr(e), Op::And) if e.is_or() => None,
+            (Part::Expr(e), Op::And) => match e.form() {
                 Form::And(a, b) => Some(Operands::Two(a, b)),
                 _ => None,
             },
-            (Part::Expr(e), Op::Or) => match &e.form {
+            (Part::Expr(e), Op::Or) => match e.form() {
                 Form::Or(a, b) => Some(Operands::Two(a, b)),
                 _ => None,
             },
@@ -855,7 +910,7 @@ impl<'m> Connect<'m> {
             // An exclusive or's complement is made again as it was first made beside it, so
             // that the two are equal as built.
             xor::mate(pair, !constant)
-        } else if let Form::Not(q) = &e.form {
+        } else if let Form::Not(q) = e.form() {
             if let Part::Expr(m) = q {
                 let _ = m.source.set(Source::NotOfThis);
             }
@@ -868,9 +923,9 @@ impl<'m> Connect<'m> {
             let n = self.choose(&c, &x, &y).await;
             if let Part::Expr(m) = &n
                 && !m.holds(e)
-                && !e.form.holds(m)
+                && !e.form().holds(m)
             {
-                let _ = m.source.set(Source::Form(e.form.clone()));
+                let _ = m.source.set(Source::Form(e.form().clone()));
             }
             n
         } else {
@@ -1004,7 +1059,10 @@ impl<'m> Connect<'m> {
         op: Op,
     ) -> Option<(Part<A>, Part<A>, Part<A>)> {
         let inner = if op == Op::Or { Op::And } else { Op::Or };
-        let (l, r) = (a.operands(inner)?, b.operands(inner)?);
+        // `b`'s operands first: when it has none, an exclusive or `a` is not made to show its
+        // halves.
+        let r = b.operands(inner)?;
+        let l = a.operands(inner)?;
         // The literal of the chain `d` that `n` is, looked up in `O(log k)`.
         let within = |n: &Part<A>, d: &Bdd<A>| match n {
             Part::Bdd(n) => n
@@ -1083,10 +1141,17 @@ impl<'m> Connect<'m> {
     }
 
     /// The choice `p` is in its one form. Only an expression is one, since an operand of a
-    /// chain's union is a literal, which has no operands.
+    /// chain's union is a literal, which has no operands; and an exclusive or in its one form
+    /// is none, since both of its halves' operands have their complements in the other half,
+    /// so two conditions fit (`xor::meet`). It is answered without making its halves.
     async fn choice<A: Literal>(&'m self, p: &Part<A>) -> Option<(Part<A>, Part<A>, Part<A>)> {
         let Part::Expr(e) = p else { return None };
-        let Form::Or(a, b) = &e.form else { return None };
+        if e.xor.is_some() {
+            return None;
+        }
+        let Form::Or(a, b) = e.form() else {
+            return None;
+        };
         let (c, x, y) = self.choice_of(a, b, Op::Or).await?;
         let (d, same) = self.condition(&c).await;
         Some(if same { (d, x, y) } else { (d, y, x) })
@@ -1115,20 +1180,20 @@ impl<A: Literal> Part<A> {
                 Job::Part(Part::Expr(e)) => match memo.get(&e.id) {
                     Some(v) => values.push(*v),
                     None => {
-                        let (_, a, _) = e.form.operands();
+                        let (_, a, _) = e.form().operands();
                         jobs.push(Job::First(e));
                         jobs.push(Job::Part(a));
                     }
                 },
                 Job::First(e) => {
                     let v = values.pop().expect("the first operand's value");
-                    match &e.form {
+                    match e.form() {
                         Form::Not(_) => {
                             memo.insert(e.id, !v);
                             values.push(!v);
                         }
                         Form::Or(_, b) | Form::And(_, b) => {
-                            if v == matches!(e.form, Form::Or(..)) {
+                            if v == matches!(e.form(), Form::Or(..)) {
                                 memo.insert(e.id, v);
                                 values.push(v);
                             } else {
@@ -1192,7 +1257,7 @@ impl<A: Literal> Part<A> {
                 Part::Bdd(b) => Some(bdd(b, holds, nodes)),
                 Part::Expr(x) => memo.get(&x.id).copied(),
             };
-            let operands: Vec<&Part<A>> = match &e.form {
+            let operands: Vec<&Part<A>> = match e.form() {
                 Form::Not(a) => vec![a],
                 Form::Or(a, b) | Form::And(a, b) => vec![a, b],
             };
@@ -1210,7 +1275,7 @@ impl<A: Literal> Part<A> {
                 continue;
             }
             let vs: Vec<Option<bool>> = vs.into_iter().flatten().collect();
-            let v = match &e.form {
+            let v = match e.form() {
                 Form::Not(_) => vs[0].map(|v| !v),
                 Form::Or(..) => match (vs[0], vs[1]) {
                     (Some(true), _) | (_, Some(true)) => Some(true),
@@ -1270,7 +1335,7 @@ impl<A: Literal> Part<A> {
             ids.insert(e.id, exprs.len());
             exprs.push(e.clone());
             uses.push(1);
-            match &e.form {
+            match e.form() {
                 Form::Not(a) => stack.push(a.clone()),
                 // The first operand is pushed last, so it is walked first.
                 Form::Or(a, b) | Form::And(a, b) => {
@@ -1287,7 +1352,7 @@ impl<A: Literal> Part<A> {
             Part::Expr(x) => Some(ids[&x.id]),
             Part::Bdd(_) => None,
         };
-        let operands = |e: &Expr<A>| match &e.form {
+        let operands = |e: &Expr<A>| match e.form() {
             Form::Not(a) => [Some(a.clone()), None],
             Form::Or(a, b) | Form::And(a, b) => [Some(a.clone()), Some(b.clone())],
         };
@@ -1310,7 +1375,7 @@ impl<A: Literal> Part<A> {
                     Bdd::List(..) => None,
                 },
             };
-            match &e.form {
+            match e.form() {
                 Form::Not(a) => value(a).map(|v| !v),
                 Form::Or(a, b) => match (value(a), value(b)) {
                     (Some(true), _) | (_, Some(true)) => Some(true),
@@ -1394,7 +1459,7 @@ impl<A: Literal> Part<A> {
                 if *n > 1 {
                     continue;
                 }
-                match &e.form {
+                match e.form() {
                     Form::Not(a) => stack.push(a.clone()),
                     // The first operand is pushed last, so it is walked first.
                     Form::Or(a, b) | Form::And(a, b) => {
@@ -1455,7 +1520,7 @@ impl<A: Literal> Part<A> {
             if memo.contains_key(&e.id) {
                 continue;
             }
-            let (_, a, b) = e.form.operands();
+            let (_, a, b) = e.form().operands();
             if !ready {
                 stack.push((e, true));
                 // The first operand is pushed last, so it is rebuilt first.
@@ -1478,7 +1543,7 @@ impl<A: Literal> Part<A> {
                 Part::Bdd(_) => base(q).expect("`base` decides every diagram"),
             };
             let (a, b) = (get(a), b.map(get));
-            let r = match (&e.form, b) {
+            let r = match (e.form(), b) {
                 (Form::Or(..), Some(b)) => a.zip(&b, Op::Or),
                 (Form::And(..), Some(b)) => a.zip(&b, Op::And),
                 _ => a.not(),
@@ -1548,7 +1613,7 @@ impl<A: Literal> Part<A> {
             if exprs.contains_key(&e.id) {
                 continue;
             }
-            let operands: Vec<&Part<A>> = match &e.form {
+            let operands: Vec<&Part<A>> = match e.form() {
                 Form::Not(a) => vec![a],
                 Form::Or(a, b) | Form::And(a, b) => vec![a, b],
             };
@@ -1570,7 +1635,7 @@ impl<A: Literal> Part<A> {
                 Part::Bdd(b @ Bdd::List(..)) => nodes[&b.id()].clone(),
                 Part::Bdd(b) => of_bdd(b),
             };
-            let sets = match &e.form {
+            let sets = match e.form() {
                 Form::Not(a) => {
                     let (off, on) = get(a);
                     (on, off)
@@ -1607,7 +1672,7 @@ impl<A: Literal> Part<A> {
         let mut stack = vec![self];
         while let Some(p) = stack.pop() {
             if let Part::Expr(e) = p
-                && let Form::Or(a, b) = &e.form
+                && let Form::Or(a, b) = e.form()
             {
                 if seen.insert(e.id) {
                     stack.push(b);
@@ -1645,7 +1710,7 @@ impl<A: Literal> Part<A> {
                 }
                 Part::Expr(e) => {
                     if seen.insert(e.id) {
-                        let (_, a, b) = e.form.operands();
+                        let (_, a, b) = e.form().operands();
                         stack.extend(b);
                         stack.push(a);
                     }
@@ -1679,7 +1744,7 @@ impl<A: Literal> Part<A> {
                     if !seen.insert(e.id) {
                         continue;
                     }
-                    let Form::Or(a, b) = &e.form else {
+                    let Form::Or(a, b) = e.form() else {
                         return None;
                     };
                     stack.push(b);
@@ -1718,7 +1783,7 @@ impl<A: Literal> Part<A> {
     pub(super) fn view(&self) -> Result<&Bdd<A>, &Form<A>> {
         match self {
             Part::Bdd(b) => Ok(b),
-            Part::Expr(e) => Err(&e.form),
+            Part::Expr(e) => Err(e.form()),
         }
     }
 }
@@ -1818,6 +1883,12 @@ mod xor {
     //! as are those of its subtrees. A set with a literal added or removed has `O(log n)` new
     //! tree nodes in expectation, and only those take new expressions, each in constant time.
     //!
+    //! An exclusive or is made with its digest alone, computed from the digests of `p`, `q` and
+    //! their complements, and its two meets are made when its form is first read
+    //! ([`Expr::form`], [`halves`]): the digest, the order of parts and the tables need no more,
+    //! and most are never read. One of two literals is made whole at once, since its meets are
+    //! lists (step KERNEL-parity-lazy-halves).
+    //!
     //! The table holds each node weakly, and a node leaves it when it is dropped (step
     //! TABLE-life). The two expressions made beside each other share the halves they were made
     //! from (`Pair`), and the one dropped first is made again from them when its complement is
@@ -1836,7 +1907,7 @@ mod xor {
     use std::sync::{Arc, Weak};
 
     use super::set::{self, Set, Tree};
-    use super::{Bdd, Expr, Form, KeyHasher, Literal, Op, Operands, Owned, Part};
+    use super::{Bdd, Expr, Form, KeyHasher, Literal, Op, Operands, Owned, Part, joined_digest};
 
     /// An exclusive or: the set of its atoms, each taken, and the constant joined to them.
     pub(super) type Tag<A> = (Arc<Set<A>>, bool);
@@ -1844,8 +1915,8 @@ mod xor {
     /// The halves `p` and `q` that an exclusive or and its complement are made from, and the set of
     /// atoms they are the one form of, if they are.
     pub(super) struct Pair<A: Literal> {
-        p: Part<A>,
-        q: Part<A>,
+        pub(super) p: Part<A>,
+        pub(super) q: Part<A>,
         pub(super) atoms: Option<Arc<Set<A>>>,
     }
 
@@ -2033,7 +2104,16 @@ mod xor {
 
     /// The exclusive or of `pair` with `constant`: `p&!q | !p&q` when `false`, `p&q | !p&!q` when
     /// `true`, `np` and `nq` the halves' complements; kept in the thread's table when the pair is
-    /// the one form of a set.
+    /// the one form of a set. Its two meets are made when its form is first read
+    /// ([`halves`]), unless both are lists, which are not expressions and whose digests are
+    /// those of their contents.
+    // Complexity tradeoff: the naive version makes the two meets with the union, three
+    // expressions where one is kept, and frees them with it; most are never read, since the
+    // digest, the order and the tables need only the union's digest, which is made here from the
+    // operands' digests in constant time without allocating. A meet is made on its first read, a
+    // lock and the two meets, the same work as before, so no input costs more than a constant
+    // more. Measured on parity built a literal at a time (KERNEL-parity-lazy-halves, COMPLEXITY
+    // row of that name).
     fn half<A: Literal>(
         pair: &Arc<Pair<A>>,
         constant: bool,
@@ -2041,18 +2121,53 @@ mod xor {
         nq: &Part<A>,
     ) -> Part<A> {
         let (p, q) = (&pair.p, &pair.q);
-        let (x, y) = if constant {
-            (meet(p, q), meet(np, nq))
+        let r = if let (Part::Bdd(_), Part::Bdd(_)) = (p, q) {
+            let (x, y) = meets(pair, constant, np, nq);
+            Part::expr_xor(Form::Or(x, y), Some((pair.clone(), constant)))
         } else {
-            (meet(p, nq), meet(np, q))
+            // Each meet has an operand that is an expression, as `p` or `q` is one and so is its
+            // complement. A digest made of two equal digests is the same in either order, so
+            // the order of contents, which decides a tie, is not needed for it.
+            let meet_digest = |a: &Part<A>, b: &Part<A>| {
+                let (a, b) = (a.digest(), b.digest());
+                joined_digest(Op::And, a.min(b), a.max(b))
+            };
+            let (x, y) = if constant {
+                (meet_digest(p, q), meet_digest(np, nq))
+            } else {
+                (meet_digest(p, nq), meet_digest(np, q))
+            };
+            let digest = joined_digest(Op::Or, x.min(y), x.max(y));
+            Part::expr_unmade(digest, (pair.clone(), constant))
         };
-        let (x, y) = if x.before(&y) { (x, y) } else { (y, x) };
-        let r = Part::expr_xor(Form::Or(x, y), Some((pair.clone(), constant)));
         if let (Some(s), Part::Expr(e)) = (&pair.atoms, &r) {
             // An entry left by a node dropped on another thread is replaced.
             A::table(|t| t.xors.insert((s.id, constant), Arc::downgrade(e)));
         }
         r
+    }
+
+    /// The form of the exclusive or of `pair` with `constant` ([`half`]): its two meets, made.
+    pub(super) fn halves<A: Literal>(pair: &Pair<A>, constant: bool) -> Form<A> {
+        let (x, y) = meets(pair, constant, &pair.p.not(), &pair.q.not());
+        Form::Or(x, y)
+    }
+
+    /// The two meets of the exclusive or of `pair` with `constant`, in their order, `np` and `nq`
+    /// the complements of the pair's parts.
+    fn meets<A: Literal>(
+        pair: &Pair<A>,
+        constant: bool,
+        np: &Part<A>,
+        nq: &Part<A>,
+    ) -> (Part<A>, Part<A>) {
+        let (p, q) = (&pair.p, &pair.q);
+        let (x, y) = if constant {
+            (meet(p, q), meet(np, nq))
+        } else {
+            (meet(p, nq), meet(np, q))
+        };
+        if x.before(&y) { (x, y) } else { (y, x) }
     }
 
     /// `a & b` for `a` and `b` each a literal or an exclusive or made by [`half`] (or the
@@ -2099,11 +2214,14 @@ mod xor {
 
     /// The two operands of `p` under `op`, each an exclusive or in its one form.
     fn pair<A: Literal>(p: &Part<A>, op: Op) -> Option<[Tag<A>; 2]> {
-        // A chain is listed only when it has two literals, so a long one costs constant time here.
-        if let Part::Bdd(b) = p
-            && b.chain_len(op) != Some(2)
-        {
-            return None;
+        match p {
+            // A chain is listed only when it has two literals, so a long one costs constant time
+            // here.
+            Part::Bdd(b) if b.chain_len(op) != Some(2) => return None,
+            // An exclusive or is a union, and its halves are meets, so neither is one in its one
+            // form; its halves are not made to show it.
+            Part::Expr(e) if e.xor.is_some() => return None,
+            _ => {}
         }
         match p.operands(op)? {
             Operands::Two(x, y) => Some([x.xor_tag()?, y.xor_tag()?]),

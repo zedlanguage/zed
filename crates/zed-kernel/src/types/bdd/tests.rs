@@ -934,7 +934,10 @@ fn parity_built_a_literal_at_a_time_scales() {
     // 508 tests (KERNEL-parity-cost). So the sizes are now 1,024 and 8,192 literals, where the
     // limit is 11.44: 2.26G and 23.36G instructions (10.3 times), 221M and 2.31G bytes (10.4
     // times), 11 s at load 30. Rebuilding every tree node on each literal fails the check at
-    // 128 and 1,024 literals, by 58.6 times the bytes.
+    // 128 and 1,024 literals, by 58.6 times the bytes. Making each exclusive or's two meets
+    // only when its form is read (KERNEL-parity-lazy-halves) takes 1.96G and 20.45G
+    // instructions to 1.48G and 15.31G (10.3 times), 221M and 2.31G bytes to 138M and 1.39G
+    // (10.1 times), and 10.4 s to 7.0 s at load 11 to 22.
     let n = 1 << 10;
     let lits = scaling::inputs(n, |m| {
         (0..SHAPES)
@@ -1588,7 +1591,7 @@ fn a_choice_between_chains_is_the_one_found_by_listing_both() {
     for other in [y, z] {
         let u = Part::Bdd(x.clone()).zip(&Part::Bdd(other.clone()), Op::Or);
         assert!(
-            matches!(&u, Part::Expr(e) if matches!(e.form, Form::Or(..))),
+            matches!(&u, Part::Expr(e) if matches!(e.form(), Form::Or(..))),
             "{u:?}"
         );
         for bits in 0..1u32 << atoms.len() {
@@ -1655,6 +1658,103 @@ fn an_exclusive_or_built_on_another_thread_is_recognized() {
     assert!(d.xor_tag().is_some());
     assert_eq!(c, d);
     assert!(c.xor_tag().is_some(), "{c:?}");
+}
+
+/// Whether `p` is an expression whose form is not made yet (`Expr::form`).
+fn unmade(p: &Part<Row>) -> bool {
+    matches!(p, Part::Expr(e) if e.form.get().is_none())
+}
+
+/// The expression of `p`.
+fn expr_of(p: &Part<Row>) -> &Arc<Expr<Row>> {
+    match p {
+        Part::Expr(e) => e,
+        Part::Bdd(_) => unreachable!("an expression"),
+    }
+}
+
+#[test]
+fn the_halves_of_an_exclusive_or_are_made_on_first_read() {
+    // Item KERNEL-parity-lazy-halves: an exclusive or with an operand that is an expression is
+    // made with its digest alone, and its two meets when its form is first read; one of two
+    // literals, whose meets are lists, is made whole at once. The form made on first read is
+    // the one `zip` makes from the same pair, `p&!q | !p&q` or `p&q | !p&!q`, its operands in
+    // their order, and its digest is the one the expression was made with.
+    let two = parity(9500, 2);
+    assert!(!unmade(&two) && !unmade(&two.not()));
+    for k in 3..12 {
+        let x = parity(9600 + 20 * k, k);
+        // Ordering two exclusive ors of distinct digests reads no form.
+        let y = parity(9601 + 20 * k, k);
+        assert!(x.digest() != y.digest() && x != y);
+        for p in [&x, &x.not(), &y] {
+            assert!(unmade(p), "{k}");
+        }
+        for p in [x.clone(), x.not()] {
+            let e = expr_of(&p);
+            let (pair, constant) = e.xor.as_ref().expect("an exclusive or");
+            let (q, r) = (&pair.p, &pair.q);
+            let (a, b) = match constant {
+                true => (q.zip(r, Op::And), q.not().zip(&r.not(), Op::And)),
+                false => (q.zip(&r.not(), Op::And), q.not().zip(r, Op::And)),
+            };
+            let (a, b) = if a.before(&b) { (a, b) } else { (b, a) };
+            let Form::Or(u, v) = e.form() else {
+                panic!("an exclusive or is a union: {p:?}")
+            };
+            assert!(*u == a && *v == b, "{k} {constant}");
+            assert_eq!(joined_digest(Op::Or, a.digest(), b.digest()), e.digest);
+            assert!(!unmade(&p));
+        }
+        for bits in 0..1u32 << k {
+            let holds =
+                |a: &Row| (0..k).any(|i| bits >> i & 1 == 1 && *a == atom(9600 + 20 * k + i));
+            assert_eq!(x.eval(&holds), odd(bits, k as u32), "{k} {bits:b}");
+        }
+    }
+}
+
+#[test]
+fn an_exclusive_or_made_again_from_its_pair_is_made_on_first_read() {
+    // The complement of an exclusive or whose own complement was dropped is made again from
+    // their pair (`xor::mate`), with its digest alone, equal to the one dropped.
+    let first = parity(9900, 9);
+    let (digest, text) = (first.digest(), format!("{first:?}"));
+    let n = first.not();
+    assert!(expr_of(&n).known().is_some());
+    drop(first);
+    assert!(expr_of(&n).known().is_none());
+    let again = n.not();
+    assert!(unmade(&again));
+    assert_eq!(again.digest(), digest);
+    assert_eq!(format!("{again:?}"), text);
+    assert_eq!(again.not().id(), n.id());
+}
+
+#[test]
+fn the_halves_of_an_exclusive_or_read_on_many_threads_are_made_once() {
+    // An exclusive or shared by threads that read its form at once: each reads the one form,
+    // made by one of them (`OnceLock`).
+    const THREADS: usize = 8;
+    let x = parity(9950, 10);
+    assert!(unmade(&x));
+    let barrier = std::sync::Barrier::new(THREADS);
+    let seen: Vec<usize> = std::thread::scope(|s| {
+        let threads: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let (x, barrier) = (&x, &barrier);
+                s.spawn(move || {
+                    barrier.wait();
+                    std::ptr::from_ref(expr_of(x).form()).addr()
+                })
+            })
+            .collect();
+        (threads.into_iter())
+            .map(|h| h.join().expect("the thread runs without panicking"))
+            .collect()
+    });
+    assert!(seen.iter().all(|&a| a == seen[0]), "{seen:?}");
+    assert_eq!(expr_of(&x).form().digest(), x.digest());
 }
 
 /// What `exclusive_ors_shared_by_threads_are_the_ones_built_on_one` records of a part: its
