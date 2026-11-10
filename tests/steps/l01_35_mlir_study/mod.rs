@@ -81,8 +81,19 @@ fn variants(src: &str, name: &str) -> Vec<String> {
     panic!("`pub enum {name}` has no closing brace")
 }
 
-/// The rows of the Operations table that the variants of `Op` call for: the lower-case variant
-/// name, as the text form writes it; `port read` and `port push` for the two port operations,
+/// The name the text form writes for variant `v`: its first letter in lower case, the rest as
+/// written, so `OrderedValues` is `orderedValues`, as `zir::op_name` and `zir::kind_name` write
+/// it and as DESIGN.md names the derived node.
+fn text_name(v: &str) -> String {
+    let mut chars = v.chars();
+    chars
+        .next()
+        .map(|c| c.to_lowercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+/// The rows of the Operations table that the variants of `Op` call for: the variant name as the
+/// text form writes it (`text_name`); `port read` and `port push` for the two port operations,
 /// which the text form writes under one name with a direction; and for `Op::Derived` one row
 /// per variant of `Derived`, since each derived node lowers in its own way.
 fn operation_rows(src: &str) -> BTreeSet<String> {
@@ -92,10 +103,10 @@ fn operation_rows(src: &str) -> BTreeSet<String> {
             "Read" => want.insert("port read".to_string()),
             "Push" => want.insert("port push".to_string()),
             "Derived" => {
-                want.extend(variants(src, "Derived").iter().map(|d| d.to_lowercase()));
+                want.extend(variants(src, "Derived").iter().map(|d| text_name(d)));
                 continue;
             }
-            _ => want.insert(v.to_lowercase()),
+            _ => want.insert(text_name(&v)),
         };
     }
     want
@@ -105,7 +116,7 @@ fn operation_rows(src: &str) -> BTreeSet<String> {
 fn region_rows(src: &str) -> BTreeSet<String> {
     variants(src, "RegionKind")
         .iter()
-        .map(|v| v.to_lowercase())
+        .map(|v| text_name(v))
         .collect()
 }
 
@@ -142,8 +153,23 @@ fn every_region_kind_has_a_form() {
 }
 
 #[test]
+fn a_variant_of_several_words_keeps_its_inner_capitals() {
+    // The text form writes `orderedValues`, not `orderedvalues`: only the first letter drops
+    // to lower case.
+    for (variant, name) in [
+        ("OrderedValues", "orderedValues"),
+        ("Reindex", "reindex"),
+        ("If", "if"),
+        ("X", "x"),
+        ("", ""),
+    ] {
+        assert_eq!(text_name(variant), name);
+    }
+}
+
+#[test]
 fn the_ports_and_the_derived_nodes_have_their_own_rows() {
-    // The two exceptions to the lower-case rule: `Op::Read` and `Op::Push` are written `port`
+    // The two exceptions to the `text_name` rule: `Op::Read` and `Op::Push` are written `port`
     // with a direction, and `Op::Derived` stands for the variants of `Derived`.
     let src = zir_source();
     let want = operation_rows(&src);
@@ -162,7 +188,7 @@ fn the_ports_and_the_derived_nodes_have_their_own_rows() {
     let derived = variants(&src, "Derived");
     assert!(!derived.is_empty());
     for d in &derived {
-        assert!(want.contains(&d.to_lowercase()), "Derived::{d} has no row");
+        assert!(want.contains(&text_name(d)), "Derived::{d} has no row");
     }
 }
 
