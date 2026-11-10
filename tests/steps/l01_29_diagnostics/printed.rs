@@ -51,10 +51,10 @@ fn printed_by(text: &str) -> (Vec<(Ty, String)>, String) {
 }
 
 /// What type syntax states of `t`: the atoms a named family holds, a positional parameter's name,
-/// a default, a body's needs, the variables a signature binds and whether it is a family are
-/// not written in a type. The payloads of atoms are (L29-print). A type variable is written
-/// only with a bound of carriers: one that no signature around it bounds so, or whose bound
-/// holds other values, is `_` (DESIGN.md L1.26).
+/// a default, a body's needs, the variables a signature binds, whether it is a family and
+/// whether its keys are one integer interval are not written in a type. The payloads of atoms
+/// are (L29-print). A type variable is written only with a bound of carriers: one that no
+/// signature around it bounds so, or whose bound holds other values, is `_` (DESIGN.md L1.26).
 fn stated(t: &Ty) -> Ty {
     stated_in(t, Arc::default())
 }
@@ -106,6 +106,7 @@ fn stated_in(t: &Ty, scope: Arc<HashSet<Arc<str>>>) -> Ty {
             s.needs.clear();
             s.own.clear();
             s.data = false;
+            s.dense = false;
             for a in s.arrows.iter_mut() {
                 stack.extend(a.params.iter_mut().map(|t| (t, scope.clone())));
                 stack.push((&mut a.result, scope.clone()));
