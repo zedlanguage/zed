@@ -1756,9 +1756,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRES-below-key | impl attempt 1 | 2026-11-09 18:58 | started; worktree /home/luke/Work/wt/pres-below-key from origin/main a2fcd7a5 |
 | PRES-disj-cost | impl attempt 1 | 2026-11-09 18:58 | started; making worktree pres-disj-cost from origin/main |
 | PRES-nest-empty | impl attempt 1 | 2026-11-09 18:58 | start: audit F2, nest_empty refused Disjuncts instead of false |
-| PRES-pendants-wider | repair attempt 1 | 2026-11-09 15:16 | ready e9e0021e: 531 pieces 0 failed with doc check, clippy and fmt clean; not pushed |
 | PRES-small-point | impl attempt 1 | 2026-11-09 17:33 | start; worktree /home/luke/Work/wt/small-point from origin/main 6b3a8c52 |
-| STRUCT-laws | impl attempt 1 | 2026-11-09 18:21 | started; worktrees struct-laws and struct-laws-spec from origin/main (zed 25048ed, zed-impl a2fcd7a5) |
 | WITH-initial | impl attempt 1 | 2026-11-09 18:54 | started: worktrees and spec reading |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
