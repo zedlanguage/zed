@@ -409,7 +409,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  26 | sessions = events . chunkBy ( e -> e . userId ) ;
  27 | report = sessions . map ( s -> summarize ( s ) ) ;
 == DESIGN.md [sec:tour_failure] 1 L3
-  1 | parse : ( Utf8String ) -> Config | #syntaxError ( pos : int )
+  1 | parse : ( Utf8String ) -> Config | #syntaxError ( .. )
   3 | conf = parse ( text ) «else» defaultConfig ;
   4 | port = parse ( text ) ?. server ?. port «else» 8080₍10₎ ;
   6 | results = files . map ( f -> read ( f ) ) . map ( b -> parse ( b ) ) ;
@@ -491,6 +491,6 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
 104 | cur [ i ] = max ( xs [ i ] , cur [ i - 1₍10₎ ] + xs [ i ] ) «with» cur [ - 1₍10₎ ] = 0₍10₎ ;
 105 | best = cur >< max «else» 0₍10₎ ;
 112 | «struct» User { id : int , name : Utf8String }
-113 | u : User | #parseError ( pos : int , msg : Utf8String ) = Json . decode ( text ) ;
-121 | ok : User | #parseError ( pos : int , msg : Utf8String ) = Json . decode ( str["{\"id\": 5, \"name\": \"John\"}"] ) ;
-122 | bad : User | #parseError ( pos : int , msg : Utf8String ) = Json . decode ( str["{\"id\": \"5\", \"name\": \"John\"}"] ) ;
+113 | u : User | #parseError ( .. ) = Json . decode ( text ) ;
+121 | ok : User | #parseError ( .. ) = Json . decode ( str["{\"id\": 5, \"name\": \"John\"}"] ) ;
+122 | bad : User | #parseError ( .. ) = Json . decode ( str["{\"id\": \"5\", \"name\": \"John\"}"] ) ;

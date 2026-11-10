@@ -57,6 +57,8 @@ rows! {
     OverlappingArrows => "Cross-unit overlapping incomparable arrows",
     AmbiguousImport => "Ambiguous imported name",
     NameAboveDefinition => "Name used above its definition",
+    // No diagnostic uses this row yet: plan row L1.14a emits it.
+    UnresolvedName => "Name that resolves to nothing",
     NeedInCallerScope => "Need met only by an arrow in the caller's scope",
     MemberTwice =>
         "Two members of one name with different declarations in a struct or interface body",
@@ -92,11 +94,18 @@ rows! {
     MethodOnValue => "Method declared on a value",
     PrefixMinus => "Prefix `-` on a numeric literal's postfix chain",
     DisplayInBody => "Display in body position",
+    // No diagnostic uses this row yet: plan row L1.29d emits it.
+    SyntaxError => "Syntax error",
     NamedBeforePositional => "Named argument before a positional one",
     PositionalAfterNamed => "`positional` parameter after a named one",
     WrongForm => "Argument in the wrong form",
     ParameterKinds => "Function whose parameter kinds do not fit the expected function type",
     MissingArgument => "Missing argument",
+    // No diagnostic uses these four rows yet: plan row L1.29c emits them.
+    ArgumentBeyondParameters => "Argument beyond the parameters",
+    ArgumentNamedForNoParameter => "Argument named for no parameter",
+    ParameterGivenTwice => "Parameter given two values",
+    ValueBeforeDotWithNoParameters => "Value before the dot for a function with no parameters",
     NothingLeftOut => "`...` with no named parameter left out",
     PositionalConstructor => "Positional constructor call or pattern",
     InnerDomain => "Inner-domain dependency outside the fragment",
