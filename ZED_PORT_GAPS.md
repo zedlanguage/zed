@@ -3204,3 +3204,13 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A merge hook passed as `impl FnMut(&mut Trie, usize)`, called on both class roots before their children maps are merged, so a waiting node is read first | `Trie::merge_with`, `Trie::merge`, `overlaps` (`Work::Merge`) | Mutation (gap 11) | The merge as a fold that takes the reading function and the state and returns both, or the read done by the caller before the merge |
 | A work stack of an enum (`Work::Place`, `Bind`, `Merge`) popped until empty, with `continue` out of a match arm when a node waits | `Work`, `overlaps` | Mutation (gap 11), early exit (gap 12) | A fold over a persistent list of work items, each step returning the new items |
 | The pass of wholes down the trie as a loop over two stacks (`enter` before `down`), with an `Option<usize>` per placement marking it entered | `overlaps` (`whole`, `entered`, `enter`, `down`) | Mutation (gap 11) | A walk over the nodes in a topological order with persistent maps for the type each node and placement received |
+
+## Entries from GROUP-overlaps-lower (`crates/zed-kernel/src/types/empty.rs`)
+
+GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work::Bind` arm named above: every node placed waits, so `Bind` always reads.
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The merge hook a closure capturing `&mut Placing` and the work stack `&mut Vec<Work>` at once, pushing the work of a node read during the merge onto the stack being popped | `overlaps` (`Work::Merge`), `Placing::reach` | Mutation (gap 11) | The merge as a fold returning the state and the new work items, appended by the caller |
+| A per-node flag set by a walk back along the children from a stack of seeds, with the parents built as a `Vec<Vec<usize>>`, reading the flags of lower groups through the thread-local `GROUPS` | `Group::set_deep`, `Walked::make` | Mutation (gap 11), thread-local state | A fixpoint over the reversed child edges in a topological order, the lower groups' flags passed in with the groups already made |
+| A `HashMap<(usize, usize), usize>` from cell and group number to placement, kept over all cells | `overlaps` (`placed`) | Mutation (gap 11) | A persistent map keyed by the pair, threaded with the placements |

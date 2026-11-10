@@ -464,3 +464,214 @@ fn types_that_each_reach_a_ring_of_names_scale() {
         },
     );
 }
+
+/// The ring of names whose members each hold a type of a lower group,
+/// `T_j = #a_j((T_{j+1},)) | #b_j((int,)) | j`.
+fn ring_holding_a_lower_type(k: usize) -> Vec<Type> {
+    use super::super::rec::Expr;
+    let int = Type::tuple(vec![Type::int()]);
+    ring(k, |j, t| {
+        Expr::Union(vec![
+            Expr::Atom(format!("a{j}"), vec![t]),
+            Expr::Type(Type::atom_with(&format!("b{j}"), &int)),
+        ])
+    })
+}
+
+/// k types that each reach one ring of k names whose members hold types of lower groups cost
+/// order k log k: the lower types of a node of the ring are placed only when the node is read
+/// (the second tradeoff at `overlaps`). The rings: each member holding `#b_j((int,))`; each
+/// holding `#b((int,))`, one name for all, so every type shares the node of `#b` at the root
+/// and is in one class; and each holding `#c_j((L,))` for a list type `L`, a recursive lower
+/// group.
+#[test]
+fn types_that_each_reach_a_ring_holding_lower_types_scale() {
+    use super::super::rec::{Def, Expr, Group};
+    let lower = crate::scaling::inputs(64, ring_holding_a_lower_type);
+    crate::scaling::check(
+        "k types that each reach a ring of k names holding a lower type",
+        64,
+        |k| {
+            let classes = overlaps(lower[&k].iter());
+            assert_eq!(classes, (0..k).map(|j| vec![j]).collect::<Vec<_>>());
+        },
+    );
+    let int = Type::tuple(vec![Type::int()]);
+    let one_name = crate::scaling::inputs(64, |k| {
+        ring(k, |j, t| {
+            Expr::Union(vec![
+                Expr::Atom(format!("a{j}"), vec![t]),
+                Expr::Type(Type::atom_with("b", &int)),
+            ])
+        })
+    });
+    crate::scaling::check(
+        "k types that each reach a ring of k names holding one lower type under one name",
+        64,
+        |k| {
+            let classes = overlaps(one_name[&k].iter());
+            assert_eq!(classes, vec![(0..k).collect::<Vec<_>>()]);
+        },
+    );
+    // `L = #nil | #cons((int, L))`.
+    let list = Group::new(vec![Def {
+        name: "L".into(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Type(Type::atom("nil")),
+            Expr::Atom(
+                "cons".into(),
+                vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])],
+            ),
+        ]),
+    }])
+    .expect("a group")
+    .instance(vec![])
+    .remove(0);
+    let lists = crate::scaling::inputs(64, |k| {
+        ring(k, |j, t| {
+            Expr::Union(vec![
+                Expr::Atom(format!("a{j}"), vec![t]),
+                Expr::Atom(format!("c{j}"), vec![Expr::Type(list.clone())]),
+            ])
+        })
+    });
+    crate::scaling::check(
+        "k types that each reach a ring of k names holding a list type",
+        64,
+        |k| {
+            let classes = overlaps(lists[&k].iter());
+            assert_eq!(classes, (0..k).map(|j| vec![j]).collect::<Vec<_>>());
+        },
+    );
+}
+
+/// A number in `0..n`, from the generator [`next`].
+fn below(s: &mut u64, n: usize) -> usize {
+    (next(s) >> 11) as usize % n
+}
+
+/// Every value but the one-tuple of the literal `r`: under a node, it holds every one-tuple there
+/// but one.
+fn all_but_one(r: usize) -> Type {
+    let r = Type::lit(&Value::Int(r as i64)).expect("a literal");
+    &Type::top() - &Type::tuple(vec![r])
+}
+
+/// A random group of one to four members over the types `pool` of lower groups: each member a
+/// union of one to three of `#x((T,))`, `#x((P,))`, `(T,)`, `(P, T)`, `(T, P)`, `P`,
+/// `#x(any \ (r,))` and a literal `r`, `T` a member, `P` a type of `pool`, `x` one of three
+/// names. None if the group is refused.
+fn random_group(s: &mut u64, pool: &[Type], tag: &str) -> Option<Vec<Type>> {
+    use super::super::rec::{Def, Expr, Group};
+    let n = 1 + below(s, 4);
+    let defs = (0..n)
+        .map(|d| {
+            let alts = (0..1 + below(s, 3))
+                .map(|_| {
+                    let r = Expr::Ref(below(s, n), vec![]);
+                    let p = Expr::Type(pool[below(s, pool.len())].clone());
+                    let name = ["a", "b", "c"][below(s, 3)].to_string();
+                    match below(s, 8) {
+                        0 => Expr::Atom(name, vec![r]),
+                        1 => Expr::Atom(name, vec![p]),
+                        2 => Expr::Tuple(vec![r]),
+                        3 => Expr::Tuple(vec![p, r]),
+                        4 => Expr::Tuple(vec![r, p]),
+                        5 => p,
+                        6 => Expr::Type(Type::atom_with(&name, &all_but_one(below(s, 3)))),
+                        _ => Expr::Type(
+                            Type::lit(&Value::Int(below(s, 3) as i64)).expect("a literal"),
+                        ),
+                    }
+                })
+                .collect();
+            Def {
+                name: format!("{tag}{d}"),
+                params: vec![],
+                body: Expr::Union(alts),
+            }
+        })
+        .collect();
+    Some(Group::new(defs).ok()?.instance(vec![]))
+}
+
+/// Random cells: plain types, the members of a group over them and of a group over both, each
+/// type alone, under a name or a one-tuple, or joined with another; and `#x(any \ (r,))` and
+/// `(any \ (r,),)`, which hold every value under a node but the one-tuple of a literal `r`.
+fn random_cells(s: &mut u64) -> Vec<Type> {
+    let lit = |i: usize| Type::lit(&Value::Int(i as i64)).expect("a literal");
+    let one = |t: &Type| Type::tuple(vec![t.clone()]);
+    let mut pool: Vec<Type> = (0..2 + below(s, 3))
+        .map(|_| {
+            let r = lit(below(s, 3));
+            match below(s, 7) {
+                0 => r,
+                1 => Type::int(),
+                2 => &Type::int() - &r,
+                3 => one(&r),
+                4 => one(&Type::int()),
+                5 => Type::atom_with(["a", "b", "c"][below(s, 3)], &one(&r)),
+                _ => Type::atom(["a", "b", "c"][below(s, 3)]),
+            }
+        })
+        .collect();
+    for tag in ["L", "U"] {
+        if let Some(ms) = random_group(s, &pool, tag) {
+            pool.extend(ms);
+        }
+    }
+    (0..3 + below(s, 6))
+        .map(|_| {
+            let t = &pool[below(s, pool.len())];
+            match below(s, 7) {
+                0 => Type::atom_with(["a", "b", "c"][below(s, 3)], &one(t)),
+                1 => one(t),
+                2 => t | &pool[below(s, pool.len())],
+                3 => Type::atom_with(["a", "b", "c"][below(s, 3)], &all_but_one(below(s, 3))),
+                4 => one(&all_but_one(below(s, 3))),
+                _ => t.clone(),
+            }
+        })
+        .collect()
+}
+
+/// `overlaps` on random groups whose members hold types of lower groups, recursive ones too:
+/// two types whose meet is shown inhabited are in one class, and the classes are the same with
+/// the types in the other order.
+#[test]
+fn types_that_meet_are_joined_in_random_groups_holding_lower_types() {
+    let mut s = 0x2545_f491_4f6c_dd1d;
+    let (mut met, mut apart) = (0, 0);
+    for case in 0..400 {
+        let ts = random_cells(&mut s);
+        let classes = overlaps(ts.iter());
+        let mut class = vec![usize::MAX; ts.len()];
+        for (c, is) in classes.iter().enumerate() {
+            for &i in is {
+                class[i] = c;
+            }
+        }
+        for i in 0..ts.len() {
+            for j in i + 1..ts.len() {
+                if (&ts[i] & &ts[j]).verdict() == Verdict::Inhabited {
+                    met += 1;
+                    assert_eq!(class[i], class[j], "case {case}: {i} and {j} meet");
+                } else if class[i] != class[j] {
+                    apart += 1;
+                }
+            }
+        }
+        let n = ts.len();
+        let mut reversed = overlaps(ts.iter().rev());
+        for is in &mut reversed {
+            for i in is.iter_mut() {
+                *i = n - 1 - *i;
+            }
+            is.sort();
+        }
+        reversed.sort();
+        assert_eq!(reversed, classes, "case {case} in the other order");
+    }
+    assert!(met > 0 && apart > 0, "{met} pairs met, {apart} apart");
+}
