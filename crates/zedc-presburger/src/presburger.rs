@@ -1455,12 +1455,13 @@ fn met(a: Option<&values::Bounds>, b: &values::Bounds) -> Option<values::Bounds>
 /// passes; `None` when a disjunction is left with no disjunct or the rows show there is no
 /// point. `rows` and the disjunctions are the parts of a formula, so the implied rows hold at
 /// each of its points, and a disjunct removed has none: the formula's points are as they were.
-/// A pass asks each disjunction's disjuncts of the rows projected onto their atoms
-/// ([`by_halves`], [`shadow`], exact over the integers), and a disjunction that loses a
-/// disjunct adds its narrower implied rows to the projections of the disjunctions after it in
-/// the pass. The disjunctions are taken in the order of their structure ([`by_structure`]),
-/// forward and backward in turn, until a pass removes nothing. The result does not depend on
-/// the order of the disjunctions or of their disjuncts: a disjunct is removed only when it is
+/// A pass asks each disjunct of the rows projected onto its own atoms ([`by_halves`],
+/// [`shadow`], exact over the integers), and a disjunction that loses a disjunct adds its
+/// narrower implied rows to the projections of the disjunctions after it in the pass, once
+/// all its disjuncts are asked. The disjunctions are taken in the order of their structure
+/// ([`by_structure`]), forward and backward in turn, until a pass removes nothing. The result
+/// does not depend on the order of the disjunctions or of their disjuncts: a disjunct is
+/// removed only when it is
 /// empty with rows that the disjuncts still there imply, fewer disjuncts imply narrower rows,
 /// so a disjunct removed in one order is removed in any, and the last pass, which removes
 /// nothing, asks every disjunct of the same rows (the greatest set of disjuncts closed under
@@ -1478,9 +1479,21 @@ fn met(a: Option<&values::Bounds>, b: &values::Bounds) -> Option<values::Bounds>
 /// [`project_parts`] reads for its hulls and [`tighten_each`] for a point at each end, so that no
 /// question is asked whose answer is no point (COMPLEXITY.md DISJ-incremental).
 // Complexity tradeoff: a pass costs one projection by halves, O((m + k) log k) for `m` terms
-// and `k` disjunctions where the projections of the ranges of the order stay small, as on a
-// chain in its own order. Removals that each need the one before run in one pass while they
-// follow the order of the pass. On a chain (each part sharing atoms with the one before and
+// and `k` disjuncts asked where the projections of the ranges of the order stay small, as on
+// a chain in its own order. Each disjunct is asked of the rows projected onto its own atoms;
+// projected onto the atoms of its whole disjunction, as before item PROJECT-canon-rounds,
+// the rows each disjunct was asked with were as large as that union, so a disjunction of `k`
+// cases each reading its own stage of a chain cost `k` questions of O(k) rows, O(k²) (70
+// times the time at `8k`, `exclusive_cases`); now 10 times. The answers are the same: a
+// disjunct has a point with the rows exactly when it has one with their projection onto any
+// set of atoms that holds its own, and a disjunction is changed only after all its disjuncts
+// are asked, as it was. A question the solver refuses (a [`Refusal`]) keeps its disjunct
+// as before; since a refusal depends on the rows asked, a question refused with one set of
+// rows could be answered with the other, which changed no answer of the steps that use this
+// solver (each projection compared before and after this change). The projections by halves
+// are onto the atoms of ranges of disjuncts rather than of disjunctions, the same atoms in
+// all. Removals that each need the one before run in one pass while they follow the order
+// of the pass. On a chain (each part sharing atoms with the one before and
 // the one after only) the structural order runs from one end to the other, so such removals
 // cost O(1) passes, whatever the names or the order given (4 or fewer on the chain of
 // `jointly_empty_order`, in six orders at 16 and 128 stages). What is given up: time only,
@@ -1509,30 +1522,55 @@ fn drop_jointly_empty(rows: &[Con], ors: &mut [Vec<Rc<Parts>>]) -> Option<usize>
             return Some(passes);
         }
         passes += 1;
-        // The atoms of the constraints of each disjunction asked, in the order of this pass.
-        let keep: Vec<BTreeSet<Atom>> = (order.iter())
-            .map(|&j| {
-                let cons = ors[j].iter().flat_map(|d| d.cons.iter());
-                cons.flat_map(|c| c.lin.terms.keys().cloned()).collect()
-            })
-            .collect();
+        // The atoms of the constraints of each disjunct asked, by disjunction in the order of
+        // this pass, with its place: each disjunct is asked of the rows projected onto its own
+        // atoms, which have a point with it exactly when the rows do (the projection is exact
+        // over the integers).
+        let mut keep: Vec<BTreeSet<Atom>> = Vec::new();
+        let mut place: Vec<(usize, usize)> = Vec::new();
+        for &j in &order {
+            for (t, d) in ors[j]
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| !d.cons.is_empty())
+            {
+                keep.push(
+                    d.cons
+                        .iter()
+                        .flat_map(|c| c.lin.terms.keys().cloned())
+                        .collect(),
+                );
+                place.push((j, t));
+            }
+        }
         let mut all = rows.to_vec();
         all.extend(implied);
         let mut removed = false;
+        // The disjuncts of the disjunction being asked found with no point.
+        let mut empty: Vec<usize> = Vec::new();
         // `Err` when a projection or a disjunction is left with no point.
         let ran: Result<(), ()> = by_halves(all, &keep, |i, k| {
             let k = k.ok_or(())?;
-            let ds = &mut ors[order[i]];
-            let n = ds.len();
-            ds.retain(|d| {
-                let cs: Vec<&Con> = k.iter().chain(d.cons.iter()).collect();
-                d.cons.is_empty() || !matches!(solve(&cs, false), Ok(None))
+            let (j, t) = place[i];
+            let cs: Vec<&Con> = k.iter().chain(ors[j][t].cons.iter()).collect();
+            if matches!(solve(&cs, false), Ok(None)) {
+                empty.push(t);
+            }
+            // The disjunction is changed after its last disjunct is asked, so that its
+            // narrower rows reach the disjunctions after it in the pass only.
+            if place.get(i + 1).is_some_and(|&(next, _)| next == j) || empty.is_empty() {
+                return Ok(Vec::new());
+            }
+            // `empty` is in increasing order, so one walk removes its disjuncts.
+            let ds = &mut ors[j];
+            let (mut t, mut next) = (0, empty.iter().peekable());
+            ds.retain(|_| {
+                t += 1;
+                next.next_if_eq(&&(t - 1)).is_none()
             });
+            empty.clear();
             if ds.is_empty() {
                 return Err(());
-            }
-            if ds.len() == n {
-                return Ok(Vec::new());
             }
             removed = true;
             Ok(disjunction_hulls(std::slice::from_ref(ds), &mut deep))
@@ -2546,9 +2584,20 @@ fn specialize_con(c: &Con, free: &BTreeSet<Atom>, model: &Model) -> Con {
 /// term `x mod (n + i)` for each `i`, PRES-mod-conjuncts), [`local_repair`] costs the `k`
 /// constraints that read the shared atom for each disjunct, O(k²) in all.
 fn own_repair(near: &Near, model: &Model, extra: &[Con]) -> Option<Model> {
+    own_repair_in(&[near], &|_| false, model, extra)
+}
+
+/// [`own_repair`] with the constraints taken indexed in several parts, `nears`, and the atoms
+/// for which `fixed` holds kept at `model` too.
+fn own_repair_in(
+    nears: &[&Near],
+    fixed: &dyn Fn(&Atom) -> bool,
+    model: &Model,
+    extra: &[Con],
+) -> Option<Model> {
     let own: BTreeSet<Atom> = (extra.iter())
         .flat_map(|c| c.lin.terms.keys())
-        .filter(|a| !near.by_atom.contains_key(*a))
+        .filter(|a| !fixed(a) && nears.iter().all(|n| !n.by_atom.contains_key(*a)))
         .cloned()
         .collect();
     if own.is_empty() {
@@ -2563,7 +2612,7 @@ fn own_repair(near: &Near, model: &Model, extra: &[Con]) -> Option<Model> {
         }
     }
     for a in &own {
-        near.bounds(a, &mut local);
+        nears.iter().for_each(|n| n.bounds(a, &mut local));
     }
     let mut m = solve(&local, true).ok()??;
     for a in own {
@@ -4489,10 +4538,19 @@ fn point_with(
 /// cost `O(f log r)` searches and the others `O(f log r + 1)` together: on those chains, where
 /// the disjuncts that no greedy point holds all have a point together, one search does all.
 /// The disjuncts are forced in rounds: one whose bounds of one atom exclude those of a
-/// disjunct forced before it in the round waits for the next, so a disjunction of `m` cases
-/// that exclude each other, each with a point, costs `m` rounds of one search each,
-/// `O(m n log n)`. Forced all in one round (method (c)), such cases share no point, so their
-/// halves cost a search each down to one case: the chain of guarded remainders took 77.7
+/// disjunct forced before it in the round waits for the next. Taken a round each, a
+/// disjunction of `m` cases that exclude each other, each with a point, cost `m` rounds of one
+/// search each, `O(m n log n)`: 20.1 times the bytes at `8n` (limit 14.1) on a chain whose
+/// cases each read one stage (`exclusive_cases`). Here the first search of a round that finds
+/// a point also settles the disjuncts left waiting ([`hold_waiting`]): each is marked held
+/// when the point, with the atoms that only that disjunct's disjunction reads moved
+/// ([`own_repair_in`]), satisfies it, which costs `O(d log n)` for a disjunct of `d`
+/// constraints, so the `m` cases cost one search and `O(m log n)` repairs, 10.0 times the
+/// bytes at `8n`. What is given up: a case whose point needs an atom moved that another
+/// disjunction or the rest of the formula reads is not repaired and still waits for a round of
+/// its own, as before; such cases cost what they cost before. Forced all in one round (method
+/// (c)), such cases share no point, so their halves cost a search each down to one case: the
+/// chain of guarded remainders took 77.7
 /// times the bytes at `8n` (limit 15.4); in rounds 8.8 times. On the remainder chains `m` stops at the classes of the modulus (spread and
 /// sliced chains, sizes 8 to 64: 6.8 and 7.5 times the work, limit 17.6; 32 to 256: 7.5 and
 /// 11.1 times). A set of values of one atom, which would cost a round per piece, is not
@@ -4528,9 +4586,19 @@ fn search_by_halves(
             (!o.is_empty() && hs.iter().all(|h| *h) && one_atom_set(o)).then(|| OneAtomSet::of(o))
         })
         .collect();
+    // The atoms of those sets, which a repair below keeps at the point's values.
+    let set_atoms: BTreeSet<&Atom> = (p.ors.iter().zip(&sets))
+        .filter(|(_, s)| s.is_some())
+        .flat_map(|(o, _)| o.iter().flat_map(|d| &d.cons))
+        .flat_map(|c| c.lin.terms.keys())
+        .collect();
+    // The constraints that every search takes, indexed for the repairs below.
+    let mut base = Near::default();
+    cons.iter().for_each(|c| base.add(0, c));
     // One search with the disjuncts in `forced` (by disjunction) all taken, and without the
-    // sets above when `bare`; a point and the disjuncts [`pick`] took.
-    let ask = |held: &[Vec<bool>], forced: &[Vec<usize>], bare: bool| {
+    // sets above when `bare`; a point, the disjuncts [`pick`] took, and, when `note`, the
+    // constraints of those disjuncts indexed.
+    let ask = |held: &[Vec<bool>], forced: &[Vec<usize>], bare: bool, note: bool| {
         let mut q = Parts {
             cons: cons.clone(),
             ors: Vec::new(),
@@ -4552,35 +4620,46 @@ fn search_by_halves(
             q.ors.push(new.chain(old).map(|(e, _)| e.clone()).collect());
         }
         let (m, took) = pick_taking(&q, true).ok()?;
+        let mut near = Near::default();
+        if note {
+            (took.iter().flat_map(|t| &t.cons)).for_each(|c| near.add(0, c));
+        }
         let took: HashSet<*const Parts> = took.into_iter().map(|t| t as *const Parts).collect();
-        Some((m, took))
+        Some((m, took, near))
     };
     // One search with the disjuncts in `forced` all taken; on a point, marks the disjuncts it
-    // holds and keeps it. Without a point when the sets are left out, there is none with them.
-    let mut search = |held: &mut [Vec<bool>], forced: &[Vec<usize>]| -> bool {
-        let Some((m, took)) = ask(held, forced, true) else {
-            return false;
-        };
-        let inside = sets.iter().flatten().all(|s| s.holds(&m));
-        let Some((m, took)) = (if inside {
-            Some((m, took))
-        } else {
-            ask(held, forced, false)
-        }) else {
-            return false;
-        };
-        for (((o, hs), fs), set) in p.ors.iter().zip(held.iter_mut()).zip(forced).zip(&sets) {
-            if set.is_some() {
-                continue;
+    // holds, and those of `waiting` it holds once repaired ([`hold_waiting`]), and keeps it.
+    // Without a point when the sets are left out, there is none with them.
+    let mut search =
+        |held: &mut [Vec<bool>], forced: &[Vec<usize>], waiting: &mut [Vec<usize>]| -> bool {
+            let note =
+                (forced.iter().zip(waiting.iter())).any(|(f, w)| !f.is_empty() && !w.is_empty());
+            let Some((m, took, near)) = ask(held, forced, true, note) else {
+                return false;
+            };
+            let inside = sets.iter().flatten().all(|s| s.holds(&m));
+            let Some((m, took, near)) = (if inside {
+                Some((m, took, near))
+            } else {
+                ask(held, forced, false, note)
+            }) else {
+                return false;
+            };
+            for (((o, hs), fs), set) in p.ors.iter().zip(held.iter_mut()).zip(forced).zip(&sets) {
+                if set.is_some() {
+                    continue;
+                }
+                for (e, h) in o.iter().zip(hs.iter_mut()) {
+                    *h = *h || took.contains(&Rc::as_ptr(e));
+                }
+                fs.iter().for_each(|&at| hs[at] = true);
             }
-            for (e, h) in o.iter().zip(hs.iter_mut()) {
-                *h = *h || took.contains(&Rc::as_ptr(e));
+            if note {
+                hold_waiting(p, forced, waiting, held, &m, (&base, near), &set_atoms);
             }
-            fs.iter().for_each(|&at| hs[at] = true);
-        }
-        points.push(m);
-        true
-    };
+            points.push(m);
+            true
+        };
     let mut failed: Vec<Vec<bool>> = p.ors.iter().map(|o| vec![false; o.len()]).collect();
     // The disjuncts not yet forced in a search, in the order of the parts.
     let mut left: Vec<(usize, usize)> = (p.ors.iter().enumerate())
@@ -4591,9 +4670,13 @@ fn search_by_halves(
         // the bounds of one atom of those forced before it in the round exclude, which waits
         // for the next round: `y == 0` and `y == 10` of one disjunction are never forced
         // together, a search that fails, and whose failure the solver proves at a cost that
-        // grows faster than the parts on a chain.
+        // grows faster than the parts on a chain. The first search of the round that finds a
+        // point marks those that wait which that point, repaired, holds ([`hold_waiting`]),
+        // so that they need no round of their own.
         let mut near = Near::default();
         let (mut round, mut later) = (Vec::new(), Vec::new());
+        // The disjuncts that wait, by disjunction.
+        let mut waiting: Vec<Vec<usize>> = vec![Vec::new(); p.ors.len()];
         for (i, at) in left {
             if held[i][at] {
                 continue;
@@ -4601,6 +4684,7 @@ fn search_by_halves(
             let d = &p.ors[i][at];
             if !round.is_empty() && near.refutes(&d.cons) {
                 later.push((i, at));
+                waiting[i].push(at);
                 continue;
             }
             for (a, lo, hi) in d.cons.iter().filter_map(one_bound) {
@@ -4609,18 +4693,78 @@ fn search_by_halves(
             round.push((i, at));
         }
         left = later;
-        by_halves_of(round, held, &mut failed, &mut search);
+        by_halves_of(round, held, &mut failed, &mut waiting, &mut search);
     }
     failed
 }
 
+/// After a search of [`search_by_halves`] has found the point `model`, marks in `held` each
+/// disjunct listed in `waiting` (by disjunction, each list emptied, so that it is tried once a
+/// round) that holds at a point found from `model` by moving only atoms of its own: those
+/// that no other constraint the search took reads, but bounds of one atom. Only a disjunct of
+/// a disjunction with disjuncts forced in the search, and with no disjunction below it, is
+/// tried. The constraints the search took are those every search takes (`parts.0`), the
+/// disjuncts [`pick`] took (`parts.1`, to which the forced disjuncts of the disjunctions not
+/// tried are added here), and the forced disjuncts of those tried; the atoms of the forced
+/// disjuncts of a disjunction tried are its own for its waiting disjuncts when no other
+/// disjunction tried reads them, and the atoms of the sets left out of the search
+/// (`set_atoms`) are never own. Then the point repaired ([`own_repair_in`]) holds the
+/// disjunct, every part the search took but the forced disjuncts of its own disjunction, and
+/// so every disjunction: it is a point of the parts, which is all a mark claims.
+fn hold_waiting(
+    p: &Parts,
+    forced: &[Vec<usize>],
+    waiting: &mut [Vec<usize>],
+    held: &mut [Vec<bool>],
+    model: &Model,
+    parts: (&Near, Near),
+    set_atoms: &BTreeSet<&Atom>,
+) {
+    let (base, mut took) = parts;
+    let tried: Vec<bool> = (forced.iter().zip(waiting.iter()))
+        .map(|(f, w)| !f.is_empty() && !w.is_empty())
+        .collect();
+    let forced_cons = |i: usize| forced[i].iter().flat_map(move |&at| &p.ors[i][at].cons);
+    for i in (0..forced.len()).filter(|&i| !tried[i]) {
+        forced_cons(i).for_each(|c| took.add(0, c));
+    }
+    // For each disjunction tried, the atoms of its forced disjuncts; for each atom, the
+    // number of those disjunctions that read it.
+    let mine: Vec<(usize, BTreeSet<&Atom>)> = (0..forced.len())
+        .filter(|&i| tried[i])
+        .map(|i| (i, forced_cons(i).flat_map(|c| c.lin.terms.keys()).collect()))
+        .collect();
+    let mut readers: BTreeMap<&Atom, usize> = BTreeMap::new();
+    for a in mine.iter().flat_map(|(_, s)| s) {
+        *readers.entry(a).or_default() += 1;
+    }
+    for (i, mine) in &mine {
+        let fixed = |a: &Atom| {
+            set_atoms.contains(a)
+                || readers
+                    .get(a)
+                    .is_some_and(|&k| k > usize::from(mine.contains(a)))
+        };
+        for at in mem::take(&mut waiting[*i]) {
+            let d = &p.ors[*i][at];
+            if held[*i][at] || !d.ors.is_empty() {
+                continue;
+            }
+            held[*i][at] = d.cons.iter().all(|c| c.holds_linear(model))
+                || own_repair_in(&[base, &took], &fixed, model, &d.cons).is_some();
+        }
+    }
+}
+
 /// [`search_by_halves`]'s searches of one round: all the disjuncts of `round` forced, and on
-/// a failure each half in turn, down to one, which is then marked in `failed`.
+/// a failure each half in turn, down to one, which is then marked in `failed`. `waiting` is
+/// handed to each search.
 fn by_halves_of(
     round: Vec<(usize, usize)>,
     held: &mut [Vec<bool>],
     failed: &mut [Vec<bool>],
-    search: &mut impl FnMut(&mut [Vec<bool>], &[Vec<usize>]) -> bool,
+    waiting: &mut [Vec<usize>],
+    search: &mut impl FnMut(&mut [Vec<bool>], &[Vec<usize>], &mut [Vec<usize>]) -> bool,
 ) {
     let width = failed.len();
     let mut stack = vec![round];
@@ -4631,7 +4775,7 @@ fn by_halves_of(
         }
         let mut forced: Vec<Vec<usize>> = vec![Vec::new(); width];
         s.iter().for_each(|&(i, at)| forced[i].push(at));
-        if search(held, &forced) {
+        if search(held, &forced, waiting) {
             continue;
         }
         if let [(i, at)] = s[..] {

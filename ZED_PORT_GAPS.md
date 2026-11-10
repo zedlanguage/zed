@@ -3392,3 +3392,11 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | `fmt::from_fn` closures that write a message or a fix line straight into the formatter, with `?` on each `write!` | `Msg::written`, `lit_holds`, `binder_holds`, `never_equal` | Early exit (gap 12) | a function that returns the text as a list of parts, joined once |
 | A `HashSet<Span>` of the literals on the carrier's path, tested for each literal | `unfixed_binding` | none | a set of spans |
 | `String::truncate` and `String::drain` to trim the corrected line in place | `Rewrite::line` | Mutation (gap 11) | a slice of the line between its first and last non-blank characters |
+
+## Entries from PROJECT-canon-rounds (`crates/zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Lists of the disjuncts waiting for a round, `&mut [Vec<usize>]`, handed through `by_halves_of` into the search closure and emptied in place by `mem::take` when the first point tries them | `search_by_halves`, `by_halves_of`, `hold_waiting` | Mutation (gap 11) | The lists returned by each search with the held marks, threaded through the fold over the halves |
+| A predicate `&dyn Fn(&Atom) -> bool` for the atoms a repair keeps at the model | `own_repair_in` | Function values (`dyn Fn`) | A function value, or the set of atoms kept passed as a set |
+| `retain` whose closure counts the places it has passed in a captured counter and walks a sorted list of places to remove with `Peekable::next_if_eq` | `drop_jointly_empty` | Mutation (gap 11) | `where` over the disjuncts zipped with their places, against a set of the places found with no point |
