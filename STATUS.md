@@ -1767,11 +1767,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ALWAYS-atom-cast | running | 2026-11-09 20:05 |  |
 | ALWAYS-atom-div | running | 2026-11-09 20:05 |  |
 | ALWAYS-atom-lookup | running | 2026-11-09 20:05 |  |
+| GROUP-cycle-dup-across | impl attempt 1 | 2026-11-09 11:08 | started on wt/group-cycle-dup-across from origin/main 31f57138 / load 11.69 15.63 18.34 |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
+| LIT-eq-kind | impl attempt 1 | 2026-11-05 18:21 | ready: impl bbebe2c4, spec 8a096ad; final run with doc 155 pieces 0 failed; board-check-docs ok; load 23.54 27.92 32.15 |
+| LOAD-chain-sep-rest | impl attempt 1 | 2026-11-07 07:07 | base control at 50/100 links (s): H div x 3.26/20.0; if-branch 3.35/20.2; abs(H) div 2+1 3.41/13.7; abs(H-5) div 2 3.06/18.0; min(H div 2,x) 1.45/6.33; max(H di |
+| NARROW-eager-star-redo | impl attempt 1 | 2026-11-07 07:57 | groups ^(l01_25/l01_29/l01_38/l01_39) with the family check on: 487 pieces, 0 failed / load 42.27 35.82 34.13 |
 | PRES-disj-cost-xr | impl attempt 1 | 2026-11-09 19:19 | /home down to 1 MB free; moved reviewer build dirs pdcx-tgt-r1-claude/gemini to scratchpad tmpfs with links back (2.5G free now); no delete |
-| PRES-nest-empty | impl attempt 2 | 2026-11-09 18:58 | ready 5d4304f2 on wt/pres-nest-empty, rebased on fa4f925a; 428 pieces 0 failed; fmt, clippy ok |
+| PRES-nest-empty | merge attempt 1 | 2026-11-09 18:58 | dropped from batch 98: l01_25 s22 random_guarded_chains_keep_their_preimages_0000 fails (exact boxes 52 vs 53) on main after batch 97; ledger back to merging |
+| PRINT-kept-meet-all | impl attempt 1 | 2026-11-09 18:43 | ready d3be9827 on wt/print-kept-meet-all; 101 pieces 0 failed; scaling 8.5x and 8.1x for 8n, naive control 43.5x bytes; load 28.70 36.16 35.31 |
 | PROJECT-each-chain-xr | impl attempt 1 | 2026-11-09 20:07 | started / load 21.19 16.46 17.59 |
 | REFUSAL-front-xr | impl attempt 1 | 2026-11-09 20:30 | own probe: hand-rewritten chain variant of the front family |
+| ST-formula-set | impl attempt 1 | 2026-11-04 13:51 | started: Q55 answer A, hash check before exact parse on Formula ==; load 16.28 28.17 32.48 |
+| TESTS-l01_29-order-multiname | impl attempt 1 | 2026-11-08 23:59 | ready: edb2e9bb on wt/tests-order-multiname; l01_29_diagnostics 244 passed 0 failed 1 ignored (doc check on, load 22.5); fmt, clippy ok; not pushed |
 | W11-note | running | 2026-11-09 19:51 |  |
 | W1-premise | running | 2026-11-09 19:51 |  |
 
