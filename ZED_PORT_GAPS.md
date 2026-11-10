@@ -1228,8 +1228,6 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A closure `impl Fn(usize) -> bool` that says which operands to keep whole, passed to `and_keeping` and `or_keeping` | `Formula::and_keeping`, `or_keeping`, `rebuild`, `nnf`, `preimage::Tx::formula_at` | None | A function value parameter |
-| A `HashMap` memo keyed by a raw `*const Parts` address with the base constraints and symbols, holding an `Rc` of the key so the address is not reused, threaded by `&mut` through a recursive function | `project_parts` (`Below`) | Shared tables across pure calls (gap 2), mutation (gap 11) | A memo keyed by the value's identity, if the runtime gives one, in the state of a fold |
-| A `HashSet<*const Vec<Formula>>` of visited shared conjunctions, with the formulas held in a `Vec` so their addresses stay live, on an explicit stack | `Conjuncts::and_held` | Mutation (gap 11) | A fold over the worklist with the visited set in its state |
 | A visited `HashSet<Id>` built in one walk to find the parts reached through two or more parents | `deep::Id::reached_twice`, `Id::among`, `Formula::chooses` | Mutation (gap 11) | A fold with the set in its state |
 | Two stacks of `slice::Iter` over borrowed parts, each level tagged with the number of the entry it was entered with, read in step; a `HashSet<(Id, Id)>` of pairs found equal and a `Vec<Option<(Id, Id)>>` of open entries, `take`n when an entry ends | `deep::Side`, `deep::Level`, `Formula::cmp` | Mutation (gap 11), identity (gap 1) | A fold over the two sides' worklists with the set of equal pairs in its state, the pairs keyed by node identity |
 
@@ -3362,7 +3360,6 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| Raw pointers (`*const Parts`) as keys of a `HashSet`, for the disjunctions kept untested and the disjuncts a search took, compared by address only and never dereferenced | `probe_unhandled`, `probe`, `probe_kept`, `search_by_halves` | Identity (gap 1) | A set keyed by the part's id (gap 1's content digest or a `fresh_id` field), or a flag on the part |
 | A `thread_local!` `Cell<bool>` (`REVERSED`), set by `with_parts_reversed` around a call, that makes `project_parts` reverse its disjunctions and the disjuncts of each, so a test can compare the two orders | `REVERSED`, `with_parts_reversed`, `project_parts` | Mutation, global state | An order passed as a parameter, or the test builds the reversed parts itself |
 | `#[inline(never)]` on helpers of `project_parts`, which recurses once per level of a nest, so that their locals do not enlarge its stack frame (`nest_empty` at depth 512 runs on the test thread's stack) | `probe_unhandled`, `tree_domains` | Stack depth of recursion | The port's recursion over nests is an explicit stack, so frame size no longer matters |
 | Binary search on a sorted `Vec` of pieces (`partition_point`) to find the piece of a one-atom set that may hold a value | `OneAtomSet::holds` | Key range queries (gap 9) | `before` on a map keyed by the low end of each piece |

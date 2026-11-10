@@ -3692,7 +3692,7 @@ fn by_halves<E>(
 ///
 /// Each disjunct in `kept` is kept untested, as if a point held it: neither removed nor
 /// searched for ([`probe_kept`]).
-fn probe(p: Parts, kept: &HashSet<*const Parts>) -> Result<Option<Parts>, Refusal> {
+fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
     probe_kept(p, &mut Vec::new(), false, kept)
 }
 
@@ -3731,7 +3731,14 @@ fn probe(p: Parts, kept: &HashSet<*const Parts>) -> Result<Option<Parts>, Refusa
 fn probe_unhandled(
     p: &mut Parts,
 ) -> Result<Option<(Option<Box<(HashMap<Atom, IntervalSet>, Vec<bool>)>>, bool)>, Refusal> {
-    let mut kept: HashSet<*const Parts> = HashSet::new();
+    // Complexity tradeoff: the disjuncts kept untested are named by their ids ([`Parts::id`]),
+    // as are the disjuncts a search took in [`search_by_halves`]. Keyed by content, each key
+    // would cost a hash of the whole disjunct, O(size) per insertion and per lookup; keyed by
+    // address, O(1), but an address freed by a dropped disjunct can be given to a new one,
+    // which would then count as kept. The id is O(1) as well (one `fresh_id` draw the first
+    // time a disjunct is asked, 8 bytes it already carries) and is never reused. The sets are
+    // only looked up, never iterated, so no order depends on the ids.
+    let mut kept: HashSet<u64> = HashSet::new();
     let mut early = None;
     if !old_path() {
         let Some(m) = solve(&p.cons, true)? else {
@@ -3740,16 +3747,11 @@ fn probe_unhandled(
         let (doms, handled) = forest_domains(&Linked::of(p.cons.clone()), &p.ors, &m);
         kept = (p.ors.iter().zip(&handled))
             .filter(|(o, h)| **h || one_atom_set(o))
-            .flat_map(|(o, _)| o.iter().map(Rc::as_ptr))
+            .flat_map(|(o, _)| o.iter().map(|d| d.id()))
             .collect();
         early = Some(Box::new((doms, handled)));
     }
-    if early.is_some()
-        && p.ors
-            .iter()
-            .flatten()
-            .all(|d| kept.contains(&Rc::as_ptr(d)))
-    {
+    if early.is_some() && p.ors.iter().flatten().all(|d| kept.contains(&d.id())) {
         return Ok(Some((early, false)));
     }
     Ok(probe(std::mem::take(p), &kept)?.map(|q| {
@@ -3894,7 +3896,7 @@ fn probe_kept(
     mut p: Parts,
     points: &mut Vec<Model>,
     stop: bool,
-    kept: &HashSet<*const Parts>,
+    kept: &HashSet<u64>,
 ) -> Result<Option<Parts>, Refusal> {
     // The bounds on single atoms that the formula implies, found by [`learn`]. The formula
     // only gains constraints or stays equal from round to round, so they hold to the end.
@@ -3908,7 +3910,7 @@ fn probe_kept(
             .iter()
             .map(|o| {
                 o.iter()
-                    .map(|d| kept.contains(&Rc::as_ptr(d)) || points.iter().any(|m| d.holds(m)))
+                    .map(|d| kept.contains(&d.id()) || points.iter().any(|m| d.holds(m)))
                     .collect()
             })
             .collect();
@@ -4624,7 +4626,7 @@ fn search_by_halves(
         if note {
             (took.iter().flat_map(|t| &t.cons)).for_each(|c| near.add(0, c));
         }
-        let took: HashSet<*const Parts> = took.into_iter().map(|t| t as *const Parts).collect();
+        let took: HashSet<u64> = took.into_iter().map(Parts::id).collect();
         Some((m, took, near))
     };
     // One search with the disjuncts in `forced` all taken; on a point, marks the disjuncts it
@@ -4650,7 +4652,7 @@ fn search_by_halves(
                     continue;
                 }
                 for (e, h) in o.iter().zip(hs.iter_mut()) {
-                    *h = *h || took.contains(&Rc::as_ptr(e));
+                    *h = *h || took.contains(&e.id());
                 }
                 fs.iter().for_each(|&at| hs[at] = true);
             }
@@ -5130,7 +5132,8 @@ impl Parts {
 
     /// The id of the parts, drawn the first time it is asked for: no other parts have it, so
     /// a memo keyed by it ([`BelowKey`]) knows a disjunct shared by several disjunctions,
-    /// and ids are never reused, so the memo needs not hold the disjunct.
+    /// and ids are never reused, so the memo needs not hold the disjunct. The sets of
+    /// disjuncts of [`probe_kept`] and [`search_by_halves`] are keyed by it too.
     fn id(&self) -> u64 {
         if self.id.get() == 0 {
             self.id.set(fresh_id());
