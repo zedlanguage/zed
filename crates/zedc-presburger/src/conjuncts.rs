@@ -63,6 +63,12 @@ impl<T: Ord + Clone> Uses<T> {
     pub fn names(&self) -> impl Iterator<Item = &Arc<str>> {
         self.0.keys()
     }
+
+    /// The persistent set of the values that use `name`, which a copy kept for later shares,
+    /// so that the two are compared in the values that differ.
+    pub fn set(&self, name: &str) -> Option<&OrdSet<T>> {
+        self.0.get(name)
+    }
 }
 
 impl<T: Ord + Clone + Default> Uses<(usize, T)> {
@@ -156,6 +162,28 @@ pub type Class = Arc<[Arc<Formula>]>;
 /// The name of the leaf in a [`Class`]: one no program writes, since `#` begins no name.
 pub const LEAF: &str = "#leaf";
 
+/// The family of a class ([`Class`]): when the class is one inequality in which the leaf has
+/// the coefficient 1 or -1, as `#leaf >= n + m - 3`, the class with that constant made 0;
+/// otherwise the class itself. The classes of one family have the same hubs and conjuncts
+/// among them and differ only in that constant, so each gives its leaf the family's bound
+/// moved by its constant ([`Conjuncts::class_core`]): one check of whether the bound moved
+/// answers for the whole family.
+pub fn family(c: &Class) -> Class {
+    let leaf = Atom::Sym(Arc::from(LEAF));
+    if let [g] = &**c
+        && let Formula::Con(con) = &**g
+        && con.rel == Rel::Ge
+        && con.lin.terms.get(&leaf).is_some_and(Int::is_unit)
+    {
+        let lin = Lin {
+            terms: con.lin.terms.clone(),
+            constant: Int::ZERO,
+        };
+        return [Arc::new(Formula::Con(Con { lin, rel: Rel::Ge }))].into();
+    }
+    c.clone()
+}
+
 /// `g` with the name `x` written `to`.
 fn renamed(g: &Formula, x: &str, to: &Arc<str>) -> Formula {
     g.map_cons(&|c| {
@@ -225,6 +253,10 @@ struct StarIndex {
     class_of: OrdMap<Arc<str>, Class>,
     /// The classes of `classes` at each of their hubs.
     class_at: Uses<Class>,
+    /// The classes of each family of the classes of `classes` ([`family`]).
+    families: OrdMap<Class, OrdSet<Class>>,
+    /// The families of `families` at each of their hubs.
+    family_at: Uses<Class>,
     /// The conjuncts of the stars at each hub.
     hangs: Uses<Arc<Formula>>,
     /// The conjuncts that mention each name, but those of the stars at it as a hub: those a
@@ -636,14 +668,14 @@ impl Conjuncts {
         gs.into_iter().collect()
     }
 
-    /// The classes of the stars of two hubs or more whose projection reads `g` as a conjunct
-    /// among their hubs ([`Conjuncts::core`]): those at each name `g` is free at. In time near
-    /// the classes at those names, not their stars.
+    /// The families ([`family`]) of the classes of the stars of two hubs or more whose
+    /// projection reads `g` as a conjunct among their hubs ([`Conjuncts::core`]): those at each
+    /// name `g` is free at. In time near the families at those names, not their classes.
     pub fn classed(&self, g: &Arc<Formula>) -> BTreeSet<Class> {
         let mut out = BTreeSet::new();
         for n in names(g) {
             if self.index.free.has(&n, g) {
-                out.extend(self.index.class_at.of(&n).cloned());
+                out.extend(self.index.family_at.of(&n).cloned());
             }
         }
         out
@@ -660,6 +692,16 @@ impl Conjuncts {
             gs.extend(self.index.free.of(n).cloned());
         }
         Some(gs.into_iter().collect())
+    }
+
+    /// The classes of family `f` ([`family`]).
+    pub fn family_classes(&self, f: &Class) -> impl Iterator<Item = &Class> {
+        self.index.families.get(f).into_iter().flatten()
+    }
+
+    /// The free conjuncts at `n` ([`Conjuncts::core`]) as their persistent set ([`Uses::set`]).
+    pub fn free_set(&self, n: &str) -> Option<&OrdSet<Arc<Formula>>> {
+        self.index.free.set(n)
     }
 
     /// The leaves of the stars of class `c`.
@@ -684,12 +726,21 @@ impl Conjuncts {
         key.sort_unstable();
         let key: Class = key.into();
         let leaves = self.index.classes.entry(key.clone()).or_default();
-        if leaves.is_empty() {
+        let new = leaves.is_empty();
+        leaves.insert(x.clone());
+        if new {
             for h in hubs {
                 self.index.class_at.add(h, &key);
             }
+            let f = family(&key);
+            let classes = self.index.families.entry(f.clone()).or_default();
+            if classes.is_empty() {
+                for h in hubs {
+                    self.index.family_at.add(h, &f);
+                }
+            }
+            classes.insert(key.clone());
         }
-        leaves.insert(x.clone());
         self.index.class_of.insert(x.clone(), key);
     }
 
@@ -707,6 +758,16 @@ impl Conjuncts {
             let hubs: BTreeSet<Arc<str>> = key.iter().flat_map(|g| names(g)).collect();
             for h in hubs.iter().filter(|h| &***h != LEAF) {
                 self.index.class_at.remove(h, &key);
+            }
+            let f = family(&key);
+            if let Some(classes) = self.index.families.get_mut(&f) {
+                classes.remove(&key);
+                if classes.is_empty() {
+                    self.index.families.remove(&f);
+                    for h in hubs.iter().filter(|h| &***h != LEAF) {
+                        self.index.family_at.remove(h, &f);
+                    }
+                }
             }
         }
     }
@@ -1831,6 +1892,11 @@ impl Blocks {
     /// The conjuncts of block `b`.
     pub fn members(&self, b: BlockId) -> impl Iterator<Item = &Arc<Formula>> {
         self.members.get(&b).into_iter().flatten()
+    }
+
+    /// The conjuncts of block `b` as their persistent set ([`Uses::set`]).
+    pub fn member_set(&self, b: BlockId) -> Option<&OrdSet<Arc<Formula>>> {
+        self.members.get(&b)
     }
 
     /// The tree of block `b`: one number for all the blocks of one tree.

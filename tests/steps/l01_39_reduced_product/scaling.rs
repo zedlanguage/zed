@@ -708,7 +708,7 @@ fn tests_among_the_hubs_of_many_stars_narrow_an_eager_scope_in_linear_time() {
     // projected every star again: `k` projections per test, 57.4 times the bytes for 8 times
     // the size (item NARROW-eager-scope). The stars of one class, the same conjuncts but for
     // the leaf, are now projected again only when the class's bound on its leaf changes
-    // (`Scope::same_leaf_bound`).
+    // (`Scope::leaf_bound_stays`).
     let p = Premises::new();
     let built: BTreeMap<usize, Scope> = [16, 128]
         .into_iter()
@@ -843,6 +843,79 @@ fn an_eager_scope_with_many_disjunctions_among_the_hubs_of_a_star_scales() {
     // parts at each test: 25.0 to 26.4 times the instructions for 8 times the size
     // (COMPLEXITY.md C26; META4 O6).
     disjunctions_scale("k disjunctions among the hubs of a star, eager", false);
+}
+
+#[test]
+fn an_eager_scope_settles_the_hubs_of_a_class_of_stars_in_linear_time() {
+    // The tests of the lazy case above, in an eager scope: `k` stars `ai >= n + m - i`, each a
+    // class of its own, then `k` tests among their hubs, none of which moves a leaf. Each test
+    // projected every star again, the disjunction among the hubs keeping each class's bound
+    // from being shown to stay: `k` projections per test, O(k²) (item
+    // NARROW-eager-star-redo).
+    let inputs = scaling::inputs(16, a_class_of_stars);
+    let p = Premises::new();
+    let (start, tests) = &inputs[&16];
+    let s = tests
+        .iter()
+        .fold(start.clone(), |s, t| s.assume(t, true, &p));
+    for i in 0..16 {
+        assert_eq!(s.get(&format!("a{i}")).ints().to_string(), "[..]", "a{i}");
+    }
+    scaling::check(
+        "k tests among the hubs of a class of k stars, eager",
+        16,
+        |k| {
+            let (start, tests) = &inputs[&k];
+            tests
+                .iter()
+                .fold(start.clone(), |s, t| s.assume(t, true, &p));
+        },
+    );
+}
+
+/// The star `a >= x + y`, then `k` tests `x + j * y >= 1 || x - j * y >= 1` among its hubs,
+/// `j` = 1 to `k`, of which none implies another.
+fn distinct_disjunctions_among_the_hubs_of_a_star(k: usize) -> (Scope, Vec<Term>) {
+    let mut tests = vec![prim(
+        Prim::Ge,
+        var("a"),
+        prim(Prim::Add, var("x"), var("y")),
+    )];
+    tests.extend((1..=k as i64).map(|j| {
+        let jy = || prim(Prim::Mul, int(j), var("y"));
+        prim(
+            Prim::Or,
+            prim(Prim::Ge, prim(Prim::Add, var("x"), jy()), int(1)),
+            prim(Prim::Ge, prim(Prim::Sub, var("x"), jy()), int(1)),
+        )
+    }));
+    let names: Vec<Arc<str>> = ["a", "x", "y"].into_iter().map(Arc::from).collect();
+    (ints(&names), tests)
+}
+
+#[test]
+fn an_eager_scope_with_many_distinct_disjunctions_among_the_hubs_of_a_star_scales() {
+    // Every disjunction stays in the relation, so the star's block and the hubs' block each
+    // hold `k` of them. Each test made both blocks again from all their conjuncts, and
+    // checked and recorded every part of each: O(k) per test though one part is new, O(k²)
+    // in all (item NARROW-eager-star-redo).
+    let inputs = scaling::inputs(16, distinct_disjunctions_among_the_hubs_of_a_star);
+    let p = Premises::new();
+    let (start, tests) = &inputs[&16];
+    let s = tests
+        .iter()
+        .fold(start.clone(), |s, t| s.assume(t, true, &p));
+    assert_eq!(s.relation.set().len(), 17);
+    scaling::check(
+        "k distinct disjunctions among the hubs of a star, eager",
+        16,
+        |k| {
+            let (start, tests) = &inputs[&k];
+            tests
+                .iter()
+                .fold(start.clone(), |s, t| s.assume(t, true, &p));
+        },
+    );
 }
 
 /// The scope of `a` and `b` within `0..=100000`, with `a + b <= 150000` and the disjunction
