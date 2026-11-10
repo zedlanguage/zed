@@ -724,7 +724,13 @@ impl IntervalSet {
 
     /// The integers from `lo` to `hi`, both included; empty when `lo > hi`.
     pub fn range(lo: End, hi: End) -> Self {
-        IntervalSet::from_pieces(vec![(lo, hi)])
+        if lo <= hi && lo != PosInf && hi != NegInf {
+            IntervalSet {
+                root: Some(node(None, keyed((lo, hi)), None)),
+            }
+        } else {
+            IntervalSet::empty()
+        }
     }
 
     /// The one integer `v`.
@@ -745,14 +751,8 @@ impl IntervalSet {
     /// The union of the given pieces, in any order, overlapping or not. A piece whose lower
     /// endpoint is above its upper one, or which has an infinite endpoint on the wrong side, is
     /// empty and is dropped.
-    pub fn from_pieces(mut pieces: Vec<(End, End)>) -> Self {
-        pieces.retain(|(lo, hi)| lo <= hi && *lo != PosInf && *hi != NegInf);
-        pieces.sort();
-        let mut out: Vec<(End, End)> = Vec::with_capacity(pieces.len());
-        for (lo, hi) in pieces {
-            push_merged(&mut out, lo, hi);
-        }
-        IntervalSet::from_normal(out)
+    pub fn from_pieces(pieces: Vec<(End, End)>) -> Self {
+        IntervalSet::from_normal(normal_pieces(pieces))
     }
 
     /// The set of the given pieces, which are sorted, disjoint and not adjacent: `O(p)`.
@@ -1011,52 +1011,61 @@ impl IntervalSet {
     /// (sec:constraints). This is not a join and need not be monotone; forward revision applies
     /// it to bound an image by its operands' pieces.
     pub fn cap(&self, limit: usize) -> Self {
-        use std::cmp::Reverse;
-        use std::collections::BinaryHeap;
-        let limit = limit.max(1);
-        let n = self.len();
-        if n <= limit {
+        if self.len() <= limit.max(1) {
             return self.clone();
         }
-        // The pieces as a list linked by index, so that a merge is O(1), and the gaps in a
-        // heap, smallest first and the lower pair on a tie; a gap whose pieces have changed
-        // since it was pushed is skipped when it comes up. A piece's lower end never changes,
-        // so the heap holds the index of the right piece, not its end.
-        let mut pieces = self.clone().into_pieces();
-        let mut next: Vec<usize> = (1..=n).collect();
-        let mut alive = vec![true; n];
-        let gap = |left: &(End, End), right: &(End, End)| match (&left.1, &right.0) {
-            (Fin(hi), Fin(lo)) => lo - hi,
-            _ => unreachable!("only the outer endpoints are infinite"),
-        };
-        let mut heap: BinaryHeap<Reverse<(Num, usize, usize)>> = (0..n - 1)
-            .map(|i| Reverse((gap(&pieces[i], &pieces[i + 1]), i, i + 1)))
-            .collect();
-        let mut count = n;
-        while count > limit {
-            let Reverse((_, at, right_was)) = heap.pop().expect("a gap for each pair");
-            let right = next[at];
-            if !alive[at] || right >= n || right != right_was {
-                continue;
-            }
-            pieces[at].1 = std::mem::replace(&mut pieces[right].1, NegInf);
-            alive[right] = false;
-            next[at] = next[right];
-            if next[at] < n {
-                let r = next[at];
-                heap.push(Reverse((gap(&pieces[at], &pieces[r]), at, r)));
-            }
-            count -= 1;
-        }
-        IntervalSet::from_normal(
-            pieces
-                .into_iter()
-                .zip(alive)
-                .filter_map(|(p, a)| a.then_some(p))
-                .collect(),
-        )
+        IntervalSet::from_normal(cap_pieces(self.clone().into_pieces(), limit))
     }
+}
 
+/// The pieces of [`IntervalSet::cap`] for a set given by its pieces, sorted, disjoint and not
+/// adjacent, as [`normal_pieces`] gives them; the result is in the same form. Revision caps the
+/// lists it works on with it, so that no set is built for a list that is read once.
+pub fn cap_pieces(mut pieces: Vec<(End, End)>, limit: usize) -> Vec<(End, End)> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+    let limit = limit.max(1);
+    let n = pieces.len();
+    if n <= limit {
+        return pieces;
+    }
+    // The pieces as a list linked by index, so that a merge is O(1), and the gaps in a
+    // heap, smallest first and the lower pair on a tie; a gap whose pieces have changed
+    // since it was pushed is skipped when it comes up. A piece's lower end never changes,
+    // so the heap holds the index of the right piece, not its end.
+    let mut next: Vec<usize> = (1..=n).collect();
+    let mut alive = vec![true; n];
+    let gap = |left: &(End, End), right: &(End, End)| match (&left.1, &right.0) {
+        (Fin(hi), Fin(lo)) => lo - hi,
+        _ => unreachable!("only the outer endpoints are infinite"),
+    };
+    let mut heap: BinaryHeap<Reverse<(Num, usize, usize)>> = (0..n - 1)
+        .map(|i| Reverse((gap(&pieces[i], &pieces[i + 1]), i, i + 1)))
+        .collect();
+    let mut count = n;
+    while count > limit {
+        let Reverse((_, at, right_was)) = heap.pop().expect("a gap for each pair");
+        let right = next[at];
+        if !alive[at] || right >= n || right != right_was {
+            continue;
+        }
+        pieces[at].1 = std::mem::replace(&mut pieces[right].1, NegInf);
+        alive[right] = false;
+        next[at] = next[right];
+        if next[at] < n {
+            let r = next[at];
+            heap.push(Reverse((gap(&pieces[at], &pieces[r]), at, r)));
+        }
+        count -= 1;
+    }
+    pieces
+        .into_iter()
+        .zip(alive)
+        .filter_map(|(p, a)| a.then_some(p))
+        .collect()
+}
+
+impl IntervalSet {
     /// The widening `self ∇ next` (step M0.5), for `next` the value that the join would give,
     /// which contains `self`.
     ///
@@ -1193,16 +1202,49 @@ impl IntervalSet {
 
     /// The pieces split at zero into negative, zero and positive parts, so that each part has
     /// one sign (step M0.5's sign-conditioned tonicity). The parts are listed, not merged.
+    // Complexity tradeoff: the naive version meets the set with the three sets of one sign
+    // and lists each meet: O(log p) each but with three sets and their nodes built, two
+    // inclusion walks per meet and the meets' nodes, about 22,000 instructions for a set of one
+    // piece (PERF-refused-assume). Used: one walk over the pieces, each split where it crosses
+    // zero, O(p) with no set built; the pieces are sorted, so the negative parts come first,
+    // then 0, then the positive ones, the order of the meets. Same output, no precondition.
     pub fn sign_parts(&self) -> Vec<(End, End)> {
-        [
-            IntervalSet::range(NegInf, End::of(-1)),
-            IntervalSet::single(0),
-            IntervalSet::range(End::of(1), PosInf),
-        ]
-        .iter()
-        .flat_map(|part| self.meet(part).into_pieces())
-        .collect()
+        split_signs(self.pieces().cloned())
     }
+}
+
+/// The pieces of a set given by its pieces, in increasing order, split at zero into negative,
+/// zero and positive parts: [`IntervalSet::sign_parts`] without the set. `O(p)`.
+pub fn split_signs(pieces: impl IntoIterator<Item = (End, End)>) -> Vec<(End, End)> {
+    let pieces = pieces.into_iter();
+    let mut out = Vec::with_capacity(pieces.size_hint().0 + 2);
+    for (lo, hi) in pieces {
+        if hi.signum() < 0 || lo.signum() > 0 {
+            out.push((lo, hi));
+            continue;
+        }
+        let up = hi.signum() > 0;
+        if lo.signum() < 0 {
+            out.push((lo, End::of(-1)));
+        }
+        out.push((End::of(0), End::of(0)));
+        if up {
+            out.push((End::of(1), hi));
+        }
+    }
+    out
+}
+
+/// The pieces of [`IntervalSet::from_pieces`] of `pieces`, in increasing order: empty pieces
+/// dropped, the rest sorted and those that overlap or touch merged. `O(p log p)` for the sort.
+pub fn normal_pieces(mut pieces: Vec<(End, End)>) -> Vec<(End, End)> {
+    pieces.retain(|(lo, hi)| lo <= hi && *lo != PosInf && *hi != NegInf);
+    pieces.sort();
+    let mut out: Vec<(End, End)> = Vec::with_capacity(pieces.len());
+    for (lo, hi) in pieces {
+        push_merged(&mut out, lo, hi);
+    }
+    out
 }
 
 impl PartialEq for IntervalSet {

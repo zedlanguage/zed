@@ -332,8 +332,10 @@ fn narrowing_by_many_refused_tests_scales() {
 }
 
 /// The check of [`narrowing_by_many_refused_tests_scales`] is mostly the solver's work, about
-/// 42M instructions per refused test (11M when it was written, 2026-11-03), so the refusals' own
-/// cost is measured alone: keeping `k` refusals, each once, in a scope costs near linear in `k`.
+/// 26M instructions per refused test since PERF-refused-assume (42M before it, 11M when it was
+/// written, 2026-11-03; `one_refused_test_costs_at_most_a_fixed_number_of_instructions` below
+/// holds it under a limit), so the refusals' own cost is measured alone: keeping `k` refusals,
+/// each once, in a scope costs near linear in `k`.
 #[test]
 fn keeping_many_refusals_scales() {
     use zed_tests::scaling::{self, FACTOR};
@@ -396,6 +398,53 @@ fn the_join_of_arms_with_many_refused_tests_and_its_warnings_scale() {
         assert_eq!(joins[usize::from(k != n)].warnings().len(), k);
     });
 }
+
+/// The instructions of one assume of a refused Growth test, the mean of 16 on disjoint names,
+/// stay at most [`ASSUME_LIMIT`]. The scaling test above checks only the ratio from n to 8n, so
+/// it did not catch the constant growing from about 15M (c3d19a6e, 2026-11-03) to about 41M
+/// (465a54b5, 2026-11-10); PERF-refused-assume cut it to about 26M. Counts of processor time
+/// vary too much with load for a fixed limit, so on a machine that cannot count instructions
+/// the test measures nothing.
+#[test]
+fn one_refused_test_costs_at_most_a_fixed_number_of_instructions() {
+    use zed_tests::scaling::Meter;
+    use zedc::store::cell::Premises;
+    let mut meter = Meter::new();
+    if meter.unit() != "instructions" {
+        return;
+    }
+    let none = Premises::new();
+    let k = 16;
+    let ns: Vec<Arc<str>> = (0..4 * k).map(|i| format!("v{i}").into()).collect();
+    let gs: Vec<Term> = ns.chunks(4).map(growth_term).collect();
+    let scope = super::ints(&ns);
+    let run = || {
+        let s = gs
+            .iter()
+            .fold(scope.clone(), |s, g| s.assume(g, true, &none));
+        assert_eq!(s.warnings().len(), k);
+    };
+    let least = (0..2)
+        .map(|_| meter.work(run).units)
+        .min()
+        .expect("two runs");
+    let each = least / k as u64;
+    let load = std::fs::read_to_string("/proc/loadavg")
+        .map(|l| l.split(' ').next().unwrap_or("").to_string())
+        .unwrap_or_default();
+    eprintln!("one refused test: {each} instructions (limit {ASSUME_LIMIT}), load {load}");
+    assert!(
+        each <= ASSUME_LIMIT,
+        "one refused test took {each} instructions, more than {ASSUME_LIMIT} (load {load})"
+    );
+}
+
+/// The limit of [`one_refused_test_costs_at_most_a_fixed_number_of_instructions`]: 1.1 times
+/// the 26.3M measured with the allocator settings of `tools/run_tests.sh` (no thread cache;
+/// 20.6M with it), load 49. Negative control, run once and not committed: five extra copies
+/// of the set in each `IntervalSet::sign_parts` give 30.0M, and the test fails; one copy gives
+/// 27.0M, under the limit.
+const ASSUME_LIMIT: u64 = 29_000_000;
 
 /// [`growth_test`] as a kernel term on `names`, in the order `x`, `y`, `z`, `w`.
 fn growth_term(names: &[Arc<str>]) -> Term {

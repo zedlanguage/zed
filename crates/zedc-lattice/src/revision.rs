@@ -13,7 +13,7 @@
 
 use std::cmp::Ordering;
 
-use super::interval::{End, IntervalSet, Num};
+use super::interval::{End, IntervalSet, Num, cap_pieces, normal_pieces, split_signs};
 use super::lattice::{Congruence, FiniteSet, Lattice};
 use End::{Fin, NegInf, PosInf};
 use zedc_int::int::Int;
@@ -242,10 +242,7 @@ pub fn forward(op: &Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
     let one = [(End::of(0), End::of(0))];
     match op {
         Op::Mod => map2(&xs, &y.clone().into_pieces(), forward_mod),
-        Op::Div => {
-            let nonzero = IntervalSet::single(0).complement_in(y).sign_parts();
-            map2(&xs, &nonzero, |a, b| vec![corners(op, a, b)])
-        }
+        Op::Div => map2(&xs, &nonzero(ys), |a, b| vec![corners(op, a, b)]),
         _ if arity(op) == 1 => map2(&xs, &one, |a, b| vec![corners(op, a, b)]),
         _ => map2(&xs, &ys, |a, b| vec![corners(op, a, b)]),
     }
@@ -297,10 +294,22 @@ fn region(p: &(End, End)) -> usize {
     }
 }
 
-/// The parts split at zero, grouped by sign region.
-fn regions(parts: &[(End, End)]) -> [Vec<(End, End)>; 3] {
+/// The sign parts of a set without 0: the parts of [`IntervalSet::sign_parts`] but the part
+/// `0..=0`, which are the sign parts of the set minus 0.
+fn nonzero(mut parts: Vec<(End, End)>) -> Vec<(End, End)> {
+    parts.retain(|p| region(p) != 1);
+    parts
+}
+
+/// The parts of the union of `parts` split at zero, grouped by sign region: the sign parts of
+/// [`IntervalSet::from_pieces`] of `parts`.
+// Complexity tradeoff: the naive version builds the set of the parts and lists its sign
+// parts, O(p log p) with a tree node allocated per piece and freed at once. Used: the same
+// sort and merge on the list, then one split at zero, O(p log p) with no set built. Same
+// output, no precondition (PERF-refused-assume).
+fn regions(parts: Vec<(End, End)>) -> [Vec<(End, End)>; 3] {
     let mut out: [Vec<(End, End)>; 3] = Default::default();
-    for p in IntervalSet::from_pieces(parts.to_vec()).sign_parts() {
+    for p in split_signs(normal_pieces(parts)) {
         out[region(&p)].push(p);
     }
     out
@@ -330,27 +339,29 @@ fn map2(
     b: &[(End, End)],
     f: impl Fn(&(End, End), &(End, End)) -> Vec<(End, End)>,
 ) -> IntervalSet {
-    let (ra, rb) = (regions(a), regions(b));
+    // The lists are kept as lists, sorted and merged as `IntervalSet::from_pieces` would, and
+    // a set is built only for the result: each list here is read once (PERF-refused-assume).
+    let (ra, rb) = (regions(a.to_vec()), regions(b.to_vec()));
     let most = ra.iter().chain(&rb).map(Vec::len).max().unwrap_or(0);
-    let shrink = |r: &[Vec<(End, End)>; 3], big: usize, small: usize| {
+    let shrink = |r: [Vec<(End, End)>; 3], big: usize, small: usize| {
         let c = (big + small).div_ceil(big.max(1));
-        IntervalSet::from_pieces(r.concat()).cap(c).sign_parts()
+        split_signs(cap_pieces(normal_pieces(r.concat()), c))
     };
     let (na, nb) = (a.len(), b.len());
     let (pa, pb) = if na >= nb {
-        (ra.concat(), shrink(&rb, na, nb))
+        (ra.concat(), shrink(rb, na, nb))
     } else {
-        (shrink(&ra, nb, na), rb.concat())
+        (shrink(ra, nb, na), rb.concat())
     };
-    let image = IntervalSet::from_pieces(
-        pa.iter()
-            .flat_map(|p| pb.iter().flat_map(|q| f(p, q)).collect::<Vec<_>>())
-            .collect(),
-    );
+    let f = &f;
+    let image: Vec<(End, End)> = pa
+        .iter()
+        .flat_map(|p| pb.iter().flat_map(move |q| f(p, q)))
+        .collect();
     IntervalSet::from_pieces(
-        regions(&image.into_pieces())
+        regions(image)
             .into_iter()
-            .flat_map(|ps| IntervalSet::from_pieces(ps).cap(most.max(1)).into_pieces())
+            .flat_map(|ps| cap_pieces(ps, most))
             .collect(),
     )
 }
@@ -404,8 +415,7 @@ pub fn backward(
             if z.contains(0) && other.contains(0) {
                 IntervalSet::top()
             } else {
-                let nonzero = IntervalSet::single(0).complement_in(other).sign_parts();
-                map2(&z.sign_parts(), &nonzero, |zp, yp| {
+                map2(&z.sign_parts(), &nonzero(other.sign_parts()), |zp, yp| {
                     // z / y over a box of one sign in each: monotone in each argument, so
                     // its extremes are among the four corners.
                     let qs = [

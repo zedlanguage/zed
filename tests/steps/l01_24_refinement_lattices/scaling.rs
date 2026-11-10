@@ -252,6 +252,17 @@ fn the_interval_operations_scale() {
         let z = revision::forward(&Op::Mul, &a, &b.neg());
         assert!(!z.is_empty());
     });
+    // The sign parts are one walk over the pieces and the `/` reads the divisor's sign parts
+    // without 0, with no set built for either (PERF-refused-assume).
+    scaling::check("the sign parts of n pieces", 4000, |n| {
+        let (a, _) = sets(n);
+        assert!(a.sign_parts().len() >= n);
+    });
+    scaling::check("the forward `/` of two sets of n pieces", 4000, |n| {
+        let (a, b) = sets(n);
+        let z = revision::forward(&Op::Div, &a, &b.neg());
+        assert!(!z.is_empty());
+    });
     scaling::check("joining two sets of n pieces", 4000, |n| {
         let (a, b) = sets(n);
         assert!(!a.join(&b).is_empty());
