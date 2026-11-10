@@ -689,19 +689,26 @@ fn rounds(n: usize) -> Vec<Expr> {
 /// The decider takes one round of dropping arms and merging, so in [`rounds`] of 2 it decides
 /// level 0 and leaves level 1 to the search, which finds its values with no message
 /// (`// Complexity tradeoff:` at `names::contracted`; repeating the rounds until nothing changes
-/// costs a round per level). With the arm `(Tree0, Node0)` dropped from `W0` by hand, `W0` and
-/// `V0` are written alike, and one round decides level 1 too.
+/// costs a round per level). With `W0` written as `V0` is, level 1 is still left: `W0` and `V0`
+/// are then one node, but `W1` and `V1` are one only after `(Tree1, W0)` is dropped and the
+/// parts merged again. With `W1`'s arm written `(Tree1, V0)`, level 1 is level 0 again, and one
+/// round decides it.
 #[test]
 fn parts_equal_only_after_two_rounds_are_left_to_the_search() {
     let left = (None, Verdict::Inhabited);
-    assert_eq!(
-        verdicts_of(rounds(2)),
-        [vec![HAS_A_VALUE; 4], vec![left; 4]].concat()
-    );
+    let level_1_left = [vec![HAS_A_VALUE; 4], vec![left; 4]].concat();
+    assert_eq!(verdicts_of(rounds(2)), level_1_left);
     assert_eq!(messages(rounds(2)), vec![None; 8]);
-    let mut dropped = rounds(2);
-    dropped[2] = pair(f(r(TREE)), node_or_tree());
-    assert_eq!(verdicts_of(dropped), vec![HAS_A_VALUE; 8]);
+    let (node1, tree1, v0, w1) = (4, 5, 3, 6);
+    let mut w0_alike = rounds(2);
+    w0_alike[2] = pair(f(r(TREE)), node_or_tree());
+    assert_eq!(verdicts_of(w0_alike), level_1_left);
+    let mut v0_in_w1 = rounds(2);
+    v0_in_w1[w1] = pair(
+        f(r(tree1)),
+        or(vec![r(node1), r(tree1), pair(r(tree1), r(v0))]),
+    );
+    assert_eq!(verdicts_of(v0_in_w1), vec![HAS_A_VALUE; 8]);
 }
 
 /// [`seed_57360`], whose group the decider refuses as written, with two chains of `n` names
