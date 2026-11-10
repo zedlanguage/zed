@@ -1751,13 +1751,19 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| ALWAYS-atom-audit | impl attempt 1 | 2026-11-09 19:47 | started: spec audit + read-only impl audit of the always-atom rule |
+| BATCH-95 | running | 2026-11-09 19:52 |  |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
-| LOOKUP-oob | impl attempt 1 | 2026-11-09 19:03 | started; making worktrees lookup-oob and lookup-oob-spec |
-| PRES-below-key | impl attempt 1 | 2026-11-09 18:58 | started; worktree /home/luke/Work/wt/pres-below-key from origin/main a2fcd7a5 |
-| PRES-disj-cost | impl attempt 1 | 2026-11-09 18:58 | started; making worktree pres-disj-cost from origin/main |
-| PRES-nest-empty | impl attempt 1 | 2026-11-09 18:58 | start: audit F2, nest_empty refused Disjuncts instead of false |
-| PRES-small-point | impl attempt 1 | 2026-11-09 17:33 | start; worktree /home/luke/Work/wt/small-point from origin/main 6b3a8c52 |
-| WITH-initial | impl attempt 1 | 2026-11-09 18:54 | started: worktrees and spec reading |
+| LOOKUP-oob | impl attempt 1 | 2026-11-09 19:03 | l01+m0+crate groups run start, load 45.32 34.71 27.19 |
+| MLIR-ordered-name | impl attempt 1 | 2026-11-09 18:37 | ready e6219ad6 on wt/mlir-ordered-name: l01_35 12 passed (was 10 passed 1 failed), clippy -p zed-tests and fmt clean, rebased on 981d0c57 (STATUS.md conflict, b |
+| PRES-below-key | impl attempt 1 | 2026-11-09 18:58 | ready: branch wt/pres-below-key commit a4b78066 (rebased on origin/main, no conflict); project_each on the audit's nest exponent 1.00 (7.0M..113.9M at k 4..64), |
+| PRES-disj-cost-xr | impl attempt 1 | 2026-11-09 19:19 | skip-probing run: 10/296 pieces fail (16 tests); round 1 briefs built, launching 3 reviewers |
+| PRES-nest-empty | impl attempt 1 | 2026-11-09 18:58 | red run on the HEAD solver: 6 of 8 nest_empty tests fail with Err(Disjuncts); fix linear on nest, chain, one-side chain (exponents 1.00-1.08) |
+| PRES-small-point | impl attempt 1 | 2026-11-09 17:33 | ready: 263264b0 on f13bed49; 296 pieces 0 failed; rounds, state types, facts |
+| PROJECT-each-chain-all | impl attempt 1 | 2026-11-09 17:08 | reproduced: chained dead2 all symbols on main 121M/471M/1.9G/7.9G/32.9G instr at 16..256 stages (exponent 2.05); with each disjunct asked only for the symbols i |
+| REFUSAL-front-quadratic | impl attempt 1 | 2026-11-09 02:22 | started in /home/luke/Work/wt/refusal-front-quadratic from origin/main f13bed49 |
+| SOUND-exact-oracle | impl attempt 1 | 2026-11-09 18:13 | ready at 3ed3a647: exact oracle test, 2 soundness fixes (exact_search failing points, min/max definedness), c^0 control fails 7/8 pieces, 541 pieces 0 failed |
+| WITH-initial | impl attempt 1 | 2026-11-09 18:54 | ready: impl 7f1c82e9 on wt/with-initial, spec e1ed6c5 on wt/with-initial-spec |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
