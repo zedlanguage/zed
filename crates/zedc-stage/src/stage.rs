@@ -89,9 +89,12 @@ fn free_of_primitives(t: &Term) -> Option<BTreeSet<Arc<str>>> {
             }
             Term::Lit(_) | Term::PrimFn(_) | Term::Read(_) => {}
             Term::Prim(_, args) => todo.extend(args),
-            Term::If(c, a, b) => {
-                todo.extend([c, a, b].into_iter().filter(|s| seen.insert(s.id())).map(|s| &**s))
-            }
+            Term::If(c, a, b) => todo.extend(
+                [c, a, b]
+                    .into_iter()
+                    .filter(|s| seen.insert(s.id()))
+                    .map(|s| &**s),
+            ),
             _ => return None,
         }
     }

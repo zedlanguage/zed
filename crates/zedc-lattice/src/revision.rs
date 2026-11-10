@@ -731,7 +731,12 @@ mod tests {
             _ => End::of(below(41) as i64 - 20),
         };
         for _ in 0..4000 {
-            let (a, b, c, d) = (end(&mut below), end(&mut below), end(&mut below), end(&mut below));
+            let (a, b, c, d) = (
+                end(&mut below),
+                end(&mut below),
+                end(&mut below),
+                end(&mut below),
+            );
             let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
             let (lo2, hi2) = if c <= d { (c, d) } else { (d, c) };
             pairs.push((IntervalSet::range(lo, hi), IntervalSet::range(lo2, hi2)));

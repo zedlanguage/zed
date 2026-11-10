@@ -253,9 +253,7 @@ fn order_with_literal(term: &Term, inputs: &Domains, demand: &Demand) -> Option<
         return None;
     };
     let (x, half) = order_set(term, *outcome)?;
-    let Some((name, dom)) = inputs.iter().next() else {
-        return None;
-    };
+    let (name, dom) = inputs.iter().next()?;
     if inputs.len() != 1 || name != x || dom.is_empty() {
         return None;
     }
@@ -527,7 +525,8 @@ fn preimage_in(
         }
     }
 
-    tx.start(inputs, marks.clone());
+    let begun = tx.begin(inputs);
+    tx.start_from(&begun, marks.clone());
     let r = tx.back(root, ROOT, demand);
     let mut r = Whole {
         dom: tx.whole(&r),
@@ -536,7 +535,23 @@ fn preimage_in(
     let mut stops = std::mem::take(&mut tx.run.stops);
     let mut enumerated = false;
     if !r.exact && !is_empty(&r.dom) {
-        tx.start(&r.dom, marks.clone());
+        // Complexity tradeoff: naive version, the forward run over a box the backward run
+        // did not narrow begins afresh, so it makes again every set of integers the backward
+        // run made: for `i * i * j * i * j * … <= 1` the bounds of each product, `O(n)` bits
+        // at depth `n`, `O(n^2)` bits in all, twice. Used: the box is the same, so the run
+        // begins from the same shared domains and keeps the backward run's sets
+        // ([`SharedInts`]), each a function of its key alone, as the runs of
+        // [`split_residues`] keep them; a narrowed box begins afresh as before. The test
+        // `r.dom == *inputs` is `O(p)` for the `p` pieces of the box. Test:
+        // `l01_25_preimage_catalog::powers::reading_a_product_as_a_power_is_linear_in_its_factors`;
+        // COMPLEXITY.md row PA-bind-cost.
+        if r.dom == *inputs {
+            let ints = std::mem::take(&mut tx.run.ints);
+            tx.start_from(&begun, marks.clone());
+            tx.run.ints = ints;
+        } else {
+            tx.start(&r.dom, marks.clone());
+        }
         if tx.fwd(root, ROOT).meets(demand) {
             r.exact = true;
         }
@@ -3160,9 +3175,10 @@ struct SharedInts {
     inputs: HashMap<*const IntervalSet, Ints>,
     literals: HashMap<i64, Ints>,
     /// By the operator and the operands' ids ([`Ints::id`]), which no other set takes, even
-    /// after the operands are dropped, so the entry need not hold them. No power: its key
-    /// would need its exponent.
+    /// after the operands are dropped, so the entry need not hold them. No power: see `pows`.
     ops: HashMap<OpKey, Ints>,
+    /// The powers, by the exponent and the operand's id ([`Ints::id`]).
+    pows: HashMap<(Num, u64), Ints>,
 }
 
 /// An operator other than a power, and the ids of its two operands ([`Ints::id`]).
@@ -4113,9 +4129,8 @@ struct Begun {
 /// What [`Tx::start`] makes of the box `inputs` under the summaries `lets`, which depends on
 /// the box alone: the context, with each domain shared, and the run's fields found from it.
 fn begin(lets: &Lets, inputs: &Domains) -> Begun {
-    let reads: Rc<[Arc<dyn SummaryRead>]> = (lets.values())
-        .filter_map(|l| l.read.clone())
-        .collect();
+    let reads: Rc<[Arc<dyn SummaryRead>]> =
+        (lets.values()).filter_map(|l| l.read.clone()).collect();
     let own: Sets = (inputs.iter())
         .map(|(k, v)| (k.clone(), Rc::new(v.clone())))
         .collect();
@@ -5001,8 +5016,18 @@ impl<'t> Tx<'t> {
 
     /// [`Ints::forward`], once for each operator and operands in the run ([`SharedInts`]).
     fn forward_ints(&mut self, o: &Op, a: &Ints, b: &Ints) -> Ints {
-        if matches!(o, Op::Pow(_)) {
-            return Ints::forward(o, a, b);
+        // Complexity tradeoff: naive version, a power made afresh at each reading, so every set
+        // made from it has a new id and misses `ops` too: a run that reads `i * i * j * …`
+        // again made the bounds of each product again, `O(n)` bits at depth `n`, `O(n^2)` bits
+        // in all. Used: a power once per exponent and operand, keyed by the exponent's value
+        // (`Num`'s hash, O(1) to compute) and the operand's id; its set is a function of those
+        // alone (`revision::forward` reads one operand for a power). Test:
+        // `l01_25_preimage_catalog::powers::reading_a_product_as_a_power_is_linear_in_its_factors`;
+        // COMPLEXITY.md row PA-bind-cost.
+        if let Op::Pow(k) = o {
+            return (self.run.ints.pows.entry((k.num().clone(), a.id())))
+                .or_insert_with(|| Ints::forward(o, a, b))
+                .clone();
         }
         let key = (std::mem::discriminant(o), a.id(), b.id());
         let shared = &mut self.run.ints.ops;
@@ -10675,11 +10700,7 @@ fn key(e: &End) -> i128 {
 /// inputs of its set ([`Walk::pa_select`], [`order_if`]): the arms' treaps sliced to the
 /// stretches of their sets and joined in order; `None` when a set or the domain has an end
 /// outside [`in_range`].
-fn select(
-    var: &Arc<str>,
-    dom: &IntervalSet,
-    arms: [Option<(&IntervalSet, &Pa)>; 2],
-) -> Option<Pa> {
+fn select(var: &Arc<str>, dom: &IntervalSet, arms: [Option<(&IntervalSet, &Pa)>; 2]) -> Option<Pa> {
     // Each arm's treap, and the stretches of inputs that take each arm, in order.
     let mut trees = Vec::with_capacity(2);
     let mut spans: Vec<(&End, &End, usize)> = Vec::new();
@@ -13982,8 +14003,16 @@ mod tests {
             for _ in 0..1 + rng.below(3) {
                 let lo = rng.below(41) as i64 - 20;
                 let hi = lo + rng.below(10) as i64;
-                let lo = if rng.below(8) == 0 { NegInf } else { End::of(lo) };
-                let hi = if rng.below(8) == 0 { PosInf } else { End::of(hi) };
+                let lo = if rng.below(8) == 0 {
+                    NegInf
+                } else {
+                    End::of(lo)
+                };
+                let hi = if rng.below(8) == 0 {
+                    PosInf
+                } else {
+                    End::of(hi)
+                };
                 pieces.push((lo, hi));
             }
             let inputs = Domains::from([(x.clone(), IntervalSet::from_pieces(pieces))]);
@@ -14001,7 +14030,10 @@ mod tests {
             };
             let demand = Demand::Bool(rng.below(2) == 0);
             let Some(fast) = order_with_literal(&term, &inputs, &demand) else {
-                assert!(inputs[&x].is_empty(), "{term} over {inputs:?} is read at once");
+                assert!(
+                    inputs[&x].is_empty(),
+                    "{term} over {inputs:?} is read at once"
+                );
                 continue;
             };
             let mut tx = Tx::new();
@@ -14011,7 +14043,10 @@ mod tests {
             read += 1;
             empty += usize::from(fast.domains[&x].is_empty());
         }
-        assert!(read > 3000 && empty > 300, "{read} read at once, {empty} empty");
+        assert!(
+            read > 3000 && empty > 300,
+            "{read} read at once, {empty} empty"
+        );
     }
 
     /// The summary of an `if` of two integer literals guarded by an order of an input against

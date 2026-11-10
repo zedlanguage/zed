@@ -6946,7 +6946,11 @@ impl<'a> Tree<'a> {
         // a tree of two atoms or more writes each once, as before, O(s) for `s` parts. Test:
         // `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`, COMPLEXITY.md
         // row PA-bind-cost.
-        let ordered = nodes.iter().filter(|n| matches!(n.kind, Kind::Atom)).count() > 1;
+        let ordered = nodes
+            .iter()
+            .filter(|n| matches!(n.kind, Kind::Atom))
+            .count()
+            > 1;
         let mut height = vec![0usize; nodes.len()];
         let mut texts = vec![String::new(); nodes.len()];
         for i in (0..nodes.len()).rev() {

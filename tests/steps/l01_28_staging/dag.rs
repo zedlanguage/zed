@@ -282,7 +282,10 @@ fn the_names_of_a_term_of_primitives_and_ifs_are_those_frees_gives() {
             fast += 1;
         }
     }
-    assert!(fast > 1000 && lets > 1000, "{fast} without a let, {lets} with");
+    assert!(
+        fast > 1000 && lets > 1000,
+        "{fast} without a let, {lets} with"
+    );
 }
 
 /// `main = (x, c) -> nd` with `n0 = x` and `nj = if c { let x = x + 1; n(j-1) } else { let x =
