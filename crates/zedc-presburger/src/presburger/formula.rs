@@ -376,16 +376,21 @@ impl Lin {
     /// `self + other`.
     pub fn plus(&self, other: &Lin) -> Lin {
         let mut out = self.clone();
+        out.plus_assign(other);
+        out
+    }
+
+    /// `self += other`, in time near `other` alone.
+    pub fn plus_assign(&mut self, other: &Lin) {
         for (a, c) in &other.terms {
-            let v = out.terms.get(a).map_or_else(|| c.clone(), |o| o + c);
+            let v = self.terms.get(a).map_or_else(|| c.clone(), |o| o + c);
             if v.is_zero() {
-                out.terms.remove(a);
+                self.terms.remove(a);
             } else {
-                out.terms.insert(a.clone(), v);
+                self.terms.insert(a.clone(), v);
             }
         }
-        out.constant = &out.constant + &other.constant;
-        out
+        self.constant = &self.constant + &other.constant;
     }
 
     /// `self * k`.

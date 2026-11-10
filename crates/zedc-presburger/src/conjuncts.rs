@@ -931,7 +931,6 @@ impl Conjuncts {
         let mut sign: Option<(bool, &Arc<Formula>)> = None;
         let mut hubs: BTreeMap<&Arc<str>, (bool, &Arc<Formula>)> = BTreeMap::new();
         let mut far = None;
-        let mut witness: Option<(&Arc<str>, &Arc<Formula>)> = None;
         for g in self.users.of(x) {
             // A constraint, or a disjunction of constraints each of which mentions `x`: as each
             // holds for `x` far enough on one side, so does their disjunction.
@@ -949,7 +948,9 @@ impl Conjuncts {
                 let Some(a) = c.lin.terms.get(&at) else {
                     return Err(why(vec![g.clone()]));
                 };
-                if c.rel != Rel::Ge || c.lin.terms.keys().any(|a| !matches!(a, Atom::Sym(_))) {
+                // A term other than a name is found in the loop over the terms below, so that
+                // the witness there is found first (see the tradeoff below).
+                if c.rel != Rel::Ge {
                     return Err(why(vec![g.clone()]));
                 }
                 let up = a.is_positive();
@@ -960,7 +961,7 @@ impl Conjuncts {
                 }
                 for (a, b) in &c.lin.terms {
                     let Atom::Sym(h) = a else {
-                        unreachable!("a conjunct of names alone")
+                        return Err(why(vec![g.clone()]));
                     };
                     if h == x {
                         continue;
@@ -975,8 +976,28 @@ impl Conjuncts {
                             hubs.insert(h, (b.is_positive(), g));
                         }
                     }
-                    if witness.is_none() && self.users.count(h) <= count {
-                        witness = Some((h, g));
+                    // A name of no more conjuncts than `x` shows that `x` is no leaf, whatever the
+                    // rest of its conjuncts say.
+                    // Complexity tradeoff: the naive way read every term of every conjunct of
+                    // `x` before taking the witness, and first read them all once more to see
+                    // that each is a name: Θ(k log k) for each of the `k` names of
+                    // `z0 + … + z(k-1) >= 0`, each found again when the row comes: Θ(k² log k)
+                    // for the whole assume (4.2 s at k = 2048 once the projection was linear).
+                    // Stopping at the first witness, with a term other than a name found in the
+                    // same loop, reads O(1) terms of such a row for each name, and the leaf's
+                    // shape found is the same, since a shape needs no witness and every term is
+                    // still read before one is given; only which reason a name of no shape
+                    // keeps may differ, and each reason is one that only its own change can
+                    // undo ([`Why`]). Still above:
+                    // a name whose conjuncts' other names all have more conjuncts than it,
+                    // with a sign or a side read last, is read whole. Test:
+                    // `l01_39_reduced_product::scaling::a_sum_over_many_names_is_assumed_in_time_near_linear`.
+                    // COMPLEXITY.md row F154.
+                    if self.users.count(h) <= count {
+                        return Err(Why {
+                            count: Some(h.clone()),
+                            ..why(vec![g.clone()])
+                        });
                     }
                 }
                 if c.lin.terms.len() == 1 {
@@ -995,12 +1016,6 @@ impl Conjuncts {
                 }
                 far = Some(up);
             }
-        }
-        if let Some((h, g)) = witness {
-            return Err(Why {
-                count: Some(h.clone()),
-                ..why(vec![g.clone()])
-            });
         }
         Ok(Shape {
             gs: self.users.of(x).cloned().collect(),

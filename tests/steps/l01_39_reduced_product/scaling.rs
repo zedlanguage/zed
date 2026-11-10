@@ -1354,3 +1354,61 @@ fn a_test_beside_a_wide_part_costs_its_own_part() {
         tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
     });
 }
+
+/// `t0 && t1 && …` as a balanced tree, so its depth is that of a binary tree of the tests.
+fn all_of(tests: &[Term]) -> Term {
+    match tests {
+        [t] => t.clone(),
+        _ => {
+            let (a, b) = tests.split_at(tests.len() / 2);
+            prim(Prim::And, all_of(a), all_of(b))
+        }
+    }
+}
+
+/// The names `z0` to `z(k-1)`, the sum `z0 + … + z(k-1)`, and the tests `0 <= zj <= 3` and
+/// `z0 + … + z(k-1) >= 3·k - 1`.
+fn wide_sum(k: usize) -> (Vec<Arc<str>>, Term, Term) {
+    let names: Vec<Arc<str>> = (0..k).map(|j| format!("z{j}").into()).collect();
+    let sum = (names[1..].iter()).fold(var(&names[0]), |t, x| prim(Prim::Add, t, var(x)));
+    let mut tests: Vec<Term> = Vec::with_capacity(2 * k + 1);
+    for x in &names {
+        tests.push(prim(Prim::Ge, var(x), int(0)));
+        tests.push(prim(Prim::Le, var(x), int(3)));
+    }
+    tests.push(prim(Prim::Ge, sum.clone(), int(3 * k as i64 - 1)));
+    (names, sum, all_of(&tests))
+}
+
+#[test]
+fn a_sum_over_many_names_is_assumed_in_time_near_linear() {
+    // Each name's values are read from the row and the others' bounds, not asked of the solver
+    // one name at a time (item PERF-wide-sum-project, COMPLEXITY.md F154): with `0 <= zj <= 3`
+    // and the sum at least `3·k - 1`, the others give at most `3·(k - 1)`, so each `zj >= 2`.
+    let p = Premises::new();
+    let (names, sum, bounded) = wide_sum(5);
+    let r = ints(&names).assume(&bounded, true, &p);
+    for x in &names {
+        assert_eq!(r.get(x).ints().to_string(), "[2..=3]", "{x}");
+    }
+    let r = ints(&names).assume(&prim(Prim::Ge, sum, int(0)), true, &p);
+    assert!(!r.bottom);
+    assert_eq!(r.get("z0").ints().to_string(), "[..]");
+    // The scopes and tests, built before the timing.
+    let built = scaling::inputs(128, |k| {
+        let (names, sum, bounded) = wide_sum(k);
+        (ints(&names), prim(Prim::Ge, sum, int(0)), bounded)
+    });
+    scaling::check("z0 + … + z(k-1) >= 0 assumed on k names", 128, |k| {
+        let (s, t, _) = &built[&k];
+        s.assume(t, true, &p);
+    });
+    scaling::check(
+        "0 <= zj <= 3 for each of k names and their sum at least 3·k - 1",
+        128,
+        |k| {
+            let (s, _, t) = &built[&k];
+            s.assume(t, true, &p);
+        },
+    );
+}

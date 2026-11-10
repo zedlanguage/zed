@@ -5331,6 +5331,9 @@ struct Walk<'m, 't> {
     /// [`Walk::translating`].
     tr: Option<RefCell<&'m mut Tr>>,
     stack: Stack<'m>,
+    /// The inner sums read as part of a larger one without their linear terms kept
+    /// ([`Walk::lin_sum`]); one met a second time is translated and kept.
+    summed: RefCell<HashSet<(Tid, Eid)>>,
 }
 
 impl<'m, 't> Walk<'m, 't> {
@@ -5339,6 +5342,7 @@ impl<'m, 't> Walk<'m, 't> {
             tx: RefCell::new(tx),
             tr: None,
             stack: Stack::default(),
+            summed: RefCell::default(),
         }
     }
 
@@ -5348,6 +5352,7 @@ impl<'m, 't> Walk<'m, 't> {
             tx: RefCell::new(tx),
             tr: Some(RefCell::new(tr)),
             stack: Stack::default(),
+            summed: RefCell::default(),
         }
     }
 
@@ -7606,6 +7611,58 @@ impl<'m, 't> Walk<'m, 't> {
         })
     }
 
+    /// The linear term of the sum or difference `t`: its left operands that are sums or
+    /// differences in turn are read in place down to the first that is not, or whose term is
+    /// known, or that was read in place before in this walk, which is translated
+    /// ([`Walk::lin`]); then each right operand is translated and added, the innermost first.
+    /// The terms are read, and so translated, in the order the operands nest, as one call of
+    /// `lin` for each would read them.
+    // Complexity tradeoff: naive version, `lin` on each operand and `Lin::plus`, so each inner
+    // sum's linear term was copied and kept: `z0 + … + z(k-1)`, read as
+    // `((z0 + z1) + …) + z(k-1)`, kept a term of i names at the i-th `+`, Θ(k²) time and
+    // memory (54 s at k = 16384 for the assume, against 2.1 s for the same sum written as a
+    // balanced tree). Used: the left operands read in place and added into one term, O(k log
+    // k) for such a chain. A left operand met in place a second time in one walk is translated
+    // and kept, so an operand shared by many sums is read in place once and then known, and
+    // the walk reads each term in place at most once, as before. Tradeoffs: an inner sum read
+    // in place has no kept term, so a later walk that meets it alone translates it again,
+    // which costs what the whole chain cost here; a chain nested on the right,
+    // `z0 + (z1 + …)`, is not read in place and still keeps a term at each `+`, Θ(k²).
+    // Test: `l01_39_reduced_product::scaling::a_sum_over_many_names_is_assumed_in_time_near_linear`,
+    // COMPLEXITY.md row F154.
+    async fn lin_sum(&'m self, t: Tid, env: Eid) -> Option<Lin> {
+        use Prim::*;
+        // The right operands, outermost first, each with whether it is subtracted.
+        let mut rights: Vec<(bool, Tid)> = Vec::new();
+        let mut at = t;
+        let base = loop {
+            let Node::Prim(p @ (Add | Sub), args) = self.node(at) else {
+                unreachable!("a sum or difference")
+            };
+            rights.push((p == Sub, self.arg(args, 1)));
+            let left = self.arg(args, 0);
+            let inner = matches!(self.node(left), Node::Prim(Add | Sub, a) if a.len() == 2);
+            if !inner
+                || self.with(|tx| tx.run.memo.lin.contains_key(&(left, env)))
+                || !self.summed.borrow_mut().insert((left, env))
+                || self.constant(left, env).await.is_some()
+            {
+                break left;
+            }
+            at = left;
+        };
+        let mut sum = self.lin(base, env).await?;
+        for (minus, r) in rights.into_iter().rev() {
+            let l = self.lin(r, env).await?;
+            if minus {
+                sum.plus_assign(&l.times(-1));
+            } else {
+                sum.plus_assign(&l);
+            }
+        }
+        Some(sum)
+    }
+
     async fn lin_at(&'m self, t: Tid, env: Eid) -> Option<Lin> {
         use Prim::*;
         if let Some(v) = self.constant(t, env).await {
@@ -7670,8 +7727,7 @@ impl<'m, 't> Walk<'m, 't> {
                 let arg = |i: usize| self.lin(self.arg(args, i), env);
                 let products = self.tr(|tr| tr.products);
                 match p {
-                    Add => Some(arg(0).await?.plus(&arg(1).await?)),
-                    Sub => Some(arg(0).await?.minus(&arg(1).await?)),
+                    Add | Sub if args.len() == 2 => self.lin_sum(t, env).await,
                     Neg => Some(arg(0).await?.times(-1)),
                     Mul => {
                         let (a, b) = (arg(0).await?, arg(1).await?);

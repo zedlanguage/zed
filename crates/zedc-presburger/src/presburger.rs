@@ -9952,7 +9952,9 @@ fn project_parts(
     // A group of difference constraints and bounds gives the hulls of all its atoms in one
     // pass ([`difference_hulls`]), and so does one that becomes such a group once each atom
     // not asked for that only rows of it alone bound on one side is set to that bound
-    // ([`substituted_difference_hulls`]); any other group, each hull by its own questions.
+    // ([`substituted_difference_hulls`]), and so does a group of bounds and inequalities that
+    // form a forest ([`forest_row_hulls`]: `z0 + … + z(k-1) >= 0`); any other group, each hull
+    // by its own questions.
     // Complexity tradeoff: the naive way, each hull by its own questions ([`hull_from`]), is
     // O(log d) questions of the whole group of n rows for each side; the substitution and the
     // shortest paths are O(n log n) for the group, once. On the three-atom chain of
@@ -9960,6 +9962,10 @@ fn project_parts(
     // less work in all, still of order n log n. Test:
     // `disj_groups::the_middle_of_a_chain_of_three_atom_rows_is_found_without_asking_for_a_side`.
     // COMPLEXITY.md row THREE-atom-exponent.
+    // For a forest of inequalities, the naive way is Θ(k·n) for k atoms and n terms, Θ(k²) for
+    // one inequality over k atoms; the two passes of [`forest_row_hulls`] are O(n log n).
+    // Test: `l01_39_reduced_product::scaling::a_sum_over_many_names_is_assumed_in_time_near_linear`.
+    // COMPLEXITY.md row F154.
     let mut differences: HashMap<usize, Option<HashMap<Atom, IntervalSet>>> = HashMap::new();
     let mut out: Vec<Result<IntervalSet, Refusal>> = Vec::with_capacity(syms.len());
     for s in syms {
@@ -9969,9 +9975,11 @@ fn project_parts(
                 .entry(g)
                 .or_insert_with(|| {
                     let cs: Vec<&Con> = held.iter().map(|i| &linked.cons[*i]).collect();
-                    difference_hulls(&cs, &model).or_else(|| {
-                        substituted_difference_hulls(&cs, &|a| index.contains_key(a), &model)
-                    })
+                    difference_hulls(&cs, &model)
+                        .or_else(|| {
+                            substituted_difference_hulls(&cs, &|a| index.contains_key(a), &model)
+                        })
+                        .or_else(|| forest_row_hulls(&cs))
                 })
                 .as_ref()
                 .and_then(|h| h.get(s).cloned()),
@@ -11556,6 +11564,301 @@ fn substituted_difference_hulls(
     }
     let refs: Vec<&Con> = rows.iter().collect();
     difference_hulls(&refs, m)
+}
+
+/// The hull of every atom of `cons`, constraints with an integer point, when each is a bound
+/// of one atom (`a·x + k >= 0`, `a·x + k == 0`) or an inequality over two atoms or more, and
+/// the inequalities form a forest: in the graph that joins each inequality to its atoms there
+/// is no cycle, so no two of them share two atoms and no chain of them closes on itself.
+/// Inequalities with the same terms count as one, the one with the least constant. `None`
+/// when a row over two atoms or more is an equation, when there is a cycle, or when no
+/// inequality has two atoms. The sum `z0 + … + z(k-1) >= 0`, alone or with bounds on its
+/// atoms, is one such forest.
+///
+/// The hulls are exact, those [`hull_from`] finds. Each atom's bounds alone give it an
+/// interval of integers, its box. For an inequality `Σ a_u·x_u + k >= 0` whose atoms other
+/// than `v` take any integers in intervals, the values of `v` it allows are those with
+/// `a_v·x_v + k + M >= 0`, where `M` is the sum of each other term's greatest value, `a_u`
+/// times an end of its interval: a half-line, or every integer when an end is missing. Root
+/// each tree of the forest at an atom. Going up from the leaves, an atom's values that extend
+/// to the part of the tree below it are its box met with the half-lines of the inequalities
+/// below it, each read from the values of its atoms below that extend downward (each such
+/// atom can take the end that gives its term's greatest value, which extends downward, and
+/// the parts below the atoms of an inequality share no atom, the forest having no cycle). At
+/// the root that is its projection. Going down, an atom's projection is its values that
+/// extend downward met with the half-line of the inequality above it, read from the
+/// projection-side values of the atom above it (that atom's box, the half-line above it and
+/// the half-lines of its other inequalities below, but not this one) and the upward values of
+/// its other atoms: each of those extends to its own part of the tree, and the parts are
+/// disjoint. Every set so formed is an interval of integers, and each step is exact over the
+/// integers, so the two ends are the least and greatest values of the atom over the integer
+/// points of `cons`. The point is used only in that every projection is not empty; a set that
+/// comes out empty answers `None`.
+// Complexity tradeoff: the naive way, which this replaces for such groups, is [`hull_from`] for
+// each atom of the group, O(log d) questions of the whole group of `n` terms for each of its
+// `k` atoms: Θ(k·n), Θ(k²) for one inequality over `k` atoms (`z0 + … + z(k-1) >= 0`: 0.18,
+// 0.67, 2.7 and 10.9 s for the whole assume at k = 128, 256, 512, 1024, item
+// PERF-wide-sum-project). Used: one pass over the terms to check for a cycle (union-find) and
+// to build the forest, and the two passes over it, each term read a constant number of times,
+// O(n log n) with the hash maps. It refuses nothing: a group with an equation over two atoms
+// or more, or with a cycle (two inequalities sharing two atoms, `x + y >= 0 && x + y <= 5` as
+// two rows, or a closed chain), keeps the naive way, with the same hulls; for those the cost
+// is still Θ(k·n). Why not more: an equation over integers lets only the values of a
+// congruence through (`x + 2·y == 0` gives `x` even), so its values are not an interval read
+// from the others' ends; along a cycle the values at one atom depend jointly on the others,
+// which is an integer program. Tests: `forest_row_hulls_are_those_the_solver_finds`,
+// `l01_39_reduced_product::scaling::a_sum_over_many_names_is_assumed_in_time_near_linear`.
+// COMPLEXITY.md row F154.
+fn forest_row_hulls(cons: &[&Con]) -> Option<HashMap<Atom, IntervalSet>> {
+    // Each atom's bounds alone, and each inequality over two atoms or more by its terms, with
+    // the least constant.
+    let mut alone: HashMap<&Atom, Vec<(Int, Int, Rel)>> = HashMap::new();
+    let mut wide: HashMap<&BTreeMap<Atom, Int>, &Int> = HashMap::new();
+    for c in cons {
+        let mut terms = c.lin.terms.iter();
+        match (terms.next(), terms.next()) {
+            (None, _) => {}
+            (Some((a, k)), None) => {
+                alone
+                    .entry(a)
+                    .or_default()
+                    .push((k.clone(), c.lin.constant.clone(), c.rel));
+            }
+            (Some(_), Some(_)) if c.rel == Rel::Eq => return None,
+            (Some(_), Some(_)) => {
+                let k = wide.entry(&c.lin.terms).or_insert(&c.lin.constant);
+                if c.lin.constant < **k {
+                    *k = &c.lin.constant;
+                }
+            }
+        }
+    }
+    if wide.is_empty() {
+        return None;
+    }
+    // The atoms of the inequalities numbered, and each inequality as its atoms' numbers with
+    // their coefficients, and its constant.
+    let mut number: HashMap<&Atom, usize> = HashMap::new();
+    let mut atoms: Vec<&Atom> = Vec::new();
+    let rows: Vec<(Vec<(usize, &Int)>, &Int)> = (wide.into_iter())
+        .map(|(terms, k)| {
+            let ts = (terms.iter())
+                .map(|(a, c)| {
+                    let i = *number.entry(a).or_insert_with(|| {
+                        atoms.push(a);
+                        atoms.len() - 1
+                    });
+                    (i, c)
+                })
+                .collect();
+            (ts, k)
+        })
+        .collect();
+    // A cycle shows as an inequality joined to an atom already in its tree (union-find over
+    // the atoms and then the inequalities, the smaller tree joining the larger).
+    let n = atoms.len();
+    let mut parent: Vec<usize> = (0..n + rows.len()).collect();
+    let mut size: Vec<usize> = vec![1; n + rows.len()];
+    let root = |parent: &mut Vec<usize>, mut i: usize| {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    };
+    for (r, (ts, _)) in rows.iter().enumerate() {
+        for &(i, _) in ts {
+            let (a, b) = (root(&mut parent, n + r), root(&mut parent, i));
+            if a == b {
+                return None;
+            }
+            let (big, small) = if size[a] < size[b] { (b, a) } else { (a, b) };
+            parent[small] = big;
+            size[big] += size[small];
+        }
+    }
+    let mut boxes: Vec<Ends> = Vec::with_capacity(n);
+    for a in &atoms {
+        boxes.push(int_bounds(alone.remove(*a).unwrap_or_default())?);
+    }
+    let mut rows_of: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (r, (ts, _)) in rows.iter().enumerate() {
+        for &(i, _) in ts {
+            rows_of[i].push(r);
+        }
+    }
+    // Each tree from a root atom, in an order with each atom before the inequalities below it
+    // and each inequality before the atoms below it; the inequality above each atom, and the
+    // atom above each inequality. Each node is entered once (`above`, `top` set on entry).
+    #[derive(Clone, Copy)]
+    enum Node {
+        Atom(usize),
+        Row(usize),
+    }
+    let mut order: Vec<Node> = Vec::with_capacity(n + rows.len());
+    let mut above: Vec<Option<usize>> = vec![None; n];
+    let mut top: Vec<Option<usize>> = vec![None; rows.len()];
+    let mut entered = vec![false; n];
+    for start in 0..n {
+        if entered[start] {
+            continue;
+        }
+        entered[start] = true;
+        let mut stack = vec![Node::Atom(start)];
+        while let Some(node) = stack.pop() {
+            order.push(node);
+            match node {
+                Node::Atom(v) => {
+                    for &r in &rows_of[v] {
+                        if top[r].is_none() {
+                            top[r] = Some(v);
+                            stack.push(Node::Row(r));
+                        }
+                    }
+                }
+                Node::Row(r) => {
+                    for &(u, _) in &rows[r].0 {
+                        if !entered[u] {
+                            entered[u] = true;
+                            above[u] = Some(r);
+                            stack.push(Node::Atom(u));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // The greatest value of `a·x` for `x` in `e`, `None` when there is none.
+    let greatest = |a: &Int, e: &Ends| -> Option<Int> {
+        if a.is_positive() {
+            e.1.as_ref().map(|h| a * h)
+        } else {
+            e.0.as_ref().map(|l| a * l)
+        }
+    };
+    // The values of `x` with `a·x + k >= 0`, every integer when `k` is `None` (unbounded).
+    let half = |a: &Int, k: Option<Int>| -> Ends {
+        match k {
+            None => (None, None),
+            Some(k) if a.is_positive() => (Some(-&k.div_floor(a)), None),
+            Some(k) => (None, Some(k.div_floor(&-a))),
+        }
+    };
+    let meet = |x: &Ends, y: &Ends| -> Ends {
+        let lo = match (&x.0, &y.0) {
+            (Some(a), Some(b)) => Some(a.max(b).clone()),
+            (a, b) => a.clone().or_else(|| b.clone()),
+        };
+        let hi = match (&x.1, &y.1) {
+            (Some(a), Some(b)) => Some(a.min(b).clone()),
+            (a, b) => a.clone().or_else(|| b.clone()),
+        };
+        (lo, hi)
+    };
+    // The constant of inequality `r` plus the greatest values of its terms, each read from
+    // `ends(u)`, with the term of each atom left out in turn: for each atom of `r`, that sum
+    // without its term, `None` where a term left in has no greatest value.
+    let without_each = |r: usize, ends: &dyn Fn(usize) -> Ends| -> Vec<Option<Int>> {
+        let (ts, k) = &rows[r];
+        let each: Vec<Option<Int>> = ts.iter().map(|(u, a)| greatest(a, &ends(*u))).collect();
+        let (mut sum, mut open) = ((*k).clone(), 0usize);
+        for g in &each {
+            match g {
+                Some(g) => sum = &sum + g,
+                None => open += 1,
+            }
+        }
+        (each.iter())
+            .map(|g| match (g, open) {
+                (Some(g), 0) => Some(&sum - g),
+                (None, 1) => Some(sum.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    // Going up: at each inequality, the half-line it gives the atom above it from the values
+    // of its other atoms that extend downward; at each atom, those values.
+    let mut up: Vec<Ends> = vec![(None, None); n];
+    let mut row_half: Vec<Ends> = vec![(None, None); rows.len()];
+    for &node in order.iter().rev() {
+        match node {
+            Node::Row(r) => {
+                let t = top[r].expect("an inequality's atom above");
+                let rest = without_each(r, &|u| if u == t { (None, None) } else { up[u].clone() });
+                let at = rows[r]
+                    .0
+                    .iter()
+                    .position(|(u, _)| *u == t)
+                    .expect("its atom");
+                row_half[r] = half(rows[r].0[at].1, rest[at].clone());
+            }
+            Node::Atom(v) => {
+                let below = rows_of[v].iter().filter(|r| Some(**r) != above[v]);
+                up[v] = below.fold(boxes[v].clone(), |e, &r| meet(&e, &row_half[r]));
+            }
+        }
+    }
+    // Going down: at each atom, its box met with the half-line from above (`from_above`, set
+    // at the inequality above it) and, for each inequality below it, that met with the
+    // half-lines of its other inequalities below (`aside`); at each inequality, the half-line
+    // each atom below it gets from the atom above it and its other atoms below.
+    let mut from_above: Vec<Ends> = boxes;
+    let mut aside: Vec<Ends> = vec![(None, None); rows.len()];
+    let mut out: HashMap<Atom, IntervalSet> = HashMap::with_capacity(n + alone.len());
+    let end = |e: &Option<Int>, inf: End| e.as_ref().map_or(inf, |v| End::Fin(Num::from(v)));
+    for &node in &order {
+        match node {
+            Node::Atom(v) => {
+                let below: Vec<usize> = (rows_of[v].iter().copied())
+                    .filter(|r| Some(*r) != above[v])
+                    .collect();
+                // The meets of the half-lines before and after each inequality below.
+                let mut after: Vec<Ends> = vec![(None, None); below.len() + 1];
+                for (i, &r) in below.iter().enumerate().rev() {
+                    after[i] = meet(&after[i + 1], &row_half[r]);
+                }
+                let mut before = from_above[v].clone();
+                for (i, &r) in below.iter().enumerate() {
+                    aside[r] = meet(&before, &after[i + 1]);
+                    before = meet(&before, &row_half[r]);
+                }
+                let (lo, hi) = &before;
+                if let (Some(l), Some(h)) = (lo, hi)
+                    && l > h
+                {
+                    return None;
+                }
+                out.insert(
+                    atoms[v].clone(),
+                    IntervalSet::range(end(lo, End::NegInf), end(hi, End::PosInf)),
+                );
+            }
+            Node::Row(r) => {
+                let t = top[r].expect("an inequality's atom above");
+                let rest = without_each(r, &|u| {
+                    if u == t {
+                        aside[r].clone()
+                    } else {
+                        up[u].clone()
+                    }
+                });
+                for (i, &(u, a)) in rows[r].0.iter().enumerate() {
+                    if u != t {
+                        from_above[u] = meet(&from_above[u], &half(a, rest[i].clone()));
+                    }
+                }
+            }
+        }
+    }
+    // An atom bounded alone, in no inequality, has its box.
+    for (a, rows) in alone {
+        let (lo, hi) = int_bounds(rows)?;
+        out.insert(
+            a.clone(),
+            IntervalSet::range(end(&lo, End::NegInf), end(&hi, End::PosInf)),
+        );
+    }
+    Some(out)
 }
 
 /// The least and greatest value of each atom, `None` where there is none.
@@ -14249,6 +14552,100 @@ pub(super) mod tests {
             compared > 1000 && taken > 300 && not_taken > 300,
             "{compared} {taken} {not_taken}"
         );
+    }
+
+    /// The hulls [`forest_row_hulls`] gives are those found by asking the solver of each atom
+    /// ([`hull_from`]), on random systems of up to 7 rows over 6 names: bounds of one atom
+    /// (some equations, some with a coefficient of 2 or 3) and inequalities over two to four
+    /// atoms with coefficients from -3 to 3, constants from -8 to 8. Many systems are forests
+    /// and taken; many are not (two inequalities sharing two atoms, a closed chain, an
+    /// equation over two atoms) and give `None`.
+    #[test]
+    fn forest_row_hulls_are_those_the_solver_finds() {
+        let names = ["a", "b", "c", "d", "e", "f"];
+        let mut rng = Rng(0x5851_f42d_4c95_7f2d);
+        let (mut compared, mut taken, mut not_taken) = (0, 0, 0);
+        for _ in 0..4000 {
+            let rows = 1 + rng.below(7) as usize;
+            let cons: Vec<Con> = (0..rows)
+                .map(|_| {
+                    let k = rng.below(17) as i128 - 8;
+                    let width = if rng.below(2) == 0 {
+                        1
+                    } else {
+                        2 + rng.below(3) as usize
+                    };
+                    let mut terms: Vec<(&str, i128)> = Vec::new();
+                    while terms.len() < width {
+                        let x = names[rng.below(6) as usize];
+                        let c = 1 + rng.below(3) as i128;
+                        let c = if rng.below(2) == 0 { c } else { -c };
+                        if terms.iter().all(|(y, _)| *y != x) {
+                            terms.push((x, c));
+                        }
+                    }
+                    let rel = if rng.below(if width == 1 { 4 } else { 12 }) == 0 {
+                        Rel::Eq
+                    } else {
+                        Rel::Ge
+                    };
+                    Con {
+                        lin: lin(&terms, k),
+                        rel,
+                    }
+                })
+                .collect();
+            let Ok(Some(model)) = solve(&cons, true) else {
+                continue;
+            };
+            let refs: Vec<&Con> = cons.iter().collect();
+            let Some(hulls) = forest_row_hulls(&refs) else {
+                not_taken += 1;
+                continue;
+            };
+            taken += 1;
+            let whole = Formula::and(cons.iter().cloned().map(Formula::Con).collect());
+            for (a, h) in &hulls {
+                assert_eq!(
+                    Ok(h.clone()),
+                    hull_from(&whole, a, &model),
+                    "{whole} onto {a}"
+                );
+                compared += 1;
+            }
+        }
+        assert!(
+            compared > 2000 && taken > 500 && not_taken > 300,
+            "{compared} {taken} {not_taken}"
+        );
+        // `a <= 1, b <= 2, c >= 0, d <= 0` and `a + 2·b - 3·c + d - 4 >= 0`: the others' terms
+        // are at most 4 + 0 + 0, so `a >= 0`.
+        let ge = |terms: &[(&str, i128)], k| Con {
+            lin: lin(terms, k),
+            rel: Rel::Ge,
+        };
+        let wide = [
+            ge(&[("a", 1), ("b", 2), ("c", -3), ("d", 1)], -4),
+            ge(&[("a", -1)], 1),
+            ge(&[("b", -1)], 2),
+            ge(&[("c", 1)], 0),
+            ge(&[("d", -1)], 0),
+        ];
+        let refs: Vec<&Con> = wide.iter().collect();
+        let hulls = forest_row_hulls(&refs).expect("a forest");
+        let fin = |v: &Int| End::Fin(Num::from(v));
+        assert_eq!(
+            hulls[&sym("a")],
+            IntervalSet::range(fin(&Int::ZERO), fin(&Int::ONE))
+        );
+        // Not taken: two inequalities on the same two atoms, and an equation over two atoms.
+        let two = [ge(&[("a", 1), ("b", 1)], 0), ge(&[("a", -1), ("b", -1)], 5)];
+        assert!(forest_row_hulls(&[&two[0], &two[1]]).is_none());
+        let eq = Con {
+            lin: lin(&[("a", 1), ("b", 2)], 0),
+            rel: Rel::Eq,
+        };
+        assert!(forest_row_hulls(&[&eq]).is_none());
     }
 
     /// The bounds [`part_bounds`] gives each atom of a part contain the hull the solver finds

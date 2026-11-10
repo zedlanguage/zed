@@ -436,6 +436,19 @@ impl Ord for Formula {
         fn again(read: &mut HashSet<Id>, g: &Formula) -> bool {
             g.is_shared() && !read.insert(Id::any(g))
         }
+        // A formula compared with itself is equal at once.
+        // Complexity tradeoff: naive version, the nodes compared, so a constraint of k terms
+        // compared with itself costs Θ(k); a set keyed by formulas that is asked for a key it
+        // holds, once for each of the key's k names (`Conjuncts::flush`, `refree`), then costs
+        // Θ(k² log n): the assume of a balanced sum of 16384 names took 31.0 s without this
+        // check and 8.4 s with it, the other fixes of F154 not yet made. Used: a pointer check,
+        // O(1), which is exact since a formula is equal to itself. Two equal formulas at other
+        // addresses still cost what the walk below costs. Test:
+        // `l01_39_reduced_product::scaling::a_sum_over_many_names_is_assumed_in_time_near_linear`,
+        // COMPLEXITY.md row F154.
+        if std::ptr::eq(self, other) {
+            return Ordering::Equal;
+        }
         match self.cmp_node(other) {
             Ordering::Equal => {}
             o => return o,
