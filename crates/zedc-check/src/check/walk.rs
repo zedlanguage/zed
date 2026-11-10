@@ -2029,15 +2029,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             "==" | "!=" => {
                 self.data(&x.ty, &format!("`{op}`"), span, x.at.unwrap_or(span));
                 self.data(&y.ty, &format!("`{op}`"), span, y.at.unwrap_or(span));
-                self.equal(&x, &y);
                 let op = if op == "==" { "==" } else { "!=" };
+                self.comparing = Some((op, [x.at, y.at]));
+                self.equal(&x, &y);
+                self.comparing = None;
                 for (l, v, left) in [(&x, &y, true), (&y, &x, false)] {
                     if let (Some(lit), None) = (&l.lit, &v.lit)
                         && lit.bare
                     {
                         self.eq_sides.insert(lit.site, (op, v.at, left));
-                        if self.class_of_ty(&v.ty).is_none() && holds_text_only(&v.ty) {
-                            self.texts(lit);
+                        if self.class_of_ty(&v.ty).is_none() && holds_no_number(&[&v.ty]) {
+                            self.never_equal(lit, &v.ty);
                         }
                     }
                 }

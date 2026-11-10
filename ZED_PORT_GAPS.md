@@ -3239,3 +3239,9 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 |---|---|---|---|
 | An optional `&mut String` held in the code generator (`Gen::ir`) that each function's IR text is appended to before Cranelift compiles it | `Gen::ir`, `codegen::define`, `zed_native::ir` | Mutation (gap 11) | None needed: `codegen.rs` and the hooks stay in Rust (section "What stays in Rust"); a port would return the text with each function instead |
 | The hook `rt_pow`, an `extern "C"` function on the bits of two `f64` | `hooks.rs` | stays in Rust | None: hooks stay in Rust |
+
+## Entries from LIT-eq-kind (`zedc-check/src/check/mod.rs`, `check/walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A field of the checker (`Ck.comparing`, the operator and the operands' spans) set before `Ck::equal` and cleared after it, read deep inside it by `Ck::follow` | `walk.rs` `binary_end`, `Ck::follow` | Mutation (gap 11) | a parameter of `equal`, `pair` and `follow` passed down the comparison |

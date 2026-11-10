@@ -456,6 +456,201 @@ fn a_number_literal_compared_with_a_string_is_rejected() {
     );
 }
 
+/// The rejection of `1` compared by `==` or `!=` with `x` of the type `ty`, which holds no
+/// number, with the repairs `repairs`.
+fn never_equal(ty: &str, repairs: &str) -> String {
+    format!(
+        "the literal `1` is a number, and `x` is a `{ty}` here, which no number equals, so the \
+         comparison always gives the same answer; write {repairs} [1]"
+    )
+}
+
+#[test]
+fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
+    // A `bool` is `true` or `false` and a tuple is its components, so neither equals a number,
+    // as a string does not (A15): the comparison always gives the same answer. The literal on
+    // either side.
+    assert_eq!(
+        type_errors("f(positional x: bool) = x == 1;\n"),
+        [never_equal(
+            "bool",
+            "`x == true` or `x == false` to compare with a truth value"
+        )]
+    );
+    assert_eq!(
+        type_errors("f(positional x: bool | #none) = 1 != x;\n"),
+        [never_equal(
+            "bool",
+            "`true != x` or `false != x` to compare with a truth value"
+        )]
+    );
+    let pair = "`x[0] == 1` or `x[1] == 1` to compare a component";
+    assert_eq!(
+        type_errors("f(positional x: (int, int)) = x == 1;\n"),
+        [never_equal("(int, int)", pair)]
+    );
+    assert_eq!(
+        type_errors("f(positional x: (int, String)) = 1 == x;\n"),
+        [never_equal(
+            "(int, String)",
+            "`1 == x[0]` to compare a component"
+        )]
+    );
+    // Shapes of two lengths: an index both have.
+    assert_eq!(
+        type_errors("f(positional x: (int, int) | (int, int, int) | #none) = x == 1;\n"),
+        [never_equal("(int, int) | (int, int, int)", pair)]
+    );
+    // A string on the other side too, and both orders for it.
+    assert_eq!(
+        type_errors("f(positional x: String) = 1 == x;\n"),
+        [never_equal(
+            "String",
+            "`\"1\" == x` to compare the text or `1 == int(x)` to compare the number the text \
+             holds"
+        )]
+    );
+    assert_eq!(
+        type_errors("f(positional x: bool | String) = x == 1;\n"),
+        [never_equal(
+            "bool | String",
+            "`x == \"1\"` to compare the text, `x == true` or `x == false` to compare with a \
+             truth value"
+        )]
+    );
+    // An inferred parameter that `&&` makes a `bool`, before the comparison or after it.
+    let bool_menu = "`x == true` or `x == false` to compare with a truth value";
+    assert_eq!(
+        type_errors("f(positional x) = (x && true) || x == 1;\n"),
+        [never_equal("bool", bool_menu)]
+    );
+    assert_eq!(
+        type_errors("f(positional x) = 1 == x || (x && true);\n"),
+        [never_equal(
+            "bool",
+            "`true == x` or `false == x` to compare with a truth value"
+        )]
+    );
+    // An operand that is no name: the repairs say what to write where.
+    assert_eq!(
+        type_errors("f(positional x: bool) = (x && x) == 1;\n"),
+        [
+            "the literal `1` is a number, compared by `==` with a `bool`, which no number \
+             equals; write `true` or `false` in place of the literal to compare with a truth \
+             value [1]"
+        ]
+    );
+    // No repair of those fits: the answer the comparison always gives.
+    assert_eq!(
+        type_errors("f(positional x: (String, bool)) = x != 1;\n"),
+        [
+            "the literal `1` is a number, and `x` is a `(String, bool)` here, which no number \
+             equals, so the comparison always gives `true`; write `true` in place of `x != 1` [1]"
+        ]
+    );
+    assert_eq!(
+        type_errors("f(positional x: (int, int)) = 1.5 == x;\n"),
+        [
+            "the literal `1.5` is a number, and `x` is a `(int, int)` here, which no number \
+             equals, so the comparison always gives `false`; write `false` in place of \
+             `1.5 == x` [1.5]"
+        ]
+    );
+}
+
+#[test]
+fn a_number_literal_in_a_tuple_compared_with_a_component_that_holds_no_number_is_rejected() {
+    // Component by component, as a literal in a tuple reads a declared tuple type.
+    assert_eq!(
+        type_errors("f(positional p: (String, int)) = p == (1, 2);\n"),
+        [
+            "the literal `1` is a number, and the component of `p` it is compared with by `==` \
+             is a `String` here, which no number equals, so the comparison always gives the \
+             same answer; write `\"1\"` in its place to compare the text [1]"
+        ]
+    );
+    assert_eq!(
+        type_errors("f(positional p: (bool, int)) = (1, 2) != p;\n"),
+        [
+            "the literal `1` is a number, and the component of `p` it is compared with by `!=` \
+             is a `bool` here, which no number equals, so the comparison always gives the same \
+             answer; write `true` or `false` in its place to compare with a truth value [1]"
+        ]
+    );
+    assert_eq!(
+        type_errors("f(positional p: ((int, int), int)) = p == (1, 2);\n"),
+        [
+            "the literal `1` is a number, and the component of `p` it is compared with by `==` \
+             is a `(int, int)` here, which no number equals, so the comparison always gives the \
+             same answer; write a value of `(int, int)` in its place [1]"
+        ]
+    );
+    // A component that holds a number in one shape of a union takes it there.
+    assert!(type_errors("f(positional p: (String, int) | (int, int)) = p == (1, 2);\n").is_empty());
+}
+
+#[test]
+fn each_repair_of_a_number_literal_compared_with_no_number_checks() {
+    for ok in [
+        "f(positional x: bool) = x == true;\n",
+        "f(positional x: bool | #none) = false != x;\n",
+        "f(positional x: (int, int)) = x[0] == 1;\n",
+        "f(positional x: (int, String)) = 1 == x[0];\n",
+        "f(positional x: (int, int) | (int, int, int) | #none) = x[1] == 1;\n",
+        "f(positional x: String) = \"1\" == x;\n",
+        "f(positional x: String) = 1 == int(x);\n",
+        "f(positional x: bool | String) = x == \"1\";\n",
+        "f(positional p: (String, int)) = p == (\"1\", 2);\n",
+        "f(positional p: (bool, int)) = (true, 2) != p;\n",
+        // A comparison with an atom or a failure stays legal.
+        "f(positional x: bool | #none) = x == #none;\n",
+        "f(positional x: (int, int) | #none) = #none != x;\n",
+        "f(positional a: int, positional b: int) = (a div b) == #divByZero;\n",
+        // A type of atoms alone holds no value a number could be taken for.
+        "f(positional x: #a | #b) = x == #a;\n",
+    ] {
+        assert!(type_errors(ok).is_empty(), "{ok}: {:?}", type_errors(ok));
+    }
+    let f = "f(positional x: bool) = x == true;\ng(positional x: (int, int)) = x[1] == 2;\n";
+    assert_eq!(value(&format!("{f}y = f(true);\n"), "y"), "true");
+    assert_eq!(value(&format!("{f}y = g((1, 2));\n"), "y"), "true");
+}
+
+/// A function comparing a parameter whose tuple type has `n` components with `1`.
+fn wide_tuple(n: usize) -> String {
+    let comps = vec!["int"; n].join(", ");
+    format!("f(positional x: ({comps})) = x == 1;\n")
+}
+
+#[test]
+fn the_component_repairs_of_a_wide_tuple_scale() {
+    // One repair per component, each read once in each shape.
+    let n = 256;
+    let units: Vec<_> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let stmts = zed_tests::deep::statements(&wide_tuple(m));
+            let res = zedc::resolve::resolve(&stmts).unwrap();
+            (m, stmts, res)
+        })
+        .collect();
+    scaling::check_order(
+        "the repairs of a tuple of n components compared with a literal",
+        n,
+        1,
+        |m| {
+            let (_, stmts, res) = units.iter().find(|(k, _, _)| *k == m).unwrap();
+            let info = zedc::check::walk::check(stmts, res);
+            assert_eq!(info.errors.len(), 1);
+            assert!(
+                info.errors[0]
+                    .message
+                    .contains(&format!("`x[{}] == 1`", m - 1))
+            );
+        },
+    );
+}
+
 #[test]
 fn literals_in_a_tuple_compared_with_a_union_of_tuple_shapes_take_across_the_shapes() {
     let ty = "(f64, f64) | (String, f64)";

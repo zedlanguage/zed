@@ -52,7 +52,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use zed_kernel::num::TooLarge;
-use zed_kernel::types::{Type as KType, Verdict, defs};
+use zed_kernel::types::{Type as KType, Universes, Verdict, defs};
 use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
 use zedc_base::rejection::Row;
@@ -814,9 +814,14 @@ struct Ck<'t, 'a> {
     seen: HashMap<Span, Seen<'a>>,
     /// Each bare literal written as an operand of `==` or `!=`, by its site: the operator, the
     /// span of the other operand, and whether the literal is the left one. A literal that a
-    /// class of strings follows is rejected when the class takes its type ([`Ck::texts`]);
-    /// the entry only names the comparison, so an entry a repair's trial wrote is harmless.
+    /// class of strings or `bool` follows is rejected when the class takes its type
+    /// ([`Ck::never_equal`]); the entry only names the comparison, so an entry a repair's
+    /// trial wrote is harmless.
     eq_sides: HashMap<Span, (&'static str, Option<Span>, bool)>,
+    /// While the operands of an `==` or `!=` are paired: the operator and the span of each
+    /// operand, left then right, so that a literal component of a tuple compared with a
+    /// component that holds no number names the comparison ([`Ck::never_equal_component`]).
+    comparing: Option<(&'static str, [Option<Span>; 2])>,
     /// Each expression's loose atoms that reach its value unnamed, by its span, as last
     /// found: a superset of those no `else` default on their path writes. No entry is none.
     unnamed: HashMap<Span, KType>,
@@ -958,6 +963,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             log: Vec::new(),
             seen: HashMap::new(),
             eq_sides: HashMap::new(),
+            comparing: None,
             unnamed: HashMap::new(),
             made: HashMap::new(),
             alias: HashMap::new(),
@@ -2232,12 +2238,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         // A bare literal compared with values of the class follows it without narrowing it, so
-        // whether the class holds strings and no number is known only now, whatever order the
-        // body's uses come in (A15).
+        // whether the class holds strings or `bool` and no number is known only now, whatever
+        // order the body's uses come in (A15).
         let numbers = Carrier::Int.bit() | Carrier::Rat.bit() | Carrier::F64.bit();
-        if mask & (numbers | OTHER) == 0 && mask & Carrier::Str.bit() != 0 {
+        let others = Carrier::Str.bit() | Carrier::Bool.bit();
+        if mask & (numbers | OTHER) == 0 && mask & others != 0 {
+            let held = Ty::of_mask(mask);
             for (l, _) in lits.iter().filter(|(l, follows)| *follows && l.bare) {
-                self.texts(l);
+                self.never_equal(l, &held);
             }
         }
         let ty = match numeric {
@@ -2888,8 +2896,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         (false, false) => {}
                     }
                 }
-                (Some(l), None) => self.follow(l, &yt, inner),
-                (None, Some(m)) => self.follow(m, &xt, inner),
+                (Some(l), None) => self.follow(l, &yt, inner, 1),
+                (None, Some(m)) => self.follow(m, &xt, inner, 0),
                 (None, None) if xp.is_none() && yp.is_none() => {}
                 (None, None) => {
                     let n = xp.or(yp).map_or(0, <[Part]>::len);
@@ -2907,8 +2915,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// does, keeping only the literal's carrier; a generic one outside a tuple follows the
     /// class's carrier without narrowing it, and one in a tuple joins it as a plain one does,
     /// since the elaborator's rewrite that follows the class's carrier at run time
-    /// (`Info::follows`) is built for an operand of `==` only.
-    fn follow(&mut self, l: &Lit, ts: &[&Ty], inner: bool) {
+    /// (`Info::follows`) is built for an operand of `==` only. `other` is the index, in
+    /// [`Ck::comparing`], of the operand on the other side from `l`.
+    fn follow(&mut self, l: &Lit, ts: &[&Ty], inner: bool, other: usize) {
         if let [t] = ts
             && let Some(k) = self.class_of_ty(t)
         {
@@ -2948,43 +2957,96 @@ impl<'t, 'a> Ck<'t, 'a> {
             Ok(Some(c)) => {
                 self.adopt_to(l, c);
             }
-            Ok(None) => {}
+            Ok(None) => {
+                // A component of a tuple operand; the literal written as an operand itself is
+                // judged by the operator, which knows its other operand ([`Ck::never_equal`]).
+                if inner
+                    && l.bare
+                    && let Some((op, ats)) = self.comparing
+                    && holds_no_number(ts)
+                {
+                    self.never_equal_component(l, ts, op, ats[other]);
+                }
+            }
             Err(m) => self.compared(l, ts, m),
         }
     }
 
     /// Rejects the literal `l`, written without a suffix and compared by `==` or `!=` with a
-    /// value whose type holds strings and no number (author decision, 2026-11-09, A15): no
-    /// carrier of a number literal is a string, so the comparison is never true. The repairs
-    /// compare the text, `x == "1"`, or read the number the text holds, `int(x) == 1`; a
-    /// comparison with an atom stays legal and does not come here.
-    fn texts(&mut self, l: &Lit) {
+    /// value of `t`, which holds values and no number ([`holds_no_number`]): no carrier of a
+    /// number literal is a string, a `bool` or a tuple, so the comparison always gives the
+    /// same answer (author decision, 2026-11-09, A15). The repairs fit what `t` holds, and the
+    /// checker accepts each: the text, `x == "1"`, and the number the text holds,
+    /// `int(x) == 1`, where `t` holds strings; `x == true` and `x == false` where it holds
+    /// `bool`; `x[i] == 1` for each component `i` of its tuples that may be the number; and,
+    /// where none of these fits, the answer the comparison always gives. A comparison with an
+    /// atom stays legal and does not come here. Each component is read once in each shape, so
+    /// the cost is linear in the size of `t`'s tuples.
+    fn never_equal(&mut self, l: &Lit, t: &Ty) {
         let (op, at, left) = self
             .eq_sides
             .get(&l.site)
             .copied()
             .unwrap_or(("==", None, false));
-        let t = self.t;
+        let tables = self.t;
         let name = at.and_then(|at| match self.seen.get(&at) {
-            Some((_, Src::Name(id))) => Some(t.res.binders[*id].name.as_str()),
+            Some((_, Src::Name(id))) => Some(tables.res.binders[*id].name.as_str()),
             _ => None,
         });
-        let lit = l.written();
+        let values = t.without_atoms();
+        let u = values.set.universes();
         let decimal = lit_carrier(&l.value) == Carrier::F64;
-        let casts: &[&str] = if decimal { &["f64", "rat"] } else { &["int"] };
+        let words: &[&str] = if decimal { &["f64", "rat"] } else { &["int"] };
+        let casts = (words.iter().copied())
+            .filter(|w| converted(&word_sig(w), t).is_some())
+            .map(Repair::Cast)
+            .collect();
+        // `x[i]` takes a tuple of more than `i` components, and no other value but a loose
+        // atom, which passes by.
+        let tuples_only = !u.bases.iter().any(|&b| b) && !u.rest && t.family.is_empty();
+        let width = (values.tuples.iter().map(|r| r.len()).min())
+            .filter(|_| tuples_only)
+            .unwrap_or(0);
+        let components = (0..width)
+            .filter(|&i| takes_number(l, &values.tuples.iter().map(|r| &r[i]).collect::<Vec<_>>()))
+            .map(Repair::Component)
+            .collect();
+        let groups = [
+            (texts(&u), "to compare the text"),
+            (casts, "to compare the number the text holds"),
+            (
+                bools(&u),
+                match name {
+                    Some(_) => "to compare with a truth value",
+                    None => "in place of the literal to compare with a truth value",
+                },
+            ),
+            (components, "to compare a component"),
+        ];
+        let answer = groups.iter().all(|(rs, _)| rs.is_empty());
+        let shown = self.shown(&values);
+        let lit = l.written();
         let message = quoting(
             &fmt::from_fn(|f| {
                 let Some(n) = name else {
                     write!(
                         f,
-                        "the literal `{lit}` is a number, compared by `{op}` with a `String`, \
-                         which no number equals; write the text `\"{lit}\"` to compare the text"
+                        "the literal `{lit}` is a number, compared by `{op}` with a `{shown}`, \
+                         which no number equals; write "
                     )?;
-                    for (i, c) in casts.iter().enumerate() {
-                        f.write_str(if i + 1 == casts.len() { " or " } else { ", " })?;
-                        write!(f, "`{c}(…)` around the other operand")?;
+                    if answer {
+                        return write!(
+                            f,
+                            "`{}` in place of the comparison, the answer it always gives",
+                            op != "=="
+                        );
                     }
-                    return f.write_str(" to compare the number the text holds");
+                    return write_repairs(f, &groups, |f, r| match r {
+                        Repair::Text => write!(f, "the text `\"{lit}\"`"),
+                        Repair::Cast(c) => write!(f, "`{c}(…)` around the other operand"),
+                        Repair::Bool(b) => write!(f, "`{b}`"),
+                        Repair::Component(i) => write!(f, "`[{i}]` after the other operand"),
+                    });
                 };
                 let pair =
                     |f: &mut fmt::Formatter<'_>, a: &dyn fmt::Display, b: &dyn fmt::Display| {
@@ -2995,21 +3057,84 @@ impl<'t, 'a> Ck<'t, 'a> {
                     };
                 write!(
                     f,
-                    "the literal `{lit}` is a number, and `{n}` is a `String` here, which no \
-                     number equals, so the comparison always gives the same answer; write "
+                    "the literal `{lit}` is a number, and `{n}` is a `{shown}` here, "
                 )?;
-                pair(f, &n, &format_args!("\"{lit}\""))?;
-                f.write_str(" to compare the text")?;
-                for (i, c) in casts.iter().enumerate() {
-                    f.write_str(if i + 1 == casts.len() { " or " } else { ", " })?;
-                    pair(f, &format_args!("{c}({n})"), &lit)?;
+                if answer {
+                    let a = op != "==";
+                    write!(
+                        f,
+                        "which no number equals, so the comparison always gives `{a}`; write \
+                         `{a}` in place of "
+                    )?;
+                    return pair(f, &n, &lit);
                 }
-                f.write_str(" to compare the number the text holds")
+                f.write_str(
+                    "which no number equals, so the comparison always gives the same answer; \
+                     write ",
+                )?;
+                write_repairs(f, &groups, |f, r| match r {
+                    Repair::Text => pair(f, &n, &format_args!("\"{lit}\"")),
+                    Repair::Cast(c) => pair(f, &format_args!("{c}({n})"), &lit),
+                    Repair::Bool(b) => pair(f, &n, &b),
+                    Repair::Component(i) => pair(f, &format_args!("{n}[{i}]"), &lit),
+                })
             }),
             || {
                 format!(
-                    "this literal is a number, compared by `{op}` with a `String`, which no \
+                    "this literal is a number, compared by `{op}` with a `{shown}`, which no \
                      number equals"
+                )
+            },
+        );
+        let notes = self.derive(&[at.unwrap_or(l.site)]);
+        self.rejects_with(Row::LiteralCarrier, l.site, message, notes);
+    }
+
+    /// Rejects the literal `l`, written without a suffix as a component of a tuple that `op`
+    /// compares with a tuple whose components there, of the types `ts`, hold no number
+    /// ([`holds_no_number`]), as [`Ck::never_equal`] rejects a literal written as an operand:
+    /// `p == (1, 2)` with `p: (String, int)`. `at` is the span of the other operand. The
+    /// repairs write in the literal's place the text, `"1"`, where the component holds
+    /// strings, and `true` or `false` where it holds `bool`; with neither, a value of the
+    /// component's type.
+    fn never_equal_component(&mut self, l: &Lit, ts: &[&Ty], op: &str, at: Option<Span>) {
+        let tables = self.t;
+        let name = at.and_then(|at| match self.seen.get(&at) {
+            Some((_, Src::Name(id))) => Some(tables.res.binders[*id].name.as_str()),
+            _ => None,
+        });
+        let values = Ty::union_all(ts.iter().copied()).without_atoms();
+        let u = values.set.universes();
+        let groups = [
+            (texts(&u), "in its place to compare the text"),
+            (bools(&u), "in its place to compare with a truth value"),
+        ];
+        let shown = self.shown(&values);
+        let lit = l.written();
+        let message = quoting(
+            &fmt::from_fn(|f| {
+                write!(f, "the literal `{lit}` is a number, and the component ")?;
+                if let Some(n) = name {
+                    write!(f, "of `{n}` ")?;
+                }
+                write!(
+                    f,
+                    "it is compared with by `{op}` is a `{shown}` here, which no number equals, \
+                     so the comparison always gives the same answer; write "
+                )?;
+                if groups.iter().all(|(rs, _)| rs.is_empty()) {
+                    return write!(f, "a value of `{shown}` in its place");
+                }
+                write_repairs(f, &groups, |f, r| match r {
+                    Repair::Text => write!(f, "`\"{lit}\"`"),
+                    Repair::Bool(b) => write!(f, "`{b}`"),
+                    Repair::Cast(_) | Repair::Component(_) => Ok(()),
+                })
+            }),
+            || {
+                format!(
+                    "this literal is a number, compared by `{op}` with a component that is a \
+                     `{shown}`, which no number equals"
                 )
             },
         );
@@ -4444,16 +4569,90 @@ fn expected(l: &Lit, want: &[&Ty]) -> Result<Option<Carrier>, String> {
     }
 }
 
-/// Whether the declared type `t` holds strings and no number, tuple, function or variable,
-/// so a number literal compared with its values is never equal to one (A15); the atoms it
-/// holds beside the strings do not matter.
-fn holds_text_only(t: &Ty) -> bool {
-    if t.dynamic || !t.vars.is_empty() || !t.tuples.is_empty() || !t.fns.is_empty() {
-        return false;
+/// Whether the declared types `ts` hold values and none of them a number: strings, `bool` or
+/// tuples, with any atoms beside, so a number literal compared with one of their values is
+/// never equal to it (A15). A type of atoms alone, or of no value, is left alone, as are a
+/// variable and the unknown, which could stand for a number; a function, and every tuple or
+/// struct as `(..)` and `{..}` write them, are left to the check that `==` takes data.
+fn holds_no_number(ts: &[&Ty]) -> bool {
+    let mut values = false;
+    for t in ts {
+        if t.dynamic || !t.vars.is_empty() || !t.fns.is_empty() {
+            return false;
+        }
+        let u = t.set.universes();
+        let numeric = [Carrier::Int, Carrier::Rat, Carrier::F64];
+        if numeric.iter().any(|c| u.bases[c.base()]) {
+            return false;
+        }
+        values |=
+            u.bases[Carrier::Str.base()] || u.bases[Carrier::Bool.base()] || !t.tuples.is_empty();
     }
-    let numeric = [Carrier::Int, Carrier::Rat, Carrier::F64];
-    !(&t.set & &Carrier::Str.ty()).is_empty()
-        && numeric.iter().all(|c| (&t.set & &c.ty()).is_empty())
+    values
+}
+
+/// Whether the literal `l` compared with a value of one of the types `cs` checks and may be
+/// equal to it: they hold a number `l` can be, or a variable or the unknown, which could
+/// stand for one.
+fn takes_number(l: &Lit, cs: &[&Ty]) -> bool {
+    let open = cs.iter().any(|c| c.dynamic || !c.vars.is_empty());
+    let numbers = [Carrier::Int, Carrier::Rat, Carrier::F64]
+        .into_iter()
+        .any(|n| cs.iter().any(|c| !(&c.set & &n.ty()).is_empty()));
+    (open || numbers) && expected(l, cs).is_ok()
+}
+
+/// A repair of a number literal compared with a value that holds no number
+/// ([`Ck::never_equal`]): the literal written as text, a cast of the other operand by the
+/// word, the literal replaced by a `bool`, or the other operand's component at an index
+/// compared in its place.
+#[derive(Clone, Copy)]
+enum Repair<'w> {
+    Text,
+    Cast(&'w str),
+    Bool(bool),
+    Component(usize),
+}
+
+/// The text repair where the values of the universes `u` hold strings.
+fn texts(u: &Universes) -> Vec<Repair<'static>> {
+    match u.bases[Carrier::Str.base()] {
+        true => vec![Repair::Text],
+        false => Vec::new(),
+    }
+}
+
+/// The two `bool` repairs where the values of the universes `u` hold `bool`.
+fn bools(u: &Universes) -> Vec<Repair<'static>> {
+    match u.bases[Carrier::Bool.base()] {
+        true => vec![Repair::Bool(true), Repair::Bool(false)],
+        false => Vec::new(),
+    }
+}
+
+/// Writes the repairs of `groups`, each a list of repairs and what they do, as one list: the
+/// repairs written by `form` and separated by `, `, the last by ` or `, and each group's
+/// followed by what they do.
+fn write_repairs<'w>(
+    f: &mut fmt::Formatter<'_>,
+    groups: &[(Vec<Repair<'w>>, &str)],
+    form: impl Fn(&mut fmt::Formatter<'_>, Repair<'w>) -> fmt::Result,
+) -> fmt::Result {
+    let total: usize = groups.iter().map(|(rs, _)| rs.len()).sum();
+    let mut k = 0;
+    for (rs, what) in groups {
+        for &r in rs {
+            if k > 0 {
+                f.write_str(if k + 1 == total { " or " } else { ", " })?;
+            }
+            form(f, r)?;
+            k += 1;
+        }
+        if !rs.is_empty() {
+            write!(f, " {what}")?;
+        }
+    }
+    Ok(())
 }
 
 /// The digits of the literal `l` as written, without its `-` and without the suffix `f64`.
