@@ -211,18 +211,21 @@ type Proof = #eval                                            // discharge by en
            | #assume(why: Utf8String);                            // rung 9, recorded at the site
 ```
 
-<!-- DESIGN.md:1255 layer L12: ring L7, word L12 (parity), label none; section [sec:checking_in_zed] 1 -->
+<!-- DESIGN.md:1257 layer L12: ring L10, word L12 (parity), label none; section [sec:checking_in_zed] 1 -->
 ```zed
 type Parity = #even | #odd | #either;
+parityHolds(positional p: Parity, positional x: int) -> bool =
+  match p { #even -> x mod 2 == 0, #odd -> x mod 2 == 1, #either -> true };
+parityTransfer(positional op, positional a: Parity, positional b: Parity) -> Parity = match op {
+  #add -> if a == #either || b == #either { #either } else if a == b { #even } else { #odd },
+  #mul -> if a == #even || b == #even { #even } else if a == #odd && b == #odd { #odd } else { #either },
+  _    -> #either,
+};
 parity = Facet(
   kind:     #evidence,
-  lattice:  flat([#even, #odd], top: #either),     // a prelude lattice; finite, so each rule's monotonicity is enumerated
-  holds:    (p, x: int) -> match p { #even -> x mod 2 == 0, #odd -> x mod 2 == 1, #either -> true },
-  transfer: (op, a, b) -> match op {
-    #add -> if a == #either || b == #either { #either } else if a == b { #even } else { #odd },
-    #mul -> if a == #even || b == #even { #even } else if a == #odd && b == #odd { #odd } else { #either },
-    _    -> #either,
-  },
+  lattice:  flat([#even, #odd], top: #either),     // a prelude lattice over Parity's atoms; finite, so each rule's monotonicity is enumerated
+  holds:    parityHolds,
+  transfer: parityTransfer,
 );
 
 half(positional x: int with parity(#even)) = x div 2;                     // a demand on the argument's fact
@@ -231,7 +234,7 @@ h(n: int with parity(#odd), m: int with parity(#even)) = half(n * m);   // ✓ #
 seven = 7 with parity(#odd);                                            // attaching a fact to a value is an obligation: holds(#odd, 7), rung 1
 ```
 
-<!-- DESIGN.md:1310 layer L22: ring L22, word none, label none; section [sec:theories] 1 -->
+<!-- DESIGN.md:1315 layer L22: ring L22, word none, label none; section [sec:theories] 1 -->
 ```zed
 interface Semigroup(T) {
   mul: (T, T) -> T,
@@ -266,7 +269,7 @@ interface CommRing(T) {
 intRing: CommRing(int) = { mul: (*), one: 1, add: (+), zero: 0, neg: (a -> -a) };
 ```
 
-<!-- DESIGN.md:1352 layer L22: ring L22, word L22 (CommRing), label none; section [sec:theories] 2 -->
+<!-- DESIGN.md:1357 layer L22: ring L22, word L22 (CommRing), label none; section [sec:theories] 2 -->
 ```zed
 law square(R: CommRing(T), a: T, b: T) = (a + b) * (a + b) == a * a + 2 * a * b + b * b
 proof {
@@ -277,7 +280,7 @@ proof {
 }
 ```
 
-<!-- DESIGN.md:1366 layer L22: ring L15, word L22 (Monoid), label none; section [sec:theories] 3 -->
+<!-- DESIGN.md:1371 layer L22: ring L15, word L22 (Monoid), label none; section [sec:theories] 3 -->
 ```zed
 pow(M: Monoid(T), x: T, n: int[0..]) -> T = if n == 0 { 1 } else { pow(M:, x:, n: n - 1) * x };
 
@@ -286,12 +289,12 @@ law powAdd(M: Monoid(T), x: T, m: int[0..], n: int[0..]) =
 proof { byInduction(n) }                        // base by mulOne; step by ih and mulAssoc at rung 3
 ```
 
-<!-- DESIGN.md:1376 layer L22: ring L10, word L22 (Monoid), label none; section [sec:theories] 4 -->
+<!-- DESIGN.md:1381 layer L22: ring L10, word L22 (Monoid), label none; section [sec:theories] 4 -->
 ```zed
 additive(R: CommRing(T)) -> Monoid(T) = { mul: R.add, one: R.zero };   // mulAssoc is R.addAssoc; mulOne is R.addZero; oneMul by addComm
 ```
 
-<!-- DESIGN.md:1455 layer L22: ring L22, word none, label none; section [sec:theories] 5 -->
+<!-- DESIGN.md:1460 layer L22: ring L22, word none, label none; section [sec:theories] 5 -->
 ```zed
 interface MonoInt {
   f: (int) -> int,
@@ -306,7 +309,7 @@ law monoTwice(M: MonoInt, a: int, b: int) = (a <= b).implies(M.f(M.f(a)) <= M.f(
 }
 ```
 
-<!-- DESIGN.md:1779 layer L7: ring L7, word L7 (u8), label none; section [sec:ffi] 1 -->
+<!-- DESIGN.md:1784 layer L7: ring L7, word L7 (u8), label none; section [sec:ffi] 1 -->
 ```zed
 @foreign struct SockAddr { family: int with bits(16), data: [u8] with length(14) }
 @foreign struct AddrInfo {
@@ -320,7 +323,7 @@ law monoTwice(M: MonoInt, a: int, b: int) = (a <= b).implies(M.f(M.f(a)) <= M.f(
 @foreign("c", "getaddrinfo") getAddrInfo: (node: [u8] with terminated(0), service: [u8] with terminated(0), hints: Ptr(AddrInfo) | #none) -> {rc: i32, res: Ptr(AddrInfo) | #none with release(freeAddrInfo)};
 ```
 
-<!-- DESIGN.md:3339 layer L10: ring L10, word L1 (Utf8String), label none; section [sec:tour_basics] 1 -->
+<!-- DESIGN.md:3344 layer L10: ring L10, word L1 (Utf8String), label none; section [sec:tour_basics] 1 -->
 ```zed
 // bindings — immutable, inferred; domains where they carry intent
 x = 42;
@@ -359,7 +362,7 @@ onAxis = Point(x: 0, ...);             // a struct is its constructor, curried b
 struct Round { import Rect, r: f64 }     // composition-import, not inheritance
 ```
 
-<!-- DESIGN.md:3379 layer L10: ring L10, word none, label none; section [sec:tour_methods] 1 -->
+<!-- DESIGN.md:3384 layer L10: ring L10, word none, label none; section [sec:tour_methods] 1 -->
 ```zed
 struct Counter { n: int, hi: int }
 
@@ -395,7 +398,7 @@ run = loop {
 };
 ```
 
-<!-- DESIGN.md:3423 layer L5: ring L5, word L5 (sort), label none; section [sec:tour_collections] 1 -->
+<!-- DESIGN.md:3428 layer L5: ring L5, word L5 (sort), label none; section [sec:tour_collections] 1 -->
 ```zed
 xs   = [3, 1, 4, 1, 5];                 // [int]  ≡  int[0..<5] -> int
 m    = { "a" -> 1, "b" -> 2 };          // display: commas inside, `;` ends the statement;
@@ -413,13 +416,13 @@ counts = text.split(" ").group(w -> w.lower).count;
 // counts : Utf8String ->? int     (f() ≡ f — a unit morphism reads as its value)
 ```
 
-<!-- DESIGN.md:3440 layer L8: ring L8, word L3 (split), label none; section [sec:tour_collections] 2 -->
+<!-- DESIGN.md:3445 layer L8: ring L8, word L3 (split), label none; section [sec:tour_collections] 2 -->
 ```zed
 // the same program, symbolic register (what the optimizer reasons over):
 counts = text.split(" ") as (i -> w) into (w.lower -> i -> 1) >< (+);
 ```
 
-<!-- DESIGN.md:3445 layer L4: ring L1, word L4 (rekey), label none; section [sec:tour_collections] 3 -->
+<!-- DESIGN.md:3450 layer L4: ring L1, word L4 (rekey), label none; section [sec:tour_collections] 3 -->
 ```zed
 // group vs rekey — the grouping decision is always a visible word:
 byId = users.rekey(u -> u.id);  // ✗ Collision: unless id-uniqueness is witnessed:
@@ -427,7 +430,7 @@ byId = users.rekey(u -> u.id);  // ✗ Collision: unless id-uniqueness is witnes
                                 //    or mark the key function @injective"
 ```
 
-<!-- DESIGN.md:3452 layer L5: ring L1, word L5 (maxBy), label none; section [sec:tour_collections] 4 -->
+<!-- DESIGN.md:3457 layer L5: ring L1, word L5 (maxBy), label none; section [sec:tour_collections] 4 -->
 ```zed
 byId = users.group(u -> u.id);  // ✓ type: Id ->? (UserKey -> User)  (the extra level, declared by the word)
 
@@ -437,7 +440,7 @@ one  = best?.first;             // #none carried; lexicographic: the max-score g
                                 // (first/last descend by each level's order — sec:corner_cases)
 ```
 
-<!-- DESIGN.md:3463 layer L5: ring L1, word L5 (join), label none; section [sec:tour_joins] 1 -->
+<!-- DESIGN.md:3468 layer L5: ring L1, word L5 (join), label none; section [sec:tour_joins] 1 -->
 ```zed
 // query projection      (payments : OrderId -> Payment — uniquely keyed,
 //                        which is what keeps the join flat, sec:joins;
@@ -446,7 +449,7 @@ paid = orders.join(payments, on: #orderId, kind: #left);
      // OrderId -> (Order, Payment | #none) — the pair of sec:joins; absence is a value, not a null row
 ```
 
-<!-- DESIGN.md:3471 layer L3: ring L3, word none, label none; section [sec:tour_joins] 2 -->
+<!-- DESIGN.md:3476 layer L3: ring L3, word none, label none; section [sec:tour_joins] 2 -->
 ```zed
 // iteration projection — the SAME kernel term; the compiler picks the plan
 paid = for o in orders {
@@ -455,13 +458,13 @@ paid = for o in orders {
 };
 ```
 
-<!-- DESIGN.md:3479 layer L5: ring L1, word L5 (diff), label none; section [sec:tour_joins] 3 -->
+<!-- DESIGN.md:3484 layer L5: ring L1, word L5 (diff), label none; section [sec:tour_joins] 3 -->
 ```zed
 // anti-join, both ways (same term again)
 unpaid = orders.diff(payments, on: #orderId);
 ```
 
-<!-- DESIGN.md:3484 layer L8: ring L8, word L3 (where), label none; section [sec:tour_joins] 4 -->
+<!-- DESIGN.md:3489 layer L8: ring L8, word L3 (where), label none; section [sec:tour_joins] 4 -->
 ```zed
 unpaid = orders.where(o -> payments[o.orderId] is #notFound);
 
@@ -482,7 +485,7 @@ matmul(positional a: (r -> c -> f64), positional b: (c -> k -> f64)) =
 prod = a.matmul(b);
 ```
 
-<!-- DESIGN.md:3506 layer L6: ring L6, word L6 (::frames), label none; section [sec:tour_loops] 1 -->
+<!-- DESIGN.md:3511 layer L6: ring L6, word L6 (::frames), label none; section [sec:tour_loops] 1 -->
 ```zed
 // comprehension — parallel by default
 sq = for i in 0..<n { i * i };
@@ -513,7 +516,7 @@ sessions = events.chunkBy(e -> e.userId);     // key-change splits; last chunk i
 report   = sessions.map(s -> summarize(s));
 ```
 
-<!-- DESIGN.md:3538 layer L3: ring L3, word L3 (where), label none, documentation notation; section [sec:tour_failure] 1 -->
+<!-- DESIGN.md:3543 layer L3: ring L3, word L3 (where), label none, documentation notation; section [sec:tour_failure] 1 -->
 ```zed
 parse : (Utf8String) -> Config | #syntaxError(pos: int)   // an assumed input, shown as a type — no ';' (sec:lexical)
 
@@ -537,7 +540,7 @@ badAmounts = amounts.where(a -> a is not int);     // 3: keep them — an ordina
                                                    //    collection, sized and reported
 ```
 
-<!-- DESIGN.md:3563 layer L21: ring L20, word L21 (store), label none, documentation notation; section [sec:tour_grammar] 1 -->
+<!-- DESIGN.md:3568 layer L21: ring L20, word L21 (store), label none, documentation notation; section [sec:tour_grammar] 1 -->
 ```zed
 // one declaration: type + parser + serializer (round-trip canonical)
 struct KeyVal  grammar { key: Ident  ":"  value: Json }
@@ -591,18 +594,18 @@ exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's sig
 rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers
 ```
 
-<!-- DESIGN.md:3670 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
+<!-- DESIGN.md:3675 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
 ```zed
 // layer L3
 priceOf(positional items, positional id) = items[id]?.price * (1 + taxRate);
 ```
 
-<!-- DESIGN.md:3677 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
+<!-- DESIGN.md:3682 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
 ```zed
 priceOf : (K ->? {price: f64}, K) -> f64 | #notFound
 ```
 
-<!-- DESIGN.md:3689 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
+<!-- DESIGN.md:3694 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
 ```zed
 // 1 — Deterministic parallel float sum: bit-identical at any core count.
 total = readings >< (+);
