@@ -1376,6 +1376,48 @@ fn separate_tests_over_a_chain_of_largest_values_less_one_scale() {
 }
 
 #[test]
+fn separate_tests_over_a_chain_reading_a_new_symbol_at_each_link_scale() {
+    // LOAD-max-div-xr (cross-review round 2, I7): `q{i} = q{i-1} + s{i}`, a test `q{i} >= 0`
+    // at each link. The symbols of link i's cone are i + 1; a set copied at each link stores
+    // O(n^2) atoms in all (Codex measured 26.7 times the bytes from 320 to 2560 links); a
+    // persistent set shares its input's tree, O(log n) at each link.
+    use zedc::store::presburger::extend::Extending;
+    use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared};
+    let defs = |m: usize| -> Vec<Formula> {
+        let sym = |i: usize| Lin::atom(Atom::Sym(format!("s{i}").into()));
+        let aux = |i: usize| Lin::atom(Atom::Aux(i as u32));
+        (0..m)
+            .map(|i| {
+                let rhs = if i == 0 {
+                    sym(0)
+                } else {
+                    aux(i - 1).plus(&sym(i))
+                };
+                Formula::And(Shared::new(vec![Formula::Con(Con::eq(&aux(i), &rhs))]))
+            })
+            .collect()
+    };
+    let inputs = zed_tests::scaling::inputs(200, |m| {
+        let asks: Vec<Formula> = (0..m)
+            .map(|i| Formula::Con(Con::ge(&Lin::atom(Atom::Aux(i as u32)), &Lin::constant(0))))
+            .collect();
+        (defs(m), asks)
+    });
+    zed_tests::scaling::check(
+        "separate tests over a chain reading a new symbol at each link",
+        200,
+        |m| {
+            let (defs, asks) = &inputs[&m];
+            let mut extending = Extending::new();
+            for f in asks {
+                let a = extending.defined(f, &|n| defs[n as usize].clone());
+                assert_eq!(a.holds, Ok(true));
+            }
+        },
+    );
+}
+
+#[test]
 fn separate_tests_over_a_chain_of_largest_values_of_multiples_scale() {
     // LOAD-max-div-xr: `2 * x - 9` beside `H div 2`.
     separate_tests_scale(
@@ -1628,6 +1670,18 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
             "u2(x: int) = t2(x: x) && x > 5;\n",
             "v2(x: int) = t2(x: x) && h2(x: x) < 0;\n",
             "w2(x: int) = u2(x: x) && t1(x: x + 1);\n",
+        )
+        .to_string(),
+        // A fork (cross-review of LOAD-max-div-xr, round 2): `c` reads `x` through `a` and
+        // `y` through `b`, so the symbols of its cone are both; with `y` left out, the summary
+        // of `c` says `t` can hold, where the whole has no point.
+        concat!(
+            "a(x: int) = abs(x);\n",
+            "b(y: int) = abs(y);\n",
+            "c(x: int, y: int) = max(a(x: x), b(y: y));\n",
+            "t(x: int, y: int) = c(x: x, y: y) < y;\n",
+            "u(x: int) = a(x: x) == 0;\n",
+            "v(y: int) = b(y: y) == 0;\n",
         )
         .to_string(),
     ];

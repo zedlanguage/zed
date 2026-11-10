@@ -130,7 +130,7 @@ pub struct Extending {
 #[derive(Default)]
 struct Summaries {
     by: HashMap<Key, Option<Summary>>,
-    syms: HashMap<Id, Arc<BTreeSet<Atom>>>,
+    syms: HashMap<Id, Arc<imbl::OrdSet<Atom>>>,
 }
 
 /// The key of a summary: the definition's, and the atoms kept beside its own variables, in
@@ -2830,36 +2830,69 @@ impl Summaries {
 
     /// Finds the symbols of the cone of the definition `h`: those it reads and those of the
     /// definitions it reaches, each definition's found once and remembered, after its inputs':
-    /// an explicit stack, since the chain is as deep as the program. A definition whose
-    /// symbols are those of its input with none added shares its input's set. Time of the
-    /// definitions reached and of the sets made.
+    /// an explicit stack, since the chain is as deep as the program. Each definition on the
+    /// stack holds its inputs, read once, and the place of the next one to visit, so that
+    /// every input is visited before the union is made (a definition that reads two others
+    /// whose sets are not yet found visits both: cross-review of LOAD-max-div-xr, round 2). A
+    /// definition whose symbols are those of its input with none added shares its input's
+    /// set. Time of the definitions and inputs reached and of the sets made.
     fn syms(&mut self, h: Formula, def: &dyn Fn(u32) -> Formula) {
-        let mut stack: Vec<Formula> = vec![h];
-        let mut open: HashSet<Id> = HashSet::new();
-        while let Some(top) = stack.last() {
-            let id = Id::any(top);
-            if self.syms.contains_key(&id) {
-                stack.pop();
-                continue;
-            }
-            let atoms = reads(top);
+        // A definition on the stack: its key, the atoms it reads, its inputs, and the place
+        // of the next input to visit.
+        struct Frame {
+            id: Id,
+            atoms: Vec<Atom>,
+            inputs: Vec<Formula>,
+            next: usize,
+        }
+        let frame = |f: &Formula| {
+            let id = Id::any(f);
+            let atoms: Vec<Atom> = reads(f).into_iter().collect();
             let inputs: Vec<Formula> = (atoms.iter().flat_map(auxes))
                 .map(def)
                 .filter(|d| !free(d) && Id::any(d) != id)
                 .collect();
-            if open.insert(id)
-                && let Some(d) = inputs.iter().find(|d| !self.syms.contains_key(&Id::any(d)))
-            {
-                stack.push(d.clone());
+            Frame {
+                id,
+                atoms,
+                inputs,
+                next: 0,
+            }
+        };
+        if self.syms.contains_key(&Id::any(&h)) {
+            return;
+        }
+        // The keys of the definitions on the stack: an input among them is on a cycle.
+        let mut open: HashSet<Id> = HashSet::from([Id::any(&h)]);
+        let mut stack: Vec<Frame> = vec![frame(&h)];
+        while let Some(top) = stack.last_mut() {
+            // Complexity tradeoff: searching the inputs from the first at each return to a
+            // definition costs O(d^2) for d inputs; the place kept in the frame visits each
+            // input once, O(d).
+            let child = loop {
+                let Some(d) = top.inputs.get(top.next) else {
+                    break None;
+                };
+                top.next += 1;
+                let k = Id::any(d);
+                if !self.syms.contains_key(&k) && !open.contains(&k) {
+                    break Some(d.clone());
+                }
+            };
+            if let Some(d) = child {
+                open.insert(Id::any(&d));
+                stack.push(frame(&d));
                 continue;
             }
+            let Some(top) = stack.pop() else { break };
+            open.remove(&top.id);
             // Its inputs' sets, the largest first, those missing (on a cycle) left out; the
             // definition is in no summary then ([`Def::of`] numbers each input before it).
-            let mut sets: Vec<&Arc<BTreeSet<Atom>>> = (inputs.iter())
+            let mut sets: Vec<&Arc<imbl::OrdSet<Atom>>> = (top.inputs.iter())
                 .filter_map(|d| self.syms.get(&Id::any(d)))
                 .collect();
             sets.sort_by_key(|s| std::cmp::Reverse(s.len()));
-            let mine = atoms.iter().filter(|a| matches!(a, Atom::Sym(_)));
+            let mine = top.atoms.iter().filter(|a| matches!(a, Atom::Sym(_)));
             let set = match sets.split_first() {
                 Some((big, rest))
                     if mine.clone().all(|a| big.contains(a))
@@ -2867,15 +2900,23 @@ impl Summaries {
                 {
                     Arc::clone(big)
                 }
-                _ => Arc::new(
-                    (sets.iter().flat_map(|s| s.iter()))
-                        .chain(mine)
-                        .cloned()
-                        .collect(),
-                ),
+                _ => {
+                    // Complexity tradeoff: copying the largest input's set and adding to it
+                    // costs O(n) per link on a chain that reads a new symbol at each link,
+                    // O(n^2) time and storage over n links (cross-review of LOAD-max-div-xr,
+                    // round 1, I7). A persistent ordered set shares the largest input's tree;
+                    // each added symbol costs O(log n), O(n log n) over that chain. The other
+                    // inputs' sets are still visited to form the union, O(their sizes · log n).
+                    let mut set: imbl::OrdSet<Atom> = sets
+                        .first()
+                        .map_or_else(imbl::OrdSet::new, |s| (***s).clone());
+                    for a in sets.iter().skip(1).flat_map(|s| s.iter()).chain(mine) {
+                        set.insert(a.clone());
+                    }
+                    Arc::new(set)
+                }
             };
-            self.syms.insert(id, set);
-            stack.pop();
+            self.syms.insert(top.id, set);
         }
     }
 }
@@ -3106,9 +3147,12 @@ fn pairs(rows: &[Con]) -> Vec<(Int, Atom, usize, usize)> {
 /// skipped. Time of the rows rewritten, each found through the rows holding its atom.
 // Complexity tradeoff: naive version, each pair scans every row for its atom, O(p r t) for
 // p pairs over r rows of t terms. Used: the rows holding each atom, kept as rows are
-// rewritten, so each pair reads only its atom's rows, O(r t + w t) for w rewrites in all.
-// Tradeoffs: one hash map of row lists; a list keeps an entry of a row that no longer holds
-// the atom, skipped where it is read.
+// rewritten, so each pair reads only its atom's rows, O(r t + w t) term visits for w
+// rewrites in all, besides the sorts: of the rows, O(r log r) comparisons of rows, of the
+// pairs, O(p log p), and of the holder lists, whose E <= r t + w t entries in all cost
+// O(E log E) comparisons (cross-review of LOAD-max-div-xr, round 2). Tradeoffs: one hash map
+// of row lists; a list keeps an entry of a row that no longer holds the atom, skipped where
+// it is read.
 fn by_pairs(mut rows: Vec<Con>, elim: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
     rows.sort();
     let mut pairs = pairs(&rows);
@@ -3279,8 +3323,9 @@ fn remainders_as_pairs(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
 // further off has a piece with a point in the gap), and two that merge are taken out and
 // their merge put back on the list; each merge leaves one piece fewer, so p pieces are put
 // in at most 2p times, O(p r² + p r log p) (the rest of a piece for each of its forms is
-// O(r) to make), and two decisions of the rest with the gap for each, O(p) decisions of
-// O(r) rows. Tradeoffs: one hash map and one ordered map for each group; two pieces whose
+// O(r) to make), and at most two decisions of the rest with a gap for each form tried, O(p r)
+// decisions of O(r) rows (cross-review of LOAD-max-div-xr, round 2: pieces fixing each of r
+// coordinates to 0 or 2 try every form). Tradeoffs: one hash map and one ordered map for each group; two pieces whose
 // union is no interval of one form (`x <= 2` and `x >= 4` with a point at 3, or two forms
 // changing at once) stay apart, exact but more pieces; a gap whose decision is refused is
 // taken to have a point. `max(H - 1, x mod 5 + x div 7 - 9)`: n^2.0 from 10 to 80 links
@@ -3682,6 +3727,32 @@ mod tests {
         // A row that no other implies is kept, and a lone row too.
         let lone = vec![con(&[(0, 1)], 1, Rel::Ge)];
         assert_eq!(lean(lone.clone()), lone);
+    }
+
+    #[test]
+    fn symbols_of_a_fork_include_every_input() {
+        // `q2 = q0 + q1` reads `x` through `q0` and `y` through `q1`; `q3 = q0 + q2` reaches
+        // `q0` twice. Each set holds the symbols of every input (cross-review of
+        // LOAD-max-div-xr, round 2: the second input of a fork was left out).
+        let (x, y) = (Atom::Sym("x".into()), Atom::Sym("y".into()));
+        let eq = |l: Lin, r: Lin| Formula::And(Shared::new(vec![Formula::Con(Con::eq(&l, &r))]));
+        let defs = [
+            eq(Lin::atom(a(0)), Lin::atom(x.clone())),
+            eq(Lin::atom(a(1)), Lin::atom(y.clone())),
+            eq(Lin::atom(a(2)), lin(&[(0, 1), (1, 1)], 0)),
+            eq(Lin::atom(a(3)), lin(&[(0, 1), (2, 1)], 0)),
+        ];
+        let mut summaries = Summaries::default();
+        summaries.syms(defs[3].clone(), &|n| defs[n as usize].clone());
+        for (i, want) in [
+            (0, vec![&x]),
+            (1, vec![&y]),
+            (2, vec![&x, &y]),
+            (3, vec![&x, &y]),
+        ] {
+            let got: Vec<&Atom> = summaries.syms[&Id::any(&defs[i])].iter().collect();
+            assert_eq!(got, want, "q{i}");
+        }
     }
 
     #[test]
