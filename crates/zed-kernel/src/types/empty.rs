@@ -909,8 +909,8 @@ struct Search {
     /// for [`Type::is_empty`], not for the search of a value after a refused decision.
     refuse_forks: bool,
     /// Whether a fork of recursive rows counts as inhabited with nothing shown, before the box
-    /// is narrowed; set for the search of a value after a refused decision, which so follows
-    /// no fork ([`Searching::tuples_on`]).
+    /// is narrowed; set for the search of a value after a refused decision and for the searches
+    /// of [`Searching::refine`], which so follow no fork ([`Searching::tuples_on`]).
     open_forks: bool,
     /// How many times the search of a value kept a component whole at a fork
     /// ([`Searching::narrow_tuples`]), so that [`Searching::find_rep`] knows a narrowing met one.
@@ -3778,9 +3778,30 @@ impl<'m> Searching<'m> {
     /// and keeping a piece the search shows inhabited, else one it does not prove empty. Each
     /// step is at most two searches, so the searches are at most twice the tuple types times
     /// the components, and the box ends closed on every tuple type: the part then holds all of
-    /// it or none.
+    /// it or none. Its searches neither end at a fork nor follow one: a forked piece counts as
+    /// inhabited with nothing shown.
     async fn refine(&'m self, start: Vec<Type>, f: &Part<Row>) -> Option<Vec<Type>> {
-        let refuse_forks = std::mem::replace(&mut self.s().refuse_forks, false);
+        // Complexity tradeoff: the searches of `refine` count a part whose open tuple types
+        // fork as inhabited, with nothing shown (`open_forks`), as the search of a value after a
+        // refused decision does, instead of following the fork. Given up: a value that only a
+        // piece past a fork would show; the box then keeps that piece, its row is checked as
+        // any candidate is, and the type is refused for `Fork` (the cause met) where no value
+        // is found. Why: `refine` turns `refuse_forks` off, so that a fork does not end the
+        // search, and with `open_forks` off too its searches followed the fork, the subset
+        // construction (the tradeoff in `narrow_tuples`), exponential in the recursive types:
+        // the pairs of `W -> int` and lists of length 2, less the pairs of `Never ->? (L | (S,
+        // L))` and lists `[1, _]`, nonempty lists or `cons(int, E)` with `E` the end family of
+        // `n` places, cost 28.5M, 320M and 3.64G instructions at `n` 1, 2 and 3 (`is_empty`
+        // 1.58G at 3); now 62.1M and 435M at 8 and 64. Trigger: a fork met in a piece `refine`
+        // tries, in a search with `refuse_forks` set (`verdict_alone`, `is_empty`). Test:
+        // `l01_23_subtyping::refusals::refining_a_box_follows_no_fork_in_its_size`.
+        // COMPLEXITY.md K35. A complete solution needs the subset construction over the
+        // forked tuple types, exponential in them.
+        let (refuse_forks, open_forks) = {
+            let mut s = self.s();
+            let refuse = std::mem::replace(&mut s.refuse_forks, false);
+            (refuse, std::mem::replace(&mut s.open_forks, true))
+        };
         let len = start.len();
         let mut g = self.region(start, f).await;
         let mut h = f.clone();
@@ -3804,7 +3825,11 @@ impl<'m> Searching<'m> {
                 empty = self.narrow_tuples(&mut g, &mut h).await;
             }
         }
-        self.s().refuse_forks = refuse_forks;
+        {
+            let mut s = self.s();
+            s.refuse_forks = refuse_forks;
+            s.open_forks = open_forks;
+        }
         (!empty && h.is_leaf() == Some(true)).then_some(g.r)
     }
 

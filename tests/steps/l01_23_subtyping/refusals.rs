@@ -1047,3 +1047,78 @@ fn emptiness_counts_a_fork_as_inhabited_in_its_size() {
         });
     });
 }
+
+/// `cons(head, tail)`, a type of its own.
+fn cons_of(head: Type, tail: Type) -> Type {
+    Group::new(vec![def("C", cons(Expr::Type(head), Expr::Type(tail)))])
+        .unwrap()
+        .instance(vec![])
+        .remove(0)
+}
+
+/// The pairs of `W` and the lists of integers of length 2, less the pairs of
+/// `Never ->? (L | (S, L))` and the lists `[1, _]`, the nonempty lists or `cons(int, E)`, with
+/// `L` the lists of integers, `W = (W) -> int`, `S = (int) -> S` and `E` the end family of `n`
+/// places ([`by_place_from_the_end`]; with `skip`, that place left out of it, and the
+/// nonempty lists left out of the union).
+fn refined_pairs(n: usize, skip: bool, tag: &str) -> Type {
+    let ts = Group::new(vec![
+        def(
+            &format!("L{tag}"),
+            Expr::Union(vec![nil(), cons(int(), r(0))]),
+        ),
+        def(&format!("W{tag}"), Expr::exact(r(1), int())),
+        def(&format!("S{tag}"), Expr::exact(int(), r(2))),
+    ])
+    .unwrap()
+    .instance(vec![]);
+    let (l, w, s) = (&ts[0], &ts[1], &ts[2]);
+    let int_then = |t: Type| cons_of(Type::int(), t);
+    let two = int_then(int_then(l.clone()));
+    let three = int_then(two.clone());
+    let into = &l.clone() | &Type::tuple(vec![s.clone(), l.clone()]);
+    let f = Type::morphism(Type::empty(), Type::empty(), into);
+    let one_then = cons_of(lit(1), int_then(Type::atom("nil")));
+    let y = if skip {
+        &one_then | &int_then(by_place_from_the_end(n, Some(n), tag))
+    } else {
+        &(&one_then | &int_then(l.clone())) | &int_then(by_place_from_the_end(n, None, tag))
+    };
+    &Type::tuple(vec![w.clone(), &two - &three]) - &Type::tuple(vec![f, y])
+}
+
+#[test]
+fn refining_a_box_follows_no_fork_in_its_size() {
+    // The search of a value refines the box of these pairs (`Searching::refine`), and the
+    // pieces it tries meet the fork of the end family in the second component. Refining
+    // followed the fork, the subset construction: on 92e736cd the verdict took 28.5M, 320M and
+    // 3.64G instructions at n 1, 2 and 3, `is_empty` 23.1M, 47.4M and 1.58G, and this test did
+    // not end within 60 s. Now refining counts a forked piece as inhabited, as the search of a
+    // value after a refused decision does: the verdict 22.5M, 27.3M, 39.1M, 62.1M, 110M, 211M
+    // and 435M at n 1, 2, 4, 8, 16, 32 and 64 (7.0 times from 8 to 64, order n^0.94),
+    // `is_empty` 54.8M and 396M at 8 and 64 (COMPLEXITY.md K35).
+    for skip in [false, true] {
+        big(move || {
+            let tag = AtomicUsize::new(0);
+            scaling::check("Fork, refining pairs by the end family", 8, |n| {
+                Type::forget_emptiness();
+                let tag = format!("_rf{skip}{}", tag.fetch_add(1, Relaxed));
+                let t = refined_pairs(n, skip, &tag);
+                assert_eq!(t.verdict(), Verdict::Refused(Refusal::Fork), "at {n}");
+            });
+        });
+    }
+    big(|| {
+        let tag = AtomicUsize::new(0);
+        scaling::check("emptiness, refining pairs by the end family", 8, |n| {
+            Type::forget_emptiness();
+            let tag = format!("_rfe{}", tag.fetch_add(1, Relaxed));
+            assert!(!refined_pairs(n, false, &tag).is_empty(), "at {n}");
+        });
+    });
+    // At n 1, without the nonempty lists and with the end family's one place left out, the
+    // refusal names the fork refining meets, where following it named no value found.
+    Type::forget_emptiness();
+    let t = refined_pairs(1, true, "_rf1");
+    assert_eq!(t.verdict(), Verdict::Refused(Refusal::Fork));
+}
