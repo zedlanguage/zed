@@ -8331,9 +8331,30 @@ fn project_parts(
             }
         }
         let rows = linked.cons.clone();
+        // The least and the first past the greatest product atom, to ask whether a disjunct
+        // has one in O(log n).
+        let products = (
+            Atom::product_of(Factor::Sym(Arc::from("")), Factor::Sym(Arc::from(""))),
+            Atom::Aux(0),
+        );
         let filled: Result<(), ()> = by_halves(rows, &keep, |i, k| {
             let (j, t) = place[i];
-            kernels[j][t] = k.filter(|_| !old_path());
+            // The projection keeps an atom of neither the disjunct nor the symbols where it
+            // cannot eliminate it exactly (`2 h == x + 15`, `h` a witness of `x` odd); its
+            // constants then differ by the path the disjunct is read on, and are moved to one
+            // form ([`shift_free`]) so that the memo below knows the disjunct again.
+            let atoms = ors[j][t].atoms();
+            let plain = atoms
+                .range(products.0.clone()..products.1.clone())
+                .next()
+                .is_none();
+            kernels[j][t] = k.filter(|_| !old_path()).map(|k| {
+                if plain {
+                    shift_free(k, |a| !atoms.contains(a) && !index.contains_key(a))
+                } else {
+                    k
+                }
+            });
             Ok(Vec::new())
         });
         filled.expect("no leaf fails");
@@ -8355,7 +8376,8 @@ fn project_parts(
         let mut order: Vec<(usize, &Rc<Parts>)> = ds.iter().enumerate().collect();
         order.sort_by_key(|(_, d)| d.atoms().len());
         let mut wanted: Option<Vec<usize>> = None;
-        let mut pre: Vec<Option<Result<Option<Parts>, Refusal>>> = Vec::new();
+        // With `sets`, each disjunct's settling, and whether it was of the base's groups.
+        let mut pre: Vec<Option<Presettled>> = Vec::new();
         if sets {
             for &(t, d) in &order {
                 let roots = roots_of(d.atoms());
@@ -8363,6 +8385,7 @@ fn project_parts(
                 // the projected base is asked again with the base's groups.
                 let kernel = kernels[j][t].as_deref();
                 let mut s = settle_as_sets(parts_of(d, &roots, kernel)).map(|s| s.map(|s| s.p));
+                let groups = kernel.is_none() || s.is_err();
                 if s.is_err() && kernel.is_some() {
                     s = settle_as_sets(parts_of(d, &roots, None)).map(|s| s.map(|s| s.p));
                 }
@@ -8379,7 +8402,7 @@ fn project_parts(
                             .collect(),
                     });
                 }
-                pre.push(maybe.then_some(s));
+                pre.push(maybe.then_some((s, groups)));
             }
         }
         for (at, (t, d)) in order.into_iter().enumerate() {
@@ -8406,21 +8429,17 @@ fn project_parts(
             let sub: Vec<Atom> = ks.iter().map(|&k| syms[k].clone()).collect();
             // A disjunct asked for no symbol is only asked whether it has a point, as
             // [`decide`] asks it; with `sets` it was asked above.
-            // A disjunct met before, at the same base groups and asked for the same symbols,
-            // is read once: its answer depends on these alone.
-            // The base as projected for this disjunct; when the solver refuses the disjunct
-            // with it, the disjunct is asked again with the base's groups, as before.
+            // A disjunct met before, with the same base and asked for the same symbols, is
+            // read once: its answer depends on these alone. The base is the one projected for
+            // this disjunct, its free atoms moved to one form ([`shift_free`]), or, where there
+            // is none or the solver refuses the disjunct with it, the base's groups; each
+            // answer is kept under a key of its own, so that the answer read for a disjunct
+            // does not depend on which path to it was read first.
             let kernel = kernels[j][t].take();
-            let key: BelowKey = (
-                d.id(),
-                match &kernel {
-                    Some(k) => k.clone(),
-                    None => (roots.iter())
-                        .flat_map(|r| linked.held[*r].iter().map(|i| linked.cons[*i].clone()))
-                        .collect(),
-                },
-                sub.clone(),
-            );
+            let (mut pre_d, pre_groups) = match pre_d {
+                Some((s, g)) => (Some(s), g),
+                None => (None, false),
+            };
             let answer = |settled: Result<Option<Parts>, Refusal>, memo: &mut Below| {
                 settled.and_then(|q| match q {
                     None => Ok((no_points(&sub), false)),
@@ -8446,25 +8465,49 @@ fn project_parts(
                     }),
                 })
             };
-            let found_rs = if let Some(r) = memo.get(&key) {
-                r.clone()
-            } else {
-                let settled = match pre_d {
-                    Some(s) => s,
-                    None => settle(parts_of(d, &roots, kernel.as_deref()), false),
-                };
-                let mut r = answer(settled, memo);
-                if r.is_err() && kernel.is_some() {
-                    let base = parts_of(d, &roots, None);
-                    let settled = if sets {
-                        settle_as_sets(base).map(|s| s.map(|s| s.p))
-                    } else {
-                        settle(base, false)
+            let mut found = None;
+            if let Some(k) = kernel
+                && !pre_groups
+            {
+                let key: BelowKey = (d.id(), false, k, sub.clone());
+                let r = if let Some(r) = memo.get(&key) {
+                    r.clone()
+                } else {
+                    let settled = match pre_d.take() {
+                        Some(s) => s,
+                        None => settle(parts_of(d, &roots, Some(&key.2)), false),
                     };
-                    r = answer(settled, memo);
+                    let r = answer(settled, memo);
+                    memo.insert(key, r.clone());
+                    r
+                };
+                // A settling with the projected base is no settling of the base's groups.
+                pre_d = None;
+                if r.is_ok() {
+                    found = Some(r);
                 }
-                memo.insert(key, r.clone());
-                r
+            }
+            let found_rs = match found {
+                Some(r) => r,
+                None => {
+                    let rows = (roots.iter())
+                        .flat_map(|r| linked.held[*r].iter().map(|i| linked.cons[*i].clone()));
+                    let key: BelowKey = (d.id(), true, rows.collect(), sub.clone());
+                    if let Some(r) = memo.get(&key) {
+                        r.clone()
+                    } else {
+                        let settled = match pre_d {
+                            Some(s) => s,
+                            None if sets => {
+                                settle_as_sets(parts_of(d, &roots, None)).map(|s| s.map(|s| s.p))
+                            }
+                            None => settle(parts_of(d, &roots, None), false),
+                        };
+                        let r = answer(settled, memo);
+                        memo.insert(key, r.clone());
+                        r
+                    }
+                }
             };
             let (rs, has_point) = match found_rs {
                 Ok(((rs, more), point)) => {
@@ -8654,9 +8697,10 @@ fn project_parts(
     Ok((out, skipped))
 }
 
-/// A disjunct of [`project_parts`] below the top, by its id ([`Parts::id`]), with the
-/// constraints of the base groups it is read with and the symbols it is asked for.
-type BelowKey = (u64, Vec<Con>, Vec<Atom>);
+/// A disjunct of [`project_parts`] below the top, by its id ([`Parts::id`]), with whether it is
+/// read with the base's groups (`true`) or with the base projected for it, the constraints of
+/// that base, and the symbols it is asked for.
+type BelowKey = (u64, bool, Vec<Con>, Vec<Atom>);
 
 /// The answers of [`project_parts`] for the disjuncts below the top already read. A disjunct
 /// shared by several disjunctions (a named disjunction used as a disjunct at each of several
@@ -8664,6 +8708,89 @@ type BelowKey = (u64, Vec<Con>, Vec<Atom>);
 /// once for each path to it, which is exponential in the depth when the shared disjunctions
 /// nest.
 type Below = HashMap<BelowKey, Result<(Each, bool), Refusal>>;
+
+/// A disjunct of [`project_parts`] settled before it is read (with `sets`), with whether it was
+/// settled with the base's groups.
+type Presettled = (Result<Option<Parts>, Refusal>, bool);
+
+/// `rows`, sorted, with each atom `a` that `free` allows (a symbol or an auxiliary variable,
+/// not a factor of a product among the rows) replaced by `a - q` for the integer `q` that
+/// brings the constant of one row over `a` into the range from 0 up to that row's coefficient
+/// of `a`: `2 a == x + 15` becomes `2 a == x - 1` (`q` = -8), and every other row over `a`
+/// moves by `q` times its own coefficient of `a`. The row is the one with the least
+/// coefficient of `a` in size, then by comparison, then by terms, then by constant, a choice
+/// that moving any atom does not change: rows that compare equal up to the constant have the
+/// same coefficients, so they move together and keep their order.
+///
+/// The answer of [`project_parts`] for a disjunct read with `rows` is unchanged when `free`
+/// holds of no atom of the disjunct or of the symbols: `a ↦ a - q` maps the integer points
+/// of the rows with the disjunct one to one onto those of the rows moved with it, and changes
+/// no atom that the disjunct or the symbols read, so the points have the same values on the
+/// symbols and the same have a point. A product's factor is left as it is, since moving it
+/// would change the product. The solver is then asked about the moved rows, the same set.
+///
+/// Complexity tradeoff: [`project_parts`] keyed its memo by the base rows as projected,
+/// which keep, where the projection cannot eliminate an atom exactly, the same core with a
+/// constant that depends on the path the disjunct is read on (`2 h == x[i] + c` with `c` one
+/// of the `2^i` partial sums of a nest of shared disjunctions `x[i] == x[i - 1]` or
+/// `x[i] == x[i - 1] + 2^i`, `x[k]` odd): the memo never knew the disjunct again, so the
+/// projection read all `2^k` paths, O(2^k) (0.72G to 11.50G instructions at k = 10 to 14).
+/// With the free atoms moved, each level has one key and the nest costs O(k). This costs
+/// O(r log r) for a projected base of `r` terms, no more than the projection that made it.
+/// What is given up: only the constant of each free atom is moved, one atom at a time, so
+/// two projected bases that differ by a move of free atoms are made equal where each row
+/// holds one free atom; where a row holds two or more, or the bases differ by more than a
+/// move (`a ↦ a + x`, `a ↦ -a`), they can stay apart, and a nest with such links still reads
+/// each path: O(2^k). A disjunct with a product atom is not moved at all (finding whether a
+/// product reads a free atom costs the disjunct's atoms at each level, O(k^2) in a nest).
+/// Why: the form that makes every equal projection equal is the projection's own normal
+/// form, the Hermite normal form of the free atoms' columns, a change of the projection,
+/// not of its key. Tests: `l01_38_presburger::shared::a_linked_nest_projects_in_time_linear_in_its_depth`
+/// (the nest at k and 8k, and its answers against the ways counted one by one), `twin_linked_nests_project_in_time_linear_in_their_depth`; COMPLEXITY.md row
+/// PRES-below-key.
+fn shift_free(mut rows: Vec<Con>, free: impl Fn(&Atom) -> bool) -> Vec<Con> {
+    let mut factors: HashSet<Atom> = HashSet::new();
+    let mut at: BTreeMap<Atom, Vec<usize>> = BTreeMap::new();
+    for (i, c) in rows.iter().enumerate() {
+        for a in c.lin.terms.keys() {
+            match a {
+                Atom::Product(x, y) => {
+                    factors.insert(x.atom());
+                    factors.insert(y.atom());
+                }
+                _ if free(a) => at.entry(a.clone()).or_default().push(i),
+                _ => {}
+            }
+        }
+    }
+    for (a, is) in at {
+        if factors.contains(&a) {
+            continue;
+        }
+        let q = {
+            let coef = |i: usize| &rows[i].lin.terms[&a];
+            let pick = (is.iter().copied())
+                .min_by(|&i, &j| {
+                    (coef(i).abs().cmp(&coef(j).abs()))
+                        .then_with(|| rows[i].rel.cmp(&rows[j].rel))
+                        .then_with(|| rows[i].lin.terms.cmp(&rows[j].lin.terms))
+                        .then_with(|| rows[i].lin.constant.cmp(&rows[j].lin.constant))
+                })
+                .expect("a free atom's row");
+            rows[pick].lin.constant.div_floor(coef(pick))
+        };
+        if q.is_zero() {
+            continue;
+        }
+        for i in is {
+            let by = &rows[i].lin.terms[&a] * &q;
+            let lin = &mut rows[i].lin;
+            lin.constant = &lin.constant - &by;
+        }
+    }
+    rows.sort_unstable();
+    rows
+}
 
 /// A disjunct with a point and its projections, each with the index of its symbol, sorted.
 type Projected<'a> = (&'a Parts, Vec<(usize, IntervalSet)>);

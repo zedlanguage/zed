@@ -21,6 +21,7 @@ mod extend;
 mod front_cost;
 mod ids;
 mod ladder;
+mod linked_nest;
 mod live3;
 mod mod_symbol;
 mod model;
