@@ -1746,11 +1746,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| GROUP-overlaps-lower | impl attempt 1 | 2026-11-09 17:22 | started; worktree from 6cab7e76; load 9.56 8.65 11.90 |
+| GROUP-overlaps-lower | impl attempt 1 | 2026-11-09 17:22 | baseline on 6cab7e76: ring holding #b_j((int,)) 5.65, 24.9, 99.4, 373, 1515 ms at k 64..1024 (4x per doubling, k^2), debug; new scaling test fails on old code;  |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
-| PRES-pendants-wider | impl attempt 1 | 2026-11-09 15:16 | candidate ends from disjunct projections: 11/226 z1 and 14/271 z0 now exact; disj_groups 20/20 / load 13.53 23.67 24.12 |
+| PRES-pendants-wider | repair attempt 1 | 2026-11-09 15:16 | port done, s22 row 500 44->43 (old transfer {3} now exact, checked by hand); final test run starting |
 | PRES-small-point | impl attempt 1 | 2026-11-09 17:33 | start; worktree /home/luke/Work/wt/small-point from origin/main 6b3a8c52 |
-| READ-atom-meet | impl attempt 1 | 2026-11-09 17:51 | worktree wt/read-atom-meet at c7126aed; cause located: Ty::meet_rest keeps self's payloads (crates/zedc-types/src/ty.rs); building seed-sweep probe |
+| READ-atom-meet | impl attempt 1 | 2026-11-09 17:51 | ready wt/read-atom-meet 2f332a39 on cdf85dbe; tests green but pre-existing l01_10/l01_35 / load 12.36 13.55 18.02 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
