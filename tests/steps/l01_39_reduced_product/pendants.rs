@@ -1908,6 +1908,50 @@ fn refused_projections_of_joined_random_parts_keep_sound_boxes() {
     assert_eq!(count, (7, 30, 14));
 }
 
+/// The part `case` of `seed` and its boxes, drawn as [`refused_names_in`] draws them.
+fn random_case(seed: u64, case: usize) -> (Vec<Item>, BTreeMap<String, Vec<Piece>>) {
+    let mut r = Rng::new(seed);
+    for c in 0..=case {
+        let nz = 2 + r.below(5);
+        let items = random_part(&mut r, nz);
+        let bs = random_boxes(&mut r, nz);
+        if c == case {
+            return (items, bs);
+        }
+    }
+    unreachable!("the loop returns at `case`")
+}
+
+/// Names of random parts of seeds 11 to 18, not refused, whose hulls were wider than brute
+/// force finds (item PRES-pendants-wider), each now that hull: `a` and `z2` by the rows that
+/// the rows of a projection give each other (`2·a + z2 + 15 >= 0` with `a <= 7`), `z0` of
+/// seed 17 and `z3` by the rows the disjunctions imply with an end the hull left infinite,
+/// `z0` of seed 14 by a search of a finite end whose other end is infinite, and `z1` by a
+/// candidate end a disjunct gives (`z1 <= 6`, where `z1 >= 7` leaves three disjuncts that
+/// hold together at no point).
+#[test]
+fn hulls_once_wider_than_brute_force_are_its_hulls() {
+    for (seed, case, name, want) in [
+        (16, 8, "a", "[3,inf]"),
+        (15, 331, "z2", "[-29,inf]"),
+        (17, 121, "z0", "[-21,-4]"),
+        (16, 214, "z3", "[-7,29]"),
+        (14, 271, "z0", "[-inf,25]"),
+        (11, 226, "z1", "[-3,6]"),
+    ] {
+        let (items, bs) = random_case(seed, case);
+        let got = boxed_names(&scope(&bs), &formula(&items), &item_names(&items));
+        let (x, refused) = &got[name];
+        assert!(!refused, "seed {seed} case {case} {name}");
+        assert_eq!(show(x), want, "seed {seed} case {case} {name}");
+        assert_eq!(
+            brute_hulls(&items, &bs)[name],
+            *x,
+            "seed {seed} case {case} {name}"
+        );
+    }
+}
+
 /// A random part of seed 0xca17, its boxes, and six other writings of it with the same
 /// points: four by [`rewritten`] (its equations negated or held twice with opposite signs, its
 /// inequalities held twice, some equations split into two inequalities, with `split`) and

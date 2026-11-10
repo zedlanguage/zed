@@ -436,3 +436,184 @@ fn the_middle_of_a_chain_of_removals_each_needing_the_one_before_is_projected_in
         );
     }
 }
+
+/// An atom by name.
+fn named(n: &str) -> Lin {
+    Lin::atom(Atom::Sym(n.into()))
+}
+
+/// `l` is one of `vs`, as a disjunction of equations.
+fn one_of(l: &Lin, vs: &[i128]) -> Formula {
+    Formula::or(vs.iter().map(|v| eq(l.minus(&Lin::constant(*v)))).collect())
+}
+
+/// The hull of `z` over `f`, with `lo` and `hi` its ends (`None`: unbounded), and no part
+/// left out.
+fn assert_hull(f: &Formula, lo: Option<i64>, hi: Option<i64>) {
+    let r = project_each(f, &[Atom::Sym("z".into())]).expect("a projection");
+    let s = r.0[0].clone().expect("a hull");
+    let probe = 1_000_000;
+    match lo {
+        Some(lo) => assert!(s.contains(lo) && !s.contains(lo - 1), "{f}: {s:?}"),
+        None => assert!(s.contains(-probe), "{f}: {s:?}"),
+    }
+    match hi {
+        Some(hi) => assert!(s.contains(hi) && !s.contains(hi + 1), "{f}: {s:?}"),
+        None => assert!(s.contains(probe), "{f}: {s:?}"),
+    }
+    assert!(r.1.is_empty(), "{f}: {:?}", r.1);
+}
+
+/// `b + c >= z` with `b` in {0, 2} and `c` in {0, 3}: each disjunction alone leaves `z`
+/// unbounded above (the other's atom is free), and the rows the two imply, `0 <= b <= 2` and
+/// `0 <= c <= 3`, give `z <= 5`, reached at `b = 2`, `c = 3` (item PRES-pendants-wider: seed 17
+/// case 121 of `l01_39_reduced_product::pendants`, `z0` unbounded below where it is `-21`).
+#[test]
+fn an_unbounded_end_that_the_rows_the_disjunctions_imply_bound_is_read() {
+    let f = Formula::and(vec![
+        ge(named("b").plus(&named("c")).minus(&named("z"))),
+        one_of(&named("b"), &[0, 2]),
+        one_of(&named("c"), &[0, 3]),
+    ]);
+    assert_hull(&f, None, Some(5));
+}
+
+/// `z <= 5` with `x >= 1 || z <= 0` and `x <= 0 || z <= 0`: `z >= 1` leaves `x >= 1` and
+/// `x <= 0` together, so `z <= 0`, reached at `x = 0`, `z = 0`. No row the disjunctions imply
+/// bounds `z` above but `z <= 5`, so only a question of the whole formula past the end does (item
+/// PRES-pendants-wider: `z1 <= 6` of seed 11 case 226 of `l01_39_reduced_product::pendants`,
+/// left at `[-3, inf]` before).
+#[test]
+fn a_finite_end_whose_other_is_infinite_is_tightened_by_cases() {
+    let (x, z) = (named("x"), named("z"));
+    let f = Formula::and(vec![
+        ge(Lin::constant(5).minus(&z)),
+        Formula::or(vec![ge(x.minus(&Lin::constant(1))), ge(z.times(-1))]),
+        Formula::or(vec![ge(x.times(-1)), ge(z.times(-1))]),
+    ]);
+    assert_hull(&f, None, Some(0));
+    // The same with the end below: `z >= -5`, `x >= 1 || z >= 0`, `x <= 0 || z >= 0`.
+    let g = Formula::and(vec![
+        ge(z.plus(&Lin::constant(5))),
+        Formula::or(vec![ge(x.minus(&Lin::constant(1))), ge(z.clone())]),
+        Formula::or(vec![ge(x.times(-1)), ge(z.clone())]),
+    ]);
+    assert_hull(&g, Some(0), None);
+}
+
+/// `z <= 0 || a >= 5` with `z <= 0 || a <= 3`: `z <= 0` by cases, and no row bounds `z` at
+/// either end; the disjunct `z <= 0` gives 0 as a candidate end, and one question, the formula
+/// with `z >= 1`, shows no point lies past it (item PRES-pendants-wider: `z1 <= 6` of seed 11
+/// case 226 of `l01_39_reduced_product::pendants`, left at `[-3, inf]` before).
+#[test]
+fn an_end_only_case_reasoning_bounds_is_read_from_a_disjunct() {
+    let (a, z) = (named("a"), named("z"));
+    let f = Formula::and(vec![
+        Formula::or(vec![ge(z.times(-1)), ge(a.minus(&Lin::constant(5)))]),
+        Formula::or(vec![ge(z.times(-1)), ge(Lin::constant(3).minus(&a))]),
+    ]);
+    assert_hull(&f, None, Some(0));
+}
+
+/// `z <= x + y` with `x <= 0` and `y <= 0` each by cases (`x <= 0 || p >= 1` with
+/// `x <= 0 || p <= 0`, the same for `y` with `q`): `z <= 0`, but no disjunct bounds `z` alone
+/// (`x <= 0` leaves `y` free), so no candidate end is found and the hull stays open, sound and
+/// wider than the exact `z <= 0` (the tradeoff of [`project_each`] at `tighten`, item
+/// PRES-pendants-wider).
+#[test]
+fn an_end_that_cases_bound_at_a_value_no_disjunct_gives_is_left_open() {
+    let (x, y, z, p, q) = (named("x"), named("y"), named("z"), named("p"), named("q"));
+    let mut fs = vec![ge(x.plus(&y).minus(&z))];
+    for (v, w) in [(&x, &p), (&y, &q)] {
+        fs.push(Formula::or(vec![
+            ge(v.times(-1)),
+            ge(w.minus(&Lin::constant(1))),
+        ]));
+        fs.push(Formula::or(vec![ge(v.times(-1)), ge(w.times(-1))]));
+    }
+    assert_hull(&Formula::and(fs), None, None);
+}
+
+/// A chain of `n` stages `y[i + 1] <= y[i] + x[i]` with `x[i]` in {0, 2} and `y[0] == 0`:
+/// `y[i]` is at most `2i` and unbounded below, a bound only the rows the disjunctions imply
+/// give (item PRES-pendants-wider).
+fn sum_chain(n: usize) -> Formula {
+    let mut fs = vec![eq(y(0))];
+    for i in 0..n - 1 {
+        fs.push(ge(y(i).plus(&x(i)).minus(&y(i + 1))));
+        fs.push(one_of(&x(i), &[0, 2]));
+    }
+    Formula::and(fs)
+}
+
+#[test]
+fn the_middle_of_a_chain_bounded_by_the_rows_its_disjunctions_imply_is_projected_in_n_log_n() {
+    let inputs = scaling::inputs(16, sum_chain);
+    scaling::check(
+        "a chain bounded by the rows its disjunctions imply",
+        16,
+        |m| {
+            let mid = m / 2;
+            let r = project_each(&inputs[&m], &[Atom::Sym(format!("y{mid:05}").into())])
+                .expect("a projection");
+            let s = r.0[0].clone().expect("a hull");
+            let top = 2 * mid as i64;
+            assert!(
+                s.contains(top) && !s.contains(top + 1) && s.contains(-1_000_000),
+                "{s:?}"
+            );
+        },
+    );
+}
+
+/// A chain of `n` stages `y[i + 1] >= y[i] - 1` with `y[0] == 0`, and at the middle stage
+/// `m`, `x >= 1 || y[m] >= 0` and `x <= 0 || y[m] >= 0`: by cases `y[m] >= 0`, where the rows
+/// allow `-m`; no row bounds it above (item PRES-pendants-wider). Cases at every stage
+/// (`x[i] >= 1 || y[i + 1] >= y[i]` and `x[i] <= 0 || y[i + 1] >= y[i]`) give the same bound
+/// by cases, but the search through the disjunctions ([`pick`]) refuses its questions, so
+/// that hull stays sound and wider (the tradeoff of plan item DISJ-dpll).
+fn case_chain(n: usize) -> Formula {
+    let m = n / 2;
+    let mut fs = vec![eq(y(0))];
+    for i in 0..n - 1 {
+        fs.push(ge(y(i + 1).minus(&y(i)).plus(&Lin::constant(1))));
+    }
+    let x = named("x");
+    fs.push(Formula::or(vec![ge(x.minus(&Lin::constant(1))), ge(y(m))]));
+    fs.push(Formula::or(vec![ge(x.times(-1)), ge(y(m))]));
+    Formula::and(fs)
+}
+
+#[test]
+fn the_middle_of_a_chain_whose_lower_end_only_cases_give_is_projected_in_n_log_n() {
+    let inputs = scaling::inputs(16, case_chain);
+    scaling::check("a chain whose lower end only cases give", 16, |m| {
+        let mid = m / 2;
+        let r = project_each(&inputs[&m], &[Atom::Sym(format!("y{mid:05}").into())])
+            .expect("a projection");
+        let s = r.0[0].clone().expect("a hull");
+        assert!(
+            s.contains(0) && !s.contains(-1) && s.contains(1_000_000),
+            "{s:?}"
+        );
+    });
+}
+
+/// `z <= 5` with `x >= 1 || z <= 0`, `x <= 0 || z <= 0` and the same two with `w`: `x` and
+/// `w` are told apart by no structure, so the formula is asked of [`decide`], which gives no
+/// point, and the search for the upper end steps down from 5 by 1, 2, 4 to a value with no
+/// proof that no point lies above it, then bisects (item PRES-pendants-wider; left at 5
+/// before).
+#[test]
+fn a_finite_end_is_tightened_where_the_solver_gives_no_point() {
+    let (x, w, z) = (named("x"), named("w"), named("z"));
+    let mut fs = vec![ge(Lin::constant(5).minus(&z))];
+    for v in [&x, &w] {
+        fs.push(Formula::or(vec![
+            ge(v.minus(&Lin::constant(1))),
+            ge(z.times(-1)),
+        ]));
+        fs.push(Formula::or(vec![ge(v.times(-1)), ge(z.times(-1))]));
+    }
+    assert_hull(&Formula::and(fs), None, Some(0));
+}

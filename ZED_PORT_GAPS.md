@@ -3215,3 +3215,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | The merge hook a closure capturing `&mut Placing` and the work stack `&mut Vec<Work>` at once, pushing the work of a node read during the merge onto the stack being popped | `overlaps` (`Work::Merge`), `Placing::reach` | Mutation (gap 11) | The merge as a fold returning the state and the new work items, appended by the caller |
 | A per-node flag set by a walk back along the children from a stack of seeds, with the parents built as a `Vec<Vec<usize>>`, reading the flags of lower groups through the thread-local `GROUPS` | `Group::set_deep`, `Walked::make` | Mutation (gap 11), thread-local state | A fixpoint over the reversed child edges in a topological order, the lower groups' flags passed in with the groups already made |
 | A `HashMap<(usize, usize), usize>` from cell and group number to placement, kept over all cells | `overlaps` (`placed`) | Mutation (gap 11) | A persistent map keyed by the pair, threaded with the placements |
+
+## Entries from PRES-pendants-wider (`crates/zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap<usize, (Option<Int>, Option<Int>)>` of the farthest finite ends each disjunct's projection gives a symbol, filled in place through `entry().or_default()` in one pass over the projections kept | `project_parts` (`open`) | Mutation (gap 11) | a fold over the projections into a persistent map from symbol to its two ends, O(n log n) |
+| A doubling search away from a finite end, a `loop` whose state (`a`, `step`) is reassigned until a question has no proof of no point, then `break (a, v)` with the interval to bisect | `Hull::tighten` (`new_lo`, `new_hi`) | Mutation (gap 11), early exit (gap 12) | a recursive function of the end and the step that returns the interval; at most about `log2 w` calls |

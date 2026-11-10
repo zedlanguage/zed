@@ -8167,8 +8167,8 @@ fn project_parts(
     // own group, and a disjunct is projected with the groups its atoms touch, onto the symbols
     // in them, the others keeping the base's hull. A projection then costs the groups each
     // disjunct touches, not the whole base for each disjunct and each symbol.
-    // With two disjunctions or more, a hull with two finite bounds, the only hull a tightening
-    // moves, is tightened: at the top over the whole formula, below it over [`summarize`].
+    // With two disjunctions or more, a hull with a finite end, the only end a tightening moves,
+    // is tightened: at the top over the whole formula, below it over [`summarize`].
     let mut ors = std::mem::take(&mut p.ors);
     let n_ors = ors.len();
     let linked = Linked::of(std::mem::take(&mut p.cons));
@@ -8551,7 +8551,11 @@ fn project_parts(
     // that their rows allow. Tests: `l01_38_presburger::disj_groups` (the hulls of small chains
     // against their points counted one by one, and the two chains above at `n` and `8n`);
     // COMPLEXITY.md row DISJ-incremental.
-    let finite = |o: &Result<IntervalSet, Refusal>| matches!(o, Ok(s) if matches!(s.bounds(), Some((End::Fin(_), End::Fin(_)))));
+    // A hull with one finite end is tightened at that end too, searched toward the value of
+    // the symbol at a point of the formula (item PRES-pendants-wider: `z0 <= 25` of seed 14
+    // case 271 of `l01_39_reduced_product::pendants`, left at 27 before), and an infinite end
+    // that a disjunct's own projection bounds is tried at that bound ([`Hull::tighten`]).
+    let finite = |o: &Result<IntervalSet, Refusal>| matches!(o, Ok(s) if s.bounds().is_some_and(|(l, h)| matches!(l, End::Fin(_)) || matches!(h, End::Fin(_))));
     // Before the questions, each hull to be tightened is met with the symbol's hull over the
     // base and the rows the disjunctions imply ([`disjunction_hulls`]), all symbols at once by
     // [`by_halves`]: the rows hold at every point of the parts, so the bounds are sound, and
@@ -8562,16 +8566,21 @@ fn project_parts(
     // growing), and [`probe`] then tests each disjunct by a propagation of the whole formula.
     // A bound is read from the rows of the projection with the symbol alone, so a projection
     // that keeps other atoms (a core, see [`shadow`]) gives what it gives and the questions
-    // the rest. Rows with no point show the parts have none.
+    // the rest. Rows with no point show the parts have none. A hull with an infinite end is met
+    // too: in `b + c >= z` with `b` in {0, 2} and `c` in {0, 2} (each a disjunction, as a box
+    // with a hole is, [`member`]), each disjunction's union, with the other's atom free, leaves
+    // `z` unbounded, and their meet does too, where the rows `0 <= b <= 2` and `0 <= c <= 2`
+    // the two imply give `z <= 4` (seed 17 case 121 of `l01_39_reduced_product::pendants`,
+    // item PRES-pendants-wider).
     // The rows the disjuncts left imply, read below for the hulls and by [`tighten_each`] for a
     // point at each end.
-    let implied = if !sets && n_ors > 1 && !old_path() && out.iter().any(finite) {
+    let implied = if !sets && n_ors > 1 && !old_path() && out.iter().any(Result::is_ok) {
         disjunction_hulls(&ors)
     } else {
         Vec::new()
     };
     if !implied.is_empty() {
-        let ks: Vec<usize> = (0..syms.len()).filter(|&k| finite(&out[k])).collect();
+        let ks: Vec<usize> = (0..syms.len()).filter(|&k| out[k].is_ok()).collect();
         let keep: Vec<BTreeSet<Atom>> = (ks.iter())
             .map(|&k| BTreeSet::from([syms[k].clone()]))
             .collect();
@@ -8594,7 +8603,37 @@ fn project_parts(
             return Ok(none());
         }
     }
-    if n_ors > 1 && out.iter().any(finite) {
+    // For each symbol, the least finite lower end and the greatest finite upper end that a
+    // disjunct's own projection gives it, candidates for an end the hull leaves open
+    // ([`Hull::tighten`]), read in one pass over the projections kept.
+    let mut open: HashMap<usize, (Option<Int>, Option<Int>)> = HashMap::new();
+    for (_, kept) in seen.iter().flatten().flatten() {
+        for (k, h) in kept {
+            let Some((l, u)) = h.bounds() else { continue };
+            let e = open.entry(*k).or_default();
+            if let End::Fin(v) = l {
+                let v = Int::from(v);
+                if e.0.as_ref().is_none_or(|w| &v < w) {
+                    e.0 = Some(v);
+                }
+            }
+            if let End::Fin(v) = u {
+                let v = Int::from(v);
+                if e.1.as_ref().is_none_or(|w| &v > w) {
+                    e.1 = Some(v);
+                }
+            }
+        }
+    }
+    // The hulls to tighten: those with a finite end, and those an `open` candidate may give
+    // one.
+    let ks: Vec<usize> = (0..syms.len())
+        .filter(|&k| {
+            finite(&out[k])
+                || (out[k].is_ok() && open.get(&k).is_some_and(|e| e.0.is_some() || e.1.is_some()))
+        })
+        .collect();
+    if n_ors > 1 && !ks.is_empty() {
         let summary;
         let f = match whole {
             Some(f) => f,
@@ -8608,7 +8647,7 @@ fn project_parts(
         } else {
             |f, kept| decide_kept(f, Some(kept))
         };
-        tighten_each(f, syms, &mut out, &implied, ask);
+        tighten_each(f, syms, &ks, &open, &mut out, &implied, ask);
     }
     skipped.sort_unstable();
     skipped.dedup();
@@ -8676,12 +8715,13 @@ fn summarize(cons: &[Con], seen: &[Option<Vec<Projected>>], syms: &[Atom]) -> Fo
 /// the list a point of the formula it finds, or [`decide`], which adds none.
 type Ask = fn(&Formula, &mut Vec<Model>) -> Result<bool, Refusal>;
 
-/// Each hull of `out` with two finite bounds (the projection of `f` onto the symbol of `syms`
-/// at its place) with each bound raised or lowered by bisection to the nearest value at which
-/// `f` with the symbol past it is shown to have no point ([`Hull::tighten`]). A bound moves
-/// only on such a proof, so a refused question leaves it sound. Each question is asked of
-/// `ask`. `hint` holds rows that the parts `f` stands for imply, read with `f`'s own to find a
-/// point at each end.
+/// Each hull of `out` at the places `ks` (the projection of `f` onto the symbol of `syms` at
+/// its place) with each finite bound raised or lowered by bisection to the nearest value at
+/// which `f` with the symbol past it is shown to have no point ([`Hull::tighten`]), and each
+/// infinite end with a candidate in `open` made finite where `f` past the candidate is shown
+/// to have no point. A bound moves only on such a proof, so a refused question leaves it
+/// sound. Each question is asked of `ask`. `hint` holds rows that the parts `f` stands for
+/// imply, read with `f`'s own to find a point at each end.
 ///
 /// The conjuncts of `f` are first put in groups linked by shared atoms
 /// ([`linked_conjuncts`]). When there are two groups or more and each is shown to have a
@@ -8725,28 +8765,57 @@ type Ask = fn(&Formula, &mut Vec<Model>) -> Result<bool, Refusal>;
 // every symbol of the chain is not, item PROJECT-each-chain-all),
 // `l01_38_presburger::omega::independent_stages_scale` (ends shown only by questions);
 // COMPLEXITY.md row TIGHTEN-each-whole.
+// A hull with one finite end (item PRES-pendants-wider): the naive search walks from the end
+// one value at a time, `w` questions with `w` the distance from the end to the nearest value at
+// a point. Here the end is bisected toward the value of the symbol at a point found (the least
+// or greatest kept in [`Hull`]), about `log2 w` questions of the group; where the solver shows
+// the group has a point but gives none ([`decide`] with `sets`), steps of 1, 2, 4, ... away
+// from the end first find a value at or past a point, so about `2 log2 w` questions in all. The
+// cost: a step may overshoot by up to `w`, and each question is a whole `decide` of the group.
+// An infinite end is first given a candidate, the farthest finite end that a disjunct's own
+// projection gives the symbol (`open`, read by [`project_parts`] in one pass over the
+// projections kept), and one question, the group with the symbol past the candidate, makes it
+// a finite end to search from where it has no point (`z1 <= 6` of seed 11 case 226 of
+// `l01_39_reduced_product::pendants`, where `z1 >= 7` leaves three disjuncts that hold together
+// at no point). What is given up: an end that cases bound at a value no disjunct gives
+// (`z <= x + y` with `x <= 0` and `y <= 0` each by cases) stays open, a sound hull wider than
+// the exact one, as does an end whose question the solver refuses. Finding whether such an end
+// is finite at all asks whether the formula has points with the symbol past every bound, a
+// question with one more quantifier, and no search by values ends where it is not (item
+// PRES-cases-end). Tests
+// `l01_38_presburger::disj_groups::a_finite_end_whose_other_is_infinite_is_tightened_by_cases`,
+// `a_finite_end_is_tightened_where_the_solver_gives_no_point`,
+// `an_end_only_case_reasoning_bounds_is_read_from_a_disjunct`,
+// `an_end_that_cases_bound_at_a_value_no_disjunct_gives_is_left_open` and
+// `the_middle_of_a_chain_whose_lower_end_only_cases_give_is_projected_in_n_log_n` (`n` and
+// `8n`); COMPLEXITY.md row PRES-pendants-wider.
 fn tighten_each(
     f: &Formula,
     syms: &[Atom],
+    ks: &[usize],
+    open: &HashMap<usize, (Option<Int>, Option<Int>)>,
     out: &mut [Result<IntervalSet, Refusal>],
     hint: &[Con],
     ask: Ask,
 ) {
-    let finite = |o: &Result<IntervalSet, Refusal>| matches!(o, Ok(s) if matches!(s.bounds(), Some((End::Fin(_), End::Fin(_)))));
-    let ks: Vec<usize> = (0..syms.len()).filter(|&k| finite(&out[k])).collect();
-    // Each hull holds the symbol at every point of `f`, so its bounds are rows `f` implies.
+    // Each hull holds the symbol at every point of `f`, so its finite bounds are rows `f`
+    // implies.
     let mut rows = hint.to_vec();
-    for &k in &ks {
+    for &k in ks {
         if let Ok(s) = &out[k]
-            && let Some((End::Fin(lo), End::Fin(hi))) = s.bounds()
+            && let Some((lo, hi)) = s.bounds()
         {
             let x = Lin::atom(syms[k].clone());
-            rows.push(Con::ge(&x, &Lin::constant(Int::from(lo))));
-            rows.push(Con::ge(&Lin::constant(Int::from(hi)), &x));
+            if let End::Fin(lo) = lo {
+                rows.push(Con::ge(&x, &Lin::constant(Int::from(lo))));
+            }
+            if let End::Fin(hi) = hi {
+                rows.push(Con::ge(&Lin::constant(Int::from(hi)), &x));
+            }
         }
     }
     let hint = &rows[..];
-    let groups = linked_conjuncts(f, hint, syms, &ks);
+    let groups = linked_conjuncts(f, hint, syms, ks);
     if groups.len() > 1 {
         let mut ends: Vec<Hull> = (groups.into_iter())
             .map(|(cs, rows, ks)| {
@@ -8760,7 +8829,7 @@ fn tighten_each(
                 Ok(true) => {}
                 // A group with no point: `f` has none.
                 Ok(false) => {
-                    for &k in &ks {
+                    for &k in ks {
                         out[k] = Ok(IntervalSet::empty());
                     }
                     return;
@@ -8770,14 +8839,14 @@ fn tighten_each(
         }
         if !refused {
             for e in &mut ends {
-                e.tighten_all(out);
+                e.tighten_all(out, open);
             }
             return;
         }
     }
-    let mut e = Hull::new(f.clone(), hint.iter().cloned(), syms, ks, ask);
+    let mut e = Hull::new(f.clone(), hint.iter().cloned(), syms, ks.to_vec(), ask);
     e.seed();
-    e.tighten_all(out);
+    e.tighten_all(out, open);
 }
 
 /// The top-level conjuncts of `f` ([`Formula::conjuncts`]) in groups linked by shared atoms, a
@@ -8908,6 +8977,8 @@ struct Hull {
     seen: Vec<Option<(Int, Int)>>,
     /// The points that `ask` found and that are not yet read into `seen`.
     found: Vec<Model>,
+    /// Whether `ask` showed that `f` has a point; it may give none ([`decide`]).
+    has: bool,
     ask: Ask,
 }
 
@@ -8932,6 +9003,7 @@ impl Hull {
             seen: vec![None; ks.len()],
             ks,
             found: Vec::new(),
+            has: false,
             ask,
         }
     }
@@ -8977,6 +9049,7 @@ impl Hull {
         }
         let r = (self.ask)(&self.f, &mut self.found);
         self.read_found();
+        self.has = matches!(r, Ok(true));
         r
     }
 
@@ -9052,68 +9125,182 @@ impl Hull {
     /// every question of that side then has a point. One question where the end is the bound,
     /// in place of about `log2 w` that all have a point (item PRES-project-each-cost); one more
     /// where it is not. A refusal or `false` leaves the search as it was.
-    fn tighten(&mut self, i: usize, set: IntervalSet) -> IntervalSet {
-        let Some((End::Fin(lo), End::Fin(hi))) = set.bounds() else {
+    ///
+    /// Where the other end is infinite, the search runs toward the value of the symbol at a
+    /// point of `f`, and the infinite end stays (item PRES-pendants-wider). An infinite end
+    /// with a candidate in `open` (lower, upper), a value past which no point is expected,
+    /// becomes that value where `f` with the symbol past it is shown to have no point, and is
+    /// then searched as a finite end; a point or a refusal leaves it open.
+    fn tighten(
+        &mut self,
+        i: usize,
+        set: IntervalSet,
+        open: &(Option<Int>, Option<Int>),
+    ) -> IntervalSet {
+        let fin = |e: &End| match e {
+            End::Fin(v) => Some(Int::from(v)),
+            _ => None,
+        };
+        let Some((lo, hi)) = set.bounds().map(|(l, h)| (fin(l), fin(h))) else {
             return set;
         };
         let (one, two) = (Int::ONE, Int::from(2));
-        let (lo, hi) = (Int::from(lo), Int::from(hi));
-        // The least `v` in `lo..=hi` with no proof that `f` has no point where the symbol is
-        // at most `v`, and the greatest with none where it is at least `v`.
-        let new_lo = if self.at_end(i, true, &lo) || matches!(self.asked(i, true, &lo), Ok(true)) {
-            lo
-        } else {
-            let (mut a, mut b) = (lo, hi.clone());
-            while a < b {
-                let mid = &a + &(&b - &a).div_floor(&two);
-                if self.none(i, true, &mid) {
-                    a = &mid + &one
-                } else {
-                    b = mid
-                }
+        // An end the rows leave open that a disjunct's own projection bounds (`z <= 0` of
+        // `z <= 0 || a >= 5` with `z <= 0 || a <= 3`): one question, `f` with the symbol past
+        // the candidate, and where it has no point the candidate is a finite end to search
+        // from.
+        let hi = match (hi, &open.1) {
+            (None, Some(u))
+                if lo.as_ref().is_none_or(|l| l <= u) && self.none(i, false, &(u + &one)) =>
+            {
+                Some(u.clone())
             }
-            if self.none(i, true, &a) {
-                return IntervalSet::empty();
-            }
-            a
+            (hi, _) => hi,
         };
-        if self.at_end(i, false, &hi) || matches!(self.asked(i, false, &hi), Ok(true)) {
-            return set.meet(&IntervalSet::range(
-                End::Fin(Num::from(&new_lo)),
-                End::Fin(Num::from(&hi)),
-            ));
-        }
-        let (mut a, mut b) = (new_lo.clone(), hi);
-        while a < b {
-            let mid = &b - &(&b - &a).div_floor(&two);
-            if self.none(i, false, &mid) {
-                b = &mid - &one
-            } else {
-                a = mid
+        let lo = match (lo, &open.0) {
+            (None, Some(l))
+                if hi.as_ref().is_none_or(|h| l <= h) && self.none(i, true, &(l - &one)) =>
+            {
+                Some(l.clone())
             }
+            (lo, _) => lo,
+        };
+        if lo.is_none() && hi.is_none() {
+            return set;
         }
+        // With one end infinite, the value of the symbol at a point of `f` bounds the search of
+        // the finite end from the other side: a point found so far ([`Hull::seed`], the
+        // questions before), else the one `ask` finds for `f` itself. `f` with no point leaves
+        // no value, and a refusal leaves `set` as it is. Where `ask` shows that `f` has a point
+        // but gives none ([`decide`] with `sets`), the search first steps away from the finite
+        // end by 1, 2, 4, ... to a value with no proof that `f` has no point up to it; `f` has
+        // a point, so the steps end, after about `log2 w` questions with `w` the distance from
+        // the end to the nearest value of the symbol at a point.
+        if (lo.is_none() || hi.is_none()) && self.seen[i].is_none() && !self.has {
+            match (self.ask)(&self.f, &mut self.found) {
+                Ok(true) => self.has = true,
+                Ok(false) => return IntervalSet::empty(),
+                Err(_) => return set,
+            }
+            self.read_found();
+        }
+        // The least `v` from `lo` with no proof that `f` has no point where the symbol is at
+        // most `v`, and the greatest down to it with none where it is at least `v`.
+        let new_lo = match lo {
+            None => None,
+            Some(lo)
+                if self.at_end(i, true, &lo) || matches!(self.asked(i, true, &lo), Ok(true)) =>
+            {
+                Some(lo)
+            }
+            Some(lo) => {
+                let top = hi
+                    .clone()
+                    .or_else(|| self.seen[i].as_ref().map(|s| s.0.clone()));
+                let (mut a, mut b) = match top {
+                    Some(top) => (lo, top),
+                    None => {
+                        let (mut a, mut step) = (lo, one.clone());
+                        loop {
+                            let v = &a + &step;
+                            if !self.none(i, true, &v) {
+                                break (a, v);
+                            }
+                            a = &v + &one;
+                            step = &step * &two;
+                        }
+                    }
+                };
+                while a < b {
+                    let mid = &a + &(&b - &a).div_floor(&two);
+                    if self.none(i, true, &mid) {
+                        a = &mid + &one
+                    } else {
+                        b = mid
+                    }
+                }
+                if self.none(i, true, &a) {
+                    return IntervalSet::empty();
+                }
+                Some(a)
+            }
+        };
+        let new_hi = match hi {
+            None => None,
+            Some(hi)
+                if self.at_end(i, false, &hi) || matches!(self.asked(i, false, &hi), Ok(true)) =>
+            {
+                Some(hi)
+            }
+            Some(hi) => {
+                let bottom =
+                    (new_lo.clone()).or_else(|| self.seen[i].as_ref().map(|s| s.1.clone()));
+                let (mut a, mut b) = match bottom {
+                    Some(bottom) => (bottom, hi),
+                    None => {
+                        let (mut b, mut step) = (hi, one.clone());
+                        loop {
+                            let v = &b - &step;
+                            if !self.none(i, false, &v) {
+                                break (v, b);
+                            }
+                            b = &v - &one;
+                            step = &step * &two;
+                        }
+                    }
+                };
+                while a < b {
+                    let mid = &b - &(&b - &a).div_floor(&two);
+                    if self.none(i, false, &mid) {
+                        b = &mid - &one
+                    } else {
+                        a = mid
+                    }
+                }
+                Some(a)
+            }
+        };
+        let end = |v: Option<Int>, inf: End| v.map_or(inf, |v| End::Fin(Num::from(&v)));
         set.meet(&IntervalSet::range(
-            End::Fin(Num::from(&new_lo)),
-            End::Fin(Num::from(&a)),
+            end(new_lo, End::NegInf),
+            end(new_hi, End::PosInf),
         ))
     }
 
-    /// Tightens the hull in `out` of each symbol of `ks`.
-    fn tighten_all(&mut self, out: &mut [Result<IntervalSet, Refusal>]) {
+    /// Tightens the hull in `out` of each symbol of `ks`, with the candidates `open` gives
+    /// for its infinite ends.
+    fn tighten_all(
+        &mut self,
+        out: &mut [Result<IntervalSet, Refusal>],
+        open: &HashMap<usize, (Option<Int>, Option<Int>)>,
+    ) {
+        let no = (None, None);
         for i in 0..self.ks.len() {
             let k = self.ks[i].0;
             if let Ok(s) = &out[k] {
                 let s = s.clone();
-                out[k] = Ok(self.tighten(i, s));
+                out[k] = Ok(self.tighten(i, s, open.get(&k).unwrap_or(&no)));
             }
         }
     }
 }
 
-/// The values of `sym` that the rows of `rows` with `sym` alone allow; the other rows are not
-/// read, so the set holds every value of `sym` over `rows`. One pass over the rows.
+/// The values of `sym` that the rows of `rows` with `sym` alone allow, with the bounds that
+/// the rows give each other by [`propagate`] added: where the rows keep other atoms (a core,
+/// [`shadow`]), `2·a + z + 15 >= 0` with `a <= 7` gives `z >= -29` (seed 15 case 331 of
+/// `l01_39_reduced_product::pendants`, item PRES-pendants-wider). Each bound holds at every
+/// point of `rows`, so the set holds every value of `sym` over `rows`. The cost is linear in
+/// the rows' terms ([`propagate`]).
 fn bounds_alone(sym: &Atom, rows: &[Con]) -> IntervalSet {
-    let alone = (rows.iter())
+    let mut added = Vec::new();
+    if rows.iter().any(|c| c.lin.terms.len() > 1) {
+        propagate(
+            &rows.iter().collect::<Vec<_>>(),
+            &HashMap::new(),
+            &mut added,
+        );
+    }
+    let alone = (rows.iter().chain(&added))
         .filter(|c| c.lin.terms.len() == 1)
         .filter_map(|c| Some((c.lin.terms.get(sym)?.clone(), c.lin.constant.clone(), c.rel)));
     let Some((lo, hi)) = int_bounds(alone) else {

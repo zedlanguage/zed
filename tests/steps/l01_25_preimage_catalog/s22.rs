@@ -1013,22 +1013,22 @@ type Counts = (
 const GUARDED: [Counts; 16] = [
     (0, (0, 0, 53), (10, &[]), 0),
     (250, (0, 3, 41), (9, &[]), 0),
-    (500, (0, 0, 45), (8, &[]), 0),
-    (750, (0, 0, 47), (11, &[]), 0),
-    (1000, (0, 0, 53), (14, &[]), 0),
+    (500, (0, 0, 43), (8, &[]), 0),
+    (750, (0, 0, 45), (11, &[]), 0),
+    (1000, (0, 0, 52), (14, &[]), 0),
     (1250, (0, 2, 50), (4, &[]), 0),
     (1500, (0, 0, 42), (12, &[]), 0),
     (1750, (0, 1, 49), (13, &[]), 0),
-    (2000, (0, 1, 55), (17, &[]), 0),
+    (2000, (0, 1, 51), (17, &[]), 0),
     (2250, (0, 1, 42), (15, &[]), 0),
-    (2500, (0, 0, 52), (10, &[]), 0),
-    (2750, (0, 0, 48), (5, &[]), 0),
-    (3000, (0, 0, 58), (10, &[]), 0),
+    (2500, (0, 0, 50), (10, &[]), 0),
+    (2750, (0, 0, 46), (5, &[]), 0),
+    (3000, (0, 0, 57), (10, &[]), 0),
     (3250, (0, 0, 52), (7, &[]), 0),
-    (3500, (0, 0, 50), (5, &[]), 0),
+    (3500, (0, 0, 48), (5, &[]), 0),
     (
         3750,
-        (0, 2, 56),
+        (0, 2, 51),
         (
             11,
             &[
@@ -1185,10 +1185,21 @@ guarded_ranges!(
 /// rows put a form outside the values the other disjunctions leave it, two inexact boxes of
 /// the transfer are exact and narrower than the transfer before: in cases 750 to 1000,
 /// `if (abs(i) >= 5) { … }` with demand `[7, 22]` gives `i` in `[-4, -3] ∪ [-1, 0]`, where the
-/// transfer before keeps `(-inf, -3] ∪ [-1, +inf)`; in cases 3500 to 3750,
+/// transfer before kept `(-inf, -3] ∪ [-1, +inf)`; in cases 3500 to 3750,
 /// `if ((i mod 3) == 1) { … }` with demand `[-15, -13] ∪ [-9, -6]` gives `i` in `{0, 3}`, where
 /// the transfer before keeps `{0} ∪ [2, 3]` (at 2 the chain gives -12). So the first half
-/// counts 380 made exact, the second 413; both boxes hold no point the interpreter refutes.
+/// counted 380 made exact, the second 413; both boxes hold no point the interpreter refutes.
+///
+/// Since PRES-pendants-wider, which tightens a hull end whose other end is infinite and reads
+/// the bounds that rows give each other, the transfer before, which shares the solver, gives
+/// 21 of the boxes counted as made exact exactly as the transfer does, 5 in the first half
+/// (375) and 16 in the second (397): `(-inf, 7]` becomes `[-9, 7]`, `(-inf, 4]` becomes
+/// `{2}`, `[-6, -6] ∪ [11, +inf)` becomes the exact `{-6}`, in cases 500 to 750 the box `{3}`
+/// of `if (i != 3) { … }` with demand `[-13, 0] ∪ [20, 22]` loses its relation and is exact
+/// (at 3 the chain gives -2, elsewhere 4 or 6), and the first case above
+/// `(-inf, -3] ∪ [-1, 0]`, still inexact. Every changed box lies inside the one before, and
+/// the interpreter refutes none on the points within (-60, 60); no result of the transfer
+/// changes.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1209,13 +1220,13 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (0, 6, 380, 81, vec![], 0));
+    assert_eq!(sum(&GUARDED[..8]), (0, 6, 375, 81, vec![], 0));
     assert_eq!(
         sum(&GUARDED[8..]),
         (
             0,
             4,
-            413,
+            397,
             80,
             vec![
                 "i [2..] before i [2..=2, 5..]",
@@ -1308,7 +1319,13 @@ fn random_terms_keep_their_preimages() {
         // translates, so the transfer before now lists the points of `((y mod y)^0) > ((x +
         // x)^1)` with `y` in `{-12}`, where it read `(y mod y)^0` as 1; the transfer reads the
         // same box, `x <= 0`, exact without a listing.
-        diffs.unlisted(1).none_but(6800, 6, 0, 25);
+        //
+        // Since PRES-pendants-wider, which tightens a hull end whose other end is infinite and
+        // reads the bounds that rows give each other, the transfer before, which shares the
+        // solver, gives one of those 6 narrower boxes as the transfer does (5). Five results
+        // change, each inside the one before (`x` in `[0, ∞)` with `y` in `[3, 8]` to the
+        // exact `[4, ∞)`, `y` in `(-∞, 22]` to `[11, 22]`), and the interpreter refutes none.
+        diffs.unlisted(1).none_but(6800, 5, 0, 25);
     });
 }
 
