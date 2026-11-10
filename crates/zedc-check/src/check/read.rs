@@ -7,13 +7,14 @@
 //! sec:type_resolution); this reads those too. The empty type prints as `Never`, a prelude type
 //! name of L1; its L10 form `!_` is read as well.
 
-use std::collections::HashSet;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::num::{TooLarge, bytes_of};
 use zed_kernel::{Rat, Value};
 
-use super::ty::{Binds, NodeId, Sig, Ty};
+use super::ty::{Binds, NodeId, Row, Shape, Sig, Ty};
 use super::{carrier_mask, denoted_with};
 use zedc_syntax::ast::{self, Type, TypeKind};
 use zedc_syntax::lex::{self, Part, Tok};
@@ -30,6 +31,7 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
     let tokens = lex::lex(text).map_err(|e| format!("`{text}`: {e}"))?;
     let tok = |i: usize| tokens.get(i).map(|t| &t.tok);
     let mut named = Binds::new();
+    let mut seen = Seen::default();
     let mut i = 0;
     while let (Some(Tok::Keyword("type")), Some(Tok::Name(name)), Some(Tok::Op("="))) =
         (tok(i), tok(i + 1), tok(i + 2))
@@ -38,17 +40,18 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
             .find(|&j| tokens[j].tok == Tok::Op(";"))
             .ok_or_else(|| format!("`{text}`: the definition of `{name}` has no `;`"))?;
         let body = &text[tokens[i + 3].span.start..tokens[end].span.start];
-        let t = read_part(text, body, &mut named)?;
+        let t = read_part(text, body, &mut named, &mut seen)?;
         named.insert(name.as_str().into(), t);
         i = end + 1;
     }
     let rest = &text[tokens.get(i).map_or(text.len(), |t| t.span.start)..];
-    read_part(text, rest, &mut named)
+    read_part(text, rest, &mut named, &mut seen)
 }
 
 /// The type `head`, a part of the printed type `text`, which may name the types of `named`:
 /// the definitions before it, and the leaves of layer L10 read so far, to which it adds its own.
-fn read_part(text: &str, head: &str, named: &mut Binds) -> Result<Ty, String> {
+/// `seen` holds what the parts before it walked of their types, and gets what this one walks.
+fn read_part(text: &str, head: &str, named: &mut Binds, seen: &mut Seen) -> Result<Ty, String> {
     let tokens = lex::lex(head).map_err(|e| format!("`{text}`: {e}"))?;
     // The names the resolver finds: the definitions `head` names, and its own leaves.
     let mut found: HashSet<Arc<str>> = (tokens.iter())
@@ -113,18 +116,34 @@ fn read_part(text: &str, head: &str, named: &mut Binds) -> Result<Ty, String> {
         }
     }
     let ty = denoted_with(&t, binds);
-    // Complexity tradeoff: naive version, `bounds_in` on every part, which walks the parts
-    // of the definitions a part names again: O(n²) for a printed type of n definitions each
-    // naming the one before. Used: the walk only for a part with a `for` clause, which no
-    // answer changes (with no bound there is nothing to find), O(n) when few parts bound a
-    // variable. Tradeoff: n definitions each with its own `for` clause and naming the one
-    // before still cost O(n²); a walk that skips the definitions' own parts would make that
-    // O(n), but it would reject a part whose bound is found now only on a signature of a
-    // definition it names, an answer change (COMPLEXITY.md F153). Test
-    // `l01_26_type_resolution::bounds::reading_a_chain_of_shared_bounded_parts_scales`.
+    // Each variable the part bounds must be on a signature its type reaches, at any depth,
+    // the definitions it names included. Only a part with a `for` clause is walked: with no
+    // bound there is nothing to find.
+    // Complexity tradeoff: naive version (F153), a walk of all that the part's type reaches
+    // for each part with a `for` clause, which walks the definitions it names again: O(n²)
+    // for n definitions each with its own clause and naming the one before (25x at 8n,
+    // 3.6x per 2x at n = 3,200). Used (F155): one walk for the whole printed type, which
+    // meets each row, payload and signature once, in the first part that reaches it, and
+    // finds there the variables bounded on the signatures it meets first (`Seen::fresh`);
+    // a variable not among them, which a part has when its own signature for it was emptied
+    // away (`((x: T) -> T, Never)`), or is equal to one met before, or was never written, is
+    // looked for in all the part reaches by a search that keeps, for that variable, whether
+    // each node reaches a signature that bounds it (`Seen::reaches`). O(n) in all when each
+    // bound is on a signature its part makes, as in every type the checker prints, and when
+    // the variables searched for share a few names. Tradeoff: each variable name searched
+    // for adds at most one visit of each node, so k parts whose signatures are emptied away,
+    // each for a variable of its own name and each naming the one before, cost O(n·k), with
+    // memory to match (measured 25x at 8n, k = n); exact answers there need reachability
+    // from many nodes to many sets in a shared graph, which has no known linear method. A
+    // part whose clause bounds a variable no signature of its own holds is rejected by the
+    // resolver if not here, so the search runs on at most one such part. Every answer is
+    // the one of the naive walk. Tests in `l01_26_type_resolution::bounds`:
+    // `reading_a_chain_of_bounded_definitions_scales` and
+    // `a_bound_deep_in_a_chain_is_found_and_a_bound_on_no_signature_is_rejected`.
     if !bounded.is_empty() {
-        let on = bounds_in(&ty);
-        if let Some(v) = bounded.into_iter().find(|v| !on.contains(*v)) {
+        let own = seen.fresh(&ty);
+        if let Some(v) = (bounded.into_iter()).find(|v| !own.contains(*v) && !seen.reaches(&ty, v))
+        {
             return Err(format!(
                 "`{text}`: the bound of `{v}` is on no signature that names it"
             ));
@@ -139,47 +158,133 @@ fn read_part(text: &str, head: &str, named: &mut Binds) -> Result<Ty, String> {
     Ok(ty)
 }
 
-/// The variables the signatures of `t` bound, at any depth. A type read from text shares the
-/// rows, payloads and signatures of a definition at each name for it, so the walk keeps the
-/// rows, payloads and signatures it met and meets each once: time linear in the text.
-fn bounds_in(t: &Ty) -> HashSet<Arc<str>> {
-    let mut out = HashSet::new();
-    // Complexity tradeoff: naive version, a walk of `t` as a tree, O(2^d) for parts shared d
-    // levels deep. Used: the rows and payload shapes met, by their numbers (`Row::node`,
-    // `Shape::node`), and the signatures met, by address, each read once, O(n) for the n
-    // distinct parts, a hash lookup each. The rows were keyed by `row.as_ptr()`, the address
-    // of the components' buffer, which every row with no components shares (an empty `Vec`
-    // has no buffer); a row's number is its own (PTR-keys-rest). A signature has no number:
-    // its address is a key only while `t`, which every key is borrowed from, is borrowed,
-    // and none of the three sets is iterated. Tests in `l01_26_type_resolution::bounds`:
-    // `bounds_on_two_rows_are_both_found`, `bounds_on_two_payloads_are_both_found` and
-    // `reading_a_chain_of_shared_bounded_parts_scales`;
-    // COMPLEXITY.md F153.
-    let mut rows: HashSet<NodeId> = HashSet::new();
-    let mut sigs: HashSet<*const Sig> = HashSet::new();
-    let mut shapes: HashSet<NodeId> = HashSet::new();
-    let mut stack = vec![t];
-    while let Some(t) = stack.pop() {
-        for row in &t.tuples {
-            if rows.insert(row.node()) {
-                stack.extend(row);
-            }
-        }
-        for s in t.payloads.values().flatten().flatten() {
-            if shapes.insert(s.node()) {
-                stack.extend(&s.items);
-                stack.extend(s.fields.values());
-            }
-        }
-        for s in t.fns.iter().filter(|s| sigs.insert(Arc::as_ptr(s))) {
-            out.extend(s.bounds.keys().cloned());
-            for a in &s.arrows {
-                stack.extend(&a.params);
-                stack.push(&a.result);
-            }
+/// What the reading of one printed type has walked of its parts' types, for the check that
+/// each variable a `for` clause bounds is on a signature the part's type reaches. A type read
+/// from text shares the rows, payloads and signatures of a definition at each name for it, so
+/// a part reaches the nodes of every definition it names, and of those they name.
+#[derive(Default)]
+struct Seen {
+    /// The rows met, by number (`Row::node`).
+    rows: HashSet<NodeId>,
+    /// The payload shapes met, by number (`Shape::node`).
+    shapes: HashSet<NodeId>,
+    /// The signatures met, by address, each held here: a signature has no number, and held,
+    /// no other signature takes its address while the reading lasts. Never iterated.
+    sigs: HashMap<*const Sig, Arc<Sig>>,
+    /// For each variable `reaches` was asked about, the nodes it found to reach a signature
+    /// that bounds the variable, and those it found not to. Each is in `rows`, `shapes` or
+    /// `sigs`, since `fresh` walked the type before `reaches` was asked about it.
+    reach: HashMap<Arc<str>, HashMap<Node, bool>>,
+}
+
+/// A row, a payload shape or a signature: a node a type shares, which a part's type reaches.
+#[derive(Clone, Copy)]
+enum Piece<'a> {
+    Row(&'a Row),
+    Shape(&'a Shape),
+    Sig(&'a Arc<Sig>),
+}
+
+/// The key of a [`Piece`] in [`Seen`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Node {
+    Row(NodeId),
+    Shape(NodeId),
+    Sig(*const Sig),
+}
+
+impl<'a> Piece<'a> {
+    /// The pieces of the outer level of `t`.
+    fn of(t: &'a Ty) -> impl Iterator<Item = Piece<'a>> {
+        (t.tuples.iter().map(Piece::Row))
+            .chain(t.payloads.values().flatten().flatten().map(Piece::Shape))
+            .chain(t.fns.iter().map(Piece::Sig))
+    }
+
+    /// The pieces of the types it holds: a row's components, a payload's items and fields, a
+    /// signature's parameters and results.
+    fn inner(self) -> Vec<Piece<'a>> {
+        match self {
+            Piece::Row(r) => r.iter().flat_map(Piece::of).collect(),
+            Piece::Shape(s) => (s.items.iter().chain(s.fields.values()))
+                .flat_map(Piece::of)
+                .collect(),
+            Piece::Sig(s) => (s.arrows.iter())
+                .flat_map(|a| a.params.iter().chain([&a.result]))
+                .flat_map(Piece::of)
+                .collect(),
         }
     }
-    out
+
+    fn node(self) -> Node {
+        match self {
+            Piece::Row(r) => Node::Row(r.node()),
+            Piece::Shape(s) => Node::Shape(s.node()),
+            Piece::Sig(s) => Node::Sig(Arc::as_ptr(s)),
+        }
+    }
+}
+
+impl Seen {
+    /// The variables bounded on the signatures `t` reaches that no part before met, each node
+    /// `t` reaches now met: time linear in the nodes no part before met.
+    fn fresh(&mut self, t: &Ty) -> HashSet<Arc<str>> {
+        let mut own = HashSet::new();
+        let mut stack: Vec<Piece> = Piece::of(t).collect();
+        while let Some(p) = stack.pop() {
+            let new = match p {
+                Piece::Row(r) => self.rows.insert(r.node()),
+                Piece::Shape(s) => self.shapes.insert(s.node()),
+                Piece::Sig(s) => match self.sigs.entry(Arc::as_ptr(s)) {
+                    Entry::Occupied(_) => false,
+                    Entry::Vacant(e) => {
+                        own.extend(s.bounds.keys().cloned());
+                        e.insert(s.clone());
+                        true
+                    }
+                },
+            };
+            if new {
+                stack.extend(p.inner());
+            }
+        }
+        own
+    }
+
+    /// Whether a signature `t` reaches, which [`Seen::fresh`] walked, bounds `v`. A search
+    /// with an explicit stack that stops at the first such signature: a node it leaves with
+    /// none found reaches none, and the nodes on the stack when it finds one reach it; both
+    /// are kept for `v`, so each node is searched at most once for each variable.
+    fn reaches(&mut self, t: &Ty, v: &str) -> bool {
+        let known = self.reach.entry(v.into()).or_default();
+        let mut stack: Vec<(Option<Node>, std::vec::IntoIter<Piece>)> =
+            vec![(None, Piece::of(t).collect::<Vec<_>>().into_iter())];
+        while let Some((at, next)) = stack.last_mut() {
+            let at = *at;
+            let Some(p) = next.next() else {
+                if let Some(at) = at {
+                    known.insert(at, false);
+                }
+                stack.pop();
+                continue;
+            };
+            let n = p.node();
+            let found = match known.get(&n) {
+                Some(&k) => k,
+                None if matches!(p, Piece::Sig(s) if s.bounds.contains_key(v)) => true,
+                None => {
+                    stack.push((Some(n), p.inner().into_iter()));
+                    continue;
+                }
+            };
+            if found {
+                known.insert(n, true);
+                known.extend(stack.iter().filter_map(|(at, _)| *at).map(|at| (at, true)));
+                return true;
+            }
+        }
+        false
+    }
 }
 
 /// `head` with each leaf of layer L10 replaced by a type variable, put in `binds` with what it

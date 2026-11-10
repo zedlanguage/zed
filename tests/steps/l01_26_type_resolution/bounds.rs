@@ -953,3 +953,70 @@ fn reading_a_chain_of_shared_bounded_parts_scales() {
         assert_eq!(t.tuples.len(), 1);
     });
 }
+
+/// A printed type of `n` definitions, each a tuple of a bounded signature of its own and the
+/// definition before it, ending with the last: each `for` clause is read against the parts
+/// its definition names, which hold every definition before it.
+fn bounded_chain(n: usize) -> String {
+    let mut text = String::from("type T0 = ((x: T) -> T for T in int | f64,);\n");
+    for i in 1..=n {
+        text += &format!(
+            "type T{i} = ((x: T) -> T for T in int | f64, T{});\n",
+            i - 1
+        );
+    }
+    text + &format!("T{n}")
+}
+
+#[test]
+fn reading_a_chain_of_bounded_definitions_scales() {
+    let n = 200;
+    let texts = zed_tests::scaling::inputs(n, bounded_chain);
+    zed_tests::scaling::check_order(
+        "reading a chain of n definitions, each with its own bounds clause",
+        n,
+        1,
+        |m| {
+            let t = parse_type(&texts[&m]).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(t.tuples.len(), 1);
+        },
+    );
+}
+
+/// `bounded_chain` with `T0` bounding `W` in place of `T`, so that of the definitions only the
+/// first, `n` deep, has a signature that names `W`.
+fn chain_bounding_w_first(n: usize) -> String {
+    bounded_chain(n).replacen(
+        "type T0 = ((x: T) -> T for T in int | f64,);",
+        "type T0 = ((x: W) -> W for W in int | f64,);",
+        1,
+    )
+}
+
+#[test]
+fn a_bound_deep_in_a_chain_is_found_and_a_bound_on_no_signature_is_rejected() {
+    let n = 300;
+    let chain = chain_bounding_w_first(n);
+    assert!(parse_type(&chain).is_ok(), "{chain}");
+    let ending = |clause: &str| {
+        chain.replacen(
+            &format!("\nT{n}"),
+            &format!("\ntype B = (int, T{n}) {clause};\nB"),
+            1,
+        )
+    };
+    // `U` is on no signature: not on one of `B`, which has none, nor on one of the definitions
+    // it names, which bound `T` and, `n` deep, `W`.
+    let err = parse_type(&ending("for U in int")).expect_err("a bound on no signature");
+    assert!(
+        err.ends_with("the bound of `U` is on no signature that names it"),
+        "{err}"
+    );
+    // `W` is on the signature of `T0`, `n` deep, so the reading goes on, and the resolver
+    // rejects the clause, since the type before `for` does not hold `W`.
+    let err = parse_type(&ending("for W in int")).expect_err("a bound that holds nothing");
+    assert!(
+        err.contains("the bound names `W`, and the type before `for` does not hold `W`"),
+        "{err}"
+    );
+}
