@@ -281,27 +281,27 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         ),
     ),
     (
-        "README.md:554",
+        "README.md:557",
         4,
         concat!(
             "line 1: ",
             zed_tests::not_yet!("the reduction `with units(\"g\")`")
         ),
     ),
-    ("README.md:775", 7, "pass"),
+    ("README.md:778", 7, "pass"),
     (
-        "README.md:1063",
+        "README.md:1066",
         7,
         concat!("line 1: ", zed_tests::not_yet!("an array display")),
     ),
     (
-        "README.md:1128",
+        "README.md:1131",
         3,
         "line 2: `users` is not defined: no definition, parameter or binding in scope has this \
          name, and the prelude has none. Define `users`, or correct the name if it is misspelled.",
     ),
     (
-        "README.md:1164",
+        "README.md:1167",
         4,
         concat!(
             "line 1: ",
@@ -309,7 +309,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         ),
     ),
     (
-        "README.md:1256",
+        "README.md:1262",
         6,
         concat!(
             "line 2: ",
@@ -317,22 +317,22 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         ),
     ),
     (
-        "README.md:1691",
+        "README.md:1697",
         6,
         concat!("line 1: ", zed_tests::not_yet!("the array type `[T; n]`")),
     ),
     (
-        "README.md:2111",
+        "README.md:2117",
         4,
         concat!("line 1: ", zed_tests::not_yet!("the refinement `[lo..]`")),
     ),
     (
-        "README.md:2111",
+        "README.md:2117",
         9,
         concat!("line 1: ", zed_tests::not_yet!("the refinement `[lo..]`")),
     ),
     (
-        "README.md:2141",
+        "README.md:2147",
         4,
         concat!(
             "line 1: ",
@@ -340,7 +340,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         ),
     ),
     (
-        "README.md:2141",
+        "README.md:2147",
         9,
         concat!(
             "line 1: ",

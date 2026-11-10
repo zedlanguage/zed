@@ -15,9 +15,9 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   1 | «as» ( k1 -> k2 -> v ) «into» ( k1 -> k2 -> _ )
   3 | «as» ( k1 -> k2 -> v ) «into» ( k1 -> k2 )
 == DESIGN.md [sec:remap_law] 5 L8
-  1 | «as» ( k1 -> k2 -> v ) «into» ( k1 -> v )
+  1 | «as» ( region -> day -> sku -> r ) «into» ( region -> day -> r )
 == DESIGN.md [sec:remap_law] 6 L8
-  1 | «as» ( k1 -> k2 -> v ) «into» ( k1 -> k2 >< ( + ) -> v )
+  1 | «as» ( region -> day -> sku -> r ) «into» ( region -> day -> sku >< ( + ) -> r )
 == DESIGN.md [sec:remap_law] 7 L8
   1 | byScore = scores «into» ( «desc» score -> name -> score ) ;
 == DESIGN.md [sec:grouping] 1 L8
@@ -306,11 +306,11 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   4 | name = str["Zed"] ;
   5 | color = #green ;
  10 | double ( «positional» x ) = x * 2₍10₎ ;
- 11 | clamp ( «positional» v , «positional» lo , «positional» hi ) -> int {
+ 11 | limit ( «positional» v , «positional» lo , «positional» hi ) {
  12 | «if» v < lo { lo } «else» «if» v > hi { hi } «else» { v }
  13 | }
  14 | greet ( «positional» name : Utf8String , punct = str["!"] ) = str["Hi, "] ++ name ++ punct ;
- 15 | y = 5₍10₎ . double . clamp ( 0₍10₎ , 8₍10₎ ) ;
+ 15 | y = 5₍10₎ . double . limit ( 0₍10₎ , 8₍10₎ ) ;
  16 | ann = greet ( str["Ann"] , punct : str["?"] ) ;
  17 | hiAnn = greet ( str["Ann"] , ... ) ;
  20 | «struct» Point { x : f64 , y : f64 }
@@ -430,7 +430,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  26 | «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
  27 | «law» doubleIsSum ( x : int ) = double ( x ) == x + x ;
  30 | main ( stdin : Lines ) -> ( stdout : Lines ) {
- 31 | stdout <- stdin . map ( l -> l . upper ) ;
+ 31 | stdout <- stdin . map ( l -> l . upper «else» str[] ) ;
  32 | }
  35 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
  36 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;

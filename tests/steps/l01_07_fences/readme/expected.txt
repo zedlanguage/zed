@@ -55,8 +55,11 @@ text
 > error: this remap would map one key to many values
 >   the `(region, day, sku)` keypaths collapse onto `(region, day)`, but their values survive.
 >   drop the values too:         into (region -> day -> sku -> _)
+>       keeps each sku and drops its value
 >   or keep the inner key:       into (region -> day -> sku -> r)
+>       keeps each value under its sku
 >   or say how the values merge: into (region -> day -> sku >< op -> r)
+>       merges each day's values with op, which must be associative
 table What each repair gives at `("East", 0)`
 | Repair | into pattern | Value at ("East", 0) |
 | drop the values | (region -> day -> sku -> _) | the skus ink and pen, with no revenue |
@@ -399,8 +402,11 @@ text
 > error: this remap would map one key to many values
 >   the `(region, sku)` keypaths collapse onto `region`, but their values survive.
 >   drop the values too:         into (region -> sku -> _)
+>       keeps each sku and drops its value
 >   or keep the inner key:       into (region -> sku -> amount)
+>       keeps each value under its sku
 >   or say how the values merge: into (region -> sku >< op -> amount)
+>       merges each region's values with op, which must be associative
 
 == README.md [Remapping] 2
 table input: `revenue`

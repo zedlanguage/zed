@@ -226,8 +226,11 @@ The keypath `("East", 0)` would lead to both 14 and 10, and `("West", 0)` to bot
 error: this remap would map one key to many values
   the `(region, day, sku)` keypaths collapse onto `(region, day)`, but their values survive.
   drop the values too:         into (region -> day -> sku -> _)
+      keeps each sku and drops its value
   or keep the inner key:       into (region -> day -> sku -> r)
+      keeps each value under its sku
   or say how the values merge: into (region -> day -> sku >< op -> r)
+      merges each day's values with op, which must be associative
 ```
 
 > [!IMPORTANT]
@@ -1247,8 +1250,11 @@ The key `East` leads to two values, so the result is not a map. The error lists 
 error: this remap would map one key to many values
   the `(region, sku)` keypaths collapse onto `region`, but their values survive.
   drop the values too:         into (region -> sku -> _)
+      keeps each sku and drops its value
   or keep the inner key:       into (region -> sku -> amount)
+      keeps each value under its sku
   or say how the values merge: into (region -> sku >< op -> amount)
+      merges each region's values with op, which must be associative
 ```
 
 Here is a table with one more level, so you can follow each value as the levels move:
