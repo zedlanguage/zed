@@ -6597,11 +6597,15 @@ fn known_empty(k: &Type) -> bool {
 /// search does not decide it, its verdict is refused with its own message
 /// ([`Type::refusal_site`]).
 ///
-/// A union that names another union with some of the same arms is decided a second time with
-/// those arms dropped ([`names::absorb`], item GROUP-cycle-dup-names), and a member decided by
-/// either system is decided: both are systems of the same types. The refusal message reads the
-/// first. Time linear in the bodies, besides the emptiness of their closed parts and the
-/// O(m log m) of [`names::absorb`].
+/// A member the system leaves open is read in other systems of the same types ([`Others`]): the
+/// system with the arms dropped that a union also reaches through another union it names
+/// ([`names::absorb`], item GROUP-cycle-dup-names), the system with the nodes that play alike
+/// merged, among them equal parts of two definitions ([`names::merged`], item
+/// GROUP-cycle-dup-across), and that with those arms dropped. A member any of them decides is
+/// decided, since each answer is the type's. The refusal message reads the system as written,
+/// whose nodes keep the definition that wrote them. Time linear in the bodies, besides the
+/// emptiness of their closed parts, the O(m log m) of [`names::absorb`] and the O(m log n) of
+/// [`names::merged`].
 fn judge(env: &Arc<Env>) -> Judgment {
     let bodies = &env.group().0.bodies;
     let System {
@@ -6625,18 +6629,13 @@ fn judge(env: &Arc<Env>) -> Judgment {
             }
         }
     }
-    let mut absorbed = names::absorb(&b, &same, &union);
     let mut runs = vec![decide(&b)];
-    let mut also: Vec<Decision> = absorbed.iter().map(decide).collect();
     if !leaves.is_empty() {
         // A leaf has no children either way, so the parents `seal` filled stay right.
-        for g in std::iter::once(&mut b).chain(absorbed.as_mut()) {
-            for &v in &leaves {
-                g.set(v, Kind::Top, vec![]);
-            }
+        for &v in &leaves {
+            b.set(v, Kind::Top, vec![]);
         }
         runs.push(decide(&b));
-        also.extend(absorbed.iter().map(decide));
     }
     // Complexity tradeoff: a member shown inhabited through a meet or a difference goes to the
     // search, which builds a value of the meet: one state of the product of its operands per
@@ -6655,18 +6654,25 @@ fn judge(env: &Arc<Env>) -> Judgment {
     // construction of the meet's tree automata, exponential in the number of operands
     // (emptiness of an intersection of tree automata is EXPTIME-complete).
     let n = bodies.len();
+    let (low, high) = (&runs[0], &runs[runs.len() - 1]);
+    let named: Vec<Option<bool>> = (0..n)
+        .map(|i| settled(low.answers[i], high.answers[i], wide[i]))
+        .collect();
+    // The other systems are read only for a member `b` leaves open. With debug assertions they
+    // are decided for every group, for the assertion that they agree.
+    let others = (cfg!(debug_assertions) || named.contains(&None))
+        .then(|| Others::new(&mut b, &leaves, &same, &union));
     let (mut answers, mut refused) = (vec![None; n], vec![false; n]);
     for i in 0..n {
-        let (low, high) = (runs[0].answers[i], runs[runs.len() - 1].answers[i]);
-        let named = settled(low, high, wide[i]);
-        let read = (also.first().zip(also.last()))
-            .and_then(|(first, last)| settled(first.answers[i], last.answers[i], wide[i]));
+        let mut read = others.iter().flat_map(|o| o.answers(i, wide[i]));
+        let first = named[i].or_else(|| read.next());
         debug_assert!(
-            named.is_none() || read.is_none() || named == read,
-            "the two systems of one group's types agree"
+            read.all(|r| Some(r) == first),
+            "the systems of one group's types agree"
         );
-        answers[i] = named.or(read);
-        refused[i] = answers[i].is_none() && (low == Answer::Refused || high == Answer::Refused);
+        answers[i] = first;
+        refused[i] = first.is_none()
+            && (low.answers[i] == Answer::Refused || high.answers[i] == Answer::Refused);
     }
     let why = refused
         .contains(&true)
@@ -6687,6 +6693,74 @@ fn settled(low: Answer, high: Answer, wide: bool) -> Option<bool> {
         (_, Answer::Empty) => Some(true),
         (Answer::Inhabited, _) if !wide => Some(false),
         _ => None,
+    }
+}
+
+/// The systems of a group's types beside `b`, for [`judge`]: `b` less the arms a union also
+/// reaches through names ([`names::absorb`]), `b` with the nodes that play alike merged
+/// ([`names::merged`]), and that less those arms. Each is decided with its leaves `Bot` and,
+/// when it has leaves, `Top`.
+struct Others {
+    /// Each system's runs, and whether its nodes are the classes of the merged system.
+    runs: Vec<(Decision, Option<Decision>, bool)>,
+    /// Each node of `b`'s class in the merged system.
+    at: Vec<u32>,
+}
+
+impl Others {
+    /// The systems of `b`, whose `leaves` are `Top` on entry and on return; `same` and `union`
+    /// as [`System`] gives them.
+    fn new(b: &mut Bes, leaves: &[u32], same: &[u32], union: &[bool]) -> Others {
+        // `absorb` and `merged` read the leaves `Bot`, as `system` made them.
+        for &v in leaves {
+            b.set(v, Kind::Bot, vec![]);
+        }
+        let mut systems: Vec<(Bes, Vec<u32>, bool)> = Vec::new();
+        if let Some(a) = names::absorb(b, same, union) {
+            systems.push((a, leaves.to_vec(), false));
+        }
+        let mut leaf = vec![false; b.len()];
+        for &v in leaves {
+            leaf[v as usize] = true;
+        }
+        let mut at = Vec::new();
+        if let Some((m, node, union)) = names::merged(b, &leaf, union) {
+            let mut leaves: Vec<u32> = leaves.iter().map(|&v| node[v as usize]).collect();
+            leaves.sort_unstable();
+            leaves.dedup();
+            let types: Vec<u32> = (0..m.len() as u32).collect();
+            if let Some(a) = names::absorb(&m, &types, &union) {
+                systems.push((a, leaves.clone(), true));
+            }
+            systems.push((m, leaves, true));
+            at = node;
+        }
+        for &v in leaves {
+            b.set(v, Kind::Top, vec![]);
+        }
+        let runs = (systems.into_iter())
+            .map(|(mut g, leaves, merged)| {
+                let low = decide(&g);
+                let high = (!leaves.is_empty()).then(|| {
+                    // A leaf has no children either way, so the parents `seal` filled stay right.
+                    for &v in &leaves {
+                        g.set(v, Kind::Top, vec![]);
+                    }
+                    decide(&g)
+                });
+                (low, high, merged)
+            })
+            .collect();
+        Others { runs, at }
+    }
+
+    /// Member `i`'s emptiness by each system that settles it; `wide` as for [`settled`].
+    fn answers(&self, i: usize, wide: bool) -> impl Iterator<Item = bool> + '_ {
+        self.runs.iter().filter_map(move |(low, high, merged)| {
+            let high = high.as_ref().unwrap_or(low);
+            let v = if *merged { self.at[i] as usize } else { i };
+            settled(low.answers[v], high.answers[v], wide)
+        })
     }
 }
 
@@ -6822,10 +6896,10 @@ enum Same<'a> {
 /// name and the same union written out differ in their counts when the named union's arms
 /// overlap the arms written beside it. Each node's type across the definitions (`same`) is
 /// numbered for [`names::absorb`], which [`judge`] uses to decide a second system with those arms
-/// dropped (item GROUP-cycle-dup-names). Parts of two definitions are not merged, so each node's
-/// origin, which the refusal message reads, is in the definition that wrote it; equal parts of
-/// two definitions that neither reaches through unions keep their own nodes (follow-up
-/// GROUP-cycle-dup-across).
+/// dropped (item GROUP-cycle-dup-names). Parts of two definitions are not merged here, so each
+/// node's origin, which the refusal message reads, is in the definition that wrote it; equal
+/// parts of two definitions are merged in a copy that [`judge`] decides beside this system
+/// ([`names::merged`], item GROUP-cycle-dup-across).
 ///
 /// Each part is read once, from a stack; a part written like one met before in its definition
 /// is not read again. Expected time linear in the bodies, besides sorting each union's arms and

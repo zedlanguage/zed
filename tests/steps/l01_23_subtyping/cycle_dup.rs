@@ -7,7 +7,7 @@
 //! repetition and grouping of union arms are now one node, and a union's arms a set.
 
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_kernel::types::{Type, Verdict};
+use zed_kernel::types::{Refusal, Type, Verdict};
 use zed_tests::scaling;
 
 fn r(i: usize) -> Expr {
@@ -241,6 +241,17 @@ fn verdicts_of(bodies: Vec<Expr>) -> Vec<(Option<bool>, Verdict)> {
         .collect()
 }
 
+/// Each member's refusal message, `None` for a member that is not refused.
+fn messages(bodies: Vec<Expr>) -> Vec<Option<String>> {
+    Type::forget_emptiness();
+    (named(bodies).instance(vec![]).iter())
+        .map(|t| t.refusal_site(Refusal::Group).and_then(|s| s.detail))
+        .collect()
+}
+
+/// A member the decider decides is not empty, and whose value the checker builds.
+const HAS_A_VALUE: (Option<bool>, Verdict) = (Some(false), Verdict::Inhabited);
+
 /// The first definition after `Thunk`.
 const A1: usize = 3;
 
@@ -334,9 +345,10 @@ fn a_name_used_twice_is_read_as_its_arms() {
 ///
 /// A name that refers to itself through a tuple, with arms that overlap those of the name it
 /// names: `A2` drops `(Tree, Tree)`, an arm of `A1`, and `Node` drops it too. Written with
-/// `(A2, #z)` as an arm of `Node` as well, `Node` drops that arm, an arm of `A2`. (With `A2`'s
-/// arms written out in `Node`, `Node` and `A2` each have their own `(A2, #z)` and neither names
-/// the other, and the group is refused: follow-up GROUP-cycle-dup-across.)
+/// `(A2, #z)` as an arm of `Node` as well, `Node` drops that arm, an arm of `A2`. With `A2`'s
+/// arms written out in `Node`, `type Node = A1 | (Tree, Tree) | (A2, #z)`, `Node` and `A2`
+/// each have their own `(A2, #z)` and neither names the other: the two equal tuples are
+/// decided as one (item GROUP-cycle-dup-across); before that item the group was refused.
 #[test]
 fn names_in_a_cycle_are_read_as_their_arms() {
     let a2z = || pair(r(A1 + 1), atom("z"));
@@ -347,6 +359,8 @@ fn names_in_a_cycle_are_read_as_their_arms() {
         verdicts_of(with(or(vec![r(A1 + 1), tt(), a2z()]), more())),
         out
     );
+    let written_out = with(or(vec![r(A1), tt(), a2z()]), more());
+    assert_eq!(verdicts_of(written_out), out);
 }
 
 /// Deciding the group of a [`chain`] of `n` and `8n` names: one topological order, two trees
@@ -387,38 +401,252 @@ fn a_group_decided_as_written_stays_decided() {
     );
 }
 
+/// Seed 34841 of the probe of item GROUP-cycle-dup-names (DOCS-TODO.md entry 48, example 4),
+/// with each `Node | Tree` written `inner` (`node_inner` in `Node`, `tree_inner` in `Tree`):
+///
 /// ```text
 /// type Node = Tree | (Node, Tree) | (int, (int) -> (int) -> Tree) | (Tree, Node) | ((int) -> Tree, Node | Tree)
 /// type Tree = (Tree, Node) | ((int) -> Tree, Node | Tree)
 /// ```
-///
-/// Every arm of `Tree` is an arm of `Node`, so `Node | Tree` is `Node`. Each `Node | Tree`
-/// reaches `Tree` through `Node`, but `Node` is named by both, so neither dominates it and
-/// neither is post-dominated by it: the arm is kept (`// Complexity tradeoff:` at
-/// `names::absorb`), the decider refuses the group, and the search finds its values. With
-/// `Node | Tree` written `Node` the decider decides it. Seed 34841 of the item's probe; when the
-/// tradeoff is lifted, the first verdicts become decided too.
-#[test]
-fn a_name_reached_by_two_unions_is_left_to_the_search() {
+fn seed_34841(node_inner: Expr, tree_inner: Expr) -> Vec<Expr> {
     let (node, tree) = (|| r(NODE), || r(TREE));
-    let group = |inner: &dyn Fn() -> Expr| {
-        let arms = vec![
+    vec![
+        or(vec![
             tree(),
             pair(node(), tree()),
             pair(int(), f(f(tree()))),
             pair(tree(), node()),
-            pair(f(tree()), inner()),
-        ];
+            pair(f(tree()), node_inner),
+        ]),
+        or(vec![pair(tree(), node()), pair(f(tree()), tree_inner)]),
+    ]
+}
+
+fn node_or_tree() -> Expr {
+    or(vec![r(NODE), r(TREE)])
+}
+
+/// Every arm of `Tree` is an arm of `Node`, so `Node | Tree` is `Node`; each `Node | Tree`
+/// names `Tree` directly and through `Node`, a name reached by two unions, which neither
+/// dominance nor post-dominance sees (`names::absorb`). Before item GROUP-cycle-dup-across the
+/// decider refused the group and the search found its values. Now either of two things
+/// decides it: the edge from `Node | Tree` to `Tree` runs along the cycle through `Node`, so
+/// the ring is one cycle (`bes::one_cycle_but_union_chords`); and `Node`'s
+/// `((int) -> Tree, Node | Tree)` is written alike in `Tree`, so the system with the nodes that
+/// play alike merged has one node for both (`names::merged`). The verdicts are those of the group
+/// with `Node | Tree` written `Node`: each member has a value and no message.
+#[test]
+fn a_name_reached_by_two_unions_is_read_as_its_arms() {
+    let as_written = verdicts_of(seed_34841(node_or_tree(), node_or_tree()));
+    assert_eq!(as_written, vec![HAS_A_VALUE; 2]);
+    assert_eq!(
+        messages(seed_34841(node_or_tree(), node_or_tree())),
+        vec![None; 2]
+    );
+    assert_eq!(verdicts_of(seed_34841(r(NODE), r(NODE))), as_written);
+}
+
+/// Seed 34841 with a third arm in one `Node | Tree` (`x3` of the item's probe):
+///
+/// ```text
+/// type Node = Tree | (Node, Tree) | (int, (int) -> (int) -> Tree) | (Tree, Node)
+/// type Tree = (Tree, Node) | ((int) -> Tree, Node | Tree) | (Tree, Node | (Node, Node))
+/// ```
+///
+/// `Node`'s and `Tree`'s parts differ, so merging the nodes that play alike changes nothing that
+/// matters here (the decider refuses the merged system too); the edge from
+/// `Node | Tree` to `Tree` runs along the cycle through `Node`, and the group is decided as with
+/// `Node | Tree` written `Node`. Before the item, the decider refused it.
+#[test]
+fn a_union_edge_along_the_cycle_is_not_a_second_cycle() {
+    let group = |inner: Expr| {
+        let (node, tree) = (|| r(NODE), || r(TREE));
         vec![
-            or(arms),
-            or(vec![pair(tree(), node()), pair(f(tree()), inner())]),
+            or(vec![
+                tree(),
+                pair(node(), tree()),
+                pair(int(), f(f(tree()))),
+                pair(tree(), node()),
+            ]),
+            or(vec![
+                pair(tree(), node()),
+                pair(f(tree()), inner),
+                pair(tree(), or(vec![node(), pair(node(), node())])),
+            ]),
         ]
     };
-    let as_written = verdicts_of(group(&|| or(vec![node(), tree()])));
-    assert_eq!(
-        as_written,
-        vec![(None, Verdict::Inhabited), (None, Verdict::Inhabited)]
-    );
-    let v = verdicts_of(group(&node));
-    assert!(v.iter().all(|&(d, _)| d == Some(false)), "{v:?}");
+    let as_written = verdicts_of(group(node_or_tree()));
+    assert!(decided(&as_written), "{as_written:?}");
+    assert_eq!(verdicts_of(group(r(NODE))), as_written);
+}
+
+/// Seed 57360 of the probe of item GROUP-cycle-dup-names, `F(x)` standing for `(int) -> x`:
+///
+/// ```text
+/// type Node = F(Thunk) | Thunk | A1 | F(Thunk) | Tree | (Thunk, Thunk)
+/// type Tree = Thunk | A1 | A1 | F(Thunk) | Thunk | (A1, (#a, A1)) | (A1, Node)
+/// type Thunk = (A1, (#a, A1)) | A1 | (A1, Node) | (A1, (#a, A1)) | (A1 | (Thunk | Tree, int)) | A1 | (Thunk, Thunk) | (Thunk, Thunk)
+/// type A1 = (Thunk, Thunk)
+/// ```
+///
+/// `A1` and the arm `(Thunk, Thunk)` of `Node` and of `Thunk` are one type written in three
+/// places, and `(A1, (#a, A1))` and `(A1, Node)` are written in both `Tree` and `Thunk`, with no
+/// union path between the places.
+fn seed_57360() -> Vec<Expr> {
+    let (node, tree, thunk, a1) = (|| r(NODE), || r(TREE), || r(THUNK), || r(A1));
+    let a = || pair(a1(), pair(atom("a"), a1()));
+    vec![
+        or(vec![
+            f(thunk()),
+            thunk(),
+            a1(),
+            f(thunk()),
+            tree(),
+            pair(thunk(), thunk()),
+        ]),
+        or(vec![
+            thunk(),
+            a1(),
+            a1(),
+            f(thunk()),
+            thunk(),
+            a(),
+            pair(a1(), node()),
+        ]),
+        or(vec![
+            a(),
+            a1(),
+            pair(a1(), node()),
+            a(),
+            or(vec![a1(), pair(or(vec![thunk(), tree()]), int())]),
+            a1(),
+            pair(thunk(), thunk()),
+            pair(thunk(), thunk()),
+        ]),
+        pair(thunk(), thunk()),
+    ]
+}
+
+/// Each part of [`seed_57360`] written in two places was its own node before item
+/// GROUP-cycle-dup-across, and the decider refused the group. Decided with the nodes that play
+/// alike merged (`names::merged`), every member has a value and no message. A message reads the
+/// system as written, so it still names the program's own definitions
+/// (`group_refusal::a_mixed_component_is_refused_with_its_own_message`, whose group has a merged
+/// system).
+#[test]
+fn equal_parts_in_two_definitions_are_one() {
+    assert_eq!(verdicts_of(seed_57360()), vec![HAS_A_VALUE; 4]);
+    assert_eq!(messages(seed_57360()), vec![None; 4]);
+}
+
+/// Seed 34841 written two more ways: `Node | Tree` in `Node` written
+/// `Node | Tree | (Tree, Node)`, and `Node | Tree` in `Tree` written `Node`. Each union is still
+/// `Node`, but the two `((int) -> Tree, …)` parts are equal only once arms are dropped:
+/// `Node | Tree | (Tree, Node)` against `Node | Tree` in the first, `Node | Tree` against `Node`
+/// in the second. Neither the union edge test nor the merge of nodes that play alike sees
+/// that; dropping arms and merging again until nothing changes is the open class of item
+/// GROUP-cycle-dup-across, with no bound within `m log m` found. The decider refuses the group,
+/// and the search finds every member's value, with no message.
+#[test]
+fn parts_equal_only_once_arms_are_dropped_are_left_to_the_search() {
+    let wider = or(vec![r(NODE), r(TREE), pair(r(TREE), r(NODE))]);
+    let left = vec![(None, Verdict::Inhabited), (None, Verdict::Inhabited)];
+    assert_eq!(verdicts_of(seed_34841(wider, node_or_tree())), left);
+    assert_eq!(verdicts_of(seed_34841(node_or_tree(), r(NODE))), left);
+    assert_eq!(messages(seed_34841(node_or_tree(), r(NODE))), vec![None; 2]);
+}
+
+/// [`seed_57360`], whose group the decider refuses as written, with two chains of `n` names
+/// written alike after it, `Ak` for `k` from 2 to `n + 1` and `Bk` the `k`th after them:
+///
+/// ```text
+/// type Ak = (A(k+1), Node) | (Tree, Tree)   type A(n+1) = (Node, Node)
+/// type Bk = (B(k+1), Node) | (Tree, Tree)   type B(n+1) = (Node, Node)
+/// ```
+///
+/// `Ak` and `Bk` play alike, and no two names of one chain do, since they lie at different
+/// distances from its end: a partition refined one round at a time takes `n` rounds to tell
+/// them apart.
+fn two_chains(n: usize) -> Vec<Expr> {
+    let mut bodies = seed_57360();
+    for first in [A1 + 1, A1 + 1 + n] {
+        for k in 0..n {
+            bodies.push(if k + 1 == n {
+                pair(r(NODE), r(NODE))
+            } else {
+                or(vec![pair(r(first + k + 1), r(NODE)), tt()])
+            });
+        }
+    }
+    bodies
+}
+
+/// The chains of [`two_chains`] change nothing in the members of [`seed_57360`], and each name
+/// in them has a value.
+#[test]
+fn two_chains_written_alike_are_decided() {
+    for n in [1, 2, 5] {
+        let v = verdicts_of(two_chains(n));
+        assert_eq!(v, vec![HAS_A_VALUE; 4 + 2 * n], "n = {n}");
+        assert_eq!(messages(two_chains(n)), vec![None; 4 + 2 * n], "n = {n}");
+    }
+}
+
+/// Deciding the group of [`two_chains`] of `n` and `8n` names, with the nodes that play alike
+/// found by the refinement of `names::merged`, within `m log m`.
+#[test]
+fn two_chains_written_alike_scale() {
+    let n = 512;
+    let groups = scaling::inputs(n, |m| named(two_chains(m)));
+    scaling::check_order("two chains of n names written alike", n, 1, |m| {
+        Type::forget_emptiness();
+        for t in &groups[&m].instance(vec![]) {
+            std::hint::black_box(t.decided_by_group());
+        }
+    });
+}
+
+/// The groups of item GROUP-cycle-dup-across: seed 34841 as written and in the two forms left
+/// to the search, seed 57360, and [`two_chains`] of 3.
+fn item_groups() -> Vec<Vec<Expr>> {
+    let wider = or(vec![r(NODE), r(TREE), pair(r(TREE), r(NODE))]);
+    vec![
+        seed_34841(node_or_tree(), node_or_tree()),
+        seed_34841(wider, node_or_tree()),
+        seed_34841(node_or_tree(), r(NODE)),
+        seed_57360(),
+        two_chains(3),
+    ]
+}
+
+/// What the decider says of `t`, its verdict, and its refusal message.
+fn answers(t: &Type) -> (Option<bool>, Verdict, Option<String>) {
+    let message = t.refusal_site(Refusal::Group).and_then(|s| s.detail);
+    (t.decided_by_group(), t.verdict(), message)
+}
+
+/// Each group of [`item_groups`] checked alone, on a thread of its own with nothing cached,
+/// gives the same answers as in a batch: every group checked on one thread after the others
+/// with nothing forgotten, the groups and their members in reverse order, twice over.
+#[test]
+fn a_group_checked_alone_or_in_a_batch_gives_the_same_answers() {
+    let alone: Vec<Vec<_>> = (0..item_groups().len())
+        .map(|k| {
+            std::thread::spawn(move || {
+                let types = named(item_groups().swap_remove(k)).instance(vec![]);
+                types.iter().map(answers).collect()
+            })
+            .join()
+            .unwrap()
+        })
+        .collect();
+    Type::forget_emptiness();
+    for round in 0..2 {
+        for (k, bodies) in item_groups().into_iter().enumerate().rev() {
+            let types = named(bodies).instance(vec![]);
+            let mut got: Vec<_> = types.iter().rev().map(answers).collect();
+            got.reverse();
+            assert_eq!(got, alone[k], "group {k}, round {round}");
+        }
+    }
 }

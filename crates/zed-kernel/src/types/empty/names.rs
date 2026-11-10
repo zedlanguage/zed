@@ -7,6 +7,11 @@
 //! independent cycles differed by one between the two ways of writing the group, and the named
 //! form could be refused when the written-out form was decided. [`absorb`] makes a copy of the
 //! system without such arms, which [`super::judge`] decides as well.
+//!
+//! Parts of two definitions written alike, and two definitions with one body, are nodes of
+//! their own for the same reason (item GROUP-cycle-dup-across). [`merged`] makes a copy of the
+//! system with the nodes that play alike made one, which [`super::judge`] decides too, with
+//! and without the arms [`absorb`] drops.
 
 use super::super::bes::{Bes, Kind};
 
@@ -37,15 +42,17 @@ use super::super::bes::{Bes, Kind};
 /// Why: dropping every arm that a union reaches through another path is the transitive
 /// reduction of that graph, which costs as much as its transitive closure (Aho, Garey and
 /// Ullman 1972), O(n·m) or a matrix product; even the one-level case, an arm of a union that is
-/// also an arm of one of its union arms, is triangle detection. Trigger: a name
-/// used in two places, reached by a union through it and directly: in
+/// also an arm of one of its union arms, is triangle detection. Trigger: a name used in two
+/// places, reached by a union through it and directly, as in
 /// `A = B | (A, B) | (int, (int) -> (int) -> B) | (B, A) | ((int) -> B, A | B)` with
-/// `B = (B, A) | ((int) -> B, A | B)`, each `A | B` reaches `B` through `A`, which both name, so
-/// neither dominates `A`, and the group is refused where `A | B` written `A` is decided; two
-/// names with equal bodies; parts equal only once arms are dropped. Cost: such a
-/// group keeps the extra cycle and may be refused, as before this item, and goes to the
-/// search. COMPLEXITY.md K88. A complete solution needs the transitive reduction of the union
-/// graph.
+/// `B = (B, A) | ((int) -> B, A | B)`: each `A | B` reaches `B` through `A`, which both name, so
+/// neither dominates `A`. That group is decided all the same, since the edge from `A | B` to `B`
+/// runs along the cycle through `A` (`bes::one_cycle_but_union_chords`) and the two
+/// `((int) -> B, A | B)` play alike ([`merged`], item GROUP-cycle-dup-across). Left open: parts
+/// equal only once arms are dropped, as with `A`'s `A | B` written `A | B | (B, A)`. Cost: such a
+/// group keeps the extra cycle and may be refused, and goes to the search. COMPLEXITY.md K88.
+/// A complete solution needs the transitive reduction of the union graph, with the nodes that
+/// play alike merged again after it drops arms, until nothing changes.
 pub(super) fn absorb(b: &Bes, same: &[u32], union: &[bool]) -> Option<Bes> {
     // The union nodes, numbered 0..k; `k` is the virtual root of each tree.
     let unions: Vec<u32> = (0..b.len() as u32).filter(|&v| union[v as usize]).collect();
@@ -268,4 +275,303 @@ impl Lift {
 struct Intervals {
     pre: Vec<u32>,
     last: Vec<u32>,
+}
+
+/// `b` with the nodes that play alike made one node, and for each node of `b` its node in the
+/// copy, and whether each node of the copy is a union; `None` when no two nodes play alike (item
+/// GROUP-cycle-dup-across). `leaf` marks the leaves, the parts the decider does not take, which
+/// `b` holds as `Bot` and [`super::judge`] sets `Top` for its second run. `b` is sealed, and so
+/// is the copy.
+///
+/// Two nodes play alike when they lie in one class of the coarsest partition in which the
+/// nodes of a class have one kind, are all leaves or all not, and have children in the same
+/// classes: the coarsest bisimulation of the system read as a game. The game on the copy is the
+/// game on `b` with each class one position, so every node's answer in the copy, with the
+/// leaves `Bot` or `Top`, is its answer in `b`, and each answer the decider gives for the copy is
+/// the node's. Parts of two definitions written alike are in one class, and so are two
+/// definitions with one body, as `Node` and `A2` with
+/// `type Node = A1 | (Tree, Tree) | (A2, #z)` and `type A2 = A1 | (Tree, Tree) | (A2, #z)`:
+/// each `(A2, #z)` is one node in the copy, and `Node` and `A2` one too. [`super::judge`]
+/// decides the copy beside `b`, whose nodes keep the definition that wrote them for the
+/// refusal message. The classes do not depend on how the nodes are numbered; the copy numbers
+/// them by their first node in `b`.
+///
+/// Complexity tradeoff: the naive way to the coarsest partition splits every class by its
+/// members' sets of child classes until no class splits, a round per split, O(n·m) (Kanellakis
+/// and Smolka 1990). Used: the refinement of Paige and Tarjan (1987), O(m log n): a class is
+/// split by a smaller part of an earlier class, and each node's count of children in each such
+/// part tells the nodes with children in both parts from those with children in one, so a node
+/// is in a part handled at most log n times. Tradeoff: one count per node and part it has
+/// children in, and the edges into each node, held while the partition is refined.
+pub(super) fn merged(b: &Bes, leaf: &[bool], union: &[bool]) -> Option<(Bes, Vec<u32>, Vec<bool>)> {
+    let n = b.len();
+    // Each node's distinct children, and the edges into each node by their place in `child`.
+    let mut at = Vec::with_capacity(n + 1);
+    at.push(0);
+    let mut child = Vec::new();
+    for v in 0..n as u32 {
+        let start = child.len();
+        child.extend_from_slice(b.children(v));
+        child[start..].sort_unstable();
+        let mut kept = start;
+        for i in start..child.len() {
+            if kept == start || child[i] != child[kept - 1] {
+                child[kept] = child[i];
+                kept += 1;
+            }
+        }
+        child.truncate(kept);
+        at.push(child.len());
+    }
+    let mut into_at = vec![0usize; n + 1];
+    for &w in &child {
+        into_at[w as usize + 1] += 1;
+    }
+    for v in 0..n {
+        into_at[v + 1] += into_at[v];
+    }
+    let (mut into, mut fill) = (vec![0u32; child.len()], into_at.clone());
+    let mut from = vec![0u32; child.len()];
+    for v in 0..n {
+        for (e, &w) in child.iter().enumerate().take(at[v + 1]).skip(at[v]) {
+            from[e] = v as u32;
+            into[fill[w as usize]] = e as u32;
+            fill[w as usize] += 1;
+        }
+    }
+    // The first partition: by kind, leaf or not, and whether a node has children (the split by
+    // the class of every node).
+    let key = |v: usize| {
+        let kind = match b.kind(v as u32) {
+            Kind::Or => 0,
+            Kind::And => 1,
+            Kind::Mor => 2,
+            Kind::Top => 3,
+            Kind::Bot => 4,
+        };
+        (kind * 2 + usize::from(leaf[v])) * 2 + usize::from(at[v + 1] > at[v])
+    };
+    let mut p = Partition::new(n, 20, key);
+    if p.start.len() == n {
+        return None;
+    }
+    // One count of children per node and coarse class, for the class of every node first.
+    let mut count: Vec<u32> = (0..n).map(|v| (at[v + 1] - at[v]) as u32).collect();
+    let mut counted: Vec<u32> = from.clone();
+    let (mut in_b, mut seen, mut only_b) = (Vec::new(), vec![u32::MAX; n], Vec::new());
+    let mut part = Vec::new();
+    while let Some(c) = p.compound.last().copied() {
+        // The smaller of two fine classes of the coarse class `c` becomes a coarse class.
+        let (x, y) = (p.coarse[c as usize][0], p.coarse[c as usize][1]);
+        let small = if p.size(x) <= p.size(y) { x } else { y };
+        p.leave(small);
+        part.clear();
+        part.extend_from_slice(p.members(small));
+        // The nodes with children in `small`, and each one's count of them.
+        in_b.clear();
+        for &w in &part {
+            for &e in &into[into_at[w as usize]..into_at[w as usize + 1]] {
+                let v = from[e as usize] as usize;
+                if seen[v] == u32::MAX {
+                    seen[v] = count.len() as u32;
+                    count.push(0);
+                    in_b.push(v as u32);
+                }
+                count[seen[v] as usize] += 1;
+            }
+        }
+        // Those whose children in the old coarse class all lie in `small`.
+        only_b.clear();
+        for &w in &part {
+            for &e in &into[into_at[w as usize]..into_at[w as usize + 1]] {
+                let v = from[e as usize] as usize;
+                let whole = counted[e as usize];
+                if count[whole as usize] == count[seen[v] as usize] {
+                    only_b.push(v as u32);
+                }
+            }
+        }
+        p.split(&in_b);
+        p.split(&only_b);
+        for &w in &part {
+            for &e in &into[into_at[w as usize]..into_at[w as usize + 1]] {
+                let v = from[e as usize] as usize;
+                count[counted[e as usize] as usize] -= 1;
+                counted[e as usize] = seen[v];
+            }
+        }
+        for &v in &in_b {
+            seen[v as usize] = u32::MAX;
+        }
+    }
+    if p.start.len() == n {
+        return None;
+    }
+    // The copy, each class numbered by its first node.
+    let mut id = vec![u32::MAX; p.start.len()];
+    let mut first = Vec::new();
+    let node: Vec<u32> = (0..n)
+        .map(|v| {
+            let q = p.class[v] as usize;
+            if id[q] == u32::MAX {
+                id[q] = first.len() as u32;
+                first.push(v);
+            }
+            id[q]
+        })
+        .collect();
+    let mut m = Bes::new();
+    let mut unions = vec![false; first.len()];
+    for v in 0..n {
+        unions[node[v] as usize] |= union[v];
+    }
+    for &v in &first {
+        let mut children: Vec<u32> = child[at[v]..at[v + 1]]
+            .iter()
+            .map(|&w| node[w as usize])
+            .collect();
+        children.sort_unstable();
+        children.dedup();
+        m.add(b.kind(v as u32), children);
+    }
+    m.seal();
+    Some((m, node, unions))
+}
+
+/// A partition of nodes `0..n` into fine classes, each a run of `order`, and of the fine
+/// classes into coarse classes, for [`merged`].
+struct Partition {
+    /// The nodes, each fine class a run.
+    order: Vec<u32>,
+    /// Each node's place in `order`.
+    place: Vec<u32>,
+    /// Each node's fine class.
+    class: Vec<u32>,
+    /// Each fine class's run of `order`, and how many of its nodes [`Partition::split`] has
+    /// marked, at the run's start.
+    start: Vec<u32>,
+    end: Vec<u32>,
+    marked: Vec<u32>,
+    /// Each fine class's coarse class, and its place in that class's list.
+    outer: Vec<u32>,
+    slot: Vec<u32>,
+    /// Each coarse class's fine classes.
+    coarse: Vec<Vec<u32>>,
+    /// The coarse classes with two fine classes or more.
+    compound: Vec<u32>,
+    touched: Vec<u32>,
+}
+
+impl Partition {
+    /// The fine classes by `key`, below `keys`, in the order of the keys; one coarse class.
+    fn new(n: usize, keys: usize, key: impl Fn(usize) -> usize) -> Self {
+        let mut at = vec![0u32; keys + 1];
+        for v in 0..n {
+            at[key(v) + 1] += 1;
+        }
+        for k in 0..keys {
+            at[k + 1] += at[k];
+        }
+        let mut fill = at.clone();
+        let (mut order, mut place) = (vec![0u32; n], vec![0u32; n]);
+        let mut class = vec![0u32; n];
+        let (mut start, mut end) = (Vec::new(), Vec::new());
+        let mut of_key = vec![u32::MAX; keys];
+        for v in 0..n {
+            let k = key(v);
+            if of_key[k] == u32::MAX {
+                of_key[k] = start.len() as u32;
+                start.push(at[k]);
+                end.push(at[k + 1]);
+            }
+            class[v] = of_key[k];
+            order[fill[k] as usize] = v as u32;
+            place[v] = fill[k];
+            fill[k] += 1;
+        }
+        let classes = start.len();
+        let compound = if classes >= 2 { vec![0] } else { Vec::new() };
+        Partition {
+            order,
+            place,
+            class,
+            marked: vec![0; classes],
+            outer: vec![0; classes],
+            slot: (0..classes as u32).collect(),
+            coarse: vec![(0..classes as u32).collect()],
+            start,
+            end,
+            compound,
+            touched: Vec::new(),
+        }
+    }
+
+    fn size(&self, q: u32) -> u32 {
+        self.end[q as usize] - self.start[q as usize]
+    }
+
+    fn members(&self, q: u32) -> &[u32] {
+        &self.order[self.start[q as usize] as usize..self.end[q as usize] as usize]
+    }
+
+    /// Takes fine class `q` out of its coarse class, which is the last compound one, into a
+    /// coarse class of its own.
+    fn leave(&mut self, q: u32) {
+        let c = self.outer[q as usize] as usize;
+        let list = &mut self.coarse[c];
+        let i = self.slot[q as usize] as usize;
+        list.swap_remove(i);
+        if let Some(&moved) = list.get(i) {
+            self.slot[moved as usize] = i as u32;
+        }
+        if list.len() < 2 {
+            self.compound.pop();
+        }
+        self.outer[q as usize] = self.coarse.len() as u32;
+        self.slot[q as usize] = 0;
+        self.coarse.push(vec![q]);
+    }
+
+    /// Splits each fine class into its nodes in `nodes` and the rest; a node may come twice.
+    fn split(&mut self, nodes: &[u32]) {
+        self.touched.clear();
+        for &v in nodes {
+            let q = self.class[v as usize] as usize;
+            let (i, j) = (self.place[v as usize], self.start[q] + self.marked[q]);
+            if i < j {
+                continue;
+            }
+            let w = self.order[j as usize];
+            self.order.swap(i as usize, j as usize);
+            self.place[v as usize] = j;
+            self.place[w as usize] = i;
+            if self.marked[q] == 0 {
+                self.touched.push(q as u32);
+            }
+            self.marked[q] += 1;
+        }
+        for k in 0..self.touched.len() {
+            let q = self.touched[k] as usize;
+            let m = std::mem::take(&mut self.marked[q]);
+            if m == self.end[q] - self.start[q] {
+                continue;
+            }
+            let fresh = self.start.len() as u32;
+            let s = self.start[q];
+            self.start.push(s);
+            self.end.push(s + m);
+            self.marked.push(0);
+            self.start[q] = s + m;
+            for &v in &self.order[s as usize..(s + m) as usize] {
+                self.class[v as usize] = fresh;
+            }
+            let c = self.outer[q] as usize;
+            self.outer.push(c as u32);
+            self.slot.push(self.coarse[c].len() as u32);
+            self.coarse[c].push(fresh);
+            if self.coarse[c].len() == 2 {
+                self.compound.push(c as u32);
+            }
+        }
+    }
 }

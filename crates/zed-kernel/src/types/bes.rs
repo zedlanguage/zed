@@ -21,7 +21,8 @@
 //!    player's choices only by one deletion cascade;
 //! 5. a component left with a tuple cycle of cyclomatic number 2 or more and an `And` node with
 //!    two undecided children is refused, with its counts as the cause, and so is every node
-//!    whose answer depends on a refused one.
+//!    whose answer depends on a refused one; a tuple cycle that is one simple cycle once the
+//!    `Or` edges running along it are dropped is not refused (item GROUP-cycle-dup-across).
 //!
 //! No step depends on a size: a refusal is a property of the component's shape. Results do not
 //! depend on the order nodes are numbered in.
@@ -770,11 +771,14 @@ fn refusal(
                 }
             }
         }
+        let cyclomatic = internal_edges.saturating_sub(tc.len()) + 1;
+        let shaped = cyclomatic >= 2
+            && branching_and >= 1
+            && !one_cycle_but_union_chords(g, tc, cid as u32, sc, stamp);
         for &v in tc {
             sc.t_comp[v as usize] = u32::MAX;
         }
-        let cyclomatic = internal_edges.saturating_sub(tc.len()) + 1;
-        if !(cyclomatic >= 2 && branching_and >= 1) {
+        if !shaped {
             tuples.truncate(branching);
         } else if found.is_none() {
             found = Some(Refusal {
@@ -800,6 +804,137 @@ fn refusal(
             tuples,
             ..r
         }
+    })
+}
+
+/// Whether the tuple cycle `tc` (component `cid` in `sc.t_comp`, the undecided nodes in
+/// `sc.in_sub`) is one simple cycle `C` through all its nodes once each edge from an `Or` node
+/// `v` to a node `w` is dropped that `v`'s successor on `C` reaches along `C` through `Or` nodes
+/// alone (item GROUP-cycle-dup-across). Such an edge is a union arm that another arm of the same
+/// union holds through unions, `A | B` with `B = A | …`: from `v`, the player choosing at `Or`
+/// nodes can take the successor and follow `C` to `w` with no morphism edge and no choice of
+/// the other player on the way, so every game answer is the same without the edge, and the
+/// component is the simple cycle the deletion cascade decides.
+///
+/// If such a `C` exists, `v`'s successor reaches each of `v`'s other children through `Or`
+/// edges, so it comes before them in every topological order of the `Or` edges; the successor
+/// is therefore the earliest child in one such order, and the test checks that this choice
+/// closes one cycle and that each other child lies within the run of `Or` nodes that follows
+/// it. A component whose `Or` edges have a cycle is not taken.
+// Complexity tradeoff: the naive form is the transitive reduction of the `Or` edges before
+// counting cycles, O(nodes * edges) (a reachability search from each node). Used: the test only
+// asks whether the reduced component is one simple cycle, which needs one topological order of
+// the `Or` edges (Kahn's algorithm) and one walk around the cycle, O(nodes + edges) of `tc`.
+// Tradeoff: a component that the reduction would leave with fewer cycles, but more than one, is
+// still refused; its refusal does not change, since the refusal asks for two or more.
+fn one_cycle_but_union_chords(
+    g: &Bes,
+    tc: &[u32],
+    cid: u32,
+    sc: &mut Scratch,
+    stamp: &mut Stamp,
+) -> bool {
+    let n = tc.len();
+    for (i, &v) in tc.iter().enumerate() {
+        sc.local[v as usize] = i as u32;
+    }
+    // Each node's distinct children inside `tc`, by their place in `tc`.
+    let (mut at, mut inner) = (Vec::with_capacity(n + 1), Vec::new());
+    at.push(0);
+    let mut indegree = vec![0u32; n];
+    let mut fits = true;
+    for &v in tc {
+        stamp.advance();
+        let start = inner.len();
+        for &w in g.children(v) {
+            if sc.in_sub[w as usize] && sc.t_comp[w as usize] == cid && stamp.first(w as usize) {
+                inner.push(sc.local[w as usize]);
+            }
+        }
+        if g.kind(v) == Kind::Or {
+            for &j in &inner[start..] {
+                indegree[j as usize] += 1;
+            }
+        } else if inner.len() - start != 1 {
+            fits = false;
+        }
+        at.push(inner.len());
+    }
+    for &v in tc {
+        sc.local[v as usize] = u32::MAX;
+    }
+    if !fits {
+        return false;
+    }
+    let is_or = |i: usize| g.kind(tc[i]) == Kind::Or;
+    // A topological order of the `Or` edges, by Kahn's algorithm.
+    let mut rank = vec![u32::MAX; n];
+    let mut ready: Vec<usize> = (0..n).filter(|&i| indegree[i] == 0).collect();
+    let mut ranked = 0u32;
+    while let Some(i) = ready.pop() {
+        rank[i] = ranked;
+        ranked += 1;
+        if is_or(i) {
+            for &j in &inner[at[i]..at[i + 1]] {
+                indegree[j as usize] -= 1;
+                if indegree[j as usize] == 0 {
+                    ready.push(j as usize);
+                }
+            }
+        }
+    }
+    if ranked as usize != n {
+        return false;
+    }
+    let next: Vec<usize> = (0..n)
+        .map(|i| {
+            let kids = &inner[at[i]..at[i + 1]];
+            *kids
+                .iter()
+                .min_by_key(|&&j| rank[j as usize])
+                .expect("a node of a cycle has a child in it") as usize
+        })
+        .collect();
+    // The successors close one cycle through every node: walk it from node 0.
+    let mut place = vec![u32::MAX; n];
+    let mut i = 0;
+    for step in 0..n {
+        if place[i] != u32::MAX {
+            return false;
+        }
+        place[i] = step as u32;
+        i = next[i];
+    }
+    if i != 0 {
+        return false;
+    }
+    // From each place, how many steps along the cycle to the first node that is not `Or`; the
+    // `Or` edges have no cycle, so there is one.
+    let order: Vec<usize> = {
+        let mut order = vec![0; n];
+        for (i, &p) in place.iter().enumerate() {
+            order[p as usize] = i;
+        }
+        order
+    };
+    let stop = (0..n)
+        .find(|&p| !is_or(order[p]))
+        .expect("an all-`Or` cycle is an `Or` cycle");
+    let mut ahead = vec![0usize; n];
+    for k in 1..n {
+        let p = (stop + n - k) % n;
+        ahead[p] = if is_or(order[p]) {
+            ahead[(p + 1) % n] + 1
+        } else {
+            0
+        };
+    }
+    (0..n).filter(|&i| is_or(i)).all(|i| {
+        let s = place[next[i]] as usize;
+        inner[at[i]..at[i + 1]].iter().all(|&j| {
+            let d = (place[j as usize] as usize + n - s) % n;
+            d <= ahead[s]
+        })
     })
 }
 
