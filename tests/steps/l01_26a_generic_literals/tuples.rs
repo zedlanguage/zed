@@ -115,9 +115,9 @@ fn a_division_of_integer_literals_in_a_tuple_lists_its_menu() {
     assert_eq!(
         checked("y = ((1 + 2) / 3, 1);\n"),
         pairs(&[
-            ("y = ((f64(1) + 2) / 3, 1);", "y[0] is 1.0"),
             ("y = ((1.0f64 + 2) / 3, 1);", "y[0] is 1.0"),
             ("y = ((1r + 2) / 3, 1);", "y[0] is 1r"),
+            ("y = ((f64(1) + 2) / 3, 1);", "y[0] is 1.0"),
         ])
     );
 }

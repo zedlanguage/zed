@@ -695,6 +695,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::Str(s) => self.str_step(m, s),
             Frame::Unary(op, span) => {
                 let x = m.take_arg();
+                // A `-` of an operation on literals alone at the top level is one too, and
+                // takes the carrier of what it meets, as `-(1 + 2)` in `-(1 + 2) * 0.5f64`
+                // ([`Self::lit_op_meets`]).
+                if self.level == 0
+                    && op == "-"
+                    && x.expr.is_some_and(|e| self.lit_ops.contains(&e.span))
+                {
+                    self.lit_ops.insert(span);
+                }
                 let sig = op_sig(op);
                 let t = self
                     .apply(&format!("`{op}`"), &sig, vec![Some(x)], true, span)
@@ -2035,6 +2044,64 @@ impl<'t, 'a> Ck<'t, 'a> {
         a.union(b)
     }
 
+    /// At the top level, an operation on bare literals alone, as `3 + 4`, is typed `int` as it
+    /// is walked, since nothing in it gives a carrier; but it is a literal too, and takes the
+    /// carrier of what it meets (DESIGN.md sec:diagnostics, "A `/` of integer literals": "an
+    /// operation on literals alone is an `int` only where nothing at all gives it a
+    /// carrier"). So where the operator `op` at `span` has one operand `x` or `y` that is such
+    /// an operation and the other of one numeric carrier other than `int`, each literal of
+    /// the operation adopts that carrier and the operand takes its type: in
+    /// `q = (1.0f64 + 2) / (3 + 4)`, `3 + 4` is an `f64`, and in `(1 + 2) < 0.5f64`, `1 + 2` is.
+    /// The operators are the arithmetic ones but `^`, whose exponent need not have the carrier
+    /// of its base, and the comparisons. An operation of `+`, `-` or `*` on two such operands,
+    /// and a `-` of one, is recorded as one ([`Ck::lit_ops`]). A `/` is not: a `/` of two
+    /// bare integer literals is rejected as it is walked, since no arrow of `/` takes `int`
+    /// ([`Ck::apply`]), so `y = 1.0f64 + 7 / 2` is rejected at the `7`, against DESIGN.md's
+    /// "an operation on literals alone is an `int` only where nothing at all gives it a
+    /// carrier" (LIT-menu-match-design, an open case for QUESTIONS.md).
+    ///
+    /// Complexity tradeoff: the naive test walks each operand to see whether it holds literals
+    /// alone, which costs the depth of the operation at each operator, the square of the
+    /// depth over a nest of them. Each operation is recorded as it ends, from its two operands'
+    /// entries, so the test is one lookup, and the literals of an operation are walked once,
+    /// when it takes its carrier: after that the operand is of that carrier, and the operation
+    /// around it holds a value of a carrier, not literals alone.
+    fn lit_op_meets(&mut self, op: &str, x: &mut Arg<'a>, y: &mut Arg<'a>, span: Span) {
+        let op_of = |a: &Arg| a.expr.is_some_and(|e| self.lit_ops.contains(&e.span));
+        let bare = |a: &Arg| a.lit.as_ref().is_some_and(|l| l.bare);
+        let (ox, oy) = (op_of(x), op_of(y));
+        if (ox || bare(x)) && (oy || bare(y)) {
+            if matches!(op, "+" | "-" | "*") {
+                self.lit_ops.insert(span);
+            }
+            return;
+        }
+        let (side, other) = match (ox, oy) {
+            (true, false) => (x, &*y),
+            (false, true) => (y, &*x),
+            _ => return,
+        };
+        let Some(c) = other.ty.numeric_carrier().filter(|&c| c != Carrier::Int) else {
+            return;
+        };
+        let Some(e) = side.expr else {
+            return;
+        };
+        let mut todo = vec![e];
+        while let Some(e) = todo.pop() {
+            if let Some(l) = literal(e) {
+                self.adopt_to(&l, c);
+                continue;
+            }
+            match &e.kind {
+                ExprKind::Binary(_, a, b) => todo.extend([&**b, &**a]),
+                ExprKind::Unary("-", a) => todo.push(a),
+                _ => {}
+            }
+        }
+        side.ty = Ty::carrier(c);
+    }
+
     /// A binary operator other than `&&` and `||` applied to its arguments `x` and `y`, the
     /// second written `b`.
     fn binary_end(
@@ -2068,6 +2135,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ..x
                 };
             }
+        }
+        if self.level == 0
+            && matches!(
+                op,
+                "+" | "-" | "*" | "/" | "<" | "<=" | ">" | ">=" | "==" | "!="
+            )
+        {
+            self.lit_op_meets(op, &mut x, &mut y, span);
         }
         match op {
             "==" | "!=" => {
@@ -2247,9 +2322,42 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    fn word_end(&mut self, w: &str, x: Arg<'a>, span: Span) -> Ty {
+    fn word_end(&mut self, w: &str, mut x: Arg<'a>, span: Span) -> Ty {
         if w == "sum" {
             return self.sum(x, span);
+        }
+        // A decimal with no suffix as the operand of a cast at the top level, as in
+        // `f64(0.1)`, is rejected, since a cast fixes no carrier for its operand (step L1.26b).
+        // A fix that writes it with a carrier at which the cast always fails is not offered
+        // (DESIGN.md sec:domains: "A cast `f64(9007199254740993r)` is never offered [...] since
+        // the integer has no exact `f64`, so the cast gives `#inexact` for its one input"):
+        // `f64(0.1)` lists `f64(0.1f64)` alone, since `0.1r` has no exact `f64`, and `f64(0.5)`
+        // lists `0.5f64` and `0.5r`. The operand then takes the first carrier left, so the call
+        // is typed as with it. Each carrier's value is cast once, as
+        // [`Self::always_fails_word`] casts it, at the cost it names.
+        if self.level == 0
+            && let Some(l) =
+                (x.lit.clone()).filter(|l| l.bare && lit_carrier(&l.value) == Carrier::F64)
+            && let Some(p) = zedc_base::interp::prim(w)
+        {
+            let sig = word_sig(w);
+            let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
+                .into_iter()
+                .filter(|&c| {
+                    lit_value(&l, c).is_some_and(|v| {
+                        sig.arrows.iter().any(|a| a.params[0].contains(&v))
+                            && !matches!(run(p, &v), Some(Value::Atom(_)))
+                    })
+                })
+                .collect();
+            if let [c, ..] = cs[..] {
+                let notes = self.derive(&[l.site]);
+                let m = unfixed(&l, &cs, None);
+                self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
+                self.adopt_to(&l, c);
+                x.lit = None;
+                x.ty = Ty::carrier(c);
+            }
         }
         if w == "String" {
             self.data(&x.ty, "`String`", span, x.at.unwrap_or(span));

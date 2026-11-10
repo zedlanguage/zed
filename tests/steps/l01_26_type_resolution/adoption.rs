@@ -73,8 +73,8 @@ fn a_power_with_a_decimal_that_nothing_fixes_is_rejected_with_f64_alone() {
              carrier; `/` has no arrow at `int`, `^` has none at `rat`, and Zed does not choose \
              `f64` for it{} [(3/2)]",
             menu(&[
-                ("q = (f64(3)/2)^2;", "q is 2.25"),
                 ("q = (3.0f64/2)^2;", "q is 2.25"),
+                ("q = (f64(3)/2)^2;", "q is 2.25"),
             ])
         )]
     );
@@ -91,7 +91,14 @@ fn a_power_with_a_decimal_that_nothing_fixes_is_rejected_with_f64_alone() {
 fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fixes_it() {
     // At the top level an operation on two literals that meets no carrier is an `int`, as
     // `1 + 2` is in `(1 + 2) / 3`. The value is rejected once, at its `/`, and each fix
-    // writes with a carrier the literals whose carrier reaches every operation of the value.
+    // writes the first literal of the value with a carrier, the suffixed forms before the
+    // cast; an operation on literals alone takes the carrier of what it meets, so it reaches
+    // the rest. A `/` of two literals and a `^` take no carrier from outside, so where one
+    // stands in the value the fix writes its first literal (its base) as well, and every fix
+    // checks. DESIGN.md sec:diagnostics, "A `/` of integer literals":
+    //   q = (1.0f64 + 2) / (3 + 4);    q is 0.42857142857142855
+    //   q = (1r + 2) / (3 + 4);        q is 3r/7r
+    //   q = (f64(1) + 2) / (3 + 4);    q is 0.42857142857142855
     let why = "nothing here gives them a carrier; `/` has no arrow at `int`, and Zed does not \
                choose `f64` or `rat` for it";
     let pow = "nothing here gives them a carrier; `/` has no arrow at `int`, `^` has none at \
@@ -103,9 +110,9 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
             "y = (1 + 2) / 3;\n",
             slash(why),
             vec![
-                ("y = (f64(1) + 2) / 3;", "y is 1.0"),
                 ("y = (1.0f64 + 2) / 3;", "y is 1.0"),
                 ("y = (1r + 2) / 3;", "y is 1r"),
+                ("y = (f64(1) + 2) / 3;", "y is 1.0"),
             ],
             "(1 + 2) / 3",
         ),
@@ -113,9 +120,9 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
             "y = 7 / (1 + 2);\n",
             slash(why),
             vec![
-                ("y = 7 / (f64(1) + 2);", "y is 2.3333333333333335"),
-                ("y = 7 / (1.0f64 + 2);", "y is 2.3333333333333335"),
-                ("y = 7 / (1r + 2);", "y is 7r/3r"),
+                ("y = 7.0f64 / (1 + 2);", "y is 2.3333333333333335"),
+                ("y = 7r / (1 + 2);", "y is 7r/3r"),
+                ("y = f64(7) / (1 + 2);", "y is 2.3333333333333335"),
             ],
             "7 / (1 + 2)",
         ),
@@ -123,9 +130,9 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
             "y = -(1 + 2) / 3;\n",
             slash(why),
             vec![
-                ("y = -(f64(1) + 2) / 3;", "y is -1.0"),
                 ("y = -(1.0f64 + 2) / 3;", "y is -1.0"),
                 ("y = -(1r + 2) / 3;", "y is -1r"),
+                ("y = -(f64(1) + 2) / 3;", "y is -1.0"),
             ],
             "-(1 + 2) / 3",
         ),
@@ -133,13 +140,14 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
             "y = 1 + 7 / 2;\n",
             slash(why),
             vec![
-                ("y = 1 + f64(7) / 2;", "y is 4.5"),
+                // `7 / 2` is rejected as it is walked, so a carrier on `1` would not reach it.
                 ("y = 1 + 7.0f64 / 2;", "y is 4.5"),
                 ("y = 1 + 7r / 2;", "y is 9r/2r"),
+                ("y = 1 + f64(7) / 2;", "y is 4.5"),
             ],
             "7 / 2",
         ),
-        // A literal in another base is offered in a cast alone; `^` gives its base's carrier.
+        // A literal in another base is offered in a cast alone, at `f64` and then `rat`.
         (
             "y = 0xFF / 2;\n",
             format!("`y = 0xFF / 2` divides two integer literals, and {why}"),
@@ -152,26 +160,63 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
         (
             "y = 0xFF / 2 ^ 2;\n",
             slash(pow),
+            // `2 ^ 2` is an `int` that no outer carrier reaches, so the fix writes its base.
             vec![
-                ("y = 0xFF / f64(2) ^ 2;", "y is 63.75"),
                 ("y = 0xFF / 2.0f64 ^ 2;", "y is 63.75"),
+                ("y = 0xFF / f64(2) ^ 2;", "y is 63.75"),
             ],
             "0xFF / 2 ^ 2",
         ),
-        // No one literal reaches both operations on literals, so each fix writes two.
+        (
+            "y = 1 + 2 ^ 2 / 3;\n",
+            slash(pow),
+            vec![
+                ("y = 1 + 2.0f64 ^ 2 / 3;", "y is 2.333333333333333"),
+                ("y = 1 + f64(2) ^ 2 / 3;", "y is 2.333333333333333"),
+            ],
+            "2 ^ 2 / 3",
+        ),
+        // Each `/` of two literals needs its own: a carrier on one does not reach the other.
+        (
+            "y = (1 / 2) / (3 / 4);\n",
+            slash(why),
+            vec![
+                (
+                    "y = (1.0f64 / 2) / (3.0f64 / 4);",
+                    "y is 0.6666666666666666",
+                ),
+                ("y = (1r / 2) / (3r / 4);", "y is 2r/3r"),
+                (
+                    "y = (f64(1) / 2) / (f64(3) / 4);",
+                    "y is 0.6666666666666666",
+                ),
+            ],
+            "(1 / 2) / (3 / 4)",
+        ),
+        (
+            "y = (1 + 2) / (3 + 4) + 7 / 2;\n",
+            slash(why),
+            vec![
+                (
+                    "y = (1.0f64 + 2) / (3 + 4) + 7.0f64 / 2;",
+                    "y is 3.9285714285714284",
+                ),
+                ("y = (1r + 2) / (3 + 4) + 7r / 2;", "y is 55r/14r"),
+                (
+                    "y = (f64(1) + 2) / (3 + 4) + f64(7) / 2;",
+                    "y is 3.9285714285714284",
+                ),
+            ],
+            "(1 + 2) / (3 + 4)",
+        ),
+        // DESIGN's example: the suffix on the first literal alone reaches both sums.
         (
             "y = (1 + 2) / (3 + 4);\n",
             slash(why),
             vec![
-                (
-                    "y = (f64(1) + 2) / (f64(3) + 4);",
-                    "y is 0.42857142857142855",
-                ),
-                (
-                    "y = (1.0f64 + 2) / (3.0f64 + 4);",
-                    "y is 0.42857142857142855",
-                ),
-                ("y = (1r + 2) / (3r + 4);", "y is 3r/7r"),
+                ("y = (1.0f64 + 2) / (3 + 4);", "y is 0.42857142857142855"),
+                ("y = (1r + 2) / (3 + 4);", "y is 3r/7r"),
+                ("y = (f64(1) + 2) / (3 + 4);", "y is 0.42857142857142855"),
             ],
             "(1 + 2) / (3 + 4)",
         ),
@@ -188,16 +233,15 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
             assert_eq!(value(&format!("{line}\n"), "y"), y, "{line}");
         }
     }
-    // A decimal whose suffix would not reach the operation on literals beside it gets fixes
-    // that give the carrier to a literal of that operation; one whose suffix would reach
-    // the rest gets the suffixed forms.
+    // The suffix on the decimal reaches the operation on literals beside it, which takes the
+    // carrier it meets (DESIGN.md step L1.26b: "`y = 0.5f64 * (1 + 2)` is `1.5`").
     assert_eq!(
         type_errors("y = 0.5 * (1 + 2);\n"),
         [unfixed(
             "0.5",
             &[
-                ("y = 0.5 * (1.0f64 + 2);", "y is 1.5"),
-                ("y = 0.5 * (1r + 2);", "y is 3r/2r"),
+                ("y = 0.5f64 * (1 + 2);", "y is 1.5"),
+                ("y = 0.5r * (1 + 2);", "y is 3r/2r"),
             ]
         )]
     );
@@ -211,8 +255,22 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
             ]
         )]
     );
-    assert_eq!(value("y = 0.5 * (1.0f64 + 2);\n", "y"), "1.5");
-    assert_eq!(value("y = 0.5 * (1r + 2);\n", "y"), "3r/2r");
+    // A suffix on the decimal does not reach a `/` of two integer literals beside it, so the
+    // fix writes that `/`'s first literal too.
+    assert_eq!(
+        type_errors("y = 0.5 * (7 / 2);\n"),
+        [unfixed(
+            "0.5",
+            &[
+                ("y = 0.5f64 * (7.0f64 / 2);", "y is 1.75"),
+                ("y = 0.5r * (7r / 2);", "y is 7r/4r"),
+            ]
+        )]
+    );
+    assert_eq!(value("y = 0.5f64 * (7.0f64 / 2);\n", "y"), "1.75");
+    assert_eq!(value("y = 0.5r * (7r / 2);\n", "y"), "7r/4r");
+    assert_eq!(value("y = 0.5f64 * (1 + 2);\n", "y"), "1.5");
+    assert_eq!(value("y = 0.5r * (1 + 2);\n", "y"), "3r/2r");
     assert_eq!(value("y = 2 * 0.5f64;\n", "y"), "1.0");
     assert_eq!(value("y = 2 * 0.5r;\n", "y"), "1r");
 }

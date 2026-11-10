@@ -36,7 +36,7 @@ pub(super) fn fixes(src: &str) -> Vec<(String, String)> {
 /// Checks each fix of the rejection of `src`, whose rejected line is its last: the program
 /// with that line replaced is accepted, and a binder the fix names holds the value it names.
 /// Returns the fixes, for the caller to pin.
-fn checked(src: &str) -> Vec<(String, String)> {
+pub(super) fn checked(src: &str) -> Vec<(String, String)> {
     let fixes = fixes(src);
     assert!(!fixes.is_empty(), "{src}: an empty menu");
     let lines: Vec<&str> = src.lines().collect();
@@ -68,35 +68,31 @@ pub(super) fn pairs(fixes: &[(&str, &str)]) -> Vec<(String, String)> {
 
 #[test]
 fn a_division_of_integer_literals_lists_three_lines() {
+    // The suffixes come first and the cast last, as in DESIGN.md's menu for
+    // `q = (1 + 2) / (3 + 4)` (sec:diagnostics, "A `/` of integer literals").
     assert_eq!(
         checked("half = 1 / 2;\n"),
         pairs(&[
-            ("half = f64(1) / 2;", "half is 0.5"),
             ("half = 1.0f64 / 2;", "half is 0.5"),
             ("half = 1r / 2;", "half is 1r/2r"),
+            ("half = f64(1) / 2;", "half is 0.5"),
         ])
     );
     assert_eq!(
         checked("r = -1 / 3;\n"),
         pairs(&[
-            ("r = -f64(1) / 3;", "r is -0.3333333333333333"),
             ("r = -1.0f64 / 3;", "r is -0.3333333333333333"),
             ("r = -1r / 3;", "r is -1r/3r"),
+            ("r = -f64(1) / 3;", "r is -0.3333333333333333"),
         ])
     );
-    // Each side of the `/` is typed on its own, so each needs a literal with a carrier.
+    // One carrier reaches both sides of the `/`, so the first literal alone takes it.
     assert_eq!(
         checked("q = (1 + 2) / (3 + 4);\n"),
         pairs(&[
-            (
-                "q = (f64(1) + 2) / (f64(3) + 4);",
-                "q is 0.42857142857142855"
-            ),
-            (
-                "q = (1.0f64 + 2) / (3.0f64 + 4);",
-                "q is 0.42857142857142855"
-            ),
-            ("q = (1r + 2) / (3r + 4);", "q is 3r/7r"),
+            ("q = (1.0f64 + 2) / (3 + 4);", "q is 0.42857142857142855"),
+            ("q = (1r + 2) / (3 + 4);", "q is 3r/7r"),
+            ("q = (f64(1) + 2) / (3 + 4);", "q is 0.42857142857142855"),
         ])
     );
 }
@@ -124,28 +120,28 @@ fn an_unfixed_decimal_lists_a_line_for_each_carrier() {
     assert_eq!(
         checked("y = 1 + 2 < 0.5;\n"),
         pairs(&[
-            ("y = 1.0f64 + 2 < 0.5;", "y is false"),
-            ("y = 1r + 2 < 0.5;", "y is false"),
+            ("y = 1 + 2 < 0.5f64;", "y is false"),
+            ("y = 1 + 2 < 0.5r;", "y is false"),
         ])
     );
-    // A suffix on `0.5` would not reach `1 + 2`, which would be an `int`, so the fixes
-    // give the carrier to the `1`.
+    // A suffix on `0.5` reaches `1 + 2`, an operation on literals alone, which takes the
+    // carrier of what it meets, so the fixes write the decimal the message names.
     assert_eq!(
         checked("y = (1 + 2) * 0.5;\n"),
         pairs(&[
-            ("y = (1.0f64 + 2) * 0.5;", "y is 1.5"),
-            ("y = (1r + 2) * 0.5;", "y is 3r/2r"),
+            ("y = (1 + 2) * 0.5f64;", "y is 1.5"),
+            ("y = (1 + 2) * 0.5r;", "y is 3r/2r"),
         ])
     );
     assert_eq!(
         checked("y = (1 + 2) * 0.5 ^ 2;\n"),
-        pairs(&[("y = (1.0f64 + 2) * 0.5f64 ^ 2;", "y is 0.75")])
+        pairs(&[("y = (1 + 2) * 0.5f64 ^ 2;", "y is 0.75")])
     );
     assert_eq!(
         checked("y = (1 + 2) * (3 + 0.5);\n"),
         pairs(&[
-            ("y = (1.0f64 + 2) * (3 + 0.5f64);", "y is 10.5"),
-            ("y = (1r + 2) * (3 + 0.5r);", "y is 21r/2r"),
+            ("y = (1 + 2) * (3 + 0.5f64);", "y is 10.5"),
+            ("y = (1 + 2) * (3 + 0.5r);", "y is 21r/2r"),
         ])
     );
 }
@@ -287,9 +283,9 @@ fn a_fix_leaves_out_a_comment_after_the_line() {
     assert_eq!(
         checked("half = 1 / 2; // the rejected line\n"),
         pairs(&[
-            ("half = f64(1) / 2;", "half is 0.5"),
             ("half = 1.0f64 / 2;", "half is 0.5"),
             ("half = 1r / 2;", "half is 1r/2r"),
+            ("half = f64(1) / 2;", "half is 0.5"),
         ])
     );
     assert_eq!(

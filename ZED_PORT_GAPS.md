@@ -3385,9 +3385,9 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| Walks of an expression on an explicit `Vec` stack of steps (`Visit`, `Apply`) with a second `Vec` of values, popped in a `while let` loop | `folded`, `unfixed_binding`, `carrier_leaves` | Mutation (gap 11) | recursion on the expression, whose depth is that of the text, or a fold over a list carried by a loop |
+| Walks of an expression on an explicit `Vec` stack of steps (`Visit`, `Apply`) with a second `Vec` of values, popped in a `while let` loop | `folded`, `unfixed_binding`, `unreached` (`carrier_leaves` before LIT-menu-match-design) | Mutation (gap 11) | recursion on the expression, whose depth is that of the text, or a fold over a list carried by a loop |
 | `fmt::from_fn` closures that write a message or a fix line straight into the formatter, with `?` on each `write!` | `Msg::written`, `lit_holds`, `binder_holds`, `never_equal` | Early exit (gap 12) | a function that returns the text as a list of parts, joined once |
-| A `HashSet<Span>` of the literals on the carrier's path, tested for each literal | `unfixed_binding` | none | a set of spans |
+| A `HashSet<Span>` of the literals on the carrier's path, tested for each literal (removed by LIT-menu-match-design with `carrier_leaves`) | `unfixed_binding` (before LIT-menu-match-design) | none | a set of spans |
 | `String::truncate` and `String::drain` to trim the corrected line in place | `Rewrite::line` | Mutation (gap 11) | a slice of the line between its first and last non-blank characters |
 
 ## Entries from PROJECT-canon-rounds (`crates/zedc-presburger/src/presburger.rs`)
@@ -3439,3 +3439,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A `RefCell<HashSet<(Tid, Eid)>>` field of the walk, the sums read in place, filled through `&self` by `insert` (whose `bool` stops the read of a left spine) | `Walk::summed`, `Walk::lin_sum` | Mutation (gap 11) | A set threaded through the walk with the memo of terms |
 | A loop down the left operands of a sum pushing each right operand onto a `Vec`, then a loop adding them innermost first | `Walk::lin_sum` | Mutation (gap 11) | A recursive function on the left spine returning the base and the list of right operands |
 | `return Err(..)` from inside the loop over a conjunct's terms at the first term that is not a name, and `return` at the first witness | `Conjuncts::shape_of` | Early exit (gap 12) | A fold over the terms whose state stops at the first failure or witness |
+
+## Entries from LIT-menu-match-design (`crates/zedc-check/src/check/mod.rs`, `walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashSet<Span>` of the operations on literals alone, filled in place as each operator ends and read by the operator around it | `Ck::lit_ops`, `Ck::lit_op_meets`, the `Frame::Unary` step | Mutation (gap 11) | the walk returns, with each operand's type, whether it is an operation on literals alone, so no set is kept |
+| Walks of an expression on an explicit `Vec` stack: the literals of an operation adopting a carrier, the paired components of two tuple displays, the literals of an operation on literals alone | `Ck::lit_op_meets`, `paired`, `literals_alone` | Mutation (gap 11) | recursion on the expression |

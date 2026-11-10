@@ -820,6 +820,12 @@ struct Ck<'t, 'a> {
     /// ([`Ck::never_equal`]); the entry only names the comparison, so an entry a repair's
     /// trial wrote is harmless.
     eq_sides: HashMap<Span, (&'static str, Option<Span>, bool)>,
+    /// The span of each operation on bare literals alone with `+`, `-` or `*`, as `1 + 2` or
+    /// `(1 + 2) * 3`: at the top level it is typed `int` as it is walked, and where it then
+    /// meets an operand of one other numeric carrier, the carrier reaches each of its literals
+    /// ([`Ck::lit_op_meets`]). Which operations are such is read off the text alone, so an
+    /// entry a repair's trial wrote is harmless.
+    lit_ops: HashSet<Span>,
     /// The `==` or `!=` whose operands are being paired, so that a literal component of a
     /// tuple compared with a component that holds no number names the comparison
     /// ([`Ck::never_equal_component`]), and two values with no common carrier are rejected
@@ -980,6 +986,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             log: Vec::new(),
             seen: HashMap::new(),
             eq_sides: HashMap::new(),
+            lit_ops: HashSet::new(),
             comparing: None,
             unnamed: HashMap::new(),
             made: HashMap::new(),
@@ -5393,6 +5400,10 @@ fn folded(e: &Expr, c: Carrier) -> Option<Value> {
                     ExprKind::Unary("-", a) => {
                         todo.extend([Step::Apply(Prim::Neg, 1), Step::Visit(a)]);
                     }
+                    // A `rat` literal, `2r`, is a value of `rat` alone.
+                    ExprKind::Rat(d) if c == Carrier::Rat => {
+                        values.push(Value::rat(Rat::decimal(d).ok()??));
+                    }
                     _ => return None,
                 }
             }
@@ -5621,15 +5632,221 @@ fn unfixed(l: &Lit, cs: &[Carrier], bound: Option<(&str, &Expr)>) -> Msg {
     Msg::new(m, fixes)
 }
 
+/// The pairs of components that `==` compares in the tuple displays `a` and `b`, of one
+/// shape, the components that are no tuple displays, in the order of the text; `None` where
+/// the shapes differ. The walk keeps its own stack, since displays nest as deep as the text;
+/// it costs the size of the displays.
+fn paired<'e>(a: &'e Expr, b: &'e Expr) -> Option<Vec<(&'e Expr, &'e Expr)>> {
+    let mut out = Vec::new();
+    let mut todo = vec![(a, b)];
+    while let Some((x, y)) = todo.pop() {
+        match (&x.kind, &y.kind) {
+            (ExprKind::Tuple(xs), ExprKind::Tuple(ys)) if xs.len() == ys.len() => {
+                todo.extend(xs.iter().zip(ys).rev());
+            }
+            (ExprKind::Tuple(_), _) | (_, ExprKind::Tuple(_)) => return None,
+            _ => out.push((x, y)),
+        }
+    }
+    Some(out)
+}
+
+/// The `int` and `f64` literals of `e`, with or without a suffix, in the order of the text,
+/// and whether it holds a `rat` literal, `2r`, where `e` is an operation on literals alone
+/// under `+`, `-`, `*`, `^` and a `-`; `None` otherwise, and for a `/`, which a comparison of
+/// tuples leaves with no carrier ([`unfixed_comparison`]). It costs the size of `e`.
+fn literals_alone(e: &Expr) -> Option<(Vec<Lit>, bool)> {
+    let mut out = Vec::new();
+    let mut rat = false;
+    let mut todo = vec![e];
+    while let Some(x) = todo.pop() {
+        if let Some(l) = literal(x) {
+            out.push(l);
+            continue;
+        }
+        match &x.kind {
+            ExprKind::Rat(_) => rat = true,
+            ExprKind::Binary("+" | "-" | "*" | "^", a, b) => todo.extend([&**b, &**a]),
+            ExprKind::Unary("-", a) => todo.push(a),
+            _ => return None,
+        }
+    }
+    Some((out, rat))
+}
+
+/// The rejection of a comparison `a == b` or `a != b` of two tuple displays of one shape whose
+/// components are operations on literals alone ([`literals_alone`]), where nothing gives a
+/// carrier to a decimal in a pair of components that `==` compares: a pair of literals with
+/// no suffix alone, one of them a decimal. As where the value is no tuple
+/// ([`unfixed_binding`]), the first such decimal in the text is rejected, and each fix writes
+/// it with a carrier and names the value `place` then holds (DESIGN.md sec:diagnostics, "The
+/// value a fix names": the binder is named "where the binder's value is a literal or an
+/// operation on literals"): in `y = (1, (2, 3)) == (1.0, (2r, 3))`, `y = (1, (2, 3)) ==
+/// (1.0f64, (2r, 3)); y is true`. Each pair takes the carrier of its literals with a suffix,
+/// the fixed decimal's among them, or `int` where it has none, and `==` is true where every
+/// pair is equal; where the pairs' literals take no one carrier, the fix names the literal
+/// instead ([`lit_holds`]). `None` for any other value, which [`unfixed_binding`] then reads.
+/// It costs the size of `e` ([`folded`]).
+fn unfixed_comparison(e: &Expr, place: &dyn fmt::Display) -> Option<(Span, Msg)> {
+    let ExprKind::Binary(op @ ("==" | "!="), a, b) = &e.kind else {
+        return None;
+    };
+    let pairs = paired(a, b)?;
+    if pairs.len() == 1 && std::ptr::eq(pairs[0].0, &**a) {
+        return None;
+    }
+    // The literals of each pair, and whether it holds a `rat` literal.
+    let lits: Vec<(Vec<Lit>, Vec<Lit>, bool)> = (pairs.iter())
+        .map(|(x, y)| {
+            let ((xs, r), (ys, s)) = (literals_alone(x)?, literals_alone(y)?);
+            Some((xs, ys, r || s))
+        })
+        .collect::<Option<_>>()?;
+    // A comparison of tuples carries no carrier into a component that is an operation: in
+    // `y = (1 + 2, 0) == (3.0f64, 0)`, `1 + 2` stays an `int`, and `3.0f64` is rejected. So a
+    // pair with an operation is taken only where all its literals are integers with no suffix,
+    // which no fix changes; any other value is left to [`unfixed_binding`].
+    let single = |x: &Expr| literal(x).is_some() || matches!(x.kind, ExprKind::Rat(_));
+    for ((x, y), (xs, ys, rat)) in pairs.iter().zip(&lits) {
+        let ints = (xs.iter().chain(ys)).all(|m| m.bare && lit_carrier(&m.value) == Carrier::Int);
+        if !(single(x) && single(y)) && (*rat || !ints) {
+            return None;
+        }
+    }
+    let decimal = |l: &&Lit| l.bare && lit_carrier(&l.value) == Carrier::F64;
+    let open = |(xs, ys, rat): &&(Vec<Lit>, Vec<Lit>, bool)| {
+        !rat && xs.iter().chain(ys).all(|l| l.bare) && xs.iter().chain(ys).any(|l| decimal(&l))
+    };
+    // The components of `a` come before those of `b` in the text.
+    let l = (lits
+        .iter()
+        .filter(open)
+        .flat_map(|(xs, _, _)| xs)
+        .find(decimal))
+    .or_else(|| {
+        lits.iter()
+            .filter(open)
+            .flat_map(|(_, ys, _)| ys)
+            .find(decimal)
+    })?;
+    // Whether the two sides are equal once `l` is written with `c`.
+    let equal = |c: Carrier| -> Option<bool> {
+        let mut all = true;
+        for ((x, y), (xs, ys, rat)) in pairs.iter().zip(&lits) {
+            let mut at = rat.then_some(Carrier::Rat);
+            for m in xs.iter().chain(ys) {
+                let own = match m.site == l.site {
+                    true => c,
+                    false if m.bare => continue,
+                    false => lit_carrier(&m.value),
+                };
+                if at.is_some_and(|k| k != own) {
+                    return None;
+                }
+                at = Some(own);
+            }
+            let at = at.unwrap_or(Carrier::Int);
+            let (u, v) = (folded(x, at)?, folded(y, at)?);
+            all &= eval(&Term::Prim(Prim::Eq, vec![Term::Lit(u), Term::Lit(v)])).ok()?
+                == Value::Bool(true);
+        }
+        Some(if *op == "==" { all } else { !all })
+    };
+    let mut m = unfixed(l, &[], None);
+    let sign = if l.neg() { "-" } else { "" };
+    m.fixes = [Carrier::F64, Carrier::Rat]
+        .into_iter()
+        .filter_map(|c| {
+            let with = with_carrier(l, c);
+            let alone = format_args!("{sign}{with}");
+            match equal(c) {
+                Some(v) => {
+                    Rewrite::new(&[(l.span, &with)], &format_args!("{place} is {v}"), &alone)
+                }
+                None => Rewrite::new(&[(l.span, &with)], &lit_holds(l, c), &alone),
+            }
+        })
+        .collect();
+    Some((l.site, m))
+}
+
+/// The literals of the operations on literals `roots` (a value, or the two sides of a
+/// comparison) that a fix of [`unfixed_binding`] writes with a carrier, besides the literal at
+/// `written`, in the order of the text. The checker carries a carrier across `+`, `-`, `*` and
+/// the comparisons to an operation on literals alone ([`Ck::lit_op_meets`]), but not into a
+/// `/` or a `^`, which are typed as they are walked: a `/` of two bare integer literals is
+/// rejected there ([`Ck::apply`]), and `2 ^ 2` is an `int`. So each `/` whose operands hold no
+/// literal written with a carrier gets its first literal, `7` in `y = 1 + 7 / 2` and `1` in
+/// `q = (1 + 2) / (3 + 4)`; and so does the base of each `^` that holds none, unless the base is
+/// a literal and the exponent holds one, as in `2 ^ 0.5f64`: `2` in `y = 0xFF / 2 ^ 2`. One
+/// walk in post-order on its own stack, since the operations nest as deep as the text: O(|e|),
+/// and O(k log k) to sort the k literals it returns.
+///
+/// Complexity tradeoff: the naive test walks the operands of each `/` and `^` to see whether
+/// they hold a written literal, and the literals written for the operations inside it, which
+/// is O(|e| · depth), O(|e|²) for `((1 / 2) / 3) / …`; here each subtree's answer, and its
+/// first literal, is kept on a second stack as it is done, so each node is visited once.
+fn unreached(roots: &[&Expr], written: Option<Span>) -> Vec<Lit> {
+    enum Step<'e> {
+        Visit(&'e Expr),
+        Apply(&'e str, &'e Expr),
+    }
+    // For each subtree done: whether it holds a literal written with a carrier, and its first
+    // literal.
+    let mut done: Vec<(bool, Option<Lit>)> = Vec::new();
+    let mut out = Vec::new();
+    for &root in roots {
+        let mut todo = vec![Step::Visit(root)];
+        while let Some(s) = todo.pop() {
+            match s {
+                Step::Visit(x) => match &x.kind {
+                    ExprKind::Binary(op @ ("+" | "-" | "*" | "/" | "^"), a, b) => {
+                        todo.extend([Step::Apply(op, a), Step::Visit(b), Step::Visit(a)]);
+                    }
+                    ExprKind::Unary("-", a) if literal(x).is_none() => todo.push(Step::Visit(a)),
+                    _ => {
+                        let l = literal(x);
+                        let has = l.as_ref().is_some_and(|l| Some(l.span) == written);
+                        done.push((has, l));
+                    }
+                },
+                Step::Apply(op, base) => {
+                    let (Some((mut rb, fb)), Some((mut ra, fa))) = (done.pop(), done.pop()) else {
+                        unreachable!("two operands")
+                    };
+                    if op == "^" && !ra && !(literal(base).is_some() && rb) {
+                        out.extend(fa.clone());
+                        ra = true;
+                    }
+                    if op == "/" && !ra && !rb {
+                        out.extend(fa.clone().or_else(|| fb.clone()));
+                        rb = true;
+                    }
+                    done.push((ra || rb, fa.or(fb)));
+                }
+            }
+        }
+        done.clear();
+    }
+    out.sort_by_key(|l| l.span.start);
+    out
+}
+
 /// The rejection of the value `e` bound to the name `n` outside a function when nothing gives
 /// its literals a carrier (DESIGN.md step L1.26b): `e` is literals with no suffix alone, under
 /// `+`, `-`, `*`, `/`, `^` and a `-`, with a decimal among them or a `/`; with a `^` among them
-/// the fixes give `f64` alone, since `^` has no arrow at `rat`. Each fix writes the literals of
-/// [`carrier_leaves`] with a carrier ([`leaves_with`]). A decimal literal is rejected at the
-/// decimal among them, or else at the first decimal ([`unfixed`]): `y = 0.5f64`, `y = 0.5r`,
-/// and `y = (1.0f64 + 2) * 0.5`, since a suffix on `0.5` would not reach `1 + 2`. A `/` of
-/// integer literals is rejected at the `/`: `half = f64(1) / 2`, `half = 1.0f64 / 2` and
-/// `half = 1r / 2`. Each fix names the value `n` then holds ([`folded`]). A comparison of two
+/// the fixes give `f64` alone, since `^` has no arrow at `rat`. Each fix writes one literal
+/// with a carrier ([`leaves_with`]), and the operators carry it to the rest, since an
+/// operation on literals alone takes the carrier of what it meets ([`Ck::lit_op_meets`]): the
+/// first decimal, which the message names ([`unfixed`]), `y = 0.5f64` and `y = 0.5r`, and
+/// `y = 0.5f64 * (1 + 2)`; or else, for a `/` of integer literals, which is rejected at the
+/// `/`, the first literal of the value (DESIGN.md sec:diagnostics, "A `/` of integer
+/// literals": "the menu writes the carrier at the first literal of the value"):
+/// `half = 1.0f64 / 2`, `half = 1r / 2` and `half = f64(1) / 2`, the suffixes first, as
+/// DESIGN's menu for `q = (1 + 2) / (3 + 4)` lists them. Where a carrier written there would
+/// not reach a `/` or a `^` ([`unreached`]), the fix writes the first literal of that
+/// operation too or instead: `y = 1 + 7.0f64 / 2`, `y = 0.5f64 * (7.0f64 / 2)`. Each fix
+/// names the value `n` then holds ([`folded`]). A comparison of two
 /// such operations, `y = 1 == 1.0`, is taken too, at the top of `e` alone, since a comparison
 /// gives a `bool`, which no operation here takes; it joins the carriers of its sides as the
 /// operations do, and `y` then holds `true` or `false`. `None` for any other value. The walks
@@ -5646,10 +5863,14 @@ fn unfixed_binding(
     place: &dyn fmt::Display,
     whole: bool,
 ) -> Option<(Span, Msg)> {
+    if let Some(r) = unfixed_comparison(e, place) {
+        return Some(r);
+    }
     let mut stack = match &e.kind {
         ExprKind::Binary("==" | "!=" | "<" | "<=" | ">" | ">=", a, b) => vec![&**b, &**a],
         _ => vec![e],
     };
+    let roots = stack.clone();
     let mut lits = Vec::new();
     let mut div = None;
     let mut pow = false;
@@ -5669,28 +5890,23 @@ fn unfixed_binding(
             }
         }
     }
-    // The literals that, written with a carrier, give the whole value that carrier.
-    let leaves = carrier_leaves(e);
-    let sites: HashSet<Span> = leaves.iter().map(|p| p.site).collect();
-    let on_path = |l: &Lit| sites.contains(&l.site);
     // `^` has no arrow at `rat`, so with a `^` in the value only `f64` checks.
     let forms = [
-        Form::Cast,
         Form::Suffix(Carrier::F64),
         Form::Suffix(Carrier::Rat),
+        Form::Cast,
     ];
     let forms = forms
         .into_iter()
         .filter(|f| !pow || f.carrier() != Carrier::Rat);
-    // The decimal on those paths, or else the first. A suffix on a decimal off them would not
-    // reach the rest, which is then an `int`, as `1 + 2` in `y = (1 + 2) * 0.5`, so the fixes
-    // write the literals on them with the carrier: `y = (1.0f64 + 2) * 0.5`.
+    // The literals come in the order of the text: the stack takes the left operand first.
     let is_decimal = |l: &&Lit| lit_carrier(&l.value) == Carrier::F64;
-    let decimal = (lits.iter().filter(is_decimal).find(|l| on_path(l)))
-        .or_else(|| lits.iter().find(is_decimal));
-    if let Some(l) = decimal {
+    if let Some(l) = lits.iter().find(is_decimal) {
         let mut m = unfixed(l, &[], Some((n, e)));
         let forms = forms.filter(|f| *f != Form::Cast);
+        let mut leaves = unreached(&roots, Some(l.span));
+        leaves.push(l.clone());
+        leaves.sort_by_key(|l| l.span.start);
         m.fixes = forms
             .filter_map(|f| leaves_with(&leaves, f, place, whole.then_some(n), e, None))
             .collect();
@@ -5734,11 +5950,18 @@ fn unfixed_binding(
     );
     // The literals in a cast, `f64(1)`; with the suffix, `1.0f64`, where each is written in
     // decimal digits, since otherwise that form is the cast; and at `rat`, but for a `^`.
+    let leaves = &unreached(&roots, None)[..];
     let digits = (leaves.iter()).all(|p| lit_digits(p).bytes().all(|b| b.is_ascii_digit()));
     let forms = forms.filter(|f| digits || *f != Form::Suffix(Carrier::F64));
+    // Without decimal digits both forms are casts, written `f64(0xFF)` then `rat(0xFF)`.
+    let mut forms: Vec<Form> = forms.collect();
+    if !digits {
+        forms.sort_by_key(|f| *f != Form::Cast);
+    }
     let divisor = literal(b).filter(|_| two);
     let bound = whole.then_some(n);
-    let fixes = forms.map(|f| leaves_with(&leaves, f, place, bound, e, divisor.as_ref()));
+    let fixes =
+        (forms.into_iter()).map(|f| leaves_with(leaves, f, place, bound, e, divisor.as_ref()));
     Some((d.span, Msg::new(m, fixes.collect())))
 }
 
@@ -6024,48 +6247,6 @@ fn leaves_with(
         }
     });
     Rewrite::new(&edits, &binder_holds(place, e, c), &alone)
-}
-
-/// The literals of `e`, an operation on literals alone, whose carrier, written on each of
-/// them, reaches every operation of `e`, since at the top level an operation on two literals
-/// that meets no carrier is typed `int` (DESIGN.md step L1.26a). From the root, each
-/// operation with one literal operand leads into the other operand; of two literals, into
-/// the decimal one, or else the left one; a `^` whose exponent is no literal into its base,
-/// whose carrier it gives; and an operation with no literal operand into both, since each
-/// side is typed on its own: `1` and `3` in `(1 + 2) / (3 + 4)`. They come in the order of
-/// the text. The walk keeps its own stack, since the operations nest as deep as the text; it
-/// costs the size of `e`.
-fn carrier_leaves(e: &Expr) -> Vec<Lit> {
-    let mut leaves = Vec::new();
-    let mut todo = vec![e];
-    while let Some(mut x) = todo.pop() {
-        loop {
-            if let Some(l) = literal(x) {
-                leaves.push(l);
-                break;
-            }
-            x = match &x.kind {
-                ExprKind::Unary("-", a) => a,
-                ExprKind::Binary("^", a, b) if literal(b).is_none() => a,
-                ExprKind::Binary(_, a, b) => match (literal(a), literal(b)) {
-                    (Some(l), Some(r)) => match lit_carrier(&r.value) == Carrier::F64
-                        && lit_carrier(&l.value) != Carrier::F64
-                    {
-                        true => b,
-                        false => a,
-                    },
-                    (Some(_), None) => b,
-                    (None, Some(_)) => a,
-                    (None, None) => {
-                        todo.push(b);
-                        a
-                    }
-                },
-                _ => break,
-            };
-        }
-    }
-    leaves
 }
 
 /// The literals of the other carriers that are exactly the number of `e` when `e` is a `rat`

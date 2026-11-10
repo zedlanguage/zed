@@ -7,6 +7,7 @@
 //! The carriers here are `int`, `f64` and `rat`: `bf16`, `f16` and `f32` join the bounds of
 //! these signatures with item FLOAT-f32.
 
+mod design_menus;
 mod fixes;
 mod scaling;
 mod spelling;
@@ -193,8 +194,8 @@ fn literals_that_nothing_fixes_and_that_no_int_holds_are_rejected_with_a_menu() 
         [
             "`half = 1 / 2` divides two integer literals, and nothing here gives them a \
              carrier; `/` has no arrow at `int`, and Zed does not choose `f64` or `rat` for \
-             it\n  fixes, each checked here:\n    half = f64(1) / 2;    half is 0.5\n    \
-             half = 1.0f64 / 2;    half is 0.5\n    half = 1r / 2;        half is 1r/2r [1 / 2]"
+             it\n  fixes, each checked here:\n    half = 1.0f64 / 2;    half is 0.5\n    \
+             half = 1r / 2;        half is 1r/2r\n    half = f64(1) / 2;    half is 0.5 [1 / 2]"
         ]
     );
     assert_eq!(

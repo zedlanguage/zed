@@ -4,16 +4,20 @@
 //! DESIGN.md with a menu is compiled where zedc can produce it, and its message is compared
 //! with DESIGN's: the first sentence word for word, and the order of the parts.
 //!
+//! The menus of `q = (1 + 2) / (3 + 4)` and `y = inc(x: 2.5)` are compared too, fix by fix,
+//! without DESIGN's fixes that declare a type (`q: f64 = ...`, `y: rat = ...`): a top-level
+//! binding with a declared type is layer L10 (TypedBinding), so zedc offers no such fix at
+//! layer L1 (LIT-menu-match-design, an open case for QUESTIONS.md).
+//!
 //! No example is compared whole yet. Every one differs from DESIGN in the form of its steps:
 //! DESIGN writes `1. the literal (1:21)` with the source line under each step, and zedc writes
-//! `[1] 1:21: ...` with each source line shown once for all the steps on it. The menus differ
-//! too, in the ways recorded under LIT-menu-match-design: zedc offers no fix that declares a
-//! type (`q: f64 = ...`, `y: rat = ...`), and for `q = (1 + 2) / (3 + 4)` it gives a suffix
-//! to both sides of the `/` where DESIGN gives it to the first literal alone. The fixes of
-//! `twice` also differ in their wording and in which are offered (DESIGN offers
-//! `twice(x: f64)`, `twice(x: rat)` and `twice(x)`). The example at a declared type,
-//! `x: f64 = 9007199254740993;`, is not compared at all: zedc does not compile a top-level
-//! binding with a declared type yet.
+//! `[1] 1:21: ...` with each source line shown once for all the steps on it, as DESIGN's own
+//! rule for a source line shared by several steps says; the step texts differ too (DESIGN's
+//! "the division", "its left operand"). LIT-menu-match-design left this open for
+//! QUESTIONS.md. The fixes of `twice` also differ in their wording and in which are offered
+//! (DESIGN offers `twice(x: f64)`, `twice(x: rat)` and `twice(x)`). The example at a declared
+//! type, `x: f64 = 9007199254740993;`, is not compared at all: zedc does not compile a
+//! top-level binding with a declared type yet.
 
 use super::rejected;
 
@@ -102,23 +106,49 @@ fn design_examples(design: &str) -> Vec<String> {
     out
 }
 
+/// The fixes of the menu of the message `text`, each `(line, what it then holds)`, without
+/// the fixes that declare the type of a top-level binding (`q: f64 = ...`), which zedc does
+/// not offer at layer L1.
+fn menu(text: &str) -> Vec<(&str, &str)> {
+    let Some((_, rest)) = text.split_once("\n  fixes, each checked here:\n") else {
+        return Vec::new();
+    };
+    rest.lines()
+        .take_while(|l| l.starts_with("    ") && !l.starts_with("     "))
+        .filter_map(|l| {
+            let (line, holds) = l.trim_start().split_once("  ")?;
+            let lhs = line.split_once(" = ").map_or("", |(lhs, _)| lhs);
+            let declares = lhs.contains(": ") && !lhs.contains('(');
+            (!declares).then(|| (line, holds.trim_start()))
+        })
+        .collect()
+}
+
 /// The program of each DESIGN.md example with a menu, found by the source line its steps
-/// show, and whether zedc compiles it yet.
-const PROGRAMS: [(&str, &str, bool); 4] = [
+/// show, whether zedc compiles it yet, and whether its menu is compared ([`menu`]).
+const PROGRAMS: [(&str, &str, bool, bool); 4] = [
     (
         "twice(x: int) = x * 2.0;",
         "twice(x: int) = x * 2.0;\n",
         true,
+        false,
     ),
     (
         "y = inc(x: 2.5);",
         "inc(x) = x + 1;\ny = inc(x: 2.5);\n",
         true,
+        true,
     ),
-    ("q = (1 + 2) / (3 + 4);", "q = (1 + 2) / (3 + 4);\n", true),
+    (
+        "q = (1 + 2) / (3 + 4);",
+        "q = (1 + 2) / (3 + 4);\n",
+        true,
+        true,
+    ),
     (
         "x: f64 = 9007199254740993;",
         "x: f64 = 9007199254740993;\n",
+        false,
         false,
     ),
 ];
@@ -142,10 +172,10 @@ fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so
         );
         let found: Vec<_> = PROGRAMS
             .iter()
-            .filter(|(line, _, _)| example.contains(&format!("\n       {line}\n")))
+            .filter(|(line, ..)| example.contains(&format!("\n       {line}\n")))
             .collect();
         assert_eq!(found.len(), 1, "the program of\n{example}");
-        let (_, src, compiled) = found[0];
+        let (_, src, compiled, compare_menu) = found[0];
         let out = rejected(&program(src));
         if !compiled {
             // Held back: zedc does not compile the example yet. Once it does, this fails, and
@@ -162,7 +192,33 @@ fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so
         );
         assert_eq!(first(&out), first(example), "{out}\n\n{example}");
         assert_eq!(parts(&out), order, "{out}\n\n{example}");
+        if *compare_menu {
+            assert!(!menu(example).is_empty(), "{example}");
+            assert_eq!(menu(&out), menu(example), "{out}\n\n{example}");
+        }
     }
+}
+
+#[test]
+#[ignore = "open: DESIGN's step form (`1. the division (1:13)` with the source line under each \
+            step) against its rule that a source line shared by steps is shown once, and the \
+            fixes that declare a type (layer L10); LIT-menu-match-design, QUESTIONS.md"]
+fn the_message_of_a_division_of_integer_literals_is_designs_whole() {
+    // DESIGN.md sec:diagnostics, "A `/` of integer literals": the message, word for word, with
+    // zedc's `line:col: ` in place of `error: `.
+    let Some(spec) = zed_tests::spec::dir("DESIGN.md's message for q") else {
+        return;
+    };
+    let design = std::fs::read_to_string(spec.join("DESIGN.md")).expect("DESIGN.md");
+    let example = (design_examples(&design).into_iter())
+        .find(|e| e.contains("\n       q = (1 + 2) / (3 + 4);\n"))
+        .expect("the example");
+    let out = rejected(&program("q = (1 + 2) / (3 + 4);"));
+    let out = format!(
+        "error: {}",
+        out.split_once(": ").map_or("", |(_, rest)| rest)
+    );
+    assert_eq!(out, example);
 }
 
 #[test]

@@ -257,14 +257,10 @@ fn literals_in_a_tuple_compared_with_a_tuple() {
              literal takes the carrier of its use, never `int`, and Zed does not choose one for \
              it{} [1.0]",
             menu(&[
-                (
-                    "y = (1, (2, 3)) == (1.0f64, (2r, 3));",
-                    "the literal is then the f64 1.0"
-                ),
-                (
-                    "y = (1, (2, 3)) == (1.0r, (2r, 3));",
-                    "the literal is then exactly 1.0, a rat"
-                ),
+                // The binder's value: DESIGN.md sec:diagnostics, "The value a fix names":
+                // "`y is true` for `y = 1 == 1.0f64`".
+                ("y = (1, (2, 3)) == (1.0f64, (2r, 3));", "y is true"),
+                ("y = (1, (2, 3)) == (1.0r, (2r, 3));", "y is true"),
             ])
         )]
     );

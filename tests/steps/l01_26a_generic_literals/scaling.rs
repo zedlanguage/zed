@@ -124,46 +124,129 @@ fn a_body_of_many_generic_literal_arguments_scales() {
         .unwrap();
 }
 
-/// A value bound outside a function, `y = (1 + 0) /* … */ * (1 + 0) /* … */ * … * 0.5`, of `n`
-/// parenthesized sums of integer literals and a decimal: nothing gives its literals a carrier,
-/// and each sum is typed on its own, so each fix writes the first literal of every sum with a
-/// carrier, on one line of length of order n, and names the value of `y`, folded over the `2n`
-/// operations (MSG-literal-fixes). The comments make the line long beside the checker's work
-/// on each sum. Negative controls (each run once, not committed), at n = 500 and 4,000:
-/// `Rewrite::line` building a new line for each edit failed at 33.0 times the bytes;
-/// applying each edit in place by `String::replace_range`, which moves the rest of the line
-/// each time, passed at 8.2 times the work, since `memmove` costs a small fraction of an
-/// instruction per byte against the checker's work on each sum, so this test does not see
-/// that form.
-fn product(n: usize) -> String {
+/// A value bound outside a function, `y = (1 + 0) /* … */ * (1 + 0) /* … */ * … * d`, of `n`
+/// parenthesized sums of integer literals and the decimal `d`. Each sum is an operation on
+/// literals alone, and so is their product, which takes the carrier of what it meets
+/// (DESIGN.md sec:diagnostics, "A `/` of integer literals"). The comments make the line long
+/// beside the checker's work on each sum.
+fn product(n: usize, d: &str) -> String {
     format!(
-        "y = {} * 0.5;\n",
+        "y = {} * {d};\n",
         vec!["(1 + 0) /* a comment the fixes keep, which makes the line long */"; n].join(" * ")
     )
 }
 
+/// With `d = 0.5` nothing gives the literals a carrier, and each fix writes the decimal with
+/// one, on one line of length of order n, and names the value of `y`, folded over the `2n`
+/// operations (MSG-literal-fixes). Negative controls (each run once, not committed), at
+/// n = 500 and 4,000, when each fix wrote the first literal of every sum: `Rewrite::line`
+/// building a new line for each edit failed at 33.0 times the bytes; applying each edit in
+/// place by `String::replace_range`, which moves the rest of the line each time, passed at 8.2
+/// times the work, since `memmove` costs a small fraction of an instruction per byte against
+/// the checker's work on each sum, so this test does not see that form.
 #[test]
-fn a_menu_of_many_edits_scales() {
+fn a_menu_of_a_long_line_scales() {
     scaling::on_a_thread(1 << 29, || {
         let c = "/* a comment the fixes keep, which makes the line long */";
         let one = format!(
-            "  fixes, each checked here:\n    y = (1.0f64 + 0) {c} * 0.5;    y is 0.5\n    \
-             y = (1r + 0) {c} * 0.5;        y is 1r/2r"
+            "  fixes, each checked here:\n    y = (1 + 0) {c} * 0.5f64;    y is 0.5\n    \
+             y = (1 + 0) {c} * 0.5r;      y is 1r/2r"
         );
-        let [m] = &type_errors(&product(1))[..] else {
+        let [m] = &type_errors(&product(1, "0.5"))[..] else {
             panic!("one rejection")
         };
         assert!(m.ends_with(&format!("{one} [0.5]")), "{m}");
         let n = 500;
-        let units = scaling::inputs(n, |m| Resolved::new(&product(m)));
+        let units = scaling::inputs(n, |m| Resolved::new(&product(m, "0.5")));
         for (m, u) in &units {
             let [e] = &u.type_errors()[..] else {
                 panic!("one rejection")
             };
-            assert_eq!(e.matches("1.0f64 + 0").count(), *m, "{e}");
-            assert!(e.contains("y is 0.5\n"), "{e}");
+            assert_eq!(e.matches("(1 + 0)").count(), 2 * m, "{e}");
+            assert!(e.contains("* 0.5f64;    y is 0.5\n"), "{e}");
         }
         scaling::check("rejecting a value of n sums with a menu", n, |m| {
+            std::hint::black_box(units[&m].type_errors());
+        });
+    });
+}
+
+/// With `d = 0.5f64` the product of the `n` sums meets an `f64`, and each of its `2n`
+/// literals takes it: each operation is recorded as one on literals alone from its operands'
+/// entries, one lookup each, and the literals are walked once, where the product meets the
+/// `f64` (`Ck::lit_op_meets`). Negative control (run once, not committed), at n = 500 and
+/// 4,000: testing each operand by walking it, at each `*`, failed at 44.4 times the bytes, and
+/// `a_menu_of_a_long_line_scales` with it at 42.6 times.
+#[test]
+fn an_operation_on_many_literals_takes_its_carrier_in_linear_time() {
+    scaling::on_a_thread(1 << 29, || {
+        assert_eq!(type_errors(&product(3, "0.5f64")), Vec::<String>::new());
+        let n = 500;
+        let units = scaling::inputs(n, |m| Resolved::new(&product(m, "0.5f64")));
+        for u in units.values() {
+            assert_eq!(u.type_errors(), Vec::<String>::new());
+        }
+        scaling::check("checking a value of n sums that meets an f64", n, |m| {
+            std::hint::black_box(units[&m].type_errors());
+        });
+    });
+}
+
+/// `y = (1 / 1) * (1 / 1) * … * (1 / 1)`, of `n` divisions of integer literals: a `/` of two
+/// integer literals takes no carrier from outside, so each fix writes the first literal of
+/// every one, `n` edits on one line, chosen in one walk of the value (`unreached`).
+///
+/// Held back: the checker costs O(n²) here, and not in `unreached`. Each `/` of two literals
+/// is rejected as it is walked (`Ck::apply`), and `Ck::reject` writes the menu of each of
+/// those `n` rejections at once, each fix the whole line of length of order n
+/// (`Rewrite::line`), before the binding's one rejection drops them (`Ck::rejects_unfixed`).
+/// zedc took 0.40 s, 1.30 s and 19.3 s at n = 500, 1,000 and 4,000; at n = 500, 84% of the
+/// instructions were in those 500 calls of `reject`. The same code is on fb135254.
+#[test]
+#[ignore = "open: O(n²) writing the menus of rejections that are then dropped \
+            (LIT-menu-match-design follow-up)"]
+fn a_menu_that_writes_a_literal_in_each_of_many_divisions_scales() {
+    let quotients = |n: usize| format!("y = {};\n", vec!["(1 / 1)"; n].join(" * "));
+    scaling::on_a_thread(1 << 29, || {
+        let n = 500;
+        let units = scaling::inputs(n, |m| Resolved::new(&quotients(m)));
+        for (m, u) in &units {
+            let [e] = &u.type_errors()[..] else {
+                panic!("one rejection")
+            };
+            for fix in ["(1.0f64 / 1)", "(1r / 1)", "(f64(1) / 1)"] {
+                assert_eq!(e.matches(fix).count(), *m, "{e}");
+            }
+            assert!(
+                e.contains(" * (1r / 1);") && e.contains(" y is 1r\n"),
+                "{e}"
+            );
+        }
+        scaling::check("rejecting a value of n divisions with a menu", n, |m| {
+            std::hint::black_box(units[&m].type_errors());
+        });
+    });
+}
+
+/// `y = 1 / 1 / … / 1`, `n` divisions nested to depth `n`: only the innermost divides two
+/// literals, and each fix writes its first literal alone. Whether a written carrier reaches
+/// each `/` is kept for each operand as the walk leaves it (`unreached`), so the walk does
+/// not look into an operand again at the `/` around it.
+#[test]
+fn a_menu_of_divisions_nested_deep_scales() {
+    let quotients = |n: usize| format!("y = 1{};\n", " / 1".repeat(n));
+    scaling::on_a_thread(1 << 29, || {
+        let n = 500;
+        let units = scaling::inputs(n, |m| Resolved::new(&quotients(m)));
+        for (m, u) in &units {
+            let [e] = &u.type_errors()[..] else {
+                panic!("one rejection")
+            };
+            let fix = format!("    y = 1r{};", " / 1".repeat(*m));
+            assert!(e.contains(&fix), "{e}");
+            assert_eq!(e.matches("1.0f64").count(), 1, "{e}");
+        }
+        scaling::check("rejecting n nested divisions with a menu", n, |m| {
             std::hint::black_box(units[&m].type_errors());
         });
     });
