@@ -1745,9 +1745,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRES-each-settle-share | impl attempt 1 | 2026-11-09 15:16 | started on 55b632b9, worktree /home/luke/Work/wt/pres-each-settle-share / load 11.77 11.55 14.83 |
 | PRES-pendants-wider | impl attempt 1 | 2026-11-09 15:16 | candidate ends from disjunct projections: 11/226 z1 and 14/271 z0 now exact; disj_groups 20/20 / load 13.53 23.67 24.12 |
 | PRES-small-point | impl attempt 1 | 2026-11-09 17:33 | start; worktree /home/luke/Work/wt/small-point from origin/main 6b3a8c52 |
-| PRINT-anyatom-pattern | impl attempt 1 | 2026-11-09 17:33 | affected groups pass (l01_15/16/20/22/28/29/39, zed_kernel, zedc, zedc_elab, l01_21/23/25/27: 118 pieces 0 failed, load ~15-22); negative control old printer: 3 |
+| PRINT-anyatom-pattern | impl attempt 1 | 2026-11-09 17:33 | ready: wt/print-anyatom-pattern f5aeef6a rebased on origin/main; final doc-check run 33 pieces 0 failed / load 14.59 15.01 15.83 |
 | QUESTIONS-cleanup | impl attempt 1 | 2026-11-09 16:52 | ready: zed c2dcb5b (wt/questions-cleanup), zed-impl df82d402 (wt/questions-cleanup-impl); not pushed |
-| SOUND-div-exact | running | 2026-11-09 17:46 |  |
+| READ-atom-meet | running | 2026-11-09 17:51 |  |
+| SOUND-div-exact | impl attempt 1 | 2026-11-09 17:46 | start; load 16.42 |
 | TIGHTEN-each-whole | impl attempt 1 | 2026-11-09 14:19 | ready: wt/tighten-each-whole 757335f3; final run 526 pieces, 1 failed (l01_07 copies: spec DESIGN.md changed at 16:43, not this branch); clippy, fmt clean; foll |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
