@@ -1742,20 +1742,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| A55-spec | impl attempt 1 | 2026-11-09 16:33 | ready: wt/a55 507f7121, wt/a55-spec eb375db; A55 answer A applied, parity typed, soundness law + Galois text added; sync --check 0, grammar check 0; l01/m0_03/l |
-| BLOCKS-remove-local | impl attempt 1 | 2026-11-09 15:18 | ready: 6d34cd6e on wt/blocks-remove-local; 391 pieces pass, doc/clippy/fmt clean; not pushed / load 23.20 |
-| CK-data-memo | impl attempt 2 | 2026-11-07 23:45 | negative controls (not committed, reverted): exact set walk per row -> disjoint 56.0x bytes (fails); memos off -> shared-rows test killed at 60 s, load1 27-30 |
-| GROUP-overlaps-names | impl attempt 1 | 2026-11-09 14:55 | ready f35c9a00: 302 pieces 0 failed with doc check, clippy and fmt clean; open GROUP-overlaps-lower / load 14.17 |
+| BATCH-91 | running | 2026-11-09 18:01 |  |
+| FACET-typed | impl attempt 1 | 2026-11-09 17:10 | started; worktrees facet-typed (6cab7e76) and facet-typed-spec (e12afda) created and seeded |
+| GROUP-overlaps-lower | impl attempt 1 | 2026-11-09 17:22 | started; worktree from 6cab7e76; load 9.56 8.65 11.90 |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
-| PA-walk-nest-cost | impl attempt 1 | 2026-11-09 15:39 | ready 078dca93 on origin/main 87a45509; targeted 527 pieces 0 failed / load 37.20 47.47 36.21 |
-| PRES-each-settle-share | impl attempt 1 | 2026-11-09 15:16 | started on 55b632b9, worktree /home/luke/Work/wt/pres-each-settle-share / load 11.77 11.55 14.83 |
 | PRES-pendants-wider | impl attempt 1 | 2026-11-09 15:16 | candidate ends from disjunct projections: 11/226 z1 and 14/271 z0 now exact; disj_groups 20/20 / load 13.53 23.67 24.12 |
 | PRES-small-point | impl attempt 1 | 2026-11-09 17:33 | start; worktree /home/luke/Work/wt/small-point from origin/main 6b3a8c52 |
 | PRINT-anyatom-pattern | impl attempt 1 | 2026-11-09 17:33 | ready: wt/print-anyatom-pattern f5aeef6a rebased on origin/main; final doc-check run 33 pieces 0 failed / load 14.59 15.01 15.83 |
-| QUESTIONS-cleanup | impl attempt 1 | 2026-11-09 16:52 | ready: zed c2dcb5b (wt/questions-cleanup), zed-impl df82d402 (wt/questions-cleanup-impl); not pushed |
-| READ-atom-meet | running | 2026-11-09 17:51 |  |
-| SOUND-div-exact | impl attempt 1 | 2026-11-09 17:46 | start; load 16.42 |
-| TIGHTEN-each-whole | impl attempt 1 | 2026-11-09 14:19 | ready: wt/tighten-each-whole 757335f3; final run 526 pieces, 1 failed (l01_07 copies: spec DESIGN.md changed at 16:43, not this branch); clippy, fmt clean; foll |
+| READ-atom-meet | impl attempt 1 | 2026-11-09 17:51 | worktree wt/read-atom-meet at c7126aed; cause located: Ty::meet_rest keeps self's payloads (crates/zedc-types/src/ty.rs); building seed-sweep probe |
+| SOUND-div-exact | impl attempt 1 | 2026-11-09 17:46 | fix in both transfers; new tests red without it, green with it; running affected groups / load 9.56 8.65 11.90 |
+| TEST-fence-count | impl attempt 1 | 2026-11-09 16:36 | start |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
