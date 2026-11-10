@@ -35,6 +35,7 @@ Binder naming a type
 Numeric literal at a carrier that cannot take it
 Decimal literal, or `/` of integer literals, that nothing gives a carrier
 Two numeric values with no common carrier
+Two values compared by `==` or `!=` whose types share no value
 Match binder unused in its guard and arm
 Capitalized free name used once in a signature and nowhere in the body
 Capitalized name in a `struct` field that is neither a declared type parameter nor a name in scope
