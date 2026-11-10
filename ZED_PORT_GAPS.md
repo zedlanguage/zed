@@ -3426,3 +3426,16 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A `Cell<Option<Span>>` set around a closure and restored after it, so a printer deep in the call reads the span of the message being written | `Ck::near`, `Ck::spelling` | Mutation (gap 11) | the span passed to the printer as an argument, with the spelling function built from it |
 | A spelling function passed as `&dyn Fn(&Value) -> Option<Cow<'a, str>>` (`Spell`) through the type printer | `Printer::spell`, `KType::surfaces_spelled`, `Ty::write_parts`, `Ty::text_spelled`, `show_with` | Function values (`dyn Fn`) | a function value |
 | `Cow<'a, str>`: a spelling borrowed from the program's text, or `-` and the spelling of the negated value formatted | `Ck::spelling` | None | Zed shares strings, so the spelling is a plain `String` |
+
+## Entries from PERF-wide-sum-project (`crates/zedc-presburger/src/presburger.rs`, `conjuncts.rs`, `presburger/deep.rs`, `presburger/formula.rs`; `crates/zedc-preimage/src/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A union-find by size with path halving over `Vec<usize>` parent and size arrays mutated in place, left by `return None` at the first cycle | `forest_row_hulls` | Mutation (gap 11), early exit (gap 12) | A persistent union-find, or a fold over the rows whose state holds the map from node to root and gives `None` at a cycle |
+| A depth-first walk on an explicit `Vec` stack of `Node` with a `Vec<bool>` of atoms entered, filling the order and the links above each node by index | `forest_row_hulls` | Mutation (gap 11) | A recursive walk over the forest returning the order and the links as values |
+| A `HashMap<&BTreeMap<Atom, Int>, &Int>` keyed by a borrow of each row's terms, and a `HashMap<&Atom, usize>` numbering atoms by borrow | `forest_row_hulls` | Borrowed keys | Maps keyed by the values; Zed shares values, so no borrow is needed |
+| A closure taking `&dyn Fn(usize) -> Ends` for the ends of each atom | `forest_row_hulls` (`without_each`) | Function values (`dyn Fn`) | A function value |
+| `Lin::plus_assign(&mut self, &Lin)`, adding into a term in place, with `plus` as a clone and a call of it | `Lin::plus_assign`, `Lin::plus`, `Walk::lin_sum` | Mutation (gap 11) | `plus` on a persistent map of terms, which shares the larger operand and costs the smaller |
+| A `RefCell<HashSet<(Tid, Eid)>>` field of the walk, the sums read in place, filled through `&self` by `insert` (whose `bool` stops the read of a left spine) | `Walk::summed`, `Walk::lin_sum` | Mutation (gap 11) | A set threaded through the walk with the memo of terms |
+| A loop down the left operands of a sum pushing each right operand onto a `Vec`, then a loop adding them innermost first | `Walk::lin_sum` | Mutation (gap 11) | A recursive function on the left spine returning the base and the list of right operands |
+| `return Err(..)` from inside the loop over a conjunct's terms at the first term that is not a name, and `return` at the first witness | `Conjuncts::shape_of` | Early exit (gap 12) | A fold over the terms whose state stops at the first failure or witness |
