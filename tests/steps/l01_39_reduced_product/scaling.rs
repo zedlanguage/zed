@@ -1412,3 +1412,75 @@ fn a_sum_over_many_names_is_assumed_in_time_near_linear() {
         },
     );
 }
+
+/// The scope of `z0 + … + z(k-1) + h >= 0 || g <= -1` and the `k` tests
+/// `a_i + h >= 0 || a_i + g <= -5` that follow it: each test shares `h` and `g` with the first
+/// disjunction, so all are one block, and `a_i` has both signs, so it is the leaf of no star.
+fn disjunctions_beside_a_wide_disjunction(k: usize) -> (Scope, Vec<Term>) {
+    let p = Premises::new();
+    let wide: Vec<Arc<str>> = (0..k).map(|j| format!("z{j:06}").into()).collect();
+    let small: Vec<Arc<str>> = (0..k).map(|i| format!("a{i:06}").into()).collect();
+    let names: Vec<Arc<str>> = ["g".into(), "h".into()]
+        .into_iter()
+        .chain(wide.iter().cloned())
+        .chain(small.iter().cloned())
+        .collect();
+    let sum = wide
+        .iter()
+        .fold(var("h"), |t, x| prim(Prim::Add, t, var(x)));
+    let first = prim(
+        Prim::Or,
+        prim(Prim::Ge, sum, int(0)),
+        prim(Prim::Le, var("g"), int(-1)),
+    );
+    let s = ints(&names).assume(&first, true, &p);
+    let tests = small
+        .iter()
+        .map(|a| {
+            prim(
+                Prim::Or,
+                prim(Prim::Ge, prim(Prim::Add, var(a), var("h")), int(0)),
+                prim(Prim::Le, prim(Prim::Add, var(a), var("g")), int(-5)),
+            )
+        })
+        .collect();
+    (s, tests)
+}
+
+#[test]
+fn a_disjunction_beside_a_wide_one_in_its_block_costs_its_own_part() {
+    // A kept block indexes its parts by the terms their conjuncts compare, in a persistent map
+    // that the next projection shares and copies along the path to the entry it changes. The
+    // terms of each test, `a_i + h` and `a_i + g`, sort just before those of the first
+    // disjunction, `g` and `h + z0 + … + z(k-1)`, so each new entry lands in the leaf that holds
+    // the term of `k + 1` names; held by value, that term was copied with each such path copy
+    // (item PERF-block-terms-key). The blocks themselves, kept in a persistent map of the scope,
+    // are shared as well (item PERF-seen-blocks-arc). COMPLEXITY.md C44.
+    let n = 64;
+    let inputs = scaling::inputs(n, disjunctions_beside_a_wide_disjunction);
+    let p = Premises::new();
+    for k in [n, scaling::FACTOR * n] {
+        let (s, tests) = &inputs[&k];
+        let end = tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
+        assert!(!end.bottom, "k = {k}: the scope became empty");
+        assert_eq!(
+            end.relation.set().len(),
+            k + 1,
+            "k = {k}: each disjunction kept"
+        );
+        assert_eq!(
+            end.relation.blocks().all().count(),
+            1,
+            "k = {k}: the disjunctions are one block"
+        );
+        assert!(end.relation.stars().is_empty(), "k = {k}: no star");
+    }
+    scaling::check(
+        "k disjunctions beside one on k names in one block",
+        n,
+        |k| {
+            let (s, tests) = &inputs[&k];
+            tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
+        },
+    );
+}

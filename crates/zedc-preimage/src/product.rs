@@ -1093,8 +1093,16 @@ struct Seen {
     /// under one key): a part whose record is taken away or changed outside its block's
     /// projection ([`Seen::drop_part`]) is due at the block's next projection
     /// ([`Block::forgot`]), since only a change of its conjuncts or names would otherwise
-    /// make it due.
-    blocks: imbl::OrdMap<BlockId, Block>,
+    /// make it due. Each block is shared, so that a copy of an entry, as a path copy of the
+    /// persistent map makes for each entry of a node it changes, costs a reference count and
+    /// not the block's twenty fields (item PERF-seen-blocks-arc).
+    // Complexity tradeoff: a `Block` held by value was cloned with each entry a path copy
+    // copies, up to 16 a node, each clone about twenty reference counts and 360 bytes of node;
+    // behind an `Arc` an entry is one pointer, and a block is cloned only where it is changed
+    // in place (`Seen::drop_part`, `Arc::make_mut`) or brought up to date (`Block::update`,
+    // which makes a new block from the kept one as before). The order is unchanged, O(log b)
+    // per keep for `b` kept blocks; the constant drops. COMPLEXITY.md C44.
+    blocks: imbl::OrdMap<BlockId, Arc<Block>>,
     owners: imbl::OrdMap<PartKey, imbl::OrdSet<BlockId>>,
     /// Each class's bound on its leaf, as [`Scope::leaf_bound_stays`] last found it
     /// ([`LeafBound`]).
@@ -1124,7 +1132,10 @@ impl Seen {
         for b in ids {
             match self.blocks.get_mut(b) {
                 Some(block) if block.parts.contains_key(&at) => {
-                    block.forgot.insert(at.clone());
+                    // Complexity tradeoff: copy on write, the one block changed is cloned
+                    // when another scope shares it, O(1) in its persistent fields, where a
+                    // path copy of the map cloned every block of the node. COMPLEXITY.md C44.
+                    Arc::make_mut(block).forgot.insert(at.clone());
                 }
                 _ => gone.push(*b),
             }
@@ -1729,8 +1740,16 @@ struct Block {
     cons: imbl::OrdSet<Arc<Formula>>,
     split: Arc<Split>,
     /// The parts of the conjuncts that compare each term ([`unsigned`]), and the number of
-    /// conjuncts with a part that mention each name.
-    terms: imbl::OrdMap<BTreeMap<Atom, Int>, imbl::OrdSet<PartAt>>,
+    /// conjuncts with a part that mention each name. Each term is shared, so that a path copy
+    /// of the map copies a reference count per key and not its terms (item
+    /// PERF-block-terms-key).
+    // Complexity tradeoff: a term held by value (a `BTreeMap` of its t names) was cloned with
+    // each key a path copy of this persistent map copies, O(t) per key, up to 16 keys a node,
+    // so k parts added beside a conjunct on a term of k names cost O(k^2); behind an `Arc` a
+    // key is copied in O(1). A key is never changed once made, so an `Arc` suffices and a
+    // persistent map of the term is not needed. Keys are compared by the terms they hold, as
+    // before, so the order of the map is unchanged. COMPLEXITY.md C44.
+    terms: imbl::OrdMap<Arc<BTreeMap<Atom, Int>>, imbl::OrdSet<PartAt>>,
     mentions: imbl::OrdMap<Arc<str>, usize>,
     /// The parts whose records were taken away or changed since the block was kept
     /// ([`Seen::drop_part`]), due at its next projection.
@@ -1891,7 +1910,17 @@ impl Block {
         }
         if let Some(g) = &of {
             for t in terms(g) {
-                self.terms.entry(t).or_default().insert(at.clone());
+                // Complexity tradeoff: one `Arc` allocation per term not yet a key, so that a
+                // later path copy of `terms` shares the key, O(1), not O(t). COMPLEXITY.md C44.
+                match self.terms.get_mut(&t) {
+                    Some(parts) => {
+                        parts.insert(at.clone());
+                    }
+                    None => {
+                        self.terms
+                            .insert(Arc::new(t), imbl::OrdSet::unit(at.clone()));
+                    }
+                }
             }
             for n in syms(g) {
                 *self.mentions.entry(n).or_insert(0) += 1;
@@ -2597,7 +2626,9 @@ impl Scope {
         for key in std::mem::take(&mut block.added) {
             self.seen.owners.entry(key).or_default().insert(block.id);
         }
-        self.seen.blocks.insert(block.id, block);
+        // Complexity tradeoff: the block goes behind an `Arc` once, one allocation, so the path
+        // copy this insert makes copies pointers, not blocks. COMPLEXITY.md C44.
+        self.seen.blocks.insert(block.id, Arc::new(block));
     }
 
     /// Settles the stale leaves among `names` ([`Scope::lazy`]): projects each one's star,
