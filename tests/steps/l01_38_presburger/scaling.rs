@@ -10,6 +10,7 @@ use super::stages::Row;
 
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
+use zedc::store::conjuncts::Conjuncts;
 use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, decide, satisfiable};
 
@@ -819,5 +820,72 @@ fn splinters_of_splinters_scale() {
         512,
         Ok(true),
         split_twice_in_a_chain,
+    );
+}
+
+/// `name >= 0`.
+fn at_least_zero(name: &str) -> Formula {
+    let l = Lin::atom(Atom::Sym(Arc::from(name)));
+    Formula::Con(Con::ge(&l, &Lin::constant(0)))
+}
+
+/// The conjunction of `wide` and then each of `small`, each added to a copy of the conjunction
+/// before, which is kept, as a scope keeps the conjunction it narrows: each addition then copies
+/// the path of the persistent maps it changes, as it does in a scope.
+fn each_on_a_copy(wide: &Formula, small: &[Formula]) -> Vec<Conjuncts> {
+    let mut c = Conjuncts::default();
+    c.and(wide.clone());
+    let mut kept = Vec::with_capacity(small.len() + 1);
+    for g in small {
+        let mut next = c.clone();
+        next.and(g.clone());
+        kept.push(std::mem::replace(&mut c, next));
+    }
+    kept.push(c);
+    kept
+}
+
+/// k bounds `ai >= 0` added one at a time, each to a copy of the conjunction before, beside one
+/// constraint on a term of k names, `z0 + ... + z(k-1) >= 0`. Its term is the greatest key of
+/// the map of the constraints kept on each term (`Conjuncts::tight`), and the names are numbered
+/// so that each new key is greater than the last, so each lands in the leaf that holds the wide
+/// term, and the copy copies that leaf. A key held by value cost its k names at each copy, O(k)
+/// a bound and O(k^2) in all; shared, O(1) a bound (item PERF-conjuncts-term-keys, COMPLEXITY.md
+/// C46). Likewise k disjunctions `ai >= 0 || bi >= 0` beside `z0 + ... + z(k-1) >= 0 || y >= 0`,
+/// for the map of the disjunctions of two constraints by their two terms (`Conjuncts::pair`).
+#[test]
+fn a_conjunct_beside_a_wide_one_costs_its_own_key() {
+    let wide = |k: usize| {
+        let sum = (0..k).fold(Lin::constant(0), |l, i| {
+            l.plus(&Lin::atom(Atom::Sym(Arc::from(format!("z{i:06}")))))
+        });
+        Formula::Con(Con::ge(&sum, &Lin::constant(0)))
+    };
+    let bounds = scaling::inputs(64, |k| {
+        let small: Vec<Formula> = (0..k).map(|i| at_least_zero(&format!("a{i:06}"))).collect();
+        (wide(k), small)
+    });
+    scaling::check("bounds beside a constraint on k names", 64, |k| {
+        let (wide, small) = &bounds[&k];
+        std::hint::black_box(each_on_a_copy(wide, small));
+    });
+    let pairs = scaling::inputs(64, |k| {
+        let small: Vec<Formula> = (0..k)
+            .map(|i| {
+                Formula::or(vec![
+                    at_least_zero(&format!("a{i:06}")),
+                    at_least_zero(&format!("b{i:06}")),
+                ])
+            })
+            .collect();
+        (Formula::or(vec![wide(k), at_least_zero("y")]), small)
+    });
+    scaling::check(
+        "disjunctions of two bounds beside one of a constraint on k names",
+        64,
+        |k| {
+            let (wide, small) = &pairs[&k];
+            std::hint::black_box(each_on_a_copy(wide, small));
+        },
     );
 }

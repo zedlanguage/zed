@@ -3446,3 +3446,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 |---|---|---|---|
 | A `HashSet<Span>` of the operations on literals alone, filled in place as each operator ends and read by the operator around it | `Ck::lit_ops`, `Ck::lit_op_meets`, the `Frame::Unary` step | Mutation (gap 11) | the walk returns, with each operand's type, whether it is an operation on literals alone, so no set is kept |
 | Walks of an expression on an explicit `Vec` stack: the literals of an operation adopting a carrier, the paired components of two tuple displays, the literals of an operation on literals alone | `Ck::lit_op_meets`, `paired`, `literals_alone` | Mutation (gap 11) | recursion on the expression |
+
+## Entries from PERF-conjuncts-term-keys (`crates/zedc-presburger/src/conjuncts.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Persistent maps keyed by `Arc<BTreeMap<Atom, Int>>` and `Arc<PairKey>`, looked up by a borrow of the key's contents (`Arc<T>: Borrow<T>`), so that a path copy clones a pointer, not the term | `Conjuncts::tight`, `Conjuncts::pairs`, `Conjuncts::and_one`, `pair`, `unindex` | Borrowed keys | Maps keyed by the terms; Zed shares values, so a path copy shares each key and no `Arc` or borrow is needed |
+| A fixed-size array `[Tight; 2]` of maps, one per `Rel`, indexed by `tight_at(rel)` and changed in place through `&mut self.tight[..]` | `Conjuncts::tight`, `and_one`, `unindex` | Mutation (gap 11) | A record of two maps, one field per relation, or one map keyed by the pair (term, relation); a change gives a new record |

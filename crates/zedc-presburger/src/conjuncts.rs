@@ -94,8 +94,17 @@ impl<T: Ord + Clone + Default> Uses<(usize, T)> {
     }
 }
 
-/// The key of a constraint for the rule that keeps the tighter of two: its term and relation.
-type Tight = (BTreeMap<Atom, Int>, Rel);
+/// The constraints kept by the rule that keeps the tighter of two, of one relation, by their
+/// term ([`Conjuncts::tight`]).
+type Tight = OrdMap<Arc<BTreeMap<Atom, Int>>, Arc<Formula>>;
+
+/// The index of the map of `rel`'s constraints in [`Conjuncts::tight`].
+fn tight_at(rel: Rel) -> usize {
+    match rel {
+        Rel::Ge => 0,
+        Rel::Eq => 1,
+    }
+}
 
 /// Conjuncts removed from every index but the blocks, by their atoms ([`Conjuncts::swap`]).
 type Held = BTreeMap<BTreeSet<Atom>, Vec<Arc<Formula>>>;
@@ -136,11 +145,27 @@ fn pair_of(g: &Formula) -> Option<(PairKey, Int, Int)> {
 pub struct Conjuncts {
     /// The conjuncts. `false` is the set of `false` alone.
     set: OrdSet<Arc<Formula>>,
-    /// Of the constraints on each term with each relation, the one kept.
-    tight: OrdMap<Tight, Arc<Formula>>,
+    /// Of the constraints on each term with each relation, the one kept: a map for each
+    /// relation ([`tight_at`]), keyed by the term alone, so that a lookup reads the
+    /// constraint's own term and makes no key. Each key is shared, so that a copy of it, as a
+    /// path copy of the persistent map makes for each key of a node it changes, costs a
+    /// reference count and not the term (item PERF-conjuncts-term-keys).
+    // Complexity tradeoff: a key `(BTreeMap<Atom, Int>, Rel)` held by value was cloned with
+    // each key a path copy copies, O(t) for a term of t atoms, up to 16 keys a node and one
+    // node a level, and each lookup cloned the term to make its key; behind an `Arc`, keyed by
+    // the term within the map of its relation, a path copy is O(1) per key and a lookup clones
+    // nothing. The order of each map is the order of the terms, as before within a relation,
+    // and the maps are only looked up, never walked, so no answer changes. One `Arc` per
+    // constraint kept. COMPLEXITY.md C46.
+    tight: [Tight; 2],
     /// Of the disjunctions of two constraints on each pair of terms, those that no other
-    /// implies ([`Conjuncts::pair`]).
-    pairs: OrdMap<PairKey, Front>,
+    /// implies ([`Conjuncts::pair`]). Each key is shared, as in `tight`.
+    // Complexity tradeoff: a `PairKey` held by value was cloned with each key a path copy
+    // copies, O(t) for terms of t atoms; behind an `Arc` it is O(1). A lookup still builds the
+    // key from the disjunction ([`pair_of`]), O(t), once per disjunction added or removed, and
+    // the `Arc` is made only for a key not yet in the map. Keys compare by the terms they
+    // hold, so the order is unchanged. COMPLEXITY.md C46.
+    pairs: OrdMap<Arc<PairKey>, Front>,
     /// The conjuncts that mention each name, alone or in a product.
     users: Uses<Arc<Formula>>,
     /// The blocks of the conjuncts: the forest of the conjuncts of no star, and each star's
@@ -1647,9 +1672,12 @@ impl Conjuncts {
             return;
         }
         // The looser constraint on the same term, which `g` replaces in its block.
+        // Complexity tradeoff: looked up by a borrow of the constraint's own term, where the key
+        // `(term, rel)` cloned the term first, O(t) a lookup; now O(t log m) for the comparisons
+        // alone, for m constraints kept. COMPLEXITY.md C46.
         let mut looser = None;
         if let Formula::Con(c) = &g
-            && let Some(old) = self.tight.get(&(c.lin.terms.clone(), c.rel))
+            && let Some(old) = self.tight[tight_at(c.rel)].get(&c.lin.terms)
         {
             let Formula::Con(o) = &**old else {
                 unreachable!("a constraint")
@@ -1681,7 +1709,9 @@ impl Conjuncts {
             self.index.solo.add(&n, &g);
         }
         if let Formula::Con(c) = &*g {
-            self.tight.insert((c.lin.terms.clone(), c.rel), g.clone());
+            // Complexity tradeoff: the one copy of the term, made once per constraint kept and
+            // shared by every later path copy, O(t) once. COMPLEXITY.md C46.
+            self.tight[tight_at(c.rel)].insert(Arc::new(c.lin.terms.clone()), g.clone());
         }
         // Else a conjunct of the same atoms [`Conjuncts::swap`] removes, `g` itself first.
         let old = looser.or_else(|| {
@@ -1732,7 +1762,17 @@ impl Conjuncts {
                 held.entry(h.atoms()).or_default().push(h);
             }
         }
-        self.pairs.entry(key).or_default().insert(c, (d, g.clone()));
+        // Complexity tradeoff: the key is put behind an `Arc` only when it is new, one
+        // allocation, so that later path copies share it. COMPLEXITY.md C46.
+        match self.pairs.get_mut(&key) {
+            Some(front) => {
+                front.insert(c, (d, g.clone()));
+            }
+            None => {
+                self.pairs
+                    .insert(Arc::new(key), OrdMap::unit(c, (d, g.clone())));
+            }
+        }
         true
     }
 
@@ -1752,9 +1792,12 @@ impl Conjuncts {
         }
         self.counted(g, &ns, false, p);
         if let Formula::Con(c) = &**g {
-            let key = (c.lin.terms.clone(), c.rel);
-            if self.tight.get(&key) == Some(g) {
-                self.tight.remove(&key);
+            // Complexity tradeoff: looked up and removed by a borrow of the term, where the key
+            // `(term, rel)` cloned the term first, O(t); the path copy of the removal clones
+            // each key of a node in O(1). COMPLEXITY.md C46.
+            let tight = &mut self.tight[tight_at(c.rel)];
+            if tight.get(&c.lin.terms) == Some(g) {
+                tight.remove(&c.lin.terms);
             }
         }
         if let Some((key, c, _)) = pair_of(g)
