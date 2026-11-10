@@ -31,9 +31,9 @@ const SEED: u64 = 0x1_29b;
 pub(super) struct Items<'t> {
     text: &'t str,
     pub(super) cuts: Vec<usize>,
-    /// The name each item declares: the first name of its declaration; `None` for a unit
-    /// annotation.
-    names: Vec<Option<&'t str>>,
+    /// The names each item declares: each named target of a binding `a, b = …`, otherwise the
+    /// first name of its declaration; none for a unit annotation.
+    names: Vec<Vec<&'t str>>,
 }
 
 /// The items of `text`; one item, the whole text, when it does not lex or parse.
@@ -41,7 +41,7 @@ pub(super) fn items(text: &str) -> Items<'_> {
     let whole = Items {
         text,
         cuts: vec![0, text.len()],
-        names: vec![None],
+        names: vec![Vec::new()],
     };
     let Ok((tokens, _)) = lex_with_docs(text) else {
         return whole;
@@ -85,27 +85,37 @@ fn line_rest(text: &str, at: usize) -> usize {
     }
 }
 
-/// The first name of the declaration of item node `item`: its first name token outside its
-/// annotations, found in pre-order with an explicit stack; `None` for a unit annotation.
+/// The names the declaration of item node `item` declares, found in pre-order with an explicit
+/// stack, outside its annotations: each named target of a binding (`PlainBinding = Target %
+/// ',' '=' Expr …`, so `a, _, b = e` declares `a` and `b`), otherwise its first name token;
+/// none for a unit annotation.
 fn declared<'t>(
     text: &'t str,
     tokens: &[zedc::lex::Token],
     tree: &Tree,
     item: usize,
-) -> Option<&'t str> {
+) -> Vec<&'t str> {
+    let name = |n: usize| {
+        let t = &tokens[tree.nodes[n].start];
+        assert!(matches!(t.tok, Tok::Name(_)), "a `Name` node is a name");
+        &text[t.span.start..t.span.end]
+    };
     let mut stack = vec![item];
     while let Some(n) = stack.pop() {
         match tree.name(n) {
             "Annot" | "UnitAnnot" => continue,
-            "Name" => {
-                let t = &tokens[tree.nodes[n].start];
-                assert!(matches!(t.tok, Tok::Name(_)), "a `Name` node is a name");
-                return Some(&text[t.span.start..t.span.end]);
+            "Name" => return vec![name(n)],
+            // A target is a `Name` or `_`; the value and boundary after the targets are not.
+            "PlainBinding" => {
+                return (tree.nodes[n].kids.iter())
+                    .filter(|&&k| tree.name(k) == "Target")
+                    .flat_map(|&k| tree.nodes[k].kids.first().map(|&m| name(m)))
+                    .collect();
             }
             _ => stack.extend(tree.nodes[n].kids.iter().rev()),
         }
     }
-    None
+    Vec::new()
 }
 
 impl<'t> Items<'t> {
@@ -113,23 +123,47 @@ impl<'t> Items<'t> {
         self.names.len()
     }
 
-    /// `order` with the items of each name put back in their written order: the places the
-    /// items of a name take in `order` are given to them in written order. O(i).
+    /// `order` with the items of each name put back in their written order. Items that share a
+    /// name are joined, and the joins taken transitively, so `a, b = …` joins the items of `a`
+    /// with those of `b`; the places the items of a join take in `order` are given to them in
+    /// written order. A join may hold two items with no name in common, which then also keep
+    /// their written order: a coarser restriction than each name's, and still a permutation.
+    /// O(i·α(i)) for i items, by union-find with union by size and path halving, over one hash
+    /// lookup per declared name.
     fn keep_names(&self, order: Vec<usize>) -> Vec<usize> {
-        let mut written: HashMap<&str, VecDeque<usize>> = HashMap::new();
-        for (i, name) in self.names.iter().enumerate() {
-            if let Some(name) = name {
-                written.entry(name).or_default().push_back(i);
+        let n = self.len();
+        let mut parent: Vec<usize> = (0..n).collect();
+        let mut size = vec![1usize; n];
+        let find = |parent: &mut [usize], mut i: usize| {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
             }
+            i
+        };
+        let mut first: HashMap<&str, usize> = HashMap::new();
+        for (i, names) in self.names.iter().enumerate() {
+            for &name in names {
+                let j = *first.entry(name).or_insert(i);
+                let (a, b) = (find(&mut parent, i), find(&mut parent, j));
+                if a != b {
+                    let (big, small) = if size[a] >= size[b] { (a, b) } else { (b, a) };
+                    parent[small] = big;
+                    size[big] += size[small];
+                }
+            }
+        }
+        // The items of each join in written order, under the join's root.
+        let mut written = vec![VecDeque::new(); n];
+        for i in 0..n {
+            written[find(&mut parent, i)].push_back(i);
         }
         order
             .into_iter()
-            .map(|i| match self.names[i] {
-                Some(name) => written
-                    .get_mut(name)
-                    .and_then(VecDeque::pop_front)
-                    .expect("one place per item of the name"),
-                None => i,
+            .map(|i| {
+                written[find(&mut parent, i)]
+                    .pop_front()
+                    .expect("one place per item of the join")
             })
             .collect()
     }
@@ -398,7 +432,7 @@ test { 25 -> 20 }
 #[test]
 fn a_units_items_are_cut_with_their_comments_tables_and_marks() {
     let items = items(ACCOUNTS);
-    assert_eq!(items.names, [Some("fee"), Some("deposit"), Some("tens")]);
+    assert_eq!(items.names, [["fee"], ["deposit"], ["tens"]]);
     let texts: Vec<&str> = (0..items.len())
         .map(|i| &ACCOUNTS[items.cuts[i]..items.cuts[i + 1]])
         .collect();
@@ -420,7 +454,7 @@ fn a_units_items_are_cut_with_their_comments_tables_and_marks() {
 fn two_items_on_one_line_are_cut_apart() {
     let text = "low = 1; high = 9; // the bounds\nspan = high - low;\n";
     let items = items(text);
-    assert_eq!(items.names, [Some("low"), Some("high"), Some("span")]);
+    assert_eq!(items.names, [["low"], ["high"], ["span"]]);
     assert_eq!(items.cuts, [0, 8, 33, text.len()]);
     let p = items.permuted(&[2, 1, 0]);
     assert_eq!(
@@ -456,10 +490,7 @@ main() = 0;
 #[test]
 fn the_declarations_of_a_name_keep_their_written_order() {
     let items = items(STEPS);
-    assert_eq!(
-        items.names,
-        [Some("step"), Some("start"), Some("step"), Some("main")]
-    );
+    assert_eq!(items.names, [["step"], ["start"], ["step"], ["main"]]);
     let [reversed, shuffled] = items.orders();
     assert_eq!(reversed, [3, 0, 1, 2]);
     for order in [reversed, shuffled] {
@@ -467,6 +498,39 @@ fn the_declarations_of_a_name_keep_their_written_order() {
         let second = order.iter().position(|&i| i == 2).unwrap();
         assert!(first < second, "{order:?}");
     }
+}
+
+/// An item that declares two names keeps its place against the other declarations of each:
+/// `a, b = (1, 2)` declares `a` and `b`, so it stays before or after `b = 3` as written, in
+/// either written order. The unit is rejected, since a scope binds `b` once, and the rejection
+/// is at the second binding of `b`, so swapping the two moves it. Keyed by its first name only,
+/// `a, b = (1, 2)` was free to move past `b = 3`, and the rejection moved with the swap.
+#[test]
+fn an_item_of_several_names_keeps_its_order_against_each() {
+    for (unit, names) in [
+        ("a, b = (1, 2);\nb = 3;\n", [vec!["a", "b"], vec!["b"]]),
+        ("b = 3;\na, b = (1, 2);\n", [vec!["b"], vec!["a", "b"]]),
+    ] {
+        let items = items(unit);
+        assert_eq!(items.names, names);
+        assert_eq!(items.orders(), [[0, 1], [0, 1]], "{unit}");
+        let orders = ["reversed", "shuffled"].into_iter().zip(items.orders());
+        check_unit(unit, unit, &items, &orders.collect::<Vec<_>>());
+    }
+}
+
+/// Names shared along a chain of items join them all, and `_` declares nothing: `c` is free
+/// to move, and the three items that declare `a` or `b` keep their written order.
+#[test]
+fn items_joined_through_shared_names_keep_their_written_order() {
+    let unit = "a, _ = (1, 2);\nc = 0;\nb, a = (3, 4);\nb = 5;\n";
+    let items = items(unit);
+    assert_eq!(
+        items.names,
+        [vec!["a"], vec!["c"], vec!["b", "a"], vec!["b"]]
+    );
+    let [reversed, _] = items.orders();
+    assert_eq!(reversed, [0, 2, 1, 3]);
 }
 
 /// Two incomparable arrows of `f` whose domains overlap on 0 to 10. DESIGN.md writes the second
@@ -504,7 +568,7 @@ fn swapping_two_declarations_of_one_name_changes_which_arrow_runs() {
 fn at_l1_the_two_declarations_are_rejected_alike_in_either_order() {
     let unit = overlap([0, 1], "a");
     let items = items(&unit);
-    assert_eq!(items.names, [Some("f"), Some("f"), Some("probe")]);
+    assert_eq!(items.names, [["f"], ["f"], ["probe"]]);
     let [written, swapped] = [[0, 1, 2], [1, 0, 2]].map(|order| items.permuted(&order).answer());
     assert_eq!(written, swapped);
     let messages: Vec<(Place, &str)> = written
@@ -685,6 +749,17 @@ fn rates(n: usize) -> String {
         .collect()
 }
 
+/// `n` items, every other one a binding of two names out of eight (`v0` to `v4`, `w0` to
+/// `w2`), the rest functions over seven names, so the joins of the bindings grow and merge.
+fn pairs(n: usize) -> String {
+    (0..n)
+        .map(|i| match i % 2 {
+            0 => format!("rate{}(positional x) = x + {i};\n", i % 7),
+            _ => format!("v{}, w{} = ({i}, {i});\n", i % 5, i % 3),
+        })
+        .collect()
+}
+
 /// Cutting a unit into items is O(i): the lex and parse, and one pass over the root's items.
 #[test]
 fn cutting_a_unit_into_items_scales() {
@@ -704,6 +779,22 @@ fn moving_the_items_of_a_unit_scales() {
     let units: HashMap<usize, String> = [n, 8 * n].into_iter().map(|k| (k, rates(k))).collect();
     let cut: HashMap<usize, Items> = units.iter().map(|(&k, t)| (k, items(t))).collect();
     scaling::check("moving n items of seven names", n, |k| {
+        let items = &cut[&k];
+        for order in items.orders() {
+            assert_eq!(items.permuted(&order).text.len(), units[&k].len());
+        }
+    });
+}
+
+/// Keeping the written order of items that declare several names is O(i): the joins of
+/// shared names are found by union-find, with one hash lookup per name.
+#[test]
+fn moving_items_of_several_names_scales() {
+    let n = 2000;
+    let units: HashMap<usize, String> = [n, 8 * n].into_iter().map(|k| (k, pairs(k))).collect();
+    let cut: HashMap<usize, Items> = units.iter().map(|(&k, t)| (k, items(t))).collect();
+    assert_eq!(cut[&n].names[1], ["v1", "w1"]);
+    scaling::check("moving n items, every other one of two names", n, |k| {
         let items = &cut[&k];
         for order in items.orders() {
             assert_eq!(items.permuted(&order).text.len(), units[&k].len());
