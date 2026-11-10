@@ -1290,3 +1290,67 @@ fn tests_that_give_an_input_another_domain_read_it_through_the_tree() {
         },
     );
 }
+
+/// The scope of `z0 + … + z(k-1) >= 0` and the `k` tests `a_i_u + a_i_v + a_i_w >= 0` that
+/// follow it, each on three inputs of its own, written so that each test's conjunct comes
+/// after every earlier one in the order of the parts' keys and before the sum.
+fn parts_beside_a_wide_part(k: usize) -> (Scope, Vec<Term>) {
+    let p = Premises::new();
+    let wide: Vec<Arc<str>> = (0..k).map(|j| format!("z{j}").into()).collect();
+    let small: Vec<[Arc<str>; 3]> = (0..k)
+        .map(|i| ["u", "v", "w"].map(|x| format!("a{i:06}_{x}").into()))
+        .collect();
+    let names: Vec<Arc<str>> = wide
+        .iter()
+        .cloned()
+        .chain(small.iter().flatten().cloned())
+        .collect();
+    let sum = |xs: &[Arc<str>]| {
+        xs[1..]
+            .iter()
+            .fold(var(&xs[0]), |t, x| prim(Prim::Add, t, var(x)))
+    };
+    let s = ints(&names).assume(&prim(Prim::Ge, sum(&wide), int(0)), true, &p);
+    let tests = small
+        .iter()
+        .map(|xs| prim(Prim::Ge, sum(xs), int(0)))
+        .collect();
+    (s, tests)
+}
+
+#[test]
+fn a_test_beside_a_wide_part_costs_its_own_part() {
+    // Each scope's record of its parts' projections ([`Scope::projected`]) is a persistent
+    // map that the next test shares and copies along the path to the entry it changes. The
+    // conjunct `z0 + … + z(k-1) >= 0`, which mentions `k` inputs, is the greatest key, so the
+    // entry of each new test lands in its leaf, and each copy of that leaf copied the key's
+    // formula and the intervals of its `k` names while they were held by value (item
+    // PERF-partkey-arc). Negative control, the cloning version at d5714627, not committed:
+    // 317M and 2.98G instructions (9.4 times), 64.4M and 667M bytes (10.4 times). Shared:
+    // 306M and 2.69G instructions (8.8 times), 59.9M and 518M bytes (8.7 times). The control
+    // passes the limit of 13.2 too: each test costs about 1M bytes besides the copies, and a
+    // wider part takes too long to build (its projection costs the square of its names), so
+    // at sizes a test can afford this one bounds the order and does not tell the two apart.
+    let n = 64;
+    let inputs = scaling::inputs(n, parts_beside_a_wide_part);
+    let p = Premises::new();
+    for k in [n, scaling::FACTOR * n] {
+        let (s, tests) = &inputs[&k];
+        assert_eq!(
+            s.projected.len(),
+            1,
+            "k = {k}: the wide part alone at the start"
+        );
+        let end = tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
+        assert!(!end.bottom, "k = {k}: the scope became empty");
+        assert_eq!(
+            end.projected.len(),
+            k + 1,
+            "k = {k}: one part for each test"
+        );
+    }
+    scaling::check("k tests beside a part of k names", n, |k| {
+        let (s, tests) = &inputs[&k];
+        tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
+    });
+}

@@ -1117,7 +1117,9 @@ impl Seen {
         let Some(ids) = self.owners.get(key) else {
             return;
         };
-        let at: PartAt = (matches!(key.0, Formula::Con(_)), Arc::new(key.0.clone()));
+        // Complexity tradeoff: the key's formula is shared, O(1), where it was copied, O(t) in
+        // its t terms, for each part dropped. COMPLEXITY.md C41.
+        let at: PartAt = (matches!(*key.0, Formula::Con(_)), key.0.clone());
         let mut gone: Vec<BlockId> = Vec::new();
         for b in ids {
             match self.blocks.get_mut(b) {
@@ -1484,8 +1486,15 @@ fn put_in(
     Ok(None)
 }
 
-/// The intervals and classes of a part's names when it was last projected.
-pub type Projected = Vec<(Arc<str>, IntervalSet, Congruence)>;
+/// The intervals and classes of a part's names when it was last projected, shared, so that a
+/// copy of an entry of [`Scope::projected`], as a path copy of the persistent map makes for
+/// each entry of a node it changes, costs a reference count and not the names (item
+/// PERF-partkey-arc).
+// Complexity tradeoff: a `Vec` here was copied whole with each entry a path copy of the map
+// copies, O(m) for a part of m names, so k tests beside a part of k names cost O(k^2) bytes;
+// shared, the copy is O(1), and the slice is built once when the part is projected. See
+// COMPLEXITY.md C41.
+pub type Projected = Arc<[(Arc<str>, IntervalSet, Congruence)]>;
 
 /// The names of `now` that are not in `then` or differ from it there, with their products.
 fn changed<'a>(
@@ -1518,8 +1527,17 @@ fn syms(f: &Formula) -> Vec<Arc<str>> {
 /// NARROW-lazy-settle). What the part is projected with is beside the key, not in it
 /// ([`PartWith`]): in the key, each change of a block's equalities, or of its constraints for
 /// their own part, left the part's old entry in the map, which grew by one entry for each
-/// change until the conjunct left (item ST-projected-stale).
-pub type PartKey = (Formula, Option<Arc<str>>);
+/// change until the conjunct left (item ST-projected-stale). The conjunct is shared with the
+/// relation that holds it, so that a copy of a key, as a path copy of [`Scope::projected`] or
+/// `Seen::owners` makes for each key of a node it changes, costs a reference count and not
+/// the constraint's terms (item PERF-partkey-arc). Keys are compared by the formulas they
+/// hold, as before.
+// Complexity tradeoff: a `Formula` held by value was cloned with each key a path copy copies,
+// O(t) for a constraint of t terms (its `Lin` is a `BTreeMap`); behind an `Arc` the copy is
+// O(1). Comparing two keys still reads the formulas, O(t) at worst, as before: an id would
+// make it O(1) but give an order that differs from the formulas' and so other answers.
+// COMPLEXITY.md C41.
+pub type PartKey = (Arc<Formula>, Option<Arc<str>>);
 
 /// What a part of the relation was projected with: the equalities among the constraints it is
 /// projected with, sorted, and the constraints among them on the terms the part's conjunct
@@ -1528,8 +1546,11 @@ pub type PartKey = (Formula, Option<Arc<str>>);
 /// or a constraint on one of its terms, joins or leaves them, as `-2 <= x - y <= 2` after the
 /// disjunction above, which leaves no value. A constraint on other terms alone does not make
 /// a conjunct's part due, so that a new constraint costs the parts on its term and not the
-/// block's (the walk `v_i + w <= 0 || v_(i+1) - w >= 1` through the shared name `w`).
-pub type PartWith = (Arc<[Con]>, Option<Formula>);
+/// block's (the walk `v_i + w <= 0 || v_(i+1) - w >= 1` through the shared name `w`). The
+/// constraints are shared, as the key is ([`PartKey`]).
+// Complexity tradeoff: as for [`PartKey`], O(1) for each copy of an entry instead of O(t) for
+// the t terms of the constraints together. COMPLEXITY.md C41.
+pub type PartWith = (Arc<[Con]>, Option<Arc<Formula>>);
 
 /// Whether a conjunct `g` of a class ([`conjuncts::Class`]) keeps the projection onto its leaf
 /// exact ([`Scope::core_leaf_bound`]): a constraint, the negation of a bound, or a conjunct
@@ -1565,20 +1586,24 @@ struct Split {
     eqs: Arc<[Con]>,
     /// The constraints on each term, either sign, which only the other conjuncts read.
     on: BTreeMap<BTreeMap<Atom, Int>, Vec<Con>>,
-    /// The constraints together, in the order they came.
-    base: Formula,
-    /// The least constraint, the key of the constraints' own part.
-    least: Option<Formula>,
+    // Complexity tradeoff: built once per split, O(t) in the t terms of the constraints; the
+    // part's key and what it is projected with take a reference to it, O(1), where they took
+    // a deep copy each, O(t). COMPLEXITY.md C41.
+    /// The constraints together, in the order they came, shared with the [`PartWith`] of their
+    /// own part.
+    base: Arc<Formula>,
+    /// The least constraint, the key of the constraints' own part, shared with the relation.
+    least: Option<Arc<Formula>>,
     /// The leaf, when the conjuncts are a star's.
     leaf: Option<Arc<str>>,
 }
 
 impl Split {
     /// The context of the constraints `cons`, in the star of leaf `leaf` if any.
-    fn new(cons: &[&Formula], leaf: Option<&Arc<str>>) -> Split {
+    fn new(cons: &[&Arc<Formula>], leaf: Option<&Arc<str>>) -> Split {
         let mut eqs: Vec<Con> = cons
             .iter()
-            .filter_map(|g| match g {
+            .filter_map(|g| match &***g {
                 Formula::Con(c) if c.rel == Rel::Eq => Some(c.clone()),
                 _ => None,
             })
@@ -1586,14 +1611,14 @@ impl Split {
         eqs.sort_unstable();
         let mut on: BTreeMap<BTreeMap<Atom, Int>, Vec<Con>> = BTreeMap::new();
         for g in cons {
-            if let Formula::Con(c) = g {
+            if let Formula::Con(c) = &***g {
                 on.entry(unsigned(c)).or_default().push(c.clone());
             }
         }
         Split {
             eqs: eqs.into(),
             on,
-            base: Formula::and(cons.iter().map(|&g| g.clone()).collect()),
+            base: Arc::new(Formula::and(cons.iter().map(|&g| (**g).clone()).collect())),
             least: cons.iter().min().map(|&c| c.clone()),
             leaf: leaf.cloned(),
         }
@@ -1601,11 +1626,11 @@ impl Split {
 
     /// The part of `g`, a conjunct that is not a constraint: `g` with the constraints, keyed by
     /// `g`, projected with the equalities and the constraints on the terms `g` compares.
-    fn part(&self, g: &Formula) -> (PartKey, PartWith, Formula) {
+    fn part(&self, g: &Arc<Formula>) -> (PartKey, PartWith, Formula) {
         (
             (g.clone(), self.leaf.clone()),
             self.with(g),
-            self.formula(Some(g)),
+            self.formula(Some(&**g)),
         )
     }
 
@@ -1619,25 +1644,28 @@ impl Split {
             .collect();
         boxed.sort_unstable();
         let boxed = Formula::and(boxed.into_iter().map(Formula::Con).collect());
-        (self.eqs.clone(), Some(boxed))
+        (self.eqs.clone(), Some(Arc::new(boxed)))
     }
 
     /// The formula projected for the part of `g`, or for the constraints' own part when `g`
     /// is `None`.
     fn formula(&self, g: Option<&Formula>) -> Formula {
         match g {
-            Some(g) => Formula::and(vec![g.clone(), self.base.clone()]),
-            None => self.base.clone(),
+            Some(g) => Formula::and(vec![g.clone(), (*self.base).clone()]),
+            None => (*self.base).clone(),
         }
     }
 
     /// The constraints' own part, when there are any.
     fn constraints(&self) -> Option<(PartKey, PartWith, Formula)> {
-        let least = self.least.clone().filter(|_| self.base != Formula::top())?;
+        let least = self
+            .least
+            .clone()
+            .filter(|_| *self.base != Formula::top())?;
         Some((
             (least, self.leaf.clone()),
             (self.eqs.clone(), Some(self.base.clone())),
-            self.base.clone(),
+            (*self.base).clone(),
         ))
     }
 }
@@ -1646,11 +1674,11 @@ impl Split {
 /// alone when there are any; each part with its key and what it is projected with, in the
 /// star of leaf `leaf` if any.
 fn split<'a>(
-    conjuncts: impl Iterator<Item = &'a Formula>,
+    conjuncts: impl Iterator<Item = &'a Arc<Formula>>,
     leaf: Option<&Arc<str>>,
 ) -> Vec<(PartKey, PartWith, Formula)> {
-    let (cons, others): (Vec<&Formula>, Vec<&Formula>) =
-        conjuncts.partition(|g| matches!(g, Formula::Con(_)));
+    let (cons, others): (Vec<&Arc<Formula>>, Vec<&Arc<Formula>>) =
+        conjuncts.partition(|g| matches!(&***g, Formula::Con(_)));
     let context = Split::new(&cons, leaf);
     let mut parts: Vec<(PartKey, PartWith, Formula)> =
         others.into_iter().map(|g| context.part(g)).collect();
@@ -1757,10 +1785,7 @@ impl Block {
             .filter(|g| matches!(&***g, Formula::Con(_)))
             .cloned()
             .collect();
-        let split = Split::new(
-            &cons.iter().map(|g| &**g).collect::<Vec<_>>(),
-            leaf.as_ref(),
-        );
+        let split = Split::new(&cons.iter().collect::<Vec<_>>(), leaf.as_ref());
         let mut out = Block {
             id: b,
             parts: imbl::OrdMap::new(),
@@ -1791,7 +1816,7 @@ impl Block {
     /// Adds the constraints' own part, when there are constraints; returns where it stands.
     fn add_constraints(&mut self) -> Option<PartAt> {
         let (key, with, formula) = self.split.constraints()?;
-        let at: PartAt = (true, Arc::new(key.0.clone()));
+        let at: PartAt = (true, key.0.clone());
         self.add_part(at.clone(), key, with, None, &formula);
         Some(at)
     }
@@ -1927,7 +1952,7 @@ impl Block {
         changed: &BTreeSet<BTreeMap<Atom, Int>>,
         due: &mut BTreeSet<PartAt>,
     ) -> bool {
-        let cons: Vec<&Formula> = self.cons.iter().map(|g| &**g).collect();
+        let cons: Vec<&Arc<Formula>> = self.cons.iter().collect();
         let split = Split::new(&cons, self.leaf.as_ref());
         if split.eqs != self.split.eqs {
             return false;
@@ -1946,7 +1971,7 @@ impl Block {
             return false;
         }
         if let Some((key, _, _)) = self.split.constraints() {
-            self.remove_part(&(true, Arc::new(key.0)));
+            self.remove_part(&(true, key.0));
         }
         self.split = Arc::new(split);
         due.extend(self.add_constraints());
@@ -4334,9 +4359,9 @@ impl Scope {
         for g in gone {
             let keys: Vec<PartKey> = self
                 .projected
-                .range((Formula::clone(&g), None)..)
+                .range((g.clone(), None)..)
                 .map(|(k, _)| k)
-                .take_while(|k| k.0 == *g)
+                .take_while(|k| k.0 == g)
                 .cloned()
                 .collect();
             for k in &keys {
@@ -4417,10 +4442,10 @@ impl Scope {
                 }
                 first.push(at);
             }
-            let mut trees: BTreeMap<usize, Vec<&Formula>> = BTreeMap::new();
+            let mut trees: BTreeMap<usize, Vec<&Arc<Formula>>> = BTreeMap::new();
             for (g, at) in self.relation.set().iter().zip(first) {
                 if let Some(i) = at {
-                    trees.entry(root(&mut parent, i)).or_default().push(&**g);
+                    trees.entry(root(&mut parent, i)).or_default().push(g);
                 }
             }
             let parts: Vec<(PartKey, PartWith, Formula)> = trees
@@ -5552,7 +5577,7 @@ impl Scope {
             self.project_part(&b.formula(part));
             let mut again = false;
             let mut empty = false;
-            for (n, old) in part.names.iter().zip(&before) {
+            for (n, old) in part.names.iter().zip(before.iter()) {
                 let p = self.get(n);
                 if (p.ints(), &p.cell.congruence.element) == (&old.1, &old.2) {
                     continue;
@@ -5702,17 +5727,15 @@ impl Scope {
     /// leaf's own product of many intervals is then the one disjunction, which the solver
     /// projects exactly ([`presburger::project`]).
     fn core_leaf_bound(&self, core: &[Arc<Formula>]) -> Option<(IntervalSet, Arc<Formula>)> {
-        let (cons, others): (Vec<&Formula>, Vec<&Formula>) = core
-            .iter()
-            .map(|g| &**g)
-            .partition(|g| matches!(g, Formula::Con(_)));
+        let (cons, others): (Vec<&Arc<Formula>>, Vec<&Arc<Formula>>) =
+            core.iter().partition(|g| matches!(&***g, Formula::Con(_)));
         let context = Split::new(&cons, None);
         let mut out = IntervalSet::top();
         let parts = others.into_iter().map(|g| context.part(g));
         for (_, _, part) in parts.chain(context.constraints()) {
             out = out.meet(&self.part_leaf_bound(&part)?);
         }
-        Some((out, Arc::new(context.base)))
+        Some((out, context.base))
     }
 
     /// The bound one part of a class's conjuncts gives its leaf ([`Scope::core_leaf_bound`]):
