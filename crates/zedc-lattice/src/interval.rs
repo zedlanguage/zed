@@ -12,7 +12,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::Neg;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use zed_kernel::{Prim, Value};
 
@@ -127,8 +127,9 @@ impl fmt::Display for End {
 /// AVL tree joined and split as in Blelloch, Ferizovic and Sun, "Just Join for Parallel Ordered
 /// Sets", 2016). A clone shares the whole tree; an operation that builds a new set copies only
 /// the `O(log p)` nodes on the paths it changes and shares the rest. Each node also holds, for
-/// its subtree, the count of pieces, the first and last ends, the longest run of integers left
-/// out between two pieces, and a hash of the pieces in order, so that these are read in `O(1)`.
+/// its subtree, the count of pieces, the first and last ends and a hash of the pieces in
+/// order, so that these are read in `O(1)`, and, once asked for, the longest run of integers
+/// left out between two pieces.
 // Complexity tradeoff: the naive version is a sorted `Vec` of pieces; there a membership test
 // or a search is O(log p), but a clone, a meet, a join, an equality test and the longest gap
 // are each O(p), so a scope that tests and narrows a name of p pieces once for each of n
@@ -137,15 +138,20 @@ impl fmt::Display for End {
 // names. Used: the persistent tree. A clone is O(1); a meet, a join and a difference of sets
 // of m <= n pieces split one set around each piece of the other and are O(m log(n/m + 1)):
 // O(log n) for one piece, O(n) for two sets of n as the merge of two lists; an inclusion test
-// is O(m log n); a test or search O(log p); the longest gap, the hull, the count and an
-// inequality O(1). An inclusion test and an equality test walk both trees together and pass
-// by every subtree the two share, and every subtree of one that lies inside a piece of the
-// other, so sets that differ on d paths cost O(d log p) and equal sets built apart O(p); a
-// meet or join that leaves an operand unchanged returns its tree shared, so the test after
-// it is O(1). Tradeoffs: each piece costs a node of about 150 bytes, not 32; a meet or join
-// first runs the two inclusion tests that find the shared case; a walk over every piece
-// costs a stack of O(log p) nodes; building from a list is O(p) after the sort, as before.
-// Test:
+// is O(m log n); a test or search O(log p); the hull, the count and an inequality O(1); the
+// longest gap O(1) for each node that does not hold its run yet, so O(log p) after a
+// one-piece change to a set already asked. The runs are filled on demand, not as a node is
+// built, because a run is a difference of two ends and the ends can be numbers whose
+// difference costs time and space in their width (the chains of `l01_25_preimage_catalog`
+// s22.rs and the nested squares of powers.rs, which never ask for a gap); for the same
+// reason a meet does not add 1 to an end it keeps. An inclusion test and an equality test
+// walk both trees together and pass by every subtree the two share, and every subtree of one
+// that lies inside a piece of the other, so sets that differ on d paths cost O(d log p) and
+// equal sets built apart O(p); a meet or join that leaves an operand unchanged returns its
+// tree shared, so the test after it is O(1). Tradeoffs: each piece costs a node of about 150
+// bytes, not 32; a meet or join first runs the two inclusion tests that find the shared case;
+// a walk over every piece costs a stack of O(log p) nodes; building from a list is O(p) after
+// the sort, as before. Test:
 // `l01_24_refinement_lattices::scaling::interval_set_operations_scale`; COMPLEXITY.md row
 // INTERVAL-persistent.
 #[derive(Clone, Default)]
@@ -174,8 +180,8 @@ struct Node {
     /// The upper end of the subtree's last piece.
     last: End,
     /// The longest run of integers missing between two neighboring pieces of the subtree, 0
-    /// for one piece.
-    gap: Num,
+    /// for one piece: set by the first [`gap`] that asks for it.
+    gap: OnceLock<Num>,
     /// The hash of the subtree's pieces in order: `Σ h_i · R^(count - 1 - i)` modulo `P`.
     hash: u64,
     /// `R^count` modulo `P`.
@@ -248,11 +254,9 @@ fn height(t: &Link) -> u8 {
 /// The node with the given children and piece, which lies between them with at least one
 /// integer missing on each side.
 fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
-    let mut gap = Num::ZERO;
     let (mut hash, mut pow, mut count, mut h) = (0, 1, 1, 0);
     let first = match &left {
         Some(l) => {
-            gap = l.gap.clone().max(run_between(&l.last, &piece.0));
             (hash, pow, count, h) = (l.hash, l.pow, count + l.count, l.height);
             l.first.clone()
         }
@@ -262,7 +266,6 @@ fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
     pow = mul_mod(pow, R);
     let last = match &right {
         Some(r) => {
-            gap = gap.max(r.gap.clone()).max(run_between(&piece.1, &r.first));
             hash = add_mod(mul_mod(hash, r.pow), r.hash);
             pow = mul_mod(pow, r.pow);
             count += r.count;
@@ -280,9 +283,28 @@ fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
         count,
         first,
         last,
-        gap,
+        gap: OnceLock::new(),
         hash,
         pow,
+    })
+}
+
+/// The longest run of integers missing between two neighboring pieces of `n`'s subtree,
+/// computed for the nodes that do not hold it yet and kept in them. A node is built without
+/// it because a run is a difference of two ends, and the ends can be wide numbers that most
+/// sets never need subtracted (the chains of l01_25 s22.rs, whose ends grow by a digit at each
+/// step). The nodes a new set shares with an older one keep their runs, so after one
+/// [`IntervalSet::max_gap`] of the older set the next costs `O(1)` for each new node.
+fn gap(n: &Node) -> &Num {
+    n.gap.get_or_init(|| {
+        let mut g = Num::ZERO;
+        if let Some(l) = &n.left {
+            g = run_between(&l.last, &n.piece.0).max(gap(l).clone());
+        }
+        if let Some(r) = &n.right {
+            g = g.max(run_between(&n.piece.1, &r.first)).max(gap(r).clone());
+        }
+        g
     })
 }
 
@@ -478,8 +500,15 @@ fn intersection(a: Link, b: Link) -> Link {
         .filter(|e| *e >= lo);
     let past = (inside.as_ref().map(|t| &t.last))
         .or(reach.as_ref())
-        .filter(|e| **e > hi)
-        .cloned();
+        .filter(|e| **e > hi);
+    // The part past `hi` of that piece meets only the pieces of `ra`, which start past
+    // `hi + 1`, so it is kept as `lo..=e`: starting it at `hi + 1` would add 1 to `hi`, and
+    // adding to a kept power computes an approximation of the power, whose cost grows with
+    // its exponent (the nested squares of l01_25 powers.rs).
+    let above = match past {
+        Some(e) => Some(join(None, keyed((lo.clone(), e.clone())), above)),
+        None => above,
+    };
     let mut middle = inside.map(|t| {
         if t.last > hi {
             let (t, ((l, _), _)) = split_last(t);
@@ -491,10 +520,6 @@ fn intersection(a: Link, b: Link) -> Link {
     if let Some(e) = reach {
         middle = Some(join(None, keyed((lo, e.min(hi.clone()))), middle));
     }
-    let above = match past {
-        Some(e) => Some(join(None, keyed((hi.succ(), e)), above)),
-        None => above,
-    };
     let left = intersection(la, below);
     concat(concat(left, middle), intersection(ra, above))
 }
@@ -846,9 +871,10 @@ impl IntervalSet {
     }
 
     /// The length of the longest run of integers missing between two neighboring pieces, 0
-    /// for fewer than two pieces: `O(1)`.
+    /// for fewer than two pieces: `O(1)` for each node that does not hold its run yet: `O(p)`
+    /// the first time, `O(log p)` after a one-piece change to a set already asked.
     pub fn max_gap(&self) -> Num {
-        self.root.as_ref().map_or(Num::ZERO, |n| n.gap.clone())
+        self.root.as_ref().map_or(Num::ZERO, |n| gap(n).clone())
     }
 
     /// The least and the greatest endpoint, or `None` for the empty set: `O(1)`.
@@ -1794,7 +1820,7 @@ mod tests {
             hash = add_mod(mul_mod(hash, R), piece_hash(p));
             pow = mul_mod(pow, R);
         }
-        assert_eq!(n.gap, gap);
+        assert_eq!(*super::gap(n), gap);
         assert_eq!((n.hash, n.pow), (hash, pow));
         hl.max(hr) + 1
     }
