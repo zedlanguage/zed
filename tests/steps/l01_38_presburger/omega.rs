@@ -1465,3 +1465,189 @@ fn forest_answers_match_enumeration() {
     }
     assert!(checked >= 50, "only {checked} cases have a point");
 }
+
+/// `Σ c·a + k`, where a name `qN` is the solver's own atom `N` ([`Atom::Aux`]) and any other
+/// name is a symbol.
+fn aux_lin(terms: &[(&str, i128)], k: i128) -> Lin {
+    terms.iter().fold(Lin::constant(k), |l, (s, c)| {
+        let a = match s.strip_prefix('q') {
+            Some(n) => Atom::Aux(n.parse().expect("a number")),
+            None => sym(s),
+        };
+        l.plus(&Lin::atom(a).times(*c))
+    })
+}
+
+fn aux_ge(terms: &[(&str, i128)], k: i128) -> Formula {
+    Formula::Con(Con::ge(&aux_lin(terms, k), &Lin::constant(0)))
+}
+
+fn aux_eq(terms: &[(&str, i128)], k: i128) -> Formula {
+    Formula::Con(Con::eq(&aux_lin(terms, k), &Lin::constant(0)))
+}
+
+/// `(c && a) || (!c && b)`.
+fn picked(c: Formula, a: Formula, b: Formula) -> Formula {
+    let not = Formula::Not(Shared::new(c.clone()));
+    Formula::or(vec![Formula::and(vec![c, a]), Formula::and(vec![not, b])])
+}
+
+/// `q == |x - k|`, written as the translator writes it.
+fn abs_of(q: &str, x: &str, k: i128) -> Formula {
+    picked(
+        aux_ge(&[(x, 1)], -k),
+        aux_eq(&[(x, 1), (q, -1)], -k),
+        aux_eq(&[(x, 1), (q, 1)], -k),
+    )
+}
+
+/// The values of `i` in `lo..=hi` at which `f` has a point, each decided by the solver.
+fn values_of_i(f: &Formula, lo: i64, hi: i64) -> Vec<i64> {
+    (lo..=hi)
+        .filter(|&v| {
+            let one = Formula::and(vec![f.clone(), eq(&[("i", 1)], -(v as i128))]);
+            satisfiable(&one).expect("decided").is_some()
+        })
+        .collect()
+}
+
+/// `|i - k|` written twice for each `k` below `n`, as `q(2k)` and `q(2k+1)`, with each pair
+/// summing to at least 6 and `i <= n + 10`: `i` in `..=-3` and `n+2..=n+10`.
+fn twin_absolute_values(n: usize) -> Formula {
+    let mut parts = Vec::new();
+    for k in 0..n {
+        let (a, b) = (format!("q{}", 2 * k), format!("q{}", 2 * k + 1));
+        parts.push(abs_of(&a, "i", k as i128));
+        parts.push(abs_of(&b, "i", k as i128));
+        parts.push(aux_ge(&[(a.as_str(), 1), (b.as_str(), 1)], -6));
+    }
+    parts.push(aux_ge(&[("i", -1)], 10 + n as i128));
+    Formula::and(parts)
+}
+
+/// s22 case 1185 of `l01_25_preimage_catalog` as the reference transfer writes it: a shared
+/// term written once at each use, so `q2` and `q3`, `q4` and `q5`, `q7` and `q8`, and `q9`,
+/// `q10` and `q11` are each defined alike. Its one point has `i == -9`.
+fn case_1185() -> Formula {
+    let mut parts = vec![
+        aux_eq(&[("i", 1), ("q0", -3), ("q1", -1)], 0),
+        aux_ge(&[("q1", 1)], 0),
+        aux_ge(&[("q1", -1)], 2),
+        abs_of("q2", "i", 0),
+        abs_of("q3", "i", 0),
+    ];
+    for q in ["q4", "q5"] {
+        parts.push(picked(
+            aux_ge(&[("i", -1)], -5),
+            aux_eq(&[("i", 2), (q, -1)], 0),
+            aux_eq(&[("i", 1), (q, -1)], 3),
+        ));
+    }
+    parts.push(picked(
+        aux_ge(&[("q5", -1)], -6),
+        aux_eq(&[("q5", 1), ("q6", -1)], 0),
+        aux_eq(&[("q6", 1)], 6),
+    ));
+    for q in ["q7", "q8"] {
+        parts.push(picked(
+            aux_ge(&[("q3", 1)], -4),
+            aux_eq(&[("q4", 1), (q, 1)], 5),
+            aux_eq(&[("q6", 1), (q, -1)], 0),
+        ));
+    }
+    for q in ["q9", "q10", "q11"] {
+        parts.push(picked(
+            aux_ge(&[("q2", 1)], -5),
+            aux_eq(&[("q7", 1), (q, -1)], 0),
+            aux_eq(&[("q8", 1), (q, 1)], 0),
+        ));
+    }
+    parts.push(picked(
+        aux_eq(&[("q1", 1)], 0),
+        aux_eq(&[("q9", 1), ("q10", 1), ("q12", -1)], 0),
+        aux_eq(&[("q11", 1), ("q12", 1)], 0),
+    ));
+    parts.extend([
+        aux_ge(&[("i", -1)], 10),
+        aux_ge(&[("q12", 1)], -21),
+        aux_ge(&[("q12", -1)], 26),
+    ]);
+    Formula::and(parts)
+}
+
+#[test]
+fn twin_definitions_are_merged_before_a_tied_projection() {
+    // Two auxiliary atoms defined alike (`q0 == |i|` and `q1 == |i|`) cannot be told apart by
+    // their names, so the projection is tied (`Refusal::Unordered`), and before item
+    // PROJECT-box-half-open it kept only `i <= 11` from the rows: the bounded side of the
+    // half-open box was not narrowed. Each pair is one atom at every point, so it is made one
+    // and the merged formula projected; both answers are checked against the values the
+    // solver finds one at a time.
+    let f = twin_absolute_values(1);
+    let set = |ps: &[(Option<i64>, i64)]| {
+        IntervalSet::from_pieces(
+            ps.iter()
+                .map(|&(lo, hi)| {
+                    (
+                        lo.map_or(End::NegInf, |v| End::Fin(Num::from(v))),
+                        End::Fin(Num::from(hi)),
+                    )
+                })
+                .collect(),
+        )
+    };
+    let (each, _) = project_each(&f, &[sym("i")]).expect("answered");
+    let got = each[0].clone().expect("answered");
+    assert_eq!(got, set(&[(None, -3), (Some(3), 11)]), "{f}");
+    let values = values_of_i(&f, -40, 40);
+    assert_eq!(values, (-40..=-3).chain(3..=11).collect::<Vec<_>>(), "{f}");
+    // Case 1185 also needs a point of `f` with `i` at most a bound to show that `f` has a
+    // point, where asking for `f` itself is refused (`Hull::asked`): its upper end is -9, the
+    // one value, where it was 4.
+    let f = case_1185();
+    let (each, _) = project_each(&f, &[sym("i")]).expect("answered");
+    let got = each[0].clone().expect("answered");
+    assert_eq!(
+        got.bounds(),
+        Some((&End::NegInf, &End::Fin(Num::from(-9)))),
+        "{f}"
+    );
+    assert_eq!(values_of_i(&f, -40, 40), vec![-9], "{f}");
+}
+
+#[test]
+fn twin_definitions_merge_in_time_near_linear() {
+    // n pairs of twins over the same symbol: numbering the definitions is one pass in the order
+    // of their dependencies with a hash lookup each, and the merged formula has n absolute
+    // values of one symbol. Control (once, not kept): an O(n²) scan of the definitions in the
+    // merge failed this test.
+    let n = 32;
+    let (small, large) = (
+        twin_absolute_values(n),
+        twin_absolute_values(scaling::FACTOR * n),
+    );
+    for (m, f) in [(n, &small), (scaling::FACTOR * n, &large)] {
+        let (each, _) = project_each(f, &[sym("i")]).expect("answered");
+        let m = m as i64;
+        let want = [
+            (End::NegInf, End::Fin(Num::from(-3))),
+            (End::Fin(Num::from(m + 2)), End::Fin(Num::from(m + 10))),
+        ];
+        assert_eq!(
+            each[0].clone().expect("answered"),
+            IntervalSet::from_pieces(want.to_vec()),
+            "{m}"
+        );
+    }
+    scaling::check_order(
+        "twin definitions merged before a tied projection",
+        n,
+        1,
+        |m| {
+            drop(project_each(
+                if m == n { &small } else { &large },
+                &[sym("i")],
+            ));
+        },
+    );
+}

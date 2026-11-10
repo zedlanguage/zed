@@ -9225,12 +9225,31 @@ fn project_each_named(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
         // Projected with each disjunction kept, by questions that no order of the parts
         // changes ([`project_parts`] with `sets`).
         Naming::Tied(..) => {
-            return match settle_as_sets(absorbed(f, syms).0)? {
+            let tied = || match settle_as_sets(absorbed(f, syms).0)? {
                 None => Ok(no_points(syms)),
                 // A projection may keep a disjunct not shown to have a point.
                 Some(AsSets { p, .. }) => {
                     project_parts(p, syms, Some(f), true, &mut HashMap::new())
                 }
+            };
+            // With atoms defined alike made one, the tie may be gone; each answer is sound,
+            // so their meet is, and no wider than either. Each merge leaves fewer atoms,
+            // so the call below ends.
+            let Some(g) = twins_merged(f, syms) else {
+                return tied();
+            };
+            return match (project_each_named(&g, syms), tied()) {
+                (Ok((mut each, skipped)), Ok((others, other_skipped))) => {
+                    meet_each(&mut each, others);
+                    let skipped = if other_skipped.is_empty() {
+                        other_skipped
+                    } else {
+                        skipped
+                    };
+                    Ok((each, skipped))
+                }
+                (Ok(each), Err(_)) => Ok(each),
+                (Err(_), r) => r,
             };
         }
     };
@@ -9242,6 +9261,317 @@ fn project_each_named(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
             .collect(),
         skipped.into_iter().map(|e| r.back_refusal(e)).collect(),
     ))
+}
+
+/// The atoms of `f`, other than `syms`, that a top-level conjunct of `f` defines alike: two
+/// atoms `x` and `y` with conjuncts `D(x, a)` and `D(y, a)`, the same formula over the same
+/// other atoms `a`, where `D` allows at most one value of its atom for each value of the
+/// others ([`functional`]), so that `x == y` at every point. Each such atom is replaced by the
+/// least atom it is equal to, which leaves the projection onto `syms` as it was, since every
+/// point of `f` is a point of the result with the replaced atoms dropped, and every point of
+/// the result one of `f` with each replaced atom given the value of the atom that replaced it.
+/// `None` when no two atoms are found equal.
+///
+/// The atoms are numbered as in value numbering: an atom with one defining conjunct is
+/// numbered once every other atom of that conjunct defined so has been, by the conjunct
+/// written with the atom as `#` and each other atom as its number; two atoms with the same
+/// such conjunct get one number. An atom used as a factor of a product, an atom with two
+/// defining conjuncts or none, an atom whose conjunct defines another atom too, and an atom
+/// whose definition reaches itself through others, is its own number.
+///
+/// The formula of a tied projection ([`Naming::Tied`]) whose atoms share a color because the
+/// formula defines two of them alike, as the old transfer writes a shared subterm once at
+/// each place it is used (seed 1000 case 1185 of `l01_25_preimage_catalog::s22`), loses the
+/// tie, and with it the refusals ([`Refusal::Unordered`]) that left its hull open on a side.
+// Complexity tradeoff: two atoms are found equal only through definitions alike as written,
+// up to the order of the parts, `Formula::and`'s tightening and the numbers of the other atoms:
+// equal atoms defined by different formulas, by a disjunction of three cases or more, by a
+// conjunct that defines two atoms of a cycle (`i == 3 * q0 + q1`, with `q0` and `q1` both
+// unknown), or by two conjuncts, stay apart, and the projection keeps the refusals the tie
+// gives. The naive way compares the definitions of each pair of atoms: O(A²) comparisons for
+// A defined atoms, each as long as a conjunct. Here each step is linear or near it, in the
+// size N of the formula's distinct parts: one walk of the formula with a visited set
+// ([`functional`], whose unions merge the smaller set into the larger, O(N log N)); the atoms
+// of each conjunct that defines one atom, listed once, since a conjunct that defines two or
+// more waits for none; the strongly connected components, O(N); and one numbered, sorted and
+// hashed copy of each conjunct that defines one atom, O(N log N) in all. Why: finding every
+// pair of equal atoms is deciding the equality of two terms of the formula, which is the
+// whole projection problem. Trigger: a projection whose atoms share a color. Tests:
+// `l01_38_presburger::omega::twin_definitions_are_merged_before_a_tied_projection` and
+// `l01_38_presburger::omega::twin_definitions_merge_in_time_near_linear` (control: the
+// pairwise comparison failed it, 16.2 times the bytes at 8 times the size, limit 14.1).
+// COMPLEXITY.md row PROJECT-box-half-open.
+fn twins_merged(f: &Formula, syms: &[Atom]) -> Option<Formula> {
+    let atoms = f.atoms();
+    let factors: HashSet<Atom> = (atoms.iter())
+        .filter_map(|a| match a {
+            Atom::Product(x, y) => Some([x.atom(), y.atom()]),
+            Atom::Sym(_) | Atom::Aux(_) => None,
+        })
+        .flatten()
+        .collect();
+    let syms: HashSet<&Atom> = syms.iter().collect();
+    let definable =
+        |a: &Atom| !matches!(a, Atom::Product(..)) && !syms.contains(a) && !factors.contains(a);
+    let defines = functional(f);
+    let conjuncts = f.conjuncts();
+    // The conjunct that defines each atom, when one alone does.
+    let mut def: HashMap<Atom, Option<usize>> = HashMap::new();
+    for (i, c) in conjuncts.iter().enumerate() {
+        for a in defines(c).iter().filter(|a| definable(a)) {
+            def.entry(a.clone())
+                .and_modify(|d| *d = None)
+                .or_insert(Some(i));
+        }
+    }
+    let def: HashMap<Atom, usize> = (def.into_iter())
+        .filter_map(|(a, d)| d.map(|d| (a, d)))
+        .collect();
+    if def.len() < 2 {
+        return None;
+    }
+    // The number of atoms each conjunct defines. A conjunct that defines two or more defines
+    // each in terms of the others, so each is its own number (`cyclic` below).
+    let mut defined: HashMap<usize, usize> = HashMap::new();
+    for &i in def.values() {
+        *defined.entry(i).or_default() += 1;
+    }
+    // The defined atoms, in the order of their conjuncts and then of the atoms, and for each,
+    // the defined atoms of its conjunct that it waits for: none for a conjunct that defines
+    // two atoms or more, so that each conjunct's atoms are listed once.
+    let mut order: Vec<&Atom> = def.keys().collect();
+    order.sort_unstable_by(|a, b| def[*a].cmp(&def[*b]).then_with(|| a.cmp(b)));
+    let place: HashMap<&Atom, usize> = order.iter().enumerate().map(|(k, a)| (*a, k)).collect();
+    let shared = |x: &Atom| defined[&def[x]] > 1;
+    let waits_for: Vec<Vec<usize>> = (order.iter())
+        .map(|&x| match shared(x) {
+            true => Vec::new(),
+            false => (conjuncts[def[x]].atoms().iter())
+                .filter(|a| *a != x)
+                .filter_map(|a| place.get(a).copied())
+                .collect(),
+        })
+        .collect();
+    // An atom whose definition reaches itself is its own number, and waited for by none: the
+    // atoms of a strongly connected component of two atoms or more, and of a conjunct that
+    // defines two atoms or more.
+    let comp = zedc_solvers::utvpi::components(&waits_for, |&w| w);
+    let mut size: HashMap<usize, usize> = HashMap::new();
+    for &c in &comp {
+        *size.entry(c).or_default() += 1;
+    }
+    let cyclic = |k: usize| size[&comp[k]] > 1 || shared(order[k]);
+    let mut waits: Vec<usize> = vec![0; order.len()];
+    let mut waiting: Vec<Vec<usize>> = vec![Vec::new(); order.len()];
+    let mut ready: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    for (x, on) in waits_for.iter().enumerate() {
+        if cyclic(x) {
+            continue;
+        }
+        for &a in on.iter().filter(|&&a| !cyclic(a)) {
+            waits[x] += 1;
+            waiting[a].push(x);
+        }
+        if waits[x] == 0 {
+            ready.push_back(x);
+        }
+    }
+    // The number of each atom numbered, written as the first atom given it.
+    let mut number: HashMap<Atom, Atom> = HashMap::new();
+    let mut seen: HashMap<Formula, Atom> = HashMap::new();
+    let mut merged = false;
+    while let Some(k) = ready.pop_front() {
+        let x = order[k];
+        let key = numbered(conjuncts[def[x]], x, &number);
+        let n = seen.entry(key).or_insert_with(|| x.clone()).clone();
+        merged |= n != *x;
+        number.insert(x.clone(), n);
+        for w in mem::take(&mut waiting[k]) {
+            waits[w] -= 1;
+            if waits[w] == 0 {
+                ready.push_back(w);
+            }
+        }
+    }
+    if !merged {
+        return None;
+    }
+    // Each atom is replaced by the least atom of its number.
+    let mut least: HashMap<&Atom, &Atom> = HashMap::new();
+    for (a, n) in &number {
+        let l = least.entry(n).or_insert(a);
+        if a < *l {
+            *l = a;
+        }
+    }
+    let to: HashMap<Atom, Atom> = (number.iter())
+        .map(|(a, n)| (a.clone(), least[n].clone()))
+        .filter(|(a, l)| a != l)
+        .collect();
+    Some(f.map_cons(&|c| Formula::Con(con_renamed(c, &|a| to.get(a).cloned()))))
+}
+
+/// `c` with each atom `a` replaced by `to(a)` where that is given, the coefficients of the
+/// atoms it makes one added.
+fn con_renamed(c: &Con, to: &dyn Fn(&Atom) -> Option<Atom>) -> Con {
+    let mut terms: BTreeMap<Atom, Int> = BTreeMap::new();
+    for (a, k) in &c.lin.terms {
+        let e = terms
+            .entry(to(a).unwrap_or_else(|| a.clone()))
+            .or_insert(Int::ZERO);
+        *e = &*e + k;
+    }
+    terms.retain(|_, k| !k.is_zero());
+    Con {
+        lin: Lin {
+            terms,
+            constant: c.lin.constant.clone(),
+        },
+        rel: c.rel,
+    }
+}
+
+/// The conjunct `c` of [`twins_merged`] with `x` written `#`, which no atom is named, each
+/// atom numbered written as its number, and the parts of each conjunction and disjunction
+/// sorted, so that two conjuncts that define two atoms alike give one formula.
+fn numbered(c: &Formula, x: &Atom, number: &HashMap<Atom, Atom>) -> Formula {
+    let hash = Atom::Sym(Arc::from("#"));
+    let to = |a: &Atom| {
+        if a == x {
+            Some(hash.clone())
+        } else {
+            number.get(a).cloned()
+        }
+    };
+    c.fold(
+        (),
+        |_, ()| (),
+        |g, (), parts| {
+            let mut out = match g {
+                Formula::Con(c) => return Formula::Con(con_renamed(c, &to)),
+                Formula::Not(_) | Formula::And(_) | Formula::Or(_) => g.rebuild(parts),
+            };
+            if let Formula::And(gs) | Formula::Or(gs) = &mut out
+                && let Some(gs) = Shared::change(gs)
+            {
+                gs.sort();
+            }
+            out
+        },
+    )
+}
+
+/// For each conjunct of `f`, the atoms it allows at most one value of for each value of its
+/// other atoms, read off its form: an equation with the atom in it; a conjunction with a part
+/// that allows one; a disjunction of two parts that each allow one, with a guard that the
+/// atom is not in, a constraint of one part whose negation is a constraint of the other
+/// ([`guard_atoms`]), so that at most one part holds for each value of the other atoms. The
+/// sets of the compound parts are found in one walk with a visited set; a constraint's is
+/// read off it.
+fn functional(f: &Formula) -> impl Fn(&Formula) -> Rc<BTreeSet<Atom>> {
+    fn of_con(c: &Con) -> Rc<BTreeSet<Atom>> {
+        Rc::new(match c.rel {
+            Rel::Eq => c.lin.terms.keys().cloned().collect(),
+            Rel::Ge => BTreeSet::new(),
+        })
+    }
+    let mut sets: HashMap<Id, Rc<BTreeSet<Atom>>> = HashMap::new();
+    f.fold(
+        (),
+        |_, ()| (),
+        |g, (), mut parts: Vec<Rc<BTreeSet<Atom>>>| {
+            let out = match g {
+                Formula::Con(c) => return of_con(c),
+                Formula::Not(_) => Rc::new(BTreeSet::new()),
+                Formula::And(_) if parts.is_empty() => Rc::new(BTreeSet::new()),
+                // The union, made into the largest set.
+                Formula::And(_) => {
+                    let largest = (0..parts.len())
+                        .max_by_key(|&i| parts[i].len())
+                        .expect("a part");
+                    let mut set = Rc::unwrap_or_clone(parts.swap_remove(largest));
+                    set.extend(parts.iter().flat_map(|p| p.iter().cloned()));
+                    Rc::new(set)
+                }
+                // The meet, read over the smaller set, less the atoms of every guard.
+                Formula::Or(gs) if gs.len() == 2 => match guard_atoms(&gs[0], &gs[1]) {
+                    Some(guard) => {
+                        let (small, large) = if parts[0].len() <= parts[1].len() {
+                            (&parts[0], &parts[1])
+                        } else {
+                            (&parts[1], &parts[0])
+                        };
+                        let set = (small.iter())
+                            .filter(|a| large.contains(*a) && !guard.contains(*a))
+                            .cloned();
+                        Rc::new(set.collect())
+                    }
+                    None => Rc::new(BTreeSet::new()),
+                },
+                Formula::Or(_) => Rc::new(BTreeSet::new()),
+            };
+            sets.insert(Id::any(g), out.clone());
+            out
+        },
+    );
+    move |c: &Formula| match c {
+        Formula::Con(c) => of_con(c),
+        _ => sets[&Id::any(c)].clone(),
+    }
+}
+
+/// The atoms in every guard of `a` and `b`, a top-level conjunct of one whose negation is a
+/// top-level conjunct of the other: `c` and `!c`, or `t >= 0` and `s >= 0` with `t + s` a
+/// constant below zero, which no integer point holds both of. `None` when there is no guard.
+/// Each conjunct is looked up once by its content, as [`Formula::complementary`] looks them up.
+fn guard_atoms(a: &Formula, b: &Formula) -> Option<BTreeSet<Atom>> {
+    let mut whole: HashSet<&Con> = HashSet::new();
+    let mut negated: HashSet<&Con> = HashSet::new();
+    let mut ge: HashMap<&BTreeMap<Atom, Int>, &Int> = HashMap::new();
+    for g in a.conjuncts() {
+        match g {
+            Formula::Con(c) => {
+                whole.insert(c);
+                if c.rel == Rel::Ge {
+                    // The least constant, the strongest constraint, decides.
+                    let k = ge.entry(&c.lin.terms).or_insert(&c.lin.constant);
+                    if c.lin.constant < **k {
+                        *k = &c.lin.constant;
+                    }
+                }
+            }
+            Formula::Not(n) => {
+                if let Formula::Con(c) = &**n {
+                    negated.insert(c);
+                }
+            }
+            Formula::And(_) | Formula::Or(_) => {}
+        }
+    }
+    let mut out: Option<BTreeSet<Atom>> = None;
+    for g in b.conjuncts() {
+        let hit = match g {
+            Formula::Con(c) if negated.contains(c) => Some(c),
+            Formula::Con(c) if c.rel == Rel::Ge => {
+                let neg: BTreeMap<Atom, Int> =
+                    c.lin.terms.iter().map(|(a, k)| (a.clone(), -k)).collect();
+                (ge.get(&neg)).and_then(|k| (&c.lin.constant + *k < Int::ZERO).then_some(c))
+            }
+            Formula::Not(n) => match &**n {
+                Formula::Con(c) if whole.contains(c) => Some(c),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(c) = hit {
+            let atoms: BTreeSet<Atom> = c.lin.terms.keys().cloned().collect();
+            out = Some(match out {
+                None => atoms,
+                Some(o) => o.intersection(&atoms).cloned().collect(),
+            });
+        }
+    }
+    out
 }
 
 /// [`project_each`] of a formula whose names no longer matter ([`Renamed`]).
@@ -10624,13 +10954,18 @@ impl Hull {
         }
     }
 
-    /// The answer of `ask` to `f` with symbol `i` at most `v` (`below`) or at least `v`.
+    /// The answer of `ask` to `f` with symbol `i` at most `v` (`below`) or at least `v`. A
+    /// point of that formula is one of `f`, so `true` shows that `f` has a point (`has`), even
+    /// where `ask` gives none ([`decide`] with `sets`) and where `ask` refuses `f` itself.
     fn asked(&mut self, i: usize, below: bool, v: &Int) -> Result<bool, Refusal> {
         let con = self.side(i, below, v);
         let r = (self.ask)(
             &Formula::and(vec![self.f.clone(), Formula::Con(con)]),
             &mut self.found,
         );
+        if matches!(r, Ok(true)) {
+            self.has = true;
+        }
         self.read_found();
         r
     }

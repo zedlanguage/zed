@@ -3400,3 +3400,13 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | Lists of the disjuncts waiting for a round, `&mut [Vec<usize>]`, handed through `by_halves_of` into the search closure and emptied in place by `mem::take` when the first point tries them | `search_by_halves`, `by_halves_of`, `hold_waiting` | Mutation (gap 11) | The lists returned by each search with the held marks, threaded through the fold over the halves |
 | A predicate `&dyn Fn(&Atom) -> bool` for the atoms a repair keeps at the model | `own_repair_in` | Function values (`dyn Fn`) | A function value, or the set of atoms kept passed as a set |
 | `retain` whose closure counts the places it has passed in a captured counter and walks a sorted list of places to remove with `Peekable::next_if_eq` | `drop_jointly_empty` | Mutation (gap 11) | `where` over the disjuncts zipped with their places, against a set of the places found with no point |
+
+## Entries from PROJECT-box-half-open (`crates/zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The sets of atoms each compound part defines, kept in a map keyed by the part's identity (`Id::any`) and filled by one fold of the formula | `functional` | Identity (gap 1) | A map keyed by the part's content digest, or the fold returns the sets with the parts |
+| An `Rc<BTreeSet<Atom>>` per part, the union of a conjunction made by taking the largest part's set out of its `Rc` (`Rc::unwrap_or_clone`) and adding the others in place | `functional` | Mutation (gap 11) | A persistent set; the union adds the smaller sets to the largest, which is already the shape of a fold |
+| Kahn's topological order with a mutable count of the atoms each one waits for, a `VecDeque` of atoms ready, and `mem::take` of each atom's waiting list | `twins_merged` | Mutation (gap 11) | A fold over the strongly connected components in their topological order (the components are already found), threading the numbers given so far |
+| A conjunct written with its atoms numbered, its parts sorted in place where the `Shared` vector has one owner (`Shared::change`), used as the key of a `HashMap<Formula, Atom>` | `numbered`, `twins_merged` (`seen`) | Mutation (gap 11) | The parts sorted into a new list; the key is the formula's content, as a map keyed by value |
+| A closure `tied` computing the tied answer, called once on either path, and a `let ... else` that returns it when no twins are found | `project_each_named` | Early exit (gap 12) | A local function and an `if` on the merged formula, each branch returning |

@@ -1009,49 +1009,76 @@ type Counts = (
 );
 
 const GUARDED: [Counts; 16] = [
-    (0, (0, 0, 51), (10, &[]), 0),
-    (250, (0, 3, 40), (9, &[]), 0),
+    (0, (0, 0, 44), (10, &[]), 0),
+    (
+        250,
+        (0, 3, 31),
+        (
+            9,
+            &["i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]"],
+        ),
+        0,
+    ),
     (
         500,
-        (0, 0, 42),
+        (0, 0, 39),
         (8, &["i [..=0] before i [..=-5, -3..=0]"]),
         0,
     ),
-    (750, (0, 0, 44), (11, &[]), 0),
-    (1000, (0, 0, 51), (14, &[]), 0),
-    (1250, (0, 2, 50), (4, &[]), 0),
+    (750, (0, 0, 32), (11, &[]), 0),
+    (
+        1000,
+        (0, 0, 49),
+        (
+            14,
+            &["i [-10..=-10, -7..=-6, -4..=-4, -2..] before i [-10..=7, 9..]"],
+        ),
+        0,
+    ),
+    (
+        1250,
+        (0, 2, 45),
+        (4, &["i [-7..] before i [..=-6, -4..]"]),
+        0,
+    ),
     (
         1500,
-        (0, 0, 42),
+        (0, 0, 36),
         (
             12,
             &[
                 "i [..=0, 6..=7, 9..=10, 12..=13, 15..=16, 18..=18] before i [..=-11, -9..=0, 3..=4, 6..=18]",
+                "i [-10..] before i [-10..=9, 11..]",
             ],
         ),
         0,
     ),
-    (1750, (0, 1, 48), (13, &[]), 0),
-    (2000, (0, 1, 51), (17, &[]), 0),
+    (1750, (0, 1, 40), (13, &[]), 0),
+    (
+        2000,
+        (0, 1, 40),
+        (17, &["i [1..] before i [1..=4, 7..]"]),
+        0,
+    ),
     (
         2250,
-        (0, 1, 41),
+        (0, 1, 38),
         (15, &["i [3..] before i [3..=6, 9..]"]),
         0,
     ),
-    (2500, (0, 0, 50), (10, &[]), 0),
-    (2750, (0, 0, 46), (5, &[]), 0),
+    (2500, (0, 0, 40), (10, &[]), 0),
+    (2750, (0, 0, 42), (5, &[]), 0),
     (
         3000,
-        (0, 0, 55),
+        (0, 0, 43),
         (10, &["i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]"]),
         0,
     ),
-    (3250, (0, 0, 52), (7, &[]), 0),
-    (3500, (0, 0, 47), (5, &[]), 0),
+    (3250, (0, 0, 38), (7, &[]), 0),
+    (3500, (0, 0, 38), (5, &[]), 0),
     (
         3750,
-        (0, 2, 51),
+        (0, 2, 44),
         (
             11,
             &[
@@ -1268,6 +1295,16 @@ guarded_ranges!(
 /// `[-13, -9] ∪ [7, 13]` gains `{-5}` the same way. The interpreter refutes no box; no box of
 /// the transfer here changes. Measured against the change with the old call (the probe only on a
 /// failed search) over all 4000 cases.
+///
+/// Since PROJECT-box-half-open, which merges the atoms a formula defines alike before a tied
+/// projection (the transfer before writes a shared subterm once at each place it is used, and
+/// the twins left its questions refused, `Unordered`), the transfer before, which shares the
+/// solver, gives 122 of the boxes counted as made exact exactly as the transfer does, 52 in the
+/// first half (316) and 70 in the second (323). In 5 more cases the box before is now narrower
+/// than the box of a split over many periods, which is listed as wider (rows 250, 1000, 1250,
+/// 1500 and 2000), its relation still exact on its box: `i [1..]` against `i [1..=4, 7..]`
+/// before. No other count changes, no box of the transfer here changes, and over all 4000 cases
+/// no box before is wider than without the change or leaves out a point the interpreter finds.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1293,11 +1330,15 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
         (
             0,
             6,
-            368,
+            316,
             81,
             vec![
+                "i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]",
                 "i [..=0] before i [..=-5, -3..=0]",
+                "i [-10..=-10, -7..=-6, -4..=-4, -2..] before i [-10..=7, 9..]",
+                "i [-7..] before i [..=-6, -4..]",
                 "i [..=0, 6..=7, 9..=10, 12..=13, 15..=16, 18..=18] before i [..=-11, -9..=0, 3..=4, 6..=18]",
+                "i [-10..] before i [-10..=9, 11..]",
             ],
             0
         )
@@ -1307,9 +1348,10 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
         (
             0,
             4,
-            393,
+            323,
             80,
             vec![
+                "i [1..] before i [1..=4, 7..]",
                 "i [3..] before i [3..=6, 9..]",
                 "i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]",
                 "i [2..] before i [2..=2, 5..]",
