@@ -1733,12 +1733,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | A55-spec | impl attempt 1 | 2026-11-09 16:33 | ready: wt/a55 507f7121, wt/a55-spec eb375db; A55 answer A applied, parity typed, soundness law + Galois text added; sync --check 0, grammar check 0; l01/m0_03/l |
 | A56-spec | impl attempt 1 | 2026-11-09 16:18 | ready: zed-impl 9e3a6f6e on wt/a56, spec 72af31b on wt/a56-spec; 121 pieces 1 failed (l01_10 count 1919 vs 1917, same on origin/main fences, pre-existing); sync |
-| BLOCKS-remove-local | impl attempt 1 | 2026-11-09 15:18 | name-by-block index added (Blocks::at/put); hub test 9.0x instr 7.9x bytes (31.4x bytes before); targets 10.7x/8.4x and 10.7x/8.8x; clippy, fmt clean; group run |
+| BLOCKS-remove-local | impl attempt 1 | 2026-11-09 15:18 | ready: 6d34cd6e on wt/blocks-remove-local; 391 pieces pass, doc/clippy/fmt clean; not pushed / load 23.20 |
 | CK-data-memo | impl attempt 2 | 2026-11-07 23:45 | negative controls (not committed, reverted): exact set walk per row -> disjoint 56.0x bytes (fails); memos off -> shared-rows test killed at 60 s, load1 27-30 |
 | CX-tradeoff-krows | impl attempt 1 | 2026-11-09 15:42 | ready 611c7ec4 on wt/cx-krows: 477 rows checked, 101 comments added, 67 completed, 9 stale fixed; 80 test pieces and doc pass / load 18.34 |
 | CX-tradeoff-review | impl attempt 1 | 2026-11-09 15:11 | ready wt/cx-tradeoff-review 1373f81f: 48 partial + 2 stale tradeoff comments fixed, comments only; K-row search for missing comments left; fmt, clippy, doc, s_0 |
-| FACET-typed | impl attempt 1 | 2026-11-09 17:10 | start: type parity example via declared Facet on wt/a55-spec |
-| GROUP-overlaps-names | impl attempt 1 | 2026-11-09 14:55 | names ring new 0.65/1.10/2.28/4.55 ms vs old 3.84/15.8/58.1/268 ms (k 64-512); lower-group ring stays k^2 (6-504 ms); covers for wholes tried and dropped (unrea |
+| GROUP-overlaps-names | impl attempt 1 | 2026-11-09 14:55 | TEMP code removed; scaling test 8.1/8.1/8.2x; negative control 57.8x bytes (fails); docs updated; final run with doc check started / load 13.72 |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | repair ready b9a464bd: reference walk now same order as the walk, quadratic copy deleted after 8,000-seed agreement; walk's own superlinear forms (a)-(c) open f |
 | PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | ready: wt/lto-cost d61b1c8d on origin/main eae094cc; Cargo.toml deps cgu1; 757M->719M / 1077M->1016M / 989M->943M; 54/54 pieces pass; deletes: perf data and scr |
