@@ -3144,7 +3144,9 @@ fn pairs(rows: &[Con]) -> Vec<(Int, Atom, usize, usize)> {
 /// exactly where they held. The projection that follows then meets `v` in the pair alone
 /// (`x <= 2 * q + 10` beside `8 * q <= x <= 8 * q + 7` becomes `x <= 2 * (x div 8)` read
 /// through the pair). Pairs are taken by `m`, then atom; a pair a rewrite has changed is
-/// skipped. Time of the rows rewritten, each found through the rows holding its atom.
+/// skipped: its rows must still be opposite with constants adding to `m - 1`, since rows that
+/// bound `m * v` more loosely (`y <= 3 * q <= y + 5`) leave `v` two values, and reading another
+/// row through them is not exact (`q <= 0 && q >= 1` would become `-2 <= y <= 0`). Time of the rows rewritten, each found through the rows holding its atom.
 // Complexity tradeoff: naive version, each pair scans every row for its atom, O(p r t) for
 // p pairs over r rows of t terms. Used: the rows holding each atom, kept as rows are
 // rewritten, so each pair reads only its atom's rows, O(r t + w t) term visits for w
@@ -3175,6 +3177,7 @@ fn by_pairs(mut rows: Vec<Con>, elim: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
         if a.lin.terms.get(&v) != Some(&-&m)
             || b.lin.terms.get(&v) != Some(&m)
             || !a.lin.plus(&b.lin).terms.is_empty()
+            || &(&a.lin.constant + &b.lin.constant) + &Int::ONE != m
         {
             continue;
         }
@@ -3315,6 +3318,14 @@ fn remainders_as_pairs(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
 /// terms with the first coefficient positive. `min(H div 2, x)` cases split at `x` meet again
 /// this way, and the values `max(H - 1, x mod 5 + x div 7 - 9)` takes as its second
 /// argument, at intervals of `x - (x mod 5) - (x div 7)` with no integer point between them.
+///
+/// Two pieces next to each other on one form whose rests `A` and `B` differ merge too, into
+/// `A`, `B` and the interval holding both, when `B` holds wherever the piece of `A` does, `A`
+/// wherever the piece of `B` does, and `A` and `B` hold at no integer point with the form
+/// between the two intervals: each piece lies in the merged one, and a point of the merged one
+/// with the form in the interval of one piece is a point of that piece. `max(H div 2, x + y -
+/// 9)` cases at each link `k` where the chain takes `x + y - 9`, bounded by `(2^k - 1) x + 2^k
+/// y >= c_k` and by the form of link `k - 1`, meet again this way.
 // Complexity tradeoff: naive version, each pass groups all pieces by form and merges, and
 // passes repeat while one merges, O(p) passes over p pieces of r rows, O(p² r²). Used: a work
 // list, each piece put in the groups of its forms, where the intervals of the pieces in a
@@ -3325,7 +3336,16 @@ fn remainders_as_pairs(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
 // in at most 2p times, O(p r² + p r log p) (the rest of a piece for each of its forms is
 // O(r) to make), and at most two decisions of the rest with a gap for each form tried, O(p r)
 // decisions of O(r) rows (cross-review of LOAD-max-div-xr, round 2: pieces fixing each of r
-// coordinates to 0 or 2 try every form). Tradeoffs: one hash map and one ordered map for each group; two pieces whose
+// coordinates to 0 or 2 try every form). The pieces of different rests: for each form, the
+// pieces by upper bound and by lower bound, where a piece no group merges finds the one with
+// the nearest upper bound below its interval and the one with the nearest lower bound above,
+// O(log p); for each, O(r) decisions that one rest holds on the other piece and one with the
+// gap, O(r) forms tried per piece put in, O(p r²) decisions of O(r) rows in all (naive: each
+// pair of pieces with a shared form, O(p² r) decisions); ties of one bound keep the piece put
+// in last, so a piece hidden by a tie, or the nearer one where it fails, stays apart: exact,
+// more pieces. `max(H div 2, x + y - 9)`: n^2.06 to 80 links before (21.4 G instructions), 4
+// pieces at each link and n^1.1 to n^1.6 with it (2.8 G at 80 links, 20.6 G at 320); the
+// rest is the coefficients growing one bit a link, LOAD-max-div-bits. Tradeoffs: one hash map and one ordered map for each group; two pieces whose
 // union is no interval of one form (`x <= 2` and `x >= 4` with a point at 3, or two forms
 // changing at once) stay apart, exact but more pieces; a gap whose decision is refused is
 // taken to have a point. `max(H - 1, x mod 5 + x div 7 - 9)`: n^2.0 from 10 to 80 links
@@ -3394,6 +3414,47 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
         }
         _ => true,
     };
+    // Whether `r` holds wherever `piece` does: `piece` with `r` negated has no integer point (a
+    // decision refused counts as a point).
+    let implied = |piece: &[Con], r: &Con| {
+        let neg = |l: &Lin| Con {
+            lin: l.times(-&Int::ONE).plus(&Lin::constant(-&Int::ONE)),
+            rel: Rel::Ge,
+        };
+        let not: Vec<Con> = match r.rel {
+            Rel::Ge => vec![neg(&r.lin)],
+            Rel::Eq => vec![neg(&r.lin), neg(&r.lin.times(-&Int::ONE))],
+        };
+        not.iter().all(|n| {
+            let rows = piece.iter().chain([n]).map(|c| Formula::Con(c.clone()));
+            decide(&Formula::and(rows.collect())) == Ok(false)
+        })
+    };
+    // The rest of `g` with its form between `lo` and `hi`, `None` unbounded.
+    let joined = |g: &Group, lo: Option<Int>, hi: Option<Int>| {
+        let t = Lin {
+            terms: g.1.clone(),
+            constant: Int::ZERO,
+        };
+        let mut merged = g.0.clone();
+        match (&lo, &hi) {
+            (Some(l), Some(h)) if l == h => merged.push(Con::eq(&t, &Lin::constant(l.clone()))),
+            _ => {
+                if let Some(l) = &lo {
+                    merged.push(Con::ge(&t, &Lin::constant(l.clone())));
+                }
+                if let Some(h) = &hi {
+                    merged.push(Con::ge(&Lin::constant(h.clone()), &t));
+                }
+            }
+        }
+        merged.sort();
+        merged.dedup();
+        merged
+    };
+    // For each form, the pieces holding a bound of it, by upper bound and by lower bound (an
+    // entry of a piece merged since is skipped where read).
+    let mut sides: HashMap<Terms, (BTreeMap<Int, usize>, BTreeMap<Int, usize>)> = HashMap::new();
     let mut live: Vec<Option<Vec<Con>>> = Vec::new();
     let mut groups: HashMap<Group, Intervals> = HashMap::new();
     let mut work: Vec<Vec<Con>> = pieces.into_iter().collect();
@@ -3414,7 +3475,85 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
         // A piece in a group is live: its entries leave the groups when it is merged.
         let hit = hit.and_then(|(g, lo, hi, l, h, id)| Some((g, lo, hi, l, h, live[id].take()?)));
         let Some((g, lo, hi, l, h, q)) = hit else {
+            // Else the piece next to it on one of its forms whose rest differs: they merge when
+            // each rest holds wherever the other piece does and the two rests hold at no integer
+            // point with the form between them.
+            let cross = fs.iter().find_map(|(g, lo, hi)| {
+                let (uppers, lowers) = sides.get(&g.1)?;
+                let below = lo
+                    .as_ref()
+                    .and_then(|lo| uppers.range(..lo.clone()).next_back())
+                    .map(|(_, id)| *id);
+                let above = hi
+                    .as_ref()
+                    .and_then(|hi| {
+                        lowers
+                            .range((
+                                std::ops::Bound::Excluded(hi.clone()),
+                                std::ops::Bound::Unbounded,
+                            ))
+                            .next()
+                    })
+                    .map(|(_, id)| *id);
+                [below, above].into_iter().flatten().find_map(|id| {
+                    let q = live[id].as_ref()?;
+                    let (b, l, h) = forms(q).into_iter().find(|(gq, _, _)| gq.1 == g.1)?;
+                    let b = b.0;
+                    if b == g.0
+                        || !g.0.iter().all(|r| implied(q, r))
+                        || !b.iter().all(|r| implied(&p, r))
+                    {
+                        return None;
+                    }
+                    let rest: Vec<Con> = g.0.iter().chain(&b).cloned().collect();
+                    let both = (rest.clone(), g.1.clone());
+                    let ok = if l.as_ref().zip(lo.as_ref()).is_some_and(|(l, lo)| l > lo) {
+                        touch(&both, hi, &l)
+                    } else {
+                        touch(&both, &h, lo)
+                    };
+                    ok.then(|| (both, lo.clone(), hi.clone(), l, h, id))
+                })
+            });
+            if let Some((both, lo, hi, l, h, id)) = cross {
+                if let Some(q) = live[id].take() {
+                    for (gq, lq, hq) in forms(&q) {
+                        if let Some(m) = groups.get_mut(&gq) {
+                            m.remove(&lq);
+                        }
+                        // Another piece with the same bound may hold the entry since.
+                        if let Some((u, w)) = sides.get_mut(&gq.1) {
+                            if let Some(hq) = hq {
+                                if u.get(&hq) == Some(&id) {
+                                    u.remove(&hq);
+                                }
+                            }
+                            if let Some(lq) = lq {
+                                if w.get(&lq) == Some(&id) {
+                                    w.remove(&lq);
+                                }
+                            }
+                        }
+                    }
+                    work.push(joined(
+                        &both,
+                        lo.min(l),
+                        match (hi, h) {
+                            (Some(a), Some(b)) => Some(a.max(b)),
+                            _ => None,
+                        },
+                    ));
+                    continue;
+                }
+            }
             for (g, lo, hi) in fs {
+                let (u, w) = sides.entry(g.1.clone()).or_default();
+                if let Some(hi) = &hi {
+                    u.insert(hi.clone(), live.len());
+                }
+                if let Some(lo) = &lo {
+                    w.insert(lo.clone(), live.len());
+                }
                 groups.entry(g).or_default().insert(lo, (hi, live.len()));
             }
             live.push(Some(p));
@@ -3430,25 +3569,7 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
             (Some(a), Some(b)) => Some(a.clone().max(b)),
             _ => None,
         };
-        let t = Lin {
-            terms: g.1.clone(),
-            constant: Int::ZERO,
-        };
-        let mut merged = g.0.clone();
-        match (&lo, &hi) {
-            (Some(l), Some(h)) if l == h => merged.push(Con::eq(&t, &Lin::constant(l.clone()))),
-            _ => {
-                if let Some(l) = &lo {
-                    merged.push(Con::ge(&t, &Lin::constant(l.clone())));
-                }
-                if let Some(h) = &hi {
-                    merged.push(Con::ge(&Lin::constant(h.clone()), &t));
-                }
-            }
-        }
-        merged.sort();
-        merged.dedup();
-        work.push(merged);
+        work.push(joined(g, lo, hi));
     }
     live.into_iter().flatten().collect()
 }
@@ -3811,5 +3932,60 @@ mod tests {
         // Alone, `x == 1` is a point between them: the two stay apart.
         let pieces = BTreeSet::from([vec![at(0)], vec![at(2)]]);
         assert_eq!(merge_pieces(pieces.clone()).len(), 2);
+    }
+
+    #[test]
+    fn merge_pieces_joins_pieces_whose_rests_hold_on_each_other() {
+        // `y >= max(x + 3, 2 * x)` for `0 <= x <= 6`, cut at `x = 3` (cross-review of
+        // LOAD-max-div-xr, round 2, I8): `y >= x + 3` for `x <= 3`, where `y >= 2 * x` holds
+        // too, and `y >= 2 * x` for `x >= 4`, where `y >= x + 3` holds too. One piece holds both.
+        let x_at_least = |c: i64| con(&[(0, 1)], -c, Rel::Ge);
+        let x_at_most = |c: i64| con(&[(0, -1)], c, Rel::Ge);
+        let above_x_plus_3 = con(&[(0, -1), (1, 1)], -3, Rel::Ge);
+        let above_2x = con(&[(0, -2), (1, 1)], 0, Rel::Ge);
+        let piece = |rest: &Con, lo: i64, hi: i64| {
+            let mut p = vec![rest.clone(), x_at_least(lo), x_at_most(hi)];
+            p.sort();
+            p
+        };
+        let pieces = BTreeSet::from([piece(&above_x_plus_3, 0, 3), piece(&above_2x, 4, 6)]);
+        let mut want = vec![
+            above_x_plus_3.clone(),
+            above_2x.clone(),
+            x_at_least(0),
+            x_at_most(6),
+        ];
+        want.sort();
+        assert_eq!(merge_pieces(pieces), vec![want]);
+        // Swapped, `y >= 2 * x` for `x <= 3` and `y >= x + 3` for `x >= 4`: `(0, 0)` is a point
+        // of the first and of no piece holding both rests, so the two stay apart.
+        let pieces = BTreeSet::from([piece(&above_2x, 0, 3), piece(&above_x_plus_3, 4, 6)]);
+        assert_eq!(merge_pieces(pieces).len(), 2);
+        // With a point between them, `x = 4` left out: they stay apart.
+        let pieces = BTreeSet::from([piece(&above_x_plus_3, 0, 3), piece(&above_2x, 5, 6)]);
+        assert_eq!(merge_pieces(pieces).len(), 2);
+    }
+
+    #[test]
+    fn by_pairs_reads_no_row_through_a_pair_a_rewrite_has_loosened() {
+        // `p == (y + 3 * q + 1) div 2` and `q == (p + 2) div 3`, with `q <= 0 && q >= 1`
+        // (cross-review of LOAD-max-div-xr, round 2, Gemini's indicator sum): reading the rows
+        // of `q`'s pair through `p`'s makes `y <= 3 * q <= y + 5`, which leaves `q` two values.
+        // Read through that as a pair, `q <= 0 && q >= 1` became `-2 <= y <= 0`, a point
+        // where the rows have none.
+        let (p, q, y) = (0, 1, 2);
+        let rows = vec![
+            con(&[(y, 1), (q, 3), (p, -2)], 1, Rel::Ge),
+            con(&[(p, 2), (y, -1), (q, -3)], 0, Rel::Ge),
+            con(&[(p, 1), (q, -3)], 2, Rel::Ge),
+            con(&[(q, 3), (p, -1)], 0, Rel::Ge),
+            con(&[(q, -1)], 0, Rel::Ge),
+            con(&[(q, 1)], -1, Rel::Ge),
+        ];
+        let out = by_pairs(rows, &|v| *v != a(y));
+        assert_eq!(
+            decide(&Formula::and(out.into_iter().map(Formula::Con).collect())),
+            Ok(false)
+        );
     }
 }

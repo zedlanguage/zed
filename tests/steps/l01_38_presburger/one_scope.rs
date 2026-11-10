@@ -1233,14 +1233,34 @@ fn separate_tests_over_the_links_of_one_chain_of_definitions_scale() {
 /// held to work of order `n^power` ([`zed_tests::scaling::check_order`]): each test is a
 /// question of its own, with no kept part (LOAD-chain-sep-rest).
 fn separate_tests_scale(what: &str, n: usize, power: u32, step: &'static str, test: &'static str) {
+    separate_tests_over_inputs_scale(what, n, power, &["x"], step, test);
+}
+
+/// [`separate_tests_scale`] with the inputs `inputs` at each link, `h0` the first.
+fn separate_tests_over_inputs_scale(
+    what: &str,
+    n: usize,
+    power: u32,
+    inputs: &[&str],
+    step: &'static str,
+    test: &'static str,
+) {
+    let params = (inputs.iter())
+        .map(|v| format!("{v}: int"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let args = (inputs.iter())
+        .map(|v| format!("{v}: {v}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
         .into_iter()
         .map(|m| {
-            let mut src = String::from("h0(x: int) = x;\n");
+            let mut src = format!("h0({params}) = {};\n", inputs[0]);
             for i in 1..m {
-                let h = |k: usize| format!("h{k}(x: x)");
-                src += &format!("h{i}(x: int) = {};\n", step.replace('H', &h(i - 1)));
-                src += &format!("t{i}(x: int) = {};\n", test.replace('H', &h(i)));
+                let h = |k: usize| format!("h{k}({args})");
+                src += &format!("h{i}({params}) = {};\n", step.replace('H', &h(i - 1)));
+                src += &format!("t{i}({params}) = {};\n", test.replace('H', &h(i)));
             }
             (
                 m,
@@ -1347,7 +1367,8 @@ fn separate_tests_over_a_chain_of_largest_values_of_two_divisions_scale() {
     // presburger::extend). Before: 37.3 and 477 billion instructions at 10 and 20 links, 6 and
     // 16 tests refused, n^3.7. Now the summaries, pieces and rows grow linearly (116 summaries,
     // 746 pieces and 6041 rows at 40 links, 56, 326 and 2641 at 20), and the work by n^1.6 to
-    // n^1.9 from 10 to 80 links (13.4, 40.5, 123 and 453 billion instructions): the solver's
+    // n^1.9 from 10 to 80 links (13.4, 40.5, 123 and 453 billion instructions; 6.7, 14.4 and 59.2
+    // to 40 links since pieces of different rests merge, round 2): the solver's
     // arithmetic on the coefficients `2^i` of link i, in rows of three atoms. Held to n^2, at
     // 4 and 32 links to stay under 60 s; the item for n log n is LOAD-max-div-bits.
     separate_tests_scale(
@@ -1355,6 +1376,27 @@ fn separate_tests_over_a_chain_of_largest_values_of_two_divisions_scale() {
         4,
         2,
         "max(H div 2, x mod 5 + x div 7 - 9)",
+        "H < 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_largest_values_of_two_inputs_scale() {
+    // LOAD-max-div-xr (cross-review round 2, I8): `x + y - 9` beside `H div 2`. The values
+    // `h{i}` takes as `x + y - 9` were cut at each link `k` where the chain took it, by `(2^k -
+    // 1) x + 2^k y >= c_k` and the form of link `k - 1`, one piece more at each link: 0.25 to
+    // 21.4 billion instructions from 10 to 80 links, n^2.1, 70 times from 10 to 80. Pieces next
+    // to each other on one form whose rests hold on each other now merge (`merge_pieces` in
+    // presburger::extend): four pieces at each link, 0.25, 0.60, 1.29 and 2.79 billion. The
+    // coefficients still grow one bit a link, so the work grows by n^1.3 to n^1.6 from 80 to
+    // 320 links (13.2 times from 25 to 200): held at 10 and 80 links; the item for n log n at
+    // every size is LOAD-max-div-bits.
+    separate_tests_over_inputs_scale(
+        "separate tests over a chain of `max`s of two inputs",
+        10,
+        1,
+        &["x", "y"],
+        "max(H div 2, x + y - 9)",
         "H < 0",
     );
 }
@@ -1578,6 +1620,11 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
         }
         src
     };
+    // A chain over the inputs `x` and `y`.
+    let two = |src: String| {
+        src.replace("(x: int)", "(x: int, y: int)")
+            .replace("(x: x)", "(x: x, y: y)")
+    };
     let units = [
         // The chain of the scaling test, and other steps: by 3, a remainder, a step that
         // reverses the sign, one that grows its input, and one that reads it twice.
@@ -1623,6 +1670,22 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
         chain("min(H div 2 + 1, x - 5)", "H > 3", 5),
         chain("min(H div 4, 3 * x + 7)", "H == 1", 5),
         chain("max(H div 3, x - 9)", "H < x - 9", 5),
+        // Two inputs (cross-review round 2, I8): pieces whose rests differ, merged where
+        // each rest holds on the other piece; a value of `x + y - 9` at the last link, one
+        // between, and values at a bound of the merged pieces.
+        two(chain("max(H div 2, x + y - 9)", "H < 0", 6)),
+        two(chain(
+            "max(H div 2, x + y - 9)",
+            "H == x + y - 9 && x > 20 - y",
+            6,
+        )),
+        two(chain(
+            "max(H div 2, x + y - 9)",
+            "2 * H > x + y - 9 && H > x + y - 9",
+            6,
+        )),
+        two(chain("max(H div 2, x + y - 9)", "H == 3 && x + y < 13", 6)),
+        two(chain("min(H div 2 + 1, x - y)", "H > 3 && x < y + 4", 5)),
         chain("min(H, 100) + 1", "H > 100", 5),
         chain("max(H - 2, 0)", "H > 0 && x < 9", 5),
         chain("abs(H div 2 - 3)", "H > 1", 5),
@@ -1682,6 +1745,17 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
             "t(x: int, y: int) = c(x: x, y: y) < y;\n",
             "u(x: int) = a(x: x) == 0;\n",
             "v(y: int) = b(y: y) == 0;\n",
+        )
+        .to_string(),
+        // Cross-review round 2 (Gemini): a sum of four tests of quotients of two inputs, whose
+        // last two (`v0 >= 1`, `v0 <= 0`) add to 1, so `t` holds nowhere. Reading the rows of
+        // `v0 == (u0 + 2) div 3` through `u0`'s pair loosened them to `y <= 3 * v0 <= y + 5`,
+        // and reading `v0 <= 0 && v0 >= 1` through that as a pair made `t` hold ([`by_pairs`]).
+        concat!(
+            "v0(x: int, y: int) = (x div 1) div 1;\n",
+            "u0(x: int, y: int) = (3 * v0(x: x, y: y) + y + 1) div 2;\n",
+            "h(x: int, y: int) = ((if u0(x: x, y: y) - 3 * v0(x: x, y: y) + 2 >= 0 { 1 } else { 0 }) + (if 3 * v0(x: x, y: y) - u0(x: x, y: y) >= 0 { 1 } else { 0 }) + (if v0(x: x, y: y) >= 1 { 1 } else { 0 }) + (if v0(x: x, y: y) <= 0 { 1 } else { 0 })) div 1;\n",
+            "t(x: int, y: int) = h(x: x, y: y) >= 4;\n",
         )
         .to_string(),
     ];
@@ -1823,6 +1897,85 @@ fn summaries_of_max_min_div_chains_give_the_values_of_the_chains() {
                 src += &format!("l{i}c{j}(x: int) = {h} < {};\n", lit(c));
                 want.insert(format!("v{i}c{j}"), set.contains(&c));
                 want.insert(format!("l{i}c{j}"), set.range(..c).next().is_some());
+            }
+        }
+        let unit = elab(&src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let lets = lets(&unit);
+        let mut scoped = Scoped::new(&lets);
+        let mut extending = Extending::new();
+        let mut asked = 0;
+        for (name, ps, body) in functions(&unit) {
+            let Some(&holds) = want.get(name) else {
+                continue;
+            };
+            let r = (scoped.relation(body, ps, ps, true)).unwrap_or_else(|| panic!("{name}"));
+            let a = extending.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+            assert_eq!(a.holds, Ok(holds), "`{name}` in\n{src}");
+            asked += 1;
+        }
+        assert_eq!(asked, want.len(), "{step}");
+    }
+}
+
+#[test]
+fn summaries_of_max_min_div_chains_of_two_inputs_give_the_values_of_the_chains() {
+    // LOAD-max-div-xr (cross-review round 2, I8): chains over `x` and `y`, whose summaries
+    // merge pieces with different rests (`merge_pieces` in presburger::extend). Each test fixes
+    // `x` and `y` and asks whether `h{i}` has the value computed here, or another: the first
+    // must hold and the second not. Pairs on either side of where `x + y - 9` and `x div 2^i`
+    // cross, negative, zero and large.
+    use zedc::store::presburger::extend::Extending;
+    type Step = (&'static str, fn(i64, i64, i64) -> i64);
+    let steps: [Step; 4] = [
+        ("max(H div 2, x + y - 9)", |h, x, y| {
+            h.div_euclid(2).max(x + y - 9)
+        }),
+        ("min(H div 2 + 1, x - y)", |h, x, y| {
+            (h.div_euclid(2) + 1).min(x - y)
+        }),
+        ("max(H div 2, 2 * x - y)", |h, x, y| {
+            h.div_euclid(2).max(2 * x - y)
+        }),
+        ("max(H - 1, x + y div 3)", |h, x, y| {
+            (h - 1).max(x + y.div_euclid(3))
+        }),
+    ];
+    let pairs: [(i64, i64); 9] = [
+        (-1_000_000, 3),
+        (-5, -7),
+        (0, 0),
+        (1, 8),
+        (16, -6),
+        (40, -29),
+        (64, 0),
+        (100, -95),
+        (1_000_000, -999_990),
+    ];
+    let lit = |v: i64| {
+        if v < 0 {
+            format!("0 - {}", -v)
+        } else {
+            v.to_string()
+        }
+    };
+    for (step, value) in steps {
+        let mut src = "h0(x: int, y: int) = x;\n".to_string();
+        for i in 1..=6 {
+            src += &format!(
+                "h{i}(x: int, y: int) = {};\n",
+                step.replace("H", &format!("h{}(x: x, y: y)", i - 1))
+            );
+        }
+        let mut want = std::collections::BTreeMap::new();
+        for (k, &(x, y)) in pairs.iter().enumerate() {
+            let mut h = x;
+            for i in 1..=6 {
+                h = value(h, x, y);
+                let at = format!("x == {} && y == {} && h{i}(x: x, y: y)", lit(x), lit(y));
+                src += &format!("e{i}k{k}(x: int, y: int) = {at} == {};\n", lit(h));
+                src += &format!("n{i}k{k}(x: int, y: int) = {at} != {};\n", lit(h));
+                want.insert(format!("e{i}k{k}"), true);
+                want.insert(format!("n{i}k{k}"), false);
             }
         }
         let unit = elab(&src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
