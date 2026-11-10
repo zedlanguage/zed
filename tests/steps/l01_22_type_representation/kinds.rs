@@ -1569,3 +1569,132 @@ fn contains_of_tuples_of_many_patterns_costs_the_patterns() {
         },
     );
 }
+
+#[test]
+fn the_meet_of_payloads_of_one_atom_meets_the_payloads() {
+    // `&` of two types of one atom meets their payloads, as it meets the components of tuples,
+    // and is empty where no payload of one shares a value with one of the other. Before
+    // READ-atom-meet the payloads of the left side were kept, so `#a(bool) & #a(int)` read as
+    // `#a(bool)`.
+    for (text, want) in [
+        ("#a(bool) & #a(int)", "Never"),
+        ("#a(x: int) & #a(x: bool)", "Never"),
+        ("#a(x: int) & #a(y: int)", "Never"),
+        ("#a(#a(String)) & #a(#a(bool))", "Never"),
+        ("(#a(bool) & #a(int),)", "Never"),
+        ("(String, #a(bool) & #a(int))", "Never"),
+        ("#a(int, bool) & #a(int, int)", "Never"),
+        ("#a(int) & #a(int, int)", "Never"),
+        ("#a() & #a(int)", "Never"),
+        ("#a(int) & (#a(bool) | #b)", "Never"),
+        ("(bool,) & (int,)", "Never"),
+        ("(int, bool) & (int, int)", "Never"),
+        ("#a(int | bool) & #a(int)", "#a(int)"),
+        ("#a(int) & #a(int | bool)", "#a(int)"),
+        ("#a(..) & #a(int)", "#a(int)"),
+        ("#a(int) & #a(..)", "#a(int)"),
+        ("#a(int) & #_", "#a(int)"),
+        ("#a(int | String) & #a(String | bool)", "#a(String)"),
+        ("(#a(int) | #a(bool)) & #a(int | String)", "#a(int)"),
+        ("#a(int) & #a(int, int) & #a(int | bool)", "Never"),
+        (
+            "(#a(int) | #a(int, int)) & #a(int | bool, int)",
+            "#a(int, int)",
+        ),
+        (
+            "#a(x: int | bool, y: int) & #a(x: int, y: int)",
+            "#a(x: int, y: int)",
+        ),
+        ("(#a(int) | #b) & (#a(bool) | #b)", "#b"),
+        (
+            "(#a(int) | #b(int)) & (#a(bool) | #b(int | bool))",
+            "#b(int)",
+        ),
+        ("#a(#b(int | bool)) & #a(#b(bool | String))", "#a(#b(bool))"),
+        ("(#a(bool) | int) & (#a(int) | int)", "int"),
+    ] {
+        let (t, w) = (ty(text), ty(want));
+        assert!(t.subtype(&w) && w.subtype(&t), "{text} is {want}, not {t}");
+        assert_eq!(t.is_empty(), want == "Never", "{text}");
+    }
+}
+
+/// `#a(0, 0) | … | #a(n-1, n-1)` and `#a(0, int) | … | #a(n-1, int)`.
+fn payload_pairs(n: usize) -> (Ty, Ty) {
+    let each = |f: &dyn Fn(usize) -> Ty| -> Ty {
+        let ts: Vec<Ty> = (0..n)
+            .map(|i| with_payloads("a", vec![vec![int(i), f(i)]]))
+            .collect();
+        Ty::union_all(&ts)
+    };
+    (each(&int), each(&|_| ty("int")))
+}
+
+#[test]
+fn the_meet_of_many_payloads_of_one_atom_scales() {
+    // The payloads of the two sides are filed by the class or value of each component, as
+    // tuples are, so the meet of n shapes with n shapes meets the n pairs that share a value
+    // and not all n² (READ-atom-meet).
+    let inputs = scaling::inputs(256, payload_pairs);
+    scaling::check(
+        "the meet of n payloads of #a with n payloads of #a",
+        256,
+        |n| {
+            let (l, r) = &inputs[&n];
+            let met = l.meet(r);
+            assert!(met.subtype(l) && l.subtype(&met));
+        },
+    );
+}
+
+#[test]
+fn the_difference_of_payloads_of_one_atom_takes_the_payloads() {
+    // `\` of a type of one atom takes from the left side the payloads the right side holds,
+    // shape by shape, as it takes tuples. Before READ-atom-meet the right side's atom was taken
+    // with any payload, so `#a(bool) \ #a(int)` read as `Never`, and an `is not #a(int)` test
+    // narrowed a `#a(bool)` away.
+    for (text, want) in [
+        ("#a(bool) \\ #a(int)", "#a(bool)"),
+        ("#a(#a(int)) \\ #a((int,))", "#a(#a(int))"),
+        ("#a(x: int) \\ #a(y: int)", "#a(x: int)"),
+        ("#a(int) \\ #a(int, int)", "#a(int)"),
+        ("(#a(int) | #a(bool)) \\ #a(int)", "#a(bool)"),
+        ("(#a(int) | #b(int)) \\ #a(int | bool)", "#b(int)"),
+        ("(#a(int) | #b) \\ #a(bool)", "#a(int) | #b"),
+        ("(String, #a(bool) \\ #a(int))", "(String, #a(bool))"),
+        ("#a(..) \\ #a(int)", "#a(..)"),
+        ("#a(int) \\ #a(int)", "Never"),
+        ("#a(int) \\ #a(..)", "Never"),
+        ("#a(x: int) \\ #a(x: int | bool)", "Never"),
+        ("#a(int, bool) \\ (#a(int, true) | #a(int, false))", "Never"),
+        ("(#a(int) | #a(bool)) \\ (#a(int) | #a(bool))", "Never"),
+        ("(#a(int) | #b) \\ (#a(int) | #b)", "Never"),
+    ] {
+        let (t, w) = (ty(text), ty(want));
+        assert!(t.subtype(&w) && w.subtype(&t), "{text} is {want}, not {t}");
+        assert_eq!(t.is_empty(), want == "Never", "{text}");
+    }
+    // A shape held only in part is kept whole, as a tuple is: more than the difference, never
+    // less.
+    let t = ty("#a(1 | 2) \\ #a(1)");
+    assert!(
+        ty("#a(2)").subtype(&t) && t.subtype(&ty("#a(1 | 2)")),
+        "{t}"
+    );
+}
+
+#[test]
+fn the_difference_of_many_payloads_of_one_atom_scales() {
+    // Each shape of the left side is compared with the shapes of the right side that may share
+    // a value with it, found as for the meet, so n shapes less n shapes costs n comparisons of
+    // one shape with one, not n comparisons with n (READ-atom-meet).
+    let inputs = scaling::inputs(256, payload_pairs);
+    scaling::check(
+        "the difference of n payloads of #a and n payloads of #a",
+        256,
+        |n| {
+            let (l, r) = &inputs[&n];
+            assert!(l.diff(r).is_empty());
+        },
+    );
+}

@@ -704,7 +704,7 @@ fn the_empty_type_prints_as_never() {
             "(int,) -> Never",
         ),
         (Type::partial(Type::int(), never.clone()), "int ->? Never"),
-        (Type::universe(Universe::Morphism), "Never .. _ -> _"),
+        (Type::universe(Universe::Morphism), "_ ->? _"),
     ] {
         let s = round_trip(&t);
         assert_eq!(s.to_string(), text);

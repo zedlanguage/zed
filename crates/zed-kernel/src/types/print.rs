@@ -894,6 +894,30 @@ impl Printer {
                 let y = operand(self, y);
                 Text::group(vec![x, y], " | ", At::Union, Class::Union)
             }
+            // `x & !q`, a difference kept as its operands, is written `x \ q`, as a program
+            // writes it at L1, and not `x & (all \ q)` (READ-atom-meet).
+            Err(Form::And(x, y))
+                if matches!(
+                    (x.view(), y.view()),
+                    (Err(Form::Not(_)), _) | (_, Err(Form::Not(_)))
+                ) =>
+            {
+                let (x, q) = match (x.view(), y.view()) {
+                    (_, Err(Form::Not(q))) => (x, q),
+                    (Err(Form::Not(q)), _) => (y, q),
+                    _ => unreachable!("one operand is a complement"),
+                };
+                let x = operand(self, x);
+                let q = operand(self, q);
+                let mut segs = Vec::new();
+                put(&mut segs, x, At::DiffLeft);
+                segs.push(Seg::Str(" \\ ".into()));
+                put(&mut segs, q, At::Prim);
+                Text {
+                    segs,
+                    class: Class::Diff,
+                }
+            }
             Err(Form::And(x, y)) => {
                 let x = operand(self, x);
                 let y = operand(self, y);
@@ -906,11 +930,16 @@ impl Printer {
     /// depend on the order of the atoms. A block of value `true` is the union of its literals
     /// and the rest, `a | (all \ b) | rest`; a block of value `false` is the rest without its
     /// literals, `b & rest \ a`, `a` an atom the block's literals take and `b` one they refuse.
-    /// The literals of a block are a group. The text is written from the first block on into
-    /// one list of segments, with a stack of what closes the blocks begun, so that no block's
-    /// text is copied into the text before it.
+    /// Where `rest` holds a value outside every atom, its text would hold `all`, which needs
+    /// the top type `_` of layer L10, while `b` has no such value: such a block is written
+    /// `b \ (a | not rest)` instead, `not rest` the rest with every value turned over, so a type
+    /// a program writes at L1, `A \ (B \ C)`, prints as written and not as
+    /// `A & ((all \ B) | C)` (READ-atom-meet). The literals of a block are a group. The text is
+    /// written from the first block on into one list of segments, with a stack of what closes
+    /// the blocks begun, so that no block's text is copied into the text before it.
     // Complexity tradeoff: each diagram prints its own list, so the text is linear in the
     // lists of the distinct parts printed, where printing nodes was linear in their union.
+    // Which blocks are turned over is found in two passes over the list, linear in it.
     fn list<A: super::bdd::Literal>(
         &mut self,
         b: &Bdd<A>,
@@ -919,12 +948,34 @@ impl Printer {
     ) -> Text {
         let list = b.list();
         let m = list.blocks.len();
-        let every = list.tail;
+        // Whether the list from each block on holds the values outside every atom: the value
+        // of the first block from there that refuses an atom, or the tail.
+        let mut outside = vec![list.tail; m + 1];
+        for k in (0..m).rev() {
+            let (v, lits) = &list.blocks[k];
+            outside[k] = match lits.iter().any(|(_, t)| !t) {
+                true => *v,
+                false => outside[k + 1],
+            };
+        }
+        // Each block's value as written, the blocks after a turn taking the other value, and
+        // whether the rest is turned over after it.
+        let mut value = Vec::with_capacity(m);
+        let mut turn = vec![false; m];
+        let mut over = false;
+        for (k, (v, lits)) in list.blocks.iter().enumerate() {
+            value.push(*v != over);
+            if *v == over && k + 1 < m && lits.iter().any(|(_, t)| !t) && outside[k + 1] != over {
+                turn[k] = true;
+                over = !over;
+            }
+        }
+        let every = list.tail != over;
         let mut tail = every.then(|| all(self));
         // The texts of each block's literals: of value `true`, `a` and `all \ b` in the order
         // of the literals; of value `false`, the atoms refused and those taken.
         let mut texts: Vec<(Vec<Text>, Vec<Text>)> = Vec::with_capacity(m);
-        for (value, lits) in list.blocks.iter().rev() {
+        for ((_, lits), value) in list.blocks.iter().zip(&value) {
             let (mut first, mut taken) = (Vec::new(), Vec::new());
             for (a, t) in lits {
                 let l = lit(self, a);
@@ -945,20 +996,25 @@ impl Printer {
             }
             texts.push((first, taken));
         }
-        texts.reverse();
         // The class of the text from each block on, `None` where it has no value.
         let mut class = vec![None; m + 1];
         class[m] = tail.as_ref().map(|t| t.class);
         for k in (0..m).rev() {
             let (first, taken) = &texts[k];
             let next = class[k + 1];
-            class[k] = match list.blocks[k].0 {
-                true => Some(match (first.len(), next) {
+            class[k] = match (value[k], turn[k]) {
+                (true, _) => Some(match (first.len(), next) {
                     (1, None) => first[0].class,
                     _ => Class::Union,
                 }),
+                // `b \ (a | not rest)`, or `b` where the union has no value.
+                (false, true) => Some(match (taken.is_empty() && next.is_none(), first.len()) {
+                    (false, _) => Class::Diff,
+                    (true, 1) => first[0].class,
+                    (true, _) => Class::And,
+                }),
                 // A block of value `false` before no value leaves no value.
-                false => next.map(|n| match (taken.is_empty(), first.len()) {
+                (false, false) => next.map(|n| match (taken.is_empty(), first.len()) {
                     (false, _) => Class::Diff,
                     (true, 0) => n,
                     (true, 1) if every && k + 1 == m => first[0].class,
@@ -977,56 +1033,73 @@ impl Printer {
         };
         // Where the text from the next block on stands.
         let mut at = At::Any;
-        for (k, (first, taken)) in texts.into_iter().enumerate() {
+        for (k, (mut first, taken)) in texts.into_iter().enumerate() {
             if class[k].is_none() {
                 break;
             }
             let last = class[k + 1].is_none();
-            if list.blocks[k].0 {
-                match (first.len(), last) {
-                    (1, true) => {
-                        put(&mut segs, first.into_iter().next().expect("one item"), at);
-                    }
-                    (_, true) => {
-                        open(&mut segs, &mut closing, at, Class::Union);
-                        segs.push(group(first, " | ", At::Union));
-                    }
-                    (_, false) => {
-                        open(&mut segs, &mut closing, at, Class::Union);
-                        put(
-                            &mut segs,
-                            Text::group(first, " | ", At::Union, Class::Union),
-                            At::Union,
-                        );
-                        segs.push(Seg::Str(" | ".into()));
-                        at = At::Union;
-                        continue;
-                    }
+            if turn[k] {
+                let refused = Text::group(first, " & ", At::And, Class::And);
+                if taken.is_empty() && last {
+                    put(&mut segs, refused, at);
+                    tail = None;
+                    break;
                 }
-                tail = None;
-                break;
-            }
-            if !taken.is_empty() {
                 open(&mut segs, &mut closing, at, Class::Diff);
-                closing.push(vec![
-                    Seg::Str(" \\ ".into()),
-                    group(taken, " \\ ", At::Prim),
-                ]);
-                at = At::DiffLeft;
-            }
-            if first.is_empty() {
+                put(&mut segs, refused, At::DiffLeft);
+                segs.push(Seg::Str(" \\ ".into()));
+                at = At::Prim;
+                if taken.is_empty() {
+                    continue;
+                }
+                // The atoms taken, then the rest turned over, as a block of value `true`.
+                first = taken;
+            } else if !value[k] {
+                if !taken.is_empty() {
+                    open(&mut segs, &mut closing, at, Class::Diff);
+                    closing.push(vec![
+                        Seg::Str(" \\ ".into()),
+                        group(taken, " \\ ", At::Prim),
+                    ]);
+                    at = At::DiffLeft;
+                }
+                if first.is_empty() {
+                    continue;
+                }
+                let refused = Text::group(first, " & ", At::And, Class::And);
+                if every && k + 1 == m {
+                    put(&mut segs, refused, at);
+                    tail = None;
+                    break;
+                }
+                open(&mut segs, &mut closing, at, Class::And);
+                put(&mut segs, refused, At::And);
+                segs.push(Seg::Str(" & ".into()));
+                at = At::And;
                 continue;
             }
-            let refused = Text::group(first, " & ", At::And, Class::And);
-            if every && k + 1 == m {
-                put(&mut segs, refused, at);
-                tail = None;
-                break;
+            match (first.len(), last) {
+                (1, true) => {
+                    put(&mut segs, first.into_iter().next().expect("one item"), at);
+                }
+                (_, true) => {
+                    open(&mut segs, &mut closing, at, Class::Union);
+                    segs.push(group(first, " | ", At::Union));
+                }
+                (_, false) => {
+                    open(&mut segs, &mut closing, at, Class::Union);
+                    put(
+                        &mut segs,
+                        Text::group(first, " | ", At::Union, Class::Union),
+                        At::Union,
+                    );
+                    segs.push(Seg::Str(" | ".into()));
+                    at = At::Union;
+                    continue;
+                }
             }
-            open(&mut segs, &mut closing, at, Class::And);
-            put(&mut segs, refused, At::And);
-            segs.push(Seg::Str(" & ".into()));
-            at = At::And;
+            tail = None;
+            break;
         }
         if let Some(t) = tail {
             put(&mut segs, t, at);
@@ -1244,9 +1317,12 @@ fn minus(word: &str, t: Text) -> Text {
     }
 }
 
-/// Every morphism: no key promised, any key permitted, any value.
+/// Every morphism: no key promised, any key permitted, any value, `_ ->? _`, the partial-map
+/// former, as DESIGN.md sec:type_language writes a morphism type whose guarantee is empty. It
+/// needs the top type `_` of layer L10; a type a program writes at L1 has no part of it that
+/// [`Printer::list`] writes with it (READ-atom-meet).
 fn every_morphism() -> Text {
-    Text::word("Never .. _ -> _", Class::Arrow)
+    Text::word("_ ->? _", Class::Arrow)
 }
 
 #[cfg(test)]
@@ -1469,5 +1545,36 @@ mod tests {
         let defs = lift(&mut [&mut message], &|w| w == "T2");
         assert_eq!(message, "`T1` does not take (T3, T3)");
         assert_eq!(defs[0].0, "T3");
+    }
+
+    #[test]
+    fn a_difference_of_differences_prints_as_written() {
+        // `A \ (B \ C)` is `A & ((all \ B) | C)`, which needs the top type `_` of L10 to write;
+        // it prints as written, in the forms of L1 (READ-atom-meet).
+        let a = Type::exact(Type::atom("a"), Type::int());
+        let b = Type::partial(Type::atom("b"), Type::bool());
+        let c = Type::exact(Type::int(), Type::empty());
+        let t = &a - &(&b - &c);
+        assert_eq!(
+            t.surface().to_string(),
+            "(#a -> int) \\ ((#b ->? bool) \\ (int -> Never))"
+        );
+        let d = Type::exact(Type::string(), Type::string());
+        let t = &(&a - &d) - &(&b - &c);
+        assert_eq!(
+            t.surface().to_string(),
+            "(#a -> int) \\ ((String -> String) | ((#b ->? bool) \\ (int -> Never)))"
+        );
+        // Tuples of one length the same.
+        let row = |x: Type, y: Type| Type::tuple(vec![x, y]);
+        let t =
+            &row(a.clone(), a.clone()) - &(&row(b.clone(), a.clone()) - &row(b.clone(), c.clone()));
+        assert_eq!(
+            t.surface().to_string(),
+            "type T1 = #a -> int;\ntype T2 = #b ->? bool;\n(T1, T1) \\ ((T2, T1) \\ (T2, int -> Never))"
+        );
+        // Every morphism but some is no type of L1, and keeps `_`.
+        let t = &Type::universe(super::super::Universe::Morphism) - &a;
+        assert_eq!(t.surface().to_string(), "(_ ->? _) \\ (#a -> int)");
     }
 }

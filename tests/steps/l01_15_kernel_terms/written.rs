@@ -265,33 +265,60 @@ fn samples() -> Vec<Value> {
 /// Seeded random terms: a `match` of up to four arms whose patterns nest tuples, atoms with
 /// payloads by position and by name, names, literals and `_` up to three deep, with type tests
 /// of random types among them, parts shared between them declared before the term. Each
-/// printed term reads back.
+/// printed term reads back, at each of the seeds 15 to 30, and so does each type test drawn,
+/// whatever the seed (READ-atom-meet: the test ran seed 15 alone, and at seed 19 a payload
+/// meet read back wrong, at seed 20 it read 50 payload tests and wanted more than 50).
 #[test]
 fn random_terms_with_type_tests_read_back() {
-    let mut rng = zed_tests::instances::Rng::new(15);
-    let mut total = Seen::default();
-    for _ in 0..zed_tests::instances::RANDOM_INSTANCES {
-        let arms = (0..1 + rng.below(4))
-            .map(|i| {
-                let p = match i {
-                    // At least one type test, at the top of an arm.
-                    0 => Pattern::Is(random_type(&mut rng, 3)),
-                    _ => random_pattern(&mut rng, 3),
-                };
-                (p, lit(format!("arm {i}").as_str()))
-            })
-            .collect();
-        let t = Term::Match(zed_tests::kernel::rc(var("v@1")), arms);
-        let seen = reads_back(&t, &written(&t, before_at));
-        total.same += seen.same;
-        total.functions += seen.functions;
-        total.payloads += seen.payloads;
+    for seed in 15..=30 {
+        let mut rng = zed_tests::instances::Rng::new(seed);
+        let mut seed_seen = Seen::default();
+        let mut drawn = 0;
+        for _ in 0..zed_tests::instances::RANDOM_INSTANCES {
+            let arms: Vec<(Pattern, Term)> = (0..1 + rng.below(4))
+                .map(|i| {
+                    let p = match i {
+                        // At least one type test, at the top of an arm.
+                        0 => Pattern::Is(random_type(&mut rng, 3)),
+                        _ => random_pattern(&mut rng, 3),
+                    };
+                    (p, lit(format!("arm {i}").as_str()))
+                })
+                .collect();
+            drawn += arms.iter().map(|(p, _)| type_tests(p)).sum::<usize>();
+            let t = Term::Match(zed_tests::kernel::rc(var("v@1")), arms);
+            let seen = reads_back(&t, &written(&t, before_at));
+            seed_seen.same += seen.same;
+            seed_seen.functions += seen.functions;
+            seed_seen.payloads += seen.payloads;
+        }
+        // Every type test drawn is read back one of the three ways, and each way is taken:
+        // over the seeds 0 to 63 the fewest of a seed were 410, 228 and 44.
+        let Seen {
+            same,
+            functions,
+            payloads,
+        } = seed_seen;
+        assert_eq!(
+            same + functions + payloads,
+            drawn,
+            "seed {seed}: {seed_seen:?}"
+        );
+        assert!(
+            same > 0 && functions > 0 && payloads > 0,
+            "seed {seed}: {seed_seen:?}"
+        );
     }
-    // Each way of reading a type test back is taken many times (with seed 15: 470, 243, 63).
-    assert!(
-        total.same > 100 && total.functions > 100 && total.payloads > 50,
-        "{total:?}"
-    );
+}
+
+/// How many type tests the pattern `p` holds, at any depth.
+fn type_tests(p: &Pattern) -> usize {
+    match p {
+        Pattern::Is(_) => 1,
+        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => ps.iter().map(type_tests).sum(),
+        Pattern::Fields(_, fs) => fs.iter().map(|(_, p)| type_tests(p)).sum(),
+        Pattern::Wild | Pattern::Bind(_) | Pattern::Lit(_) | Pattern::AnyAtom => 0,
+    }
 }
 
 /// A random pattern `d` deep, a type test one time in three.
@@ -508,6 +535,12 @@ fn reads_back(t: &Term, text: &str) -> Seen {
                 }
                 if ty.decidable() {
                     assert!(back.subtype(&want), "{src}: `{part}` reads back as {back}");
+                    // With its payloads read, the type read is the kernel's set, where it has a
+                    // kernel type (READ-atom-meet: `#a(bool) & #a(int)` read as `#a(bool)`, and
+                    // `#a(#a(int)) \ #a((int,))` as `Never`).
+                    if let Some(k) = back.exact_kernel() {
+                        assert!(k.equiv(ty), "{src}: `{part}` reads back as {back}");
+                    }
                     seen.payloads += 1;
                 } else {
                     // A type that holds some functions and not others reads back as the

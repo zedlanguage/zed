@@ -5,11 +5,12 @@
 # it (zedc-int src/int.rs, `Memo`). A signature's hash and equality never read the facts of
 # its variables it fills on first use (zedc-types src/ty.rs, `Facts`). A row's hash and
 # equality read its digest and components, never the keys of its components it fills on first
-# use (zedc-types src/ty.rs, `Row::keys`).
+# use (zedc-types src/ty.rs, `Row::keys`), and so do a payload shape's (`Shape`'s `Placed::keys`).
 ignore-interior-mutability = [
   "zed_kernel::types::Type",
   "zed_kernel::text::Text",
   "zedc_int::int::Memo",
   "zedc_types::ty::Facts",
   "zedc_types::ty::Row",
+  "zedc_types::ty::Shape",
 ]

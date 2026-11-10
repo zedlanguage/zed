@@ -1125,6 +1125,9 @@ pub struct ShapeData {
     /// Whether a component or field lists no value ([`Ty::lists_nothing`]): no atom has this
     /// payload, and [`Ty::atom_of`] and the rebuilding walk leave it out.
     void: bool,
+    /// The class of each component and field and its value where it is one value ([`class`]),
+    /// found the first time the shape is filed ([`near_pairs`]) and kept, as a row keeps its own.
+    keys: std::sync::OnceLock<Keys>,
 }
 
 impl std::ops::Deref for Shape {
@@ -1318,6 +1321,7 @@ impl Shape {
             wide,
             open_atoms,
             void,
+            keys: std::sync::OnceLock::new(),
         }))
     }
 
@@ -3908,9 +3912,53 @@ type Keyed<'r> = Vec<(usize, &'r [CompKey])>;
 /// One group of the right side of [`Groups`]: the kind at each place and its tuples.
 type RightGroup<'r> = (Cow<'r, [Kind]>, Keyed<'r>);
 
+/// What [`near_pairs`] files: a tuple's row, or an atom's payload shape, its items then its
+/// fields.
+trait Placed {
+    /// How many components it has.
+    fn width(&self) -> usize;
+    /// The class of each component and its value where it is one value, found once and kept.
+    fn keys(&self) -> &Keys;
+}
+
+impl Placed for Row {
+    fn width(&self) -> usize {
+        self.len()
+    }
+    fn keys(&self) -> &Keys {
+        Row::keys(self)
+    }
+}
+
+impl Placed for Shape {
+    fn width(&self) -> usize {
+        self.items.len() + self.fields.len()
+    }
+    fn keys(&self) -> &Keys {
+        (self.0.keys).get_or_init(|| {
+            Keys::new(
+                self.items
+                    .iter()
+                    .chain(self.fields.values())
+                    .map(class)
+                    .collect(),
+            )
+        })
+    }
+}
+
+impl<P: Placed> Placed for &P {
+    fn width(&self) -> usize {
+        (**self).width()
+    }
+    fn keys(&self) -> &Keys {
+        (**self).keys()
+    }
+}
+
 /// The tuples of `rows`, each with the keys of its components, by length and [`Kind`] at each
 /// place, each list in written order.
-fn by_pattern(rows: &[Row]) -> FMap<Pattern<'_>, Keyed<'_>> {
+fn by_pattern<P: Placed>(rows: &[P]) -> FMap<Pattern<'_>, Keyed<'_>> {
     let mut out: FMap<Pattern<'_>, Keyed<'_>> = FMap::default();
     for (i, r) in rows.iter().enumerate() {
         let Keys { comps, kinds, .. } = r.keys();
@@ -3919,10 +3967,10 @@ fn by_pattern(rows: &[Row]) -> FMap<Pattern<'_>, Keyed<'_>> {
         // ([`project`]), and every tuple of the other side of that length is near it.
         #[cfg(test)]
         let kinds = match NEAR_ALL.get() {
-            true => Cow::Owned(vec![Kind::Open; r.len()]),
+            true => Cow::Owned(vec![Kind::Open; r.width()]),
             false => kinds,
         };
-        out.entry((r.len(), kinds)).or_default().push((i, comps));
+        out.entry((r.width(), kinds)).or_default().push((i, comps));
     }
     out
 }
@@ -3932,7 +3980,7 @@ fn by_pattern(rows: &[Row]) -> FMap<Pattern<'_>, Keyed<'_>> {
 /// value with the tuple of `left`: their meet is empty ([`Ty::meet`] gives an empty component
 /// at the place), and the union of `right` holds the tuple exactly when the union of the tuples
 /// given holds it.
-fn near_pairs(left: &[Row], right: &[Row]) -> Vec<Vec<usize>> {
+fn near_pairs<P: Placed>(left: &[P], right: &[P]) -> Vec<Vec<usize>> {
     let groups = Groups::new(left, right);
     let mut near = Near::new(&groups);
     let mut sorted = |l| {
@@ -3956,7 +4004,7 @@ struct Groups<'r> {
 }
 
 impl<'r> Groups<'r> {
-    fn new(left: &'r [Row], right: &'r [Row]) -> Groups<'r> {
+    fn new<P: Placed>(left: &'r [P], right: &'r [P]) -> Groups<'r> {
         let mut groups = Groups {
             right: FMap::default(),
             left: Vec::new(),
@@ -4299,9 +4347,14 @@ impl<'a> Search<'a> {
 
 /// A type of one payload shape or one union of payload shapes of the atom `n`, for a message.
 fn payload_text(n: &str, shapes: Vec<Shape>) -> String {
+    payload_ty(n, shapes).to_string()
+}
+
+/// The type of the atoms `n` with a payload of one of the shapes `shapes`.
+fn payload_ty(n: &str, shapes: Vec<Shape>) -> Ty {
     let mut t = Ty::set(KType::atom_with(n, &KType::top()));
     t.payloads.insert(n.into(), Some(shapes));
-    t.to_string()
+    t
 }
 
 /// Why two members, `first` and `second`, of a union were refused ([`Comparing::search`]): each
@@ -4834,10 +4887,18 @@ impl<'m, 's> Comparing<'m, 's> {
     /// the comparisons open set aside meanwhile.
     async fn diff(&'m self, t: &Ty, u: &Ty, solve: Option<Solve<'s>>) -> Ty {
         let open = std::mem::take(&mut *self.cx.borrow_mut());
-        let tk = u.kernel();
+        // The atoms whose payloads `u` lists are left out of what is taken from the sets: the
+        // kernel type of `u` holds such an atom with any payload, and `#a(bool) \ #a(int)` was
+        // read as empty (READ-atom-meet). Their payloads are taken shape by shape below.
+        let listed: Vec<(&Arc<str>, &[Shape])> = (u.payloads.iter())
+            .filter_map(|(n, us)| Some((n, us.as_deref()?)))
+            .collect();
+        let paid =
+            KType::union_all((listed.iter()).map(|(n, _)| KType::atom_with(n, &KType::top())));
+        let tk = u.kernel().map(|k| &k - &paid);
         let mut out = t.clone();
-        out.set = &t.set - tk.as_ref().unwrap_or(&u.set);
-        out.family = &t.family - &u.set;
+        out.set = &t.set - &(tk.clone()).unwrap_or_else(|| &u.set - &paid);
+        out.family = &t.family - &(&u.set - &paid);
         out.prune_payloads();
         let w = &u.set & &wide();
         let within = Ty {
@@ -4877,6 +4938,51 @@ impl<'m, 's> Comparing<'m, 's> {
                 (Some(tk), Some(k)) if !(&k & &w).is_empty() => rest.push(&k - tk),
                 _ => kept.push(a),
             }
+        }
+        // A payload shape of an atom `u` lists is dropped when `u`'s shapes of that atom that
+        // may share a value with it ([`near_pairs`]) hold it, as a tuple is above; an atom left
+        // with no shape is taken from the sets. A refused comparison keeps the shape.
+        // Complexity tradeoff (COMPLEXITY.md F144): comparing each shape with all of `u`'s
+        // shapes of the atom costs O(l·r) for l and r shapes (70.2 times the bytes at 8 times
+        // the shapes in the negative control); the shapes that may share a value with it are
+        // found as for the meet, O((l·G + r·H)·w + p), and a shape held only in part is kept
+        // whole, so the type may hold more than the difference, as for tuples.
+        let mut gone = Vec::new();
+        for (n, us) in &listed {
+            let Some(Some(ts)) = t.payloads.get(*n) else {
+                continue;
+            };
+            if !holds_payload(&out.set, n) {
+                continue;
+            }
+            let mut left = Vec::with_capacity(ts.len());
+            for (s, near) in ts.iter().zip(near_pairs(ts, us)) {
+                if !near.is_empty() {
+                    *self.cx.borrow_mut() = Cx {
+                        solve,
+                        ..Cx::default()
+                    };
+                    let one = payload_ty(n, vec![s.clone()]);
+                    let near = payload_ty(n, near.into_iter().map(|j| us[j].clone()).collect());
+                    let mut b = Binds::new();
+                    let held = self.sub_near(&one, &near, None, &mut b).await;
+                    if self.cx.borrow().decided(held) && b.is_empty() {
+                        continue;
+                    }
+                }
+                left.push(s.clone());
+            }
+            if left.is_empty() {
+                out.payloads.remove(*n);
+                gone.push(KType::atom_with(n, &KType::top()));
+            } else if left.len() < ts.len() {
+                out.payloads.insert((*n).clone(), Some(left));
+            }
+        }
+        if !gone.is_empty() {
+            let gone = KType::union_all(gone);
+            out.set = &out.set - &gone;
+            out.family = &out.family - &gone;
         }
         *self.cx.borrow_mut() = open;
         out.tuples = kept;
@@ -5800,8 +5906,8 @@ impl Ty {
 
     /// The meet with `t`, as an `is` test narrows: what of `self` is also in `t`.
     pub fn meet(&self, t: &Ty) -> Ty {
-        if self.tuples.is_empty() || t.tuples.is_empty() {
-            return self.meet_rest(t, Vec::new());
+        if !self.meets_parts(t) {
+            return self.meet_rest(t, Vec::new(), BTreeMap::new());
         }
         let memo = RefCell::default();
         let pairs = Pairs {
@@ -5811,14 +5917,71 @@ impl Ty {
         pairs.stack.run(pairs.meet(self, t))
     }
 
-    /// [`Self::meet`] with `met`, the meets of the pairs of its tuples and `t`'s.
-    fn meet_rest(&self, t: &Ty, mut met: Vec<Row>) -> Ty {
+    /// Whether its meet with `t` meets parts of the two side by side: when both have tuples,
+    /// or both list the payloads of an atom of one name ([`Self::listed_with`]).
+    fn meets_parts(&self, t: &Ty) -> bool {
+        (!self.tuples.is_empty() && !t.tuples.is_empty()) || self.listed_with(t).next().is_some()
+    }
+
+    /// The atom names whose payloads both it and `t` list, each with the two lists of shapes,
+    /// in name order. A lookup in `t` per name it lists.
+    fn listed_with<'a>(
+        &'a self,
+        t: &'a Ty,
+    ) -> impl Iterator<Item = (&'a Arc<str>, &'a [Shape], &'a [Shape])> + 'a {
+        (self.payloads.iter()).filter_map(|(n, xs)| match (xs, t.payloads.get(n)) {
+            (Some(xs), Some(Some(ys))) => Some((n, &xs[..], &ys[..])),
+            _ => None,
+        })
+    }
+
+    /// [`Self::meet`] with `met`, the meets of the pairs of its tuples and `t`'s, and `shapes`,
+    /// for each atom name both list the payloads of ([`Self::listed_with`]), the meets of the
+    /// pairs of their shapes.
+    fn meet_rest(
+        &self,
+        t: &Ty,
+        mut met: Vec<Row>,
+        mut shapes: BTreeMap<Arc<str>, Vec<Shape>>,
+    ) -> Ty {
         if t.dynamic {
             return self.clone();
         }
         let mut out = Ty::set(&self.set & &t.set);
+        // The payloads of an atom name: met shape by shape where both list them, so that
+        // `#a(bool) & #a(int)` has no `#a` with a payload; one side's where only it lists
+        // them, since the other holds that atom with any payload or not at all (and then the
+        // set has lost it). Before (READ-atom-meet), its own payloads were kept whatever `t`
+        // listed, and `#a(bool) & #a(int)` was read as `#a(bool)`.
+        let mut gone = BTreeSet::new();
+        for (a, b) in [(self, t), (t, self)] {
+            for (n, xs) in &a.payloads {
+                if out.payloads.contains_key(n) || gone.contains(n) {
+                    continue;
+                }
+                let made = match (xs, b.payloads.get(n)) {
+                    (Some(_), Some(Some(_))) => {
+                        let m = shapes
+                            .remove(n)
+                            .expect("the shapes both sides list are met");
+                        if m.is_empty() {
+                            gone.insert(n);
+                            continue;
+                        }
+                        Some(m)
+                    }
+                    (Some(xs), _) => Some(xs.clone()),
+                    (None, Some(Some(ys))) => Some(ys.clone()),
+                    (None, _) => None,
+                };
+                out.payloads.insert(n.clone(), made);
+            }
+        }
+        if !gone.is_empty() {
+            let gone = gone.into_iter().map(|n| KType::atom_with(n, &KType::top()));
+            out.set = &out.set - &KType::union_all(gone);
+        }
         out.family = &self.family & &out.set;
-        out.payloads = self.payloads.clone();
         // A kind-wide part of one side keeps the other's shapes it holds whole; of a shape it
         // holds in part, the part goes to the set, where the kernel holds it exactly. A shape
         // with no kernel type is kept, which may be more than the meet.
@@ -5847,6 +6010,7 @@ impl Ty {
         if !t.fns.is_empty() {
             out.fns = self.fns.clone();
         }
+        out.prune_payloads();
         if self.dynamic || !self.vars.is_empty() {
             out = out.union(t);
         }
@@ -5856,7 +6020,8 @@ impl Ty {
     /// What of `self` is not in `t`, as `is not` narrows: scalars are subtracted, and so is
     /// all of `t` from the kind-wide part when `t` has a kernel type; tuples wholly inside `t`
     /// are dropped, a tuple that `t`'s kind-wide part holds in part leaves its rest in the set,
-    /// and the other tuples are kept.
+    /// and the other tuples are kept. The payload shapes of an atom whose payloads `t` lists
+    /// are dropped as tuples are, and the atom with them when none is left.
     pub fn diff(&self, t: &Ty) -> Ty {
         self.diff_in(t, None)
     }
@@ -6197,7 +6362,8 @@ impl<'m, K: std::hash::Hash + Eq + Copy + 'm, V: Clone + Unpin + 'm> Pairs<'m, K
 }
 
 impl<'m> Pairs<'m, (*const Ty, *const Ty), Ty> {
-    /// [`Ty::meet`] of `a` and `t`, which both hold tuples.
+    /// [`Ty::meet`] of `a` and `t`, which both hold tuples or both list the payloads of an atom
+    /// of one name ([`Ty::meets_parts`]).
     async fn meet(&'m self, a: &'m Ty, t: &'m Ty) -> Ty {
         if t.dynamic {
             return a.clone();
@@ -6207,23 +6373,87 @@ impl<'m> Pairs<'m, (*const Ty, *const Ty), Ty> {
         // any other pair has an empty component and is left out, so the tuples and their order
         // are those of meeting every pair of one length.
         for (r, near) in a.tuples.iter().zip(near_pairs(&a.tuples, &t.tuples)) {
-            'pair: for s in near.into_iter().map(|j| &t.tuples[j]) {
-                let mut cs = Vec::with_capacity(r.len());
-                for (x, y) in r.iter().zip(s) {
-                    let c = match x.tuples.is_empty() || y.tuples.is_empty() {
-                        true => x.meet_rest(y, Vec::new()),
-                        false => self.kept((x, y), move || self.meet(x, y)).await,
-                    };
-                    // A row with an empty component is left out, whatever the rest meet to.
-                    if c.is_empty() {
-                        continue 'pair;
-                    }
-                    cs.push(c);
+            for s in near.into_iter().map(|j| &t.tuples[j]) {
+                if let Some(cs) = self.components(r.iter().zip(s.iter())).await {
+                    met.push(Row::new(cs));
                 }
-                met.push(Row::new(cs));
             }
         }
-        a.meet_rest(t, met)
+        // The payloads of each atom name both list, met the same way: only shapes with as
+        // many items and the same field names share a value, so they are grouped by those
+        // first, and in each group only the pairs [`near_pairs`] gives are met.
+        // Complexity tradeoff (COMPLEXITY.md F144): the naive meet tries each pair of shapes,
+        // O(l·r) for l and r shapes of the name (60.9 times the bytes at 8 times the shapes in
+        // the negative control); grouping in a hash map and filing each group as tuples are
+        // filed (F127) meets only the pairs that may share a value, O((l·G + r·H)·w + p) as
+        // for rows, at the cost of the group index and of the class keys each shape keeps.
+        let mut shapes = BTreeMap::new();
+        for (n, xs, ys) in a.listed_with(t) {
+            let key = |s: &'m Shape| (s.items.len(), s.fields.keys().collect::<Vec<_>>());
+            let mut index: FMap<(usize, Vec<&Arc<str>>), usize> = FMap::default();
+            // Each group's shapes of `xs` and of `ys`.
+            let mut groups: Vec<(Vec<&Shape>, Vec<&Shape>)> = Vec::new();
+            for y in ys {
+                let g = *index.entry(key(y)).or_insert_with(|| {
+                    groups.push((Vec::new(), Vec::new()));
+                    groups.len() - 1
+                });
+                groups[g].1.push(y);
+            }
+            // For each shape of `xs`, its group and its place in the group.
+            let mut of = Vec::with_capacity(xs.len());
+            for x in xs {
+                of.push(index.get(&key(x)).map(|&g| {
+                    groups[g].0.push(x);
+                    (g, groups[g].0.len() - 1)
+                }));
+            }
+            let near: Vec<Vec<Vec<usize>>> = (groups.iter())
+                .map(|(left, right)| near_pairs(left, right))
+                .collect();
+            let mut m = Vec::new();
+            for (x, at) in xs.iter().zip(of) {
+                let Some((g, i)) = at else { continue };
+                let right = &groups[g].1;
+                for y in near[g][i].iter().map(|&j| right[j]) {
+                    let named = std::cell::Cell::new(true);
+                    let Some(mut cs) = self.components(x.pairs(y, &named)).await else {
+                        continue;
+                    };
+                    let fields = (x.fields.keys().cloned()).zip(cs.split_off(x.items.len()));
+                    m.push(Shape::new(cs, fields.collect()));
+                }
+            }
+            // Complexity tradeoff (COMPLEXITY.md F17): repeated shapes dropped through a hash
+            // set, as repeated rows are below.
+            let mut have = HashSet::new();
+            let first: Vec<bool> = m.iter().map(|s| have.insert(s)).collect();
+            let m = (m.iter().zip(first))
+                .filter(|&(_, f)| f)
+                .map(|(s, _)| s.clone());
+            shapes.insert(n.clone(), m.collect());
+        }
+        a.meet_rest(t, met, shapes)
+    }
+
+    /// The meets of the pairs of components `pairs`, in order, or none when one is empty: a
+    /// row or a payload with an empty component has no value, whatever the rest meet to.
+    async fn components(
+        &'m self,
+        pairs: impl Iterator<Item = (&'m Ty, &'m Ty)>,
+    ) -> Option<Vec<Ty>> {
+        let mut cs = Vec::new();
+        for (x, y) in pairs {
+            let c = match x.meets_parts(y) {
+                false => x.meet_rest(y, Vec::new(), BTreeMap::new()),
+                true => self.kept((x, y), move || self.meet(x, y)).await,
+            };
+            if c.is_empty() {
+                return None;
+            }
+            cs.push(c);
+        }
+        Some(cs)
     }
 }
 
