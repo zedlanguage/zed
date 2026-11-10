@@ -21,7 +21,7 @@
 //! payload of every tuple but not every struct, or the reverse, has no surface type: it prints
 //! as `#a(tuple)` or `#a(struct)` and is marked not exact.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use super::TextPlace as At;
@@ -372,11 +372,13 @@ fn sort_groups(segs: &mut [Seg], rank: &[u32]) {
 /// The atom name whose payloads a type stands for, or `None` for the values themselves.
 type Ctx = Option<Arc<str>>;
 
-/// A node of the walk.
+/// A node of the walk. A part is written as it is, or turned over when its flag is set (the
+/// values it does not hold), which only an expression takes: a list turned over is the list
+/// of the other value ([`signed`]).
 enum Item {
     Ty(Ctx, Type),
-    Tuples(Ctx, usize, Part<Row>),
-    Morphisms(Part<Morphism>),
+    Tuples(Ctx, usize, Part<Row>, bool),
+    Morphisms(Part<Morphism>, bool),
 }
 
 /// An item's key: its contents, with a diagram node by its interned id.
@@ -384,22 +386,42 @@ enum Item {
 enum Key {
     Ty(Ctx, Type),
     TupleNode(Ctx, usize, u64),
-    TupleExpr(Ctx, usize, Part<Row>),
+    TupleExpr(Ctx, usize, Part<Row>, bool),
     MorphismNode(u64),
-    MorphismExpr(Part<Morphism>),
+    MorphismExpr(Part<Morphism>, bool),
 }
 
 impl Item {
     fn key(&self) -> Key {
         match self {
             Item::Ty(c, t) => Key::Ty(c.clone(), t.clone()),
-            Item::Tuples(c, n, p) => match p.view() {
+            Item::Tuples(c, n, p, not) => match p.view() {
                 Ok(b) => Key::TupleNode(c.clone(), *n, node_id(b)),
-                Err(_) => Key::TupleExpr(c.clone(), *n, p.clone()),
+                Err(_) => Key::TupleExpr(c.clone(), *n, p.clone(), *not),
             },
-            Item::Morphisms(p) => match p.view() {
+            Item::Morphisms(p, not) => match p.view() {
                 Ok(b) => Key::MorphismNode(node_id(b)),
-                Err(_) => Key::MorphismExpr(p.clone()),
+                Err(_) => Key::MorphismExpr(p.clone(), *not),
+            },
+        }
+    }
+}
+
+/// The part `p`, or the values it does not hold when `not` is set, in the one form an item
+/// takes: a list turned over is the list of the other value, and a complement `!q` turned over
+/// is `q`.
+fn signed<A: super::bdd::Literal>(p: &Part<A>, not: bool) -> (Part<A>, bool) {
+    let mut p = p;
+    let mut not = not;
+    loop {
+        match p {
+            Part::Bdd(b) => return (Part::Bdd(if not { b.not() } else { b.clone() }), false),
+            Part::Expr(e) => match (&e.form, not) {
+                (Form::Not(q), true) => {
+                    p = q;
+                    not = false;
+                }
+                _ => return (p.clone(), not),
             },
         }
     }
@@ -424,6 +446,8 @@ struct Printer {
     exact: bool,
     /// Whether a recursive member is written by its group's name for it ([`Type::surface_by_name`]).
     by_name: bool,
+    /// The value of each part met outside every atom, by its node's id ([`Printer::outside`]).
+    outsides: HashMap<u64, bool>,
 }
 
 enum Step {
@@ -619,17 +643,19 @@ impl Printer {
     fn text(&mut self, item: &Item) -> Text {
         match item {
             Item::Ty(ctx, t) => self.ty(ctx, t),
-            Item::Tuples(ctx, n, p) => self.part(
+            Item::Tuples(ctx, n, p, not) => self.part(
                 p,
+                *not,
                 &|me: &mut Printer, r: &Row| me.row(ctx, *n, Some(r)),
                 &|me: &mut Printer| me.row(ctx, *n, None),
-                &|c: &Part<Row>| Item::Tuples(ctx.clone(), *n, c.clone()),
+                &|c: &Part<Row>, not| Item::Tuples(ctx.clone(), *n, c.clone(), not),
             ),
-            Item::Morphisms(p) => self.part(
+            Item::Morphisms(p, not) => self.part(
                 p,
+                *not,
                 &|me: &mut Printer, m: &Morphism| me.morphism(m),
                 &|_: &mut Printer| every_morphism(),
-                &|c: &Part<Morphism>| Item::Morphisms(c.clone()),
+                &|c: &Part<Morphism>, not| Item::Morphisms(c.clone(), not),
             ),
         }
     }
@@ -759,7 +785,7 @@ impl Printer {
         match p.morphisms.is_leaf() {
             Some(false) => {}
             Some(true) => items.push(every_morphism()),
-            None => items.push(self.refer(Item::Morphisms(p.morphisms.clone()))),
+            None => items.push(self.refer(Item::Morphisms(p.morphisms.clone(), false))),
         }
         items
     }
@@ -796,7 +822,7 @@ impl Printer {
             match part.is_leaf() {
                 Some(false) => {}
                 Some(true) => items.push(self.row(ctx, *n, None)),
-                None => items.push(self.refer(Item::Tuples(ctx.clone(), *n, part.clone()))),
+                None => items.push(self.refer(Item::Tuples(ctx.clone(), *n, part.clone(), false))),
             }
         }
     }
@@ -861,69 +887,163 @@ impl Printer {
         }
     }
 
-    /// A part: a diagram from its decision list ([`Printer::list`]), or an expression's
-    /// connective, its operands in any order.
+    /// A part, or the values it does not hold when `not` is set: a diagram from its decision
+    /// list ([`Printer::list`]), or an expression's connective, its operands in any order, an
+    /// expression turned over written by De Morgan's laws (`!(x & y)` as `!x | !y`).
+    ///
+    /// A part whose value outside every atom is `false` ([`Printer::outside`]) is written with
+    /// no word for every value, `all`, which needs the top type `_` of layer L10 (`(_, _)` for
+    /// the pairs, `_ ->? _` for the morphisms), while a program at L1 writes every such part
+    /// (READ-atom-meet, PRINT-kept-meet-all). A list is so written by [`Printer::list`]. A meet
+    /// `x & y` of such an `x` and a `y` of value `true` there is written `x \ !y`, `!y` a part
+    /// of value `false` there; a complement `!q` of such a `q` is written as `all \ q`, and of
+    /// any other `q` as `q` turned over. So, by induction on the expression, only a part that
+    /// holds values outside every atom is written with `all`.
     fn part<A: super::bdd::Literal>(
         &mut self,
         p: &Part<A>,
+        not: bool,
         lit: &dyn Fn(&mut Printer, &A) -> Text,
         all: &dyn Fn(&mut Printer) -> Text,
-        item: &dyn Fn(&Part<A>) -> Item,
+        item: &dyn Fn(&Part<A>, bool) -> Item,
     ) -> Text {
         // An operand: a leaf as text, otherwise a node of its own.
-        let operand = |me: &mut Printer, q: &Part<A>| match q.is_leaf() {
+        let operand = |me: &mut Printer, (q, not): &(Part<A>, bool)| match q.is_leaf() {
             Some(true) => all(me),
             Some(false) => Text::word("Never", Class::Prim),
-            None => me.refer(item(q)),
+            None => me.refer(item(q, *not)),
         };
-        match p.view() {
-            Ok(b) => self.list(b, lit, all),
+        let diff = |me: &mut Printer, x: &(Part<A>, bool), q: &(Part<A>, bool)| {
+            let x = operand(me, x);
+            let q = operand(me, q);
+            let mut segs = Vec::new();
+            put(&mut segs, x, At::DiffLeft);
+            segs.push(Seg::Str(" \\ ".into()));
+            put(&mut segs, q, At::Prim);
+            Text {
+                segs,
+                class: Class::Diff,
+            }
+        };
+        let (x, y, and) = match p.view() {
+            Ok(b) => {
+                debug_assert!(!not, "a list turned over is the list of the other value");
+                return self.list(b, lit, all);
+            }
             Err(Form::Not(q)) => {
-                let q = operand(self, q);
-                let mut segs = Vec::new();
-                put(&mut segs, all(self), At::DiffLeft);
-                segs.push(Seg::Str(" \\ ".into()));
-                put(&mut segs, q, At::Prim);
-                Text {
-                    segs,
-                    class: Class::Diff,
-                }
-            }
-            Err(Form::Or(x, y)) => {
-                let x = operand(self, x);
-                let y = operand(self, y);
-                Text::group(vec![x, y], " | ", At::Union, Class::Union)
-            }
-            // `x & !q`, a difference kept as its operands, is written `x \ q`, as a program
-            // writes it at L1, and not `x & (all \ q)` (READ-atom-meet).
-            Err(Form::And(x, y))
-                if matches!(
-                    (x.view(), y.view()),
-                    (Err(Form::Not(_)), _) | (_, Err(Form::Not(_)))
-                ) =>
-            {
-                let (x, q) = match (x.view(), y.view()) {
-                    (_, Err(Form::Not(q))) => (x, q),
-                    (Err(Form::Not(q)), _) => (y, q),
-                    _ => unreachable!("one operand is a complement"),
+                debug_assert!(!not, "a complement turned over is its operand");
+                // `!q` of `q` with no value outside every atom is `all \ q`; of any other `q`, it
+                // is `q` turned over, a part with no such value.
+                return match self.outside(q) {
+                    false => {
+                        let q = operand(self, &signed(q, false));
+                        let mut segs = Vec::new();
+                        put(&mut segs, all(self), At::DiffLeft);
+                        segs.push(Seg::Str(" \\ ".into()));
+                        put(&mut segs, q, At::Prim);
+                        Text {
+                            segs,
+                            class: Class::Diff,
+                        }
+                    }
+                    true => operand(self, &signed(q, true)),
                 };
-                let x = operand(self, x);
-                let q = operand(self, q);
-                let mut segs = Vec::new();
-                put(&mut segs, x, At::DiffLeft);
-                segs.push(Seg::Str(" \\ ".into()));
-                put(&mut segs, q, At::Prim);
-                Text {
-                    segs,
-                    class: Class::Diff,
-                }
             }
-            Err(Form::And(x, y)) => {
-                let x = operand(self, x);
-                let y = operand(self, y);
+            // De Morgan's laws: a union turned over is the meet of its operands turned over, and
+            // a meet turned over their union.
+            Err(Form::Or(x, y)) => (signed(x, not), signed(y, not), not),
+            Err(Form::And(x, y)) => (signed(x, not), signed(y, not), !not),
+        };
+        if !and {
+            let x = operand(self, &x);
+            let y = operand(self, &y);
+            return Text::group(vec![x, y], " | ", At::Union, Class::Union);
+        }
+        // A complement kept as an expression, `!q`, as its operand `q`.
+        let complement = |(q, not): &(Part<A>, bool)| match (q.view(), not) {
+            (Err(Form::Not(q)), false) => Some(signed(q, false)),
+            _ => None,
+        };
+        match (self.outside_of(&x), self.outside_of(&y)) {
+            // `x & y` of `x` with no value outside every atom and `y` with some is `x \ !y`, as
+            // a program writes it at L1, and not `x & (all \ !y)` or the like: `!y` has no such
+            // value either. The difference `x & !q` kept as its operands is so `x \ q`.
+            (false, true) => diff(self, &x, &signed(&y.0, !y.1)),
+            (true, false) => diff(self, &y, &signed(&x.0, !x.1)),
+            // Both hold values outside every atom: a complement operand `!q` is written
+            // `x \ q`, which writes `all` once, in `x`.
+            (true, true) => match (complement(&y), complement(&x)) {
+                (Some(q), _) => diff(self, &x, &q),
+                (None, Some(q)) => diff(self, &y, &q),
+                (None, None) => {
+                    let x = operand(self, &x);
+                    let y = operand(self, &y);
+                    Text::group(vec![x, y], " & ", At::And, Class::And)
+                }
+            },
+            (false, false) => {
+                let x = operand(self, &x);
+                let y = operand(self, &y);
                 Text::group(vec![x, y], " & ", At::And, Class::And)
             }
         }
+    }
+
+    /// The value of a part, turned over when its flag is set, outside every atom
+    /// ([`Printer::outside`]).
+    fn outside_of<A: super::bdd::Literal>(&mut self, (p, not): &(Part<A>, bool)) -> bool {
+        self.outside(p) != *not
+    }
+
+    /// The value of a part on the values outside every atom, where no literal holds but those
+    /// that refuse their atom: a list's is the value of its first block that refuses an atom,
+    /// or its last value; an expression's is its connective's of its operands'. Each node is
+    /// evaluated once in the printer, with a stack of its own, so the time is linear in the
+    /// nodes and literals of the parts printed, each list read up to its first block that
+    /// refuses an atom.
+    fn outside<A: super::bdd::Literal>(&mut self, p: &Part<A>) -> bool {
+        // Complexity tradeoff: the naive version asks each meet `p.eval3` afresh, which walks
+        // every node below it, so `n` meets inside each other cost O(n²). Here each node's value
+        // is kept by its id for the printer's life, so the whole text costs O(n) evaluations
+        // and O(n) memory for the table; the cost is that table, freed with the printer.
+        if let Some(&v) = self.outsides.get(&p.id()) {
+            return v;
+        }
+        let mut stack = vec![(p.clone(), false)];
+        while let Some((q, ready)) = stack.pop() {
+            let id = q.id();
+            if self.outsides.contains_key(&id) {
+                continue;
+            }
+            let v = match q.view() {
+                Ok(_) => q
+                    .eval3(&|_| Some(false))
+                    .expect("a list has one value where every atom is known"),
+                Err(form) => {
+                    let (x, y) = match form {
+                        Form::Not(x) => (x, None),
+                        Form::Or(x, y) | Form::And(x, y) => (x, Some(y)),
+                    };
+                    if !ready {
+                        stack.push((q.clone(), true));
+                        for o in [Some(x), y].into_iter().flatten() {
+                            if !self.outsides.contains_key(&o.id()) {
+                                stack.push((o.clone(), false));
+                            }
+                        }
+                        continue;
+                    }
+                    let x = self.outsides[&x.id()];
+                    match (form, y.map(|y| self.outsides[&y.id()])) {
+                        (Form::Or(..), Some(y)) => x || y,
+                        (Form::And(..), Some(y)) => x && y,
+                        _ => !x,
+                    }
+                }
+            };
+            self.outsides.insert(id, v);
+        }
+        self.outsides[&p.id()]
     }
 
     /// A diagram from its decision list in its one form (module `bdd::list`), which does not
@@ -1576,5 +1696,46 @@ mod tests {
         // Every morphism but some is no type of L1, and keeps `_`.
         let t = &Type::universe(super::super::Universe::Morphism) - &a;
         assert_eq!(t.surface().to_string(), "(_ ->? _) \\ (#a -> int)");
+    }
+
+    /// A random part of 1-tuples over six rows, from literals, their complements, meets,
+    /// unions and complements.
+    fn random_part(seed: &mut u64, depth: u32) -> Part<Row> {
+        let k = next(seed);
+        if depth == 0 || k.is_multiple_of(5) {
+            let l = Part::literal(Row::new(vec![lit(k / 5 % 6)]));
+            return if (k / 30).is_multiple_of(2) {
+                l
+            } else {
+                l.not()
+            };
+        }
+        let a = random_part(seed, depth - 1);
+        match k % 3 {
+            0 => a.zip(&random_part(seed, depth - 1), Op::And),
+            1 => a.zip(&random_part(seed, depth - 1), Op::Or),
+            _ => a.not(),
+        }
+    }
+
+    #[test]
+    fn only_a_part_holding_values_outside_every_atom_prints_the_top_type() {
+        // Item PRINT-kept-meet-all: a part prints `_` exactly when it holds the values outside
+        // every atom it names, which no other text can write; a kept meet or complement whose
+        // operand holds them, and that does not hold them itself, is written without `_`.
+        let mut kept = 0;
+        for i in 0..20000u64 {
+            let mut seed = i * 7919 + 3;
+            let p = random_part(&mut seed, 6);
+            let outside = p.eval3(&|_| Some(false)).expect("every atom is known");
+            kept += usize::from(p.view().is_err());
+            let t = Type::with(|q| {
+                q.tuples.lens.insert(1, p.clone());
+            });
+            let s = t.surface().to_string();
+            assert_eq!(s.contains('_'), outside, "{s}");
+        }
+        // Most of the parts are kept expressions, not lists.
+        assert!(kept > 5000, "{kept}");
     }
 }

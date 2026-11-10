@@ -711,3 +711,150 @@ fn the_empty_type_prints_as_never() {
         assert!(!s.to_string().contains("!_"), "{s}");
     }
 }
+
+/// The point `(x, y)`, a pair of integers.
+fn point(x: i64, y: i64) -> Type {
+    tuple(&[lit(x), lit(y)])
+}
+
+/// The points in both of two unions, `((a, b) | (a, c)) & ((a, c) | (d, c))`, which the kernel
+/// keeps as the meet of its two operands.
+fn both(a: i64, b: i64, c: i64, d: i64) -> Type {
+    &(&point(a, b) | &point(a, c)) & &(&point(a, c) | &point(d, c))
+}
+
+/// Item PRINT-kept-meet-all: a meet the kernel keeps as its two operands, one of them a
+/// decision list that holds values outside every point named, such as the complement of a
+/// point that `x \ (6, 0)` meets, printed that operand with the top type: `x \ (6, 0)` was
+/// `((_, _) \ (6, 0)) & x`, and `_` in a type is a word of layer L10 that no program at L1
+/// writes (DESIGN.md sec:type_language). Such a meet is now printed as the difference of the
+/// other operand and that one's complement, as a program writes it; a complement whose operand
+/// holds such values is printed as that operand turned over. Each text reads back as its type.
+#[test]
+fn a_meet_kept_with_a_decision_list_prints_without_the_top_type() {
+    let x = both(0, 0, 1, 1);
+    let y = both(2, 0, 1, 3);
+    let list = &(&point(3, 0) | &point(4, 0)) - &point(5, 0);
+    for (t, text) in [
+        // One point taken away.
+        (
+            &x - &point(6, 0),
+            r"(((0, 0) | (0, 1)) & ((0, 1) | (1, 1))) \ (6, 0)",
+        ),
+        // A list of several blocks taken away, and one taken away twice.
+        (
+            &x - &list,
+            r"(((0, 0) | (0, 1)) & ((0, 1) | (1, 1))) \ (((3, 0) | (4, 0)) \ (5, 0))",
+        ),
+        (
+            &x - &(&point(3, 0) - &point(4, 0)),
+            r"(((0, 0) | (0, 1)) & ((0, 1) | (1, 1))) \ ((3, 0) \ (4, 0))",
+        ),
+        (
+            &(&x | &y) - &list,
+            r"(((0, 0) | (0, 1)) & ((0, 1) | (1, 1)) | ((2, 0) | (2, 1)) & ((2, 1) | (3, 1))) \ (((3, 0) | (4, 0)) \ (5, 0))",
+        ),
+        // Meets inside meets.
+        (
+            &(&x - &point(6, 0)) - &point(7, 0),
+            r"(((0, 0) | (0, 1)) & ((0, 1) | (1, 1))) \ (6, 0) \ (7, 0)",
+        ),
+        (
+            &(&x - &point(6, 0)) & &(&y - &point(7, 0)),
+            r"((((0, 0) | (0, 1)) & ((0, 1) | (1, 1))) \ (6, 0)) & ((((2, 0) | (2, 1)) & ((2, 1) | (3, 1))) \ (7, 0))",
+        ),
+        (
+            &x & &(&y - &point(7, 0)),
+            r"((0, 0) | (0, 1)) & ((0, 1) | (1, 1)) & ((((2, 0) | (2, 1)) & ((2, 1) | (3, 1))) \ (7, 0))",
+        ),
+        // A point less the points of `x` and every value but `(6, 0)`: the complement is
+        // turned over, `(6, 0) \ x`.
+        (
+            &point(0, 1) - &(&x | &!&point(6, 0)),
+            r"(0, 1) & ((6, 0) \ (((0, 0) | (0, 1)) & ((0, 1) | (1, 1))))",
+        ),
+        // Nothing left, and nothing taken away.
+        (&x - &x, "Never"),
+        (
+            &x - &Type::empty(),
+            r"((0, 0) | (0, 1)) & ((0, 1) | (1, 1))",
+        ),
+    ] {
+        let s = round_trip(&t);
+        assert_eq!(s.to_string(), text);
+        assert!(!s.to_string().contains('_'), "{s}");
+    }
+}
+
+/// A random type of unions, meets, differences and exclusive ors of points.
+fn points(seed: &mut Seed, depth: usize) -> Type {
+    if depth == 0 || seed.next(4) == 0 {
+        return point(seed.next(3) as i64, seed.next(3) as i64);
+    }
+    let (a, b) = (points(seed, depth - 1), points(seed, depth - 1));
+    match seed.next(4) {
+        0 => &a | &b,
+        1 => &a & &b,
+        2 => &a - &b,
+        _ => &(&a - &b) | &(&b - &a),
+    }
+}
+
+#[test]
+fn a_type_of_points_prints_without_the_top_type_and_reads_back() {
+    // A type made of points holds no value outside them, so its text needs no `_`, whatever
+    // operands the kernel keeps (item PRINT-kept-meet-all).
+    for s in 0..400 {
+        let mut seed = Seed(s * 7919 + 5);
+        let t = points(&mut seed, 5);
+        let s = round_trip(&t);
+        assert!(!s.to_string().contains('_'), "{s}");
+    }
+}
+
+/// The points `x` less a decision list of `n` points, in blocks of two, values alternating:
+/// `x \ ((2, 0) | (3, 0) | (((6, 0) | (7, 0)) \ (4, 0) \ (5, 0)))` at 6.
+fn less_a_long_list(n: usize) -> Type {
+    let n = n as i64;
+    let mut f = point(n + 1, 0);
+    for i in (2..n + 1).rev() {
+        f = match i / 2 % 2 {
+            0 => &f - &point(i, 0),
+            _ => &f | &point(i, 0),
+        };
+    }
+    &both(0, 0, 1, 1) - &f
+}
+
+/// `n` meets inside each other, each with its own point taken away:
+/// `(e(k) | (... \ (k - 1, 1))) \ (k, 1)`, `e(k)` the points in both of two unions.
+fn meets_n_deep(n: usize) -> Type {
+    let mut t = both(0, 0, 1, 1);
+    for k in 0..n as i64 {
+        let a = 10 + k;
+        t = &(&t | &both(a, 0, 1, 3)) - &point(a, 1);
+    }
+    t
+}
+
+#[test]
+fn the_text_of_a_meet_with_a_long_list_scales() {
+    let inputs = scaling::inputs(256, less_a_long_list);
+    scaling::check("a meet with a decision list of n points", 256, |n| {
+        let s = inputs[&n].surface().to_string();
+        assert!(!s.contains('_'), "{s}");
+        assert_eq!(s.matches(" \\ ").count() + s.matches(" | ").count(), n + 2);
+    });
+}
+
+#[test]
+fn the_text_of_meets_n_deep_scales() {
+    // Each meet asks whether its operands hold values outside every point; each node's answer
+    // is kept, so the n meets read each node once and not each node below them again.
+    let inputs = scaling::inputs(128, meets_n_deep);
+    scaling::check("n meets inside each other", 128, |n| {
+        let s = inputs[&n].surface().to_string();
+        assert!(!s.contains('_'), "{s}");
+        assert_eq!(s.matches(" \\ ").count(), n);
+    });
+}
