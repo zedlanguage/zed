@@ -4547,9 +4547,14 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                         // The question below is of the disjunct's own constraints, so the point
                         // answers it when they hold there, whatever holds below them; reading
                         // only them keeps a nest from being read once for each level above it.
+                        // The repairs only keep a disjunct, which `served` keeps anyway unless
+                        // a refutation below removes it, and a disjunct a repair keeps has a
+                        // point with the base, which no refutation then shows empty: so with
+                        // `served` they decide nothing and are not run (item
+                        // PRES-each-settle-share).
                         if let Some(pt) = &point
                             && (d.cons.iter().all(|c| c.holds_linear(pt))
-                                || own_repair(&near, pt, &d.cons).is_some())
+                                || (!served && own_repair(&near, pt, &d.cons).is_some()))
                         {
                             return true;
                         }
@@ -4559,7 +4564,8 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                         if near.refutes(&d.cons) {
                             return false;
                         }
-                        if let Some(pt) = &point
+                        if !served
+                            && let Some(pt) = &point
                             && local_repair(&base.cons, &near, pt, &d.cons).is_some()
                         {
                             return true;
@@ -8144,11 +8150,14 @@ fn project_parts(
     {
         return Ok(none());
     }
+    // Whether [`probe`] changed the parts after that removal.
+    let mut probed = false;
     if !sets && p.ors.len() > 1 && pick(&p, whole.is_some()).is_err() {
         let Some(q) = probe(p)? else {
             return Ok(none());
         };
         p = q;
+        probed = true;
     }
     let Some(model) = solve(&p.cons, true)? else {
         return Ok(none());
@@ -8167,8 +8176,19 @@ fn project_parts(
     // rows the other disjunctions imply is removed again ([`drop_jointly_empty`]), after the
     // search, which [`probe`] may have changed the parts by, so that the implied rows read
     // below for the hulls and for a point at each end are those of the disjuncts left. With
-    // `sets`, the parts are projected as they are.
-    if !sets && n_ors > 1 && !old_path() && drop_jointly_empty(&linked.cons, &mut ors).is_none() {
+    // `sets`, the parts are projected as they are. Without a probe, the parts are those the
+    // removal above left, which removes nothing more from them: its last pass asked every
+    // disjunct of these rows and removed none (`linked.cons` is `p.cons`, in its order), so
+    // it is not run again (item PRES-each-settle-share). A second run could differ only on a
+    // question the solver refused in that pass and answers in the other order (see
+    // [`drop_jointly_empty`]); run beside the first in every test of the solver and the
+    // preimage steps, it removed nothing.
+    if !sets
+        && probed
+        && n_ors > 1
+        && !old_path()
+        && drop_jointly_empty(&linked.cons, &mut ors).is_none()
+    {
         return Ok(none());
     }
     let bases: HashMap<usize, Formula> = (0..linked.held.len())
