@@ -4380,7 +4380,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let start = self.refused.len();
         let out = match &n.kind {
-            NeedKind::Component { i, key } => self.at_index(&on, *i, Arg::of(key.clone()), span, false),
+            NeedKind::Component { i, key } => {
+                self.at_index(&on, *i, Arg::of(key.clone()), span, false)
+            }
             NeedKind::Index(k) => {
                 let k = Arg::of(self.bound(k, binds));
                 self.at_key(&on, k, span, false)
@@ -7328,6 +7330,21 @@ fn passed_repairs(p: &str, d: &IntDomain, span: Span) -> Vec<Note> {
     .collect()
 }
 
+/// `r`, the entry type of a read of a family whose keys are one integer interval, every key
+/// present, with its miss `#notFound` written `#outOfBounds` (DESIGN.md sec:type_language, the
+/// `m[k]` row). A `#notFound` the key `key` brings is passed by, not a miss, so it stays.
+fn out_of_bounds(r: Ty, key: &Ty) -> Ty {
+    let not_found = KType::atom("notFound");
+    if (&r.atoms() & &not_found).is_empty() {
+        return r;
+    }
+    let r = match (&key.loose() & &not_found).is_empty() {
+        true => r.without(&not_found),
+        false => r,
+    };
+    r.union(&Ty::set(KType::atom("outOfBounds")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7412,19 +7429,4 @@ mod tests {
         dynamic.insert(v, Ty::dynamic());
         assert_eq!(ck.bound(&row, &mut Binds::new()), row.replace(&dynamic));
     }
-}
-
-/// `r`, the entry type of a read of a family whose keys are one integer interval, every key
-/// present, with its miss `#notFound` written `#outOfBounds` (DESIGN.md sec:type_language, the
-/// `m[k]` row). A `#notFound` the key `key` brings is passed by, not a miss, so it stays.
-fn out_of_bounds(r: Ty, key: &Ty) -> Ty {
-    let not_found = KType::atom("notFound");
-    if (&r.atoms() & &not_found).is_empty() {
-        return r;
-    }
-    let r = match (&key.loose() & &not_found).is_empty() {
-        true => r.without(&not_found),
-        false => r,
-    };
-    r.union(&Ty::set(KType::atom("outOfBounds")))
 }

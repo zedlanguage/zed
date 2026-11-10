@@ -66,7 +66,7 @@ AscChain      : a chain of `<` and `<=`, as in EqChain
 DescChain     : a chain of `>` and `>=`, as in EqChain
 Compare       : the primitives lt, le, gt and ge
 IsTest        : the type test of ⟦e⟧ against T, a bool
-InTest        : `e in D` is match get(⟦D⟧, ⟦e⟧) { #notFound -> false, _ -> true }, and `not in` its negation
+InTest        : `e in D` is match get(⟦D⟧, ⟦e⟧) { m -> false for the miss atom m of D's level (#notFound, or #outOfBounds at an integer-interval level), _ -> true }, and `not in` its negation
 Reduce        : the tails applied left to right to ⟦Range⟧
 ReduceTail    : `F >< op` is fold(⟦F⟧, ⟦op⟧, ev) with the evidence the checker attaches (sec:reduction); `as (p)` names the levels of ⟦F⟧ and `into (q)` is the reindex its output pattern builds, with a fold for each level collapsed by `><` (sec:remap_law); `with { u, … }` is discard(⟦F⟧, keep all but the updated keypaths) ⊎ the updated entries; `with f(…)` attaches a facet (sec:facets), adding its failure members and leaving the term unchanged
 ReducePolicy  : the fold's evidence: `tree` the canonical tree, `compensated` the compensated sum on that tree, `unordered` any grouping and order (sec:reduction)
@@ -81,7 +81,7 @@ Power         : the primitive pow, right-associative
 Postfix       : the suffixes applied left to right to ⟦Primary⟧
 Suffix        : the suffix of its alternative, over its receiver x
 CallSuffix    : the application with its arguments in parameter order, defaults filled and `...` a λ over the parameters left out
-IndexSuffix   : get on a family, application on a function, tupleGet on a tuple
+IndexSuffix   : get on a family, a miss being the level's atom (#outOfBounds at a level whose keys are one integer interval, every one present, else #notFound), application on a function, tupleGet on a tuple, a miss being #outOfBounds
 MemberSuffix  : get(x, #n) where x's type guarantees the field n, else the application n(x, …)
 SafeSuffix    : match ⟦x⟧ { a -> a for each atom member a, v -> ⟦v.n⟧ }
 SpreadSuffix  : the method call that writes the receiver's next generation

@@ -2668,9 +2668,10 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::TupleGet | Prim::At, [Value::Tuple(_), _]) => Value::atom("outOfBounds"),
         // A read the checker proved is of a family whose keys are one integer interval, every
         // key present: a key it lacks lies outside the interval.
-        (Prim::At, [Value::Family(f), k]) => {
-            f.get(k).cloned().unwrap_or_else(|| Value::atom("outOfBounds"))
-        }
+        (Prim::At, [Value::Family(f), k]) => f
+            .get(k)
+            .cloned()
+            .unwrap_or_else(|| Value::atom("outOfBounds")),
         (
             Prim::Show
             | Prim::CastInt
