@@ -1760,14 +1760,21 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | A9-path-words | impl attempt 1 | 2026-11-09 20:07 | ready 3b1982bf6d5162e7a3f701cd4aafaa909de74a7a on wt/a9-path-words (rebased on 7172c67e): post-rebase 29 pieces 0 failed; scaling 8.0x at 2000->16000, control 5 |
+| A9-spec | impl attempt 1 | 2026-11-09 21:17 | started; spec worktree /home/luke/Work/wt/a9-spec from origin/main |
+| ALWAYS-atom-cast | running | 2026-11-09 20:05 |  |
+| ALWAYS-atom-div | running | 2026-11-09 20:05 |  |
+| ALWAYS-atom-lookup | running | 2026-11-09 20:05 |  |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | PRES-disj-cost-xr | impl attempt 1 | 2026-11-09 19:19 | /home down to 1 MB free; moved reviewer build dirs pdcx-tgt-r1-claude/gemini to scratchpad tmpfs with links back (2.5G free now); no delete |
 | PRES-nest-empty | impl attempt 2 | 2026-11-09 18:58 | Parts::atoms one-origin unions: two-atoms chain 904M->124M at depth 512 (exp 1.03), pair 539M->151M (exp 1.03), check_order 8.7x; negative control = previous ru |
-| PRES-small-point | impl attempt 2 | 2026-11-09 17:33 | s22 pins: the 2 failures are cases where the reference transfer (shares the solver) now also gives the exact empty box, since the solver no longer refuses with  |
+| PRES-small-point | impl attempt 2 | 2026-11-09 17:33 | ready d8d35545 on wt/small-point (rebased on fa4f925a): cycle broken, s22 pins 43->42 and 42->41 explained; stacked on SOUND-exact-oracle 8c0df6b8 l01_25+s_01f  |
 | PROJECT-each-chain-xr | impl attempt 1 | 2026-11-09 20:07 | started / load 21.19 16.46 17.59 |
+| R2-frames-from-end | impl attempt 1 | 2026-11-09 19:10 | started; worktrees frames-from-end and frames-from-end-spec from origin/main |
+| README-limit | running | 2026-11-09 21:47 |  |
 | REFUSAL-front-xr | impl attempt 1 | 2026-11-09 20:30 | own probe: hand-rewritten chain variant of the front family |
 | REFUSAL-refine-forks | impl attempt 1 | 2026-11-09 20:30 | ready eb2b8b99 on wt/refusal-refine-forks: refine follows no fork; 3.64G at n 3 -> 435M at n 64; 91 pieces, 1 failure already on main (l02_03 Store) |
 | SOUND-exact-oracle | impl attempt 2 | 2026-11-09 18:13 | ready 8c0df6b8 on wt/sound-exact-oracle: pins 5479/36149/36039/35184/35163 with reason comment; fmt, clippy clean; 543 pieces 0 failed (l01_25, l01_38, l01_39*, |
+| STORE-l02-03 | repair attempt 1 | 2026-11-09 21:47 | start |
 | W11-note | running | 2026-11-09 19:51 |  |
 | W1-premise | running | 2026-11-09 19:51 |  |
 
