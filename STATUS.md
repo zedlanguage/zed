@@ -1731,24 +1731,25 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| A55-spec | impl attempt 1 | 2026-11-09 16:33 | started |
+| A55-spec | impl attempt 1 | 2026-11-09 16:33 | ready: wt/a55 507f7121, wt/a55-spec eb375db; A55 answer A applied, parity typed, soundness law + Galois text added; sync --check 0, grammar check 0; l01/m0_03/l |
 | A56-spec | impl attempt 1 | 2026-11-09 16:18 | ready: zed-impl 9e3a6f6e on wt/a56, spec 72af31b on wt/a56-spec; 121 pieces 1 failed (l01_10 count 1919 vs 1917, same on origin/main fences, pre-existing); sync |
 | BLOCKS-remove-local | impl attempt 1 | 2026-11-09 15:18 | baseline reproduced: take-apart 34.0x bytes, random build with bounds 16.6x bytes (limit 13.2) / load 33.32 20.02 16.86 |
 | CK-data-memo | impl attempt 2 | 2026-11-07 23:45 | negative controls (not committed, reverted): exact set walk per row -> disjoint 56.0x bytes (fails); memos off -> shared-rows test killed at 60 s, load1 27-30 |
 | CX-tradeoff-krows | impl attempt 1 | 2026-11-09 15:42 | ready 611c7ec4 on wt/cx-krows: 477 rows checked, 101 comments added, 67 completed, 9 stale fixed; 80 test pieces and doc pass / load 18.34 |
 | CX-tradeoff-review | impl attempt 1 | 2026-11-09 15:11 | ready wt/cx-tradeoff-review 1373f81f: 48 partial + 2 stale tradeoff comments fixed, comments only; K-row search for missing comments left; fmt, clippy, doc, s_0 |
-| GROUP-overlaps-names | impl attempt 1 | 2026-11-09 14:55 | plan: lazy placement of groups with no lower groups and no whole nodes (a placed group node is read only when another type reaches its node or a whole passes ov |
+| GROUP-overlaps-names | impl attempt 1 | 2026-11-09 14:55 | stopped own run_tests started without zrun (built build/cargo, to remove); rerun via zrun / load 82.14 |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | repair ready b9a464bd: reference walk now same order as the walk, quadratic copy deleted after 8,000-seed agreement; walk's own superlinear forms (a)-(c) open f |
 | PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | ready: wt/lto-cost d61b1c8d on origin/main eae094cc; Cargo.toml deps cgu1; 757M->719M / 1077M->1016M / 989M->943M; 54/54 pieces pass; deletes: perf data and scr |
-| PA-walk-nest-cost | impl attempt 1 | 2026-11-09 15:39 | negative control (old product.rs/cell.rs, new tests): scaling test fails form 0 at 61.3x bytes; old probe A 113->6800 Minstr (64->512), C 203->6016, B 64: 7086  |
+| PA-walk-nest-cost | impl attempt 1 | 2026-11-09 15:39 | ready 078dca93 on origin/main 87a45509; targeted 527 pieces 0 failed / load 37.20 47.47 36.21 |
 | PRES-each-settle-share | impl attempt 1 | 2026-11-09 15:16 | started on 55b632b9, worktree /home/luke/Work/wt/pres-each-settle-share / load 11.77 11.55 14.83 |
-| PRES-pendants-wider | impl attempt 1 | 2026-11-09 15:16 | fix in project_parts (implied meet for all hulls, bounds_alone propagates); sweeping seeds 11-18 vs brute / load 23.81 22.67 18.45 |
+| PRES-pendants-wider | impl attempt 1 | 2026-11-09 15:16 | candidate ends from disjunct projections: 11/226 z1 and 14/271 z0 now exact; disj_groups 20/20 / load 13.53 23.67 24.12 |
 | PRES-product-parity | impl attempt 1 | 2026-11-09 15:51 | ready 9f60144e on wt/product-parity (rebased on ecb20b59): 519 pieces 0 failed with doc check, load 12-35; l01_38 instr after/before 0.968-1.006; PRES-model-pro |
 | PRES-small-front | impl attempt 1 | 2026-11-09 14:43 | ready 4d29be86 on wt/small-front (stacked on wt/pres-small-cost): bounds in propagation + fast-path constant halved; point tried for decide dropped (changed ref |
-| R2-frames-gaps | impl attempt 1 | 2026-11-09 15:08 | started; reading sec:generations, Boundedness, FacetCall, L6.6, L7.3, L15.4 |
+| QUESTIONS-cleanup | impl attempt 1 | 2026-11-09 16:52 | started |
+| R2-frames-gaps | impl attempt 1 | 2026-11-09 15:08 | ready: zed-impl c2fe4350 on wt/r2-frames-gaps, spec b4113c8 on wt/r2-frames-gaps-spec; keys kept as step numbers (not renumbered); laws over ::frames not reads; |
 | TEST-group-oracle-enum | impl attempt 1 | 2026-11-09 15:42 | rebased (no conflict) on origin/main eae094cc; commit is fe298ed1; ledger ready |
-| TIGHTEN-each-whole | impl attempt 1 | 2026-11-09 14:19 | baseline reproduced: all y,z of dead2 16->128 stages: unchained 56.1x bytes (29.7 MB -> 1.67 GB), chained 61.6x bytes (51.8 MB -> 3.19 GB); limit 15.4; load 12. |
+| TIGHTEN-each-whole | impl attempt 1 | 2026-11-09 14:19 | tests: 526 pieces, 0 failed (load 21-55); residual hub (k vars in {0,1}, sum<=1), tighten stage 16/32/64: new 2.9/16/118 ms, old 6.2/37/244 ms; whole projection |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
