@@ -49,6 +49,7 @@ rows! {
     PositionalMap =>
         "Positional `.map`, or a name that is no parameter, on a value that is not a morphism",
     KeyOutsideBound => "Key outside the permission bound",
+    AlwaysFails => "Operation that always fails",
     UndischargedRegion => "Undischarged region assertion",
     ReadBelowDomain => "Read below the domain with no boundary entry",
     BareBoundary => "Boundary item with neither `initial` nor an index",

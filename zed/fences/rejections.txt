@@ -14,6 +14,7 @@ Unreachable `match` arm
 `.map` at a parameter outside the value positions
 Positional `.map`, or a name that is no parameter, on a value that is not a morphism
 Key outside the permission bound
+Operation that always fails
 Undischarged region assertion
 Read below the domain with no boundary entry
 Boundary item with neither `initial` nor an index
