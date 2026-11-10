@@ -1182,7 +1182,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `imbl::OrdMap::diff`, which skips subtrees the two maps share, to find the names a join or a reduce must visit | `Scope::join`, `changed`, `Scope::reduce_with` | Missing | Zed's maps are values but have no structural difference; it needs a `diff` word that the runtime answers in time proportional to what differs, or the scope keeps its own list of changed names |
+| `imbl::OrdMap::diff`, which skips subtrees the two maps share, to find the names a join or a reduce must visit, and the stars and classes a join drops or moves (SETTLE-class-check-case) | `Scope::join`, `changed`, `Scope::reduce_with`, `Conjuncts::classes_of` | Missing | Zed's maps are values but have no structural difference; it needs a `diff` word that the runtime answers in time proportional to what differs, or the scope keeps its own list of changed names |
 | A cache field whose `PartialEq` always holds, so that comparing scopes ignores it | `Reduced` | None | A field left out of the comparison the port writes for `Scope` |
 | `std::mem::take` of the cache at the start of a reduce, put back at the end | `Scope::reduce_with` | Mutation | A state receiver, or the cache returned with the scope |
 | A persistent set of conjuncts kept with two persistent indexes in step (by name, and by term and relation for the tighter-bound rule), each update touching all three | `conjuncts::Conjuncts` | None | A Zed record of three persistent maps, updated together by one function; no gap beyond the `diff` row above |

@@ -3123,17 +3123,28 @@ impl Scope {
     /// A name of a conjunct one side holds alone whose free conjuncts differ between the sides
     /// changes the core ([`Conjuncts::core`]) of each star of two hubs or more at it, so its
     /// leaf, of one product `L` on both sides, settles to `L` met with the projection `pA` of
-    /// one side's core and `pB` of the other's, and the eager join holds `L ∩ (pA ∪ pB)`. Each
-    /// side implies the join's relation, so the join's core projects to `pJ ⊇ pA ∪ pB`; when
-    /// the join's free conjuncts at each hub of the star's class hold those of one side `S`,
-    /// with the hubs and the names of those conjuncts of one product on both sides, the
-    /// join's core holds that side's, so `pJ ⊆ pS` and `pJ = pA ∪ pB`: the leaf is left as it
-    /// is, and settling it in the join gives the eager product. Such a class costs the
-    /// difference of its hubs' free conjuncts, not its leaves; the leaves of any other class
-    /// are settled on both sides and the sides joined again. The two cases of
-    /// `!(x >= n && x >= m)`, `x < n` and `x >= n && x < m`, hold `x` free at both hubs in the
-    /// second, and join to the star `x < n || x < m` ([`Formula::either`]), so the join's
-    /// free conjuncts at the hubs are the first case's.
+    /// one side's core and `pB` of the other's, and the eager join holds `L ∩ (pA ∪ pB)`. The
+    /// join's core is the disjunction of the sides' cores, whose projection is `pA ∪ pB`, but
+    /// a core of two disjunctions or more is projected one disjunction at a time (S16), which
+    /// may give a larger `pJ`: with `n - m >= -6 || n <= -8` on both sides, `n - m >= -8` on
+    /// one and `n - m >= -6` on the other, the join's core holds the first disjunction and
+    /// `n - m >= -8 || n - m >= -6`, and projects `x >= n && x >= -m` to `x >= -4`, where each
+    /// side's core of one disjunction gives `x >= -3`. When the join's free conjuncts at each
+    /// hub of the star's class hold those of one side `S`, with the hubs and the names of
+    /// those conjuncts of one product on both sides, the join's core holds that side's and
+    /// adds no disjunction to it, so `pJ ⊆ pS` and `pJ = pA ∪ pB`: the leaf is left as it is,
+    /// and settling it in the join gives the eager product. Such a class costs the difference
+    /// of its hubs' free conjuncts, not its leaves; the leaves of any other class are settled
+    /// on both sides and the sides joined again. The two cases of `!(x >= n && x >= m)`,
+    /// `x < n` and `x >= n && x < m`, hold `x` free at both hubs in the second, and join to
+    /// the star `x < n || x < m` ([`Formula::either`]), so the join's free conjuncts at the
+    /// hubs are the first case's.
+    ///
+    /// A leaf left stale whose star the join does not hold, or holds in another class, is
+    /// settled on both sides too: the disjunction of the conjuncts the sides hold alone may
+    /// mention a hub and a name that is no satellite, as `(z >= 0 && n + m <= -7) ||
+    /// (z < 0 && n - m >= -30)` mentions `z`, so that the hubs no longer admit the star, and
+    /// the join would read the leaf as a name of no star, which nothing settles.
     // Complexity tradeoff: naive version, the join is `Or(R∧A, R∧B)`, which copies the common
     // part R into each side, so k joins in a row cost 2^k connectives. Used: the conjuncts the
     // sides share are found by the difference of their persistent sets (`Conjuncts`) and kept
@@ -3159,6 +3170,17 @@ impl Scope {
     // `l01_39a_bit_words::scaling::reads_under_the_else_arms_of_satellites_of_two_hubs_scale`,
     // `l01_39_reduced_product::lazy::a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does`;
     // COMPLEXITY.md row C40.
+    //
+    // Complexity tradeoff (SETTLE-class-check-case): naive version, settle every stale leaf of
+    // either side before the join, O(k) projections per join on k stale leaves. Used: the
+    // stars and classes of each side against the first join's, by the difference of their
+    // persistent maps, which the join copies from one side and changes where the sides
+    // differ, so O((stars and classes changed) log n); only the leaves whose star is gone or
+    // whose class changed are settled. Tradeoffs: a dropped star costs its leaves'
+    // projections and a second `join_settled`, as a class that fails the check does. Tests:
+    // `l01_39_reduced_product::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction`
+    // (its random part against the enumeration of the hubs) and the `reads_under_the_else_arms`
+    // scaling test above; COMPLEXITY.md row C40.
     pub fn join(&self, other: &Scope) -> Scope {
         if self.bottom {
             return other.clone();
@@ -3210,16 +3232,32 @@ impl Scope {
         a.settle(&leaves);
         b.settle(&leaves);
         let joined = a.join_settled(&b);
-        if joined.bottom || cored.is_empty() {
+        if joined.bottom {
             return joined;
         }
+        let mut due: BTreeSet<Arc<str>> = BTreeSet::new();
+        // The leaves whose star the join drops or holds in another class (see above), not
+        // among the leaves settled already.
+        for side in [self, other] {
+            let (stars, classes) = (joined.relation.stars(), joined.relation.classes_of());
+            for d in side.relation.stars().diff(stars) {
+                if let DiffItem::Remove(x, _) = d {
+                    due.insert(x.clone());
+                }
+            }
+            for d in side.relation.classes_of().diff(classes) {
+                if let DiffItem::Remove(x, _) | DiffItem::Update { old: (x, _), .. } = d {
+                    due.insert(x.clone());
+                }
+            }
+        }
+        due.retain(|x| !leaves.contains(x));
         // Whether the join's free conjuncts at `h` hold those of side `s`.
         let within = |s: &Scope, h: &str| {
             (free(s, h).diff(&free(&joined, h)))
                 .all(|d| matches!(d, imbl::ordset::DiffItem::Add(_)))
         };
         let mut checked: BTreeSet<&conjuncts::Class> = BTreeSet::new();
-        let mut due: BTreeSet<Arc<str>> = BTreeSet::new();
         for n in &cored {
             for side in [self, other] {
                 for c in side.relation.classes_at(n) {

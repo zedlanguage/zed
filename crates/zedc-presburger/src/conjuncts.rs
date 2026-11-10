@@ -716,6 +716,12 @@ impl Conjuncts {
         self.index.class_at.of(h)
     }
 
+    /// The class of each star of two hubs or more, by its leaf ([`Conjuncts::class_of`]), as
+    /// the persistent map, which two relations of one scope compare by its difference.
+    pub fn classes_of(&self) -> &OrdMap<Arc<str>, Class> {
+        &self.index.class_of
+    }
+
     /// The class of the star of leaf `x`, when it has two hubs or more.
     pub fn class_of(&self, x: &str) -> Option<&Class> {
         self.index.class_of.get(x)

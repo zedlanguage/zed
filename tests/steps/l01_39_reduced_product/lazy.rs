@@ -679,3 +679,252 @@ mod a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does {
         part(100..200);
     }
 }
+
+/// Joins whose two cases keep the values of each hub, so that the stars at the hubs, stale
+/// from a move of both hubs, stay stale through the join unless the join settles them. Each
+/// leaf `ai` is above `n` and above `m` (or `-m`), and the hubs meet a disjunction of tests
+/// on them. Two ways the join's own star can differ from the cases': a case that is a test
+/// on another name, `z`, joined with a test on the hubs makes a disjunction that mentions `z`
+/// and both hubs, so the hubs no longer admit the star and the join holds none; and two cases
+/// that test the hubs alone make a second disjunction among the hubs, which the projection of
+/// the star (one disjunction at a time) reads less tightly than each case's one disjunction.
+/// In both, the leaf settles to the least value of the leaf over the union of the cases.
+mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
+    use super::*;
+
+    /// `kn·n + km·m >= k`, each coefficient -1, 0 or 1.
+    #[derive(Clone, Copy, Debug)]
+    struct HubTest(i64, i64, i64);
+
+    impl HubTest {
+        fn holds(self, n: i64, m: i64) -> bool {
+            self.0 * n + self.1 * m >= self.2
+        }
+
+        /// The test as a program writes it, with sums and differences only: a coefficient
+        /// other than one or minus one would make it a written constraint, whose names the
+        /// join settles at once.
+        fn term(self) -> Term {
+            let mut sum: Option<Term> = None;
+            for (k, x) in [(self.0, "n"), (self.1, "m")] {
+                sum = match (sum, k) {
+                    (s, 0) => s,
+                    (None, 1) => Some(var(x)),
+                    (None, _) => Some(prim(Prim::Sub, int(0), var(x))),
+                    (Some(s), 1) => Some(prim(Prim::Add, s, var(x))),
+                    (Some(s), _) => Some(prim(Prim::Sub, s, var(x))),
+                };
+            }
+            prim(Prim::Ge, sum.expect("a hub"), int(self.2))
+        }
+    }
+
+    fn all(ts: &[HubTest], n: i64, m: i64) -> bool {
+        ts.iter().all(|t| t.holds(n, m))
+    }
+
+    fn conj(ts: &[HubTest]) -> Term {
+        ts.iter().map(|t| t.term()).reduce(and).expect("a test")
+    }
+
+    /// The hubs' values after the move.
+    const LO: i64 = -10;
+    const HI: i64 = 10;
+
+    /// The case: hubs in `LO - 1..=HI`, leaves `ai >= n` and `ai >= sign·m`, the disjunction
+    /// `d1`, the move of both hubs to `LO`; then `z >= 0` and `yes`, or `z < 0` and `no`,
+    /// tested together when `with_z` and one after the other otherwise. Checks each name of
+    /// the join against settling every name first, and against the eager scope when `eager`,
+    /// and each leaf's least value against the enumeration of the hubs; returns how many
+    /// leaves one case or the other holds stale before the join. (The eager scope is at
+    /// times less tight than the lazy one, so the random cases do not compare with it.)
+    fn run(
+        sign: i64,
+        d1: &[HubTest],
+        yes: &[HubTest],
+        no: &[HubTest],
+        with_z: bool,
+        eager: bool,
+        trace: &str,
+    ) -> usize {
+        let all_names = names(&["n", "m", "z", "a0", "a1", "a2"]);
+        let p = Premises::new();
+        let mut t: Vec<Term> = Vec::new();
+        for h in HUBS {
+            t.push(prim(Prim::Ge, var(h), int(LO - 1)));
+            t.push(prim(Prim::Le, var(h), int(HI)));
+        }
+        for x in ["a0", "a1", "a2"] {
+            t.push(diff_ge(x, "n", 0));
+            t.push(if sign == 1 {
+                diff_ge(x, "m", 0)
+            } else {
+                prim(Prim::Ge, prim(Prim::Add, var(x), var("m")), int(0))
+            });
+        }
+        t.push(d1.iter().map(|g| g.term()).reduce(or).expect("a test"));
+        for h in HUBS {
+            t.push(prim(Prim::Ge, var(h), int(LO)));
+        }
+        let mut lazy = ints(&all_names).lazy();
+        for t in &t {
+            lazy = lazy.assume(t, true, &p);
+        }
+        let z = prim(Prim::Ge, var("z"), int(0));
+        let arms = |s: &Scope| {
+            if with_z {
+                let not_z = prim(Prim::Lt, var("z"), int(0));
+                (
+                    s.assume(&and(z.clone(), conj(yes)), true, &p),
+                    s.assume(&and(not_z, conj(no)), true, &p),
+                )
+            } else {
+                (
+                    s.assume(&z, true, &p).assume(&conj(yes), true, &p),
+                    s.assume(&z, false, &p).assume(&conj(no), true, &p),
+                )
+            }
+        };
+        let (ly, ln) = arms(&lazy);
+        let (mut sy, mut sn) = (ly.clone(), ln.clone());
+        sy.settle(&all_names);
+        sn.settle(&all_names);
+        let (every, joined) = (sy.join(&sn), ly.join(&ln));
+        let eager = eager.then(|| {
+            let mut eager = ints(&all_names);
+            for t in &t {
+                eager = eager.assume(t, true, &p);
+            }
+            let (ey, en) = arms(&eager);
+            ey.join(&en)
+        });
+        let d1_holds = |n, m| d1.iter().any(|g: &HubTest| g.holds(n, m));
+        let least = (LO..=HI)
+            .flat_map(|n| (LO..=HI).map(move |m| (n, m)))
+            .filter(|&(n, m)| d1_holds(n, m) && (all(yes, n, m) || all(no, n, m)))
+            .map(|(n, m)| n.max(sign * m))
+            .min();
+        assert_eq!(joined.bottom, least.is_none(), "{trace}");
+        let Some(least) = least else {
+            return 0;
+        };
+        let mut stale = 0;
+        for x in &all_names {
+            let s = joined.settled(x);
+            assert_eq!(s, every.settled(x), "{x} after {trace}");
+            if let Some(eager) = &eager {
+                assert_eq!(s, eager.get(x), "{x} eagerly after {trace}");
+            }
+            if x.starts_with('a') {
+                let ints = s.ints();
+                assert!(
+                    ints.contains(least) && !ints.contains(least - 1),
+                    "{x} is {ints}, least {least}, after {trace}"
+                );
+                stale += usize::from(ly.get(x) != ly.settled(x) || ln.get(x) != ln.settled(x));
+            }
+        }
+        stale
+    }
+
+    /// The case that tests `z` with a test on the hubs: the join's disjunction
+    /// `(z >= 0 && n + m <= -7) || (z < 0 && n - m >= -30)` mentions `z`, which no hub relates
+    /// to, so the join holds no star, and the leaves, at `-11` from before the move, read as
+    /// they are unless the join settles them first.
+    #[test]
+    fn a_case_that_tests_another_name_drops_the_star() {
+        let d1 = [HubTest(-1, -1, 10)];
+        let (yes, no) = ([HubTest(-1, -1, 7)], [HubTest(1, -1, -30)]);
+        let trace = "n + m <= -10; z >= 0 && n + m <= -7, or z < 0 && n - m >= -30";
+        assert!(run(1, &d1, &yes, &no, true, true, trace) > 0);
+    }
+
+    /// Cases that test the hubs alone: the join's core holds `n - m >= -6 || n <= -8` and
+    /// `n - m >= -8 || n - m >= -6`, two disjunctions, and is projected one disjunction at a
+    /// time, which gives `ai >= -4`; each case's core holds one disjunction and gives the
+    /// least value `-3` (at `n = -3`, `m = 3`).
+    #[test]
+    fn a_join_that_adds_a_second_disjunction_to_the_core() {
+        let d1 = [HubTest(1, -1, -6), HubTest(-1, 0, 8)];
+        let (yes, no) = ([HubTest(1, -1, -8)], [HubTest(1, -1, -6)]);
+        let trace = "n - m >= -6 || n <= -8; n - m >= -8, or n - m >= -6";
+        assert!(run(-1, &d1, &yes, &no, false, true, trace) > 0);
+    }
+
+    /// Random cases of both kinds: `d1` of two or three tests, each case of one or two, kept
+    /// when no case narrows a hub (otherwise the join settles the stars at it at once).
+    fn part(seeds: std::ops::Range<u64>) {
+        let (mut joins, mut kept) = (0, 0);
+        let shapes = [
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1),
+            (1, 1),
+            (-1, -1),
+            (1, -1),
+            (-1, 1),
+        ];
+        for seed in seeds {
+            let mut rng = Rng::new(seed);
+            // A test of one hub narrows it, and so does a test of two whose bound is above 0
+            // on this box, so the cases draw tests of two hubs with bounds at or below 0.
+            let test = |rng: &mut Rng, case: bool| {
+                if case {
+                    let (a, b) = rng.pick(&shapes[4..]);
+                    HubTest(a, b, rng.int(-20, 0))
+                } else {
+                    let (a, b) = rng.pick(&shapes);
+                    HubTest(a, b, rng.int(-14, 14))
+                }
+            };
+            let d1: Vec<HubTest> = (0..2 + rng.below(2))
+                .map(|_| test(&mut rng, false))
+                .collect();
+            let yes: Vec<HubTest> = (0..1 + rng.below(2))
+                .map(|_| test(&mut rng, true))
+                .collect();
+            let no: Vec<HubTest> = (0..1 + rng.below(2))
+                .map(|_| test(&mut rng, true))
+                .collect();
+            let (sign, with_z) = (rng.pick(&[1, -1]), rng.below(2) == 0);
+            let d1_holds = |n, m| d1.iter().any(|g: &HubTest| g.holds(n, m));
+            let keeps = |case: &[HubTest]| {
+                let (mut ns, mut ms) = (BTreeSet::new(), BTreeSet::new());
+                for n in LO..=HI {
+                    for m in LO..=HI {
+                        if d1_holds(n, m) && all(case, n, m) {
+                            ns.insert(n);
+                            ms.insert(m);
+                        }
+                    }
+                }
+                ns.len() == ms.len() && ns.len() == (HI - LO + 1) as usize
+            };
+            if !keeps(&yes) || !keeps(&no) {
+                continue;
+            }
+            let trace =
+                format!("seed {seed}: sign {sign} d1 {d1:?} yes {yes:?} no {no:?} z {with_z}");
+            kept += run(sign, &d1, &yes, &no, with_z, false, &trace);
+            joins += 1;
+        }
+        println!("{joins} joins, {kept} leaves stale before a join");
+        assert!(joins > 100 && kept > 0, "{joins} joins, {kept} stale");
+    }
+
+    #[test]
+    fn seeds_0_to_399() {
+        part(0..400);
+    }
+
+    #[test]
+    fn seeds_400_to_799() {
+        part(400..800);
+    }
+
+    #[test]
+    fn seeds_800_to_1199() {
+        part(800..1_200);
+    }
+}
