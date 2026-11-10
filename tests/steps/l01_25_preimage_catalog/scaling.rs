@@ -760,3 +760,42 @@ fn a_listed_set_is_enumerated_in_time_of_its_length() {
         pre_listed(t, ds, &Demand::Bool(true));
     });
 }
+
+/// `t0 = i; tj = max(t(j-1), 0 mod (i - j)); tk >= lo`, each operand failing at one point: the
+/// preimage of each `max` asks where its other operand is an integer, which is asked once for
+/// each operand (SOUND-exact-oracle).
+fn failing_max(k: usize, lo: i64) -> Term {
+    let t = (1..=k as i64).fold(var("i"), |t, j| {
+        let fails = prim(Prim::Mod, int(0), prim(Prim::Sub, var("i"), int(j)));
+        prim(Prim::Max, t, fails)
+    });
+    prim(Prim::Ge, t, int(lo))
+}
+
+/// [`failing_max`] with a demand that holds some of the values of the `max`es.
+fn failing_max_some(k: usize) -> Term {
+    failing_max(k, 1)
+}
+
+/// [`failing_max`] with a demand that holds every value of the `max`es.
+fn failing_max_all(k: usize) -> Term {
+    failing_max(k, -50)
+}
+
+#[test]
+fn long_failing_max_some() {
+    long(
+        "`max`es whose operands fail, a demand holding some of their values",
+        failing_max_some,
+        one,
+    );
+}
+
+#[test]
+fn long_failing_max_all() {
+    long(
+        "`max`es whose operands fail, a demand holding all their values",
+        failing_max_all,
+        one,
+    );
+}

@@ -13,6 +13,7 @@ mod constant_minus;
 mod deep;
 mod entries;
 mod exact;
+mod exact_oracle;
 mod kept_ends;
 mod overflow;
 mod powers;

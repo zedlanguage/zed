@@ -187,6 +187,7 @@ split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
   l01_25_preimage_catalog l01_25_preimage_catalog::s22
+  l01_25_preimage_catalog::exact_oracle
   l01_26_type_resolution l01_26_type_resolution::deep_ops
   l01_36_cranelift l01_36_cranelift::scaling l01_36_cranelift::table
   l01_38_presburger l01_38_presburger::oracle l01_38_presburger::omega

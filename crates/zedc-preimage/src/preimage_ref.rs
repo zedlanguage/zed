@@ -2439,9 +2439,10 @@ impl<'t> Tx<'t> {
                 };
                 let up = IntervalSet::range(lo.clone(), fhi.clone()).is_subset(z);
                 let down = IntervalSet::range(flo.clone(), hi.clone()).is_subset(z);
-                // min ≥ lo: both are; max ≤ hi: both are. The other rays: either is. When
-                // the demand holds the whole forward range, both rays apply; the upward one is
-                // taken.
+                // min ≥ lo: both are; max ≤ hi: both are. The other rays: either is, where the
+                // other operand is an integer, since a failing operand fails the term (DESIGN.md
+                // sec:failure). When the demand holds the whole forward range, both rays apply;
+                // the upward one is taken.
                 let both = (p == Min && up) || (p == Max && down && !up);
                 let either = (p == Min && down && !up) || (p == Max && up);
                 if both || either {
@@ -2452,11 +2453,22 @@ impl<'t> Tx<'t> {
                     };
                     let ra = self.back_at(a, env, &ints(r.clone()));
                     let rb = self.back_at(b, env, &ints(r));
-                    return if both {
-                        self.meet(ra, rb)
+                    if both {
+                        return self.meet(ra, rb);
+                    }
+                    let ra = if self.fwd(b, env).fails {
+                        let db = self.back_at(b, env, &ints(IntervalSet::top()));
+                        self.meet(ra, db)
                     } else {
-                        self.union(ra, rb)
+                        ra
                     };
+                    let rb = if self.fwd(a, env).fails {
+                        let da = self.back_at(a, env, &ints(IntervalSet::top()));
+                        self.meet(rb, da)
+                    } else {
+                        rb
+                    };
+                    return self.union(ra, rb);
                 }
                 self.project(p, a, b, env, z)
             }
@@ -2962,19 +2974,89 @@ fn exact_search(
     if met.values().any(IntervalSet::is_empty) || several <= 1 {
         return Some((met, true));
     }
-    let fails = match demand {
-        Demand::Bool(b) => Demand::Bool(!b),
-        Demand::Ints(z) => Demand::Ints(z.complement_in(&IntervalSet::top())),
-    };
-    /// The search for any point.
-    struct Any;
-    impl Search for Any {
-        fn all(&mut self, _: &Domains) -> bool {
-            true
+    // The second search looks for a point of `met` that fails the demand: one whose value is
+    // outside it, or whose run fails (DESIGN.md sec:failure).
+    let found = fails_in(term, met.clone(), classes, demand)?;
+    Some((met, !found))
+}
+
+/// Whether some point of `root` with each input in its class fails `demand`: its value is
+/// outside the demand, or its run fails. Branch and prune as in [`branch`]: a box is found to
+/// hold such a point when [`preimage_in`] drops a value of an input's class from it, dropped
+/// when the preimage is exact and keeps all of it, and otherwise halved on its widest input; a
+/// single point is evaluated. `None` when a point cannot be run.
+fn fails_in(term: &Term, root: Domains, classes: &Classes, demand: &Demand) -> Option<bool> {
+    match classes_decide(term, classes, demand) {
+        Some(true) => return Some(false),
+        Some(false) => return Some(true),
+        None => {}
+    }
+    let mut tx = Tx::new();
+    let top = tx.terms.add(term);
+    let mut boxes = vec![root];
+    while let Some(b) = boxes.pop() {
+        if b.values().all(is_point) {
+            if !demand.holds(&run_point(term, &b)?) {
+                return Some(true);
+            }
+            continue;
+        }
+        let r = preimage_in(&mut tx, top, term, &b, NONE_LISTED, demand);
+        let dropped = b.iter().any(|(k, s)| {
+            let out = r.domains[k].complement_in(s);
+            match classes.get(k) {
+                Some(c) => !reduce_congruence(&out, c).0.is_empty(),
+                None => !out.is_empty(),
+            }
+        });
+        if dropped {
+            return Some(true);
+        }
+        if !r.exact {
+            halve(&b, classes, &mut boxes);
         }
     }
-    let found = branch(term, met.clone(), classes, &fails, &mut Any)?;
-    Some((met, !found))
+    Some(false)
+}
+
+/// The value of `term` at the point `b`, each input one value; `None` when it cannot be run.
+fn run_point(term: &Term, b: &Domains) -> Option<Value> {
+    let mut t = term.clone();
+    for (k, s) in b.iter().rev() {
+        let Some((Fin(v), _)) = s.bounds() else {
+            unreachable!("a point is finite")
+        };
+        t = Term::Let(
+            k.clone(),
+            Shared::new(Term::Lit(Value::from(v))),
+            Shared::new(t),
+        );
+    }
+    Evaluator::new(World::new()).run(&t).ok()
+}
+
+/// Pushes onto `boxes` the two halves of `b` split at the middle of its widest input, each
+/// within `classes` and dropped when it holds no point of them.
+fn halve(b: &Domains, classes: &Classes, boxes: &mut Vec<Domains>) {
+    let (k, lo, hi) = b
+        .iter()
+        .filter_map(|(k, s)| match s.bounds() {
+            Some((Fin(lo), Fin(hi))) if lo < hi => Some((k, lo, hi)),
+            _ => None,
+        })
+        .max_by_key(|(_, lo, hi)| *hi - *lo)
+        .expect("a box of more than one point has an input of more than one value");
+    let mid = lo + &(hi - lo).div_floor(&Num::from(2i64));
+    for half in [
+        IntervalSet::range(Fin(&mid + &Num::ONE), PosInf),
+        IntervalSet::range(NegInf, Fin(mid.clone())),
+    ] {
+        let mut h = b.clone();
+        h.insert(k.clone(), b[k].meet(&half));
+        if let Some(h) = within_classes(&h, classes) {
+            boxes.push(h);
+        }
+    }
 }
 
 /// What a search of [`branch`] does with the boxes: which it skips, and what it takes from each
@@ -3036,42 +3118,12 @@ fn branch(
             n
         };
         if b.values().all(is_point) {
-            let mut t = term.clone();
-            for (k, s) in b.iter().rev() {
-                let Some((Fin(v), _)) = s.bounds() else {
-                    unreachable!("a point is finite")
-                };
-                t = Term::Let(
-                    k.clone(),
-                    Shared::new(Term::Lit(Value::from(v))),
-                    Shared::new(t),
-                );
-            }
-            let v = Evaluator::new(World::new()).run(&t).ok()?;
-            if demand.holds(&v) && search.all(&b) {
+            if demand.holds(&run_point(term, &b)?) && search.all(&b) {
                 return Some(true);
             }
             continue;
         }
-        let (k, lo, hi) = b
-            .iter()
-            .filter_map(|(k, s)| match s.bounds() {
-                Some((Fin(lo), Fin(hi))) if lo < hi => Some((k, lo, hi)),
-                _ => None,
-            })
-            .max_by_key(|(_, lo, hi)| *hi - *lo)
-            .expect("a box of more than one point has an input of more than one value");
-        let mid = lo + &(hi - lo).div_floor(&Num::from(2i64));
-        for half in [
-            IntervalSet::range(Fin(&mid + &Num::ONE), PosInf),
-            IntervalSet::range(NegInf, Fin(mid.clone())),
-        ] {
-            let mut h = b.clone();
-            h.insert(k.clone(), b[k].meet(&half));
-            if let Some(h) = within_classes(&h, classes) {
-                boxes.push(h);
-            }
-        }
+        halve(&b, classes, &mut boxes);
     }
     Some(false)
 }

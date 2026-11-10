@@ -1237,22 +1237,88 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     );
 }
 
-/// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
-#[test]
-fn random_terms_keep_their_preimages() {
-    on_big_stack(|| {
-        let mut diffs = Diffs::default();
-        let seeds = [
-            (25, 250, false, false),
-            (2025, 250, true, false),
-            (7, 400, false, true),
-        ];
-        let more = [
-            (77, 400, true, true),
-            (777, 1500, false, true),
-            (31337, 1500, true, true),
-        ];
-        for (seed, cases, test, calls) in seeds.into_iter().chain(more) {
+/// A run of random terms: `Mixed` runs `cases` terms of depth 3 from `seed`, tests (asked true
+/// or false) where `test` holds, from seed 777 on only in every other case, and integer terms
+/// with a random demand otherwise, each third term reading through calls where `calls` holds,
+/// over random domains, some listed; `Deep` runs 200 terms of depth 4, each a test or an
+/// integer term at random; `Exact` runs 250 terms under `@exact` over bounded boxes, `x` in a
+/// random class one case in three.
+#[derive(Clone, Copy)]
+pub(super) enum Run {
+    Mixed {
+        seed: u64,
+        cases: usize,
+        test: bool,
+        calls: bool,
+    },
+    Deep {
+        seed: u64,
+    },
+    Exact {
+        seed: u64,
+        test: bool,
+    },
+}
+
+/// The runs of [`random_terms_keep_their_preimages`]: the seeds of `random.rs` and others.
+pub(super) const RUNS: [Run; 18] = {
+    use Run::{Deep, Exact};
+    const fn mixed(seed: u64, cases: usize, test: bool, calls: bool) -> Run {
+        Run::Mixed {
+            seed,
+            cases,
+            test,
+            calls,
+        }
+    }
+    [
+        mixed(25, 250, false, false),
+        mixed(2025, 250, true, false),
+        mixed(7, 400, false, true),
+        mixed(77, 400, true, true),
+        mixed(777, 1500, false, true),
+        mixed(31337, 1500, true, true),
+        Deep { seed: 1000 },
+        Deep { seed: 1001 },
+        Deep { seed: 1002 },
+        Deep { seed: 1003 },
+        Deep { seed: 1004 },
+        Deep { seed: 1005 },
+        Deep { seed: 1006 },
+        Deep { seed: 1007 },
+        Deep { seed: 1008 },
+        Deep { seed: 1009 },
+        Exact {
+            seed: 7,
+            test: false,
+        },
+        Exact {
+            seed: 77,
+            test: true,
+        },
+    ]
+};
+
+/// One case of a [`Run`]: the term, its inputs' domains, the names whose members the source
+/// lists, the inputs' classes under `@exact` (an `Exact` run only), and the demand.
+pub(super) struct Case {
+    pub what: &'static str,
+    pub term: Term,
+    pub domains: Domains,
+    pub listed: Listed,
+    pub classes: Option<Classes>,
+    pub demand: Demand,
+}
+
+/// Calls `each` on every case of `run`, in order.
+pub(super) fn cases(run: Run, mut each: impl FnMut(Case)) {
+    match run {
+        Run::Mixed {
+            seed,
+            cases,
+            test,
+            calls,
+        } => {
             let mut rng = Rng::new(seed);
             for case in 0..cases {
                 let test = test && (seed < 777 || case % 2 == 1);
@@ -1267,10 +1333,17 @@ fn random_terms_keep_their_preimages() {
                     t
                 };
                 let (ds, listed) = domains(&mut rng);
-                diffs.preimage_listed("random term", &t, &ds, &listed, &d);
+                each(Case {
+                    what: "random term",
+                    term: t,
+                    domains: ds,
+                    listed,
+                    classes: None,
+                    demand: d,
+                });
             }
         }
-        for seed in 1000..1010 {
+        Run::Deep { seed } => {
             let mut rng = Rng::new(seed);
             for _ in 0..200 {
                 let (t, d) = if rng.below(2) == 0 {
@@ -1279,10 +1352,17 @@ fn random_terms_keep_their_preimages() {
                     (int_term(&mut rng, 4), int_demand(&mut rng))
                 };
                 let (ds, listed) = domains(&mut rng);
-                diffs.preimage_listed("random term, depth 4", &t, &ds, &listed, &d);
+                each(Case {
+                    what: "random term, depth 4",
+                    term: t,
+                    domains: ds,
+                    listed,
+                    classes: None,
+                    demand: d,
+                });
             }
         }
-        for (seed, test) in [(7, false), (77, true)] {
+        Run::Exact { seed, test } => {
             let mut rng = Rng::new(seed);
             for _ in 0..250 {
                 let (t, d) = if test {
@@ -1300,8 +1380,29 @@ fn random_terms_keep_their_preimages() {
                     let m = rng.int(2, 4);
                     cs.insert("x".into(), Congruence::new(m as u64, rng.int(0, m - 1)));
                 }
-                diffs.exact("exact", &t, &ds, &cs, &d);
+                each(Case {
+                    what: "exact",
+                    term: t,
+                    domains: ds,
+                    listed: Listed::new(),
+                    classes: Some(cs),
+                    demand: d,
+                });
             }
+        }
+    }
+}
+
+/// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
+#[test]
+fn random_terms_keep_their_preimages() {
+    on_big_stack(|| {
+        let mut diffs = Diffs::default();
+        for run in RUNS {
+            cases(run, |c| match &c.classes {
+                None => diffs.preimage_listed(c.what, &c.term, &c.domains, &c.listed, &c.demand),
+                Some(cs) => diffs.exact(c.what, &c.term, &c.domains, cs, &c.demand),
+            });
         }
         // The one box S22b changes here, `((5 mod (3 - x)) mod abs(5))` with `x` in `[-4, ∞)`
         // and the demand `[-3, 5]`, is now exact (`x` in `[-4, 2] | [4, ∞)`, where `3 - x` is

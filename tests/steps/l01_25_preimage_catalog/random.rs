@@ -18,7 +18,7 @@ use zedc::store::preimage::{
 use super::{check, meets, points};
 
 /// The window each domain is checked over.
-const WINDOW: (i64, i64) = (-15, 15);
+pub(super) const WINDOW: (i64, i64) = (-15, 15);
 
 fn lit(n: i64) -> Term {
     Term::Lit(Value::Int(n))
