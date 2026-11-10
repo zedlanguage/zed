@@ -1013,14 +1013,14 @@ type Counts = (
 const GUARDED: [Counts; 16] = [
     (0, (0, 0, 53), (10, &[]), 0),
     (250, (0, 3, 41), (9, &[]), 0),
-    (500, (0, 0, 43), (8, &[]), 0),
+    (500, (0, 0, 42), (8, &[]), 0),
     (750, (0, 0, 45), (11, &[]), 0),
     (1000, (0, 0, 52), (14, &[]), 0),
     (1250, (0, 2, 50), (4, &[]), 0),
     (1500, (0, 0, 42), (12, &[]), 0),
     (1750, (0, 1, 49), (13, &[]), 0),
     (2000, (0, 1, 51), (17, &[]), 0),
-    (2250, (0, 1, 42), (15, &[]), 0),
+    (2250, (0, 1, 41), (15, &[]), 0),
     (2500, (0, 0, 50), (10, &[]), 0),
     (2750, (0, 0, 46), (5, &[]), 0),
     (3000, (0, 0, 57), (10, &[]), 0),
@@ -1200,6 +1200,17 @@ guarded_ranges!(
 /// `(-inf, -3] ∪ [-1, 0]`, still inexact. Every changed box lies inside the one before, and
 /// the interpreter refutes none on the points within (-60, 60); no result of the transfer
 /// changes.
+///
+/// Since PRES-small-point, which gives the solver each atom that propagation fixed replaced
+/// by its value, the transfer before, which shares the solver, gives 2 of the boxes counted
+/// as made exact exactly as the transfer does, one in each half (374 and 396). Both are the
+/// empty box, exact: in cases 500 to 750, `if (i != -2) { … }` with demand `[18, 27]`, and in
+/// cases 2250 to 2500, `if (i != 3) { min(…, 2) } else { … }` with demand `[26, 35]`, where
+/// the transfer before kept `{-2}` and `{3}`, inexact, with a relation, since the solver
+/// refused the formula (`Unordered`: two copies of one subterm with the same rows); with the
+/// guard's value replaced it shows the formula has no point. The transfer's own results do
+/// not change in any case; the transfer before loses that refusal in 5 more cases, still
+/// inexact with a relation and the same box.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1220,13 +1231,13 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (0, 6, 375, 81, vec![], 0));
+    assert_eq!(sum(&GUARDED[..8]), (0, 6, 374, 81, vec![], 0));
     assert_eq!(
         sum(&GUARDED[8..]),
         (
             0,
             4,
-            397,
+            396,
             80,
             vec![
                 "i [2..] before i [2..=2, 5..]",

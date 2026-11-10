@@ -46,13 +46,13 @@
 //!   a round sets is never passed, not even as a hint, since it holds at one point at most
 //!   and would remove the others.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 
 use rustc_hash::FxHasher;
 use zedc_int::int::Int;
 
-use super::formula::{Atom, Con, Formula, Id, Lin, Model, Rel};
+use super::formula::{Atom, Con, Formula, Id, Model, Rel};
 use state::{Countdown, Interval, Latch, Meet, Once};
 use trial::Trial;
 
@@ -549,67 +549,15 @@ impl<'f> Graph<'f> {
 /// value holds at some point of the formula at most, not at every point, and as a row it
 /// would remove the others.
 pub(super) struct Facts<'f> {
-    formula: &'f Formula,
-    known: FxMap<&'f Atom, Int>,
+    /// The formula the propagation read.
+    pub(super) formula: &'f Formula,
+    /// Each atom it fixed, with its value.
+    pub(super) known: FxMap<&'f Atom, Int>,
 }
 
 impl Facts<'_> {
-    /// The formula with each fixed atom replaced by its value, each constraint left with no
-    /// atom replaced by `true` or `false`, and each conjunction and disjunction rebuilt by
-    /// [`Formula::and_keeping`] and [`Formula::or_keeping`], which drop `true` and `false`
-    /// and keep the tighter of two rows of one left-hand side; and beside it the equation
-    /// `a == v` of each fixed atom `a`, so that every atom of the formula is still in it, and
-    /// two atoms the formula tells apart (`x == 2` beside a product `x * y`) are told apart
-    /// there too, as the solver's check that no name orders its search needs
-    /// ([`super::Renamed`]). `None` when no atom is fixed, so the formula goes to the solver
-    /// as written. O(n + k log k) for `n` the size of the formula with each shared part
-    /// counted once ([`Formula::map_cons`] folds each shared part once) and `k` the atoms
-    /// fixed, whose equations are sorted, so that their order is the same in every order of
-    /// the propagation.
-    pub(super) fn reduced(&self) -> Option<Formula> {
-        if self.known.is_empty() {
-            return None;
-        }
-        let replaced = self.formula.map_cons(&|c| {
-            if !c.lin.terms.keys().any(|a| self.known.contains_key(a)) {
-                return Formula::Con(c.clone());
-            }
-            let mut lin = Lin {
-                terms: BTreeMap::new(),
-                constant: c.lin.constant.clone(),
-            };
-            for (a, k) in &c.lin.terms {
-                match self.known.get(a) {
-                    Some(v) => lin.constant = &lin.constant + &(k * v),
-                    None => {
-                        lin.terms.insert(a.clone(), k.clone());
-                    }
-                }
-            }
-            if !lin.terms.is_empty() {
-                return Formula::Con(Con { lin, rel: c.rel });
-            }
-            let holds = match c.rel {
-                Rel::Eq => lin.constant.is_zero(),
-                Rel::Ge => !lin.constant.is_negative(),
-            };
-            if holds {
-                Formula::top()
-            } else {
-                Formula::bottom()
-            }
-        });
-        let mut fixed: Vec<(&Atom, &Int)> = self.known.iter().map(|(a, v)| (*a, v)).collect();
-        fixed.sort_unstable();
-        let equations = (fixed.into_iter())
-            .map(|(a, v)| Formula::Con(Con::eq(&Lin::atom(a.clone()), &Lin::constant(v.clone()))));
-        Some(Formula::and(
-            std::iter::once(replaced).chain(equations).collect(),
-        ))
-    }
-
-    /// A point of the formula from a point of [`Facts::reduced`]: the fixed atoms with their
-    /// values added.
+    /// A point of the formula from a point of its reduced form ([`super::reduced`]): the fixed
+    /// atoms with their values added.
     pub(super) fn fill(&self, m: &mut Model) {
         for (a, v) in &self.known {
             m.insert((*a).clone(), v.clone());

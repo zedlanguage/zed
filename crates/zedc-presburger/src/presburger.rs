@@ -104,7 +104,7 @@ mod forced;
 mod formula;
 mod values;
 
-use forced::Forced;
+use forced::{Facts, Forced};
 pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 
 /// Why a question lies outside the fragment the solver decides. Each is reported in its own
@@ -853,6 +853,60 @@ impl fmt::Display for Relation {
     }
 }
 
+/// The formula of `facts` with each fixed atom replaced by its value, each constraint left with no
+/// atom replaced by `true` or `false`, and each conjunction and disjunction rebuilt by
+/// [`Formula::and_keeping`] and [`Formula::or_keeping`], which drop `true` and `false`
+/// and keep the tighter of two rows of one left-hand side; and beside it the equation
+/// `a == v` of each fixed atom `a`, so that every atom of the formula is still in it, and
+/// two atoms the formula tells apart (`x == 2` beside a product `x * y`) are told apart
+/// there too, as the solver's check that no name orders its search needs
+/// ([`Renamed`]). `None` when no atom is fixed, so the formula goes to the solver
+/// as written. O(n + k log k) for `n` the size of the formula with each shared part
+/// counted once ([`Formula::map_cons`] folds each shared part once) and `k` the atoms
+/// fixed, whose equations are sorted, so that their order is the same in every order of
+/// the propagation.
+fn reduced(facts: &Facts) -> Option<Formula> {
+    if facts.known.is_empty() {
+        return None;
+    }
+    let replaced = facts.formula.map_cons(&|c| {
+        if !c.lin.terms.keys().any(|a| facts.known.contains_key(a)) {
+            return Formula::Con(c.clone());
+        }
+        let mut lin = Lin {
+            terms: BTreeMap::new(),
+            constant: c.lin.constant.clone(),
+        };
+        for (a, k) in &c.lin.terms {
+            match facts.known.get(a) {
+                Some(v) => lin.constant = &lin.constant + &(k * v),
+                None => {
+                    lin.terms.insert(a.clone(), k.clone());
+                }
+            }
+        }
+        if !lin.terms.is_empty() {
+            return Formula::Con(Con { lin, rel: c.rel });
+        }
+        let holds = match c.rel {
+            Rel::Eq => lin.constant.is_zero(),
+            Rel::Ge => !lin.constant.is_negative(),
+        };
+        if holds {
+            Formula::top()
+        } else {
+            Formula::bottom()
+        }
+    });
+    let mut fixed: Vec<(&Atom, &Int)> = facts.known.iter().map(|(a, v)| (*a, v)).collect();
+    fixed.sort_unstable();
+    let equations = (fixed.into_iter())
+        .map(|(a, v)| Formula::Con(Con::eq(&Lin::atom(a.clone()), &Lin::constant(v.clone()))));
+    Some(Formula::and(
+        std::iter::once(replaced).chain(equations).collect(),
+    ))
+}
+
 /// Whether `f` holds somewhere, and where. A formula whose forced equations fix its atoms one
 /// after another, as the preimage of a chain of `if` at a point gives, is answered by
 /// propagation alone in time linear in its size (module `forced`, PRES-small-cost), with every
@@ -873,7 +927,7 @@ pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
         Forced::Empty => Ok(None),
         Forced::Point(m) => Ok(Some(m)),
         Forced::Holds => unreachable!("a point is asked for"),
-        Forced::Undecided(facts) => match facts.reduced() {
+        Forced::Undecided(facts) => match reduced(&facts) {
             None => or_old(|| satisfiable_named(f)),
             // Complexity tradeoff: as at `decide`, a refusal with the facts asks again as
             // written.
@@ -951,7 +1005,7 @@ pub fn decide(f: &Formula) -> Result<bool, Refusal> {
     match forced::forced(f, false) {
         Forced::Empty => Ok(false),
         Forced::Point(_) | Forced::Holds => Ok(true),
-        Forced::Undecided(facts) => match facts.reduced() {
+        Forced::Undecided(facts) => match reduced(&facts) {
             None => or_old(|| decide_named(f)),
             // Complexity tradeoff: a formula the solver refuses with the facts is asked again
             // as written, so it costs up to twice what it cost before, and no answer given as
