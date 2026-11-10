@@ -14412,3 +14412,107 @@ mod forced_against_solver {
         assert!(events >= 10_000, "{events} events");
     }
 }
+
+#[cfg(test)]
+// The tests of `Formula`'s kept hashes (deep.rs). They are here, not in deep.rs, because they
+// build formulas with `Atom` and `nnf` from this file, which deep.rs may not import.
+mod formula_hashes {
+    use super::formula::Sig;
+    use super::*;
+
+    /// `x + c >= 0`.
+    fn con(c: i64) -> Formula {
+        let x = Lin::atom(Atom::Sym("x".into()));
+        Formula::Con(Con::ge(&x.plus(&Lin::constant(c)), &Lin::default()))
+    }
+
+    fn and(fs: Vec<Formula>) -> Formula {
+        Formula::And(Shared::new(fs))
+    }
+
+    fn or(fs: Vec<Formula>) -> Formula {
+        Formula::Or(Shared::new(fs))
+    }
+
+    #[test]
+    fn formulas_whose_hashes_collide_are_compared() {
+        // One hash kept by hand for three conjunctions before any is hashed: two equal, one
+        // not. Equal hashes decide nothing, so `cmp` still tells them apart.
+        let sig = Sig {
+            rank: 2,
+            n: 7,
+            seq: 7,
+            pow: 7,
+        };
+        let (a, b, c) = (
+            and(vec![con(0), con(1)]),
+            and(vec![con(0), con(2)]),
+            and(vec![con(0), con(1)]),
+        );
+        for f in [&a, &b, &c] {
+            let Formula::And(gs) = f else { unreachable!() };
+            assert!(Shared::keep_sig(gs, sig));
+        }
+        assert_eq!(a.sig(), b.sig());
+        assert_ne!(a, b);
+        assert_ne!(b, a);
+        assert_eq!(a, c);
+        assert_eq!(a.cmp(&b), b.cmp(&a).reverse());
+        assert_ne!(a.cmp(&b), Ordering::Equal);
+        // A hash found by the walk: unequal to the one kept by hand, and to the hash of `a`.
+        // (`b == d` would be false, since the hash kept for `b` is not its own; `cmp`, which
+        // reads no hash, still finds them equal.)
+        let d = and(vec![con(0), con(2)]);
+        assert_ne!(a.sig(), d.sig());
+        assert_ne!(a, d);
+        assert_eq!(b.cmp(&d), Ordering::Equal);
+    }
+
+    #[test]
+    fn runs_in_other_orders_are_unequal_until_sorted_and_then_hash_alike() {
+        // `x >= 0 && (x >= -1 || x >= -2)` and the same with each run in the other order:
+        // unequal as written, since `Ord` reads parts in order, and equal with equal hashes
+        // once `nnf` sorts each run.
+        let a = and(vec![con(0), or(vec![con(1), con(2)])]);
+        let b = and(vec![or(vec![con(2), con(1)]), con(0)]);
+        assert_ne!(a, b);
+        let (a, b) = (nnf(&a, true), nnf(&b, true));
+        assert_eq!(a, b);
+        assert_eq!(a.sig(), b.sig());
+        assert_eq!(a.cmp(&b), Ordering::Equal);
+    }
+
+    #[test]
+    fn a_hash_is_found_again_after_its_parts_change() {
+        let mut f = and(vec![con(0), con(1)]);
+        let before = f.sig();
+        let Formula::And(gs) = &mut f else {
+            unreachable!()
+        };
+        Shared::change(gs).expect("one holder").push(con(2));
+        let fresh = and(vec![con(0), con(1), con(2)]);
+        assert_ne!(f.sig(), before);
+        assert_eq!(f.sig(), fresh.sig());
+        assert_eq!(f, fresh);
+    }
+
+    #[test]
+    fn parts_held_by_a_conjunction_and_a_disjunction_hash_as_each() {
+        // One list of parts under two variants: one keeps its hash with the parts, the other's
+        // is found in the call (`spill`), and both match the same formulas built apart.
+        let gs = Shared::new(vec![con(0), con(1)]);
+        let (a, o) = (Formula::And(gs.clone()), Formula::Or(gs));
+        let top = and(vec![a.clone(), o.clone(), a.clone()]);
+        let apart = |fs: [i64; 2]| fs.map(con).to_vec();
+        let top_apart = and(vec![
+            and(apart([0, 1])),
+            or(apart([0, 1])),
+            and(apart([0, 1])),
+        ]);
+        assert_eq!(top.sig(), top_apart.sig());
+        assert_eq!(a.sig(), and(apart([0, 1])).sig());
+        assert_eq!(o.sig(), or(apart([0, 1])).sig());
+        assert_ne!(a, o);
+        assert_eq!(top, top_apart);
+    }
+}
