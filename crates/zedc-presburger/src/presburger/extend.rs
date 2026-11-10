@@ -2529,8 +2529,9 @@ impl Summaries {
     // whose values on the kept atoms take a new
     // shape at each depth keeps O(depth) pieces and the chain O(n²). Two definitions read
     // together whose cones are apart are read beside each other down to where they meet, O(their depth). The
-    // symbols of each definition's cone are a set made once for it, shared with its input's
-    // when it adds none, so a chain whose links each read a new symbol holds O(n²) in all. The
+    // symbols of each definition's cone are a persistent set made once for it, sharing the
+    // largest input's tree, so a chain whose links each read a new symbol costs O(n log n) time
+    // and storage; the other inputs' sets of a definition of several are still visited. The
     // coefficients of a summary are those of the composed definitions (`2^i` after i halvings
     // in `min(H div 2, x)`), so its numbers have O(i) bits; the solver's own elimination of
     // the whole chain makes the same numbers. Trigger: these definitions in a chain of
@@ -3238,8 +3239,7 @@ fn hull_of(
 // Complexity tradeoff: naive version, each row tried against the others by [`decide`] as
 // [`lean`] does, one decision for each row, and refused here. Used: the rows grouped by hash,
 // each group sorted by slope and swept once keeping the upper hull over the interval `[lo, hi]`
-// of 1-form bounds on `f` (with bounds implied by lower and upper hulls on `(y, f)` found by a
-// linear two-pointer merge of the two hulls), O(r log r) for r rows of t terms each, O(r t) for
+// of 1-form bounds on `f`, O(r log r) for r rows of t terms each, O(r t) for
 // the forms. Tradeoffs: a row implied by rows of other groups, or by several forms together, is
 // left to [`lean`]'s decisions.
 fn envelope(rows: Vec<Con>) -> Vec<Con> {
@@ -3260,7 +3260,8 @@ fn envelope(rows: Vec<Con>) -> Vec<Con> {
 /// atoms, so dropping the pair preserves integer satisfiability.
 // Complexity tradeoff: naive version, rescan `rows` and `pairs` in a loop until no free pair
 // remains, O(p r t). Used: a worklist queue of quotients whose occurrence count reaches 2,
-// decrementing the counts of the dividend's atoms as each pair is dropped, O(r t). Tradeoffs:
+// decrementing the counts of the dividend's atoms as each pair is dropped, O(r t),
+// plus O(r log r) row comparisons for the sort and deduplication. Tradeoffs:
 // two hash maps of atom counts and pairs.
 fn without_free_pairs_for(mut rows: Vec<Con>, elim: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
     rows.sort();
@@ -3308,12 +3309,24 @@ fn without_free_pairs_for(mut rows: Vec<Con>, elim: &dyn Fn(&Atom) -> bool) -> V
         .collect()
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Entries of occurrence lists read by [`without_free_pairs`] (tests of its cost only).
+    static OCCURRENCE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Rows read to make the rests of the forms of a piece in [`merge_pieces`] (tests of its
+    /// cost only).
+    static REST_ROW_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// `rows` simplified preserving integer satisfiability: remainders converted to division pairs,
 /// equations with a single-use unit variable dropped, and free division pairs peeled.
 // Complexity tradeoff: naive version, pass all definition rows to [`decide`], which eliminates
 // auxiliary quotients and remainders alongside big-integer bounds in `live3`. Used: peel
-// single-use unit equations by queue and run [`without_free_pairs_for`], O(r t). Tradeoffs: hash
-// maps of occurrences.
+// single-use unit equations by queue, with the rows left that use each atom counted down as
+// rows are dropped, and run [`without_free_pairs_for`], O(r t) plus O(r log r) row comparisons
+// for its sort. Counting the uses left by a scan of the atom's occurrence list after each drop
+// costs O(r²) on `y_i == x` (cross-review of LOAD-max-div-xr, round 3, Codex). Tradeoffs: hash
+// maps of occurrences and counts.
 fn without_free_pairs(rows: Vec<Con>) -> Vec<Con> {
     let mut rows = remainders_as_pairs(&rows, &|_| false);
     let mut at: HashMap<Atom, Vec<usize>> = HashMap::new();
@@ -3322,6 +3335,8 @@ fn without_free_pairs(rows: Vec<Con>) -> Vec<Con> {
             at.entry(a.clone()).or_default().push(i);
         }
     }
+    // The rows not dropped that use each atom.
+    let mut left: HashMap<Atom, usize> = (at.iter()).map(|(a, ns)| (a.clone(), ns.len())).collect();
     let mut queue: Vec<Atom> = (at.iter())
         .filter_map(|(a, ns)| {
             (ns.len() == 1 && !matches!(a, Atom::Product(..))).then_some(a.clone())
@@ -3340,12 +3355,13 @@ fn without_free_pairs(rows: Vec<Con>) -> Vec<Con> {
         }
         drop.insert(i);
         for b in rows[i].lin.terms.keys() {
-            if !matches!(b, Atom::Product(..))
-                && at
-                    .get(b)
-                    .is_some_and(|ns| ns.iter().filter(|n| !drop.contains(n)).count() == 1)
-            {
-                queue.push(b.clone());
+            #[cfg(test)]
+            OCCURRENCE_VISITS.with(|v| v.set(v.get() + 1));
+            if let Some(n) = left.get_mut(b) {
+                *n -= 1;
+                if *n == 1 && !matches!(b, Atom::Product(..)) {
+                    queue.push(b.clone());
+                }
             }
         }
     }
@@ -3746,7 +3762,11 @@ fn remainders_as_pairs(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
 // the nearest upper bound below its interval and the one with the nearest lower bound above,
 // O(log p); for each, O(r) decisions that one rest holds on the other piece and one with the
 // gap, O(r) forms tried per piece put in, O(p r²) decisions of O(r) rows in all (naive: each
-// pair of pieces with a shared form, O(p² r) decisions); ties of one bound keep the piece put
+// pair of pieces with a shared form, O(p² r) decisions). The forms of a piece are made once
+// when it is put in and kept beside it: made again for each neighbor read, O(r) forms of O(r)
+// rows for each of O(r) forms tried, O(p r³) row visits (cross-review of LOAD-max-div-xr,
+// round 3, Codex); kept, O(r) to find the one form, O(p r²) in all, for the storage of the
+// forms of the pieces put in. Ties of one bound keep the piece put
 // in last, so a piece hidden by a tie, or the nearer one where it fails, stays apart: exact,
 // more pieces. `max(H div 2, x + y - 9)`: n^2.06 to 80 links before (21.4 G instructions), 4
 // pieces at each link and n^1.1 to n^1.6 with it (2.8 G at 80 links, 20.6 G at 320); the
@@ -3794,6 +3814,8 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
         }
         (bounds.into_iter())
             .map(|(t, (lo, hi))| {
+                #[cfg(test)]
+                REST_ROW_VISITS.with(|v| v.set(v.get() + p.len()));
                 let rest = (p.iter())
                     .filter(|r| r.lin.terms.is_empty() || form(r).0 != t)
                     .cloned()
@@ -3858,6 +3880,8 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
     // entry of a piece merged since is skipped where read).
     let mut sides: HashMap<Terms, (BTreeMap<Int, usize>, BTreeMap<Int, usize>)> = HashMap::new();
     let mut live: Vec<Option<Vec<Con>>> = Vec::new();
+    // The forms of each piece put in, by its index in `live`, made once when it is put in.
+    let mut forms_of: Vec<Vec<(Group, Option<Int>, Option<Int>)>> = Vec::new();
     let mut groups: HashMap<Group, Intervals> = HashMap::new();
     let mut work: Vec<Vec<Con>> = pieces.into_iter().collect();
     while let Some(p) = work.pop() {
@@ -3897,25 +3921,35 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
                             .next()
                     })
                     .map(|(_, id)| *id);
-                [below, above].into_iter().flatten().find_map(|id| {
-                    let q = live[id].as_ref()?;
-                    let (b, l, h) = forms(q).into_iter().find(|(gq, _, _)| gq.1 == g.1)?;
-                    let b = b.0;
-                    if b == g.0
-                        || !g.0.iter().all(|r| implied(q, r))
-                        || !b.iter().all(|r| implied(&p, r))
-                    {
-                        return None;
-                    }
-                    let rest: Vec<Con> = g.0.iter().chain(&b).cloned().collect();
-                    let both = (rest.clone(), g.1.clone());
-                    let ok = if l.as_ref().zip(lo.as_ref()).is_some_and(|(l, lo)| l > lo) {
-                        touch(&both, hi, &l)
-                    } else {
-                        touch(&both, &h, lo)
-                    };
-                    ok.then(|| (both, lo.clone(), hi.clone(), l, h, id))
-                })
+                // `up`: the other piece lies above this one on the form, so the gap is between
+                // this one's upper bound and its lower bound; else between its upper bound and
+                // this one's lower bound (cross-review of LOAD-max-div-xr, round 3: read from a
+                // comparison of the lower bounds, the gap of a piece with no lower bound and one
+                // above it went unchecked).
+                [below.map(|id| (id, false)), above.map(|id| (id, true))]
+                    .into_iter()
+                    .flatten()
+                    .find_map(|(id, up)| {
+                        let q = live[id].as_ref()?;
+                        let (b, l, h) = (forms_of[id].iter())
+                            .find(|(gq, _, _)| gq.1 == g.1)
+                            .cloned()?;
+                        let b = b.0;
+                        if b == g.0
+                            || !g.0.iter().all(|r| implied(q, r))
+                            || !b.iter().all(|r| implied(&p, r))
+                        {
+                            return None;
+                        }
+                        let rest: Vec<Con> = g.0.iter().chain(&b).cloned().collect();
+                        let both = (rest.clone(), g.1.clone());
+                        let ok = if up {
+                            touch(&both, hi, &l)
+                        } else {
+                            touch(&both, &h, lo)
+                        };
+                        ok.then(|| (both, lo.clone(), hi.clone(), l, h, id))
+                    })
             });
             if let Some((both, lo, hi, l, h, id)) = cross {
                 if let Some(q) = live[id].take() {
@@ -3948,16 +3982,17 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
                     continue;
                 }
             }
-            for (g, lo, hi) in fs {
+            for (g, lo, hi) in &fs {
                 let (u, w) = sides.entry(g.1.clone()).or_default();
-                if let Some(hi) = &hi {
+                if let Some(hi) = hi {
                     u.insert(hi.clone(), live.len());
                 }
-                if let Some(lo) = &lo {
+                if let Some(lo) = lo {
                     w.insert(lo.clone(), live.len());
                 }
-                groups.entry(g).or_default().insert(lo, (hi, live.len()));
+                (groups.entry(g.clone()).or_default()).insert(lo.clone(), (hi.clone(), live.len()));
             }
+            forms_of.push(fs);
             live.push(Some(p));
             continue;
         };
@@ -4452,5 +4487,191 @@ mod tests {
             decide(&Formula::and(out.into_iter().map(Formula::Con).collect())),
             Ok(false)
         );
+    }
+
+    #[test]
+    fn merge_pieces_checks_the_gap_below_a_neighbor_above_a_piece_unbounded_below() {
+        // Cross-review of LOAD-max-div-xr, round 3 (Claude): `y >= x` for `x <= 5` (no lower
+        // bound on `x`) and `y >= 2 * x - 10` for `x >= 10`: each rest holds on the other piece,
+        // but `(7, 7)` holds both rests and lies in neither piece, so the two stay apart.
+        // Mirrored in `x` too, so that each of the two pieces is the one put in first.
+        let (x, y) = (0, 1);
+        let at =
+            |px: i64, py: i64| vec![con(&[(x, 1)], -px, Rel::Eq), con(&[(y, 1)], -py, Rel::Eq)];
+        for s in [1i64, -1] {
+            let mut p = vec![
+                con(&[(x, -s)], 5, Rel::Ge),
+                con(&[(y, 1), (x, -s)], 0, Rel::Ge),
+            ];
+            let mut q = vec![
+                con(&[(x, s)], -10, Rel::Ge),
+                con(&[(y, 1), (x, -2 * s)], 10, Rel::Ge),
+            ];
+            p.sort();
+            q.sort();
+            let out = merge_pieces(BTreeSet::from([p, q]));
+            for piece in &out {
+                let rows: Vec<Con> = piece.iter().cloned().chain(at(7 * s, 7)).collect();
+                assert_eq!(
+                    decide(&Formula::and(rows.into_iter().map(Formula::Con).collect())),
+                    Ok(false),
+                    "sign {s}: {out:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn single_use_equations_of_one_shared_atom_are_dropped_in_linear_work() {
+        // Cross-review of LOAD-max-div-xr, round 3 (Codex): `y_i == x` for i = 1..n. Counting
+        // the uses of `x` left after each drop by a scan of its occurrence list read O(n²)
+        // entries; a count kept per atom reads O(n). Limit for 8 times the rows: 24 times the
+        // work.
+        let work = |n: u32| {
+            let rows = (1..=n)
+                .map(|i| con(&[(0, 1), (i, -1)], 0, Rel::Eq))
+                .collect();
+            OCCURRENCE_VISITS.with(|v| v.set(0));
+            assert!(without_free_pairs(rows).is_empty());
+            OCCURRENCE_VISITS.with(|v| v.get())
+        };
+        let (small, large) = (work(100), work(800));
+        assert!(
+            large <= 24 * small,
+            "occurrence visits {small} at 100 rows, {large} at 800"
+        );
+    }
+
+    #[test]
+    fn forms_of_a_piece_in_a_merge_are_made_once() {
+        // Cross-review of LOAD-max-div-xr, round 3 (Codex): `x_i == 0` for every i and
+        // `x_i == 2` for every i, r atoms: the rests differ on every form, so each of the r
+        // forms tried reads the other piece's forms. Made again for each, O(r³) rows read; made
+        // once when the piece is put in, O(r²). Limit for 8 times the atoms: 128 times the work
+        // (64 for r², 512 for r³).
+        let work = |r: u32| {
+            let p = (0..r).map(|i| con(&[(i, 1)], 0, Rel::Eq)).collect();
+            let q = (0..r).map(|i| con(&[(i, 1)], -2, Rel::Eq)).collect();
+            REST_ROW_VISITS.with(|v| v.set(0));
+            assert_eq!(merge_pieces(BTreeSet::from([p, q])).len(), 2);
+            REST_ROW_VISITS.with(|v| v.get())
+        };
+        let (small, large) = (work(10), work(80));
+        assert!(
+            large <= 128 * small,
+            "rest rows read {small} at 10 atoms, {large} at 80"
+        );
+    }
+
+    #[test]
+    fn envelope_lean_merge_and_decide_keep_the_integer_points_of_small_systems() {
+        // Cross-review of LOAD-max-div-xr, round 3 (Codex): 180 random systems of five rows over
+        // three atoms in the box [-2, 2]³, fixed seed. `envelope` and `lean` (rows forward and
+        // reversed) keep exactly the integer points of the box, `merge_pieces` of two such
+        // pieces keeps their union, and `decide_cons` agrees with the points. The control (the
+        // box alone) must differ somewhere, so the comparison can fail.
+        let holds = |rows: &[Con], xyz: [i64; 3]| {
+            rows.iter().all(|r| {
+                let mut v = r.lin.constant.clone();
+                for (a, k) in &r.lin.terms {
+                    let Atom::Aux(n) = a else { panic!("aux") };
+                    v = &v + &(k * &Int::from(xyz[*n as usize]));
+                }
+                match r.rel {
+                    Rel::Eq => v.is_zero(),
+                    Rel::Ge => !v.is_negative(),
+                }
+            })
+        };
+        let mut seed = 789123u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 32) as i64
+        };
+        let mut control_differs = 0;
+        for case in 0..180 {
+            let mut box_rows = Vec::new();
+            for n in 0..3 {
+                box_rows.push(con(&[(n, 1)], 2, Rel::Ge));
+                box_rows.push(con(&[(n, -1)], 2, Rel::Ge));
+            }
+            let mut pieces = Vec::new();
+            for _ in 0..2 {
+                let mut rows = box_rows.clone();
+                for _ in 0..5 {
+                    let ts: Vec<(u32, i64)> = (0..3)
+                        .filter_map(|n| {
+                            let k = next() % 7 - 3;
+                            (k != 0).then_some((n, k))
+                        })
+                        .collect();
+                    rows.push(con(&ts, next() % 9 - 4, Rel::Ge));
+                }
+                pieces.push(rows);
+            }
+            let mut reversed = pieces[0].clone();
+            reversed.reverse();
+            let outs = [
+                envelope(pieces[0].clone()),
+                lean(pieces[0].clone()),
+                lean(reversed),
+            ];
+            let merged = merge_pieces(pieces.clone().into_iter().collect());
+            let mut any = false;
+            for x in -2..=2 {
+                for y in -2..=2 {
+                    for z in -2..=2 {
+                        let xyz = [x, y, z];
+                        let original = holds(&pieces[0], xyz);
+                        any |= original;
+                        for out in &outs {
+                            assert_eq!(original, holds(out, xyz), "case {case} at {xyz:?}");
+                        }
+                        assert_eq!(
+                            pieces.iter().any(|p| holds(p, xyz)),
+                            merged.iter().any(|p| holds(p, xyz)),
+                            "merge, case {case} at {xyz:?}"
+                        );
+                        if holds(&box_rows, xyz) != original {
+                            control_differs += 1;
+                        }
+                    }
+                }
+            }
+            assert_eq!(decide_cons(pieces[0].clone()), Ok(any), "case {case}");
+        }
+        assert!(control_differs > 0);
+    }
+
+    #[test]
+    fn ray_cap_keeps_the_points_above_a_crossing() {
+        // Cross-review of LOAD-max-div-xr, round 3 (Codex): `y >= 2 * (x + z)` and
+        // `y >= 4 * (x + z) - 3` cross at `x + z == 3 / 2`; (y, x, z) = (5, 1, 1), on
+        // `x + z == 2` above the crossing, holds both, and holds every row `lean` leaves.
+        let rows = vec![
+            con(&[(0, 1), (1, -2), (2, -2)], 0, Rel::Ge),
+            con(&[(0, 1), (1, -4), (2, -4)], 3, Rel::Ge),
+        ];
+        for r in lean(rows) {
+            let mut v = r.lin.constant;
+            for (a, k) in r.lin.terms {
+                let Atom::Aux(n) = a else { panic!("aux") };
+                v = &v + &(&k * &Int::from([5, 1, 1][n as usize]));
+            }
+            assert!(!v.is_negative(), "a point of the rows was capped away");
+        }
+    }
+
+    #[test]
+    fn hull_check_keeps_a_strip_between_parallel_lines() {
+        // Cross-review of LOAD-max-div-xr, round 3 (Codex): `2 * y <= x <= 2 * y + 1` with
+        // `0 <= y <= 2` has the point x = y = 0.
+        let rows = vec![
+            con(&[(0, 1), (1, -2)], 0, Rel::Ge),
+            con(&[(0, -1), (1, 2)], 1, Rel::Ge),
+            con(&[(1, 1)], 0, Rel::Ge),
+            con(&[(1, -1)], 2, Rel::Ge),
+        ];
+        assert_eq!(decide_cons(rows), Ok(true));
     }
 }
