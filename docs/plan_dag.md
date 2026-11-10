@@ -1133,7 +1133,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 
 ## File conflicts at the same level
 
-Each pair below is at one level, shares a file and is not yet done. Under the rule of 2026-11-02 the two may run in parallel and the merge resolves the overlap; run them apart where possible. There are 804 pairs. Regenerated on 2026-11-05 for the reduced needs of L1.40, L1.41, S.1 and S.3, and on 2026-11-07 for the eight rows of the soundness survey and the widened MOD-residue only, and for POLY-nf (Q10 withdrawn), each row of those listing every pair it is in; files under `tests/` are not compared. On 2026-11-09 each row naming L18.2 was split between L18.2a and L18.2b, each half keeping only the paths its own row lists; the level column was not recomputed.
+Each pair below is at one level, shares a file and is not yet done. Under the rule of 2026-11-02 the two may run in parallel and the merge resolves the overlap; run them apart where possible. There are 772 pairs. Regenerated on 2026-11-05 for the reduced needs of L1.40, L1.41, S.1 and S.3, and on 2026-11-07 for the eight rows of the soundness survey and the widened MOD-residue only, and for POLY-nf (Q10 withdrawn), each row of those listing every pair it is in; files under `tests/` are not compared. On 2026-11-09 each row naming L18.2 was split between L18.2a and L18.2b. On 2026-11-10 (item PLAN-L18.2-rest) a node script recomputed the level column from the items table above (440 of the 760 rows kept had a stale level); the 13 pairs whose two items are now at different levels, both open and with no path between them, moved to the end of the cross-level list, and 16 such pairs with a done item were dropped; the rows of L18.2a and L18.2b were recomputed from the items table by the rule of the cross-level list. The other rows were not recomputed: by that rule the items table now gives 909 pairs at one level, of which 363 are missing here, and 226 rows here are no longer such a pair.
 
 | Level | Items | Shared paths |
 |---|---|---|
@@ -1187,13 +1187,8 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 1 | XMARK-rows, ORDER-rename | `DESIGN.md` |
 | 1 | XMARK-rows, P14-bits | `zed/corpus/ref/src/p14/delaunay.rs` |
 | 2 | L1.36a, DIAG-suppress | `crates/zedc/src/main.rs` |
-| 2 | T11-preimage-log, UTVPI-union | `crates/zedc-preimage/src/preimage.rs` |
 | 2 | VALUE-one-tuple, FAMILY-eq-dag | `crates/zed-kernel/src/deep.rs` |
 | 2 | DIAG-suppress, MENU-linear | `crates/zedc/src/run.rs` |
-| 2 | UTVPI-union, UTVPI-dag-test | `crates/zedc-solvers/src/utvpi.rs` |
-| 2 | UTVPI-union, UTVPI-model | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-solvers/src/utvpi.rs` |
-| 2 | UTVPI-union, DECIDE-disj-chain | `crates/zedc-presburger/src/presburger.rs` |
-| 2 | UTVPI-union, NAME-ties-orient | `crates/zedc-presburger/src/presburger.rs` |
 | 2 | UTVPI-dag-test, UTVPI-model | `crates/zedc-solvers/src/utvpi.rs` |
 | 2 | UTVPI-model, DECIDE-disj-chain | `crates/zedc-presburger/src/presburger.rs` |
 | 2 | UTVPI-model, NAME-ties-orient | `crates/zedc-presburger/src/presburger.rs` |
@@ -1217,7 +1212,6 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 4 | REFUSE-group-site, MINMAX-tuples | `crates/zedc-types/src/ty.rs` |
 | 4 | REFUSE-group-site, T6-2sat | `crates/zed-kernel/src/types/empty.rs` |
 | 4 | REFUSE-group-site, T6-refusal-cost | `crates/zed-kernel/src/types/empty.rs` |
-| 4 | REFUSE-group-site, IF-union | `crates/zedc-types/src/ty.rs` |
 | 4 | REFUSE-group-site, STR-types | `crates/zed-kernel/src/types/empty.rs`, `crates/zedc-types/src/ty.rs` |
 | 4 | GROUP-admit-msg, GROUP-oracle | `crates/zed-kernel/src/types/rec.rs` |
 | 4 | GROUP-admit-msg, GROUP-refusal | `crates/zed-kernel/src/types/rec.rs` |
@@ -1235,7 +1229,6 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 4 | GROUP-refusal, T6-refusal-cost | `crates/zed-kernel/src/types/bes.rs`, `crates/zed-kernel/src/types/rec.rs`, `crates/zed-kernel/src/types/empty.rs` |
 | 4 | GROUP-refusal, REC-canon | `crates/zed-kernel/src/types/rec.rs` |
 | 4 | GROUP-refusal, STR-types | `crates/zed-kernel/src/types/bes.rs`, `crates/zed-kernel/src/types/rec.rs`, `crates/zed-kernel/src/types/empty.rs` |
-| 4 | MINMAX-tuples, IF-union | `crates/zedc-check/src/check/` |
 | 4 | MINMAX-tuples, STR-types | `crates/zedc-check/src/check/`, `zed/prelude/` |
 | 4 | MINMAX-tuples, CAST-menu | `crates/zedc-check/src/check/mod.rs` |
 | 4 | TD-finite, STR-types | `crates/zed-kernel/src/types.rs` |
@@ -1252,22 +1245,15 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 4 | T6-refusal-cost, STR-types | `crates/zed-kernel/src/types/` |
 | 4 | BDD-xor-parity, STR-types | `crates/zed-kernel/src/types/bdd.rs` |
 | 4 | MATCH-fn-binder, HEAP-binder-paths | `crates/zed-native/src/hooks.rs` |
-| 4 | MATCH-fn-binder, IF-union | `crates/zed-native/src/hooks.rs` |
 | 4 | MATCH-fn-binder, STR-types | `crates/zed-native/src/hooks.rs` |
-| 4 | HEAP-binder-paths, IF-union | `crates/zed-native/src/hooks.rs` |
 | 4 | HEAP-binder-paths, STR-types | `crates/zed-rt/src/heap.rs`, `crates/zed-native/src/hooks.rs` |
 | 4 | REC-canon, STR-types | `crates/zed-kernel/src/types/rec.rs` |
-| 4 | IF-union, STR-types | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab/walk.rs`, `crates/zed-native/src/hooks.rs` |
-| 4 | IF-union, CAST-menu | `crates/zedc-check/src/check/mod.rs` |
 | 4 | STR-types, CAST-menu | `crates/zedc-check/src/check/mod.rs` |
 | 5 | T2-types-rest, GROUP-setop | `crates/zed-kernel/src/types/rec.rs`, `crates/zed-kernel/src/types/empty.rs` |
 | 5 | T11-preimage-rest, S15-calls | `crates/zedc-preimage/src/preimage.rs` |
 | 6 | T14-bring, RT-sites | `crates/zedc-zir/src/zir/lower.rs` |
-| 6 | NARROW-hub-settle, ST-wider | `crates/zedc-preimage/src/product.rs` |
 | 6 | NARROW-hub-settle, PRODUCT-nested-chain | `crates/zedc-preimage/src/product.rs` |
 | 6 | NARROW-hub-settle, FINITE-type | `crates/zedc-preimage/src/product.rs` |
-| 6 | ST-wider, PRODUCT-nested-chain | `crates/zedc-preimage/src/product.rs` |
-| 6 | ST-wider, FINITE-type | `crates/zedc-preimage/src/product.rs` |
 | 6 | SETTLE-rounds, TABLE-life | `crates/zed-kernel/src/types/bdd.rs` |
 | 6 | PRODUCT-nested-chain, FINITE-type | `crates/zedc-preimage/src/product.rs` |
 | 7 | SCALE-cover, T14-paths | `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-native/src/tables.rs`, `crates/zed-native/src/codegen.rs` |
@@ -1276,19 +1262,15 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 7 | SCALE-cover, T2-ty | `crates/zedc-types/src/ty.rs`, `crates/zedc/src/store/` |
 | 7 | SCALE-cover, ADDR-presburger | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/conjuncts.rs`, `crates/zedc-presburger/src/presburger/deep.rs` |
 | 7 | SCALE-cover, CHK-held-cascade | `crates/zedc-check/src/check` |
-| 7 | SCALE-cover, L1.40 | `crates/zedc-preimage/src/product.rs`, `crates/zedc-lattice/src/revision.rs`, `crates/zedc-preimage/src/preimage.rs` |
 | 7 | L2.5, L2.8 | `DESIGN.md` |
 | 7 | L2.5, T2-ty | `crates/zedc-types/src/ty.rs` |
 | 7 | L2.5, CHK-held-cascade | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
-| 7 | L2.8, L1.40 | `zed/prelude/revision.zed` |
 | 7 | T2-ty, ADDR-presburger | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/conjuncts.rs`, `crates/zedc-presburger/src/presburger/deep.rs` |
 | 7 | T2-ty, CHK-held-cascade | `crates/zedc-types/src/ty.rs` |
-| 7 | T2-ty, L1.40 | `crates/zedc-preimage/src/product.rs`, `crates/zedc-lattice/src/revision.rs`, `crates/zedc-preimage/src/preimage.rs` |
 | 7 | RT-internal-fault, SCALE-cover | `crates/zed-rt/src/`, `crates/zed-native/src/` |
 | 8 | T11-ty, WARN-refused | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 8 | T11-ty, CHK-need-bound | `crates/zedc-check/src/check/mod.rs` |
 | 8 | T11-ty, L2.8c | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 8 | T2, L2.8c | `crates/zedc/src/main.rs` |
 | 8 | L2.4, BUILD-const | `crates/zedc-stage/src/stage.rs` |
 | 8 | L2.4, WARN-refused | `crates/zedc/src/run.rs` |
 | 8 | L2.4, L2.8b | `DESIGN.md` |
@@ -1299,7 +1281,6 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 8 | WARN-refused, CHK-need-bound | `crates/zedc-check/src/check/mod.rs` |
 | 8 | WARN-refused, L2.8c | `crates/zedc-check/src/check`, `crates/zedc/src/run.rs`, `crates/zedc-preimage/src/product.rs` |
 | 8 | WARN-refused, NARROW-notes-quad | `crates/zedc-check/src/check/arms.rs` |
-| 8 | WARN-refused, L1.40a | `crates/zedc-preimage/src/product.rs` |
 | 8 | IS-chain-quad, L2.8c | `crates/zedc-check/src/check/walk.rs` |
 | 8 | PREIMAGE-and-chain, L2.8c | `crates/zedc-preimage/src/preimage.rs` |
 | 8 | CHK-need-bound, L2.8c | `crates/zedc-check/src/check/mod.rs` |
@@ -1311,24 +1292,14 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 8 | GROUP-e2e, L2.8c | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab/`, `crates/zedc-base/src/rejection.rs` |
 | 8 | PLAN-shared-regions, L2.8c | `crates/zedc-zir/src/zir/memory.rs` |
 | 8 | L2.8c, NARROW-notes-quad | `crates/zedc-check/src/check/arms.rs` |
-| 8 | L2.8c, L1.40a | `crates/zedc/src/store/layer.rs`, `crates/zedc-lattice/src/cell.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-lattice/src/lattice.rs` |
-| 9 | S22-R2, T14-lints | `crates/zedc-preimage/src/preimage.rs` |
 | 9 | S22-R2, L2.7 | `crates/zedc-preimage/src/preimage.rs` |
 | 9 | T11-check, ISSUE1-payload | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
 | 9 | T11-check, STRUCT-key | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
-| 9 | T11-check, T14-lints | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
 | 9 | T11-check, L2.7 | `crates/zedc-check/src/check/mod.rs` |
-| 9 | ST-formula-set, T14-lints | `crates/zedc-presburger/src/presburger/deep.rs`, `crates/zedc-presburger/src/presburger/deep/canon.rs`, `crates/zedc-presburger/src/presburger.rs` |
 | 9 | ISSUE1-payload, STRUCT-key | `crates/zedc-check/src/check` |
-| 9 | ISSUE1-payload, T14-lints | `crates/zedc-check/src/check` |
 | 9 | ISSUE1-payload, L2.7 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/exhaust.rs` |
-| 9 | STRUCT-key, T14-lints | `crates/zedc-check/src/check` |
 | 9 | STRUCT-key, L2.7 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/exhaust.rs`, `DESIGN.md` |
-| 9 | T14-lints, L1.40c | `crates/zedc-stage/src/stage.rs`, `crates/zedc-preimage/src/product.rs` |
-| 9 | T14-lints, L2.7 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/exhaust.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/preimage.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types.rs` |
-| 9 | L1.40c, L2.7 | `crates/zedc-preimage/src/product.rs` |
 | 10 | STAGE-print, STAGE-ends-cone | `crates/zedc-stage/src/stage.rs` |
-| 10 | L1.40b, STATIC-assert | `crates/zedc-check/src/check/` |
 | 11 | L2.6, L1.40e | `DESIGN.md` |
 | 11 | L1.40e, L1.40f | `crates/zedc-preimage/src/product.rs` |
 | 12 | HKT-2, L2.12 | `crates/zedc-check/src/check/mod.rs` |
@@ -1472,460 +1443,457 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 38 | INTERN-threaded, MEMO-cross | `ZED_PORT_GAPS.md` |
 | 38 | MEMO-cross, ARM-split | `crates/zedc/src/store/`, `DESIGN.md` |
 | 39 | L6.17, STR-cursor | `crates/zedc/src/opt/`, `crates/zedc-zir/src/zir/`, `crates/zed-kernel/src/text.rs`, `crates/zed-native/src/hooks.rs` |
-| 41 | S.1d, S.1e | `zed/prelude/` |
-| 41 | S.1d, L7.1 | `zed/prelude/`, `crates/zedc-check/src/check/` |
-| 41 | S.1e, L7.1 | `zed/prelude/` |
-| 41 | L7.1, L8.1 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-syntax/src/format.rs` |
-| 42 | S.1a, L7.2 | `crates/zedc/src/run.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs` |
-| 42 | S.1a, ROD-data | `crates/zed-native/src/` |
-| 42 | L7.1a, L7.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
-| 42 | L7.1a, L8.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
-| 42 | L7.2, L8.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
-| 42 | L7.2, L10.1 | `crates/zedc-syntax/src/ast/stmts.rs` |
-| 42 | L7.2, ROD-data | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs` |
-| 43 | L7.2a, L7.3 | `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/run.rs` |
-| 43 | L7.2a, L9.1 | `crates/zedc-elab/src/elab.rs` |
-| 43 | L7.2a, L15.1 | `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/run.rs` |
-| 43 | L7.3, L9.1 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/`, `crates/zed-native/src/hooks.rs` |
-| 43 | L7.3, L15.1 | `crates/zedc/src/run.rs`, `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/` |
-| 43 | L7.3, L10.4a | `crates/zedc-check/src/check/` |
-| 43 | L7.3, FINITE-prop | `crates/zedc-check/src/check/` |
-| 43 | L9.1, L15.1 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-zir/src/zir/` |
-| 43 | L9.1, L10.4a | `crates/zedc-check/src/check/` |
-| 43 | L9.1, FINITE-prop | `crates/zedc-check/src/check/` |
-| 43 | L15.1, L10.4a | `crates/zedc-check/src/check/` |
-| 43 | L15.1, L8.2a | `crates/zedc-resolve/src/resolve.rs` |
-| 43 | L15.1, FINITE-prop | `crates/zedc-check/src/check/`, `crates/zedc/src/store/` |
-| 43 | L10.4a, FINITE-prop | `crates/zedc-check/src/check/` |
-| 43 | PORT-key-static, L7.3 | `crates/zedc-check/src/check/` |
-| 43 | PORT-key-static, L9.1 | `crates/zedc-check/src/check/` |
-| 43 | PORT-key-static, L10.4a | `crates/zedc-check/src/check/` |
-| 43 | PORT-key-static, FINITE-prop | `crates/zedc-check/src/check/` |
-| 43 | PORT-key-static, EMPTY-level-swap | `crates/zedc-check/src/check/` |
-| 44 | L7.4, L22.1 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-types/src/ty.rs` |
-| 44 | L7.4, L7.14 | `crates/zedc-check/src/check/` |
-| 44 | L7.4, GLAM-logspec | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
-| 44 | L7.4, L7.5 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/run.rs`, `crates/zed-native/src/`, `crates/zed-rt/src/` |
-| 44 | L7.4, UNORD-keep | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-rt/src/` |
-| 44 | L7.4, FILE-bytes | `crates/zedc/src/run.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-rt/src/ports.rs` |
-| 44 | L7.4, TARGET-native | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/run.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs` |
-| 44 | L7.4, PORT-why | `crates/zed-rt/src/` |
-| 44 | L22.1, L7.14 | `crates/zedc-types/src/ty.rs` |
-| 44 | L22.1, L7.5 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-types/src/ty.rs` |
-| 44 | L22.1, TARGET-native | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-types/src/ty.rs` |
-| 44 | L7.14, L7.5 | `crates/zedc-check/src/check/` |
-| 44 | L7.14, TARGET-native | `crates/zedc-check/src/check/`, `crates/zedc/src/store/` |
-| 44 | GLAM-logspec, L7.5 | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
-| 44 | GLAM-logspec, UNORD-keep | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
-| 44 | GLAM-logspec, FILE-bytes | `crates/zed-rt/src/ports.rs` |
-| 44 | GLAM-logspec, PORT-why | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
-| 44 | L7.5, UNORD-keep | `crates/zed-rt/src/` |
-| 44 | L7.5, FILE-bytes | `crates/zedc/src/run.rs`, `crates/zed-rt/src/ports.rs`, `crates/zed-native/src/hooks.rs` |
-| 44 | L7.5, TARGET-native | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/run.rs` |
-| 44 | L7.5, PORT-why | `crates/zed-rt/src/` |
-| 44 | UNORD-keep, FILE-bytes | `crates/zed-rt/src/ports.rs` |
-| 44 | UNORD-keep, TARGET-native | `crates/zedc-zir/src/zir/` |
-| 44 | UNORD-keep, PORT-why | `crates/zed-rt/src/` |
-| 44 | FILE-bytes, TARGET-native | `crates/zedc/src/run.rs` |
-| 44 | FILE-bytes, PORT-why | `crates/zed-rt/src/ports.rs` |
-| 44 | PORT-ack-name, L7.4 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/ports.rs` |
-| 44 | PORT-ack-name, L22.1 | `crates/zedc-syntax/src/format.rs`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs` |
-| 44 | PORT-ack-name, L7.14 | `crates/zedc-check/src/check/` |
-| 44 | PORT-ack-name, GLAM-logspec | `crates/zed-rt/src/ports.rs` |
-| 44 | PORT-ack-name, L7.5 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/ports.rs` |
-| 44 | PORT-ack-name, UNORD-keep | `crates/zed-rt/src/ports.rs` |
-| 44 | PORT-ack-name, QUANT-finite | `crates/zedc-check/src/check/` |
-| 45 | L7.5a, L21.2 | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
-| 45 | L7.5a, L28.1 | `crates/zed-rt/src/` |
-| 45 | L7.5a, OOM-wave | `crates/zed-rt/src/` |
-| 45 | L7.5a, RT-exhaust-wave | `crates/zed-rt/src/` |
-| 45 | L10.2, L21.2 | `crates/zedc-check/src/check/mod.rs` |
-| 45 | L10.2, L7.4b | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
-| 45 | L10.2, L7.3e | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-elab/src/elab.rs` |
-| 45 | L10.2, FFI-status | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-elab/src/elab.rs` |
-| 45 | L10.2, EXPORT-unique | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-elab/src/elab.rs` |
-| 45 | L21.2, L28.1 | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
-| 45 | L21.2, OOM-wave | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
-| 45 | L21.2, L7.4b | `crates/zedc-check/src/check/mod.rs` |
-| 45 | L21.2, L7.3e | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 45 | L21.2, FFI-headertest | `crates/zedc-resolve/src/resolve.rs` |
-| 45 | L21.2, FFI-status | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 45 | L21.2, EXPORT-unique | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 45 | L21.2, RT-exhaust-wave | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
-| 45 | L28.1, OOM-wave | `crates/zed-rt/src/`, `crates/zedc/src/run.rs`, `DESIGN.md` |
-| 45 | L28.1, L7.5b | `DESIGN.md` |
-| 45 | L28.1, L7.4b | `DESIGN.md` |
-| 45 | L28.1, L7.3e | `crates/zedc/src/mlir/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs`, `DESIGN.md` |
-| 45 | L28.1, FFI-headertest | `DESIGN.md` |
-| 45 | L28.1, FFI-status | `crates/zedc/src/mlir/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs` |
-| 45 | L28.1, EXPORT-unique | `crates/zedc/src/mlir/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs` |
-| 45 | L28.1, RT-exhaust-wave | `crates/zed-rt/src/` |
-| 45 | OOM-wave, L7.5b | `DESIGN.md` |
-| 45 | OOM-wave, L7.4b | `DESIGN.md` |
-| 45 | OOM-wave, L7.3e | `crates/zedc/src/run.rs`, `DESIGN.md` |
-| 45 | OOM-wave, FFI-headertest | `DESIGN.md` |
-| 45 | OOM-wave, FFI-status | `crates/zedc/src/run.rs` |
-| 45 | OOM-wave, EXPORT-unique | `crates/zedc/src/run.rs` |
-| 45 | OOM-wave, RT-exhaust-wave | `crates/zed-rt/src` |
-| 45 | L7.5b, L7.4b | `DESIGN.md` |
-| 45 | L7.5b, L7.3e | `DESIGN.md`, `crates/zedc/src/incr/` |
-| 45 | L7.5b, FFI-headertest | `DESIGN.md` |
-| 45 | L7.5b, FFI-status | `crates/zedc/src/incr/` |
-| 45 | L7.5b, EXPORT-unique | `crates/zedc/src/incr/` |
-| 45 | L7.4b, L7.3e | `DESIGN.md`, `crates/zedc-check/src/check/` |
-| 45 | L7.4b, FFI-headertest | `DESIGN.md` |
-| 45 | L7.4b, FFI-status | `crates/zedc-check/src/check/` |
-| 45 | L7.4b, EXPORT-unique | `crates/zedc-check/src/check/` |
-| 45 | L7.3e, FFI-headertest | `DESIGN.md`, `crates/zedc/src/unit.rs`, `crates/zedc-resolve/src/resolve.rs` |
-| 45 | L7.3e, FFI-status | `crates/zedc/src/` |
-| 45 | L7.3e, EXPORT-unique | `crates/zedc/src/` |
-| 45 | FFI-headertest, FFI-status | `crates/zedc/src/unit.rs`, `crates/zedc-resolve/src/resolve.rs` |
-| 45 | FFI-headertest, EXPORT-unique | `crates/zedc/src/unit.rs`, `crates/zedc-resolve/src/resolve.rs` |
-| 45 | FFI-status, EXPORT-unique | `crates/zedc/src/` |
-| 45 | STOP-switch, L10.2 | `crates/zedc-check/src/check/mod.rs` |
-| 45 | STOP-switch, L21.2 | `crates/zedc-check/src/check/mod.rs` |
-| 45 | STOP-switch, L28.1 | `crates/zedc/src/main.rs` |
-| 45 | STOP-switch, L7.4b | `crates/zedc-check/src/check/` |
-| 45 | STOP-switch, INT-128 | `crates/zedc/src/store/` |
-| 45 | STOP-switch, BYTES-wide | `crates/zedc-check/src/check/` |
-| 45 | STOP-switch, L7.3e | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
-| 45 | STOP-switch, FFI-status | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
-| 45 | STOP-switch, EXPORT-unique | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
-| 46 | L7.6, L10.3 | `crates/zedc-zir/src/zir/` |
-| 46 | L10.3, L10.2a | `crates/zedc-check/src/check/` |
-| 46 | ROUND-words, L10.2a | `DESIGN.md` |
-| 47 | L7.7, L7.8 | `crates/zedc/src/incr/` |
-| 47 | L7.7, L7.11 | `crates/zedc/src/incr/` |
-| 47 | L7.7, LIVE-clocks | `crates/zedc-zir/src/canon/`, `crates/zedc/src/incr/`, `crates/zedc/src/query.rs` |
-| 47 | L7.8, L7.11 | `crates/zedc/src/incr/`, `crates/zed-rt/src/` |
-| 47 | L7.8, LIVE-clocks | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/` |
-| 47 | L7.11, LIVE-clocks | `crates/zedc/src/incr/` |
-| 47 | L10.4, L11.1 | `crates/zedc-check/src/check/` |
-| 47 | L10.4, LIVE-clocks | `crates/zedc/src/store/`, `crates/zedc-check/src/check/` |
-| 47 | L11.1, LIVE-clocks | `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/introspect/`, `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs` |
-| 48 | L7.9, L7.10 | `crates/zedc/src/incr/` |
-| 48 | L7.9, L7.12 | `crates/zedc/src/incr/` |
-| 48 | L7.9, L7.13 | `crates/zedc/src/incr/` |
-| 48 | L7.10, L7.12 | `crates/zedc/src/incr/` |
-| 48 | L7.10, L7.13 | `crates/zedc/src/incr/` |
-| 48 | L7.10, FPWARN | `crates/zedc-zir/src/zir/` |
-| 48 | L7.10, EDGE-class | `crates/zedc-zir/src/zir/` |
-| 48 | L7.12, L7.13 | `crates/zedc/src/incr/` |
-| 48 | L11.2, L12.1 | `zed/prelude/` |
-| 48 | L11.2, EDGE-class | `crates/zedc/src/store/` |
-| 48 | L12.1, BIT-checker-ranges | `crates/zedc-check/src/check/` |
-| 48 | L12.1, FPWARN | `crates/zedc-check/src/check/` |
-| 48 | BIT-checker-ranges, FPWARN | `crates/zedc-check/src/check/` |
-| 48 | FPWARN, EDGE-class | `crates/zedc-zir/src/zir/` |
-| 49 | L7.10a, L18.1 | `crates/zedc-base/src/cost.rs` |
-| 49 | L7.10a, L20.1 | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs` |
-| 49 | L7.10a, L15.2 | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs` |
-| 49 | L7.10a, L7.9a | `crates/zedc/src/incr/` |
-| 49 | L7.10a, MEMO-edit | `crates/zedc/src/incr/` |
-| 49 | L11.1a, L12.2 | `zed/prelude/` |
-| 49 | L11.1a, L13.1 | `zed/prelude/` |
-| 49 | L11.1a, L18.1 | `zed/prelude/cost.zed` |
-| 49 | L11.1a, L20.1 | `crates/zedc/src/introspect/` |
-| 49 | L11.1a, L15.2 | `crates/zedc/src/introspect/`, `zed/prelude/` |
-| 49 | L12.2, L13.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 49 | L12.2, L18.1 | `crates/zedc-check/src/check/`, `zed/prelude/cost.zed` |
-| 49 | L12.2, L20.1 | `crates/zedc/src/store/`, `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
-| 49 | L12.2, L15.2 | `crates/zedc/src/store/`, `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 49 | L12.2, L11.2a | `crates/zedc-check/src/check/` |
-| 49 | L13.1, L18.1 | `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs`, `zed/prelude/cost.zed` |
-| 49 | L13.1, L20.1 | `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc/src/facet/`, `crates/zedc-stage/src/stage.rs` |
-| 49 | L13.1, L15.2 | `crates/zedc-check/src/check/`, `crates/zedc/src/facet/`, `crates/zedc-stage/src/stage.rs`, `zed/prelude/` |
-| 49 | L13.1, L11.2a | `crates/zedc-check/src/check/` |
-| 49 | L18.1, L20.1 | `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-stage/src/stage.rs` |
-| 49 | L18.1, L15.2 | `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs`, `zed/prelude/cost.zed` |
-| 49 | L18.1, L11.2a | `crates/zedc-check/src/check/` |
-| 49 | L20.1, L15.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc/src/store/`, `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/main.rs`, `crates/zedc/src/`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-syntax/src/format.rs` |
-| 49 | L20.1, L11.2a | `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
-| 49 | L20.1, L7.13a | `DESIGN.md` |
-| 49 | L20.1, L7.9a | `crates/zedc/src/incr/` |
-| 49 | L20.1, MEMO-edit | `crates/zedc/src/incr/`, `DESIGN.md` |
-| 49 | L15.2, L11.2a | `crates/zedc-check/src/check/` |
-| 49 | L15.2, L7.9a | `crates/zedc/src/incr/` |
-| 49 | L15.2, MEMO-edit | `crates/zedc/src/incr/` |
-| 49 | L7.13a, MEMO-edit | `DESIGN.md` |
-| 49 | L7.9a, MEMO-edit | `crates/zedc/src/incr/` |
-| 49 | MOD-residue, L10.3d | `crates/zedc-check/src/check/` |
-| 49 | MOD-residue, FLOAT-pitfall-lints | `crates/zedc-check/src/check/` |
-| 49 | MOD-residue, KNOWN-mix | `crates/zedc-check/src/check/` |
-| 49 | MOD-residue, L12.2 | `crates/zedc-check/src/check/` |
-| 49 | MOD-residue, L13.1 | `crates/zedc-check/src/check/` |
-| 49 | MOD-residue, L18.1 | `crates/zedc-check/src/check/` |
-| 49 | MOD-residue, L20.1 | `crates/zedc-check/src/check/mod.rs` |
-| 49 | MOD-residue, L15.2 | `crates/zedc-check/src/check/`, `crates/zed-kernel/src/term.rs` |
-| 49 | MOD-residue, L11.2a | `crates/zedc-check/src/check/` |
-| 49 | MOD-residue, L7.9a | `crates/zed-kernel/src/exact.rs` |
-| 50 | L7.10b, L14.1 | `crates/zedc-zir/src/zir/` |
-| 50 | L7.10b, L15.4 | `crates/zedc-zir/src/zir/lower.rs` |
-| 50 | L7.10b, EDIT-run | `crates/zedc/src/incr/` |
-| 50 | L12.3, L14.1 | `zed/prelude/` |
-| 50 | L12.3, L19.1 | `zed/prelude/` |
-| 50 | L12.3, L15.3 | `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/preimage.rs`, `zed/prelude/` |
-| 50 | L12.3, L15.4 | `zed/prelude/` |
-| 50 | L12.3, L15.5 | `zed/prelude/` |
-| 50 | L12.3, L16.1 | `zed/prelude/` |
-| 50 | L12.3, L17.1 | `zed/prelude/` |
-| 50 | L12.3, L16.3 | `zed/prelude/` |
-| 50 | L14.1, L19.1 | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `zed/prelude/` |
-| 50 | L14.1, L15.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L14.1, L15.4 | `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/lower.rs`, `zed/prelude/` |
-| 50 | L14.1, L15.5 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L14.1, L16.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L14.1, L17.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L14.1, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L14.1, LAW-shape | `crates/zedc-check/src/check/` |
-| 50 | L14.1, STAGE-reads | `crates/zedc-check/src/check/` |
-| 50 | L14.1, L20.1a | `crates/zedc-syntax/src/ast/types.rs` |
-| 50 | L14.1, TOKEN-types | `crates/zedc-check/src/check/` |
-| 50 | L19.1, L15.3 | `zed/prelude/` |
-| 50 | L19.1, L15.4 | `crates/zedc-stage/src/stage.rs`, `zed/prelude/` |
-| 50 | L19.1, L15.5 | `crates/zed-kernel/src/eval.rs`, `zed/prelude/` |
-| 50 | L19.1, L16.1 | `zed/prelude/` |
-| 50 | L19.1, L17.1 | `crates/zedc-stage/src/stage.rs`, `zed/prelude/`, `DESIGN.md sec:staging` |
-| 50 | L19.1, L16.3 | `zed/prelude/` |
-| 50 | L19.1, STAGE-reads | `crates/zedc-stage/src/stage.rs` |
-| 50 | L19.1, EDIT-run | `crates/zedc/src/run.rs` |
-| 50 | L15.3, L15.4 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L15.3, L15.5 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L15.3, L16.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L15.3, L17.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L15.3, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L15.3, LAW-shape | `crates/zedc-check/src/check/` |
-| 50 | L15.3, STAGE-reads | `crates/zedc-check/src/check/` |
-| 50 | L15.3, TOKEN-types | `crates/zedc-check/src/check/` |
-| 50 | L15.4, L15.5 | `crates/zedc-check/src/check/`, `crates/zed-kernel/src/provenance.rs`, `zed/prelude/` |
-| 50 | L15.4, L16.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L15.4, L17.1 | `crates/zedc-stage/src/stage.rs`, `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L15.4, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L15.4, LAW-shape | `crates/zedc-check/src/check/` |
-| 50 | L15.4, STAGE-reads | `crates/zedc-stage/src/stage.rs`, `crates/zedc-check/src/check/` |
-| 50 | L15.4, TOKEN-types | `crates/zedc-check/src/check/` |
-| 50 | L15.5, L16.1 | `crates/zed-cert/src/`, `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L15.5, L17.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L15.5, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L15.5, LAW-shape | `crates/zedc-check/src/check/` |
-| 50 | L15.5, STAGE-reads | `crates/zedc-check/src/check/` |
-| 50 | L15.5, TOKEN-types | `crates/zedc-check/src/check/` |
-| 50 | L16.1, L17.1 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `zed/prelude/` |
-| 50 | L16.1, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L16.1, LAW-shape | `crates/zedc-check/src/check/` |
-| 50 | L16.1, STAGE-reads | `crates/zedc-check/src/check/` |
-| 50 | L16.1, L20.1a | `crates/zedc-elab/src/elab.rs` |
-| 50 | L16.1, TOKEN-types | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
-| 50 | L17.1, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 50 | L17.1, LAW-shape | `crates/zedc-check/src/check/` |
-| 50 | L17.1, STAGE-reads | `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs` |
-| 50 | L17.1, L20.1a | `crates/zedc-elab/src/elab.rs` |
-| 50 | L17.1, TOKEN-types | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
-| 50 | L16.3, LAW-shape | `crates/zedc-check/src/check/` |
-| 50 | L16.3, STAGE-reads | `crates/zedc-check/src/check/` |
-| 50 | L16.3, TOKEN-types | `crates/zedc-check/src/check/` |
-| 50 | LAW-shape, STAGE-reads | `crates/zedc-check/src/check/` |
-| 50 | LAW-shape, TOKEN-types | `crates/zedc-check/src/check/` |
-| 50 | STAGE-reads, L20.1a | `DESIGN.md` |
-| 50 | STAGE-reads, TOKEN-types | `crates/zedc-check/src/check/` |
-| 50 | STAGE-reads, EDIT-run | `DESIGN.md` |
-| 50 | L20.1a, TOKEN-types | `crates/zedc-elab/src/elab.rs` |
-| 50 | L20.1a, EDIT-run | `DESIGN.md` |
-| 51 | S.1b, L18.2b | `zed/prelude/` |
-| 51 | S.1b, L20.2 | `zed/prelude/grammar.zed` |
-| 51 | S.1b, L15.6 | `zed/prelude/` |
-| 51 | S.1b, L16.2 | `zed/prelude/` |
-| 51 | S.1b, L22.2 | `zed/prelude/theories.zed` |
-| 51 | S.1b, L12.3a | `zed/prelude/` |
-| 51 | L18.2a, L20.2 | `crates/zedc-check/src/check/mod.rs` |
-| 51 | L18.2b, L20.2 | `crates/zedc-check/src/check/mod.rs`, `zed/prelude/grammar.zed` |
-| 51 | L18.2b, L15.6 | `zed/prelude/` |
-| 51 | L18.2a, L16.2 | `crates/zedc-check/src/check/` |
-| 51 | L18.2b, L16.2 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 51 | L18.2a, L22.2 | `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/main.rs` |
-| 51 | L18.2b, L22.2 | `crates/zedc-zir/src/zir/memory.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/`, `zed/prelude/theories.zed` |
-| 51 | L18.2b, L12.3a | `zed/prelude/` |
-| 51 | L18.2a, L21.0 | `crates/zedc-check/src/check/` |
-| 51 | L18.2b, L21.0 | `crates/zedc-check/src/check/` |
-| 51 | L18.2a, REPACK-tile | `crates/zedc-zir/src/zir/mod.rs` |
-| 51 | L18.2b, REPACK-tile | `crates/zedc-zir/src/zir/memory.rs` |
-| 51 | L20.2, L15.6 | `zed/prelude/grammar.zed` |
-| 51 | L20.2, L16.2 | `zed/prelude/grammar.zed`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 51 | L20.2, L22.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 51 | L20.2, L12.3a | `zed/prelude/grammar.zed` |
-| 51 | L20.2, L21.0 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
-| 51 | L20.2, L17.1b | `DESIGN.md` |
-| 51 | L15.6, L16.2 | `zed/prelude/` |
-| 51 | L15.6, L22.2 | `crates/zed-cert/src/lib.rs`, `zed/prelude/theories.zed` |
-| 51 | L15.6, L12.3a | `zed/prelude/` |
-| 51 | L16.2, L22.2 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `zed/prelude/theories.zed` |
-| 51 | L16.2, L12.3a | `zed/prelude/` |
-| 51 | L16.2, L21.0 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
-| 51 | L22.2, L12.3a | `zed/prelude/theories.zed`, `crates/zedc/src/store/eq.rs`, `crates/zedc/src/store/` |
-| 51 | L22.2, L21.0 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
-| 51 | L22.2, L17.1b | `crates/zedc/src/opt` |
-| 51 | L22.2, REPACK-tile | `crates/zedc-zir/src/zir/` |
-| 51 | TERM-stall, L18.2a | `crates/zedc-check/src/check/` |
-| 51 | TERM-stall, L18.2b | `crates/zedc-check/src/check/` |
-| 51 | TERM-stall, L20.2 | `crates/zedc-check/src/check/mod.rs` |
-| 51 | TERM-stall, L22.2 | `crates/zedc-check/src/check/mod.rs` |
-| 51 | TERM-stall, L21.0 | `crates/zedc-check/src/check/` |
-| 52 | GLAM-diamond-iface, TERM-1 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
-| 52 | GLAM-diamond-iface, L22.8 | `crates/zedc-check/src/check/mod.rs` |
-| 52 | GLAM-diamond-iface, L15.2c | `crates/zedc-check/src/check/` |
-| 52 | L13.2, L14.2 | `zed/corpus/20-taint.zed` |
-| 52 | L13.2, TERM-1 | `zed/prelude/grammar.zed` |
-| 52 | L13.2, L22.8 | `zed/prelude/theories.zed` |
-| 52 | L13.2, L12.4 | `zed/corpus/20-taint.zed` |
-| 52 | L14.2, L12.4 | `zed/corpus/` |
-| 52 | TERM-1, L22.8 | `crates/zedc-check/src/check/mod.rs` |
-| 52 | TERM-1, L15.2c | `crates/zedc-check/src/check/` |
-| 52 | L22.8, L15.2c | `crates/zedc-check/src/check/mod.rs` |
-| 53 | L23.1, L15.7 | `crates/zedc-check/src/check/`, `crates/zedc/src/main.rs` |
-| 53 | L23.1, L19.2a | `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/query.rs` |
-| 54 | L15.8, L15.7b | `crates/zedc-check/src/check/`, `crates/zedc/src/main.rs` |
-| 54 | L15.7b, L23.5c | `DESIGN.md` |
-| 55 | L22.3, TERM-2a | `crates/zedc-check/src/check/mod.rs` |
-| 55 | L22.3, NOINST-report | `crates/zedc-check/src/check/mod.rs` |
-| 55 | TERM-2a, NOINST-report | `crates/zedc-check/src/check/` |
-| 56 | L23.4, L22.4 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-zir/src/zir/lower.rs` |
-| 56 | L23.4, L22.5 | `crates/zedc-check/src/check/mod.rs` |
-| 56 | L22.4, L22.5 | `crates/zedc-check/src/check/mod.rs`, `crates/zed-cert/src/lib.rs` |
-| 56 | STORE-check-off, L23.4 | `crates/zedc/src/store/` |
-| 56 | STORE-check-off, L22.4 | `crates/zedc-check/src/check/mod.rs` |
-| 56 | STORE-check-off, L22.5 | `crates/zedc-check/src/check/mod.rs` |
-| 57 | L23.5, L24.1 | `crates/zedc/src/opt/` |
-| 57 | L24.1, L22.6 | `crates/zedc-check/src/check/mod.rs` |
-| 57 | L24.1, L22.7 | `crates/zedc-check/src/check/mod.rs` |
-| 57 | L22.6, L22.7 | `crates/zedc-check/src/check/mod.rs` |
-| 62 | STD-seq, STD-text | `zed/stdlib/` |
-| 62 | STD-seq, STD-num | `zed/stdlib/` |
-| 62 | STD-text, STD-num | `zed/stdlib/` |
-| 64 | S.3, S.2-forms | `zed/compiler/` |
-| 65 | L21.1, S.3-forms | `DESIGN.md` |
-| 66 | S.4, L21.1c | `crates/zedc/src/run.rs` |
-| 67 | L19.2, L24.2 | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/tables.rs`, `zed/compiler/` |
-| 67 | L19.2, L24.3 | `crates/zed-native/src/codegen.rs`, `zed/compiler/` |
-| 67 | L19.2, L24.5 | `zed/compiler/`, `zed/prelude/placement.zed` |
-| 67 | L24.2, L24.3 | `crates/zed-native/src/codegen.rs`, `zed/compiler/` |
-| 67 | L24.2, L24.5 | `zed/compiler/` |
-| 67 | L24.3, L24.5 | `zed/compiler/` |
-| 68 | L19.3, L20.4 | `zed/compiler/` |
-| 68 | L19.3, L20.3 | `zed/prelude/json.zed`, `zed/prelude/csv.zed`, `zed/prelude/grammar.zed` |
-| 68 | L19.3, L24.6 | `zed/compiler/` |
-| 68 | L19.3, L24.10 | `zed/compiler/` |
-| 68 | L20.4, L24.6 | `zed/compiler/`, `DESIGN.md` |
-| 68 | L20.4, L24.10 | `zed/compiler/` |
-| 68 | L24.6, L24.10 | `zed/compiler/`, `crates/zed-rt/src/` |
-| 68 | S.5a, S.6a | `row S` |
-| 68 | S.5a, S.6b | `row S` |
-| 68 | S.6a, S.6b | `row S` |
-| 69 | S.6, L24.7 | `zed/compiler/`, `crates/zedc-base/src/source.rs`, `crates/zed-rt/src/` |
-| 70 | QUOT-classes, TERM-3 | `zed/prelude/png.zed`, `zed/prelude/gzip.zed`, `docs/stdlib-catalog.md` |
-| 70 | QUOT-classes, L22.9 | `zed/prelude/symbolic.zed` |
-| 70 | QUOT-classes, L26.1 | `crates/zed-rt/src/union_find.rs (from L5.9)` |
-| 70 | QUOT-classes, FLOAT-elem | `zed/prelude/` |
-| 70 | QUOT-classes, INTEROP-study | `docs/stdlib-catalog.md` |
-| 70 | QUOT-classes, L28.4 | `crates/zed-rt/src/union_find.rs (from L5.9)` |
-| 70 | L25.1, L26.1 | `crates/zedc/src/main.rs`, `crates/zedc/src/run.rs`, `DESIGN.md` |
-| 70 | L25.1, L31.1 | `DESIGN.md` |
-| 70 | L25.1, FLOAT-elem | `DESIGN.md` |
-| 70 | L25.1, PORT-pointer-keys | `DESIGN.md` |
-| 70 | L25.1, L28.4 | `DESIGN.md` |
-| 70 | TERM-3, FLOAT-elem | `zed/prelude/png.zed`, `zed/prelude/gzip.zed` |
-| 70 | TERM-3, INTEROP-study | `docs/stdlib-catalog.md` |
-| 70 | L22.9, L26.1 | `crates/zedc-resolve/src/resolve.rs` |
-| 70 | L22.9, FLOAT-elem | `zed/prelude/symbolic.zed` |
-| 70 | L26.1, L31.1 | `DESIGN.md` |
-| 70 | L26.1, FLOAT-elem | `DESIGN.md` |
-| 70 | L26.1, INTEROP-study | `docs/layout.md` |
-| 70 | L26.1, PORT-pointer-keys | `DESIGN.md` |
-| 70 | L26.1, L28.4 | `crates/zed-rt/src/`, `DESIGN.md` |
-| 70 | L31.1, FLOAT-elem | `DESIGN.md` |
-| 70 | L31.1, INTEROP-study | `docs/mcu-study.md` |
-| 70 | L31.1, PORT-pointer-keys | `DESIGN.md` |
-| 70 | L31.1, L28.4 | `DESIGN.md` |
-| 70 | FLOAT-elem, PORT-pointer-keys | `DESIGN.md` |
-| 70 | FLOAT-elem, L28.4 | `DESIGN.md` |
-| 70 | PORT-pointer-keys, L28.4 | `DESIGN.md` |
-| 71 | L25.3, L25.2 | `crates/zedc/src/lsp/` |
-| 71 | L25.3, L27.3 | `DESIGN.md` |
-| 71 | L25.3, L29.1 | `DESIGN.md` |
-| 71 | L25.3, DIAG-json | `DESIGN.md`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/lsp/` |
-| 71 | L25.3, AD-reverse | `DESIGN.md` |
-| 71 | L19.4, L27.3 | `zed/corpus/` |
-| 71 | L25.2, DIAG-json | `crates/zedc/src/lsp/`, `crates/zedc/src/run.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-stage/src/stage.rs` |
-| 71 | L27.3, L29.1 | `DESIGN.md` |
-| 71 | L27.3, DIAG-json | `crates/zedc/src/hdl/ (new) or crates/zed-hdl/`, `DESIGN.md` |
-| 71 | L27.3, AD-reverse | `DESIGN.md` |
-| 71 | L29.1, DIAG-json | `DESIGN.md` |
-| 71 | L29.1, AD-reverse | `DESIGN.md` |
-| 71 | DIAG-json, AD-reverse | `DESIGN.md` |
-| 72 | LIB-linkage, L25.4 | `DESIGN.md` |
-| 72 | LIB-linkage, L25.5 | `DESIGN.md` |
-| 72 | LIB-linkage, L31.2 | `DESIGN.md` |
-| 72 | L25.4, L30.1 | `crates/zedc/src/lsp/` |
-| 72 | L25.4, L25.5 | `DESIGN.md`, `zed/prelude/agent.zed`, `crates/zedc/src/lsp/`, `crates/zedc-elab/src/elab.rs` |
-| 72 | L25.4, L31.2 | `DESIGN.md` |
-| 72 | L30.1, L25.5 | `crates/zedc/src/lsp/` |
-| 72 | L25.5, L31.2 | `DESIGN.md` |
-| 73 | TERM-2, L30.2 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/lsp/` |
-| 73 | TERM-2, L25.6 | `crates/zedc-elab/src/elab.rs`, `zed/prelude/agent.zed`, `crates/zedc/src/lsp/` |
-| 73 | L30.2, L25.6 | `crates/zedc/src/lsp/` |
-| 73 | L25.6, L31.3 | `DESIGN.md` |
-| 74 | L30.3, L34.9 | `crates/zedc/src/lsp/` |
-| 74 | L30.3, L27.1 | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/mod.rs` |
-| 74 | L30.3, L27.2 | `crates/zedc-elab/src/elab.rs` |
-| 74 | L30.3, MCU-period | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/lsp/` |
-| 74 | L25.7, L27.1 | `DESIGN.md` |
-| 74 | L25.7, L27.2 | `DESIGN.md` |
-| 74 | L25.7, PICTURE-type | `DESIGN.md` |
-| 74 | L25.7, MCU-period | `crates/zedc/src/delta.rs` |
-| 74 | L34.9, L27.2 | `zed/prelude/agent.zed` |
-| 74 | L34.9, MCU-period | `crates/zedc/src/lsp/` |
-| 74 | L27.1, L27.2 | `crates/zed-rt/src/ (cluster transport`, `zed/prelude/cost.zed`, `crates/zedc/src/run.rs`, `docs/layout.md`, `DESIGN.md` |
-| 74 | L27.1, PICTURE-type | `DESIGN.md` |
-| 74 | L27.1, MCU-period | `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs`, `crates/zedc/src/run.rs` |
-| 74 | L27.2, PICTURE-type | `DESIGN.md` |
-| 74 | L27.2, MCU-period | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/run.rs` |
-| 75 | L30.4, L25.9 | `DESIGN.md` |
-| 75 | L30.4, L27.2a | `DESIGN.md` |
-| 75 | L30.4, L27.2b | `DESIGN.md` |
-| 75 | L30.4, L27.2c | `DESIGN.md` |
-| 75 | L30.4, L30.3a | `crates/zedc/src/lsp/`, `editors/vscode/`, `DESIGN.md` |
-| 75 | L25.9, L27.2a | `DESIGN.md` |
-| 75 | L25.9, L27.2b | `DESIGN.md` |
-| 75 | L25.9, L27.2c | `DESIGN.md` |
-| 75 | L25.9, L30.3a | `DESIGN.md` |
-| 75 | L27.2a, L27.2b | `crates/zed-rt/src/`, `DESIGN.md` |
-| 75 | L27.2a, L27.2c | `crates/zed-rt/src/`, `DESIGN.md` |
-| 75 | L27.2a, L30.3a | `DESIGN.md` |
-| 75 | L27.2b, L27.2c | `crates/zed-rt/src/`, `DESIGN.md` |
-| 75 | L27.2b, L30.3a | `DESIGN.md` |
-| 75 | L27.2c, L30.3a | `DESIGN.md` |
-| 76 | L30.5, L34.10 | `crates/zedc/src/lsp/` |
-| 76 | L30.5, L34.1 | `crates/zedc/src/lsp/` |
-| 76 | L34.10, L34.1 | `crates/zedc/src/lsp/` |
-| 77 | L34.11, L30.6 | `editors/vscode/` |
-| 83 | L34.2, L34.4 | `crates/zedc/src/lsp/`, `editors/vscode/` |
-| 84 | L34.3, L34.6 | `crates/zedc/src/lsp/`, `editors/vscode/` |
-| 84 | L34.3, L34.7 | `crates/zedc/src/lsp/`, `editors/vscode/` |
-| 84 | L34.3, L35.1 | `crates/zedc/src/lsp/`, `editors/vscode/` |
-| 84 | L34.6, L34.7 | `crates/zedc/src/lsp/`, `editors/vscode/` |
-| 84 | L34.6, L35.1 | `crates/zedc/src/lsp/`, `editors/vscode/` |
-| 84 | L34.7, L35.1 | `crates/zedc/src/lsp/`, `editors/vscode/` |
-| 84 | L33.2, L33.3 | `DESIGN.md` |
-| 70 | L2.13, L25.1 | `STATUS.md` |
-| 70 | L2.13, L21.3 | `STATUS.md` |
+| 42 | S.1d, S.1e | `zed/prelude/` |
+| 42 | S.1d, L7.1 | `zed/prelude/`, `crates/zedc-check/src/check/` |
+| 42 | S.1e, L7.1 | `zed/prelude/` |
+| 42 | L7.1, L8.1 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-syntax/src/format.rs` |
+| 43 | S.1a, L7.2 | `crates/zedc/src/run.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs` |
+| 43 | S.1a, ROD-data | `crates/zed-native/src/` |
+| 43 | L7.1a, L7.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
+| 43 | L7.1a, L8.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
+| 43 | L7.2, L8.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
+| 43 | L7.2, L10.1 | `crates/zedc-syntax/src/ast/stmts.rs` |
+| 43 | L7.2, ROD-data | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs` |
+| 44 | L7.2a, L7.3 | `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/run.rs` |
+| 44 | L7.2a, L9.1 | `crates/zedc-elab/src/elab.rs` |
+| 44 | L7.2a, L15.1 | `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/run.rs` |
+| 44 | L7.3, L9.1 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/`, `crates/zed-native/src/hooks.rs` |
+| 44 | L7.3, L15.1 | `crates/zedc/src/run.rs`, `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/` |
+| 44 | L7.3, L10.4a | `crates/zedc-check/src/check/` |
+| 44 | L7.3, FINITE-prop | `crates/zedc-check/src/check/` |
+| 44 | L9.1, L15.1 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-zir/src/zir/` |
+| 44 | L9.1, L10.4a | `crates/zedc-check/src/check/` |
+| 44 | L9.1, FINITE-prop | `crates/zedc-check/src/check/` |
+| 44 | L15.1, L10.4a | `crates/zedc-check/src/check/` |
+| 44 | L15.1, L8.2a | `crates/zedc-resolve/src/resolve.rs` |
+| 44 | L15.1, FINITE-prop | `crates/zedc-check/src/check/`, `crates/zedc/src/store/` |
+| 44 | L10.4a, FINITE-prop | `crates/zedc-check/src/check/` |
+| 44 | PORT-key-static, L7.3 | `crates/zedc-check/src/check/` |
+| 44 | PORT-key-static, L9.1 | `crates/zedc-check/src/check/` |
+| 44 | PORT-key-static, L10.4a | `crates/zedc-check/src/check/` |
+| 44 | PORT-key-static, FINITE-prop | `crates/zedc-check/src/check/` |
+| 44 | PORT-key-static, EMPTY-level-swap | `crates/zedc-check/src/check/` |
+| 45 | L7.4, L22.1 | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-types/src/ty.rs` |
+| 45 | L7.4, L7.14 | `crates/zedc-check/src/check/` |
+| 45 | L7.4, GLAM-logspec | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
+| 45 | L7.4, L7.5 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/run.rs`, `crates/zed-native/src/`, `crates/zed-rt/src/` |
+| 45 | L7.4, UNORD-keep | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs`, `crates/zed-rt/src/` |
+| 45 | L7.4, FILE-bytes | `crates/zedc/src/run.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-rt/src/ports.rs` |
+| 45 | L7.4, TARGET-native | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/run.rs`, `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/memory.rs` |
+| 45 | L7.4, PORT-why | `crates/zed-rt/src/` |
+| 45 | L22.1, L7.14 | `crates/zedc-types/src/ty.rs` |
+| 45 | L22.1, L7.5 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-types/src/ty.rs` |
+| 45 | L22.1, TARGET-native | `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-syntax/src/format.rs`, `crates/zedc-types/src/ty.rs` |
+| 45 | L7.14, L7.5 | `crates/zedc-check/src/check/` |
+| 45 | L7.14, TARGET-native | `crates/zedc-check/src/check/`, `crates/zedc/src/store/` |
+| 45 | GLAM-logspec, L7.5 | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
+| 45 | GLAM-logspec, UNORD-keep | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
+| 45 | GLAM-logspec, FILE-bytes | `crates/zed-rt/src/ports.rs` |
+| 45 | GLAM-logspec, PORT-why | `crates/zed-rt/src/sched.rs`, `crates/zed-rt/src/ports.rs` |
+| 45 | L7.5, UNORD-keep | `crates/zed-rt/src/` |
+| 45 | L7.5, FILE-bytes | `crates/zedc/src/run.rs`, `crates/zed-rt/src/ports.rs`, `crates/zed-native/src/hooks.rs` |
+| 45 | L7.5, TARGET-native | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/run.rs` |
+| 45 | L7.5, PORT-why | `crates/zed-rt/src/` |
+| 45 | UNORD-keep, FILE-bytes | `crates/zed-rt/src/ports.rs` |
+| 45 | UNORD-keep, TARGET-native | `crates/zedc-zir/src/zir/` |
+| 45 | UNORD-keep, PORT-why | `crates/zed-rt/src/` |
+| 45 | FILE-bytes, TARGET-native | `crates/zedc/src/run.rs` |
+| 45 | FILE-bytes, PORT-why | `crates/zed-rt/src/ports.rs` |
+| 45 | PORT-ack-name, L7.4 | `crates/zedc-syntax/src/ast/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/ports.rs` |
+| 45 | PORT-ack-name, L22.1 | `crates/zedc-syntax/src/format.rs`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs` |
+| 45 | PORT-ack-name, L7.14 | `crates/zedc-check/src/check/` |
+| 45 | PORT-ack-name, GLAM-logspec | `crates/zed-rt/src/ports.rs` |
+| 45 | PORT-ack-name, L7.5 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/`, `crates/zed-rt/src/ports.rs` |
+| 45 | PORT-ack-name, UNORD-keep | `crates/zed-rt/src/ports.rs` |
+| 45 | PORT-ack-name, QUANT-finite | `crates/zedc-check/src/check/` |
+| 46 | L7.5a, L21.2 | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
+| 46 | L7.5a, L28.1 | `crates/zed-rt/src/` |
+| 46 | L7.5a, OOM-wave | `crates/zed-rt/src/` |
+| 46 | L7.5a, RT-exhaust-wave | `crates/zed-rt/src/` |
+| 46 | L10.2, L21.2 | `crates/zedc-check/src/check/mod.rs` |
+| 46 | L10.2, L7.4b | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
+| 46 | L10.2, L7.3e | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-elab/src/elab.rs` |
+| 46 | L10.2, FFI-status | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-elab/src/elab.rs` |
+| 46 | L10.2, EXPORT-unique | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-elab/src/elab.rs` |
+| 46 | L21.2, L28.1 | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
+| 46 | L21.2, OOM-wave | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
+| 46 | L21.2, L7.4b | `crates/zedc-check/src/check/mod.rs` |
+| 46 | L21.2, L7.3e | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 46 | L21.2, FFI-headertest | `crates/zedc-resolve/src/resolve.rs` |
+| 46 | L21.2, FFI-status | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 46 | L21.2, EXPORT-unique | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 46 | L21.2, RT-exhaust-wave | `crates/zed-rt/src/ports.rs`, `crates/zed-rt/src/lib.rs` |
+| 46 | L28.1, OOM-wave | `crates/zed-rt/src/`, `crates/zedc/src/run.rs`, `DESIGN.md` |
+| 46 | L28.1, L7.5b | `DESIGN.md` |
+| 46 | L28.1, L7.4b | `DESIGN.md` |
+| 46 | L28.1, L7.3e | `crates/zedc/src/mlir/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs`, `DESIGN.md` |
+| 46 | L28.1, FFI-headertest | `DESIGN.md` |
+| 46 | L28.1, FFI-status | `crates/zedc/src/mlir/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs` |
+| 46 | L28.1, EXPORT-unique | `crates/zedc/src/mlir/`, `crates/zedc/src/run.rs`, `crates/zedc/src/main.rs` |
+| 46 | L28.1, RT-exhaust-wave | `crates/zed-rt/src/` |
+| 46 | OOM-wave, L7.5b | `DESIGN.md` |
+| 46 | OOM-wave, L7.4b | `DESIGN.md` |
+| 46 | OOM-wave, L7.3e | `crates/zedc/src/run.rs`, `DESIGN.md` |
+| 46 | OOM-wave, FFI-headertest | `DESIGN.md` |
+| 46 | OOM-wave, FFI-status | `crates/zedc/src/run.rs` |
+| 46 | OOM-wave, EXPORT-unique | `crates/zedc/src/run.rs` |
+| 46 | OOM-wave, RT-exhaust-wave | `crates/zed-rt/src` |
+| 46 | L7.5b, L7.4b | `DESIGN.md` |
+| 46 | L7.5b, L7.3e | `DESIGN.md`, `crates/zedc/src/incr/` |
+| 46 | L7.5b, FFI-headertest | `DESIGN.md` |
+| 46 | L7.5b, FFI-status | `crates/zedc/src/incr/` |
+| 46 | L7.5b, EXPORT-unique | `crates/zedc/src/incr/` |
+| 46 | L7.4b, L7.3e | `DESIGN.md`, `crates/zedc-check/src/check/` |
+| 46 | L7.4b, FFI-headertest | `DESIGN.md` |
+| 46 | L7.4b, FFI-status | `crates/zedc-check/src/check/` |
+| 46 | L7.4b, EXPORT-unique | `crates/zedc-check/src/check/` |
+| 46 | L7.3e, FFI-headertest | `DESIGN.md`, `crates/zedc/src/unit.rs`, `crates/zedc-resolve/src/resolve.rs` |
+| 46 | L7.3e, FFI-status | `crates/zedc/src/` |
+| 46 | L7.3e, EXPORT-unique | `crates/zedc/src/` |
+| 46 | FFI-headertest, FFI-status | `crates/zedc/src/unit.rs`, `crates/zedc-resolve/src/resolve.rs` |
+| 46 | FFI-headertest, EXPORT-unique | `crates/zedc/src/unit.rs`, `crates/zedc-resolve/src/resolve.rs` |
+| 46 | FFI-status, EXPORT-unique | `crates/zedc/src/` |
+| 46 | STOP-switch, L10.2 | `crates/zedc-check/src/check/mod.rs` |
+| 46 | STOP-switch, L21.2 | `crates/zedc-check/src/check/mod.rs` |
+| 46 | STOP-switch, L28.1 | `crates/zedc/src/main.rs` |
+| 46 | STOP-switch, L7.4b | `crates/zedc-check/src/check/` |
+| 46 | STOP-switch, INT-128 | `crates/zedc/src/store/` |
+| 46 | STOP-switch, BYTES-wide | `crates/zedc-check/src/check/` |
+| 46 | STOP-switch, L7.3e | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
+| 46 | STOP-switch, FFI-status | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
+| 46 | STOP-switch, EXPORT-unique | `crates/zedc/src/main.rs`, `crates/zedc/src/store/` |
+| 47 | L7.6, L10.3 | `crates/zedc-zir/src/zir/` |
+| 47 | L10.3, L10.2a | `crates/zedc-check/src/check/` |
+| 47 | ROUND-words, L10.2a | `DESIGN.md` |
+| 48 | L7.7, L7.8 | `crates/zedc/src/incr/` |
+| 48 | L7.7, L7.11 | `crates/zedc/src/incr/` |
+| 48 | L7.7, LIVE-clocks | `crates/zedc-zir/src/canon/`, `crates/zedc/src/incr/`, `crates/zedc/src/query.rs` |
+| 48 | L7.8, L7.11 | `crates/zedc/src/incr/`, `crates/zed-rt/src/` |
+| 48 | L7.8, LIVE-clocks | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/` |
+| 48 | L7.11, LIVE-clocks | `crates/zedc/src/incr/` |
+| 48 | L10.4, L11.1 | `crates/zedc-check/src/check/` |
+| 48 | L10.4, LIVE-clocks | `crates/zedc/src/store/`, `crates/zedc-check/src/check/` |
+| 48 | L11.1, LIVE-clocks | `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/introspect/`, `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs` |
+| 49 | L7.9, L7.10 | `crates/zedc/src/incr/` |
+| 49 | L7.9, L7.12 | `crates/zedc/src/incr/` |
+| 49 | L7.9, L7.13 | `crates/zedc/src/incr/` |
+| 49 | L7.10, L7.12 | `crates/zedc/src/incr/` |
+| 49 | L7.10, L7.13 | `crates/zedc/src/incr/` |
+| 49 | L7.10, FPWARN | `crates/zedc-zir/src/zir/` |
+| 49 | L7.10, EDGE-class | `crates/zedc-zir/src/zir/` |
+| 49 | L7.12, L7.13 | `crates/zedc/src/incr/` |
+| 49 | L11.2, L12.1 | `zed/prelude/` |
+| 49 | L11.2, EDGE-class | `crates/zedc/src/store/` |
+| 49 | L12.1, BIT-checker-ranges | `crates/zedc-check/src/check/` |
+| 49 | L12.1, FPWARN | `crates/zedc-check/src/check/` |
+| 49 | BIT-checker-ranges, FPWARN | `crates/zedc-check/src/check/` |
+| 49 | FPWARN, EDGE-class | `crates/zedc-zir/src/zir/` |
+| 50 | L7.10a, L18.1 | `crates/zedc-base/src/cost.rs` |
+| 50 | L7.10a, L20.1 | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs` |
+| 50 | L7.10a, L15.2 | `crates/zedc/src/incr/`, `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs` |
+| 50 | L7.10a, L7.9a | `crates/zedc/src/incr/` |
+| 50 | L7.10a, MEMO-edit | `crates/zedc/src/incr/` |
+| 50 | L11.1a, L12.2 | `zed/prelude/` |
+| 50 | L11.1a, L13.1 | `zed/prelude/` |
+| 50 | L11.1a, L18.1 | `zed/prelude/cost.zed` |
+| 50 | L11.1a, L20.1 | `crates/zedc/src/introspect/` |
+| 50 | L11.1a, L15.2 | `crates/zedc/src/introspect/`, `zed/prelude/` |
+| 50 | L12.2, L13.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 50 | L12.2, L18.1 | `crates/zedc-check/src/check/`, `zed/prelude/cost.zed` |
+| 50 | L12.2, L20.1 | `crates/zedc/src/store/`, `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
+| 50 | L12.2, L15.2 | `crates/zedc/src/store/`, `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 50 | L12.2, L11.2a | `crates/zedc-check/src/check/` |
+| 50 | L13.1, L18.1 | `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs`, `zed/prelude/cost.zed` |
+| 50 | L13.1, L20.1 | `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc/src/facet/`, `crates/zedc-stage/src/stage.rs` |
+| 50 | L13.1, L15.2 | `crates/zedc-check/src/check/`, `crates/zedc/src/facet/`, `crates/zedc-stage/src/stage.rs`, `zed/prelude/` |
+| 50 | L13.1, L11.2a | `crates/zedc-check/src/check/` |
+| 50 | L18.1, L20.1 | `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-stage/src/stage.rs` |
+| 50 | L18.1, L15.2 | `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs`, `zed/prelude/cost.zed` |
+| 50 | L18.1, L11.2a | `crates/zedc-check/src/check/` |
+| 50 | L20.1, L15.2 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc/src/store/`, `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/main.rs`, `crates/zedc/src/`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-syntax/src/ast/types.rs`, `crates/zedc-syntax/src/ast/stmts.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`, `crates/zedc-syntax/src/format.rs` |
+| 50 | L20.1, L11.2a | `crates/zedc-check/src/check/`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
+| 50 | L20.1, L7.13a | `DESIGN.md` |
+| 50 | L20.1, L7.9a | `crates/zedc/src/incr/` |
+| 50 | L20.1, MEMO-edit | `crates/zedc/src/incr/`, `DESIGN.md` |
+| 50 | L15.2, L11.2a | `crates/zedc-check/src/check/` |
+| 50 | L15.2, L7.9a | `crates/zedc/src/incr/` |
+| 50 | L15.2, MEMO-edit | `crates/zedc/src/incr/` |
+| 50 | L7.13a, MEMO-edit | `DESIGN.md` |
+| 50 | L7.9a, MEMO-edit | `crates/zedc/src/incr/` |
+| 50 | MOD-residue, L10.3d | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, FLOAT-pitfall-lints | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, KNOWN-mix | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, L12.2 | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, L13.1 | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, L18.1 | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, L20.1 | `crates/zedc-check/src/check/mod.rs` |
+| 50 | MOD-residue, L15.2 | `crates/zedc-check/src/check/`, `crates/zed-kernel/src/term.rs` |
+| 50 | MOD-residue, L11.2a | `crates/zedc-check/src/check/` |
+| 50 | MOD-residue, L7.9a | `crates/zed-kernel/src/exact.rs` |
+| 51 | L7.10b, L14.1 | `crates/zedc-zir/src/zir/` |
+| 51 | L7.10b, L15.4 | `crates/zedc-zir/src/zir/lower.rs` |
+| 51 | L7.10b, EDIT-run | `crates/zedc/src/incr/` |
+| 51 | L12.3, L14.1 | `zed/prelude/` |
+| 51 | L12.3, L19.1 | `zed/prelude/` |
+| 51 | L12.3, L15.3 | `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/preimage.rs`, `zed/prelude/` |
+| 51 | L12.3, L15.4 | `zed/prelude/` |
+| 51 | L12.3, L15.5 | `zed/prelude/` |
+| 51 | L12.3, L16.1 | `zed/prelude/` |
+| 51 | L12.3, L17.1 | `zed/prelude/` |
+| 51 | L12.3, L16.3 | `zed/prelude/` |
+| 51 | L14.1, L19.1 | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `zed/prelude/` |
+| 51 | L14.1, L15.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L14.1, L15.4 | `crates/zedc-check/src/check/`, `crates/zedc-zir/src/zir/lower.rs`, `zed/prelude/` |
+| 51 | L14.1, L15.5 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L14.1, L16.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L14.1, L17.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L14.1, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L14.1, LAW-shape | `crates/zedc-check/src/check/` |
+| 51 | L14.1, STAGE-reads | `crates/zedc-check/src/check/` |
+| 51 | L14.1, L20.1a | `crates/zedc-syntax/src/ast/types.rs` |
+| 51 | L14.1, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | L19.1, L15.3 | `zed/prelude/` |
+| 51 | L19.1, L15.4 | `crates/zedc-stage/src/stage.rs`, `zed/prelude/` |
+| 51 | L19.1, L15.5 | `crates/zed-kernel/src/eval.rs`, `zed/prelude/` |
+| 51 | L19.1, L16.1 | `zed/prelude/` |
+| 51 | L19.1, L17.1 | `crates/zedc-stage/src/stage.rs`, `zed/prelude/`, `DESIGN.md sec:staging` |
+| 51 | L19.1, L16.3 | `zed/prelude/` |
+| 51 | L19.1, STAGE-reads | `crates/zedc-stage/src/stage.rs` |
+| 51 | L19.1, EDIT-run | `crates/zedc/src/run.rs` |
+| 51 | L15.3, L15.4 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.3, L15.5 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.3, L16.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.3, L17.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.3, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.3, LAW-shape | `crates/zedc-check/src/check/` |
+| 51 | L15.3, STAGE-reads | `crates/zedc-check/src/check/` |
+| 51 | L15.3, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | L15.4, L15.5 | `crates/zedc-check/src/check/`, `crates/zed-kernel/src/provenance.rs`, `zed/prelude/` |
+| 51 | L15.4, L16.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.4, L17.1 | `crates/zedc-stage/src/stage.rs`, `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.4, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.4, LAW-shape | `crates/zedc-check/src/check/` |
+| 51 | L15.4, STAGE-reads | `crates/zedc-stage/src/stage.rs`, `crates/zedc-check/src/check/` |
+| 51 | L15.4, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | L15.5, L16.1 | `crates/zed-cert/src/`, `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.5, L17.1 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.5, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L15.5, LAW-shape | `crates/zedc-check/src/check/` |
+| 51 | L15.5, STAGE-reads | `crates/zedc-check/src/check/` |
+| 51 | L15.5, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | L16.1, L17.1 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `zed/prelude/` |
+| 51 | L16.1, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L16.1, LAW-shape | `crates/zedc-check/src/check/` |
+| 51 | L16.1, STAGE-reads | `crates/zedc-check/src/check/` |
+| 51 | L16.1, L20.1a | `crates/zedc-elab/src/elab.rs` |
+| 51 | L16.1, TOKEN-types | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
+| 51 | L17.1, L16.3 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L17.1, LAW-shape | `crates/zedc-check/src/check/` |
+| 51 | L17.1, STAGE-reads | `crates/zedc-check/src/check/`, `crates/zedc-stage/src/stage.rs` |
+| 51 | L17.1, L20.1a | `crates/zedc-elab/src/elab.rs` |
+| 51 | L17.1, TOKEN-types | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
+| 51 | L16.3, LAW-shape | `crates/zedc-check/src/check/` |
+| 51 | L16.3, STAGE-reads | `crates/zedc-check/src/check/` |
+| 51 | L16.3, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | LAW-shape, STAGE-reads | `crates/zedc-check/src/check/` |
+| 51 | LAW-shape, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | STAGE-reads, L20.1a | `DESIGN.md` |
+| 51 | STAGE-reads, TOKEN-types | `crates/zedc-check/src/check/` |
+| 51 | STAGE-reads, EDIT-run | `DESIGN.md` |
+| 51 | L20.1a, TOKEN-types | `crates/zedc-elab/src/elab.rs` |
+| 51 | L20.1a, EDIT-run | `DESIGN.md` |
+| 52 | L18.2a, L20.2 | `crates/zedc-check/src/check/mod.rs` |
+| 52 | L18.2a, L16.2 | `crates/zedc-check/src/check/` |
+| 52 | L18.2a, L22.2 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/main.rs` |
+| 52 | L18.2a, L21.0 | `crates/zedc-check/src/check/` |
+| 52 | L18.2a, REPACK-tile | `crates/zedc-zir/src/zir/mod.rs` |
+| 52 | L18.2a, TERM-stall | `crates/zedc-check/src/check/` |
+| 52 | L18.2a, LAW-shape-eq | `crates/zedc-check/src/check/` |
+| 53 | L18.2b, GLAM-diamond-iface | `crates/zedc-check/src/check/` |
+| 53 | L18.2b, L13.2 | `zed/prelude/` |
+| 53 | L18.2b, TERM-1 | `crates/zedc-check/src/check/`, `zed/prelude/grammar.zed` |
+| 53 | L18.2b, L22.8 | `crates/zedc-check/src/check/mod.rs`, `zed/prelude/theories.zed` |
+| 53 | L18.2b, L15.2c | `crates/zedc-check/src/check/` |
+| 52 | S.1b, L20.2 | `zed/prelude/grammar.zed` |
+| 52 | S.1b, L15.6 | `zed/prelude/` |
+| 52 | S.1b, L16.2 | `zed/prelude/` |
+| 52 | S.1b, L22.2 | `zed/prelude/theories.zed` |
+| 52 | S.1b, L12.3a | `zed/prelude/` |
+| 52 | L20.2, L15.6 | `zed/prelude/grammar.zed` |
+| 52 | L20.2, L16.2 | `zed/prelude/grammar.zed`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 52 | L20.2, L22.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 52 | L20.2, L12.3a | `zed/prelude/grammar.zed` |
+| 52 | L20.2, L21.0 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 52 | L20.2, L17.1b | `DESIGN.md` |
+| 52 | L15.6, L16.2 | `zed/prelude/` |
+| 52 | L15.6, L22.2 | `crates/zed-cert/src/lib.rs`, `zed/prelude/theories.zed` |
+| 52 | L15.6, L12.3a | `zed/prelude/` |
+| 52 | L16.2, L22.2 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs`, `zed/prelude/theories.zed` |
+| 52 | L16.2, L12.3a | `zed/prelude/` |
+| 52 | L16.2, L21.0 | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/elab.rs` |
+| 52 | L22.2, L12.3a | `zed/prelude/theories.zed`, `crates/zedc/src/store/eq.rs`, `crates/zedc/src/store/` |
+| 52 | L22.2, L21.0 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
+| 52 | L22.2, L17.1b | `crates/zedc/src/opt` |
+| 52 | L22.2, REPACK-tile | `crates/zedc-zir/src/zir/` |
+| 52 | TERM-stall, L20.2 | `crates/zedc-check/src/check/mod.rs` |
+| 52 | TERM-stall, L22.2 | `crates/zedc-check/src/check/mod.rs` |
+| 52 | TERM-stall, L21.0 | `crates/zedc-check/src/check/` |
+| 53 | GLAM-diamond-iface, TERM-1 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
+| 53 | GLAM-diamond-iface, L22.8 | `crates/zedc-check/src/check/mod.rs` |
+| 53 | GLAM-diamond-iface, L15.2c | `crates/zedc-check/src/check/` |
+| 53 | L13.2, L14.2 | `zed/corpus/20-taint.zed` |
+| 53 | L13.2, TERM-1 | `zed/prelude/grammar.zed` |
+| 53 | L13.2, L22.8 | `zed/prelude/theories.zed` |
+| 53 | L13.2, L12.4 | `zed/corpus/20-taint.zed` |
+| 53 | L14.2, L12.4 | `zed/corpus/` |
+| 53 | TERM-1, L22.8 | `crates/zedc-check/src/check/mod.rs` |
+| 53 | TERM-1, L15.2c | `crates/zedc-check/src/check/` |
+| 53 | L22.8, L15.2c | `crates/zedc-check/src/check/mod.rs` |
+| 54 | L23.1, L15.7 | `crates/zedc-check/src/check/`, `crates/zedc/src/main.rs` |
+| 54 | L23.1, L19.2a | `crates/zedc-stage/src/stage.rs`, `crates/zedc/src/query.rs` |
+| 55 | L15.8, L15.7b | `crates/zedc-check/src/check/`, `crates/zedc/src/main.rs` |
+| 55 | L15.7b, L23.5c | `DESIGN.md` |
+| 56 | L22.3, TERM-2a | `crates/zedc-check/src/check/mod.rs` |
+| 56 | L22.3, NOINST-report | `crates/zedc-check/src/check/mod.rs` |
+| 56 | TERM-2a, NOINST-report | `crates/zedc-check/src/check/` |
+| 57 | L23.4, L22.4 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-zir/src/zir/lower.rs` |
+| 57 | L23.4, L22.5 | `crates/zedc-check/src/check/mod.rs` |
+| 57 | L22.4, L22.5 | `crates/zedc-check/src/check/mod.rs`, `crates/zed-cert/src/lib.rs` |
+| 57 | STORE-check-off, L23.4 | `crates/zedc/src/store/` |
+| 57 | STORE-check-off, L22.4 | `crates/zedc-check/src/check/mod.rs` |
+| 57 | STORE-check-off, L22.5 | `crates/zedc-check/src/check/mod.rs` |
+| 58 | L23.5, L24.1 | `crates/zedc/src/opt/` |
+| 58 | L24.1, L22.6 | `crates/zedc-check/src/check/mod.rs` |
+| 58 | L24.1, L22.7 | `crates/zedc-check/src/check/mod.rs` |
+| 58 | L22.6, L22.7 | `crates/zedc-check/src/check/mod.rs` |
+| 63 | STD-seq, STD-text | `zed/stdlib/` |
+| 63 | STD-seq, STD-num | `zed/stdlib/` |
+| 63 | STD-text, STD-num | `zed/stdlib/` |
+| 65 | S.3, S.2-forms | `zed/compiler/` |
+| 66 | L21.1, S.3-forms | `DESIGN.md` |
+| 67 | S.4, L21.1c | `crates/zedc/src/run.rs` |
+| 68 | L19.2, L24.2 | `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/tables.rs`, `zed/compiler/` |
+| 68 | L19.2, L24.3 | `crates/zed-native/src/codegen.rs`, `zed/compiler/` |
+| 68 | L19.2, L24.5 | `zed/compiler/`, `zed/prelude/placement.zed` |
+| 68 | L24.2, L24.3 | `crates/zed-native/src/codegen.rs`, `zed/compiler/` |
+| 68 | L24.2, L24.5 | `zed/compiler/` |
+| 68 | L24.3, L24.5 | `zed/compiler/` |
+| 69 | L19.3, L20.4 | `zed/compiler/` |
+| 69 | L19.3, L20.3 | `zed/prelude/json.zed`, `zed/prelude/csv.zed`, `zed/prelude/grammar.zed` |
+| 69 | L19.3, L24.6 | `zed/compiler/` |
+| 69 | L19.3, L24.10 | `zed/compiler/` |
+| 69 | L20.4, L24.6 | `zed/compiler/`, `DESIGN.md` |
+| 69 | L20.4, L24.10 | `zed/compiler/` |
+| 69 | L24.6, L24.10 | `zed/compiler/`, `crates/zed-rt/src/` |
+| 69 | S.5a, S.6a | `row S` |
+| 69 | S.5a, S.6b | `row S` |
+| 69 | S.6a, S.6b | `row S` |
+| 70 | S.6, L24.7 | `zed/compiler/`, `crates/zedc-base/src/source.rs`, `crates/zed-rt/src/` |
+| 71 | QUOT-classes, TERM-3 | `zed/prelude/png.zed`, `zed/prelude/gzip.zed`, `docs/stdlib-catalog.md` |
+| 71 | QUOT-classes, L22.9 | `zed/prelude/symbolic.zed` |
+| 71 | QUOT-classes, L26.1 | `crates/zed-rt/src/union_find.rs (from L5.9)` |
+| 71 | QUOT-classes, FLOAT-elem | `zed/prelude/` |
+| 71 | QUOT-classes, INTEROP-study | `docs/stdlib-catalog.md` |
+| 71 | QUOT-classes, L28.4 | `crates/zed-rt/src/union_find.rs (from L5.9)` |
+| 71 | L25.1, L26.1 | `crates/zedc/src/main.rs`, `crates/zedc/src/run.rs`, `DESIGN.md` |
+| 71 | L25.1, L31.1 | `DESIGN.md` |
+| 71 | L25.1, FLOAT-elem | `DESIGN.md` |
+| 71 | L25.1, PORT-pointer-keys | `DESIGN.md` |
+| 71 | L25.1, L28.4 | `DESIGN.md` |
+| 71 | TERM-3, FLOAT-elem | `zed/prelude/png.zed`, `zed/prelude/gzip.zed` |
+| 71 | TERM-3, INTEROP-study | `docs/stdlib-catalog.md` |
+| 71 | L22.9, L26.1 | `crates/zedc-resolve/src/resolve.rs` |
+| 71 | L22.9, FLOAT-elem | `zed/prelude/symbolic.zed` |
+| 71 | L26.1, L31.1 | `DESIGN.md` |
+| 71 | L26.1, FLOAT-elem | `DESIGN.md` |
+| 71 | L26.1, INTEROP-study | `docs/layout.md` |
+| 71 | L26.1, PORT-pointer-keys | `DESIGN.md` |
+| 71 | L26.1, L28.4 | `crates/zed-rt/src/`, `DESIGN.md` |
+| 71 | L31.1, FLOAT-elem | `DESIGN.md` |
+| 71 | L31.1, INTEROP-study | `docs/mcu-study.md` |
+| 71 | L31.1, PORT-pointer-keys | `DESIGN.md` |
+| 71 | L31.1, L28.4 | `DESIGN.md` |
+| 71 | FLOAT-elem, PORT-pointer-keys | `DESIGN.md` |
+| 71 | FLOAT-elem, L28.4 | `DESIGN.md` |
+| 71 | PORT-pointer-keys, L28.4 | `DESIGN.md` |
+| 72 | L25.3, L25.2 | `crates/zedc/src/lsp/` |
+| 72 | L25.3, L27.3 | `DESIGN.md` |
+| 72 | L25.3, L29.1 | `DESIGN.md` |
+| 72 | L25.3, DIAG-json | `DESIGN.md`, `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/lsp/` |
+| 72 | L25.3, AD-reverse | `DESIGN.md` |
+| 72 | L19.4, L27.3 | `zed/corpus/` |
+| 72 | L25.2, DIAG-json | `crates/zedc/src/lsp/`, `crates/zedc/src/run.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-syntax/src/ast/mod.rs`, `crates/zedc-stage/src/stage.rs` |
+| 72 | L27.3, L29.1 | `DESIGN.md` |
+| 72 | L27.3, DIAG-json | `crates/zedc/src/hdl/ (new) or crates/zed-hdl/`, `DESIGN.md` |
+| 72 | L27.3, AD-reverse | `DESIGN.md` |
+| 72 | L29.1, DIAG-json | `DESIGN.md` |
+| 72 | L29.1, AD-reverse | `DESIGN.md` |
+| 72 | DIAG-json, AD-reverse | `DESIGN.md` |
+| 73 | LIB-linkage, L25.4 | `DESIGN.md` |
+| 73 | LIB-linkage, L25.5 | `DESIGN.md` |
+| 73 | LIB-linkage, L31.2 | `DESIGN.md` |
+| 73 | L25.4, L30.1 | `crates/zedc/src/lsp/` |
+| 73 | L25.4, L25.5 | `DESIGN.md`, `zed/prelude/agent.zed`, `crates/zedc/src/lsp/`, `crates/zedc-elab/src/elab.rs` |
+| 73 | L25.4, L31.2 | `DESIGN.md` |
+| 73 | L30.1, L25.5 | `crates/zedc/src/lsp/` |
+| 73 | L25.5, L31.2 | `DESIGN.md` |
+| 74 | TERM-2, L30.2 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/lsp/` |
+| 74 | TERM-2, L25.6 | `crates/zedc-elab/src/elab.rs`, `zed/prelude/agent.zed`, `crates/zedc/src/lsp/` |
+| 74 | L30.2, L25.6 | `crates/zedc/src/lsp/` |
+| 74 | L25.6, L31.3 | `DESIGN.md` |
+| 75 | L30.3, L34.9 | `crates/zedc/src/lsp/` |
+| 75 | L30.3, L27.1 | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/mod.rs` |
+| 75 | L30.3, L27.2 | `crates/zedc-elab/src/elab.rs` |
+| 75 | L30.3, MCU-period | `crates/zedc-zir/src/zir/lower.rs`, `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc/src/lsp/` |
+| 75 | L25.7, L27.1 | `DESIGN.md` |
+| 75 | L25.7, L27.2 | `DESIGN.md` |
+| 75 | L25.7, PICTURE-type | `DESIGN.md` |
+| 75 | L25.7, MCU-period | `crates/zedc/src/delta.rs` |
+| 75 | L34.9, L27.2 | `zed/prelude/agent.zed` |
+| 75 | L34.9, MCU-period | `crates/zedc/src/lsp/` |
+| 75 | L27.1, L27.2 | `crates/zed-rt/src/ (cluster transport`, `zed/prelude/cost.zed`, `crates/zedc/src/run.rs`, `docs/layout.md`, `DESIGN.md` |
+| 75 | L27.1, PICTURE-type | `DESIGN.md` |
+| 75 | L27.1, MCU-period | `crates/zedc-zir/src/zir/`, `crates/zedc-base/src/cost.rs`, `crates/zedc/src/run.rs` |
+| 75 | L27.2, PICTURE-type | `DESIGN.md` |
+| 75 | L27.2, MCU-period | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/run.rs` |
+| 76 | L30.4, L25.9 | `DESIGN.md` |
+| 76 | L30.4, L27.2a | `DESIGN.md` |
+| 76 | L30.4, L27.2b | `DESIGN.md` |
+| 76 | L30.4, L27.2c | `DESIGN.md` |
+| 76 | L30.4, L30.3a | `crates/zedc/src/lsp/`, `editors/vscode/`, `DESIGN.md` |
+| 76 | L25.9, L27.2a | `DESIGN.md` |
+| 76 | L25.9, L27.2b | `DESIGN.md` |
+| 76 | L25.9, L27.2c | `DESIGN.md` |
+| 76 | L25.9, L30.3a | `DESIGN.md` |
+| 76 | L27.2a, L27.2b | `crates/zed-rt/src/`, `DESIGN.md` |
+| 76 | L27.2a, L27.2c | `crates/zed-rt/src/`, `DESIGN.md` |
+| 76 | L27.2a, L30.3a | `DESIGN.md` |
+| 76 | L27.2b, L27.2c | `crates/zed-rt/src/`, `DESIGN.md` |
+| 76 | L27.2b, L30.3a | `DESIGN.md` |
+| 76 | L27.2c, L30.3a | `DESIGN.md` |
+| 77 | L30.5, L34.10 | `crates/zedc/src/lsp/` |
+| 77 | L30.5, L34.1 | `crates/zedc/src/lsp/` |
+| 77 | L34.10, L34.1 | `crates/zedc/src/lsp/` |
+| 78 | L34.11, L30.6 | `editors/vscode/` |
+| 84 | L34.2, L34.4 | `crates/zedc/src/lsp/`, `editors/vscode/` |
+| 85 | L34.3, L34.6 | `crates/zedc/src/lsp/`, `editors/vscode/` |
+| 85 | L34.3, L34.7 | `crates/zedc/src/lsp/`, `editors/vscode/` |
+| 85 | L34.3, L35.1 | `crates/zedc/src/lsp/`, `editors/vscode/` |
+| 85 | L34.6, L34.7 | `crates/zedc/src/lsp/`, `editors/vscode/` |
+| 85 | L34.6, L35.1 | `crates/zedc/src/lsp/`, `editors/vscode/` |
+| 85 | L34.7, L35.1 | `crates/zedc/src/lsp/`, `editors/vscode/` |
+| 85 | L33.2, L33.3 | `DESIGN.md` |
+| 71 | L2.13, L25.1 | `STATUS.md` |
+| 71 | L2.13, L21.3 | `STATUS.md` |
 | 10 | TEST-fuzz, T14-lints | `crates/zedc/src` |
-| 48 | READ-arms, L7.9 | `crates/zedc/src/incr` |
-| 48 | READ-arms, L7.10 | `crates/zedc/src/incr` |
-| 48 | READ-arms, L7.12 | `crates/zedc/src/testing.rs`, `crates/zedc/src/incr` |
-| 48 | READ-arms, L11.2 | `crates/zedc/src/store`, `crates/zedc/src/introspect` |
-| 48 | READ-arms, L7.13 | `crates/zedc/src/query.rs`, `crates/zedc/src/incr` |
-| 48 | READ-arms, MENU-linear-L10 | `crates/zedc/src/run.rs` |
-| 48 | READ-arms, SELFINT-design | `DESIGN.md` |
-| 48 | READ-arms, EDGE-class | `crates/zedc/src/store` |
+| 49 | READ-arms, L7.9 | `crates/zedc/src/incr` |
+| 49 | READ-arms, L7.10 | `crates/zedc/src/incr` |
+| 49 | READ-arms, L7.12 | `crates/zedc/src/testing.rs`, `crates/zedc/src/incr` |
+| 49 | READ-arms, L11.2 | `crates/zedc/src/store`, `crates/zedc/src/introspect` |
+| 49 | READ-arms, L7.13 | `crates/zedc/src/query.rs`, `crates/zedc/src/incr` |
+| 49 | READ-arms, MENU-linear-L10 | `crates/zedc/src/run.rs` |
+| 49 | READ-arms, SELFINT-design | `DESIGN.md` |
+| 49 | READ-arms, EDGE-class | `crates/zedc/src/store` |
 | 0 | POLY-nf, K36-study | `COMPLEXITY.md` |
 | 0 | POLY-nf, STAGE-joined-eq | `COMPLEXITY.md` |
 | 0 | POLY-nf, KEY-written-addr | `COMPLEXITY.md` |
@@ -1939,14 +1907,14 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 0 | LIST-size, KEY-written-addr | `crates/zedc-preimage/src/product.rs` |
 | 0 | LIST-size, POLY-nf | `STATUS.md` |
 | 0 | LIST-size, ST-wider | `crates/zedc-preimage/src/product.rs`, `STATUS.md` |
-| 55 | LIST-exact-overlap, TERM-2a | `crates/zedc-check/src/check/overload.rs` |
-| 55 | LIST-exact-overlap, NOINST-report | `crates/zedc-check/src/check/overload.rs`, `DESIGN.md` |
+| 56 | LIST-exact-overlap, TERM-2a | `crates/zedc-check/src/check/overload.rs` |
+| 56 | LIST-exact-overlap, NOINST-report | `crates/zedc-check/src/check/overload.rs`, `DESIGN.md` |
 
 ## File conflicts across levels
 
-These 12779 pairs are at different levels, have no directed path between them, are not yet done and share a file, so the same rule applies: they may run in parallel, and the merge resolves the overlap. Regenerated on 2026-11-05 for the reduced needs of L1.40, L1.41, S.1 and S.3, and on 2026-11-07 for the eight rows of the soundness survey and the widened MOD-residue only, whose lines at the end name every item each conflicts with; and on 2026-11-07 for L2.13, TEST-fuzz, READ-arms and L2.14-diag after the answer to Q8, and for POLY-nf when Q10 was withdrawn, likewise at the end, with a directory path matched only at a `/` (the older lines also pair `crates/zedc` with `crates/zedc-check`); files under `tests/` are not compared. Each line names an item and the items it conflicts with.
+These 13168 pairs (distinct pairs of items, counted on 2026-11-10; the earlier figure here, 12779, was 299 below the 13078 the lines then held) are at different levels, have no directed path between them, are not yet done and share a file, so the same rule applies: they may run in parallel, and the merge resolves the overlap. Regenerated on 2026-11-05 for the reduced needs of L1.40, L1.41, S.1 and S.3, and on 2026-11-07 for the eight rows of the soundness survey and the widened MOD-residue only, whose lines at the end name every item each conflicts with; and on 2026-11-07 for L2.13, TEST-fuzz, READ-arms and L2.14-diag after the answer to Q8, and for POLY-nf when Q10 was withdrawn, likewise at the end, with a directory path matched only at a `/` (the older lines also pair `crates/zedc` with `crates/zedc-check`); files under `tests/` are not compared. On 2026-11-10 (item PLAN-L18.2-rest) every entry naming L18.2, L18.2a or L18.2b (107) was removed, and the lines of L18.2a and L18.2b at the end were recomputed from the items table by that rule (78 and 106 items), followed by the 13 pairs moved from the same-level table. The other lines were not recomputed: by that rule the items table now gives 10385 pairs across levels, of which 3829 are missing here, and 6612 pairs here are no longer such a pair. Each line names an item and the items it conflicts with.
 
-- S.1f: FOOTPRINT-overlap, RUNG2-bit, PASS-at-args, L1.19b, T11-unit-share, ENV-port, XMARK-rows, ORDER-rename, HULL3-subsumed, L1.36a, T11-preimage-log, VALUE-one-tuple, DIAG-suppress, UTVPI-union, UTVPI-dag-test, UTVPI-model, DECIDE-disj-chain, NAME-ties-orient, MENU-linear, U8-rename, FLOAT-minmax, PREIMAGE-ref-tests, S22-order, HOOKS-term-dag, L1.36b, LIT-plain, PRE-stack-explicit, REFUSE-group-site, ST-exact-enum, MINMAX-tuples, HEAP-fresh-dag, POW-kept-exp, MATCH-fn-binder, IF-union, STR-types, CAST-menu, ST-ladder, T11-preimage-rest, S15-calls, T14-bring, T12-Z4, BOUNDS-other, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, RT-sites, SCALE-cover, T14-paths, L2.5, L2.8, T2-ty, ADDR-presburger, CHK-held-cascade, L1.40, T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, PREIMAGE-and-chain, CHK-need-bound, L2.8b, DIAG-control, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, L1.40a, S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L3.5, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, UNIT-modes, L5.1, L3.14, L4.4, L5.2, L5.3, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.13, L6.3, L5.5a, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13b, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, COST-patch, HEAP-rank, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
+- S.1f: FOOTPRINT-overlap, RUNG2-bit, PASS-at-args, L1.19b, T11-unit-share, ENV-port, XMARK-rows, ORDER-rename, HULL3-subsumed, L1.36a, T11-preimage-log, VALUE-one-tuple, DIAG-suppress, UTVPI-union, UTVPI-dag-test, UTVPI-model, DECIDE-disj-chain, NAME-ties-orient, MENU-linear, U8-rename, FLOAT-minmax, PREIMAGE-ref-tests, S22-order, HOOKS-term-dag, L1.36b, LIT-plain, PRE-stack-explicit, REFUSE-group-site, ST-exact-enum, MINMAX-tuples, HEAP-fresh-dag, POW-kept-exp, MATCH-fn-binder, IF-union, STR-types, CAST-menu, ST-ladder, T11-preimage-rest, S15-calls, T14-bring, T12-Z4, BOUNDS-other, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, RT-sites, SCALE-cover, T14-paths, L2.5, L2.8, T2-ty, ADDR-presburger, CHK-held-cascade, L1.40, T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, PREIMAGE-and-chain, CHK-need-bound, L2.8b, DIAG-control, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, L1.40a, S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L3.5, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, UNIT-modes, L5.1, L3.14, L4.4, L5.2, L5.3, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.13, L6.3, L5.5a, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13b, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, COST-patch, HEAP-rank, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
 - CASES-xr1: BREAK-cases, OR-PAT
 - M0.10a: FOOTPRINT-overlap, XMARK-rows, ORDER-rename, GROUP-admit-msg, GROUP-setop, SETTLE-rounds, L2.5, L2.8, L2.4, L2.8b, STRUCT-key, L2.7, L2.6, L1.40e, L1.41, L2.10, SCOPE-warn, L2.11, L3.2, L2.14, L4.1, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product, L3.11, PROP-per-arrow, L3.23, KEYABLE-reject, L3.24, L5.5a, TRACE-gen-laws, WITNESS-widened, EQ-tabulate, MEMO-cross, ARM-split
 - RUNG2-mod-symbol: FOOTPRINT-overlap, RUNG2-bit, XMARK-rows, ORDER-rename, T11-preimage-log, UTVPI-union, UTVPI-model, DECIDE-disj-chain, NAME-ties-orient, S22-order, L1.36b, PRE-stack-explicit, GROUP-admit-msg, GROUP-setop, T11-preimage-rest, S15-calls, SETTLE-rounds, PRODUCT-nested-chain, SCALE-cover, L2.5, L2.8, T2-ty, ADDR-presburger, L1.40, L2.4, PREIMAGE-and-chain, L2.8b, L2.8c, S22-R2, ST-formula-set, STRUCT-key, T14-lints, L2.7, PRE-abs-output, ST-formula-sibling, L2.6, L1.40e, L1.40f, L1.41, L2.10, SCOPE-warn, L2.11, L3.2, L2.14, L4.1, COLLATE-data, L3.6, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
@@ -1960,15 +1928,15 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - ZIR-family-key: VALUE-one-tuple, L1.36b, SCALE-cover, L2.8c, T14-lints, L2.9, L1.41, L2.10, L3.4, L6.6, WIDE-product, L3.20, L3.12, ZIR-check-passes, FOLD-zero, EVID-dynamic, L5.1d, INLINE-zir, SPECULATE, L6.15, MEMO-cross, L6.17, STR-cursor, L7.1, L7.3, L9.1, L15.1, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L6.17a
 - ZIR-name-xid: VALUE-one-tuple, L1.36b, SCALE-cover, L2.8c, T14-lints, L2.9, L1.41, L2.10, L3.4, L6.6, WIDE-product, L3.20, L3.12, ZIR-check-passes, FOLD-zero, EVID-dynamic, L5.1d, INLINE-zir, SPECULATE, L6.15, MEMO-cross, L6.17, STR-cursor, L7.1, L7.3, L9.1, L15.1, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L6.17a
 - FMT-load-pos: L1.36b, SCALE-cover, L2.8, L2.8c, T14-lints, L4.1, L5.1, L5.4, L5.5, MEMO-cross, L6.17, L7.1, L8.1, L10.1, L9.1, L15.1, L22.1, TARGET-native, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L20.1, L15.2, L22.2, L23.1, L23.4, L24.1, L6.17a
-- CITE-check: FOOTPRINT-overlap, PASS-at-args, XMARK-rows, ORDER-rename, PROV-family-entries, PLAN-conflicts, U8-rename, FLOAT-minmax, L1.36b, LIT-plain, REFUSE-group-site, GROUP-admit-msg, MINMAX-tuples, IF-union, STR-types, CAST-menu, GROUP-setop, BOUNDS-other, NARROW-hub-settle, SETTLE-rounds, SCALE-cover, L2.5, L2.8, T2-ty, CHK-held-cascade, T11-ty, L2.4, WARN-refused, IS-chain-quad, CHK-need-bound, L2.8b, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STAGE-print, L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, OR-PAT, SCOPE-warn, L2.7a, L2.11, L3.2, FLOAT-sqrt, SCALE-zed, L2.14, L4.1, STR-views, L3.4, COLLATE-data, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.10, L3.11, L3.18, PROP-per-arrow, L3.23, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, BOUND-L4, L3.24, L5.5, L6.2, BOUND-L5, L5.5a, L6.8, L6.11, TRACE-gen-laws, L5.10, L6.9, LAW14-gen, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, ROD-data, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L18.2, L20.2, L16.2, L22.2, L21.0, L17.1b, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L16.4, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, STD-num, S.2-forms, L21.1, S.3-forms, L21.1c, L24.5, L20.4, L20.3, L24.6, S.6, L25.1, L26.1, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L25.3, L25.2, L27.3, L29.1, TARGET-mcu, DIAG-json, AD-reverse, LIB-linkage, L25.4, L30.1, L25.5, L31.2, TERM-2, L30.2, L25.6, L31.3, L25.7, L27.1, L27.2, PICTURE-type, MCU-period, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2, L33.1, L33.2, L33.3, L33.1a, USER-guide
+- CITE-check: FOOTPRINT-overlap, PASS-at-args, XMARK-rows, ORDER-rename, PROV-family-entries, PLAN-conflicts, U8-rename, FLOAT-minmax, L1.36b, LIT-plain, REFUSE-group-site, GROUP-admit-msg, MINMAX-tuples, IF-union, STR-types, CAST-menu, GROUP-setop, BOUNDS-other, NARROW-hub-settle, SETTLE-rounds, SCALE-cover, L2.5, L2.8, T2-ty, CHK-held-cascade, T11-ty, L2.4, WARN-refused, IS-chain-quad, CHK-need-bound, L2.8b, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STAGE-print, L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, OR-PAT, SCOPE-warn, L2.7a, L2.11, L3.2, FLOAT-sqrt, SCALE-zed, L2.14, L4.1, STR-views, L3.4, COLLATE-data, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.10, L3.11, L3.18, PROP-per-arrow, L3.23, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, BOUND-L4, L3.24, L5.5, L6.2, BOUND-L5, L5.5a, L6.8, L6.11, TRACE-gen-laws, L5.10, L6.9, LAW14-gen, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, ROD-data, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L21.0, L17.1b, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L16.4, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, STD-num, S.2-forms, L21.1, S.3-forms, L21.1c, L24.5, L20.4, L20.3, L24.6, S.6, L25.1, L26.1, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L25.3, L25.2, L27.3, L29.1, TARGET-mcu, DIAG-json, AD-reverse, LIB-linkage, L25.4, L30.1, L25.5, L31.2, TERM-2, L30.2, L25.6, L31.3, L25.7, L27.1, L27.2, PICTURE-type, MCU-period, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L32.1, L32.2, L33.1, L33.2, L33.3, L33.1a, USER-guide
 - M0d-suite: VARIANT-sync, XMARK-rows, LIT-plain, STR-types, L2.8b
-- LOWER-legalize: L1.36a, FLOAT-minmax, HOOKS-term-dag, MATCH-fn-binder, HEAP-binder-paths, IF-union, STR-types, RT-sites, SCALE-cover, T14-paths, PLAN-shared-regions, T14-lints, L2.9, L3.2, FLOAT-sqrt, STR-views, L3.13, L3.15a, BIT-repr, WIDE-product, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, L6.14, L5.1d, SPECULATE, L6.14a, L6.13, L6.13a, L6.13c, L6.15, FOLD-layers, L6.16, RT-layout, L6.17, STR-cursor, L7.2, L7.3, L9.1, L7.4, L7.5, FILE-bytes, L21.2, L10.3, L14.1, L19.1, L18.2, L24.1
-- TIME-report: FOOTPRINT-overlap, RUNG2-bit, PASS-at-args, L1.19b, T11-unit-share, ENV-port, XMARK-rows, ORDER-rename, HULL3-subsumed, L1.36a, T11-preimage-log, VALUE-one-tuple, DIAG-suppress, UTVPI-union, UTVPI-dag-test, UTVPI-model, DECIDE-disj-chain, NAME-ties-orient, MENU-linear, U8-rename, FLOAT-minmax, PREIMAGE-ref-tests, S22-order, HOOKS-term-dag, L1.36b, LIT-plain, PRE-stack-explicit, REFUSE-group-site, ST-exact-enum, MINMAX-tuples, HEAP-fresh-dag, POW-kept-exp, MATCH-fn-binder, IF-union, STR-types, CAST-menu, ST-ladder, T11-preimage-rest, S15-calls, T14-bring, T12-Z4, BOUNDS-other, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, RT-sites, SCALE-cover, T14-paths, L2.5, L2.8, T2-ty, ADDR-presburger, CHK-held-cascade, L1.40, T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, PREIMAGE-and-chain, CHK-need-bound, L2.8b, DIAG-control, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, L1.40a, S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L3.5, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, UNIT-modes, L5.1, L3.14, L4.4, L5.2, L5.3, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.13, L6.3, L5.5a, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13b, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, COST-patch, HEAP-rank, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
+- LOWER-legalize: L1.36a, FLOAT-minmax, HOOKS-term-dag, MATCH-fn-binder, HEAP-binder-paths, IF-union, STR-types, RT-sites, SCALE-cover, T14-paths, PLAN-shared-regions, T14-lints, L2.9, L3.2, FLOAT-sqrt, STR-views, L3.13, L3.15a, BIT-repr, WIDE-product, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, L6.14, L5.1d, SPECULATE, L6.14a, L6.13, L6.13a, L6.13c, L6.15, FOLD-layers, L6.16, RT-layout, L6.17, STR-cursor, L7.2, L7.3, L9.1, L7.4, L7.5, FILE-bytes, L21.2, L10.3, L14.1, L19.1, L24.1
+- TIME-report: FOOTPRINT-overlap, RUNG2-bit, PASS-at-args, L1.19b, T11-unit-share, ENV-port, XMARK-rows, ORDER-rename, HULL3-subsumed, L1.36a, T11-preimage-log, VALUE-one-tuple, DIAG-suppress, UTVPI-union, UTVPI-dag-test, UTVPI-model, DECIDE-disj-chain, NAME-ties-orient, MENU-linear, U8-rename, FLOAT-minmax, PREIMAGE-ref-tests, S22-order, HOOKS-term-dag, L1.36b, LIT-plain, PRE-stack-explicit, REFUSE-group-site, ST-exact-enum, MINMAX-tuples, HEAP-fresh-dag, POW-kept-exp, MATCH-fn-binder, IF-union, STR-types, CAST-menu, ST-ladder, T11-preimage-rest, S15-calls, T14-bring, T12-Z4, BOUNDS-other, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, RT-sites, SCALE-cover, T14-paths, L2.5, L2.8, T2-ty, ADDR-presburger, CHK-held-cascade, L1.40, T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, PREIMAGE-and-chain, CHK-need-bound, L2.8b, DIAG-control, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, L1.40a, S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L3.5, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, UNIT-modes, L5.1, L3.14, L4.4, L5.2, L5.3, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.13, L6.3, L5.5a, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13b, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, COST-patch, HEAP-rank, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
 - PORT-catalog: SCALE-cover, COLLATE-data, L6.17, L16.4, L6.17a
 - PLAN-sync: SELFINT-design, INTEROP-study
 - FOOTPRINT-overlap: U8-rename, L1.36b, LIT-plain, GROUP-admit-msg, MINMAX-tuples, STR-types, GROUP-setop, SETTLE-rounds, SCALE-cover, L2.5, L2.8, L2.4, L2.8b, L2.8c, STRUCT-key, T14-lints, L2.7, STATIC-assert, L2.6, L1.40e, L1.41, L2.10, SCOPE-warn, L2.11, L3.2, FLOAT-sqrt, L2.14, L4.1, STR-views, COLLATE-data, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.11, PROP-per-arrow, KEYABLE-reject, L5.1, L5.2, L5.3, L4.6, L5.4, EVID-dynamic, L5.9, L5.5a, TRACE-gen-laws, WITNESS-widened, EQ-tabulate, ARM-split
 - RUNG2-bit: T11-preimage-log, UTVPI-union, S22-order, L1.36b, PRE-stack-explicit, T11-preimage-rest, S15-calls, PRODUCT-nested-chain, SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, S22-R2, T14-lints, L2.7, PRE-abs-output, L1.40f, L2.10, L3.6, BIT-repr
-- PASS-at-args: U8-rename, FLOAT-minmax, L1.36b, LIT-plain, MINMAX-tuples, IF-union, STR-types, CAST-menu, SCALE-cover, L2.5, CHK-held-cascade, T11-ty, WARN-refused, CHK-need-bound, L2.8c, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, L1.40b, STATIC-assert, L2.6, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, L2.7a, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, L3.8, FLOAT-f32, L3.10, L3.18, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, BOUND-L4, L5.5, L6.2, BOUND-L5, L6.8, L6.11, L5.10, L6.9, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1
+- PASS-at-args: U8-rename, FLOAT-minmax, L1.36b, LIT-plain, MINMAX-tuples, IF-union, STR-types, CAST-menu, SCALE-cover, L2.5, CHK-held-cascade, T11-ty, WARN-refused, CHK-need-bound, L2.8c, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, L1.40b, STATIC-assert, L2.6, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, L2.7a, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, L3.8, FLOAT-f32, L3.10, L3.18, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, BOUND-L4, L5.5, L6.2, BOUND-L5, L6.8, L6.11, L5.10, L6.9, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1
 - L1.19b: DIAG-suppress, MENU-linear, L1.36b, RT-sites, SCALE-cover, L2.8, L2.4, WARN-refused, L2.8c, T14-lints, L1.40f, L2.12, L2.10, SCOPE-warn, L3.2
 - T11-unit-share: L1.36b, SCALE-cover, L2.8c, T14-lints, L3.8, MEMO-cross, L6.17, L15.1, TARGET-native, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L7.12, L20.1, L15.2, L22.2, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1, L21.1c, S.6, DIAG-json, MCU-period
 - ENV-port: DIAG-suppress, MENU-linear, U8-rename, FLOAT-minmax, L1.36b, LIT-plain, MINMAX-tuples, STR-types, RT-sites, SCALE-cover, L2.8, L1.40, L2.4, WARN-refused, L2.8c, T14-lints, STATIC-assert, L1.40f, L2.12, L2.10, SCOPE-warn, L3.2, FLOAT-sqrt, L4.1, STR-views, COLLATE-data, L3.15a
@@ -1984,7 +1952,7 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - T11-preimage-log: S22-order, L1.36b, PRE-stack-explicit, T11-preimage-rest, S15-calls, PRODUCT-nested-chain, SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, S22-R2, T14-lints, L2.7, PRE-abs-output, L1.40f, L2.10, L3.6, BIT-repr, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, INTERN-threaded, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1
 - VALUE-one-tuple: FLOAT-minmax, L1.36b, STR-types, SCALE-cover, L2.8c, T14-lints, STAGE-print, L2.9, L2.10, FLOAT-sqrt, STR-views, L3.4, L6.6, L3.15a, WIDE-product
 - FAMILY-eq-dag: FLOAT-minmax, STR-types, SCALE-cover, T14-lints, STAGE-print, FLOAT-sqrt, STR-views, L3.15a, L6.17, L15.5, L1.18a, STD-num
-- DIAG-suppress: L1.36b, CAST-menu, RT-sites, SCALE-cover, L2.8, T2, L2.4, WARN-refused, L2.8c, T14-lints, L1.40f, L2.12, L2.10, SCOPE-warn, L3.2, L3.11, L3.21, L5.10, L6.13b, MEMO-cross, L6.17, S.1a, L7.2, L7.2a, L7.3, L15.1, L7.4, L7.5, FILE-bytes, TARGET-native, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L20.1, L15.2, L19.1, L17.1, EDIT-run, L18.2, L22.2, L23.1, L15.7, L15.8, L15.7b, L23.4, L24.1, L6.17a
+- DIAG-suppress: L1.36b, CAST-menu, RT-sites, SCALE-cover, L2.8, T2, L2.4, WARN-refused, L2.8c, T14-lints, L1.40f, L2.12, L2.10, SCOPE-warn, L3.2, L3.11, L3.21, L5.10, L6.13b, MEMO-cross, L6.17, S.1a, L7.2, L7.2a, L7.3, L15.1, L7.4, L7.5, FILE-bytes, TARGET-native, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L20.1, L15.2, L19.1, L17.1, EDIT-run, L22.2, L23.1, L15.7, L15.8, L15.7b, L23.4, L24.1, L6.17a
 - UTVPI-union: PREIMAGE-ref-tests, S22-order, L1.36b, PRE-stack-explicit, ST-exact-enum, POW-kept-exp, ST-ladder, T11-preimage-rest, S15-calls, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, SCALE-cover, T2-ty, ADDR-presburger, L1.40, WARN-refused, PREIMAGE-and-chain, L2.8c, L1.40a, S22-R2, ST-formula-set, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, ST-formula-parse-keep, L1.40b, L1.40e, L1.40f, L2.12, L2.10, SCOPE-warn, L3.22, L3.6, L3.7, L3.8, FLOAT-f32, BIT-repr, L3.23, L3.18a, L4.4, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.11, L6.11a, L6.9, WITNESS-widened, L6.8a, DESCENT-sum, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1, HULL3-GEN
 - UTVPI-dag-test: L1.36b, SCALE-cover, T2-ty, L2.8c, T14-lints, L1.40f, BIT-repr, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, L21.1c, S.6, DIAG-json, MCU-period
 - UTVPI-model: L1.36b, PRODUCT-nested-chain, SCALE-cover, T2-ty, ADDR-presburger, L2.8c, ST-formula-set, T14-lints, ST-formula-sibling, L1.40f, L3.7, BIT-repr, L4.4, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, DESCENT-sum, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, HULL3-GEN
@@ -1995,8 +1963,8 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - FLOAT-minmax: VERDICT-route, REFUSE-group-site, GROUP-admit-msg, GROUP-oracle, GROUP-refusal, TD-finite, GROUP-same, T6-2sat, T6-refusal-cost, BDD-xor-parity, MATCH-fn-binder, HEAP-binder-paths, REC-canon, IF-union, STR-types, CAST-menu, T2-types-rest, GROUP-setop, SETTLE-rounds, RT-sites, TABLE-life, SCALE-cover, T14-paths, L2.5, L2.8, CHK-held-cascade, T11-ty, T2, L2.4, WARN-refused, CHK-need-bound, PLAN-shared-regions, L2.8c, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STAGE-print, L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, L2.7a, FLOAT-sqrt
 - PREIMAGE-ref-tests: PRE-stack-explicit, SCALE-cover, T2-ty, L2.8c, T14-lints, L1.40f, L3.22, BIT-repr, L3.9, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1, L21.1c, S.6, L25.1, DIAG-json, L30.2, MCU-period
 - S22-order: PRE-stack-explicit, T11-preimage-rest, S15-calls, PRODUCT-nested-chain, SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, T14-lints, L2.7, L1.40f, L2.10, L3.6, BIT-repr
-- HOOKS-term-dag: HEAP-fresh-dag, MATCH-fn-binder, HEAP-binder-paths, IF-union, STR-types, T12-Z4, RT-sites, SCALE-cover, T14-paths, PLAN-shared-regions, L2.8c, T14-lints, LOWER-dag, L2.9, L3.2, FLOAT-sqrt, STR-views, L3.4, L3.13, L3.15a, BIT-repr, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.16, L4.2, UNIT-modes, LAYOUT-soa, L3.14, UNION-spare, L3.15, L4.6, EVID-dynamic, L5.8a, L5.6, L5.9, L5.13, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.13, L6.13a, L6.13b, L6.13c, L6.15, HEAP-rank, L6.16, RT-layout, MEMO-cross, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L21.2, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L18.2, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L6.17a, S.1, NATIVE-cache, L21.1, S.4, L21.1c, S.6, L23.5a, DIAG-json, L24.8, L27.1, MCU-period
-- L1.36b: PRE-stack-explicit, REFUSE-group-site, ST-exact-enum, MINMAX-tuples, HEAP-fresh-dag, POW-kept-exp, MATCH-fn-binder, IF-union, STR-types, CAST-menu, ST-ladder, T11-preimage-rest, S15-calls, T14-bring, T12-Z4, BOUNDS-other, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, RT-sites, SCALE-cover, T14-paths, L2.5, L2.8, T2-ty, ADDR-presburger, CHK-held-cascade, L1.40, T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, PREIMAGE-and-chain, CHK-need-bound, L2.8b, DIAG-control, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, L1.40a, S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L3.5, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, UNIT-modes, L5.1, L3.14, L4.4, L5.2, L5.3, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.13, L6.3, L5.5a, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13b, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, COST-patch, HEAP-rank, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
+- HOOKS-term-dag: HEAP-fresh-dag, MATCH-fn-binder, HEAP-binder-paths, IF-union, STR-types, T12-Z4, RT-sites, SCALE-cover, T14-paths, PLAN-shared-regions, L2.8c, T14-lints, LOWER-dag, L2.9, L3.2, FLOAT-sqrt, STR-views, L3.4, L3.13, L3.15a, BIT-repr, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.16, L4.2, UNIT-modes, LAYOUT-soa, L3.14, UNION-spare, L3.15, L4.6, EVID-dynamic, L5.8a, L5.6, L5.9, L5.13, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.13, L6.13a, L6.13b, L6.13c, L6.15, HEAP-rank, L6.16, RT-layout, MEMO-cross, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L21.2, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L6.17a, S.1, NATIVE-cache, L21.1, S.4, L21.1c, S.6, L23.5a, DIAG-json, L24.8, L27.1, MCU-period
+- L1.36b: PRE-stack-explicit, REFUSE-group-site, ST-exact-enum, MINMAX-tuples, HEAP-fresh-dag, POW-kept-exp, MATCH-fn-binder, IF-union, STR-types, CAST-menu, ST-ladder, T11-preimage-rest, S15-calls, T14-bring, T12-Z4, BOUNDS-other, NARROW-hub-settle, ST-wider, PRODUCT-nested-chain, FINITE-type, RT-sites, SCALE-cover, T14-paths, L2.5, L2.8, T2-ty, ADDR-presburger, CHK-held-cascade, L1.40, T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, PREIMAGE-and-chain, CHK-need-bound, L2.8b, DIAG-control, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, L1.40a, S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L3.5, L6.4, L3.6, L3.7, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, UNIT-modes, L5.1, L3.14, L4.4, L5.2, L5.3, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.13, L6.3, L5.5a, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13b, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, COST-patch, HEAP-rank, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
 - LIT-plain: REFUSE-group-site, MINMAX-tuples, BOUNDS-other, NARROW-hub-settle, SCALE-cover, L2.5, L2.8, T2-ty, CHK-held-cascade, L1.40, T11-ty, WARN-refused, IS-chain-quad, CHK-need-bound, L2.8b, GROUP-e2e, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STATIC-assert
 - PRE-stack-explicit: SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, L2.7, L1.40f, L2.10, L3.6, BIT-repr
 - VERDICT-route: T2-types-rest, GROUP-setop, SCALE-cover, L2.5, T14-lints, L2.7, STAGE-print, FLOAT-sqrt, STR-views, L3.7, L3.15a
@@ -2008,13 +1976,13 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - MINMAX-tuples: BOUNDS-other, NARROW-hub-settle, SCALE-cover, L2.5, L2.8, T2-ty, CHK-held-cascade, L1.40, T11-ty, WARN-refused, IS-chain-quad, CHK-need-bound, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, OR-PAT, L2.7a, FLOAT-sqrt
 - TD-finite: SCALE-cover, L2.5, T14-lints, L2.7, STAGE-print, L1.40e, FLOAT-sqrt, STR-views, L3.7, L3.15a, L5.2, L6.17, L7.1, L7.2, L9.1, L7.4, L10.2, L10.3, L15.5, L1.18a, STD-num, S.6
 - GROUP-same: T2-types-rest, GROUP-setop, TABLE-life, SCALE-cover, L2.5, T14-lints, STAGE-print, FLOAT-sqrt, STR-views, L6.4, L3.7, L3.15a, L6.17, L15.5, L1.18a, STD-num
-- HEAP-fresh-dag: T12-Z4, SCALE-cover, T14-paths, PLAN-shared-regions, L2.8c, T14-lints, LOWER-dag, L2.9, FLOAT-sqrt, L3.4, RT-exhaust-report, L3.13, BIT-repr, WIDE-product, HASH-repr, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L3.14, EVID-dynamic, L5.6, ENUM-perm, SORTED-dense, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.13a, L6.13b, L6.13c, L6.15, L6.13e, HEAP-rank, RT-layout, DEEP-native-eq, MEMO-cross, RECLAIM-pulse, L6.17, STR-cursor, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, TARGET-native, PORT-why, L7.5a, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, LIVE-clocks, L7.9, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L1.18a, L18.2, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L24.4, L6.17a, S.1, NATIVE-cache, L21.1c, L24.3, L24.6, L24.10, S.6, L24.7, L23.5a, L26.1, L28.4, L29.1, DIAG-json, L27.1, MCU-period, L27.2a, L27.2b, L27.2c, L34.5
+- HEAP-fresh-dag: T12-Z4, SCALE-cover, T14-paths, PLAN-shared-regions, L2.8c, T14-lints, LOWER-dag, L2.9, FLOAT-sqrt, L3.4, RT-exhaust-report, L3.13, BIT-repr, WIDE-product, HASH-repr, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L3.14, EVID-dynamic, L5.6, ENUM-perm, SORTED-dense, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.13a, L6.13b, L6.13c, L6.15, L6.13e, HEAP-rank, RT-layout, DEEP-native-eq, MEMO-cross, RECLAIM-pulse, L6.17, STR-cursor, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, TARGET-native, PORT-why, L7.5a, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, LIVE-clocks, L7.9, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L24.4, L6.17a, S.1, NATIVE-cache, L21.1c, L24.3, L24.6, L24.10, S.6, L24.7, L23.5a, L26.1, L28.4, L29.1, DIAG-json, L27.1, MCU-period, L27.2a, L27.2b, L27.2c, L34.5
 - T6-2sat: T2-types-rest, GROUP-setop, SCALE-cover, L2.5, T14-lints, L2.7, STAGE-print, FLOAT-sqrt, STR-views, L3.7, L3.15a, L6.17, L15.5, L1.18a, STD-num
 - T6-refusal-cost: T2-types-rest, GROUP-setop, SETTLE-rounds, TABLE-life, SCALE-cover, L2.5, T2, T14-lints, L2.7, STAGE-print, FLOAT-sqrt, STR-views, L6.4, L3.7, L3.15a, L6.17, L15.5, L1.18a, STD-num
 - BDD-xor-parity: T2-types-rest, SETTLE-rounds, TABLE-life, SCALE-cover, L2.5, T2, T14-lints, STAGE-print, FLOAT-sqrt, STR-views, L3.7, L3.15a, L6.17, SELFINT-design, L15.5, L1.18a, STD-num
 - POW-kept-exp: SCALE-cover, T2-ty, L2.8c, T14-lints
 - MATCH-fn-binder: T12-Z4, RT-sites, SCALE-cover, T14-paths, PLAN-shared-regions, L2.8c, T14-lints, LOWER-dag, L2.9, L3.2, FLOAT-sqrt, STR-views, L3.4, L3.13, L3.15a, BIT-repr, WIDE-product
-- HEAP-binder-paths: RT-sites, SCALE-cover, T14-lints, L2.9, L3.2, FLOAT-sqrt, STR-views, RT-exhaust-report, L3.13, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.16, L4.2, L5.8, LAYOUT-soa, L3.14, UNION-spare, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L6.14, L5.1d, L6.14a, L6.13, L6.13a, L6.13c, L6.13e, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L1.18a, L18.2, L24.1, L24.4, L6.17a, L21.1, S.4, L24.3, L24.6, L24.10, S.6, L24.7, L26.1, L28.4, L29.1, L24.8, L27.1, L27.2a, L27.2b, L27.2c, L34.5
+- HEAP-binder-paths: RT-sites, SCALE-cover, T14-lints, L2.9, L3.2, FLOAT-sqrt, STR-views, RT-exhaust-report, L3.13, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.16, L4.2, L5.8, LAYOUT-soa, L3.14, UNION-spare, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L6.14, L5.1d, L6.14a, L6.13, L6.13a, L6.13c, L6.13e, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L1.18a, L24.1, L24.4, L6.17a, L21.1, S.4, L24.3, L24.6, L24.10, S.6, L24.7, L26.1, L28.4, L29.1, L24.8, L27.1, L27.2a, L27.2b, L27.2c, L34.5
 - REC-canon: T2-types-rest, GROUP-setop, TABLE-life, SCALE-cover, T14-lints, STAGE-print
 - IF-union: BOUNDS-other, NARROW-hub-settle, RT-sites, SCALE-cover, T14-paths, L2.5, T2-ty, CHK-held-cascade, T11-ty, WARN-refused, IS-chain-quad, CHK-need-bound, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STATIC-assert
 - STR-types: T2-types-rest, GROUP-setop, BOUNDS-other, NARROW-hub-settle, SETTLE-rounds, RT-sites, TABLE-life, SCALE-cover, L2.5, L2.8, T2-ty, CHK-held-cascade, L1.40, T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, CHK-need-bound, L2.8b, GROUP-e2e, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STAGE-print, STATIC-assert
@@ -2025,7 +1993,7 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - T11-preimage-rest: PRODUCT-nested-chain, SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, S22-R2, T14-lints, L2.7, PRE-abs-output, L1.40f, L2.10, L3.6, BIT-repr, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1
 - S15-calls: PRODUCT-nested-chain, SCALE-cover, T2-ty, L1.40, PREIMAGE-and-chain, L2.8c, S22-R2, T14-lints, L2.7, PRE-abs-output, L1.40f, L2.10, L3.6, BIT-repr, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1
 - T14-bring: SCALE-cover, L2.8c, T14-lints, L2.9, CONTIFY, L3.2, L3.4, L6.6, WIDE-product
-- T12-Z4: SCALE-cover, L2.8c, T14-lints, LOWER-dag, L2.9, L3.4, L3.13, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.16, L4.2, UNIT-modes, L3.14, EVID-dynamic, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.13, L6.13b, L6.15, HEAP-rank, MEMO-cross, L6.17, STR-cursor, L7.2, L7.3, L9.1, L15.1, L7.4, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L18.2, L22.2, REPACK-tile
+- T12-Z4: SCALE-cover, L2.8c, T14-lints, LOWER-dag, L2.9, L3.4, L3.13, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.16, L4.2, UNIT-modes, L3.14, EVID-dynamic, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.13, L6.13b, L6.15, HEAP-rank, MEMO-cross, L6.17, STR-cursor, L7.2, L7.3, L9.1, L15.1, L7.4, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L22.2, REPACK-tile
 - BOUNDS-other: SCALE-cover, L2.5, T2-ty, CHK-held-cascade, T11-ty, WARN-refused, L2.8c, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L1.40b, STATIC-assert, L1.40e, HKT-2, OVERLOAD-name-type, GLAM-diamond, L2.12b, L2.7a, L3.2, L4.1, STR-views, L3.7
 - NARROW-hub-settle: SCALE-cover, T2-ty, CHK-held-cascade, L1.40, L2.8c, L1.40a, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, STATIC-assert
 - ST-wider: SCALE-cover, T2-ty, WARN-refused, L2.8c, T14-lints
@@ -2036,7 +2004,7 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - RT-sites: SCALE-cover, T14-paths, L2.8, L2.4, WARN-refused, PLAN-shared-regions, L2.8c, T14-lints, LOWER-dag, L1.40f, L2.9, L2.12, L2.10, CONTIFY, SCOPE-warn, L3.2, FLOAT-sqrt, STR-views, L3.4, L6.6, L3.13, L3.15a, BIT-repr, WIDE-product
 - TABLE-life: SCALE-cover, L2.5, T2, T14-lints, STAGE-print, FLOAT-sqrt, STR-views, L6.4, L3.7, L3.15a, L6.17, L15.5, L1.18a, STD-num
 - SCALE-cover: T11-ty, T2, L2.4, BUILD-const, WARN-refused, IS-chain-quad, PREIMAGE-and-chain, CHK-need-bound, L2.8b, DIAG-control, GROUP-e2e, PLAN-shared-regions, L2.8c, NARROW-notes-quad, L1.40a, S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, FLOAT-sqrt, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L6.7, COLLATE-data, L3.5, L6.4, L3.6, L3.7, RT-exhaust-report, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr
-- T14-paths: L2.8c, T14-lints, LOWER-dag, L2.9, FLOAT-sqrt, L3.4, L3.13, L3.15a, BIT-repr, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L3.15, L4.6, EVID-dynamic, L5.8a, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.13a, L6.13b, L6.15, FOLD-layers, HEAP-rank, MEMO-cross, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L18.2, L22.2, REPACK-tile, L19.2a
+- T14-paths: L2.8c, T14-lints, LOWER-dag, L2.9, FLOAT-sqrt, L3.4, L3.13, L3.15a, BIT-repr, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L3.15, L4.6, EVID-dynamic, L5.8a, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.13a, L6.13b, L6.15, FOLD-layers, HEAP-rank, MEMO-cross, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L22.2, REPACK-tile, L19.2a
 - L2.5: T11-ty, T2, WARN-refused, CHK-need-bound, L2.8b, L2.8c, T11-check, T14-lints, STAGE-print, L1.40b, STATIC-assert, L1.40e, L1.41
 - L2.8: T2, L2.4, WARN-refused, STRUCT-key, T14-lints, L2.7, STATIC-assert, L2.6, L1.40e, L1.40f, L2.12, L1.41, SCOPE-warn
 - T2-ty: WARN-refused, PREIMAGE-and-chain, L2.8c, L1.40a, S22-R2, ST-formula-set, ISSUE1-payload, STRUCT-key, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, ST-formula-parse-keep, STATIC-assert
@@ -2044,19 +2012,19 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - CHK-held-cascade: T11-ty, WARN-refused, IS-chain-quad, CHK-need-bound, L2.8c, NARROW-notes-quad, T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32
 - L1.40: WARN-refused, PREIMAGE-and-chain, L2.8c, S22-R2, T14-lints, PRE-abs-output
 - T11-ty: ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STATIC-assert
-- T2: STAGE-print, FLOAT-sqrt, STR-views, L3.7, L3.15a, L3.11, L3.21, L5.10, L6.13b, MEMO-cross, L6.17, L15.1, TARGET-native, L28.1, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L20.1, L15.2, L15.5, L17.1, L1.18a, L18.2, L22.2, L23.1, L15.7, L15.8, L15.7b, L23.4, L24.1, L6.17a, S.1, STD-num
+- T2: STAGE-print, FLOAT-sqrt, STR-views, L3.7, L3.15a, L3.11, L3.21, L5.10, L6.13b, MEMO-cross, L6.17, L15.1, TARGET-native, L28.1, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L20.1, L15.2, L15.5, L17.1, L1.18a, L22.2, L23.1, L15.7, L15.8, L15.7b, L23.4, L24.1, L6.17a, S.1, STD-num
 - L2.4: T14-lints, L1.40c, STAGE-print, STAGE-ends-cone, L1.40e, L1.40f, L1.41
 - BUILD-const: T14-lints, L1.40c, STAGE-print, STAGE-ends-cone, L2.6, L2.12, L2.10, L3.2, L4.1, L6.4, L3.8, FLOAT-f32, L5.1, L5.5, L6.3, SORTED-select, L6.12, MEMO-cross, L6.17, L7.1, L15.1, L8.2a, L22.1, TARGET-native, L21.2, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L11.1, LIVE-clocks, L12.1, L13.1, L18.1, L20.1, L15.2, L14.1, L19.1, L15.4, L17.1, STAGE-reads, L22.2, GLAM-pin, L23.1, L19.2a, L22.3, L23.4, L24.1, L24.4, L6.17a
 - WARN-refused: T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, OR-PAT, SCOPE-warn, L2.7a, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32, BIT-repr
-- IS-chain-quad: ISSUE1-payload, STRUCT-key, T14-lints, L1.40b, STATIC-assert, OVERLOAD-name-type, GLAM-diamond, L2.12b, L2.7a, STR-views, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, BOUND-L4, BOUND-L5, WITNESS-widened, L6.12a, DESCENT-sum, EQ-tabulate, L6.12b, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L6.17a, S.1
+- IS-chain-quad: ISSUE1-payload, STRUCT-key, T14-lints, L1.40b, STATIC-assert, OVERLOAD-name-type, GLAM-diamond, L2.12b, L2.7a, STR-views, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, BOUND-L4, BOUND-L5, WITNESS-widened, L6.12a, DESCENT-sum, EQ-tabulate, L6.12b, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L6.17a, S.1
 - PREIMAGE-and-chain: S22-R2, T14-lints, L2.7, PRE-abs-output, L1.40f, L2.10, L3.6, BIT-repr, L4.3, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L15.3, L22.2, L12.3a, L23.1, L15.8, L23.4, L24.1, L6.17a, S.1
 - CHK-need-bound: T11-check, ISSUE1-payload, STRUCT-key, T14-lints, L2.7, STATIC-assert
 - L2.8b: STRUCT-key, T14-lints, L2.7, L2.6, L1.40e, HKT-2, L1.41, L2.10, SCOPE-warn, L2.7a, L2.11, L3.2, L4.1, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
 - DIAG-control: T14-lints, HKT-2, L2.7a
 - GROUP-e2e: T14-lints, L2.6, HKT-2, L2.10, L3.2, L4.1, STR-views, L6.4, FLOAT-f32
-- PLAN-shared-regions: T14-lints, LOWER-dag, L2.9, FLOAT-sqrt, L3.4, L3.13, L3.15a, BIT-repr, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L3.15, L4.6, EVID-dynamic, L5.8a, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.13a, L6.13b, L6.15, FOLD-layers, HEAP-rank, MEMO-cross, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L18.2, L22.2, REPACK-tile, L19.2a
+- PLAN-shared-regions: T14-lints, LOWER-dag, L2.9, FLOAT-sqrt, L3.4, L3.13, L3.15a, BIT-repr, WIDE-product, L3.12, ZIR-check-passes, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L3.15, L4.6, EVID-dynamic, L5.8a, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.14a, L6.13, L6.13a, L6.13b, L6.15, FOLD-layers, HEAP-rank, MEMO-cross, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L7.4, L7.5, UNORD-keep, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L7.8, LIVE-clocks, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L22.2, REPACK-tile, L19.2a
 - L2.8c: S22-R2, T11-check, ST-formula-set, ISSUE1-payload, STRUCT-key, T14-lints, L1.40c, L2.7, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L3.5, L6.4, L3.6, L3.7, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product
-- NARROW-notes-quad: ISSUE1-payload, STRUCT-key, T14-lints, L1.40b, STATIC-assert, OVERLOAD-name-type, GLAM-diamond, L2.12b, L2.7a, STR-views, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, BOUND-L4, BOUND-L5, WITNESS-widened, L6.12a, DESCENT-sum, EQ-tabulate, L6.12b, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L6.17a, S.1
+- NARROW-notes-quad: ISSUE1-payload, STRUCT-key, T14-lints, L1.40b, STATIC-assert, OVERLOAD-name-type, GLAM-diamond, L2.12b, L2.7a, STR-views, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, BOUND-L4, BOUND-L5, WITNESS-widened, L6.12a, DESCENT-sum, EQ-tabulate, L6.12b, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L6.17a, S.1
 - L1.40a: T14-lints
 - S22-R2: L1.40f, L2.10, L3.6, BIT-repr
 - T11-check: STATIC-assert
@@ -2064,7 +2032,7 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - ISSUE1-payload: L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32
 - STRUCT-key: L1.40b, STATIC-assert, L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, OR-PAT, SCOPE-warn, L2.7a, L2.11, L3.2, L4.1, STR-views, COLLATE-data, L6.4, L3.6, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
 - T10: OR-PAT, LOWER-stack, L6.11a, L6.17, SELFINT-design, L6.17a, S.6, L26.1, INTEROP-study, L27.3, L30.1, L27.1, L27.2
-- T14-lints: PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, FLOAT-sqrt, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L6.7, L3.5, L6.4, L3.6, L3.7, RT-exhaust-report, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, L4.4, UNION-spare, L5.2, L5.3, L3.15, L4.6, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.9, L5.13, L6.3, L5.5a, ENUM-perm, SORTED-dense, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13a, L6.13b, L6.13c, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, L6.13e, COST-patch, HEAP-rank, BEND-contract, L6.16, RT-layout, DEEP-native-eq, FOLD-unique, MEMO-cross, ARM-split, RECLAIM-pulse, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, TARGET-native, PORT-why, L7.5a, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, HULL3-GEN, STD-num, ADVISORY, NATIVE-cache, L21.1, S.4, L21.1c, L19.2, L24.2, L24.3, L19.3, L20.4, L20.3, L24.6, L24.10, S.6, L24.7, QUOT-classes, L25.1, L23.5a, L22.9, L26.1, L28.4, L25.3, L25.2, L27.3, L29.1, DIAG-json, L25.4, L30.1, L25.5, L31.2, TERM-2, L30.2, L25.6, L24.8, L31.3, L30.3, L25.7, L34.9, L27.1, L27.2, MCU-period, L30.4, FFI-inline-proc, L27.2a, L27.2b, L27.2c, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.2, L32.4, L34.5, L34.2, L34.4, L34.8, L34.3, L34.6, L34.7, L35.1, PORTABLE-rt
+- T14-lints: PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, LOWER-dag, STAGE-ends-cone, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, L2.9, L2.12, OVERLOAD-name-type, L1.41, L2.10, GLAM-diamond, L2.12b, CONTIFY, OR-PAT, SCOPE-warn, L2.7a, L3.2, FLOAT-sqrt, L3.3, L3.22, L4.1, STR-views, L3.4, L6.6, L6.7, L3.5, L6.4, L3.6, L3.7, RT-exhaust-report, L3.8, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr, L3.9, L3.20, L3.10, L3.11, L3.12, L3.18, MATCH-commute, PROP-per-arrow, ZIR-check-passes, SEMIRING-values, FOLD-zero, L3.17, L3.21, L3.23, L3.18a, L3.18b, KEYABLE-reject, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, L4.4, UNION-spare, L5.2, L5.3, L3.15, L4.6, L4.3, L4.5, LAW20-move, L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L5.6, L6.2, BOUND-L5, LAW19-join, L4.8, L5.9, L5.13, L6.3, L5.5a, ENUM-perm, SORTED-dense, L5.7, L6.8, L6.11, L6.14, L5.1d, L5.10, L6.11a, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, SORTED-select, L6.8a, L6.10, SPECULATE, L6.14a, L6.12, L6.13, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13a, L6.13b, L6.13c, L6.12b, HKT-1, L6.15, L6.5c, FOLD-layers, L6.13e, COST-patch, HEAP-rank, BEND-contract, L6.16, RT-layout, DEEP-native-eq, FOLD-unique, MEMO-cross, ARM-split, RECLAIM-pulse, L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, TARGET-native, PORT-why, L7.5a, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, HULL3-GEN, STD-num, ADVISORY, NATIVE-cache, L21.1, S.4, L21.1c, L19.2, L24.2, L24.3, L19.3, L20.4, L20.3, L24.6, L24.10, S.6, L24.7, QUOT-classes, L25.1, L23.5a, L22.9, L26.1, L28.4, L25.3, L25.2, L27.3, L29.1, DIAG-json, L25.4, L30.1, L25.5, L31.2, TERM-2, L30.2, L25.6, L24.8, L31.3, L30.3, L25.7, L34.9, L27.1, L27.2, MCU-period, L30.4, FFI-inline-proc, L27.2a, L27.2b, L27.2c, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.2, L32.4, L34.5, L34.2, L34.4, L34.8, L34.3, L34.6, L34.7, L35.1, PORTABLE-rt
 - L1.40c: STAGE-print, STAGE-ends-cone, L1.40b, L2.6, L1.40e, L1.40f, L2.12, L2.10, SCOPE-warn, L3.2, L6.4, L3.6, L3.7, BIT-repr
 - L2.7: PRE-abs-output, STAGE-print, L1.40b, STATIC-assert, L2.6, L1.40e, L1.40f, HKT-2, OVERLOAD-name-type, L1.41, L2.10, L2.11, L3.2, FLOAT-sqrt, L4.1, STR-views, COLLATE-data, L6.4, L3.6, L3.7, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product
 - PRE-abs-output: L1.40f, L2.10, L3.6, BIT-repr
@@ -2073,7 +2041,7 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - ST-formula-parse-keep: L1.40f, BIT-repr, CSR-bounds, BOUND-L4, BOUND-L5, L6.9, WITNESS-widened, L6.8a, MEMO-cross, ARM-split, L6.17, L15.1, FINITE-prop, L7.14, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L10.4, LIVE-clocks, L11.2, EDGE-class, L12.2, L20.1, L15.2, L12.3, L22.2, L12.3a, L23.1, L23.4, L24.1, L6.17a, S.1
 - LOWER-dag: L2.9, CONTIFY, L3.2, L3.4, L6.6, L3.13, WIDE-product
 - STAGE-ends-cone: L2.6, L3.2, L6.4, L3.8, L6.3, SORTED-select, L6.12, MEMO-cross, L6.17, L15.1, TARGET-native, L7.3e, FFI-status, EXPORT-unique, L11.1, LIVE-clocks, L12.1, L13.1, L18.1, L20.1, L15.2, L19.1, L15.4, L17.1, STAGE-reads, L22.2, GLAM-pin, L23.1, L19.2a, L23.4, L24.1, L6.17a, S.1
-- STATIC-assert: L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.2, FLOAT-sqrt, L4.1, STR-views, COLLATE-data, L6.4, L3.6, L3.7, L3.8, L3.15a, FLOAT-f32, L3.10, L3.18, PROP-per-arrow, SEMIRING-values, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.6, L4.5, L5.4, CSR-bounds, BOUND-L4, L5.5, L6.2, BOUND-L5, L5.9, L5.7, L6.8, L6.11, L5.10, L6.11a, L6.9, WITNESS-widened, L5.7a, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, PRELUDE-words, L6.5c, COST-patch, BEND-contract, L6.16, MEMO-cross, L6.17, PRELUDE-rules-run, S.1d, S.1e, L7.1, S.1a, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, FILE-bytes, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, S.1b, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a
+- STATIC-assert: L2.6, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.2, FLOAT-sqrt, L4.1, STR-views, COLLATE-data, L6.4, L3.6, L3.7, L3.8, L3.15a, FLOAT-f32, L3.10, L3.18, PROP-per-arrow, SEMIRING-values, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.6, L4.5, L5.4, CSR-bounds, BOUND-L4, L5.5, L6.2, BOUND-L5, L5.9, L5.7, L6.8, L6.11, L5.10, L6.11a, L6.9, WITNESS-widened, L5.7a, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, PRELUDE-words, L6.5c, COST-patch, BEND-contract, L6.16, MEMO-cross, L6.17, PRELUDE-rules-run, S.1d, S.1e, L7.1, S.1a, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, FILE-bytes, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a
 - L2.6: L1.41
 - L1.40e: HKT-2, L2.12, OVERLOAD-name-type, L2.10, GLAM-diamond, L2.12b, SCOPE-warn, L2.7a, L2.11, L3.2, FLOAT-sqrt, L4.1, STR-views, COLLATE-data, L3.6, L3.7, L3.13, L3.15a, FLOAT-f32, BIT-repr, WIDE-product
 - L1.40f: L2.12, L2.10, SCOPE-warn, L3.2, L3.22, L3.6, L3.7, FLOAT-f32, BIT-repr
@@ -2084,7 +2052,7 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - GLAM-diamond: L3.2, L3.3, L4.1, STR-views, L3.4, L3.5, L6.4, L3.6, L3.7, L3.15a, FLOAT-f32
 - L2.12b: L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32
 - CONTIFY: L3.2, L3.4, L6.6, WIDE-product, L3.11, L3.12, ZIR-check-passes, FOLD-zero, L4.2, L5.1, L5.3, L5.4, EVID-dynamic, L5.6, L5.1d
-- OR-PAT: STR-views, LOWER-stack, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, BOUND-L4, BOUND-L5, L6.11a, WITNESS-widened, L6.12a, DESCENT-sum, EQ-tabulate, L6.12b, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, L18.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L6.17a
+- OR-PAT: STR-views, LOWER-stack, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, BOUND-L4, BOUND-L5, L6.11a, WITNESS-widened, L6.12a, DESCENT-sum, EQ-tabulate, L6.12b, MEMO-cross, L6.17, S.1d, L7.1, L7.1a, L7.2, L8.2, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L7.14, L7.5, TARGET-native, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L6.17a
 - SCOPE-warn: L2.11, L3.2, L4.1, COLLATE-data, L3.6, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
 - L2.7a: L3.2, L4.1, STR-views, L6.4, L3.6, L3.7, FLOAT-f32
 - L2.11: L4.1, COLLATE-data, L3.7, L3.13, FLOAT-f32, BIT-repr, WIDE-product
@@ -2104,14 +2072,14 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - L6.4: L3.6, L3.7, L3.8, L3.15a, FLOAT-f32, L3.10, L3.18, PROP-per-arrow, L3.18a, L3.18b, KEYABLE-reject, L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, BOUND-L4, L5.8a, L5.5, BOUND-L5, L5.10, SORTED-select
 - L3.19: L4.7, L5.12, L5.11, L6.18
 - LOWER-stack: L6.11a
-- RT-exhaust-report: L3.13, BIT-repr, HASH-repr, L3.17, L3.16, L4.2, L5.8, LAYOUT-soa, L3.14, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, FOLD-layers, L6.13e, BEND-contract, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, L28.1a, L7.2, ROD-data, L7.3, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L28.1, OOM-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L18.2, L21.0, L24.1, L24.4
+- RT-exhaust-report: L3.13, BIT-repr, HASH-repr, L3.17, L3.16, L4.2, L5.8, LAYOUT-soa, L3.14, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, FOLD-layers, L6.13e, BEND-contract, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, L28.1a, L7.2, ROD-data, L7.3, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L28.1, OOM-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4
 - L3.8: L3.15a, FLOAT-f32, BIT-repr
 - L3.13: L3.11, L3.12, PROP-per-arrow, ZIR-check-passes, KEYABLE-reject
 - L3.15a: L3.20, L3.10, SEMIRING-values, L3.17, L3.21, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L4.4, UNION-spare, L5.2, L5.3, L3.15, L4.6, L4.5, L5.4, CSR-bounds, L5.8a, L5.5, L5.6, L6.2, L5.9, L5.13, L6.3, ENUM-perm, L5.7, L6.11, L6.14, L5.1d, L6.11a, L5.7a, L6.8a, L6.10, SPECULATE, L6.14a, L6.13, L6.19, L6.5, EQ-tabulate, L6.13a, L6.13c, HKT-1, L6.15, FOLD-layers, COST-patch, BEND-contract, L6.16, RT-layout, FOLD-unique, MEMO-cross, STR-cursor
 - FLOAT-f32: L3.10, L3.11, L3.18, PROP-per-arrow, L3.23, L3.18a, L3.18b, KEYABLE-reject, L4.2, L5.1, L4.4, L5.2, L5.3, L4.5, L5.4, CSR-bounds, BOUND-L4, L5.5, L6.2, BOUND-L5, L6.3, L5.5a, L6.8, L6.11, TRACE-gen-laws, L6.9, WITNESS-widened, L6.8a, L6.10, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, L6.5c, MEMO-cross, ARM-split
-- BIT-repr: L3.11, PROP-per-arrow, FOLD-zero, L3.17, L3.23, L3.18a, KEYABLE-reject, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L4.4, UNION-spare, L5.2, L5.3, L3.15, L4.6, L4.3, L5.4, CSR-bounds, BOUND-L4, L5.8a, L3.24, L5.6, BOUND-L5, L5.9, L5.13, L5.5a, ENUM-perm, SORTED-dense, L5.7, L6.11, L6.14, TRACE-gen-laws, L5.1d, L6.11a, L6.9, LAW14-gen, WITNESS-widened, L5.7a, L6.8a, SPECULATE, L6.14a, L6.13, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13a, L6.13c, HKT-1, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, MEMO-cross, ARM-split, RECLAIM-pulse, L6.17, STR-cursor, S.1d, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L8.2a, FINITE-prop, L7.4, L7.14, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, TARGET-native, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, ROUND-words, L10.2a, L7.8, L7.11, L10.4, LIVE-clocks, L7.9, L11.2, SELFINT-design, EDGE-class, L12.2, L20.1, L15.2, L7.13a, MEMO-edit, L12.3, L14.1, L19.1, L15.3, L15.5, STAGE-reads, L20.1a, EDIT-run, L1.18a, L18.2, L20.2, L22.2, L12.3a, L21.0, L17.1b, L15.2c, L23.1, L19.2a, L15.8, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4, L6.17a
-- WIDE-product: L3.20, L3.11, L3.12, PROP-per-arrow, ZIR-check-passes, FOLD-zero, L3.17, L3.23, KEYABLE-reject, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L5.3, L3.15, L4.6, L5.4, EVID-dynamic, L5.8a, L3.24, L5.6, L5.9, L5.13, L5.5a, L6.14, TRACE-gen-laws, L5.1d, INLINE-zir, LAW14-gen, WITNESS-widened, SPECULATE, L6.14a, L6.13, L6.5, EQ-tabulate, L6.13a, L6.13b, L6.13c, L6.15, FOLD-layers, HEAP-rank, L6.16, RT-layout, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L8.2a, L7.4, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, ROUND-words, L10.2a, L7.8, LIVE-clocks, L7.10, FPWARN, SELFINT-design, EDGE-class, L7.10a, L20.1, L15.2, L7.13a, MEMO-edit, L7.10b, L14.1, L19.1, L15.4, STAGE-reads, L20.1a, EDIT-run, L1.18a, L18.2, L20.2, L22.2, L17.1b, REPACK-tile, L15.2c, L23.1, L19.2a, L15.7b, L23.5c, NOINST-report, L23.4, L22.4, L24.1, L6.17a
-- HASH-repr: L3.17, L3.16, L4.2, L5.8, LAYOUT-soa, L3.14, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, FOLD-layers, L6.13e, BEND-contract, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, L28.1a, L7.2, ROD-data, L7.3, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L18.2, L21.0, L24.1, L24.4, L6.17a
+- BIT-repr: L3.11, PROP-per-arrow, FOLD-zero, L3.17, L3.23, L3.18a, KEYABLE-reject, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L4.4, UNION-spare, L5.2, L5.3, L3.15, L4.6, L4.3, L5.4, CSR-bounds, BOUND-L4, L5.8a, L3.24, L5.6, BOUND-L5, L5.9, L5.13, L5.5a, ENUM-perm, SORTED-dense, L5.7, L6.11, L6.14, TRACE-gen-laws, L5.1d, L6.11a, L6.9, LAW14-gen, WITNESS-widened, L5.7a, L6.8a, SPECULATE, L6.14a, L6.13, L6.5, DESCENT-sum, EQ-tabulate, L5.14, L6.13a, L6.13c, HKT-1, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, MEMO-cross, ARM-split, RECLAIM-pulse, L6.17, STR-cursor, S.1d, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L8.2a, FINITE-prop, L7.4, L7.14, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, TARGET-native, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, ROUND-words, L10.2a, L7.8, L7.11, L10.4, LIVE-clocks, L7.9, L11.2, SELFINT-design, EDGE-class, L12.2, L20.1, L15.2, L7.13a, MEMO-edit, L12.3, L14.1, L19.1, L15.3, L15.5, STAGE-reads, L20.1a, EDIT-run, L1.18a, L20.2, L22.2, L12.3a, L21.0, L17.1b, L15.2c, L23.1, L19.2a, L15.8, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4, L6.17a
+- WIDE-product: L3.20, L3.11, L3.12, PROP-per-arrow, ZIR-check-passes, FOLD-zero, L3.17, L3.23, KEYABLE-reject, L3.16, L4.2, L5.8, UNIT-modes, LAYOUT-soa, L5.1, L3.14, UNION-spare, L5.2, L5.3, L3.15, L4.6, L5.4, EVID-dynamic, L5.8a, L3.24, L5.6, L5.9, L5.13, L5.5a, L6.14, TRACE-gen-laws, L5.1d, INLINE-zir, LAW14-gen, WITNESS-widened, SPECULATE, L6.14a, L6.13, L6.5, EQ-tabulate, L6.13a, L6.13b, L6.13c, L6.15, FOLD-layers, HEAP-rank, L6.16, RT-layout, MEMO-cross, ARM-split, L6.17, STR-cursor, S.1d, L7.1, S.1a, L7.2, ROD-data, L7.3, L9.1, L15.1, L8.2a, L7.4, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, ROUND-words, L10.2a, L7.8, LIVE-clocks, L7.10, FPWARN, SELFINT-design, EDGE-class, L7.10a, L20.1, L15.2, L7.13a, MEMO-edit, L7.10b, L14.1, L19.1, L15.4, STAGE-reads, L20.1a, EDIT-run, L1.18a, L20.2, L22.2, L17.1b, REPACK-tile, L15.2c, L23.1, L19.2a, L15.7b, L23.5c, NOINST-report, L23.4, L22.4, L24.1, L6.17a
+- HASH-repr: L3.17, L3.16, L4.2, L5.8, LAYOUT-soa, L3.14, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, FOLD-layers, L6.13e, BEND-contract, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, L28.1a, L7.2, ROD-data, L7.3, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4, L6.17a
 - L3.20: L3.12, ZIR-check-passes, L3.21, L5.1, L4.4, L5.3, L5.1d, INLINE-zir
 - L3.10: L5.1, L4.4, L5.2, L5.3, L5.4, L5.8a, L5.5, L6.2, BOUND-L5, L6.3, L6.8
 - L3.11: PROP-per-arrow, FOLD-zero, KEYABLE-reject
@@ -2131,11 +2099,11 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - L4.2: L3.14, UNION-spare, L3.15, EVID-dynamic
 - L5.8: L3.14, UNION-spare, L4.6, L6.14, L6.14a, L6.13, L6.13a, L6.13c, L6.13e, RT-layout, DEEP-native-eq, RECLAIM-pulse
 - UNIT-modes: L3.14, EVID-dynamic, L5.6, L6.14, L5.1d, INLINE-zir, SPECULATE, L6.15, STR-cursor
-- LAYOUT-soa: L5.1, L3.14, L5.2, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L1.18a, L18.2, L21.0, L19.2a, L24.1, L24.4, L6.17a
+- LAYOUT-soa: L5.1, L3.14, L5.2, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L1.18a, L21.0, L19.2a, L24.1, L24.4, L6.17a
 - L5.1: L3.15, L4.6, L4.5, EVID-dynamic, BOUND-L4, L4.8
 - L3.14: L5.2, L5.8a, SORTED-dense, L6.14, INLINE-zir, L6.14a, L6.13, L6.13a, L6.13b, L6.13c, L6.13e, HEAP-rank, RT-layout, DEEP-native-eq, MEMO-cross
 - L4.4: L5.2, L5.3, CSR-bounds
-- UNION-spare: L5.2, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, L6.14, L5.1d, SPECULATE, L6.14a, L6.13, L6.13a, L6.13c, L6.15, FOLD-layers, L6.16, RT-layout, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, L7.5, FILE-bytes, L21.2, L10.3, L14.1, L19.1, L18.2, L19.2a, L24.1
+- UNION-spare: L5.2, L3.15, L4.6, L5.8a, L5.6, L5.9, L5.13, L6.14, L5.1d, SPECULATE, L6.14a, L6.13, L6.13a, L6.13c, L6.15, FOLD-layers, L6.16, RT-layout, L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, L7.5, FILE-bytes, L21.2, L10.3, L14.1, L19.1, L19.2a, L24.1
 - L5.2: BOUND-L4
 - L5.3: L5.4, CSR-bounds, EVID-dynamic, BOUND-L4, L5.8a, L5.5, L6.2, L6.3, L6.8, L6.11, L6.14, L6.11a, L6.9, INLINE-zir, WITNESS-widened, L6.8a, L6.10, L6.14a, L6.12, L6.12a, L6.19, L6.5, DESCENT-sum, EQ-tabulate, L6.12b, HKT-1, PRELUDE-words, L6.5c, COST-patch, FOLD-unique, MEMO-cross
 - L3.15: L5.8a, SORTED-dense, L6.14, L6.14a, L6.13, L6.13a, L6.13c, FOLD-layers, RT-layout, RECLAIM-pulse
@@ -2160,7 +2128,7 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - L6.3: SORTED-select
 - L5.5a: L5.7, TRACE-gen-laws, L5.10, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, L6.5, EQ-tabulate, L6.15, L6.5c, FOLD-layers, BEND-contract, L6.16, MEMO-cross, ARM-split, STR-cursor
 - ENUM-perm: L5.7, L6.14, L5.7a, SPECULATE, L6.14a, L6.13, L6.5, EQ-tabulate, L6.13a, L6.13c, HKT-1, FOLD-layers, L6.13e, BEND-contract, RT-layout, DEEP-native-eq, RECLAIM-pulse
-- SORTED-dense: L5.7, L6.14, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, FOLD-layers, L6.13e, BEND-contract, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, L28.1a, L7.2, ROD-data, L7.3, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L18.2, L21.0, L24.1, L24.4, L6.17a
+- SORTED-dense: L5.7, L6.14, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, FOLD-layers, L6.13e, BEND-contract, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, L28.1a, L7.2, ROD-data, L7.3, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4, L6.17a
 - L5.7: L5.10, L6.11a, INLINE-zir, L6.19, L6.5, L6.15, PRELUDE-words, L6.5c, FOLD-layers, COST-patch, L6.16, MEMO-cross, RECLAIM-pulse, STR-cursor
 - L6.8: L5.10, WITNESS-widened
 - L6.11: L5.10, L6.9, L6.10
@@ -2194,116 +2162,115 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - L6.12b: MEMO-cross
 - HKT-1: MEMO-cross
 - L6.15: BEND-contract, MEMO-cross
-- PRELUDE-words: BEND-contract, L6.16, L6.17, S.1d, L7.1, S.1a, FILE-bytes, ROUND-words, L11.1, L11.2, L12.1, L11.1a, L12.2, L13.1, L18.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L18.2, L15.6, L16.2, L12.3a, L13.2, L15.7, L15.8, L6.17a
+- PRELUDE-words: BEND-contract, L6.16, L6.17, S.1d, L7.1, S.1a, FILE-bytes, ROUND-words, L11.1, L11.2, L12.1, L11.1a, L12.2, L13.1, L18.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L15.6, L16.2, L12.3a, L13.2, L15.7, L15.8, L6.17a
 - L6.5c: BEND-contract, L6.16, MEMO-cross, L6.17, STR-cursor
 - FOLD-layers: L6.16, MEMO-cross, RECLAIM-pulse, L6.17, STR-cursor
 - L6.13e: RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17
 - COST-patch: BEND-contract, L6.16, MEMO-cross, L6.17, S.1d, S.1e, L7.1, S.1a, L15.1, TARGET-native, L7.3e, FFI-status, EXPORT-unique, ROUND-words, L11.1, LIVE-clocks, L7.10, L11.2, L12.1, L7.10a, L11.1a, L12.2, L13.1, L20.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, L15.6, L16.2, L22.2, L12.3a, L13.2, L23.1, L15.7, L15.8
 - HEAP-rank: MEMO-cross, L6.17, STR-cursor
 - BEND-contract: L6.17, STR-cursor
-- RT-layout: L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L1.18a, L18.2, L21.0, L24.1, L24.4, L6.17a
+- RT-layout: L6.17, STR-cursor, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, FILE-bytes, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L1.18a, L21.0, L24.1, L24.4, L6.17a
 - DEEP-native-eq: L6.17
 - FOLD-unique: L6.17
 - INTERN-threaded: L6.17, FILE-bytes, L6.17a
-- MEMO-cross: L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, ROUND-words, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, SELFINT-design, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
+- MEMO-cross: L6.17, STR-cursor, S.1d, L7.1, L8.1, L28.1a, S.1a, L7.1a, L7.2, L8.2, L10.1, ROD-data, L7.2a, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, ROUND-words, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, SELFINT-design, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4, L6.17a
 - ARM-split: L6.17
 - RECLAIM-pulse: L6.17
-- PRELUDE-rules-run: S.1d, S.1e, L7.1, S.1a, ROUND-words, L11.1, L11.2, L12.1, L11.1a, L12.2, L13.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L18.2, L15.6, L16.2, L12.3a, L13.2, L15.7, L15.8, L6.17a
-- S.1d: S.1a, L7.1a, L7.2, L8.2, ROD-data, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, S.1b, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, L17.1b, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a
-- S.1e: S.1a, FILE-bytes, L21.2, ROUND-words, L11.1, L11.2, L12.1, L11.1a, L12.2, L13.1, L18.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L15.7, L15.8, L22.3, L22.5, L22.6, L22.7, L6.17a
+- PRELUDE-rules-run: S.1d, S.1e, L7.1, S.1a, ROUND-words, L11.1, L11.2, L12.1, L11.1a, L12.2, L13.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L15.6, L16.2, L12.3a, L13.2, L15.7, L15.8, L6.17a
+- S.1d: S.1a, L7.1a, L7.2, L8.2, ROD-data, L7.3, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, L17.1b, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a
+- S.1e: S.1a, FILE-bytes, L21.2, ROUND-words, L11.1, L11.2, L12.1, L11.1a, L12.2, L13.1, L18.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L15.7, L15.8, L22.3, L22.5, L22.6, L22.7, L6.17a
 - L7.1: S.1a, L8.2, L8.2a
 - L8.1: L10.1, L7.3, L15.1, L7.4, L22.1, TARGET-native, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks, L20.1, L15.2, L20.1a, L22.2, TERM-1
 - L28.1a: L7.3, L15.1, L7.4, L7.5, UNORD-keep, TARGET-native, PORT-why, L7.5a, OOM-wave, L7.3e, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L7.8, L7.11, LIVE-clocks, L7.9, L20.1, L15.2, L1.18a, L22.2, L23.1, L23.4, L24.1, L24.4
-- S.1a: L7.2a, L7.3, L9.1, L15.1, L7.4, L7.5, FILE-bytes, TARGET-native, L21.2, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, L10.3, ROUND-words, L11.1, LIVE-clocks, L11.2, L12.1, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, EDIT-run, S.1b, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L23.1, L15.7, L19.2a, L15.8, L22.3, L23.4, L22.5, L24.1, L22.6, L22.7, L6.17a
+- S.1a: L7.2a, L7.3, L9.1, L15.1, L7.4, L7.5, FILE-bytes, TARGET-native, L21.2, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, L10.3, ROUND-words, L11.1, LIVE-clocks, L11.2, L12.1, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, EDIT-run, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L23.1, L15.7, L19.2a, L15.8, L22.3, L23.4, L22.5, L24.1, L22.6, L22.7, L6.17a
 - L7.1a: L7.2a, L7.3, L9.1, L15.1, L10.4a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, LIVE-clocks, BIT-checker-ranges, FPWARN, L20.1, TOKEN-types
 - L7.2: L9.1, L15.1, L10.4a, L22.1, UNORD-keep
 - L8.2: L7.2a, L7.3, L15.1, L10.4a, FINITE-prop, L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L20.1, L15.2, L11.2a, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, L20.1a, TOKEN-types, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7
 - L10.1: L7.3, L9.1, L7.4, TARGET-native, L7.3e, FFI-status, EXPORT-unique, LIVE-clocks
-- ROD-data: L7.3, L9.1, L15.1, L8.2a, L7.4, L7.5, UNORD-keep, FILE-bytes, TARGET-native, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, ROUND-words, MLIR-noalias, L10.2a, L7.8, L7.11, LIVE-clocks, L7.9, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L14.1, L19.1, STAGE-reads, L20.1a, EDIT-run, L1.18a, L18.2, L20.2, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4
+- ROD-data: L7.3, L9.1, L15.1, L8.2a, L7.4, L7.5, UNORD-keep, FILE-bytes, TARGET-native, PORT-why, L7.5a, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, ROUND-words, MLIR-noalias, L10.2a, L7.8, L7.11, LIVE-clocks, L7.9, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L14.1, L19.1, STAGE-reads, L20.1a, EDIT-run, L1.18a, L20.2, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4
 - L7.2a: L7.4, L22.1, L7.5, FILE-bytes, TARGET-native, L10.2, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, L10.3, L11.1, LIVE-clocks, L20.1, L15.2, L19.1, L16.1, L17.1, L20.1a, TOKEN-types, EDIT-run, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L23.1, L22.3, L23.4, L22.4, L24.1, L24.4
 - L7.3: L22.1, UNORD-keep
 - L9.1: L7.4, L22.1, L7.14, L7.5, FILE-bytes, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L7.6, L10.3, L10.2a, L7.8, L10.4, L11.1, LIVE-clocks, L7.10, L12.1, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L12.2, L13.1, L20.1, L15.2, L11.2a, L7.10b, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, L20.1a, TOKEN-types, L1.18a, L20.2, L16.2, L22.2, L21.0, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L19.2a, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7
 - L15.1: L7.4, L7.14, L7.5, UNORD-keep, FILE-bytes, TARGET-native, L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L12.3a, REPACK-tile
-- L10.4a: L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- L10.4a: L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
 - L8.2a: L22.1, L7.5, TARGET-native, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, ROUND-words, L10.2a, L11.1, LIVE-clocks, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L14.1, STAGE-reads, L20.1a, EDIT-run, L20.2, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, L22.3, NOINST-report, L23.4, L24.1, L24.4
-- FINITE-prop: L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, EDGE-class, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- FINITE-prop: L7.4, L22.1, L7.14, L7.5, TARGET-native, L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, EDGE-class, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
 - L8.3: L7.13, L10.5, L11.3, L7.15, L13.2, L14.2, L12.4, L16.4
 - L7.4: OOM-wave, L7.3e, RT-exhaust-wave, L7.6, L7.8, L7.11, LIVE-clocks, L7.9, L7.10, EDGE-class, L7.10a, L7.10b, EDIT-run
-- L22.1: L10.2, L21.2, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, L18.2, L20.2, L16.2, L21.0, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L24.4
-- L7.14: L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, EDGE-class, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- L22.1: L10.2, L21.2, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, L20.2, L16.2, L21.0, TERM-1, L15.2c, L23.1, L15.7, L15.8, L15.7b, TERM-2a, NOINST-report, L23.4, L24.1, L24.4
+- L7.14: L10.2, L21.2, L7.4b, L7.3e, FFI-status, EXPORT-unique, L10.3, L10.2a, L10.4, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, EDGE-class, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
 - GLAM-logspec: L7.5a, L21.2, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L7.8, L7.11, L7.9, L1.18a, L21.0, L24.1, L24.4
 - L7.5: L10.2, L21.2, L7.4b, FFI-headertest, FFI-status, EXPORT-unique, L10.3, ROUND-words, L10.2a, L10.4, L11.1, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L12.2, L13.1, L18.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L1.18a, L16.2, L22.2, L17.1b, GLAM-diamond-iface, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.7
-- UNORD-keep: L7.5a, L21.2, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, LIVE-clocks, L7.9, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L15.4, L1.18a, L18.2, L22.2, L21.0, REPACK-tile, L22.4
-- FILE-bytes: L7.5a, L21.2, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, ROUND-words, L7.8, L7.11, L11.1, LIVE-clocks, L7.9, L11.2, L12.1, L11.1a, L12.2, L13.1, L20.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, EDIT-run, S.1b, L1.18a, L18.2, L15.6, L16.2, L22.2, L12.3a, L21.0, L13.2, L23.1, L15.7, L15.8, L23.4, L24.1, L24.4, L6.17a
-- TARGET-native: L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
-- PORT-why: L7.5a, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L18.2, L21.0, L24.1, L24.4
-- L7.5a: L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L18.2, L21.0, L24.1, L24.4
+- UNORD-keep: L7.5a, L21.2, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, LIVE-clocks, L7.9, L7.10, FPWARN, EDGE-class, L7.10a, L20.1, L15.2, L7.10b, L14.1, L19.1, L15.4, L1.18a, L22.2, L21.0, REPACK-tile, L22.4
+- FILE-bytes: L7.5a, L21.2, L28.1, OOM-wave, L7.3e, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, L10.3, ROUND-words, L7.8, L7.11, L11.1, LIVE-clocks, L7.9, L11.2, L12.1, L11.1a, L12.2, L13.1, L20.1, L15.2, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, EDIT-run, S.1b, L1.18a, L15.6, L16.2, L22.2, L12.3a, L21.0, L13.2, L23.1, L15.7, L15.8, L23.4, L24.1, L24.4, L6.17a
+- TARGET-native: L10.2, L21.2, L28.1, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
+- PORT-why: L7.5a, L28.1, OOM-wave, RT-exhaust-wave, L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4
+- L7.5a: L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4
 - L10.2: LIVE-clocks
-- L21.2: L7.6, L10.3, ROUND-words, L10.2a, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L11.2, L12.1, BIT-checker-ranges, FPWARN, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, S.1b, L1.18a, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L28.1: L7.6, ROUND-words, L10.2a, L7.8, L7.11, LIVE-clocks, L7.9, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L19.1, L17.1, STAGE-reads, L20.1a, EDIT-run, L1.18a, L18.2, L20.2, L22.2, L21.0, L17.1b, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4, L6.17a
-- OOM-wave: L7.6, ROUND-words, L10.2a, L7.8, L7.11, LIVE-clocks, L7.9, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L19.1, STAGE-reads, L20.1a, EDIT-run, L1.18a, L18.2, L20.2, L22.2, L21.0, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4
+- L21.2: L7.6, L10.3, ROUND-words, L10.2a, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L11.2, L12.1, BIT-checker-ranges, FPWARN, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, S.1b, L1.18a, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- L28.1: L7.6, ROUND-words, L10.2a, L7.8, L7.11, LIVE-clocks, L7.9, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L19.1, L17.1, STAGE-reads, L20.1a, EDIT-run, L1.18a, L20.2, L22.2, L21.0, L17.1b, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4, L6.17a
+- OOM-wave: L7.6, ROUND-words, L10.2a, L7.8, L7.11, LIVE-clocks, L7.9, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L19.1, STAGE-reads, L20.1a, EDIT-run, L1.18a, L20.2, L22.2, L21.0, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report, L23.4, L24.1, L24.4
 - L7.5b: ROUND-words, L10.2a, SELFINT-design, L15.2, STAGE-reads, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report
-- L7.4b: L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L18.2, L20.2, L16.2, L22.2, L21.0, L17.1b, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L7.3e: L7.6, L10.3, ROUND-words, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, SELFINT-design, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
+- L7.4b: L10.3, ROUND-words, L10.2a, L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L20.2, L16.2, L22.2, L21.0, L17.1b, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- L7.3e: L7.6, L10.3, ROUND-words, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, SELFINT-design, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
 - FFI-headertest: ROUND-words, L10.2a, L11.1, LIVE-clocks, SELFINT-design, L20.1, L15.2, L7.13a, MEMO-edit, L14.1, STAGE-reads, L20.1a, EDIT-run, L20.2, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, L22.3, NOINST-report, L23.4, L24.1, L24.4
 - LAWS-stream: STAGE-reads, COMPILE-data, TERM-1, L15.8, L15.9
-- FFI-status: L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
-- EXPORT-unique: L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
-- RT-exhaust-wave: L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L18.2, L21.0, L24.1, L24.4
+- FFI-status: L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
+- EXPORT-unique: L7.6, L10.3, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, L11.1, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
+- RT-exhaust-wave: L7.6, L7.8, L7.11, L7.9, L19.1, L1.18a, L21.0, L24.1, L24.4
 - L7.6: FPWARN, L15.2, L14.1, L15.4, L15.5, L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L22.4
 - L10.3: L7.8, LIVE-clocks, L7.10, EDGE-class, L7.10a, L7.10b
-- ROUND-words: L11.1, L11.2, L12.1, SELFINT-design, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L7.13a, MEMO-edit, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, STAGE-reads, L20.1a, EDIT-run, S.1b, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L17.1b, L13.2, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L23.5c, L22.3, NOINST-report, L22.5, L22.6, L22.7
+- ROUND-words: L11.1, L11.2, L12.1, SELFINT-design, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L7.13a, MEMO-edit, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, STAGE-reads, L20.1a, EDIT-run, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L17.1b, L13.2, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L23.5c, L22.3, NOINST-report, L22.5, L22.6, L22.7
 - MLIR-noalias: LIVE-clocks, L20.1, L15.2, L22.2, L23.1, L23.4, L24.1, L6.17a
-- L10.2a: L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L18.2, L20.2, L16.2, L22.2, L21.0, L17.1b, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- L10.2a: L10.4, L11.1, LIVE-clocks, L12.1, BIT-checker-ranges, FPWARN, SELFINT-design, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.13a, MEMO-edit, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L20.2, L16.2, L22.2, L21.0, L17.1b, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
 - L7.7: L7.9, L7.10, L7.10a, L20.1, L15.2, L7.9a, L7.10b, L15.5, L22.2, L23.1, L23.4, L24.1
-- L7.8: L7.12, L7.13, FPWARN, EDGE-class, L15.2, MEMO-edit, L14.1, L19.1, L15.4, L15.5, L16.1, EDIT-run, L1.18a, L18.2, L15.6, L22.2, REPACK-tile, L23.1, L23.5c, L23.3, L23.4, L22.4, L22.5, L24.1, L22.7, L24.4
-- L7.11: L7.9, L7.10, L7.10a, L15.2, L7.9a, L7.10b, L19.1, L1.18a, L18.2, L22.2, L23.1, L23.4, L24.1, L24.4
+- L7.8: L7.12, L7.13, FPWARN, EDGE-class, L15.2, MEMO-edit, L14.1, L19.1, L15.4, L15.5, L16.1, EDIT-run, L1.18a, L15.6, L22.2, REPACK-tile, L23.1, L23.5c, L23.3, L23.4, L22.4, L22.5, L24.1, L22.7, L24.4
+- L7.11: L7.9, L7.10, L7.10a, L15.2, L7.9a, L7.10b, L19.1, L1.18a, L22.2, L23.1, L23.4, L24.1, L24.4
 - L10.4: EDGE-class, L20.1, TOKEN-types
 - L11.1: BIT-checker-ranges, FPWARN, L20.1, TOKEN-types
-- LIVE-clocks: L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L18.2, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
-- L7.9: L7.10a, L20.1, L15.2, MEMO-edit, L7.10b, L19.1, EDIT-run, L1.18a, L18.2, L22.2, L21.0, L23.1, L23.4, L24.1, L24.4
-- L7.10: L18.1, L15.2, L7.9a, MEMO-edit, L14.1, L15.4, EDIT-run, L1.18a, L18.2, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L22.4, L24.1
+- LIVE-clocks: L7.9, L7.10, L7.12, L11.2, L12.1, L7.13, BIT-checker-ranges, FPWARN, EDGE-class, L7.10a, L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.9a, MEMO-edit, L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L20.2, L16.2, L22.2, L12.3a, L21.0, L17.1b, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
+- L7.9: L7.10a, L20.1, L15.2, MEMO-edit, L7.10b, L19.1, EDIT-run, L1.18a, L22.2, L21.0, L23.1, L23.4, L24.1, L24.4
+- L7.10: L18.1, L15.2, L7.9a, MEMO-edit, L14.1, L15.4, EDIT-run, L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L22.4, L24.1
 - L7.12: L7.10a, L20.1, L15.2, L7.9a, MEMO-edit, L7.10b, EDIT-run, L22.2, L23.1, L15.8, L23.4, L24.1
-- L11.2: L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L12.3, L14.1, L19.1, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L23.1, L15.7, L23.4, L24.1
+- L11.2: L11.1a, L12.2, L13.1, L18.1, L20.1, L15.2, L12.3, L14.1, L19.1, L15.4, L15.5, L16.1, L17.1, L16.3, S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L23.1, L15.7, L23.4, L24.1
 - L12.1: L20.1, L11.2a, TOKEN-types
 - L7.13: L7.10a, L10.5, L20.1, L15.2, L7.9a, L7.10b, L11.3, L22.2, L13.2, L14.2, L12.4, L23.1, L23.4, L24.1
-- BIT-checker-ranges: L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- FPWARN: L7.10a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.10b, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L1.18a, L18.2, L20.2, L16.2, L22.2, L21.0, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- BIT-checker-ranges: L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- FPWARN: L7.10a, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L7.10b, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L1.18a, L20.2, L16.2, L22.2, L21.0, REPACK-tile, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
 - SELFINT-design: L20.1, L7.13a, MEMO-edit, STAGE-reads, L20.1a, EDIT-run, L20.2, L17.1b, L15.2c, L15.7b, L23.5c, NOINST-report
-- EDGE-class: L7.10a, L12.2, L20.1, L15.2, L7.10b, L12.3, L14.1, L15.3, L15.4, L1.18a, L18.2, L22.2, L12.3a, REPACK-tile, L23.1, L15.8, L23.5c, L23.4, L22.4, L24.1
-- L7.10a: L14.1, L15.4, EDIT-run, L1.18a, L18.2, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L22.4, L24.1
+- EDGE-class: L7.10a, L12.2, L20.1, L15.2, L7.10b, L12.3, L14.1, L15.3, L15.4, L1.18a, L22.2, L12.3a, REPACK-tile, L23.1, L15.8, L23.5c, L23.4, L22.4, L24.1
+- L7.10a: L14.1, L15.4, EDIT-run, L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L22.4, L24.1
 - L10.5: L11.3, L7.15, L13.2, L14.2, L12.4, L16.4
-- L11.1a: L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L23.1, L15.7, L15.8, L22.3, L23.4, L22.5, L24.1, L22.7
-- L12.2: L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L20.2, L15.6, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.7, L24.4
-- L13.1: L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.7, L24.4
+- L11.1a: L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, L23.1, L15.7, L15.8, L22.3, L23.4, L22.5, L24.1, L22.7
+- L12.2: L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L15.6, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.7, L24.4
+- L13.1: L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.7, L24.4
 - L18.1: L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, TOKEN-types, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7
-- L20.1: L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, EDIT-run, L1.18a, L18.2, L16.2, L22.2, L12.3a, L17.1b, REPACK-tile, GLAM-diamond-iface, L22.8, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
+- L20.1: L7.10b, L12.3, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, THIRDHOM-law, STAGE-reads, EDIT-run, L1.18a, L16.2, L22.2, L12.3a, L17.1b, REPACK-tile, GLAM-diamond-iface, L22.8, L15.2c, L23.1, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L23.5, L24.1, L22.6, L22.7, L24.4
 - L15.2: L7.10b, L12.3, L14.1, L19.1, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L1.18a, L12.3a, REPACK-tile
-- L11.2a: L14.1, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.7b, L23.4, L24.1, L24.4
+- L11.2a: L14.1, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.7b, L23.4, L24.1, L24.4
 - L7.13a: STAGE-reads, L20.1a, EDIT-run, L20.2, L17.1b, L15.2c, L15.7b, L23.5c, NOINST-report
 - L7.9a: L7.10b, L15.5, EDIT-run, L1.18a, L22.2, L23.1, L23.4, L24.1
 - MEMO-edit: L7.10b, STAGE-reads, L20.1a, L20.2, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report, L23.4, L24.1
-- L7.10b: L1.18a, L18.2, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L22.4, L24.1
+- L7.10b: L1.18a, L22.2, REPACK-tile, L23.1, L23.5c, L23.4, L22.4, L24.1
 - L11.3: L7.15, L13.2, L14.2, L12.4, L16.4
-- L12.3: L18.2, L20.2, L15.6, L16.2, L22.2, L13.2, TERM-1, L22.8, L23.1, L15.7, L15.8, L22.3, L23.4, L22.5, L24.1, L22.6, L22.7
-- L14.1: L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L19.2a, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- L19.1: S.1b, L1.18a, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, GLAM-pin, L23.1, L15.7, L15.8, L22.3, L23.4, L22.5, L24.1, L22.7, L24.4
-- L15.3: S.1b, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.7b, L23.4, L24.1, L24.4
-- L15.4: S.1b, L1.18a, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, REPACK-tile, GLAM-diamond-iface, L13.2, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L15.7b, L23.5c, L23.4, L24.1, L24.4
-- L15.5: S.1b, L1.18a, L18.2, L20.2, L16.2, L12.3a, L21.0, L13.2, TERM-1
-- L16.1: L18.2, L20.2, L15.6, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- L12.3: L20.2, L15.6, L16.2, L22.2, L13.2, TERM-1, L22.8, L23.1, L15.7, L15.8, L22.3, L23.4, L22.5, L24.1, L22.6, L22.7
+- L14.1: L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L19.2a, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- L19.1: S.1b, L1.18a, L20.2, L15.6, L16.2, L22.2, L12.3a, L13.2, TERM-1, L22.8, GLAM-pin, L23.1, L15.7, L15.8, L22.3, L23.4, L22.5, L24.1, L22.7, L24.4
+- L15.3: S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.7b, L23.4, L24.1, L24.4
+- L15.4: S.1b, L1.18a, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, REPACK-tile, GLAM-diamond-iface, L13.2, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L15.7b, L23.5c, L23.4, L24.1, L24.4
+- L15.5: S.1b, L1.18a, L20.2, L16.2, L12.3a, L21.0, L13.2, TERM-1
+- L16.1: L20.2, L15.6, L22.2, L12.3a, L21.0, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.3, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
 - L17.1: L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.7
-- L16.3: S.1b, L18.2, L20.2, L15.6, L16.2, L22.2, L12.3a, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
-- LAW-shape: L18.2, L20.2, L16.2, L21.0, TERM-1, L15.2c, L23.1, L15.7, L15.7b, L23.4, L24.1, L24.4
+- L16.3: S.1b, L20.2, L15.6, L16.2, L22.2, L12.3a, GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- LAW-shape: L20.2, L16.2, L21.0, TERM-1, L15.2c, L23.1, L15.7, L15.7b, L23.4, L24.1, L24.4
 - THIRDHOM-law: L22.2, L17.1b, L23.1, L23.2, L23.3, L23.4, L23.5, L24.1
-- STAGE-reads: L18.2, L20.2, L16.2, L22.2, L21.0, L17.1b, COMPILE-data, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L15.9, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
+- STAGE-reads: L20.2, L16.2, L22.2, L21.0, L17.1b, COMPILE-data, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L23.1, L15.7, L19.2a, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L15.9, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
 - L20.1a: L16.2, L22.2, L21.0, L17.1b, GLAM-diamond-iface, L15.2c, L23.1, L15.7b, L23.5c, L22.3, NOINST-report, L23.4, L22.4, L24.1, L24.4
-- TOKEN-types: L18.2, L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a
+- TOKEN-types: L20.2, L16.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a
 - EDIT-run: L20.2, L22.2, L17.1b, L15.2c, L23.1, L15.7b, L23.5c, NOINST-report, L23.4, L24.1
 - S.1b: L13.2, TERM-1, L22.8, L15.7, L15.8, L22.3, L22.5, L22.6, L22.7, L6.17a
 - L7.15: L13.2, L14.2, L12.4, L16.4
-- L1.18a: L18.2, L20.2, L22.2, L21.0, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L22.7, L24.4
-- L18.2: GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L19.2a, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7
+- L1.18a: L20.2, L22.2, L21.0, REPACK-tile, L23.1, L23.5c, L23.4, L24.1, L22.7, L24.4
 - L20.2: GLAM-diamond-iface, L13.2, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
 - L15.6: L13.2, TERM-1, L22.8, L15.7, L15.8, L23.3, L22.3, L22.4, L22.5, L22.6
 - L16.2: GLAM-diamond-iface, L13.2, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4
@@ -2401,21 +2368,35 @@ These 12779 pairs are at different levels, have no directed path between them, a
 - L34.5: L34.8
 - L34.2: L34.3
 - L33.2: L33.1a
-- STOP-switch: PASSES-vars-test, L1.26b, SCALE-cover, MSG-shared-print, T2, WARN-refused, L2.8c, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STATIC-assert, L1.40f, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.8, BIT-repr, INT-twos, NAN-cast-atoms, HKT-1, MEMO-cross, L7.1a, L8.2, L9.1, L15.1, L10.4a, FINITE-prop, L7.14, L7.5, TARGET-native, QUANT-finite, L10.3, L10.2a, L10.4, CHECKED-float, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, EDGE-class, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L20.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, EMPTY-level-swap, TERM-stall, PORT-ack-name, STORE-check-off, PORT-key-static, L21.1, L21.1c, S.6, L25.1, L26.1, L25.2, DIAG-json, TERM-2, L30.2, L27.2, MCU-period, L32.4
-- RT-alloc-refusal: RT-sites, SCALE-cover, PLAN-shared-regions, T10, T14-lints, FLOAT-sqrt, L1.39g, STR-views, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L5.2, L3.15, L4.6, L1.18a, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, L7.5a, L21.2, L28.1, OOM-wave, INT-128, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L18.2, L21.0, L19.2a, L24.1, L24.4, L6.17a, RT-guard-fault, PORT-ack-name, RT-internal-fault, L21.1, S.4, L19.2, L24.2, L24.3, L24.2a, L24.6, L24.10, S.6, L24.7, QUOT-classes, L26.1, L28.4, L29.1, L31.2, L24.8, L31.3, L27.1, L27.2, L27.1b, L27.2a, L27.2b, L27.2c, L34.5, L34.8, PORTABLE-rt
-- RT-guard-fault: RT-sites, SCALE-cover, PLAN-shared-regions, T10, T14-lints, FLOAT-sqrt, L1.39g, STR-views, L3.13, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L5.2, L3.15, L4.6, L1.18a, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, L7.5a, L21.2, L28.1, OOM-wave, INT-128, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L18.2, L21.0, L19.2a, L24.1, L24.4, L6.17a, PORT-ack-name, RT-internal-fault, L21.1, S.4, L19.2, L24.2, L24.3, L24.2a, L24.6, L24.10, S.6, L24.7, QUOT-classes, L26.1, L28.4, L29.1, L31.2, L24.8, L31.3, L27.1, L27.2, L27.1b, L27.2a, L27.2b, L27.2c, L34.5, L34.8, PORTABLE-rt
+- STOP-switch: PASSES-vars-test, L1.26b, SCALE-cover, MSG-shared-print, T2, WARN-refused, L2.8c, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STATIC-assert, L1.40f, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.8, BIT-repr, INT-twos, NAN-cast-atoms, HKT-1, MEMO-cross, L7.1a, L8.2, L9.1, L15.1, L10.4a, FINITE-prop, L7.14, L7.5, TARGET-native, QUANT-finite, L10.3, L10.2a, L10.4, CHECKED-float, L11.1, LIVE-clocks, L11.2, L12.1, BIT-checker-ranges, FPWARN, EDGE-class, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L12.3, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, EMPTY-level-swap, TERM-stall, PORT-ack-name, STORE-check-off, PORT-key-static, L21.1, L21.1c, S.6, L25.1, L26.1, L25.2, DIAG-json, TERM-2, L30.2, L27.2, MCU-period, L32.4
+- RT-alloc-refusal: RT-sites, SCALE-cover, PLAN-shared-regions, T10, T14-lints, FLOAT-sqrt, L1.39g, STR-views, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L5.2, L3.15, L4.6, L1.18a, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, L7.5a, L21.2, L28.1, OOM-wave, INT-128, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L21.0, L19.2a, L24.1, L24.4, L6.17a, RT-guard-fault, PORT-ack-name, RT-internal-fault, L21.1, S.4, L19.2, L24.2, L24.3, L24.2a, L24.6, L24.10, S.6, L24.7, QUOT-classes, L26.1, L28.4, L29.1, L31.2, L24.8, L31.3, L27.1, L27.2, L27.1b, L27.2a, L27.2b, L27.2c, L34.5, L34.8, PORTABLE-rt
+- RT-guard-fault: RT-sites, SCALE-cover, PLAN-shared-regions, T10, T14-lints, FLOAT-sqrt, L1.39g, STR-views, L3.13, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L5.2, L3.15, L4.6, L1.18a, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, L7.5a, L21.2, L28.1, OOM-wave, INT-128, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L21.0, L19.2a, L24.1, L24.4, L6.17a, PORT-ack-name, RT-internal-fault, L21.1, S.4, L19.2, L24.2, L24.3, L24.2a, L24.6, L24.10, S.6, L24.7, QUOT-classes, L26.1, L28.4, L29.1, L31.2, L24.8, L31.3, L27.1, L27.2, L27.1b, L27.2a, L27.2b, L27.2c, L34.5, L34.8, PORTABLE-rt
 - TERM-stall: PASSES-vars-test, STAGE-joined-eq, L1.26b, MSG-shared-print, BUILD-const, WARN-refused, ISSUE1-payload, STRUCT-key, T10, L1.40c, L2.7, STAGE-print, STATIC-assert, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.8, NAN-cast-atoms, HKT-1, S.1d, L8.2, L9.1, L10.4a, FINITE-prop, L7.14, L7.5, QUANT-finite, L21.2, L7.4b, BYTES-wide, L10.2a, CHECKED-float, BIT-checker-ranges, FPWARN, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L11.2a, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, GLAM-diamond-iface, TERM-1, L22.8, GLAM-pin, L15.2c, L15.7, L19.2a, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7, L24.4, EMPTY-level-swap, PORT-ack-name, STORE-check-off, PORT-key-static, L21.1, L19.2, L19.3, S.6, L25.1, L25.2, TERM-2, L30.2, L27.2, L34.2
-- PORT-ack-name: PASSES-vars-test, PARSE-one-tuple, L1.26b, SCALE-cover, MSG-shared-print, BUILD-const, WARN-refused, GROUP-e2e, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STATIC-assert, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L1.39g, RT-exhaust-report, L3.8, BIT-repr, HASH-repr, LAYOUT-soa, L1.18a, NAN-cast-atoms, SORTED-dense, HKT-1, RT-layout, S.1d, L8.1, L7.1a, L8.2, L10.1, L7.2a, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.5a, L10.2, L21.2, L28.1, OOM-wave, L7.4b, INT-128, BYTES-wide, FFI-headertest, RT-exhaust-wave, L7.6, L10.3, L10.2a, L7.8, L7.11, L10.4, CHECKED-float, L11.1, L7.9, L12.1, BIT-checker-ranges, FPWARN, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, MATH-names, L18.2, L20.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, EMPTY-level-swap, STORE-check-off, PORT-key-static, RT-internal-fault, L21.1, L24.3, L20.4, L20.3, L24.6, L24.10, S.6, L24.7, L25.1, L22.9, L26.1, L28.4, L25.3, L25.2, L29.1, L25.4, L30.1, L25.5, TERM-2, L30.2, L25.6, L24.8, L30.3, L27.1, L27.2, L27.2a, L27.2b, L27.2c, L34.5
-- STORE-check-off: PASSES-vars-test, L1.26b, SCALE-cover, MSG-shared-print, WARN-refused, L2.8c, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STATIC-assert, L1.40f, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.8, BIT-repr, INT-twos, NAN-cast-atoms, HKT-1, MEMO-cross, S.1d, L8.2, L9.1, L10.4a, L7.14, L7.5, TARGET-native, L21.2, L7.4b, INT-128, BYTES-wide, L7.3e, FFI-status, EXPORT-unique, L10.2a, CHECKED-float, LIVE-clocks, BIT-checker-ranges, FPWARN, EDGE-class, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L12.3, L14.1, L15.5, L17.1, L16.3, STAGE-reads, TOKEN-types, L18.2, L20.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L23.1, L15.7b, L22.3, NOINST-report, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, EMPTY-level-swap, PORT-key-static, L21.1, L21.1c, S.6, L25.1, L25.2, DIAG-json, TERM-2, L30.2, L27.2, MCU-period
-- PORT-key-static: PASSES-vars-test, L1.26b, MSG-shared-print, WARN-refused, ISSUE1-payload, STRUCT-key, T10, L2.7, STATIC-assert, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.8, NAN-cast-atoms, HKT-1, S.1d, L7.1a, L8.2, L7.4, L7.14, L7.5, QUANT-finite, L10.2, L21.2, L7.4b, BYTES-wide, L10.3, L10.2a, L10.4, CHECKED-float, L11.1, L12.1, BIT-checker-ranges, FPWARN, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L18.2, L20.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7, L24.4, L21.1, S.6, L25.1, L25.2, TERM-2, L30.2, L27.2
-- RT-internal-fault: STR-types, PLAN-shared-regions, T10, T14-lints, L2.9, L3.2, FLOAT-sqrt, L1.39g, STR-views, RT-exhaust-report, L3.13, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L5.2, L3.15, L4.6, L1.18a, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, L7.5a, L21.2, L28.1, OOM-wave, INT-128, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L18.2, L21.0, L19.2a, L24.1, L24.4, L6.17a, L21.1, S.4, L19.2, L24.2, L24.3, L24.2a, L24.6, L24.10, S.6, L24.7, QUOT-classes, L26.1, L28.4, L29.1, L31.2, L24.8, L31.3, L27.1, L27.2, L27.1b, L27.2a, L27.2b, L27.2c, L34.5, L34.8, PORTABLE-rt
-- MOD-residue: PASSES-vars-test, K36-study, STAGE-joined-eq, VERDICT-route, REFUSE-group-site, T6-refusal-cost, L1.26b, SETTLE-rounds, SCALE-cover, MSG-shared-print, T2, WARN-refused, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STAGE-print, ST-formula-parse-keep, STATIC-assert, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L1.39g, L3.8, BIT-repr, INT-twos, L1.18a, NAN-cast-atoms, HKT-1, S.1d, L8.2, L9.1, L10.4a, FINITE-prop, L7.14, L7.5, QUANT-finite, L21.2, L7.4b, INT-128, BYTES-wide, L7.6, L10.2a, CHECKED-float, BIT-checker-ranges, FPWARN, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, MATH-names, L18.2, L20.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7, L24.4, Q1-LOCAL, EMPTY-level-swap
+- PORT-ack-name: PASSES-vars-test, PARSE-one-tuple, L1.26b, SCALE-cover, MSG-shared-print, BUILD-const, WARN-refused, GROUP-e2e, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STATIC-assert, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L1.39g, RT-exhaust-report, L3.8, BIT-repr, HASH-repr, LAYOUT-soa, L1.18a, NAN-cast-atoms, SORTED-dense, HKT-1, RT-layout, S.1d, L8.1, L7.1a, L8.2, L10.1, L7.2a, L9.1, L15.1, L10.4a, L8.2a, FINITE-prop, L7.5a, L10.2, L21.2, L28.1, OOM-wave, L7.4b, INT-128, BYTES-wide, FFI-headertest, RT-exhaust-wave, L7.6, L10.3, L10.2a, L7.8, L7.11, L10.4, CHECKED-float, L11.1, L7.9, L12.1, BIT-checker-ranges, FPWARN, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, L20.1a, TOKEN-types, MATH-names, L20.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, L6.17a, EMPTY-level-swap, STORE-check-off, PORT-key-static, RT-internal-fault, L21.1, L24.3, L20.4, L20.3, L24.6, L24.10, S.6, L24.7, L25.1, L22.9, L26.1, L28.4, L25.3, L25.2, L29.1, L25.4, L30.1, L25.5, TERM-2, L30.2, L25.6, L24.8, L30.3, L27.1, L27.2, L27.2a, L27.2b, L27.2c, L34.5
+- STORE-check-off: PASSES-vars-test, L1.26b, SCALE-cover, MSG-shared-print, WARN-refused, L2.8c, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STATIC-assert, L1.40f, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.8, BIT-repr, INT-twos, NAN-cast-atoms, HKT-1, MEMO-cross, S.1d, L8.2, L9.1, L10.4a, L7.14, L7.5, TARGET-native, L21.2, L7.4b, INT-128, BYTES-wide, L7.3e, FFI-status, EXPORT-unique, L10.2a, CHECKED-float, LIVE-clocks, BIT-checker-ranges, FPWARN, EDGE-class, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L12.3, L14.1, L15.5, L17.1, L16.3, STAGE-reads, TOKEN-types, L20.2, L22.2, L12.3a, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L23.1, L15.7b, L22.3, NOINST-report, L24.1, L22.6, L22.7, L24.4, L6.17a, S.1, EMPTY-level-swap, PORT-key-static, L21.1, L21.1c, S.6, L25.1, L25.2, DIAG-json, TERM-2, L30.2, L27.2, MCU-period
+- PORT-key-static: PASSES-vars-test, L1.26b, MSG-shared-print, WARN-refused, ISSUE1-payload, STRUCT-key, T10, L2.7, STATIC-assert, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L3.8, NAN-cast-atoms, HKT-1, S.1d, L7.1a, L8.2, L7.4, L7.14, L7.5, QUANT-finite, L10.2, L21.2, L7.4b, BYTES-wide, L10.3, L10.2a, L10.4, CHECKED-float, L11.1, L12.1, BIT-checker-ranges, FPWARN, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L20.1, L15.2, L11.2a, L14.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, L20.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7, L24.4, L21.1, S.6, L25.1, L25.2, TERM-2, L30.2, L27.2
+- RT-internal-fault: STR-types, PLAN-shared-regions, T10, T14-lints, L2.9, L3.2, FLOAT-sqrt, L1.39g, STR-views, RT-exhaust-report, L3.13, L3.15a, BIT-repr, WIDE-product, HASH-repr, FOLD-zero, L3.17, L3.23, L3.16, L4.2, L5.8, LAYOUT-soa, L5.1, L3.14, L5.2, L3.15, L4.6, L1.18a, L5.8a, L5.6, L5.9, L5.13, ENUM-perm, SORTED-dense, L5.7, L6.14, L5.1d, L5.7a, SPECULATE, L6.14a, L6.13, L5.14, L6.13a, L6.13c, L6.15, FOLD-layers, L6.13e, BEND-contract, L6.16, RT-layout, DEEP-native-eq, RECLAIM-pulse, L6.17, STR-cursor, L28.1a, S.1a, L7.2, ROD-data, L7.3, L9.1, L7.4, GLAM-logspec, L7.5, UNORD-keep, L7.5a, L21.2, L28.1, OOM-wave, INT-128, RT-exhaust-wave, L7.6, L10.3, L7.8, L7.11, L7.9, L14.1, L19.1, L21.0, L19.2a, L24.1, L24.4, L6.17a, L21.1, S.4, L19.2, L24.2, L24.3, L24.2a, L24.6, L24.10, S.6, L24.7, QUOT-classes, L26.1, L28.4, L29.1, L31.2, L24.8, L31.3, L27.1, L27.2, L27.1b, L27.2a, L27.2b, L27.2c, L34.5, L34.8, PORTABLE-rt
+- MOD-residue: PASSES-vars-test, K36-study, STAGE-joined-eq, VERDICT-route, REFUSE-group-site, T6-refusal-cost, L1.26b, SETTLE-rounds, SCALE-cover, MSG-shared-print, T2, WARN-refused, ISSUE1-payload, STRUCT-key, T10, T14-lints, L2.7, STAGE-print, ST-formula-parse-keep, STATIC-assert, L1.40e, HKT-2, L2.12, OVERLOAD-name-type, BUBBLE-msg, GLAM-diamond, L2.12b, OR-PAT, L2.7a, L1.39g, L3.8, BIT-repr, INT-twos, L1.18a, NAN-cast-atoms, HKT-1, S.1d, L8.2, L9.1, L10.4a, FINITE-prop, L7.14, L7.5, QUANT-finite, L21.2, L7.4b, INT-128, BYTES-wide, L7.6, L10.2a, CHECKED-float, BIT-checker-ranges, FPWARN, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L17.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, MATH-names, L20.2, L22.2, L21.0, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L15.7, L15.8, L15.7b, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7, L24.4, Q1-LOCAL, EMPTY-level-swap
 - L2.13: GROUP-refusal, T11-preimage-rest, T10, L1.41, L2.14, L3.3, L3.22, L3.4, L3.5, L3.6, L3.19, LOWER-stack, L3.7, L3.20, L3.10, L3.12, L3.18, L3.17, L3.21, L3.23, L3.16, L3.15, L3.24, INTERN-threaded, PRELUDE-rules-run, REFUSAL-census, L7.14, FILE-bytes, MLIR-noalias, L28.2, L7.15, L18.3, L17.2, L16.4, L20.2b, L15.9, L23.6, L22.10a, L24.9a, L28.3, S.1, S.2, S.2-forms, L24.2, L24.3, L24.6, L24.10, L24.7, L25.3, L19.4, L25.2, L22.10, L27.3, L26.2, L20.5, L25.4, L25.5, L29.2, L30.2, L25.6, L30.3, L25.7, L24.9, L30.4, L30.5, L27.4, L30.6
 - TEST-fuzz: RT-sites, SCALE-cover, L2.8, T2-ty, T2, WARN-refused, L2.8c, L1.40f, L2.12, L2.10, SCOPE-warn, L3.22, COLLATE-data, BIT-repr, L3.20, INT-twos, L3.10, L3.12, L3.18, MATCH-commute, L3.21, L3.23, LAW20-move, CSR-bounds, BOUND-L4, BOUND-L5, LAW19-join, L4.8, L5.13, L5.5a, L6.11, L5.10, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, L6.8a, L6.12a, L5.14, L6.13b, L6.12b, L6.5c, FOLD-layers, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, STR-cursor, S.1a, ROD-data, L7.2a, L15.1, FINITE-prop, L7.14, L7.5, FILE-bytes, TARGET-native, OOM-wave, L7.5b, INT-128, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, L7.6, MLIR-noalias, L7.7, L7.8, L7.11, L10.4, LIVE-clocks, L7.9, L7.10, L7.12, L11.2, L7.13, MENU-linear-L10, EDGE-class, READ-arms, L7.10a, FLOAT-pitfall-lints, L11.1a, L12.2, L13.1, L7.9a, MEMO-edit, L7.10b, L12.3, L17.1, THIRDHOM-law, EDIT-run, L12.3a, MENU-linear-L15, L17.1b, GLAM-pin, L15.2c, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.3, NOINST-report, L23.4, L23.5, L24.1, STOP-switch, STORE-check-off, L21.1c, L24.6, L25.1, L23.5a, L25.3, L25.2, L27.3, DIAG-json, L25.4, L25.5, TERM-2, L30.2, L25.6, L30.3, L25.7, L34.9, MCU-period, L30.4, FFI-inline-proc, L30.3a, L30.5, L34.10, L34.1, L34.11, L32.2, L32.4, L34.2, L34.4, L34.3, L34.6, L34.7, L35.1
 - READ-arms: M0.10a, QUESTIONS-answered, SPEC-L3.9-tests, SPEC-L3.21-ac, WAVE-theory, FOOTPRINT-overlap, ORDER-rename, GROUP-setop, SETTLE-rounds, FINITE-type, RT-sites, SCALE-cover, L2.8, T2-ty, T2, WARN-refused, L2.8b, L2.8c, L1.40a, STRUCT-key, T14-lints, L2.7, STATIC-assert, L2.6, L1.40e, L1.40f, L2.12, L1.41, L2.10, SCOPE-warn, L2.11, L2.14, L3.22, L4.1, COLLATE-data, L3.7, RT-exhaust-report, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr, L3.20, INT-twos, L3.10, L3.12, L3.18, MATCH-commute, PROP-per-arrow, L3.21, L3.23, KEYABLE-reject, LAW20-move, CSR-bounds, BOUND-L4, L3.24, BOUND-L5, LAW19-join, L4.8, L5.13, L5.5a, SORTED-dense, L6.11, TRACE-gen-laws, L5.10, L6.9, INLINE-zir, LAW14-gen, WITNESS-widened, L5.7a, L6.8a, L6.12a, EQ-tabulate, L5.14, L6.13b, L6.12b, L6.5c, FOLD-layers, BEND-contract, L6.16, FOLD-unique, MEMO-cross, ARM-split, STR-cursor, S.1d, S.1a, ROD-data, L7.2a, L15.1, L8.2a, FINITE-prop, L7.14, L7.5, FILE-bytes, TARGET-native, PORT-why, OOM-wave, L7.5b, L7.4b, INT-128, L7.3e, FFI-headertest, FFI-status, EXPORT-unique, RT-exhaust-wave, L7.6, ROUND-words, MLIR-noalias, L10.2a, L7.7, L7.8, L7.11, L10.4, LIVE-clocks, L7.10a, FLOAT-pitfall-lints, L11.1a, L12.2, L13.1, L7.13a, L7.9a, MEMO-edit, L7.10b, L12.3, L17.1, THIRDHOM-law, STAGE-reads, L20.1a, EDIT-run, L20.2, L12.3a, MENU-linear-L15, L17.1b, GLAM-pin, L15.2c, L15.7, L19.2a, L23.2, L15.8, L15.7b, L23.5c, L23.3, NOINST-report, L23.4, L23.5, L24.1, STOP-switch, STORE-check-off, L21.1c, L24.6, L22.7a, S.6a, L25.1, L23.5a, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L25.3, L25.2, L27.3, DIAG-json, AD-reverse, LIB-linkage, L25.4, L25.5, TERM-2, L30.2, L25.6, L30.3, L25.7, L34.9, PICTURE-type, MCU-period, L30.4, L25.9, FFI-inline-proc, L27.2a, L27.2b, L27.2c, L30.3a, L30.3b, L30.5, L34.10, L34.1, L34.11, L32.1, L32.2, L32.4, L34.2, L34.4, L34.3, L34.6, L34.7, L35.1, L33.2, L33.1a
 - POLY-nf: FOOTPRINT-overlap, VERDICT-route, GROUP-refusal, T6-refusal-cost, STR-types, L1.26b, GROUP-setop, T11-preimage-rest, SETTLE-rounds, SCALE-cover, SCALE-first-run, L1.40, L1.40a, S22-R2, ST-formula-set, T10, T14-lints, L1.40c, PRE-abs-output, ST-formula-sibling, STAGE-print, ST-formula-parse-keep, L1.41, FLOAT-sqrt, L1.39g, L2.14, L3.3, L3.22, STR-views, L3.4, L3.5, L3.6, L3.19, L3.7, L3.15a, L3.20, L3.10, L3.12, L3.18, L3.17, L3.21, L3.23, L3.16, L3.15, L1.18a, NAN-cast-atoms, L3.24, L6.11a, L6.11b, PRELUDE-rules-run, S.1e, REFUSAL-census, L7.14, INT-128, BYTES-wide, CHECKED-float, L28.2, L7.10a, L7.13a, L7.10b, KERNEL-check-tests, L7.15, MATH-names, L12.3a, L18.3, L15.2c, L17.2, L16.4, L23.2, L20.2b, L23.5c, L15.9, L23.5, L23.6, L22.10a, L24.9a, Q1-LOCAL, S.3-cost-utvpi, S.3-cost-refusal, S.3-cost-preimage, S.3-cost-groups, S.3-cost-presburger, S.3-cost-intern, S.3-cost-types, S.3-cost-narrow, S.3-cost-check, S.3-cost-store, L24.2a, L22.7a, S.5a, QUOT-classes, L25.1, L23.5a, L21.3, S.7, L2.13, L25.3, L19.4, L25.2, L22.10, L27.3, L26.2, L20.5, L25.4, L25.5, L29.2, L30.2, L25.6, L30.3, L25.7, L24.9, L30.4, L25.9, L30.5, L27.4, L30.6
 - LIST-size: FOOTPRINT-overlap, RUNG2-bit, ORDER-rename, T11-preimage-log, GROUP-refusal, GROUP-setop, T11-preimage-rest, S15-calls, SETTLE-rounds, FINITE-type, L2.8, L1.40, WARN-refused, L2.8b, L2.8c, L1.40a, S22-R2, STRUCT-key, T10, L1.40c, L2.7, L1.40b-sparse, PRE-abs-output, STATIC-assert, L1.40e, L3.3, L3.22, L4.1, L3.4, COLLATE-data, L3.5, L3.6, L3.7, RT-exhaust-report, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr, L3.20, L3.12, L3.17, L3.23, L3.16, L3.15, L4.3, L5.5a, SORTED-dense, TRACE-gen-laws, LAW14-gen, EQ-tabulate, ARM-split, PRELUDE-rules-run, ROD-data, L7.14, L7.5, PORT-why, OOM-wave, L7.5b, L7.4b, L7.3e, FFI-headertest, RT-exhaust-wave, L28.2, SELFINT-design, READ-arms, L7.13a, MEMO-edit, L12.3, L20.1a, EDIT-run, L20.2, L17.1b, L15.2c, L16.4, L20.2b, L15.7b, L23.5c, L23.6, L24.9a, L24.6, L22.7a, S.6a, L25.1, L21.3, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L2.13, L25.3, L19.4, L25.2, L22.10, L27.3, L26.2, DIAG-json, AD-reverse, LIB-linkage, L20.5, L25.4, L25.5, L29.2, L30.2, L25.6, L30.3, L25.7, L24.9, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L30.3b, L30.5, L27.4, L30.6, L32.1, L32.2, L33.2, L33.1a
 - LIST-exact-overlap: M0.10a, QUESTIONS-answered, SPEC-L3.9-tests, SPEC-L3.21-ac, WAVE-theory, CK-data-memo, POLY-nf, ORDER-rename, GROUP-refusal, IF-union, STR-types, L1.26b, GROUP-setop, T11-preimage-rest, ST-wider, SETTLE-rounds, FINITE-type, L2.8, MSG-shared-print, WARN-refused, L2.8b, L2.8c, ISSUE1-payload, STRUCT-key, T10, L2.7, L1.40b-sparse, STATIC-assert, L1.40e, L2.12, OVERLOAD-name-type, L1.41, BUBBLE-msg, L2.10, GLAM-diamond, L2.12b, SCOPE-warn, L2.7a, L2.11, L2.14, L3.4, COLLATE-data, L3.5, L3.6, L3.19, L3.7, RT-exhaust-report, FLOAT-f32, BIT-repr, WIDE-product, HASH-repr, PROP-per-arrow, L3.18a, L3.18b, L3.15, NAN-cast-atoms, BOUND-L4, L3.24, BOUND-L5, L5.5a, SORTED-dense, MEMO-cross, PRELUDE-rules-run, S.1d, REFUSAL-census, L7.1a, L8.2, ROD-data, L9.1, L10.4a, L8.2a, L7.14, L7.5, FLOAT-sum-policy, PORT-why, OOM-wave, L7.5b, L7.4b, BYTES-wide, L7.3e, FFI-headertest, RT-exhaust-wave, ROUND-words, L10.2a, CHECKED-float, L28.2, BIT-checker-ranges, FPWARN, SELFINT-design, READ-arms, L10.3d, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, L13.1, L18.1, L7.13a, MEMO-edit, L16.1, L17.1, L16.3, STAGE-reads, L20.1a, TOKEN-types, EDIT-run, L7.15, L20.2, L16.2, L21.0, L17.1b, GLAM-diamond-iface, L18.3, TERM-1, L17.2, L16.4, L20.2b, L15.7b, L23.5c, L15.9, L23.6, L22.10a, L24.9a, L28.3, S.1, EMPTY-level-swap, STOP-switch, TERM-stall, PORT-ack-name, STORE-check-off, PORT-key-static, NATIVE-cache, S.2-forms, L24.6, L22.7a, S.6a, L25.1, L21.3, L31.1, FLOAT-elem, PORT-pointer-keys, L28.4, L2.13, L25.3, L19.4, L25.2, L22.10, L27.3, L26.2, DIAG-json, AD-reverse, LIB-linkage, L20.5, L25.4, L25.5, L29.2, TERM-2, L30.2, L25.6, L30.3, L25.7, L24.9, PICTURE-type, L30.4, L25.9, L27.2a, L27.2b, L27.2c, L30.3a, L30.3b, L30.5, L27.4, L30.6, L32.1, L32.2, L33.2, L33.1a
+- L18.2a: PASSES-vars-test, MSG-shared-print, T2, T14-lints, OR-PAT, WIDE-product, FLOAT-interval, NAN-cast-atoms, MEMO-cross, S.1d, TRIVIAL-or-cnf, TIMEOUT-annot, L10.4a, FINITE-prop, L7.14, L7.3g, FLOAT-sum-policy, UNORD-keep, TARGET-native, QUANT-finite, L21.2, L28.1, L7.4b, BYTES-wide, L7.3e, FFI-status, EXPORT-unique, L10.2a, L7.8, CHECKED-float, L7.10, BIT-checker-ranges, FPWARN, EDGE-class, L10.3d, L7.10a, FLOAT-pitfall-lints, KNOWN-mix, MOD-residue, L12.2, FACT-unify, L13.1, L20.1, L11.2a, L7.10b, FACT-prelude, FACT-claims, L14.1, L15.3, L15.4, L15.5, L16.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, GLAM-diamond-iface, TERM-1, L22.8, L15.2c, L23.1, L15.7, L15.8, LIST-exact-overlap, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L22.4, L22.5, L22.6, L22.7, EMPTY-level-swap, STOP-switch, PORT-ack-name, STORE-check-off, PORT-key-static
+- L18.2b: PASSES-vars-test, MSG-shared-print, PLAN-shared-regions, T14-lints, OR-PAT, L1.39g, WIDE-product, INT-twos, L1.18a, FLOAT-interval, NAN-cast-atoms, ASSOC-fold, PRELUDE-words, RT-layout, PRELUDE-rules-run, S.1d, TRIVIAL-or-cnf, S.1e, S.1a, ROD-data, TIMEOUT-annot, L10.4a, FINITE-prop, L7.14, L7.3g, FLOAT-sum-policy, UNORD-keep, FILE-bytes, QUANT-finite, L7.5a, L21.2, L28.1, L7.4b, INT-128, BYTES-wide, L10.2a, L7.8, L7.11, CHECKED-float, L7.9, L7.10, L11.2, BIT-checker-ranges, FPWARN, EDGE-class, L10.3d, L7.10a, FLOAT-pitfall-lints, KNOWN-mix, L11.1a, MOD-residue, L12.2, FACT-unify, L13.1, L20.1, L11.2a, L7.10b, L12.3, FACT-prelude, FACT-claims, L14.1, L19.1, L15.3, L15.4, L15.5, L16.1, L16.3, LAW-shape, STAGE-reads, TOKEN-types, S.1b, MATH-names, L20.2, L15.6, L16.2, L22.2, L12.3a, L21.0, REPACK-tile, L23.1, L15.7, L19.2a, L15.8, LIST-exact-overlap, L15.7b, L23.5c, L22.3, TERM-2a, NOINST-report, L23.4, L22.4, L22.5, L24.1, L22.6, L22.7, L24.4, EMPTY-level-swap, STOP-switch, RT-alloc-refusal, RT-guard-fault, TERM-stall, LAW-shape-eq, PORT-ack-name, STORE-check-off, PORT-key-static, RT-internal-fault
+- IF-union: STR-types
+- SCALE-cover: L1.40
+- T2: L2.8c
+- WARN-refused: L1.40a
+- L2.8c: L1.40a
+- S22-R2: T14-lints
+- T11-check: T14-lints
+- ISSUE1-payload: T14-lints
+- STRUCT-key: T14-lints
+- T14-lints: L1.40c, L2.7
+- L1.40c: L2.7
+- L1.40b: STATIC-assert
 
 ## T14 and T11 findings
 
@@ -2616,7 +2597,7 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **L6.3.** L6.1: AST. L6.2: with boundary elaboration shared with loop heads. L6.6: gen interpreter to run its tests. L2.4: methods for the primed receiver. L3.2: frames as families. *Test added 2026-11-05:* `local` on a generation variable is accepted, absent from the result and readable in the step; on a step-local it is rejected at its line (resolve.rs:1277-1303); outside a loop it keeps today's error. `x + 1;` and `g(x);` are rejected naming the rule; `c*.tick();` is accepted. `loop i { hit = if xs[i] == target { break i } else { i }; ... }` with `hit` unread ends at the target, in the interpreter and after L3.11. `classes[i]*.m()` in a method of a struct with field `classes` changes only entry i, and a second writer is rejected. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L6.1 (via L6.2), L2.4 (via L6.2), L3.2 (via L6.2), L6.6 (via L6.2). *Needs now:* OSP-drop, L6.2. *Added 2026-11-09 (MSG-audit-solve-rt):* the split repair of a refused linear question names its two functions by `presburger::free_names`, which appends a number; for a primed name `f'` the number goes before the prime (`f1'`, `f2'`), with a test that the repaired program compiles.
 - **L6.8.** L6.3: elaborated gen terms to check. L6.6: execution of typed examples. *Note:* check/ has no fix or gen handling yet. *Test added 2026-11-05:* `local` drops the variable from the frame type.
 - **L6.11.** L6.3: loop heads. L6.4: recursive definition cycles. M0.5: store::{wto,iterate} and prelude iteration.zed. L1.24: resolution rules it extends. L1.39: type operations and emptiness in the widening. *Note:* Must stay deterministic between batch and single-file checking, with no size switches. Cross-review if its complexity is above O(n log n). *Changed 2026-11-05:* iterate.rs:240 widens with no record, so a widened range could silently remove `#collision`; the fix needs L4.5's reducers. The sec:domains sentence needs the author's review with the row. *Test added 2026-11-05:* Widening is recorded as a grade below proof; `#collision` is kept for a key range known only through widening. *Needs now:* L4.5, L6.3, ORDER-keypath. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L6.4 (via L6.3).
-- **L6.14.** L6.3 and L6.4: elaborated loops and recursion. L6.6 and L6.7: reference semantics for differential tests. L2.9: closure representation. L3.13: family code generation. *Note:* codegen.rs inlines only Prim, Apply, If and Match; fix and gen go through the rt_node slow path. ZIR Op::Fix, Op::Gen and RegionKind::Loop already lower (lower.rs:685-728). Added 2026-11-04: LOWER-stack (step L6.13d), the record of how generated code manages stack depth, which this step follows. *Test added 2026-11-05:* The native build of L6.3's unread `break` program ends at the target. Also: Nodes are the fix's definitions and call sites, callees outside the fix included; edges carry the key offset where affine; a component is unmarked only if one parameter moves strictly in one direction on every edge. `f2(n: int) = P(a: n, b: g2(n + 1).a)`, `g2(n: int) = P(a: f2(n - 1).a * 2, b: 0)` is marked and `f2(3).b` is 6; the `w` call is marked; `h` is unmarked; the search is linear at n and 8n. Closure families: the row names the size (ZIR nodes and edges) and degree, choosing between (a) a worklist, cubic per DESIGN:1666's exception, and (b) unification, near-linear, by L6.14's dispatch, L18.2's `@preallocated` and L24.8's schema, with a `// Complexity tradeoff:` comment, and no size switch. Also: A self tail call and a mutual tail call of different arity, inside an `if` arm, at depth 10,000,000 on a 2 MiB thread match the interpreter, with stack use read per size at n and 8n. *Needs now:* L6.3, LOWER-stack, CONTIFY. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L2.9 (via L6.3), L6.6 (via L6.3), L6.7 (via L6.3), L6.4 (via L6.3), L3.13 (via L6.3).
+- **L6.14.** L6.3 and L6.4: elaborated loops and recursion. L6.6 and L6.7: reference semantics for differential tests. L2.9: closure representation. L3.13: family code generation. *Note:* codegen.rs inlines only Prim, Apply, If and Match; fix and gen go through the rt_node slow path. ZIR Op::Fix, Op::Gen and RegionKind::Loop already lower (lower.rs:685-728). Added 2026-11-04: LOWER-stack (step L6.13d), the record of how generated code manages stack depth, which this step follows. *Test added 2026-11-05:* The native build of L6.3's unread `break` program ends at the target. Also: Nodes are the fix's definitions and call sites, callees outside the fix included; edges carry the key offset where affine; a component is unmarked only if one parameter moves strictly in one direction on every edge. `f2(n: int) = P(a: n, b: g2(n + 1).a)`, `g2(n: int) = P(a: f2(n - 1).a * 2, b: 0)` is marked and `f2(3).b` is 6; the `w` call is marked; `h` is unmarked; the search is linear at n and 8n. Closure families: the row names the size (ZIR nodes and edges) and degree, choosing between (a) a worklist, cubic per DESIGN:1666's exception, and (b) unification, near-linear, by L6.14's dispatch, L18.2b's `@preallocated` and L24.8's schema, with a `// Complexity tradeoff:` comment, and no size switch. Also: A self tail call and a mutual tail call of different arity, inside an `if` arm, at depth 10,000,000 on a 2 MiB thread match the interpreter, with stack use read per size at n and 8n. *Needs now:* L6.3, LOWER-stack, CONTIFY. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L2.9 (via L6.3), L6.6 (via L6.3), L6.7 (via L6.3), L6.4 (via L6.3), L3.13 (via L6.3).
 - **L6.9.** L6.4: definedness fix terms. L6.8: shared loop typing. L3.8: evidence grades. L3.10: Boom checks at folds; SEMIRING-values: lattice and semiring evidence. L1.39: type emptiness and type-level operations. *Note:* Hard algorithm: cross-review if stability checking has no simple complexity bound. *Test added 2026-11-05:* A `fix` step with a loose atom over a carrier without top is rejected with the three repairs of DESIGN:1414; `else` is accepted; a declared top `#conflict` is accepted, and contradictory writes give `#conflict` under every firing order. A declared `Dist` semiring with two-`Dist` multiplication and p = 0 reaches its fixed point in N rounds, and a step outside that premise gets no such bound. *Needs now:* L6.8, SEMIRING-values. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L6.4 (via L6.8), L3.8 (via L6.8), L3.10 (via SEMIRING-values).
 - **L6.13.** L6.8: dependence that fixes the retention window. L6.14: compiled loops to reuse in. L1.34: reference counting base. L3.16 and L3.17: memory plan and representation layers it extends. *Note:* zir/memory.rs has no fix or gen handling today. Cross-review the retention-window analysis. Added 2026-11-03 from LOOP-boundary-spec: L6.8a: the k-frame window and the boundary entries that set the retention window. L6.14a: the preloaded window it reuses in place. Added 2026-11-03 by the Zed0 audit: L5.4: the one-key `patch` and `with` steps it updates in place. *Test added 2026-11-05:* Generation frames in an arena leave no live slot at the end, and an inner arena releases with the outermost; an `Id ->? Node` cycle leaves no live object, and deletion gives `#notFound`. A struct with a family updated n times through `c*.m()` and through a nested receiver makes no copy and is O(1) per update at n and 8n; a negative control holding a second reference copies, run once. Each case at n and 8n. *Needs now:* L3.16, L6.14a, UNIT-modes. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L3.17 (via L3.16), L5.4 (via L6.14a), L6.8 (via L6.14a), L6.14 (via L6.14a), L6.8a (via L6.14a).
 - **L6.13c.** L6.13: compiled reference counting, whose release this makes iterative. *Note:* Added 2026-11-03 by the Zed0 audit. Feeds L6.20 and S.1. *Test added 2026-11-05:* Builds both a list and a tree by `.foldl`: `(0..<n).foldl(#nil, (a, i) -> #cons(v: i, next: a))` and `(0..<n).foldl(#leaf, (a, i) -> Node(l: a, v: i, r: #leaf))`, each released in O(n) with constant stack at n and 8n.
@@ -2699,7 +2680,7 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **L7.5.** L7.3: ports and wave stamps. Since 2026-11-03 (FRP study) L7.3 also gives the arrival `Instant` that `merge`, `latest` and `gap:` windows read. L7.4: tests of foreign calls in waves. L4.1: grouping behind windows. L5.1, L5.3: order and sorted iteration for frontiers. *Note:* Spec gap: no window signature is written in DESIGN.md although programs 17, 18 and 29 use it. Proposal: write it in sec:order and sec:grammar as the first slice of this step; author approved a wave rethink earlier, so read author-decisions memory first. *Moved before S.1 (2026-11-05):* Waves and `.window` are core stream semantics; L7.6 and L19.1 need them; needs L7.3, L7.4, L4.1, L5.1, L5.3. *Changed 2026-11-05:* D:526 and :527 promise the arrival `Instant`, D:435 and D:2229 promise merge and debounce behavior, and no test reads them; L7.5's only reason to need L7.4 is the stale foreign test (plan_dag.md:1305), so the edge goes, releasing L7.6 to L7.13 from waiting on FFI. Note edit at :1305: delete 'L7.4: tests of foreign calls in waves.' and the rethink sentence (now WAVE-theory); merge and latest read wave stamps, and a `gap:` window reads its timestamp source, which may be the arrival `Instant`. PROPOSAL's move reason for L7.5 must drop L7.4. *Test added 2026-11-05:* A window whose timestamp source is the arrival `Instant`, in the form L7.5 writes, gives the same windows on replay of a recorded run. `a.merge(b)` of two streams of one key type is rejected with `.tag` offered; `clicks.latest(pos)` timed at 10^4, 10^5 and 10^6 entries grows as n; the debounced stream of the gap example is the entries at 2, 7 and 12. Pushes to `stdout` at stamps (0, 1), (1) and (1, 0), computed in the opposite order, are written (0, 1), then (1), then (1, 0). *Needs now:* L7.3, EX-prop. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L4.1 (via L7.3), L5.1 (via L7.3), L5.3 (via L7.3).
 - **L10.2.** L10.1: AST. L1.26: rule base. L3.8: map-type checks. L2.5, L2.6: generic and overload resolution. L7.4: signature declarations (only that slice). *Note:* The need on L7.4 falls to a small slice if L7.4 is split as proposed there. *Moved before S.1 (2026-11-05):* Rule 2 of type constraints in signatures; generics in the port need it. Interface semantics added here per plan_dag.md:1297. Needs L7.4, which moves. *Test added 2026-11-05:* `interface I { f: (I) -> int }` is classified like L6.4's types. Also: `f(x: int) -> int = x + 1;` accepted and `f(x: int) -> Utf8String = x + 1;` rejected. With `g: int -> int`, `f: int[0..<10] -> int = g` rejected naming both domains with the repair `x -> g(x)`; `f: int[0..<10] -> int = x -> g(x)` accepted, with `f(9)` accepted and `f(10)` rejected at the call. `x: f64 = pick(c, 1n, 2n)` reads both literals at `f64`; `x: f64 = pick(c, 1, 2)` is rejected at the literals with the menu. An interface's required name resolves as a field or as an in-scope function taking the struct first, resolved in the caller's scope; `describe(c)` with `area(s: Shape)` elaborates to the struct widened with that field; the exported signature names only the structural type across separate compilation; `x: {show: _}` given a struct is accepted through the caller's `show` (L2.6a's corner case); `v is {name: _}` ignores a function. Scaling: n calls each resolving a required name, at n and 8n, within 24x. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L2.5 (via L10.1), L2.6 (via L10.1), L3.8 (via L10.1), LIT-plain (via L10.1). *Needs now:* L10.1, L7.4. *Changed 2026-11-09 (LIT-bare-spec; author decisions A14 B and A15 A):* DESIGN step L10.2 now has a literal take an ascribed carrier by the rule of sec:domains and a carrier the expected type fixes through a call's generic result type (`y: f64 = inc(2.5)`); a literal no carrier of the type can take is rejected with the menu of step L1.26. The tests above that write `pick(c, 1n, 2n)` read `pick(c, 1, 2)`, now accepted at `f64`. LIT-bare implements the literal rule; it comes before this step through L10.1.
 - **L21.2.** L7.1: facet clause carrying the words. L7.2: port declarations. L7.3: `timeout`, `bound`, sockets, replay harness recording arrivals and random waits. L7.3d: the port levels `#raw` and `#idempotent(key)` (plan audit, 2026-11-03). L7.4: `@stateless` foreign calls for the idempotence check. *Note:* The test peers are local processes, nothing external. Waits must draw from a recorded source so that replay stays bit-identical. *Moved before S.1 (2026-11-05):* Port policies `retry`, `hedge`, `breaker`, `rate` are language words on ports; needs L7.1-L7.4, L7.3d only; no back end involved (DESIGN:2471, confirmed). *Test added 2026-11-05:* `retry`: `#exp` doubles up to `max:`, waits are drawn below the bound and replay gives the same waits; on a non-idempotent operation or a foreign call not marked `@stateless` it is a compile error, and on a `@stateless` one it is accepted. A timeout over a retried operation ends all attempts within `d`, the failure is the last attempt's; a peer answering `#notFound` gets one request. `hedge(timeout: d)` with a slow first peer returns the second peer's answer, cancels the other and replays the same; `hedge` on a write, on a non-idempotent operation or on a port without `peers` is a compile error. `rate(n, per: d)` admits n per period, `#block` waits, `#full` fails at once, and a wait under a timeout gives `#timeout`. `bound(n)` on a port holds under `#block` and `#full`, and a stalled peer on one port leaves another port's slots free. `peers`: one case each with replay for `#roundRobin`, `#leastLoaded` and `#inOrder`; a failed first peer's retry and a hedged request each reach the next peer; under `#hash(k)` a failing peer's retry reaches the next peer and the next request for that key returns to its hash peer. `breaker`: after `d` one request reaches the peer, and while it is held a second gets `#unavailable` without calling the peer; if the held request fails the breaker stays open for another `d`, and if it succeeds the breaker closes; k `#notFound` answers do not open it, and k `#timeout` failures do. `retry(n, ...)` and `timeout(d)` with the argument read from a port are rejected, naming the run-time value, and a top-level constant is accepted; the printed type of a port under each word gains exactly the members DESIGN:1532 lists. Spec in the same step: add to DESIGN:1525 that `hedge` on a write, on a non-idempotent operation or on a port without `peers` is a compile error; add to DESIGN:1528 that the first attempt for a key goes to its hash peer and only a retry or hedged request moves on, in a fixed order from that peer. No grammar change. *Needs now:* L7.4, L7.3d, PORT-why, TEST-failinject. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L7.1 (via L7.4), L7.2 (via L7.4), L7.3 (via L7.4).
-- **L7.6.** L7.5: waves drive invalidation. L7.3: log lines stored in entries. L1.20: provenance. L1.30: query layer. L6.6: state edges and history. *Note:* New module crates/zedc/src/incr/ does not exist yet. *Moved before S.1 (2026-11-05):* The incremental engine and materialization modes are compiler-core; `@memoized` (L18.2), memo tables in the port, and L20.1 need it (DESIGN:2423, plan_dag.md:1331, confirmed). *Changed 2026-11-05:* D:1511-1513 and :1363 state glitch freedom, the cutoff, N-shaped parallelism, per-wave plans and Seq stability, and L7.6's test at D:2233 has none; `glitch` appears at D:1512 only. No present fault in verdict caching (forget_emptiness is called per unit at crates/zedc-check/src/check/mod.rs:197), and groups crossing files are refuted by D:778, :796, so that sentence is dropped. The forcing scheduler is an inferred need of the test. *Test added 2026-11-05:* With `b = a + 2` and `c = a + b` over a port, each wave runs `c` once, counted; an as-observed `log` push in `c` writes one line per wave and never pairs a fresh `a` with a stale `b`; for `b = f(a); c = g(a); d = h(b, c)` in an as-observed build, one change to `a` writes one line from `h` and `h` sees both new values; values equal a full rerun at every wave; with a `clock` port, `t.s < t.s + 1r` is true at every wave. Plan: a wave with one dirty input takes the incremental plan and a wave with every input dirty takes the recompute plan, each recorded in the plan, the choice following L3.23's cost formulas with no fixed fraction, both giving the same output. `--explain-plan` shows a batch fold edge as fused and a reactive region as memoized at a separator, and an unchanged input stops recomputation at the separator, by recomputed-node count. Cutoff compares value, semantic facets and origin token: an error whose origin moved with an equal atom repropagates; an ordinary value with an `::origin` reader repropagates; a semantic facet change repropagates; an ordinary value whose origin moved with no `::origin` reader cuts off. Kept verdicts: a kept group verdict is dropped when a definition it rests on changes; a refusal's key includes the algorithm version; cold, batched and warm runs give equal verdicts with causes by the same structural step; a warm witnessed child suppressing its edge is the control and must fail. Recomputation runs on the L3.14 scheduler: on the N-shaped program of DESIGN:1511, editing `x` under each topological completion order forced by a test scheduler, at 1, 8 and 16 threads, gives the values of a full recomputation, and a cutoff at `b` leaves `d` not recomputed while `c` is recomputed if `a` changed. Inserting one element into a Seq of n reruns O(1) memoized entries, and inserting at the front of a rank-keyed array reruns the suffix. *Needs now:* L7.5b, INCR-script. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L6.6 (via L7.5b), L3.23 (via L7.5b), L5.6 (via L7.5b), L5.10 (via L7.5b), L7.3 (via L7.5b), L7.5 (via L7.5b), L3.2a (via L7.5b).
+- **L7.6.** L7.5: waves drive invalidation. L7.3: log lines stored in entries. L1.20: provenance. L1.30: query layer. L6.6: state edges and history. *Note:* New module crates/zedc/src/incr/ does not exist yet. *Moved before S.1 (2026-11-05):* The incremental engine and materialization modes are compiler-core; `@memoized` (L18.2a), memo tables in the port, and L20.1 need it (DESIGN:2423, plan_dag.md:1331, confirmed). *Changed 2026-11-05:* D:1511-1513 and :1363 state glitch freedom, the cutoff, N-shaped parallelism, per-wave plans and Seq stability, and L7.6's test at D:2233 has none; `glitch` appears at D:1512 only. No present fault in verdict caching (forget_emptiness is called per unit at crates/zedc-check/src/check/mod.rs:197), and groups crossing files are refuted by D:778, :796, so that sentence is dropped. The forcing scheduler is an inferred need of the test. *Test added 2026-11-05:* With `b = a + 2` and `c = a + b` over a port, each wave runs `c` once, counted; an as-observed `log` push in `c` writes one line per wave and never pairs a fresh `a` with a stale `b`; for `b = f(a); c = g(a); d = h(b, c)` in an as-observed build, one change to `a` writes one line from `h` and `h` sees both new values; values equal a full rerun at every wave; with a `clock` port, `t.s < t.s + 1r` is true at every wave. Plan: a wave with one dirty input takes the incremental plan and a wave with every input dirty takes the recompute plan, each recorded in the plan, the choice following L3.23's cost formulas with no fixed fraction, both giving the same output. `--explain-plan` shows a batch fold edge as fused and a reactive region as memoized at a separator, and an unchanged input stops recomputation at the separator, by recomputed-node count. Cutoff compares value, semantic facets and origin token: an error whose origin moved with an equal atom repropagates; an ordinary value with an `::origin` reader repropagates; a semantic facet change repropagates; an ordinary value whose origin moved with no `::origin` reader cuts off. Kept verdicts: a kept group verdict is dropped when a definition it rests on changes; a refusal's key includes the algorithm version; cold, batched and warm runs give equal verdicts with causes by the same structural step; a warm witnessed child suppressing its edge is the control and must fail. Recomputation runs on the L3.14 scheduler: on the N-shaped program of DESIGN:1511, editing `x` under each topological completion order forced by a test scheduler, at 1, 8 and 16 threads, gives the values of a full recomputation, and a cutoff at `b` leaves `d` not recomputed while `c` is recomputed if `a` changed. Inserting one element into a Seq of n reruns O(1) memoized entries, and inserting at the front of a rank-keyed array reruns the suffix. *Needs now:* L7.5b, INCR-script. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L6.6 (via L7.5b), L3.23 (via L7.5b), L5.6 (via L7.5b), L5.10 (via L7.5b), L7.3 (via L7.5b), L7.5 (via L7.5b), L3.2a (via L7.5b).
 - **L10.3.** L10.1, L10.2: type forms and rule. L2.9: opaque base. L1.39: emptiness decisions. *Moved before S.1 (2026-11-05):* `refine`, `opaque`, `@checked`: type-system rules; L20.1 and FPWARN need them. ZED0.md:74's reason (checks run as ordinary code) concerned the minimum, not the author's new order. *Test added 2026-11-05:* With `x: int[0..=3]`, `x.refine(v -> v > 5)` is accepted, its success member is unreachable, and the result type is `#invalid` alone. `int[0..<_] -> T` and `[T]` are one type. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L2.9 (via L10.2), L10.1 (via L10.2). *Needs now:* L10.2.
 - **L7.7.** L7.6: memo cache to key. L1.32: canonical forms. *Moved before S.1 (2026-11-05):* Canonical memo keys, the compiler-core part of L7.6; L7.13 and L19.2a need it.
 - **L7.8.** L7.6: engine. L3.3, L3.8, L3.21: map forms that get delta rules. L4.2: grouping deltas. L5.4: sorted deltas. *Moved before S.1 (2026-11-05):* Delta path, a materialization mode of DESIGN:1363; L7.9, L7.10 need it. *Test added 2026-11-05:* Inserting and then deleting one row leaves no zero-weight entry visible and equals a recomputation; a certificate that omits the consolidation step is refused by zed-cert. A fold whose law is at `Assumed` grade takes the general path, by the plan's report, and the same fold with proof-grade evidence takes the delta path; both give the recomputed value. A linear operator's edge is delta. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L3.3 (via L7.6), L3.8 (via L7.6), L3.21 (via L7.6), L4.2 (via L7.6), L5.4 (via L7.6). *Needs now:* L7.6.
@@ -2780,7 +2761,7 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **L22.3.** L22.1: which law members and fields exist. L22.2: its report case is a theorem over a theory binder. L2.6: stays apart from overload dispatch. L6.4: `ofNat` recurses. L15.8: obligations report prints the elaborated form. L1.29: the two theories diagnostics rows. *Moved before S.1 (2026-11-05):* Operator rule at a theory's carrier; type rule. *Test added 2026-11-05:* `(+)` passed at a carrier `T` names the theory's `add`; `+` inside a lambda nested in the function names `add` too; for a test theory with fields `le` and `lt`, `<=` and `<` at `T` elaborate to `le` and `lt`, and `>=` and `>` to the same fields with their operands reversed, as the obligations report prints. Drop the `before and after specialization` clause, which L22.6 covers. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L2.6 (via L22.2), L6.4 (via L22.2), L22.1 (via L22.2). *Needs now:* L22.2, L15.8.
 - **L22.8.** L22.1: theories to enumerate. L22.2: law checking at a model. (files-light with L15.8 in check/mod.rs: merge resolves; run apart from L15.8 if possible.) *Note:* Spec conflict, inferred from sec:theories item 3 and the hard rule of Part G: 'every model on a carrier of one or two values whose function fields are constants or projections' is c^k models for k fields, exponential in the theory's size. Proposed fix: state it as work the program asks for, or find models field by field with law-driven pruning and record the worst case. Needs a decision or a cross-review. *Moved before S.1 (2026-11-05):* Vacuity warning; checker behavior; needs L22.1, L22.2. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L22.1 (via L22.2). *Decided 2026-11-09 (QUESTIONS Q28, standing rule):* the spec conflict above goes to TRIVIAL-models-study, which this step now needs. *Needs now:* L22.2, TRIVIAL-models-study. TRIVIAL-shared-atom and TRIVIAL-or-cnf: the two costs of the report that the study left open (a shared-field atom; the budget for a law with an `||` over an `&&`).
 - **TRIVIAL-or-cnf.** MIX-budget: the compile-time budget that writing a law's conjunctive normal form is charged to, in place of the prototype's `BUDGET`. *Note:* Added 2026-11-09 by TRIVIAL-models-study.
-- **L23.4.** L23.1-L23.3: what replaces it. L1.37: oracle. L3.11: the pass replaced, kept for rules not admitted. L6.15: fusion choices now come from extraction. L18.2: plan assertions read the new plans. *Note:* Expected plans of L3.11 and L3.23 tests may change, and each change needs review. *Moved before S.1 (2026-11-05):* Saturation replaces the ordered pass; porting the ordered pass and then replacing it would write the same functions twice, the reason S.3a ports this result. *Test added 2026-11-05:* Test: a rule no tier admits still fires, from the ordered pass, after the swap, and the differential oracle holds. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L3.11 (via L18.2), L6.15 (via L18.2), L23.1 (via L23.3), L23.2 (via L23.3). *Needs now:* L18.2, L23.3.
+- **L23.4.** L23.1-L23.3: what replaces it. L1.37: oracle. L3.11: the pass replaced, kept for rules not admitted. L6.15: fusion choices now come from extraction. L18.2a: plan assertions read the new plans. *Note:* Expected plans of L3.11 and L3.23 tests may change, and each change needs review. *Moved before S.1 (2026-11-05):* Saturation replaces the ordered pass; porting the ordered pass and then replacing it would write the same functions twice, the reason S.3a ports this result. *Test added 2026-11-05:* Test: a rule no tier admits still fires, from the ordered pass, after the swap, and the differential oracle holds. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L3.11 (via L18.2a), L6.15 (via L18.2a), L23.1 (via L23.3), L23.2 (via L23.3). *Needs now:* L18.2a, L23.3.
 - **L25.2.** L25.1: the server that offers code actions. L1.13: formatting of the applied edit. L1.29: the repair menus. L2.12, L3.18, L5.10, L15.8: the menu rows for rejections of L2, L3, L5 and verification, which the fixes must cover. *Note:* Pre-existing flaw: repairs are prose today (check/mod.rs:2963 formats 'repair: wrap this in ...' into a note's text), so an editor cannot apply one. Fix: give each menu entry a structured edit (span, replacement) and print the prose from it. Every layer's checker site that emits a repair changes, so this conflicts textually with any concurrent work in check/mod.rs. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L2.12 (via L25.1), L3.18 (via L25.1), L5.10 (via L25.1), L15.8 (via L25.1). *Needs now:* L25.1.
 - **L25.4.** L25.3: agent-word scaffolding and plan order. L3.8: the obligation record. L15.8: the obligations report this returns as a value. L22.2: theory-model obligations must appear in the report. *Note:* Signature missing from DESIGN.md, as for L25.3. *Changed 2026-11-05:* DESIGN:2571 has no test, and the verdict key already records each `@decides` procedure's address. The ancestor walk shows L22.7 is not an ancestor of L25.4 (plan_dag.md:366). L25.4 stays after S.1. *Test added 2026-11-05:* For each law, its `#assume` sites and each `@decides` procedure by content address are listed: a law proved through `#assume` lists that site, transitively through a `#use`; a law proved through a normalizer lists that procedure; a law proved by neither lists nothing. *Needs now:* L25.3. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L3.8 (via L25.3), L22.2 (via L25.3), L15.8 (via L25.3), L22.7 (via L25.3).
 - **L21.3.** L21.1/L21.2: end-of-layer test over both. L1.41: ZIR snapshots. L21.1a: pins on the schema files the build reads (added 2026-11-03 from the Glam study). *Note:* Same as L21.1: the Postgres backend needs a server on this machine. *Needs now:* S.6, L21.1c. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: SCALE-cover (via S.6), L1.41 (via S.6), L21.2 (via S.6), L21.1 (via L21.1c), L21.1a (via S.6), L21.0 (via S.6), L21.2t (via S.6).
@@ -2807,7 +2788,7 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **L22.10.** L22.1-L22.9: end-of-layer test over all of them. L1.41: ZIR snapshots. L3.21: checker audit. L22.1a: the `import` diamond in interface bodies (added 2026-11-03 from the Glam study). *Needs now:* L22.9, L22.7a. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: SCALE-cover (via L22.9), L1.41 (via L22.9), L3.21 (via L22.9), S.6 (via L22.9), L22.1 (via L22.9), L22.1a (via L22.9), L22.2 (via L22.9), L22.8 (via L22.9), L22.3 (via L22.9), L22.4 (via L22.9), L22.5 (via L22.9), L22.6 (via L22.9), L22.7 (via L22.9), L22.10a (via L22.9).
 - **L24.6.** L24.5: the plan being cached, its ratio and its gap. *Note:* Cycle in the plan: this step's test drops a measured pin, and L24.7 builds pins, which need this step's identity. Resolved here by moving that one test to L24.7, matching the slice order, (6) then (7). Also 'the area model' is named in the step and appears nowhere else (confirmed by grep); proposed: move it to L27.3, where area first matters. *Test added 2026-11-05:* Machine count is part of the hardware identity; a parametric plan picks a different branch at two counts, on model devices. The build reports the makespan beside the relaxation's lower bound.
 - **L24.8.** L24.5: the cut. L20.2: grammar-serialized boundary. L20.5: program 30 enabled. L6.14: closure families. L7.2: handshake fingerprints. L7.3: sockets and port failures. *Note:* Spec gap, inferred: at L24 the only target value is `#cpu` (`nodes:` and `#cluster` arrive at L27), so nothing says how a program requests a two-process cut for the demo or the `choose` test. Proposed fix: a test or build option naming the cut. *Test added 2026-11-05:* A build option names the cut keypath, used by the demo and the test. A peer with one changed definition body, including only an inner family's, is refused with `#contractMismatch`. A closure capturing a closure of another family gives the same result as uncut. A `compose` chain of depth n crosses and gives the same result, at n and 8n within 24x. The doubled form `compose(f, f)`, the DAG shape of the L6.13a test, encodes in work linear in its distinct nodes, with a negative control that re-encodes shared captures. A closure holding a handle or a foreign-supplied function, directly or through a nested capture, is not cut and the plan names the capture. Two programs built apart on one socket port connect when schemas match and get `#contractMismatch` when they differ. Spec at DESIGN:1474: a captured function value crosses by its own family's tag and captures; the schema lists the definitions of every family reachable through captures; a closure has a boundary encoding only if each nested capture has one; a value shared within what crosses is sent once. *Needs now:* L20.5, L24.5. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L6.14 (via L20.5), L7.2 (via L20.5), L7.3 (via L20.5), L20.2 (via L20.5), L7.3e (via L20.5).
-- **L24.10.** L24.1: the work-stealing strategy and the per-region plan this step extends. L24.5: the solver that chooses `k`. L7.14: the obligation that proves a definedness `fix`'s dependence order. L18.2b: `@preallocated` and the reservation the ring of `k` blocks joins. *Note:* Added 2026-11-03 from the Id study (Memo 280). The step's footprint and makespan limits are its test's pass conditions, not scheduler rules. *Test added 2026-11-05:* Step: in a definedness `fix` a step is one key level of the proved order; L24.5's cost model outputs `k`, the least k whose cost-model makespan equals the makespan with no bound, solved from the plans' symbolic cost formulas. Mutual `a[i] = b[i-1] + 1`, `b[i] = a[i-1] * 2` over `0..<n`, order proved, runs bounded with output equal to the one-worker plan's. `x[i] = x[p[i]] + 1` over `0..<n` with a run-time acyclic `p` gets no bound, gives the one-worker output, and `@preallocated` on a multi-worker plan rejects it naming that read. The expected-output plan records k; two loops at the same P with equal mean step cost, one constant and one alternating cheap and expensive, get different k, and at least one differs from 2P; run the simulator on two spreads before writing numbers into the spec. The same `gen` loop on the real per-worker deques with no bound at T = 2,000 and 8,000 on P = 8 reports both peak footprints. *Needs now:* L24.5. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L7.14 (via L24.5), L18.2 (via L24.5), L24.1 (via L24.5), L28.1a (via L24.5).
+- **L24.10.** L24.1: the work-stealing strategy and the per-region plan this step extends. L24.5: the solver that chooses `k`. L7.14: the obligation that proves a definedness `fix`'s dependence order. L18.2b: `@preallocated` and the reservation the ring of `k` blocks joins. *Note:* Added 2026-11-03 from the Id study (Memo 280). The step's footprint and makespan limits are its test's pass conditions, not scheduler rules. *Test added 2026-11-05:* Step: in a definedness `fix` a step is one key level of the proved order; L24.5's cost model outputs `k`, the least k whose cost-model makespan equals the makespan with no bound, solved from the plans' symbolic cost formulas. Mutual `a[i] = b[i-1] + 1`, `b[i] = a[i-1] * 2` over `0..<n`, order proved, runs bounded with output equal to the one-worker plan's. `x[i] = x[p[i]] + 1` over `0..<n` with a run-time acyclic `p` gets no bound, gives the one-worker output, and `@preallocated` on a multi-worker plan rejects it naming that read. The expected-output plan records k; two loops at the same P with equal mean step cost, one constant and one alternating cheap and expensive, get different k, and at least one differs from 2P; run the simulator on two spreads before writing numbers into the spec. The same `gen` loop on the real per-worker deques with no bound at T = 2,000 and 8,000 on P = 8 reports both peak footprints. *Needs now:* L24.5. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L7.14 (via L24.5), L18.2b (via L24.5), L24.1 (via L24.5), L28.1a (via L24.5).
 - **L25.7.** L25.6: verify. L25.4: remaining obligations of the refactor. L6.12: induction rung of the ladder. L7.12: semantic-delta computation. L13.1: the delta's 'which flows'. L15.2: the claim as a law. L15.7: tactics that discharge it. L18.1: the delta's 'which cost class'. *Note:* Spec gaps: (1) no step builds the printed semantic delta (nodes, types, flows, cost class, DESIGN.md provenance paragraph); L7.12 only selects tests from it. Build it here. (2) N is unstated, and so is what the refactor is and who writes it. Recommend the refactor be generated by this harness's agent, a recorded before/after pair in fixtures, with N measured and recorded, not bounded. Hard because the law must be discharged by the ladder with no human proof. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L6.12 (via L25.4), L7.12 (via L25.4), L13.1 (via L25.4), L18.1 (via L25.4), L15.2 (via L25.4), L15.7 (via L25.4). *Needs now:* L25.4, L25.6.
 - **L27.3.** L26.1: the cross-target suite the HDL lowering joins. L6.14: generations lowered, which become clock ticks. L7.5: push-mode regions (inferred, confirm against sec:push_pull). L15.3: forward-confirmed backward results for bit widths. L17.1: the total tier. L24.1: static schedules. L24.3: SDF sized bounded queues. *Note:* Environment: yosys, verilator and iverilog are installed. No FPGA is required: the step asks for synthesis and simulation only. The output route is the step's own decision; the RTL route needs the least tooling. Strict-float blocks: recommend starting from an integer combinator, since 'one combinator' suffices. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L6.14 (via L24.3), L7.5 (via L24.3), L15.3 (via L24.3), L17.1 (via L24.3), L24.1 (via L24.3), L17.1a (via L24.3). *Needs now:* L24.3, L26.1.
 - **L28.1.** L1.35: the recorded form of the lowering. L1.37: oracle. L2.9: struct layouts. L3.13: families and canonical tree. L3.14: regions become async.execute under the scheduler. L3.17: memory plan for families. L5.6: ranks and joins. L6.14: loops and closure families. L7.3: ports. L7.4: @foreign, @stateless, the foreign array read in place. L23.4 and L24.5: the plans the lowering must carry (DESIGN.md gives this as the reason for placing L28 after them). *Note:* Tests that run LLVM's tools go in tests/full and tests that compare only MLIR text stay in tests/steps (QUESTIONS C5, 2026-11-09). Environment: mlir-opt, mlir-translate, llc, opt, wasm-ld and clang are installed, all LLVM 22.1.8. Everything goes through the text form (STATUS.md L1.35 decision), so no C++ builds in the tree. Rust or Zed for this lowering: Rust, in the Rust compiler before step S.1 (QUESTIONS C18, 2026-11-07; DESIGN L28.1); L29 is the Zed port. MLIR.md decision 4 says 'L4's scheduler' but the scheduler is L3.14: fix when editing. Complexity rule: LLVM and MLIR passes are host code, so -O levels with superlinear passes must be chosen and measured; say which are outside the rule until L29. Added 2026-11-03 from LOOP-boundary-spec: L6.14a: the window lowering with no load below storage, which the MLIR lowering must match. *Moved before S.1 (2026-11-05):* The author's order puts ZIR to MLIR to LLVM IR to native x86 before Zed0. Split: L28.1a (new) has the sequential path; L28.1 keeps L7 ports and C linked as LLVM IR (DESIGN:2617). Its needs on L23.4 and L24.5 are cut: DESIGN:2615 places L28 late only so the plans exist to carry, and L23 and L24 can add lowering at their own steps because tests/steps/l01_35_mlir_study fails on a new ZIR form without a row in MLIR.md (scan 4; inferred, not re-run). *Test added 2026-11-05:* One wave program runs its regions on zed-rt's scheduler, shown by the per-worker task counts, with results equal under the oracle. Also: A package's per-target table may give a C source or an LLVM IR file for a library; the build compiles it with the pinned Clang, links with llvm-link and inlines with opt before llc; a library with no such entry goes through the C ABI. The same program with and without the entry gives identical results, with no call instruction in the first and one in the second. If the entry adds package syntax, the sec:grammar PEG changes with it and the grammar tools are rerun. *Needs now:* L7.4, L7.5, L28.1a. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L2.9 (via L7.4), L3.13 (via L7.4), L3.17 (via L7.4), L3.14 (via L7.4), L5.6 (via L7.4), L6.14 (via L7.4), L6.14a (via L7.4), L7.3 (via L7.4), LOWER-stack (via L7.4).
@@ -2946,7 +2927,7 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **L15.7a.** L15.5: the kernel the tests run against. *Note:* Added 2026-11-03 by the plan audit. Feeds L15.9. *Moved before S.1 (2026-11-05):* Kernel defect tests; L15.9 needs them; needs L15.5 only.
 - **L17.1a.** L17.1: the `total` tier. L7.3: timeouts on ports. *Note:* Added 2026-11-03 by the plan audit. Feeds L17.2 and L27.3. *Moved before S.1 (2026-11-05):* Rejection of blocking in the `total` tier; checker; needs L17.1, L7.3. *Changed 2026-11-05:* DESIGN:2411 tests a stored map and a cost read, but plan_dag:467 needs only L17.1 and L7.3; stores are L21.0, the cost read L18.1, and `rate` and `bound` L21.2 (DESIGN:2471). DESIGN:1523 and :1536 list the waits that the test omits. Fallback if open question 2 is answered no: move the stored-map case to L21.1's test and drop L21.0 here. *Test added 2026-11-05:* Under `total`, each is rejected with no timeout and accepted with one: a socket read, a write to a socket port, a foreign call, a `rate` or `bound(n)` port under `#block`, and a stored map read typed with `#timeout`. *Needs now:* L21.2, L18.1, L17.1, L21.0. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L7.3 (via L21.2).
 - **L23.5b.** L23.1: saturation. L3.11: the planner. *Note:* Added 2026-11-03 by the plan audit. Feeds L23.6. *Moved before S.1 (2026-11-05):* Fix fusion, law 25: optimizer core; needs L23.1, L3.11. *Changed 2026-11-05:* The test at DESIGN:2523 requires work linear in the edges, which is L7.10's frontier evaluation, and that row is not a need (plan_dag.md:468). The step also omits the third side condition and the invariant form that law 25 lists at DESIGN:4210. *Test added 2026-11-05:* Side conditions may be the invariant form. Test: `h = r -> r[s]` over the step `r -> E · r` with φ(r) = `E · r = r · E`, planned as the search from `s`; a case where φ is not preserved is not fused, and the plan names φ. Also: The fused `fix` passes T-Fix on the smaller carrier, checked by L6.9; an `h` whose target carrier has neither ascending chain evidence nor stability evidence is not fused, and the plan says which premise failed. Reachable-key bits are fused and give the same bits; a count of the reachable set is not fused, with the plan naming `h(a ⊔ b)` as the failed condition. Invariant form: `fix(E, r -> E · r)` read at row `s` is fused using `phi(r) = E · r = r · E`; a step where `phi` is not preserved is not fused, and the plan names the failed condition. Note at plan_dag.md:1533: `L7.10: the frontier evaluation behind the linear-work test.` *Needs now:* L7.10, L23.1. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L3.11 (via L7.10).
-- **L24.1a.** L18.2a: `@cost`. L24.1: the strategy catalog. *Note:* Added 2026-11-03 by the plan audit. Feeds L24.9, L27.1 and L27.2. *Moved before S.1 (2026-11-05):* Each strategy's constant factor and `@cost(depth:)`, a language word; needs L18.2, L24.1. *Test added 2026-11-05:* `@cost(depth: log(n) * log(n))` on a right-comb `Expr` passes; on `Node(l:, r:) -> l * l + r` it fails, naming `Node`, `l` and the action `x -> x * x + c`. CPU only, per critique D11. *Changed 2026-11-05:* the test covers the CPU only; its GPU clause moves to L27.1 and L27.4. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L18.2 (via L24.1). *Needs now:* L24.1.
+- **L24.1a.** L18.2a: `@cost`. L24.1: the strategy catalog. *Note:* Added 2026-11-03 by the plan audit. Feeds L24.9, L27.1 and L27.2. *Moved before S.1 (2026-11-05):* Each strategy's constant factor and `@cost(depth:)`, a language word; needs L18.2a, L24.1. *Test added 2026-11-05:* `@cost(depth: log(n) * log(n))` on a right-comb `Expr` passes; on `Node(l:, r:) -> l * l + r` it fails, naming `Node`, `l` and the action `x -> x * x + c`. CPU only, per critique D11. *Changed 2026-11-05:* the test covers the CPU only; its GPU clause moves to L27.1 and L27.4. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L18.2a (via L24.1). *Needs now:* L24.1.
 - **L24.7a.** L24.7: bounded searches. L15.7: tactics. *Note:* Added 2026-11-03 by the plan audit. Feeds L24.9. *Moved before S.1 (2026-11-05):* Value pin rule; uses L2.8's pin file (DESIGN:2551, confirmed), and its need on L24.7 is cut because the step reads only the pin file and tactics (L15.7). *Needs now:* L15.7.
 - **L31.1a.** L19.1: `compile`. L31.1: the first microcontroller target. *Note:* Added 2026-11-03 by the plan audit. Feeds L31.5. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L19.1 (via L31.1). *Needs now:* L31.1.
 - **L31.3a.** L31.3: the boards. *Note:* Added 2026-11-03 by the plan audit. Feeds L31.5.
@@ -3389,7 +3370,7 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **L6.5c.** Needs L6.5. *Note:* Row L6.5 recognizes `.fold` only, so the common written recursion gets none of law 21's fusion; the findings give the cases where a naive `(N, R)` read rebuilds the child. *Test:* `size` written recursively carries law 21; a derivative allocates no rebuilt child, by allocation count; a helper is read at a pair and a mutual group at a tuple; diameter gives the same result fused and unfused, in one pass with no memo, at n and 8n within 24x; `insert` is not recognized. Negative control, run once and never committed: with recognition off, the allocation count grows by one rebuilt child per node.
 - **FOLD-layers.** Needs L6.5, L6.14, L3.14, L3.23. *Note:* DESIGN:1463 prices a layer plan and BEND-contract (plan_dag.md:248) is its alternative, but no row builds the layer row itself; L6.5's Paths and test are the sequential fold. *Test:* At 1, 8 and 16 workers a balanced tree gives the same value with rounds equal to its height; a right comb takes n rounds; a non-associative algebra gives the same value; a failure in two children gives the same result on every run; n and 8n within 24x. Negative control, run once and never committed: a plan that evaluates children in completion order gives different failures across runs. This row writes its spec text in DESIGN in the same commit, with sec:grammar where syntax changes. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L3.23 (via L6.5), L6.14 (via L6.5). *Needs now:* L3.14, L6.5.
 - **L6.13e.** Needs L6.13. *Note:* L6.13's arena test reads its own programs only; an arena slot not counted is a leak the existing count cannot see. *Test:* Each enabled corpus program's native run ends at a live count of zero, and any survivor is listed. Negative control, run once and never committed: a runtime that leaks one slot fails. The count is plainly O(1) per slot, so no scaling case; a later slab step extends it.
-- **COST-patch.** Needs L6.19, L6.13. *Note:* L6.19's costs price an update as a copy, so `@cost(n)` on L6.13's own loop would fail at L18.2 although the code runs in O(n); the spec sentence in sec:runtime is corrected with the row. *Test:* L6.13's first loop on an n-entry array has work n; the second, an array read after the loop, 2*n reduced to n by dominance, against n*n for a copy on every update; an ordered tree has work n log n. Symbolic cost is plainly O(1) per update site, so no scaling case. Negative control, run once and never committed: the copy-each-update model reports n*n. This row writes its spec text in DESIGN in the same commit, with sec:grammar where syntax changes.
+- **COST-patch.** Needs L6.19, L6.13. *Note:* L6.19's costs price an update as a copy, so `@cost(n)` on L6.13's own loop would fail at L18.2a although the code runs in O(n); the spec sentence in sec:runtime is corrected with the row. *Test:* L6.13's first loop on an n-entry array has work n; the second, an array read after the loop, 2*n reduced to n by dominance, against n*n for a copy on every update; an ordered tree has work n log n. Symbolic cost is plainly O(1) per update site, so no scaling case. Negative control, run once and never committed: the copy-each-update model reports n*n. This row writes its spec text in DESIGN in the same commit, with sec:grammar where syntax changes.
 - **HEAP-rank.** Needs L6.13. *Note:* DESIGN.md:1478 calls the invariant 'checked' and defines the rank, and no code computes it; L6.13's reuse is the one operation that can rewrite a cell. That creation order is a valid rank is inferred. *Test:* A hand-built plan that ties a cycle through reuse is refused, naming the edge. Corner: a reused cell takes a new rank; a shared acyclic value passes. Plainly O(1) per edge. Negative control, run once and not committed: without the check the hand-built cycle shows only as 'N live' at the end (memory.rs:879), with no edge named.
 - **RT-layout.** Needs L6.13a, L2.9. *Note:* Confirmed: zed-rt/src/heap.rs:29-33 and ports.rs:5 import zed_kernel, zed-rt/Cargo.toml:21 depends on it, and zed-native/src/hooks.rs:13-16 imports zedc. The self-hosted compiler cannot link this runtime as it stands. *Changed 2026-11-07 (DAG-fanin):* needs implied by a longer path dropped, each reason above still holding through the path named: L2.9 (via L6.13a). *Needs now:* L6.13a.
 - **DEEP-native-eq.** Needs L6.13a. *Note:* The evaluator is tested at m0_09 deep_values.rs, and deep_heap.rs covers enter, leave, match and release but no `==`, hash, order or print. Whether native overflows is inferred, not run. *Test:* Each operation on a one-million-level value with an 8 MiB stack, where a recursive `equals` overflows (negative control run once); depth at n and 8n within 24x.
