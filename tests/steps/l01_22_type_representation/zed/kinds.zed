@@ -15,7 +15,7 @@ test {
   ("x", #a) -> "tuple",
   ((1, 2), 3) -> "tuple",
   1 -> "other",
-  2.5 -> "other",
+  2.5f64 -> "other",
   "s" -> "other",
   true -> "other",
   (x -> x) -> "other",

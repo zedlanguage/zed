@@ -226,9 +226,9 @@ fn min_of_two_tuples_nested_n_deep_through_shared_parts_scales() {
 #[ignore = "MINMAX-chain-rows: 18.3 times the work at 1,000 and 8,000 links, over the n log n limit 11.4 since SCALE-ratio; open"]
 fn checking_a_chain_of_n_tuple_mins_scales() {
     let unit = |n: usize| {
-        let mut text = String::from("a0 = (0, 1.0, 0);\n");
+        let mut text = String::from("a0 = (0, 1.0f64, 0);\n");
         for i in 1..n {
-            text.push_str(&format!("a{i} = min(a{}, ({i}, 0.5, {i}));\n", i - 1));
+            text.push_str(&format!("a{i} = min(a{}, ({i}, 0.5f64, {i}));\n", i - 1));
         }
         checked(&text)
     };
@@ -292,13 +292,13 @@ fn a_function_of_the_arrows_of_min_that_is_not_min_does_not_take_tuples() {
     );
 }
 
-/// The unit `a0 = (1.0, 0); b0 = (2.0, 0);`, then `a{k}` and `b{k}` for k up to `n` as `link`
-/// makes them from the name of the one before, then `x = min(a{n}, b{n});`.
+/// The unit `a0 = (1.0f64, 0); b0 = (2.0f64, 0);`, then `a{k}` and `b{k}` for k up to `n` as
+/// `link` makes them from the name of the one before, then `x = min(a{n}, b{n});`.
 fn nested_unit(
     n: usize,
     link: fn(&str, usize) -> String,
 ) -> zed_tests::step_helpers::l01_16_elaboration::Checked {
-    let mut text = String::from("a0 = (1.0, 0);\nb0 = (2.0, 0);\n");
+    let mut text = String::from("a0 = (1.0f64, 0);\nb0 = (2.0f64, 0);\n");
     for k in 1..=n {
         for side in ["a", "b"] {
             let before = format!("{side}{}", k - 1);

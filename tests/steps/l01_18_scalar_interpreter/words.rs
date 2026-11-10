@@ -54,7 +54,9 @@ fn summing_an_order() {
         [
             "the literal `2.0` is a decimal, and nothing here gives it a carrier; a decimal \
              literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-             it; write `2.0f64` or `2.0r` [2.0]"
+             it\n  fixes, each checked here:\n    \
+             x = sum((1, 2.0f64));    the literal is then the f64 2.0\n    \
+             x = sum((1, 2.0r));      the literal is then exactly 2.0, a rat [2.0]"
         ]
     );
     assert_eq!(
@@ -82,7 +84,9 @@ fn min_and_max_of_each_number_kind() {
         [
             "the literal `2.5` is a decimal, and nothing here gives it a carrier; a decimal \
              literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-             it; write `2.5f64` or `2.5r` [2.5]"
+             it\n  fixes, each checked here:\n    \
+             x = max(0, 2.5f64);    the literal is then the f64 2.5\n    \
+             x = max(0, 2.5r);      the literal is then exactly 2.5, a rat [2.5]"
         ]
     );
     assert_eq!(

@@ -104,14 +104,20 @@ fn numbers_of_different_kinds_do_not_mix() {
     assert_eq!(
         errors("b = 1r < 2.0f64;\n"),
         [
-            "the literal `2.0f64` is an `f64` by its suffix, and `rat` is expected here; a suffix fixes a literal's carrier; write `2.0r` [2.0f64]"
+            "the literal `2.0f64` is an `f64` by its suffix, and `rat` is expected here; a \
+             suffix fixes a literal's carrier\n  fixes, each checked here:\n    \
+             b = 1r < 2.0r;    the literal is then exactly 2.0, a rat [2.0f64]"
         ]
     );
     // Two literals without a suffix, one a decimal, have nothing to give them a carrier.
     assert_eq!(
         errors("c = 1 == 1.0;\n"),
         [
-            "the literal `1.0` is a decimal, and nothing here gives it a carrier; a decimal literal takes the carrier of its use, never `int`, and Zed does not choose one for it; write `1.0f64` or `1.0r` [1.0]"
+            "the literal `1.0` is a decimal, and nothing here gives it a carrier; a decimal \
+             literal takes the carrier of its use, never `int`, and Zed does not choose one for \
+             it\n  fixes, each checked here:\n    \
+             c = 1 == 1.0f64;    c is true\n    \
+             c = 1 == 1.0r;      c is true [1.0]"
         ]
     );
     assert_eq!(value("a = 1r + 1;\n", "a"), "2r");

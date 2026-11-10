@@ -12,7 +12,7 @@ const HEAD: &str = "  fixes, each checked here:";
 
 /// The fixes of the one rejection of `src`, each `(line, holds)`: the corrected line and the
 /// text after the gap of at least two spaces that follows it.
-fn fixes(src: &str) -> Vec<(String, String)> {
+pub(super) fn fixes(src: &str) -> Vec<(String, String)> {
     let errors = type_errors(src);
     assert_eq!(errors.len(), 1, "{src}: {errors:?}");
     // The message without the ` [text]` the helper adds.
@@ -60,7 +60,7 @@ fn checked(src: &str) -> Vec<(String, String)> {
     fixes
 }
 
-fn pairs(fixes: &[(&str, &str)]) -> Vec<(String, String)> {
+pub(super) fn pairs(fixes: &[(&str, &str)]) -> Vec<(String, String)> {
     (fixes.iter())
         .map(|(a, b)| (a.to_string(), b.to_string()))
         .collect()

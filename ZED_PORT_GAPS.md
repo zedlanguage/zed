@@ -3407,3 +3407,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | Kahn's topological order with a mutable count of the atoms each one waits for, a `VecDeque` of atoms ready, and `mem::take` of each atom's waiting list | `twins_merged` | Mutation (gap 11) | A fold over the strongly connected components in their topological order (the components are already found), threading the numbers given so far |
 | A conjunct written with its atoms numbered, its parts sorted in place where the `Shared` vector has one owner (`Shared::change`), used as the key of a `HashMap<Formula, Atom>` | `numbered`, `twins_merged` (`seen`) | Mutation (gap 11) | The parts sorted into a new list; the key is the formula's content, as a map keyed by value |
 | A closure `tied` computing the tied answer, called once on either path, and a `let ... else` that returns it when no twins are found | `project_each_named` | Early exit (gap 12) | A local function and an `if` on the merged formula, each branch returning |
+
+## Entries from MSG-literal-tuple (`crates/zedc-check/src/check/mod.rs`, `walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A union-find by size with path halving over `Vec<usize>` parent and size arrays, mutated in place | `VarSets` (`find`, `union`, `fix`) | Mutation (gap 11) | a persistent map from variable to set, joined by a fold over the needs; the sets are few per call |
+| Parts of a value kept as parent links in a `Vec<(Option<usize>, PartStep)>`, with the path to a part written by walking the links back | `value_parts`, `ValueParts::place` | Mutation (gap 11) | recursion on the value that passes the path down as a list built by prepending, written out only at a rejected part |
+| A walk of an argument against its parameter type on an explicit `Vec` stack of `(Src, &Ty)` pairs, `Src` an enum of borrowed views | `Ck::unfixed_args` | Mutation (gap 11) | recursion on the argument and the type together |
+| `partition_point` on the sorted spans of the rejected parts, to drop the errors found inside them | `Ck::rejects_unfixed` | none | a binary search over a sorted list |

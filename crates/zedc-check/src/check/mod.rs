@@ -5254,7 +5254,7 @@ fn lit_holds(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
 /// What the name `n`, bound to the operation on literals `e`, holds once a fix gives its
 /// literals the carrier `c`: `half is 0.5` ([`folded`]), or `half is an f64` where the
 /// operation gives no value of `c`.
-fn binder_holds<'a>(n: &'a str, e: &Expr, c: Carrier) -> impl fmt::Display + 'a {
+fn binder_holds<'a>(n: impl fmt::Display + 'a, e: &Expr, c: Carrier) -> impl fmt::Display + 'a {
     let v = folded(e, c);
     fmt::from_fn(move |f| match &v {
         Some(v) => write!(f, "{n} is {v}"),
@@ -5541,7 +5541,17 @@ fn unfixed(l: &Lit, cs: &[Carrier], bound: Option<(&str, &Expr)>) -> Msg {
 /// operations do, and `y` then holds `true` or `false`. `None` for any other value. The walks
 /// keep their own stacks, since the operations nest as deep as the text; they cost the size of
 /// `e`, and the fixes the length of the line.
-fn unfixed_binding(e: &Expr, n: &str) -> Option<(Span, Msg)> {
+///
+/// `e` is a part of the value of `n` ([`unfixed_parts`]): the whole value where `whole`, and
+/// otherwise a component of a tuple or a payload of an atom in it, as `0.5` in
+/// `y = (0.5, "a")`. Each fix names the value `place` then holds, `y[0] is 0.5`; a part is
+/// named by its own text, not as the binding `y = …`, in the message and the short fixes.
+fn unfixed_binding(
+    e: &Expr,
+    n: &str,
+    place: &dyn fmt::Display,
+    whole: bool,
+) -> Option<(Span, Msg)> {
     let mut stack = match &e.kind {
         ExprKind::Binary("==" | "!=" | "<" | "<=" | ">" | ">=", a, b) => vec![&**b, &**a],
         _ => vec![e],
@@ -5588,7 +5598,7 @@ fn unfixed_binding(e: &Expr, n: &str) -> Option<(Span, Msg)> {
         let mut m = unfixed(l, &[], Some((n, e)));
         let forms = forms.filter(|f| *f != Form::Cast);
         m.fixes = forms
-            .filter_map(|f| leaves_with(&leaves, f, n, e, None))
+            .filter_map(|f| leaves_with(&leaves, f, place, whole.then_some(n), e, None))
             .collect();
         return Some((l.site, m));
     }
@@ -5609,9 +5619,15 @@ fn unfixed_binding(e: &Expr, n: &str) -> Option<(Span, Msg)> {
     };
     let m = quoting(
         &fmt::from_fn(|f| match (two, literal(a), literal(b)) {
-            (true, Some(x), Some(y)) => write!(
+            (true, Some(x), Some(y)) if whole => write!(
                 f,
                 "`{n} = {x} / {y}` divides two integer literals, and {why}",
+                x = x.written(),
+                y = y.written(),
+            ),
+            (true, Some(x), Some(y)) => write!(
+                f,
+                "`{x} / {y}` in the value of `{n}` divides two integer literals, and {why}",
                 x = x.written(),
                 y = y.written(),
             ),
@@ -5627,8 +5643,223 @@ fn unfixed_binding(e: &Expr, n: &str) -> Option<(Span, Msg)> {
     let digits = (leaves.iter()).all(|p| lit_digits(p).bytes().all(|b| b.is_ascii_digit()));
     let forms = forms.filter(|f| digits || *f != Form::Suffix(Carrier::F64));
     let divisor = literal(b).filter(|_| two);
-    let fixes = forms.map(|f| leaves_with(&leaves, f, n, e, divisor.as_ref()));
+    let bound = whole.then_some(n);
+    let fixes = forms.map(|f| leaves_with(&leaves, f, place, bound, e, divisor.as_ref()));
     Some((d.span, Msg::new(m, fixes.collect())))
+}
+
+/// The type variables of a signature in sets that its needs tie together, each set marked
+/// fixed where a value other than a literal with no suffix reaches it ([`Ck::unfixed_args`]):
+/// a union-find by size with path halving.
+#[derive(Default)]
+struct VarSets {
+    /// Each variable's number.
+    ix: HashMap<Arc<str>, usize>,
+    /// Each variable by its number.
+    names: Vec<Arc<str>>,
+    /// The number of the variable toward the root of each set.
+    up: Vec<usize>,
+    /// The size of each root's set.
+    size: Vec<usize>,
+    /// Whether each root's set is fixed.
+    fixed: Vec<bool>,
+}
+
+impl VarSets {
+    /// The number of `v`, given one in a set of its own where it has none.
+    fn id(&mut self, v: &Arc<str>) -> usize {
+        if let Some(&i) = self.ix.get(v) {
+            return i;
+        }
+        let i = self.up.len();
+        self.ix.insert(v.clone(), i);
+        self.names.push(v.clone());
+        self.up.push(i);
+        self.size.push(1);
+        self.fixed.push(false);
+        i
+    }
+
+    /// The root of the set of `i`.
+    fn find(&mut self, mut i: usize) -> usize {
+        while self.up[i] != i {
+            self.up[i] = self.up[self.up[i]];
+            i = self.up[i];
+        }
+        i
+    }
+
+    /// The sets of `a` and `b` made one, fixed where either was.
+    fn union(&mut self, a: usize, b: usize) {
+        let (a, b) = (self.find(a), self.find(b));
+        if a == b {
+            return;
+        }
+        let (big, small) = if self.size[a] < self.size[b] {
+            (b, a)
+        } else {
+            (a, b)
+        };
+        self.up[small] = big;
+        self.size[big] += self.size[small];
+        self.fixed[big] |= self.fixed[small];
+    }
+
+    /// The set of `i` marked fixed.
+    fn fix(&mut self, i: usize) {
+        let r = self.find(i);
+        self.fixed[r] = true;
+    }
+
+    /// The set of each variable of `t` marked fixed.
+    fn fix_all(&mut self, t: &Ty) {
+        let mut vs = Vars::default();
+        t.vars_in(&mut vs);
+        for v in &vs.order {
+            let i = self.id(v);
+            self.fix(i);
+        }
+    }
+}
+
+/// One step from a value to a part of it ([`value_parts`]).
+#[derive(Clone, Copy)]
+enum PartStep<'e> {
+    /// The component `i` of a tuple display.
+    Component(usize),
+    /// The payload of the atom `#a`: its one item, `None`, or its item `i` of several.
+    Item(&'e str, Option<usize>),
+    /// The field `x` of the payload of the atom `#a`.
+    Field(&'e str, &'e str),
+}
+
+/// The parts of a value written as tuple displays and atoms with a payload, nested in any
+/// way: `(0.5, "a")`, `#bad(0.5)`, `#bad(x: (1, 0.5))`.
+struct ValueParts<'e> {
+    /// Each step from a part to one of its parts, with the step to that part, if any.
+    steps: Vec<(Option<usize>, PartStep<'e>)>,
+    /// Each part that is neither a tuple display nor an atom with a payload, with the step to
+    /// it, in the order of the text; the whole value alone, with no step, where it is neither.
+    leaves: Vec<(&'e Expr, Option<usize>)>,
+}
+
+/// The parts of the value `e`.
+///
+/// Complexity tradeoff: the naive way names each part by its path, written out as each part
+/// is reached, which costs the depth at every part and the square of the depth over a deeply
+/// nested tuple. Here each part keeps only the step to it and the step before that, so the
+/// walk costs one step per node of the displays, linear in the size of `e`; a path is
+/// written ([`ValueParts::place`]) only for a part that is rejected, at the cost of its
+/// depth, the length of the name it writes. The walk keeps its own stack, since displays
+/// nest as deep as the text.
+fn value_parts(e: &Expr) -> ValueParts<'_> {
+    let mut steps = Vec::new();
+    let mut leaves = Vec::new();
+    let mut todo = vec![(e, None)];
+    while let Some((x, at)) = todo.pop() {
+        let base = steps.len();
+        match &x.kind {
+            ExprKind::Tuple(items) => {
+                steps.extend((0..items.len()).map(|i| (at, PartStep::Component(i))));
+                let next = items.iter().enumerate().map(|(i, it)| (it, Some(base + i)));
+                todo.extend(next.rev());
+            }
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry: false,
+            } if matches!(callee.kind, ExprKind::Atom(_)) => {
+                let ExprKind::Atom(a) = &callee.kind else {
+                    unreachable!("an atom")
+                };
+                let one = positional.len() == 1;
+                let items = (0..positional.len()).map(|i| PartStep::Item(a, (!one).then_some(i)));
+                let fields = named.iter().map(|(x, _)| PartStep::Field(a, x));
+                steps.extend(items.chain(fields).map(|s| (at, s)));
+                // The fields come after the items, in the text and in `steps`; the stack takes
+                // the last first.
+                let k = positional.len();
+                let fields = named
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, v))| (v, Some(base + k + i)));
+                todo.extend(fields.rev());
+                let items = positional.iter().enumerate();
+                todo.extend(items.map(|(i, v)| (v, Some(base + i))).rev());
+            }
+            _ => leaves.push((x, at)),
+        }
+    }
+    ValueParts { steps, leaves }
+}
+
+impl ValueParts<'_> {
+    /// The name of the part the step `at` reaches in the value of `root`, the binder, or of
+    /// an unnamed value where `root` is `None`. Along tuple components it is written as Zed
+    /// indexes them, `y[0]` or `y[1][0]`; through the payload of an atom in words, `the
+    /// payload of `#bad``, `component 1 of the payload of `#bad`` or `the field `x` of
+    /// `#bad``; in an unnamed value `the value` or `component 0 of the value`. It costs the
+    /// depth of the part.
+    fn place<'p>(&'p self, root: Option<&'p str>, at: Option<usize>) -> impl fmt::Display + 'p {
+        fmt::from_fn(move |f| {
+            // The steps from the part back to the root.
+            let mut path = Vec::new();
+            let mut k = at;
+            while let Some(i) = k {
+                let (up, s) = self.steps[i];
+                path.push(s);
+                k = up;
+            }
+            let payload = path
+                .iter()
+                .position(|s| !matches!(s, PartStep::Component(_)));
+            if let (None, Some(n)) = (payload, root) {
+                f.write_str(n)?;
+                for s in path.iter().rev() {
+                    if let PartStep::Component(i) = s {
+                        write!(f, "[{i}]")?;
+                    }
+                }
+                return Ok(());
+            }
+            for s in &path[..payload.unwrap_or(path.len())] {
+                if let PartStep::Component(i) = s {
+                    write!(f, "component {i} of ")?;
+                }
+            }
+            match payload.map(|k| path[k]) {
+                Some(PartStep::Item(a, None)) => write!(f, "the payload of `#{a}`"),
+                Some(PartStep::Item(a, Some(i))) => {
+                    write!(f, "component {i} of the payload of `#{a}`")
+                }
+                Some(PartStep::Field(a, x)) => write!(f, "the field `{x}` of `#{a}`"),
+                _ => f.write_str("the value"),
+            }
+        })
+    }
+}
+
+/// The rejections of the value `e` bound to `n` outside a function, `_` where nothing names
+/// it, when nothing gives the literals of a part of it a carrier ([`unfixed_binding`]): the
+/// whole value, or each component of a tuple display and each payload of an atom in it, as
+/// `0.5` in `y = (0.5, "a")` (DESIGN.md step L1.26b: an unfixed decimal is rejected wherever
+/// it stands). Each rejection is the part, the place of the error and the message, in the
+/// order of the text; each fix rewrites that part alone and names the value of its place,
+/// `y[0] is 0.5`. `whole` is whether `e` is the whole value of `n`, not one component of a
+/// tuple bound to several names. It costs the size of `e` ([`value_parts`]), and the fixes
+/// the length of the line and the depth of each rejected part.
+fn unfixed_parts(e: &Expr, n: &str, whole: bool) -> Vec<(Span, Span, Msg)> {
+    let parts = value_parts(e);
+    let root = (n != "_").then_some(n);
+    let mut out = Vec::new();
+    for &(x, at) in &parts.leaves {
+        let place = parts.place(root, at);
+        if let Some((s, m)) = unfixed_binding(x, n, &place, whole && at.is_none()) {
+            out.push((x.span, s, m));
+        }
+    }
+    out
 }
 
 /// One way to write a literal with a carrier: in a cast to `f64`, `f64(1)`; or with the
@@ -5649,15 +5880,18 @@ impl Form {
     }
 }
 
-/// The fix of the binding of `n` to `e` that writes each of the literals `leaves` in the form
-/// `form`, naming the value `n` then holds ([`binder_holds`]). Its short form, for a message
-/// written without the program's text, is the binding rewritten where `e` is one literal,
-/// `y = 0.5f64`, or the division of two literals by `divisor`, `half = f64(1) / 2`; otherwise
-/// each literal's new text and the literal it replaces. It costs the length of those texts.
+/// The fix of the binding of a name to a value with the part `e` that writes each of the
+/// literals `leaves` in the form `form`, naming the value `place` then holds
+/// ([`binder_holds`]): `y is 0.5`, or `y[0] is 0.5` for a component. Its short form, for a
+/// message written without the program's text, is the binding rewritten where `e` is the
+/// whole value of `bound` and one literal, `y = 0.5f64`, or the division of two literals by
+/// `divisor`, `half = f64(1) / 2`; otherwise each literal's new text and the literal it
+/// replaces. It costs the length of those texts.
 fn leaves_with(
     leaves: &[Lit],
     form: Form,
-    n: &str,
+    place: &dyn fmt::Display,
+    bound: Option<&str>,
     e: &Expr,
     divisor: Option<&Lit>,
 ) -> Option<Rewrite> {
@@ -5677,9 +5911,12 @@ fn leaves_with(
     let alone = fmt::from_fn(|f| match (leaves, &texts[..]) {
         ([p], [t]) => {
             let sign = if p.neg() { "-" } else { "" };
-            match divisor {
-                Some(y) if y.site != p.site => write!(f, "{n} = {sign}{t} / {}", y.written()),
-                _ if literal(e).is_some() => write!(f, "{n} = {sign}{t}"),
+            match (divisor, bound) {
+                (Some(y), Some(n)) if y.site != p.site => {
+                    write!(f, "{n} = {sign}{t} / {}", y.written())
+                }
+                (Some(y), None) if y.site != p.site => write!(f, "{sign}{t} / {}", y.written()),
+                (_, Some(n)) if literal(e).is_some() => write!(f, "{n} = {sign}{t}"),
                 _ => write!(f, "{sign}{t}"),
             }
         }
@@ -5692,7 +5929,7 @@ fn leaves_with(
             Ok(())
         }
     });
-    Rewrite::new(&edits, &binder_holds(n, e, c), &alone)
+    Rewrite::new(&edits, &binder_holds(place, e, c), &alone)
 }
 
 /// The literals of `e`, an operation on literals alone, whose carrier, written on each of

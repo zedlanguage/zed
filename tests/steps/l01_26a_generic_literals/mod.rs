@@ -9,6 +9,7 @@
 
 mod fixes;
 mod scaling;
+mod tuples;
 
 use zed_tests::tokens;
 use zedc::lex::lex_fence;

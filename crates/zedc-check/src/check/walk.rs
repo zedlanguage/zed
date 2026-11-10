@@ -1446,13 +1446,24 @@ impl<'t, 'a> Ck<'t, 'a> {
         let StmtKind::Bind { targets, value, .. } = &s.kind else {
             unreachable!("a binding")
         };
+        if self.level == 0 {
+            // Each target is bound to its component where the value is a tuple display of
+            // as many components, `a, b = (0.5, 1)`; `_` names none.
+            let name = |t: &'a Target| match t {
+                Target::Name(n, _) => n.as_str(),
+                Target::Wild => "_",
+            };
+            let found = match (&targets[..], &value.kind) {
+                ([t], _) => unfixed_parts(value, name(t), true),
+                (ts, ExprKind::Tuple(items)) if items.len() == ts.len() => (ts.iter().zip(items))
+                    .flat_map(|(t, x)| unfixed_parts(x, name(t), false))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            self.rejects_unfixed(before, found);
+        }
         match &targets[..] {
             [Target::Name(n, _)] => {
-                if self.level == 0
-                    && let Some((at, message)) = unfixed_binding(value, n)
-                {
-                    self.rejects_unfixed(value, before, at, message);
-                }
                 let id = self.id(s.span, n);
                 self.origin(id, value.span, Why::Defined(v.clone()), Some(value.span));
                 self.alias.insert(id, value.span);
@@ -1539,18 +1550,34 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.infer_given(m, Box::new(s));
     }
 
-    /// Rejects `value`, bound to a name with nothing to give its literals a carrier, at `at`
-    /// with `message` (row UnfixedDecimal). The errors its check found, those after the first
-    /// `before`, are dropped where they lie in `value`: there an operator met an operation on
-    /// integer literals typed `int`, as `/` meets `1 + 2` in `y = (1 + 2) / 3`, which is
-    /// rejected as the value's `/`, not as its operands (step L1.26a).
-    fn rejects_unfixed(&mut self, value: &Expr, before: usize, at: Span, message: Msg) {
-        let message = self.written(message);
+    /// Rejects each part of a value bound to a name with nothing to give its literals a
+    /// carrier, of the list `parts` of the part, the place and the message, in the order of the
+    /// text ([`unfixed_parts`]) (row UnfixedDecimal). The errors the value's check found,
+    /// those after the first `before`, are dropped where they lie in a rejected part: there an
+    /// operator met an operation on integer literals typed `int`, as `/` meets `1 + 2` in
+    /// `y = (1 + 2) / 3`, which is rejected as the value's `/`, not as its operands (step
+    /// L1.26a). An error in another part, `y = (0.5, 1 + "a")`, stays.
+    ///
+    /// Complexity tradeoff: the naive test of each error against each part costs their
+    /// product, the square of the width over a wide tuple with an error in each component.
+    /// The parts lie apart in the order of the text, so each error looks up the last part
+    /// that starts at or before it by binary search, `O(e log p)` for `e` errors and `p` parts.
+    fn rejects_unfixed(&mut self, before: usize, parts: Vec<(Span, Span, Msg)>) {
+        if parts.is_empty() {
+            return;
+        }
         let found = self.info.errors.split_off(before);
-        let inside = |e: &Error| value.span.start <= e.span.start && e.span.end <= value.span.end;
-        (self.info.errors).extend(found.into_iter().filter(|e| !inside(e)));
-        let notes = self.derive(&[at]);
-        self.rejects_with(Row::UnfixedDecimal, at, message, notes);
+        let inside = |e: &Error| {
+            let k = parts.partition_point(|(p, _, _)| p.start <= e.span.start);
+            (k.checked_sub(1)).is_some_and(|k| e.span.end <= parts[k].0.end)
+        };
+        let kept: Vec<Error> = found.into_iter().filter(|e| !inside(e)).collect();
+        self.info.errors.extend(kept);
+        for (_, at, message) in parts {
+            let message = self.written(message);
+            let notes = self.derive(&[at]);
+            self.rejects_with(Row::UnfixedDecimal, at, message, notes);
+        }
     }
 
     /// The type each parameter's annotation or closed default gives it, in turn; then the
@@ -1563,9 +1590,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // rejected as `rate = 0.2;` is (step L1.26b).
             let p = &s.f.params[s.given.len()];
             let d = p.default.as_ref().expect("a closed default");
-            if let Some((at, message)) = unfixed_binding(d, &p.name) {
-                self.rejects_unfixed(d, before, at, message);
-            }
+            self.rejects_unfixed(before, unfixed_parts(d, &p.name, true));
             let mut out = Ty::empty();
             for piece in t.pieces() {
                 out = out.union(&match piece.carrier() {
@@ -1907,14 +1932,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 StrPart::Text(t) => s.text.push_str(t),
                 StrPart::Hole(h) => {
                     // A hole takes every carrier, as `String` does, so it gives a literal
-                    // none: `"${0.5}"` is rejected, and `"${1}"` is an `int` (step L1.26b).
-                    if let Some(l) = literal(h).filter(|l| l.bare)
-                        && lit_carrier(&l.value) != Carrier::Int
-                    {
-                        let notes = self.derive(&[l.site]);
-                        let message =
-                            self.written(unfixed(&l, &[Carrier::F64, Carrier::Rat], None));
-                        self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
+                    // none: `"${0.5}"` is rejected, and `"${1}"` is an `int` (step L1.26b);
+                    // so is a decimal in a component of a tuple or a payload of an atom
+                    // there, `"${(0.5, 1)}"`. The walk costs the size of the hole
+                    // ([`value_parts`]).
+                    for (x, _) in value_parts(h).leaves {
+                        if let Some(l) = literal(x).filter(|l| l.bare)
+                            && lit_carrier(&l.value) != Carrier::Int
+                        {
+                            let notes = self.derive(&[l.site]);
+                            let message =
+                                self.written(unfixed(&l, &[Carrier::F64, Carrier::Rat], None));
+                            self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
+                        }
                     }
                     s.hole = Some(h);
                     m.k(Frame::Str(s));
@@ -7006,8 +7036,139 @@ impl<'t, 'a> Ck<'t, 'a> {
             });
         }
         out = out.union(&self.pass_needs(what, &arrow.params, args, passing, span)?);
+        if self.level == 0 && self.replaying == 0 && !self.trying {
+            self.unfixed_args(sig, k, args, &grouped);
+        }
         self.applied = Some((binds, left));
         Ok((out, vec![0]))
+    }
+
+    /// Rejects each decimal literal with no suffix, alone or in a tuple display, in an
+    /// argument of the arrow `k` of `sig` where nothing gives it a carrier, outside a function
+    /// (row UnfixedDecimal; DESIGN.md step L1.26b: an unfixed decimal is rejected wherever it
+    /// stands): `0.5` in `y = id(x: 0.5)` and in `y = id(x: (0.5, 1))` with `id(x) = x`. The
+    /// literal stands at a variable of the arrow, which the arrow takes in any carrier; it is
+    /// fixed where another argument reaches that variable, or a variable a need of the
+    /// signature ties to it, other than through literals with no suffix: `x` gives `p[0]` its
+    /// carrier in `y = f(x: 1.0f64, p: (0.5, 1))` with `f(x, p) = x + p[0]`. A parameter of a
+    /// written type gives the literal its carrier ([`adopted`]), and the literals at a bounded
+    /// variable alone, `inc(x: 2.5)`, are taken where the arguments are grouped (`grouped`).
+    /// The fixes write the literal with each carrier the bounds of those variables take, and
+    /// name the value the literal then is, since the binder's would need a call of the
+    /// program's function.
+    ///
+    /// Complexity tradeoff: the naive way asks, for each literal, whether any other argument
+    /// reaches its variable through the needs, a walk of the arguments and the needs for each
+    /// literal, `O(l (a + n))`. Here one walk of the arguments' parts and the needs' variables
+    /// puts the variables in sets that a need ties together (union by size with path
+    /// halving), each set marked fixed once, then each literal looks up its set: `O(a + n + l)`
+    /// times the inverse Ackermann function, for `a` parts, `n` variables in needs and `l`
+    /// literals. The walks keep their own stacks, since tuple displays nest as deep as the
+    /// text.
+    fn unfixed_args(&mut self, sig: &Sig, k: usize, args: &[Option<Arg<'a>>], grouped: &[bool]) {
+        enum Src<'p> {
+            Lit(&'p Lit),
+            Parts(&'p [Part]),
+            Other,
+        }
+        let mut sets = VarSets::default();
+        for need in &sig.needs {
+            let mut vs = Vars::default();
+            need.vars_in(&mut vs);
+            let mut it = vs.order.iter();
+            if let Some(first) = it.next() {
+                let a = sets.id(first);
+                for v in it {
+                    let b = sets.id(v);
+                    sets.union(a, b);
+                }
+            }
+        }
+        let mut lits: Vec<(usize, &Lit)> = Vec::new();
+        let arrow = &sig.arrows[k];
+        for (i, (a, p)) in args.iter().zip(&arrow.params).enumerate() {
+            let Some(a) = a else {
+                continue;
+            };
+            if grouped[i] {
+                sets.fix_all(p);
+                continue;
+            }
+            let src = match (&a.lit, &a.parts) {
+                (Some(l), _) => Src::Lit(l),
+                (None, Some(ps)) => Src::Parts(ps),
+                (None, None) => Src::Other,
+            };
+            let mut todo = vec![(src, p)];
+            while let Some((src, w)) = todo.pop() {
+                let Some(v) = w.as_var() else {
+                    // A written type: each component of a tuple display stands at its
+                    // component, where the type has one shape of that length.
+                    match src {
+                        Src::Parts(ps) => match shapes([w], ps.len())[..] {
+                            [cs] => todo.extend(ps.iter().zip(cs).map(|(part, c)| {
+                                let src = match part {
+                                    Part::Lit(l) => Src::Lit(l),
+                                    Part::Tuple(ps) => Src::Parts(ps),
+                                    Part::Other => Src::Other,
+                                };
+                                (src, c)
+                            })),
+                            _ => sets.fix_all(w),
+                        },
+                        _ => sets.fix_all(w),
+                    }
+                    continue;
+                };
+                // The whole argument, or part, flows into the variable `v`: each literal in it
+                // with no suffix stands there, and anything else fixes `v`.
+                let v = sets.id(v);
+                let mut inner: Vec<Src> = vec![src];
+                while let Some(src) = inner.pop() {
+                    match src {
+                        Src::Lit(l) if !l.bare => sets.fix(v),
+                        Src::Lit(l) if lit_carrier(&l.value) == Carrier::F64 => lits.push((v, l)),
+                        Src::Lit(_) => {}
+                        Src::Parts(ps) => inner.extend(ps.iter().map(|part| match part {
+                            Part::Lit(l) => Src::Lit(l),
+                            Part::Tuple(ps) => Src::Parts(ps),
+                            Part::Other => Src::Other,
+                        })),
+                        Src::Other => sets.fix(v),
+                    }
+                }
+            }
+        }
+        if lits.is_empty() {
+            return;
+        }
+        // The carriers each set's bounds take: every carrier where none is bounded.
+        let mut takes = vec![u8::MAX; sets.up.len()];
+        for (v, &m) in &sig.bounds {
+            if let Some(&i) = sets.ix.get(v) {
+                let r = sets.find(i);
+                takes[r] &= m;
+            }
+        }
+        for (v, l) in lits {
+            let r = sets.find(v);
+            if sets.fixed[r] || self.is_class(&sets.names[v]) {
+                continue;
+            }
+            let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
+                .into_iter()
+                .filter(|&c| takes[r] & c.bit() != 0 && fits(l, c))
+                .collect();
+            // No carrier of a decimal is taken there: the call is refused for its bounds,
+            // `min` in `g((0.5, 1.0))` with `g(positional a) = min(a, (1, 2))`, and a
+            // rejection with no fix would only repeat it.
+            if cs.is_empty() {
+                continue;
+            }
+            let notes = self.derive(&[l.site]);
+            let message = self.written(unfixed(l, &cs, None));
+            self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
+        }
     }
 
     /// [`Self::apply`] of a signature of several arrows, each over one carrier or a tuple:
