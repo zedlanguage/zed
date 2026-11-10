@@ -30,6 +30,7 @@ mod refused;
 mod scaling;
 mod seed_edges;
 mod spec;
+mod two_disjunctions;
 mod written_address;
 mod xst;
 

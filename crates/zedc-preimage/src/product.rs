@@ -3580,10 +3580,12 @@ impl Scope {
         let (tree, pol) = Tree::of(plain.as_ref().unwrap_or(test));
         let value = outcome == pol;
         match &tree.nodes[0].kind {
-            Kind::Nest(and, _) if *and != value => {
-                s.cases(&tree, 0, value, premises, true).is_some()
-            }
-            Kind::If(_) => s.cases(&tree, 0, value, premises, true).is_some(),
+            Kind::Nest(and, _) if *and != value => s
+                .cases(&tree, 0, value, premises, true, &mut Vec::new())
+                .is_some(),
+            Kind::If(_) => s
+                .cases(&tree, 0, value, premises, true, &mut Vec::new())
+                .is_some(),
             _ => {
                 s.narrow_node(&tree, 0, value, premises);
                 s.reduce_case();
@@ -3629,7 +3631,44 @@ impl Scope {
             return;
         };
         let before = self.relation.clone();
-        self.narrow_node(tree, n, value, prem);
+        let body = match &tree.nodes[n].kind {
+            Kind::Nest(and, sides) if *and != value => {
+                // A nest the value does not force: its relation is that of the sides with a
+                // case that is not bottom, when some side has none. So `n + m >= -1 ||
+                // m - n >= 15` where the products hold `m - n <= 11` keeps `n + m >= -1`, a
+                // constraint, not a disjunction a later projection would have to meet with
+                // the others at the hubs (S16 projects one disjunction at a time).
+                // Complexity tradeoff: naive, keep the whole test's relation, O(1) more, and a
+                // dead side's disjunction is left for a later projection, which settles a
+                // lazy star coarser than the eager product; here, the sides' liveness comes
+                // from the cases already narrowed, and a second relation is taken only when a
+                // side is dead, of the live sides alone: O(s) for a test of `s` nodes, no
+                // further case and no projection (COMPLEXITY.md C42).
+                let mut live = Vec::new();
+                let joined = self.cases(tree, n, value, prem, false, &mut live);
+                let body = if live.contains(&false) && live.contains(&true) {
+                    let terms: Vec<Term> = sides
+                        .iter()
+                        .zip(&live)
+                        .filter(|(_, l)| **l)
+                        .map(|(&(k, p), _)| signed(tree.term_at(k), p))
+                        .collect();
+                    let p = if *and { Prim::And } else { Prim::Or };
+                    self.relation_of(&balanced(p, terms), value).unwrap_or(body)
+                } else {
+                    body
+                };
+                match joined {
+                    Some(s) => *self = s,
+                    None => self.bottom = true,
+                }
+                body
+            }
+            _ => {
+                self.narrow_node(tree, n, value, prem);
+                body
+            }
+        };
         // The relation the narrowing gives is implied by the one before, the test's and the
         // products: each case adds the relations of its tests and bounds its products hold.
         // So the test's relation replaces it, but for the equalities of two atoms or more the
@@ -3707,10 +3746,12 @@ impl Scope {
                     self.narrow_node(tree, k, value == p, prem);
                 }
             }
-            Kind::Nest(..) | Kind::If(_) => match self.cases(tree, n, value, prem, false) {
-                Some(s) => *self = s,
-                None => self.bottom = true,
-            },
+            Kind::Nest(..) | Kind::If(_) => {
+                match self.cases(tree, n, value, prem, false, &mut Vec::new()) {
+                    Some(s) => *self = s,
+                    None => self.bottom = true,
+                }
+            }
         }
     }
 
@@ -3722,6 +3763,16 @@ impl Scope {
     /// one list of cases, joined in pairs ([`join_cases`]), and only a side of at most half a
     /// nest's nodes is narrowed by a call within this one. With `any`, the first case some
     /// state reaches, unjoined ([`Scope::reaches`]).
+    ///
+    /// When node `n` is a nest the value does not force, `live` is set to one entry per side,
+    /// in the order of the sides: whether some case of the side is not bottom. A side whose
+    /// cases are all bottom, or that is not reached because the sides before it, excluded,
+    /// leave nothing, holds at no state of this scope that no side before it holds; so the
+    /// test holds where the live sides do ([`Scope::narrow_linear`]). Otherwise `live` is left
+    /// empty. Complexity tradeoff: naive, a side's liveness found by narrowing a copy of the
+    /// scope by the side alone, one more case per side; here it is read off the cases this
+    /// walk makes anyway, O(1) per case and O(s) for the root's `s` sides (COMPLEXITY.md
+    /// C42). A side is dead only when its cases are, with the products as narrowed here.
     fn cases(
         &self,
         tree: &Tree,
@@ -3729,17 +3780,25 @@ impl Scope {
         value: bool,
         prem: &Premises,
         any: bool,
+        live: &mut Vec<bool>,
     ) -> Option<Scope> {
+        let root = n;
+        live.clear();
         let mut out = Vec::new();
-        let mut work = vec![(self.clone(), n, value)];
-        while let Some((mut s, n, v)) = work.pop() {
+        // Each case with the side of the root it comes from, when the root has sides.
+        let mut work = vec![(self.clone(), n, value, None)];
+        while let Some((mut s, n, v, top)) = work.pop() {
             if s.bottom {
                 continue;
             }
             match &tree.nodes[n].kind {
                 Kind::Nest(and, sides) if *and != v => {
-                    for &(k, p) in sides {
-                        work.push((s.clone(), k, v == p));
+                    if n == root {
+                        live.resize(sides.len(), false);
+                    }
+                    for (i, &(k, p)) in sides.iter().enumerate() {
+                        let top = if n == root { Some(i) } else { top };
+                        work.push((s.clone(), k, v == p, top));
                         s.exclude(tree, k, v != p, prem);
                         if s.bottom {
                             break;
@@ -3759,25 +3818,33 @@ impl Scope {
                     }
                     s.reduce_case();
                     match heavy {
-                        Some((k, p)) => work.push((s, k, v == p)),
+                        Some((k, p)) => work.push((s, k, v == p, top)),
                         None if any && !s.bottom => return Some(s),
-                        None => out.push(s),
+                        None => {
+                            if let Some(i) = top {
+                                live[i] |= !s.bottom;
+                            }
+                            out.push(s);
+                        }
                     }
                 }
                 Kind::If([c, a, b]) => {
                     let mut t = s.clone();
                     t.narrow_node(tree, c.0, c.1, prem);
                     t.reduce_case();
-                    work.push((t, a.0, v == a.1));
+                    work.push((t, a.0, v == a.1, top));
                     s.narrow_node(tree, c.0, !c.1, prem);
                     s.reduce_case();
-                    work.push((s, b.0, v == b.1));
+                    work.push((s, b.0, v == b.1, top));
                 }
                 Kind::Lit(_) | Kind::Atom => {
                     s.narrow_node(tree, n, v, prem);
                     s.reduce_case();
                     if any && !s.bottom {
                         return Some(s);
+                    }
+                    if let Some(i) = top {
+                        live[i] |= !s.bottom;
                     }
                     out.push(s);
                 }
@@ -6743,13 +6810,6 @@ impl<'a> Tree<'a> {
     /// balanced way, and each `if` with a boolean arm as its connective: a term the size of the
     /// node's subtree, and of depth logarithmic in the length of each nest.
     fn term_at(&self, n: usize) -> Term {
-        fn signed(t: Term, pol: bool) -> Term {
-            if pol {
-                t
-            } else {
-                Term::Prim(Prim::Not, vec![t])
-            }
-        }
         // The nodes below `n`, each once: a node is a side or an arm of one node.
         let mut below = vec![n];
         let mut at = 0;
@@ -6773,17 +6833,7 @@ impl<'a> Tree<'a> {
                 Kind::Lit(_) | Kind::Atom => node.term.clone(),
                 Kind::Nest(and, sides) => {
                     let p = if *and { Prim::And } else { Prim::Or };
-                    let mut level: Vec<Term> = sides.iter().map(|&s| take(s)).collect();
-                    while level.len() > 1 {
-                        let mut it = std::mem::take(&mut level).into_iter();
-                        while let Some(l) = it.next() {
-                            level.push(match it.next() {
-                                Some(r) => Term::Prim(p, vec![l, r]),
-                                None => l,
-                            });
-                        }
-                    }
-                    level.pop().expect("a nest has a side")
+                    balanced(p, sides.iter().map(|&s| take(s)).collect())
                 }
                 Kind::If([c, a, b]) => {
                     let [c, a, b] = [*c, *a, *b].map(|s| Shared::new(take(s)));
@@ -6799,6 +6849,30 @@ impl<'a> Tree<'a> {
     fn splits(&self, n: usize) -> bool {
         matches!(self.nodes[n].kind, Kind::Nest(..) | Kind::If(_))
     }
+}
+
+/// `t`, or `!t` when `pol` is false.
+fn signed(t: Term, pol: bool) -> Term {
+    if pol {
+        t
+    } else {
+        Term::Prim(Prim::Not, vec![t])
+    }
+}
+
+/// The connective `p` over `sides`, nested in a balanced way: depth logarithmic in their
+/// number. `sides` is not empty.
+fn balanced(p: Prim, mut level: Vec<Term>) -> Term {
+    while level.len() > 1 {
+        let mut it = std::mem::take(&mut level).into_iter();
+        while let Some(l) = it.next() {
+            level.push(match it.next() {
+                Some(r) => Term::Prim(p, vec![l, r]),
+                None => l,
+            });
+        }
+    }
+    level.pop().expect("a nest has a side")
 }
 
 /// The join of `cases`, each reduced, in pairs, so that no case is copied through more than
