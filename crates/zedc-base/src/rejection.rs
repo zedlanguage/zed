@@ -73,7 +73,10 @@ rows! {
     NoCommonCarrier => "Two numeric values with no common carrier",
     UnusedMatchBinder => "Match binder unused in its guard and arm",
     CapitalizedFreeName => "Capitalized free name used once in a signature and nowhere in the body",
-    CapitalizedFreeNameInField => "Capitalized free name in a `struct` field",
+    UndeclaredNameInField =>
+        "Capitalized name in a `struct` field that is neither a declared type parameter nor a name in scope",
+    UnusedStructParameter => "`struct` type parameter that no field uses",
+    StructParameterNamesField => "`struct` type parameter with the name of a field",
     RemapOutputName =>
         "Remap output name that names a source level and resolves to a value in scope",
     MethodOnValue => "Method declared on a value",

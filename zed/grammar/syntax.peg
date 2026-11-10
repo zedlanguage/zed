@@ -42,14 +42,15 @@ Path          = Path '.' Name                                                   
               | Name                                                               L1
 Pin           = ANNOT '(' STRING ','? ')'                                          L2
 
-Struct        = 'struct' Name '{' (StructField % ',' ','?)? '}'                    L2
+Struct        = 'struct' Name TypeParams? '{' (StructField % ',' ','?)? '}'        L2
               | 'struct' Name 'grammar' '{' GAlt '}'                               L20
 StructField   = Name ':' Type '=' Expr                                             L2
+              | 'import' TypeApply                                                 L2
               | Field                                                              L2
 Field         = 'import' Path                                                      L2
               | Name ':' Type                                                      L2
 TypeDecl      = 'type' Name TypeParams? '=' Type ';'                               L2
-TypeParams    = '(' Name % ',' ','? ')'                                            L2
+TypeParams    = '(' ('positional'? Name) % ',' ','? ')'                            L2
 Interface     = 'interface' Name TypeParams? '{' (Member % ',' ','?)? '}'          L10
 Member        = 'law' Name '(' Params? ')' '=' Expr                                L22
               | 'import' Path '(' nest(Type % ',' ','?) ')'                        L22

@@ -379,8 +379,15 @@ impl Builder<'_, '_> {
         let mut fields = Vec::with_capacity(kids.len());
         let (mut names, mut paths) = (HashMap::new(), HashSet::new());
         for &k in kids {
-            // A `StructField` is a field with a default, or holds a `Field`.
+            // Type parameters (`struct S(A) {…}`) and an import with type arguments
+            // (`import P(A)`) are read by the parser and built at step L2.5.
+            if self.tree.name(k) == "TypeParams" {
+                return Err(self.later(k));
+            }
+            // A `StructField` is a field with a default, an import with type arguments, or
+            // holds a `Field`.
             let (f, default) = match self.kids(k) {
+                [f] if self.tree.name(*f) == "TypeApply" => return Err(self.later(k)),
                 [f] => (*f, None),
                 [_, _, d] => (k, Some(*d)),
                 _ => unreachable!("StructField = Name ':' Type '=' Expr | Field"),

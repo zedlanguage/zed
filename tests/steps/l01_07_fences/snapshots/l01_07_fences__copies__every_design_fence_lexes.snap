@@ -45,9 +45,9 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   5 | area ( a : int [ 1₍10₎ .. ] , b : int [ 1₍10₎ .. ] where a * b <= 99₍10₎ ) -> int = a * b ;
 == DESIGN.md [sec:constraints] 2 L6
   1 | parityFromIntervals = Reduction ( of : parity , reads : [ intervals ] ,
-  2 | reduce : ( e , r ) -> «if» r . intervals . isPoint { «if» r . intervals . lo «mod» 2₍10₎ == 0₍10₎ { #even } «else» { #odd } } «else» { e } ) ;
+  2 | reduce : ( e , s ) -> «if» s . of ( intervals ) . isPoint { «if» s . of ( intervals ) . lo «mod» 2₍10₎ == 0₍10₎ { #even } «else» { #odd } } «else» { e } ) ;
   3 | intervalsFromParity = Reduction ( of : intervals , reads : [ parity ] ,
-  4 | reduce : ( e , r ) -> «if» r . parity == #even { e . roundInwardToEven } «else» { e } ) ;
+  4 | reduce : ( e , s ) -> «if» s . of ( parity ) == #even { e . roundInwardToEven } «else» { e } ) ;
 == DESIGN.md [sec:constraints] 3 L10
   1 | «type» Bound = int | Ast | #unbounded ;
   2 | «struct» Interval { min : Bound , max : Bound }
@@ -130,37 +130,49 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   8 | | #implies ( assume : Ast , then : Proof )
   9 | | #reflect ( sound : LawId )
  10 | | #assume ( why : Utf8String ) ;
-== DESIGN.md [sec:checking_in_zed] 1 L12
+== DESIGN.md [sec:checking_in_zed] 1 L10
+  1 | «struct» Facet ( «positional» E , «positional» V ) {
+  2 | kind : #semantic | #evidence | #hint ,
+  3 | lattice : _ ,
+  4 | holds : ( ( E , V ) -> bool ) | #none where ( holds «is» #none ) == ( kind != #evidence ) = #none ,
+  5 | transfer : ( _ , E , E ) -> E ,
+  6 | abstract : ( ( Ast , Ast , ( Ast ) -> E ) -> E ) | #none = #none ,
+  7 | project : ( ( _ , [ E ] , int [ 0₍10₎ .. ] ) -> E ) | #none = #none ,
+  8 | shares : ( E ) -> #constant ( V ) | #none = e -> #none ,
+  9 | show : ( ( E , Ast ) -> Ast ) | #none = #none ,
+ 10 | reject : ( ( E , E , Ast ) -> Rejection ) | #none = #none ,
+ 11 | printedForm : #annotation | #with = #with ,
+ 12 | typeChange : ( Type ) -> Type = t -> t ,
+ 13 | }
+ 14 | «struct» Reduction ( «positional» E ) { of : Facet ( E , _ ) , reads : [ Facet ( _ , _ ) ] , reduce : ( E , Store ) -> E }
+== DESIGN.md [sec:checking_in_zed] 2 L12
   1 | «type» Parity = #even | #odd | #either ;
-  2 | parityHolds ( «positional» p : Parity , «positional» x : int ) -> bool =
-  3 | «match» p { #even -> x «mod» 2₍10₎ == 0₍10₎ , #odd -> x «mod» 2₍10₎ == 1₍10₎ , #either -> «true» } ;
-  4 | parityTransfer ( «positional» op , «positional» a : Parity , «positional» b : Parity ) -> Parity = «match» op {
-  5 | #add -> «if» a == #either || b == #either { #either } «else» «if» a == b { #even } «else» { #odd } ,
-  6 | #mul -> «if» a == #even || b == #even { #even } «else» «if» a == #odd && b == #odd { #odd } «else» { #either } ,
-  7 | _ -> #either ,
-  8 | } ;
-  9 | parity = Facet (
- 10 | kind : #evidence ,
- 11 | lattice : flat ( [ #even , #odd ] , top : #either ) ,
- 12 | holds : parityHolds ,
- 13 | transfer : parityTransfer ,
- 14 | ) ;
- 16 | half ( «positional» x : int «with» parity ( #even ) ) = x «div» 2₍10₎ ;
- 17 | g ( n : int «with» parity ( #odd ) ) = half ( n + n ) ;
- 18 | h ( n : int «with» parity ( #odd ) , m : int «with» parity ( #even ) ) = half ( n * m ) ;
- 19 | seven = 7₍10₎ «with» parity ( #odd ) ;
+  2 | parity : Facet ( Parity , int ) = Facet (
+  3 | kind : #evidence ,
+  4 | lattice : flat ( [ #even , #odd ] , top : #either ) ,
+  5 | holds : ( p , x ) -> «match» p { #even -> x «mod» 2₍10₎ == 0₍10₎ , #odd -> x «mod» 2₍10₎ == 1₍10₎ , #either -> «true» } ,
+  6 | transfer : ( op , a , b ) -> «match» op {
+  7 | #add -> «if» a == #either || b == #either { #either } «else» «if» a == b { #even } «else» { #odd } ,
+  8 | #mul -> «if» a == #even || b == #even { #even } «else» «if» a == #odd && b == #odd { #odd } «else» { #either } ,
+  9 | _ -> #either ,
+ 10 | } ,
+ 11 | ) ;
+ 13 | half ( «positional» x : int «with» parity ( #even ) ) = x «div» 2₍10₎ ;
+ 14 | g ( n : int «with» parity ( #odd ) ) = half ( n + n ) ;
+ 15 | h ( n : int «with» parity ( #odd ) , m : int «with» parity ( #even ) ) = half ( n * m ) ;
+ 16 | seven = 7₍10₎ «with» parity ( #odd ) ;
 == DESIGN.md [sec:theories] 1 L22
-  1 | «interface» Semigroup ( T ) {
+  1 | «interface» Semigroup ( «positional» T ) {
   2 | mul : ( T , T ) -> T ,
   3 | «law» mulAssoc ( a : T , b : T , c : T ) = mul ( mul ( a , b ) , c ) == mul ( a , mul ( b , c ) ) ,
   4 | }
-  6 | «interface» Monoid ( T ) {
+  6 | «interface» Monoid ( «positional» T ) {
   7 | «import» Semigroup ( T ) ,
   8 | one : T ,
   9 | «law» oneMul ( a : T ) = mul ( one , a ) == a ,
  10 | «law» mulOne ( a : T ) = mul ( a , one ) == a ,
  11 | }
- 13 | «interface» NonCommRing ( T ) {
+ 13 | «interface» NonCommRing ( «positional» T ) {
  14 | «import» Monoid ( T ) ,
  15 | add : ( T , T ) -> T ,
  16 | zero : T ,
@@ -172,7 +184,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  22 | «law» distrib ( a : T , b : T , c : T ) = mul ( a , add ( b , c ) ) == add ( mul ( a , b ) , mul ( a , c ) ) ,
  23 | «law» distribRight ( a : T , b : T , c : T ) = mul ( add ( a , b ) , c ) == add ( mul ( a , c ) , mul ( b , c ) ) ,
  24 | }
- 26 | «interface» CommRing ( T ) {
+ 26 | «interface» CommRing ( «positional» T ) {
  27 | «import» NonCommRing ( T ) ,
  28 | «law» mulComm ( a : T , b : T ) = mul ( a , b ) == mul ( b , a ) ,
  29 | }

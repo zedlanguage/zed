@@ -393,7 +393,13 @@ Expr ::: a != b != c ::: ERROR
 Expr ::: a == b <= c ::: (a == (b <= c))
 Expr ::: a == b != c ::: ERROR
 Item ::: interface Monoid(T) { import Semigroup(T), one: T, law oneMul(a: T) = mul(one, a) == a } ::: (interface Monoid (( T )) { (import Semigroup ( T )) , (one : T) , (law oneMul ( (a : T) ) = ((mul (( (one , a) ))) == a)) })
-Item ::: struct S { import Monoid(T) } ::: ERROR
+Item ::: struct S { import Monoid(T) } ::: (struct S { (import (Monoid ( T ))) })
+Item ::: struct Pair(A, B) { fst: A, snd: B } ::: (struct Pair (( A , B )) { (fst : A) , (snd : B) })
+Item ::: struct Box(A) { import Pair(A, A), h: A = fst } ::: (struct Box (( A )) { (import (Pair ( A , A ))) , (h : A = fst) })
+Item ::: struct S(A) grammar { "a" } ::: ERROR
+Item ::: struct Pair(positional A, B) { fst: A, snd: B } ::: (struct Pair (( positional A , B )) { (fst : A) , (snd : B) })
+Item ::: type Tree(positional A) = #leaf(A); ::: (type Tree (( positional A )) = (#leaf ( A )) ;)
+Item ::: struct S(A positional) { x: A } ::: ERROR
 Item ::: struct S { x: int } test { 1 -> 1 } ::: ERROR
 Item ::: law square(R: CommRing(T), a: T) = a * a == a * a proof { a * a == a * a == a * a } ::: (law square ( ((R : (CommRing ( T ))) , (a : T)) ) = ((a * a) == (a * a)) (proof ({ ((a * a) == (a * a) == (a * a)) })))
 Item ::: law l(a: int) = a == a test { 1 -> 1 } ::: ERROR

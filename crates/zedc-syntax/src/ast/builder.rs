@@ -384,6 +384,8 @@ fn kind_of(rule: &str) -> &'static str {
         "InferType" => "the wildcard type",
         "FieldType" => "the named type",
         "Struct" => "the struct declaration",
+        "TypeParams" => "the struct's type parameter list",
+        "StructField" => "the struct field",
         "MoreGen" => "the inner generator",
         "KeyedPush" => "the push at a key",
         "LitType" => "the literal type",
