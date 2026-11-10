@@ -972,7 +972,6 @@ impl<'t> Tx<'t> {
     fn landmarks(&self, inputs: &Domains, demand: &Demand) -> Landmarks {
         let ends = |s: &IntervalSet| -> Vec<Num> {
             s.pieces()
-                .iter()
                 .flat_map(|(a, b)| [a, b])
                 .filter_map(|e| match e {
                     Fin(v) => Some(v.clone()),
@@ -2625,7 +2624,7 @@ fn shift(z: &IntervalSet, c: i128) -> IntervalSet {
         Fin(v) => Fin(v + &c),
         e => e.clone(),
     };
-    IntervalSet::from_pieces(z.pieces().iter().map(|(lo, hi)| (m(lo), m(hi))).collect())
+    IntervalSet::from_pieces(z.pieces().map(|(lo, hi)| (m(lo), m(hi))).collect())
 }
 
 /// The integers `x` with `x * c` in `z`.
@@ -2653,7 +2652,6 @@ fn times_pre(z: &IntervalSet, c: i64) -> IntervalSet {
     };
     IntervalSet::from_pieces(
         z.pieces()
-            .iter()
             .map(|(lo, hi)| {
                 if c > 0 {
                     (q(lo, true), q(hi, false))
@@ -2684,7 +2682,6 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
     };
     IntervalSet::from_pieces(
         z.pieces()
-            .iter()
             .map(|(lo, hi)| {
                 if c > 0 {
                     (lower(lo), upper(hi))
@@ -2727,7 +2724,6 @@ fn mod_pre(z: &IntervalSet, c: i64, within: &IntervalSet) -> (IntervalSet, bool)
     let period = |k: &Num| {
         let base = k * &m;
         rem.pieces()
-            .iter()
             .filter_map(|(a, b)| match (a, b) {
                 (Fin(a), Fin(b)) => Some((Fin(&base + a), Fin(&base + b))),
                 _ => None,

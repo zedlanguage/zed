@@ -84,7 +84,6 @@ fn random_marks(rng: &mut Rng) -> Landmarks {
 /// The finite endpoints of `x`.
 fn ends(x: &IntervalSet) -> BTreeSet<Num> {
     x.pieces()
-        .iter()
         .flat_map(|(lo, hi)| [lo, hi])
         .filter_map(|e| match e {
             End::Fin(v) => Some(v.clone()),

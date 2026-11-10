@@ -39,7 +39,7 @@ fn end_value(e: &End) -> Option<i64> {
 /// `domain` and in `class`.
 fn sample(bx: &IntervalSet, domain: &IntervalSet, class: &dyn Fn(i64) -> bool) -> Vec<i64> {
     let mut vs: BTreeSet<i64> = (WINDOW.0..=WINDOW.1).collect();
-    for (lo, hi) in bx.pieces().iter().chain(domain.pieces()) {
+    for (lo, hi) in bx.pieces().chain(domain.pieces()) {
         let (Some(a), Some(b)) = (end_value(lo), end_value(hi)) else {
             continue;
         };

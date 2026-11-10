@@ -10565,7 +10565,6 @@ fn shifted(set: &IntervalSet, lo: &Option<Int>, hi: &Option<Int>) -> IntervalSet
     };
     IntervalSet::from_pieces(
         set.pieces()
-            .iter()
             .map(|(a, b)| {
                 let lo_end = add(a, lo);
                 let hi_end = match (b, hi) {

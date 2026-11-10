@@ -48,7 +48,6 @@ type Passing = (Vec<(i64, i64)>, Vec<i64>);
 fn enumerate(sys: &System) -> Option<Passing> {
     let values = |d: &IntervalSet| -> Vec<i64> {
         d.pieces()
-            .iter()
             .flat_map(|(lo, hi)| lo.to_i64().expect("finite")..=hi.to_i64().expect("finite"))
             .collect()
     };
@@ -104,7 +103,6 @@ fn solved(sys: &System) -> Option<Option<Passing>> {
         Answer::Bounds { names, hub } => Some(Some((
             names.iter().map(|(l, h)| (fin(l), fin(h))).collect(),
             hub.pieces()
-                .iter()
                 .flat_map(|(lo, hi)| fin(lo)..=fin(hi))
                 .collect(),
         ))),

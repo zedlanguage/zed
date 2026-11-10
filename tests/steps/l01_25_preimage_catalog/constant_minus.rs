@@ -167,7 +167,7 @@ fn a_comb_of_pieces_is_kept_exactly() {
     let p = preimage(&t, &ds, &d);
     check(&t, &ds, &d, &p, (-60, 60));
     assert!(p.exact, "{}", shown(&p));
-    assert_eq!(p.domains["x"].pieces().len(), 24);
+    assert_eq!(p.domains["x"].len(), 24);
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn a_comb_of_pieces_scales() {
     scaling::check("the preimage of c - x over a demand of n pieces", n, |k| {
         let (t, ds, d) = if k == n { &a } else { &b };
         let p = preimage(t, ds, d);
-        assert_eq!(p.domains["x"].pieces().len(), 2 * k);
+        assert_eq!(p.domains["x"].len(), 2 * k);
     });
 }
 

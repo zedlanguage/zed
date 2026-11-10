@@ -451,8 +451,7 @@ impl Diffs {
         let inside = now.domains.iter().all(|(n, s)| {
             let o = &then.domains[n];
             s.pieces()
-                .iter()
-                .all(|(lo, hi)| o.pieces().iter().any(|(l, h)| l <= lo && hi <= h))
+                .all(|(lo, hi)| o.pieces().any(|(l, h)| l <= lo && hi <= h))
         });
         let listed = now.exact
             && now.enumerated
@@ -507,8 +506,7 @@ impl Diffs {
         }
         let inside = |s: &IntervalSet, o: &IntervalSet| {
             s.pieces()
-                .iter()
-                .all(|(lo, hi)| o.pieces().iter().any(|(l, h)| l <= lo && hi <= h))
+                .all(|(lo, hi)| o.pieces().any(|(l, h)| l <= lo && hi <= h))
         };
         if new != old
             && !now.exact
@@ -2556,11 +2554,8 @@ fn remainder_splits_at_their_corners_keep_their_preimages() {
                     let what = format!("{t} over {ds:?}, demand {d:?}");
                     check(t, &ds, d, &now, *window);
                     assert!(now.exact || !then.exact, "{what}: {now:?} before {then:?}");
-                    let inside = now.domains["i"].pieces().iter().all(|(lo, hi)| {
-                        then.domains["i"]
-                            .pieces()
-                            .iter()
-                            .any(|(l, h)| l <= lo && hi <= h)
+                    let inside = now.domains["i"].pieces().all(|(lo, hi)| {
+                        then.domains["i"].pieces().any(|(l, h)| l <= lo && hi <= h)
                     });
                     assert!(inside, "{what}: {now:?} before {then:?}");
                 }

@@ -4709,15 +4709,10 @@ impl Scope {
                 Some(p) => p.ints().meet(&bound),
                 None => bound,
             };
-            if ints.pieces().is_empty() {
+            if ints.is_empty() {
                 return Ends::Done(Shortest::Bottom(n.clone()));
             }
-            dom.push(
-                ints.pieces()
-                    .iter()
-                    .map(|(a, b)| (int(a), int(b)))
-                    .collect(),
-            );
+            dom.push(ints.pieces().map(|(a, b)| (int(a), int(b))).collect());
         }
         let potential: Vec<Option<Int>> = names
             .iter()
@@ -5613,7 +5608,7 @@ impl Scope {
         let leaf = Atom::Sym(Arc::from(conjuncts::LEAF));
         let (whole, syms) = self.framed(part);
         let one = |a: &Atom| match a {
-            Atom::Sym(n) => a == &leaf || self.get(n).ints().pieces().len() <= 1,
+            Atom::Sym(n) => a == &leaf || self.get(n).ints().len() <= 1,
             _ => true,
         };
         if !syms.iter().all(one) {
@@ -5849,7 +5844,7 @@ impl Scope {
             disjunctions += one_disjunction(t)?;
         }
         for n in count.keys().filter(|n| !xs.contains(n)) {
-            let pieces = self.get(n).ints().pieces().len();
+            let pieces = self.get(n).ints().len();
             if pieces == 0 {
                 return None;
             }
@@ -7390,25 +7385,15 @@ fn classed(p: &Product) -> bool {
 }
 
 /// The length of the longest run of integers `ints` leaves out between its ends, 0 for one
-/// interval or none. In O(p) for its `p` pieces.
+/// interval or none: `O(1)`, kept by the set ([`IntervalSet::max_gap`]).
 fn hole_gap(ints: &IntervalSet) -> Int {
-    let mut most = Int::ZERO;
-    for w in ints.pieces().windows(2) {
-        if let (End::Fin(a), End::Fin(b)) = (&w[0].1, &w[1].0) {
-            let run = &(&Int::from(b) - &Int::from(a)) - &Int::ONE;
-            if run > most {
-                most = run;
-            }
-        }
-    }
-    most
+    Int::from(&ints.max_gap())
 }
 
 /// The greatest integer of `ints` at or below `z`, if any, in O(log p) for its `p` pieces.
 fn snap_down(ints: &IntervalSet, z: &Int) -> Option<Int> {
     let v = End::Fin(Num::from(z));
-    let pieces = ints.pieces();
-    let (_, hi) = pieces.get(pieces.partition_point(|(lo, _)| *lo <= v).checked_sub(1)?)?;
+    let (_, hi) = ints.piece_at_or_below(&v)?;
     Some(match hi {
         End::Fin(h) if *hi < v => Int::from(h),
         _ => z.clone(),
@@ -7418,8 +7403,7 @@ fn snap_down(ints: &IntervalSet, z: &Int) -> Option<Int> {
 /// The least integer of `ints` at or above `z`, if any, in O(log p) for its `p` pieces.
 fn snap_up(ints: &IntervalSet, z: &Int) -> Option<Int> {
     let v = End::Fin(Num::from(z));
-    let pieces = ints.pieces();
-    let (lo, _) = pieces.get(pieces.partition_point(|(_, hi)| *hi < v))?;
+    let (lo, _) = ints.piece_at_or_above(&v)?;
     Some(match lo {
         End::Fin(l) if *lo > v => Int::from(l),
         _ => z.clone(),
@@ -7441,7 +7425,7 @@ fn gapped(p: &Product) -> bool {
         }
         _ => false,
     };
-    !(plain && ints.pieces().len() == 1)
+    !(plain && ints.len() == 1)
 }
 
 /// A pendant of a part ([`Scope::project_by_pendants`]): `s·x + σ·w + k == 0`, or `>= 0`, for `w`

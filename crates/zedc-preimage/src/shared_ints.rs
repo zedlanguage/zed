@@ -74,7 +74,7 @@ impl Ints {
 
     /// The set `s`, listed, whose pieces count as made ([`count_forward`]).
     pub(crate) fn of(s: IntervalSet) -> Ints {
-        count_forward(s.pieces().len());
+        count_forward(s.len());
         Ints::shared(Rc::new(s))
     }
 
@@ -186,7 +186,7 @@ impl Ints {
                 s.bounds(),
                 "the bounds known before listing are the bounds of the pieces"
             );
-            count_forward(listed.pieces().len());
+            count_forward(listed.len());
             s.0.listed.set(Rc::new(listed)).expect("listed once");
         }
     }

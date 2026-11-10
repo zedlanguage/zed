@@ -111,7 +111,7 @@ impl Equations<Bounds> for System {
         let bounds = [&self.init[v]]
             .into_iter()
             .chain(self.terms[v].iter().map(|t| &t.guard));
-        let ends = bounds.flat_map(|b| b.concrete().pieces().iter().flat_map(|(lo, hi)| [lo, hi]));
+        let ends = bounds.flat_map(|b| b.concrete().pieces().flat_map(|(lo, hi)| [lo, hi]));
         Landmarks::of(
             ends.filter_map(|e| match e {
                 End::Fin(v) => Some(v.clone()),

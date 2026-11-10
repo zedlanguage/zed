@@ -170,8 +170,7 @@ fn old(d: &Demand) -> before::Demand {
 /// Whether every piece of `s` lies inside a piece of `o`.
 fn inside(s: &IntervalSet, o: &IntervalSet) -> bool {
     s.pieces()
-        .iter()
-        .all(|(lo, hi)| o.pieces().iter().any(|(l, h)| l <= lo && hi <= h))
+        .all(|(lo, hi)| o.pieces().any(|(l, h)| l <= lo && hi <= h))
 }
 
 /// How a preimage compares with the one before.

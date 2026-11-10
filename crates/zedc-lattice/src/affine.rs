@@ -568,9 +568,9 @@ impl fmt::Display for Bounds {
         if self.lower.is_empty() && self.upper.is_empty() {
             return write!(f, "{}", self.ints);
         }
-        let (lo, hi) = match self.ints.pieces() {
-            [(lo, hi)] => (lo, hi),
-            _ => {
+        let (lo, hi) = match self.ints.only() {
+            Some((lo, hi)) => (lo, hi),
+            None => {
                 write!(f, "{} & ", self.ints)?;
                 (&End::NegInf, &End::PosInf)
             }

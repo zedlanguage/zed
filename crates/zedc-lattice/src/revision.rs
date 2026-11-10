@@ -241,7 +241,7 @@ pub fn forward(op: &Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
     let (xs, ys) = (x.sign_parts(), y.sign_parts());
     let one = [(End::of(0), End::of(0))];
     match op {
-        Op::Mod => map2(&xs, y.pieces(), forward_mod),
+        Op::Mod => map2(&xs, &y.clone().into_pieces(), forward_mod),
         Op::Div => {
             let nonzero = IntervalSet::single(0).complement_in(y).sign_parts();
             map2(&xs, &nonzero, |a, b| vec![corners(op, a, b)])
@@ -282,18 +282,7 @@ impl IntervalSet {
     /// magnitude, so the complement of `{i64::MAX}` keeps every integer past it: the preimage
     /// of `y + (i64::MAX - 3) == i64::MAX` being false keeps every `y` above 3.
     pub fn complement_in(&self, within: &IntervalSet) -> IntervalSet {
-        let mut gaps = Vec::new();
-        let mut from = NegInf;
-        for (lo, hi) in self.pieces() {
-            let prev = std::mem::replace(&mut from, hi.succ());
-            if prev == NegInf || prev <= *lo {
-                gaps.push((prev, lo.pred()));
-            }
-        }
-        if self.pieces().last().is_none_or(|p| p.1 != PosInf) {
-            gaps.push((from, PosInf));
-        }
-        IntervalSet::from_pieces(gaps).meet(within)
+        within.minus(self)
     }
 }
 
@@ -359,7 +348,7 @@ fn map2(
             .collect(),
     );
     IntervalSet::from_pieces(
-        regions(image.pieces())
+        regions(&image.into_pieces())
             .into_iter()
             .flat_map(|ps| IntervalSet::from_pieces(ps).cap(most.max(1)).into_pieces())
             .collect(),
@@ -731,7 +720,7 @@ mod tests {
     }
 
     fn finite_piece(s: &IntervalSet) -> bool {
-        matches!(s.pieces(), [(Fin(_), Fin(_))])
+        matches!(s.only(), Some((Fin(_), Fin(_))))
     }
 
     #[test]

@@ -228,7 +228,6 @@ fn show(x: &IntervalSet) -> String {
     };
     let ps: Vec<String> = x
         .pieces()
-        .iter()
         .map(|(l, h)| format!("{},{}", end(l), end(h)))
         .collect();
     format!("[{}]", ps.join(" "))
@@ -452,16 +451,16 @@ fn points(
 /// differs from that of `y`, found within a wider one: an end that moves with the range is
 /// no end.
 fn widened(x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
-    let (Some(first), Some(last)) = (x.pieces().first(), x.pieces().last()) else {
+    let (Some(first), Some(last)) = (x.first(), x.last()) else {
         return x.clone();
     };
     let same = |e: &End, f: Option<&End>| f == Some(e);
-    let lo = if same(&first.0, y.pieces().first().map(|p| &p.0)) {
+    let lo = if same(&first.0, y.first().map(|p| &p.0)) {
         first.0.clone()
     } else {
         End::NegInf
     };
-    let hi = if same(&last.1, y.pieces().last().map(|p| &p.1)) {
+    let hi = if same(&last.1, y.last().map(|p| &p.1)) {
         last.1.clone()
     } else {
         End::PosInf

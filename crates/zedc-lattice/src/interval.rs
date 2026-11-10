@@ -12,6 +12,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::Neg;
+use std::sync::Arc;
 
 use zed_kernel::{Prim, Value};
 
@@ -121,15 +122,447 @@ impl fmt::Display for End {
 }
 
 /// A finite union of integer intervals.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+///
+/// The pieces are kept in a persistent balanced search tree ordered by their lower ends (an
+/// AVL tree joined and split as in Blelloch, Ferizovic and Sun, "Just Join for Parallel Ordered
+/// Sets", 2016). A clone shares the whole tree; an operation that builds a new set copies only
+/// the `O(log p)` nodes on the paths it changes and shares the rest. Each node also holds, for
+/// its subtree, the count of pieces, the first and last ends, the longest run of integers left
+/// out between two pieces, and a hash of the pieces in order, so that these are read in `O(1)`.
+// Complexity tradeoff: the naive version is a sorted `Vec` of pieces; there a membership test
+// or a search is O(log p), but a clone, a meet, a join, an equality test and the longest gap
+// are each O(p), so a scope that tests and narrows a name of p pieces once for each of n
+// facts does O(n p) work, and the laps family of `l01_39_reduced_product` grew as n^1.9.
+// Used: the persistent tree. A clone is O(1); a meet, a join, an inclusion test and a
+// difference of sets of m <= n pieces are O(m log n), plus the pieces of the result for a
+// difference whose first operand has fewer pieces; a test or search O(log p); the longest
+// gap, the hull, the count and an inequality O(1). An inclusion test and an equality test walk
+// both trees together and pass by every subtree the two share, and every subtree of one that
+// lies inside a piece of the other, so sets that differ on d paths cost O(d log p) and equal
+// sets built apart O(p); a meet or join that leaves an operand unchanged returns its tree
+// shared, so the test after it is O(1). Tradeoffs: each piece costs a node of about 150
+// bytes, not 32; a walk over every piece costs a stack of O(log p) nodes; building from a
+// list is O(p) after the sort, as before. Test:
+// `l01_24_refinement_lattices::scaling::interval_set_operations_scale`; COMPLEXITY.md row
+// INTERVAL-persistent.
+#[derive(Clone, Default)]
 pub struct IntervalSet {
-    pieces: Vec<(End, End)>,
+    root: Link,
+}
+
+/// A subtree of an [`IntervalSet`]: `None` is the empty one.
+type Link = Option<Arc<Node>>;
+
+/// A piece with its hash.
+type Keyed = ((End, End), u64);
+
+/// A node of an [`IntervalSet`]'s tree, with the totals of its subtree.
+struct Node {
+    piece: (End, End),
+    piece_hash: u64,
+    left: Link,
+    right: Link,
+    /// The height of the subtree, 1 for a leaf.
+    height: u8,
+    /// The count of pieces in the subtree.
+    count: usize,
+    /// The lower end of the subtree's first piece.
+    first: End,
+    /// The upper end of the subtree's last piece.
+    last: End,
+    /// The longest run of integers missing between two neighboring pieces of the subtree, 0
+    /// for one piece.
+    gap: Num,
+    /// The hash of the subtree's pieces in order: `Σ h_i · R^(count - 1 - i)` modulo `P`.
+    hash: u64,
+    /// `R^count` modulo `P`.
+    pow: u64,
+}
+
+/// The modulus of the content hash, the prime `2^61 - 1`.
+const P: u64 = (1 << 61) - 1;
+/// The base of the content hash.
+const R: u64 = 0x0b4f_7e1d_9a35_c2e7 % P;
+
+/// `a · b` modulo `P`, for `a, b < P`.
+fn mul_mod(a: u64, b: u64) -> u64 {
+    let x = u128::from(a) * u128::from(b);
+    let s = (x as u64 & P) + (x >> 61) as u64;
+    let s = (s & P) + (s >> 61);
+    if s >= P { s - P } else { s }
+}
+
+/// `a + b` modulo `P`, for `a, b < P`.
+fn add_mod(a: u64, b: u64) -> u64 {
+    let s = a + b;
+    if s >= P { s - P } else { s }
+}
+
+/// A hasher with fixed keys, so that a set's content hash is the same in every run.
+struct FixedHasher(u64);
+
+impl std::hash::Hasher for FixedHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0 ^ v)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .rotate_left(29);
+    }
+    fn write_i64(&mut self, v: i64) {
+        self.write_u64(v as u64);
+    }
+    fn finish(&self) -> u64 {
+        let x = self.0 ^ (self.0 >> 31);
+        x.wrapping_mul(0xbf58_476d_1ce4_e5b9) ^ (x >> 29)
+    }
+}
+
+/// The hash of one piece, below `P`.
+fn piece_hash(piece: &(End, End)) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = FixedHasher(0x2545_f491_4f6c_dd1d);
+    piece.hash(&mut h);
+    h.finish() % P
+}
+
+/// The integers missing between the upper end `a` of one piece and the lower end `b` of the
+/// next: both are finite, since only the outer ends are infinite.
+fn run_between(a: &End, b: &End) -> Num {
+    match (a, b) {
+        (Fin(a), Fin(b)) => &(b - a) - &Num::ONE,
+        _ => unreachable!("only the outer ends of a set are infinite"),
+    }
+}
+
+fn height(t: &Link) -> u8 {
+    t.as_ref().map_or(0, |n| n.height)
+}
+
+/// The node with the given children and piece, which lies between them with at least one
+/// integer missing on each side.
+fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
+    let mut gap = Num::ZERO;
+    let (mut hash, mut pow, mut count, mut h) = (0, 1, 1, 0);
+    let first = match &left {
+        Some(l) => {
+            gap = l.gap.clone().max(run_between(&l.last, &piece.0));
+            (hash, pow, count, h) = (l.hash, l.pow, count + l.count, l.height);
+            l.first.clone()
+        }
+        None => piece.0.clone(),
+    };
+    hash = add_mod(mul_mod(hash, R), piece_hash);
+    pow = mul_mod(pow, R);
+    let last = match &right {
+        Some(r) => {
+            gap = gap.max(r.gap.clone()).max(run_between(&piece.1, &r.first));
+            hash = add_mod(mul_mod(hash, r.pow), r.hash);
+            pow = mul_mod(pow, r.pow);
+            count += r.count;
+            h = h.max(r.height);
+            r.last.clone()
+        }
+        None => piece.1.clone(),
+    };
+    Arc::new(Node {
+        piece,
+        piece_hash,
+        left,
+        right,
+        height: h + 1,
+        count,
+        first,
+        last,
+        gap,
+        hash,
+        pow,
+    })
+}
+
+/// The children and the piece of `n`, moved out when `n` is not shared and cloned when it is.
+fn parts(n: Arc<Node>) -> (Link, Keyed, Link) {
+    match Arc::try_unwrap(n) {
+        Ok(n) => (n.left, (n.piece, n.piece_hash), n.right),
+        Err(n) => (
+            n.left.clone(),
+            (n.piece.clone(), n.piece_hash),
+            n.right.clone(),
+        ),
+    }
+}
+
+fn rotate_left(t: Arc<Node>) -> Arc<Node> {
+    let (a, x, r) = parts(t);
+    let (b, y, c) = parts(r.expect("a right child to rotate"));
+    node(Some(node(a, x, b)), y, c)
+}
+
+fn rotate_right(t: Arc<Node>) -> Arc<Node> {
+    let (l, y, c) = parts(t);
+    let (a, x, b) = parts(l.expect("a left child to rotate"));
+    node(a, x, Some(node(b, y, c)))
+}
+
+/// The tree of `l`'s pieces, then `k`, then `r`'s, for every piece of `l` below `k` and of `r`
+/// above it: `O(|height(l) - height(r)| + 1)`.
+fn join(l: Link, k: Keyed, r: Link) -> Arc<Node> {
+    let (hl, hr) = (height(&l), height(&r));
+    match (l, r) {
+        (Some(l), r) if hl > hr + 1 => join_right(l, k, r),
+        (l, Some(r)) if hr > hl + 1 => join_left(l, k, r),
+        (l, r) => node(l, k, r),
+    }
+}
+
+fn join_right(tl: Arc<Node>, k: Keyed, tr: Link) -> Arc<Node> {
+    let (l, x, c) = parts(tl);
+    if height(&c) <= height(&tr) + 1 {
+        let t = node(c, k, tr);
+        if t.height <= height(&l) + 1 {
+            node(l, x, Some(t))
+        } else {
+            rotate_left(node(l, x, Some(rotate_right(t))))
+        }
+    } else {
+        let t = join_right(c.expect("taller than tr"), k, tr);
+        let tall = t.height > height(&l) + 1;
+        let t = node(l, x, Some(t));
+        if tall { rotate_left(t) } else { t }
+    }
+}
+
+fn join_left(tl: Link, k: Keyed, tr: Arc<Node>) -> Arc<Node> {
+    let (c, x, r) = parts(tr);
+    if height(&c) <= height(&tl) + 1 {
+        let t = node(tl, k, c);
+        if t.height <= height(&r) + 1 {
+            node(Some(t), x, r)
+        } else {
+            rotate_right(node(Some(rotate_left(t)), x, r))
+        }
+    } else {
+        let t = join_left(tl, k, c.expect("taller than tl"));
+        let tall = t.height > height(&r) + 1;
+        let t = node(Some(t), x, r);
+        if tall { rotate_right(t) } else { t }
+    }
+}
+
+/// The pieces of `t` whose lower end satisfies `goes_left`, and the rest; `goes_left` holds
+/// on a prefix of the pieces. `O(log p)`.
+fn split(t: Link, goes_left: &impl Fn(&End) -> bool) -> (Link, Link) {
+    let Some(n) = t else {
+        return (None, None);
+    };
+    let left = goes_left(&n.piece.0);
+    let (l, k, r) = parts(n);
+    if left {
+        let (rl, rr) = split(r, goes_left);
+        (Some(join(l, k, rl)), rr)
+    } else {
+        let (ll, lr) = split(l, goes_left);
+        (ll, Some(join(lr, k, r)))
+    }
+}
+
+/// The tree without its last piece, and that piece.
+fn split_last(t: Arc<Node>) -> (Link, Keyed) {
+    let (l, k, r) = parts(t);
+    match r {
+        None => (l, k),
+        Some(r) => {
+            let (r, last) = split_last(r);
+            (Some(join(l, k, r)), last)
+        }
+    }
+}
+
+/// The tree without its first piece, and that piece.
+fn split_first(t: Arc<Node>) -> (Keyed, Link) {
+    let (l, k, r) = parts(t);
+    match l {
+        None => (k, r),
+        Some(l) => {
+            let (first, l) = split_first(l);
+            (first, Some(join(l, k, r)))
+        }
+    }
+}
+
+/// `l`'s pieces then `r`'s, for every piece of `l` below each of `r` with a gap between.
+fn concat(l: Link, r: Link) -> Link {
+    match (l, r) {
+        (l, None) => l,
+        (None, r) => r,
+        (l, Some(r)) => {
+            let (k, r) = split_first(r);
+            Some(join(l, k, r))
+        }
+    }
+}
+
+/// The last piece of `t`.
+fn last_piece(t: &Link) -> Option<&(End, End)> {
+    let mut n = t.as_deref()?;
+    while let Some(r) = n.right.as_deref() {
+        n = r;
+    }
+    Some(&n.piece)
+}
+
+/// The tree of the given pieces, sorted and normalized, balanced: `O(p)`.
+fn build(pieces: &mut impl Iterator<Item = (End, End)>, count: usize) -> Link {
+    if count == 0 {
+        return None;
+    }
+    let left = build(pieces, count / 2);
+    let piece = pieces.next().expect("count pieces");
+    let right = build(pieces, count - count / 2 - 1);
+    let h = piece_hash(&piece);
+    Some(node(left, (piece, h), right))
+}
+
+/// The pieces of an [`IntervalSet`] in increasing order, from either end.
+#[derive(Clone)]
+pub struct Pieces<'a> {
+    /// The nodes still to give from the front: each with its left subtree given.
+    front: Vec<&'a Node>,
+    /// The nodes still to give from the back: each with its right subtree given.
+    back: Vec<&'a Node>,
+    /// The count of pieces not yet given.
+    left: usize,
+}
+
+impl<'a> Pieces<'a> {
+    fn push_left_spine(&mut self, mut t: Option<&'a Node>) {
+        while let Some(n) = t {
+            self.front.push(n);
+            t = n.left.as_deref();
+        }
+    }
+
+    fn push_right_spine(&mut self, mut t: Option<&'a Node>) {
+        while let Some(n) = t {
+            self.back.push(n);
+            t = n.right.as_deref();
+        }
+    }
+}
+
+impl<'a> Iterator for Pieces<'a> {
+    type Item = &'a (End, End);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.left == 0 {
+            return None;
+        }
+        let n = self.front.pop()?;
+        self.push_left_spine(n.right.as_deref());
+        self.left -= 1;
+        Some(&n.piece)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.left, Some(self.left))
+    }
+
+    fn count(self) -> usize {
+        self.left
+    }
+
+    fn last(mut self) -> Option<Self::Item> {
+        self.next_back()
+    }
+}
+
+impl DoubleEndedIterator for Pieces<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.left == 0 {
+            return None;
+        }
+        let n = self.back.pop()?;
+        self.push_right_spine(n.left.as_deref());
+        self.left -= 1;
+        Some(&n.piece)
+    }
+}
+
+impl ExactSizeIterator for Pieces<'_> {}
+
+impl std::iter::FusedIterator for Pieces<'_> {}
+
+/// What a [`Walk`] gives next: a whole subtree, not yet opened, or one piece.
+#[derive(Clone, Copy)]
+enum Step<'a> {
+    Tree(&'a Node),
+    Piece(&'a (End, End)),
+}
+
+impl<'a> Step<'a> {
+    /// The least and the greatest member.
+    fn ends(self) -> (&'a End, &'a End) {
+        match self {
+            Step::Tree(n) => (&n.first, &n.last),
+            Step::Piece((lo, hi)) => (lo, hi),
+        }
+    }
+}
+
+/// The pieces of a tree in increasing order, given as whole subtrees where the reader can
+/// pass one by, so that two sets that share subtrees are compared in time that grows with
+/// their differences, not their sizes ([`IntervalSet::is_subset`], equality).
+struct Walk<'a> {
+    /// The steps still to give, the next on top.
+    stack: Vec<Step<'a>>,
+}
+
+impl<'a> Walk<'a> {
+    fn of(t: &'a Link) -> Self {
+        Walk {
+            stack: t.as_deref().map(Step::Tree).into_iter().collect(),
+        }
+    }
+
+    fn next(&self) -> Option<Step<'a>> {
+        self.stack.last().copied()
+    }
+
+    fn pass(&mut self) {
+        self.stack.pop();
+    }
+
+    /// Replaces the subtree on top by its left subtree, its piece and its right subtree.
+    fn open(&mut self) {
+        let Some(Step::Tree(n)) = self.stack.pop() else {
+            unreachable!("only a subtree opens");
+        };
+        self.stack.extend(n.right.as_deref().map(Step::Tree));
+        self.stack.push(Step::Piece(&n.piece));
+        self.stack.extend(n.left.as_deref().map(Step::Tree));
+    }
+}
+
+/// Whether `a` and `b` are the same subtree.
+fn same(a: Step<'_>, b: Step<'_>) -> bool {
+    matches!((a, b), (Step::Tree(x), Step::Tree(y)) if std::ptr::eq(x, y))
+}
+
+/// The count of pieces in a step.
+fn size(s: Step<'_>) -> usize {
+    match s {
+        Step::Tree(n) => n.count,
+        Step::Piece(_) => 1,
+    }
 }
 
 impl IntervalSet {
     /// The empty set.
     pub fn empty() -> Self {
-        IntervalSet { pieces: Vec::new() }
+        IntervalSet { root: None }
     }
 
     /// Every integer.
@@ -167,27 +600,133 @@ impl IntervalSet {
         for (lo, hi) in pieces {
             push_merged(&mut out, lo, hi);
         }
-        IntervalSet { pieces: out }
+        IntervalSet::from_normal(out)
+    }
+
+    /// The set of the given pieces, which are sorted, disjoint and not adjacent: `O(p)`.
+    fn from_normal(pieces: Vec<(End, End)>) -> Self {
+        let count = pieces.len();
+        IntervalSet {
+            root: build(&mut pieces.into_iter(), count),
+        }
     }
 
     /// The pieces, in increasing order.
-    pub fn pieces(&self) -> &[(End, End)] {
-        &self.pieces
+    pub fn pieces(&self) -> Pieces<'_> {
+        let mut it = Pieces {
+            front: Vec::new(),
+            back: Vec::new(),
+            left: self.len(),
+        };
+        it.push_left_spine(self.root.as_deref());
+        it.push_right_spine(self.root.as_deref());
+        it
+    }
+
+    /// The pieces from the first whose upper end is at or above `v`, in increasing order:
+    /// `O(log p)` to start.
+    pub fn pieces_from(&self, v: &End) -> Pieces<'_> {
+        self.pieces_after(|(_, hi)| hi < v)
+    }
+
+    /// The pieces from the first for which `before` is false, in increasing order, for
+    /// `before` true on a prefix of the pieces, as for `partition_point`: `O(log p)` to start.
+    pub fn pieces_after(&self, before: impl Fn(&(End, End)) -> bool) -> Pieces<'_> {
+        let mut it = Pieces {
+            front: Vec::new(),
+            back: Vec::new(),
+            left: self.len(),
+        };
+        let mut t = self.root.as_deref();
+        while let Some(n) = t {
+            if !before(&n.piece) {
+                it.front.push(n);
+                t = n.left.as_deref();
+            } else {
+                it.left -= n.left.as_ref().map_or(0, |l| l.count) + 1;
+                t = n.right.as_deref();
+            }
+        }
+        it.push_right_spine(self.root.as_deref());
+        it
     }
 
     /// The pieces, in increasing order, taken by value.
     pub fn into_pieces(self) -> Vec<(End, End)> {
-        self.pieces
+        self.pieces().cloned().collect()
+    }
+
+    /// The count of pieces: `O(1)`.
+    pub fn len(&self) -> usize {
+        self.root.as_ref().map_or(0, |n| n.count)
     }
 
     /// Whether the set is empty.
     pub fn is_empty(&self) -> bool {
-        self.pieces.is_empty()
+        self.root.is_none()
     }
 
-    /// The least and the greatest endpoint, or `None` for the empty set.
+    /// The first piece: `O(log p)`.
+    pub fn first(&self) -> Option<&(End, End)> {
+        let mut n = self.root.as_deref()?;
+        while let Some(l) = n.left.as_deref() {
+            n = l;
+        }
+        Some(&n.piece)
+    }
+
+    /// The last piece: `O(log p)`.
+    pub fn last(&self) -> Option<&(End, End)> {
+        last_piece(&self.root)
+    }
+
+    /// The only piece, when there is exactly one.
+    pub fn only(&self) -> Option<&(End, End)> {
+        self.root
+            .as_deref()
+            .filter(|n| n.count == 1)
+            .map(|n| &n.piece)
+    }
+
+    /// The last piece whose lower end is at or below `v`: the piece that holds `v`, or the
+    /// nearest one below it. `O(log p)`.
+    pub fn piece_at_or_below(&self, v: &End) -> Option<&(End, End)> {
+        let (mut t, mut found) = (self.root.as_deref(), None);
+        while let Some(n) = t {
+            if n.piece.0 <= *v {
+                found = Some(&n.piece);
+                t = n.right.as_deref();
+            } else {
+                t = n.left.as_deref();
+            }
+        }
+        found
+    }
+
+    /// The first piece whose upper end is at or above `v`: the piece that holds `v`, or the
+    /// nearest one above it. `O(log p)`.
+    pub fn piece_at_or_above(&self, v: &End) -> Option<&(End, End)> {
+        let (mut t, mut found) = (self.root.as_deref(), None);
+        while let Some(n) = t {
+            if n.piece.1 >= *v {
+                found = Some(&n.piece);
+                t = n.left.as_deref();
+            } else {
+                t = n.right.as_deref();
+            }
+        }
+        found
+    }
+
+    /// The length of the longest run of integers missing between two neighboring pieces, 0
+    /// for fewer than two pieces: `O(1)`.
+    pub fn max_gap(&self) -> Num {
+        self.root.as_ref().map_or(Num::ZERO, |n| n.gap.clone())
+    }
+
+    /// The least and the greatest endpoint, or `None` for the empty set: `O(1)`.
     pub fn bounds(&self) -> Option<(&End, &End)> {
-        Some((&self.pieces.first()?.0, &self.pieces.last()?.1))
+        self.root.as_deref().map(|n| (&n.first, &n.last))
     }
 
     /// The smallest single interval containing the set.
@@ -203,57 +742,215 @@ impl IntervalSet {
         self.contains_end(&End::of(v))
     }
 
-    /// Whether the finite end `v` is a member, by binary search of the pieces.
+    /// Whether the finite end `v` is a member: `O(log p)`.
     pub fn contains_end(&self, v: &End) -> bool {
-        let below = self.pieces.partition_point(|(lo, _)| lo <= v);
-        below > 0 && *v <= self.pieces[below - 1].1
+        self.piece_at_or_below(v).is_some_and(|(_, hi)| v <= hi)
     }
 
     /// The finite endpoints, each with whether it is a lower one; the infinities are left out.
-    /// Widening decreases their number (see [`IntervalSet::widen`]).
+    /// Widening decreases their number (see [`IntervalSet::widen`]). `O(1)`.
     pub fn finite_endpoints(&self) -> usize {
-        self.pieces
-            .iter()
-            .map(|(lo, hi)| usize::from(*lo != NegInf) + usize::from(*hi != PosInf))
-            .sum()
-    }
-
-    /// The union, by one merge of the two sorted lists of pieces.
-    pub fn join(&self, other: &Self) -> Self {
-        let (a, b) = (&self.pieces, &other.pieces);
-        let (mut i, mut j) = (0, 0);
-        let mut out: Vec<(End, End)> = Vec::with_capacity(a.len() + b.len());
-        while i < a.len() || j < b.len() {
-            let next = if j == b.len() || (i < a.len() && a[i] <= b[j]) {
-                i += 1;
-                &a[i - 1]
-            } else {
-                j += 1;
-                &b[j - 1]
-            };
-            push_merged(&mut out, next.0.clone(), next.1.clone());
-        }
-        IntervalSet { pieces: out }
-    }
-
-    /// The intersection.
-    pub fn meet(&self, other: &Self) -> Self {
-        let (mut i, mut j) = (0, 0);
-        let mut out = Vec::new();
-        while i < self.pieces.len() && j < other.pieces.len() {
-            let (a, b) = (&self.pieces[i], &other.pieces[j]);
-            let (lo, hi) = ((&a.0).max(&b.0), (&a.1).min(&b.1));
-            if lo <= hi {
-                out.push((lo.clone(), hi.clone()));
+        match self.bounds() {
+            None => 0,
+            Some((lo, hi)) => {
+                2 * self.len() - usize::from(*lo == NegInf) - usize::from(*hi == PosInf)
             }
-            if a.1 < b.1 { i += 1 } else { j += 1 }
         }
-        IntervalSet { pieces: out }
     }
 
-    /// Whether every member of `self` is a member of `other`.
+    /// Whether `self` and `other` share their tree, which makes them equal: `O(1)`.
+    fn same_tree(&self, other: &Self) -> bool {
+        match (&self.root, &other.root) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    /// The two sets, the one of fewer pieces first.
+    fn by_size<'a>(&'a self, other: &'a Self) -> (&'a Self, &'a Self) {
+        if self.len() <= other.len() {
+            (self, other)
+        } else {
+            (other, self)
+        }
+    }
+
+    /// The union. A set that holds the other is returned shared. `O(m log n)` for `m <= n`
+    /// pieces: each piece of the smaller set is put into the larger one by two splits.
+    pub fn join(&self, other: &Self) -> Self {
+        let (small, big) = self.by_size(other);
+        if small.is_subset(big) {
+            return big.clone();
+        }
+        if big.is_subset(small) {
+            return small.clone();
+        }
+        let mut out = big.root.clone();
+        for (lo, hi) in small.pieces() {
+            // The pieces below `lo`, the last of which merges when it reaches `lo - 1`.
+            let (below, rest) = split(out, &|l| l < lo);
+            let (mut lo, mut hi) = (lo.clone(), hi.clone());
+            let below = match below {
+                Some(b) if lo.at_most_succ(&b.last) => {
+                    let (b, ((l, h), _)) = split_last(b);
+                    lo = l;
+                    hi = hi.max(h);
+                    b
+                }
+                b => b,
+            };
+            // The pieces that start at or before `hi + 1` merge too.
+            let (merged, above) = split(rest, &|l| l.at_most_succ(&hi));
+            if let Some(m) = &merged
+                && m.last > hi
+            {
+                hi = m.last.clone();
+            }
+            let h = piece_hash(&(lo.clone(), hi.clone()));
+            out = Some(join(below, ((lo, hi), h), above));
+        }
+        IntervalSet { root: out }
+    }
+
+    /// The intersection. A set inside the other is returned shared. `O(m log n)` for `m <= n`
+    /// pieces: the larger set is cut to each piece of the smaller one by two splits.
+    pub fn meet(&self, other: &Self) -> Self {
+        let (small, big) = self.by_size(other);
+        if small.is_subset(big) {
+            return small.clone();
+        }
+        if big.is_subset(small) {
+            return big.clone();
+        }
+        let mut out: Link = None;
+        for (lo, hi) in small.pieces() {
+            let (below, rest) = split(big.root.clone(), &|l| l < lo);
+            // The last piece below `lo` may reach into `lo..=hi`.
+            let head = (below.as_ref())
+                .filter(|b| b.last >= *lo)
+                .map(|b| (lo.clone(), (&b.last).min(hi).clone()));
+            let (mut inside, _) = split(rest, &|l| l <= hi);
+            if let Some(t) = inside.take() {
+                inside = if t.last > *hi {
+                    let (t, ((l, _), _)) = split_last(t);
+                    let piece = (l, hi.clone());
+                    let h = piece_hash(&piece);
+                    Some(join(t, (piece, h), None))
+                } else {
+                    Some(t)
+                };
+            }
+            if let Some(piece) = head {
+                let h = piece_hash(&piece);
+                inside = Some(join(None, (piece, h), inside));
+            }
+            out = concat(out, inside);
+        }
+        IntervalSet { root: out }
+    }
+
+    /// Whether every member of `self` is a member of `other`, by one walk of both trees in
+    /// increasing order that passes by whole subtrees: one the two sets share, one of `self`
+    /// inside a piece of `other`, and one of `other` below what is left of `self`. `O(m log n)`
+    /// for `m <= n` pieces, and `O(d log p)` for sets of `p` pieces that differ on `d` of the
+    /// paths of their shared tree, as a set and the same set narrowed by one fact do.
     pub fn is_subset(&self, other: &Self) -> bool {
-        &self.meet(other) == self
+        let (mut a, mut b) = (Walk::of(&self.root), Walk::of(&other.root));
+        while let Some(x) = a.next() {
+            let Some(y) = b.next() else {
+                return false;
+            };
+            let ((xlo, xhi), (ylo, yhi)) = (x.ends(), y.ends());
+            if same(x, y) {
+                a.pass();
+                b.pass();
+            } else if yhi < xlo {
+                b.pass();
+            } else if xhi < ylo {
+                // What `other` has passed by ends below `x`, so nothing holds its least member.
+                return false;
+            } else if matches!(y, Step::Piece(_)) && ylo <= xlo && xhi <= yhi {
+                a.pass();
+            } else {
+                match (x, y) {
+                    // `x` is not inside `y`: below `y` nothing of `other` is left, and its next
+                    // piece starts at least one integer past `y`.
+                    (Step::Piece(_), Step::Piece(_)) => return false,
+                    (Step::Piece(_), Step::Tree(_)) => b.open(),
+                    (Step::Tree(_), Step::Piece(_)) => a.open(),
+                    (Step::Tree(_), Step::Tree(_)) if size(x) >= size(y) => a.open(),
+                    (Step::Tree(_), Step::Tree(_)) => b.open(),
+                }
+            }
+        }
+        true
+    }
+
+    /// The members of `self` that are not members of `other`. `O(m log n)` for `m <= n`
+    /// pieces, plus the pieces of the result when `self` is the smaller set.
+    pub fn minus(&self, other: &Self) -> Self {
+        if self.is_empty() || other.is_empty() {
+            return self.clone();
+        }
+        if self.same_tree(other) {
+            return IntervalSet::empty();
+        }
+        if other.len() <= self.len() {
+            // Each piece of `other` is cut out of `self` by two splits: the pieces of `self`
+            // that start inside it go, and what the last piece below it and the last piece
+            // inside it hold past its ends stays.
+            let mut out = self.root.clone();
+            for (lo, hi) in other.pieces() {
+                let (below, rest) = split(out, &|l| l < lo);
+                let (inside, above) = split(rest, &|l| l <= hi);
+                let mut kept = Vec::new();
+                let below = match below {
+                    Some(b) if b.last >= *lo => {
+                        let (b, ((l, h), _)) = split_last(b);
+                        kept.push((l, lo.pred()));
+                        if h > *hi {
+                            kept.push((hi.succ(), h));
+                        }
+                        b
+                    }
+                    b => b,
+                };
+                if let Some(t) = inside
+                    && t.last > *hi
+                {
+                    kept.push((hi.succ(), t.last.clone()));
+                }
+                let tail = kept.into_iter().rev().fold(above, |r, p| {
+                    let h = piece_hash(&p);
+                    Some(join(None, (p, h), r))
+                });
+                out = concat(below, tail);
+            }
+            return IntervalSet { root: out };
+        }
+        // Each piece of `self` keeps the gaps of `other` within it.
+        let mut out = Vec::new();
+        for (lo, hi) in self.pieces() {
+            let mut from = Some(lo.clone());
+            for (l, h) in other.pieces_from(lo) {
+                if l > hi {
+                    break;
+                }
+                if let Some(f) = from.take_if(|f| l > f) {
+                    out.push((f, l.pred()));
+                }
+                // The members from `h + 1` on are left, unless `other` holds the rest.
+                from = (h < hi).then(|| h.succ());
+                if from.is_none() {
+                    break;
+                }
+            }
+            if let Some(f) = from {
+                out.push((f, hi.clone()));
+            }
+        }
+        IntervalSet::from_normal(out)
     }
 
     /// The set with at most `limit` pieces: while it has more, the two neighboring pieces with
@@ -264,7 +961,7 @@ impl IntervalSet {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
         let limit = limit.max(1);
-        let n = self.pieces.len();
+        let n = self.len();
         if n <= limit {
             return self.clone();
         }
@@ -272,7 +969,7 @@ impl IntervalSet {
         // heap, smallest first and the lower pair on a tie; a gap whose pieces have changed
         // since it was pushed is skipped when it comes up. A piece's lower end never changes,
         // so the heap holds the index of the right piece, not its end.
-        let mut pieces = self.pieces.clone();
+        let mut pieces = self.clone().into_pieces();
         let mut next: Vec<usize> = (1..=n).collect();
         let mut alive = vec![true; n];
         let gap = |left: &(End, End), right: &(End, End)| match (&left.1, &right.0) {
@@ -298,13 +995,13 @@ impl IntervalSet {
             }
             count -= 1;
         }
-        IntervalSet {
-            pieces: pieces
+        IntervalSet::from_normal(
+            pieces
                 .into_iter()
                 .zip(alive)
                 .filter_map(|(p, a)| a.then_some(p))
                 .collect(),
-        }
+        )
     }
 
     /// The widening `self ∇ next` (step M0.5), for `next` the value that the join would give,
@@ -339,8 +1036,7 @@ impl IntervalSet {
         }
         let ends = self.finite_ends();
         let out = next
-            .pieces
-            .iter()
+            .pieces()
             .map(|(lo, hi)| {
                 let lo = match lo {
                     Fin(v) => below(&ends, marks, v).map_or(NegInf, Fin),
@@ -361,8 +1057,7 @@ impl IntervalSet {
     /// ends lie in a finite set, so there are finitely many results for one set of landmarks.
     pub fn snap(&self, marks: &Landmarks) -> Self {
         let out = self
-            .pieces
-            .iter()
+            .pieces()
             .map(|(lo, hi)| {
                 let lo = match lo {
                     Fin(v) => landmark_below(marks, v).map_or(NegInf, Fin),
@@ -405,8 +1100,7 @@ impl IntervalSet {
     pub fn narrow(&self, next: &Self, marks: &Landmarks) -> Self {
         let ends = self.finite_ends();
         let out = next
-            .pieces
-            .iter()
+            .pieces()
             .map(|(lo, hi)| {
                 let lo = match lo {
                     Fin(v) => Fin(below(&ends, marks, v).unwrap_or_else(|| v.clone())),
@@ -425,8 +1119,7 @@ impl IntervalSet {
     /// The finite endpoints of `self`, of either role, in order (the pieces are disjoint and
     /// sorted).
     fn finite_ends(&self) -> Vec<&Num> {
-        self.pieces
-            .iter()
+        self.pieces()
             .flat_map(|(lo, hi)| [lo, hi])
             .filter_map(|e| match e {
                 Fin(v) => Some(v),
@@ -437,12 +1130,12 @@ impl IntervalSet {
 
     /// The set of `-x` for each member `x`.
     pub fn neg(&self) -> Self {
-        IntervalSet::from_pieces(self.pieces.iter().map(|(lo, hi)| (-hi, -lo)).collect())
+        IntervalSet::from_normal(self.pieces().rev().map(|(lo, hi)| (-hi, -lo)).collect())
     }
 
     /// The image of each piece under `f`, joined.
     pub fn lift1(&self, f: impl Fn(&(End, End)) -> Vec<(End, End)>) -> Self {
-        IntervalSet::from_pieces(self.pieces.iter().flat_map(f).collect())
+        IntervalSet::from_pieces(self.pieces().flat_map(f).collect())
     }
 
     /// The pieces split at zero into negative, zero and positive parts, so that each part has
@@ -454,8 +1147,62 @@ impl IntervalSet {
             IntervalSet::range(End::of(1), PosInf),
         ]
         .iter()
-        .flat_map(|part| self.meet(part).pieces)
+        .flat_map(|part| self.meet(part).into_pieces())
         .collect()
+    }
+}
+
+impl PartialEq for IntervalSet {
+    /// Equality of sets: `O(1)` for a different count or hash of pieces, and otherwise a walk
+    /// of both trees that passes by the subtrees they share, `O(d log p)` for `d` paths that
+    /// differ.
+    fn eq(&self, other: &Self) -> bool {
+        let (Some(x), Some(y)) = (&self.root, &other.root) else {
+            return self.is_empty() && other.is_empty();
+        };
+        if x.count != y.count || x.hash != y.hash {
+            return false;
+        }
+        let (mut a, mut b) = (Walk::of(&self.root), Walk::of(&other.root));
+        loop {
+            match (a.next(), b.next()) {
+                (None, None) => return true,
+                (Some(x), Some(y)) if same(x, y) => {
+                    a.pass();
+                    b.pass();
+                }
+                (Some(Step::Piece(p)), Some(Step::Piece(q))) => {
+                    if p != q {
+                        return false;
+                    }
+                    a.pass();
+                    b.pass();
+                }
+                // At least one is a subtree: the larger one opens.
+                (Some(x @ Step::Tree(_)), Some(y)) if size(x) >= size(y) => a.open(),
+                (Some(_), Some(_)) => b.open(),
+                _ => return false,
+            }
+        }
+    }
+}
+
+impl Eq for IntervalSet {}
+
+impl std::hash::Hash for IntervalSet {
+    /// The count and the content hash of the pieces: `O(1)`.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let (count, hash) = self.root.as_ref().map_or((0, 0), |n| (n.count, n.hash));
+        state.write_usize(count);
+        state.write_u64(hash);
+    }
+}
+
+impl fmt::Debug for IntervalSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IntervalSet")
+            .field("pieces", &self.pieces().collect::<Vec<_>>())
+            .finish()
     }
 }
 
@@ -477,7 +1224,7 @@ impl fmt::Display for IntervalSet {
     /// `[]` for the empty set and `[..]` for every integer.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
-        for (i, (lo, hi)) in self.pieces.iter().enumerate() {
+        for (i, (lo, hi)) in self.pieces().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
@@ -846,12 +1593,12 @@ mod tests {
     #[test]
     fn normalization_merges_overlapping_and_adjacent_pieces() {
         assert_eq!(set(&[(5, 7), (0, 2), (3, 3)]), set(&[(0, 3), (5, 7)]));
-        assert_eq!(set(&[(0, 2), (1, 9)]).pieces(), &[(End::of(0), End::of(9))]);
-        assert!(set(&[(3, 2)]).is_empty());
         assert_eq!(
-            IntervalSet::range(End::of(i64::MAX), PosInf).pieces().len(),
-            1
+            set(&[(0, 2), (1, 9)]).into_pieces(),
+            [(End::of(0), End::of(9))]
         );
+        assert!(set(&[(3, 2)]).is_empty());
+        assert_eq!(IntervalSet::range(End::of(i64::MAX), PosInf).len(), 1);
     }
 
     #[test]
@@ -927,5 +1674,240 @@ mod tests {
         // An inner endpoint that moves down joins its piece to the one below.
         let a = set(&[(0, 0), (10, 20)]);
         assert_eq!(a.widen(&set(&[(0, 0), (9, 20)]), &none), set(&[(0, 20)]));
+    }
+
+    /// A xorshift generator, so that the random tests repeat.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % n
+        }
+
+        fn int(&mut self, lo: i64, hi: i64) -> i64 {
+            lo + self.below((hi - lo + 1) as u64) as i64
+        }
+    }
+
+    /// A random set of up to `most` raw pieces with ends in `-w..=w`, overlapping, adjacent or
+    /// single points, with an unbounded end on either side now and then.
+    fn random_set(rng: &mut Rng, most: u64, w: i64) -> IntervalSet {
+        let n = rng.below(most + 1);
+        let mut raw = Vec::new();
+        for _ in 0..n {
+            let lo = rng.int(-w, w);
+            let hi = match rng.below(4) {
+                0 => lo,
+                _ => (lo + rng.int(0, 1 + w / 8)).min(w),
+            };
+            raw.push((End::of(lo), End::of(hi)));
+        }
+        if rng.below(5) == 0 {
+            raw.push((NegInf, End::of(rng.int(-w, w))));
+        }
+        if rng.below(5) == 0 {
+            raw.push((End::of(rng.int(-w, w)), PosInf));
+        }
+        IntervalSet::from_pieces(raw)
+    }
+
+    /// The members of `s` in `-w-3..=w+3`, beyond which membership no longer changes.
+    fn members(s: &IntervalSet, w: i64) -> Vec<bool> {
+        (-w - 3..=w + 3).map(|v| s.contains(v)).collect()
+    }
+
+    /// The pieces of the set with the given members in `-w-3..=w+3`, found as runs of
+    /// members, the outer runs unbounded when they reach the ends: the Vec version.
+    fn from_members(m: &[bool], w: i64) -> Vec<(End, End)> {
+        let mut out: Vec<(End, End)> = Vec::new();
+        let mut start = None;
+        for (i, &b) in m.iter().enumerate() {
+            let v = -w - 3 + i as i64;
+            match (b, start) {
+                (true, None) => start = Some(v),
+                (false, Some(s)) => {
+                    out.push((End::of(s), End::of(v - 1)));
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(s) = start {
+            out.push((End::of(s), PosInf));
+        }
+        if m.first() == Some(&true) {
+            out[0].0 = NegInf;
+        }
+        out
+    }
+
+    /// Checks the tree's balance and every summary it keeps against its pieces.
+    fn check_tree(t: &Link) -> usize {
+        let Some(n) = t else { return 0 };
+        let (hl, hr) = (check_tree(&n.left), check_tree(&n.right));
+        assert!(hl.abs_diff(hr) <= 1, "unbalanced");
+        assert_eq!(usize::from(n.height), hl.max(hr) + 1);
+        let whole = IntervalSet { root: t.clone() };
+        let pieces: Vec<&(End, End)> = whole.pieces().collect();
+        assert_eq!(n.count, pieces.len());
+        assert_eq!(n.first, pieces[0].0);
+        assert_eq!(n.last, pieces[pieces.len() - 1].1);
+        assert_eq!(n.piece_hash, piece_hash(&n.piece));
+        let mut gap = Num::ZERO;
+        let (mut hash, mut pow) = (0, 1);
+        for w in pieces.windows(2) {
+            assert!(w[0].0 <= w[0].1);
+            assert!(w[0].1.succ() < w[1].0, "pieces that touch are merged");
+            gap = gap.max(run_between(&w[0].1, &w[1].0));
+        }
+        for p in &pieces {
+            hash = add_mod(mul_mod(hash, R), piece_hash(p));
+            pow = mul_mod(pow, R);
+        }
+        assert_eq!(n.gap, gap);
+        assert_eq!((n.hash, n.pow), (hash, pow));
+        hl.max(hr) + 1
+    }
+
+    /// `s` against the Vec version of the pieces with the members `m`, by every query.
+    fn agrees(s: &IntervalSet, m: &[bool], w: i64) {
+        check_tree(&s.root);
+        let want = from_members(m, w);
+        let got: Vec<(End, End)> = s.pieces().cloned().collect();
+        assert_eq!(got, want);
+        assert_eq!(*s, IntervalSet::from_pieces(want.clone()));
+        assert_eq!(s.len(), want.len());
+        assert_eq!(s.pieces().count(), want.len());
+        assert_eq!(s.pieces().last(), want.last());
+        assert_eq!(s.first(), want.first());
+        assert_eq!(s.last(), want.last());
+        let mut back: Vec<_> = s.pieces().rev().cloned().collect();
+        back.reverse();
+        assert_eq!(back, want);
+        let bounds = want.first().map(|f| (&f.0, &want[want.len() - 1].1));
+        assert_eq!(s.bounds(), bounds);
+        let gap = want
+            .windows(2)
+            .map(|p| run_between(&p[0].1, &p[1].0))
+            .max()
+            .unwrap_or(Num::ZERO);
+        assert_eq!(s.max_gap(), gap);
+        for v in -w - 3..=w + 3 {
+            let e = End::of(v);
+            assert_eq!(s.contains(v), m[(v + w + 3) as usize]);
+            assert_eq!(
+                s.piece_at_or_below(&e),
+                want.iter().rev().find(|p| p.0 <= e)
+            );
+            assert_eq!(s.piece_at_or_above(&e), want.iter().find(|p| p.1 >= e));
+            let from: Vec<_> = s.pieces_from(&e).collect();
+            let i = want.partition_point(|p| p.1 < e);
+            assert_eq!(from, want[i..].iter().collect::<Vec<_>>());
+            // From both ends at once: a front and a back that meet.
+            let mut it = s.pieces_from(&e);
+            let mut both = Vec::new();
+            while let Some(p) = it.next() {
+                both.push(p);
+                if let Some(q) = it.next_back() {
+                    both.push(q);
+                }
+            }
+            assert_eq!(both.len(), want.len() - i);
+        }
+    }
+
+    /// meet, join, minus, complement_in and is_subset on random sets, against the Vec version
+    /// built from members: small sets with many shapes, and larger ones with deep trees.
+    #[test]
+    fn set_operations_agree_with_the_vec_version_on_random_sets() {
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        for (rounds, most, w) in [(4000, 6, 12), (300, 60, 200), (40, 400, 1500)] {
+            for _ in 0..rounds {
+                let (a, b) = (random_set(&mut rng, most, w), random_set(&mut rng, most, w));
+                let (ma, mb) = (members(&a, w), members(&b, w));
+                agrees(&a, &ma, w);
+                let zip = |f: fn(bool, bool) -> bool| -> Vec<bool> {
+                    ma.iter().zip(&mb).map(|(&x, &y)| f(x, y)).collect()
+                };
+                agrees(&a.meet(&b), &zip(|x, y| x && y), w);
+                agrees(&a.join(&b), &zip(|x, y| x || y), w);
+                agrees(&a.minus(&b), &zip(|x, y| x && !y), w);
+                agrees(&b.minus(&a), &zip(|x, y| y && !x), w);
+                agrees(&a.complement_in(&b), &zip(|x, y| y && !x), w);
+                let sub = ma.iter().zip(&mb).all(|(&x, &y)| !x || y);
+                assert_eq!(a.is_subset(&b), sub, "{a} ⊆ {b}");
+                assert_eq!(a == b, ma == mb);
+                // A subset made from `b`: the shortcuts return a shared tree.
+                let c = b.meet(&a);
+                assert!(c.is_subset(&b) && c.is_subset(&a));
+                assert_eq!(c.join(&b), b);
+                assert!(c.join(&b).same_tree(&b));
+                // A set and the same set less one point share all but one path of their tree.
+                let k = rng.int(-w - 2, w + 2);
+                let point = IntervalSet::single(k);
+                let less = a.minus(&point);
+                let mut m = ma.clone();
+                m[(k + w + 3) as usize] = false;
+                agrees(&less, &m, w);
+                assert!(less.is_subset(&a));
+                assert_eq!(a.is_subset(&less), !a.contains(k));
+                assert_eq!(less == a, !a.contains(k));
+                let back = less.join(&point.meet(&a));
+                assert_eq!(back, a);
+                assert!(a.is_subset(&back) && back.is_subset(&a));
+            }
+        }
+    }
+
+    /// Equal sets built along different paths are equal and hash alike; the hash and the
+    /// count alone never decide equality.
+    #[test]
+    fn equal_sets_built_differently_hash_alike() {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let hash = |s: &IntervalSet| {
+            let mut h = DefaultHasher::new();
+            s.hash(&mut h);
+            h.finish()
+        };
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        for _ in 0..2000 {
+            let (a, b) = (random_set(&mut rng, 12, 40), random_set(&mut rng, 12, 40));
+            // (a ∪ b) \ (b \ a) = a, built by splits and joins, not from a's pieces.
+            let back = a.join(&b).minus(&b.minus(&a));
+            assert_eq!(back, a);
+            assert_eq!(hash(&back), hash(&a));
+            let union = b.join(&a);
+            assert_eq!(union, a.join(&b));
+            assert_eq!(hash(&union), hash(&a.join(&b)));
+        }
+    }
+
+    /// The empty set, every integer, single points and pieces that touch.
+    #[test]
+    fn edge_sets() {
+        let (e, top) = (IntervalSet::empty(), IntervalSet::top());
+        assert_eq!(e.meet(&top), e);
+        assert_eq!(e.join(&top), top);
+        assert_eq!(top.minus(&e), top);
+        assert!(top.minus(&top).is_empty());
+        assert_eq!(e.max_gap(), Num::ZERO);
+        assert_eq!(e.bounds(), None);
+        assert_eq!(e.pieces().count(), 0);
+        assert_eq!(
+            top.minus(&IntervalSet::single(0)),
+            IntervalSet::from_pieces(vec![(NegInf, End::of(-1)), (End::of(1), PosInf)])
+        );
+        // Pieces that touch merge: [0..=2] ∪ [3..=5] is one piece.
+        assert_eq!(set(&[(0, 2)]).join(&set(&[(3, 5)])), set(&[(0, 5)]));
+        assert_eq!(set(&[(0, 2), (6, 8)]).join(&set(&[(3, 5)])).len(), 1);
+        assert_eq!(set(&[(0, 0), (2, 2)]).max_gap(), Num::ONE);
+        assert_eq!(set(&[(5, 5)]).minus(&set(&[(5, 5)])), e);
+        assert_eq!(
+            set(&[(0, 9)]).minus(&set(&[(3, 3)])),
+            set(&[(0, 2), (4, 9)])
+        );
     }
 }

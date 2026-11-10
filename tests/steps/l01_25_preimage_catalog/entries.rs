@@ -357,7 +357,7 @@ fn a_set_of_many_pieces_is_kept_exact() {
                && x != 15 && x != 17;\n";
     let p = pre(src, &[any("x")], &Demand::Bool(true));
     assert!(p.exact, "{}", shown(&p));
-    assert_eq!(p.domains["x"].pieces().len(), 10, "{}", shown(&p));
+    assert_eq!(p.domains["x"].len(), 10, "{}", shown(&p));
     check(
         &function(src).1,
         &doms(&[any("x")]),

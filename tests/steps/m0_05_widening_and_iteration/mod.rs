@@ -245,7 +245,7 @@ impl Equations<IntervalSet> for System {
         let sets = [&self.init[v]]
             .into_iter()
             .chain(self.terms[v].iter().map(|t| &t.filter));
-        let ends = sets.flat_map(|s| s.pieces().iter().flat_map(|(lo, hi)| [lo, hi]));
+        let ends = sets.flat_map(|s| s.pieces().flat_map(|(lo, hi)| [lo, hi]));
         Landmarks::of(
             ends.filter_map(|e| match e {
                 End::Fin(v) => Some(v.clone()),

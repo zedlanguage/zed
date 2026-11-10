@@ -52,7 +52,7 @@ fn a_power_under_a_large_power_has_a_root_bound() {
         } else {
             assert_eq!(*lo, End::NegInf, "{src}");
         }
-        assert_eq!(x.pieces().len(), 1, "{src}");
+        assert_eq!(x.len(), 1, "{src}");
     }
 }
 

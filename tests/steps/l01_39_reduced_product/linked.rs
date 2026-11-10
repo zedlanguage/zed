@@ -1327,7 +1327,7 @@ fn a_name_with_holes_keeps_its_tree_from_shortest_paths() {
     let p = Premises::new();
     let mut z = Product::literal(&Value::Int(0));
     z.join(&Product::literal(&Value::Int(10)));
-    assert_eq!(z.ints().pieces().len(), 2, "{z:?}");
+    assert_eq!(z.ints().len(), 2, "{z:?}");
     let s = within(&["x", "y", "z"], &[("z", z)])
         .assume(&ge("x", "z", 0), true, &p)
         .assume(&ge("z", "y", 0), true, &p);
@@ -1339,7 +1339,6 @@ fn a_name_with_holes_keeps_its_tree_from_shortest_paths() {
             .get(n)
             .ints()
             .pieces()
-            .iter()
             .map(|(a, b)| (a.to_i64(), b.to_i64()))
             .collect();
         assert_eq!(
@@ -1484,7 +1483,7 @@ fn shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block
                     "case {case} reverse {reverse} step {step}: {order:?}"
                 );
                 moved += usize::from(intervals(&got, &ns) != before);
-                holes += usize::from(ns.iter().any(|n| got.get(n).ints().pieces().len() > 1));
+                holes += usize::from(ns.iter().any(|n| got.get(n).ints().len() > 1));
                 if got.bottom {
                     empty += 1;
                     break;
@@ -1566,10 +1565,7 @@ fn holes_in_trees(seed: u64, pile: bool) -> HoleCounts {
                     "case {case} step {step} {holds}: {hole:?} on {:?}",
                     s.relation
                 );
-                let holed = ns
-                    .iter()
-                    .filter(|n| got.get(n).ints().pieces().len() > 1)
-                    .count();
+                let holed = ns.iter().filter(|n| got.get(n).ints().len() > 1).count();
                 out.moved += usize::from(intervals(&got, &ns) != intervals(&s, &ns));
                 out.holes += usize::from(holed > 0);
                 out.piled += usize::from(holed > 1);

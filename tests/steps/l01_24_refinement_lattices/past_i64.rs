@@ -402,10 +402,7 @@ fn classes_affine_bounds_and_powers_past_i64_scale_linearly() {
                 .map(|i| (End::of(10 * i + 2), End::of(10 * i + 5)))
                 .collect(),
         );
-        assert_eq!(
-            forward(&pow((1i128 << 32) + 1), &x, &x).pieces().len(),
-            count
-        );
+        assert_eq!(forward(&pow((1i128 << 32) + 1), &x, &x).len(), count);
     });
     scaling::check(
         "n pieces moved onto a class modulo 2^64 · 3",
@@ -420,7 +417,7 @@ fn classes_affine_bounds_and_powers_past_i64_scale_linearly() {
                     .collect(),
             );
             let (x2, _) = reduce_congruence(&x, &class(&m, &Num::ONE));
-            assert_eq!(x2.pieces().len(), count);
+            assert_eq!(x2.len(), count);
         },
     );
 }

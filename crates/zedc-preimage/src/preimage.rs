@@ -816,7 +816,7 @@ fn split_classes(
             false => Rc::new(common.complement_in(s)),
         })
         .collect();
-    let mut pieces = common.pieces().to_vec();
+    let mut pieces = IntervalSet::clone(&common).into_pieces();
     let mut wide = false;
     for (own, (_, members)) in owns.iter().zip(&groups) {
         for (lo, hi) in own.pieces() {
@@ -831,7 +831,7 @@ fn split_classes(
                 };
                 let (hull, exact) = mod_pre(class, c, &within);
                 if exact {
-                    pieces.extend_from_slice(hull.pieces());
+                    pieces.extend(hull.pieces().cloned());
                     continue;
                 }
                 // The merged periods between the first and the last are read once more,
@@ -841,7 +841,7 @@ fn split_classes(
                     let (part, exact) =
                         mod_pre(class, c, &IntervalSet::range(a.clone(), b.clone()));
                     wide |= !exact;
-                    pieces.extend_from_slice(part.pieces());
+                    pieces.extend(part.pieces().cloned());
                 }
             }
         }
@@ -1186,7 +1186,7 @@ fn residue_relation(
     // reads exactly ([`presburger::project_each`]).
     let one =
         |lo: &End, hi: &End| presburger::member(&x, &IntervalSet::range(lo.clone(), hi.clone()));
-    let mut body: Vec<Formula> = common.pieces().iter().map(|(lo, hi)| one(lo, hi)).collect();
+    let mut body: Vec<Formula> = common.pieces().map(|(lo, hi)| one(lo, hi)).collect();
     for (s, class) in parts {
         for (lo, hi) in s.pieces() {
             body.push(Formula::and(vec![
@@ -2997,14 +2997,13 @@ struct Marks {
 }
 
 /// The finite ends of `pieces`, in order.
-fn finite_ends(pieces: &[(End, End)]) -> impl Iterator<Item = Num> + '_ {
-    pieces
-        .iter()
-        .flat_map(|(a, b)| [a, b])
-        .filter_map(|e| match e {
-            Fin(v) => Some(v.clone()),
-            _ => None,
-        })
+fn finite_ends<'a>(
+    pieces: impl Iterator<Item = &'a (End, End)> + 'a,
+) -> impl Iterator<Item = Num> + 'a {
+    pieces.flat_map(|(a, b)| [a, b]).filter_map(|e| match e {
+        Fin(v) => Some(v.clone()),
+        _ => None,
+    })
 }
 
 /// What one transfer over one box computes.
@@ -4237,7 +4236,7 @@ impl<'t> Tx<'t> {
             for r in self.cx.reads.iter() {
                 for v in r.vars() {
                     // An input of the run of another domain has its own ends among the landmarks.
-                    let pieces = self.cx.get(v).map_or(&[][..], IntervalSet::pieces);
+                    let pieces = self.cx.get(v).into_iter().flat_map(IntervalSet::pieces);
                     ends.extend(finite_ends(pieces));
                 }
             }
@@ -4259,14 +4258,16 @@ impl<'t> Tx<'t> {
     /// it was 35% of the work at 256 names). Now this costs the terms' literals and the
     /// demand's ends, `O(t log t)`, and a run that reads no call never builds the rest; one
     /// that does pays `O(p log p)` once, the same set as before, so no result changes. Kept:
-    /// one copy of the input domains, `O(p)` with no comparisons. COMPLEXITY.md row
-    /// LAPS-preimage-cost.
+    /// one copy of the input domains, `O(1)` for each name, whose set of pieces is shared, not
+    /// copied (INTERVAL-persistent). COMPLEXITY.md row LAPS-preimage-cost.
     fn landmarks(&self, inputs: &Domains, demand: &Demand) -> Marks {
         let demanded = match demand {
-            Demand::Ints(z) => z.pieces(),
-            Demand::Bool(_) => &[][..],
+            Demand::Ints(z) => Some(z),
+            Demand::Bool(_) => None,
         };
-        let ints = (self.terms.ints.iter().cloned()).chain(finite_ends(demanded));
+        let ints = (self.terms.ints.iter().cloned()).chain(finite_ends(
+            demanded.into_iter().flat_map(IntervalSet::pieces),
+        ));
         Marks {
             known: Landmarks::of(ints, []),
             ends_of: Some(Rc::new(inputs.clone())),
@@ -5100,7 +5101,7 @@ impl<'t> Tx<'t> {
     fn meet_domain(&self, k: &str, s: Rc<IntervalSet>, d: &IntervalSet, read: bool) -> Met {
         let met = |s: &IntervalSet| {
             if read {
-                read_domain(s.pieces().len() + d.pieces().len());
+                read_domain(s.len() + d.len());
             }
             match s.meet(d) {
                 met if met.is_empty() => Met::Empty,
@@ -5198,7 +5199,6 @@ impl<'t> Tx<'t> {
         };
         let pieces = z
             .pieces()
-            .iter()
             .map(|(zl, zh)| {
                 let lo = ohi.as_ref().map_or(NegInf, |c| shift(zl, c));
                 let hi = olo.as_ref().map_or(PosInf, |c| shift(zh, c));
@@ -6818,7 +6818,7 @@ impl<'m, 't> Walk<'m, 't> {
                 if !in_range(set) {
                     return None;
                 }
-                spans.extend(set.pieces().iter().map(|(lo, hi)| (lo, hi, trees.len())));
+                spans.extend(set.pieces().map(|(lo, hi)| (lo, hi, trees.len())));
                 trees.push(arm.to_treap(dom)?);
             }
             spans.sort_by_key(|&(lo, ..)| key(lo));
@@ -10517,8 +10517,7 @@ fn in_range(s: &IntervalSet) -> bool {
     // The pieces are in order, so every finite end lies between the least and the greatest
     // finite end, which are ends of the first or the last piece: `O(1)`, not `O(P)` for the
     // `P` pieces, which each summary of a split read (COMPLEXITY.md S22-hole-summaries).
-    let ps = s.pieces();
-    (ps.first().into_iter().chain(ps.last())).all(|(lo, hi)| {
+    (s.first().into_iter().chain(s.last())).all(|(lo, hi)| {
         [lo, hi].into_iter().all(|e| {
             !matches!(e, Fin(v) if v.to_i128().is_none_or(|w| w == i128::MIN || w == i128::MAX))
         })
@@ -10543,19 +10542,15 @@ fn key(e: &End) -> i128 {
 /// Whether no member of `dom` lies strictly between `a` and `b`, for `a < b`: `O(log P)` for
 /// the `P` pieces of `dom`.
 fn no_input_between(dom: &IntervalSet, a: &End, b: &End) -> bool {
-    let ps = dom.pieces();
-    let next = ps.partition_point(|(_, hi)| hi <= a);
-    ps.get(next).is_none_or(|(lo, _)| lo >= b)
+    dom.pieces_after(|(_, hi)| hi <= a)
+        .next()
+        .is_none_or(|(lo, _)| lo >= b)
 }
 
 /// Whether `a` and `b` share a member: `O(p log P)` for the `p` pieces of `a` and the `P` of `b`.
 fn meets(a: &IntervalSet, b: &IntervalSet) -> bool {
-    let ps = b.pieces();
-    read_domain(a.pieces().len() * (ps.len() + 1).ilog2() as usize);
-    (a.pieces().iter()).any(|(lo, hi)| {
-        let next = ps.partition_point(|(_, h)| h < lo);
-        ps.get(next).is_some_and(|(l, _)| l <= hi)
-    })
+    read_domain(a.len() * (b.len() + 1).ilog2() as usize);
+    (a.pieces()).any(|(lo, hi)| b.piece_at_or_above(lo).is_some_and(|(l, _)| l <= hi))
 }
 
 /// An end of an input's domain as an input, for the bounds of [`ByClass`]: the infinities are
@@ -11021,9 +11016,7 @@ fn invert_treap(node: &Tree, f: &Tag, z: &IntervalSet, out: &mut Vec<(End, End)>
         return;
     };
     let (lo, hi) = f.vals(&n.vals, &n.span);
-    let zs = z.pieces();
-    let i = zs.partition_point(|(_, zhi)| end_val(zhi) < lo);
-    let Some((zlo, zhi)) = zs.get(i) else {
+    let Some((zlo, zhi)) = z.pieces_after(|(_, zhi)| end_val(zhi) < lo).next() else {
         return;
     };
     let zl = end_val(zlo);
@@ -11047,9 +11040,7 @@ fn invert_treap(node: &Tree, f: &Tag, z: &IntervalSet, out: &mut Vec<(End, End)>
 fn invert_piece(lo: &End, hi: &End, a: &Int, b: &Int, z: &IntervalSet, out: &mut Vec<(End, End)>) {
     let (u, v) = (value_at(lo, a, b), value_at(hi, a, b));
     let (vlo, vhi) = if u <= v { (u, v) } else { (v, u) };
-    let zs = z.pieces();
-    let start = zs.partition_point(|(_, zhi)| end_val(zhi) < vlo);
-    for (zlo, zhi) in &zs[start..] {
+    for (zlo, zhi) in z.pieces_after(|(_, zhi)| end_val(zhi) < vlo) {
         if end_val(zlo) > vhi {
             break;
         }
@@ -11188,7 +11179,7 @@ fn shift(z: &IntervalSet, c: i128) -> IntervalSet {
         Fin(v) => Fin(v + &c),
         e => e.clone(),
     };
-    IntervalSet::from_pieces(z.pieces().iter().map(|(lo, hi)| (m(lo), m(hi))).collect())
+    IntervalSet::from_pieces(z.pieces().map(|(lo, hi)| (m(lo), m(hi))).collect())
 }
 
 /// The integers `c - v` for each member `v` of `z`: the integers `x` with `c - x` in `z`, each
@@ -11203,13 +11194,7 @@ fn reflect(z: &IntervalSet, c: i128) -> IntervalSet {
         NegInf => PosInf,
         PosInf => NegInf,
     };
-    IntervalSet::from_pieces(
-        z.pieces()
-            .iter()
-            .rev()
-            .map(|(lo, hi)| (m(hi), m(lo)))
-            .collect(),
-    )
+    IntervalSet::from_pieces(z.pieces().rev().map(|(lo, hi)| (m(hi), m(lo))).collect())
 }
 
 /// The integers `x` with `x * c` in `z`.
@@ -11237,7 +11222,6 @@ fn times_pre(z: &IntervalSet, c: i64) -> IntervalSet {
     };
     IntervalSet::from_pieces(
         z.pieces()
-            .iter()
             .map(|(lo, hi)| {
                 if c > 0 {
                     (q(lo, true), q(hi, false))
@@ -11268,7 +11252,6 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
     };
     IntervalSet::from_pieces(
         z.pieces()
-            .iter()
             .map(|(lo, hi)| {
                 if c > 0 {
                     (lower(lo), upper(hi))
@@ -11311,7 +11294,6 @@ fn mod_pre(z: &IntervalSet, c: i64, within: &IntervalSet) -> (IntervalSet, bool)
     let period = |k: &Num| {
         let base = k * &m;
         rem.pieces()
-            .iter()
             .filter_map(|(a, b)| match (a, b) {
                 (Fin(a), Fin(b)) => Some((Fin(&base + a), Fin(&base + b))),
                 _ => None,

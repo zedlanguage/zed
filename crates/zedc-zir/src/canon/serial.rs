@@ -139,7 +139,7 @@ impl Out<'_> {
     }
 
     fn domain(&mut self, d: &Domain) {
-        self.word(d.ints.pieces().len() as u64);
+        self.word(d.ints.len() as u64);
         for (lo, hi) in d.ints.pieces() {
             self.end(lo);
             self.end(hi);

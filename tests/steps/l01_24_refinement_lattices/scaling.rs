@@ -31,7 +31,7 @@ fn pieces(rng: &mut Rng, n: usize, open: bool) -> IntervalSet {
 /// The rule `cap` must follow, as step M0.5 states it: while there are too many pieces, merge
 /// the two neighbors with the fewest integers between them, the lower pair on a tie.
 fn cap_by_rule(s: &IntervalSet, limit: usize) -> IntervalSet {
-    let mut p = s.pieces().to_vec();
+    let mut p = s.clone().into_pieces();
     while p.len() > limit.max(1) {
         let gap = |i: usize| match (&p[i].1, &p[i + 1].0) {
             (Fin(hi), Fin(lo)) => lo - hi,
@@ -79,7 +79,7 @@ fn join_and_contains_agree_with_membership() {
         }
         assert_eq!(
             j,
-            IntervalSet::from_pieces([a.pieces(), b.pieces()].concat())
+            IntervalSet::from_pieces(a.pieces().chain(b.pieces()).cloned().collect())
         );
     }
 }
@@ -105,7 +105,7 @@ fn sum_chain(k: usize) -> IntervalSet {
     for _ in 0..k {
         let next = sparse(&mut rng);
         acc = revision::forward(&Op::Add, &acc, &next);
-        assert!(acc.pieces().len() <= 8, "{acc}");
+        assert!(acc.len() <= 8, "{acc}");
     }
     acc
 }
@@ -121,7 +121,7 @@ fn a_chain_of_operators_keeps_to_its_operands_pieces() {
     for v in (0..=70).step_by(10) {
         assert!(acc.contains(v), "{acc} has {v}");
     }
-    assert!(acc.pieces().len() <= 2, "{acc}");
+    assert!(acc.len() <= 2, "{acc}");
     scaling::check("a chain of `+` over eight-piece operands", 200, |k| {
         sum_chain(k);
     });
@@ -216,7 +216,7 @@ fn an_image_with_a_one_piece_operand_is_the_join_of_the_pieces_images() {
         let lo = rng.int(-40, 40);
         let b = IntervalSet::range(End::of(lo), End::of(lo + rng.int(0, 9)));
         for op in &OPS {
-            let join = a.pieces().iter().fold(IntervalSet::empty(), |j, p| {
+            let join = a.pieces().fold(IntervalSet::empty(), |j, p| {
                 j.join(&revision::forward(
                     op,
                     &IntervalSet::from_pieces(vec![p.clone()]),
@@ -245,7 +245,7 @@ fn the_interval_operations_scale() {
     };
     scaling::check("capping n pieces to 8", 4000, |n| {
         let (a, _) = sets(n);
-        assert_eq!(a.cap(8).pieces().len(), 8.min(n));
+        assert_eq!(a.cap(8).len(), 8.min(n));
     });
     scaling::check("the forward `*` of two sets of n pieces", 4000, |n| {
         let (a, b) = sets(n);
@@ -261,6 +261,43 @@ fn the_interval_operations_scale() {
         let hits = (0..n as i64).filter(|&v| b.contains(v * 7)).count();
         assert!(hits <= n);
     });
+}
+
+/// One-piece updates and queries on a set of p pieces, and a set built by p one-point joins:
+/// each `O(log p)` on the persistent tree, which shares all but one path with its operand, so p
+/// of them cost `O(p log p)`. With the pieces in a Vec each copied or scanned all p pieces, and
+/// the test took about 61 times the work for 8 times the size (COMPLEXITY.md INTERVAL-persistent).
+#[test]
+fn interval_set_operations_scale() {
+    let sets = scaling::inputs(1000, |n| pieces(&mut Rng::new(n as u64), n, false));
+    scaling::check_order(
+        "p one-piece updates and queries on a set of p pieces",
+        1000,
+        1,
+        |n| {
+            let b = &sets[&n];
+            let mut grown = IntervalSet::empty();
+            let mut hits = 0usize;
+            for i in 0..n as i64 {
+                let v = 7 * i;
+                let one = IntervalSet::of(v, v + 3);
+                hits += usize::from(!b.join(&one).is_empty());
+                hits += usize::from(!b.meet(&one).is_empty());
+                hits += usize::from(!one.complement_in(b).is_empty());
+                hits += usize::from(one.is_subset(b));
+                // A join with a member gives the set back, so the two compare equal.
+                if b.contains(v) {
+                    hits += usize::from(b.join(&IntervalSet::single(v)) == *b);
+                }
+                grown = grown.join(&IntervalSet::single(3 * v));
+            }
+            assert!(hits >= 2 * n);
+            assert_eq!(
+                grown.bounds().map(|(_, hi)| hi.clone()),
+                Some(End::of(21 * (n as i64 - 1)))
+            );
+        },
+    );
 }
 
 /// `k` lower and `k` upper bounds, each on a symbol of its own and each with a floor.

@@ -115,26 +115,24 @@ fn int(n: &Num) -> Int {
 /// The least member of `d` at or above `v`; `None` when there is none.
 fn ceil(d: &IntervalSet, v: &Val) -> Option<Val> {
     match v {
-        Val::NegInf => Some(match d.pieces().first()? {
+        Val::NegInf => Some(match d.first()? {
             (End::Fin(lo), _) => Val::Fin(Int::ZERO, int(lo)),
             _ => Val::NegInf,
         }),
         Val::PosInf => None,
         Val::Fin(s, k) => match s.cmp(&Int::ZERO) {
-            Ordering::Greater => match d.pieces().last()? {
+            Ordering::Greater => match d.last()? {
                 (_, End::PosInf) => Some(v.clone()),
                 _ => None,
             },
-            Ordering::Less => match d.pieces().first()? {
+            Ordering::Less => match d.first()? {
                 (End::Fin(lo), _) => Some(Val::Fin(Int::ZERO, int(lo))),
                 _ => Some(v.clone()),
             },
             Ordering::Equal => {
                 let x = End::Fin(Num::from(k));
                 // The first piece whose upper end is at or above `x`.
-                let ps = d.pieces();
-                let i = ps.partition_point(|(_, hi)| *hi < x);
-                let (lo, _) = ps.get(i)?;
+                let (lo, _) = d.piece_at_or_above(&x)?;
                 Some(if *lo <= x {
                     v.clone()
                 } else {

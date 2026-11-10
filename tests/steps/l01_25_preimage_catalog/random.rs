@@ -317,9 +317,9 @@ fn a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between() {
             continue;
         }
         let rem = z.meet(&IntervalSet::range(End::of(0), End::of(m - 1)));
-        let pieces = p.domains["i"].pieces().len();
+        let pieces = p.domains["i"].len();
         assert!(
-            p.exact || pieces <= 2 * rem.pieces().len() + 1,
+            p.exact || pieces <= 2 * rem.len() + 1,
             "{c} {z} over {lo}..={hi}: {pieces}"
         );
         if hi.div_euclid(m) <= lo.div_euclid(m) + 1 {

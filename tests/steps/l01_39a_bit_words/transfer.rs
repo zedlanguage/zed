@@ -52,7 +52,10 @@ fn set(rng: &mut Rng) -> IntervalSet {
 
 /// A random member of the non-empty `s`, near one of its ends or inside a piece.
 fn member(rng: &mut Rng, s: &IntervalSet) -> i64 {
-    let (lo, hi) = &s.pieces()[rng.below(s.pieces().len())];
+    let (lo, hi) = s
+        .pieces()
+        .nth(rng.below(s.len()))
+        .expect("a piece below the count");
     let (lo, hi) = (lo.to_i64(), hi.to_i64());
     let lo = match lo {
         Some(v) => v,

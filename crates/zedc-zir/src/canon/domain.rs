@@ -60,7 +60,6 @@ impl Domain {
         // the points.
         let points: Option<Vec<&Num>> = ints
             .pieces()
-            .iter()
             .map(|p| match p {
                 (End::Fin(a), End::Fin(b)) if a == b => Some(a),
                 _ => None,
