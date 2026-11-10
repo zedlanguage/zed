@@ -681,8 +681,12 @@ fn the_mixed_family_has_exact_ends_in_near_linear_time() {
 }
 
 /// CONTROL (Claude round 4): laps without the closing edge, the same tests otherwise. With
-/// no cycle the holes cost one pass, so the time is near linear on main; this separates the
-/// cost of the cycle from the cost of the number of tests.
+/// no cycle the holes cost one pass, so what is left is the cost of the tests themselves:
+/// each `x != v` makes a preimage over the domain of `x`, whose holes grow with the number of
+/// tests. When the preimage built its landmarks from the ends of every input domain at each
+/// test (before LAPS-preimage-cost), that cost was `O(p log p)` per test for `p` holes, and
+/// this control took 17.8 times the work for 8 times the size, as the laps with the cycle
+/// did (16.3): the cycle was never the cause. It now takes about 12.7 times.
 #[test]
 fn laps_without_the_closing_edge_take_near_linear_time() {
     family("laps without the closing edge", 16, |n| {

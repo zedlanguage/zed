@@ -692,7 +692,7 @@ fn split_residues(
     root: Tid,
     dom: &Domains,
     demand: &Demand,
-    marks: &Landmarks,
+    marks: &Marks,
     early: bool,
 ) -> Split {
     let mut deferred = false;
@@ -714,7 +714,7 @@ fn split_classes(
     root: Tid,
     dom: &Domains,
     demand: &Demand,
-    marks: &Landmarks,
+    marks: &Marks,
     early: bool,
     deferred: &mut bool,
 ) -> Option<(Domains, Option<ClassRelation>)> {
@@ -1639,7 +1639,7 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
         .map(|n| (n.clone(), IntervalSet::top()))
         .collect();
     let mut tx = Tx::new();
-    tx.start(&doms, Landmarks::none());
+    tx.start(&doms, Marks::default());
     let mut tr = Tr::new(products);
     tr.definedness = products;
     let mut out = Vec::new();
@@ -1763,7 +1763,7 @@ impl<'t> Scoped<'t> {
     /// to its term, read in the scope of the names bound before it.
     pub fn new(lets: &'t Term) -> Self {
         let mut tx = Tx::new();
-        tx.start(&Domains::new(), Landmarks::none());
+        tx.start(&Domains::new(), Marks::default());
         let mut t = tx.terms.add(lets);
         let mut scope = ROOT;
         let mut lams = HashMap::new();
@@ -1856,7 +1856,7 @@ impl<'t> Scoped<'t> {
         // A new run over the body's atoms, with what the runs before it found of the terms
         // without reading the inputs.
         let kept = tx.run.keep();
-        tx.start(&doms, Landmarks::none());
+        tx.start(&doms, Marks::default());
         tx.run.restore(kept);
         tx.fresh = Some(Fresh::new(
             tx.terms.nodes.len() as Tid,
@@ -2123,7 +2123,7 @@ fn linear(
     Relation,
     Result<(Domains, bool, Option<Refusal>), (Domains, Refusal)>,
 )> {
-    tx.start(dom, Landmarks::none());
+    tx.start(dom, Marks::default());
     let mut tr = Tr::new(false);
     tr.by_class = true;
     let body = match demand {
@@ -2987,6 +2987,26 @@ type CutTable = HashMap<(Name, i128), Rc<[i128]>>;
 /// ([`Tx::classes`]), `None` where it reads none.
 type ClassKey = (At, Option<(Name, i128)>);
 
+/// The landmarks of a run ([`Tx::landmarks`]): those found so far, and the domains whose
+/// ends are landmarks too but are found only when a call first reads the landmarks
+/// ([`Tx::marks`]).
+#[derive(Clone, Default)]
+struct Marks {
+    known: Landmarks,
+    ends_of: Option<Rc<Domains>>,
+}
+
+/// The finite ends of `pieces`, in order.
+fn finite_ends(pieces: &[(End, End)]) -> impl Iterator<Item = Num> + '_ {
+    pieces
+        .iter()
+        .flat_map(|(a, b)| [a, b])
+        .filter_map(|e| match e {
+            Fin(v) => Some(v.clone()),
+            _ => None,
+        })
+}
+
 /// What one transfer over one box computes.
 #[derive(Default)]
 struct Run {
@@ -2994,7 +3014,7 @@ struct Run {
     seen: HashSet<String>,
     /// The bodies of the lambdas whose calls are being read, each with its place on the stack.
     active: HashMap<Tid, usize>,
-    marks: Landmarks,
+    marks: Marks,
     /// Whether `marks` holds the ends of the inputs of the context's reads ([`Tx::marks`]).
     marked: bool,
     /// The inputs of the run given another domain than the scope its reads were made in gives
@@ -4138,7 +4158,7 @@ impl<'t> Tx<'t> {
     }
 
     /// Begins a run over the box `inputs`.
-    fn start(&mut self, inputs: &Domains, marks: Landmarks) {
+    fn start(&mut self, inputs: &Domains, marks: Marks) {
         let begun = self.begin(inputs);
         self.start_from(&begun, marks);
     }
@@ -4182,7 +4202,7 @@ impl<'t> Tx<'t> {
 
     /// Begins a run over the box [`Tx::begin`] made, which shares its domains: `O(s)` for its
     /// `s` shadowed inputs, however large the domains are.
-    fn start_from(&mut self, begun: &Begun, marks: Landmarks) {
+    fn start_from(&mut self, begun: &Begun, marks: Marks) {
         self.run = Run {
             marks,
             marked: begun.marked,
@@ -4193,9 +4213,10 @@ impl<'t> Tx<'t> {
         self.cx = begun.cx.clone();
     }
 
-    /// The landmarks of the run ([`Tx::landmarks`]), with the ends of the domains of the
-    /// inputs of the summaries read through a tree ([`LetIn::read`]) added the first time a
-    /// lambda's call reads them, so that a run that calls none does not read those inputs.
+    /// The landmarks of the run ([`Tx::landmarks`]): the ends of the domains [`Marks`] holds,
+    /// and those of the inputs of the summaries read through a tree ([`LetIn::read`]), are
+    /// added the first time a lambda's call reads them, so that a run that calls none does not
+    /// read those domains.
     ///
     /// Complexity tradeoff: the first call read in a run over such a summary of `k` inputs
     /// costs `O(k log k)` for their ends, also when it narrows none of them; a test that calls
@@ -4206,6 +4227,10 @@ impl<'t> Tx<'t> {
     /// changed in `O(log k)` for each input a scope narrows, and search it with the program's
     /// own landmarks.
     fn marks(&mut self) -> &Landmarks {
+        if let Some(doms) = self.run.marks.ends_of.take() {
+            let ends = doms.values().flat_map(|s| finite_ends(s.pieces()));
+            self.run.marks.known.extend(&Landmarks::of(ends, []));
+        }
         if !self.run.marked {
             self.run.marked = true;
             let mut ends = Vec::new();
@@ -4213,41 +4238,39 @@ impl<'t> Tx<'t> {
                 for v in r.vars() {
                     // An input of the run of another domain has its own ends among the landmarks.
                     let pieces = self.cx.get(v).map_or(&[][..], IntervalSet::pieces);
-                    for (a, b) in pieces {
-                        ends.extend([a, b].into_iter().filter_map(|e| match e {
-                            Fin(v) => Some(v.clone()),
-                            _ => None,
-                        }));
-                    }
+                    ends.extend(finite_ends(pieces));
                 }
             }
-            self.run.marks.extend(&Landmarks::of(ends, []));
+            self.run.marks.known.extend(&Landmarks::of(ends, []));
         }
-        &self.run.marks
+        &self.run.marks.known
     }
 
     /// The landmarks a summary's parameters and demands move out to: the terms' integer
     /// literals, the ends of the input domains and of the demand, each with its neighbors. A
-    /// finite set, so a lambda has finitely many summaries.
-    fn landmarks(&self, inputs: &Domains, demand: &Demand) -> Landmarks {
-        let ends = |s: &IntervalSet| -> Vec<Num> {
-            s.pieces()
-                .iter()
-                .flat_map(|(a, b)| [a, b])
-                .filter_map(|e| match e {
-                    Fin(v) => Some(v.clone()),
-                    _ => None,
-                })
-                .collect()
-        };
+    /// finite set, so a lambda has finitely many summaries. The ends of the input domains are
+    /// kept as the domains themselves and found only when a call reads the landmarks
+    /// ([`Tx::marks`]).
+    ///
+    /// Complexity tradeoff: the naive form built the whole set here, `O(p log p)` for the `p`
+    /// pieces of the input domains, at every preimage, and copied it for each transfer over
+    /// the box: `O(k p log p)` for `k` tests of one name with `p` holes, and `p` grows with `k`
+    /// (`l01_39_reduced_product::xst::holes::laps_have_exact_ends_in_near_linear_time`, where
+    /// it was 35% of the work at 256 names). Now this costs the terms' literals and the
+    /// demand's ends, `O(t log t)`, and a run that reads no call never builds the rest; one
+    /// that does pays `O(p log p)` once, the same set as before, so no result changes. Kept:
+    /// one copy of the input domains, `O(p)` with no comparisons. COMPLEXITY.md row
+    /// LAPS-preimage-cost.
+    fn landmarks(&self, inputs: &Domains, demand: &Demand) -> Marks {
         let demanded = match demand {
-            Demand::Ints(z) => ends(z),
-            Demand::Bool(_) => Vec::new(),
+            Demand::Ints(z) => z.pieces(),
+            Demand::Bool(_) => &[][..],
         };
-        let ints = (self.terms.ints.iter().cloned())
-            .chain(inputs.values().flat_map(ends))
-            .chain(demanded);
-        Landmarks::of(ints, [])
+        let ints = (self.terms.ints.iter().cloned()).chain(finite_ends(demanded));
+        Marks {
+            known: Landmarks::of(ints, []),
+            ends_of: Some(Rc::new(inputs.clone())),
+        }
     }
 
     fn node(&self, t: Tid) -> Node<'t> {
@@ -12781,7 +12804,7 @@ mod tests {
         TWO_AT_A_TIME.set(old);
         let mut tx = Tx::new();
         let root = tx.terms.add(t);
-        tx.start(&domains(), Landmarks::none());
+        tx.start(&domains(), Marks::default());
         let mut tr = Tr::new(false);
         let f = tx.formula(&mut tr, root, ROOT);
         TWO_AT_A_TIME.set(false);
@@ -13140,7 +13163,7 @@ mod tests {
         OR_IF_AS_IF.set(as_if);
         let mut tx = Tx::new();
         let root = tx.terms.add(t);
-        tx.start(&domains(), Landmarks::none());
+        tx.start(&domains(), Marks::default());
         let mut tr = Tr::new(false);
         let f = tx.formula(&mut tr, root, ROOT);
         OR_IF_AS_IF.set(false);
