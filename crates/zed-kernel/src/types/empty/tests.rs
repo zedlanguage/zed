@@ -404,3 +404,63 @@ fn types_that_each_reach_a_ring_of_names_are_apart() {
     classes.insert(0, vec![0, k]);
     assert_eq!(overlaps(with.iter()), classes);
 }
+
+/// The members of a ring of k types, each `T_j = wrap(j, T_{j+1}) | j`.
+fn ring(
+    k: usize,
+    wrap: impl Fn(usize, super::super::rec::Expr) -> super::super::rec::Expr,
+) -> Vec<Type> {
+    use super::super::rec::{Def, Expr, Group};
+    let defs = (0..k)
+        .map(|j| Def {
+            name: format!("T{j}"),
+            params: vec![],
+            body: Expr::Union(vec![
+                wrap(j, Expr::Ref((j + 1) % k, vec![])),
+                Expr::Type(Type::lit(&Value::Int(j as i64)).expect("an integer literal")),
+            ]),
+        })
+        .collect();
+    Group::new(defs).expect("a group").instance(vec![])
+}
+
+/// k types that each reach one ring of k types with a name each, `T_j = #a_j((T_{j+1},)) | j`,
+/// cost order k log k, though each reaches all k: the ring placed for a type is read only where
+/// another type reaches it (the second tradeoff at `overlaps`). So do the types of the ring
+/// `U_j = (#a_j((U_{j+1},)),) | j`, which all share the node of `(..,)` at the root, and the
+/// ring of names beside `#a_j(any \ (0,))` for each j, whose every one-tuple under `#a_j` holds
+/// every value under the rest of the ring.
+#[test]
+fn types_that_each_reach_a_ring_of_names_scale() {
+    use super::super::rec::Expr;
+    let names = |j: usize, t: Expr| Expr::Atom(format!("a{j}"), vec![t]);
+    let ring_of_names = crate::scaling::inputs(64, |k| ring(k, names));
+    crate::scaling::check("k types that each reach a ring of k names", 64, |k| {
+        let classes = overlaps(ring_of_names[&k].iter());
+        assert_eq!(classes, (0..k).map(|j| vec![j]).collect::<Vec<_>>());
+    });
+    let tuples = |j: usize, t: Expr| Expr::Tuple(vec![names(j, t)]);
+    let tuple_ring = crate::scaling::inputs(64, |k| ring(k, tuples));
+    crate::scaling::check(
+        "k types that share a node and reach a ring of k names",
+        64,
+        |k| {
+            let classes = overlaps(tuple_ring[&k].iter());
+            assert_eq!(classes, (0..k).map(|j| vec![j]).collect::<Vec<_>>());
+        },
+    );
+    let zero = Type::tuple(vec![Type::lit(&Value::Int(0)).expect("0")]);
+    let beside = crate::scaling::inputs(64, |k| {
+        let mut ts = ring(k, names);
+        ts.extend((0..k).map(|j| Type::atom_with(&format!("a{j}"), &(&Type::top() - &zero))));
+        ts
+    });
+    crate::scaling::check(
+        "a ring of k names beside a whole under each name",
+        64,
+        |k| {
+            let classes = overlaps(beside[&k].iter());
+            assert_eq!(classes, (0..k).map(|j| vec![j, k + j]).collect::<Vec<_>>());
+        },
+    );
+}

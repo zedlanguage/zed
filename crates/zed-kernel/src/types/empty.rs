@@ -5702,26 +5702,44 @@ impl Trie {
         root(&mut self.same, x)
     }
 
+    /// A new node of no children, merged with none.
+    fn add(&mut self) -> usize {
+        let next = self.kids.len();
+        self.kids.push(HashMap::new());
+        self.same.push(next);
+        next
+    }
+
     fn child(&mut self, x: usize, e: Edge) -> usize {
         let x = self.find(x);
-        let next = self.kids.len();
-        let y = *self.kids[x].entry(e).or_insert(next);
-        if y == next {
-            self.kids.push(HashMap::new());
-            self.same.push(next);
-        }
+        let y = match self.kids[x].get(&e) {
+            Some(&y) => y,
+            None => {
+                let y = self.add();
+                self.kids[x].insert(e, y);
+                y
+            }
+        };
         self.find(y)
     }
 
     /// Makes `x` and `y` one node, and their children by each edge, in turn. The smaller map
     /// of children moves into the larger, so each child moves O(log n) times over all merges.
     fn merge(&mut self, x: usize, y: usize) {
+        self.merge_with(x, y, |_, _| {});
+    }
+
+    /// [`Trie::merge`], calling `ready` on each of two distinct nodes before they are merged;
+    /// `ready` may give a node children, and may not merge nodes.
+    fn merge_with(&mut self, x: usize, y: usize, mut ready: impl FnMut(&mut Trie, usize)) {
         let mut todo = vec![(x, y)];
         while let Some((x, y)) = todo.pop() {
             let (x, y) = (self.find(x), self.find(y));
             if x == y {
                 continue;
             }
+            ready(self, x);
+            ready(self, y);
             let (big, small) = match self.kids[x].len() >= self.kids[y].len() {
                 true => (x, y),
                 false => (y, x),
@@ -5837,6 +5855,19 @@ struct Group {
     /// The group's number, from one count per thread.
     id: usize,
     nodes: Vec<GroupNode>,
+    /// Whether no node holds a type of a group below or every value under it: such a group,
+    /// placed for a type, can be read one node at a time, where another type reaches it.
+    closed: bool,
+    /// Whether some node is [`GroupNode::marked`].
+    marked: bool,
+}
+
+impl GroupNode {
+    /// Whether the node holds a key or a cofinite list: what a type holding every value above
+    /// it shares, when no other type reaches the node.
+    fn marked(&self) -> bool {
+        !self.points.is_empty() || self.lists.iter().any(|&(_, cofinite, _)| cofinite)
+    }
 }
 
 /// One node of a [`Group`]: its children by edge, the keys held there, what the universes
@@ -5989,7 +6020,14 @@ impl<'a> Walked<'a> {
             nodes[at(node[t])].below.push(t.clone());
         }
         let id = GROUP_IDS.with(|n| n.replace(n.get() + 1));
-        let group = std::rc::Rc::new(Group { id, nodes });
+        let closed = nodes.iter().all(|n| n.below.is_empty() && !n.whole);
+        let marked = nodes.iter().any(GroupNode::marked);
+        let group = std::rc::Rc::new(Group {
+            id,
+            nodes,
+            closed,
+            marked,
+        });
         GROUPS.with(|m| {
             let mut m = m.borrow_mut();
             for &v in members {
@@ -6081,6 +6119,106 @@ fn join(parent: &mut [usize], a: usize, b: usize) {
     parent[a.max(b)] = a.min(b);
 }
 
+/// One step of `overlaps` placing the types inside a type: place a type at a node, read a
+/// node of a placed group at a node, or merge two nodes.
+enum Work {
+    /// The type at the node, inside the type being placed.
+    Place(usize, Type),
+    /// The node of a group placed (by placement and group node) at a trie node.
+    Bind(usize, usize, usize),
+    Merge(usize, usize),
+}
+
+/// What `overlaps` has placed: per placement (a group placed for one type), its group, its type
+/// and the trie node of each group node placed so far; per trie node, the group node placed
+/// there and not read yet, and whether the node has been read; and the keys, lists and wholes
+/// read, by node and type.
+#[derive(Default)]
+struct Placing {
+    groups: Vec<std::rc::Rc<Group>>,
+    cells: Vec<usize>,
+    at: Vec<HashMap<usize, usize>>,
+    /// The (placement, group node) placed at a node and not read: only the nodes of a group
+    /// whose `closed` holds wait, each until another type reaches it. Such a node has no
+    /// children and is merged with no node.
+    pending: Vec<Option<(usize, usize)>>,
+    real: Vec<bool>,
+    points: Vec<(usize, Key, usize)>,
+    lists: Vec<(usize, Listed, usize)>,
+    wholes: Vec<(usize, usize)>,
+}
+
+impl Placing {
+    /// Gives each node of `trie` a state.
+    fn sync(&mut self, trie: &Trie) {
+        let n = trie.kids.len();
+        self.pending.resize(n, None);
+        self.real.resize(n, false);
+    }
+
+    /// Reads what waits at the node `x`, a class root, and marks it reached. The group waiting
+    /// is closed and `x` has no children, so reading it merges nothing and places nothing.
+    fn reach(&mut self, trie: &mut Trie, x: usize) {
+        if let Some((p, q)) = self.pending[x].take() {
+            let mut none = Vec::new();
+            self.read(trie, x, p, q, &mut none);
+            debug_assert!(none.is_empty(), "a closed group's node read without work");
+        }
+        self.real[x] = true;
+    }
+
+    /// Reads the group node `q` of placement `p` at the class root `x`: its keys, lists and
+    /// whole for the placement's type, its children linked, and the types of lower groups at
+    /// it to place. A child whose group node is placed already is that node; a new child of a
+    /// closed group waits.
+    fn read(&mut self, trie: &mut Trie, x: usize, p: usize, q: usize, work: &mut Vec<Work>) {
+        let Placing {
+            groups,
+            cells,
+            at,
+            pending,
+            real,
+            points,
+            lists,
+            wholes,
+        } = self;
+        let g = &groups[p];
+        let n = &g.nodes[q];
+        let i = cells[p];
+        real[x] = true;
+        points.extend(n.points.iter().map(|k| (x, k.clone(), i)));
+        lists.extend(n.lists.iter().map(|li| (x, li.clone(), i)));
+        if n.whole {
+            wholes.push((x, i));
+        }
+        for (e, r) in &n.kids {
+            match (trie.kids[x].get(e).copied(), at[p].get(r).copied()) {
+                (Some(kid), Some(z)) => work.push(Work::Merge(kid, z)),
+                (None, Some(z)) => {
+                    trie.kids[x].insert(e.clone(), z);
+                }
+                (Some(kid), None) => {
+                    let kid = trie.find(kid);
+                    at[p].insert(*r, kid);
+                    work.push(Work::Bind(kid, p, *r));
+                }
+                (None, None) => {
+                    let v = trie.add();
+                    pending.push(None);
+                    real.push(false);
+                    trie.kids[x].insert(e.clone(), v);
+                    at[p].insert(*r, v);
+                    match g.closed {
+                        true => pending[v] = Some((p, *r)),
+                        false => work.push(Work::Bind(v, p, *r)),
+                    }
+                }
+            }
+        }
+        work.extend(n.below.iter().map(|t| Work::Place(x, t.clone())));
+    }
+}
+
 /// The types `ts` in classes, by index in order of their first members, joined when they share
 /// a key: two types of different classes are disjoint. The keys sit in a trie: the atoms of
 /// one name are keyed by their payload's keys under the node of the name, and the tuples of one
@@ -6094,10 +6232,13 @@ fn join(parent: &mut [usize], a: usize, b: usize) {
 /// structure, so the classes do not depend on whether equal types are one shared type; met
 /// again at another node, it merges that node with the first. The types inside are placed a
 /// strongly connected group at a time ([`Group`]): a group's trie is made once until
-/// `Type::forget_emptiness` and placed whole for each type that reaches it, so a ring of k
-/// types costs each type that reaches it the size of the ring's trie, which merged nodes keep
-/// small, where a walk over the ring for each type cost k. The work is the size of the tries
-/// placed times the log of the keys, and each child of a merged node moves O(log n) times.
+/// `Type::forget_emptiness` and placed for each type that reaches it. A group with no type of
+/// a group below and no node holding every value under it is read one node at a time ([`Placing`]):
+/// a node is read where the type it is placed for meets it first, or where another type
+/// reaches it, so a ring of k types costs each type that reaches it the nodes it shares with
+/// other types. Other groups are placed whole, which merged nodes keep small. The work is the
+/// size of the tries read times the log of the keys, and each child of a merged node moves
+/// O(log n) times.
 // Complexity tradeoff: the keys are coarser than the meet of two types in three cases, each of
 // which joins disjoint types: tuples are keyed by their first component only, so `(1, 2)` and
 // `(1, 3)` land in one class; a tuple part that is not within its tuple types (a negated tuple
@@ -6131,85 +6272,104 @@ fn join(parent: &mut [usize], a: usize, b: usize) {
 // complete solution needs the connected parts of the graph in which two types meet: for tuples
 // that is the intersection graph of boxes, whose edges can number the square of the types, and
 // each edge an emptiness check.
-// Complexity tradeoff: a group's trie is placed whole for each type that reaches it, at the
-// node it is met at, since the nodes of two types are merged only through their own types. k
-// types that each reach one ring of k types with a name each, which merges no node, place k
-// tries of k nodes: order k^2 in one call (7.3, 25, 94 and 373 ms at k = 64, 128, 256, 512,
-// load about 25), as the walk over the ring for each type cost before. Why: the trie is that
-// large, k paths of k names from the root; keys meet only at a node two types reach, so a trie
-// holding the nodes two types reach would need the product of their tries. Trigger: many cells
-// of one split that each reach a large strongly connected group whose types do not merge. A
-// ring whose types merge, such as the ring of the group that hung the search, costs each type
-// the size of its merged trie: `l01_23_subtyping::group_oracle::
-// verdicts_of_a_ring_of_the_group_that_hung_the_search_scale`; the ring with a name each is
-// `types::empty::tests::types_that_each_reach_a_ring_of_names_are_apart`. COMPLEXITY.md K36.
-// No complete solution is known here: a trie of only the nodes that two types reach is the
-// product of their tries (follow-up GROUP-overlaps-names).
+// Complexity tradeoff: the naive way places a group's whole trie for each type that reaches
+// it, at the node it is met at: k types that each reach one ring of k types with a name each,
+// `T_j = #a_j((T_{j+1},)) | j`, which merges no node, place k tries of k nodes, order k^2 in
+// one call (3.8, 16, 58 and 268 ms at k = 64, 128, 256, 512; the walk over the ring for each
+// type before groups cost the same). Here a closed group ([`Group::closed`]: no type of a
+// group below, no node holding every value under it) is read lazily ([`Placing`]): a node
+// placed and not met by another type waits, and is read when another type reaches it, by a
+// key, a link or a merge; reading it places nothing, so each type costs the nodes it shares
+// with others, O(k log k) for the ring (0.65, 1.1, 2.3 and 4.6 ms; 8.1 times the instructions
+// from k = 64 to 512). A type holding every value above a node that waits enters its
+// placement once: it shares a key with the placement's type if the group holds a key or a
+// cofinite list, and passes to the nodes read, since a node with children holds a member and
+// so reaches every node of the group. The tradeoff: a group with a type of a lower group, or
+// a node holding every value under it, is still placed whole for each type, order k^2 for a
+// ring of k names each holding `#b_j((int,))` (6.0, 28, 99 and 505 ms at k = 64 to 512, the
+// old way 5.6, 21, 93 and 355 ms). Why: placing a lower group twice for one type merges two
+// nodes, and a merge can join cells through keys at nodes read by others, so a lower group
+// cannot wait without changing the classes; no ring with such a whole node has been found to
+// cost order k^2, and Group::new refuses a member under a negation, which such a node needs.
+// Trigger: many cells that each reach one large group whose members hold types of other
+// groups and do not merge. Tests: `types::empty::tests::types_that_each_reach_a_ring_of_names_scale`
+// (the ring of names, the same under a one-tuple, and beside a whole under each name),
+// `types_that_each_reach_a_ring_of_names_are_apart`,
+// `classes_inside_a_recursive_group_follow_its_merged_nodes`, and
+// `l01_23_subtyping::group_oracle::verdicts_of_a_ring_of_the_group_that_hung_the_search_scale`.
+// COMPLEXITY.md K36. A complete solution would let a lower group wait too, keeping its
+// placements per type and merging only nodes read (follow-up GROUP-overlaps-lower).
 fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
     let none = Type::empty();
     let held = Held::default();
     let mut trie = Trie::new();
-    // Each type's keys, as (node, key, type).
-    let mut points: Vec<(usize, Key, usize)> = Vec::new();
-    // Each type's lists, as (node, list, type).
-    let mut lists: Vec<(usize, Listed, usize)> = Vec::new();
-    // The nodes under which a type holds every value, as (node, type).
-    let mut wholes: Vec<(usize, usize)> = Vec::new();
+    let mut s = Placing::default();
+    s.sync(&trie);
+    s.real[0] = true;
     let mut parent: Vec<usize> = Vec::new();
+    // The groups placed for the type being placed, by number, with their placements. A type
+    // of a group placed is placed: met again, its node and the new one are merged.
+    let mut placed: HashMap<usize, usize> = HashMap::new();
+    let mut work: Vec<Work> = Vec::new();
     for (i, t) in ts.enumerate() {
         parent.push(i);
         let l = local(t.p_held(&held), &none);
-        points.extend(l.points.into_iter().map(|k| (0, k, i)));
-        lists.extend(l.lists.into_iter().map(|li| (0, li, i)));
-        // The types inside still to place, with their nodes.
-        let mut todo: Vec<(usize, Type)> = Vec::new();
+        s.points.extend(l.points.into_iter().map(|k| (0, k, i)));
+        s.lists.extend(l.lists.into_iter().map(|li| (0, li, i)));
         for kid in l.kids {
             let y = trie.child(0, kid.edge);
+            s.sync(&trie);
+            s.reach(&mut trie, y);
             if kid.bare {
-                points.push((y, Key::Bare, i));
+                s.points.push((y, Key::Bare, i));
             }
             if kid.whole {
-                wholes.push((y, i));
+                s.wholes.push((y, i));
             }
-            todo.extend(kid.inside.into_iter().map(|t| (y, t.clone())));
+            work.extend(kid.inside.into_iter().map(|t| Work::Place(y, t.clone())));
         }
-        // The groups placed for this type, by number, with the node each of their nodes is
-        // placed at. A type of a group placed is placed: met again, its node and the new one
-        // are merged.
-        type Placed = (std::rc::Rc<Group>, Vec<usize>);
-        let mut placed: HashMap<usize, Placed> = HashMap::new();
-        while let Some((y, t)) = todo.pop() {
-            let (g, c) = group_of(&t);
-            let (g, at) = match placed.entry(g.id) {
-                Entry::Occupied(o) => {
-                    trie.merge(o.get().1[c], y);
-                    continue;
+        placed.clear();
+        while let Some(w) = work.pop() {
+            match w {
+                Work::Place(y, t) => {
+                    let (g, c) = group_of(&t);
+                    let p = *placed.entry(g.id).or_insert_with(|| {
+                        s.groups.push(g);
+                        s.cells.push(i);
+                        s.at.push(HashMap::new());
+                        s.at.len() - 1
+                    });
+                    match s.at[p].get(&c) {
+                        Some(&z) => work.push(Work::Merge(z, y)),
+                        None => {
+                            s.at[p].insert(c, y);
+                            work.push(Work::Bind(y, p, c));
+                        }
+                    }
                 }
-                Entry::Vacant(v) => {
-                    let n = g.nodes.len();
-                    v.insert((g, vec![usize::MAX; n]))
+                Work::Bind(y, p, q) => {
+                    let y = trie.find(y);
+                    if s.groups[p].closed && !s.real[y] && s.pending[y].is_none() {
+                        s.pending[y] = Some((p, q));
+                        continue;
+                    }
+                    s.reach(&mut trie, y);
+                    s.read(&mut trie, y, p, q, &mut work);
                 }
-            };
-            let mut stack = vec![(c, y)];
-            while let Some((q, y)) = stack.pop() {
-                if at[q] != usize::MAX {
-                    trie.merge(at[q], y);
-                    continue;
-                }
-                at[q] = y;
-                let n = &g.nodes[q];
-                points.extend(n.points.iter().map(|k| (y, k.clone(), i)));
-                lists.extend(n.lists.iter().map(|li| (y, li.clone(), i)));
-                if n.whole {
-                    wholes.push((y, i));
-                }
-                for (e, r) in &n.kids {
-                    stack.push((*r, trie.child(y, e.clone())));
-                }
-                todo.extend(n.below.iter().map(|t| (y, t.clone())));
+                Work::Merge(a, b) => trie.merge_with(a, b, |trie, x| s.reach(trie, x)),
             }
         }
     }
+    let Placing {
+        groups: placed_groups,
+        cells,
+        at: placements,
+        pending,
+        mut points,
+        lists,
+        wholes,
+        ..
+    } = s;
     // Each node's merged node, from here on its name.
     let at: Vec<usize> = (0..trie.same.len()).map(|x| trie.find(x)).collect();
     // Per node and universe with a cofinite type, the keys every cofinite type there lists.
@@ -6244,8 +6404,15 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
     }
     // Per node, a type that holds every value under it or under a node above it. Merged nodes
     // can make a node the child of several nodes, or of one below it, so each node gets a type
-    // once and passes it to its children once.
+    // once and passes it to its children once. A node not read holds only its placement's
+    // type, and a finite list there is alone at its node, so it shares only its keys and
+    // cofinite lists. Below a node not read with children is every node of its
+    // group, since each node with children holds a member of the group, which reaches every
+    // member: a type that holds every value above such a node enters the placement, sharing a
+    // key with the placement's type if the group holds a key or a cofinite list anywhere,
+    // and passing to the nodes of the placement read, once per placement.
     let mut whole: Vec<Option<usize>> = vec![None; at.len()];
+    let mut entered: Vec<Option<usize>> = vec![None; placed_groups.len()];
     let mut down = Vec::new();
     for &(x, i) in &wholes {
         match whole[at[x]] {
@@ -6256,15 +6423,52 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
             }
         }
     }
-    while let Some(x) = down.pop() {
+    // The placements entered, with the type that enters.
+    let mut enter: Vec<(usize, usize)> = Vec::new();
+    loop {
+        if let Some((p, w)) = enter.pop() {
+            if let Some(v) = entered[p] {
+                join(&mut parent, v, w);
+                continue;
+            }
+            entered[p] = Some(w);
+            if placed_groups[p].marked {
+                join(&mut parent, w, cells[p]);
+            }
+            for &y in placements[p].values() {
+                let y = at[y];
+                if pending[y].is_some() {
+                    continue;
+                }
+                match whole[y] {
+                    Some(v) => join(&mut parent, v, w),
+                    None => {
+                        whole[y] = Some(w);
+                        down.push(y);
+                    }
+                }
+            }
+            continue;
+        }
+        let Some(x) = down.pop() else { break };
         let w = whole[x].expect("a node passed down has a type");
         for &c in trie.kids[x].values() {
-            match whole[at[c]] {
-                Some(v) => join(&mut parent, v, w),
-                None => {
-                    whole[at[c]] = Some(w);
-                    down.push(at[c]);
+            let c = at[c];
+            let Some((p, q)) = pending[c] else {
+                match whole[c] {
+                    Some(v) => join(&mut parent, v, w),
+                    None => {
+                        whole[c] = Some(w);
+                        down.push(c);
+                    }
                 }
+                continue;
+            };
+            let n = &placed_groups[p].nodes[q];
+            match n.kids.is_empty() {
+                true if n.marked() => join(&mut parent, w, cells[p]),
+                true => {}
+                false => enter.push((p, w)),
             }
         }
     }

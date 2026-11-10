@@ -3195,3 +3195,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A cursor paused inside a persistent set and resumed from the last entry read (`OrdSet::range` after it) | `Cursor`, `after`, `Blocks::advance` | None | The same range read on the persistent set the port keeps |
 | Tree labels relabeled in place for the smaller side when trees join or split, and the per-tree counts moved with them | `Blocks::union`, `Blocks::bridge`, `tally` | Mutation (gap 11) | Persistent maps from node to label and label to nodes, updated by one function that returns the new record |
 | The index of each name's conjuncts by block kept beside `of` by one function | `Blocks::put`, `Blocks::at` | None | A record field updated by the same function that moves a conjunct between blocks |
+
+## Entries from GROUP-overlaps-names (`crates/zed-kernel/src/types/empty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A struct of per-placement vectors (`groups`, `cells`, `at`) and per-node vectors (`pending`, `real`) grown in place as trie nodes are added (`sync`), with the read keys, lists and wholes pushed onto shared vectors; `read` destructures `self` to borrow the fields apart | `Placing`, `Placing::sync`, `reach`, `read`, `overlaps` | Mutation (gap 11) | A state receiver holding persistent maps from placement and from node, threaded through the walk of the cells |
+| A merge hook passed as `impl FnMut(&mut Trie, usize)`, called on both class roots before their children maps are merged, so a waiting node is read first | `Trie::merge_with`, `Trie::merge`, `overlaps` (`Work::Merge`) | Mutation (gap 11) | The merge as a fold that takes the reading function and the state and returns both, or the read done by the caller before the merge |
+| A work stack of an enum (`Work::Place`, `Bind`, `Merge`) popped until empty, with `continue` out of a match arm when a node waits | `Work`, `overlaps` | Mutation (gap 11), early exit (gap 12) | A fold over a persistent list of work items, each step returning the new items |
+| The pass of wholes down the trie as a loop over two stacks (`enter` before `down`), with an `Option<usize>` per placement marking it entered | `overlaps` (`whole`, `entered`, `enter`, `down`) | Mutation (gap 11) | A walk over the nodes in a topological order with persistent maps for the type each node and placement received |
