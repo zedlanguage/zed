@@ -3319,6 +3319,15 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A `OnceLock<Sig>` in each shared node (`Held::sig`) set through `&self` the first time the node is hashed (`get_or_init`), reset when the parts are changed in place (`Shared::change`, `Shared::get_mut`) | `Shared::sig`, `Shared::keep_sig`, `Formula::sig`, `Hash for Formula`, `PartialEq for Formula` | Lazy cells (gap 3), interior mutability | A field of the node computed when it is built, from its parts' fields; a node changed in place is a new node |
 | The hash walk on an explicit stack of `(&Formula, usize)` frames, each with the index of its next part not yet hashed, and a `HashMap<Id, Sig>` for parts whose cell holds another variant's hash | `Formula::sig_walk`, `Formula::known`, `Formula::keep` | Mutation (gap 11) | None needed when the hash is a field computed at construction; otherwise a fold in a topological order with a persistent map keyed by id |
 
+## Entries from ST-formula-sibling (`crates/zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A thread-local `Cell<bool>` (`UNFACTORED`) that tests set to run `project_each` and `decide` on the formula as written, for the comparison and the negative control | `UNFACTORED`, `factored` | Mutation of global state (gap 11) | A parameter of an inner `project_each` and `decide` that the tests call directly |
+| A union-find over atom ids in `Vec`s changed in place (`parent`, `size`, path halving in `root_mut`), with a `HashMap` from atom to index | `AtomLinks` | Mutation (gap 11) | A persistent map from atom to root with union by size and no path compression (O(log n) per find), or the vectors as primed receivers updated in place |
+| The post-order over the spine on an explicit stack with a `seen` set and a `HashMap<Id, Option<Formula>>` of rebuilt nodes | `factored` | Identity (gap 1; nodes keyed by `Id`) | A fold over the spine in topological order, with the rebuilt nodes in a map keyed by the node's hash |
+| A nested `fn` returning `Option<impl Iterator<Item = &Formula>>` borrowed from its argument | `factored_or` (`parts`) | Borrowed references into a value | A function returning the part list itself |
+
 ## Entries from NARROW-eager-star-redo (`crates/zedc-preimage/src/product.rs`, `crates/zedc-presburger/src/conjuncts.rs`)
 
 | Rust construct | Sites | Gap | At the port |

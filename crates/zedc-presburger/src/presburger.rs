@@ -1034,6 +1034,20 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// with each atom propagation fixed replaced by its value, and as written if the solver refuses
 /// that.
 pub fn decide(f: &Formula) -> Result<bool, Refusal> {
+    // The formula with each shared part taken out of the disjunctions that hold it in every
+    // disjunct ([`factored`]) holds at the same points, so its answer is the answer; the
+    // formula as written is asked where it is refused, so a refusal names the formula as
+    // written.
+    if let Some(g) = factored(f)
+        && let Ok(b) = decide_written(&g)
+    {
+        return Ok(b);
+    }
+    decide_written(f)
+}
+
+/// [`decide`] of `f` as it is written, with no part taken out of its disjunctions.
+fn decide_written(f: &Formula) -> Result<bool, Refusal> {
     match forced::forced(f, false) {
         Forced::Empty => Ok(false),
         Forced::Point(_) | Forced::Holds => Ok(true),
@@ -4699,10 +4713,16 @@ impl Parts {
     // given up. Trigger: a `let`-bound conjunction or disjunction of k parts used at each of d
     // disjuncts of one disjunction costs O(d k) here: with k = d named credit limits in each of
     // d tiers side by side, `product::arms` allocates 208.8 MB at d = 30 and 10.59 GB at 240,
-    // 50.7 times (ST-formula-wide repair 4). Conjoining a part common to every disjunct once,
-    // before the disjunction, changes answers, since `project_parts` hulls each disjunction of
-    // a part apart from the rest: `rule && (x <= 0 || y <= 0)` projects `x` to `[..]` where
-    // `(rule && x <= 0) || (rule && y <= 0)` gives `[..=0, 5..]`. The nested shapes are near linear (`Formula::and` and `Formula::or` keep a named part
+    // 50.7 times (ST-formula-wide repair 4). [`project_each`] and [`decide`] now take a part
+    // common to every disjunct out of the disjunction first ([`factored`], ST-formula-sibling)
+    // when it is linked to no atom of the rest of the disjuncts, so this shape reaches here
+    // with the part once. A linked part is not taken out, since `project_parts` hulls each
+    // disjunction of a part apart from the rest: `rule && (x <= 0 || y <= 0)` projects `x` to
+    // `[..]` where `(rule && x <= 0) || (rule && y <= 0)` gives `[..=0, 5..]`; it still costs
+    // O(d k) here, as do a part not common to every disjunct and [`satisfiable`], since taking
+    // the part out may change the model it returns. Test of the side-by-side shape:
+    // `l01_39_reduced_product::named_test::arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth`.
+    // The nested shapes are near linear (`Formula::and` and `Formula::or` keep a named part
     // whole): tests in `l01_39_reduced_product::named_test`
     // `arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth`,
     // `..._wide_named_disjunction_at_each_tier_...`, `..._wide_named_disjunction_required_at_each_tier_...`
@@ -8758,6 +8778,21 @@ pub type Each = (Vec<Result<IntervalSet, Refusal>>, Vec<Refusal>);
 // `l01_39_reduced_product::pendants::refused_parts_projected_exactly_by_pendants_fourth_quarter_rest`.
 // COMPLEXITY.md row PROJECT-each-canon.
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    // The formula with each shared part taken out of the disjunctions that hold it in every
+    // disjunct ([`factored`]) is asked first, and the formula as written where that leaves
+    // anything refused, so no refusal or cause appears that the formula as written does not
+    // give.
+    if let Some(g) = factored(f) {
+        let r = project_each_written(&g, syms);
+        if matches!(&r, Ok(each) if !refused(each)) {
+            return r;
+        }
+    }
+    project_each_written(f, syms)
+}
+
+/// [`project_each`] of `f` as it is written, with no part taken out of its disjunctions.
+fn project_each_written(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     let first = project_each_signed(&signed(f, false), syms);
     if matches!(&first, Ok(each) if !refused(each)) {
         return first;
@@ -8792,6 +8827,228 @@ fn meet_each(each: &mut [Result<IntervalSet, Refusal>], others: Vec<Result<Inter
 /// Whether `each` refuses a symbol or leaves a disjunction out.
 fn refused(each: &Each) -> bool {
     !each.1.is_empty() || each.0.iter().any(Result::is_err)
+}
+
+thread_local! {
+    /// Whether [`factored`] takes no part out, so that [`project_each`] and [`decide`] ask
+    /// every formula as it is written: for the tests that compare the two (ST-formula-sibling).
+    pub static UNFACTORED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// `f` with each shared part `u` that every disjunct of a disjunction holds as a conjunct
+/// taken out of the disjunction, `(u && r1) || (u && r2)` as `u && (r1 || r2)`, which holds at
+/// the same points; `None` when no part is taken out. Only the disjunctions reached from the
+/// root through conjunctions and negations are read, and a part is taken out only when no
+/// atom of it is linked, through the constraints of `f` (an atom of a product linked with its
+/// factors), to an atom of the rest of a disjunct. The part then forms a group of its own in
+/// the projection, read once, and not again with each disjunct: the projection of the result
+/// is that of the formula as written or within it, never wider (of 20000 random formulas, 53
+/// within it, where reading the part with each disjunct lost a bound, and none wider).
+/// [`project_each`] and [`decide`] still ask the formula as written where the result leaves
+/// anything refused, so no refusal or cause appears that the formula as written does not
+/// give. A formula with an auxiliary variable, linked through definitions that are not among
+/// its constraints, is left as it is.
+// Complexity tradeoff: naive version, the formula as written: each of d disjuncts holds the
+// shared part's k constraints, and the projection reads them in each disjunct (`Parts::of`,
+// `project_parts`), O(d k) time and memory, quadratic in the program when k is about d (k
+// named limits at each of d side-by-side tiers: 55.9 times the instructions and 46.6 times the
+// bytes from d = 30 to 240). Used: one walk with a visited set to link the atoms, one look at
+// each disjunct's parts by key, and the shared part read once, O(n log n) for a formula of n
+// distinct parts; the check reads each disjunction on the spine once, as the projection that
+// follows does. A part linked to the rest of a disjunct is not taken out, since there the
+// projection of the result can differ from that of the formula as written (a coarser set, as
+// `[..=0,5..]` to `[..]`), and such a disjunction still costs O(d k). Trigger: a disjunction
+// every disjunct of which holds one shared part over atoms of its own. Tests:
+// `l01_39_reduced_product::named_test::arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth`,
+// `l01_38_presburger::shared::taking_a_shared_part_out_of_a_disjunction_loses_no_precision`.
+// COMPLEXITY.md S31b.
+fn factored(f: &Formula) -> Option<Formula> {
+    if matches!(f, Formula::Con(_)) || UNFACTORED.with(Cell::get) {
+        return None;
+    }
+    let links = AtomLinks::of(f)?;
+    // Each compound part on the spine, its key mapped to the part rewritten, or `None` when
+    // unchanged; each part is entered once, after its parts on the spine.
+    let mut done: HashMap<Id, Option<Formula>> = HashMap::new();
+    let mut seen: HashSet<Id> = HashSet::new();
+    let mut stack: Vec<(&Formula, bool)> = vec![(f, false)];
+    while let Some((g, leave)) = stack.pop() {
+        let id = Id::any(g);
+        if leave {
+            let new = |k: &Formula| match k {
+                Formula::Con(_) => None,
+                _ => done[&Id::any(k)].clone(),
+            };
+            let out = (g.kids().iter().any(|k| new(k).is_some())).then(|| {
+                g.rebuild(
+                    (g.kids().iter())
+                        .map(|k| new(k).unwrap_or_else(|| k.clone()))
+                        .collect(),
+                )
+            });
+            done.insert(id, out);
+            continue;
+        }
+        if !seen.insert(id) {
+            continue;
+        }
+        match g {
+            Formula::Con(_) => unreachable!("a constraint is not pushed"),
+            Formula::Or(_) => {
+                done.insert(id, factored_or(g, &links));
+            }
+            Formula::Not(_) | Formula::And(_) => {
+                stack.push((g, true));
+                let compound = g.kids().iter().filter(|k| !matches!(k, Formula::Con(_)));
+                stack.extend(compound.map(|k| (k, false)));
+            }
+        }
+    }
+    done.remove(&Id::any(f)).flatten()
+}
+
+/// The disjunction `g` with the compound parts every disjunct holds as conjuncts taken out
+/// ([`factored`]), or `None` when there are none or one is linked to the rest of a disjunct.
+fn factored_or(g: &Formula, links: &AtomLinks) -> Option<Formula> {
+    let ds = g.kids();
+    if ds.len() < 2 {
+        return None;
+    }
+    fn parts(d: &Formula) -> Option<impl Iterator<Item = &Formula>> {
+        match d {
+            Formula::And(ps) => Some(ps.iter().filter(|p| !matches!(p, Formula::Con(_)))),
+            _ => None,
+        }
+    }
+    let mut common: Vec<&Formula> = Vec::new();
+    let mut ids: HashSet<Id> = HashSet::new();
+    for p in parts(&ds[0])? {
+        if ids.insert(Id::any(p)) {
+            common.push(p);
+        }
+    }
+    for d in &ds[1..] {
+        let here: HashSet<Id> = parts(d)?.map(Id::any).collect();
+        common.retain(|p| here.contains(&Id::any(p)));
+        if common.is_empty() {
+            return None;
+        }
+    }
+    let ids: HashSet<Id> = common.iter().map(|p| Id::any(p)).collect();
+    let rests: Vec<Formula> = (ds.iter())
+        .map(|d| {
+            let rest: Vec<&Formula> = (d.kids().iter())
+                .filter(|p| matches!(p, Formula::Con(_)) || !ids.contains(&Id::any(p)))
+                .collect();
+            let keep: Vec<bool> = rest.iter().map(|p| matches!(p, Formula::And(_))).collect();
+            Formula::and_keeping(rest.into_iter().cloned().collect(), |i| keep[i])
+        })
+        .collect();
+    let rest = Formula::or(rests);
+    let mut groups: HashSet<usize> = HashSet::new();
+    for p in &common {
+        p.walk(&mut |c| groups.extend(c.lin.terms.keys().map(|a| links.group(a))));
+    }
+    let mut linked = false;
+    rest.walk(&mut |c| linked |= c.lin.terms.keys().any(|a| groups.contains(&links.group(a))));
+    if linked {
+        return None;
+    }
+    let mut out: Vec<Formula> = common.into_iter().cloned().collect();
+    let keep: Vec<bool> = out.iter().map(|p| matches!(p, Formula::And(_))).collect();
+    out.push(rest);
+    Some(Formula::and_keeping(out, |i| {
+        keep.get(i).copied().unwrap_or(false)
+    }))
+}
+
+/// The atoms of a formula grouped by the constraints that link them ([`factored`]), an atom
+/// of a product linked with its factors; a group is found in near-constant time.
+struct AtomLinks {
+    ids: HashMap<Atom, usize>,
+    parent: Vec<usize>,
+    /// At each root, the number of atoms in its group.
+    size: Vec<usize>,
+}
+
+impl AtomLinks {
+    /// The groups of the atoms of `f`'s constraints, or `None` when `f` has an auxiliary
+    /// variable.
+    fn of(f: &Formula) -> Option<AtomLinks> {
+        let mut l = AtomLinks {
+            ids: HashMap::new(),
+            parent: Vec::new(),
+            size: Vec::new(),
+        };
+        let mut aux = false;
+        f.walk(&mut |c| {
+            let mut first: Option<usize> = None;
+            for a in c.lin.terms.keys() {
+                let mut join = |l: &mut AtomLinks, b: &Atom| {
+                    let i = l.id(b);
+                    match first {
+                        Some(r) => l.union(r, i),
+                        None => first = Some(i),
+                    }
+                };
+                match a {
+                    Atom::Aux(_) => aux = true,
+                    Atom::Product(x, y) => {
+                        aux |= matches!(x, Factor::Aux(_)) || matches!(y, Factor::Aux(_));
+                        join(&mut l, &x.atom());
+                        join(&mut l, &y.atom());
+                    }
+                    Atom::Sym(_) => {}
+                }
+                join(&mut l, a);
+            }
+        });
+        (!aux).then_some(l)
+    }
+
+    fn id(&mut self, a: &Atom) -> usize {
+        if let Some(&i) = self.ids.get(a) {
+            return i;
+        }
+        let i = self.parent.len();
+        self.ids.insert(a.clone(), i);
+        self.parent.push(i);
+        self.size.push(1);
+        i
+    }
+
+    /// The root of `i`, with the path to it halved.
+    fn root_mut(&mut self, mut i: usize) -> usize {
+        while self.parent[i] != i {
+            self.parent[i] = self.parent[self.parent[i]];
+            i = self.parent[i];
+        }
+        i
+    }
+
+    /// Joins the groups of `a` and `b`, the smaller into the larger, so a root is found in
+    /// `log` steps.
+    fn union(&mut self, a: usize, b: usize) {
+        let (ra, rb) = (self.root_mut(a), self.root_mut(b));
+        if ra != rb {
+            let (big, small) = if self.size[ra] < self.size[rb] {
+                (rb, ra)
+            } else {
+                (ra, rb)
+            };
+            self.parent[small] = big;
+            self.size[big] += self.size[small];
+        }
+    }
+
+    /// The group of the atom `a`, which is one of the atoms the groups were made of.
+    fn group(&self, a: &Atom) -> usize {
+        let mut i = self.ids[a];
+        while self.parent[i] != i {
+            i = self.parent[i];
+        }
+        i
+    }
 }
 
 /// [`project_each`] of `f` written one way ([`signed`]).

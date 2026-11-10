@@ -980,3 +980,138 @@ fn unequal_formulas_grouped_at_other_places_compare_in_time_near_linear_in_the_d
         },
     );
 }
+
+/// `sum of k a >= c`, or `== c` when `eq`, over the named atoms.
+fn row(terms: &[(&str, i64)], c: i64, eq: bool) -> Formula {
+    let l = (terms.iter()).fold(Lin::constant(-c), |l, (n, k)| l.plus(&sym(n).times(*k)));
+    Formula::Con(if eq {
+        Con::eq(&l, &Lin::constant(0))
+    } else {
+        Con::ge(&l, &Lin::constant(0))
+    })
+}
+
+/// A random constraint over one or two of `names`, an equation at times, coefficients up to
+/// 3 so that a projection can have holes.
+fn random_row(rng: &mut Rng, names: &[&'static str]) -> Formula {
+    let a = rng.pick(names);
+    let mut terms = vec![(a, [-3, -2, -1, 1, 2, 3][rng.below(6)])];
+    if rng.below(2) == 0 {
+        let b = rng.pick(names);
+        if b != a {
+            terms.push((b, rng.int(-2, 2)));
+        }
+    }
+    terms.retain(|(_, k)| *k != 0);
+    row(&terms, rng.int(-4, 4), rng.below(5) == 0)
+}
+
+/// A random disjunction of 2 to 4 disjuncts each holding one shared part `u` over `a` and
+/// `b` (a conjunction, at times holding a disjunction, so that a projection has a gap) beside
+/// rows of their own over `c` and `d`; at times a disjunct also reads `a`, or lacks `u`, so
+/// that the part may not be taken out. Under a conjunction with rows over all four atoms, at
+/// times negated.
+fn random_tiers(rng: &mut Rng) -> Formula {
+    let mut u: Vec<Formula> = (0..1 + rng.below(3))
+        .map(|_| random_row(rng, &["a", "b"]))
+        .collect();
+    if rng.below(3) == 0 {
+        u.push(or(vec![
+            random_row(rng, &["a", "b"]),
+            random_row(rng, &["a", "b"]),
+        ]));
+    }
+    let u = and(u);
+    let ds: Vec<Formula> = (0..2 + rng.below(3))
+        .map(|_| {
+            let rest: &[&'static str] = if rng.below(6) == 0 {
+                &["a", "c", "d"]
+            } else {
+                &["c", "d"]
+            };
+            let mut parts: Vec<Formula> = (0..1 + rng.below(2))
+                .map(|_| random_row(rng, rest))
+                .collect();
+            if rng.below(8) != 0 {
+                parts.insert(rng.below(parts.len() + 1), u.clone());
+            }
+            and(parts)
+        })
+        .collect();
+    let mut tiers = or(ds);
+    if rng.below(3) == 0 {
+        tiers = not(tiers);
+    }
+    let base: &[&'static str] = if rng.below(4) == 0 {
+        &["a", "b", "c", "d"]
+    } else {
+        &["a", "b"]
+    };
+    let mut top: Vec<Formula> = (0..rng.below(3)).map(|_| random_row(rng, base)).collect();
+    top.push(random_row(rng, &["c", "d"]));
+    top.push(tiers);
+    and(top)
+}
+
+#[test]
+fn taking_a_shared_part_out_of_a_disjunction_loses_no_precision() {
+    // `presburger::factored` takes a part every disjunct holds out of the disjunction when it
+    // is linked to nothing else in the disjuncts (ST-formula-sibling). Each decision and each
+    // refusal is the one the formula as written gives, and each projection is the one it
+    // gives or within it, and holds every value of a point of the formula in a window.
+    use zedc::store::presburger::{UNFACTORED, project_each};
+    let names = ["a", "b", "c", "d"];
+    let syms: Vec<Atom> = names.map(|n| Atom::Sym(n.into())).into();
+    fn as_written<T>(run: impl Fn() -> T) -> T {
+        UNFACTORED.with(|u| u.set(true));
+        let r = run();
+        UNFACTORED.with(|u| u.set(false));
+        r
+    }
+    let mut rng = Rng::new(0x5F5B);
+    let (mut same, mut narrower, mut answered) = (0, 0, 0);
+    for i in 0..600 {
+        let f = random_tiers(&mut rng);
+        let what = format!("formula {i}: {f}");
+        // A refusal as written may become an answer, never the other way.
+        match (decide(&f), as_written(|| decide(&f))) {
+            (now, Ok(then)) => assert_eq!(now, Ok(then), "{what}"),
+            (Ok(_), Err(_)) => answered += 1,
+            (now, then) => assert_eq!(now, then, "{what}"),
+        }
+        let (now, then) = (
+            project_each(&f, &syms),
+            as_written(|| project_each(&f, &syms)),
+        );
+        if now == then {
+            same += 1;
+            continue;
+        }
+        narrower += 1;
+        let (Ok((now, now_skipped)), Ok((then, _))) = (&now, &then) else {
+            panic!("{what}: {now:?} where as written {then:?}");
+        };
+        assert!(now_skipped.is_empty(), "{what}");
+        let now: Vec<_> = now.iter().map(|s| s.clone().expect("a set")).collect();
+        for (n, t) in now.iter().zip(then) {
+            if let Ok(t) = t {
+                assert!(n.is_subset(t), "{what}: {n} not within {t}");
+            }
+        }
+        for p in 0..9i64.pow(4) {
+            let v: Vec<i64> = (0..4).map(|k| (p / 9i64.pow(k)) % 9 - 4).collect();
+            let m: Model = (syms.iter().cloned())
+                .zip(v.iter().map(|&x| Int::from(x)))
+                .collect();
+            if f.holds(&m) {
+                for (k, s) in now.iter().enumerate() {
+                    assert!(s.contains(v[k]), "{what}: {} = {} at {v:?}", names[k], v[k]);
+                }
+            }
+        }
+    }
+    assert!(
+        narrower > 0 && same > narrower,
+        "{same} the same, {narrower} narrower, {answered} answered"
+    );
+}

@@ -434,3 +434,33 @@ fn arms_of_a_tier_needing_k_named_limits_take_time_near_linear_in_k() {
         approval_any_tier,
     );
 }
+
+#[test]
+fn arms_of_named_limits_in_side_by_side_tiers_narrow_as_with_each_tier_read_apart() {
+    // The limits every tier needs are taken out of the disjunction of the tiers
+    // (`presburger::factored`, ST-formula-sibling); the arms are those of the formula as
+    // written, each tier with the limits, and those of the limits written out at each tier.
+    use zedc::store::presburger::UNFACTORED;
+    for (d, k) in [(1, 1), (2, 2), (3, 1), (5, 5), (8, 3)] {
+        let now = summary(&arms_of(approval_any_tier(d, k, true)));
+        UNFACTORED.with(|u| u.set(true));
+        let as_written = summary(&arms_of(approval_any_tier(d, k, true)));
+        UNFACTORED.with(|u| u.set(false));
+        assert_eq!(now, as_written, "d = {d}, k = {k}");
+        assert_eq!(now, summary(&arms_of(approval_any_tier(d, k, false))));
+    }
+}
+
+#[test]
+fn arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth() {
+    // k = d credit limits named once, needed by each of d tiers side by side. Each disjunct
+    // held the limits, and the projection read them in each: on origin/main d6d1840d, in
+    // instructions at d = 30, 60, 120, 240: 0.834, 2.96, 11.5, 46.6 G (55.9 times), 0.128 to
+    // 5.97 GB allocated (46.6 times). With the limits taken out of the disjunction
+    // (`presburger::factored`): 0.267, 0.535, 1.08, 2.16 G (8.1 times), 0.044 to 0.350 GB
+    // (8.0 times).
+    wide_scaling(
+        "arms of k = d credit limits named once, needed by each of d tiers side by side",
+        approval_any_tier,
+    );
+}
