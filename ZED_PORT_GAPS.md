@@ -3068,6 +3068,16 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | The run's unions sorted by preorder into reused `Vec`s (`by_dom`, `by_post`, `open`) cleared per type, and a stack of open intervals popped in place | `names::absorb` | Mutation (gap 11) | a sort per run and a fold carrying the stack as a list |
 | A `Bes` cloned and changed by `set` and `seal`, the copy returned as `Option<Bes>`; the leaves set to `Top` in both systems through `iter::once(&mut b).chain(absorbed.as_mut())` | `names::absorb`, `judge` | Mutation (gap 11) | a new system built from the old one's nodes with the dropped arms filtered out; the runs with leaves `Top` a second system built the same way |
 
+## Entries from GROUP-cycle-dup-across (`crates/zed-kernel/src/types/bes.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/names.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Partition`: the nodes in one `Vec` with each class a run, a node moved into the marked front of its class by `swap` and its place patched, the classes split in place, each class's coarse class a `Vec<Vec<u32>>` emptied by `swap_remove`, and a stack of coarse classes with two classes or more | `names::merged`, `Partition::split`, `Partition::leave` | Mutation (gap 11) | a persistent map from node to class and a persistent set of nodes per class, a split returning the two new classes; the coarse classes a list of class sets |
+| Per-node counts of children in each coarse class held in one growing `Vec<u32>`, each edge pointing at its count (`counted`), the counts decremented and the pointers moved as a class is split; `seen` reset to `u32::MAX` after each step | `names::merged` | Mutation (gap 11) | a persistent map keyed by (node, coarse class) to its count, updated by each step's fold |
+| Each node's children sorted and deduplicated in place in one flat `Vec` with run starts, and the edges into each node by counting sort | `names::merged` | Mutation (gap 11) | each node's children as a sorted set; the edges into a node by one fold over the edges into a map of lists |
+| The other systems built only when a member is left open or under `cfg!(debug_assertions)`, through `bool::then`, the leaves set to `Bot` and back to `Top` in the borrowed `&mut Bes` around the build | `judge`, `Others::new` | Mutation (gap 11) | the systems built from `b` as written, with the leaves `Bot` and `Top` as two values, and built lazily by a closure the loop calls on the first open member |
+| Kahn's order of a cycle's `Or` edges with a mutable in-degree vector and a stack, the `Scratch` and `Stamp` buffers of `refusal` reused for local numbers and to drop repeated children, reset after use | `bes::one_cycle_but_union_chords` | Mutation (gap 11) | a fold over the cycle's nodes with a persistent map of in-degrees; local numbers and first-seen children by a map built per cycle |
+
 ## Entries from S22-shapes-linear (`crates/zedc-presburger/src/presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
