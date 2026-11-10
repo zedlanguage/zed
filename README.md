@@ -490,7 +490,7 @@ eastPenDays = (sales["East"] else []).map(day -> day["pen"] else 0);
 
 struct Shelf { pens: int }
 
-Shelf.sell(positional n: int) -> int {
+Shelf.sell(positional n: int) {
   pens' = pens - n;
   return pens;
 }
@@ -510,7 +510,7 @@ stock = loop t {
 A method is a function you call on a struct with a dot.
 
 > [!NOTE]
-> **`Name.method(...) -> T { ... }`** defines a method of the struct `Name`, whose result has the type `T`. In the body, the struct's fields are in scope by name, and **`return e;`** ends the body with the result `e`. A parameter marked **`positional`** is passed by position, as in `s.sell(3)`. Other parameters are passed by name, as in `f(x: 1)`.
+> **`Name.method(...) { ... }`** defines a method of the struct `Name`. In the body, the struct's fields are in scope by name, and **`return e;`** ends the body with the result `e`. A parameter marked **`positional`** is passed by position, as in `s.sell(3)`. Other parameters are passed by name, as in `f(x: 1)`.
 >
 > A method can write a field with a `'`, such as `pens' = pens - n`, which gives the field's value in the struct's next version. The call returns that new struct along with its result and leaves the old one alone.
 
@@ -891,7 +891,7 @@ Generic code uses type variables with no declaration, and an interface describes
 **Syntax:** `type Name(T) = ...`, `interface Name { ... }`
 
 > [!NOTE]
-> **`type Name(T) = ...;`** names a type with a type parameter `T`. **`interface Name { ... }`** lists fields and laws, and any value that has them fits it. **`s.last`** is the value at the highest key, here the last element, and **`s.first`** the value at the lowest. Either gives the atom **`#none`**, which means there is nothing here, if `s` is empty.
+> **`type Name(T) = ...;`** names a type with a type parameter `T`. **`f(x) -> R = e;`** states that the result of `f` has the type `R`; the compiler checks that `e` fits it. **`interface Name { ... }`** lists fields and laws, and any value that has them fits it. **`s.last`** is the value at the highest key, here the last element, and **`s.first`** the value at the lowest. Either gives the atom **`#none`**, which means there is nothing here, if `s` is empty.
 
 ```zed
 type Stack(T) = [T];
@@ -1912,7 +1912,7 @@ A method is a function on a struct, and it can define the struct's next version 
 ```zed
 struct Counter { n: int, peak: int }
 
-Counter.bump(positional by) -> int {
+Counter.bump(positional by) {
   n' = n + by;
   peak' = max(peak, n + by);
   return n;
@@ -1927,7 +1927,7 @@ after = Counter(n: 2, peak: 2), was = 0
 start = Counter(n: 0, peak: 0), unchanged
 ```
 
-Here `n'` is the value of `n` in the next version of this struct. The method doesn't change `start`: it returns a new `Counter` and its declared result, and you have to take both. In a loop body, a `*` makes a call look like mutation: `prev = c*.bump(3);` replaces `c` in the loop's next step. So no call changes a value you hold unless the text shows a `*`, which makes state changes easy to find by reading. Side effects go only through ports, including foreign calls and logging, as [Ports](#ports) below explains.
+Here `n'` is the value of `n` in the next version of this struct. The method doesn't change `start`: it returns a new `Counter` and the value of its `return`, and you have to take both. In a loop body, a `*` makes a call look like mutation: `prev = c*.bump(3);` replaces `c` in the loop's next step. So no call changes a value you hold unless the text shows a `*`, which makes state changes easy to find by reading. Side effects go only through ports, including foreign calls and logging, as [Ports](#ports) below explains.
 
 ### Only what's needed runs
 

@@ -70,13 +70,13 @@ trend = loop t {
 };
 ```
 
-<!-- README.md:488 layer L10: ring L10, word L3 (map), label none; section [Step 11: pens left on the shelf] 1 -->
+<!-- README.md:488 layer L6: ring L6, word L3 (map), label none; section [Step 11: pens left on the shelf] 1 -->
 ```zed
 eastPenDays = (sales["East"] else []).map(day -> day["pen"] else 0);
 
 struct Shelf { pens: int }
 
-Shelf.sell(positional n: int) -> int {
+Shelf.sell(positional n: int) {
   pens' = pens - n;
   return pens;
 }
@@ -375,11 +375,11 @@ run = loop t {
 previous = run::frames[run::len - 2]?.doc else empty;
 ```
 
-<!-- README.md:1912 layer L10: ring L10, word none, label none; section [Methods and the next value] 1 -->
+<!-- README.md:1912 layer L2: ring L2, word none, label none; section [Methods and the next value] 1 -->
 ```zed
 struct Counter { n: int, peak: int }
 
-Counter.bump(positional by) -> int {
+Counter.bump(positional by) {
   n' = n + by;
   peak' = max(peak, n + by);
   return n;
