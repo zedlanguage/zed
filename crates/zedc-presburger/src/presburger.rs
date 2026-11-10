@@ -1873,6 +1873,22 @@ fn decide_kept(f: &Formula, mut kept: Option<&mut Vec<Model>>) -> Result<bool, R
     };
     let mut ask = |mut p: Parts, rows: Vec<Con>| -> Result<bool, Refusal> {
         p.cons.extend(rows);
+        // Complexity tradeoff: [`settle`] alone removes, in each round, the disjuncts the base
+        // refutes as it stands, so a run of removals that goes against the order of the
+        // disjunctions, each leaving a disjunction one disjunct that joins the base and refutes
+        // the next, moves one disjunction per round: `n` rounds of `n` tests, O(n²), on a
+        // nested chain of absolute values whose twins were merged (`p(n-1) + t(n-1) >= 4`:
+        // 4.2 s at 64 levels on main). Used: the removals the bounds of single atoms show are
+        // made first, in one O(n log n) pass ([`drop_by_bounds`]); the disjuncts it removes
+        // have no point, so the answer is unchanged, and settle then has no run left to follow.
+        // Given up: a run whose removals the bounds do not show still moves one disjunction
+        // per round. A complete solution re-tests, when a disjunct joins the base, only the
+        // disjunctions that share an atom with it. Tests:
+        // `l01_38_presburger::probe::twin_chains_of_absolute_values_scale`, COMPLEXITY.md row
+        // C43 (PROJECT-abs-chain-quadratic).
+        if drop_by_bounds(&mut p, &|_| false).is_none() {
+            return Ok(false);
+        }
         let p = match settle(p, true)? {
             None => return Ok(false),
             Some(p) if p.ors.is_empty() => return Ok(true),
@@ -3902,7 +3918,12 @@ fn probe_kept(
     // only gains constraints or stays equal from round to round, so they hold to the end.
     let mut implied = Near::default();
     loop {
-        let mut changed = false;
+        // The disjuncts the bounds of single atoms leave without a point are removed first,
+        // all in one pass ([`drop_by_bounds`]), not each by a propagation of its own below.
+        let mut changed = match drop_by_bounds(&mut p, &|d| kept.contains(&d.id())) {
+            None => return Ok(None),
+            Some(c) => c,
+        };
         // For each disjunct of each disjunction, whether a point found so far holds it or it
         // is kept untested.
         let mut held: Vec<Vec<bool>> = p
@@ -4284,14 +4305,14 @@ enum Unit<'a> {
 
 impl<'a> Unit<'a> {
     /// The atoms of the part but `x`, each once.
-    fn atoms(&self, x: &Atom) -> Vec<&'a Atom> {
+    fn atoms(&self, x: Option<&Atom>) -> Vec<&'a Atom> {
         let cons: Vec<&'a Con> = match self {
             Unit::Con(c) => vec![c],
             Unit::Or(ds) => ds.iter().flat_map(|d| &d.cons).collect(),
         };
         let mut atoms: Vec<&'a Atom> = (cons.into_iter())
             .flat_map(|c| c.lin.terms.keys())
-            .filter(|a| *a != x)
+            .filter(|a| Some(*a) != x)
             .collect();
         atoms.sort_unstable();
         atoms.dedup();
@@ -4326,9 +4347,30 @@ impl<'a> Unit<'a> {
 /// on symbols whose names do not sort in the chain's order). A complete solution is the exact
 /// projection of the formula onto `x`, which with disjunctions is exponential in them.
 fn bounds_refute(f: &Parts, x: &Atom, extra: &Con) -> bool {
-    let units: Vec<Unit<'_>> = (f.cons.iter().map(Unit::Con))
-        .chain(f.ors.iter().map(|ds| Unit::Or(ds)))
-        .collect();
+    let units = Unit::all(f);
+    let order = read_order(&units, Some(x));
+    let mut b = AtomBounds::new();
+    let first = narrow(extra, &mut b);
+    let mut read = |u: usize| match &units[u] {
+        Unit::Con(c) => narrow(c, &mut b),
+        Unit::Or(ds) => narrow_or(ds, &mut b, None),
+    };
+    !(first && order.iter().rev().all(|&u| read(u)) && order.iter().all(|&u| read(u)))
+}
+
+impl<'a> Unit<'a> {
+    /// The constraints of `f`, then its disjunctions, in their order.
+    fn all(f: &'a Parts) -> Vec<Unit<'a>> {
+        (f.cons.iter().map(Unit::Con))
+            .chain(f.ors.iter().map(|ds| Unit::Or(ds)))
+            .collect()
+    }
+}
+
+/// The order in which [`bounds_refute`] and [`drop_by_bounds`] read `units`: breadth first
+/// from the first part of each set of connected parts, two parts being neighbors when they
+/// share an atom other than `x`. `O(n log n)` for parts of `n` terms.
+fn read_order(units: &[Unit<'_>], x: Option<&Atom>) -> Vec<usize> {
     let atoms: Vec<Vec<&Atom>> = units.iter().map(|u| u.atoms(x)).collect();
     let mut by_atom: BTreeMap<&Atom, Vec<usize>> = BTreeMap::new();
     for (u, xs) in atoms.iter().enumerate() {
@@ -4336,7 +4378,6 @@ fn bounds_refute(f: &Parts, x: &Atom, extra: &Con) -> bool {
             by_atom.entry(a).or_default().push(u);
         }
     }
-    // Breadth first from the first part of each set of connected parts.
     let mut seen = vec![false; units.len()];
     let mut order: Vec<usize> = Vec::with_capacity(units.len());
     let mut done: BTreeSet<&Atom> = BTreeSet::new();
@@ -4361,25 +4402,116 @@ fn bounds_refute(f: &Parts, x: &Atom, extra: &Con) -> bool {
             head += 1;
         }
     }
-    let mut b = AtomBounds::new();
-    let first = narrow(extra, &mut b);
-    let mut read = |u: usize| match &units[u] {
-        Unit::Con(c) => narrow(c, &mut b),
-        Unit::Or(ds) => narrow_or(ds, &mut b),
-    };
-    !(first && order.iter().rev().all(|&u| read(u)) && order.iter().all(|&u| read(u)))
+    order
+}
+
+/// Removes from the disjunctions of `p` each disjunct that the bounds of the atoms, propagated
+/// as [`bounds_refute`] propagates them (in its order backward and then forward, twice, with no
+/// extra bound), leave without a point, but those `spared`; `None` when the bounds show that `p` has
+/// no point, else whether a disjunct was removed. Every bound propagated is implied by `p`, so
+/// a disjunct removed has no point of `p`, and removing it leaves the points of `p` as they
+/// were: [`probe_kept`] would remove it too, by a propagation of the whole formula
+/// ([`settle`]) for each.
+// Complexity tradeoff: the naive way, which [`probe_kept`] still takes for every disjunct this
+// pass leaves, tests each disjunct by its own propagation of the whole formula: `r` disjuncts
+// with no point cost `r` propagations, O(r n) for parts of `n` terms, quadratic on a chain of
+// `n` definitions each with a branch no point takes (a nested chain of absolute values,
+// `p(k) == |p(k-1) - 1|` with `p(n-1) >= 2`: 0.18 s at 16 levels, 2.7 s at 64; twice that
+// and more with a twin chain, whose disjunctions `twins_merged` makes ask again). Used: four
+// readings of all the parts in breadth-first order ([`read_order`]), backward, forward,
+// backward, forward, each constraint and each disjunct read once per reading, O(n log n) in
+// all with the sort of the order, which carries a bound along a chain from either end to the
+// other and back; then each disjunction left with one disjunct joins the parts at once, so
+// that [`settle`] solves the base once for them, not once for each. Given up: a disjunct
+// whose refutation needs a bound carried along the chain more than twice, or one that the
+// bounds of single atoms do not show (a cycle of rows, a parity, a disjunction inside the
+// disjunct, which is read as having every value), is left to the propagation per disjunct as
+// before, so it costs what it cost on main and no answer changes for it. Why: propagating
+// bounds until none moves can take rounds that grow with the constants, not the parts
+// ([`bounds_refute`]). Tests:
+// `l01_38_presburger::probe::a_nested_chain_of_absolute_values_scales`,
+// `l01_38_presburger::probe::twin_chains_of_absolute_values_scale` and
+// `l01_38_presburger::probe::a_nested_chain_of_absolute_values_is_projected_exactly`.
+// COMPLEXITY.md row C43 (PROJECT-abs-chain-quadratic).
+fn drop_by_bounds(p: &mut Parts, spared: &dyn Fn(&Parts) -> bool) -> Option<bool> {
+    let n_cons = p.cons.len();
+    let mut dead: Vec<Vec<bool>> = p.ors.iter().map(|o| vec![false; o.len()]).collect();
+    {
+        let units = Unit::all(p);
+        let order = read_order(&units, None);
+        let mut b = AtomBounds::new();
+        // Each reading backward and then forward carries a bound from either end of a chain
+        // to the other, wherever in it the order starts; the second carries what the first
+        // found back: on a chain of absolute values the lower bounds go up from its input and
+        // only then do the disjuncts die one after another from its top down.
+        let pair = order.iter().rev().chain(&order);
+        for &u in pair.clone().chain(pair) {
+            let ok = match &units[u] {
+                Unit::Con(c) => narrow(c, &mut b),
+                Unit::Or(ds) => narrow_or(ds, &mut b, Some(&mut dead[u - n_cons])),
+            };
+            if !ok {
+                return None;
+            }
+        }
+    }
+    let mut changed = false;
+    let mut lone = Vec::new();
+    for (i, (o, out)) in p.ors.iter_mut().zip(&dead).enumerate() {
+        if !out.contains(&true) {
+            continue;
+        }
+        let mut k = 0;
+        o.retain(|d| {
+            let keep = !out[k] || spared(d);
+            k += 1;
+            changed |= !keep;
+            keep
+        });
+        if o.len() == 1 && out.len() > 1 {
+            lone.push(i);
+        }
+    }
+    // A disjunction this pass leaves with one disjunct is that disjunct: its constraints join
+    // the parts' own and its disjunctions theirs, so that [`settle`] takes them all with one
+    // solve of the base, not one solve of the grown base for each when the point it holds
+    // does not meet them (a chain of equalities, which no repair of a few atoms can follow).
+    // The other disjunctions keep their order, which the searches read ([`pick`]).
+    if !lone.is_empty() {
+        let mut nested = Vec::new();
+        let mut at = lone.iter().peekable();
+        for (i, mut o) in std::mem::take(&mut p.ors).into_iter().enumerate() {
+            if at.next_if_eq(&&i).is_none() {
+                p.ors.push(o);
+                continue;
+            }
+            let d = o.pop().expect("one disjunct");
+            p.cons.extend(d.cons.iter().cloned());
+            nested.extend(d.ors.iter().cloned());
+        }
+        p.ors.extend(nested);
+    }
+    Some(changed)
 }
 
 /// Moves the bounds in `b` of the atoms of the disjunction `ds` to the join of those its
 /// disjuncts leave ([`bounds_refute`]); `false` when every disjunct is left without a point.
-fn narrow_or(ds: &[Rc<Parts>], b: &mut AtomBounds) -> bool {
+/// With `dead`, a disjunct it marks is not read, and each disjunct left without a point is
+/// marked.
+fn narrow_or(ds: &[Rc<Parts>], b: &mut AtomBounds, mut dead: Option<&mut Vec<bool>>) -> bool {
     let mut join: Option<AtomBounds> = None;
-    for d in ds {
+    for (k, d) in ds.iter().enumerate() {
+        if dead.as_ref().is_some_and(|o| o[k]) {
+            continue;
+        }
         let mut own: AtomBounds = (d.cons.iter().flat_map(|c| c.lin.terms.keys()))
             .map(|a| (a.clone(), b.get(a).cloned().unwrap_or_default()))
             .collect();
         let holds = (0..2).all(|_| d.cons.iter().all(|c| narrow(c, &mut own)));
         if !holds {
+            if let Some(o) = dead.as_mut() {
+                o[k] = true;
+            }
             continue;
         }
         join = Some(match join {

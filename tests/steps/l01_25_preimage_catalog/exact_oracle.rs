@@ -313,6 +313,16 @@ fn exact(seeds: std::ops::Range<u64>) -> Vec<Run> {
 // gains 1; in more_exact_2, `x` in [1, 12] loses 2 and its count is unchanged, since the exact
 // search before listed an exact box there too (it no longer runs on that case). The
 // interpreter refutes none of the three.
+//
+// more_mixed_2 rose again, 36048 -> 36049, when the projection began to remove at once
+// the disjuncts the bounds of single atoms leave without a point (PROJECT-abs-chain-quadratic).
+// Two cases changed, both in the transfer before only, each to the box the transfer gives:
+// `(((x div -4) div -3) < if (-3 > -3) { … } else { (x div -4) })` keeps `x` in the exact
+// (-inf, -1] instead of all of `x`, inexact; and `max(g1((x + 1)), ((-g1((x + -2)))^1))` with
+// `g1 = v -> ((y mod 3) - (v * 3))` over `y` up to 8 keeps `x` in [-13, -9] or [11, 15]
+// instead of [-13, inf), inexact in both. The interpreter met the demand at every point
+// checked in each new box and at none checked outside the exact one, and the counts of `c - e`
+// did not change.
 
 #[test]
 fn s22_random_terms_match_the_interpreter_1() {
