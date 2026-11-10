@@ -1755,7 +1755,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | ALWAYS-atom-audit | impl attempt 1 | 2026-11-09 19:47 | started: spec audit + read-only impl audit of the always-atom rule |
-| BATCH-95 | running | 2026-11-09 19:52 |  |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | LOOKUP-oob | impl attempt 1 | 2026-11-09 19:03 | l01+m0+crate groups run start, load 45.32 34.71 27.19 |
 | PRES-disj-cost-xr | impl attempt 1 | 2026-11-09 19:19 | skip-probing run: 10/296 pieces fail (16 tests); round 1 briefs built, launching 3 reviewers |
