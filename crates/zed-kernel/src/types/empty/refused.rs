@@ -223,7 +223,9 @@ impl Type {
 /// The first recursive member for which `want` holds, in a walk of the parts of `t` from the
 /// top, breadth first, each node once.
 fn first_member(t: &Type, want: impl Fn(&Type) -> bool) -> Option<Type> {
-    // Each node met, held for the walk, so that its address names no other node meanwhile.
+    // Each node met, held for the walk, so that its address names no other node meanwhile: in
+    // `queue` until it is read, then in `held`. `seen` is read only by `insert`, never
+    // iterated; the walk's order is the queue's.
     let mut seen: HashSet<usize> = HashSet::new();
     let mut held: Vec<Type> = Vec::new();
     let mut queue = VecDeque::from([t.clone()]);

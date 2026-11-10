@@ -3085,6 +3085,14 @@ enum Node {
 /// What a search marks a [`Node`] by: a conjunct by its address, the one it has in every
 /// index of a [`Blocks`]; a name by its number, on the side a path enters it (`In`) or the
 /// side it leaves it (`Out`), so that a flow passes each name at most once.
+// The address of a conjunct is a key only while the conjunct is alive, and no set or map keyed
+// by `Key` is iterated: [`Search::seen`] holds each key's node (so its `Arc`) beside the key,
+// [`Flow::seen`] gets a conjunct's key only in `Flow::reach`, which pushes the conjunct to
+// `Flow::conjs` and the node to `Flow::queue`, and the map `at` of [`Blocks::peel`] is keyed
+// by the nodes of `path`, which it holds for the whole peel. The three are read only by
+// `get`, `contains` and `insert`, so their order reaches no answer. A conjunct has no id of its
+// own to key by (`Formula::Con` carries none); one drawn by `fresh_id` would cost a field and
+// a counter per conjunct for no change in what is found (PTR-keys-rest).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum Key {
     In(BlockId),

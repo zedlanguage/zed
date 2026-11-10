@@ -786,6 +786,8 @@ fn split_classes(
     // The classes that share a set, each set once, in the order of their first class.
     let mut groups: Vec<(Rc<IntervalSet>, Vec<usize>)> = Vec::new();
     let mut group = Vec::with_capacity(sets.len());
+    // Keyed by the set's address: `sets` holds every key's `Rc` for the whole loop, and the
+    // map is read only by `entry`, never iterated; the groups are in the order of `sets`.
     let mut by_set: HashMap<*const IntervalSet, usize> = HashMap::new();
     for (j, (s, _)) in sets.iter().enumerate() {
         let g = *by_set.entry(Rc::as_ptr(s)).or_insert_with(|| {
@@ -1714,7 +1716,9 @@ pub struct Scoped<'t> {
     tr: Tr,
     /// Each function the scope's lets bind, by the address of its body: its lambda's term and
     /// the scope the lambda is read in, as a call of it reaches it ([`Callee::Lam`]), so that a
-    /// body's relation is the one its callers share (LOAD-chain-affine).
+    /// body's relation is the one its callers share (LOAD-chain-affine). The address is a key
+    /// only while the term is borrowed, and every key and every body looked up is borrowed for
+    /// `'t`, the life of the scope; the map is read only by `get`, never iterated.
     lams: HashMap<*const Term, At>,
     /// The bodies read so far, for the names of the atoms of a body that is not one of `lams`.
     read: usize,
@@ -3049,16 +3053,18 @@ struct Run {
 /// taken once, not `k` times over the `H` pieces of the domain (COMPLEXITY.md S22-fwd-holes).
 #[derive(Default)]
 struct SharedInts {
-    /// By the domain's address, which the entry keeps alive.
+    /// By the domain's address, which the entry keeps alive: the entry's set is made from the
+    /// domain's `Rc` itself (`Ints::shared`). The map is read only by `entry`, never iterated.
     inputs: HashMap<*const IntervalSet, Ints>,
     literals: HashMap<i64, Ints>,
-    /// By the operator and the operands ([`Ints::id`]), which the entry keeps alive. No
-    /// power: its key would need its exponent.
-    ops: HashMap<OpKey, (Ints, [Ints; 2])>,
+    /// By the operator and the operands' ids ([`Ints::id`]), which no other set takes, even
+    /// after the operands are dropped, so the entry need not hold them. No power: its key
+    /// would need its exponent.
+    ops: HashMap<OpKey, Ints>,
 }
 
 /// An operator other than a power, and the ids of its two operands ([`Ints::id`]).
-type OpKey = (std::mem::Discriminant<Op>, *const (), *const ());
+type OpKey = (std::mem::Discriminant<Op>, u64, u64);
 
 /// The classes of remainders `x mod m` that [`Walk::by_class`] reads a term over: class `i`
 /// is `cuts[i]..cuts[i + 1]`.
@@ -4069,7 +4075,10 @@ struct Tx<'t> {
 }
 
 /// The meets of sets with the inputs' domains, by the domain's address, which the entry keeps
-/// alive, and the set.
+/// alive, and the set. The address stays a key, not an id: a domain is a set of the lattice,
+/// which carries none, and a scope may put a new domain for an input in the context while the
+/// memo lives, which the address, held, tells apart from the one before. Only `get` and
+/// `insert` read the map ([`Tx::meet_domain`]); it is never iterated.
 type DomainMeets = HashMap<(*const IntervalSet, Rc<IntervalSet>), (Rc<IntervalSet>, Met)>;
 
 /// A set met with an input's domain: empty, the whole domain, or a part of it.
@@ -4891,10 +4900,10 @@ impl<'t> Tx<'t> {
         }
         let key = (std::mem::discriminant(o), a.id(), b.id());
         let shared = &mut self.run.ints.ops;
-        let (r, _) = shared
+        shared
             .entry(key)
-            .or_insert_with(|| (Ints::forward(o, a, b), [a.clone(), b.clone()]));
-        r.clone()
+            .or_insert_with(|| Ints::forward(o, a, b))
+            .clone()
     }
 
     /// [`Walk::fwd`] on a new stack.

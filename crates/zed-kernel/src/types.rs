@@ -1213,7 +1213,10 @@ impl Type {
     }
 
     /// The address of this type's node: equal for two handles on one node, and not reused
-    /// while a handle on the node is held.
+    /// while a handle on the node is held. A set or map keyed by it must hold a handle on each
+    /// node it is keyed by, or borrow one, for as long as it lives, and must not be iterated
+    /// where the order would reach an answer, since addresses differ from run to run. The
+    /// users (`first_member`, `decide_groups_read`, `Searching::cut`, `Env::member`) do both.
     pub(crate) fn node_addr(&self) -> usize {
         Arc::as_ptr(&self.0) as usize
     }

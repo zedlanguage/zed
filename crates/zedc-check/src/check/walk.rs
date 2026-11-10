@@ -5414,6 +5414,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// paths is visited once, so the check is linear in the rows of `t`.
     fn compared_alone(&mut self, what: &str, t: &Ty, none_first: bool, span: Span) {
         let sig = op_sig("<");
+        // Keyed by the row's address (`Row::addr`): every row met is borrowed from `t`, which
+        // stays borrowed for the whole walk, so no key names a freed row, and the set is only
+        // read by `insert`, never iterated; the order of the checks is the stack's.
         let mut rows = HashSet::new();
         let mut stack = vec![t];
         while let Some(t) = stack.pop() {

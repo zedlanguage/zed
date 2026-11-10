@@ -13,7 +13,7 @@ use std::sync::Arc;
 use zed_kernel::num::{TooLarge, bytes_of};
 use zed_kernel::{Rat, Value};
 
-use super::ty::{Binds, ShapeData, Sig, Ty};
+use super::ty::{Binds, NodeId, Sig, Ty};
 use super::{carrier_mask, denoted_with};
 use zedc_syntax::ast::{self, Type, TypeKind};
 use zedc_syntax::lex::{self, Part, Tok};
@@ -113,11 +113,22 @@ fn read_part(text: &str, head: &str, named: &mut Binds) -> Result<Ty, String> {
         }
     }
     let ty = denoted_with(&t, binds);
-    let on = bounds_in(&ty);
-    if let Some(v) = bounded.into_iter().find(|v| !on.contains(*v)) {
-        return Err(format!(
-            "`{text}`: the bound of `{v}` is on no signature that names it"
-        ));
+    // Complexity tradeoff: naive version, `bounds_in` on every part, which walks the parts
+    // of the definitions a part names again: O(n²) for a printed type of n definitions each
+    // naming the one before. Used: the walk only for a part with a `for` clause, which no
+    // answer changes (with no bound there is nothing to find), O(n) when few parts bound a
+    // variable. Tradeoff: n definitions each with its own `for` clause and naming the one
+    // before still cost O(n²); a walk that skips the definitions' own parts would make that
+    // O(n), but it would reject a part whose bound is found now only on a signature of a
+    // definition it names, an answer change (COMPLEXITY.md F153). Test
+    // `l01_26_type_resolution::bounds::reading_a_chain_of_shared_bounded_parts_scales`.
+    if !bounded.is_empty() {
+        let on = bounds_in(&ty);
+        if let Some(v) = bounded.into_iter().find(|v| !on.contains(*v)) {
+            return Err(format!(
+                "`{text}`: the bound of `{v}` is on no signature that names it"
+            ));
+        }
     }
     // The names the resolver finds, as in a written type: a variable no clause bounds is not
     // defined.
@@ -133,18 +144,29 @@ fn read_part(text: &str, head: &str, named: &mut Binds) -> Result<Ty, String> {
 /// rows, payloads and signatures it met and meets each once: time linear in the text.
 fn bounds_in(t: &Ty) -> HashSet<Arc<str>> {
     let mut out = HashSet::new();
-    let mut rows: HashSet<*const Ty> = HashSet::new();
+    // Complexity tradeoff: naive version, a walk of `t` as a tree, O(2^d) for parts shared d
+    // levels deep. Used: the rows and payload shapes met, by their numbers (`Row::node`,
+    // `Shape::node`), and the signatures met, by address, each read once, O(n) for the n
+    // distinct parts, a hash lookup each. The rows were keyed by `row.as_ptr()`, the address
+    // of the components' buffer, which every row with no components shares (an empty `Vec`
+    // has no buffer); a row's number is its own (PTR-keys-rest). A signature has no number:
+    // its address is a key only while `t`, which every key is borrowed from, is borrowed,
+    // and none of the three sets is iterated. Tests in `l01_26_type_resolution::bounds`:
+    // `bounds_on_two_rows_are_both_found`, `bounds_on_two_payloads_are_both_found` and
+    // `reading_a_chain_of_shared_bounded_parts_scales`;
+    // COMPLEXITY.md F153.
+    let mut rows: HashSet<NodeId> = HashSet::new();
     let mut sigs: HashSet<*const Sig> = HashSet::new();
-    let mut shapes: HashSet<*const ShapeData> = HashSet::new();
+    let mut shapes: HashSet<NodeId> = HashSet::new();
     let mut stack = vec![t];
     while let Some(t) = stack.pop() {
         for row in &t.tuples {
-            if rows.insert(row.as_ptr()) {
+            if rows.insert(row.node()) {
                 stack.extend(row);
             }
         }
         for s in t.payloads.values().flatten().flatten() {
-            if shapes.insert(std::ptr::from_ref::<ShapeData>(s)) {
+            if shapes.insert(s.node()) {
                 stack.extend(&s.items);
                 stack.extend(s.fields.values());
             }

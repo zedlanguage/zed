@@ -894,3 +894,62 @@ fn nested_lambdas_for_bounded_parameters_scale() {
         );
     });
 }
+
+#[test]
+fn bounds_on_two_rows_are_both_found() {
+    // A union of tuple types of two lengths, each holding a bounded signature of its own, and
+    // with a tuple of no components beside them: the reading finds each bound on its own
+    // row's signature. A walk that took two rows for one would read one row's signature
+    // alone and refuse the other's bound as on no signature that names it.
+    for text in [
+        "((x: T) -> T for T in rat,) | ((y: U) -> String for U in String | bool, int)",
+        "() | ((x: T) -> T for T in rat,) | ((y: U) -> String for U in String | bool, int)",
+    ] {
+        let t = parse_type(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+        let mut bounds: Vec<String> = (t.tuples.iter())
+            .flat_map(|r| r.iter())
+            .flat_map(|c| &c.fns)
+            .flat_map(|s| s.bounds.keys().map(|v| v.to_string()))
+            .collect();
+        bounds.sort();
+        assert_eq!(bounds, ["T", "U"], "{text}");
+    }
+}
+
+#[test]
+fn bounds_on_two_payloads_are_both_found() {
+    // As above for the payloads of two atoms, each holding a bounded signature of its own.
+    let text = "#a((x: T) -> T for T in rat) | #b((y: U) -> String for U in String | bool)";
+    let t = parse_type(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+    let mut bounds: Vec<String> = (t.payloads.values().flatten().flatten())
+        .flat_map(|s| &s.items)
+        .flat_map(|c| &c.fns)
+        .flat_map(|s| s.bounds.keys().map(|v| v.to_string()))
+        .collect();
+    bounds.sort();
+    assert_eq!(bounds, ["T", "U"], "{text}");
+}
+
+/// A printed type of `n` definitions, the first a tuple of one bounded signature and each
+/// after it a tuple of two of the one before, ending with the last: the signature is reached
+/// by `2^n` paths and read once.
+fn shared_bounded_chain(n: usize) -> String {
+    let mut text = String::from("type T0 = ((x: T) -> T for T in int | f64,); ");
+    for i in 1..=n {
+        text += &format!("type T{i} = (T{}, T{});\n", i - 1, i - 1);
+    }
+    text + &format!("T{n}")
+}
+
+#[test]
+fn reading_a_chain_of_shared_bounded_parts_scales() {
+    let n = 200;
+    let texts: std::collections::HashMap<usize, String> = [n, zed_tests::scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, shared_bounded_chain(m)))
+        .collect();
+    zed_tests::scaling::check("reading a chain of n shared bounded tuples", n, |m| {
+        let t = parse_type(&texts[&m]).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(t.tuples.len(), 1);
+    });
+}

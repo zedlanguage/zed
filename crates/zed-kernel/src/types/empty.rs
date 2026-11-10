@@ -512,6 +512,10 @@ impl Type {
         // member of another group, in the order met.
         let read = |roots: &[Type]| -> Vec<Type> {
             let mut groups: HashSet<u64> = roots.iter().filter_map(Type::group).collect();
+            // `inside` is keyed by the addresses of `roots`, borrowed for the walk, and `seen`
+            // holds each node it is keyed by; neither is iterated (the groups found are in the
+            // order met), so neither the reuse of an address nor the order of addresses reaches
+            // an answer.
             let inside: HashSet<usize> = roots.iter().map(Type::node_addr).collect();
             // Each node met, held for the walk, so that its address names no other node meanwhile.
             let mut seen: HashMap<usize, Type> =
@@ -942,7 +946,9 @@ struct Search {
     cycles: ByType<Option<Cycle>>,
     /// The meet, difference or union of each pair of nodes the search built
     /// ([`Searching::cut`]), built once, by the nodes' addresses; the operands are kept with it,
-    /// so no address is reused.
+    /// so no address is reused. Read only by `entry`, never iterated. A type node has no id to
+    /// key by: one drawn per node would add a field and a counter to every type made, for
+    /// the hits of this memo alone (PTR-keys-rest).
     cuts: HashMap<(usize, usize, Cut), (Type, Type, Type), Digests>,
     /// With a list, every closure whose keys are permitted as written is taken to have a value
     /// at once, and its value type is put on the list, to be shown to have a value after the

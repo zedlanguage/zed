@@ -10,10 +10,11 @@
 //! [`revision::forward`]), each set once, so every answer is the same. Every other operator
 //! lists its operands and its result at once.
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::fmt;
 use std::rc::Rc;
 
+use zed_kernel::value::fresh_id;
 use zedc_lattice::interval::{End, IntervalSet};
 use zedc_lattice::revision::{self, Op};
 
@@ -23,8 +24,8 @@ use zedc_lattice::revision::{self, Op};
 // join and monotone operators keep their operands and bounds in O(1), its pieces listed only
 // when a reader asks, each set once on an explicit stack (130 pieces at k = 64). Tradeoffs:
 // an `Rc` node per operation, kept alive until the run ends; a reader of the pieces pays the
-// listing then; `preimage::SharedInts` keys operator entries by operand addresses, valid
-// only because each entry keeps its operands alive. Tests
+// listing then; `preimage::SharedInts` keys operator entries by the operands' ids
+// ([`Ints::id`]), which no other set has, even after the operands are dropped. Tests
 // `l01_25_preimage_catalog::s22::forward_sets_of_a_chain_share_the_holes_scale` and
 // `shared_ints::tests::made_sets_list_as_the_listed_operations_give`; COMPLEXITY.md row
 // S22-fwd-holes.
@@ -38,6 +39,8 @@ struct Node {
     listed: OnceCell<Rc<IntervalSet>>,
     /// How the set is made from others, until it is listed.
     made: RefCell<Option<Made>>,
+    /// The id ([`Ints::id`]), 0 until it is first asked for.
+    id: Cell<u64>,
 }
 
 enum Made {
@@ -85,6 +88,7 @@ impl Ints {
             bounds,
             listed: OnceCell::from(s),
             made: RefCell::new(None),
+            id: Cell::new(0),
         }))
     }
 
@@ -96,6 +100,7 @@ impl Ints {
             bounds,
             listed: OnceCell::new(),
             made: RefCell::new(Some(made)),
+            id: Cell::new(0),
         }))
     }
 
@@ -116,10 +121,21 @@ impl Ints {
         }
     }
 
-    /// What tells this set apart from every other set alive: two values with one id are one
-    /// set.
-    pub(crate) fn id(&self) -> *const () {
-        Rc::as_ptr(&self.0).cast()
+    /// What tells this set apart from every other set made: two values with one id are one
+    /// set, and a set dropped does not pass its id on, as it may pass on its address, so a
+    /// memo keyed by ids need not hold the sets. Drawn by `fresh_id` the first time it is
+    /// asked for.
+    // Complexity tradeoff: naive version, the node's address, O(1), valid as a key only while
+    // the entry holding it keeps the node alive (each `SharedInts` operator entry held its two
+    // operands for that alone). Used: an id drawn once per node asked, O(1) (a thread-local
+    // counter), never reused. Tradeoffs: 8 bytes per node; the operator entries no longer hold
+    // their operands. Test `shared_ints::tests::a_dropped_set_passes_on_no_id`; COMPLEXITY.md
+    // F153.
+    pub(crate) fn id(&self) -> u64 {
+        if self.0.id.get() == 0 {
+            self.0.id.set(fresh_id());
+        }
+        self.0.id.get()
     }
 
     /// The union, `O(1)`.
@@ -342,6 +358,24 @@ mod tests {
             for (l, f) in lazy.iter().zip(&flat) {
                 assert_eq!(l.set(), f);
             }
+        }
+    }
+
+    /// Sets made and dropped one after another have ids of their own, though each new node may
+    /// take the place the one before it was freed from; a copy has its set's id.
+    #[test]
+    fn a_dropped_set_passes_on_no_id() {
+        let mut ids = std::collections::HashSet::new();
+        for n in 0..1000 {
+            let one = Ints::of(IntervalSet::of(n, n));
+            let made = Ints::forward(&Op::Add, &one, &one);
+            assert_eq!(made.clone().id(), made.id());
+            assert!(ids.insert(one.id()), "the id of {{{n}}} was another set's");
+            assert!(
+                ids.insert(made.id()),
+                "the id of {{{}}} was another set's",
+                2 * n
+            );
         }
     }
 
