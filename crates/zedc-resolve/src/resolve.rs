@@ -572,6 +572,7 @@ pub const LATER_TYPES: &[(&str, u32)] = &[
     ("Seq", 5),
     ("Ast", 6),
     ("Facet", 6),
+    ("Lattice", 6),
     ("Reduction", 6),
     ("Store", 6),
     ("Rejection", 6),
