@@ -239,7 +239,18 @@ fn the_enabled_readme_fences_run_with_their_stated_results() {
             }
         }
         let (text, checks) = unit(&f.text, entry, true);
-        wrong.extend(run_problems(&f.at, &text, checks));
+        let problems = run_problems(&f.at, &text, checks);
+        if let Some(&(_, word, item)) = WORD_LATER.iter().find(|&&(key, _, _)| key == f.key) {
+            let quoted = format!("`{word}`");
+            if !problems.iter().any(|p| p.contains(&quoted)) {
+                wrong.push(format!(
+                    "{}: no longer stops on {quoted}; {item} has added it, so remove the fence from WORD_LATER",
+                    f.key
+                ));
+            }
+            continue;
+        }
+        wrong.extend(problems);
         for (n, v) in variants(&f.text) {
             if RAISED_LATER
                 .iter()
@@ -267,6 +278,12 @@ fn the_enabled_readme_fences_run_with_their_stated_results() {
 /// enabled fences leaves them out, and `each_readme_variant_gives_its_pinned_outcome_at_l1`
 /// holds what each gives now.
 const RAISED_LATER: &[(&str, usize, &str)] = &[];
+
+/// Enabled fences that use a word this zedc does not compile yet, by the fence's key, with the
+/// word and the item that adds it: the test of the enabled fences checks that each still stops
+/// on its word, and fails once the word compiles, so the item that adds it removes the line and
+/// the fence runs with its checks.
+const WORD_LATER: &[(&str, &str, &str)] = &[("README.md [Functions] 1", "Utf8String", "STR-types")];
 
 /// What each ✗ variant of README.md gives at L1, by the fence's place and the variant's line
 /// in it: `pass`, or its first problem. Most need forms of later layers; the step that

@@ -202,14 +202,21 @@ text
 > total = 36, port = 8080
 
 == README.md [Functions] 1
-comment a = 5.double.clamp(0, 8); // 8
+comment a = 5.double.limit(0, 8); // 8
+check a == 8
 comment b = greet("Ann", punct: "?"); // "Hi, Ann?"
+check b == "Hi, Ann?"
 comment hi = greet("Ann", ...); // a function still waiting for punct
+check hi(punct: ".") == "Hi, Ann."
 text
-> a = 8, because 5.double is 10 and clamp(0, 8) caps it
+> a = 8, because 5.double is 10 and limit(0, 8) caps it
 > b = "Hi, Ann?"
 > hi(punct: ".") = "Hi, Ann."
 > hi() = "Hi, Ann!"
+check a == 8
+check b == "Hi, Ann?"
+check hi(punct: ".") == "Hi, Ann."
+check hi() == "Hi, Ann!"
 
 == README.md [Numbers] 1
 comment big = 2^100; // 2 to the power 100, the exact integer, with no overflow

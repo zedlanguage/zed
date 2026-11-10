@@ -1131,7 +1131,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 
 ## File conflicts at the same level
 
-Each pair below is at one level, shares a file and is not yet done. Under the rule of 2026-11-02 the two may run in parallel and the merge resolves the overlap; run them apart where possible. There are 788 pairs. Regenerated on 2026-11-05 for the reduced needs of L1.40, L1.41, S.1 and S.3, and on 2026-11-07 for the eight rows of the soundness survey and the widened MOD-residue only, and for POLY-nf (Q10 withdrawn), each row of those listing every pair it is in; files under `tests/` are not compared.
+Each pair below is at one level, shares a file and is not yet done. Under the rule of 2026-11-02 the two may run in parallel and the merge resolves the overlap; run them apart where possible. There are 804 pairs. Regenerated on 2026-11-05 for the reduced needs of L1.40, L1.41, S.1 and S.3, and on 2026-11-07 for the eight rows of the soundness survey and the widened MOD-residue only, and for POLY-nf (Q10 withdrawn), each row of those listing every pair it is in; files under `tests/` are not compared. On 2026-11-09 each row naming L18.2 was split between L18.2a and L18.2b, each half keeping only the paths its own row lists; the level column was not recomputed.
 
 | Level | Items | Shared paths |
 |---|---|---|
@@ -1729,19 +1729,24 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 50 | STAGE-reads, EDIT-run | `DESIGN.md` |
 | 50 | L20.1a, TOKEN-types | `crates/zedc-elab/src/elab.rs` |
 | 50 | L20.1a, EDIT-run | `DESIGN.md` |
-| 51 | S.1b, L18.2 | `zed/prelude/` |
+| 51 | S.1b, L18.2b | `zed/prelude/` |
 | 51 | S.1b, L20.2 | `zed/prelude/grammar.zed` |
 | 51 | S.1b, L15.6 | `zed/prelude/` |
 | 51 | S.1b, L16.2 | `zed/prelude/` |
 | 51 | S.1b, L22.2 | `zed/prelude/theories.zed` |
 | 51 | S.1b, L12.3a | `zed/prelude/` |
-| 51 | L18.2, L20.2 | `crates/zedc-check/src/check/mod.rs`, `zed/prelude/grammar.zed` |
-| 51 | L18.2, L15.6 | `zed/prelude/` |
-| 51 | L18.2, L16.2 | `crates/zedc-check/src/check/`, `zed/prelude/` |
-| 51 | L18.2, L22.2 | `crates/zedc-zir/src/zir/memory.rs`, `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/main.rs`, `zed/prelude/theories.zed` |
-| 51 | L18.2, L12.3a | `zed/prelude/` |
-| 51 | L18.2, L21.0 | `crates/zedc-check/src/check/` |
-| 51 | L18.2, REPACK-tile | `crates/zedc-zir/src/zir/memory.rs`, `crates/zedc-zir/src/zir/mod.rs` |
+| 51 | L18.2a, L20.2 | `crates/zedc-check/src/check/mod.rs` |
+| 51 | L18.2b, L20.2 | `crates/zedc-check/src/check/mod.rs`, `zed/prelude/grammar.zed` |
+| 51 | L18.2b, L15.6 | `zed/prelude/` |
+| 51 | L18.2a, L16.2 | `crates/zedc-check/src/check/` |
+| 51 | L18.2b, L16.2 | `crates/zedc-check/src/check/`, `zed/prelude/` |
+| 51 | L18.2a, L22.2 | `crates/zedc-zir/src/zir/mod.rs`, `crates/zedc-base/src/cost.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/`, `crates/zedc/src/main.rs` |
+| 51 | L18.2b, L22.2 | `crates/zedc-zir/src/zir/memory.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/`, `zed/prelude/theories.zed` |
+| 51 | L18.2b, L12.3a | `zed/prelude/` |
+| 51 | L18.2a, L21.0 | `crates/zedc-check/src/check/` |
+| 51 | L18.2b, L21.0 | `crates/zedc-check/src/check/` |
+| 51 | L18.2a, REPACK-tile | `crates/zedc-zir/src/zir/mod.rs` |
+| 51 | L18.2b, REPACK-tile | `crates/zedc-zir/src/zir/memory.rs` |
 | 51 | L20.2, L15.6 | `zed/prelude/grammar.zed` |
 | 51 | L20.2, L16.2 | `zed/prelude/grammar.zed`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 51 | L20.2, L22.2 | `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/mod.rs` |
@@ -1758,7 +1763,8 @@ Each pair below is at one level, shares a file and is not yet done. Under the ru
 | 51 | L22.2, L21.0 | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-elab/src/elab.rs`, `crates/zedc-check/src/check/` |
 | 51 | L22.2, L17.1b | `crates/zedc/src/opt` |
 | 51 | L22.2, REPACK-tile | `crates/zedc-zir/src/zir/` |
-| 51 | TERM-stall, L18.2 | `crates/zedc-check/src/check/` |
+| 51 | TERM-stall, L18.2a | `crates/zedc-check/src/check/` |
+| 51 | TERM-stall, L18.2b | `crates/zedc-check/src/check/` |
 | 51 | TERM-stall, L20.2 | `crates/zedc-check/src/check/mod.rs` |
 | 51 | TERM-stall, L22.2 | `crates/zedc-check/src/check/mod.rs` |
 | 51 | TERM-stall, L21.0 | `crates/zedc-check/src/check/` |

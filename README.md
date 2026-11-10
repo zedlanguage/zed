@@ -728,10 +728,10 @@ A name is bound once. It can't be reassigned, and it can be used above the line 
 
 A function is a definition with parameters, and a call can name its arguments, chain with dots or leave some open.
 
-**Syntax:** `f(positional x, y = default) = expression;` or `f(x) -> type { ... }`
+**Syntax:** `f(positional x, y = default) = expression;` or `f(x) { ... }`
 
 > [!NOTE]
-> **`f(x) = expression;`** defines a function whose body is one expression, and **`f(x) -> T { ... }`** one with a block body and a stated result type. A block gives its last expression, unless `return` ends it first. **`y = default`** in a parameter list gives a parameter that can be left out. **`f(x, ...)`** leaves the remaining named parameters open and gives back a function that takes them. **`(T) -> U`** is the type of a function from `T` to `U`. **`if c { a } else { b }`** is a choice between two values, and **`a ++ b`** joins two strings or lists.
+> **`f(x) = expression;`** defines a function whose body is one expression, and **`f(x) { ... }`** one with a block body. A block gives its last expression, unless `return` ends it first. **`y = default`** in a parameter list gives a parameter that can be left out. **`f(x, ...)`** leaves the remaining named parameters open and gives back a function that takes them. **`(T) -> U`** is the type of a function from `T` to `U`. **`if c { a } else { b }`** is a choice between two values, and **`a ++ b`** joins two strings or lists.
 >
 > The dot call from [Step 4](#step-4-sales-with-no-price) works with any function: `5.double` is `double(5)`.
 
@@ -739,20 +739,20 @@ A function is a definition with parameters, and a call can name its arguments, c
 double(positional x) = x * 2;
 
 // A { } body gives its last expression, and if gives a value.
-clamp(positional v, positional lo, positional hi) -> int {
+limit(positional v, positional lo, positional hi) {
   if v < lo { lo } else if v > hi { hi } else { v }
 }
 
 // Utf8String is UTF-8 text, and ++ joins strings.
 greet(positional name: Utf8String, punct = "!") = "Hi, " ++ name ++ punct;
 
-a = 5.double.clamp(0, 8);        // 8
+a = 5.double.limit(0, 8);        // 8
 b = greet("Ann", punct: "?");    // "Hi, Ann?"
 hi = greet("Ann", ...);          // a function still waiting for punct
 ```
 
 ```text
-a = 8, because 5.double is 10 and clamp(0, 8) caps it
+a = 8, because 5.double is 10 and limit(0, 8) caps it
 b = "Hi, Ann?"
 hi(punct: ".") = "Hi, Ann."
 hi() = "Hi, Ann!"

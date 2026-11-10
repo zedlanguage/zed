@@ -2,7 +2,7 @@
 //! expected results the tests compare them with.
 //!
 //! The page states a fence's results in three forms: a trailing comment on a line of the fence
-//! (`a = 5.double.clamp(0, 8);        // 8`), a ```` ```text ```` block after it, and an HTML
+//! (`a = 5.double.limit(0, 8);        // 8`), a ```` ```text ```` block after it, and an HTML
 //! table after it under a bold caption line (`**`revenue`**`). A fence's results are those
 //! between its closing line and the next `zed` fence or heading. A table with no caption line
 //! compares the language with others or lists repairs, and states no result.
@@ -10,9 +10,9 @@
 //! Each result is written as lines, one form per kind:
 //!
 //! ```text
-//! comment a = 5.double.clamp(0, 8); // 8
+//! comment a = 5.double.limit(0, 8); // 8
 //! text
-//! > a = 8, because 5.double is 10 and clamp(0, 8) caps it
+//! > a = 8, because 5.double is 10 and limit(0, 8) caps it
 //! table `revenue`
 //! | region | day | sku | revenue |
 //! | East | 0 | ink | 14 |

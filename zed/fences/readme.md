@@ -125,19 +125,19 @@ quantity = 3;
 port: int[1..=65535] = 8080;   // an integer from 1 through 65535, both included
 ```
 
-<!-- README.md:738 layer L10: ring L10, word L1 (Utf8String), label none; section [Functions] 1 -->
+<!-- README.md:738 layer L1: ring L1, word L1 (Utf8String), label none; section [Functions] 1 -->
 ```zed
 double(positional x) = x * 2;
 
 // A { } body gives its last expression, and if gives a value.
-clamp(positional v, positional lo, positional hi) -> int {
+limit(positional v, positional lo, positional hi) {
   if v < lo { lo } else if v > hi { hi } else { v }
 }
 
 // Utf8String is UTF-8 text, and ++ joins strings.
 greet(positional name: Utf8String, punct = "!") = "Hi, " ++ name ++ punct;
 
-a = 5.double.clamp(0, 8);        // 8
+a = 5.double.limit(0, 8);        // 8
 b = greet("Ann", punct: "?");    // "Hi, Ann?"
 hi = greet("Ann", ...);          // a function still waiting for punct
 ```
