@@ -866,11 +866,25 @@ impl fmt::Display for Relation {
 /// factors' values: the point satisfies `f` with each product read as a variable of its own
 /// (PRES-product-parity), and [`Formula::holds`], which reads a product through its factors, may
 /// reject it (PRES-model-products).
+/// The solver is given `f` with each atom propagation fixed replaced by its value; a formula it
+/// refuses so is asked again as written (PRES-small-point).
 pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
     match forced::forced(f, true) {
-        Some(Forced::Empty) => Ok(None),
-        Some(Forced::Point(m)) => Ok(Some(m)),
-        Some(Forced::Holds) | None => or_old(|| satisfiable_named(f)),
+        Forced::Empty => Ok(None),
+        Forced::Point(m) => Ok(Some(m)),
+        Forced::Holds => unreachable!("a point is asked for"),
+        Forced::Undecided(facts) => match facts.reduced() {
+            None => or_old(|| satisfiable_named(f)),
+            // Complexity tradeoff: as at `decide`, a refusal with the facts asks again as
+            // written.
+            Some(g) => match or_old(|| satisfiable_named(&g)) {
+                Ok(m) => Ok(m.map(|mut m| {
+                    facts.fill(&mut m);
+                    m
+                })),
+                Err(_) => or_old(|| satisfiable_named(f)),
+            },
+        },
     }
 }
 
@@ -929,13 +943,29 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 
 /// Whether `f` holds somewhere. A conjunction is decided without building a point; a point is
 /// built only to search the disjunctions that propagation leaves.
-/// A formula that propagation over its forced parts decides (module `forced`) is answered
-/// without the solver.
+/// A formula that propagation over its forced parts decides (module `forced`), or the rounds at
+/// its bounds show true at a point, is answered without the solver; any other goes to the solver
+/// with each atom propagation fixed replaced by its value, and as written if the solver refuses
+/// that.
 pub fn decide(f: &Formula) -> Result<bool, Refusal> {
     match forced::forced(f, false) {
-        Some(Forced::Empty) => Ok(false),
-        Some(Forced::Point(_) | Forced::Holds) => Ok(true),
-        None => or_old(|| decide_named(f)),
+        Forced::Empty => Ok(false),
+        Forced::Point(_) | Forced::Holds => Ok(true),
+        Forced::Undecided(facts) => match facts.reduced() {
+            None => or_old(|| decide_named(f)),
+            // Complexity tradeoff: a formula the solver refuses with the facts is asked again
+            // as written, so it costs up to twice what it cost before, and no answer given as
+            // written becomes a refusal; a refusal then names the rows as written. Naive
+            // version: the formula as written alone, which leaves the solver to find again
+            // what propagation proved; used: the facts first, at most two asks of one size.
+            // Measured over the undecided formulas of the forced_against_solver census, the
+            // solver's work with the facts, a second ask included, is 0.64 of that as written
+            // on chains of definitions, 0.76 on bounded inputs, 0.93 on ladders; one formula
+            // in 50 of the chains is refused with the facts, where the replaced rows told two
+            // factors of a product apart. Leaving such factors as written gave no refusals but
+            // 0.83, since fewer formulas kept any fact. COMPLEXITY.md row PRES-small-point.
+            Some(g) => or_old(|| decide_named(&g)).or_else(|_| or_old(|| decide_named(f))),
+        },
     }
 }
 
@@ -12632,29 +12662,59 @@ mod forced_against_solver {
     }
 
     /// Checks [`forced`] of `f` against the whole solver, with and without its point; gives
-    /// which answer it gave (0 empty, 1 point, 2 holds, 3 undecided, 4 refused by the solver,
-    /// 5 empty where the solver gives a point that is none, 6 a point at the bounds other than
-    /// the solver's, 7 a point at the bounds where the solver refuses). A point at the bounds
+    /// which answer it gave (0 empty, 1 point, 3 undecided, 4 refused by the solver, 5 empty
+    /// where the solver gives a point that is none, 6 a point at the bounds other than the
+    /// solver's, 7 a point at the bounds where the solver refuses; 2, a formula that holds with
+    /// some atom free, is answered with its point since PRES-small-point and counted as 1 or
+    /// 6; 8 refused by the solver as written, answered with the facts). A point at the bounds
     /// ([`forced`]'s trial when propagation leaves `f` undecided) is checked by evaluating `f`
-    /// at it.
+    /// at it. An undecided formula goes to the solver with the atoms propagation fixed replaced
+    /// by their values ([`forced::Facts`]): [`satisfiable`] and [`decide`] then give the answers
+    /// the solver gives on `f` as written, or an answer where it refuses `f`, and each point is
+    /// checked by evaluation.
     fn agrees(f: &Formula) -> usize {
         let Some((m, d)) = slow(f) else {
-            if let Some(Forced::Point(p)) = forced(f, true) {
+            if let Forced::Point(p) = forced(f, true) {
                 assert_eq!(p.keys().cloned().collect::<BTreeSet<_>>(), f.atoms(), "{f}");
                 assert!(
                     holds_at(f, &p, &mut HashMap::new()),
                     "{p:?} is no point of {f}"
                 );
-                assert!(matches!(forced(f, false), Some(Forced::Holds)), "{f}");
+                assert!(matches!(forced(f, false), Forced::Holds), "{f}");
                 eprintln!("refused by the solver, a point at the bounds {p:?}: {f}");
                 return 7;
             }
-            eprintln!("refused: {f}");
-            return 4;
+            // The solver may answer with the atoms propagation fixed replaced by their values
+            // what it refuses as written: the answer is checked, the point by evaluation.
+            match (decide(f), satisfiable(f)) {
+                (Err(_), Err(_)) => {
+                    eprintln!("refused: {f}");
+                    return 4;
+                }
+                (Ok(d), Ok(m)) => {
+                    assert_eq!(
+                        m.is_some(),
+                        d,
+                        "satisfiable and decide of {f}, with the facts"
+                    );
+                    if let Some(mut p) = m {
+                        for a in f.atoms() {
+                            p.entry(a).or_insert(Int::ZERO);
+                        }
+                        assert!(
+                            holds_at(f, &p, &mut HashMap::new()),
+                            "{p:?} is no point of {f}"
+                        );
+                    }
+                    eprintln!("refused as written, answered with the facts: {f}");
+                    return 8;
+                }
+                (d, m) => panic!("{f}: with the facts decide {d:?}, satisfiable {m:?}"),
+            }
         };
         assert_eq!(m.is_some(), d, "satisfiable and decide of {f}");
         let class = match forced(f, true) {
-            Some(Forced::Empty) => match &m {
+            Forced::Empty => match &m {
                 // The solver's answer is wrong when the point it gives is none of `f`, as it was
                 // with `x` and the product `x * y` both fixed beside a row of parity over a value
                 // a disjunction defines until PRES-product-parity ([`bounds_agree_with_the_solver`]):
@@ -12664,7 +12724,7 @@ mod forced_against_solver {
                         "the solver's point of {f} is none of it ({:?}): {s:?}",
                         is_point(f, s)
                     );
-                    assert!(matches!(forced(f, false), Some(Forced::Empty)), "{f}");
+                    assert!(matches!(forced(f, false), Forced::Empty), "{f}");
                     return 5;
                 }
                 _ => {
@@ -12672,9 +12732,10 @@ mod forced_against_solver {
                     0
                 }
             },
-            Some(Forced::Point(p)) => {
+            Forced::Point(p) => {
                 // A point propagation forces is the solver's, which may leave out some atoms;
-                // a point at the bounds may be another.
+                // a point at the bounds, or one with an atom the formula does not read, may be
+                // another.
                 let s = m.expect("a point");
                 assert_eq!(p.keys().cloned().collect::<BTreeSet<_>>(), f.atoms(), "{f}");
                 assert!(
@@ -12687,20 +12748,30 @@ mod forced_against_solver {
                     6
                 }
             }
-            Some(Forced::Holds) => {
-                assert!(d, "{f} has no point, but propagation found it holds");
-                2
+            Forced::Holds => panic!("{f}: a point asked for, none built"),
+            Forced::Undecided(_) => {
+                assert_eq!(
+                    decide(f).ok(),
+                    Some(d),
+                    "{f}: decided otherwise with the facts"
+                );
+                let fast =
+                    satisfiable(f).unwrap_or_else(|r| panic!("{f}: refused with the facts: {r}"));
+                assert_eq!(fast.is_some(), d, "{f}: placed otherwise with the facts");
+                if let Some(p) = &fast {
+                    assert_eq!(is_point(f, p), Some(true), "{p:?} is no point of {f}");
+                }
+                3
             }
-            None => 3,
         };
         match (forced(f, false), class) {
-            (Some(Forced::Point(_)), _) => panic!("a point built for {f}, though not asked"),
-            (Some(Forced::Empty), 0) | (Some(Forced::Holds), 1 | 2 | 6) | (None, 3) => class,
+            (Forced::Point(_), _) => panic!("a point built for {f}, though not asked"),
+            (Forced::Empty, 0) | (Forced::Holds, 1 | 6) | (Forced::Undecided(_), 3) => class,
             (got, _) => panic!(
                 "{f}: with the point {class}, without it {}",
                 match got {
-                    Some(Forced::Empty) => "empty",
-                    Some(Forced::Holds) => "holds",
+                    Forced::Empty => "empty",
+                    Forced::Holds => "holds",
                     _ => "undecided",
                 }
             ),
@@ -12803,18 +12874,19 @@ mod forced_against_solver {
     #[test]
     fn propagation_agrees_with_the_solver_on_chains_of_definitions() {
         let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
-        let mut seen = [0usize; 8];
+        let mut seen = [0usize; 9];
         for _ in 0..3000 {
             seen[agrees(&chain(&mut rng, false))] += 1;
         }
-        // Each answer occurs often enough to be tested.
-        assert!(seen[..4].iter().all(|&n| n >= 50), "answers {seen:?}");
+        // Each answer occurs often enough to be tested; class 2 no longer occurs, since a
+        // formula true before the trial now gives its point (class 1).
+        assert!([0, 1, 3].iter().all(|&c| seen[c] >= 50), "answers {seen:?}");
     }
 
     #[test]
     fn propagation_agrees_with_the_solver_on_bounded_inputs() {
         let mut rng = Rng(0x2545_f491_4f6c_dd1d);
-        let mut seen = [0usize; 8];
+        let mut seen = [0usize; 9];
         for _ in 0..3000 {
             seen[agrees(&chain(&mut rng, true))] += 1;
         }
@@ -12886,13 +12958,14 @@ mod forced_against_solver {
                 ]),
                 3,
             ),
-            // True at the values given, with `z` free.
+            // True at the values given, with `z` free: its point, `z` zero, which the solver gives
+            // too (PRES-small-point; before, the solver was asked for the point).
             (
                 Formula::and(vec![
                     eq(&sym("x"), &k(1)),
                     Formula::or(vec![g.clone(), eq(&sym("z"), &k(5))]),
                 ]),
-                2,
+                1,
             ),
             // Two values for one variable.
             (
@@ -12958,9 +13031,8 @@ mod forced_against_solver {
                 ]),
                 6,
             ),
-            // At the bounds the formula is false, though it has a point (`x == 7`), or not
-            // decided, with `z` bounded only after the bounds are tried, once: neither is an
-            // answer, and the solver decides.
+            // At the bounds the formula is false, though it has a point (`x == 7`): no answer,
+            // and the solver decides.
             (
                 and(vec![
                     ge(&x, &k(6)),
@@ -12969,11 +13041,27 @@ mod forced_against_solver {
                 ]),
                 3,
             ),
+            // `z` is bounded only after the first round: `x == 6` makes `x >= 7` false, which
+            // forces `z >= 1`, and the second round sets `z == 1`, where the formula holds.
             (
                 and(vec![
                     ge(&x, &k(6)),
                     ge(&k(7), &x),
                     Formula::or(vec![ge(&x, &k(7)), ge(&sym("z"), &k(1))]),
+                ]),
+                1,
+            ),
+            // The same, and then the second round sets `z == 1`, which makes `z >= 2` false and
+            // forces `w >= 1`, while `z + w <= 1` gives `w <= 0`: a contradiction in the second
+            // round, though the formula has a point (`x == 7, z == 0, w == 1`), which the solver
+            // finds. `w` is never bounded alone, so no round sets it.
+            (
+                and(vec![
+                    ge(&x, &k(6)),
+                    ge(&k(7), &x),
+                    Formula::or(vec![ge(&x, &k(7)), ge(&sym("z"), &k(1))]),
+                    Formula::or(vec![ge(&sym("z"), &k(2)), ge(&sym("w"), &k(1))]),
+                    ge(&k(1), &sym("z").plus(&sym("w"))),
                 ]),
                 3,
             ),
@@ -13006,6 +13094,22 @@ mod forced_against_solver {
         for (f, want) in cases {
             assert_eq!(agrees(&f), want, "{f}");
         }
+        // The two cases above with `z` bounded after the first round are decided in the second.
+        let later = || {
+            vec![
+                ge(&x, &k(6)),
+                ge(&k(7), &x),
+                Formula::or(vec![ge(&x, &k(7)), ge(&sym("z"), &k(1))]),
+            ]
+        };
+        assert_eq!(forced::rounds(&and(later())), Some((Some(true), 2)));
+        let mut fs = later();
+        fs.push(Formula::or(vec![
+            ge(&sym("z"), &k(2)),
+            ge(&sym("w"), &k(1)),
+        ]));
+        fs.push(ge(&k(1), &sym("z").plus(&sym("w"))));
+        assert_eq!(forced::rounds(&and(fs)), Some((Some(false), 2)));
     }
 
     /// `f` with each atom renamed by `name` and the operands of each conjunction and
@@ -13035,54 +13139,174 @@ mod forced_against_solver {
         }
     }
 
-    /// What [`forced`] gives, as text: `empty`, `holds`, `undecided`, or the point.
-    fn shown(f: Option<Forced>) -> String {
+    /// What [`forced`] gave, each atom of its point, or of what it proved for the solver,
+    /// named by `name`.
+    fn shown(f: Forced, name: &dyn Fn(&Atom) -> Atom) -> String {
+        let named = |p: Model| p.into_iter().map(|(a, v)| (name(&a), v)).collect::<Model>();
         match f {
-            Some(Forced::Empty) => "empty".into(),
-            Some(Forced::Holds) => "holds".into(),
-            Some(Forced::Point(p)) => format!("{p:?}"),
-            None => "undecided".into(),
+            Forced::Empty => "empty".into(),
+            Forced::Holds => "holds".into(),
+            Forced::Point(p) => format!("{:?}", named(p)),
+            Forced::Undecided(facts) => format!("undecided, {:?}", named(facts.fixed())),
         }
     }
 
-    #[test]
-    fn the_point_at_the_bounds_does_not_depend_on_names_or_order() {
-        // `x` and `y` swapped, each auxiliary variable `qi` named `q(9 - i)`, which reverses
-        // their order, and each conjunction and disjunction in a random order: propagation, and
-        // the point it tries at the bounds when it leaves the formula undecided, give the same
-        // answer, and the same point renamed.
-        let name = |a: &Atom| match a {
+    /// `x` and `y` swapped, and each auxiliary variable `qi` named `q(9 - i)`, which reverses
+    /// their order.
+    fn swapped(a: &Atom) -> Atom {
+        match a {
             Atom::Sym(s) => Atom::Sym(Arc::from(if &**s == "x" { "y" } else { "x" })),
             Atom::Aux(i) => Atom::Aux(9 - i),
             // `x * y`, which the swap keeps.
             Atom::Product(..) => a.clone(),
-        };
+        }
+    }
+
+    /// Checks that `f` and three rewritings of it ([`rewritten`] by [`swapped`], each
+    /// conjunction and disjunction in an order drawn from `order`) are answered alike:
+    /// propagation and its rounds at the bounds give the same answer, the same point renamed,
+    /// and the same atoms fixed for the solver renamed; [`decide`] and [`satisfiable`], the
+    /// solver given those atoms, give the same answer or the same kind of refusal (a refusal
+    /// names the variables it ties, renamed here). Gives what `f` gave without its point.
+    fn alike_rewritten(f: &Formula, order: &mut Rng) -> String {
+        let same = |a: &Atom| a.clone();
+        let want = [
+            shown(forced(f, false), &swapped),
+            shown(forced(f, true), &swapped),
+        ];
+        let kind = |r: Refusal| std::mem::discriminant(&r);
+        for _ in 0..3 {
+            let g = rewritten(f, &swapped, order);
+            let got = [
+                shown(forced(&g, false), &same),
+                shown(forced(&g, true), &same),
+            ];
+            assert_eq!(got, want, "{f}\n  rewritten {g}");
+            assert_eq!(
+                decide(&g).map_err(kind),
+                decide(f).map_err(kind),
+                "{f}\n  rewritten {g}"
+            );
+            assert_eq!(
+                satisfiable(&g).map(|m| m.is_some()).map_err(kind),
+                satisfiable(f).map(|m| m.is_some()).map_err(kind),
+                "{f}\n  rewritten {g}"
+            );
+        }
+        want[0].clone()
+    }
+
+    #[test]
+    fn the_point_at_the_bounds_does_not_depend_on_names_or_order() {
+        // Propagation, and the point it tries at the bounds when it leaves the formula
+        // undecided, give the same answer, and the same point renamed.
         let mut rng = Rng(0x6a09_e667_f3bc_c909);
         let mut order = Rng(0xbb67_ae85_84ca_a73b);
         let mut at_bounds = 0;
         for case in 0..4000 {
             let f = chain(&mut rng, case % 2 == 0);
-            let renamed = |p: Model| p.into_iter().map(|(a, v)| (name(&a), v)).collect::<Model>();
-            let want = [
-                shown(forced(&f, false)),
-                shown(forced(&f, true).map(|p| match p {
-                    Forced::Point(p) => Forced::Point(renamed(p)),
-                    other => other,
-                })),
-            ];
-            if want[0] == "holds" && matches!(agrees(&f), 6 | 7) {
+            if alike_rewritten(&f, &mut order) == "holds" && matches!(agrees(&f), 6 | 7) {
                 at_bounds += 1;
-            }
-            for _ in 0..3 {
-                let g = rewritten(&f, &name, &mut order);
-                let got = [shown(forced(&g, false)), shown(forced(&g, true))];
-                assert_eq!(got, want, "{f}\n  rewritten {g}");
-                // A refusal names the variables it ties, renamed here: its kind is compared.
-                let kind = |d: Result<bool, Refusal>| d.map_err(|r| std::mem::discriminant(&r));
-                assert_eq!(kind(decide(&g)), kind(decide(&f)), "{f}\n  rewritten {g}");
             }
         }
         // The trial at the bounds answers often enough to be tested.
         assert!(at_bounds >= 50, "{at_bounds} answered at the bounds alone");
+    }
+
+    /// A ladder that the rounds at the bounds climb one step a round: `x` bounded, then each
+    /// `qi` bounded by a disjunction `prev >= t || qi >= prev + d` (or `qi <= prev + d`), whose
+    /// first operand is decided only once `prev`, the step before, has its value; some steps
+    /// also bound `qi` on the other side from the start, which a later round may contradict;
+    /// and at the end, sometimes, a disjunction over the last step and `y`.
+    fn ladder(rng: &mut Rng) -> Formula {
+        let x = sym("x");
+        let lo = rng.small();
+        let mut fs = vec![ge(&x, &k(lo))];
+        if rng.below(2) == 0 {
+            fs.push(ge(&k(lo + rng.below(3) as i64), &x));
+        }
+        let (mut prev, mut at) = (x, lo);
+        for i in 0..1 + rng.below(8) as u32 {
+            // `prev >= t` false at `prev`'s value `at`, mostly, so the second operand is forced.
+            let t = at + rng.below(4) as i64;
+            let d = rng.small();
+            let step = if rng.below(3) == 0 {
+                ge(&prev.plus(&k(d)), &q(i))
+            } else {
+                ge(&q(i), &prev.plus(&k(d)))
+            };
+            fs.push(Formula::or(vec![ge(&prev, &k(t)), step]));
+            if rng.below(4) == 0 {
+                fs.push(ge(&k(at + d + rng.small()), &q(i)));
+            }
+            (prev, at) = (q(i), at + d);
+        }
+        if rng.below(2) == 0 {
+            let m = at + rng.small();
+            fs.push(Formula::or(vec![
+                ge(&k(m), &prev),
+                eq(&sym("y"), &k(rng.small())),
+            ]));
+        }
+        Formula::and(fs)
+    }
+
+    #[test]
+    fn rounds_at_the_bounds_do_not_depend_on_names_or_order() {
+        // Ladders that need several rounds, some ending in a contradiction in a later round:
+        // each is answered alike whatever the names and order, and agrees with the solver.
+        let mut rng = Rng(0x3c6e_f372_fe94_f82b);
+        let mut order = Rng(0xa54f_f53a_5f1d_36f1);
+        let (mut several, mut later_empty, mut three) = (0, 0, 0);
+        for _ in 0..3000 {
+            let f = ladder(&mut rng);
+            alike_rewritten(&f, &mut order);
+            agrees(&f);
+            match forced::rounds(&f) {
+                Some((Some(true), r)) if r >= 2 => several += 1,
+                Some((Some(false), r)) if r >= 2 => later_empty += 1,
+                _ => {}
+            }
+            if forced::rounds(&f).is_some_and(|(_, r)| r >= 3) {
+                three += 1;
+            }
+        }
+        assert!(
+            several >= 50 && later_empty >= 50 && three >= 50,
+            "{several} decided in round 2 or later, {later_empty} contradicted there, {three} \
+             with three rounds or more"
+        );
+    }
+
+    #[test]
+    fn the_state_never_loosens() {
+        // After each event of the propagation and of the rounds at the bounds, the state knows
+        // at least what it knew before (`forced::trace::below`), on the census chains and the
+        // ladders. A check of the proof at `Trial::holds`, which does not rest on it.
+        // Complexity tradeoff: each state is copied whole after each event, O(e·n) for `e`
+        // events and `n` parts and variables, so quadratic in the size of one formula. The
+        // formulas here have at most a few dozen parts and do not grow. A record of each
+        // change alone would cost O(e), but it would be taken inside the methods of module
+        // `state` that the test checks from outside.
+        let mut rng = Rng(0x510e_527f_ade6_82d1);
+        let mut events = 0;
+        for case in 0..3000 {
+            let f = match case % 3 {
+                0 => chain(&mut rng, false),
+                1 => chain(&mut rng, true),
+                _ => ladder(&mut rng),
+            };
+            let states = forced::trace::states(&f);
+            events += states.len();
+            for w in states.windows(2) {
+                assert!(
+                    forced::trace::below(&w[1], &w[0]),
+                    "{f}: loosened from {:?} to {:?}",
+                    w[0],
+                    w[1]
+                );
+            }
+        }
+        assert!(events >= 10_000, "{events} events");
     }
 }

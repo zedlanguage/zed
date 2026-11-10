@@ -111,6 +111,15 @@ fn bench_small_formulas() {
             );
         }
     }
+    for n in [64, 512] {
+        let f = ladder(n);
+        let s = least(&mut meter, &|| drop(std::hint::black_box(satisfiable(&f))));
+        let d = least(&mut meter, &|| drop(std::hint::black_box(decide(&f))));
+        eprintln!(
+            "ladder n {n}: satisfiable {s} ({}/rung), decide {d}",
+            s / u64::from(n)
+        );
+    }
 }
 
 #[test]
@@ -171,4 +180,36 @@ fn a_chain_of_definitions_at_a_point_is_not_settled_by_the_whole_solver() {
         bounded < 2 * fixed && ranged < 2 * fixed,
         "fixed {fixed} {unit}, bounded {bounded} {unit}, ranged {ranged} {unit}"
     );
+}
+
+/// A ladder of `n` bounds, `x0 <= 5 && x1 <= x0 + 1 && ... && x(n-1) <= x(n-2) + 1`: no
+/// variable but `x0` is bounded until the one before it is set, so the rounds at the bounds
+/// set one rung each, `n` rounds of one continued propagation (PRES-small-point).
+fn ladder(n: u32) -> Formula {
+    let x = |i: u32| sym(&format!("x{i}"));
+    let mut fs = vec![ge(&k(5), &x(0))];
+    for i in 1..n {
+        fs.push(ge(&x(i - 1).plus(&k(1)), &x(i)));
+    }
+    Formula::and(fs)
+}
+
+#[test]
+fn a_ladder_of_bounds_costs_its_size() {
+    // Each round sets the rung bounded by the round before at its upper bound and continues
+    // the same propagation from it, O(1) each, so the `n` rounds cost O(n) in all, not one
+    // pass over the formula per round.
+    let built = scaling::inputs(64, |n| ladder(n as u32));
+    for f in built.values() {
+        let m = satisfiable(f).expect("answered").expect("a point");
+        assert!(f.holds(&m), "{m:?} is no point of {f}");
+        assert_eq!(m[&Atom::Sym(Arc::from("x1"))], 6.into(), "{f}");
+        assert_eq!(decide(f), Ok(true), "{f}");
+    }
+    scaling::check("a ladder of bounds, its point found", 64, |n| {
+        std::hint::black_box(satisfiable(&built[&n]).is_ok());
+    });
+    scaling::check("a ladder of bounds, decided", 64, |n| {
+        std::hint::black_box(decide(&built[&n]).is_ok());
+    });
 }
