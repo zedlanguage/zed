@@ -266,7 +266,9 @@ fn the_interval_operations_scale() {
 /// One-piece updates and queries on a set of p pieces, and a set built by p one-point joins:
 /// each `O(log p)` on the persistent tree, which shares all but one path with its operand, so p
 /// of them cost `O(p log p)`. With the pieces in a Vec each copied or scanned all p pieces, and
-/// the test took about 61 times the work for 8 times the size (COMPLEXITY.md INTERVAL-persistent).
+/// the test allocated 63.8 times the bytes for 8 times the size, against a limit of 11.4; it
+/// now takes about 10.4 times the work and 10.4 times the bytes (COMPLEXITY.md
+/// INTERVAL-persistent).
 #[test]
 fn interval_set_operations_scale() {
     let sets = scaling::inputs(1000, |n| pieces(&mut Rng::new(n as u64), n, false));

@@ -660,7 +660,7 @@ fn family(what: &str, n: usize, make: impl Fn(usize) -> Inst + Sync) {
 
 /// Claude round 3 and 4 (`family4`, `probe_r4_holes_laps`), Codex round 3 and 4, Gemini
 /// round 4: laps with `r = 6n` at 64 and 512 names. Every name's ends are 0, found by
-/// composing the cycle once. Main takes about 8.9 times the work for 8 times the size; with
+/// composing the cycle once. Main takes about 8.8 times the work for 8 times the size; with
 /// the `Vec` interval sets before INTERVAL-persistent it took 17.4 times.
 #[test]
 fn laps_have_exact_ends_in_near_linear_time() {
@@ -674,7 +674,7 @@ fn the_staircase_has_exact_ends_in_near_linear_time() {
     family("staircase", 16, staircase);
 }
 
-/// The mixed family, `r = 3n`, at 16 and 128 names. Main takes about 8.8 times the work for
+/// The mixed family, `r = 3n`, at 16 and 128 names. Main takes about 8.7 times the work for
 /// 8 times the size.
 #[test]
 fn the_mixed_family_has_exact_ends_in_near_linear_time() {
@@ -687,7 +687,7 @@ fn the_mixed_family_has_exact_ends_in_near_linear_time() {
 /// tests. When the preimage built its landmarks from the ends of every input domain at each
 /// test (before LAPS-preimage-cost), that cost was `O(p log p)` per test for `p` holes, and
 /// this control took 17.8 times the work for 8 times the size, as the laps with the cycle
-/// did (16.3): the cycle was never the cause. It now takes about 8.9 times.
+/// did (16.3): the cycle was never the cause. It now takes about 8.8 times.
 #[test]
 fn laps_without_the_closing_edge_take_near_linear_time() {
     family("laps without the closing edge", 16, |n| {

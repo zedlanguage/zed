@@ -132,17 +132,20 @@ impl fmt::Display for End {
 // Complexity tradeoff: the naive version is a sorted `Vec` of pieces; there a membership test
 // or a search is O(log p), but a clone, a meet, a join, an equality test and the longest gap
 // are each O(p), so a scope that tests and narrows a name of p pieces once for each of n
-// facts does O(n p) work, and the laps family of `l01_39_reduced_product` grew as n^1.9.
-// Used: the persistent tree. A clone is O(1); a meet, a join, an inclusion test and a
-// difference of sets of m <= n pieces are O(m log n), plus the pieces of the result for a
-// difference whose first operand has fewer pieces; a test or search O(log p); the longest
-// gap, the hull, the count and an inequality O(1). An inclusion test and an equality test walk
-// both trees together and pass by every subtree the two share, and every subtree of one that
-// lies inside a piece of the other, so sets that differ on d paths cost O(d log p) and equal
-// sets built apart O(p); a meet or join that leaves an operand unchanged returns its tree
-// shared, so the test after it is O(1). Tradeoffs: each piece costs a node of about 150
-// bytes, not 32; a walk over every piece costs a stack of O(log p) nodes; building from a
-// list is O(p) after the sort, as before. Test:
+// facts does O(n p) work: in the laps family of `l01_39_reduced_product` the meets and the
+// longest gap grew as n^1.7 to n^2, and the family took 17.4 times the work for 8 times the
+// names. Used: the persistent tree. A clone is O(1); a meet, a join and a difference of sets
+// of m <= n pieces split one set around each piece of the other and are O(m log(n/m + 1)):
+// O(log n) for one piece, O(n) for two sets of n as the merge of two lists; an inclusion test
+// is O(m log n); a test or search O(log p); the longest gap, the hull, the count and an
+// inequality O(1). An inclusion test and an equality test walk both trees together and pass
+// by every subtree the two share, and every subtree of one that lies inside a piece of the
+// other, so sets that differ on d paths cost O(d log p) and equal sets built apart O(p); a
+// meet or join that leaves an operand unchanged returns its tree shared, so the test after
+// it is O(1). Tradeoffs: each piece costs a node of about 150 bytes, not 32; a meet or join
+// first runs the two inclusion tests that find the shared case; a walk over every piece
+// costs a stack of O(log p) nodes; building from a list is O(p) after the sort, as before.
+// Test:
 // `l01_24_refinement_lattices::scaling::interval_set_operations_scale`; COMPLEXITY.md row
 // INTERVAL-persistent.
 #[derive(Clone, Default)]
@@ -403,6 +406,130 @@ fn concat(l: Link, r: Link) -> Link {
             Some(join(l, k, r))
         }
     }
+}
+
+/// A piece with its hash.
+fn keyed(piece: (End, End)) -> Keyed {
+    let h = piece_hash(&piece);
+    (piece, h)
+}
+
+/// `t` without its last piece when that piece reaches `lo - 1`, with `lo..=hi` grown to hold
+/// it.
+fn absorb_last(t: Link, lo: &mut End, hi: &mut End) -> Link {
+    match t {
+        Some(t) if lo.at_most_succ(&t.last) => {
+            let (t, ((l, h), _)) = split_last(t);
+            *lo = l;
+            if h > *hi {
+                *hi = h;
+            }
+            t
+        }
+        t => t,
+    }
+}
+
+/// The union of the pieces of `a` and `b`. `b` is split around the root piece of `a`, that
+/// piece takes in every piece of `b` it overlaps or touches, and the unions of the two sides
+/// are joined to it after it takes in the pieces of theirs it now touches (Blelloch, Ferizovic
+/// and Sun, "Just Join for Parallel Ordered Sets", 2016). `O(m log(n/m + 1))` for `m <= n`
+/// pieces: `O(log n)` for one piece and `O(n)` for two sets of `n`, as a merge of two lists.
+fn union(a: Link, b: Link) -> Link {
+    let (a, b) = match (a, b) {
+        (None, t) | (t, None) => return t,
+        (Some(a), Some(b)) if Arc::ptr_eq(&a, &b) => return Some(a),
+        (Some(a), Some(b)) => (a, b),
+    };
+    let (la, ((mut lo, mut hi), _), ra) = parts(a);
+    let (below, rest) = split(Some(b), &|l| *l < lo);
+    let below = absorb_last(below, &mut lo, &mut hi);
+    let (merged, above) = split(rest, &|l| l.at_most_succ(&hi));
+    if let Some(m) = merged.filter(|m| m.last > hi) {
+        hi = m.last.clone();
+    }
+    // The pieces of the left side from `lo` on lie below the root piece of `a`, so inside
+    // `lo..=hi`; the last one before them merges when it reaches `lo - 1`.
+    let (left, _) = split(union(la, below), &|l| *l < lo);
+    let left = absorb_last(left, &mut lo, &mut hi);
+    let (merged, right) = split(union(ra, above), &|l| l.at_most_succ(&hi));
+    if let Some(m) = merged.filter(|m| m.last > hi) {
+        hi = m.last.clone();
+    }
+    Some(join(left, keyed((lo, hi)), right))
+}
+
+/// The intersection of the pieces of `a` and `b`: `b` is split around the root piece of `a`,
+/// its pieces inside that piece are cut to it, and the two sides meet the two sides of `a`.
+/// `O(m log(n/m + 1))` for `m <= n` pieces, as [`union`].
+fn intersection(a: Link, b: Link) -> Link {
+    let (a, b) = match (a, b) {
+        (None, _) | (_, None) => return None,
+        (Some(a), Some(b)) if Arc::ptr_eq(&a, &b) => return Some(a),
+        (Some(a), Some(b)) => (a, b),
+    };
+    let (la, ((lo, hi), _), ra) = parts(a);
+    let (below, rest) = split(Some(b), &|l| *l < lo);
+    let (inside, above) = split(rest, &|l| *l <= hi);
+    // The last piece below `lo`, when it reaches into `lo..`, and the end past `hi` of the
+    // piece that reaches past it: the last inside, or else that one.
+    let reach = (below.as_ref())
+        .map(|t| t.last.clone())
+        .filter(|e| *e >= lo);
+    let past = (inside.as_ref().map(|t| &t.last))
+        .or(reach.as_ref())
+        .filter(|e| **e > hi)
+        .cloned();
+    let mut middle = inside.map(|t| {
+        if t.last > hi {
+            let (t, ((l, _), _)) = split_last(t);
+            join(t, keyed((l, hi.clone())), None)
+        } else {
+            t
+        }
+    });
+    if let Some(e) = reach {
+        middle = Some(join(None, keyed((lo, e.min(hi.clone()))), middle));
+    }
+    let above = match past {
+        Some(e) => Some(join(None, keyed((hi.succ(), e)), above)),
+        None => above,
+    };
+    let left = intersection(la, below);
+    concat(concat(left, middle), intersection(ra, above))
+}
+
+/// The members of `a` that are not in `b`: `a` is split around the root piece of `b`, its
+/// pieces that start inside that piece go, the pieces that reach into it from below or past
+/// it are cut, and the two sides lose the two sides of `b`. `O(m log(n/m + 1))` for `m <= n`
+/// pieces, as [`union`]; each piece of `b` cuts at most one piece of `a` in two.
+fn difference(a: Link, b: Link) -> Link {
+    let (a, b) = match (a, b) {
+        (None, _) => return None,
+        (a, None) => return a,
+        (Some(a), Some(b)) if Arc::ptr_eq(&a, &b) => return None,
+        (Some(a), Some(b)) => (a, b),
+    };
+    let (lb, ((lo, hi), _), rb) = parts(b);
+    let (below, rest) = split(Some(a), &|l| *l < lo);
+    let (inside, above) = split(rest, &|l| *l <= hi);
+    let reach = (below.as_ref()).map(|t| t.last.clone());
+    let past = (inside.as_ref().map(|t| &t.last))
+        .or(reach.as_ref())
+        .filter(|e| **e > hi)
+        .cloned();
+    let below = match below {
+        Some(t) if t.last >= lo => {
+            let (t, ((l, _), _)) = split_last(t);
+            Some(join(t, keyed((l, lo.pred())), None))
+        }
+        t => t,
+    };
+    let above = match past {
+        Some(e) => Some(join(None, keyed((hi.succ(), e)), above)),
+        None => above,
+    };
+    concat(difference(below, lb), difference(above, rb))
 }
 
 /// The last piece of `t`.
@@ -758,7 +885,9 @@ impl IntervalSet {
         }
     }
 
-    /// Whether `self` and `other` share their tree, which makes them equal: `O(1)`.
+    /// Whether `self` and `other` share their tree, which makes them equal: `O(1)`. The tests
+    /// use it to check that an operation returned an operand's tree shared.
+    #[cfg(test)]
     fn same_tree(&self, other: &Self) -> bool {
         match (&self.root, &other.root) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -776,8 +905,8 @@ impl IntervalSet {
         }
     }
 
-    /// The union. A set that holds the other is returned shared. `O(m log n)` for `m <= n`
-    /// pieces: each piece of the smaller set is put into the larger one by two splits.
+    /// The union. A set that holds the other is returned shared. `O(m log(n/m + 1))` for
+    /// `m <= n` pieces, by `union`.
     pub fn join(&self, other: &Self) -> Self {
         let (small, big) = self.by_size(other);
         if small.is_subset(big) {
@@ -786,35 +915,13 @@ impl IntervalSet {
         if big.is_subset(small) {
             return small.clone();
         }
-        let mut out = big.root.clone();
-        for (lo, hi) in small.pieces() {
-            // The pieces below `lo`, the last of which merges when it reaches `lo - 1`.
-            let (below, rest) = split(out, &|l| l < lo);
-            let (mut lo, mut hi) = (lo.clone(), hi.clone());
-            let below = match below {
-                Some(b) if lo.at_most_succ(&b.last) => {
-                    let (b, ((l, h), _)) = split_last(b);
-                    lo = l;
-                    hi = hi.max(h);
-                    b
-                }
-                b => b,
-            };
-            // The pieces that start at or before `hi + 1` merge too.
-            let (merged, above) = split(rest, &|l| l.at_most_succ(&hi));
-            if let Some(m) = &merged
-                && m.last > hi
-            {
-                hi = m.last.clone();
-            }
-            let h = piece_hash(&(lo.clone(), hi.clone()));
-            out = Some(join(below, ((lo, hi), h), above));
+        IntervalSet {
+            root: union(small.root.clone(), big.root.clone()),
         }
-        IntervalSet { root: out }
     }
 
-    /// The intersection. A set inside the other is returned shared. `O(m log n)` for `m <= n`
-    /// pieces: the larger set is cut to each piece of the smaller one by two splits.
+    /// The intersection. A set inside the other is returned shared. `O(m log(n/m + 1))` for
+    /// `m <= n` pieces, by `intersection`.
     pub fn meet(&self, other: &Self) -> Self {
         let (small, big) = self.by_size(other);
         if small.is_subset(big) {
@@ -823,31 +930,9 @@ impl IntervalSet {
         if big.is_subset(small) {
             return big.clone();
         }
-        let mut out: Link = None;
-        for (lo, hi) in small.pieces() {
-            let (below, rest) = split(big.root.clone(), &|l| l < lo);
-            // The last piece below `lo` may reach into `lo..=hi`.
-            let head = (below.as_ref())
-                .filter(|b| b.last >= *lo)
-                .map(|b| (lo.clone(), (&b.last).min(hi).clone()));
-            let (mut inside, _) = split(rest, &|l| l <= hi);
-            if let Some(t) = inside.take() {
-                inside = if t.last > *hi {
-                    let (t, ((l, _), _)) = split_last(t);
-                    let piece = (l, hi.clone());
-                    let h = piece_hash(&piece);
-                    Some(join(t, (piece, h), None))
-                } else {
-                    Some(t)
-                };
-            }
-            if let Some(piece) = head {
-                let h = piece_hash(&piece);
-                inside = Some(join(None, (piece, h), inside));
-            }
-            out = concat(out, inside);
+        IntervalSet {
+            root: intersection(small.root.clone(), big.root.clone()),
         }
-        IntervalSet { root: out }
     }
 
     /// Whether every member of `self` is a member of `other`, by one walk of both trees in
@@ -887,70 +972,12 @@ impl IntervalSet {
         true
     }
 
-    /// The members of `self` that are not members of `other`. `O(m log n)` for `m <= n`
-    /// pieces, plus the pieces of the result when `self` is the smaller set.
+    /// The members of `self` that are not members of `other`. `O(m log(n/m + 1))` for `m <= n`
+    /// pieces, by `difference`.
     pub fn minus(&self, other: &Self) -> Self {
-        if self.is_empty() || other.is_empty() {
-            return self.clone();
+        IntervalSet {
+            root: difference(self.root.clone(), other.root.clone()),
         }
-        if self.same_tree(other) {
-            return IntervalSet::empty();
-        }
-        if other.len() <= self.len() {
-            // Each piece of `other` is cut out of `self` by two splits: the pieces of `self`
-            // that start inside it go, and what the last piece below it and the last piece
-            // inside it hold past its ends stays.
-            let mut out = self.root.clone();
-            for (lo, hi) in other.pieces() {
-                let (below, rest) = split(out, &|l| l < lo);
-                let (inside, above) = split(rest, &|l| l <= hi);
-                let mut kept = Vec::new();
-                let below = match below {
-                    Some(b) if b.last >= *lo => {
-                        let (b, ((l, h), _)) = split_last(b);
-                        kept.push((l, lo.pred()));
-                        if h > *hi {
-                            kept.push((hi.succ(), h));
-                        }
-                        b
-                    }
-                    b => b,
-                };
-                if let Some(t) = inside
-                    && t.last > *hi
-                {
-                    kept.push((hi.succ(), t.last.clone()));
-                }
-                let tail = kept.into_iter().rev().fold(above, |r, p| {
-                    let h = piece_hash(&p);
-                    Some(join(None, (p, h), r))
-                });
-                out = concat(below, tail);
-            }
-            return IntervalSet { root: out };
-        }
-        // Each piece of `self` keeps the gaps of `other` within it.
-        let mut out = Vec::new();
-        for (lo, hi) in self.pieces() {
-            let mut from = Some(lo.clone());
-            for (l, h) in other.pieces_from(lo) {
-                if l > hi {
-                    break;
-                }
-                if let Some(f) = from.take_if(|f| l > f) {
-                    out.push((f, l.pred()));
-                }
-                // The members from `h + 1` on are left, unless `other` holds the rest.
-                from = (h < hi).then(|| h.succ());
-                if from.is_none() {
-                    break;
-                }
-            }
-            if let Some(f) = from {
-                out.push((f, hi.clone()));
-            }
-        }
-        IntervalSet::from_normal(out)
     }
 
     /// The set with at most `limit` pieces: while it has more, the two neighboring pieces with
@@ -1858,6 +1885,19 @@ mod tests {
                 let back = less.join(&point.meet(&a));
                 assert_eq!(back, a);
                 assert!(a.is_subset(&back) && back.is_subset(&a));
+                // Two sets of one tree, each less another point, neither inside the other: the
+                // operations meet subtrees the two share.
+                let j = rng.int(-w - 2, w + 2);
+                let other = a.minus(&IntervalSet::single(j));
+                let mut n = ma.clone();
+                n[(j + w + 3) as usize] = false;
+                let pair = |f: fn(bool, bool) -> bool| -> Vec<bool> {
+                    m.iter().zip(&n).map(|(&x, &y)| f(x, y)).collect()
+                };
+                agrees(&less.join(&other), &pair(|x, y| x || y), w);
+                agrees(&less.meet(&other), &pair(|x, y| x && y), w);
+                agrees(&less.minus(&other), &pair(|x, y| x && !y), w);
+                agrees(&other.minus(&less), &pair(|x, y| y && !x), w);
             }
         }
     }
