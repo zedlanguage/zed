@@ -2693,7 +2693,9 @@ impl Summaries {
     /// variables `reads` reads are a frontier, and while it holds two or more, the one with the
     /// highest numbers is read beside, its inputs joining the frontier, unless the others are
     /// all in its cone, which its summary keeping their variables shows (their variables are
-    /// in it), so that a question reading two variables on one path (`h{i}(x: x) > h1(x: x)`)
+    /// in it); where its summary shows some are not, those are read beside in its place, so
+    /// that what is read does not depend on the order the definitions were numbered in; so
+    /// that a question reading two variables on one path (`h{i}(x: x) > h1(x: x)`)
     /// reads the higher's summary alone, and a link reading two definitions over one input
     /// (`min(H div 2, H div 3 + 1)`) reads them beside it down to the input. The conjunction of
     /// `reads`'s formula, those beside it and the summary below, projected onto the atoms of
@@ -2716,7 +2718,7 @@ impl Summaries {
         if !enter(&ins, own, first, def, &mut seen, &mut frontier) {
             return Local::Unmade;
         }
-        while let Some((_, h)) = frontier.pop_last() {
+        while let Some((top, h)) = frontier.pop_last() {
             if frontier.is_empty() {
                 let k = match self.key(&h, reads, own, keep, &beside, def) {
                     Ok(k) => k,
@@ -2746,6 +2748,34 @@ impl Summaries {
                             let beside = beside.into_iter().map(|d| d.f).collect();
                             return Local::Ready(beside, Some(s));
                         }
+                        // Those outside `h`'s summary are read beside in its place, and `h`
+                        // stays: a question reading a definition apart from a chain
+                        // (`h{i}(x: x) < x div 64 - 1`, its `x div 64` numbered before the
+                        // links where an earlier test made it) reads the chain through its
+                        // summary, as when that definition is numbered after the links, and not
+                        // every link beside (cross-review of LOAD-max-div-xr, round 2).
+                        let out: Vec<u32> = (frontier.iter())
+                            .filter(|(_, m)| !inside(m))
+                            .map(|(&n, _)| n)
+                            .collect();
+                        frontier.insert(top, h);
+                        for n in out {
+                            let Some(m) = frontier.remove(&n) else {
+                                continue;
+                            };
+                            if !enter(
+                                &m.inputs,
+                                own,
+                                Some(m.own[0]),
+                                def,
+                                &mut seen,
+                                &mut frontier,
+                            ) {
+                                return Local::Unmade;
+                            }
+                            beside.push(m);
+                        }
+                        continue;
                     }
                 }
             }

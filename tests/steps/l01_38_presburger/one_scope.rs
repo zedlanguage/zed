@@ -1328,6 +1328,21 @@ fn separate_tests_over_a_chain_of_largest_values_scale() {
 }
 
 #[test]
+fn separate_tests_over_a_chain_of_largest_values_against_a_quotient_apart_from_it_scale() {
+    // Cross-review of LOAD-max-div-xr, round 2 (Claude): the first test numbers `x div 64`
+    // before the later links, which then found it outside each link's summary and read every
+    // link beside, so that each later test was the whole chain and was refused (`Growth`)
+    // from the fourth link on. The quotient is now read beside in the link's place.
+    separate_tests_scale(
+        "separate tests over a chain of `max`s against a quotient apart from it",
+        25,
+        1,
+        "max(H div 2, x - 9)",
+        "H < x div 64 - 1",
+    );
+}
+
+#[test]
 fn separate_tests_over_a_chain_of_largest_values_of_quotients_scale() {
     // LOAD-max-div-xr: `x div 3` beside `H div 2`. Its symbol `x` is kept beside the key where
     // the quotient is, so the next link meets `x div 3` again through the division pair and
@@ -1670,6 +1685,12 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
         chain("min(H div 2 + 1, x - 5)", "H > 3", 5),
         chain("min(H div 4, 3 * x + 7)", "H == 1", 5),
         chain("max(H div 3, x - 9)", "H < x - 9", 5),
+        // A quotient of the input apart from the chain, which the first test numbers before
+        // the later links (cross-review round 2, Claude): each test reads the chain through
+        // its summary in every order, where before the later tests read every link beside and
+        // were refused in the unit's order alone.
+        chain("max(H div 2, x - 9)", "H < x div 64 - 1", 6),
+        chain("max(H div 2, x mod 5 + x div 7 - 9)", "H < x div 64 - 1", 5),
         // Two inputs (cross-review round 2, I8): pieces whose rests differ, merged where
         // each rest holds on the other piece; a value of `x + y - 9` at the last link, one
         // between, and values at a bound of the merged pieces.
