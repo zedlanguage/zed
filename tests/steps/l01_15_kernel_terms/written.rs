@@ -200,6 +200,68 @@ fn a_type_test_inside_other_patterns_reads_back() {
     );
 }
 
+/// The kernel's pattern for any atom, which `else` and `?.` elaborate to, and its pattern for the
+/// empty tuple are written as the type tests `is #_` and `is ()`, sec:grammar's `IsPat` with the
+/// `AtomType` `#_` and the `TupleType` `()`, at the top of an arm and inside a tuple, a payload
+/// and a field, and each reads back as a type holding exactly the values the pattern matches.
+/// Before (item PRINT-anyatom-pattern), they were written `#_` and `()`, which no pattern of
+/// sec:grammar reads: `#_` is a type, not an `AtomPattern`, and a `TuplePat` has a comma.
+#[test]
+fn any_atom_and_empty_tuple_patterns_read_back() {
+    let t = Term::Match(
+        zed_tests::kernel::rc(var("v@1")),
+        vec![
+            (Pattern::AnyAtom, lit("failed")),
+            (Pattern::Tuple(vec![]), lit("unit")),
+            (
+                Pattern::Tuple(vec![Pattern::AnyAtom, Pattern::Tuple(vec![])]),
+                lit("pair"),
+            ),
+            (Pattern::Tuple(vec![Pattern::Tuple(vec![])]), lit("one")),
+            (
+                Pattern::Atom("ok".into(), vec![Pattern::AnyAtom]),
+                lit("ok"),
+            ),
+            (
+                Pattern::Fields("err".into(), vec![("code".into(), Pattern::Tuple(vec![]))]),
+                lit("err"),
+            ),
+            (Pattern::Wild, lit("other")),
+        ],
+    );
+    let shown = written(&t, before_at);
+    assert_eq!(
+        shown,
+        "match v { is #_ -> \"failed\", is () -> \"unit\", (is #_, is ()) -> \"pair\", \
+         (is (),) -> \"one\", #ok(is #_) -> \"ok\", #err(code: is ()) -> \"err\", \
+         _ -> \"other\" }"
+    );
+    assert_eq!(
+        reads_back(&t, &shown),
+        Seen {
+            same: 7,
+            ..Seen::default()
+        }
+    );
+}
+
+/// Values of each kind, for comparing what a pattern matches with what a type holds: atoms with
+/// and without payloads, the empty tuple and longer ones, and scalars.
+fn samples() -> Vec<Value> {
+    vec![
+        Value::atom("a"),
+        Value::atom_with("a", vec![Value::Int(1)]),
+        Value::atom_with("b", vec![]),
+        Value::atom_named("c", vec![("x".into(), Value::Int(2))]).expect("a field"),
+        Value::tuple(vec![]),
+        Value::tuple(vec![Value::tuple(vec![])]),
+        Value::tuple(vec![Value::atom("a"), Value::Int(0)]),
+        Value::Int(0),
+        Value::Bool(true),
+        Value::str(""),
+    ]
+}
+
 /// Seeded random terms: a `match` of up to four arms whose patterns nest tuples, atoms with
 /// payloads by position and by name, names, literals and `_` up to three deep, with type tests
 /// of random types among them, parts shared between them declared before the term. Each
@@ -256,6 +318,63 @@ fn random_pattern(rng: &mut zed_tests::instances::Rng, d: usize) -> Pattern {
             ["f", "g"][..1 + rng.below(2)]
                 .iter()
                 .map(|&k| (k.into(), random_pattern(rng, d - 1)))
+                .collect(),
+        ),
+    }
+}
+
+/// Seeded random terms: a `match` of up to four arms whose patterns nest the any-atom pattern,
+/// the empty tuple, other tuples, atoms with payloads by position and by name, names and `_` up
+/// to three deep. Each printed term reads back, each `is #_` and `is ()` as a type holding the
+/// values its pattern matches. The type tests of random types are left to the test above.
+#[test]
+fn random_terms_with_any_atom_and_empty_tuple_patterns_read_back() {
+    let mut rng = zed_tests::instances::Rng::new(16);
+    let mut same = 0;
+    for _ in 0..zed_tests::instances::RANDOM_INSTANCES {
+        let arms = (0..1 + rng.below(4))
+            .map(|i| {
+                let p = match i {
+                    // At least one of the two, at the top of an arm.
+                    0 if rng.below(2) == 0 => Pattern::AnyAtom,
+                    0 => Pattern::Tuple(vec![]),
+                    _ => random_kind_pattern(&mut rng, 3),
+                };
+                (p, lit(format!("arm {i}").as_str()))
+            })
+            .collect();
+        let t = Term::Match(zed_tests::kernel::rc(var("v@1")), arms);
+        same += reads_back(&t, &written(&t, before_at)).same;
+    }
+    // Each instance has at least one.
+    assert!(same >= zed_tests::instances::RANDOM_INSTANCES, "{same}");
+}
+
+/// A random pattern `d` deep with no type test, the any-atom pattern or the empty tuple one
+/// time in two at a leaf.
+fn random_kind_pattern(rng: &mut zed_tests::instances::Rng, d: usize) -> Pattern {
+    let leaf = d == 0 || rng.below(3) == 0;
+    match rng.below(if leaf { 4 } else { 7 }) {
+        0 => Pattern::AnyAtom,
+        1 => Pattern::Tuple(vec![]),
+        2 => Pattern::Wild,
+        3 => Pattern::Bind(["a@1", "b@2", "c@3"][rng.below(3)].into()),
+        4 => Pattern::Tuple(
+            (0..1 + rng.below(3))
+                .map(|_| random_kind_pattern(rng, d - 1))
+                .collect(),
+        ),
+        5 => Pattern::Atom(
+            ["p", "q"][rng.below(2)].into(),
+            (0..1 + rng.below(2))
+                .map(|_| random_kind_pattern(rng, d - 1))
+                .collect(),
+        ),
+        _ => Pattern::Fields(
+            "r".into(),
+            ["f", "g"][..1 + rng.below(2)]
+                .iter()
+                .map(|&k| (k.into(), random_kind_pattern(rng, d - 1)))
                 .collect(),
         ),
     }
@@ -401,6 +520,38 @@ fn reads_back(t: &Term, text: &str) -> Seen {
                 let again = zedc::check::read::parse_type(&text)
                     .unwrap_or_else(|e| panic!("{src}: `{part}` read as {text}: {e}"));
                 assert_eq!(again.to_string(), text, "{src}: `{part}`");
+            }
+            // `is #_` and `is ()`: the kernel's any-atom and empty-tuple patterns, which no
+            // other pattern of sec:grammar reads (item PRINT-anyatom-pattern).
+            (
+                Pattern::AnyAtom | Pattern::Tuple(_),
+                Read::Is {
+                    name: None, ty: r, ..
+                },
+            ) => {
+                let want = match p {
+                    Pattern::AnyAtom => zedc::check::ty::atoms(),
+                    _ => Type::tuple(vec![]),
+                };
+                let part = format!("{decls}{}", &src[r.span.start..r.span.end]);
+                let back = zedc::check::read::parse_type(&part)
+                    .unwrap_or_else(|e| panic!("{src}: `{part}`: {e}"));
+                let set = zedc::check::ty::Ty::set(want);
+                assert!(
+                    back.subtype(&set) && set.subtype(&back),
+                    "{src}: `{part}` reads back as {back}"
+                );
+                // The type read holds exactly the values the kernel's pattern matches.
+                let kernel = back.kernel().unwrap_or_else(|| panic!("{src}: {back}"));
+                for v in samples() {
+                    let t = Term::Match(
+                        zed_tests::kernel::rc(Term::Lit(v.clone())),
+                        vec![(p.clone(), lit(true)), (Pattern::Wild, lit(false))],
+                    );
+                    let hit = zed_kernel::eval::eval(&t).expect("a match on a value");
+                    assert_eq!(hit, Value::Bool(kernel.contains(&v)), "{src}: `{p}` at {v}");
+                }
+                seen.same += 1;
             }
             _ => panic!("{src}: the pattern `{p}` reads back as {q}"),
         }

@@ -309,12 +309,12 @@ match value {
   #cons(head, _) -> head,
   #err(code: c, line: 3) -> c,
   (only,) -> only,
-  () -> "unit",
+  is () -> "unit",
   (x, (_, y)) -> (
     x +
     y
   ),
-  #_ -> "failed",
+  is #_ -> "failed",
   is int -> "an integer"
 }
 --- a match with every pattern, width 40
@@ -327,9 +327,9 @@ match value {
   #cons(head, _) -> head,
   #err(code: c, line: 3) -> c,
   (only,) -> only,
-  () -> "unit",
+  is () -> "unit",
   (x, (_, y)) -> (x + y),
-  #_ -> "failed",
+  is #_ -> "failed",
   is int -> "an integer"
 }
 --- a match with every pattern, width 80
@@ -342,13 +342,13 @@ match value {
   #cons(head, _) -> head,
   #err(code: c, line: 3) -> c,
   (only,) -> only,
-  () -> "unit",
+  is () -> "unit",
   (x, (_, y)) -> (x + y),
-  #_ -> "failed",
+  is #_ -> "failed",
   is int -> "an integer"
 }
 --- a match with every pattern, on one line
-match value { _ -> "anything", amount -> amount, 0 -> "zero", "none" -> "none", #empty -> "empty", #cons(head, _) -> head, #err(code: c, line: 3) -> c, (only,) -> only, () -> "unit", (x, (_, y)) -> (x + y), #_ -> "failed", is int -> "an integer" }
+match value { _ -> "anything", amount -> amount, 0 -> "zero", "none" -> "none", #empty -> "empty", #cons(head, _) -> head, #err(code: c, line: 3) -> c, (only,) -> only, is () -> "unit", (x, (_, y)) -> (x + y), is #_ -> "failed", is int -> "an integer" }
 --- a family, width 20
 fam(
   lines,
@@ -594,7 +594,7 @@ port.push(stdout, report(port.read(stdin)))
   match byRegion[
     "north"
   ] {
-    #_ -> 0,
+    is #_ -> 0,
     f -> fold(
       f,
       (+),
@@ -613,7 +613,7 @@ port.push(stdout, report(port.read(stdin)))
     witness: residue
   );
   match byRegion["north"] {
-    #_ -> 0,
+    is #_ -> 0,
     f -> fold(
       f,
       (+),
@@ -632,9 +632,9 @@ port.push(stdout, report(port.read(stdin)))
     witness: residue
   );
   match byRegion["north"] {
-    #_ -> 0,
+    is #_ -> 0,
     f -> fold(f, (+), identity: 0, depth: 1, ev: {})
   }
 }
 --- nested forms, on one line
-{ byRegion = reindex(discard(sales, s -> (s == week)), (k, s) -> path(s["region"], k), (k, s) -> s, witness: residue); match byRegion["north"] { #_ -> 0, f -> fold(f, (+), identity: 0, depth: 1, ev: {}) } }
+{ byRegion = reindex(discard(sales, s -> (s == week)), (k, s) -> path(s["region"], k), (k, s) -> s, witness: residue); match byRegion["north"] { is #_ -> 0, f -> fold(f, (+), identity: 0, depth: 1, ev: {}) } }

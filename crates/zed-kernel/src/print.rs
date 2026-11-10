@@ -640,11 +640,16 @@ impl<'a> Pieces<'a> {
                 .patterns(fs.iter().map(|(k, p)| (Some(&**k), p)))
                 .text(")"),
             Pattern::Tuple(ps) if ps.len() == 1 => self.text("(").pattern(&ps[0]).text(",)"),
+            // sec:grammar's `TuplePat` has a comma, so the empty tuple is the type test of the
+            // type `()`, whose one value it is.
+            Pattern::Tuple(ps) if ps.is_empty() => self.text("is ()"),
             Pattern::Tuple(ps) => self
                 .text("(")
                 .patterns(ps.iter().map(|p| (None, p)))
                 .text(")"),
-            Pattern::AnyAtom => self.text("#_"),
+            // No pattern of sec:grammar is `#_`, the type of every atom, so any atom is the type
+            // test of that type.
+            Pattern::AnyAtom => self.text("is #_"),
             // `is T`, sec:grammar's `IsPat` with no name, the type as a program writes it after
             // `is`: only an arrow is parenthesized. The type ends where a pattern does, before
             // `,`, `)` or an arm's `->`, which a `TypeUnion` does not take.
