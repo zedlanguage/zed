@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::ops::Deref;
 use std::slice;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use zed_kernel::value::fresh_id;
 use zedc_int::int::Int;
@@ -86,12 +86,28 @@ pub enum Formula {
 /// and parts changed in place ([`Shared::change`]) take a new one. So a pass that meets a
 /// shared part again knows it by its id ([`Id`]): memo and visited keys are ids or structure,
 /// never addresses (SYNTHESIS fact 2), as with `zed_kernel::Shared`. The id does not change what
-/// the formula means: equality, order, hash and show read the parts alone.
+/// the formula means: equality, order, hash and show read the parts alone. The parts also keep
+/// the hash of the node that holds them once it is found (`Sig`), so that it is found once.
 pub struct Shared<T>(Arc<Held<T>>);
 
 struct Held<T> {
     id: u64,
+    /// The hash of the node holding the parts, found the first time it is asked for.
+    sig: OnceLock<Sig>,
     body: T,
+}
+
+/// The hash of a node of a [`Formula`] (`deep`): `n`, the number its `Hash` writes, and for a
+/// conjunction or disjunction its parts' numbers read as flattened, as one polynomial `seq`
+/// and the power `pow` of its base to their count, which a parent of the same variant reads
+/// in their place. `rank` is the variant it was found for ([`Formula::rank`]). Two formulas
+/// equal under `Ord` have equal hashes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Sig {
+    pub(super) rank: u8,
+    pub(super) n: u64,
+    pub(super) seq: u64,
+    pub(super) pow: u64,
 }
 
 impl<T> Shared<T> {
@@ -99,22 +115,39 @@ impl<T> Shared<T> {
     pub fn new(body: T) -> Shared<T> {
         Shared(Arc::new(Held {
             id: fresh_id(),
+            sig: OnceLock::new(),
             body,
         }))
     }
 
     /// The parts, to change in place when `this` is their only holder. They take a new id,
-    /// since what the old id named is no longer these parts.
+    /// since what the old id named is no longer these parts, and lose their hash.
     pub fn change(this: &mut Shared<T>) -> Option<&mut T> {
         let held = Arc::get_mut(&mut this.0)?;
         held.id = fresh_id();
+        held.sig = OnceLock::new();
         Some(&mut held.body)
     }
 
     /// The parts, when `this` is their only holder, only to move them out before the node
-    /// goes, so the id is kept.
+    /// goes, so the id is kept; the hash is dropped, since the parts are no longer these.
     pub(super) fn get_mut(this: &mut Shared<T>) -> Option<&mut T> {
-        Arc::get_mut(&mut this.0).map(|h| &mut h.body)
+        Arc::get_mut(&mut this.0).map(|h| {
+            h.sig = OnceLock::new();
+            &mut h.body
+        })
+    }
+
+    /// The hash kept for the node holding the parts, when one was kept for a node of the
+    /// variant `rank`.
+    pub(super) fn sig(this: &Shared<T>, rank: u8) -> Option<Sig> {
+        this.0.sig.get().copied().filter(|s| s.rank == rank)
+    }
+
+    /// Keeps `sig` as the hash of the node holding the parts, unless one is kept already;
+    /// whether `sig` is the one kept.
+    pub(super) fn keep_sig(this: &Shared<T>, sig: Sig) -> bool {
+        *this.0.sig.get_or_init(|| sig) == sig
     }
 
     /// The number of holders of the parts.

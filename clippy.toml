@@ -6,6 +6,9 @@
 # its variables it fills on first use (zedc-types src/ty.rs, `Facts`). A row's hash and
 # equality read its digest and components, never the keys of its components it fills on first
 # use (zedc-types src/ty.rs, `Row::keys`), and so do a payload shape's (`Shape`'s `Placed::keys`).
+# A formula's equality and hash read its parts and the hash a shared part keeps of the node
+# that holds it, which the parts alone fix and which is filled once (zedc-presburger
+# src/presburger/formula.rs, `Shared`); a part whose parts change loses it.
 ignore-interior-mutability = [
   "zed_kernel::types::Type",
   "zed_kernel::text::Text",
@@ -13,4 +16,5 @@ ignore-interior-mutability = [
   "zedc_types::ty::Facts",
   "zedc_types::ty::Row",
   "zedc_types::ty::Shape",
+  "zedc_presburger::presburger::formula::Shared",
 ]

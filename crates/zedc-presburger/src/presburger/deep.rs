@@ -5,7 +5,8 @@
 //! A part of a formula may be held by more than one parent ([`Formula`]). Each operation but
 //! show reads such a part once per call: it keeps the part's result in a map keyed by the part
 //! ([`Id`]), so its cost is the number of distinct parts and not the size of the tree written
-//! out. A part held by one parent alone is reached once and is not kept in the map.
+//! out. A part held by one parent alone is reached once and is not kept in the map. Hash,
+//! which `==` also reads first, reads a compound part once at all: its hash is kept with it.
 
 // Complexity tradeoff: naive version, the derived `Drop`, `Clone`, `PartialEq`, `Ord`, `Hash`,
 // `Debug` and `Display` and the recursive maps, O(n) time but O(depth) thread stack, so a
@@ -24,7 +25,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem;
 use std::slice;
 
-use super::formula::{Con, Formula, Id, Lin, Model, Names, Rel, Shared, as_is};
+use super::formula::{Con, Formula, Id, Lin, Model, Names, Rel, Shared, Sig, as_is};
 
 mod canon;
 
@@ -548,54 +549,160 @@ impl PartialOrd for Formula {
 }
 
 impl PartialEq for Formula {
+    /// `cmp` gives `Equal`, after a check of the two hashes (`Formula::sig`): formulas equal
+    /// under `Ord` have equal hashes, so two compound formulas whose hashes differ are unequal
+    /// without being compared. Equal hashes prove nothing, and the pair is then compared.
+    // Complexity tradeoff: naive version, `cmp` on every `==`, which reads the two formulas
+    // until they differ, and on formulas whose shared parts are grouped at other places on
+    // each side parses both, O(n log N) for n distinct parts and N parts written out, O(d^2)
+    // on `shifted_chains` of depth d (COMPLEXITY.md S31b). Used: the hashes compared first,
+    // each found once per node, in time linear in its distinct parts and edges, and kept with
+    // the node (`Sig`), so an unequal pair costs O(1) once both are hashed. Tradeoffs: 40
+    // bytes per compound node for the kept hash; the first `==` on a formula pays for hashing
+    // the parts not yet hashed, which a pair that differs early, compared by `cmp` alone, would
+    // not read; equal pairs, and pairs whose hashes collide, still cost what `cmp` costs, and
+    // `cmp` itself, which needs an order and not only inequality, is not helped. No answer
+    // changes, since a hash never decides equality. Tests `l01_38_presburger::shared`
+    // (`unequal_formulas_grouped_at_other_places_compare_in_time_near_linear_in_the_depth`,
+    // `equal_formulas_hash_alike_however_their_runs_are_grouped`) and
+    // `deep::tests::formulas_whose_hashes_collide_are_compared`.
     fn eq(&self, other: &Formula) -> bool {
+        if !matches!(self, Formula::Con(_))
+            && !matches!(other, Formula::Con(_))
+            && !self.same(other)
+            && self.sig() != other.sig()
+        {
+            return false;
+        }
         self.cmp(other) == Ordering::Equal
     }
 }
 
 impl Eq for Formula {}
 
-impl Hash for Formula {
-    /// Writes one number made from the tree bottom up: each node's number is the hash of its
-    /// variant and its constraint, or of its parts' numbers read as flattened (`Flat`), so
-    /// that formulas equal under [`Ord`] write equal numbers. A shared part's number is found
-    /// once per call.
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        /// An odd multiplier, 2^64 divided by (1 + √5) / 2.
-        const BASE: u64 = 0x9e37_79b9_7f4a_7c15;
-        // Each node's number, and for a conjunction or disjunction its parts' numbers as one
-        // polynomial in `BASE` and `BASE` to the count of its parts. A part of the node's own
-        // kind adds its polynomial in its place, so that it is hashed as flattened at the cost
-        // of its own parts.
-        let (n, _, _) = self.fold(
-            (),
-            |_, ()| (),
-            |g, (), parts: Vec<(u64, u64, u64)>| {
-                // A fixed hasher, so that the number of a formula does not change between runs.
-                let mut h = DefaultHasher::new();
-                h.write_u8(g.rank());
-                let (mut seq, mut pow) = (0u64, 1u64);
-                match g {
-                    Formula::Con(c) => c.hash(&mut h),
-                    Formula::Not(_) => h.write_u64(parts[0].0),
-                    Formula::And(_) | Formula::Or(_) => {
-                        for (k, (n, s, p)) in g.kids().iter().zip(parts) {
-                            if k.flattens_into(g.rank()) {
-                                seq = seq.wrapping_mul(p).wrapping_add(s);
-                                pow = pow.wrapping_mul(p);
-                            } else {
-                                seq = seq.wrapping_mul(BASE).wrapping_add(n);
-                                pow = pow.wrapping_mul(BASE);
-                            }
-                        }
-                        h.write_u64(seq);
-                        h.write_u64(pow);
+/// An odd multiplier, 2^64 divided by (1 + √5) / 2.
+const BASE: u64 = 0x9e37_79b9_7f4a_7c15;
+
+impl Formula {
+    /// The hash kept for this compound node when it is of its own variant, or the one this
+    /// call found when another variant's hash is kept in its parts (`spill`).
+    fn known(&self, spill: &HashMap<Id, Sig>) -> Option<Sig> {
+        let kept = match self {
+            Formula::Con(_) => return None,
+            Formula::Not(g) => Shared::sig(g, self.rank()),
+            Formula::And(gs) | Formula::Or(gs) => Shared::sig(gs, self.rank()),
+        };
+        kept.or_else(|| spill.get(&Id::any(self)).copied())
+    }
+
+    /// Keeps `sig` with this compound node's parts, or in `spill` when they keep the hash of a
+    /// node of another variant that holds them too.
+    fn keep(&self, sig: Sig, spill: &mut HashMap<Id, Sig>) {
+        let kept = match self {
+            Formula::Con(_) => unreachable!("a constraint keeps no hash"),
+            Formula::Not(g) => Shared::keep_sig(g, sig),
+            Formula::And(gs) | Formula::Or(gs) => Shared::keep_sig(gs, sig),
+        };
+        if !kept {
+            spill.insert(Id::any(self), sig);
+        }
+    }
+
+    /// The node's hash from its parts' hashes, given in order: the hash of its variant and its
+    /// constraint, or of its parts' numbers read as flattened (`Flat`). A part of the node's own
+    /// variant adds its polynomial in its place, so that it is hashed as flattened at the cost
+    /// of its own parts.
+    fn sig_of(&self, parts: impl Iterator<Item = Sig>) -> Sig {
+        // A fixed hasher, so that the number of a formula does not change between runs.
+        let mut h = DefaultHasher::new();
+        let rank = self.rank();
+        h.write_u8(rank);
+        let (mut seq, mut pow) = (0u64, 1u64);
+        match self {
+            Formula::Con(c) => c.hash(&mut h),
+            Formula::Not(_) => {
+                for p in parts {
+                    h.write_u64(p.n);
+                }
+            }
+            Formula::And(_) | Formula::Or(_) => {
+                for p in parts {
+                    if p.rank == rank && p.rank >= 2 {
+                        seq = seq.wrapping_mul(p.pow).wrapping_add(p.seq);
+                        pow = pow.wrapping_mul(p.pow);
+                    } else {
+                        seq = seq.wrapping_mul(BASE).wrapping_add(p.n);
+                        pow = pow.wrapping_mul(BASE);
                     }
                 }
-                (h.finish(), seq, pow)
-            },
-        );
-        state.write_u64(n);
+                h.write_u64(seq);
+                h.write_u64(pow);
+            }
+        }
+        Sig {
+            rank,
+            n: h.finish(),
+            seq,
+            pow,
+        }
+    }
+
+    /// The hash of the formula ([`Sig`]). A compound node's hash is found once and kept with
+    /// its parts, so a later call reads it in O(1); the first call finds the hashes of the
+    /// parts not yet hashed bottom up on an explicit stack, each once, in time linear in their
+    /// number and their edges. A constraint's hash is found at each call, in time linear in
+    /// its size.
+    pub(super) fn sig(&self) -> Sig {
+        if let Formula::Con(_) = self {
+            return self.sig_of(std::iter::empty());
+        }
+        let spill: HashMap<Id, Sig> = HashMap::new();
+        if let Some(s) = self.known(&spill) {
+            return s;
+        }
+        self.sig_walk(spill)
+    }
+
+    /// [`Formula::sig`] of a compound node whose hash is not kept.
+    fn sig_walk(&self, mut spill: HashMap<Id, Sig>) -> Sig {
+        let part = |k: &Formula, spill: &HashMap<Id, Sig>| match k {
+            Formula::Con(_) => k.sig_of(std::iter::empty()),
+            _ => k
+                .known(spill)
+                .expect("each compound part is hashed before its parent"),
+        };
+        // The nodes being hashed, each with the index of the first part not known to be hashed.
+        let mut stack: Vec<(&Formula, usize)> = vec![(self, 0)];
+        while let Some((g, from)) = stack.last_mut() {
+            let kids = g.kids();
+            let next = (kids[*from..].iter())
+                .position(|k| !matches!(k, Formula::Con(_)) && k.known(&spill).is_none());
+            if let Some(i) = next {
+                // That part is hashed before this node is read again.
+                *from += i + 1;
+                let k = &kids[*from - 1];
+                stack.push((k, 0));
+                continue;
+            }
+            let g: &Formula = g;
+            let sig = g.sig_of(kids.iter().map(|k| part(k, &spill)));
+            g.keep(sig, &mut spill);
+            stack.pop();
+            if stack.is_empty() {
+                return sig;
+            }
+        }
+        unreachable!("the root returns its hash")
+    }
+}
+
+impl Hash for Formula {
+    /// Writes one number made from the tree bottom up (`Formula::sig`): each node's number is
+    /// the hash of its variant and its constraint, or of its parts' numbers read as flattened
+    /// (`Flat`), so that formulas equal under [`Ord`] write equal numbers. A compound node's
+    /// number is found once and kept with it.
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.sig().n);
     }
 }
 
@@ -720,5 +827,107 @@ impl fmt::Debug for Formula {
     /// The derived form, `And([Con(..), Not(..)])`, on one line also under `{:#?}`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         show(self, f, true, as_is)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Atom, nnf};
+    use super::*;
+
+    /// `x + c >= 0`.
+    fn con(c: i64) -> Formula {
+        let x = Lin::atom(Atom::Sym("x".into()));
+        Formula::Con(Con::ge(&x.plus(&Lin::constant(c)), &Lin::default()))
+    }
+
+    fn and(fs: Vec<Formula>) -> Formula {
+        Formula::And(Shared::new(fs))
+    }
+
+    fn or(fs: Vec<Formula>) -> Formula {
+        Formula::Or(Shared::new(fs))
+    }
+
+    #[test]
+    fn formulas_whose_hashes_collide_are_compared() {
+        // One hash kept by hand for three conjunctions before any is hashed: two equal, one
+        // not. Equal hashes decide nothing, so `cmp` still tells them apart.
+        let sig = Sig {
+            rank: 2,
+            n: 7,
+            seq: 7,
+            pow: 7,
+        };
+        let (a, b, c) = (
+            and(vec![con(0), con(1)]),
+            and(vec![con(0), con(2)]),
+            and(vec![con(0), con(1)]),
+        );
+        for f in [&a, &b, &c] {
+            let Formula::And(gs) = f else { unreachable!() };
+            assert!(Shared::keep_sig(gs, sig));
+        }
+        assert_eq!(a.sig(), b.sig());
+        assert_ne!(a, b);
+        assert_ne!(b, a);
+        assert_eq!(a, c);
+        assert_eq!(a.cmp(&b), b.cmp(&a).reverse());
+        assert_ne!(a.cmp(&b), Ordering::Equal);
+        // A hash found by the walk: unequal to the one kept by hand, and to the hash of `a`.
+        // (`b == d` would be false, since the hash kept for `b` is not its own; `cmp`, which
+        // reads no hash, still finds them equal.)
+        let d = and(vec![con(0), con(2)]);
+        assert_ne!(a.sig(), d.sig());
+        assert_ne!(a, d);
+        assert_eq!(b.cmp(&d), Ordering::Equal);
+    }
+
+    #[test]
+    fn runs_in_other_orders_are_unequal_until_sorted_and_then_hash_alike() {
+        // `x >= 0 && (x >= -1 || x >= -2)` and the same with each run in the other order:
+        // unequal as written, since `Ord` reads parts in order, and equal with equal hashes
+        // once `nnf` sorts each run.
+        let a = and(vec![con(0), or(vec![con(1), con(2)])]);
+        let b = and(vec![or(vec![con(2), con(1)]), con(0)]);
+        assert_ne!(a, b);
+        let (a, b) = (nnf(&a, true), nnf(&b, true));
+        assert_eq!(a, b);
+        assert_eq!(a.sig(), b.sig());
+        assert_eq!(a.cmp(&b), Ordering::Equal);
+    }
+
+    #[test]
+    fn a_hash_is_found_again_after_its_parts_change() {
+        let mut f = and(vec![con(0), con(1)]);
+        let before = f.sig();
+        let Formula::And(gs) = &mut f else {
+            unreachable!()
+        };
+        Shared::change(gs).expect("one holder").push(con(2));
+        let fresh = and(vec![con(0), con(1), con(2)]);
+        assert_ne!(f.sig(), before);
+        assert_eq!(f.sig(), fresh.sig());
+        assert_eq!(f, fresh);
+    }
+
+    #[test]
+    fn parts_held_by_a_conjunction_and_a_disjunction_hash_as_each() {
+        // One list of parts under two variants: one keeps its hash with the parts, the other's
+        // is found in the call (`spill`), and both match the same formulas built apart.
+        let gs = Shared::new(vec![con(0), con(1)]);
+        let (a, o) = (Formula::And(gs.clone()), Formula::Or(gs));
+        let top = and(vec![a.clone(), o.clone(), a.clone()]);
+        let apart = |fs: [i64; 2]| fs.map(con).to_vec();
+        let top_apart = and(vec![
+            and(apart([0, 1])),
+            or(apart([0, 1])),
+            and(apart([0, 1])),
+        ]);
+        assert_eq!(top.sig(), top_apart.sig());
+        assert_eq!(a.sig(), and(apart([0, 1])).sig());
+        assert_eq!(o.sig(), or(apart([0, 1])).sig());
+        assert_ne!(a, o);
+        assert_eq!(top, top_apart);
     }
 }

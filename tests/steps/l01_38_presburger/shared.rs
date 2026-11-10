@@ -862,3 +862,121 @@ fn a_deep_chain_of_single_parts_compares_without_running_out_of_stack() {
     assert_ne!(a, c);
     assert_eq!(hash(&a), hash(&b));
 }
+
+/// Small formulas whose runs of `&&` and `||` are empty, of one part, repeated, grouped at
+/// other places or in other orders, built anew at each call so that no hash is kept yet.
+fn corner_cases() -> Vec<Formula> {
+    let (c, c1, c2) = (
+        con(0, 1, 0, false),
+        con(1, 0, -1, false),
+        con(1, 0, -2, false),
+    );
+    let s = and(vec![c1.clone(), c2.clone()]);
+    vec![
+        c.clone(),
+        and(vec![]),
+        or(vec![]),
+        and(vec![and(vec![])]),
+        or(vec![and(vec![])]),
+        and(vec![and(vec![]), c.clone()]),
+        and(vec![c.clone(), or(vec![])]),
+        and(vec![c.clone()]),
+        or(vec![c.clone()]),
+        and(vec![and(vec![c.clone()])]),
+        or(vec![and(vec![c.clone()])]),
+        not(c.clone()),
+        not(and(vec![c.clone()])),
+        and(vec![not(c.clone())]),
+        and(vec![c.clone(), c.clone()]),
+        and(vec![and(vec![c.clone()]), c.clone()]),
+        and(vec![c1.clone(), c2.clone()]),
+        and(vec![c2.clone(), c1.clone()]),
+        or(vec![c2.clone(), c1.clone()]),
+        and(vec![and(vec![c1.clone()]), c2.clone()]),
+        and(vec![c1.clone(), and(vec![c2.clone()])]),
+        and(vec![s.clone(), s.clone()]),
+        and(vec![c1.clone(), c2.clone(), c1.clone(), c2.clone()]),
+        and(vec![
+            c1.clone(),
+            and(vec![c2.clone(), c1.clone()]),
+            c2.clone(),
+        ]),
+        and(vec![s.clone(), c1.clone()]),
+        not(s.clone()),
+        not(and(vec![c1, c2])),
+    ]
+}
+
+#[test]
+fn equal_formulas_hash_alike_however_their_runs_are_grouped() {
+    // Each pair compared with the hash of neither side kept (single), and all pairs compared
+    // after every hash is kept, both ways and in both orders (batch): `==` gives the answer the
+    // order written out gives, and the same in each way.
+    let n = corner_cases().len();
+    let single: Vec<Vec<bool>> = (0..n)
+        .map(|i| {
+            (0..n)
+                .map(|j| {
+                    let fs = corner_cases();
+                    fs[i] == fs[j]
+                })
+                .collect()
+        })
+        .collect();
+    let fs = corner_cases();
+    for (i, p) in fs.iter().enumerate() {
+        for (j, q) in fs.iter().enumerate() {
+            let o = written(p).cmp(&written(q));
+            assert_eq!(p == q, o == Ordering::Equal, "{p} against {q}");
+            assert_eq!(single[i][j], o == Ordering::Equal, "{p} against {q}");
+            assert_eq!(p.cmp(q), o, "{p} against {q}");
+            if o == Ordering::Equal {
+                assert_eq!(hash(p), hash(q), "{p} against {q}");
+            }
+        }
+    }
+    for (i, p) in fs.iter().enumerate().rev() {
+        for (j, q) in fs.iter().enumerate().rev() {
+            assert_eq!(p == q, single[i][j], "{p} against {q}");
+        }
+    }
+    // The corner cases the order written out treats as equal, so that the hash must too.
+    let same = |i: usize, j: usize| assert!(single[i][j], "{} against {}", fs[i], fs[j]);
+    same(1, 3); // `true` and a conjunction of `true`
+    same(5, 7); // an empty run beside a constraint, and a run of one
+    same(7, 9); // a run of one in a run of one
+    same(14, 15); // a repeat in the top run, regrouped
+    same(16, 19);
+    same(16, 20);
+    same(21, 22); // a shared part twice, and its parts written out twice
+    same(25, 26);
+    assert!(!single[16][17], "a run in another order");
+    assert!(!single[7][8] && !single[0][7] && !single[11][13] && !single[1][2]);
+    assert!(!single[7][14], "a repeat is not dropped");
+}
+
+#[test]
+fn unequal_formulas_grouped_at_other_places_compare_in_time_near_linear_in_the_depth() {
+    // The unequal pairs of [`shifted_pairs`]: `==` finds each side's hash once, O(n) for its
+    // n = 2d + 2 distinct parts, and then answers in O(1); `cmp` alone parses both sides,
+    // O(n log N) = O(d^2) (the tradeoff at `Formula`'s `eq`, COMPLEXITY.md S31b).
+    let unequal = |d: usize| -> Vec<(Formula, Formula)> {
+        shifted_pairs(d)
+            .into_iter()
+            .filter(|(_, _, o)| *o != Ordering::Equal)
+            .map(|(a, b, _)| (a, b))
+            .collect()
+    };
+    let built: BTreeMap<usize, Vec<(Formula, Formula)>> = [30, 240].map(|d| (d, unequal(d))).into();
+    scaling::check(
+        "== on one sequence of 2^(d+1) - 1 constraints in d levels, grouped at other places on \
+         each side and differing at the last",
+        30,
+        |d| {
+            for (a, b) in &built[&d] {
+                assert!(a != b);
+                assert!(b != a);
+            }
+        },
+    );
+}

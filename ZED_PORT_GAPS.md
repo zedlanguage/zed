@@ -218,6 +218,7 @@ first use (`Type::p`, line 392), and ties a cycle through closures. `Group::inst
 `Shown` (types.rs:118) caches in place inside a shared value; `Text` did the same until WRITE-prefix-scale removed its cache. Since T14-rope the native runtime holds its strings as the same `Text` (`zed-rt/src/heap.rs`, `Obj::Str`); `zed-rt`'s own `Rope`, with a second `OnceLock`, is gone. `OddPart::filter` (`zedc-int/src/int.rs`, SCALE-fix-wide) takes the residues of a base modulo the primes below 1024 in a `OnceCell` the first time a root wider than one word is looked for; in Zed the loop over indices computes them at the first such index and carries them along.
 `Row::keys` (`zedc-types/src/ty.rs`, TY-row-class) keeps in a `OnceLock<Keys>` the class and key of each component of a tuple row, found the first time a row is filed, so later filings of the same row read them; at the port this is a field computed with the row, or a memo keyed by row id, whichever the measured cost of computing it for rows never filed allows.
 `Shape`'s `Placed::keys` (`zedc-types/src/ty.rs`, READ-atom-meet) keeps the same keys for an atom's payload shape in a `OnceLock<Keys>` in the shape, so that the meet and the difference of payloads file shapes as tuples are filed (`near_pairs`, now generic over the trait `Placed` of rows and shapes); at the port it goes the same way as `Row::keys`, and the trait is a function parameter or a sum of the two cases.
+`Formula`'s hash (`zedc-presburger/src/presburger/formula.rs`, `Held::sig`, ST-formula-set) is kept in a `OnceLock<Sig>` beside each shared part list, found the first time the node is hashed or compared by `==`, and dropped when the parts change in place; at the port it is a field computed with the node when it is built, from its parts' fields, which costs O(parts) per node and so O(n) for the formula, or a memo keyed by the node's id.
 
 Zed values are immutable with no cell, and a function field re-evaluates on each call. Cyclic
 data lives in two sanctioned forms, arenas or regions and id-indexed graphs `Id ->? Node`
@@ -3295,3 +3296,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | The input domains held in an `Option<Rc<Domains>>` in the run's `Marks`, taken (`Option::take`) through `&mut self` the first time the landmarks are read, so that their ends are added once | `Marks`, `Tx::landmarks`, `Tx::marks` | Mutation (gap 11), reference counts | The landmarks computed on demand from the domains and returned with the run's state, as PA-letpre-linear's `Run::marked` |
+
+## Entries from ST-formula-set (`crates/zedc-presburger/src/presburger/formula.rs`, `deep.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `OnceLock<Sig>` in each shared node (`Held::sig`) set through `&self` the first time the node is hashed (`get_or_init`), reset when the parts are changed in place (`Shared::change`, `Shared::get_mut`) | `Shared::sig`, `Shared::keep_sig`, `Formula::sig`, `Hash for Formula`, `PartialEq for Formula` | Lazy cells (gap 3), interior mutability | A field of the node computed when it is built, from its parts' fields; a node changed in place is a new node |
+| The hash walk on an explicit stack of `(&Formula, usize)` frames, each with the index of its next part not yet hashed, and a `HashMap<Id, Sig>` for parts whose cell holds another variant's hash | `Formula::sig_walk`, `Formula::known`, `Formula::keep` | Mutation (gap 11) | None needed when the hash is a field computed at construction; otherwise a fold in a topological order with a persistent map keyed by id |
