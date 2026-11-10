@@ -4,7 +4,7 @@
 //! whole group.
 
 use zed_tests::scaling;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, decide, project_each};
+use zedc::store::presburger::{self, Atom, Con, Formula, Lin, decide, project_each};
 
 fn x(i: usize) -> Lin {
     Lin::atom(Atom::Sym(format!("x{i:05}").into()))
@@ -62,12 +62,7 @@ pub fn difference_chain(n: usize, holds: Holds) -> Formula {
 /// `x[i + 1] - x[i] + y[i]`: `<= 2 || >= 5` (the first holds at the least point), or `== 4 ||
 /// == 5` (neither does).
 pub fn general_chain(n: usize, holds: Holds) -> Formula {
-    let mut fs = vec![ge(x(0)), ge(Lin::constant(8 * n as i128).minus(&x(n - 1)))];
-    for i in 0..n - 1 {
-        fs.push(ge(step(i).minus(&y(i))));
-        fs.push(ge(y(i).minus(&Lin::constant(1))));
-        fs.push(ge(Lin::constant(2).minus(&y(i))));
-    }
+    let mut fs = general_rows(n);
     for i in (0..n - 1).step_by(4) {
         let s = step(i).plus(&y(i));
         fs.push(Formula::or(match holds {
@@ -82,6 +77,18 @@ pub fn general_chain(n: usize, holds: Holds) -> Formula {
         }));
     }
     Formula::and(fs)
+}
+
+/// The rows of [`general_chain`] without its disjunctions: `x[i + 1] - x[i] - y[i] >= 0` with
+/// `1 <= y[i] <= 2` over `n` stages, `0 <= x[0]` and `x[n - 1] <= 8n`.
+fn general_rows(n: usize) -> Vec<Formula> {
+    let mut fs = vec![ge(x(0)), ge(Lin::constant(8 * n as i128).minus(&x(n - 1)))];
+    for i in 0..n - 1 {
+        fs.push(ge(step(i).minus(&y(i))));
+        fs.push(ge(y(i).minus(&Lin::constant(1))));
+        fs.push(ge(Lin::constant(2).minus(&y(i))));
+    }
+    fs
 }
 
 /// The symbol asked for: the middle of the chain.
@@ -135,21 +142,27 @@ fn the_middle_of_a_difference_chain_whose_disjuncts_do_not_hold_is_projected_in_
     );
 }
 
+/// At 256 stages, not fewer: the limit for work of order n log n is 12.1 times from 256 to
+/// 2048, and work of order n^1.2 gives 8^1.2 = 12.13 times there, but at 32 stages the limit is
+/// 14.1 and n log n itself gives 12.8 times, so n^1.2 passed unseen (plan item
+/// THREE-atom-exponent; COMPLEXITY.md row THREE-atom-exponent).
 #[test]
 fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_hold_is_projected_in_n_log_n() {
     projects(
         "a chain of three-atom rows projected, a disjunct holding",
-        32,
+        256,
         general_chain,
         Holds::First,
     );
 }
 
+/// At 512 stages, where the limit, 11.7 times, is below the 12.13 times of work of order n^1.2;
+/// at 64 it was 13.2 (plan item THREE-atom-exponent).
 #[test]
 fn a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_decided_in_n_log_n() {
     decides(
         "a chain of three-atom rows decided, no disjunct holding",
-        64,
+        512,
         general_chain,
     );
 }
@@ -168,11 +181,12 @@ fn the_middle_of_a_chain_whose_disjuncts_do_not_hold_has_its_exact_hull() {
     assert!(s.contains(hi) && !s.contains(hi + 1), "{s:?}");
 }
 
+/// At 256 stages, for the reason given at the test of the chain whose disjuncts hold.
 #[test]
 fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_projected_in_n_log_n() {
     projects(
         "a chain of three-atom rows projected, no disjunct holding",
-        32,
+        256,
         general_chain,
         Holds::None,
     );
@@ -191,6 +205,26 @@ fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_has_its_
     let (lo, hi) = (32 + 8, 8 * 64 - (31 + 8));
     assert!(s.contains(lo) && !s.contains(lo - 1), "{s:?}");
     assert!(s.contains(hi) && !s.contains(hi + 1), "{s:?}");
+}
+
+/// The hull of the middle of a chain of three-atom rows with no disjunction (plan item
+/// THREE-atom-exponent) is found without asking the solver for a side of a hull: each `y[i]`,
+/// bounded below by its own row only, is set to its least value 1, which leaves difference
+/// rows, whose hulls are shortest paths. Before, each side was a search of O(log n) questions
+/// about the whole chain, 77% of the work of projecting [`general_chain`] at 2048 stages.
+#[test]
+fn the_middle_of_a_chain_of_three_atom_rows_is_found_without_asking_for_a_side() {
+    for n in [8, 64, 512] {
+        let f = Formula::and(general_rows(n));
+        presburger::hull_sides_asked();
+        let r = project_each(&f, &middle(n)).expect("a projection");
+        assert_eq!(presburger::hull_sides_asked(), 0, "{n} stages");
+        let s = r.0[0].clone().expect("a hull");
+        // Every step at least 1: the middle lies in [n / 2, 8n - (n - 1 - n / 2)].
+        let (lo, hi) = ((n / 2) as i64, (8 * n - (n - 1 - n / 2)) as i64);
+        assert!(s.contains(lo) && !s.contains(lo - 1), "{s:?}");
+        assert!(s.contains(hi) && !s.contains(hi + 1), "{s:?}");
+    }
 }
 
 /// A chain of three-atom rows of `n` stages as [`general_chain`] with `x[n - 1] <= end`, and

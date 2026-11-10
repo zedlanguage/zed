@@ -9950,7 +9950,16 @@ fn project_parts(
     let top = Formula::top();
     let base_of = |r: usize| bases.get(&r).unwrap_or(&top);
     // A group of difference constraints and bounds gives the hulls of all its atoms in one
-    // pass ([`difference_hulls`]); any other group, each hull by its own questions.
+    // pass ([`difference_hulls`]), and so does one that becomes such a group once each atom
+    // not asked for that only rows of it alone bound on one side is set to that bound
+    // ([`substituted_difference_hulls`]); any other group, each hull by its own questions.
+    // Complexity tradeoff: the naive way, each hull by its own questions ([`hull_from`]), is
+    // O(log d) questions of the whole group of n rows for each side; the substitution and the
+    // shortest paths are O(n log n) for the group, once. On the three-atom chain of
+    // `l01_38_presburger::disj_groups` that was 77% of the work at 2048 stages; now 2.2 times
+    // less work in all, still of order n log n. Test:
+    // `disj_groups::the_middle_of_a_chain_of_three_atom_rows_is_found_without_asking_for_a_side`.
+    // COMPLEXITY.md row THREE-atom-exponent.
     let mut differences: HashMap<usize, Option<HashMap<Atom, IntervalSet>>> = HashMap::new();
     let mut out: Vec<Result<IntervalSet, Refusal>> = Vec::with_capacity(syms.len());
     for s in syms {
@@ -9960,7 +9969,9 @@ fn project_parts(
                 .entry(g)
                 .or_insert_with(|| {
                     let cs: Vec<&Con> = held.iter().map(|i| &linked.cons[*i]).collect();
-                    difference_hulls(&cs, &model)
+                    difference_hulls(&cs, &model).or_else(|| {
+                        substituted_difference_hulls(&cs, &|a| index.contains_key(a), &model)
+                    })
                 })
                 .as_ref()
                 .and_then(|h| h.get(s).cloned()),
@@ -11438,6 +11449,113 @@ fn difference_hulls(cons: &[&Con], m: &Model) -> Option<HashMap<Atom, IntervalSe
             })
             .collect(),
     )
+}
+
+/// [`difference_hulls`] of `cons` after each atom that `keep` does not keep and that is bounded
+/// on one side only by rows of it alone is taken out: where every row giving it a lower bound
+/// is a bound of it alone, it is set to the greatest of those lower bounds in every other row
+/// (and every row with it is dropped when it has none), and likewise for upper bounds. The
+/// rows `x[i + 1] - x[i] - y[i] >= 0` with `1 <= y[i] <= 2` become `x[i + 1] - x[i] - 1 >= 0`,
+/// difference rows. `None` when the rows left are not difference rows and bounds, or the point
+/// `m` does not meet them.
+///
+/// The hulls of the atoms left are those of `cons`: a row in which such an atom `y` gives an
+/// upper bound (its coefficient below zero) holds at a value of `y` only if it holds at every
+/// lower value, so a point of `cons` gives a point of the rows with `y` at its least value `L`,
+/// and a point of those rows is one of `cons` with `y = L`, which meets every bound of `y`
+/// alone; with no lower bound, `y` far enough down meets every row with it. Atoms taken out
+/// together are each set so at once, which is a point by the same argument for each.
+// Complexity tradeoff: the naive way, which this replaces for such groups, is [`hull_from`]
+// for each symbol of the group, O(log d) questions of the whole group of `n` rows for a bound
+// at distance `d` (the three-atom chain of `l01_38_presburger::disj_groups`: 77% of the work
+// at 2048 stages). This is one pass over the terms and the two Dijkstra searches of
+// [`difference_hulls`], O(n log n). It refuses nothing: a group whose rows are not difference
+// rows after the substitution, or an atom bounded on both sides by rows with others, keeps the
+// naive way, with the same hulls. Tests: `substituted_difference_hulls_are_those_the_solver_finds`,
+// `disj_groups::the_middle_of_a_chain_of_three_atom_rows_is_found_without_asking_for_a_side`.
+// COMPLEXITY.md row THREE-atom-exponent.
+fn substituted_difference_hulls(
+    cons: &[&Con],
+    keep: &dyn Fn(&Atom) -> bool,
+    m: &Model,
+) -> Option<HashMap<Atom, IntervalSet>> {
+    // For each atom not kept: whether its lower (upper) bounds all come from rows of it alone,
+    // and those rows.
+    struct Sides<'a> {
+        lower_alone: bool,
+        upper_alone: bool,
+        alone: Vec<&'a Con>,
+    }
+    let mut sides: HashMap<&Atom, Sides<'_>> = HashMap::new();
+    for c in cons {
+        let one = c.lin.terms.len() == 1;
+        for (a, k) in &c.lin.terms {
+            if keep(a) {
+                continue;
+            }
+            let s = sides.entry(a).or_insert(Sides {
+                lower_alone: true,
+                upper_alone: true,
+                alone: Vec::new(),
+            });
+            if one {
+                s.alone.push(c);
+            } else if c.rel == Rel::Eq {
+                (s.lower_alone, s.upper_alone) = (false, false);
+            } else if k.is_positive() {
+                s.lower_alone = false;
+            } else {
+                s.upper_alone = false;
+            }
+        }
+    }
+    // Each atom taken out: `Some(v)` set to `v`, `None` every row with it dropped.
+    let mut out: HashMap<&Atom, Option<Int>> = HashMap::new();
+    for (a, s) in sides {
+        if !(s.lower_alone || s.upper_alone) {
+            continue;
+        }
+        let rows =
+            (s.alone.iter()).map(|c| (c.lin.terms[a].clone(), c.lin.constant.clone(), c.rel));
+        let (lo, hi) = int_bounds(rows)?;
+        out.insert(a, if s.lower_alone { lo } else { hi });
+    }
+    if out.is_empty() {
+        return None;
+    }
+    let mut rows: Vec<Con> = Vec::with_capacity(cons.len());
+    for c in cons {
+        if !c.lin.terms.keys().any(|a| out.contains_key(a)) {
+            rows.push((*c).clone());
+            continue;
+        }
+        // A row with an atom whose rows are dropped.
+        if c.lin.terms.keys().any(|a| matches!(out.get(a), Some(None))) {
+            continue;
+        }
+        let mut lin = Lin::constant(c.lin.constant.clone());
+        for (a, k) in &c.lin.terms {
+            match out.get(a) {
+                Some(Some(v)) => lin.constant = &lin.constant + &(k * v),
+                _ => {
+                    lin.terms.insert(a.clone(), k.clone());
+                }
+            }
+        }
+        if lin.terms.is_empty() {
+            let met = match c.rel {
+                Rel::Ge => !lin.constant.is_negative(),
+                Rel::Eq => lin.constant.is_zero(),
+            };
+            if !met {
+                return None;
+            }
+            continue;
+        }
+        rows.push(Con { lin, rel: c.rel });
+    }
+    let refs: Vec<&Con> = rows.iter().collect();
+    difference_hulls(&refs, m)
 }
 
 /// The least and greatest value of each atom, `None` where there is none.
@@ -14071,6 +14189,66 @@ pub(super) mod tests {
         .collect();
         assert!(difference_hulls(&[&two[0]], &m).is_none());
         assert!(difference_hulls(&[&three[0]], &m).is_none());
+    }
+
+    /// The hulls [`substituted_difference_hulls`] gives are those found by asking the solver of
+    /// each atom ([`hull_from`]), on random systems of up to 9 rows over the kept names `a`,
+    /// `b`, `c` and the others `y`, `z`: difference rows and bounds, rows `x - w ± y + k` of
+    /// three atoms, and bounds of `y` and `z` alone, some without a bound on a side, some
+    /// equations. Many systems are taken (the chain's rows among them) and many are not (an
+    /// atom bounded on both sides by rows with others, or a row of three atoms left).
+    #[test]
+    fn substituted_difference_hulls_are_those_the_solver_finds() {
+        let kept = ["a", "b", "c"];
+        let others = ["y", "z"];
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let (mut compared, mut taken, mut not_taken) = (0, 0, 0);
+        for _ in 0..3000 {
+            let rows = 1 + rng.below(9) as usize;
+            let cons: Vec<Con> = (0..rows)
+                .map(|_| {
+                    let x = kept[rng.below(3) as usize];
+                    let w = kept[rng.below(3) as usize];
+                    let y = others[rng.below(2) as usize];
+                    let k = rng.below(13) as i128 - 6;
+                    let sign = if rng.below(2) == 0 { 1 } else { -1 };
+                    let terms: Vec<(&str, i128)> = match rng.below(6) {
+                        0 => vec![(x, sign)],
+                        1 if x != w => vec![(x, 1), (w, -1)],
+                        2 | 3 if x != w => vec![(x, 1), (w, -1), (y, sign)],
+                        _ => vec![(y, sign)],
+                    };
+                    let rel = if rng.below(6) == 0 { Rel::Eq } else { Rel::Ge };
+                    Con {
+                        lin: lin(&terms, k),
+                        rel,
+                    }
+                })
+                .collect();
+            let Ok(Some(model)) = solve(&cons, true) else {
+                continue;
+            };
+            let refs: Vec<&Con> = cons.iter().collect();
+            let keep = |a: &Atom| kept.iter().any(|k| *a == sym(k));
+            let Some(hulls) = substituted_difference_hulls(&refs, &keep, &model) else {
+                not_taken += 1;
+                continue;
+            };
+            taken += 1;
+            let whole = Formula::and(cons.iter().cloned().map(Formula::Con).collect());
+            for (a, h) in &hulls {
+                assert_eq!(
+                    Ok(h.clone()),
+                    hull_from(&whole, a, &model),
+                    "{whole} onto {a}"
+                );
+                compared += 1;
+            }
+        }
+        assert!(
+            compared > 1000 && taken > 300 && not_taken > 300,
+            "{compared} {taken} {not_taken}"
+        );
     }
 
     /// The bounds [`part_bounds`] gives each atom of a part contain the hull the solver finds
