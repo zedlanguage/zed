@@ -1541,12 +1541,15 @@ struct HoleCounts {
 /// (`Scope::raise`); holes of two integers, cycles lighter than the sum of their names' gaps,
 /// and cycles of weight 0 from equalities and from two inequalities go block by block. With
 /// `pile`, the step's own test is the hole test half the time, so that holes pile up in many
-/// names of one tree.
-fn holes_in_trees(seed: u64, pile: bool) -> HoleCounts {
+/// names of one tree. Only the trees `cases` (of 0 to 149) are checked and counted; the trees
+/// before them are drawn and built unchecked, so that each tree is that of its seed and case
+/// whatever range a test checks.
+fn holes_in_trees(seed: u64, pile: bool, cases: std::ops::Range<usize>) -> HoleCounts {
     let mut r = Rng::new(seed);
     let p = Premises::new();
     let mut out = HoleCounts::default();
-    for case in 0..150 {
+    for case in 0..cases.end {
+        let checked = case >= cases.start;
         let k = 3 + r.below(6);
         let ns = named(k, "x");
         let mut s = ints(&ns);
@@ -1577,7 +1580,8 @@ fn holes_in_trees(seed: u64, pile: bool) -> HoleCounts {
                 }
             };
             let asked = [hole(&mut r), hole(&mut r), hole(&mut r)];
-            for (hole, holds) in asked.iter().flat_map(|h| [(h, true), (h, false)]) {
+            let checks = asked.iter().flat_map(|h| [(h, true), (h, false)]);
+            for (hole, holds) in checks.filter(|_| checked) {
                 let got = s.assume(hole, holds, &p);
                 let mut fresh = s.clone();
                 fresh.forget_projections();
@@ -1610,7 +1614,7 @@ fn holes_in_trees(seed: u64, pile: bool) -> HoleCounts {
                 // An `if` whose arms join: the join keeps the last projection of the arm that
                 // held, with the hole, and the next steps are projected from it.
                 3 => {
-                    out.joined += 1;
+                    out.joined += usize::from(checked);
                     let mut j = s
                         .assume(&asked[1], true, &p)
                         .join(&s.assume(&asked[1], false, &p));
@@ -1622,7 +1626,7 @@ fn holes_in_trees(seed: u64, pile: bool) -> HoleCounts {
                     continue;
                 }
                 2 if i != j => {
-                    out.tied += 1;
+                    out.tied += usize::from(checked);
                     s = s.assume(&ge(&ns[i], &ns[j], c), true, &p);
                     ge(&ns[j], &ns[i], -c)
                 }
@@ -1639,27 +1643,71 @@ fn holes_in_trees(seed: u64, pile: bool) -> HoleCounts {
     out
 }
 
-#[test]
-fn holes_in_a_tree_of_differences_give_the_projection_from_scratch() {
-    let n = holes_in_trees(0x1e4e, false);
-    assert!(n.moved > 5000, "{n:?}");
-    assert!(n.holes > 2000, "{n:?}");
-    assert!(n.empty > 500, "{n:?}");
-    assert!(n.tied > 60, "{n:?}");
-    assert!(n.joined > 80, "{n:?}");
+/// [`holes_in_trees`] of seed 0x1e4e, without piling, in three parts of 50 trees, each a test.
+/// As one test of the 150 trees it took 19.5 to 20.8 s alone at load 23 to 25, and as part of
+/// the module's one piece it is the reason the piece took 55.4 s at load 27 in a full run
+/// (item SPLIT-l01_39-linked). Each part asserts its counts above a third of the limits the one
+/// test had (moved 5000, holes 2000, empty 500, tied 60, joined 80), so the three together
+/// assert at least what it did; the 150 trees counted moved 6096, holes 2330, empty 662, tied
+/// 77, joined 109.
+mod holes_in_a_tree_of_differences_give_the_projection_from_scratch {
+    use super::*;
+
+    /// The trees `cases`, with each count above its least in `[moved, holes, empty, tied,
+    /// joined]`.
+    fn part(cases: std::ops::Range<usize>, least: [usize; 5]) {
+        let n = holes_in_trees(0x1e4e, false, cases);
+        let counts = [n.moved, n.holes, n.empty, n.tied, n.joined];
+        assert!(counts.iter().zip(least).all(|(&c, l)| c > l), "{n:?}");
+    }
+
+    #[test]
+    fn cases_0_to_49() {
+        part(0..50, [1666, 666, 166, 20, 26]);
+    }
+
+    #[test]
+    fn cases_50_to_99() {
+        part(50..100, [1667, 667, 167, 20, 27]);
+    }
+
+    #[test]
+    fn cases_100_to_149() {
+        part(100..150, [1667, 667, 167, 20, 27]);
+    }
 }
 
 /// As [`holes_in_a_tree_of_differences_give_the_projection_from_scratch`], with the holes piled
-/// up in many names of each tree.
-#[test]
-fn holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch() {
-    let n = holes_in_trees(0x9a1e, true);
-    assert!(n.moved > 5000, "{n:?}");
-    assert!(n.holes > 4000, "{n:?}");
-    assert!(n.piled > 2000, "{n:?}");
-    assert!(n.empty > 500, "{n:?}");
-    assert!(n.tied > 30, "{n:?}");
-    assert!(n.joined > 30, "{n:?}");
+/// up in many names of each tree: [`holes_in_trees`] of seed 0x9a1e in three parts of 50 trees,
+/// each a test. As one test it took 22.0 to 22.8 s alone at load 23 to 25 (item
+/// SPLIT-l01_39-linked). Each part asserts its counts above a third of the limits the one test
+/// had (moved 5000, holes 4000, piled 2000, empty 500, tied 30, joined 30); the 150 trees
+/// counted moved 6773, holes 4803, piled 2296, empty 763, tied 45, joined 45.
+mod holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch {
+    use super::*;
+
+    /// The trees `cases`, with each count above its least in `[moved, holes, piled, empty,
+    /// tied, joined]`.
+    fn part(cases: std::ops::Range<usize>, least: [usize; 6]) {
+        let n = holes_in_trees(0x9a1e, true, cases);
+        let counts = [n.moved, n.holes, n.piled, n.empty, n.tied, n.joined];
+        assert!(counts.iter().zip(least).all(|(&c, l)| c > l), "{n:?}");
+    }
+
+    #[test]
+    fn cases_0_to_49() {
+        part(0..50, [1666, 1333, 666, 166, 10, 10]);
+    }
+
+    #[test]
+    fn cases_50_to_99() {
+        part(50..100, [1667, 1333, 667, 167, 10, 10]);
+    }
+
+    #[test]
+    fn cases_100_to_149() {
+        part(100..150, [1667, 1334, 667, 167, 10, 10]);
+    }
 }
 
 /// A star goes when one step both takes a conjunct from its hub and gives one to its leaf:

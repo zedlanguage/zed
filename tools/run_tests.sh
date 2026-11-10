@@ -195,6 +195,12 @@ fi
 # `the_arms_of_a_deep_block_scale`; each of its tests is a piece. The parts of lazy's join test
 # took 50 to 73 s each alone at load 31 to 58; it has ten parts of 20 seeds, each a piece
 # (2026-11-10, SPLIT-l01_39-slow).
+# l01_39 linked took 55.4 s whole at load 27 in a full run and 20 to 22 s at load 23 to 28 alone,
+# with the same instructions before and after batch 112: its tests take 91 s one by one, the two
+# random hole tests 20 and 22 s of it; each is now three parts of 50 trees. exact's test of
+# constraints reduced one at a time took 32 s at load 39 and 10.6 to 12.1 s alone at load 24;
+# it is now two parts of two names each. Each test of both is a piece
+# (2026-11-10, SPLIT-l01_39-rest).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
@@ -218,6 +224,11 @@ split="
   l01_39_reduced_product::deep_let
   l01_39_reduced_product::if_shortcut
   l01_39_reduced_product::refused
+  l01_39_reduced_product::linked
+  l01_39_reduced_product::linked::holes_in_a_tree_of_differences_give_the_projection_from_scratch
+  l01_39_reduced_product::linked::holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch
+  l01_39_reduced_product::exact
+  l01_39_reduced_product::exact::constraints_reduced_one_at_a_time_decide_as_all_at_once
   l01_39a_bit_words l01_39a_bit_words::scaling
   l25_08_mutate l25_08_mutate::scaling
 "

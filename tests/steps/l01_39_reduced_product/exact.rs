@@ -154,26 +154,47 @@ fn gear_chain() -> [Term; 4] {
     ]
 }
 
-#[test]
-fn constraints_reduced_one_at_a_time_decide_as_all_at_once() {
-    // A program that checks one constraint per line reduces after each; the exact sets must
-    // be those of reducing once after all of them.
-    let names = [("a", 0, 30), ("b", 0, 30), ("c", 0, 30), ("d", 0, 30)];
-    let at_once = written(within(&names, true), &gear_chain());
-    let mut one_by_one = within(&names, true);
-    for t in gear_chain() {
-        one_by_one = written(one_by_one, &[t]);
+/// A program that checks one constraint per line reduces after each; the exact sets must be
+/// those of reducing once after all of them. Building the two scopes takes about 50 ms; nearly
+/// all the time is the 31 searches of [`allowed`] for each name in each scope, about 40 ms each
+/// (COMPLEXITY.md S17). As one test of the four names it took 10.6 to 12.1 s alone at load 24
+/// and 32 s at load 39 as SPLIT-l01_39-slow measured it, so each pair of names is a test
+/// (item SPLIT-l01_39-rest).
+mod constraints_reduced_one_at_a_time_decide_as_all_at_once {
+    use super::*;
+
+    const NAMES: [(&str, i64, i64); 4] = [("a", 0, 30), ("b", 0, 30), ("c", 0, 30), ("d", 0, 30)];
+
+    /// The values each of `checked` allows in the scope reduced after each constraint, which
+    /// must be those it allows in the scope reduced once after all of them.
+    fn part(checked: &[&str]) -> Vec<Vec<i64>> {
+        let at_once = written(within(&NAMES, true), &gear_chain());
+        let mut one_by_one = within(&NAMES, true);
+        for t in gear_chain() {
+            one_by_one = written(one_by_one, &[t]);
+        }
+        assert!(!at_once.bottom && !one_by_one.bottom);
+        let names = NAMES.iter().filter(|(n, _, _)| checked.contains(n));
+        names
+            .map(|&(n, lo, hi)| {
+                let got = allowed(&one_by_one, n, lo, hi);
+                assert_eq!(got, allowed(&at_once, n, lo, hi), "{n}");
+                got
+            })
+            .collect()
     }
-    assert!(!at_once.bottom && !one_by_one.bottom);
-    for (n, lo, hi) in names {
-        assert_eq!(
-            allowed(&one_by_one, n, lo, hi),
-            allowed(&at_once, n, lo, hi),
-            "{n}"
-        );
+
+    #[test]
+    fn names_a_and_b() {
+        let got = part(&["a", "b"]);
+        // `d` ends in 3 or 7, so `c`, `b` and `a` do too.
+        assert_eq!(got[0], [3, 7, 13, 17, 23, 27]);
     }
-    // `d` ends in 3 or 7, so `c`, `b` and `a` do too.
-    assert_eq!(allowed(&one_by_one, "a", 0, 30), [3, 7, 13, 17, 23, 27]);
+
+    #[test]
+    fn names_c_and_d() {
+        part(&["c", "d"]);
+    }
 }
 
 #[test]
