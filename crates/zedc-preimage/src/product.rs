@@ -541,8 +541,10 @@ pub struct Scope {
     /// `…::a_refused_test_through_a_helper_names_the_test_and_its_outcome`,
     /// `…::a_refused_projection_onto_each_name_gives_one_warning_for_each`,
     /// `…::two_refused_arms_joined_give_both_warnings_in_one_order`,
-    /// `…::warnings_of_many_refused_tests_scale`. COMPLEXITY.md rows S18 (the solver) and S28
-    /// (this report). A complete solution would decide every question (see `presburger`).
+    /// `…::narrowing_by_many_refused_tests_scales`, `…::keeping_many_refusals_scales`,
+    /// `…::the_join_of_arms_with_many_refused_tests_and_its_warnings_scale`. COMPLEXITY.md rows
+    /// S18 (the solver) and S28 (this report). A complete solution would decide every question
+    /// (see `presburger`).
     pub refusals: imbl::OrdMap<Refused, Kept>,
     /// Each name a `let` of the walk bound, with the order of its binding and, for a function,
     /// its lambda: a test that calls a function is closed over it before its preimage is taken

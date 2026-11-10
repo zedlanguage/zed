@@ -292,17 +292,31 @@ fn following_the_repair_of_each_warning_ends_it() {
     }
 }
 
+/// The names of `k` refused tests on disjoint names, four to a test.
+fn refused_names(k: usize) -> Vec<Arc<str>> {
+    (0..4 * k).map(|i| format!("v{i}").into()).collect()
+}
+
+/// The refused tests ([`growth_term`]) on `names`, four names to a test.
+fn refused_guards(names: &[Arc<str>]) -> Vec<Term> {
+    names.chunks(4).map(growth_term).collect()
+}
+
+// The tests of `k` refused tests on disjoint names below were one test until
+// SPLIT-reduced-refused (2026-11-10). That test took 15 to 16 s alone with malloc's cache per thread
+// and 26 to 27 s without it, as tools/run_tests.sh runs it (load 28 to 36), and once ran past its
+// piece's limit of 83 s at load 44 to 64. About 88% of it is building the arms of the join
+// check: 2,304 `Scope::assume` calls, each about 42M instructions. Each test is a piece of its
+// own (tools/run_tests.sh).
+
 /// `k` refused tests on disjoint names: assuming them one after another records one refusal
-/// each, and the join of two arms that share those tests and add one refused test each, with
-/// its warnings, costs near linear in `k`.
+/// each, at a cost near linear in `k`.
 #[test]
-fn warnings_of_many_refused_tests_scale() {
+fn narrowing_by_many_refused_tests_scales() {
     use zed_tests::scaling::{self, FACTOR};
     use zedc::store::cell::Premises;
     let none = Premises::new();
-    let names =
-        |k: usize| -> Vec<Arc<str>> { (0..4 * k).map(|i| format!("v{i}").into()).collect() };
-    let guards = |names: &[Arc<str>]| -> Vec<Term> { names.chunks(4).map(growth_term).collect() };
+    let (names, guards) = (refused_names, refused_guards);
     let n = 16;
     let inputs = [n, FACTOR * n].map(|k| {
         let ns = names(k);
@@ -315,8 +329,15 @@ fn warnings_of_many_refused_tests_scale() {
             .fold(scope.clone(), |s, g| s.assume(g, true, &none));
         assert_eq!(s.warnings().len(), k);
     });
-    // The check above is mostly the solver's work, about 11M instructions per refused test, so
-    // the refusals' own cost is measured alone: keeping k refusals, each once, in a scope.
+}
+
+/// The check of [`narrowing_by_many_refused_tests_scales`] is mostly the solver's work, about
+/// 42M instructions per refused test (11M when it was written, 2026-11-03), so the refusals' own
+/// cost is measured alone: keeping `k` refusals, each once, in a scope costs near linear in `k`.
+#[test]
+fn keeping_many_refusals_scales() {
+    use zed_tests::scaling::{self, FACTOR};
+    let names = refused_names;
     let n = 4096;
     let refused = [n, FACTOR * n].map(|k| -> Vec<(Refused, Kept)> {
         names(k)
@@ -342,6 +363,16 @@ fn warnings_of_many_refused_tests_scale() {
             });
         assert_eq!(s.refusals.len(), k);
     });
+}
+
+/// The join of two arms that share `k - 2` refused tests on disjoint names and add one refused
+/// test each, and the join's warnings, cost near linear in `k`.
+#[test]
+fn the_join_of_arms_with_many_refused_tests_and_its_warnings_scale() {
+    use zed_tests::scaling::{self, FACTOR};
+    use zedc::store::cell::Premises;
+    let none = Premises::new();
+    let (names, guards) = (refused_names, refused_guards);
     // At sizes n and 8n: the scope after k - 2 shared tests, then each arm after one more.
     // Below n = 256 a fixed cost of about 2.8M instructions per join hides a union quadratic in
     // k. Two arms that each add many tests the other lacks are not measured here: that join was

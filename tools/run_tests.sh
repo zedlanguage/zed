@@ -185,6 +185,9 @@ fi
 # would pass 60 s (2026-11-09, PA-if-shortcut-diff).
 # l01_38 one_scope took 28.8 to 43.8 s whole under load, and 52.5 s at load 32; its 58 tests take
 # 168 s one by one, the slowest 15 to 37 s alone at load 28 to 46 (2026-11-10, SPLIT-one-scope).
+# l01_39 refused took 56 s whole on main and once ran past its limit of 83 s at load 44 to 64;
+# its test of many refused tests, 26 to 27 s alone at load 28 to 36, is now three tests, the
+# slowest the join check at 20 to 26 s at load 24 to 34 (2026-11-10, SPLIT-reduced-refused).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
@@ -204,6 +207,7 @@ split="
   l01_39_reduced_product::lazy::a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_product
   l01_39_reduced_product::lazy::leaves_of_one_class_settled_together_get_what_each_gets_alone
   l01_39_reduced_product::if_shortcut
+  l01_39_reduced_product::refused
   l01_39a_bit_words l01_39a_bit_words::scaling
   l25_08_mutate l25_08_mutate::scaling
 "
