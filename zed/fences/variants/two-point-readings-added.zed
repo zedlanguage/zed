@@ -1,6 +1,9 @@
-// variant: // both = morning + noon;                      // ✗ No `+` of two point readings: morning and noon are Celsius readings; add a difference in K
-morning = Celsius(fromZero: 12.5 with units("K"));
-noon = morning + (6.0 with units("K"));        // a Celsius(f64) reading, 18.5 °C
-rise = noon - morning;                         // 6.0 with units("K")
-absolute = noon.kelvin;                        // 291.65 with units("K")
-both = morning + noon;                      // ✗ No `+` of two point readings: morning and noon are Celsius readings; add a difference in K
+// variant: // both = morning + noon;                    // ✗ No `+` of two point readings: morning and noon are readings in °C; add a difference in K
+noon = 20.0 with units("°C");
+morning = 12.5 with units("degC");
+rise = noon - morning;                       // 7.5 with units("K")
+absolute = noon.to("K");                     // 293.15 with units("K")
+later = noon + (2.0 with units("K"));        // 22.0 with units("°C")
+warmer = noon > morning;                     // true
+both = morning + noon;                    // ✗ No `+` of two point readings: morning and noon are readings in °C; add a difference in K
+// gradient = noon / (2.0 with units("m")); // ✗ Point unit in a product, quotient or power: noon is a reading in °C; write noon.to("K")

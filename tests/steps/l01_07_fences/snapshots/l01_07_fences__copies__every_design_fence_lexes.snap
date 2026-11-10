@@ -77,38 +77,55 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | «import» geometry . shapes . { area , Rect } ;
 == DESIGN.md [sec:facets] 1 L20
   1 | «type» Nonzero = Utf8String «matching» «grammar» { str["0"] * ( str["1"] | str["2"] | str["3"] | str["4"] | str["5"] | str["6"] | str["7"] | str["8"] | str["9"] ) digit * } ;
-  2 | «type» UnitName = Utf8String «matching» «grammar» { alpha ( alpha | str["_"] ) * | str["%"] | str["°"] | str["′"] | str["″"] } ;
-  3 | «type» UnitPower = Utf8String «matching» «grammar» { str["-"] ? digit + | str["("] str["-"] ? digit + str["/"] Nonzero str[")"] } ;
-  4 | «type» UnitFactor = Utf8String «matching» «grammar» { UnitName ( str["^"] UnitPower ) ? } ;
-  5 | «type» UnitProduct = Utf8String «matching» «grammar» { UnitFactor sep ( str[" "] | str["*"] | str["·"] ) } ;
-  6 | «type» UnitText = Utf8String «matching» «grammar» { ( UnitProduct | str["1"] ) ( str["/"] ( UnitFactor | str["("] UnitProduct str[")"] ) ) ? | str[] } ;
+  2 | «type» UnitName = Utf8String «matching» «grammar» { alpha ( alpha | str["_"] ) * | str["°"] alpha * | str["%"] | str["′"] | str["″"] } ;
+  3 | «type» UnitKind = Utf8String «matching» «grammar» { str["#"] alpha ( alpha | digit | str["_"] ) * } ;
+  4 | «type» UnitPower = Utf8String «matching» «grammar» { str["-"] ? digit + | str["("] str["-"] ? digit + str["/"] Nonzero str[")"] } ;
+  5 | «type» UnitFactor = Utf8String «matching» «grammar» { UnitName ( str["^"] UnitPower ) ? } ;
+  6 | «type» UnitProduct = Utf8String «matching» «grammar» { UnitFactor sep ( str[" "] | str["*"] | str["·"] ) } ;
+  7 | «type» UnitText = Utf8String «matching» «grammar» { ( UnitProduct | str["1"] ) ( str["/"] ( UnitFactor | str["("] UnitProduct str[")"] ) ) ? ( str[" "] UnitKind ) ? | UnitKind | str[] } ;
 == DESIGN.md [sec:facets] 2 L12
   1 | «struct» UnitDef {
   2 | name : UnitName ,
-  3 | unit : UnitText | #base = #base ,
+  3 | unit : UnitText | #base ,
   4 | factor : rat = 1r ,
   5 | piPower : int = 0₍10₎ ,
-  6 | kind : #angle | #solidAngle | #none = #none ,
+  6 | offset : rat = 0r ,
   7 | ascii : UnitName | #none = #none ,
   8 | prefixes : [ UnitName ] = [ ] ,
   9 | «law» positive ( ) = factor > 0r ,
- 10 | «law» baseIsOne ( ) = ( unit == #base ) . implies ( factor == 1r && piPower == 0₍10₎ ) ,
- 11 | «law» kindOnBase ( ) = ( kind != #none ) . implies ( unit == #base ) ,
+ 10 | «law» baseIsOne ( ) = ( unit == #base ) . implies ( factor == 1r && piPower == 0₍10₎ && offset == 0r ) ,
+ 11 | «law» pointUnprefixed ( ) = ( offset != 0r ) . implies ( prefixes == [ ] ) ,
  12 | }
  13 | «struct» UnitSpelling { spelling : UnitName , means : UnitText }
- 15 | m = UnitDef ( name : str["m"] , prefixes : siPrefixes ) ;
- 16 | rad = UnitDef ( name : str["rad"] , kind : #angle , prefixes : subPrefixes ) ;
- 17 | J = UnitDef ( name : str["J"] , unit : str["N m"] , prefixes : siPrefixes ) ;
- 18 | h = UnitDef ( name : str["h"] , unit : str["s"] , factor : 3600r ) ;
- 19 | pc = UnitDef ( name : str["pc"] , unit : str["au"] , factor : 648000r , piPower : - 1₍10₎ , prefixes : [ str["k"] , str["M"] , str["G"] ] ) ;
- 20 | ohm = UnitDef ( name : str["Ω"] , ascii : str["Ohm"] , unit : str["V/A"] , prefixes : siPrefixes ) ;
- 21 | micron = UnitSpelling ( spelling : str["micron"] , means : str["μm"] ) ;
- 22 | px = UnitDef ( name : str["px"] ) ;
+ 15 | m = UnitDef ( name : str["m"] , unit : #base , prefixes : [ str["f"] , str["p"] , str["n"] , str["μ"] , str["m"] , str["c"] , str["d"] , str["k"] ] ) ;
+ 16 | K = UnitDef ( name : str["K"] , unit : #base , prefixes : [ str["n"] , str["μ"] , str["m"] ] ) ;
+ 17 | degK = UnitDef ( name : str["°K"] , ascii : str["degK"] , unit : str["K"] ) ;
+ 18 | rad = UnitDef ( name : str["rad"] , unit : #base , prefixes : [ str["n"] , str["μ"] , str["m"] ] ) ;
+ 19 | J = UnitDef ( name : str["J"] , unit : str["N m"] , prefixes : [ str["n"] , str["μ"] , str["m"] , str["k"] , str["M"] , str["G"] , str["T"] , str["P"] , str["E"] ] ) ;
+ 20 | Bq = UnitDef ( name : str["Bq"] , unit : str["1/s #activity"] , prefixes : [ str["m"] , str["k"] , str["M"] , str["G"] , str["T"] , str["P"] ] ) ;
+ 21 | h = UnitDef ( name : str["h"] , unit : str["s"] , factor : 3600r ) ;
+ 22 | percent = UnitDef ( name : str["%"] , unit : str["#ratio"] , factor : 1r / 100r ) ;
+ 23 | pc = UnitDef ( name : str["pc"] , unit : str["au"] , factor : 648000r , piPower : - 1₍10₎ , prefixes : [ str["k"] , str["M"] , str["G"] ] ) ;
+ 24 | celsius = UnitDef ( name : str["°C"] , ascii : str["degC"] , unit : str["K"] , offset : 27315r / 100r ) ;
+ 25 | ohm = UnitDef ( name : str["Ω"] , ascii : str["Ohm"] , unit : str["V/A"] , prefixes : [ str["μ"] , str["m"] , str["k"] , str["M"] , str["G"] ] ) ;
+ 26 | micron = UnitSpelling ( spelling : str["micron"] , means : str["μm"] ) ;
+ 27 | px = UnitDef ( name : str["px"] , unit : #base ) ;
 == DESIGN.md [sec:facets] 3 L12
-  1 | morning = Celsius ( fromZero : 12.5f «with» units ( str["K"] ) ) ;
-  2 | noon = morning + ( 6.0f «with» units ( str["K"] ) ) ;
+  1 | force = 3.0f «with» units ( str["N"] ) ;
+  2 | arm = 2.0f «with» units ( str["m"] ) ;
+  3 | work = force * arm ;
+  4 | moment = ( force * arm ) . to ( str["N m #torque"] ) ;
+  5 | source = 4.0e3f «with» units ( str["Bq"] ) ;
+  6 | doubled = 2.0f * source ;
+  7 | share = 25r «with» units ( str["%"] ) ;
+  8 | part = share . to ( str["1"] ) ;
+== DESIGN.md [sec:facets] 4 L12
+  1 | noon = 20.0f «with» units ( str["°C"] ) ;
+  2 | morning = 12.5f «with» units ( str["degC"] ) ;
   3 | rise = noon - morning ;
-  4 | absolute = noon . kelvin ;
+  4 | absolute = noon . to ( str["K"] ) ;
+  5 | later = noon + ( 2.0f «with» units ( str["K"] ) ) ;
+  6 | warmer = noon > morning ;
 == DESIGN.md [sec:linalg] 1 L14
   1 | matmul ( «positional» v : ( c -> T ) , «positional» b : ( c -> k -> T ) ) = ( v , b ) «into» ( k -> c >< ( + ) -> v [ c ] * b [ c ] [ k ] ) ;
   2 | matmul ( «positional» a : ( r -> c -> T ) , «positional» v : ( c -> T ) ) = ( a , v ) «into» ( r -> c >< ( + ) -> a [ r ] [ c ] * v [ c ] ) ;

@@ -1,0 +1,10 @@
+// variant: // total = work + moment;                    // ✗ Units that differ where an operation requires equal ones: work is in kg m^2/s^2 (J) and moment in kg m^2/s^2 #torque
+force = 3.0 with units("N");
+arm = 2.0 with units("m");
+work = force * arm;                          // 6.0 with units("J"), no kind
+moment = (force * arm).to("N m #torque");    // 6.0 with units("N m #torque")
+source = 4.0e3 with units("Bq");             // the kind #activity
+doubled = 2.0 * source;                      // 8.0e3 with units("Bq"), the kind kept
+share = 25r with units("%");
+part = share.to("1");                        // 1/4 with units("1"), no kind
+total = work + moment;                    // ✗ Units that differ where an operation requires equal ones: work is in kg m^2/s^2 (J) and moment in kg m^2/s^2 #torque

@@ -124,7 +124,7 @@ rows! {
     UncommutedPortOps => "Two operations on one port that may not commute, with nothing ordering them",
     NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",
     UnitsDiffer => "Units that differ where an operation requires equal ones",
-    // No diagnostic uses the next seven rows yet: plan rows L12.2a-L12.2d emit them.
+    // No diagnostic uses the next eight rows yet: plan rows L12.2a-L12.2d emit them.
     UnitNameNotDeclared => "Unit name not declared",
     UnitDeclarationCycle => "Cycle of unit declarations",
     UnitDeclaredTwice => "Two different declarations of one unit name, or of one spelling",
@@ -132,6 +132,7 @@ rows! {
     ConversionFactorNotHeld => "Conversion whose factor the carrier cannot hold",
     ConversionBetweenExpansions => "`.to` between units of different full expansions",
     SumOfPointReadings => "No `+` of two point readings",
+    PointUnitInProduct => "Point unit in a product, quotient or power",
     TaintAtSink => "Taint at a sink whose parameter does not take it",
     MutatingCallOnValue => "`*.` call on a receiver that is not a state variable",
     StoreSchemaMismatch => "Stored collection whose type and schema disagree",

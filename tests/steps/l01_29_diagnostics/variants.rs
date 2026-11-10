@@ -50,12 +50,16 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
              'with' or '|'"
                 .into(),
         ),
+        (
+            "point-unit-in-quotient",
+            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"°C\")`")),
+        ),
         ("taint-through-concatenation", none(44)),
         (
             "two-point-readings-added",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"K\")`")
+                zed_tests::not_yet!("the reduction `with units(\"°C\")`")
             ),
         ),
         (
@@ -64,6 +68,10 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
         ),
         ("unit-mismatch-force-energy", none(49)),
         ("unit-mismatch-in-sum", none(47)),
+        (
+            "units-differ-by-kind",
+            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"N\")`")),
+        ),
         (
             "value-binding-has-no-next-generation",
             format!("8: {}", zed_tests::not_yet!("the declared result type `-> int`")),
