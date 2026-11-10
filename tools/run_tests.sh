@@ -183,6 +183,8 @@ fi
 # TEST-lazy-split).
 # l01_39 if_shortcut holds four random parts of about 14 s each at load 35, which together
 # would pass 60 s (2026-11-09, PA-if-shortcut-diff).
+# l01_38 one_scope took 28.8 to 43.8 s whole under load, and 52.5 s at load 32; its 58 tests take
+# 168 s one by one, the slowest 15 to 37 s alone at load 28 to 46 (2026-11-10, SPLIT-one-scope).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
@@ -194,6 +196,7 @@ split="
   l01_38_presburger::scaling l01_38_presburger::deep
   l01_38_presburger::names l01_38_presburger::live3
   l01_38_presburger::shared l01_38_presburger::stages
+  l01_38_presburger::one_scope
   l01_39_reduced_product l01_39_reduced_product::random
   l01_39_reduced_product::pendants l01_39_reduced_product::lazy
   l01_39_reduced_product::lazy::a_lazy_scope_settles_each_name_to_the_eager_product

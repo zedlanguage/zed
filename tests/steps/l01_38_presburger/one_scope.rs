@@ -915,24 +915,30 @@ fn random_disjunctive_chain(rng: &mut zed_tests::instances::Rng) -> String {
 }
 
 #[test]
-fn each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole() {
+fn each_answer_of_a_disjunctive_chain_is_the_answer_of_the_relation_whole() {
     // LOAD-disj-residue: the face of a callee with a disjunction keeps it as clauses, each said
     // once. Drifting chains whose clauses repeat every few links (residues modulo 5), never
     // repeat (modulo 1009), move a bound (the holes of `x < 10 || x > 20`), or share a
-    // remainder between two disjunctions, which keeps it; and random chains of that shape. Each
-    // is checked against the answers made with no face, refusals too, and against the whole
-    // where the whole is decided, since the solver refuses some of these questions one way and
-    // not the other.
+    // remainder between two disjunctions, which keeps it. Each is checked against the answers
+    // made with no face, refusals too, and against the whole where the whole is decided, since
+    // the solver refuses some of these questions one way and not the other. The chain beside
+    // `x mod 4 != 1 && (x mod 6 == 2 || x mod 10 == 3)` is checked the same way by
+    // `a_link_decided_whole_is_answered_where_its_relation_is`; deciding its links whole takes
+    // 14 to 35 s (load 28 to 37), so it is not checked twice (SPLIT-one-scope).
     for q in [
         "(x mod 3 == 1 || x mod 5 == 2)",
         "(x mod 1009 == 0 || x mod 3 == 1)",
         "(x < 10 || x > 20)",
         "(x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50)",
-        "x mod 4 != 1 && (x mod 6 == 2 || x mod 10 == 3)",
     ] {
         let q = format!("q(x: int) = {q} && x > 0 && x < 1000000;\n");
         answers_with_faces_are_those_without(&drifting_chain(&q, 30));
     }
+}
+
+#[test]
+fn each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole() {
+    // Random chains of the shape of those above (LOAD-disj-residue), checked the same way.
     let mut rng = zed_tests::instances::Rng::new(0xd15e);
     for _ in 0..80 {
         answers_with_faces_are_those_without(&random_disjunctive_chain(&mut rng));
