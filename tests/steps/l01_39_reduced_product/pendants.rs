@@ -1881,12 +1881,15 @@ fn refused_names_in(seeds: std::ops::Range<u64>, double: bool) -> RefusedCount {
     count
 }
 
-/// Seeds 11 to 14 (of item PROJECT-each-canon), checked by [`refused_names_in`].
+/// Seeds 11 to 14 (of item PROJECT-each-canon), checked by [`refused_names_in`]. Item
+/// PRES-small-point answers one name refused before, `c` of seed 13 case 264,
+/// `(a + b + 2 * c >= 2 || z0 <= 6) && a + c >= -9 && a + b + z1 == c - 6` within
+/// `b >= -6`, `-1 <= z0 <= 8`, `z1 >= -4`, with the hull brute force finds, `c >= -6`.
 #[test]
 fn refused_projections_of_random_parts_keep_sound_boxes_first_half() {
     let count = refused_names_in(11..15, false);
     eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
-    assert_eq!(count, (2, 2, 1));
+    assert_eq!(count, (1, 1, 1));
 }
 
 /// Seeds 15 to 18 (of item PROJECT-each-canon), checked by [`refused_names_in`]. Item

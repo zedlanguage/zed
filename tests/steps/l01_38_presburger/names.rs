@@ -993,8 +993,11 @@ fn a_formula_whose_atoms_share_a_color_is_settled_or_refused() {
     // occur alike, but the two disjuncts of each do not, so their colors choose one of each,
     // the same under every naming (`x >= 7`, whose constant is the least). Settling removes no
     // disjunct, since each has a point with the base. With `x + y >= 10` the choice has a
-    // point; with `x + y <= 10` it has none (both late is 14), and the formula is refused,
-    // though both shifts early is a point: the loss of choosing by color, not by a search.
+    // point; with `x + y <= 10` it has none (both late is 14), but each shift at its lower
+    // bound, `x == 0 && y == 0`, is a point, which propagation from the bounds shows before
+    // any choice is made. With `1 <= x + y` as well that point is excluded, and the formula is
+    // refused, though `x == 1 && y == 0` is a point: the loss of choosing by color, not by a
+    // search.
     let shifts = |total: Formula| {
         let k = Lin::constant;
         let mut fs = vec![total];
@@ -1015,10 +1018,18 @@ fn a_formula_whose_atoms_share_a_color_is_settled_or_refused() {
     let m = satisfiable(&late).unwrap().expect("a point");
     assert!(late.holds(&m), "{m:?}");
     let early = shifts(Formula::Con(Con::ge(&Lin::constant(10), &sum)));
+    assert_eq!(decide(&early), Ok(true));
+    let m = satisfiable(&early).unwrap().expect("a point");
+    assert_eq!(m.values().collect::<Vec<_>>(), [&0.into(), &0.into()]);
+    assert!(early.holds(&m), "{m:?}");
+    let not_both_zero = Formula::and(vec![
+        early.clone(),
+        Formula::Con(Con::ge(&sum, &Lin::constant(1))),
+    ]);
     assert!(
-        matches!(decide(&early), Err(Refusal::Unordered(_))),
+        matches!(decide(&not_both_zero), Err(Refusal::Unordered(_))),
         "{:?}",
-        decide(&early)
+        decide(&not_both_zero)
     );
     // Tasks in slots, each pair apart: the two disjuncts of `t0 <= t1 - 1 || t0 >= t1 + 1`
     // differ only by which task is first, so they tie, and the disjunctions are linked through

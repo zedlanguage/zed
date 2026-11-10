@@ -246,17 +246,19 @@ fn following_each_repair_of_the_menu_makes_the_program_check() {
             ["out\n", "out\n"],
             None,
         ),
-        // Two shifts in 0..=9, each early or late, with a total of at most 10: `x` and `y`
+        // Two shifts in 0..=9, each early or late, with a total from 1 to 10: `x` and `y`
         // occur alike, so only their names could order the search
-        // (`l01_38_presburger::names`, the shifts with `x + y <= 10`).
+        // (`l01_38_presburger::names`, the shifts with `1 <= x + y <= 10`). Without
+        // `1 <= x + y`, the shifts at their lower bounds, `x == 0 && y == 0`, are a point,
+        // found before any search.
         (
             "unordered",
             "x, y",
-            "ok(x, y) = 0 <= x && x <= 9 && 0 <= y && y <= 9 && x + y <= 10 && (x <= 2 || x >= \
-             7) && (y <= 2 || y >= 7);"
+            "ok(x, y) = 0 <= x && x <= 9 && 0 <= y && y <= 9 && 1 <= x + y && x + y <= 10 && (x \
+             <= 2 || x >= 7) && (y <= 2 || y >= 7);"
                 .to_string(),
             format!("{ALTERNATIVES}. After every case that cannot hold is removed"),
-            ["in\n", "out\n"],
+            ["out\n", "out\n"],
             Some(("x", "y")),
         ),
         // The tie in a block that names a part of a condition and returns the conditions: the
@@ -411,6 +413,33 @@ fn pughs_example_is_decided_and_its_arm_is_unreachable() {
         assert_eq!(
             (o.status, o.stdout.as_str(), o.stderr.as_str()),
             (0, "out\n", ""),
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn shifts_that_hold_at_their_lower_bounds_are_decided() {
+    // Two shifts in 0..=9, each early or late, with a total of at most 10: `x` and `y` occur
+    // alike, and the search through the cases would be refused for their order, as it is with
+    // `1 <= x + y` as well (`following_each_repair_of_the_menu_makes_the_program_check`); but
+    // each shift at its lower bound, 0, meets every condition, so the test can hold and the
+    // program checks and runs.
+    let src = program(
+        "ok(x, y) = 0 <= x && x <= 9 && 0 <= y && y <= 9 && x + y <= 10 && (x <= 2 || x >= 7) \
+         && (y <= 2 || y >= 7);",
+        "x: a, y: a",
+    );
+    for (input, out) in [
+        ("0\n", "in\n"),
+        ("1\n", "in\n"),
+        ("5\n", "out\n"),
+        ("7\n", "out\n"),
+    ] {
+        let o = run("shifts", &src, input, &[]);
+        assert_eq!(
+            (o.status, o.stdout.as_str(), o.stderr.as_str()),
+            (0, out, ""),
             "{input}"
         );
     }

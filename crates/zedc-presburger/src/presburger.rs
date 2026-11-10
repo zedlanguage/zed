@@ -12633,9 +12633,22 @@ mod forced_against_solver {
 
     /// Checks [`forced`] of `f` against the whole solver, with and without its point; gives
     /// which answer it gave (0 empty, 1 point, 2 holds, 3 undecided, 4 refused by the solver,
-    /// 5 empty where the solver gives a point that is none).
+    /// 5 empty where the solver gives a point that is none, 6 a point at the bounds other than
+    /// the solver's, 7 a point at the bounds where the solver refuses). A point at the bounds
+    /// ([`forced`]'s trial when propagation leaves `f` undecided) is checked by evaluating `f`
+    /// at it.
     fn agrees(f: &Formula) -> usize {
         let Some((m, d)) = slow(f) else {
+            if let Some(Forced::Point(p)) = forced(f, true) {
+                assert_eq!(p.keys().cloned().collect::<BTreeSet<_>>(), f.atoms(), "{f}");
+                assert!(
+                    holds_at(f, &p, &mut HashMap::new()),
+                    "{p:?} is no point of {f}"
+                );
+                assert!(matches!(forced(f, false), Some(Forced::Holds)), "{f}");
+                eprintln!("refused by the solver, a point at the bounds {p:?}: {f}");
+                return 7;
+            }
             eprintln!("refused: {f}");
             return 4;
         };
@@ -12660,18 +12673,19 @@ mod forced_against_solver {
                 }
             },
             Some(Forced::Point(p)) => {
-                // The solver's point is this one, but may leave out some atoms.
+                // A point propagation forces is the solver's, which may leave out some atoms;
+                // a point at the bounds may be another.
                 let s = m.expect("a point");
-                assert!(
-                    s.iter().all(|(a, v)| p.get(a) == Some(v)),
-                    "the point of {f}: {p:?}, the solver's {s:?}"
-                );
                 assert_eq!(p.keys().cloned().collect::<BTreeSet<_>>(), f.atoms(), "{f}");
                 assert!(
                     holds_at(f, &p, &mut HashMap::new()),
                     "{p:?} is no point of {f}"
                 );
-                1
+                if s.iter().all(|(a, v)| p.get(a) == Some(v)) {
+                    1
+                } else {
+                    6
+                }
             }
             Some(Forced::Holds) => {
                 assert!(d, "{f} has no point, but propagation found it holds");
@@ -12681,7 +12695,7 @@ mod forced_against_solver {
         };
         match (forced(f, false), class) {
             (Some(Forced::Point(_)), _) => panic!("a point built for {f}, though not asked"),
-            (Some(Forced::Empty), 0) | (Some(Forced::Holds), 1 | 2) | (None, 3) => class,
+            (Some(Forced::Empty), 0) | (Some(Forced::Holds), 1 | 2 | 6) | (None, 3) => class,
             (got, _) => panic!(
                 "{f}: with the point {class}, without it {}",
                 match got {
@@ -12789,7 +12803,7 @@ mod forced_against_solver {
     #[test]
     fn propagation_agrees_with_the_solver_on_chains_of_definitions() {
         let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
-        let mut seen = [0usize; 6];
+        let mut seen = [0usize; 8];
         for _ in 0..3000 {
             seen[agrees(&chain(&mut rng, false))] += 1;
         }
@@ -12800,15 +12814,19 @@ mod forced_against_solver {
     #[test]
     fn propagation_agrees_with_the_solver_on_bounded_inputs() {
         let mut rng = Rng(0x2545_f491_4f6c_dd1d);
-        let mut seen = [0usize; 6];
+        let mut seen = [0usize; 8];
         for _ in 0..3000 {
             seen[agrees(&chain(&mut rng, true))] += 1;
         }
         eprintln!("answers {seen:?}");
         // Each answer that bounds give occurs often enough to be tested; a formula that holds
         // with a variable free is rare here (the inputs are mostly bounded), and the chains of
-        // the test above give it often.
-        assert!([0, 1, 3].iter().all(|&i| seen[i] >= 50), "answers {seen:?}");
+        // the test above give it often. A point at the bounds other than the solver's (6) is
+        // common (PRES-small-point).
+        assert!(
+            [0, 1, 3, 6].iter().all(|&i| seen[i] >= 50),
+            "answers {seen:?}"
+        );
     }
 
     #[test]
@@ -12830,10 +12848,20 @@ mod forced_against_solver {
             ),
             // A product is an atom of its own: an equation fixes it, not its factors.
             (Formula::and(vec![eq(&p, &k(6)), eq(&sym("x"), &k(2))]), 1),
-            // and its factors' values do not give it one: the solver reads it as free.
+            // and its factors' values do not give it one: the solver reads it as free. Its bound
+            // does, at which propagation tries it (PRES-small-point).
             (
                 Formula::and(vec![
                     ge(&p, &k(6)),
+                    eq(&sym("x"), &k(2)),
+                    eq(&sym("y"), &k(3)),
+                ]),
+                1,
+            ),
+            // A row with two unknowns, the product and `z`, bounds neither.
+            (
+                Formula::and(vec![
+                    ge(&p.plus(&sym("z")), &k(6)),
                     eq(&sym("x"), &k(2)),
                     eq(&sym("y"), &k(3)),
                 ]),
@@ -12906,15 +12934,56 @@ mod forced_against_solver {
             (and(vec![ge(&k(-5), &x.times(2)), ge(&x, &k(-2))]), 0),
             // A row over a known and an unknown variable: `x + y >= 4` with `y == 0`.
             (and(vec![ge(&x.plus(&sym("y")), &k(4)), ge(&k(4), &x)]), 1),
-            // A bound on one side only, or two that leave two values, fix nothing.
-            (and(vec![ge(&x, &k(6))]), 3),
-            (and(vec![ge(&x, &k(6)), ge(&k(7), &x)]), 3),
+            // A bound on one side only, or two that leave two values, fix nothing; the formula
+            // holds with `x` at its (lower) bound, which propagation then tries
+            // (PRES-small-point).
+            (and(vec![ge(&x, &k(6))]), 1),
+            (and(vec![ge(&x, &k(6)), ge(&k(7), &x)]), 1),
             // Rows not forced bound nothing: in `(x >= 6 || x == 0) && 6 >= x`, `x >= 6` is not
-            // forced.
+            // forced, so `x` has the one bound 6, where the formula holds.
             (
                 and(vec![
                     Formula::or(vec![ge(&x, &k(6)), eq(&x, &k(0))]),
                     ge(&k(6), &x),
+                ]),
+                1,
+            ),
+            // At the bounds `x >= 7` is false, which forces `z == 1`: the point `x == 6, z == 1`,
+            // not the solver's.
+            (
+                and(vec![
+                    ge(&x, &k(6)),
+                    ge(&k(7), &x),
+                    Formula::or(vec![ge(&x, &k(7)), eq(&sym("z"), &k(1))]),
+                ]),
+                6,
+            ),
+            // At the bounds the formula is false, though it has a point (`x == 7`), or not
+            // decided, with `z` bounded only after the bounds are tried, once: neither is an
+            // answer, and the solver decides.
+            (
+                and(vec![
+                    ge(&x, &k(6)),
+                    ge(&k(7), &x),
+                    Formula::or(vec![eq(&x, &k(7)), eq(&x, &k(8))]),
+                ]),
+                3,
+            ),
+            (
+                and(vec![
+                    ge(&x, &k(6)),
+                    ge(&k(7), &x),
+                    Formula::or(vec![ge(&x, &k(7)), ge(&sym("z"), &k(1))]),
+                ]),
+                3,
+            ),
+            // At the bounds `x == 6` contradicts `q0 == x + 1` and `q0 <= 6`; the formula has no
+            // point, which the solver finds.
+            (
+                and(vec![
+                    ge(&x, &k(6)),
+                    eq(&q(0), &x.plus(&k(1))),
+                    ge(&k(6), &q(0)),
                 ]),
                 3,
             ),
@@ -12937,5 +13006,83 @@ mod forced_against_solver {
         for (f, want) in cases {
             assert_eq!(agrees(&f), want, "{f}");
         }
+    }
+
+    /// `f` with each atom renamed by `name` and the operands of each conjunction and
+    /// disjunction in an order drawn from `rng` (a shared part is rewritten at each place).
+    fn rewritten(f: &Formula, name: &dyn Fn(&Atom) -> Atom, rng: &mut Rng) -> Formula {
+        fn each(gs: &[Formula], name: &dyn Fn(&Atom) -> Atom, rng: &mut Rng) -> Vec<Formula> {
+            let mut gs: Vec<Formula> = gs.iter().map(|g| rewritten(g, name, rng)).collect();
+            for i in (1..gs.len()).rev() {
+                gs.swap(i, rng.below(i as u64 + 1) as usize);
+            }
+            gs
+        }
+        match f {
+            Formula::Con(c) => {
+                let lin = (c.lin.terms.iter())
+                    .fold(Lin::constant(c.lin.constant.clone()), |l, (a, k)| {
+                        l.plus(&Lin::atom(name(a)).times(k.clone()))
+                    });
+                Formula::Con(match c.rel {
+                    Rel::Eq => Con::eq(&lin, &k(0)),
+                    Rel::Ge => Con::ge(&lin, &k(0)),
+                })
+            }
+            Formula::Not(g) => Formula::negate(rewritten(g, name, rng)),
+            Formula::And(gs) => Formula::and(each(gs, name, rng)),
+            Formula::Or(gs) => Formula::or(each(gs, name, rng)),
+        }
+    }
+
+    /// What [`forced`] gives, as text: `empty`, `holds`, `undecided`, or the point.
+    fn shown(f: Option<Forced>) -> String {
+        match f {
+            Some(Forced::Empty) => "empty".into(),
+            Some(Forced::Holds) => "holds".into(),
+            Some(Forced::Point(p)) => format!("{p:?}"),
+            None => "undecided".into(),
+        }
+    }
+
+    #[test]
+    fn the_point_at_the_bounds_does_not_depend_on_names_or_order() {
+        // `x` and `y` swapped, each auxiliary variable `qi` named `q(9 - i)`, which reverses
+        // their order, and each conjunction and disjunction in a random order: propagation, and
+        // the point it tries at the bounds when it leaves the formula undecided, give the same
+        // answer, and the same point renamed.
+        let name = |a: &Atom| match a {
+            Atom::Sym(s) => Atom::Sym(Arc::from(if &**s == "x" { "y" } else { "x" })),
+            Atom::Aux(i) => Atom::Aux(9 - i),
+            // `x * y`, which the swap keeps.
+            Atom::Product(..) => a.clone(),
+        };
+        let mut rng = Rng(0x6a09_e667_f3bc_c909);
+        let mut order = Rng(0xbb67_ae85_84ca_a73b);
+        let mut at_bounds = 0;
+        for case in 0..4000 {
+            let f = chain(&mut rng, case % 2 == 0);
+            let renamed = |p: Model| p.into_iter().map(|(a, v)| (name(&a), v)).collect::<Model>();
+            let want = [
+                shown(forced(&f, false)),
+                shown(forced(&f, true).map(|p| match p {
+                    Forced::Point(p) => Forced::Point(renamed(p)),
+                    other => other,
+                })),
+            ];
+            if want[0] == "holds" && matches!(agrees(&f), 6 | 7) {
+                at_bounds += 1;
+            }
+            for _ in 0..3 {
+                let g = rewritten(&f, &name, &mut order);
+                let got = [shown(forced(&g, false)), shown(forced(&g, true))];
+                assert_eq!(got, want, "{f}\n  rewritten {g}");
+                // A refusal names the variables it ties, renamed here: its kind is compared.
+                let kind = |d: Result<bool, Refusal>| d.map_err(|r| std::mem::discriminant(&r));
+                assert_eq!(kind(decide(&g)), kind(decide(&f)), "{f}\n  rewritten {g}");
+            }
+        }
+        // The trial at the bounds answers often enough to be tested.
+        assert!(at_bounds >= 50, "{at_bounds} answered at the bounds alone");
     }
 }

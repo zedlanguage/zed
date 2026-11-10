@@ -40,8 +40,9 @@ enum Inputs {
     Fixed,
     /// By two rows each whose bounds meet, `x >= 6 && 6 >= x`.
     Bounded,
-    /// By two rows each that leave two values, `x >= 6 && 7 >= x`: not a point, so left to the
-    /// solver.
+    /// By two rows each that leave two values, `x >= 6 && 7 >= x`: not a point, but the
+    /// inputs at their lower bounds, `x == 6 && y == 4`, are one, which propagation from the
+    /// bounds shows (PRES-small-point).
     Ranged,
 }
 
@@ -99,7 +100,7 @@ fn bench_small_formulas() {
         eprintln!("{what}: satisfiable {s}, decide {d}  {f}");
     }
     for inputs in [Inputs::Fixed, Inputs::Bounded, Inputs::Ranged] {
-        for n in [1, 2, 4, 7, 8, 16, 32, 64] {
+        for n in [1, 2, 4, 7, 8, 16, 32, 64, 512] {
             let f = defs(n, inputs);
             let s = least(&mut meter, &|| drop(std::hint::black_box(satisfiable(&f))));
             let d = least(&mut meter, &|| drop(std::hint::black_box(decide(&f))));
@@ -115,12 +116,16 @@ fn bench_small_formulas() {
 #[test]
 fn a_chain_of_definitions_at_a_point_costs_its_size() {
     // Each definition is decided by propagation from the one before, O(1) each, whether the
-    // inputs are fixed by equations or by two rows whose bounds meet.
-    for inputs in [Inputs::Fixed, Inputs::Bounded] {
+    // inputs are fixed by equations, by two rows whose bounds meet, or by two rows that leave
+    // two values each, tried at their lower bounds.
+    for inputs in [Inputs::Fixed, Inputs::Bounded, Inputs::Ranged] {
         let built = scaling::inputs(64, |n| defs(n as u32, inputs));
         for f in built.values() {
             let m = satisfiable(f).expect("answered").expect("a point");
             assert_eq!(m[&Atom::Sym(Arc::from("x"))], 6.into(), "{f}");
+            assert_eq!(m[&Atom::Sym(Arc::from("y"))], 4.into(), "{f}");
+            assert!(f.holds(&m), "{m:?} is no point of {f}");
+            assert_eq!(decide(f), Ok(true), "{f}");
         }
         scaling::check_order(
             &format!("a chain of definitions at a point ({inputs:?}), its point found"),
@@ -145,8 +150,9 @@ fn a_chain_of_definitions_at_a_point_costs_its_size() {
 fn a_chain_of_definitions_at_a_point_is_not_settled_by_the_whole_solver() {
     // Inputs bounded by two rows whose bounds meet are read by propagation as if fixed by
     // equations, at about the same cost (within 5% at eight definitions when measured). Inputs
-    // left two values each are not a point, and the same chain takes the whole solver, at about
-    // 100 times that cost.
+    // left two values each are not a point; they took the whole solver, at about 70 times that
+    // cost, until propagation tried them at their lower bounds (PRES-small-point), which costs
+    // one more pass (within 5% when measured).
     let mut meter = Meter::new();
     let [fixed, bounded, ranged] =
         [Inputs::Fixed, Inputs::Bounded, Inputs::Ranged].map(|i| defs(8, i));
@@ -154,11 +160,15 @@ fn a_chain_of_definitions_at_a_point_is_not_settled_by_the_whole_solver() {
         satisfiable(&fixed).expect("answered"),
         satisfiable(&bounded).expect("answered")
     );
+    assert_eq!(
+        satisfiable(&fixed).expect("answered"),
+        satisfiable(&ranged).expect("answered")
+    );
     let [fixed, bounded, ranged] = [&fixed, &bounded, &ranged]
         .map(|f| least(&mut meter, &|| drop(std::hint::black_box(satisfiable(f)))));
     let unit = meter.unit();
     assert!(
-        bounded < 2 * fixed && fixed * 8 < ranged,
+        bounded < 2 * fixed && ranged < 2 * fixed,
         "fixed {fixed} {unit}, bounded {bounded} {unit}, ranged {ranged} {unit}"
     );
 }

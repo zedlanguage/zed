@@ -28,6 +28,13 @@
 //!   callers then read as zero; here every atom of the formula has its value;
 //! - a formula that is true at the values given while some variable has none holds at some
 //!   point, whatever the others' values ([`super::decide`]);
+//! - a formula still undecided is tried once at its bounds (PRES-small-point): each variable
+//!   not known that has a bound is given it, its lower one when it has two, all at once, and
+//!   the propagation runs on. A formula true there holds at that point, with zero for each
+//!   atom still not known, which it does not read: `x >= 6 && 7 >= x && y == 4` is answered
+//!   `x == 6, y == 4`, one point of several, and exact. The bounds are the same in every
+//!   order of the propagation, so the answer does not depend on the names or order of the
+//!   atoms;
 //! - anything else is left to the solver, after O(n) work.
 
 use std::collections::HashMap;
@@ -42,9 +49,11 @@ use super::formula::{Atom, Con, Formula, Id, Model, Rel};
 pub(super) enum Forced {
     /// The formula has no point.
     Empty,
-    /// The formula's one point, each atom of the formula with its value.
+    /// A point of the formula, each atom of the formula with its value: its one point when
+    /// propagation fixes every variable, else the point at its bounds.
     Point(Model),
-    /// The formula holds at some point, but not every variable has a value.
+    /// The formula holds at some point, but not every variable has a value, or its point at
+    /// the bounds was not asked for.
     Holds,
 }
 
@@ -121,12 +130,15 @@ pub(super) fn forced(f: &Formula, point: bool) -> Option<Forced> {
     if !g.run() {
         return Some(Forced::Empty);
     }
-    match g.parts[0].value {
+    let root = g.parts[0].value;
+    match root {
         Some(true) if point && g.vars.iter().all(|v| v.known.is_some()) => {
             Some(Forced::Point(g.point()))
         }
         Some(true) => Some(Forced::Holds),
-        _ => None,
+        _ if !g.at_bounds() => None,
+        _ if point => Some(Forced::Point(g.point())),
+        _ => Some(Forced::Holds),
     }
 }
 
@@ -473,6 +485,41 @@ impl<'f> Graph<'f> {
         true
     }
 
+    /// Whether the formula holds once every variable not yet known that has a bound is given
+    /// that bound, its lower one when it has two, all at once, and the propagation is run again
+    /// from there. Called when the propagation has ended with the formula undecided; afterward
+    /// the graph's state is that of the trial, so nothing else reads it.
+    ///
+    /// The answer is exact when it is `true`: the formula's value then follows by evaluation
+    /// from values that are integers (the bounds, and what forced constraints give from them),
+    /// so it is true wherever the variables still not known are. It does not depend on the
+    /// names or order of the atoms: the bounds are those of the propagation's end, which every
+    /// order of its events reaches, since each rule only adds what the formula and the values
+    /// before imply; all the bounds are set before any event runs; and from there too each
+    /// event only adds what the formula and the trial imply, so a contradiction ends every
+    /// order or none (`names::disjunctions_whose_atoms_share_a_color`,
+    /// `forced_against_solver::the_point_at_the_bounds_does_not_depend_on_names_or_order`).
+    // Complexity tradeoff: a formula that holds at some point but not at this one (a bound
+    // excluded by a disjunct, a parity row the bounds miss) is left to the solver, as before
+    // this trial; trying other values (each bound in turn, or the other end) would depend on
+    // the order tried or be a search exponential in the number of bounded variables, which
+    // is the solver's work. Naive version: none, the solver for every undecided formula,
+    // O(n log n) on the two-valued chain (`small_cost`) at about 70 times this trial's
+    // constant; used: one more pass of the same propagation, O(n). COMPLEXITY.md row
+    // PRES-small-point.
+    fn at_bounds(&mut self) -> bool {
+        let Graph { vars, events, .. } = self;
+        for (x, v) in vars.iter_mut().enumerate() {
+            if v.known.is_none()
+                && let Some(b) = v.lo.as_ref().or(v.hi.as_ref())
+            {
+                v.known = Some(b.clone());
+                events.push(Event::Known(x as u32));
+            }
+        }
+        !self.events.is_empty() && self.run() && self.parts[0].value == Some(true)
+    }
+
     /// Whether the constraint `c` of part `n` holds at the known values, all of its variables
     /// known.
     fn holds(&self, n: usize, c: &Con) -> bool {
@@ -490,11 +537,12 @@ impl<'f> Graph<'f> {
         }
     }
 
-    /// The point: every atom with its value.
+    /// The point: every atom with its value, zero for one still not known, which the formula,
+    /// true at the values known, does not read.
     fn point(&self) -> Model {
         let mut m = Model::new();
         for v in &self.vars {
-            m.insert(v.atom.clone(), v.known.clone().expect("known"));
+            m.insert(v.atom.clone(), v.known.clone().unwrap_or(Int::ZERO));
         }
         m
     }

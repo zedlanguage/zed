@@ -3160,6 +3160,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A counting sort that fills `parent_list` and `watch_list` from the end, the start of each part's or variable's range serving as its cursor, the arrays read and written at once through split borrows (`let Graph { parts, kid_list, parent_list, .. } = self`) | `forced::Graph::link` | Mutation (gap 11) | a group-by into a map from part to its list, O(n log n), or the arrays in a state receiver |
 | A variable's value and bounds as `Option<Int>` fields of one struct changed in place (`known`, `lo`, `hi`), replaced when a forced row gives a tighter one | `forced::Var`, `Graph::solve` | Mutation (gap 11) | a record replaced by a new one at each tightening, in the state receiver that holds the arrays |
 
+## Entries from PRES-small-point (`crates/zedc-presburger/src/presburger/forced.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The trial at the bounds run on the propagation's own state, which it leaves changed: each unknown `Var` given its bound in place through a split borrow (`let Graph { vars, events, .. } = self`) and an `if … && let Some(b) = …` let chain, then the same event loop run again | `forced::Graph::at_bounds` | Mutation (gap 11); the let chain none | the trial as a function from the state at the propagation's end to a new state (the variables mapped to their bounds, the events queued), run by the same fold; an `is` test for the bound |
+
 ## Entries from TEST-group-oracle-enum (`tests/steps/l01_23_subtyping/group_oracle.rs`, tests only)
 
 | Rust construct | Sites | Gap | At the port |
