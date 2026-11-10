@@ -110,7 +110,7 @@ best = cur >< max else 0;
 
 // 20 — A generic JSON decoder, specialized by partial evaluation into a decoder for one struct.
 struct User { id: int, name: Utf8String }
-u: User | #parseError(pos: int, msg: Utf8String) = Json.decode(text);
+u: User | #parseError(..) = Json.decode(text);
 // The ascription fixes decode's result type at User (sec:type_resolution, rule 2), and User
 // is known at build, so mix specializes decode on it (sec:staging): the generic JSON parser,
 // the schema check, and the unpacker into a native struct become one deserializer that reads
@@ -118,12 +118,13 @@ u: User | #parseError(pos: int, msg: Utf8String) = Json.decode(text);
 // field names of User compiled into the matcher. text : Utf8String has no finite domain, so mix
 // does not specialize on it: the checks on its contents stay in the residual program, and
 // #parseError stays in the type.
-ok:  User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": 5, \"name\": \"John\"}");
-bad: User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": \"5\", \"name\": \"John\"}");
+ok:  User | #parseError(..) = Json.decode("{\"id\": 5, \"name\": \"John\"}");
+bad: User | #parseError(..) = Json.decode("{\"id\": \"5\", \"name\": \"John\"}");
 // Here the input is a literal, whose domain is a singleton (sec:domains), so the whole call
 // runs at build: ok is the constant User(id: 5, name: "John"), and bad is the constant
-// #parseError(pos: 7, msg: "expected int for field 'id', got string"). Neither residual
-// program contains a parser. decode is written in Zed, in the prelude unit Json, with the
-// reads of (sec:introspection): T::shape selects the arm, T::fields gives the names and types.
+// #parseError(pos: 7, msg: "expected int for field 'id', got string", expected: ["int"],
+// open: [#open(rule: "User", pos: 0)]). Neither residual program contains a parser.
+// decode is written in Zed, in the prelude unit Json, with the reads of (sec:introspection):
+// T::shape selects the arm, T::fields gives the names and types.
 // Elsewhere: a generic decoder reflects on the type at run time (Jackson), or a macro or a
 // code generator writes the specialized decoder (serde, protoc), as a second tool.

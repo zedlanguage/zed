@@ -4,7 +4,7 @@ struct KeyVal  grammar { key: Ident  ":"  value: Json }
 struct JsonObj grammar { "{"  entries: KeyVal sep ","  "}" }
 type   Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null;
 
-cfg = Json.parse(bytes);         // Json | #syntaxError(pos: int)  — recovery structural
+cfg = Json.parse(bytes);         // Json | #syntaxError(..)  — recovery structural
 out = cfg?.serialize;            // entries in parsed order: parse(serialize(x)) == x; ?. carries the union
 
 type Ident = Utf8String matching grammar { alpha (alpha | digit)* };  // typed strings, not regexes

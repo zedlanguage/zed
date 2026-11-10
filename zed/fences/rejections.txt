@@ -22,6 +22,7 @@ Two `with initial` items for one variable
 Cross-unit overlapping incomparable arrows
 Ambiguous imported name
 Name used above its definition
+Name that resolves to nothing
 Need met only by an arrow in the caller's scope
 Two members of one name with different declarations in a struct or interface body
 File read at the compile-time stage by a path that leaves the package root
@@ -46,11 +47,16 @@ Remap output name that names a source level and resolves to a value in scope
 Method declared on a value
 Prefix `-` on a numeric literal's postfix chain
 Display in body position
+Syntax error
 Named argument before a positional one
 `positional` parameter after a named one
 Argument in the wrong form
 Function whose parameter kinds do not fit the expected function type
 Missing argument
+Argument beyond the parameters
+Argument named for no parameter
+Parameter given two values
+Value before the dot for a function with no parameters
 `...` with no named parameter left out
 Positional constructor call or pattern
 Inner-domain dependency outside the fragment

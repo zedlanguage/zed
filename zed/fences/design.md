@@ -168,7 +168,7 @@ step(positional f: ((i: State with units(["m", "m/s"])) -> (j: State with units(
 type Shape =
     #scalar(name: Utf8String, constraints: Constraints)  // int, rat, f64, bool, …, with its refinement: int[0..<10]
   | #string(name: Utf8String, syntax: Grammar | #none, constraints: Constraints)   // Utf8String and the other string types, by name, or one matching grammar { … }
-  | #atom(name: Utf8String, payload: Type | #none)       // #red, or #parseError(pos: int, msg: Utf8String)
+  | #atom(name: Utf8String, payload: Type | #none)       // #red, or #ioError(op: Utf8String, path: Utf8String, why: Utf8String)
   | #struct(name: Utf8String | #none, fields: [Field], syntax: Grammar | #none)
   | #interface(name: Utf8String, fields: [Field])
   | #tuple(items: [Type])
@@ -412,7 +412,7 @@ law monoTwice(M: MonoInt, a: int, b: int) = (a <= b).implies(M.f(M.f(a)) <= M.f(
 }
 ```
 
-<!-- DESIGN.md:1908 layer L7: ring L7, word L7 (u8), label none; section [sec:ffi] 1 -->
+<!-- DESIGN.md:1914 layer L7: ring L7, word L7 (u8), label none; section [sec:ffi] 1 -->
 ```zed
 @foreign struct SockAddr { family: int with bits(16), data: [u8] with length(14) }
 @foreign struct AddrInfo {
@@ -426,7 +426,7 @@ law monoTwice(M: MonoInt, a: int, b: int) = (a <= b).implies(M.f(M.f(a)) <= M.f(
 @foreign("c", "getaddrinfo") getAddrInfo: (node: [u8] with terminated(0), service: [u8] with terminated(0), hints: Ptr(AddrInfo) | #none) -> {rc: i32, res: Ptr(AddrInfo) | #none with release(freeAddrInfo)};
 ```
 
-<!-- DESIGN.md:3489 layer L10: ring L10, word L1 (Utf8String), label none; section [sec:tour_basics] 1 -->
+<!-- DESIGN.md:3511 layer L10: ring L10, word L1 (Utf8String), label none; section [sec:tour_basics] 1 -->
 ```zed
 // bindings — immutable, inferred; domains where they carry intent
 x = 42;
@@ -465,7 +465,7 @@ onAxis = Point(x: 0, ...);             // a struct is its constructor, curried b
 struct Round { import Rect, r: f64 }     // composition-import, not inheritance
 ```
 
-<!-- DESIGN.md:3529 layer L10: ring L10, word none, label none; section [sec:tour_methods] 1 -->
+<!-- DESIGN.md:3551 layer L10: ring L10, word none, label none; section [sec:tour_methods] 1 -->
 ```zed
 struct Counter { n: int, hi: int }
 
@@ -501,7 +501,7 @@ run = loop {
 };
 ```
 
-<!-- DESIGN.md:3573 layer L5: ring L5, word L5 (sort), label none; section [sec:tour_collections] 1 -->
+<!-- DESIGN.md:3595 layer L5: ring L5, word L5 (sort), label none; section [sec:tour_collections] 1 -->
 ```zed
 xs   = [3, 1, 4, 1, 5];                 // [int]  ≡  int[0..<5] -> int
 m    = { "a" -> 1, "b" -> 2 };          // display: commas inside, `;` ends the statement;
@@ -519,13 +519,13 @@ counts = text.split(" ").group(w -> w.lower).count;
 // counts : Utf8String ->? int     (f() ≡ f — a unit morphism reads as its value)
 ```
 
-<!-- DESIGN.md:3590 layer L8: ring L8, word L3 (split), label none; section [sec:tour_collections] 2 -->
+<!-- DESIGN.md:3612 layer L8: ring L8, word L3 (split), label none; section [sec:tour_collections] 2 -->
 ```zed
 // the same program, symbolic register (what the optimizer reasons over):
 counts = text.split(" ") as (i -> w) into (w.lower -> i -> 1) >< (+);
 ```
 
-<!-- DESIGN.md:3595 layer L4: ring L1, word L4 (rekey), label none; section [sec:tour_collections] 3 -->
+<!-- DESIGN.md:3617 layer L4: ring L1, word L4 (rekey), label none; section [sec:tour_collections] 3 -->
 ```zed
 // group vs rekey — the grouping decision is always a visible word:
 byId = users.rekey(u -> u.id);  // ✗ Collision: unless id-uniqueness is witnessed:
@@ -533,7 +533,7 @@ byId = users.rekey(u -> u.id);  // ✗ Collision: unless id-uniqueness is witnes
                                 //    or mark the key function @injective"
 ```
 
-<!-- DESIGN.md:3602 layer L5: ring L1, word L5 (maxBy), label none; section [sec:tour_collections] 4 -->
+<!-- DESIGN.md:3624 layer L5: ring L1, word L5 (maxBy), label none; section [sec:tour_collections] 4 -->
 ```zed
 byId = users.group(u -> u.id);  // ✓ type: Id ->? (UserKey -> User)  (the extra level, declared by the word)
 
@@ -543,7 +543,7 @@ one  = best?.first;             // #none carried; lexicographic: the max-score g
                                 // (first/last descend by each level's order — sec:corner_cases)
 ```
 
-<!-- DESIGN.md:3613 layer L5: ring L1, word L5 (join), label none; section [sec:tour_joins] 1 -->
+<!-- DESIGN.md:3635 layer L5: ring L1, word L5 (join), label none; section [sec:tour_joins] 1 -->
 ```zed
 // query projection      (payments : OrderId -> Payment — uniquely keyed,
 //                        which is what keeps the join flat, sec:joins;
@@ -552,7 +552,7 @@ paid = orders.join(payments, on: #orderId, kind: #left);
      // OrderId -> (Order, Payment | #none) — the pair of sec:joins; absence is a value, not a null row
 ```
 
-<!-- DESIGN.md:3621 layer L3: ring L3, word none, label none; section [sec:tour_joins] 2 -->
+<!-- DESIGN.md:3643 layer L3: ring L3, word none, label none; section [sec:tour_joins] 2 -->
 ```zed
 // iteration projection — the SAME kernel term; the compiler picks the plan
 paid = for o in orders {
@@ -561,13 +561,13 @@ paid = for o in orders {
 };
 ```
 
-<!-- DESIGN.md:3629 layer L5: ring L1, word L5 (diff), label none; section [sec:tour_joins] 3 -->
+<!-- DESIGN.md:3651 layer L5: ring L1, word L5 (diff), label none; section [sec:tour_joins] 3 -->
 ```zed
 // anti-join, both ways (same term again)
 unpaid = orders.diff(payments, on: #orderId);
 ```
 
-<!-- DESIGN.md:3634 layer L8: ring L8, word L3 (where), label none; section [sec:tour_joins] 4 -->
+<!-- DESIGN.md:3656 layer L8: ring L8, word L3 (where), label none; section [sec:tour_joins] 4 -->
 ```zed
 unpaid = orders.where(o -> payments[o.orderId] is #notFound);
 
@@ -588,7 +588,7 @@ matmul(positional a: (r -> c -> f64), positional b: (c -> k -> f64)) =
 prod = a.matmul(b);
 ```
 
-<!-- DESIGN.md:3656 layer L6: ring L6, word L6 (::frames), label none; section [sec:tour_loops] 1 -->
+<!-- DESIGN.md:3678 layer L6: ring L6, word L6 (::frames), label none; section [sec:tour_loops] 1 -->
 ```zed
 // comprehension — parallel by default
 sq = for i in 0..<n { i * i };
@@ -619,9 +619,9 @@ sessions = events.chunkBy(e -> e.userId);     // key-change splits; last chunk i
 report   = sessions.map(s -> summarize(s));
 ```
 
-<!-- DESIGN.md:3688 layer L3: ring L3, word L3 (where), label none, documentation notation; section [sec:tour_failure] 1 -->
+<!-- DESIGN.md:3710 layer L3: ring L3, word L3 (where), label none, documentation notation; section [sec:tour_failure] 1 -->
 ```zed
-parse : (Utf8String) -> Config | #syntaxError(pos: int)   // an assumed input, shown as a type — no ';' (sec:lexical)
+parse : (Utf8String) -> Config | #syntaxError(..)         // an assumed input, shown as a type — no ';' (sec:lexical)
 
 conf = parse(text) else defaultConfig;
 port = parse(text)?.server?.port else 8080;    // ?. carries the union; else disposes of it
@@ -643,14 +643,14 @@ badAmounts = amounts.where(a -> a is not int);     // 3: keep them — an ordina
                                                    //    collection, sized and reported
 ```
 
-<!-- DESIGN.md:3713 layer L21: ring L20, word L21 (store), label none, documentation notation; section [sec:tour_grammar] 1 -->
+<!-- DESIGN.md:3735 layer L21: ring L20, word L21 (store), label none, documentation notation; section [sec:tour_grammar] 1 -->
 ```zed
 // one declaration: type + parser + serializer (round-trip canonical)
 struct KeyVal  grammar { key: Ident  ":"  value: Json }
 struct JsonObj grammar { "{"  entries: KeyVal sep ","  "}" }
 type   Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null;
 
-cfg = Json.parse(bytes);         // Json | #syntaxError(pos: int)  — recovery structural
+cfg = Json.parse(bytes);         // Json | #syntaxError(..)  — recovery structural
 out = cfg?.serialize;            // entries in parsed order: parse(serialize(x)) == x; ?. carries the union
 
 type Ident = Utf8String matching grammar { alpha (alpha | digit)* };  // typed strings, not regexes
@@ -697,18 +697,18 @@ exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's sig
 rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers
 ```
 
-<!-- DESIGN.md:3820 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
+<!-- DESIGN.md:3842 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
 ```zed
 // layer L3
 priceOf(positional items, positional id) = items[id]?.price * (1 + taxRate);
 ```
 
-<!-- DESIGN.md:3827 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
+<!-- DESIGN.md:3849 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
 ```zed
 priceOf : (K ->? {price: f64}, K) -> f64 | #notFound
 ```
 
-<!-- DESIGN.md:3839 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
+<!-- DESIGN.md:3861 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
 ```zed
 // 1 — Deterministic parallel float sum: bit-identical at any core count.
 total = readings >< (+);
@@ -822,7 +822,7 @@ best = cur >< max else 0;
 
 // 20 — A generic JSON decoder, specialized by partial evaluation into a decoder for one struct.
 struct User { id: int, name: Utf8String }
-u: User | #parseError(pos: int, msg: Utf8String) = Json.decode(text);
+u: User | #parseError(..) = Json.decode(text);
 // The ascription fixes decode's result type at User (sec:type_resolution, rule 2), and User
 // is known at build, so mix specializes decode on it (sec:staging): the generic JSON parser,
 // the schema check, and the unpacker into a native struct become one deserializer that reads
@@ -830,13 +830,14 @@ u: User | #parseError(pos: int, msg: Utf8String) = Json.decode(text);
 // field names of User compiled into the matcher. text : Utf8String has no finite domain, so mix
 // does not specialize on it: the checks on its contents stay in the residual program, and
 // #parseError stays in the type.
-ok:  User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": 5, \"name\": \"John\"}");
-bad: User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": \"5\", \"name\": \"John\"}");
+ok:  User | #parseError(..) = Json.decode("{\"id\": 5, \"name\": \"John\"}");
+bad: User | #parseError(..) = Json.decode("{\"id\": \"5\", \"name\": \"John\"}");
 // Here the input is a literal, whose domain is a singleton (sec:domains), so the whole call
 // runs at build: ok is the constant User(id: 5, name: "John"), and bad is the constant
-// #parseError(pos: 7, msg: "expected int for field 'id', got string"). Neither residual
-// program contains a parser. decode is written in Zed, in the prelude unit Json, with the
-// reads of (sec:introspection): T::shape selects the arm, T::fields gives the names and types.
+// #parseError(pos: 7, msg: "expected int for field 'id', got string", expected: ["int"],
+// open: [#open(rule: "User", pos: 0)]). Neither residual program contains a parser.
+// decode is written in Zed, in the prelude unit Json, with the reads of (sec:introspection):
+// T::shape selects the arm, T::fields gives the names and types.
 // Elsewhere: a generic decoder reflects on the type at run time (Jackson), or a macro or a
 // code generator writes the specialized decoder (serde, protoc), as a second tool.
 ```

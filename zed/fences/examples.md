@@ -987,7 +987,7 @@ squares = (0..<256).map(i -> i * i);                     // computed at build, r
 struct KeyVal  grammar { key: Ident ":" value: Json }
 struct JsonObj grammar { "{" entries: KeyVal sep "," "}" }
 type Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null;
-cfg = Json.parse(bytes);                  // Json | #syntaxError(pos: int)
+cfg = Json.parse(bytes);                  // Json | #syntaxError(..)
 out = cfg?.serialize;
 ```
 
