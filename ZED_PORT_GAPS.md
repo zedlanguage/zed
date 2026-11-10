@@ -196,7 +196,7 @@ keep the groups being decided and the values each decided group built, for the u
 Two `AtomicU64` counters issue fresh ids: `Type::rec` (types.rs:375), `Bdd::node`
 (bdd.rs:108). Neither has a form: Zed has no global state, and a closure captures values
 (line 1333). `@memoized` does not help: it is an assertion on the plan, "never a request that
-changes it" (step L18.2).
+changes it" (step L18.2a).
 
 Workaround. A function that reads its own name is a definedness fix (sec:grammar, Function), so
 recursion memoizes within one fix: `define_on_demand` (`eval.rs:1129`) does this today. That
