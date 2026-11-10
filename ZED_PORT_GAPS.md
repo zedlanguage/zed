@@ -804,6 +804,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `impl Drop` with a work list, on enums and structs | `ast/drop.rs`, `parse::Tree`, `lex::Part` | None | Removed: the runtime frees values, and must free a deep chain without recursion itself |
 | `VecDeque` with `push_front`, `pop_back` and `get_mut`, slots taken in place by `Option::take` | `Builder::fill`, `Builder::take` | Mutation | A map keyed by position, or a state receiver over a list |
 | `Cow<str>` for pieces of output, some borrowed from the source | `Formatter::pieces` | None | Zed shares strings, so a piece is a plain `String` |
+| `Cow<'static, str>` for a primitive's name in a message, borrowed from a table of words or formatted (A9-path-words) | `Prim::named` in `zed-kernel/src/print.rs` | None | Zed shares strings, so the name is a plain `String` |
 | `macro_rules!` for repeated statements in a `match` | `then!`, `shown!`, `debug_as_shown!` | Macros | A function |
 | `OnceLock` for a table computed once | `ast::forms` | Global state | A constant, or a value passed in |
 | A generic struct over a trait with an unsized `Self` (`Parser<I: Input + ?Sized>` on `[char]` and on `Tokens`) | `zedc::parse::engine` | Unsized types | An interface over a value, passed as a parameter |

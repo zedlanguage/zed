@@ -1641,10 +1641,13 @@ impl<'t> Machine<'_, 't> {
             && args.len() != n
         {
             let s = if n == 1 { "" } else { "s" };
-            return type_err(format!(
-                "`{}` takes {n} argument{s}, given {}",
-                p.written(),
-                args.len()
+            return type_err(self.at_step(
+                p,
+                format!(
+                    "{} takes {n} argument{s}, given {}",
+                    p.named(None),
+                    args.len()
+                ),
             ));
         }
         // A key past the end of a keypath above an empty level, read by the key map of a
@@ -1715,9 +1718,9 @@ impl<'t> Machine<'_, 't> {
                     ));
                 }
                 _ => {
-                    return type_err(format!(
-                        "`{}` applied to a function",
-                        p.written_with(vals.first())
+                    return type_err(self.at_step(
+                        p,
+                        format!("{} applied to a function", p.named(vals.first())),
                     ));
                 }
             }
@@ -1741,7 +1744,46 @@ impl<'t> Machine<'_, 't> {
         if let Some((t, e)) = refused() {
             return Err(order_too_large(p, t, e).into());
         }
-        give(out?)
+        match out {
+            Err(KernelError::Type(m)) => type_err(self.at_step(p, m)),
+            out => give(out?),
+        }
+    }
+
+    /// The refusal `m` of the primitive `p`, and for a step on key paths, which the compiler
+    /// generates and a program never writes, the call it ran in: the innermost `reindex` key
+    /// map or value map or `discard` test running, with the keys of the entry it was given,
+    /// or that it ran in none of them. The walk down the frames is O(depth) and runs once, on
+    /// the refusal that ends the run.
+    fn at_step(&self, p: Prim, m: String) -> String {
+        if p.in_words().is_none() {
+            return m;
+        }
+        let keys = |keys: &[Value]| {
+            let shown: Vec<String> = keys.iter().map(|k| format!("`{k}`")).collect();
+            match shown.len() {
+                0 => "with no keys".to_string(),
+                1 => format!("at the key {}", shown[0]),
+                _ => format!("at the keys {}", shown.join(", ")),
+            }
+        };
+        let call = self.frames.iter().rev().find_map(|f| match f {
+            Frame::Wait(Wait::ReindexKey(st)) => Some(("key map", "a `reindex`", keys(&st.path))),
+            Frame::Wait(Wait::ReindexValue(st)) => {
+                Some(("value map", "a `reindex`", keys(&st.path)))
+            }
+            Frame::Wait(Wait::Discard(st)) => Some(("test", "a `discard`", keys(&st.prefix))),
+            _ => None,
+        });
+        match call {
+            Some((part, of, entry)) => {
+                format!("{m}, in the {part} that {of} runs on each entry, on the entry {entry}")
+            }
+            None => format!(
+                "{m}, outside every `reindex` key map and value map and `discard` test, the \
+                 only places the compiler generates it"
+            ),
+        }
     }
 
     /// Evaluates the entry at the next key, or makes the family.
@@ -2537,8 +2579,8 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             .map(|v| format!("`{}`", v.kind_type()))
             .collect();
         Err(KernelError::Type(format!(
-            "`{}` applied to {}",
-            p.written_with(vals.first()),
+            "{} applied to {}",
+            p.named(vals.first()),
             shown.join(", ")
         )))
     };

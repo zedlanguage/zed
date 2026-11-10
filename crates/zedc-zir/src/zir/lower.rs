@@ -592,9 +592,9 @@ impl<'t> Lower<'t> {
         // program writes as syntax, so a checked program never passes one as a value.
         if p.arity().is_none() {
             return Err(bug(format_args!(
-                "the primitive `{}` takes any number of arguments, so with no inputs its node \
+                "{} takes any number of arguments, so with no inputs its node \
                  is a call, not the function",
-                p.written()
+                p.named(None)
             )));
         }
         let Val::Src(s, _) = self.leaf(Op::Prim(p), Vec::new()) else {
@@ -733,8 +733,8 @@ impl<'t> Lower<'t> {
                     && k != args.len()
                 {
                     return Err(bug(format_args!(
-                        "the primitive `{}` takes {} and is given {}",
-                        p.written(),
+                        "{} takes {} and is given {}",
+                        p.named(None),
                         plural(k, "argument"),
                         args.len()
                     )));

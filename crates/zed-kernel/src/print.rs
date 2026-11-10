@@ -172,9 +172,13 @@ impl Prim {
     /// component `[i]` (`p[0]`), an entry `[k]` (`f[k]`), and the methods `.count` and
     /// `.union`. An atom is `#_(..)`, an atom of any name with any payload, since a fixed text
     /// cannot carry its name; a message that has the name writes `#err(..)` instead
-    /// ([`Prim::written_with`]). `path`, `pathKey` and `pathLen` keep the kernel's words, for
-    /// which DESIGN.md gives no written form.
+    /// ([`Prim::written_with`]). The three steps on key paths, which only the compiler
+    /// generates and for which DESIGN.md gives no written form, are words ([`Prim::in_words`]), not
+    /// code; a sentence names a primitive through [`Prim::named`], which quotes only code.
     pub fn written(self) -> &'static str {
+        if let Some(words) = self.in_words() {
+            return words;
+        }
         match self {
             Prim::Neg => "-",
             Prim::Not => "!",
@@ -195,6 +199,29 @@ impl Prim {
         match (self, first) {
             (Prim::Atom, Some(Value::Str(name))) => Cow::Owned(format!("#{name}(..)")),
             _ => Cow::Borrowed(self.written()),
+        }
+    }
+
+    /// The step in words, for the three primitives on key paths: the compiler generates them
+    /// in the key map and value map of a `reindex` and the test of a `discard` (the swap of
+    /// two key levels that `group` makes, for one), and no program writes them, so a message
+    /// says what the step does rather than print a name the program never had.
+    pub fn in_words(self) -> Option<&'static str> {
+        match self {
+            Prim::Path => Some("the step that builds a key path from its keys"),
+            Prim::PathKey => Some("the step that reads the key at a given position of a key path"),
+            Prim::PathLen => Some("the step that counts the keys of a key path"),
+            _ => None,
+        }
+    }
+
+    /// How a sentence names the primitive: its written form in backquotes (`` `>` ``,
+    /// `` `#err(..)` ``, [`Prim::written_with`]), or for a step on key paths the words of
+    /// [`Prim::in_words`], unquoted.
+    pub fn named(self, first: Option<&Value>) -> Cow<'static, str> {
+        match self.in_words() {
+            Some(words) => Cow::Borrowed(words),
+            None => Cow::Owned(format!("`{}`", self.written_with(first))),
         }
     }
 
