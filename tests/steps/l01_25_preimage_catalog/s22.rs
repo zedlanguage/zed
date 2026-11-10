@@ -1011,7 +1011,7 @@ type Counts = (
 );
 
 const GUARDED: [Counts; 16] = [
-    (0, (0, 0, 53), (10, &[]), 0),
+    (0, (0, 0, 52), (10, &[]), 0),
     (250, (0, 3, 41), (9, &[]), 0),
     (500, (0, 0, 42), (8, &[]), 0),
     (750, (0, 0, 45), (11, &[]), 0),
@@ -1211,6 +1211,23 @@ guarded_ranges!(
 /// guard's value replaced it shows the formula has no point. The transfer's own results do
 /// not change in any case; the transfer before loses that refusal in 5 more cases, still
 /// inexact with a relation and the same box.
+///
+/// Since PRES-nest-empty, whose `settle_tied` first tests the base with the rows the
+/// disjunctions imply and answers that the formula has no point when they have none, before
+/// two copies of one subterm with the same rows stop it (`Unordered`), the transfer before,
+/// which shares the solver, gives one more of the boxes counted as made exact exactly as the
+/// transfer does (cases 0 to 250: 52, was 53; first half 373). It is case 86,
+/// `if (i != -5) { min(…, -1) } else { (-3 * if (i <= -4) { (0 - …) } else { … }) }` over
+/// `[-21, -12] ∪ [-6, 0] ∪ [4, 12]` with demand `[13, 16]`: the transfer gives the empty box,
+/// exact, before and after the change; the transfer before kept `{-5}`, inexact, with a
+/// relation, since the solver refused at `i = -5` on the copies `q4`, `q5` of
+/// `if ((i mod 3) == 1) { min(i, 1) } else { (i + i) }`. Their implied rows
+/// `-10 <= q4, q5 <= -5` put `q4 + q5` in `[-20, -10]` and the result `-3 * -(q4 + q5)` in
+/// `[-60, -30]`, outside `[13, 16]`, so the solver now shows the formula empty (at -5 the chain
+/// gives -30). The one other case of this row the new test answers, case 118, keeps its result
+/// (empty, exact, made exact); the box before narrows from `[-16, 5]` to `[-15, 5]`, still inexact.
+/// No other row changes. Measured on the branch rebased on main 501a3330: with the new test
+/// of `settle_tied` turned off, the row counts 53 again and case 86 is refused as before.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1231,7 +1248,7 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (0, 6, 374, 81, vec![], 0));
+    assert_eq!(sum(&GUARDED[..8]), (0, 6, 373, 81, vec![], 0));
     assert_eq!(
         sum(&GUARDED[8..]),
         (
