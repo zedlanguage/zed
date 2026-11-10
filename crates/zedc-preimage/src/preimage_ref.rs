@@ -1,6 +1,7 @@
 //! The backward transfer as it was before the piecewise-affine summary and the demand clip of
 //! S22a (main at fdf7918, which holds the 397f1c9 transfer and later changes), kept unchanged
-//! but for the exact interval ends of TD-ends, so that tests can compare the whole `Preimage`
+//! but for the exact interval ends of TD-ends and the failure of a base raised to 0
+//! (SOUND-div-exact), so that tests can compare the whole `Preimage`
 //! of [`super::preimage`] with it. Nothing outside the tests uses it.
 //!
 //! The tonicity of the scalar primitives and the scalar entries of the preimage catalog
@@ -1786,7 +1787,13 @@ impl<'t> Tx<'t> {
                         a.product(&b)
                     }
                     Pow => match self.constant_int(self.arg(args, 1), env)? {
-                        0 => Some(Lin::constant(1)),
+                        // SOUND-div-exact: `c^0` fails where `c` does (DESIGN.md
+                        // sec:failure), and a term translates only where it cannot fail, so
+                        // the base must translate too: `(-4 div (1 + x))^0` fails at `x == -1`.
+                        0 => {
+                            arg(self, tr, 0)?;
+                            Some(Lin::constant(1))
+                        }
                         1 => arg(self, tr, 0),
                         2 if tr.products => {
                             let a = arg(self, tr, 0)?;

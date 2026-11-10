@@ -219,3 +219,32 @@ fn random_tests_agree_with_the_interpreter() {
         "{entailments} of 60 proved"
     );
 }
+
+/// Plan item SOUND-div-exact: `c^0` fails where `c` does (DESIGN.md sec:failure), so `(1 div x)^0 == 1`
+/// is `false` at `x == 0`. Rung 1, which does not track failure, translated `c^0` as 1 without
+/// reading `c` and gave the relation `1 == 1`, true at `x == 0`; it now gives none, since a
+/// quotient by a term does not translate there. Rung 2 meets the relation with the condition
+/// that the divisor is not 0.
+#[test]
+fn a_power_zero_of_a_quotient_by_a_term_fails_where_the_divisor_is_zero() {
+    let ns = names();
+    let (x, y) = (|| Term::Var("x".into()), || Term::Var("y".into()));
+    let pow0 = |t: Term| prim(Prim::Pow, vec![t, lit(0)]);
+    for t in [
+        prim(
+            Prim::Eq,
+            vec![pow0(prim(Prim::IntDiv, vec![lit(1), x()])), lit(1)],
+        ),
+        prim(
+            Prim::Ge,
+            vec![
+                pow0(prim(Prim::Mod, vec![x(), prim(Prim::Sub, vec![x(), y()])])),
+                lit(1),
+            ],
+        ),
+    ] {
+        assert!(relations(&[&t], &ns, false).is_none(), "{t}: rung 1");
+        let rs = relations(&[&t], &ns, true).expect("in the domain");
+        check_points(&rs[0], &t, &ns).unwrap();
+    }
+}

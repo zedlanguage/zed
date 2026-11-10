@@ -7620,7 +7620,17 @@ impl<'m, 't> Walk<'m, 't> {
                         a.product(&b)
                     }
                     Pow => match self.constant_int(self.arg(args, 1), env).await? {
-                        0 => Some(Lin::constant(1)),
+                        // `c^0` is 1 where `c` is defined and `c`'s failure where it is not
+                        // (DESIGN.md sec:failure: a loose atom operand passes out). Where the
+                        // relation does not track failure ([`Tr::definedness`]), a term
+                        // translates only where it cannot fail, so the base must translate
+                        // too: `(-4 div (1 + x))^0` fails at `x == -1`.
+                        0 => {
+                            if !self.tr(|tr| tr.definedness) {
+                                arg(0).await?;
+                            }
+                            Some(Lin::constant(1))
+                        }
                         1 => arg(0).await,
                         2 if products => {
                             let a = arg(0).await?;

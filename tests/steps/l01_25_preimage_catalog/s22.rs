@@ -1303,7 +1303,12 @@ fn random_terms_keep_their_preimages() {
         // 22 more boxes are exact (24), 6 inexact boxes are narrower than the transfer
         // before and sound, and one exact preimage the transfer before listed point by point,
         // `(x <= x) || …`, is the same set read without a listing.
-        diffs.unlisted(1).none_but(6800, 6, 0, 24);
+        //
+        // 25, was 24, since SOUND-div-exact: the linear stage reads `c^0` only where `c`
+        // translates, so the transfer before now lists the points of `((y mod y)^0) > ((x +
+        // x)^1)` with `y` in `{-12}`, where it read `(y mod y)^0` as 1; the transfer reads the
+        // same box, `x <= 0`, exact without a listing.
+        diffs.unlisted(1).none_but(6800, 6, 0, 25);
     });
 }
 
@@ -3308,4 +3313,52 @@ fn the_box_of_a_chain_over_many_holes_is_tested_in_linear_work() {
             },
         );
     });
+}
+
+/// Plan item SOUND-div-exact: `c^0` is 1 where `c` is defined and fails where `c` does
+/// (DESIGN.md sec:failure: a loose atom operand selects no arrow and passes out), so a power 0
+/// of a quotient by a term is not 1 where the divisor is 0. The linear stage read `c^0` as 1
+/// without reading `c`, and so marked every `x` exact, in both transfers: the interpreter
+/// refutes that at `x == -1` for the first two terms (random_terms, seed 1002) and at
+/// `x == 0` for the third (seed 1006, its `if` arm). The base must now translate where the
+/// relation does not track failure. Each result is checked against the interpreter.
+#[test]
+fn a_power_zero_of_a_quotient_by_a_term_is_not_exact_where_the_divisor_is_zero() {
+    let x = || var("x");
+    let pow0 = |t: Term| prim(Prim::Pow, t, int(0));
+    let below = |hi: i64| Demand::Ints(IntervalSet::range(End::NegInf, End::of(hi)));
+    let cases = [
+        (
+            pow0(prim(Prim::IntDiv, int(-4), prim(Prim::Add, int(1), x()))),
+            Demand::Ints(IntervalSet::top()),
+        ),
+        (
+            pow0(Term::Prim(
+                Prim::Neg,
+                vec![prim(
+                    Prim::IntDiv,
+                    prim(Prim::Mul, int(2), int(-2)),
+                    prim(Prim::Add, int(1), x()),
+                )],
+            )),
+            Demand::Ints(IntervalSet::range(End::of(-22), End::PosInf)),
+        ),
+        (
+            pow0(prim(Prim::IntDiv, int(-3), prim(Prim::Max, x(), int(-2)))),
+            below(34),
+        ),
+    ];
+    let ds = over(&[("x", IntervalSet::top())]);
+    for (t, d) in cases {
+        let now = preimage(&t, &ds, &d);
+        let then = before::preimage(&t, &ds, &old(&d));
+        assert!(
+            !refuted(&t, &ds, &d, &now.domains, now.exact),
+            "{t}: {now:?}"
+        );
+        assert!(
+            !refuted(&t, &ds, &d, &then.domains, then.exact),
+            "{t} before: {then:?}"
+        );
+    }
 }
