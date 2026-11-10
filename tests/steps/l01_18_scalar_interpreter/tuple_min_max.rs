@@ -89,9 +89,9 @@ fn tuples_min_and_max_cannot_order_are_refused() {
         ["`min` does not take (1, 2) and 3: it takes two tuples or two numbers [min((1, 2), 3)]"]
     );
     assert_eq!(
-        errors("x = min((int(\"x\"), 2), (1, 3));\n"),
+        errors("text(positional v: String) = v;\nx = min((int(text(\"x\")), 2), (1, 3));\n"),
         [
-            "`min` does not order #invalid in a tuple: it compares tuples component by component, and an atom has no order among the numbers; handle it before `min` [min((int(\"x\"), 2), (1, 3))]"
+            "`min` does not order #invalid in a tuple: it compares tuples component by component, and an atom has no order among the numbers; handle it before `min` [min((int(text(\"x\")), 2), (1, 3))]"
         ]
     );
 }

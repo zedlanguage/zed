@@ -45,7 +45,7 @@ fn summing_an_order() {
     assert_eq!(x("sum((3, 4, 5))"), "12");
     assert_eq!(x("sum((1.5f64, 2.25))"), "3.75");
     assert_eq!(x("sum((1r/2r, 1r/3r))"), "5r/6r");
-    assert_eq!(x("sum((9, int(\"x\")))"), "#invalid");
+    assert_eq!(x("sum((9, int(text(\"x\"))))"), "#invalid");
     // An integer literal beside an f64 is read as one (DESIGN.md L1.26a); a decimal literal
     // that nothing gives a carrier is rejected; a string is no number.
     assert_eq!(x("sum((1, 2.0f64))"), "3.0");
@@ -93,8 +93,8 @@ fn min_and_max_of_each_number_kind() {
 
 #[test]
 fn min_and_max_pass_a_failure_on() {
-    assert_eq!(x("min(int(\"x\"), 1)"), "#invalid");
-    assert_eq!(x("max(int(\"x\"), int(\"y\"))"), "#invalid");
+    assert_eq!(x("min(int(text(\"x\")), 1)"), "#invalid");
+    assert_eq!(x("max(int(text(\"x\")), int(text(\"y\")))"), "#invalid");
 }
 
 #[test]

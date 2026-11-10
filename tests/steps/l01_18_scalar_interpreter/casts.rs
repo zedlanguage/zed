@@ -9,14 +9,14 @@ use zed_tests::step_helpers::l01_16_elaboration::errors;
 fn reading_a_quantity_from_a_form_field() {
     assert_eq!(x("int(\"42\")"), "42");
     assert_eq!(x("int(\"-7\")"), "-7");
-    assert_eq!(x("int(\"4 2\")"), "#invalid");
-    assert_eq!(x("int(\"\")"), "#invalid");
+    assert_eq!(x("int(text(\"4 2\"))"), "#invalid");
+    assert_eq!(x("int(text(\"\"))"), "#invalid");
     assert_eq!(
-        x("int(\"+5\")"),
+        x("int(text(\"+5\"))"),
         "#invalid",
         "a sign is only `-`, as `String` writes it"
     );
-    assert_eq!(x("int(\"twelve\") else 1"), "1");
+    assert_eq!(x("int(text(\"twelve\")) else 1"), "1");
     assert_eq!(
         x("int(\"123456789012345678901234567890\")"),
         "123456789012345678901234567890"
@@ -26,7 +26,7 @@ fn reading_a_quantity_from_a_form_field() {
 #[test]
 fn a_float_to_int_must_be_whole() {
     assert_eq!(x("int(3.0f64)"), "3");
-    assert_eq!(x("int(-2.5f64)"), "#inexact");
+    assert_eq!(x("int(real(-2.5f64))"), "#inexact");
     assert_eq!(x("int(1.0e20f64)"), "100000000000000000000");
     assert_eq!(x("int(1.0f64 / 0.0)"), "#invalid");
     assert_eq!(x("int(0.0f64 / 0.0)"), "#invalid");
@@ -48,8 +48,8 @@ fn a_rational_reads_as_string_writes_it_or_as_a_decimal() {
     assert_eq!(x("rat(\"1/2\")"), "1r/2r");
     assert_eq!(x("rat(\"3r\")"), "3r");
     assert_eq!(x("rat(\"0.25\")"), "1r/4r");
-    assert_eq!(x("rat(\"1/0\")"), "#invalid");
-    assert_eq!(x("rat(\".5\")"), "#invalid");
+    assert_eq!(x("rat(text(\"1/0\"))"), "#invalid");
+    assert_eq!(x("rat(text(\".5\"))"), "#invalid");
     assert_eq!(x("rat(String(5r/7r)) == 5r/7r"), "true");
 }
 
@@ -73,11 +73,11 @@ fn a_float_reads_correctly_rounded_and_overflow_is_inexact() {
     assert_eq!(x("f64(\"0.1\") == 0.1"), "true");
     assert_eq!(x("f64(\"2.5e-3\")"), "0.0025");
     assert_eq!(x("f64(\"7\")"), "7.0");
-    assert_eq!(x("f64(\"1e400\")"), "#inexact");
-    assert_eq!(x("f64(\"-1e400\")"), "#inexact");
-    assert_eq!(x("f64(\"1,5\")"), "#invalid");
-    assert_eq!(x("f64(\"infinity\")"), "#invalid");
-    assert_eq!(x("f64(\"1e\")"), "#invalid");
+    assert_eq!(x("f64(text(\"1e400\"))"), "#inexact");
+    assert_eq!(x("f64(text(\"-1e400\"))"), "#inexact");
+    assert_eq!(x("f64(text(\"1,5\"))"), "#invalid");
+    assert_eq!(x("f64(text(\"infinity\"))"), "#invalid");
+    assert_eq!(x("f64(text(\"1e\"))"), "#invalid");
 }
 
 #[test]

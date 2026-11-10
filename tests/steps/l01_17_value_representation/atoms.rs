@@ -15,7 +15,7 @@ fn a_named_payload_is_a_struct_whatever_the_written_order() {
 
 #[test]
 fn a_positional_payload_holds_any_value_atoms_included() {
-    let src = "sum = #add(1, (2, 3));\nwrapped = #some(#none);\nhole = #at(1 div 0);\n";
+    let src = "sum = #add(1, (2, 3));\nwrapped = #some(#none);\nhole = #at(1 div whole(0));\nwhole(positional v: int) = v;\n";
     assert_eq!(value(src, "sum"), "#add(1, (2, 3))");
     // A payload holds an atom as data: it is not passed through as a failure.
     assert_eq!(value(src, "wrapped"), "#some(#none)");

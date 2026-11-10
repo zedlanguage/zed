@@ -2,7 +2,8 @@
 //! checked against the interpreter over a window of each domain.
 
 use super::{check, doms, function, listed, pre, pre_listed, shown};
-use zedc::store::preimage::Demand;
+use zed_kernel::{Prim, Term, Value};
+use zedc::store::preimage::{Demand, preimage};
 
 /// The preimage of `true` under `src` over `ds`, printed, after checking it on the window
 /// `-60..=60`.
@@ -94,7 +95,22 @@ fn euclidean_division_and_remainder_by_a_constant_invert_exactly() {
         holds("ok(i) = i mod 10 < 10;\n", &[any("i")]),
         "i [..]; exact"
     );
-    assert_eq!(holds("ok(i) = i mod 0 == 0;\n", &[any("i")]), "i []; exact");
+    // `i mod 0` gives `#divByZero` for every `i`, so no `i` makes it equal 0. The checker
+    // rejects that program (row "Operation that always fails"), so the term is built here.
+    let t = Term::Prim(
+        Prim::Eq,
+        vec![
+            Term::Prim(
+                Prim::Mod,
+                vec![Term::Var("i".into()), Term::Lit(Value::Int(0))],
+            ),
+            Term::Lit(Value::Int(0)),
+        ],
+    );
+    let ds = doms(&[any("i")]);
+    let p = preimage(&t, &ds, &Demand::Bool(true));
+    check(&t, &ds, &Demand::Bool(true), &p, (-60, 60));
+    assert_eq!(shown(&p), "i []; exact");
 }
 
 #[test]

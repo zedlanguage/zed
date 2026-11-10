@@ -13,9 +13,14 @@ use zed_kernel::value::Family;
 use zed_kernel::{Prim, Value};
 use zedc::run::load;
 
-/// The value of `x = <expr>;`, printed.
+/// Functions that pass their argument on, so that a word applied to their result is judged on
+/// a value known only when the program runs: the word on a literal that never converts is
+/// rejected (row "Operation that always fails").
+const PASS: &str = "text(positional v: String) = v;\nwhole(positional v: int) = v;\n";
+
+/// The value of `x = <expr>;` after [`PASS`], printed.
 fn x(expr: &str) -> String {
-    zed_tests::step_helpers::l01_16_elaboration::value(&format!("x = {expr};\n"), "x")
+    zed_tests::step_helpers::l01_16_elaboration::value(&format!("{PASS}x = {expr};\n"), "x")
 }
 
 /// `src` as a whole program: a `main` is added when it declares none.

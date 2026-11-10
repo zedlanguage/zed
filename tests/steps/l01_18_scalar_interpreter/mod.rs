@@ -14,7 +14,14 @@ mod words;
 
 use zed_tests::step_helpers::l01_16_elaboration::value;
 
-/// The value of `x = <expr>;`, printed.
+/// Functions that pass their argument on, each declared with a carrier. A call is not judged,
+/// so `int(text("x"))` keeps the `#invalid` it gives when the program runs, where `int("x")`,
+/// whose operand the checker reads, is rejected as an operation that always fails (DESIGN.md
+/// sec:failure).
+const PASS: &str = "text(positional v: String) = v;\nreal(positional v: f64) = v;\n\
+                    whole(positional v: int) = v;\n";
+
+/// The value of `x = <expr>;` after [`PASS`], printed.
 fn x(expr: &str) -> String {
-    value(&format!("x = {expr};\n"), "x")
+    value(&format!("{PASS}x = {expr};\n"), "x")
 }

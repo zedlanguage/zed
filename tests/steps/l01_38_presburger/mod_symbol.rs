@@ -110,8 +110,18 @@ fn a_constant_divisor_is_translated_as_before() {
     assert_eq!(r.to_string(), "q1 == 1 where q0 = x div 3, q1 = x mod 3");
     let def = r.defined().to_string();
     assert!(!def.contains("||"), "{def}");
-    // A divisor `0` is outside the domain, as before.
-    let (ps, t) = function("ok(x) = x mod 0 == 1;");
+    // A divisor `0` is outside the domain, as before. The checker rejects the program
+    // `ok(x) = x mod 0 == 1;` (row "Operation that always fails"), so the term is built here.
+    let t = Term::Prim(
+        Prim::Eq,
+        vec![
+            Term::Prim(
+                Prim::Mod,
+                vec![Term::Var("x".into()), Term::Lit(Value::Int(0))],
+            ),
+            Term::Lit(Value::Int(1)),
+        ],
+    );
     assert!(relations(&[&t], &ps, true).is_none());
 }
 

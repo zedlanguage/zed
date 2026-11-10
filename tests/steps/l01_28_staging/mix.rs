@@ -37,9 +37,12 @@ fn a_port_dependent_definition_is_run_stage() {
 
 #[test]
 fn a_definition_nothing_reads_is_never_evaluated() {
-    let src = format!("broken = 1 div 0;\nunused = broken + 1;\n{UPTIME}");
+    let src = format!(
+        "whole(positional v: int) = v;\nbroken = 1 div whole(0);\nunused = broken + 1;\n{UPTIME}"
+    );
     let (p, s, report) = staged(&src);
-    assert_eq!(report.unread, ["broken", "unused"]);
+    // `whole` is read only by `broken`, which nothing reads.
+    assert_eq!(report.unread, ["whole", "broken", "unused"]);
     assert!(report.left.is_empty());
     assert!(s.unit().defs.iter().all(|d| d.name != "broken"));
     assert_eq!(out(&s, "5\n"), out(&p, "5\n"));
@@ -47,7 +50,7 @@ fn a_definition_nothing_reads_is_never_evaluated() {
 
 #[test]
 fn a_failure_atom_is_a_value_the_build_computes() {
-    let src = "ratio = int(\"n/a\");\nmain(stdin: Lines) -> (stdout: Lines) {\n  \
+    let src = "text(positional v: String) = v;\nratio = int(text(\"n/a\"));\nmain(stdin: Lines) -> (stdout: Lines) {\n  \
                stdout <- String(ratio) else \"no ratio\";\n}\n";
     let (p, s, report) = staged(src);
     assert_eq!(report.built, ["ratio"]);

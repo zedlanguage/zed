@@ -98,3 +98,21 @@ fn a_code_point_returned_by_a_function_is_read_as_any_int() {
         "c = codePoint(\"a\");\nx = bitAnd(c, 1) else 0;\n"
     ));
 }
+
+/// A word whose literal operand is never a scalar always fails, which the checker rejects
+/// (row "Operation that always fails"); the same word on a parameter keeps its atom.
+#[test]
+fn a_literal_that_is_never_a_scalar_is_rejected() {
+    for (src, written) in [
+        ("x = codePoint(\"ab\");\n", "\"ab\""),
+        ("x = codePoint(\"\") else -1;\n", "\"\""),
+        ("x = scalar(55296);\n", "55296"),
+    ] {
+        let out = rejected(src);
+        assert!(
+            out.contains(&format!("its operand `{written}` gives `#notScalar`")),
+            "{src}: {out}"
+        );
+    }
+    assert!(accepted("f(s: String) = codePoint(s);\n"));
+}

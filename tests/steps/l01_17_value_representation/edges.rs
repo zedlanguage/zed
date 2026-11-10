@@ -99,7 +99,8 @@ fn the_smallest_word_divides_euclidean_by_small_negative_divisors() {
 // smallest word is no exception.
 #[test]
 fn the_smallest_word_divided_by_zero_is_div_by_zero() {
-    let src = format!("{MIN}q = lo div 0;\nr = lo mod 0;\n");
+    let src =
+        format!("{MIN}whole(positional v: int) = v;\nq = lo div whole(0);\nr = lo mod whole(0);\n");
     for name in ["q", "r"] {
         assert_eq!(value(&src, name), "#divByZero", "{name}");
         let t = info(&src).0.tops[name].to_string();

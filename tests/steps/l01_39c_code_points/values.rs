@@ -6,13 +6,13 @@ use super::x;
 fn the_named_code_points() {
     assert_eq!(x("codePoint(\"a\")"), "97");
     assert_eq!(x("codePoint(\"é\")"), "233");
-    assert_eq!(x("codePoint(\"ab\")"), "#notScalar");
-    assert_eq!(x("codePoint(\"\")"), "#notScalar");
+    assert_eq!(x("codePoint(text(\"ab\"))"), "#notScalar");
+    assert_eq!(x("codePoint(text(\"\"))"), "#notScalar");
 }
 
 #[test]
 fn a_surrogate_is_not_a_scalar_and_an_emoji_round_trips() {
-    assert_eq!(x("scalar(55296)"), "#notScalar");
+    assert_eq!(x("scalar(whole(55296))"), "#notScalar");
     assert_eq!(x("scalar(128512)"), "\"😀\"");
     assert_eq!(x("codePoint(scalar(128512))"), "128512");
 }
@@ -22,7 +22,7 @@ fn scalar_refuses_every_int_that_is_not_a_scalar_value() {
     for n in [
         "-1", "55296", "56000", "57343", "1114112", "2^64", "-(2^70)",
     ] {
-        assert_eq!(x(&format!("scalar({n})")), "#notScalar", "{n}");
+        assert_eq!(x(&format!("scalar(whole({n}))")), "#notScalar", "{n}");
     }
     for n in ["0", "55295", "57344", "1114111"] {
         assert_eq!(x(&format!("codePoint(scalar({n}) else \"\")")), n, "{n}");
@@ -70,9 +70,11 @@ fn a_rope_is_read_as_its_text() {
 
 #[test]
 fn the_failures_pass_through_else() {
-    let src = "digit = codePoint(\"7\") - codePoint(\"0\") else -1;\n\
-               none = codePoint(\"77\") else -1;\n\
-               shown = scalar(55296) else \"?\";\n";
+    let src = "text(positional v: String) = v;\n\
+               whole(positional v: int) = v;\n\
+               digit = codePoint(\"7\") - codePoint(\"0\") else -1;\n\
+               none = codePoint(text(\"77\")) else -1;\n\
+               shown = scalar(whole(55296)) else \"?\";\n";
     let v = |n| zed_tests::step_helpers::l01_16_elaboration::value(src, n);
     assert_eq!(v("digit"), "7");
     assert_eq!(v("none"), "-1");
@@ -85,6 +87,6 @@ fn the_failures_pass_through_else() {
 fn an_interpolated_scalar_is_its_text_or_its_failure() {
     assert_eq!(x("\"${scalar(65)}\""), "\"A\"");
     assert_eq!(x("\"a${scalar(233)}b\""), "\"aéb\"");
-    assert_eq!(x("\"${scalar(56000)}\""), "#notScalar");
-    assert_eq!(x("\"${scalar(1114112)}\""), "#notScalar");
+    assert_eq!(x("\"${scalar(whole(56000))}\""), "#notScalar");
+    assert_eq!(x("\"${scalar(whole(1114112))}\""), "#notScalar");
 }

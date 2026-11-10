@@ -223,9 +223,17 @@ fn equality_takes_two_values_of_one_carrier() {
     // A divisor that cannot be zero adds no `#divByZero`, so the quotient passes as a rat.
     assert!(type_errors("f(positional x: rat) = x;\ny = f(3r/2r);\n").is_empty());
     // A divisor that may be zero adds `#divByZero`, a loose atom, which passes through `f`.
-    assert!(type_errors("f(positional x: int) = x;\ny = f(7 div 0);\n").is_empty());
+    assert!(
+        type_errors(
+            "f(positional x: int) = x;\nwhole(positional v: int) = v;\ny = f(7 div whole(0));\n"
+        )
+        .is_empty()
+    );
     assert_eq!(
-        value("f(positional x: int) = x;\ny = f(7 div 0);\n", "y"),
+        value(
+            "f(positional x: int) = x;\nwhole(positional v: int) = v;\ny = f(7 div whole(0));\n",
+            "y"
+        ),
         "#divByZero"
     );
     // `1 == 1.0` fixes neither literal: the decimal is rejected with its menu.

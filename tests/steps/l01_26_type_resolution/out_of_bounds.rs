@@ -117,7 +117,8 @@ fn a_key_outside_every_key_is_rejected() {
     let out = run("oob_disjoint", src, "", &["--", "a"]);
     assert_eq!(out.status, 1);
     assert!(
-        out.stderr.contains("this function does not take (\"x\")"),
+        out.stderr
+            .contains("this read can never find its key: the key is `\"x\"`"),
         "{}",
         out.stderr
     );

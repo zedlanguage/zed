@@ -61,12 +61,12 @@ fn arithmetic_comparison_and_power() {
 #[test]
 fn and_or_are_if_forms_so_they_short_circuit() {
     // The right operand would be the atom `#divByZero` if it were evaluated.
-    let src = "ok = true || 1 div 0 == 0;\nno = false && 1 div 0 == 0;\n";
+    let src = "whole(positional v: int) = v;\nok = true || 1 div whole(0) == 0;\nno = false && 1 div whole(0) == 0;\n";
     assert_eq!(value(src, "ok"), "true");
     assert_eq!(value(src, "no"), "false");
     assert_eq!(
         term(src, "ok"),
-        "if true { true } else { ((1 div 0) == 0) }"
+        "if true { true } else { ((1 div whole(0)) == 0) }"
     );
 }
 

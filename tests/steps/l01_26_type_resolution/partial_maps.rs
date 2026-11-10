@@ -172,7 +172,7 @@ fn a_key_not_inside_the_permission_is_a_static_error() {
     assert_eq!(
         type_errors("f(m: int .. int | String -> bool, k: bool) = m[k];"),
         [
-            "this function does not take (bool): these are the types of its arguments here, and this function has no arrow that takes them all [m[k]]"
+            "this read can never find its key: the key is `bool` and the map's keys are `int | String`, which share no value, so the read can only give `#notFound` [m[k]]"
         ]
     );
     assert_eq!(

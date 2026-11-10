@@ -139,8 +139,10 @@ const UNITS: &[&str] = &[
 /// functions' places and through calls: a call that holds its callee's claim (`u3`), calls
 /// that do not, written at their arguments (`u5`), a callee with an `if` on a remainder (`u6`
 /// of `u4`), and a callee whose condition reads a remainder, which a call that does not hold
-/// the claim reads at its place (`u8` of `u7`) (RUNG2-definedness).
-const DIVIDING: &str = "u1(x: int, n: int) = n == 0 && x mod n == 5;\n\
+/// the claim reads at its place (`u8` of `u7`) (RUNG2-definedness). `u1` holds the divisor
+/// 0 among others: under `n == 0` alone the remainder would always fail, which the checker
+/// rejects (row "Operation that always fails").
+const DIVIDING: &str = "u1(x: int, n: int) = n <= 0 && x mod n == 5;\n\
      u2(x: int, n: int) = (x mod n) * 0 == 0;\n\
      u3(x: int, n: int) = u2(x: x, n: n) && x div n >= 0;\n\
      u4(x: int, n: int) = if x mod n >= 1 { x div n > 0 } else { true };\n\

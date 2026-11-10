@@ -21,9 +21,9 @@ fn integers_widen_past_64_bits_and_narrow_back() {
 
 #[test]
 fn big_literals_in_any_base_and_euclidean_division() {
-    let src = "mask = 0xffff_ffff_ffff_ffff_ffff;\nbits = 0b1_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;\n\
+    let src = "whole(positional v: int) = v;\nmask = 0xffff_ffff_ffff_ffff_ffff;\nbits = 0b1_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;\n\
                q = -100000000000000000000 div 7;\nr = -100000000000000000000 mod 7;\n\
-               check = q * 7 + r;\nz = 100000000000000000000 div 0;\n";
+               check = q * 7 + r;\nz = 100000000000000000000 div whole(0);\n";
     assert_eq!(value(src, "mask"), "1208925819614629174706175");
     assert_eq!(value(src, "bits"), "18446744073709551616");
     assert_eq!(value(src, "q"), "-14285714285714285715");

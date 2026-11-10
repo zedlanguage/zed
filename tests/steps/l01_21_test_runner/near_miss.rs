@@ -178,6 +178,22 @@ const NEAR_MISSES: &[NearMiss] = &[
         None,
     ),
     (
+        Row::AlwaysFails,
+        "",
+        "f(positional x: int, d: int) = x div d;\n",
+        "f(positional x: int, d: int) = x div 0;\n",
+        "1:32",
+        Some("divide by a value that can be other than 0, such as a parameter `d: int`: `x div d`"),
+    ),
+    (
+        Row::KeyOutsideBound,
+        "",
+        "f(m: #a -> int) = m[#a];\n",
+        "f(m: #a -> int) = m[#b];\n",
+        "1:19",
+        Some("read the map with a key in `#a`"),
+    ),
+    (
         Row::BareBoundary,
         "",
         "x = 1 with initial x = 0;\n",

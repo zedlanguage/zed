@@ -339,10 +339,13 @@ pub(super) enum Frame<'a> {
     },
     Index1 {
         k: &'a Expr,
+        of: Span,
         span: Span,
     },
-    AtKey(Ty, Span),
-    AtIndex(Ty, Option<usize>, Span),
+    /// A read `v[k]`: the type of `v`, the span of `v` and the span of the read.
+    AtKey(Ty, Span, Span),
+    /// A read `v[i]` with a literal `i`: as [`Frame::AtKey`], with `i` if it is a component number.
+    AtIndex(Ty, Option<usize>, Span, Span),
     LambdaEnd {
         names: Vec<SParam>,
         /// The binder of the parameter in each slot, if a parameter takes it.
@@ -1136,10 +1139,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.partial(&sig, args, &missing, true, &what, span);
                 m.ty(t);
             }
-            Frame::Index1 { k, span } => {
+            Frame::Index1 { k, of, span } => {
                 let v = m.take_ty();
                 let ExprKind::Int { .. } = &k.kind else {
-                    m.k(Frame::AtKey(v, span));
+                    m.k(Frame::AtKey(v, of, span));
                     m.job(Job::Arg(k, Want::default()));
                     return;
                 };
@@ -1147,19 +1150,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Some(Value::Int(i)) => i,
                     _ => return m.ty(Ty::dynamic()),
                 };
-                m.k(Frame::AtIndex(v, usize::try_from(i).ok(), span));
+                m.k(Frame::AtIndex(v, usize::try_from(i).ok(), of, span));
                 m.job(Job::Arg(k, Want::default()));
             }
-            Frame::AtKey(v, span) => {
+            Frame::AtKey(v, of, span) => {
                 let x = m.take_arg();
                 let dense = self.dense_read(&v, span);
-                let t = self.at_key(&v, x, span, dense);
+                let t = self.at_key(&v, x, Some(of), span, dense);
                 m.ty(t);
             }
-            Frame::AtIndex(v, i, span) => {
+            Frame::AtIndex(v, i, of, span) => {
                 let x = m.take_arg();
                 let dense = self.dense_read(&v, span);
-                let t = self.at_index(&v, i, x, span, dense);
+                let t = self.at_index(&v, i, x, Some(of), span, dense);
                 m.ty(t);
             }
             Frame::LambdaEnd {
@@ -2057,8 +2060,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if op == "^" {
                     self.exponent(&x, &y, b, span);
                 }
+                let zero = match op {
+                    "/" | "div" | "mod" => self.zero_divisor(op, &x, &y, b),
+                    _ => None,
+                };
+                // The dividend as the program writes it, for the repair.
+                let dividend = match (&x.lit, x.expr.map(|e| &e.kind)) {
+                    (Some(l), _) => l.written().to_string(),
+                    (None, Some(ExprKind::Name(n))) => n.clone(),
+                    _ => "…".to_string(),
+                };
                 let sig = op_sig(op);
                 let r = self.apply(&format!("`{op}`"), &sig, vec![Some(x), Some(y)], true, span);
+                if let Some(why) = zero
+                    && r.0.atoms().contains(&Value::atom("divByZero"))
+                {
+                    self.divides_by_zero(op, why, &dividend, b, span);
+                }
                 if op == "*" {
                     // `*` and `/` take the same (f64, f64) and (rat, rat), and only `*` takes
                     // (int, int): `/` is defined where the product holds no `int`.
@@ -2198,8 +2216,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         let sig = word_sig(w);
-        self.apply(&format!("`{w}`"), &sig, vec![Some(x)], true, span)
-            .0
+        let values = self.operand_values(&x);
+        let at = x.at.unwrap_or(span);
+        let r = self
+            .apply(&format!("`{w}`"), &sig, vec![Some(x)], true, span)
+            .0;
+        if let Some(values) = values {
+            self.always_fails_word(w, values, &r, at, span);
+        }
+        r
     }
 
     /// A call of the bit word `w`, the primitive `p` (step L1.39a): its arguments placed by
@@ -2758,7 +2783,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             m.k(Frame::Section { sig, what, span });
             return m.job(Job::Arg(k, Want::of(&want)));
         }
-        m.k(Frame::Index1 { k, span });
+        m.k(Frame::Index1 {
+            k,
+            of: of.span,
+            span,
+        });
         m.job(Job::Expr(of));
     }
 
@@ -4383,11 +4412,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let start = self.refused.len();
         let out = match &n.kind {
             NeedKind::Component { i, key } => {
-                self.at_index(&on, *i, Arg::of(key.clone()), span, false)
+                self.at_index(&on, *i, Arg::of(key.clone()), None, span, false)
             }
             NeedKind::Index(k) => {
                 let k = Arg::of(self.bound(k, binds));
-                self.at_key(&on, k, span, false)
+                self.at_key(&on, k, None, span, false)
             }
             NeedKind::Destructure { i, n } => self.component(&on, *i, *n, span),
             NeedKind::Call {
@@ -6026,8 +6055,9 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `v[x]` with `x` no literal: an application of each function `v` may be, and a
     /// computed index of each tuple `v` may be. With `dense`, a family misses with
-    /// `#outOfBounds` ([`Self::dense_read`]).
-    fn at_key(&mut self, v: &Ty, x: Arg<'a>, span: Span, dense: bool) -> Ty {
+    /// `#outOfBounds` ([`Self::dense_read`]). With `of`, the span of `v` as written, a key
+    /// outside a function's keys is rejected ([`Self::key_outside`]).
+    fn at_key(&mut self, v: &Ty, x: Arg<'a>, of: Option<Span>, span: Span, dense: bool) -> Ty {
         let mut out = self.passing(v, "a call", span);
         for p in v.pieces() {
             match p {
@@ -6036,6 +6066,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     out = out.union(&r);
                 }
                 Piece::Fn(sig) => {
+                    if let Some(r) = self.key_outside(&sig, &x, of, span, dense) {
+                        out = out.union(&r);
+                        continue;
+                    }
                     let r = self
                         .apply("this function", &sig, vec![Some(x.clone())], false, span)
                         .0;
@@ -6071,12 +6105,24 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `v[i]` with the literal `x`, `i` if it is a component number: a tuple's component, or
     /// a family's entry. With `dense`, a family misses with `#outOfBounds`
     /// ([`Self::dense_read`]).
-    fn at_index(&mut self, v: &Ty, i: Option<usize>, x: Arg<'a>, span: Span, dense: bool) -> Ty {
+    fn at_index(
+        &mut self,
+        v: &Ty,
+        i: Option<usize>,
+        x: Arg<'a>,
+        of: Option<Span>,
+        span: Span,
+        dense: bool,
+    ) -> Ty {
         let mut out = self.passing(v, "an index", span);
         let shown = x.ty.to_string();
         for p in v.pieces() {
             match p {
                 Piece::Fn(sig) if sig.data => {
+                    if let Some(r) = self.key_outside(&sig, &x, of, span, dense) {
+                        out = out.union(&r);
+                        continue;
+                    }
                     let r = self
                         .apply("this family", &sig, vec![Some(x.clone())], true, span)
                         .0;
@@ -7330,6 +7376,405 @@ fn passed_repairs(p: &str, d: &IntDomain, span: Span) -> Vec<Note> {
     .into_iter()
     .map(|text| Note { span, text })
     .collect()
+}
+
+/// Why a divisor is always zero, as [`Ck::zero_divisor`] finds it.
+enum Zero {
+    /// It is the literal `0`, or `0r`.
+    Literal,
+    /// Its type, written here, holds no value but zero.
+    Type(String),
+    /// The int value its text folds to is `0`.
+    Folded,
+    /// The tests the walk is in leave it only `0`.
+    Tests,
+    /// Its names cancel and its constants, if it has any (the flag), add to zero: each name, in
+    /// order of first use, is added as often as it is subtracted.
+    Cancels(Vec<String>, bool),
+}
+
+/// Whether `v` is the int or rat zero.
+fn is_zero(v: &Value) -> bool {
+    match v {
+        Value::Int(n) => *n == 0,
+        Value::Rat(r) => r.is_zero(),
+        _ => false,
+    }
+}
+
+/// The exact rational value of an int or rat `v`.
+fn as_rat(v: &Value) -> Option<Rat> {
+    match v {
+        Value::Int(n) => Some(Rat::int((*n).into())),
+        Value::Big(r) | Value::Rat(r) => Some((**r).clone()),
+        _ => None,
+    }
+}
+
+// The rule "Operation that always fails" (DESIGN.md sec:failure) for the built-in operations
+// whose operands the checker's own algebra decides: a division by a divisor that is always zero,
+// a cast or conversion word whose every operand value fails, and a read whose key is never one
+// of the map's keys (R11). A call of a user function is not judged: the checker never runs it.
+impl<'a> Ck<'_, 'a> {
+    /// Why the divisor `y` of `x op y` (`b` as written) is always zero, if the checker shows it.
+    /// `/` on `f64` has no `#divByZero`, so a divisor that may be `f64` is not judged, nor is
+    /// an operand whose type lists nothing (the operation is never reached).
+    fn zero_divisor(&mut self, op: &str, x: &Arg<'a>, y: &Arg<'a>, b: &'a Expr) -> Option<Zero> {
+        if x.ty.lists_nothing() || y.ty.lists_nothing() {
+            return None;
+        }
+        let f64 = Ty::carrier(Carrier::F64);
+        if op == "/" && (x.ty.meets(&f64) || y.ty.meets(&f64)) {
+            return None;
+        }
+        let rat_zero = |d: &str| Rat::decimal(d).ok().flatten().is_some_and(|r| r.is_zero());
+        if y.lit.as_ref().is_some_and(|l| is_zero(&l.value))
+            || matches!(&b.kind, ExprKind::Rat(d) if rat_zero(d))
+        {
+            return Some(Zero::Literal);
+        }
+        if self.known(b).value.as_ref().is_some_and(is_zero) {
+            return Some(Zero::Folded);
+        }
+        let value = y.ty.without_atoms();
+        if value.closed() && !value.lists_nothing() {
+            let zeros = Ty::lit(&Value::Int(0)).union(&Ty::lit(&Value::rat(Rat::int(0.into()))));
+            if value.subtype(&zeros) {
+                return Some(Zero::Type(self.text(&y.ty)));
+            }
+            // The narrowing of the tests reads values as ints, so it is read only for an int
+            // divisor.
+            if value.subtype(&Ty::carrier(Carrier::Int)) {
+                let (ints, narrowed) = self.ints_here(b);
+                if ints == IntervalSet::single(0) {
+                    return Some(if narrowed { Zero::Tests } else { Zero::Folded });
+                }
+            }
+        }
+        self.cancels(b)
+            .map(|(names, constants)| Zero::Cancels(names, constants))
+    }
+
+    /// The names of `e`, in order of first use, and whether it has constants, when `e` is a sum of names and constants under
+    /// `+`, `-` and unary `-` in which each name is added as often as it is subtracted and the
+    /// constants add to zero, as in `x - x` or `(a + 1) - (1 + a)`. One pass over `e` on an
+    /// explicit stack, each node once.
+    ///
+    /// Complexity tradeoff: the naive test of "always zero" evaluates `e` at every value of
+    /// its names, which is unbounded. Used: the linear form of `e` over `+` and `-`, one count
+    /// per name, O(n) for n nodes, and the constants added in pairs, a balanced tree, O(M(S)
+    /// log n) for S digits in all, where adding them left to right is O(n·S). Given up: a
+    /// product, as in `2 * x - x - x`, a name bound to a value that is not a constant, as in
+    /// `z = x - x`, and any call: such a divisor is not shown zero, and its division keeps
+    /// `#divByZero`. COMPLEXITY.md row C38.
+    fn cancels(&mut self, e: &'a Expr) -> Option<(Vec<String>, bool)> {
+        let mut counts: HashMap<usize, (usize, i64)> = HashMap::new();
+        let mut names: Vec<String> = Vec::new();
+        let mut constants: Vec<Rat> = Vec::new();
+        let mut stack = vec![(e, false)];
+        while let Some((x, neg)) = stack.pop() {
+            match &x.kind {
+                ExprKind::Binary(o @ ("+" | "-"), a, b) => {
+                    stack.push((b, neg ^ (*o == "-")));
+                    stack.push((a, neg));
+                }
+                ExprKind::Unary("-", a) => stack.push((a, !neg)),
+                ExprKind::Rat(d) => {
+                    let r = Rat::decimal(d).ok()??;
+                    constants.push(if neg { r.neg() } else { r });
+                }
+                _ => {
+                    if let Some(v) = self.known(x).value {
+                        let r = as_rat(&v)?;
+                        constants.push(if neg { r.neg() } else { r });
+                        continue;
+                    }
+                    let ExprKind::Name(n) = &x.kind else {
+                        return None;
+                    };
+                    let id = match self.t.res.uses.get(&x.span) {
+                        Some(Ref::Bound(ids)) if ids.len() == 1 => ids[0],
+                        _ => return None,
+                    };
+                    let next = names.len();
+                    let (_, c) = counts.entry(id).or_insert_with(|| {
+                        names.push(n.clone());
+                        (next, 0)
+                    });
+                    *c = c.checked_add(if neg { -1 } else { 1 })?;
+                }
+            }
+        }
+        if names.is_empty() || counts.values().any(|&(_, c)| c != 0) {
+            return None;
+        }
+        while constants.len() > 1 {
+            let mut next = Vec::with_capacity(constants.len().div_ceil(2));
+            let mut it = constants.into_iter();
+            while let Some(a) = it.next() {
+                next.push(match it.next() {
+                    Some(b) => a.add(&b).ok()?,
+                    None => a,
+                });
+            }
+            constants = next;
+        }
+        let had = !constants.is_empty();
+        constants.iter().all(Rat::is_zero).then_some((names, had))
+    }
+
+    /// Rejects `x op y` at `span`, `dividend` the dividend as the program writes it (its literal
+    /// or its name, else `…`) and `b` the divisor as written, whose divisor is always zero for
+    /// the reason `why`: every value that reaches it fails with `#divByZero`.
+    fn divides_by_zero(&mut self, op: &str, why: Zero, dividend: &str, b: &'a Expr, span: Span) {
+        let (result, kind) = match op {
+            "/" => ("a rat", "rat"),
+            _ => ("an int", "int"),
+        };
+        let mut notes = Vec::new();
+        let reason = match why {
+            Zero::Literal => "its divisor is the literal 0".to_string(),
+            Zero::Type(t) => format!("its divisor has the type `{t}`, whose only value is 0"),
+            Zero::Folded => "its divisor is built from constants and works out to 0".to_string(),
+            Zero::Tests => {
+                notes.extend(self.deciding_notes(b));
+                "the tests around it leave its divisor only the value 0".to_string()
+            }
+            Zero::Cancels(names, constants) => {
+                let each = match names.len() {
+                    1 => "",
+                    _ => "each of ",
+                };
+                let names = names
+                    .iter()
+                    .map(|n| format!("`{n}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let constants = match constants {
+                    true => ", and its constants add up to 0",
+                    false => "",
+                };
+                format!(
+                    "its divisor adds {each}{names} as often as it subtracts it{constants}, which \
+                     makes it 0 for every value of {names}"
+                )
+            }
+        };
+        notes.push(Note {
+            span: b.span,
+            text: "this divisor is always 0".to_string(),
+        });
+        notes.extend(self.derive(&[b.span]));
+        let menu = [
+            format!(
+                "repair: divide by a value that can be other than 0, such as a parameter `d: {kind}`: \
+                 `{dividend} {op} d`"
+            ),
+            "repair: write `#divByZero` in place of this division, where the failure is meant"
+                .to_string(),
+            "repair: write `#bug(\"…\")` in place of this division, where it is never meant to \
+             be reached"
+                .to_string(),
+        ];
+        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        self.rejects_with(
+            Row::AlwaysFails,
+            span,
+            format!(
+                "`{op}` here always fails with `#divByZero`: {reason}, so no value that reaches \
+                 it gives {result}"
+            ),
+            notes,
+        );
+    }
+
+    /// The values the operand `x` of a word may take, when the checker can list them, and the
+    /// literal as written when it is one: a literal, in each carrier a bare integer literal may
+    /// adopt, or the values of a type that lists them one by one (`"a" | "b"`). A bare decimal
+    /// literal is left out: it is rejected as a literal with no carrier. Linear in the size of
+    /// the type.
+    fn operand_values(&self, x: &Arg<'a>) -> Option<(Vec<Value>, Option<String>)> {
+        if let Some(l) = &x.lit {
+            let v = neg_value(&l.value, l.neg());
+            let mut values = vec![v.clone()];
+            if l.bare {
+                // A bare integer literal is generic: `7` may be an int, a rat or an f64, so the
+                // word fails always only if it fails on each.
+                let r = matches!(v, Value::Int(_) | Value::Big(_)).then(|| as_rat(&v))??;
+                if let Ok(f) = r.to_f64() {
+                    values.push(Value::float(f));
+                }
+                values.push(Value::rat(r));
+            }
+            return Some((values, Some(l.written().to_string())));
+        }
+        let value = x.ty.without_atoms();
+        if value.lists_nothing() {
+            return None;
+        }
+        Some((value.kernel()?.values_listed()?, None))
+    }
+
+    /// Rejects the word `w` applied at `span` to an operand at `at` whose values are `values`,
+    /// `written` when it is a literal, and whose result is `r`, when every value the word takes
+    /// fails with an atom. A value the kernel cannot convert for want of memory leaves the call
+    /// unjudged.
+    ///
+    /// Complexity tradeoff: the cast is run on each listed value, which costs what the cast
+    /// costs when the program runs, O(d^1.47) for a literal of d digits (COMPLEXITY.md K41),
+    /// and O(V) such casts for V listed values. No cheaper test decides whether a long digit
+    /// string is exact in the target format. COMPLEXITY.md row C39.
+    fn always_fails_word(
+        &mut self,
+        w: &str,
+        (values, written): (Vec<Value>, Option<String>),
+        r: &Ty,
+        at: Span,
+        span: Span,
+    ) {
+        if r.atoms().is_empty() {
+            return;
+        }
+        let Some(p) = zedc_base::interp::prim(w) else {
+            return;
+        };
+        let sig = word_sig(w);
+        let mut fails = Vec::new();
+        for v in values {
+            if !sig.arrows.iter().any(|a| a.params[0].contains(&v)) {
+                continue;
+            }
+            match run(p, &v) {
+                Some(a @ Value::Atom(_)) => fails.push((v, a)),
+                Some(_) | None => return,
+            }
+        }
+        let Some((first, _)) = fails.first() else {
+            return;
+        };
+        let carrier = match first {
+            Value::Str(_) => "String".to_string(),
+            v => lit_carrier(v).name().to_string(),
+        };
+        let atoms = fails
+            .iter()
+            .map(|(_, a)| a.to_string())
+            .collect::<BTreeSet<_>>();
+        let atoms = atoms.into_iter().collect::<Vec<_>>().join(" | ");
+        let written = written.or_else(|| match &fails[..] {
+            [(v, _)] => Some(self.text(&Ty::lit(v))),
+            _ => None,
+        });
+        let shown = match &written {
+            Some(text) => format!("its operand `{text}` gives `{atoms}`"),
+            None => format!(
+                "each value its operand may be fails: {}",
+                fails
+                    .iter()
+                    .map(|(v, a)| format!("`{}` gives `{a}`", self.text(&Ty::lit(v))))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        let mut notes = vec![Note {
+            span: at,
+            text: format!("`{w}` cannot convert this operand"),
+        }];
+        notes.extend(self.derive(&[at]));
+        let menu = [
+            format!(
+                "repair: convert a value known only when the program runs, such as a parameter \
+                 `s: {carrier}`: `{w}(s)` gives the result where `s` converts and `{atoms}` where it \
+                 does not"
+            ),
+            format!("repair: write `{atoms}` in place of this call, where the failure is meant"),
+            "repair: write `#bug(\"…\")` in place of this call, where it is never meant to be \
+             reached"
+                .to_string(),
+        ];
+        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        self.rejects_with(
+            Row::AlwaysFails,
+            span,
+            format!("`{w}` here always fails: {shown}, so this call never gives a value"),
+            notes,
+        );
+    }
+
+    /// The type of the read of the function `sig` at the key `x`, `of` the span of the map as
+    /// written, when `x` is never one of its keys (R11): the read is rejected and typed as the
+    /// map's entries, so nothing after it fails again. None when the key may be one of them,
+    /// or when there is no written map (a replayed need).
+    fn key_outside(
+        &mut self,
+        sig: &Sig,
+        x: &Arg<'a>,
+        of: Option<Span>,
+        span: Span,
+        dense: bool,
+    ) -> Option<Ty> {
+        let of = of?;
+        if sig.params.is_empty() || x.ty.lists_nothing() {
+            return None;
+        }
+        let keys = Ty::union_all(sig.arrows.iter().map(|a| &a.params[0]));
+        if x.ty.meets(&keys) {
+            return None;
+        }
+        let miss = match dense {
+            true => "#outOfBounds",
+            false => "#notFound",
+        };
+        let entries = Ty::union_all(sig.arrows.iter().map(|a| &a.result))
+            .without(&(&KType::atom("notFound") | &KType::atom("outOfBounds")));
+        let (key, keys_text, entry) = (self.text(&x.ty), self.text(&keys), self.text(&entries));
+        let at = x.at.unwrap_or(span);
+        let mut notes = vec![Note {
+            span: of,
+            text: format!("this map has the keys `{keys_text}`, which hold no `{key}`"),
+        }];
+        notes.extend(self.derive(&[at, of]));
+        let mut menu = vec![format!("repair: read the map with a key in `{keys_text}`")];
+        if !dense {
+            // The key's carriers and atoms, so the wider keys are a type the program can write
+            // for any key of the key's kind, not only the literal read here.
+            let wider = [
+                Carrier::Bool,
+                Carrier::Int,
+                Carrier::F64,
+                Carrier::Rat,
+                Carrier::Str,
+            ]
+            .into_iter()
+            .map(Ty::carrier)
+            .filter(|c| x.ty.meets(c))
+            .fold(Ty::set(x.ty.atoms()), |t, c| t.union(&c));
+            let wider = self.text(&keys.union(&wider));
+            menu.push(format!(
+                "repair: declare the map with the wider keys `{wider} ->? {entry}`, and handle \
+                 `#notFound` where the key is missing"
+            ));
+        }
+        menu.push(format!(
+            "repair: write `{miss}` in place of this read, where the miss is meant"
+        ));
+        menu.push(
+            "repair: write `#bug(\"…\")` in place of this read, where it is never meant to be \
+             reached"
+                .to_string(),
+        );
+        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        self.rejects_with(
+            Row::KeyOutsideBound,
+            span,
+            format!(
+                "this read can never find its key: the key is `{key}` and the map's keys are \
+                 `{keys_text}`, which share no value, so the read can only give `{miss}`"
+            ),
+            notes,
+        );
+        Some(entries)
+    }
 }
 
 /// `r`, the entry type of a read of a family whose keys are one integer interval, every key

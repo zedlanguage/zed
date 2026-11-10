@@ -24,12 +24,12 @@ fn a_price_read_from_a_form_field() {
     assert_eq!(x("rat(\"-1r/3r\")"), "-1r/3r");
     assert_eq!(x("rat(\"19.99\") * 3r"), "5997r/100r");
     assert_eq!(
-        x("rat(\"2/4\") else 0r"),
+        x("rat(text(\"2/4\")) else 0r"),
         "0r",
         "String writes 1r/2r, never 2r/4r"
     );
     assert_eq!(
-        x("rat(\"1/-3\")"),
+        x("rat(text(\"1/-3\"))"),
         "#invalid",
         "the sign is on the numerator"
     );

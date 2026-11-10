@@ -194,7 +194,7 @@ fn units() -> Vec<(String, Vec<u8>)> {
         ),
         (
             "a definition nothing reads".into(),
-            b"broken = 1 div 0;\nunused = broken + 1;\nmain(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"a\" ++ \"b\";\n}\n".to_vec(),
+            b"whole(positional v: int) = v;\nbroken = 1 div whole(0);\nunused = broken + 1;\nmain(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"a\" ++ \"b\";\n}\n".to_vec(),
         ),
     ]);
     out

@@ -6,26 +6,26 @@ use zed_tests::step_helpers::l01_16_elaboration::errors;
 
 #[test]
 fn one_failure_flows_through_the_arithmetic() {
-    assert_eq!(x("int(\"x\") * 2 + 1"), "#invalid");
-    assert_eq!(x("-(10 div 0)"), "#divByZero");
+    assert_eq!(x("int(text(\"x\")) * 2 + 1"), "#invalid");
+    assert_eq!(x("-(10 div whole(0))"), "#divByZero");
     // A term with an undefined operand is undefined, the exponent 0 included, as NaN in,
     // NaN out holds for float `^` (item FLOAT-pow-nan).
-    assert_eq!(x("(10 div 0) ^ 0"), "#divByZero");
+    assert_eq!(x("(10 div whole(0)) ^ 0"), "#divByZero");
 }
 
 #[test]
 fn two_failures_merge_into_a_set() {
     assert_eq!(
-        x("int(\"seven\") + int(2.5f64)"),
+        x("int(text(\"seven\")) + int(real(2.5f64))"),
         "#errs({#inexact, #invalid})"
     );
     assert_eq!(
-        x("int(2.5f64) + int(\"seven\")"),
+        x("int(real(2.5f64)) + int(text(\"seven\"))"),
         "#errs({#inexact, #invalid})",
         "the set has no order to invent"
     );
     assert_eq!(
-        x("int(\"a\") + int(\"b\")"),
+        x("int(text(\"a\")) + int(text(\"b\"))"),
         "#invalid",
         "a singleton unwraps"
     );
@@ -33,17 +33,18 @@ fn two_failures_merge_into_a_set() {
 
 #[test]
 fn a_merge_flattens_and_else_replaces_it() {
-    let src = "price = int(\"n/a\");\nqty = int(1.5f64);\nfee = 10 div 0;\n\
+    let src = "price = int(text(\"n/a\"));\nqty = int(real(1.5f64));\nfee = 10 div whole(0);\n\
                total = price * qty + fee;\nshown = total else 0;\n";
-    let v = |n| zed_tests::step_helpers::l01_16_elaboration::value(src, n);
+    let v =
+        |n| zed_tests::step_helpers::l01_16_elaboration::value(&format!("{}{src}", super::PASS), n);
     assert_eq!(v("total"), "#errs({#divByZero, #inexact, #invalid})");
     assert_eq!(v("shown"), "0");
 }
 
 #[test]
 fn an_atom_compared_with_equals_is_data() {
-    assert_eq!(x("int(\"x\") == int(\"y\")"), "true");
-    assert_eq!(x("int(\"x\") != int(2.5f64)"), "true");
+    assert_eq!(x("int(text(\"x\")) == int(text(\"y\"))"), "true");
+    assert_eq!(x("int(text(\"x\")) != int(real(2.5f64))"), "true");
 }
 
 #[test]
