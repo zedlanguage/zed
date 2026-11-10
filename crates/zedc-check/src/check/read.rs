@@ -133,13 +133,32 @@ fn read_part(text: &str, head: &str, named: &mut Binds, seen: &mut Seen) -> Resu
     // the variables searched for share a few names. Tradeoff: each variable name searched
     // for adds at most one visit of each node, so k parts whose signatures are emptied away,
     // each for a variable of its own name and each naming the one before, cost O(n·k), with
-    // memory to match (measured 25x at 8n, k = n); exact answers there need reachability
-    // from many nodes to many sets in a shared graph, which has no known linear method. A
-    // part whose clause bounds a variable no signature of its own holds is rejected by the
-    // resolver if not here, so the search runs on at most one such part. Every answer is
-    // the one of the naive walk. Tests in `l01_26_type_resolution::bounds`:
-    // `reading_a_chain_of_bounded_definitions_scales` and
-    // `a_bound_deep_in_a_chain_is_found_and_a_bound_on_no_signature_is_rejected`.
+    // memory to match (measured 28.7 and 593 ms at n = 200 and 1,600, k = n, 20.7x at 8n).
+    // No input reaches that case (READ-bounds-reach-sets, F155): (1) zedc never calls
+    // `parse_type`; only tests do, on text they write and on types the checker prints, and
+    // a program's types are read by the front end, never here. (2) In a printed type no
+    // part but the last holds a clause: `write_parts` writes each clause (`Print::Bounds`)
+    // right after the arrows of the signature it bounds, and the definitions before the
+    // text are kernel sets (`KType::surfaces_by_name`), whose printer writes no clause. (3)
+    // Read back, the last part denotes each signature it writes as a new `Sig`, at an
+    // address no part before met (`Seen` holds each signature it met), bounding each
+    // variable of its clause the signature uses (one it does not use the resolver rejects:
+    // the type before `for` does not hold it, so no printed type that reads back has one);
+    // and the denotation keeps every signature of a type the checker made with the
+    // same constructors (`Ty::of_row` and `Ty::atom_of` empty a part only where a
+    // component is empty, which such a type has already done). So `fresh` gives every
+    // bounded variable of a printed type, and `reaches` runs on none; the definitions'
+    // signatures (kernel arrows) bound nothing. Only hand-written text with a clause on a
+    // signature emptied away, or on one of a definition, reaches `reaches`. A printed type
+    // whose part dropped a signature would not read back as itself, which the read-back
+    // tests catch; such a part costs one search before its rejection. A linear method for
+    // the hand-written case would need reachability from many nodes to many sets in a
+    // shared graph. Every answer is the one of the naive walk. Tests in
+    // `l01_26_type_resolution::bounds`: `reading_a_chain_of_bounded_definitions_scales`,
+    // `a_bound_deep_in_a_chain_is_found_and_a_bound_on_no_signature_is_rejected`,
+    // `a_printed_type_has_each_bounds_clause_on_a_signature_of_its_last_part` and
+    // `reading_back_a_printed_type_of_many_distinct_bounded_variables_scales` (which fails if
+    // the reading searches for a variable `fresh` gave).
     if !bounded.is_empty() {
         let own = seen.fresh(&ty);
         if let Some(v) = (bounded.into_iter()).find(|v| !own.contains(*v) && !seen.reaches(&ty, v))

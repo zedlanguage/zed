@@ -1020,3 +1020,59 @@ fn a_bound_deep_in_a_chain_is_found_and_a_bound_on_no_signature_is_rejected() {
         "{err}"
     );
 }
+
+/// A type of `n` bounded signatures, each for a variable of its own name (`X1` to `Xn`) and
+/// each in a tuple with the one before, every one also taking `int | #x`, a part used `n`
+/// times, so the checker prints it with a definition before the whole text.
+fn distinct_bounds_chain(n: usize) -> String {
+    let mut text = String::from("type D0 = (int | #x,);\n");
+    for k in 1..=n {
+        text += &format!(
+            "type D{k} = (((x: X{k}, y: int | #x) -> X{k} for X{k} in int | f64), D{});\n",
+            k - 1
+        );
+    }
+    text + &format!("D{n}")
+}
+
+#[test]
+fn a_printed_type_has_each_bounds_clause_on_a_signature_of_its_last_part() {
+    // The printer writes a bounds clause right after the signature it bounds, in the text of
+    // the type itself; the definitions before it are kernel sets, which hold no clause. So each
+    // clause of a printed type is on a signature its last part writes, and reading it back
+    // finds each bound among the signatures that part meets first, with no search of the
+    // definitions.
+    let n = 5;
+    let t = parse_type(&distinct_bounds_chain(n)).unwrap_or_else(|e| panic!("{e}"));
+    let printed = t.to_string();
+    let (defs, last): (Vec<&str>, Vec<&str>) =
+        printed.lines().partition(|l| l.starts_with("type "));
+    assert!(!defs.is_empty(), "{printed}");
+    assert!(defs.iter().all(|d| !d.contains(" for ")), "{printed}");
+    assert_eq!(last.len(), 1, "{printed}");
+    assert_eq!(last[0].matches(" for ").count(), n, "{printed}");
+    assert_eq!(parse_type(&printed).unwrap_or_else(|e| panic!("{e}")), t);
+}
+
+#[test]
+fn reading_back_a_printed_type_of_many_distinct_bounded_variables_scales() {
+    // The printed texts of `distinct_bounds_chain`, built before timing. Each of the n clauses
+    // bounds a variable of its own name on a signature of the last part, which the reading
+    // meets first: O(n). A reading that searched the type for each variable, as it does for
+    // a variable whose signature was emptied away, would take O(n^2) here (COMPLEXITY.md
+    // F155).
+    let n = 200;
+    let inputs = zed_tests::scaling::inputs(n, |m| {
+        let t = parse_type(&distinct_bounds_chain(m)).unwrap_or_else(|e| panic!("{e}"));
+        let text = t.to_string();
+        (t, text)
+    });
+    zed_tests::scaling::check(
+        "reading back a printed type of n bounded signatures, each for a variable of its own name",
+        n,
+        |m| {
+            let (t, text) = &inputs[&m];
+            assert_eq!(&parse_type(text).unwrap_or_else(|e| panic!("{e}")), t);
+        },
+    );
+}
