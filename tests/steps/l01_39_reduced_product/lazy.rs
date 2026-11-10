@@ -567,7 +567,9 @@ mod leaves_of_one_class_settled_together_get_what_each_gets_alone {
 /// are stale, then two joins in a row of the two outcomes of a test, each narrowed
 /// further: a test of a hub, of the two hubs (`n - m >= c`, a free conjunct at both, which
 /// moves neither), of a leaf, or `b >= n && b >= m` on a further name `b`, whose negation
-/// splits in two. Every name is then settled to the product of both. Seeds 0 to 199.
+/// splits in two. Every name is then settled to the product of both. Seeds 0 to 199, in
+/// ten parts of 20 seeds, each a test: as two parts of 100 seeds they took 33 s together at
+/// load 24 to 35, and 50 to 73 s each at load 31 to 58 (item SPLIT-l01_39-slow).
 mod a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does {
     use super::*;
 
@@ -670,13 +672,53 @@ mod a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does {
     }
 
     #[test]
-    fn seeds_0_to_99() {
-        part(0..100);
+    fn seeds_0_to_19() {
+        part(0..20);
     }
 
     #[test]
-    fn seeds_100_to_199() {
-        part(100..200);
+    fn seeds_20_to_39() {
+        part(20..40);
+    }
+
+    #[test]
+    fn seeds_40_to_59() {
+        part(40..60);
+    }
+
+    #[test]
+    fn seeds_60_to_79() {
+        part(60..80);
+    }
+
+    #[test]
+    fn seeds_80_to_99() {
+        part(80..100);
+    }
+
+    #[test]
+    fn seeds_100_to_119() {
+        part(100..120);
+    }
+
+    #[test]
+    fn seeds_120_to_139() {
+        part(120..140);
+    }
+
+    #[test]
+    fn seeds_140_to_159() {
+        part(140..160);
+    }
+
+    #[test]
+    fn seeds_160_to_179() {
+        part(160..180);
+    }
+
+    #[test]
+    fn seeds_180_to_199() {
+        part(180..200);
     }
 }
 

@@ -1847,23 +1847,33 @@ fn brute_hulls(items: &[Item], bs: &BTreeMap<String, Vec<Piece>>) -> BTreeMap<St
         .collect()
 }
 
-/// [`check_refused`] on the random parts of seeds `seeds`, 400 each, with `double` each part
-/// two random parts over the same names joined (more rows, so more refusals), the hulls by
-/// brute force.
-fn refused_names_in(seeds: std::ops::Range<u64>, double: bool) -> RefusedCount {
+/// [`check_refused`] on the random parts `cases` (of 0 to 399) of seeds `seeds`, with `double`
+/// each part two random parts over the same names joined (more rows, so more refusals), the
+/// hulls by brute force. The parts before `cases` are drawn and not checked, so that each part
+/// is that of its seed and case whatever range a test checks.
+fn refused_names_in(
+    seeds: std::ops::Range<u64>,
+    cases: std::ops::Range<usize>,
+    double: bool,
+) -> RefusedCount {
     let mut count = (0, 0, 0);
     let mut wrong = Vec::new();
     for seed in seeds {
         let mut r = Rng::new(seed);
-        // The orders are drawn apart from the parts, so that the parts are those of the seed.
-        let mut order = Rng::new(0x0de5 ^ seed);
-        for case in 0..400 {
+        for case in 0..cases.end {
             let nz = 2 + r.below(5);
             let mut items = random_part(&mut r, nz);
             if double {
                 items.extend(random_part(&mut r, nz));
             }
             let bs = random_boxes(&mut r, nz);
+            if case < cases.start {
+                continue;
+            }
+            // The orders are drawn apart from the parts, so that the parts are those of the
+            // seed, and from a sequence of each case's own, so that a case checks the same
+            // orders whichever cases before it are checked.
+            let mut order = Rng::new(0x0de5 ^ seed ^ ((case as u64) << 32));
             let label = format!("seed {seed} case {case}");
             let hulls = || brute_hulls(&items, &bs);
             check_refused(
@@ -1886,7 +1896,7 @@ fn refused_names_in(seeds: std::ops::Range<u64>, double: bool) -> RefusedCount {
 /// `b >= -6`, `-1 <= z0 <= 8`, `z1 >= -4`, with the hull brute force finds, `c >= -6`.
 #[test]
 fn refused_projections_of_random_parts_keep_sound_boxes_first_half() {
-    let count = refused_names_in(11..15, false);
+    let count = refused_names_in(11..15, 0..400, false);
     eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
     assert_eq!(count, (1, 1, 1));
 }
@@ -1895,19 +1905,44 @@ fn refused_projections_of_random_parts_keep_sound_boxes_first_half() {
 /// PRES-project-each-cost answers one name refused before, with the hull brute force finds.
 #[test]
 fn refused_projections_of_random_parts_keep_sound_boxes_second_half() {
-    let count = refused_names_in(15..19, false);
+    let count = refused_names_in(15..19, 0..400, false);
     eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
     assert_eq!(count, (2, 10, 8));
 }
 
-/// Seeds 11 and 12 with each part two random parts joined, checked by [`refused_names_in`].
-/// Item PRES-project-each-cost answers the one refused name of one part, narrower than its
-/// box, with the hull brute force finds.
+/// Cases 0 to 199 of seed 11 with each part two random parts joined, checked by
+/// [`refused_names_in`]. With cases 200 to 399
+/// ([`refused_projections_of_joined_random_parts_keep_sound_boxes_seed_11_cases_200_to_399`])
+/// and seed 12 ([`refused_projections_of_joined_random_parts_keep_sound_boxes_seed_12`]) it
+/// counts (7, 30, 14). Seeds 11 and 12 took 37 s as one test at load 24 to 35, and seed 11
+/// alone 34 to 53 s at load 49 to 55, most of it in three refused parts (cases 17, 85 and 274,
+/// 6 to 10 s each), so seed 11 is two tests (item SPLIT-l01_39-slow). Item
+/// PRES-project-each-cost answers the one refused name of one part, narrower than its box,
+/// with the hull brute force finds.
 #[test]
-fn refused_projections_of_joined_random_parts_keep_sound_boxes() {
-    let count = refused_names_in(11..13, true);
+fn refused_projections_of_joined_random_parts_keep_sound_boxes_seed_11_cases_0_to_199() {
+    let count = refused_names_in(11..12, 0..200, true);
     eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
-    assert_eq!(count, (7, 30, 14));
+    assert_eq!(count, (2, 8, 3));
+}
+
+/// Cases 200 to 399 of seed 11 with each part two random parts joined, checked by
+/// [`refused_names_in`]; see
+/// [`refused_projections_of_joined_random_parts_keep_sound_boxes_seed_11_cases_0_to_199`].
+#[test]
+fn refused_projections_of_joined_random_parts_keep_sound_boxes_seed_11_cases_200_to_399() {
+    let count = refused_names_in(11..12, 200..400, true);
+    eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
+    assert_eq!(count, (2, 7, 5));
+}
+
+/// Seed 12 with each part two random parts joined, checked by [`refused_names_in`]; see
+/// [`refused_projections_of_joined_random_parts_keep_sound_boxes_seed_11_cases_0_to_199`].
+#[test]
+fn refused_projections_of_joined_random_parts_keep_sound_boxes_seed_12() {
+    let count = refused_names_in(12..13, 0..400, true);
+    eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
+    assert_eq!(count, (3, 15, 6));
 }
 
 /// The part `case` of `seed` and its boxes, drawn as [`refused_names_in`] draws them.

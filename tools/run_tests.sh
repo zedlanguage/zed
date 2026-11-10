@@ -191,6 +191,10 @@ fi
 # l01_39 lazy's joins that drop a star hold three random parts of 13 to 22 s each at load 35
 # to 45, which together with the rest of lazy would pass 60 s (2026-11-10,
 # SETTLE-class-check-case).
+# l01_39 deep_let took 36.8 s whole at load 24 to 35, and 43 s at load 31, nearly all of it in
+# `the_arms_of_a_deep_block_scale`; each of its tests is a piece. The parts of lazy's join test
+# took 50 to 73 s each alone at load 31 to 58; it has ten parts of 20 seeds, each a piece
+# (2026-11-10, SPLIT-l01_39-slow).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
@@ -210,6 +214,8 @@ split="
   l01_39_reduced_product::lazy::a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_product
   l01_39_reduced_product::lazy::leaves_of_one_class_settled_together_get_what_each_gets_alone
   l01_39_reduced_product::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction
+  l01_39_reduced_product::lazy::a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does
+  l01_39_reduced_product::deep_let
   l01_39_reduced_product::if_shortcut
   l01_39_reduced_product::refused
   l01_39a_bit_words l01_39a_bit_words::scaling
