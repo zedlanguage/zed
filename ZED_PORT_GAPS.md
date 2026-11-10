@@ -3357,3 +3357,11 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A `thread_local!` `Cell<bool>` (`REVERSED`), set by `with_parts_reversed` around a call, that makes `project_parts` reverse its disjunctions and the disjuncts of each, so a test can compare the two orders | `REVERSED`, `with_parts_reversed`, `project_parts` | Mutation, global state | An order passed as a parameter, or the test builds the reversed parts itself |
 | `#[inline(never)]` on helpers of `project_parts`, which recurses once per level of a nest, so that their locals do not enlarge its stack frame (`nest_empty` at depth 512 runs on the test thread's stack) | `probe_unhandled`, `tree_domains` | Stack depth of recursion | The port's recursion over nests is an explicit stack, so frame size no longer matters |
 | Binary search on a sorted `Vec` of pieces (`partition_point`) to find the piece of a one-atom set that may hold a value | `OneAtomSet::holds` | Key range queries (gap 9) | `before` on a map keyed by the low end of each piece |
+
+## Entries from SETTLE-class-join (`crates/zedc-preimage/src/product.rs`, `crates/zedc-presburger/src/conjuncts.rs`, `crates/zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The free conjuncts at a hub on each side compared with the first join's by a diff of persistent sets, which skips the subtrees they share by address | `Scope::join` (`within`, `cored`) | Identity (gap 1; see `Atoms::zip` above) | A diff of two persistent sets that skips shared nodes, from the runtime or by content digests |
+| A set of classes already checked, `BTreeSet<&Class>`, of borrows into the two sides' indexes, filled while the loop walks the classes at each name | `Scope::join` (`checked`) | Mutation (gap 11) | A fold over the classes that threads the set checked and the leaves due |
+| A return from the middle of the join when no class is due, after the first `join_settled` | `Scope::join` | Early exit (gap 12) | An `if` whose else branch settles the due leaves and joins again |

@@ -617,7 +617,9 @@ impl Conjuncts {
 
     /// The block of the star of which `x` is the leaf, if any. A leaf is a name no written
     /// constraint holds of ([`Conjuncts::pin`]) each conjunct at which is a constraint
-    /// `a * x + b1 * y1 + … + c >= 0` of names alone with at least one other name, its hubs;
+    /// `a * x + b1 * y1 + … + c >= 0` of names alone with at least one other name, its hubs,
+    /// or a disjunction of such constraints, such as `x < n || x < m`, which holds for `x` far
+    /// enough on the side each of its constraints does;
     /// `a` is of one sign at every conjunct, so is each hub's coefficient, each hub is
     /// mentioned by more conjuncts than `x`, and where a conjunct mentions two hubs or more,
     /// `x` is unbounded on the side away from it ([`Conjuncts::bound`]). The leaf's conjuncts
@@ -707,6 +709,11 @@ impl Conjuncts {
     /// The leaves of the stars of class `c`.
     pub fn class_leaves(&self, c: &Class) -> impl Iterator<Item = &Arc<str>> {
         self.index.classes.get(c).into_iter().flatten()
+    }
+
+    /// The classes of the stars of two hubs or more of which `h` is a hub.
+    pub fn classes_at(&self, h: &str) -> impl Iterator<Item = &Class> {
+        self.index.class_at.of(h)
     }
 
     /// The class of the star of leaf `x`, when it has two hubs or more.
@@ -920,49 +927,60 @@ impl Conjuncts {
         let mut far = None;
         let mut witness: Option<(&Arc<str>, &Arc<Formula>)> = None;
         for g in self.users.of(x) {
-            let Formula::Con(c) = &**g else {
-                return Err(why(vec![g.clone()]));
+            // A constraint, or a disjunction of constraints each of which mentions `x`: as each
+            // holds for `x` far enough on one side, so does their disjunction.
+            let one = std::slice::from_ref(&**g);
+            let parts: &[Formula] = match &**g {
+                Formula::Con(_) => one,
+                Formula::Or(gs) if gs.len() > 1 => gs,
+                _ => return Err(why(vec![g.clone()])),
             };
-            let Some(a) = c.lin.terms.get(&at) else {
-                return Err(why(vec![g.clone()]));
-            };
-            if c.rel != Rel::Ge || c.lin.terms.keys().any(|a| !matches!(a, Atom::Sym(_))) {
-                return Err(why(vec![g.clone()]));
-            }
-            let up = a.is_positive();
-            match sign {
-                Some((s, h)) if s != up => return Err(why(vec![g.clone(), h.clone()])),
-                Some(_) => {}
-                None => sign = Some((up, g)),
-            }
-            let mut others = 0;
-            for (a, b) in &c.lin.terms {
-                let Atom::Sym(h) = a else {
-                    unreachable!("a conjunct of names alone")
+            let mut others: BTreeSet<&Arc<str>> = BTreeSet::new();
+            for part in parts {
+                let Formula::Con(c) = part else {
+                    return Err(why(vec![g.clone()]));
                 };
-                if h == x {
-                    continue;
+                let Some(a) = c.lin.terms.get(&at) else {
+                    return Err(why(vec![g.clone()]));
+                };
+                if c.rel != Rel::Ge || c.lin.terms.keys().any(|a| !matches!(a, Atom::Sym(_))) {
+                    return Err(why(vec![g.clone()]));
                 }
-                others += 1;
-                match hubs.get(h) {
-                    Some(&(s, k)) if s != b.is_positive() => {
-                        return Err(why(vec![g.clone(), k.clone()]));
-                    }
+                let up = a.is_positive();
+                match sign {
+                    Some((s, h)) if s != up => return Err(why(vec![g.clone(), h.clone()])),
                     Some(_) => {}
-                    None => {
-                        hubs.insert(h, (b.is_positive(), g));
+                    None => sign = Some((up, g)),
+                }
+                for (a, b) in &c.lin.terms {
+                    let Atom::Sym(h) = a else {
+                        unreachable!("a conjunct of names alone")
+                    };
+                    if h == x {
+                        continue;
+                    }
+                    others.insert(h);
+                    match hubs.get(h) {
+                        Some(&(s, k)) if s != b.is_positive() => {
+                            return Err(why(vec![g.clone(), k.clone()]));
+                        }
+                        Some(_) => {}
+                        None => {
+                            hubs.insert(h, (b.is_positive(), g));
+                        }
+                    }
+                    if witness.is_none() && self.users.count(h) <= count {
+                        witness = Some((h, g));
                     }
                 }
-                if witness.is_none() && self.users.count(h) <= count {
-                    witness = Some((h, g));
+                if c.lin.terms.len() == 1 {
+                    return Err(why(vec![g.clone()]));
                 }
-            }
-            if others == 0 {
-                return Err(why(vec![g.clone()]));
             }
             // `x` is bounded by `g` below when `up`, so a large enough `x` meets it when `x`
             // is unbounded above.
-            if others > 1 {
+            if others.len() > 1 {
+                let up = sign.is_some_and(|(s, _)| s);
                 if self.index.bounded.contains(&(x.clone(), up)) {
                     return Err(Why {
                         bound: Some(up),

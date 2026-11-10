@@ -518,7 +518,12 @@ impl Formula {
 
     /// The disjunction of `a` and `b` with the conjuncts they share taken out of it, so that
     /// joining two narrowings of one relation does not copy the relation into each disjunct.
-    /// Each constraint of the rest of each side is replaced by `rest` of it.
+    /// Each constraint of the rest of each side is replaced by `rest` of it. When the rest of
+    /// one side is one constraint `c`, a conjunct `d` of the other with `c || d` true
+    /// (`complements`) is dropped, since `c || (d && r)` is `(c || d) && (c || r)`, that is
+    /// `c || r`: the two cases of `!(x >= n && x >= m)`, `x < n` and `x >= n && x < m`, join
+    /// to `x < n || x < m`, which bounds `x` on one side alone
+    /// ([`crate::conjuncts::Conjuncts::star`]).
     pub fn either(a: &Formula, b: &Formula, rest: &dyn Fn(&Con) -> Formula) -> Formula {
         fn parts(f: &Formula) -> &[Formula] {
             match f {
@@ -530,16 +535,23 @@ impl Formula {
         let in_b: std::collections::HashSet<&Formula> = pb.iter().collect();
         let shared: std::collections::HashSet<&Formula> =
             pa.iter().filter(|g| in_b.contains(g)).collect();
-        let left = |p: &[Formula]| {
+        let oa: Vec<&Formula> = pa.iter().filter(|g| !shared.contains(g)).collect();
+        let ob: Vec<&Formula> = pb.iter().filter(|g| !shared.contains(g)).collect();
+        let (ca, cb) = (
+            (oa.len() == 1).then(|| oa[0]),
+            (ob.len() == 1).then(|| ob[0]),
+        );
+        let left = |o: &[&Formula], other: Option<&Formula>| {
             Formula::and(
-                p.iter()
-                    .filter(|g| !shared.contains(g))
+                o.iter()
+                    .filter(|g| other.is_none_or(|c| !complements(c, g)))
                     .map(|g| g.map_cons(rest))
                     .collect(),
             )
         };
+        let (la, lb) = (left(&oa, cb), left(&ob, ca));
         let mut out: Vec<Formula> = pa.iter().filter(|g| shared.contains(g)).cloned().collect();
-        out.push(Formula::or(vec![left(pa), left(pb)]));
+        out.push(Formula::or(vec![la, lb]));
         Formula::and(out)
     }
 
@@ -659,6 +671,26 @@ impl Formula {
             }
         }
         out
+    }
+}
+
+/// Whether `f || g` holds at every integer point, by their forms: a constraint and its
+/// negation, or `t >= 0` and `s >= 0` with `t + s` a constant of at least `-1`, as
+/// [`Formula::complementary`] finds among many. In time near the constraints' size.
+fn complements(f: &Formula, g: &Formula) -> bool {
+    match (f, g) {
+        (Formula::Con(c), Formula::Not(n)) | (Formula::Not(n), Formula::Con(c)) => {
+            matches!(&**n, Formula::Con(d) if d == c)
+        }
+        (Formula::Con(c), Formula::Con(d)) if c.rel == Rel::Ge && d.rel == Rel::Ge => {
+            c.lin.terms.len() == d.lin.terms.len()
+                && c.lin
+                    .terms
+                    .iter()
+                    .all(|(a, k)| d.lin.terms.get(a).is_some_and(|j| j == &-k))
+                && &c.lin.constant + &d.lin.constant >= Int::from(-1i64)
+        }
+        _ => false,
     }
 }
 

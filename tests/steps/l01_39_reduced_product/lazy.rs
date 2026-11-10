@@ -555,3 +555,127 @@ mod leaves_of_one_class_settled_together_get_what_each_gets_alone {
         );
     }
 }
+
+/// `Scope::join` settles on each side the leaves of the stars whose core may differ
+/// between the sides: those at a name the sides hold differently, at a name a written
+/// constraint of one side alone mentions, or at a name whose free conjuncts differ
+/// ([`zedc::store::conjuncts::Conjuncts::core`]). A leaf of a star whose core and product
+/// are one on both sides stays as it is. Against the join of the two sides with every name
+/// settled first, and against the eager join: leaves `a0` to `a3` of one class of two hubs
+/// (`ai >= n + c` and `ai >= m + c`, or `ai - n + m >= c`), each with its own lower bound
+/// and hole, hubs with bounds and holes, then a test that moves a hub, so that the stars
+/// are stale, then two joins in a row of the two outcomes of a test, each narrowed
+/// further: a test of a hub, of the two hubs (`n - m >= c`, a free conjunct at both, which
+/// moves neither), of a leaf, or `b >= n && b >= m` on a further name `b`, whose negation
+/// splits in two. Every name is then settled to the product of both. Seeds 0 to 199.
+mod a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does {
+    use super::*;
+
+    const LEAVES: [&str; 4] = ["a0", "a1", "a2", "a3"];
+
+    /// A test on the two hubs, a leaf, or `b`, at nesting `depth` at most.
+    fn branch(rng: &mut Rng, depth: usize) -> Term {
+        let hub = rng.pick(&HUBS);
+        match rng.below(if depth == 0 { 5 } else { 7 }) {
+            0 => prim(
+                rng.pick(&[Prim::Ge, Prim::Le]),
+                var(hub),
+                int(rng.int(-12, 12)),
+            ),
+            1 => diff_ge("n", "m", rng.int(-3, 3)),
+            2 => prim(
+                rng.pick(&[Prim::Ge, Prim::Le]),
+                var(rng.pick(&LEAVES)),
+                int(rng.int(-20, 20)),
+            ),
+            3 | 4 => and(diff_ge("b", "n", 0), diff_ge("b", "m", 0)),
+            5 => or(branch(rng, depth - 1), branch(rng, depth - 1)),
+            _ => and(branch(rng, depth - 1), branch(rng, depth - 1)),
+        }
+    }
+
+    fn part(seeds: std::ops::Range<u64>) {
+        let all = names(&["n", "m", "a0", "a1", "a2", "a3", "b"]);
+        let p = Premises::new();
+        let (mut runs, mut kept) = (0, 0);
+        for seed in seeds {
+            let mut rng = Rng::new(seed);
+            let (form, c) = (rng.below(2), rng.int(-3, 3));
+            let mut t: Vec<Term> = Vec::new();
+            for h in HUBS {
+                t.push(prim(Prim::Ge, var(h), int(rng.int(-20, -2))));
+                t.push(prim(Prim::Le, var(h), int(rng.int(2, 20))));
+                t.push(prim(Prim::Ne, var(h), int(rng.int(-3, 3))));
+            }
+            let lows = [rng.int(-30, 0), rng.int(-30, 0)];
+            for x in LEAVES {
+                if form == 0 {
+                    t.push(diff_ge(x, "n", c));
+                    t.push(diff_ge(x, "m", c));
+                } else {
+                    let d = prim(Prim::Sub, var(x), var("n"));
+                    t.push(prim(Prim::Ge, prim(Prim::Add, d, var("m")), int(c)));
+                }
+                t.push(prim(Prim::Ge, var(x), int(rng.pick(&lows))));
+                t.push(prim(Prim::Ne, var(x), int(rng.int(-3, 6))));
+            }
+            t.push(prim(
+                rng.pick(&[Prim::Ge, Prim::Le]),
+                var(rng.pick(&HUBS)),
+                int(rng.int(-6, 6)),
+            ));
+            let (mut eager, mut lazy) = (ints(&all), ints(&all).lazy());
+            for t in &t {
+                eager = eager.assume(t, true, &p);
+                lazy = lazy.assume(t, true, &p);
+            }
+            let mut trace = vec![format!("seed {seed}: {t:?}")];
+            for _ in 0..2 {
+                if eager.bottom {
+                    break;
+                }
+                let (t, u, v) = (
+                    branch(&mut rng, 1),
+                    branch(&mut rng, 0),
+                    branch(&mut rng, 0),
+                );
+                trace.push(format!("join {t:?} and {u:?} with not it and {v:?}"));
+                let arms = |s: &Scope| {
+                    let yes = s.assume(&t, true, &p).assume(&u, true, &p);
+                    let no = s.assume(&t, false, &p).assume(&v, true, &p);
+                    (yes, no)
+                };
+                let (ey, en) = arms(&eager);
+                let (ly, ln) = arms(&lazy);
+                let (mut sy, mut sn) = (ly.clone(), ln.clone());
+                sy.settle(&all);
+                sn.settle(&all);
+                let (every, joined) = (sy.join(&sn), ly.join(&ln));
+                eager = ey.join(&en);
+                assert_eq!(eager.bottom, joined.bottom, "{}", trace.join("\n"));
+                if !eager.bottom {
+                    for x in &all {
+                        let s = joined.settled(x);
+                        assert_eq!(s, every.settled(x), "{x} after\n{}", trace.join("\n"));
+                        assert_eq!(s, eager.get(x), "{x} eagerly after\n{}", trace.join("\n"));
+                        kept += usize::from(LEAVES.contains(&&**x) && joined.get(x) != s);
+                    }
+                }
+                lazy = joined;
+                runs += 1;
+            }
+        }
+        println!("{runs} joins, {kept} leaves left stale by a join");
+        assert!(kept > 0, "no join left a leaf stale");
+    }
+
+    #[test]
+    fn seeds_0_to_99() {
+        part(0..100);
+    }
+
+    #[test]
+    fn seeds_100_to_199() {
+        part(100..200);
+    }
+}

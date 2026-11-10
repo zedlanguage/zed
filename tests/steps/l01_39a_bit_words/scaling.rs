@@ -1257,3 +1257,14 @@ fn satellites_of_two_hubs_keep_the_stars_of_their_hubs_in_linear_time() {
         |k| negated_hub_nest(k, |i| format!("#s{i}")),
     );
 }
+
+#[test]
+fn reads_under_the_else_arms_of_satellites_of_two_hubs_scale() {
+    // The nest above with `popCount(ai)` in each else-arm in place of a type: `k` rejections,
+    // since `ai` may be below 0 there.
+    check_rejected_in_linear_work(
+        "k levels of stars of two hubs with a read in each else-arm",
+        12,
+        |k| negated_hub_nest(k, |i| format!("popCount(a{i})")),
+    );
+}

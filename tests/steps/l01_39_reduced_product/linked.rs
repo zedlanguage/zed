@@ -140,7 +140,8 @@ fn conjunct(r: &mut Rng) -> Formula {
 /// A random conjunct as [`conjunct`] gives, or, four times in five, one of the shape of a star's
 /// ([`stars_by_definition`]): one of `c` to `f`, each with a sign of its own, against one or
 /// both of the hubs `a` and `b`, the sign now and then the other one, so that stars of two
-/// hubs come and go.
+/// hubs come and go. One time in six such a conjunct is a disjunction of two of them of one
+/// leaf, such as `c < a || c < b`, which a star's leaf may hold as well.
 fn star_conjunct(r: &mut Rng) -> Formula {
     if r.below(5) == 0 {
         return conjunct(r);
@@ -149,16 +150,24 @@ fn star_conjunct(r: &mut Rng) -> Formula {
     let flip = |r: &mut Rng| if r.below(8) == 0 { -1 } else { 1 };
     let up = if i.is_multiple_of(2) { 1 } else { -1 };
     let leaf = Atom::Sym(["c", "d", "e", "f"][i].into());
-    let mut lin = Lin::constant(r.int(-3, 3)).plus(&Lin::atom(leaf).times(up * flip(r)));
-    let hubs = match r.below(3) {
-        0 => &["a"][..],
-        1 => &["b"][..],
-        _ => &["a", "b"][..],
+    let one = |r: &mut Rng| {
+        let mut lin =
+            Lin::constant(r.int(-3, 3)).plus(&Lin::atom(leaf.clone()).times(up * flip(r)));
+        let hubs = match r.below(3) {
+            0 => &["a"][..],
+            1 => &["b"][..],
+            _ => &["a", "b"][..],
+        };
+        for h in hubs {
+            lin = lin.plus(&Lin::atom(Atom::Sym((*h).into())).times(-up * flip(r)));
+        }
+        Formula::Con(Con::ge(&lin, &Lin::constant(0)))
     };
-    for h in hubs {
-        lin = lin.plus(&Lin::atom(Atom::Sym((*h).into())).times(-up * flip(r)));
+    if r.below(6) == 0 {
+        let (f, g) = (one(r), one(r));
+        return Formula::or(vec![f, g]);
     }
-    Formula::Con(Con::ge(&lin, &Lin::constant(0)))
+    one(r)
 }
 
 /// The blocks of `c`, each as the set of its conjuncts.
@@ -181,8 +190,9 @@ pub(super) fn partition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
 
 /// The stars of `c` by their definition ([`Conjuncts::star`]), by brute force, each leaf with
 /// its conjuncts: a name no written constraint holds of, each conjunct at which is a
-/// constraint `>= 0` of names alone with another name, its coefficient of one sign at all of
-/// them and each hub's of one sign, each hub of more conjuncts than it, and unbounded on the
+/// constraint `>= 0` of names alone with another name, or a disjunction of such constraints,
+/// its coefficient of one sign at all of them and each hub's of one sign, each hub of more
+/// conjuncts than it, and unbounded on the
 /// side away from each conjunct of two hubs or more; with one hub, or with every hub's
 /// conjuncts each the conjunct of such a leaf other than the hub, of the hub alone, or one
 /// whose other names are each a hub or a satellite whose other related names are hubs.
@@ -203,26 +213,41 @@ pub(super) fn stars_by_definition(c: &Conjuncts) -> BTreeMap<Arc<str>, BTreeSet<
         let gs = at(&x);
         let mut signs: BTreeMap<Arc<str>, bool> = BTreeMap::new();
         for g in &gs {
-            let Formula::Con(k) = &**g else {
-                continue 'name;
+            let parts: Vec<&Con> = match &**g {
+                Formula::Con(k) => vec![k],
+                Formula::Or(fs) if fs.len() > 1 => {
+                    let ks: Vec<&Con> = (fs.iter())
+                        .filter_map(|f| match f {
+                            Formula::Con(k) => Some(k),
+                            _ => None,
+                        })
+                        .collect();
+                    if ks.len() != fs.len() {
+                        continue 'name;
+                    }
+                    ks
+                }
+                _ => continue 'name,
             };
-            if k.rel != Rel::Ge || k.lin.terms.keys().any(|a| !matches!(a, Atom::Sym(_))) {
-                continue 'name;
-            }
-            let Some(a) = k.lin.terms.get(&Atom::Sym(x.clone())) else {
-                continue 'name;
-            };
-            if k.lin.terms.len() < 2 {
-                continue 'name;
-            }
-            if k.lin.terms.len() > 2 && c.bounded(&x, a.is_positive()) {
-                continue 'name;
-            }
-            for (t, b) in &k.lin.terms {
-                let Atom::Sym(h) = t else { unreachable!() };
-                if *signs.entry(h.clone()).or_insert(b.is_positive()) != b.is_positive() {
+            // The names other than `x` of the conjunct, over all its constraints.
+            let mut others: BTreeSet<&Atom> = BTreeSet::new();
+            for k in parts {
+                if k.rel != Rel::Ge || k.lin.terms.keys().any(|a| !matches!(a, Atom::Sym(_))) {
                     continue 'name;
                 }
+                if !k.lin.terms.contains_key(&Atom::Sym(x.clone())) || k.lin.terms.len() < 2 {
+                    continue 'name;
+                }
+                others.extend(k.lin.terms.keys().filter(|a| **a != Atom::Sym(x.clone())));
+                for (t, b) in &k.lin.terms {
+                    let Atom::Sym(h) = t else { unreachable!() };
+                    if *signs.entry(h.clone()).or_insert(b.is_positive()) != b.is_positive() {
+                        continue 'name;
+                    }
+                }
+            }
+            if others.len() > 1 && c.bounded(&x, signs[&x]) {
+                continue 'name;
             }
         }
         signs.remove(&x);
