@@ -53,7 +53,7 @@ use super::super::bes::{Bes, Kind};
 /// returns, after [`contracted`] reads each union left with one arm as that arm (item
 /// GROUP-arm-drop-merge). Left open: parts equal only after several rounds of drop and merge,
 /// each round's drop needing the merge before it; such a group goes to the search
-/// (COMPLEXITY.md K88, K98). A complete solution needs the transitive reduction of the union
+/// (COMPLEXITY.md K88, K99). A complete solution needs the transitive reduction of the union
 /// graph, with the nodes that play alike merged again after it drops arms, until nothing changes.
 pub(super) fn absorb(b: &Bes, same: &[u32], union: &[bool]) -> Option<Bes> {
     // The union nodes, numbered 0..k; `k` is the virtual root of each tree.
@@ -334,7 +334,7 @@ pub(super) fn merged(b: &Bes, leaf: &[bool], union: &[bool]) -> Option<(Bes, Vec
 /// arms drop only once the level below is merged; reading every union as the set of
 /// its non-union descendants flattens the rounds into one but is the transitive closure of the
 /// union graph, O(n·m). Used: one round, O(m log n) with [`merged`]. Tradeoff: a chain needing
-/// two or more rounds is left to the search, which is linear on it (COMPLEXITY.md K98).
+/// two or more rounds is left to the search, which is linear on it (COMPLEXITY.md K99).
 pub(super) fn contracted(b: &Bes) -> Option<(Bes, Vec<u32>, Vec<u32>)> {
     let n = b.len();
     // Each node's stand-in: itself unless it is a union of one distinct arm after its arms'
