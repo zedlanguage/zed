@@ -33,11 +33,13 @@
 //! classes, so its size is bounded by the clauses written and not by the least common
 //! multiple of the moduli.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use super::formula::{Rel, Shared};
 use super::{
     Atom, Con, Factor, Formula, Id, Lin, Model, Refusal, decide, nnf, satisfiable, shadow,
+    shadow_whole,
 };
 use zedc_int::int::Int;
 
@@ -85,6 +87,11 @@ struct Known {
     size: usize,
     /// Every atom of the conjunction and of the definitions it reaches.
     closure: Atoms,
+    /// Whether `point`, `miss` and `closure` are still to be found: a conjunction decided
+    /// whole ([`whole`]) finds them only when a conjunction reads it as a part
+    /// ([`Extending::fill`]), so that separate questions over one chain do not each read
+    /// every definition they reach.
+    later: bool,
 }
 
 /// A kept conjunction and the definitions it reaches, projected exactly onto the atoms its
@@ -116,28 +123,34 @@ pub struct Extending {
     faces: Faces,
 }
 
-/// The definitions a definition reaches, projected exactly: by the definition (the formula
-/// `def` gives, held as a key, so that the quotient and the remainder it defines share it), its
-/// summary, or `None` where none is made.
+/// The definitions a definition reaches, projected exactly ([`Summary`]): by the definition (the
+/// formula `def` gives, held as a key, so that the quotient and the remainder it defines share
+/// it) and the atoms kept beside its own variables, `None` where none is made; and the
+/// symbols the definitions each definition reaches read ([`Summaries::syms`]).
 #[derive(Default)]
 struct Summaries {
-    by: HashMap<Id, Option<Summary>>,
+    by: HashMap<Key, Option<Summary>>,
+    syms: HashMap<Id, Arc<BTreeSet<Atom>>>,
 }
 
-/// A definition `d` and the definitions it reaches, projected onto the variables `d` defines and
-/// the atoms none of them defines (the inputs, and variables with no definition): the integer
-/// points of `rows` are those of the conjunction read on these atoms (exact, [`shadow`] with its
-/// dark shadows). Made only where each definition reads the variables of one definition at
-/// most, so the definitions reached form a path down to the one that reads none, `bottom`; two
-/// summaries with different bottoms share no definition. The symbols a definition binds, an
-/// equality with none of its variables that sets a symbol its input's summary reads (`c ==
-/// x + 1` of a claimed call, LOAD-chain-affine: `c` a canonical atom of the callee), are
-/// projected out too, `hidden`: the summary stands for the definitions only where nothing
-/// else read with it reads them ([`Summaries::read`]).
+/// The key of a summary: the definition's, and the atoms kept beside its own variables, in
+/// order.
+type Key = (Id, Vec<Atom>);
+
+/// A definition `d` and the definitions it reaches (its cone), projected onto the atoms of its
+/// key, which holds the variables `d` defines that others read: the integer points of the disjunction of `pieces`,
+/// each a conjunction, read on these atoms, are those of the cone (exact, [`shadow`] with its
+/// dark shadows). Each piece is one case of `d` (a branch of an `if`, of `min`, `max` or `abs`,
+/// one side of a `!=`) with one piece of the summary below it, those with no point dropped
+/// ([`decide`]) and those written alike kept once (LOAD-chain-sep-rest). Every
+/// other atom of the cone is projected out, the symbols too: a question is asked of the
+/// summaries and the parts beside them together, existentially, so projecting an atom out is
+/// exact when nothing else read with the summary reads it, and each atom anything else reads
+/// is in the key ([`Summaries::key`]).
 struct Summary {
-    rows: Formula,
-    bottom: Id,
-    hidden: HashSet<Atom>,
+    pieces: Vec<Vec<Con>>,
+    /// Every atom of `pieces`.
+    atoms: BTreeSet<Atom>,
 }
 
 impl Extending {
@@ -214,8 +227,10 @@ impl Extending {
     // they read ([`Summaries`], LOAD-chain-sep), so separate tests over the links of one chain
     // of n definitions read O(n) rows in all; where a summary is not made, with every
     // definition they reach (the tradeoff at [`Summaries::summary`]). A conjunction with no
-    // kept part finds its point with every definition it reaches, as above, since a summary
-    // gives no value to the atoms it projects out. The same holds for the negation of a
+    // kept part is decided with the summaries as well, and its point, which a summary does not
+    // give since it projects out the atoms of the definitions, is found only when a conjunction
+    // that extends it is asked ([`Extending::fill`], LOAD-chain-sep-rest): with every
+    // definition it reaches, as above, once for each such conjunction. The same holds for the negation of a
     // conjunction whose part fails only at points its call's arguments do not reach (`p(x) =
     // q(x: 2 * x)`, `q` failing at odd values alone) and whose other parts never fail: decided
     // whole (LOAD-chain-affine).
@@ -248,7 +263,9 @@ impl Extending {
             }
             if after {
                 let mut k = self.extend(&g, def, iface);
-                k.closure = self.closure(&g, def);
+                if !k.later {
+                    k.closure = self.closure(&g, def);
+                }
                 self.known.insert(Id::any(&g), k);
                 continue;
             }
@@ -274,6 +291,11 @@ impl Extending {
     /// extends the chain and reads `q` beside it (LOAD-chain-affine). O(its parts).
     fn extend(&mut self, g: &Formula, def: &dyn Fn(u32) -> Formula, iface: Interface) -> Known {
         let kids = g.kids();
+        for h in kids {
+            if matches!(h, Formula::And(_)) {
+                self.fill(h, def);
+            }
+        }
         // The kept parts, the largest first, the first of those with as many.
         let mut parts: Vec<(usize, &Known)> = Vec::new();
         for (i, h) in kids.iter().enumerate() {
@@ -452,6 +474,52 @@ impl Extending {
             miss,
             size: part.size + rest.atoms().len(),
             closure: Atoms::new(),
+            later: false,
+        }
+    }
+
+    /// Finds the point, the point of negation and the atoms of the known conjunction `h`, and
+    /// of the known conjunctions under it, where they are still to be found ([`Known::later`]):
+    /// with every definition each reaches, as [`holds_whole`] and [`fails_whole`] find them,
+    /// the parts under one first, since its atoms are theirs with its own added
+    /// ([`Extending::closure`]). An explicit stack, since the parts nest as deep as the chain
+    /// of calls; each is found once, and those found are the visited set. Time of each
+    /// conjunction found and the definitions it reaches.
+    fn fill(&mut self, h: &Formula, def: &dyn Fn(u32) -> Formula) {
+        let later = |known: &HashMap<Id, Known>, g: &Formula| {
+            matches!(g, Formula::And(_)) && known.get(&Id::any(g)).is_some_and(|k| k.later)
+        };
+        let mut todo = vec![(h.clone(), false)];
+        while let Some((g, after)) = todo.pop() {
+            if !later(&self.known, &g) {
+                continue;
+            }
+            if !after {
+                let kids: Vec<Formula> = (g.kids().iter())
+                    .filter(|k| later(&self.known, k))
+                    .cloned()
+                    .collect();
+                todo.push((g, true));
+                todo.extend(kids.into_iter().map(|k| (k, false)));
+                continue;
+            }
+            let id = Id::any(&g);
+            let answers = &self.known[&id].answers;
+            let (holds, fails) = (
+                matches!(answers.holds, Ok(true)),
+                matches!(answers.fails, Ok(true)),
+            );
+            let closure = self.closure(&g, def);
+            let all = reached(&g, def);
+            let found = |f: Formula| point(&with(&all, f)).ok().flatten();
+            let at = holds.then(|| found(g.clone())).flatten();
+            let miss = fails.then(|| found(Formula::negate(g.clone()))).flatten();
+            if let Some(k) = self.known.get_mut(&id) {
+                k.point = at;
+                k.miss = miss;
+                k.closure = closure;
+                k.later = false;
+            }
         }
     }
 
@@ -2314,16 +2382,20 @@ fn fails_whole(
     }
 }
 
-/// The answers of `g`, decided whole.
+/// The answers of `g`, decided whole, with the summaries of the definitions it reads where
+/// they answer ([`decide_defined`]); its points and atoms are found later, when a conjunction
+/// reads it as a part ([`Extending::fill`]).
 fn whole(sums: &mut Summaries, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Known {
-    let (holds, point) = holds_whole(g, def);
-    let (fails, miss) = fails_whole(sums, g, def);
     Known {
-        answers: Answers { holds, fails },
-        point,
-        miss,
+        answers: Answers {
+            holds: decide_defined(sums, g.clone(), def),
+            fails: decide_defined(sums, Formula::negate(g.clone()), def),
+        },
+        point: None,
+        miss: None,
         size: g.atoms().len(),
         closure: Atoms::new(),
+        later: true,
     }
 }
 
@@ -2346,207 +2418,527 @@ fn decide_defined(
 }
 
 impl Summaries {
-    /// The summaries of the definitions of `f`'s auxiliary variables, one for each definition,
-    /// in place of every definition `f` reaches: `None` when one has none, or when two have the
-    /// same bottom, so that they may share definitions and their projections, each exact, may
-    /// not be together, or when a symbol one summary projects out ([`Summary::hidden`]) is
-    /// read by `f` or by another summary. Time of `f` and of the summaries made, each made
-    /// once.
+    /// The definitions `f` reaches, in place of all of them, for a question asked of `f`: the
+    /// definitions [`Summaries::local`] reads beside `f`, with the summary of the one left
+    /// below them, which keeps every atom of its cone that `f` or they read. `None` where a
+    /// summary is not made. Time of `f`, of the definitions read beside it and of the
+    /// summaries made, each made once.
     fn read(&mut self, f: &Formula, def: &dyn Fn(u32) -> Formula) -> Option<Vec<Formula>> {
-        let mut seen: HashSet<Id> = HashSet::new();
-        let mut bottoms: HashSet<Id> = HashSet::new();
-        let mut read: HashSet<Atom> = f.atoms().into_iter().collect();
-        let mut hidden: HashSet<Atom> = HashSet::new();
-        let mut out = Vec::new();
-        for n in f.atoms().iter().flat_map(auxes) {
-            let d = def(n);
-            if matches!(&d, Formula::And(gs) if gs.is_empty()) {
-                continue;
-            }
-            if !matches!(d, Formula::And(_)) {
-                return None;
-            }
-            let id = Id::any(&d);
-            if !seen.insert(id) {
-                continue;
-            }
-            let s = self.summary(&d, def)?;
-            if !bottoms.insert(s.bottom) {
-                return None;
-            }
-            for h in &s.hidden {
-                if !hidden.insert(h.clone()) {
-                    return None;
+        let reads = reads(f);
+        let own = BTreeSet::new();
+        loop {
+            match self.local(&reads, &own, None, &[], def) {
+                Local::Need(n) => self.made(n, def),
+                Local::Unmade => return None,
+                Local::Ready(mut beside, below) => {
+                    beside.extend(below.map(Summary::rows));
+                    return Some(beside);
                 }
             }
-            read.extend(s.rows.atoms());
-            out.push(s.rows.clone());
         }
-        hidden.is_disjoint(&read).then_some(out)
     }
 
-    /// The summary of the definition `d`, a conjunction, made from the summary of the one
-    /// definition its variables read, which is made first: an explicit stack, since the path is
-    /// as deep as the chain of definitions. Each definition is read once, and its summary is
-    /// `shadow` of its constraints and its input's summary, so the time is that of the
-    /// definitions and the summaries along the path, each made once and remembered.
-    // Complexity tradeoff: no summary is made, and the question is decided with every
-    // definition it reaches as before, for a definition that is not a conjunction of
-    // constraints (`min`, `max`, `abs`, an `if`, a `div` by a variable, each a disjunction), one
-    // with products of variables, one that reads the variables of two definitions, one whose
-    // input has none, and one whose projection `shadow` does not finish (an atom of the input
-    // left in it); and for a question that reads two variables on one path (`h3(x: x) > 0 &&
-    // h7(x: x) > 0`). Separate tests over the links of such a chain read O(n²) definitions.
-    // Why: projecting a disjunction keeps one case per branch, which may double at each link,
-    // and two definitions read together need the conjunction of their paths, which no single
-    // summary is. Trigger: these definitions in a chain of separate tests. Test
+    /// Makes what `n` names: a summary, with those below it first, or a set of symbols.
+    fn made(&mut self, n: Need, def: &dyn Fn(u32) -> Formula) {
+        match n {
+            Need::Summary(k, g) => self.summary(k, g, def),
+            Need::Syms(h) => self.syms(h, def),
+        }
+    }
+
+    /// The summary of the definition `g` under the key `k`, made after those it is made from,
+    /// each made once and remembered: an explicit stack, since the path is as deep as the
+    /// chain of definitions. A summary needed while it is being made (a cycle, which a scope's
+    /// numbering does not make) is not made.
+    // Complexity tradeoff: naive version, each question decided with every definition it
+    // reaches, so separate tests over the n links of one chain read O(n²) definitions in all.
+    // Used: the summary of each definition, made from the one below it, so the tests read O(n)
+    // rows in all (LOAD-chain-sep), for links that are conjunctions of constraints, cases of
+    // one (an `if`, `min`, `max`, `abs`, `!=`: one piece for each case and each piece below,
+    // those with no point dropped and those written alike kept once), and that read the
+    // variables of several definitions (`min(H div 2, H div 3 + 1)`: those read beside the
+    // link down to one whose cone holds the rest, [`Summaries::local`]); and for questions
+    // that read two variables on one path (`h{i}(x: x) > h1(x: x)`: the lower kept in the
+    // higher's key) (LOAD-chain-sep-rest). A summary keeps only the variables of its
+    // definition that others read, so the remainder of `(2 * H) div 3` is projected out with
+    // `H` and leaves no congruence. A piece is projected with [`shadow_whole`], which
+    // eliminates an atom however many rows that makes, and where that leaves an atom, again
+    // without the rows the others imply ([`lean`]: `min(H div 2, x)`). Measured from 25 to
+    // 200 links, 8.1 to 10.0 times the instructions for each shape (limit 14.5); seconds at
+    // 50 and 100 links before (load about 35): `if H > 3 { H div 2 } else { H + 1 }` 3.35 and
+    // 20.2, `abs(H - 5) div 2` 3.06 and 18.0, `min(H div 2, H div 3 + 1)` 18.5 and over 60;
+    // now 0.04, 0.05 and 0.10 at 50 links and 0.39, 0.47 and 0.97 at 400.
+    // Tradeoffs: no summary is made, and the question is decided with every definition it
+    // reaches as before, O(n) for each and O(n²) or worse over the chain, for a definition
+    // with products of variables (`H * x`, a `div` by a variable, whose value is not linear in
+    // its input: 41.8 and 74.5 times the instructions from 10 to 80 links), and for a piece
+    // whose projection keeps an atom outside the key: values that are no union of polyhedra
+    // without a remainder of a kept atom (`max(H div 2, x - 9)` keeping `x` holds where `x -
+    // 10 <= 2 * (x div 8)`: 132 times from 10 to 80 links). Also a definition whose formula
+    // holds a negation of more than one constraint. The pieces of a summary are merged only
+    // where written alike, so a link whose values on the kept atoms take a new shape at each
+    // depth keeps O(depth) pieces and the chain O(n²). Two definitions read together whose
+    // cones are apart are read beside each other down to where they meet, O(their depth). The
+    // symbols of each definition's cone are a set made once for it, shared with its input's
+    // when it adds none, so a chain whose links each read a new symbol holds O(n²) in all. The
+    // coefficients of a summary are those of the composed definitions (`2^i` after i halvings
+    // in `min(H div 2, x)`), so its numbers have O(i) bits; the solver's own elimination of
+    // the whole chain makes the same numbers. Trigger: these definitions in a chain of
+    // separate tests. Tests
     // `l01_38_presburger::one_scope::summaries_of_definitions_give_the_answers_of_the_definitions`,
-    // which checks the answers, COMPLEXITY.md row LOAD-chain-sep. A complete solution keeps
-    // a summary per case of a disjunction, merged where cases agree, and for two variables on
-    // one path the summary of the lower projected onto both, made from the higher's path.
-    // The coefficients of a summary are those of the composed definitions (`2^i` after i
-    // halvings), so its numbers have O(i) bits; the solver's own elimination of the whole chain
-    // makes the same numbers.
-    fn summary(&mut self, d: &Formula, def: &dyn Fn(u32) -> Formula) -> Option<&Summary> {
-        let mut stack: Vec<Formula> = vec![d.clone()];
-        let mut open: HashSet<Id> = HashSet::new();
-        while let Some(top) = stack.last() {
-            let id = Id::any(top);
-            if self.by.contains_key(&id) {
-                open.remove(&id);
+    // which checks the answers against the definitions decided whole, and the
+    // `separate_*_scale` tests there, which measure each shape; COMPLEXITY.md rows
+    // LOAD-chain-sep and LOAD-chain-sep-rest. A complete solution keeps congruences in the
+    // pieces (rows with a modulus, as the Omega test's projection keeps them, or the splinters
+    // of its exact shadow), merges pieces where one holds another (a test of inclusion between
+    // unions of polyhedra over the integers, co-NP-hard in general), and keeps products as a
+    // piecewise polynomial form.
+    fn summary(&mut self, k: Key, g: Formula, def: &dyn Fn(u32) -> Formula) {
+        let mut stack: Vec<(Key, Formula)> = vec![(k, g)];
+        let mut open: HashSet<Key> = HashSet::new();
+        while let Some((k, g)) = stack.last() {
+            if self.by.contains_key(k) {
+                open.remove(k);
                 stack.pop();
                 continue;
             }
-            open.insert(id);
-            match self.make(top, &id, def) {
-                Made::Done(s) => {
-                    self.by.insert(id, s);
-                    open.remove(&id);
-                    stack.pop();
-                }
-                Made::First(g) if !open.contains(&Id::any(&g)) => stack.push(g),
-                Made::First(_) => {
-                    self.by.insert(id, None);
-                    open.remove(&id);
-                    stack.pop();
+            open.insert(k.clone());
+            match self.make(k, g, def) {
+                Made::First(Need::Summary(j, h)) if !open.contains(&j) => stack.push((j, h)),
+                Made::First(Need::Syms(h)) => self.syms(h, def),
+                made => {
+                    let s = match made {
+                        Made::Done(s) => s,
+                        Made::First(_) => None,
+                    };
+                    if let Some((k, _)) = stack.pop() {
+                        open.remove(&k);
+                        self.by.insert(k, s);
+                    }
                 }
             }
         }
-        self.by.get(&Id::any(d))?.as_ref()
     }
 
-    /// The summary of the definition `d` (whose key is `id`) when the summary of its input is
-    /// known, or the input to make first. Time of `d` and of its input's summary.
-    fn make(&self, d: &Formula, id: &Id, def: &dyn Fn(u32) -> Formula) -> Made {
-        let none = Made::Done(None);
-        let mut rows: Vec<Con> = Vec::new();
-        for h in d.kids() {
-            match h {
-                Formula::Con(c) => rows.push(c.clone()),
-                _ => return none,
+    /// The summary of the definition `g` under the key `k`, when the summary below it is known,
+    /// or what to make first: the projection of each case of `g` and of the definitions read
+    /// beside it ([`Summaries::local`]) with each piece of the summary below them, onto the
+    /// atoms of `k`. Time of `g`, of those beside it and of the pieces below, times the number
+    /// of cases, and of one decision of each piece made (and of each of its rows, where
+    /// [`lean`] runs).
+    fn make(&self, k: &Key, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Made {
+        let Some(d) = Def::of(g.clone(), def) else {
+            return Made::Done(None);
+        };
+        let own: BTreeSet<Atom> = d.own.iter().map(|&n| Atom::Aux(n)).collect();
+        let (beside, below) = match self.local(&d.reads, &own, Some(d.own[0]), &k.1, def) {
+            Local::Ready(beside, below) => (beside, below),
+            Local::Need(n) => return Made::First(n),
+            Local::Unmade => return Made::Done(None),
+        };
+        let mut all = cases(g);
+        for f in &beside {
+            all = all.and_then(|a| Some(cross(&a, &cases(f)?)));
+        }
+        let Some(all) = all else {
+            return Made::Done(None);
+        };
+        let keep: HashSet<&Atom> = k.1.iter().collect();
+        let alone = [Vec::new()];
+        let below = below.map_or(&alone[..], |s| &s.pieces[..]);
+        let mut pieces: BTreeSet<Vec<Con>> = BTreeSet::new();
+        for c in &all {
+            for p in below {
+                let rows: Vec<Con> = c.iter().chain(p).cloned().collect();
+                let Some(mut out) = shadow_whole(&rows, &|a| keep.contains(a)) else {
+                    continue;
+                };
+                // A piece with no point is dropped: [`shadow`] shows it only where an elimination
+                // makes a false row, and not by two bounds of a kept atom (`q <= 4 && q >= 9`)
+                // or when it cannot eliminate an atom. A piece that keeps an atom outside the key
+                // otherwise leaves no summary.
+                let piece = Formula::and(out.iter().cloned().map(Formula::Con).collect());
+                if decide(&piece) == Ok(false) {
+                    continue;
+                }
+                // A row the others imply may pair with a remainder's bound so that the dark
+                // shadow is not the real one (`x >= 2 * q` beside `x >= 4 * q` and `x >= -1`,
+                // with `4 * r` on both sides of `x`): such rows are dropped, and the piece
+                // projected again.
+                let left = |out: &[Con]| {
+                    (out.iter()).any(|c| c.lin.terms.keys().any(|a| !keep.contains(a)))
+                };
+                if left(&out) {
+                    match shadow_whole(&lean(out), &|a| keep.contains(a)) {
+                        Some(o) => out = o,
+                        None => continue,
+                    }
+                }
+                if left(&out) {
+                    return Made::Done(None);
+                }
+                out.sort();
+                out.dedup();
+                pieces.insert(out);
             }
         }
-        // The atoms the summary keeps: the inputs (the variables without a definition and
-        // those of no other definition) and the variables `d` defines.
-        let mut keep: HashSet<Atom> = HashSet::new();
-        let mut input: Option<(Id, Formula)> = None;
-        for c in &rows {
-            for a in c.lin.terms.keys() {
-                match a {
-                    Atom::Product(..) => return none,
-                    Atom::Sym(_) => {
-                        keep.insert(a.clone());
+        let atoms = (pieces.iter().flatten())
+            .flat_map(|c| c.lin.terms.keys().cloned())
+            .collect();
+        Made::Done(Some(Summary {
+            pieces: pieces.into_iter().collect(),
+            atoms,
+        }))
+    }
+
+    /// The definitions read beside `reads`, the atoms of a definition whose own variables are
+    /// `own`, the first numbered `first`, or of a question (`first` none), and the summary of
+    /// the one definition left below them, whose key keeps `keep` too: the definitions of the
+    /// variables `reads` reads are a frontier, and while it holds two or more, the one with the
+    /// highest numbers is read beside, its inputs joining the frontier, unless the others are
+    /// all in its cone, which its summary keeping their variables shows (their variables are
+    /// in it), so that a question reading two variables on one path (`h{i}(x: x) > h1(x: x)`)
+    /// reads the higher's summary alone, and a link reading two definitions over one input
+    /// (`min(H div 2, H div 3 + 1)`) reads them beside it down to the input. The conjunction of
+    /// `reads`'s formula, those beside it and the summary below, projected onto the atoms of
+    /// `own`, `keep` and `reads`, is then that of all the definitions it reaches: the summary
+    /// keeps every atom of its cone the others read, and every other definition reached is in
+    /// its cone or beside. Time of the definitions read beside and of the summaries looked up.
+    fn local<'a>(
+        &'a self,
+        reads: &BTreeSet<Atom>,
+        own: &BTreeSet<Atom>,
+        first: Option<u32>,
+        keep: &[Atom],
+        def: &dyn Fn(u32) -> Formula,
+    ) -> Local<'a> {
+        let mut beside: Vec<Def> = Vec::new();
+        // By the highest number each defines.
+        let mut frontier: BTreeMap<u32, Def> = BTreeMap::new();
+        let mut seen: HashSet<Id> = HashSet::new();
+        let ins: Vec<u32> = reads.iter().flat_map(auxes).collect();
+        if !enter(&ins, own, first, def, &mut seen, &mut frontier) {
+            return Local::Unmade;
+        }
+        while let Some((_, h)) = frontier.pop_last() {
+            if frontier.is_empty() {
+                let k = match self.key(&h, reads, own, keep, &beside) {
+                    Ok(k) => k,
+                    Err(n) => return Local::Need(n),
+                };
+                return match self.by.get(&k) {
+                    None => Local::Need(Need::Summary(k, h.f)),
+                    Some(None) => Local::Unmade,
+                    Some(Some(s)) => {
+                        Local::Ready(beside.into_iter().map(|d| d.f).collect(), Some(s))
                     }
-                    Atom::Aux(n) => {
-                        let e = def(*n);
-                        if matches!(&e, Formula::And(gs) if gs.is_empty()) {
-                            keep.insert(a.clone());
-                            continue;
-                        }
-                        if !matches!(e, Formula::And(_)) {
-                            return none;
-                        }
-                        let eid = Id::any(&e);
-                        if eid == *id {
-                            keep.insert(a.clone());
-                        } else {
-                            match &input {
-                                None => input = Some((eid, e)),
-                                Some((j, _)) if *j == eid => {}
-                                Some(_) => return none,
-                            }
+                };
+            }
+            // The others may be in `h`'s cone only when numbered before it.
+            if frontier.keys().next_back().is_some_and(|&n| n < h.own[0]) {
+                let k = match self.key(&h, reads, own, keep, &beside) {
+                    Ok(k) => k,
+                    Err(n) => return Local::Need(n),
+                };
+                match self.by.get(&k) {
+                    None => return Local::Need(Need::Summary(k, h.f)),
+                    Some(None) => return Local::Unmade,
+                    Some(Some(s)) => {
+                        let inside =
+                            |m: &Def| m.own.iter().any(|&n| s.atoms.contains(&Atom::Aux(n)));
+                        if frontier.values().all(inside) {
+                            let beside = beside.into_iter().map(|d| d.f).collect();
+                            return Local::Ready(beside, Some(s));
                         }
                     }
                 }
             }
-        }
-        let Some((gid, g)) = input else {
-            return Made::Done(Some(Summary {
-                rows: d.clone(),
-                bottom: *id,
-                hidden: HashSet::new(),
-            }));
-        };
-        let Some(known) = self.by.get(&gid) else {
-            return Made::First(g);
-        };
-        let Some(below) = known else {
-            return none;
-        };
-        // The input's summary reads the inputs and the input definition's variables, which
-        // are projected out.
-        for a in below.rows.atoms() {
-            if matches!(a, Atom::Sym(_))
-                || matches!(&a, Atom::Aux(n) if matches!(&def(*n), Formula::And(gs) if gs.is_empty()))
-            {
-                keep.insert(a);
+            if !enter(
+                &h.inputs,
+                own,
+                Some(h.own[0]),
+                def,
+                &mut seen,
+                &mut frontier,
+            ) {
+                return Local::Unmade;
             }
+            beside.push(h);
         }
-        // The symbols `d` binds: each set with coefficient ±1 by an equality of `d` that holds
-        // no variable `d` defines, and read by the input's summary. A question is asked of
-        // the summaries and `f` together, existentially, so projecting a symbol out of one
-        // summary is exact when no other part reads it: `read` checks `f` and the other
-        // summaries' rows. The definitions a summary projected out are on its own path, which
-        // another summary reaches only with the same bottom, refused there. Only `d`'s own
-        // symbols are kept, not those of the summaries below, which are on the same path, so a
-        // path of n bindings holds n symbols in all and not n²/2.
-        let below_atoms = below.rows.atoms();
-        let mut hidden = HashSet::new();
-        let own = |a: &Atom| matches!(a, Atom::Aux(n) if Id::any(&def(*n)) == *id);
-        for c in &rows {
-            if c.rel != Rel::Eq || c.lin.terms.keys().any(own) {
+        Local::Ready(beside.into_iter().map(|d| d.f).collect(), None)
+    }
+
+    /// The key of the summary of `h`, read beside `reads` (whose own variables are `own`), the
+    /// definitions `beside` and an outer key `keep`: the atoms of these that `h` or its cone
+    /// may hold, but those `own` and `beside` define: a variable of `h`'s own, so that one no
+    /// other reads (the remainder of `(2 * H) div 3`) is projected out of the summary, a
+    /// variable numbered before `h`'s own (every variable of its cone is, [`enter`]) and a
+    /// symbol of `h`'s cone
+    /// ([`Summaries::syms`]), so that a question reading a symbol the chain does not
+    /// (`h{i}(x: x) > 0 && x < 1000`, its own `x`) shares the chain's summaries. `Err` with
+    /// the symbols to find first. Time of the atoms, O(log n) each.
+    fn key(
+        &self,
+        h: &Def,
+        reads: &BTreeSet<Atom>,
+        own: &BTreeSet<Atom>,
+        keep: &[Atom],
+        beside: &[Def],
+    ) -> Result<Key, Need> {
+        let Some(syms) = self.syms.get(&h.id) else {
+            return Err(Need::Syms(h.f.clone()));
+        };
+        let defined: HashSet<u32> = beside.iter().flat_map(|d| d.own.iter().copied()).collect();
+        let atoms = (keep.iter().chain(reads)).chain(beside.iter().flat_map(|d| &d.reads));
+        let out: BTreeSet<Atom> = atoms
+            .filter(|a| match a {
+                Atom::Aux(n) => {
+                    (*n < h.own[0] && !defined.contains(n) && !own.contains(a))
+                        || h.own.binary_search(n).is_ok()
+                }
+                Atom::Sym(_) => syms.contains(a),
+                Atom::Product(..) => false,
+            })
+            .cloned()
+            .collect();
+        Ok((h.id, out.into_iter().collect()))
+    }
+
+    /// Finds the symbols of the cone of the definition `h`: those it reads and those of the
+    /// definitions it reaches, each definition's found once and remembered, after its inputs':
+    /// an explicit stack, since the chain is as deep as the program. A definition whose
+    /// symbols are those of its input with none added shares its input's set. Time of the
+    /// definitions reached and of the sets made.
+    fn syms(&mut self, h: Formula, def: &dyn Fn(u32) -> Formula) {
+        let mut stack: Vec<Formula> = vec![h];
+        let mut open: HashSet<Id> = HashSet::new();
+        while let Some(top) = stack.last() {
+            let id = Id::any(top);
+            if self.syms.contains_key(&id) {
+                stack.pop();
                 continue;
             }
-            for (a, k) in &c.lin.terms {
-                if matches!(a, Atom::Sym(_)) && k.is_unit() && below_atoms.contains(a) {
-                    keep.remove(a);
-                    hidden.insert(a.clone());
-                }
+            let atoms = reads(top);
+            let inputs: Vec<Formula> = (atoms.iter().flat_map(auxes))
+                .map(def)
+                .filter(|d| !free(d) && Id::any(d) != id)
+                .collect();
+            if open.insert(id)
+                && let Some(d) = inputs.iter().find(|d| !self.syms.contains_key(&Id::any(d)))
+            {
+                stack.push(d.clone());
+                continue;
             }
+            // Its inputs' sets, the largest first, those missing (on a cycle) left out; the
+            // definition is in no summary then ([`Def::of`] numbers each input before it).
+            let mut sets: Vec<&Arc<BTreeSet<Atom>>> = (inputs.iter())
+                .filter_map(|d| self.syms.get(&Id::any(d)))
+                .collect();
+            sets.sort_by_key(|s| std::cmp::Reverse(s.len()));
+            let mine = atoms.iter().filter(|a| matches!(a, Atom::Sym(_)));
+            let set = match sets.split_first() {
+                Some((big, rest))
+                    if mine.clone().all(|a| big.contains(a))
+                        && rest.iter().all(|s| s.iter().all(|a| big.contains(a))) =>
+                {
+                    Arc::clone(big)
+                }
+                _ => Arc::new(
+                    (sets.iter().flat_map(|s| s.iter()))
+                        .chain(mine)
+                        .cloned()
+                        .collect(),
+                ),
+            };
+            self.syms.insert(id, set);
+            stack.pop();
         }
-        rows.extend(below.rows.cons().into_iter().cloned());
-        let Some(out) = shadow(&rows, &|a| keep.contains(a), true) else {
-            return none;
-        };
-        if out
-            .iter()
-            .any(|c| c.lin.terms.keys().any(|a| !keep.contains(a)))
-        {
-            return none;
-        }
-        Made::Done(Some(Summary {
-            rows: Formula::and(out.into_iter().map(Formula::Con).collect()),
-            bottom: below.bottom,
-            hidden,
-        }))
     }
 }
 
-/// What [`Summaries::make`] gives: the summary, `None` where none is made, or the input
-/// definition whose summary is made first.
+impl Summary {
+    /// The summary as one formula: the disjunction of its pieces.
+    fn rows(&self) -> Formula {
+        let and = |p: &Vec<Con>| Formula::and(p.iter().cloned().map(Formula::Con).collect());
+        Formula::or(self.pieces.iter().map(and).collect())
+    }
+}
+
+/// A definition as the summaries read it: its formula and key, the variables it defines in
+/// order, the variables of other definitions it reads, and every atom it reads.
+struct Def {
+    f: Formula,
+    id: Id,
+    own: Vec<u32>,
+    inputs: Vec<u32>,
+    reads: BTreeSet<Atom>,
+}
+
+impl Def {
+    /// The definition `f`, `None` where no summary is made of it: one with a product of
+    /// variables, whose quotient or value is not linear in its inputs, and one that defines no
+    /// variable it reads. Time of `f`.
+    fn of(f: Formula, def: &dyn Fn(u32) -> Formula) -> Option<Def> {
+        let id = Id::any(&f);
+        let reads = f.atoms();
+        let (mut own, mut inputs) = (Vec::new(), Vec::new());
+        for a in &reads {
+            match a {
+                Atom::Product(..) => return None,
+                Atom::Sym(_) => {}
+                Atom::Aux(n) => {
+                    let d = def(*n);
+                    if Id::any(&d) == id {
+                        own.push(*n);
+                    } else if !free(&d) {
+                        inputs.push(*n);
+                    }
+                }
+            }
+        }
+        (!own.is_empty()).then_some(Def {
+            f,
+            id,
+            own,
+            inputs,
+            reads,
+        })
+    }
+}
+
+/// Puts the definitions of the variables `ins` on `frontier`, by the highest number each
+/// defines, each once (`seen`), but those of `own`, and of variables with no definition: false
+/// where no summary is made of one ([`Def::of`]), or where one defines a variable numbered at
+/// or after `first`, the first variable of the definition that reads it, so that every
+/// variable of a definition's cone is numbered before its own (the order a scope numbers them
+/// in, `preimage::Scoped::def`), which [`Summaries::key`] reads.
+fn enter(
+    ins: &[u32],
+    own: &BTreeSet<Atom>,
+    first: Option<u32>,
+    def: &dyn Fn(u32) -> Formula,
+    seen: &mut HashSet<Id>,
+    frontier: &mut BTreeMap<u32, Def>,
+) -> bool {
+    for &n in ins {
+        let f = def(n);
+        if free(&f) || own.contains(&Atom::Aux(n)) || !seen.insert(Id::any(&f)) {
+            continue;
+        }
+        let Some(d) = Def::of(f, def) else {
+            return false;
+        };
+        let last = d.own[d.own.len() - 1];
+        if first.is_some_and(|m| last >= m) {
+            return false;
+        }
+        frontier.insert(last, d);
+    }
+    true
+}
+
+/// `rows` without each row the others imply over the integers, each tried in turn against
+/// those left: [`decide`] shows the others and the row's negation have no point. A row whose
+/// question is refused is kept. Time of one decision of the rows for each row.
+fn lean(mut rows: Vec<Con>) -> Vec<Con> {
+    let mut i = 0;
+    while i < rows.len() {
+        let others = (rows.iter().enumerate())
+            .filter(|&(j, _)| j != i)
+            .map(|(_, c)| Formula::Con(c.clone()));
+        let not = Formula::negate(Formula::Con(rows[i].clone()));
+        if decide(&Formula::and(others.chain([not]).collect())) == Ok(false) {
+            rows.swap_remove(i);
+        } else {
+            i += 1;
+        }
+    }
+    rows
+}
+
+/// Whether `f` is the definition of a variable with no definition: `true`.
+fn free(f: &Formula) -> bool {
+    matches!(f, Formula::And(gs) if gs.is_empty())
+}
+
+/// The atoms `f` reads, the factors of a product in place of the product.
+fn reads(f: &Formula) -> BTreeSet<Atom> {
+    let mut out = BTreeSet::new();
+    for a in f.atoms() {
+        match a {
+            Atom::Product(g, h) => {
+                out.insert(g.atom());
+                out.insert(h.atom());
+            }
+            a => {
+                out.insert(a);
+            }
+        }
+    }
+    out
+}
+
+/// The cases of `f`: conjunctions of constraints whose disjunction holds where `f` holds, a
+/// negated constraint written as the constraints of the points it leaves (`!(e >= 0)` is `-e -
+/// 1 >= 0`, `!(e == 0)` the two cases `e >= 1` and `-e >= 1`); `None` for a negation of
+/// anything else. Time of the cases: those of a conjunction are the products of its parts',
+/// and a definition is one operation, with a few. Recursive, as deep as one definition's
+/// formula, which holds one operation.
+fn cases(f: &Formula) -> Option<Vec<Vec<Con>>> {
+    match f {
+        Formula::Con(c) => Some(vec![vec![c.clone()]]),
+        Formula::Not(g) => {
+            let Formula::Con(c) = &**g else {
+                return None;
+            };
+            let below = Con::ge(&Lin::constant(-1), &c.lin);
+            Some(match c.rel {
+                Rel::Ge => vec![vec![below]],
+                Rel::Eq => vec![vec![Con::ge(&c.lin, &Lin::constant(1))], vec![below]],
+            })
+        }
+        Formula::And(gs) => gs
+            .iter()
+            .try_fold(vec![Vec::new()], |a, g| Some(cross(&a, &cases(g)?))),
+        Formula::Or(gs) => {
+            let mut out = Vec::new();
+            for g in gs.iter() {
+                out.extend(cases(g)?);
+            }
+            Some(out)
+        }
+    }
+}
+
+/// Each case of `a` with each of `b`. Time of the result.
+fn cross(a: &[Vec<Con>], b: &[Vec<Con>]) -> Vec<Vec<Con>> {
+    (a.iter())
+        .flat_map(|x| b.iter().map(move |y| x.iter().chain(y).cloned().collect()))
+        .collect()
+}
+
+/// What [`Summaries::local`] gives.
+enum Local<'a> {
+    /// The definitions read beside, and the summary of the one left below them, if any.
+    Ready(Vec<Formula>, Option<&'a Summary>),
+    /// What to make first.
+    Need(Need),
+    /// No summary is made.
+    Unmade,
+}
+
+/// What to make first: the summary of a definition under a key, or the symbols of a
+/// definition's cone.
+enum Need {
+    Summary(Key, Formula),
+    Syms(Formula),
+}
+
+/// What [`Summaries::make`] gives: the summary, `None` where none is made, or what to make
+/// first.
 enum Made {
     Done(Option<Summary>),
-    First(Formula),
+    First(Need),
 }
 
 #[cfg(test)]
@@ -2664,5 +3056,82 @@ mod tests {
             clauses[7].clone(),
         ];
         assert_eq!(out, want);
+    }
+
+    #[test]
+    fn the_cases_of_a_definition_are_its_disjunctive_normal_form() {
+        // `!(x >= 3)` is `x <= 2`; `!(x == 3)` is `x >= 4` or `x <= 2`; a conjunction of two
+        // disjunctions has a case for each pair; a negated conjunction has no cases.
+        let ge = con(&[(0, 1)], -3, Rel::Ge);
+        let eq = con(&[(0, 1)], -3, Rel::Eq);
+        let below = con(&[(0, -1)], 2, Rel::Ge);
+        let above = con(&[(0, 1)], -4, Rel::Ge);
+        let not = |c: &Con| Formula::Not(Shared::new(Formula::Con(c.clone())));
+        assert_eq!(cases(&not(&ge)), Some(vec![vec![below.clone()]]));
+        assert_eq!(
+            cases(&not(&eq)),
+            Some(vec![vec![above.clone()], vec![below.clone()]])
+        );
+        let y = con(&[(1, 1)], 0, Rel::Ge);
+        let either = Formula::or(vec![Formula::Con(y.clone()), not(&eq)]);
+        let both = Formula::and(vec![either.clone(), Formula::Con(ge.clone())]);
+        let got = cases(&both).expect("cases");
+        assert_eq!(got.len(), 3, "{got:?}");
+        for case in [
+            vec![y, ge.clone()],
+            vec![above, ge.clone()],
+            vec![below, ge.clone()],
+        ] {
+            assert!(got.iter().any(|g| {
+                let (mut g, mut case) = (g.clone(), case.clone());
+                g.sort();
+                case.sort();
+                g == case
+            }));
+        }
+        let pair = Formula::and(vec![Formula::Con(ge), either]);
+        assert_eq!(cases(&Formula::Not(Shared::new(pair))), None);
+    }
+
+    #[test]
+    fn rows_the_others_imply_are_dropped_so_a_remainder_is_eliminated() {
+        // The rows of `min(q5 div 2, x)` read beside the summary of `q5`'s link, `4·q5 <= x <=
+        // 4·q5 + 3` with `x >= -1`: `x >= 2·q5` and `x >= q5` follow from these, and paired with
+        // `x <= 4·q5 + 3` they leave the remainder `q7` of `q5 == 2·q6 + q7`, whose bounds then
+        // have coefficients 4 and 2. Without them the projection onto `x` and `q6` is exact:
+        // `8·q6 <= x <= 8·q6 + 7` and `x >= -1`. x is atom 0.
+        let rows = vec![
+            con(&[(5, 1), (6, -2), (7, -1)], 0, Rel::Eq),
+            con(&[(7, 1)], 0, Rel::Ge),
+            con(&[(7, -1)], 1, Rel::Ge),
+            con(&[(0, -1), (5, 4)], 3, Rel::Ge),
+            con(&[(0, 1)], 1, Rel::Ge),
+            con(&[(0, 1), (5, -4)], 0, Rel::Ge),
+            con(&[(0, 1), (5, -2)], 0, Rel::Ge),
+            con(&[(0, 1), (5, -1)], 0, Rel::Ge),
+        ];
+        let keep = |b: &Atom| *b == a(0) || *b == a(6);
+        let left = |out: &[Con]| out.iter().any(|c| c.lin.terms.keys().any(|b| !keep(b)));
+        let whole = shadow_whole(&rows, &keep).expect("a point");
+        assert!(left(&whole), "{whole:?}");
+        let lean_rows = lean(rows.clone());
+        assert_eq!(lean_rows.len(), rows.len() - 2, "{lean_rows:?}");
+        let out = shadow_whole(&lean_rows, &keep).expect("a point");
+        assert!(!left(&out), "{out:?}");
+        // The projection holds at `x`, `q6` exactly where the rows hold for some `q5`, `q7`.
+        let and = |rows: &[Con], x: i64, q: i64| {
+            let mut f: Vec<Formula> = rows.iter().cloned().map(Formula::Con).collect();
+            f.push(Formula::Con(con(&[(0, 1)], -x, Rel::Eq)));
+            f.push(Formula::Con(con(&[(6, 1)], -q, Rel::Eq)));
+            decide(&Formula::and(f))
+        };
+        for x in -20..=40 {
+            for q in -4..=5 {
+                assert_eq!(and(&rows, x, q), and(&out, x, q), "x = {x}, q6 = {q}");
+            }
+        }
+        // A row that no other implies is kept, and a lone row too.
+        let lone = vec![con(&[(0, 1)], 1, Rel::Ge)];
+        assert_eq!(lean(lone.clone()), lone);
     }
 }

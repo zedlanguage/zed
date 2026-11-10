@@ -1222,6 +1222,173 @@ fn separate_tests_over_the_links_of_one_chain_of_definitions_scale() {
     );
 }
 
+/// Times the separate tests `t{i}(x) = {test}` over one chain `h{i}(x) = {step}`, each `H` of
+/// `step` written as `h{i-1}(x: x)` and each `H` of `test` as `h{i}(x: x)`, at `n` and 8n links,
+/// held to work of order `n^power` ([`zed_tests::scaling::check_order`]): each test is a
+/// question of its own, with no kept part (LOAD-chain-sep-rest).
+fn separate_tests_scale(what: &str, n: usize, power: u32, step: &'static str, test: &'static str) {
+    let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
+        .into_iter()
+        .map(|m| {
+            let mut src = String::from("h0(x: int) = x;\n");
+            for i in 1..m {
+                let h = |k: usize| format!("h{k}(x: x)");
+                src += &format!("h{i}(x: int) = {};\n", step.replace('H', &h(i - 1)));
+                src += &format!("t{i}(x: int) = {};\n", test.replace('H', &h(i)));
+            }
+            (
+                m,
+                (
+                    zed_tests::deep::statements(&src),
+                    zedc::lex::lex_fence(&src).unwrap(),
+                    elab(&src).unwrap(),
+                    src,
+                ),
+            )
+        })
+        .collect();
+    zed_tests::scaling::check_order(what, n, power, |m| {
+        let (stmts, tokens, unit, src) = &units[&m];
+        let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
+        assert!(refused.is_empty(), "{refused:?}");
+    });
+}
+
+// LOAD-chain-sep-rest: each shape below was decided with every definition each test reaches,
+// O(n²) over the chain. Seconds at 50 and 100 links before (load about 35): branches 3.35 and
+// 20.2, `min` 1.45 and 6.33, `max` 1.34 and 6.55, `abs(H - 5) div 2` 3.06 and 18.0, two
+// inputs 18.5 and over 60, two links 0.27 and 0.66, conjunctions 0.61 and 2.21, `(2 * H) div
+// 3` 0.45 and 0.82. Now read through the summaries of the definitions; at 50 and 400 links:
+// see each test.
+
+#[test]
+fn separate_tests_over_a_chain_of_branches_scale() {
+    // 0.042 s at 50 links, 0.387 s at 400.
+    separate_tests_scale(
+        "separate tests over a chain of `if`s",
+        25,
+        1,
+        "if H > 3 { H div 2 } else { H + 1 }",
+        "H > 2",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_smallest_values_scale() {
+    // 0.100 s at 50 links, 1.58 s at 400: the summary's coefficients are `2^i` at link i.
+    separate_tests_scale(
+        "separate tests over a chain of `min`s",
+        25,
+        1,
+        "min(H div 2, x)",
+        "H > 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_largest_values_scale() {
+    // Complexity tradeoff (Summaries::summary): the values of `max(H div 2, x - 9)` over `x` at
+    // a link are not a union of polyhedra without a remainder of `x` (they hold where `x - 10
+    // <= 2 * (x div 8)`), so no summary is made, and each test is decided with every
+    // definition it reaches: 1.30 s at 50 links, 4.9 s at 100; 132 times the instructions from
+    // 10 to 80 links.
+    separate_tests_scale(
+        "separate tests over a chain of `max`s",
+        10,
+        3,
+        "max(H div 2, x - 9)",
+        "H < 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_absolute_values_scale() {
+    // 0.051 s at 50 links, 0.468 s at 400.
+    separate_tests_scale(
+        "separate tests over a chain of `abs`s",
+        25,
+        1,
+        "abs(H - 5) div 2",
+        "H > 1",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_two_inputs_scale() {
+    // 0.100 s at 50 links, 0.972 s at 400.
+    separate_tests_scale(
+        "separate tests over a chain reading two quotients of one link",
+        25,
+        1,
+        "min(H div 2, H div 3 + 1)",
+        "H > 1",
+    );
+}
+
+#[test]
+fn separate_tests_over_two_links_of_one_chain_scale() {
+    // 0.053 s at 50 links, 0.232 s at 400.
+    separate_tests_scale(
+        "separate tests over two links of one chain",
+        25,
+        1,
+        "H div 2 + 1",
+        "H > h1(x: x)",
+    );
+}
+
+#[test]
+fn separate_conjunctions_over_the_links_of_one_chain_scale() {
+    // 0.027 s at 50 links, 0.375 s at 400.
+    separate_tests_scale(
+        "separate conjunctions over one chain of halvings",
+        25,
+        1,
+        "H div 2 + 1",
+        "H > 0 && x < 1000",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_divisions_by_a_parameter_scale() {
+    // Complexity tradeoff (Summaries::summary): a quotient by a variable is not linear in its
+    // input, so no summary is made: 0.58 s at 50 links, 55 s at 400; 74.5 times the
+    // instructions from 10 to 80 links.
+    separate_tests_scale(
+        "separate tests over a chain of divisions by a parameter",
+        10,
+        2,
+        "H div x",
+        "H > 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_products_scale() {
+    // Complexity tradeoff (Summaries::summary): a product of variables, as above: 0.072 s at
+    // 50 links, 3.46 s at 400; 41.8 times the instructions from 10 to 80 links.
+    separate_tests_scale(
+        "separate tests over a chain of products",
+        10,
+        2,
+        "H * x + 1",
+        "H > 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_nonunit_steps_scale() {
+    // 0.032 s at 50 links, 0.127 s at 400: the remainder, read by no other link, is projected
+    // out with the input, so `2 * H == 3 * q + r` leaves no congruence.
+    separate_tests_scale(
+        "separate tests over a chain of `(2 * H) div 3`",
+        25,
+        1,
+        "(2 * H) div 3",
+        "H > 0",
+    );
+}
+
 #[test]
 fn summaries_of_definitions_give_the_answers_of_the_definitions() {
     // LOAD-chain-sep: a question with no kept part reads each definition's chain through its
@@ -1289,13 +1456,49 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
         chain("H div 2", "H * 2 > x + 1 && x >= 0", 6),
         chain("H div 2 + 1", "H > h1(x: x)", 6),
         chain("H div 2 + 1", "H + h1(x: x + 1) > 3", 6),
-        // A branch, a smallest value and an absolute value in a link: no summary is made
-        // past them.
+        // Links of several cases (LOAD-chain-sep-rest): a summary of one piece for each case
+        // and each piece below, those with no point dropped. A branch, one on a value it
+        // excludes, one that clamps at zero, a smallest and a largest value against the
+        // input or a constant, and absolute values.
         chain("if H > 3 { H div 2 } else { H + 1 }", "H > 2", 5),
+        chain("if H > 3 { H div 2 } else { H + 1 }", "H == 3", 5),
+        chain("if H != 3 { H div 2 } else { H }", "H > 0", 5),
+        chain("if H > 0 { H - 1 } else { 0 }", "H > 0", 5),
+        chain("if H > 0 { H - 1 } else { 0 }", "H < 0", 5),
         chain("min(H div 2, x)", "H > 0", 5),
+        chain("min(H div 2, x)", "H == x", 5),
+        chain("max(H div 2, x - 9)", "H < 0", 5),
+        chain("min(H, 100) + 1", "H > 100", 5),
+        chain("max(H - 2, 0)", "H > 0 && x < 9", 5),
         chain("abs(H div 2 - 3)", "H > 1", 5),
-        // A division by a variable.
+        chain("abs(H) div 2 + 1", "H > 2", 5),
+        chain("abs(H - 5) div 2", "H == 0", 5),
+        // Two inputs: two quotients of one link, read beside it down to the link, and a test
+        // over a link and one below it on its path.
+        chain("min(H div 2, H div 3 + 1)", "H > 1", 5),
+        chain("H div 2 - H div 3", "H == 1", 5),
+        chain("H div 2", "H > h1(x: x)", 6),
+        chain("abs(H - 1)", "H + h2(x: x) == 4", 5),
+        // Steps whose remainder no other link reads, projected out with the input.
+        chain("(2 * H) div 3", "H > 0", 5),
+        chain("(2 * H + 1) div 3", "H == 2", 5),
+        // A division by a variable and a product: no summary is made.
         chain("H div x", "H > 0", 4),
+        chain("H * x + 1", "H > 0", 4),
+        // Conjunctions with no kept part, decided with the summaries, and tests extending
+        // them, whose points are found then (`Extending::fill`).
+        chain("H div 2 + 1", "H > 0 && x < 1000", 5),
+        concat!(
+            "h0(x: int) = x;\n",
+            "h1(x: int) = h0(x: x) div 2 + 1;\n",
+            "t1(x: int) = h1(x: x) > 0 && x < 1000;\n",
+            "h2(x: int) = if h1(x: x) > 3 { h1(x: x) div 2 } else { h1(x: x) + 1 };\n",
+            "t2(x: int) = h2(x: x) > 1 && x < 900;\n",
+            "u2(x: int) = t2(x: x) && x > 5;\n",
+            "v2(x: int) = t2(x: x) && h2(x: x) < 0;\n",
+            "w2(x: int) = u2(x: x) && t1(x: x + 1);\n",
+        )
+        .to_string(),
     ];
     for src in &units {
         let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));

@@ -2179,6 +2179,16 @@ These replace the DIAG-suppress-rest rows (that section is now empty and removed
 | A let chain `if let Some(..) = .. && let Ok(b) = ..` choosing the summaries before the fallback | `extend::decide_defined` | None | Nested matches, or `else` on `#none` |
 | A struct with methods `push`, `combine`, `dark_is_real` over one bound of a variable, used in Fourier-Motzkin elimination | `presburger::Side1`, `presburger::shadow` | None | A record type with functions over it |
 
+## Entries from LOAD-chain-sep-rest (`zedc-presburger/src/presburger.rs`, `presburger/extend.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A memo `HashMap<(Id, Vec<Atom>), Option<Summary>>` keyed by a definition's identity and its key, and a `HashMap<Id, Arc<BTreeSet<Atom>>>` of cone symbols shared by `Arc::clone` where a definition adds none | `extend::Summaries`, `Summaries::syms` | Identity (gap 1), Shared tables (gap 2), Mutation (gap 11) | Maps from the definition's content digest threaded through the fold over the questions; the shared set a persistent set value |
+| An enum borrowing from the memo, `Local<'a> { Ready(Vec<Formula>, Option<&'a Summary>), Need(Need), Unmade }`, returned to a loop that makes what is needed and asks again | `Summaries::local`, `Summaries::read`, `Summaries::make` | None | A union of records holding the summary value |
+| A `BTreeMap<u32, Def>` frontier popped from its highest key with `pop_last` | `Summaries::local`, `extend::enter` | Mutation (gap 11) | A sorted map value, its last entry taken and the rest passed on |
+| A `BTreeSet<Vec<Con>>` deduplicating pieces, and `Vec::swap_remove` in a `while` loop dropping implied rows | `Summaries::make`, `extend::lean` | Mutation (gap 11) | A set value; a fold over the rows building the kept list |
+| An explicit stack of `(Formula, bool)` for a post-order fill of the points of known conjunctions | `Extending::fill` | Mutation (gap 11) | A list value used as a stack |
+
 ## Entries from LOAD-chain-affine (`zedc-preimage/src/preimage.rs`, `zedc-presburger/src/presburger/extend.rs`, `zedc/src/front.rs`)
 
 The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer apply: both are removed.

@@ -3139,7 +3139,7 @@ impl Side1 {
 // (Fourier-Motzkin is doubly exponential in general), so no smaller exact result is known;
 // the callers then solve the kept core with each question, as they did the whole group.
 pub(super) fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool, dark: bool) -> Option<Vec<Con>> {
-    shadow_logged(rows, keep, dark, None)
+    shadow_logged(rows, keep, dark, false, None)
 }
 
 /// The conjunction `rows` with every atom outside `keep` eliminated, exactly over the integers
@@ -3160,11 +3160,31 @@ pub fn eliminated(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>
 /// the atom a value by them, the atoms eliminated after it having theirs ([`point_of`]).
 type Eliminated = (Atom, Vec<Con>);
 
-/// [`shadow`], each elimination written to `log` in turn when there is one.
+/// [`shadow`] with every atom outside `keep` eliminated that can be exactly (by an equality
+/// where its coefficient is 1 or -1, by bounds of which one side has coefficients 1 or -1, or by
+/// dark shadows equal to the real ones), however many rows that makes: for small systems whose
+/// projection is known to stay small, the pieces of a summary of definitions
+/// (`extend::Summaries::make`), where the size rules of [`shadow`] would leave an atom that
+/// the next elimination needs gone.
+// Complexity tradeoff: naive version, [`shadow`], which leaves an atom whose elimination
+// makes more rows than it takes out, so that a projection never grows: a summary piece with
+// such an atom is not made, and its chain of definitions is decided whole at each question,
+// O(n²) over n links. Used: the elimination done anyway, Fourier-Motzkin on the piece, O(l·u)
+// rows for an atom of l lower and u upper bounds, so a piece of r rows may grow to O(r²) at
+// each atom; a piece of a summary holds the rows of one case of one definition and of one
+// piece below, a few rows each, and is measured by the `separate_*_scale` tests
+// (l01_38_presburger::one_scope), COMPLEXITY.md row LOAD-chain-sep-rest.
+pub(super) fn shadow_whole(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
+    shadow_logged(rows, keep, true, true, None)
+}
+
+/// [`shadow`], each elimination written to `log` in turn when there is one; with `grow`, as
+/// [`shadow_whole`].
 fn shadow_logged(
     rows: &[Con],
     keep: &dyn Fn(&Atom) -> bool,
     dark: bool,
+    grow: bool,
     mut log: Option<&mut Vec<Eliminated>>,
 ) -> Option<Vec<Con>> {
     #[derive(Default)]
@@ -3336,8 +3356,8 @@ fn shadow_logged(
         // than the `e` terms of the equality taken out. Judged with the mean size of such
         // equalities, which the one used is no larger than.
         let others = (l + u).saturating_sub(d.eqs + 1);
-        let by_eq =
-            d.unit_eqs > 0 && others * d.unit_eq_terms <= d.unit_eq_terms + 2 * others * d.unit_eqs;
+        let by_eq = d.unit_eqs > 0
+            && (grow || others * d.unit_eq_terms <= d.unit_eq_terms + 2 * others * d.unit_eqs);
         // With `dark`, an atom is eliminated too when each pair of its bounds has, in its real
         // shadow, the integer points of its dark shadow ([`Side1::dark_is_real`], always so
         // for a coefficient 1 or -1): the dark shadow of the whole then has the points of the
@@ -3348,31 +3368,32 @@ fn shadow_logged(
         // and not by the bound of `small`: no more rows, of no more terms in all, than it
         // takes out. The rows are made only where `l·u <= l + u` (one side has one or two
         // bounds), so the trial costs O(the terms of the atom's rows), as the elimination does.
-        let fits = dark && l * u <= l + u && !by_eq && !d.gone && d.eqs == d.unit_eqs && {
-            let (mut lows, mut highs) = (Vec::new(), Vec::new());
-            let (mut old_rows, mut old_terms) = (0, 0);
-            for &i in &d.rows {
-                if let Some(c) = &live[i] {
-                    old_rows += 1;
-                    old_terms += c.lin.terms.len();
-                    Side1::push(c, &x, i, &mut lows, &mut highs);
-                }
-            }
-            let (mut new_rows, mut new_terms) = (0, 0);
-            let all = (lows.iter()).all(|lo| {
-                (highs.iter()).filter(|hi| lo.row != hi.row).all(|hi| {
-                    let lin = lo.combine(hi);
-                    let real = lo.dark_is_real(hi, &lin);
-                    if let Ok(Some(c)) = tidy(lin, Rel::Ge) {
-                        new_rows += 1;
-                        new_terms += c.lin.terms.len();
+        let fits =
+            dark && (grow || l * u <= l + u) && !by_eq && !d.gone && d.eqs == d.unit_eqs && {
+                let (mut lows, mut highs) = (Vec::new(), Vec::new());
+                let (mut old_rows, mut old_terms) = (0, 0);
+                for &i in &d.rows {
+                    if let Some(c) = &live[i] {
+                        old_rows += 1;
+                        old_terms += c.lin.terms.len();
+                        Side1::push(c, &x, i, &mut lows, &mut highs);
                     }
-                    real
-                })
-            });
-            all && new_rows <= old_rows && new_terms <= old_terms
-        };
-        if d.gone || !(by_eq || (exact && (small || trial)) || fits) {
+                }
+                let (mut new_rows, mut new_terms) = (0, 0);
+                let all = (lows.iter()).all(|lo| {
+                    (highs.iter()).filter(|hi| lo.row != hi.row).all(|hi| {
+                        let lin = lo.combine(hi);
+                        let real = lo.dark_is_real(hi, &lin);
+                        if let Ok(Some(c)) = tidy(lin, Rel::Ge) {
+                            new_rows += 1;
+                            new_terms += c.lin.terms.len();
+                        }
+                        real
+                    })
+                });
+                all && (grow || (new_rows <= old_rows && new_terms <= old_terms))
+            };
+        if d.gone || !(by_eq || (exact && (small || trial || grow)) || fits) {
             continue;
         }
         d.gone = true;
@@ -3441,7 +3462,7 @@ fn shadow_logged(
             });
             made.dedup_by(|later, first| later.lin.terms == first.lin.terms);
             let terms: usize = made.iter().map(|c| c.lin.terms.len()).sum();
-            if made.len() > out_rows || terms > out_terms {
+            if !grow && (made.len() > out_rows || terms > out_terms) {
                 let d = deg.get_mut(&x).expect("a queued atom");
                 d.gone = false;
                 d.rows = ids;
@@ -9971,7 +9992,7 @@ fn int_bounds(
 /// as the solver reads it. The cost is that of [`shadow`] and of one solve of the rows left.
 fn point_of(rows: &[Con], greatest: bool) -> Option<Model> {
     let mut log = Vec::new();
-    let left = shadow_logged(rows, &|_| false, false, Some(&mut log))?;
+    let left = shadow_logged(rows, &|_| false, false, false, Some(&mut log))?;
     let mut model = solve(&left, true).ok()??;
     for (x, rows) in log.into_iter().rev() {
         let at = rows.iter().map(|c| {
