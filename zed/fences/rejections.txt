@@ -73,6 +73,14 @@ Statement that writes nothing, or drops a declared result
 Two operations on one port that may not commute, with nothing ordering them
 Operator with no arrow at its operands' carrier
 Units that differ where an operation requires equal ones
+Unit name not declared
+Cycle of unit declarations
+Two different declarations of one unit name, or of one spelling
+`UnitDef` that is not a constant at a unit's top level
+Conversion whose factor the carrier cannot hold
+`.to` between units of different full expansions
+No `+` of two point readings
+Point unit in a product, quotient or power
 Taint at a sink whose parameter does not take it
 `*.` call on a receiver that is not a state variable
 Stored collection whose type and schema disagree
