@@ -3322,3 +3322,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | The class's leaf bound kept in the scope's cache and replaced in `due` while it walks the families | `Seen::bounds`, `LeafBound`, `Scope::leaf_bound_stays` | Mutation (gap 11) | The new record returned with the blocks due, and put in the cache by the caller |
 | Diffs of the kept blocks' sets, the names' products and the free conjuncts at each hub against the relation's, which skip the subtrees they share by address | `Block::update`, `Scope::record`, `Scope::added_among`, `Scope::project` | Identity (gap 1; see `Atoms::zip` above) | A diff of two persistent maps that skips shared nodes, from the runtime or by content digests |
 | The diff of the names' products since a block was kept, walked in a `for` that leaves by `break` once it has seen more changes than the block has names | `Block::update` | Early exit (gap 12) | A `loop` over the diff with `break`, or the first `u + 1` items of the diff taken lazily and counted |
+
+## Entries from EQ-no-common-carrier (`zedc-types/src/ty.rs`, `zedc-check/src/check/mod.rs`, `check/walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A memo of what the widening walk made of each row and payload shape, keyed by address (`Made::rows` by `Arc::as_ptr`, `Made::shapes` by `Shape::as_ptr`), and a trait hook with a default body (`Rebuild::made_set`) that only `Widen` overrides | `Widen`, `Ty::carriers`, `rebuild` | Identity (gap 1) | As for the other `Rebuild` walks: the node's digest as the key, confirmed by contents; the hook a function parameter of the walk |
+| The comparison's context (`Ck.comparing: Option<Comparison>`, now with the operand expressions, the span and the error count at its start) set in `binary_end` and read deep inside `Ck::pair` and `Ck::apart` | `walk.rs` `binary_end`, `Ck::pair`, `Ck::apart` | Mutation (gap 11) | a parameter of `equal`, `pair`, `follow` and `apart`, as for LIT-eq-kind |
+| The path of component places (`places`) and the first leaf found apart (`last`) updated in place in `pair`'s loop over its explicit stack, through a closure that borrows them mutably (`leaf`) | `Ck::pair` | Mutation (gap 11) | a fold over the pairs of components threading the path and the first leaf found apart |
+| An early `return` of `apart` when an error was already reported inside the comparison (`errors.len() == from`) | `Ck::apart` | Early exit (gap 12) | a guard on the count, as an `if` around the body |

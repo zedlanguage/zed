@@ -1521,6 +1521,11 @@ trait Rebuild {
     fn made_held(&mut self, s: &Arc<Sig>, arrows: Vec<Arrow>, needs: Vec<Need>) -> Arc<Sig>;
     /// What the variable `v` is replaced by, if it is.
     fn binding(&self, v: &str) -> Option<Cow<'_, Ty>>;
+    /// The set of scalars, atoms and kind-wide part made of the set `s` a type holds: `s`
+    /// itself, unless the walk widens it ([`Ty::carriers`]).
+    fn made_set(&mut self, s: KType) -> KType {
+        s
+    }
 }
 
 /// A step of [`rebuild`]: a part to enter, or a part whose parts are made, to be made from them.
@@ -1651,6 +1656,7 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
                         (&t.set - &gone, &t.family - &gone)
                     }
                 };
+                let set = w.made_set(set);
                 let mut made = Ty {
                     set,
                     tuples,
@@ -1998,6 +2004,55 @@ impl Rebuild for Subst<'_> {
 
     fn binding(&self, v: &str) -> Option<Cow<'_, Ty>> {
         self.binds.get(v).map(Cow::Borrowed)
+    }
+}
+
+/// [`Ty::carriers`]: each set of scalars widened to every value of the carriers it holds, at
+/// every depth outside functions, which are kept whole; each row and payload shape is made
+/// once, by address ([`Made`]).
+#[derive(Default)]
+struct Widen {
+    made: Made,
+}
+
+impl Rebuild for Widen {
+    fn known_ty(&mut self, _: &Ty) -> Option<Ty> {
+        None
+    }
+
+    fn known_row(&mut self, r: &Row) -> Option<Row> {
+        self.made.rows.get(&Arc::as_ptr(&r.0)).cloned()
+    }
+
+    fn made_row(&mut self, r: &Row, out: &Row) {
+        self.made.rows.insert(Arc::as_ptr(&r.0), out.clone());
+    }
+
+    fn known_shape(&mut self, s: &Shape) -> Option<Shape> {
+        self.made.shapes.get(&s.as_ptr()).cloned()
+    }
+
+    fn made_shape(&mut self, s: &Shape, out: &Shape) {
+        self.made.shapes.insert(s.as_ptr(), out.clone());
+    }
+
+    fn known_held(&mut self, s: &Arc<Sig>) -> Option<Arc<Sig>> {
+        Some(s.clone())
+    }
+
+    fn made_held(&mut self, _: &Arc<Sig>, _: Vec<Arrow>, _: Vec<Need>) -> Arc<Sig> {
+        unreachable!("`carriers` keeps each function whole, so it enters none")
+    }
+
+    fn binding(&self, _: &str) -> Option<Cow<'_, Ty>> {
+        None
+    }
+
+    fn made_set(&mut self, s: KType) -> KType {
+        let held: Vec<_> = (Carrier::ALL.into_iter())
+            .filter(|c| !(&s & &c.ty()).is_empty())
+            .collect();
+        held.into_iter().fold(s, |s, c| &s | &c.ty())
     }
 }
 
@@ -6206,6 +6261,16 @@ impl Ty {
             }
             stack[from..].reverse();
         }
+    }
+
+    /// It with each scalar it holds, at every depth outside the functions it holds, widened to
+    /// every value of its carrier: `1 | 2.5` is `int | f64`, and `(1, "a")` is `(int, String)`.
+    /// Atoms, payloads, functions, variables and the kind-wide part stay as they are. Two
+    /// types have a common carrier where their widenings meet ([`Ty::meets`]). Each row and
+    /// payload shape is widened once, on the walk's own stack (`rebuild`), so the cost is
+    /// the number of distinct rows and shapes, however many paths lead to them.
+    pub fn carriers(&self) -> Ty {
+        rebuild_ty(&mut Widen::default(), self)
     }
 
     /// It with each class variable `solve` gives a type replaced by that type at every depth,

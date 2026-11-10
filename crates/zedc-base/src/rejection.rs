@@ -75,6 +75,9 @@ rows! {
     LiteralCarrier => "Numeric literal at a carrier that cannot take it",
     UnfixedDecimal => "Decimal literal, or `/` of integer literals, that nothing gives a carrier",
     NoCommonCarrier => "Two numeric values with no common carrier",
+    // `b == s` with `b: bool` and `s: String`, or `x == 1r` with `x: bool`: the comparison always
+    // gives the same answer.
+    EqNoCommonCarrier => "Two values compared by `==` or `!=` whose types share no value",
     UnusedMatchBinder => "Match binder unused in its guard and arm",
     CapitalizedFreeName => "Capitalized free name used once in a signature and nowhere in the body",
     UndeclaredNameInField =>

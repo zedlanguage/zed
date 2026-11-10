@@ -38,7 +38,7 @@ fn a_one_tuple_evaluates_to_a_tuple_of_one() {
     assert_eq!(value("x = ((1),);\n", "x"), "(1,)");
     assert_eq!(value("x = (1);\n", "x"), "1");
     assert_eq!(value("x = (1,) == (1,);\n", "x"), "true");
-    assert_eq!(value("x = (1,) == (1, 1);\n", "x"), "false");
+    assert_eq!(value("x = (1,) == (2,);\n", "x"), "false");
 }
 
 /// The surface `match` is elaborated from step L2.4, so until then the arm `(a,) -> a` is run

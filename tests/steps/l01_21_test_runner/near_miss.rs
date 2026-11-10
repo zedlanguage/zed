@@ -80,6 +80,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         Some("write `f64(r)`; the checker accepts that"),
     ),
     (
+        Row::EqNoCommonCarrier,
+        "",
+        "same(s: String, n: int) = int(s) == n;\n",
+        "same(s: String, n: int) = s == n;\n",
+        "1:27",
+        Some("write `int(s) == n`"),
+    ),
+    (
         Row::NamedBeforePositional,
         FEE,
         "f = fee(5, rate: 3);\n",

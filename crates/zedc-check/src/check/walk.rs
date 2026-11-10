@@ -2030,10 +2030,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         match op {
             "==" | "!=" => {
+                let from = self.info.errors.len();
                 self.data(&x.ty, &format!("`{op}`"), span, x.at.unwrap_or(span));
                 self.data(&y.ty, &format!("`{op}`"), span, y.at.unwrap_or(span));
                 let op = if op == "==" { "==" } else { "!=" };
-                self.comparing = Some((op, [x.at, y.at]));
+                self.comparing = Some(Comparison {
+                    op,
+                    ats: [x.at, y.at],
+                    exprs: [x.expr, y.expr],
+                    span,
+                    from,
+                });
                 self.equal(&x, &y);
                 self.comparing = None;
                 for (l, v, left) in [(&x, &y, true), (&y, &x, false)] {

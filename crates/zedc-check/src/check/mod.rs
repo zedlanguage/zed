@@ -818,10 +818,11 @@ struct Ck<'t, 'a> {
     /// ([`Ck::never_equal`]); the entry only names the comparison, so an entry a repair's
     /// trial wrote is harmless.
     eq_sides: HashMap<Span, (&'static str, Option<Span>, bool)>,
-    /// While the operands of an `==` or `!=` are paired: the operator and the span of each
-    /// operand, left then right, so that a literal component of a tuple compared with a
-    /// component that holds no number names the comparison ([`Ck::never_equal_component`]).
-    comparing: Option<(&'static str, [Option<Span>; 2])>,
+    /// The `==` or `!=` whose operands are being paired, so that a literal component of a
+    /// tuple compared with a component that holds no number names the comparison
+    /// ([`Ck::never_equal_component`]), and two values with no common carrier are rejected
+    /// at it ([`Ck::apart`]).
+    comparing: Option<Comparison<'a>>,
     /// Each expression's loose atoms that reach its value unnamed, by its span, as last
     /// found: a superset of those no `else` default on their path writes. No entry is none.
     unnamed: HashMap<Span, KType>,
@@ -2864,10 +2865,30 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.info.errors[k].notes = notes;
     }
 
-    /// [`Ck::equal`] of the two sides `x` and `y`.
+    /// [`Ck::equal`] of the two sides `x` and `y`. Inside an `==` or `!=` ([`Ck::comparing`]),
+    /// each pair of components with no literal on either side, and each literal with a suffix
+    /// with what it is compared with, is checked for a common carrier
+    /// ([`no_common_carrier`]); of the pairs that have none, the first in written order is
+    /// rejected ([`Ck::apart`]). The stack pops a tuple's components last first, so that pair
+    /// is the last one met. Each pair keeps its place as an entry of `places`, the place of
+    /// its tuple and its index there, so only the place of the pair rejected is put in words.
     fn pair(&mut self, x: Side<'_>, y: Side<'_>) {
-        let mut stack = vec![(x, y, false)];
-        while let Some(((xt, xl, xp), (yt, yl, yp), inner)) = stack.pop() {
+        // The place of the operands themselves.
+        const TOP: usize = usize::MAX;
+        let mut places: Vec<(usize, usize)> = Vec::new();
+        let mut last: Option<(usize, Ty, Ty)> = None;
+        let checking = self.comparing.is_some();
+        let mut leaf = |at: usize, xt: &[&Ty], yt: &[&Ty]| {
+            if checking {
+                let a = Ty::union_all(xt.iter().copied());
+                let b = Ty::union_all(yt.iter().copied());
+                if no_common_carrier(&a, &b) {
+                    last = Some((at, a, b));
+                }
+            }
+        };
+        let mut stack = vec![(x, y, false, TOP)];
+        while let Some(((xt, xl, xp), (yt, yl, yp), inner, at)) = stack.pop() {
             match (xl, yl) {
                 (Some(l), Some(m)) => {
                     let (lc, mc) = (lit_carrier(&l.value), lit_carrier(&m.value));
@@ -2896,18 +2917,180 @@ impl<'t, 'a> Ck<'t, 'a> {
                         (false, false) => {}
                     }
                 }
-                (Some(l), None) => self.follow(l, &yt, inner, 1),
-                (None, Some(m)) => self.follow(m, &xt, inner, 0),
-                (None, None) if xp.is_none() && yp.is_none() => {}
+                // A literal with a suffix is a value of its carrier like any other.
+                (Some(l), None) => {
+                    if !l.bare {
+                        leaf(at, &[&Ty::carrier(lit_carrier(&l.value))], &yt);
+                    }
+                    self.follow(l, &yt, inner, 1);
+                }
+                (None, Some(m)) => {
+                    if !m.bare {
+                        leaf(at, &xt, &[&Ty::carrier(lit_carrier(&m.value))]);
+                    }
+                    self.follow(m, &xt, inner, 0);
+                }
+                (None, None) if xp.is_none() && yp.is_none() => leaf(at, &xt, &yt),
                 (None, None) => {
                     let n = xp.or(yp).map_or(0, <[Part]>::len);
                     let (Some(xs), Some(ys)) = (sides(&xt, xp, n), sides(&yt, yp, n)) else {
+                        leaf(at, &xt, &yt);
                         continue;
                     };
-                    stack.extend(xs.zip(ys).map(|(a, b)| (a, b, true)));
+                    for (i, (a, b)) in xs.zip(ys).enumerate() {
+                        places.push((at, i));
+                        stack.push((a, b, true, places.len() - 1));
+                    }
                 }
             }
         }
+        if let Some((mut at, a, b)) = last {
+            let mut path = Vec::new();
+            while at != TOP {
+                let (up, i) = places[at];
+                path.push(i);
+                at = up;
+            }
+            path.reverse();
+            self.apart(&path, &a, &b);
+        }
+    }
+
+    /// Rejects the `==` or `!=` being checked ([`Ck::comparing`]) whose operands, or whose
+    /// components at the place `path` (indices from the operands down), are of the types `a`
+    /// and `b`, which share no value at any carrier ([`no_common_carrier`]), unless the
+    /// operands' own checks rejected something first. The comparison always gives the same
+    /// answer. At the operands themselves the repairs are each cast of one operand that
+    /// makes the two meet, then each component of a tuple operand that may equal the other
+    /// operand; with none, or inside the operands, the answer it always gives.
+    fn apart(&mut self, path: &[usize], a: &Ty, b: &Ty) {
+        let Some(Comparison {
+            op,
+            ats,
+            exprs,
+            span,
+            from,
+        }) = self.comparing
+        else {
+            return;
+        };
+        if self.info.errors.len() != from {
+            return;
+        }
+        let tables = self.t;
+        let labels = [0, 1].map(|s| match ats[s].and_then(|at| self.seen.get(&at)) {
+            Some((_, Src::Name(id))) => Some(Operand::Name(&tables.res.binders[*id].name)),
+            _ => exprs[s]
+                .filter(|e| path.is_empty() && is_literal(e))
+                .map(Operand::Literal),
+        });
+        let sides = [a, b];
+        let mut fixes = [Vec::new(), Vec::new()];
+        if path.is_empty() {
+            let widened = sides.map(widened);
+            for s in 0..2 {
+                let Some(other) = &widened[1 - s] else {
+                    continue;
+                };
+                for w in ["int", "rat", "f64"] {
+                    if let Some(r) = converted(&word_sig(w), sides[s])
+                        && widened_meets(&r, other)
+                    {
+                        fixes[0].push(Fix::Cast(s, w));
+                    }
+                }
+            }
+            for s in 0..2 {
+                let Some(other) = &widened[1 - s] else {
+                    continue;
+                };
+                let values = sides[s].without_atoms();
+                let u = values.set.universes();
+                let tuples_only = !u.bases.iter().any(|&b| b) && !u.rest;
+                let width = (values.tuples.iter().map(|r| r.len()).min())
+                    .filter(|_| tuples_only)
+                    .unwrap_or(0);
+                for i in 0..width {
+                    let c = Ty::union_all(values.tuples.iter().map(|r| &r[i]));
+                    if widened_meets(&c, other) {
+                        fixes[1].push(Fix::Component(s, i));
+                    }
+                }
+            }
+        }
+        let [fixes, components] = fixes;
+        let groups = [
+            (fixes, "to compare the numbers"),
+            (components, "to compare a component"),
+        ];
+        let answer = groups.iter().all(|(rs, _)| rs.is_empty());
+        let shown = sides.map(|t| self.shown(&t.carriers()));
+        let ends = ["left", "right"];
+        let named = match &labels {
+            [Some(l), Some(m)] if path.is_empty() => Some((l, m)),
+            _ => None,
+        };
+        let form = |f: &mut fmt::Formatter<'_>, r: Fix| match (named, r) {
+            (Some((l, m)), Fix::Cast(0, w)) => write!(f, "`{w}({l}) {op} {m}`"),
+            (Some((l, m)), Fix::Cast(_, w)) => write!(f, "`{l} {op} {w}({m})`"),
+            (Some((l, m)), Fix::Component(0, i)) => write!(f, "`{l}[{i}] {op} {m}`"),
+            (Some((l, m)), Fix::Component(_, i)) => write!(f, "`{l} {op} {m}[{i}]`"),
+            (None, Fix::Cast(s, w)) => write!(f, "`{w}(…)` around the {} operand", ends[s]),
+            (None, Fix::Component(s, i)) => write!(f, "`[{i}]` after the {} operand", ends[s]),
+        };
+        let in_place = |f: &mut fmt::Formatter<'_>| {
+            write!(f, "`{}` in place of ", op != "==")?;
+            match named {
+                Some((l, m)) => write!(f, "`{l} {op} {m}`"),
+                None => f.write_str("the comparison"),
+            }
+        };
+        let message = quoting(
+            &fmt::from_fn(|f| {
+                for s in 0..2 {
+                    if s == 1 {
+                        f.write_str(" and ")?;
+                    }
+                    match (&labels[s], path) {
+                        (Some(l), []) => write!(f, "`{l}`")?,
+                        (None, []) => write!(f, "the {} operand of `{op}`", ends[s])?,
+                        (Some(l @ Operand::Name(_)), _) => write!(f, "`{l}{}`", Place(path))?,
+                        _ => write!(f, "component `{}` of the {} operand", Place(path), ends[s])?,
+                    }
+                    let t = &shown[s];
+                    write!(f, " is {} `{t}`", article_of(t))?;
+                }
+                f.write_str(" here, and no value is both, so the comparison always gives ")?;
+                if answer {
+                    let a = op != "==";
+                    return write!(f, "`{a}`; write {}", fmt::from_fn(in_place));
+                }
+                f.write_str("the same answer; write ")?;
+                write_repairs(f, &groups, form)
+            }),
+            || {
+                format!(
+                    "the two sides of this `{op}` share no value, so the comparison always \
+                     gives the same answer"
+                )
+            },
+        );
+        let row = match sides.iter().all(|t| only_numbers(t)) {
+            true => Row::NoCommonCarrier,
+            false => Row::EqNoCommonCarrier,
+        };
+        let mut notes = self.derive(&ats.into_iter().flatten().collect::<Vec<_>>());
+        // The menu again as repair steps, in the order the message lists it.
+        let repairs = groups.iter().flat_map(|(rs, _)| rs.iter());
+        notes.extend(repairs.map(|&r| Note {
+            span,
+            text: format!("repair: write {}", fmt::from_fn(|f| form(f, r))),
+        }));
+        if answer {
+            let text = format!("repair: write {}", fmt::from_fn(in_place));
+            notes.push(Note { span, text });
+        }
+        self.rejects_with(row, span, message, notes);
     }
 
     /// The literal `l` compared with a value of one of the types `ts`, as at a parameter
@@ -2962,7 +3145,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // judged by the operator, which knows its other operand ([`Ck::never_equal`]).
                 if inner
                     && l.bare
-                    && let Some((op, ats)) = self.comparing
+                    && let Some(Comparison { op, ats, .. }) = self.comparing
                     && holds_no_number(ts)
                 {
                     self.never_equal_component(l, ts, op, ats[other]);
@@ -4285,6 +4468,19 @@ fn only_tuple(t: &Ty, n: usize) -> Option<&[Ty]> {
     }
 }
 
+/// An `==` or `!=` whose operands [`Ck::equal`] pairs: the operator, the span and the expression
+/// of each operand, left then right, the span of the comparison, and the number of errors before its operands
+/// were checked, so that two values with no common carrier are rejected there only where
+/// nothing else rejected the comparison first ([`Ck::apart`]).
+#[derive(Clone, Copy)]
+struct Comparison<'a> {
+    op: &'static str,
+    ats: [Option<Span>; 2],
+    exprs: [Option<&'a Expr>; 2],
+    span: Span,
+    from: usize,
+}
+
 /// One side of `==` as [`Ck::equal`] reads it: the types its value may have, one per tuple
 /// shape it is a component of, the literal it is, if it is one, and the literals written in
 /// it, by component, if it is a tuple that holds one.
@@ -4591,6 +4787,143 @@ fn holds_no_number(ts: &[&Ty]) -> bool {
     values
 }
 
+/// The values of `t` at their carriers, without its atoms: each scalar widened to its whole
+/// carrier, in tuple components too ([`Ty::carriers`]), so two types meet there when a value
+/// of one may be compared with a value of the other, whatever values each holds. None where
+/// `t` holds the unknown, a type variable or a function, which could be anything.
+fn widened(t: &Ty) -> Option<Ty> {
+    match t.dynamic || !t.vars.is_empty() || !t.fns.is_empty() {
+        true => None,
+        false => Some(t.without_atoms().carriers()),
+    }
+}
+
+/// Whether a value of `t` may be compared with one of `other`, already [`widened`].
+fn widened_meets(t: &Ty, other: &Ty) -> bool {
+    widened(t).is_none_or(|t| t.meets(other))
+}
+
+/// Whether `==` between a value of `a` and one of `b` always gives the same answer: both hold
+/// values other than atoms, and their carriers share none ([`widened`]). An atom on either
+/// side, `x == #none`, is a value that side may be, compared as any other; a side that holds
+/// only atoms is not judged here.
+///
+/// Complexity tradeoff: the naive check compares each arm of one side with each arm of the
+/// other, carrier by carrier, recursing into tuple components pairwise: O(|a| · |b|). Here
+/// each side is widened once in O(|a|) and O(|b|) ([`Ty::carriers`], memoized by shape), and
+/// the widened types are met once ([`Ty::meets`]), which files the tuples of one side by their
+/// components and compares each tuple of the other only with those filed near it (COMPLEXITY.md
+/// F132): O(|a| + |b|) in all, at the cost of building the two widened types.
+fn no_common_carrier(a: &Ty, b: &Ty) -> bool {
+    match (widened(a), widened(b)) {
+        (Some(a), Some(b)) => !a.is_empty() && !b.is_empty() && !a.meets(&b),
+        _ => false,
+    }
+}
+
+/// Whether the values of `t`, without its atoms, are all numbers, `int`, `rat` or `f64`.
+fn only_numbers(t: &Ty) -> bool {
+    let v = t.without_atoms();
+    let u = v.set.universes();
+    let numeric = [Carrier::Int, Carrier::Rat, Carrier::F64].map(|c| c.base());
+    v.tuples.is_empty()
+        && !u.rest
+        && numeric.iter().any(|&i| u.bases[i])
+        && (u.bases.iter().enumerate()).all(|(i, &b)| !b || numeric.contains(&i))
+}
+
+/// An operand of `==` that a message names as the program writes it.
+#[derive(Clone, Copy)]
+enum Operand<'e> {
+    /// A name.
+    Name(&'e str),
+    /// A number or truth-value literal, with or without a `-` ([`is_literal`]).
+    Literal(&'e Expr),
+}
+
+impl fmt::Display for Operand<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut e = match self {
+            Operand::Name(n) => return f.write_str(n),
+            Operand::Literal(e) => *e,
+        };
+        if let ExprKind::Unary("-", a) = &e.kind {
+            f.write_str("-")?;
+            e = a;
+        }
+        match &e.kind {
+            ExprKind::Int { radix, digits } => {
+                let prefix = match radix {
+                    2 => "0b",
+                    8 => "0o",
+                    16 => "0x",
+                    _ => "",
+                };
+                write!(f, "{prefix}{digits}")
+            }
+            ExprKind::Float { digits, forced } => {
+                write!(f, "{digits}{}", if *forced { "f64" } else { "" })
+            }
+            ExprKind::Rat(digits) => write!(f, "{digits}r"),
+            ExprKind::Bool(b) => write!(f, "{b}"),
+            _ => unreachable!("an operand named as written is a literal ([`is_literal`])"),
+        }
+    }
+}
+
+/// Whether `e` is a number or truth-value literal, with or without a `-`, which a message
+/// names as written ([`Operand::Literal`]).
+fn is_literal(e: &Expr) -> bool {
+    let e = match &e.kind {
+        ExprKind::Unary("-", a) => a,
+        _ => e,
+    };
+    matches!(
+        e.kind,
+        ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Rat(_) | ExprKind::Bool(_)
+    )
+}
+
+/// A place in a tuple, as the indices that reach it written `[0][1]`.
+struct Place<'p>(&'p [usize]);
+
+impl fmt::Display for Place<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.iter().try_for_each(|i| write!(f, "[{i}]"))
+    }
+}
+
+/// `an` before a type written with a vowel sound first, `int`, `f64`, `(..)` not; `a` else.
+fn article_of(t: &impl fmt::Display) -> &'static str {
+    /// Keeps the first two characters written, then stops the writing.
+    struct First(Vec<char>);
+    impl fmt::Write for First {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            self.0.extend(s.chars().take(2 - self.0.len()));
+            match self.0.len() {
+                2 => Err(fmt::Error),
+                _ => Ok(()),
+            }
+        }
+    }
+    let mut first = First(Vec::with_capacity(2));
+    // The writing stops with an error once it has the two characters.
+    let _ = fmt::write(&mut first, format_args!("{t}"));
+    match first.0[..] {
+        ['a' | 'e' | 'i' | 'o', ..] | ['f', '0'..='9', ..] => "an",
+        _ => "a",
+    }
+}
+
+/// A repair of an `==` whose operands share no value ([`Ck::apart`]): a cast by the word of
+/// the operand at a side, 0 left and 1 right, or that operand's component at an index
+/// compared in its place.
+#[derive(Clone, Copy)]
+enum Fix {
+    Cast(usize, &'static str),
+    Component(usize, usize),
+}
+
 /// Whether the literal `l` compared with a value of one of the types `cs` checks and may be
 /// equal to it: they hold a number `l` can be, or a variable or the unknown, which could
 /// stand for one.
@@ -4633,10 +4966,10 @@ fn bools(u: &Universes) -> Vec<Repair<'static>> {
 /// Writes the repairs of `groups`, each a list of repairs and what they do, as one list: the
 /// repairs written by `form` and separated by `, `, the last by ` or `, and each group's
 /// followed by what they do.
-fn write_repairs<'w>(
+fn write_repairs<R: Copy>(
     f: &mut fmt::Formatter<'_>,
-    groups: &[(Vec<Repair<'w>>, &str)],
-    form: impl Fn(&mut fmt::Formatter<'_>, Repair<'w>) -> fmt::Result,
+    groups: &[(Vec<R>, &str)],
+    form: impl Fn(&mut fmt::Formatter<'_>, R) -> fmt::Result,
 ) -> fmt::Result {
     let total: usize = groups.iter().map(|(rs, _)| rs.len()).sum();
     let mut k = 0;
