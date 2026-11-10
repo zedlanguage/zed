@@ -1,9 +1,10 @@
 //! Every preimage of the random terms of `s22.rs`, from the transfer and from the transfer
 //! before (`zedc::store::preimage_ref`), checked against the interpreter, whether or not the
 //! two agree: a point that meets the demand lies in the box, and where the box is marked exact,
-//! a point in it meets the demand. `s22.rs` runs the interpreter only where the two transfers
-//! differ, so a defect both share went unseen there (SOUND-div-exact: both read `c^0` as 1
-//! without reading `c`, and marked `(-4 div (1 + x))^0` exact over every `x`).
+//! a point in it meets the demand. `s22.rs` ran the interpreter only where the two transfers
+//! differed, so a defect both share went unseen there (SOUND-div-exact: both read `c^0` as 1
+//! without reading `c`, and marked `(-4 div (1 + x))^0` exact over every `x`); it checks both
+//! boxes of every case since S22-exact-mislabel.
 //!
 //! The points checked on each input are the ends of each piece of the box and of the input's
 //! domain, the integers next to each end, the middle of each piece, and the integers from -15 to
@@ -147,39 +148,12 @@ fn disagreements(case: &Case, who: &str, bx: &Domains, exact: bool) -> Vec<Strin
     out
 }
 
-/// Whether `t` reads no variable, as `-5` and `min(0, -5)`.
-fn closed(t: &Term) -> bool {
-    match t {
-        Term::Lit(_) => true,
-        Term::Prim(_, xs) => xs.iter().all(closed),
-        _ => false,
-    }
-}
-
-/// Whether `t` holds `c - e` for a constant `c` (a term that reads no variable), read through
-/// `let`s, functions, calls and branches.
-fn has_constant_minus(t: &Term) -> bool {
-    match t {
-        Term::Prim(Prim::Sub, xs) if xs.first().is_some_and(closed) => true,
-        Term::Prim(_, xs) => xs.iter().any(has_constant_minus),
-        Term::Lam(_, body) => has_constant_minus(body),
-        Term::App(f, xs) => has_constant_minus(f) || xs.iter().any(has_constant_minus),
-        Term::Let(_, e, body) => has_constant_minus(e) || has_constant_minus(body),
-        Term::If(c, a, b) => [c, a, b].into_iter().any(|t| has_constant_minus(t)),
-        _ => false,
-    }
-}
-
 /// What the interpreter found in both transfers' preimages of one case.
 struct Found {
-    /// The disagreements, but those of the transfer before on a term of `c - e`.
+    /// The disagreements of either transfer.
     disagreements: Vec<String>,
     /// How many of the two preimages are marked exact.
     exact: usize,
-    /// Whether the transfer before disagrees on a term of `c - e`: it took `c - x` as the
-    /// forward image of `{c} - z`, which merges pieces moved across zero and keeps the merged
-    /// box exact (S22b, fixed in the transfer and left in the transfer before).
-    reflected: bool,
 }
 
 /// The disagreements of the interpreter with both transfers' preimages of `case`.
@@ -207,23 +181,22 @@ fn check(case: &Case) -> Found {
         }
     };
     let mut disagreements = disagreements(case, "transfer", &now.0, now.1);
-    let then_found = self::disagreements(case, "transfer before", &then.0, then.1);
-    let reflected = !then_found.is_empty() && has_constant_minus(t);
-    if !reflected {
-        disagreements.extend(then_found);
-    }
+    disagreements.extend(self::disagreements(
+        case,
+        "transfer before",
+        &then.0,
+        then.1,
+    ));
     Found {
         disagreements,
         exact: now.1 as usize + then.1 as usize,
-        reflected,
     }
 }
 
-/// Checks every case of `runs`: no disagreement, exactly `exact` preimages marked exact, and
-/// exactly `reflected` cases where the transfer before disagrees on a term of `c - e`; panics
-/// showing every disagreement.
-fn check_runs(runs: &[Run], exact: usize, reflected: usize) {
-    let (mut found, mut exact_now, mut reflected_now) = (Vec::new(), 0, 0);
+/// Checks every case of `runs`: no disagreement and exactly `exact` preimages marked exact;
+/// panics showing every disagreement.
+fn check_runs(runs: &[Run], exact: usize) {
+    let (mut found, mut exact_now) = (Vec::new(), 0);
     std::thread::scope(|s| {
         let thread = std::thread::Builder::new().stack_size(1 << 28);
         thread
@@ -233,7 +206,6 @@ fn check_runs(runs: &[Run], exact: usize, reflected: usize) {
                         let f = check(&c);
                         found.extend(f.disagreements);
                         exact_now += f.exact;
-                        reflected_now += f.reflected as usize;
                     });
                 }
             })
@@ -247,11 +219,7 @@ fn check_runs(runs: &[Run], exact: usize, reflected: usize) {
         found.len(),
         found.join("\n")
     );
-    assert_eq!(
-        (exact_now, reflected_now),
-        (exact, reflected),
-        "(exact preimages, cases of `c - e` the transfer before gets wrong)"
-    );
+    assert_eq!(exact_now, exact, "the number of exact preimages changed");
 }
 
 /// Runs of mixed terms from the seeds `seeds`, 2000 cases each, every other case a test and
@@ -321,64 +289,82 @@ fn exact(seeds: std::ops::Range<u64>) -> Vec<Run> {
 // probe only on a failed search) at the same seeds, in both orders of the parts: with the
 // parts reversed the old call counts 36155 and 36041 for more_mixed_1 and _2, this one
 // 36160 and 36048 in both orders.
+//
+// Until S22-exact-mislabel, the disagreements of the transfer before on a term of `c - e` were
+// counted apart and not reported (13 cases in all: 3 in more_mixed_1, 5 in more_mixed_2, 2 in
+// more_deep_1, 1 in more_deep_2, 1 each in more_exact_2 and _3): it took `c - x` as the forward
+// image of `{c} - z`, whose cap on the pieces of each sign region merges pieces moved across
+// zero, and kept the merged box exact. It now marks that box exact only when `x` takes no value
+// of the image outside the reflection of `z`, so the count is gone and every disagreement is
+// reported. 14 boxes of the transfer before changed, each to a subset of the box before, and
+// none of the transfer: in 6 the box is the same and no longer exact, so the exact counts
+// fell by 1 (more_deep_1, the `(min(0, -5) - (abs(x) + -4)) != -1` case; more_deep_2,
+// `(2 - (5 * 6)) - (((x div -3)^2) div -4)`) and by 3 (more_mixed_2); in the other 8 the
+// linear stage, which now runs on the box, narrows it to the exact set the transfer gives
+// (`3 - x` over [-6, 4] demanded in [-24, -20] or [1, inf) keeps `x` in [-6, 2], not
+// [-6, 4]), so the counts are unchanged. 13 of the 14 boxes before were refuted at the points
+// checked here; the 14th, `x` in [-7, 47] for the `x div -3` case, fails at `x` from 21 to 44,
+// outside the window and away from the ends, which a dense check of `x` from -7 to 60 showed.
 
 #[test]
 fn s22_random_terms_match_the_interpreter_1() {
-    check_runs(&RUNS[0..4], 2353, 0);
+    check_runs(&RUNS[0..4], 2353);
 }
 
 #[test]
 fn s22_random_terms_match_the_interpreter_2() {
-    check_runs(&RUNS[4..6], 5479, 0);
+    check_runs(&RUNS[4..6], 5479);
 }
 
 #[test]
 fn s22_random_terms_match_the_interpreter_3() {
-    check_runs(&RUNS[6..18], 4433, 0);
+    check_runs(&RUNS[6..18], 4433);
 }
 
 #[test]
 fn more_mixed_terms_match_the_interpreter_1() {
-    check_runs(&mixed(10_000..10_010), 36160, 3);
+    check_runs(&mixed(10_000..10_010), 36160);
 }
 
 #[test]
 fn more_mixed_terms_match_the_interpreter_2() {
-    check_runs(&mixed(10_010..10_020), 36048, 5);
+    check_runs(&mixed(10_010..10_020), 36045);
 }
 
 #[test]
 fn more_deep_terms_match_the_interpreter_1() {
-    check_runs(&deep(2_000..2_100), 35186, 2);
+    check_runs(&deep(2_000..2_100), 35185);
 }
 
 #[test]
 fn more_deep_terms_match_the_interpreter_2() {
-    check_runs(&deep(2_100..2_200), 35171, 1);
+    check_runs(&deep(2_100..2_200), 35170);
 }
 
 // The seeds 3000 to 3039 of `@exact` terms ran as one test of 56.5 s at load 41 (68.8 s at
 // load 71), above the 60 s limit; each seed's 250 cases take 0.6 to 2.6 s, so they are split
-// by seed into four tests, whose counts add up to the whole's 19134 and 2 (SPLIT-exact-oracle).
+// by seed into four tests, whose counts add up to the whole's 19134 (SPLIT-exact-oracle; the
+// whole also counted 2 cases of `c - e` the transfer before got wrong, none since
+// S22-exact-mislabel).
 
 #[test]
 fn more_exact_terms_match_the_interpreter_1() {
-    check_runs(&exact(3_000..3_010), 4764, 0);
+    check_runs(&exact(3_000..3_010), 4764);
 }
 
 #[test]
 fn more_exact_terms_match_the_interpreter_2() {
-    check_runs(&exact(3_010..3_020), 4778, 1);
+    check_runs(&exact(3_010..3_020), 4778);
 }
 
 #[test]
 fn more_exact_terms_match_the_interpreter_3() {
-    check_runs(&exact(3_020..3_030), 4800, 1);
+    check_runs(&exact(3_020..3_030), 4800);
 }
 
 #[test]
 fn more_exact_terms_match_the_interpreter_4() {
-    check_runs(&exact(3_030..3_040), 4792, 0);
+    check_runs(&exact(3_030..3_040), 4792);
 }
 
 fn var(x: &str) -> Term {

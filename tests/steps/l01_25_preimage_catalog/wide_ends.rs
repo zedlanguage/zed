@@ -287,20 +287,18 @@ fn chains_over_wide_domains_keep_their_preimages() {
     }
     drop(note);
     assert!(cases >= 2500, "only {cases} cases");
-    // `MAX - i` under a demand of two pieces on both sides of zero: the transfer before took
-    // `c - x` as the forward image of `{c} - z`, whose cap merged the two pieces, and marked
-    // the merged box exact (S22b). The interpreter refutes each such box.
-    assert_eq!(
-        refuted_before.len(),
-        25,
+    // No box of the transfer before is refuted by the interpreter. Until item
+    // S22-exact-mislabel, 25 were: `MAX - i` under a demand of two pieces on both sides of
+    // zero, where the transfer before took `c - x` as the forward image of `{c} - z`, whose
+    // cap merged the two pieces, and marked the merged box exact (S22b). It now marks such a
+    // box exact only when `i` takes no value of the image outside the reflection of the
+    // demand. The linear stage then reads the 25 inexact boxes: in 18 it finds the exact box
+    // the new transfer finds, and the two are equal; in 7 its box is still wider than the new
+    // one, and they count as narrower (20 before the item, now 27).
+    assert!(
+        refuted_before.is_empty(),
         "the boxes before that the interpreter refutes:\n{}",
         refuted_before.join("\n")
-    );
-    assert!(
-        refuted_before
-            .iter()
-            .all(|w| w.contains("(9223372036854775807 - i)")),
-        "{refuted_before:?}"
     );
     // The summary reads values past `i128` (its numbers are unbounded), where the transfer
     // before read the `if` arm by arm: its box is the same or narrower and exact more often. Neither
@@ -309,7 +307,7 @@ fn chains_over_wide_domains_keep_their_preimages() {
     // Each is sound by the interpreter, inside the box before and exact wherever it was.
     assert_eq!(
         (narrower.len(), now_exact.len(), not_enumerated.len()),
-        (20, 246, 0),
+        (27, 246, 0),
         "narrower:\n{}\nnow exact:\n{}",
         narrower[..narrower.len().min(3)].join("\n"),
         now_exact[..now_exact.len().min(3)].join("\n")

@@ -1,7 +1,8 @@
 //! The backward transfer as it was before the piecewise-affine summary and the demand clip of
 //! S22a (main at fdf7918, which holds the 397f1c9 transfer and later changes), kept unchanged
-//! but for the exact interval ends of TD-ends and the failure of a base raised to 0
-//! (SOUND-div-exact), so that tests can compare the whole `Preimage`
+//! but for the exact interval ends of TD-ends, the failure of a base raised to 0
+//! (SOUND-div-exact), and a box of `c - x` no longer marked exact when the forward image of
+//! `{c} - z` merged pieces (S22-exact-mislabel), so that tests can compare the whole `Preimage`
 //! of [`super::preimage`] with it. Nothing outside the tests uses it.
 //!
 //! The tonicity of the scalar primitives and the scalar entries of the preimage catalog
@@ -2415,8 +2416,31 @@ impl<'t> Tx<'t> {
                 self.back_at(a, env, &ints(shift(z, c)))
             }
             (Sub, Some(c), _) => {
+                // The forward image `r` of `{c} - z` caps the pieces of each sign region
+                // (`revision::map2`), so it may merge pieces it moves across zero and hold values
+                // `v` whose `c - v` is outside `z`: the holes, `r` less the reflection of `z`. The
+                // box is kept as it was; it is exact only when `b` takes no value in the holes, by
+                // its forward image (item S22-exact-mislabel: the transfer marked such boxes exact
+                // whether or not it did). With no value of `b` there, the inputs whose `b` lies in
+                // `r` are those whose `c - b` lies in `z`.
+                //
+                // Complexity tradeoff: naive version: decide exactness by running the term at
+                // each point of the box, a cost in the box's width, or not at all for an
+                // unbounded box; used: the reflection in O(k) for the k pieces of `z`, and the
+                // holes and their meet with the f pieces of the forward image of `b` in
+                // O(m log(n/m + 1)) each for sets of m <= n pieces, O((k + f) log(k + f)) at most;
+                // the forward image is memoized by term and binding, so it is computed once for the
+                // whole transfer. Given up: a box whose holes meet the forward image of `b` though
+                // no input in the box takes a value there is reported not exact, such as one where
+                // an enclosing guard keeps `b` out of the holes (deciding that would take the back
+                // transfer of the holes at each such `c - x`, twice the demands at each level of a
+                // chain of them).
                 let r = revision::forward(&Op::Sub, &IntervalSet::single(c), z);
-                self.back_at(b, env, &ints(r))
+                let holes = r.minus(&reflect(z, c as i128));
+                let missed = !holes.is_empty() && !holes.meet(&self.fwd(b, env).ints).is_empty();
+                let mut res = self.back_at(b, env, &ints(r));
+                res.exact &= !missed;
+                res
             }
             (Mul, Some(c), _) => self.back_at(b, env, &ints(times_pre(z, c))),
             (Mul, _, Some(c)) => self.back_at(a, env, &ints(times_pre(z, c))),
@@ -2625,6 +2649,19 @@ fn shift(z: &IntervalSet, c: i128) -> IntervalSet {
         e => e.clone(),
     };
     IntervalSet::from_pieces(z.pieces().map(|(lo, hi)| (m(lo), m(hi))).collect())
+}
+
+/// The integers `c - v` for each member `v` of `z`, each piece reflected and moved by `c`,
+/// exact at any magnitude: used only to tell whether the forward image of `{c} - z` merged
+/// pieces.
+fn reflect(z: &IntervalSet, c: i128) -> IntervalSet {
+    let c = Num::from(c);
+    let m = |e: &End| match e {
+        Fin(v) => Fin(&c - v),
+        NegInf => PosInf,
+        PosInf => NegInf,
+    };
+    IntervalSet::from_pieces(z.pieces().rev().map(|(lo, hi)| (m(hi), m(lo))).collect())
 }
 
 /// The integers `x` with `x * c` in `z`.

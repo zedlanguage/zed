@@ -415,14 +415,23 @@ fn split_relation_exact(t: &Term, ds: &Domains, d: &Demand, p: &Preimage) -> boo
 /// the points within (-60, 60): a point that meets `d` lies outside, or, when `exact`, a point
 /// inside fails `d`.
 fn refuted(t: &Term, ds: &Domains, d: &Demand, domains: &Domains, exact: bool) -> bool {
+    first_refuted(t, ds, d, &[(domains, exact)]).is_some()
+}
+
+/// The index of a box of `boxes` (each a box and whether it is marked exact) that the
+/// interpreter refutes as [`refuted`] does, if any. The term runs once at each point, whatever
+/// the number of boxes.
+fn first_refuted(t: &Term, ds: &Domains, d: &Demand, boxes: &[(&Domains, bool)]) -> Option<usize> {
     let names: Vec<Arc<str>> = ds.keys().cloned().collect();
-    super::points(ds, &names, (-60, 60)).iter().any(|pt| {
-        let inside = names
-            .iter()
-            .zip(pt)
-            .all(|(n, &v)| domains.get(n).is_none_or(|s| s.contains(v)));
+    super::points(ds, &names, (-60, 60)).iter().find_map(|pt| {
         let meets = super::meets(t, &names, pt, d);
-        (meets && !inside) || (!meets && exact && inside)
+        boxes.iter().position(|&(domains, exact)| {
+            let inside = names
+                .iter()
+                .zip(pt)
+                .all(|(n, &v)| domains.get(n).is_none_or(|s| s.contains(v)));
+            (meets && !inside) || (!meets && exact && inside)
+        })
     })
 }
 
@@ -441,6 +450,21 @@ impl Diffs {
             before::preimage_listed(t, ds, listed, &old(d)),
         );
         let (new, old) = (format!("{now:?}"), format!("{then:?}"));
+        // Every box of both transfers, whether or not the two differ, holds each point that
+        // meets the demand, and holds no point that fails it when it is marked exact (item
+        // S22-exact-mislabel: ten boxes of the transfer before were marked exact while holding
+        // points that fail, and were counted as boxes of `c - x` narrowed, since this was
+        // checked only for the new box).
+        let boxes = [(&now.domains, now.exact), (&then.domains, then.exact)];
+        if let Some(i) = first_refuted(t, ds, d, &boxes) {
+            let (which, shown) = [("now", &new), ("before", &old)][i];
+            self.cases += 1;
+            self.found.push(format!(
+                "{what}: {t} over {ds:?}, demand {d:?}\n  the interpreter refutes the box \
+                 {which}: {shown}"
+            ));
+            return;
+        }
         // Plan item S22e-wide: a split by remainders over many periods answers with its box and
         // the classes' relation, exact on the box, where the linear stage stated its own
         // relation and projected a box from it. The box is narrower than the projection's in
@@ -457,8 +481,7 @@ impl Diffs {
             && now.enumerated
             && !then.enumerated
             && inside
-            && (!then.exact || now.domains == then.domains)
-            && !refuted(t, ds, d, &now.domains, true);
+            && (!then.exact || now.domains == then.domains);
         if new != old && (listed || !then.exact && split_relation_exact(t, ds, d, &now)) {
             self.cases += 1;
             self.wide += 1;
@@ -513,7 +536,6 @@ impl Diffs {
             && rest!(now) == rest!(then)
             && now.domains.keys().eq(then.domains.keys())
             && now.domains.iter().all(|(n, s)| inside(s, &then.domains[n]))
-            && !refuted(t, ds, d, &now.domains, now.exact)
         {
             self.cases += 1;
             self.narrower += 1;
@@ -536,22 +558,21 @@ impl Diffs {
             } else {
                 now.domains.iter().all(|(n, s)| inside(s, &then.domains[n]))
             }
-            && !refuted(t, ds, d, &now.domains, true)
         {
             self.cases += 1;
             self.exact += 1;
             return;
         }
-        // Plan item S22b: the transfer before took `c - x` as the forward image of `{c} - z`,
-        // whose cap merged pieces moved across zero, so its box may be wider, and may be marked
-        // exact while holding points that fail. The new result holds every point that meets
-        // the demand, holds no point that fails when it is exact, lies inside the one before,
-        // and is exact wherever the one before was.
+        // Plan item S22b: the transfer before takes `c - x` as the forward image of `{c} - z`,
+        // whose cap merges pieces moved across zero, so its box may be wider. The new result
+        // lies inside the one before and is exact wherever the one before was. Until item
+        // S22-exact-mislabel the box before was marked exact even when the cap had merged
+        // pieces; now it is not, the linear stage narrows it, and no case of these tests
+        // counts here.
         if new != old
             && (now.exact || !then.exact)
             && now.domains.keys().eq(then.domains.keys())
             && now.domains.iter().all(|(n, s)| inside(s, &then.domains[n]))
-            && !refuted(t, ds, d, &now.domains, now.exact)
         {
             self.cases += 1;
             self.reflected += 1;
@@ -932,7 +953,7 @@ fn random_chains_of_shared_terms_keep_their_preimages() {
 /// Since PA-plus-if, `x + x` has a summary (the sum of two summaries of one input), which is
 /// inverted in place of the map2 cap, so the preimage is now that true set, exact; the box
 /// before is as it was. The narrower kind of difference is still met in
-/// `random_terms_keep_their_preimages` (6 cases).
+/// [`random_terms`] (6 cases).
 #[test]
 fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
     let i = || var("i");
@@ -1012,7 +1033,7 @@ const GUARDED: [Counts; 16] = [
     (0, (0, 0, 44), (10, &[]), 0),
     (
         250,
-        (0, 3, 31),
+        (0, 0, 35),
         (
             9,
             &["i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]"],
@@ -1037,7 +1058,7 @@ const GUARDED: [Counts; 16] = [
     ),
     (
         1250,
-        (0, 2, 45),
+        (0, 0, 47),
         (4, &["i [-7..] before i [..=-6, -4..]"]),
         0,
     ),
@@ -1053,16 +1074,16 @@ const GUARDED: [Counts; 16] = [
         ),
         0,
     ),
-    (1750, (0, 1, 40), (13, &[]), 0),
+    (1750, (0, 0, 41), (13, &[]), 0),
     (
         2000,
-        (0, 1, 40),
+        (0, 0, 41),
         (17, &["i [1..] before i [1..=4, 7..]"]),
         0,
     ),
     (
         2250,
-        (0, 1, 38),
+        (0, 0, 39),
         (15, &["i [3..] before i [3..=6, 9..]"]),
         0,
     ),
@@ -1078,7 +1099,7 @@ const GUARDED: [Counts; 16] = [
     (3500, (0, 0, 38), (5, &[]), 0),
     (
         3750,
-        (0, 2, 44),
+        (0, 0, 46),
         (
             11,
             &[
@@ -1305,6 +1326,19 @@ guarded_ranges!(
 /// 1500 and 2000), its relation still exact on its box: `i [1..]` against `i [1..=4, 7..]`
 /// before. No other count changes, no box of the transfer here changes, and over all 4000 cases
 /// no box before is wider than without the change or leaves out a point the interpreter finds.
+///
+/// Since S22-exact-mislabel, which marks a box of `c - x` before exact only when `x` takes no
+/// value of the forward image of `{c} - z` outside the reflection of `z`, the ten boxes counted
+/// as reflected (cases 366, 463, 482, 1264, 1420, 1930, 2087, 2314, 3817 and 3897) are no
+/// longer exact before; each held points that fail the demand (case 3897 the 17 inputs -25 to
+/// -9), which [`Diffs::preimage_listed`] now checks for both boxes. The new box, exact, counts
+/// as made exact. One more box before, exact and right, is now inexact: in a case of row 250
+/// the arm `(0 - A)` of `if (i == 7) { -(A) } else { (0 - A) }` has a hole `{4}` that
+/// `A` reaches only at `i == 7`, where the guard excludes it, and the check at `c - x` does
+/// not see the guard; the new box counts as made exact. So made exact gains 4 in row 250, 2 in
+/// rows 1250 and 3750, 1 in rows 1750, 2000 and 2250 (323 in the first half, 327 in the
+/// second), and reflected counts none. No box of the transfer here changes, no box before is
+/// wider, and every other answer before is the same.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1329,8 +1363,8 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
         sum(&GUARDED[..8]),
         (
             0,
-            6,
-            316,
+            0,
+            323,
             81,
             vec![
                 "i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]",
@@ -1347,8 +1381,8 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
         sum(&GUARDED[8..]),
         (
             0,
-            4,
-            323,
+            0,
+            327,
             80,
             vec![
                 "i [1..] before i [1..=4, 7..]",
@@ -1386,7 +1420,7 @@ pub(super) enum Run {
     },
 }
 
-/// The runs of [`random_terms_keep_their_preimages`]: the seeds of `random.rs` and others.
+/// The runs of [`random_terms`]: the seeds of `random.rs` and others.
 pub(super) const RUNS: [Run; 18] = {
     use Run::{Deep, Exact};
     const fn mixed(seed: u64, cases: usize, test: bool, calls: bool) -> Run {
@@ -1519,12 +1553,17 @@ pub(super) fn cases(run: Run, mut each: impl FnMut(Case)) {
     }
 }
 
-/// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
-#[test]
-fn random_terms_keep_their_preimages() {
+/// The random terms of `random.rs`, with its seeds and others, and its exact preimages: the
+/// runs `RUNS[runs]`, in three tests so each stays under 60 s (since S22-exact-mislabel every
+/// case runs the interpreter over its points, not only the cases that differ), with the least
+/// number of cases and the narrower, made exact and unlisted counts of each.
+fn random_terms(
+    runs: std::ops::Range<usize>,
+    (least, narrower, exact, unlisted): (usize, usize, usize, usize),
+) {
     on_big_stack(|| {
         let mut diffs = Diffs::default();
-        for run in RUNS {
+        for run in RUNS[runs].iter().copied() {
             cases(run, |c| match &c.classes {
                 None => diffs.preimage_listed(c.what, &c.term, &c.domains, &c.listed, &c.demand),
                 Some(cs) => diffs.exact(c.what, &c.term, &c.domains, cs, &c.demand),
@@ -1560,8 +1599,26 @@ fn random_terms_keep_their_preimages() {
         // (`x` in `[-21, ∞)` for all of `x`; `y` in `[-47, -23] ∪ [-1, 23]` for `[-47, 23]`), and
         // two exact boxes are read by both transfers without listing their points; the
         // interpreter refutes none.
-        diffs.unlisted(1).none_but(6800, 5, 0, 24);
+        //
+        // The counts above are of all 18 runs, one test before S22-exact-mislabel: 6800 cases,
+        // 5 narrower, 24 made exact and 1 unlisted, now split over the three tests below.
+        diffs.unlisted(unlisted).none_but(least, narrower, 0, exact);
     });
+}
+
+#[test]
+fn random_terms_keep_their_preimages_0() {
+    random_terms(0..5, (2800, 2, 8, 0));
+}
+
+#[test]
+fn random_terms_keep_their_preimages_1() {
+    random_terms(5..8, (1900, 0, 9, 0));
+}
+
+#[test]
+fn random_terms_keep_their_preimages_2() {
+    random_terms(8..18, (2100, 3, 7, 1));
 }
 
 /// Guards, domains, offsets and demands at the two ends of `i64`, values that leave `i64`
@@ -1688,7 +1745,10 @@ fn ends_of_i64_and_other_corners_keep_their_preimages() {
                 );
             }
         }
-        diffs.none_but(4000, 0, 2, 0);
+        // Two reflections, counted as reflected until S22-exact-mislabel: the boxes before
+        // were marked exact while holding points that fail the demand; they are now inexact,
+        // so the new exact boxes count as made exact.
+        diffs.none_but(4000, 0, 0, 2);
     });
 }
 
@@ -3703,4 +3763,34 @@ fn reversed_parts_give_the_same_boxes_2() {
 #[test]
 fn reversed_parts_give_the_same_boxes_3() {
     reversed_parts_give_the_same_boxes(3000, 4000);
+}
+
+/// `c - i` with `c = 4n + 3` under a demand of `2n` pieces, `n` on each side of zero, by the
+/// transfer before: the reflections of the demand's pieces are all positive, so the forward
+/// image of `{c} - z` caps them to the `n` pieces of one sign region of an operand and has
+/// holes, and the box is exact only because the domain of `i`, the reflection itself, takes no
+/// value in them (S22-exact-mislabel). The check (the reflection of the demand, the image less
+/// it, and the meet with the forward image of `i`) costs `O(n log n)` at most.
+#[test]
+fn constant_minus_holes_scale() {
+    let case = |n: usize| {
+        let n = n as i64;
+        let c = 4 * n + 3;
+        let z = pieces(&(-n..n).map(|j| (4 * j, 4 * j + 1)).collect::<Vec<_>>());
+        let reflected = (-n..n).rev().map(|j| (c - 4 * j - 1, c - 4 * j));
+        let ds = over(&[("i", pieces(&reflected.collect::<Vec<_>>()))]);
+        (prim(Prim::Sub, int(c), var("i")), ds, Demand::Ints(z))
+    };
+    let n = 256;
+    let (a, b) = (case(n), case(n * scaling::FACTOR));
+    on_big_stack(|| {
+        for (t, ds, d) in [&a, &b] {
+            let p = before::preimage(t, ds, &old(d));
+            assert!(p.exact && p.domains == *ds, "{t}: {p:?}");
+        }
+        scaling::check("the transfer before of `c - i` with holes", n, |k| {
+            let (t, ds, d) = if k == n { &a } else { &b };
+            before::preimage(t, ds, &old(d));
+        });
+    });
 }
