@@ -17,7 +17,14 @@ pub fn elab(text: &str) -> Result<Unit, Vec<String>> {
     let res = resolve(&stmts).unwrap_or_else(|e| panic!("{text}: {e:?}"));
     elaborate_text(&stmts, &res, Some(text)).map_err(|es| {
         es.iter()
-            .map(|e| format!("{} [{}]", e.message, &text[e.span.start..e.span.end]))
+            .map(|e| {
+                format!(
+                    "{}{} [{}]",
+                    e.message,
+                    e.menu,
+                    &text[e.span.start..e.span.end]
+                )
+            })
             .collect()
     })
 }

@@ -31,6 +31,7 @@ fn steps_are_numbered_to_one_width_and_places_shown_once_when_repeated() {
         col: 7,
         message: "`++` does not take (int, \"!\")".into(),
         steps,
+        menu: String::new(),
     };
     let want = "12:7: `++` does not take (int, \"!\")
   [1]  12:7: `x` is int here
@@ -59,6 +60,7 @@ fn a_diagnostic_without_steps_is_one_line() {
         col: 1,
         message: "`Point` is not defined".into(),
         steps: Vec::new(),
+        menu: String::new(),
     };
     assert_eq!(d.to_string(), "3:1: `Point` is not defined");
 }
@@ -95,6 +97,7 @@ fn diagnostic(steps: Vec<Step>) -> Diagnostic {
         col: steps[0].col,
         message: "the message".into(),
         steps,
+        menu: String::new(),
     }
 }
 

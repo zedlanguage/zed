@@ -46,6 +46,9 @@ pub struct Diagnostic {
     pub message: String,
     /// Each constraint and step that led to it, in the order the compiler met them.
     pub steps: Vec<Step>,
+    /// The menu of fixes, written after the steps: its heading line, then each fix on a line
+    /// of its own, every line starting with a newline. Empty when it has none.
+    pub menu: String,
     /// The row of the rejection table (DESIGN.md sec:diagnostics) it is a case of, if any.
     pub row: Option<crate::rejection::Row>,
     /// The part of its address that the unit's text decides, the same on every run of the same
@@ -70,8 +73,9 @@ pub struct Step {
 }
 
 impl std::fmt::Display for Diagnostic {
-    /// The message on one line; then each step numbered. The first step on a line is followed
-    /// by that line, shown once for all the steps of the diagnostic on it (`shown`), with the
+    /// The message on one line; then each step numbered; then the menu of fixes. The first
+    /// step on a line is followed by that line, shown once for all the steps of the diagnostic
+    /// on it (`shown`), with the
     /// text each covers marked below it (`layout`, `draw`); a step that `layout` leaves undrawn
     /// is given by its range, `3:11 to 3:19`, instead. Each line of the source is shown once and each row under it is at most as long
     /// as it and the numbers in the row, so k steps on one line of L characters print
@@ -120,7 +124,7 @@ impl std::fmt::Display for Diagnostic {
                 draw(f, &margin, l)?;
             }
         }
-        Ok(())
+        f.write_str(&self.menu)
     }
 }
 
@@ -480,6 +484,7 @@ pub(crate) fn compile(text: &str) -> Front {
     let lines = source::Lines::new(text.as_bytes());
     let at = |span: lex::Span, message: String| {
         let e = ast::Error {
+            menu: String::new(),
             span,
             message,
             notes: Vec::new(),
@@ -841,6 +846,7 @@ pub fn linear_questions(
                         let stop = if why.ends_with('.') { "" } else { "." };
                         out.push(ast::Error {
                             row: Some(crate::rejection::Row::NonLinearQuestion),
+                            menu: String::new(),
                             span: s.span,
                             message: format!(
                                 "zedc could not decide whether the condition of `{}`, written \
@@ -889,6 +895,7 @@ pub(crate) fn placed(
                 col,
                 steps: e.notes.into_iter().map(|n| read.step(n)).collect(),
                 message: e.message,
+                menu: e.menu,
                 row: e.row,
                 address,
             }
@@ -973,6 +980,7 @@ impl Read<'_> {
 pub(crate) fn error(span: Span, message: String) -> Error {
     Error {
         row: None,
+        menu: String::new(),
         span,
         message,
         notes: Vec::new(),

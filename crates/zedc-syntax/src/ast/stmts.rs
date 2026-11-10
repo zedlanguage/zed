@@ -40,6 +40,7 @@ impl Builder<'_, '_> {
                 if let Some(first) = export {
                     return Err(Error {
                         row: None,
+                        menu: String::new(),
                         span: s.span,
                         message: "this block exports a second time, and a block exports one value, once. \
                                   Remove one of the two exports."
@@ -134,6 +135,7 @@ impl Builder<'_, '_> {
                 (_, _, true) => {
                     return Err(Error {
                         row: None,
+                        menu: String::new(),
                         span: self.span(n),
                         message: format!(
                             "the arguments of `@{name}` end in `...`, and only a call takes `...`, to \
@@ -191,6 +193,7 @@ impl Builder<'_, '_> {
         let fail = |span: Span, message: String| {
             Err(Error {
                 row: None,
+                menu: String::new(),
                 span,
                 message,
                 notes: Vec::new(),
@@ -518,6 +521,7 @@ impl Builder<'_, '_> {
                 let name = &b.name;
                 return Err(Error {
                     row: Some(Row::TwoInitials),
+                    menu: String::new(),
                     span: b.span,
                     message: format!(
                         "the sentinel value of `{name}`, its value below its first step or \

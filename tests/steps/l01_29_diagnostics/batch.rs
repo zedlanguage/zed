@@ -119,15 +119,15 @@ fn batch_and_single_file_checking_agree() {
         Some(
             "2:12: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
              chooses one\n  \
-             fixes, each checked here:\n    \
-             main() = f(1r);        the literal is then exactly 1, a rat\n    \
-             main() = f(1.0f64);    the literal is then the f64 1.0\n  \
              T1 stands for a part written more than once:\n    \
              type T1 = rat | f64;\n  \
              [1] 1:1: `f` is declared here with no type written for its result; the type the \
              checker found for `f` is `(T1) -> T1`\n      \
              1 | f(positional x: f64 | rat) = x;\n        \
-             | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+             | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  \
+             fixes, each checked here:\n    \
+             main() = f(1r);        the literal is then exactly 1, a rat\n    \
+             main() = f(1.0f64);    the literal is then the f64 1.0"
         )
     );
     // So is one compared by `==` with a value of such a union.

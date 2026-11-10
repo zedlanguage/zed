@@ -57,6 +57,7 @@ l01_21_test_runner/zed/labels.zed
                 width: 7,
             },
         ],
+        menu: "",
         row: Some(
             MissingArgument,
         ),
@@ -95,6 +96,7 @@ l01_21_test_runner/zed/labels.zed
                 width: 7,
             },
         ],
+        menu: "",
         row: Some(
             MissingArgument,
         ),
@@ -126,6 +128,7 @@ l01_21_test_runner/zed/labels.zed
                 width: 5,
             },
         ],
+        menu: "",
         row: Some(
             WrongForm,
         ),
@@ -150,6 +153,7 @@ l01_21_test_runner/zed/labels.zed
                 width: 49,
             },
         ],
+        menu: "",
         row: Some(
             NothingLeftOut,
         ),
@@ -174,6 +178,7 @@ l01_21_test_runner/zed/labels.zed
                 width: 1,
             },
         ],
+        menu: "",
         row: Some(
             ParameterKinds,
         ),
@@ -256,6 +261,7 @@ l01_29_diagnostics/zed/narrowed.zed
                 width: 1,
             },
         ],
+        menu: "",
         row: Some(
             NoArrowAtCarrier,
         ),
@@ -306,6 +312,7 @@ l01_29_diagnostics/zed/offsets.zed
                 width: 6,
             },
         ],
+        menu: "",
         row: Some(
             PrefixMinus,
         ),

@@ -90,6 +90,7 @@ pub fn unit_all_errors(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<
             match b.item(k) {
                 Ok(s) if matches!(s.kind, StmtKind::Return(_)) => errors.push(Error {
                     row: None,
+                    menu: String::new(),
                     span: s.span,
                     message:
                         "`return` gives the value a block exports, and this one stands at the top \
@@ -532,6 +533,7 @@ impl<'a, 's> Builder<'a, 's> {
                 let path = path.join(".");
                 return Err(Error {
                     row: None,
+                    menu: String::new(),
                     span,
                     message: format!(
                         "the field `{path}` is updated twice in one `with`, and a `with` updates \
@@ -621,6 +623,7 @@ impl<'a, 's> Builder<'a, 's> {
             };
             return Err(Error {
                 row: None,
+                menu: String::new(),
                 span: self.span(odd),
                 message: format!(
                     "{this} stands in a display whose first entry is a {that}, and a display \
@@ -748,6 +751,7 @@ impl From<crate::parse::Error> for Error {
         let message = e.to_string();
         let Some(b) = e.bare else {
             return Error {
+                menu: String::new(),
                 span: e.span,
                 message,
                 notes: Vec::new(),
@@ -775,6 +779,7 @@ impl From<crate::parse::Error> for Error {
             });
         }
         Error {
+            menu: String::new(),
             span: b.item,
             message,
             notes,

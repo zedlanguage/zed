@@ -323,6 +323,7 @@ impl Pins {
             let Some((kind, address, key)) = pin_line(line) else {
                 errors.push(Error {
                     row: None,
+                    menu: String::new(),
                     span,
                     message: format!(
                         "this line of the pin file `{PIN_FILE}` is not a pin. A pin is written \
@@ -339,6 +340,7 @@ impl Pins {
             if let Some(&at) = first.get(&(kind, key)) {
                 errors.push(Error {
                     row: None,
+                    menu: String::new(),
                     span,
                     message: format!(
                         "the pin file `{PIN_FILE}` pins the {kind} `{key}` twice, and it holds \

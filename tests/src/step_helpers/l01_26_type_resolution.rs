@@ -32,12 +32,20 @@ impl Resolved {
         check_text(&self.stmts, &self.res, Some(&self.text))
     }
 
-    /// The type errors, each `message [text]`.
+    /// The type errors, each `message [text]`, the message followed by its menu of fixes, if any
+    /// (the steps, which stand between them, left out).
     pub fn type_errors(&self) -> Vec<String> {
         self.check()
             .errors
             .iter()
-            .map(|e| format!("{} [{}]", e.message, &self.text[e.span.start..e.span.end]))
+            .map(|e| {
+                format!(
+                    "{}{} [{}]",
+                    e.message,
+                    e.menu,
+                    &self.text[e.span.start..e.span.end]
+                )
+            })
             .collect()
     }
 }
@@ -71,7 +79,7 @@ pub fn type_errors(text: &str) -> Vec<String> {
 }
 
 /// The menu of fixes a message ends with (DESIGN.md sec:diagnostics), as the checker writes it
-/// after the message's first sentence: a heading line, then each fix as the corrected source
+/// after the derivation steps: a heading line, then each fix as the corrected source
 /// line, followed at four spaces past the widest line by what the program then holds.
 pub fn menu(fixes: &[(&str, &str)]) -> String {
     let width = fixes

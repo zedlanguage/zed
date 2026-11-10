@@ -19,6 +19,7 @@ mod group_site;
 mod kernel_names;
 mod layout;
 mod markers;
+mod menu_order;
 mod negative_literals;
 mod neglit;
 mod order;

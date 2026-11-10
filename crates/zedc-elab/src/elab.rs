@@ -146,8 +146,10 @@ fn finish(
     if errors.is_empty() {
         Ok((out, marks))
     } else {
-        errors.sort_by(|a, b| (a.span, &a.message).cmp(&(b.span, &b.message)));
-        errors.dedup_by(|a, b| (a.span, &a.message, a.row) == (b.span, &b.message, b.row));
+        errors.sort_by(|a, b| (a.span, &a.message, &a.menu).cmp(&(b.span, &b.message, &b.menu)));
+        errors.dedup_by(|a, b| {
+            (a.span, &a.message, &a.menu, a.row) == (b.span, &b.message, &b.menu, b.row)
+        });
         Err(errors)
     }
 }

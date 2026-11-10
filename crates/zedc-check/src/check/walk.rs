@@ -57,7 +57,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     clean_check::flush();
     ck.info
         .errors
-        .sort_by(|a, b| (a.span, &a.message).cmp(&(b.span, &b.message)));
+        .sort_by(|a, b| (a.span, &a.message, &a.menu).cmp(&(b.span, &b.message, &b.menu)));
     ck.info.errors.dedup();
     ck.info
 }
@@ -84,8 +84,8 @@ pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
     );
     let messages = (ck.info.errors.into_iter())
         .map(|mut e| {
-            lay_out(&mut e.message, &mut e.notes);
-            e.message
+            lay_out(&mut e.message, &mut e.notes, &mut e.menu);
+            e.message + &e.menu
         })
         .collect();
     (out, messages)
@@ -1574,9 +1574,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let kept: Vec<Error> = found.into_iter().filter(|e| !inside(e)).collect();
         self.info.errors.extend(kept);
         for (_, at, message) in parts {
-            let message = self.written(message);
             let notes = self.derive(&[at]);
-            self.rejects_with(Row::UnfixedDecimal, at, message, notes);
+            self.reject(Some(Row::UnfixedDecimal), at, message, notes);
         }
     }
 
@@ -1946,9 +1945,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                             && lit_carrier(&l.value) != Carrier::Int
                         {
                             let notes = self.derive(&[l.site]);
-                            let message =
-                                self.written(unfixed(&l, &[Carrier::F64, Carrier::Rat], None));
-                            self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
+                            let m = unfixed(&l, &[Carrier::F64, Carrier::Rat], None);
+                            self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
                         }
                     }
                     s.hole = Some(h);
@@ -2261,8 +2259,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 && lit_carrier(&l.value) != Carrier::Int
             {
                 let notes = self.derive(&[l.site]);
-                let message = self.written(unfixed(l, &[Carrier::F64, Carrier::Rat], None));
-                self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
+                let m = unfixed(l, &[Carrier::F64, Carrier::Rat], None);
+                self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
             }
         }
         let sig = word_sig(w);
@@ -6683,10 +6681,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 });
             m = decimal_at_int(l, what, name, op);
         }
-        let m = self.written(m);
         if self.no_arrow_at_carrier(what, sig, args) {
             let notes = self.derive(&[s]);
-            self.rejects_with(Row::NoArrowAtCarrier, s, m, notes);
+            self.reject(Some(Row::NoArrowAtCarrier), s, m, notes);
         } else if self.no_common_carrier(sig, args) {
             let mut notes = Vec::new();
             if !self.trying {
@@ -6701,12 +6698,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 notes.extend(self.repairs(what, sig, args, pass, span));
             }
-            self.rejects_with(Row::LiteralCarrier, s, m, notes);
+            self.reject(Some(Row::LiteralCarrier), s, m, notes);
         } else {
             // A refused literal is a literal at a carrier it cannot take, whatever else the
             // application holds.
             let notes = self.derive(&[s]);
-            self.rejects_with(Row::LiteralCarrier, s, m, notes);
+            self.reject(Some(Row::LiteralCarrier), s, m, notes);
         }
     }
 
@@ -6845,8 +6842,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                                         .find(|l| lit_carrier(&l.value) == Carrier::F64)
                                         .unwrap_or(&lits[0]);
                                     let notes = self.derive(&[l.site]);
-                                    let message = self.written(unfixed(l, &takes, None));
-                                    self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
+                                    let m = unfixed(l, &takes, None);
+                                    self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
                                     c
                                 }
                                 [] => unreachable!("a carrier every literal takes"),
@@ -7174,8 +7171,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             }
             let notes = self.derive(&[l.site]);
-            let message = self.written(unfixed(l, &cs, None));
-            self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
+            let m = unfixed(l, &cs, None);
+            self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
         }
     }
 

@@ -9,6 +9,7 @@ constructor-called-by-position
         col: 5,
         message: "`Point` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Point`, or correct the name if it is misspelled.",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -19,7 +20,7 @@ decimal-literal-at-int
     Diagnostic {
         line: 4,
         col: 11,
-        message: "the literal `2.0` is a decimal, and `*` expects `int`, the carrier of `x`; a decimal literal is never an `int`\n  fixes, each checked here:\n    bad = x * 2;           2 takes the int of x\n    bad = f64(x) * 2.0;    x is cast to f64, and `*` takes two f64\n    bad = rat(x) * 2.0;    x is cast to rat, and `*` takes two rat",
+        message: "the literal `2.0` is a decimal, and `*` expects `int`, the carrier of `x`; a decimal literal is never an `int`",
         steps: [
             Step {
                 line: 4,
@@ -85,6 +86,7 @@ decimal-literal-at-int
                 width: 1,
             },
         ],
+        menu: "\n  fixes, each checked here:\n    bad = x * 2;           2 takes the int of x\n    bad = f64(x) * 2.0;    x is cast to f64, and `*` takes two f64\n    bad = rat(x) * 2.0;    x is cast to rat, and `*` takes two rat",
         row: Some(
             LiteralCarrier,
         ),
@@ -99,6 +101,7 @@ dot-never-mutates
         col: 29,
         message: "the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -111,6 +114,7 @@ nullable-column-missing-none
         col: 1,
         message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -123,6 +127,7 @@ numeric-is-not-binary-float
         col: 1,
         message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -135,6 +140,7 @@ payload-built-by-position
         col: 1,
         message: "a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -142,6 +148,7 @@ payload-built-by-position
         col: 13,
         message: "an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -149,6 +156,7 @@ payload-built-by-position
         col: 41,
         message: "the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -156,6 +164,7 @@ payload-built-by-position
         col: 21,
         message: "a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -168,6 +177,7 @@ point-unit-in-quotient
         col: 13,
         message: "the reduction `with units(\"°C\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -175,6 +185,7 @@ point-unit-in-quotient
         col: 16,
         message: "the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -182,6 +193,7 @@ point-unit-in-quotient
         col: 21,
         message: "the reduction `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -189,6 +201,7 @@ point-unit-in-quotient
         col: 16,
         message: "the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -196,6 +209,7 @@ point-unit-in-quotient
         col: 24,
         message: "the reduction `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -208,6 +222,7 @@ taint-reaches-clean-sink
         col: 1,
         message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -220,6 +235,7 @@ taint-through-concatenation
         col: 55,
         message: "the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -232,6 +248,7 @@ two-point-readings-added
         col: 13,
         message: "the reduction `with units(\"°C\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -239,6 +256,7 @@ two-point-readings-added
         col: 16,
         message: "the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -246,6 +264,7 @@ two-point-readings-added
         col: 21,
         message: "the reduction `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -253,6 +272,7 @@ two-point-readings-added
         col: 16,
         message: "the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -265,6 +285,7 @@ two-writers-of-one-generation
         col: 29,
         message: "the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -277,6 +298,7 @@ unit-mismatch-force-energy
         col: 55,
         message: "the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -289,6 +311,7 @@ unit-mismatch-in-sum
         col: 1,
         message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -301,6 +324,7 @@ units-differ-by-kind
         col: 13,
         message: "the reduction `with units(\"N\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -308,6 +332,7 @@ units-differ-by-kind
         col: 11,
         message: "the reduction `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -315,6 +340,7 @@ units-differ-by-kind
         col: 16,
         message: "the reduction `with units(\"Bq\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
     Diagnostic {
@@ -322,6 +348,7 @@ units-differ-by-kind
         col: 13,
         message: "the reduction `with units(\"%\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
 ]
@@ -334,6 +361,7 @@ value-binding-has-no-next-generation
         col: 29,
         message: "the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
+        menu: "",
         row: None,
     },
 ]

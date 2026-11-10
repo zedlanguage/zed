@@ -50,6 +50,7 @@ fn attach(tokens: &[Token], next: usize, span: Span, res: &Resolution, out: &mut
         None => "this doc comment documents no declaration; it is at the end of the unit",
     };
     out.push(Error {
+        menu: String::new(),
         span,
         message: message.into(),
         notes: Vec::new(),
@@ -84,6 +85,7 @@ fn links(text: &str, span: Span, names: &HashSet<&str>, out: &mut Vec<Error>) {
                     && !is_prelude_name(name)
                 {
                     out.push(Error {
+                        menu: String::new(),
                         span: Span {
                             start: span.start + i,
                             end: span.start + name_end + 1,

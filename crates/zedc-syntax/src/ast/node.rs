@@ -279,6 +279,10 @@ pub struct Error {
     pub message: String,
     /// How the checker reached it: each constraint and step, in the order it met them.
     pub notes: Vec<Note>,
+    /// The menu of fixes, written after the steps of `notes` (DESIGN.md sec:diagnostics): its
+    /// heading line, then each fix on a line of its own, every line starting with a newline.
+    /// Empty when the error has none.
+    pub menu: String,
     /// The row of the rejection table (DESIGN.md sec:diagnostics) the error is a case of, if any.
     pub row: Option<zedc_base::rejection::Row>,
 }

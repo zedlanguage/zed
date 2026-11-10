@@ -425,6 +425,7 @@ fn suppressed(n: usize) -> (Vec<Diagnostic>, Vec<String>) {
             col: 1,
             message: "w".into(),
             steps: Vec::new(),
+            menu: String::new(),
             row: None,
             address: ContentAddress(*blake3::hash(&i.to_le_bytes()).as_bytes()),
         })

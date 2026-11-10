@@ -58,6 +58,7 @@ impl Builder<'_, '_> {
         let (w_first, w_last) = (which(v_first), which(v_last));
         Some(Error {
             row: Some(Row::PrefixMinus),
+            menu: String::new(),
             span: whole,
             message: format!(
                 "a prefix `-` stands before a postfix chain whose base is the number \

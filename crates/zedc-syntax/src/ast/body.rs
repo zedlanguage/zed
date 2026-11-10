@@ -196,6 +196,7 @@ impl Builder<'_, '_> {
         };
         Error {
             row: Some(Row::DisplayInBody),
+            menu: String::new(),
             span: brace,
             message,
             notes,

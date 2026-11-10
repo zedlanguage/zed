@@ -174,6 +174,7 @@ pub fn manifest(text: &str) -> Result<Manifest, Vec<Error>> {
         if let Some(&first) = seen.get(name.as_str()) {
             errors.push(Error {
                 row: None,
+                menu: String::new(),
                 span: *at,
                 message: format!(
                     "the manifest binds `{name}` twice, and a manifest binds each name once. \

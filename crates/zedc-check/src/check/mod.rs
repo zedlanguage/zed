@@ -638,16 +638,18 @@ fn show_with(t: &Ty, masks: &Masks, spell: Spell<'_>) -> String {
 /// (see `zed_kernel::types::defs`).
 const DECLARE: &str = "\u{FDD8}";
 
-/// Writes the types of one message, its text and its notes, in one numbering: each part
-/// written more than once gets one definition, named `T1`, `T2`, … with no name the program
-/// binds or the message writes ([`fresh_name`]), and the definitions stand after the sentence on lines of
-/// their own (module `defs` of the kernel). A repair note whose code names one says, where it
+/// Writes the types of one message, its text, its notes and its menu, in one numbering, in
+/// the order they are printed: each part written more than once gets one definition, named
+/// `T1`, `T2`, … with no name the program binds or the message writes ([`fresh_name`]), and
+/// the definitions stand after the sentence on lines of their own (module `defs` of the
+/// kernel), before the notes. A repair note whose code names one says, where it
 /// wrote [`DECLARE`], to declare them at the top level; elsewhere [`DECLARE`] is dropped. A
 /// message with no part written twice is as it was.
-fn lay_out(message: &mut String, notes: &mut [Note]) {
+fn lay_out(message: &mut String, notes: &mut [Note], menu: &mut String) {
     let code: Vec<bool> = notes.iter().map(|n| defs::holds(&n.text)).collect();
     let mut texts: Vec<&mut String> = std::iter::once(&mut *message)
         .chain(notes.iter_mut().map(|n| &mut n.text))
+        .chain(std::iter::once(menu))
         .collect();
     let lifted = defs::lift(&mut texts, &|_| false);
     let these = match lifted.len() {
@@ -1356,29 +1358,29 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.error_with(span, message, notes);
     }
 
-    /// The message `m` with its fixes, each the corrected line of this unit's text where the
-    /// checker has it ([`Msg::written`]).
-    fn written(&self, m: Msg) -> String {
-        m.written(self.t.text)
-    }
-
     /// An error at `span` that is a case of the row `row` of the rejection table, with the
     /// notes `notes`.
     fn rejects_with(&mut self, row: Row, span: Span, message: impl Into<String>, notes: Vec<Note>) {
-        self.info.errors.push(Error {
-            row: Some(row),
-            span,
-            message: message.into(),
-            notes,
-        });
+        self.reject(Some(row), span, Msg::from(message.into()), notes);
     }
 
     fn error_with(&mut self, span: Span, message: impl Into<String>, notes: Vec<Note>) {
+        self.reject(None, span, Msg::from(message.into()), notes);
+    }
+
+    /// An error at `span`, in the row `row` of the rejection table if any, with the message
+    /// and fixes of `m` and the notes `notes`. Every error of the checker is pushed here: the
+    /// fixes are written as the menu ([`Msg::written`]), with each fix the corrected line of
+    /// this unit's text where the checker has it, and the menu stands after the notes
+    /// (DESIGN.md sec:diagnostics).
+    fn reject(&mut self, row: Option<Row>, span: Span, m: Msg, notes: Vec<Note>) {
+        let (message, menu) = m.written(self.t.text);
         self.info.errors.push(Error {
-            row: None,
+            row,
             span,
-            message: message.into(),
+            message,
             notes,
+            menu,
         });
     }
 
@@ -2308,8 +2310,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .or(first)
             {
                 let notes = self.derive(&[l.site]);
-                let m = self.written(unfixed(l, &left, None));
-                self.rejects_with(Row::UnfixedDecimal, l.site, m, notes);
+                let m = unfixed(l, &left, None);
+                self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
             }
         }
         // A bare literal compared with values of the class follows it without narrowing it, so
@@ -2639,7 +2641,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             for n in &mut e.notes {
                 n.text = self.named(&n.text);
             }
-            lay_out(&mut e.message, &mut e.notes);
+            e.menu = self.named(&e.menu);
+            lay_out(&mut e.message, &mut e.notes, &mut e.menu);
         }
         self.info.errors = errors;
     }
@@ -2702,8 +2705,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 t
             }
             Err(m) => {
-                let m = self.written(m);
-                self.rejects_with(Row::LiteralCarrier, l.site, m, Vec::new());
+                self.reject(Some(Row::LiteralCarrier), l.site, m, Vec::new());
                 lit_ty(&l.value, l.neg())
             }
         }
@@ -2980,9 +2982,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                                     text: literal_note(l.written(), lit_ty(&l.value, l.neg())),
                                 })
                                 .to_vec();
-                            let message =
-                                self.written(unfixed(d, &[Carrier::F64, Carrier::Rat], None));
-                            self.rejects_with(Row::UnfixedDecimal, d.site, message, notes);
+                            let m = unfixed(d, &[Carrier::F64, Carrier::Rat], None);
+                            self.reject(Some(Row::UnfixedDecimal), d.site, m, notes);
                         }
                         (true, false) => {
                             self.adopt_to(l, mc);
@@ -3366,9 +3367,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 &a,
             ));
         }
-        let message = self.written(Msg::new(message, fixes));
         let notes = self.derive(&[at.unwrap_or(l.site)]);
-        self.rejects_with(Row::LiteralCarrier, l.site, message, notes);
+        self.reject(
+            Some(Row::LiteralCarrier),
+            l.site,
+            Msg::new(message, fixes),
+            notes,
+        );
     }
 
     /// Rejects the literal `l`, written without a suffix as a component of a tuple that `op`
@@ -3421,9 +3426,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => Rewrite::new(&[(l.site, &text)], &"compares the text", &text),
             })
             .collect();
-        let message = self.written(Msg::new(message, fixes));
         let notes = self.derive(&[at.unwrap_or(l.site)]);
-        self.rejects_with(Row::LiteralCarrier, l.site, message, notes);
+        self.reject(
+            Some(Row::LiteralCarrier),
+            l.site,
+            Msg::new(message, fixes),
+            notes,
+        );
     }
 
     /// Reports the literal `l`, compared by `==` with a value of one of the types `ts`,
@@ -3431,15 +3440,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// where `ts` holds numbers (`n == 1.5` with `n: int`), whose derivation and repairs
     /// [`Self::equal_repairs`] adds; in no row otherwise.
     fn compared(&mut self, l: &Lit, ts: &[&Ty], m: Msg) {
-        let m = self.written(m);
         let numbers = (ts.iter()).try_fold(0, |acc, t| self.numbers_in(t).map(|m| acc | m));
-        match numbers {
-            Some(n) if n != 0 => {
-                let notes = self.derive(&[l.site]);
-                self.rejects_with(Row::LiteralCarrier, l.site, m, notes)
-            }
-            _ => self.error(l.site, m),
-        }
+        let row = match numbers {
+            Some(n) if n != 0 => Some(Row::LiteralCarrier),
+            _ => None,
+        };
+        let notes = self.derive(&[l.site]);
+        self.reject(row, l.site, m, notes);
     }
 
     fn name(&mut self, span: Span) -> Ty {
@@ -4133,8 +4140,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         if let Some((l, left)) = first {
             let notes = self.derive(&[l.site]);
-            let m = self.written(unfixed(&l, &left, None));
-            self.rejects_with(Row::UnfixedDecimal, l.site, m, notes);
+            self.reject(
+                Some(Row::UnfixedDecimal),
+                l.site,
+                unfixed(&l, &left, None),
+                notes,
+            );
         }
         for (i, t) in retyped {
             if let Some(a) = &mut args[i] {
@@ -5207,12 +5218,12 @@ impl Msg {
         }
     }
 
-    /// The message with its fixes. With `source`, the program's text, each fix is the
-    /// corrected source line, followed by what the program then holds, one fix to a line
-    /// under the message (DESIGN.md sec:diagnostics):
+    /// The message and, apart from it, the menu of its fixes, which the diagnostic writes
+    /// after the steps of its derivation (DESIGN.md sec:diagnostics). With `source`, the
+    /// program's text, the menu is a heading line, then each fix as the corrected source line,
+    /// followed by what the program then holds, one fix to a line:
     ///
     /// ```text
-    /// …; `/` has no arrow at `int`, and Zed does not choose `f64` or `rat` for it
     ///   fixes, each checked here:
     ///     half = f64(1) / 2;    half is 0.5
     ///     half = 1.0f64 / 2;    half is 0.5
@@ -5220,24 +5231,24 @@ impl Msg {
     /// ```
     ///
     /// Without the text, or where a fix's span does not lie in it, the short forms follow
-    /// the message, as `; write `0.5f64` or `0.5r``. Written in memory the system gives
-    /// first; where it refuses, the message alone. It costs the length of the message and of
-    /// the lines the fixes touch.
-    fn written(self, source: Option<&str>) -> String {
+    /// the message, as `; write `0.5f64` or `0.5r``, and the menu is empty. Written in memory
+    /// the system gives first; where it refuses, the message alone and no menu. It costs the
+    /// length of the message and of the lines the fixes touch.
+    fn written(self, source: Option<&str>) -> (String, String) {
         if self.fixes.is_empty() {
-            return self.text;
+            return (self.text, String::new());
         }
         let lines = source.and_then(|s| {
             (self.fixes.iter())
                 .map(|x| x.line(s))
                 .collect::<Option<Vec<_>>>()
         });
-        let shown = match &lines {
+        let written = match &lines {
             Some(lines) => {
                 let last = |l: &str| l.rsplit('\n').next().unwrap_or(l).chars().count();
                 let width = lines.iter().map(|l| last(l)).max().unwrap_or(0) + 4;
-                shown(&fmt::from_fn(|f| {
-                    write!(f, "{}\n  fixes, each checked here:", self.text)?;
+                let menu = shown(&fmt::from_fn(|f| {
+                    f.write_str("\n  fixes, each checked here:")?;
                     for (l, x) in lines.iter().zip(&self.fixes) {
                         for part in l.split('\n') {
                             write!(f, "\n    {}", part.trim_end())?;
@@ -5246,7 +5257,8 @@ impl Msg {
                         write!(f, "{:pad$}{}", "", x.holds)?;
                     }
                     Ok(())
-                }))
+                }));
+                menu.map(|menu| (None, menu))
             }
             None => shown(&fmt::from_fn(|f| {
                 write!(f, "{}; write ", self.text)?;
@@ -5260,9 +5272,13 @@ impl Msg {
                     write!(f, "{sep}`{}`", x.alone)?;
                 }
                 Ok(())
-            })),
+            }))
+            .map(|text| (Some(text), String::new())),
         };
-        shown.unwrap_or(self.text)
+        match written {
+            Ok((text, menu)) => (text.unwrap_or(self.text), menu),
+            Err(_) => (self.text, String::new()),
+        }
     }
 }
 

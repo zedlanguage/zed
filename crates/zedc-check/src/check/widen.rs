@@ -606,6 +606,7 @@ impl<'t, 'a> Walk<'t, 'a> {
                 .to_string(),
         });
         Error {
+            menu: String::new(),
             span: n.e.span,
             message,
             notes,

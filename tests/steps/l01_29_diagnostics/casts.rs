@@ -284,14 +284,23 @@ fn a_plain_literal_beside_a_value_of_another_carrier_is_a_case_of_the_row() {
     let src = program("half(q: int) = q + 1.5;");
     assert_eq!(rows(&src), [Some(Row::LiteralCarrier)]);
     let out = rejected(&src);
+    // The menu stands after the steps (DESIGN.md sec:diagnostics).
+    let (head, fixes) = (out.split_once("\n  fixes, each checked here:\n"))
+        .unwrap_or_else(|| panic!("no menu: {out}"));
     assert!(
-        out.starts_with(
+        head.starts_with(
             "1:20: the literal `1.5` is a decimal, and `+` expects `int`, the carrier of `q`; a \
-             decimal literal is never an `int`\n  fixes, each checked here:\n    half(q: int) = \
-             f64(q) + 1.5;    q is cast to f64, and `+` takes two f64\n"
+             decimal literal is never an `int`\n  [1] "
         ),
         "{out}"
     );
+    assert!(
+        fixes.starts_with(
+            "    half(q: int) = f64(q) + 1.5;    q is cast to f64, and `+` takes two f64\n"
+        ),
+        "{out}"
+    );
+    assert!(!fixes.contains("\n  ["), "a step after the menu: {out}");
     assert!(steps(&out).contains(&"`q` is declared `int`"), "{out}");
     assert_eq!(menu(&src), [entry("rat(q)"), entry("f64(q)")]);
     checks(&edited(&src, "q + 1.5", "f64(q) + 1.5"));

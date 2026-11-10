@@ -360,6 +360,7 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
         };
         return Err(ast::Error {
             row: None,
+            menu: String::new(),
             span: mains
                 .get(1)
                 .map_or(Span { start: 0, end: 0 }, |(s, _)| s.span),
@@ -375,6 +376,7 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
     };
     let refused = |span: Span, message: String| ast::Error {
         row: None,
+        menu: String::new(),
         span,
         message,
         notes: Vec::new(),

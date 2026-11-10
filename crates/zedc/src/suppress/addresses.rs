@@ -25,8 +25,9 @@ pub enum Severity {
 ///
 /// That part is the BLAKE3-256 hash of the severity, the rejection row, the name of the
 /// top-level declaration the diagnostic lies in, the text of the node it is at with its
-/// white space dropped, and its message; and of its occurrence among the diagnostics with all
-/// of these the same, counted in order, so that no two diagnostics of a unit share it.
+/// white space dropped, and its message followed by its menu of fixes; and of its occurrence
+/// among the diagnostics with all of these the same, counted in order, so that no two
+/// diagnostics of a unit share it.
 /// Line and column are not part of it, so an edit elsewhere in the unit, a line added above
 /// for instance, leaves it as it was. The full 256 bits are kept even under zed-kernel's
 /// feature `short-addresses`, which shortens content addresses only.
@@ -56,6 +57,7 @@ pub(crate) fn addresses(
             h.update(b"\0");
             h.update(&content.hash(e.span).to_le_bytes());
             h.update(e.message.as_bytes());
+            h.update(e.menu.as_bytes());
             h.update(b"\0");
             let n = seen.entry(*h.finalize().as_bytes()).or_insert(0);
             h.update(&n.to_le_bytes());

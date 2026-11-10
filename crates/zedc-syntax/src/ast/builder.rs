@@ -136,6 +136,7 @@ impl<'a, 's> Builder<'a, 's> {
         };
         Error {
             row: None,
+            menu: String::new(),
             span: s,
             message: not_yet(&format!("{kind} `{quoted}`")),
             notes: Vec::new(),
@@ -168,6 +169,7 @@ impl<'a, 's> Builder<'a, 's> {
             };
             return Err(Error {
                 row: None,
+                menu: String::new(),
                 span: e.span,
                 message: message.into(),
                 notes: Vec::new(),
@@ -234,6 +236,7 @@ impl<'a, 's> Builder<'a, 's> {
         if let Some(&first) = seen.get(name) {
             return Err(Error {
                 row: None,
+                menu: String::new(),
                 span,
                 message: format!(
                     "the {what} `{name}` is {done} twice, and each {what} is {done} once. Remove \
@@ -269,6 +272,7 @@ impl<'a, 's> Builder<'a, 's> {
             if let (Some((word, at)), "PlainArg" | "SortArg") = (first_named, rule) {
                 return Err(Error {
                     row: Some(Row::NamedBeforePositional),
+                    menu: String::new(),
                     span: self.span(k),
                     message: format!(
                         "this positional argument comes after the named argument `{word}`, and a \
@@ -318,6 +322,7 @@ impl<'a, 's> Builder<'a, 's> {
             if let Some(first) = seen.get(word) {
                 return Err(Error {
                     row: None,
+                    menu: String::new(),
                     span,
                     message: format!(
                         "the argument `{word}` is named twice in this call, and a call names \

@@ -896,6 +896,7 @@ impl Resolver<'_> {
                 }
                 self.errors.push(Error {
                     row: Some(Row::Rebinding),
+                    menu: String::new(),
                     span,
                     message,
                     notes,
@@ -949,6 +950,7 @@ impl Resolver<'_> {
                 let first = b.ids[0];
                 self.errors.push(Error {
                     row: Some(Row::Rebinding),
+                    menu: String::new(),
                     span,
                     message: format!(
                         "`{name}` is already bound in this scope, and a scope binds each name once"
@@ -1050,6 +1052,7 @@ impl Resolver<'_> {
             .into();
         self.errors.push(Error {
             row: None,
+            menu: String::new(),
             span,
             message: format!(
                 "`{name}` is ambiguous: two imports bring it into scope from different units; \
@@ -1226,6 +1229,7 @@ impl Resolver<'_> {
             }
             errors.push(Error {
                 row: Some(Row::NameAboveDefinition),
+                menu: String::new(),
                 span: used,
                 message,
                 notes,
@@ -1300,6 +1304,7 @@ impl Resolver<'_> {
         };
         self.errors.push(Error {
             row: None,
+            menu: String::new(),
             span,
             message,
             notes: Vec::new(),
@@ -1363,6 +1368,7 @@ impl Resolver<'_> {
         };
         self.errors.push(Error {
             row: None,
+            menu: String::new(),
             span,
             message,
             notes: vec![Note {
@@ -1385,6 +1391,7 @@ impl Resolver<'_> {
             Some(Err(Refused::Because(why))) => {
                 self.errors.push(Error {
                     row: None,
+                    menu: String::new(),
                     span,
                     message: format!("the unit `{unit}` cannot be imported: {why}"),
                     notes: Vec::new(),
@@ -1674,6 +1681,7 @@ impl Resolver<'_> {
             | StmtKind::Method(_) => {
                 self.errors.push(Error {
                     row: None,
+                    menu: String::new(),
                     span: s.span,
                     message: "`local` keeps a declaration from other units, and a declaration in a block is \
                               seen by no other unit already, so `local` stands only at a unit's top \
@@ -1697,6 +1705,7 @@ impl Resolver<'_> {
         };
         self.errors.push(Error {
             row: None,
+            menu: String::new(),
             span: s.span,
             message: format!(
                 "`local` stands before {what}, and `local` marks only a binding, a function, a \
@@ -1733,6 +1742,7 @@ impl Resolver<'_> {
                         if !matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
                             self.errors.push(Error {
                                 row: None,
+                                menu: String::new(),
                                 span: p.span,
                                 message: output_port_message(&p.name, &f.name, &p.ty),
                                 notes: Vec::new(),
@@ -1785,6 +1795,7 @@ impl Resolver<'_> {
             StmtKind::Import(_) => {
                 self.later.push(Error {
                     row: None,
+                    menu: String::new(),
                     span: s.span,
                     message: "an import is part of the Zed language, and this version of zedc \
                               does not yet tie a name an import brings in to the other unit's \
@@ -1834,6 +1845,7 @@ impl Resolver<'_> {
                     if let Some(&first) = seen.get(name.as_str()) {
                         self.errors.push(Error {
                             row: None,
+                            menu: String::new(),
                             span: *at,
                             message: format!(
                                 "the struct `{}` has the field `{name}` twice, and a struct has each field once. \
@@ -1897,6 +1909,7 @@ impl Resolver<'_> {
         };
         self.errors.push(Error {
             row: None,
+            menu: String::new(),
             span: a.span,
             message,
             notes: Vec::new(),
@@ -1910,6 +1923,7 @@ impl Resolver<'_> {
         let name = &a.name;
         let fail = |message: String| Error {
             row: None,
+            menu: String::new(),
             span,
             message,
             notes: Vec::new(),
@@ -2046,6 +2060,7 @@ impl Resolver<'_> {
     fn later(&mut self, span: Span, what: &str) {
         self.errors.push(Error {
             row: None,
+            menu: String::new(),
             span,
             message: not_yet(what),
             notes: Vec::new(),
@@ -2069,6 +2084,7 @@ impl Resolver<'_> {
         };
         self.errors.push(Error {
             row: Some(Row::BinderNamingType),
+            menu: String::new(),
             span: at,
             message: format!(
                 "{binder} `{name}` names the type `{name}`, which the prelude declares: a binder \
@@ -2091,6 +2107,7 @@ impl Resolver<'_> {
     fn linked(&mut self, span: Span, what: &str) {
         self.later.push(Error {
             row: None,
+            menu: String::new(),
             span,
             message: format!(
                 "{what} is used here, and this version of zedc does not yet link a use to a \
@@ -2283,6 +2300,7 @@ impl Resolver<'_> {
                     }
                     _ => self.errors.push(Error {
                         row: None,
+                        menu: String::new(),
                         span: e.span,
                         message: "`this` stands outside a method: it names the receiver of a \
                                   method `T.m(…) = …`, in the method's body"
@@ -2454,6 +2472,7 @@ impl Resolver<'_> {
                     if let Some(outer) = self.tvars.get(&b.name) {
                         self.errors.push(Error {
                             row: None,
+                            menu: String::new(),
                             span: b.span,
                             message: format!(
                                 "the type variable `{}` is bounded twice, and a type variable \
@@ -2497,6 +2516,7 @@ impl Resolver<'_> {
                     Ok(false) => {}
                     Err(message) => self.errors.push(Error {
                         row: None,
+                        menu: String::new(),
                         span: t.span,
                         message,
                         notes: Vec::new(),
@@ -2579,6 +2599,7 @@ impl Resolver<'_> {
                 };
                 return self.errors.push(Error {
                     row: None,
+                    menu: String::new(),
                     span,
                     message: format!(
                         "`{n}` stands where a type is written, and names {binder} `{n}`, which \
@@ -2604,6 +2625,7 @@ impl Resolver<'_> {
         };
         self.errors.push(Error {
             row: None,
+            menu: String::new(),
             span,
             message,
             // Inside a clause, the name reads as a type variable its clause forgot.
@@ -2628,6 +2650,7 @@ impl Resolver<'_> {
         if name.contains('.') {
             return self.errors.push(Error {
                 row: None,
+                menu: String::new(),
                 span,
                 message: format!(
                     "the type `{q}.{name}` has more than one qualifier; a qualified type is a \
@@ -2675,6 +2698,7 @@ impl Resolver<'_> {
         };
         self.errors.push(Error {
             row: None,
+            menu: String::new(),
             span,
             message,
             notes: Vec::new(),
@@ -2717,6 +2741,7 @@ impl Resolver<'_> {
         }));
         self.errors.push(Error {
             row: None,
+            menu: String::new(),
             span,
             message,
             notes,
@@ -2737,6 +2762,7 @@ impl Resolver<'_> {
             if var.first.is_none() {
                 self.errors.push(Error {
                     row: None,
+                    menu: String::new(),
                     span: b.span,
                     message: format!(
                         "the bound names `{0}`, and the type before `for` does not hold `{0}`, so the \
@@ -2779,6 +2805,7 @@ impl Resolver<'_> {
                 };
                 self.errors.push(Error {
                     row: None,
+                    menu: String::new(),
                     span: t.span,
                     message: format!(
                         "the bound of `{v}` is not a union of carriers: {what}; the carriers are \

@@ -238,6 +238,7 @@ impl Builder<'_, '_> {
                     let named = &out[i];
                     return Err(Error {
                         row: Some(Row::PositionalAfterNamed),
+                        menu: String::new(),
                         span: p.span,
                         message: format!(
                             "the positional parameter `{}` comes after the named parameter `{}`, and a \

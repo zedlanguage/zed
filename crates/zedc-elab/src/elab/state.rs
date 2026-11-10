@@ -114,6 +114,7 @@ impl<'a> Elab<'a> {
         message: impl Into<String>,
     ) -> Option<T> {
         self.errors.push(Error {
+            menu: String::new(),
             row,
             span,
             message: message.into(),
