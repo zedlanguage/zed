@@ -1776,9 +1776,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
+| LOAD-chain-sep-nonlinear | impl attempt 1 | 2026-11-09 23:49 | measured on base 19428f6a, instructions per phase, n=10,20,40,80(,160): H*x+1: Scoped::relation 9.3M->433M->1688M (exp 1.74,1.86,1.93,1.96; only t1 is linear, a |
 | NARROW-eager-star-redo | impl attempt 2 | 2026-11-07 07:57 | rebased on 501a3330; new scaling tests red on base: eager class of k stars 67.3x bytes (16->128), one star with k distinct disjunctions 16.9x bytes (limit 15.4) |
-| PRES-disj-cost-xr | impl attempt 1 | 2026-11-09 19:19 | /home down to 1 MB free; moved reviewer build dirs pdcx-tgt-r1-claude/gemini to scratchpad tmpfs with links back (2.5G free now); no delete |
-| REFUSAL-front-xr | impl attempt 1 | 2026-11-09 20:30 | own probe: hand-rewritten chain variant of the front family |
+| PRES-disj-cost-xr | impl attempt 2 | 2026-11-09 19:19 | stood down: impl#1 still owns the review |
+| REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | stood down: impl#1 still owns the review |
 | W11-note | running | 2026-11-09 19:51 |  |
 | W1-premise | running | 2026-11-09 19:51 |  |
 
