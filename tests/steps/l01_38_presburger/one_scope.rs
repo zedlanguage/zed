@@ -1293,18 +1293,109 @@ fn separate_tests_over_a_chain_of_smallest_values_scale() {
 
 #[test]
 fn separate_tests_over_a_chain_of_largest_values_scale() {
-    // Complexity tradeoff (Summaries::summary): the values of `max(H div 2, x - 9)` over `x` at
-    // a link are not a union of polyhedra without a remainder of `x` (they hold where `x - 10
-    // <= 2 * (x div 8)`), so no summary is made, and each test is decided with every
-    // definition it reaches: 1.30 s at 50 links, 4.9 s at 100; 132 times the instructions from
-    // 10 to 80 links. Still so after LOAD-chain-sep-nonlinear (n^2.4 to n^2.5 from 10 to 80
-    // links); what was tried is at `Summaries::summary`.
+    // LOAD-max-div-xr: the values of `max(H div 2, x - 9)` over `x` at a link are no union of
+    // polyhedra without a remainder of `x` (they hold where `x - 10 <= 2 * (x div 8)`), so no
+    // summary was made, and each test was decided with every definition it reaches: n^2.4 to
+    // n^2.5 from 10 to 80 links. The quotient `x div 8` is now kept beside the key, read as
+    // any value, with the rows read through its division pair (Summaries::summary).
     separate_tests_scale(
         "separate tests over a chain of `max`s",
-        10,
-        3,
+        25,
+        1,
         "max(H div 2, x - 9)",
         "H < 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_largest_values_of_quotients_scale() {
+    // LOAD-max-div-xr: `x div 3` beside `H div 2`. Its symbol `x` is kept beside the key where
+    // the quotient is, so the next link meets `x div 3` again through the division pair and
+    // needs no remainder of it; without that, 5.9 and 153 billion instructions at 10 and 20
+    // links, n^4.7.
+    separate_tests_scale(
+        "separate tests over a chain of `max`s of quotients",
+        25,
+        1,
+        "max(H div 2, x div 3 - 9)",
+        "H < 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_largest_values_of_remainders_scale() {
+    // LOAD-max-div-xr: `x mod 3` beside `H div 2`. The variables of `x mod 3` are a function of
+    // `x` alone and one fixed set, so one left by a projection stays in the piece as a symbol
+    // does, and its definition's variables join the key of a summary that reads them; before,
+    // no summary was made: 12.8 and 138 billion instructions at 10 and 20 links, 6 and 16
+    // tests refused, n^3.4.
+    separate_tests_scale(
+        "separate tests over a chain of `max`s of remainders",
+        25,
+        1,
+        "max(H div 2, x mod 3 - 9)",
+        "H < 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_largest_values_of_two_divisions_scale() {
+    // LOAD-max-div-xr: `x mod 5 + x div 7` beside `H div 2`. Its projection left a quotient of
+    // the chain in rows over both divisions; a piece is now projected again keeping the
+    // symbols and the variables of definitions of symbols alone, and the bounds `x >= 2^k *
+    // (q3 + q4) - 9 * 2^k` piling up at each link are cut to two ([`envelope`] in
+    // presburger::extend). Before: 37.3 and 477 billion instructions at 10 and 20 links, 6 and
+    // 16 tests refused, n^3.7. Now the summaries, pieces and rows grow linearly (116 summaries,
+    // 746 pieces and 6041 rows at 40 links, 56, 326 and 2641 at 20), and the work by n^1.6 to
+    // n^1.9 from 10 to 80 links (13.4, 40.5, 123 and 453 billion instructions): the solver's
+    // arithmetic on the coefficients `2^i` of link i, in rows of three atoms. Held to n^2, at
+    // 4 and 32 links to stay under 60 s; the item for n log n is LOAD-max-div-bits.
+    separate_tests_scale(
+        "separate tests over a chain of `max`s of two divisions",
+        4,
+        2,
+        "max(H div 2, x mod 5 + x div 7 - 9)",
+        "H < 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_largest_values_less_one_scale() {
+    // LOAD-max-div-xr: `x mod 5 + x div 7` beside `H - 1`. The values `h{i}` takes as `x mod 5
+    // + x div 7 - 9` are pieces equal but for the interval of `x - (x mod 5) - (x div 7)`,
+    // one more at every few links, with gaps between them holding no integer point of the
+    // rest (`merge_pieces` in presburger::extend now merges them). Before: 0.67, 2.09, 8.39
+    // and 32.6 billion instructions at 10, 20, 40 and 80 links, n^2.0.
+    separate_tests_scale(
+        "separate tests over a chain of `max`s of a decrement",
+        25,
+        1,
+        "max(H - 1, x mod 5 + x div 7 - 9)",
+        "H < 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_largest_values_of_multiples_scale() {
+    // LOAD-max-div-xr: `2 * x - 9` beside `H div 2`.
+    separate_tests_scale(
+        "separate tests over a chain of `max`s of multiples",
+        25,
+        1,
+        "max(H div 2, 2 * x - 9)",
+        "H < 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_a_chain_of_smallest_values_against_the_input_scale() {
+    // LOAD-max-div-xr: `min` against a step of the input.
+    separate_tests_scale(
+        "separate tests over a chain of `min`s against `x - 5`",
+        25,
+        1,
+        "min(H div 2 + 1, x - 5)",
+        "H > 3",
     );
 }
 
@@ -1481,6 +1572,15 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
         chain("min(H div 2, x)", "H > 0", 5),
         chain("min(H div 2, x)", "H == x", 5),
         chain("max(H div 2, x - 9)", "H < 0", 5),
+        // LOAD-max-div-xr: the input, and quotients of it, kept beside the key.
+        chain("max(H div 2, x - 9)", "H == x - 9 && x > 10", 6),
+        chain("max(H div 2, x - 9)", "H > x div 2", 6),
+        chain("max(H div 2, x div 3 - 9)", "H < 0", 5),
+        chain("max(H div 2, x div 3 - 9)", "H == 2 && x > 30", 5),
+        chain("max(H div 2, 2 * x - 9)", "H == 0", 5),
+        chain("min(H div 2 + 1, x - 5)", "H > 3", 5),
+        chain("min(H div 4, 3 * x + 7)", "H == 1", 5),
+        chain("max(H div 3, x - 9)", "H < x - 9", 5),
         chain("min(H, 100) + 1", "H > 100", 5),
         chain("max(H - 2, 0)", "H > 0 && x < 9", 5),
         chain("abs(H div 2 - 3)", "H > 1", 5),
@@ -1569,6 +1669,123 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
         for i in 0..n {
             assert_eq!(forward[i], ask(vec![i])[i], "{src}: `{}` alone", fs[i].0);
         }
+    }
+}
+
+#[test]
+fn summaries_of_max_min_div_chains_give_the_values_of_the_chains() {
+    // LOAD-max-div-xr: chains of `max`, `min` and `div` whose summaries keep the input, and the
+    // quotients the next link needs, beside the key. Each test fixes `x` and asks whether
+    // `h{i}` has the value computed here by integer arithmetic (`div` by a positive constant
+    // rounds down), or another: the first must hold and the second not. Negative, zero and
+    // large `x`, and `x` on either side of where `x - 9` and `x div 2^i` cross. Then, with `x`
+    // free, the values each `h{i}` takes, found by trying every `x` in a range.
+    use zedc::store::presburger::extend::Extending;
+    // A link, `H` its input, and its value from `H` and `x`.
+    type Step = (&'static str, fn(i64, i64) -> i64);
+    let steps: [Step; 16] = [
+        ("max(H div 2, x - 9)", |h, x| h.div_euclid(2).max(x - 9)),
+        ("min(H div 2, x + 9)", |h, x| h.div_euclid(2).min(x + 9)),
+        ("max(H div 3, x - 9)", |h, x| h.div_euclid(3).max(x - 9)),
+        ("max(H div 2, 2 * x - 9)", |h, x| {
+            h.div_euclid(2).max(2 * x - 9)
+        }),
+        ("min(H div 2 + 1, x - 5)", |h, x| {
+            (h.div_euclid(2) + 1).min(x - 5)
+        }),
+        ("max(H div 2, x div 3 - 9)", |h, x| {
+            h.div_euclid(2).max(x.div_euclid(3) - 9)
+        }),
+        ("max(H div 2, x div 3 - 1000)", |h, x| {
+            h.div_euclid(2).max(x.div_euclid(3) - 1000)
+        }),
+        ("max(H div 2, 9 - x)", |h, x| h.div_euclid(2).max(9 - x)),
+        ("min(H div 4, 3 * x + 7)", |h, x| {
+            h.div_euclid(4).min(3 * x + 7)
+        }),
+        ("max(H div 2, x) - 1", |h, x| h.div_euclid(2).max(x) - 1),
+        ("max(H div 2 - 1, x)", |h, x| (h.div_euclid(2) - 1).max(x)),
+        ("max(H div 2, x mod 3 - 9)", |h, x| {
+            h.div_euclid(2).max(x.rem_euclid(3) - 9)
+        }),
+        ("min(H div 2, x mod 4 + 3)", |h, x| {
+            h.div_euclid(2).min(x.rem_euclid(4) + 3)
+        }),
+        ("max(H div 2, x mod 5 + x div 7 - 9)", |h, x| {
+            h.div_euclid(2).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
+        }),
+        ("max(H - 1, x mod 5 + x div 7 - 9)", |h, x| {
+            (h - 1).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
+        }),
+        ("max(H - 4, x mod 5 + x div 7 - 9)", |h, x| {
+            (h - 4).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
+        }),
+    ];
+    let xs: [i64; 10] = [-1_000_000, -19, -1, 0, 1, 9, 10, 18, 19, 1_000_000];
+    let lit = |v: i64| {
+        if v < 0 {
+            format!("0 - {}", -v)
+        } else {
+            v.to_string()
+        }
+    };
+    for (step, value) in steps {
+        let mut src = "h0(x: int) = x;\n".to_string();
+        for i in 1..=5 {
+            src += &format!(
+                "h{i}(x: int) = {};\n",
+                step.replace("H", &format!("h{}(x: x)", i - 1))
+            );
+        }
+        let mut want = std::collections::BTreeMap::new();
+        for (k, &c) in xs.iter().enumerate() {
+            let mut h = c;
+            for i in 1..=5 {
+                h = value(h, c);
+                let at = format!("x == {} && h{i}(x: x)", lit(c));
+                src += &format!("e{i}k{k}(x: int) = {at} == {};\n", lit(h));
+                src += &format!("n{i}k{k}(x: int) = {at} != {};\n", lit(h));
+                want.insert(format!("e{i}k{k}"), true);
+                want.insert(format!("n{i}k{k}"), false);
+            }
+        }
+        // Questions with `x` free, whose keys hold `h{i}`'s variable alone: does `h{i}` take
+        // the value `c`, or one below it, for some `x`? Found by trying every `x` with
+        // |x| <= 200000: past that, each link here is beyond -40..=40 or repeats a value it
+        // takes inside (a remainder repeats with `x`).
+        let cs: [i64; 12] = [-40, -12, -10, -9, -8, -7, -1, 0, 1, 5, 10, 40];
+        let mut takes = vec![std::collections::BTreeSet::new(); 6];
+        for x in -200_000..=200_000 {
+            let mut h = x;
+            for set in &mut takes[1..] {
+                h = value(h, x);
+                set.insert(h);
+            }
+        }
+        for (i, set) in takes.iter().enumerate().skip(1) {
+            for (j, &c) in cs.iter().enumerate() {
+                let h = format!("h{i}(x: x)");
+                src += &format!("v{i}c{j}(x: int) = {h} == {};\n", lit(c));
+                src += &format!("l{i}c{j}(x: int) = {h} < {};\n", lit(c));
+                want.insert(format!("v{i}c{j}"), set.contains(&c));
+                want.insert(format!("l{i}c{j}"), set.range(..c).next().is_some());
+            }
+        }
+        let unit = elab(&src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let lets = lets(&unit);
+        let mut scoped = Scoped::new(&lets);
+        let mut extending = Extending::new();
+        let mut asked = 0;
+        for (name, ps, body) in functions(&unit) {
+            let Some(&holds) = want.get(name) else {
+                continue;
+            };
+            let r = (scoped.relation(body, ps, ps, true)).unwrap_or_else(|| panic!("{name}"));
+            let a = extending.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+            assert_eq!(a.holds, Ok(holds), "`{name}` in\n{src}");
+            asked += 1;
+        }
+        assert_eq!(asked, want.len(), "{step}");
     }
 }
 

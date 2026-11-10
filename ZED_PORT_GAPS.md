@@ -2212,6 +2212,18 @@ These replace the DIAG-suppress-rest rows (that section is now empty and removed
 | A generic nested `fn undo<K: Hash + Eq, V>(t: &mut HashMap<K, Entry<Option<V>>>, k: &K)` removing an entry unless `Option::is_some_and` finds it a failure with no stop | `preimage::Tx::forget` | Mutation (gap 11) | A function over a map value returning the map with the entry removed or kept |
 | A closure `kept` over an `Atom` used inside a `match` filtering a key, a product kept when both factors are kept | `extend::Summaries::key` | None | A local function over the atom |
 
+## Entries from LOAD-max-div-xr (`zedc-presburger/src/presburger/extend.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An index `HashMap<Atom, Vec<usize>>` of the rows holding each atom, pushed to as rows are rewritten in place, its stale entries skipped where read, and `HashMap::remove` taking an atom's list | `extend::by_pairs` | Mutation (gap 11) | A map value from atom to row numbers, returned with the rows after each rewrite |
+| Predicates passed as `&dyn Fn(&Atom) -> bool`, built from a `HashSet<&Atom>` borrowed from the key and the set of kept quotients | `Summaries::make`, `by_pairs`, `kept_quotients`, `remainders_as_pairs` | None | Function values over the atom |
+| A work list `Vec<Vec<Con>>`, a `Vec<Option<Vec<Con>>>` of live pieces emptied with `Option::take`, and a `HashMap` of `BTreeMap<Option<Int>, (Option<Int>, usize)>` searched with `range` and `Bound::Excluded` for the intervals before and after a bound | `extend::merge_pieces` | Mutation (gap 11) | A fold over the work list carrying a map of sorted maps; the sorted map's first entry at or below a key and first entry above it |
+| A nested `fn forms` and type aliases `Terms`, `Group`, `Intervals` declared inside a function | `extend::merge_pieces` | None | Module-level functions and type definitions |
+| A labeled `for` over a summary's pieces (`'piece`) holding a `loop` that projects a piece, then again with a flag `wide` set, left by `break out` with the projection, `continue` for the second try, and `continue 'piece` past a piece with no point | `Summaries::make` | Early exit (gap 12) | A function projecting one piece with the kept set as an argument, called with the wider set where the first result leaves an atom, its `None` dropping the piece |
+| A `HashMap` from form to a `Vec` of lines pushed to, each sorted in place, and a hull `Vec` popped while its last two and the next line fail the turn test, with a `HashSet` of dropped row numbers | `extend::envelope` | Mutation (gap 11) | A grouping by form, a sort, and a fold over each sorted list carrying the hull as a list |
+| A closure `touch` in `merge_pieces` building the gap's two rows and calling `decide` | `extend::merge_pieces` | None | A function of the group and the two bounds |
+
 ## Entries from LOAD-chain-affine (`zedc-preimage/src/preimage.rs`, `zedc-presburger/src/presburger/extend.rs`, `zedc/src/front.rs`)
 
 The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer apply: both are removed.

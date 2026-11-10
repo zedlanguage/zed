@@ -146,7 +146,12 @@ type Key = (Id, Vec<Atom>);
 /// other atom of the cone is projected out, the symbols too: a question is asked of the
 /// summaries and the parts beside them together, existentially, so projecting an atom out is
 /// exact when nothing else read with the summary reads it, and each atom anything else reads
-/// is in the key ([`Summaries::key`]).
+/// is in the key ([`Summaries::key`]). Some atoms outside the key stay in a piece, where
+/// projecting them out needs a remainder ([`kept_quotients`], a symbol left by the projection,
+/// and a variable of a definition that reads symbols alone, as `x div 3` does, left or kept
+/// with the symbols when a projection leaves any atom): read existentially with the rest, they
+/// keep the piece exact (LOAD-max-div-xr). Such a variable is a function of the symbols, one of
+/// a fixed set, so the atoms of the pieces stay bounded along a chain.
 struct Summary {
     pieces: Vec<Vec<Con>>,
     /// Every atom of `pieces`.
@@ -2471,21 +2476,50 @@ impl Summaries {
     // A product of variables (`H * x`, the `x * q` of a `div` by a variable) is an atom of its
     // own in the pieces, as the solver reads it ([`decide`]), kept in a key where its factors
     // are (LOAD-chain-sep-nonlinear): 8.3 times the instructions from 25 to 200 links for
-    // `H div x`, against 74.5 times from 10 to 80 before. Tradeoffs: no summary is made, and
-    // the question is decided with every definition it reaches as before, O(n) for each and
-    // O(n²) or worse over the chain, for a piece whose projection keeps an atom outside the
-    // key: values that are no union of polyhedra without a remainder of a kept atom (`max(H
-    // div 2, x - 9)` keeping `x` holds where `x - 10 <= 2 * (x div 8)`: n^2.4 to n^2.5 from 10
-    // to 80 links, all of it in the questions decided whole). Tried for it
-    // (LOAD-chain-sep-nonlinear): dropping the rows of each piece the others imply ([`lean`]
-    // on every piece) leaves the row `x <= 2 * q + 10` beside `8 * q <= x <= 8 * q + 7`, which
-    // the next link needs to eliminate `q` across two coefficients above 1; the values of
-    // `h{i}` are `max(x div 2^i, x - 9)`, two pieces, but the pieces made follow each path
-    // of cases and are merged only where written alike. Also a definition whose formula
-    // holds a negation of more than one constraint. The pieces of a summary are merged only
-    // where written alike, so a link whose values on the kept atoms take a new shape at each
-    // depth keeps O(depth) pieces and the chain O(n²). Two definitions read together whose
-    // cones are apart are read beside each other down to where they meet, O(their depth). The
+    // `H div x`, against 74.5 times from 10 to 80 before. Values that are no union of
+    // polyhedra without a remainder of a kept atom (`max(H div 2, x - 9)` keeping `x` holds
+    // where `x - 10 <= 2 * (x div 8)`) are summarized with the quotients they need kept in
+    // the pieces (LOAD-max-div-xr): each row holding a quotient to be projected out with
+    // coefficient 1 or -1 is read through its division pair ([`by_pairs`]), so the
+    // projection meets the quotient in the pair alone; a quotient of kept atoms that another
+    // row holds with a coefficient above 1, and the symbols under a kept quotient by more
+    // than 1, stay in the piece ([`kept_quotients`]), as does a symbol the projection
+    // leaves, all read existentially with the rest; where the projection still leaves an
+    // atom, the piece is projected again keeping every symbol of its rows and every variable
+    // of a definition that reads symbols alone (`x mod 3`; [`Summaries::key`]), which mean
+    // the same at every link; [`lean`] runs on every piece, after [`envelope`] keeps, of the
+    // bounds `y >= a * f + b` of one form, only those on the upper envelope (the bounds `x >=
+    // 2^k * (q3 + q4) - 9 * 2^k` piling up at each link of `max(H div 2, x mod 5 + x div 7 -
+    // 9)`, which `decide` refuses to compare); and pieces equal but for one interval of one
+    // form are merged where the intervals touch or the gap between them has no point
+    // ([`merge_pieces`]), so the values of `h{i}`, `max(x div 2^i, x - 9)`, stay two pieces.
+    // Instructions from 10 to 160 links, doubling: `max(H div 2, x - 9)` 0.056, 0.119,
+    // 0.245, 0.500 and 1.02 G (exponents 1.10, 1.04, 1.03, 1.03), against 0.16, 0.72, 3.68
+    // and 21.3 G from 10 to 80 before (2.15, 2.35, 2.53); `max(H div 2, x div 3 - 9)` 0.41
+    // to 10.1 G (1.37, 1.15, 1.07, 1.05), against n^4.7 before; `max(H div 2, x mod 3 - 9)`
+    // 0.22 to 3.96 G (1.06, 1.03, 1.02, 1.05), against 12.8 and 138 G at 10 and 20 before
+    // (n^3.4); `max(H - 1, x mod 5 + x div 7 - 9)` 0.63 to 5.8 G from 10 to 80 (1.14, 1.07,
+    // 1.01), against n^2.0 without the gap test; twelve other `max`, `min` and `if` chains
+    // 1.01 to 1.10 from 80 to 160. `max(H div 2, x mod 5 + x div 7 - 9)` gets summaries of
+    // seven pieces at most and no question decided whole (37.3 and 477 G at 10 and 20 links
+    // before, n^3.7), but its work grows n^1.59, 1.61 and 1.88 from 10 to 80 links (13.4,
+    // 40.5, 123 and 453 G), in the solver's linear programs of three variables over rationals
+    // whose numbers are the coefficients `2^i` of link i: big-integer arithmetic is 3% of the
+    // cycles at 10 links and 17% at 40 (perf); open, LOAD-max-div-bits. Tradeoffs: no
+    // summary is made, and the question is decided with every definition it reaches as
+    // before, O(n) for each and O(n²) or worse over the chain, for a piece whose projection
+    // leaves any other atom outside the key: values that need a remainder modulo m^i at depth
+    // i (`(3 * H + 1) div 2`, `(5 * H + 2) div 3`, `H mod 7 + H`, `H div 2 + H div 3`: n^2 to
+    // n^3.5 from 10 to 40 links, as before), whose exact pieces are shown to grow as 2^i for
+    // `(3 * H) div 2` (the cross-review of LOAD-max-div-xr, round 1) and not yet shown for
+    // the others. Keeping such a quotient too was tried and made them slower, n^3.1 to
+    // n^4.5, its rows growing at each link. `max((3 * H) div 2, x - 9)` is summarized but its
+    // pieces grow with the depth: n^2.4 to n^2.7 from 10 to 40 links (n^3.7 from 5 to 10
+    // before). Also a definition whose formula holds a negation of more than one constraint.
+    // The pieces of a summary are merged only where written alike or equal but for one
+    // interval with no point between, so a link whose values on the kept atoms take a new
+    // shape at each depth keeps O(depth) pieces and the chain O(n²). Two definitions read
+    // together whose cones are apart are read beside each other down to where they meet, O(their depth). The
     // symbols of each definition's cone are a set made once for it, shared with its input's
     // when it adds none, so a chain whose links each read a new symbol holds O(n²) in all. The
     // coefficients of a summary are those of the composed definitions (`2^i` after i halvings
@@ -2493,13 +2527,15 @@ impl Summaries {
     // the whole chain makes the same numbers. Trigger: these definitions in a chain of
     // separate tests. Tests
     // `l01_38_presburger::one_scope::summaries_of_definitions_give_the_answers_of_the_definitions`,
-    // which checks the answers against the definitions decided whole, and the
+    // which checks the answers against the definitions decided whole,
+    // `summaries_of_max_min_div_chains_give_the_values_of_the_chains`, which checks the
+    // values of sixteen `max`, `min` and `div` chains against integer arithmetic, and the
     // `separate_*_scale` tests there, which measure each shape; COMPLEXITY.md rows
-    // LOAD-chain-sep and LOAD-chain-sep-rest. A complete solution keeps congruences in the
-    // pieces (rows with a modulus, as the Omega test's projection keeps them, or the splinters
-    // of its exact shadow), merges pieces where one holds another (a test of inclusion between
-    // unions of polyhedra over the integers, co-NP-hard in general), and keeps products as a
-    // piecewise polynomial form.
+    // LOAD-chain-sep, LOAD-chain-sep-rest and LOAD-max-div-xr. A complete solution keeps
+    // congruences in the pieces (rows with a modulus, as the Omega test's projection keeps
+    // them, or the splinters of its exact shadow), merges pieces where one holds another (a
+    // test of inclusion between unions of polyhedra over the integers, co-NP-hard in
+    // general), and keeps products as a piecewise polynomial form.
     fn summary(&mut self, k: Key, g: Formula, def: &dyn Fn(u32) -> Formula) {
         let mut stack: Vec<(Key, Formula)> = vec![(k, g)];
         let mut open: HashSet<Key> = HashSet::new();
@@ -2550,45 +2586,98 @@ impl Summaries {
         let Some(all) = all else {
             return Made::Done(None);
         };
-        let keep: HashSet<&Atom> = k.1.iter().collect();
+        let key: HashSet<&Atom> = k.1.iter().collect();
+        // A variable of a definition that reads symbols alone (`q2` of `x div 3`): a function of
+        // the inputs, as a symbol is, and one of a fixed set, so one left is kept as a symbol.
+        let leaf = |a: &Atom| match a {
+            Atom::Aux(n) => Def::of(def(*n), def).is_some_and(|m| m.inputs.is_empty()),
+            _ => false,
+        };
         let alone = [Vec::new()];
         let below = below.map_or(&alone[..], |s| &s.pieces[..]);
         let mut pieces: BTreeSet<Vec<Con>> = BTreeSet::new();
         for c in &all {
-            for p in below {
+            'piece: for p in below {
                 let rows: Vec<Con> = c.iter().chain(p).cloned().collect();
-                let Some(mut out) = shadow_whole(&rows, &|a| keep.contains(a)) else {
-                    continue;
-                };
-                // A piece with no point is dropped: [`shadow`] shows it only where an elimination
-                // makes a false row, and not by two bounds of a kept atom (`q <= 4 && q >= 9`)
-                // or when it cannot eliminate an atom. A piece that keeps an atom outside the key
-                // otherwise leaves no summary.
-                let piece = Formula::and(out.iter().cloned().map(Formula::Con).collect());
-                if decide(&piece) == Ok(false) {
-                    continue;
-                }
-                // A row the others imply may pair with a remainder's bound so that the dark
-                // shadow is not the real one (`x >= 2 * q` beside `x >= 4 * q` and `x >= -1`,
-                // with `4 * r` on both sides of `x`): such rows are dropped, and the piece
-                // projected again.
-                let left = |out: &[Con]| {
-                    (out.iter()).any(|c| c.lin.terms.keys().any(|a| !keep.contains(a)))
-                };
-                if left(&out) {
-                    match shadow_whole(&lean(out), &|a| keep.contains(a)) {
-                        Some(o) => out = o,
-                        None => continue,
+                // The atoms kept beside the key: those whose elimination needs a remainder of a
+                // kept atom ([`kept_quotients`]). They stay in the piece, read as any value.
+                let more =
+                    kept_quotients(&remainders_as_pairs(&rows, &|a| key.contains(a)), &|a| {
+                        key.contains(a)
+                    });
+                let syms: HashSet<&Atom> = (rows.iter())
+                    .flat_map(|c| c.lin.terms.keys())
+                    .filter(|a| matches!(a, Atom::Sym(_)) || leaf(a))
+                    .collect();
+                let mut wide = false;
+                let out = loop {
+                    let keep = |a: &Atom| {
+                        key.contains(a) || more.contains(a) || (wide && syms.contains(a))
+                    };
+                    let elim = |a: &Atom| !keep(a);
+                    let Some(mut out) = shadow_whole(&by_pairs(rows.clone(), &elim), &keep) else {
+                        continue 'piece;
+                    };
+                    // A piece with no point is dropped: [`shadow`] shows it only where an
+                    // elimination makes a false row, and not by two bounds of a kept atom
+                    // (`q <= 4 && q >= 9`) or when it cannot eliminate an atom. A piece that
+                    // keeps an atom outside the key otherwise leaves no summary.
+                    let piece = Formula::and(out.iter().cloned().map(Formula::Con).collect());
+                    if decide(&piece) == Ok(false) {
+                        continue 'piece;
                     }
-                }
-                if left(&out) {
-                    return Made::Done(None);
-                }
+                    // A row the others imply may pair with a remainder's bound so that the dark
+                    // shadow is not the real one (`x >= 2 * q` beside `x >= 4 * q` and `x >= -1`,
+                    // with `4 * r` on both sides of `x`): such rows are dropped, and the piece
+                    // projected again.
+                    // Before that, the rows the projection made are read through their division
+                    // pairs again ([`by_pairs`]), which leaves the projection one atom fewer to
+                    // eliminate across coefficients above 1.
+                    let left = |out: &[Con]| (out.iter()).any(|c| c.lin.terms.keys().any(&elim));
+                    if left(&out) {
+                        match shadow_whole(&by_pairs(out, &elim), &keep) {
+                            Some(o) => out = o,
+                            None => continue 'piece,
+                        }
+                    }
+                    if left(&out) {
+                        match shadow_whole(&lean(out), &keep) {
+                            Some(o) => out = o,
+                            None => continue 'piece,
+                        }
+                    }
+                    // A symbol left (`x` of `2 * x == q + 9`, whose projection is a congruence of
+                    // `q`) is kept, read as any value: the symbols of a chain are its inputs, read
+                    // through the key. Any other atom left leaves no summary.
+                    let other = |c: &Con| {
+                        c.lin
+                            .terms
+                            .keys()
+                            .any(|a| elim(a) && !matches!(a, Atom::Sym(_)) && !leaf(a))
+                    };
+                    if !wide
+                        && out.iter().any(|c| {
+                            c.lin
+                                .terms
+                                .keys()
+                                .any(|a| elim(a) && !matches!(a, Atom::Sym(_)))
+                        })
+                    {
+                        wide = true;
+                        continue;
+                    }
+                    if out.iter().any(other) {
+                        return Made::Done(None);
+                    }
+                    break out;
+                };
+                let mut out = lean(out);
                 out.sort();
                 out.dedup();
                 pieces.insert(out);
             }
         }
+        let pieces = merge_pieces(pieces);
         let atoms = (pieces.iter().flatten())
             .flat_map(|c| c.lin.terms.keys().cloned())
             .collect();
@@ -2629,7 +2718,7 @@ impl Summaries {
         }
         while let Some((_, h)) = frontier.pop_last() {
             if frontier.is_empty() {
-                let k = match self.key(&h, reads, own, keep, &beside) {
+                let k = match self.key(&h, reads, own, keep, &beside, def) {
                     Ok(k) => k,
                     Err(n) => return Local::Need(n),
                 };
@@ -2642,8 +2731,8 @@ impl Summaries {
                 };
             }
             // The others may be in `h`'s cone only when numbered before it.
-            if frontier.keys().next_back().is_some_and(|&n| n < h.own[0]) {
-                let k = match self.key(&h, reads, own, keep, &beside) {
+            if !h.inputs.is_empty() && frontier.keys().next_back().is_some_and(|&n| n < h.own[0]) {
+                let k = match self.key(&h, reads, own, keep, &beside, def) {
                     Ok(k) => k,
                     Err(n) => return Local::Need(n),
                 };
@@ -2682,8 +2771,15 @@ impl Summaries {
     /// variable numbered before `h`'s own (every variable of its cone is, [`enter`]) and a
     /// symbol of `h`'s cone
     /// ([`Summaries::syms`]), so that a question reading a symbol the chain does not
-    /// (`h{i}(x: x) > 0 && x < 1000`, its own `x`) shares the chain's summaries. `Err` with
-    /// the symbols to find first. Time of the atoms, O(log n) each.
+    /// (`h{i}(x: x) > 0 && x < 1000`, its own `x`) shares the chain's summaries. A variable
+    /// numbered before `h`'s own is kept only when `h` reads another definition: the
+    /// variables of a definition of symbols alone (`x div 3`) are in no cone of its. Where the
+    /// key keeps such a variable, the symbols of the cone and the first variable of its
+    /// definition join it, so the pieces meet it beside the symbols it is a function of (a
+    /// summary keyed without it is then never read with its definition, which [`Summaries::local`]
+    /// enters only through an atom of the key). `Err` with the symbols to find first. Time of
+    /// the atoms, O(log n) each, and of one [`Def::of`] for each variable numbered before
+    /// `h`'s own.
     fn key(
         &self,
         h: &Def,
@@ -2691,6 +2787,7 @@ impl Summaries {
         own: &BTreeSet<Atom>,
         keep: &[Atom],
         beside: &[Def],
+        def: &dyn Fn(u32) -> Formula,
     ) -> Result<Key, Need> {
         let Some(syms) = self.syms.get(&h.id) else {
             return Err(Need::Syms(h.f.clone()));
@@ -2699,13 +2796,13 @@ impl Summaries {
         let atoms = (keep.iter().chain(reads)).chain(beside.iter().flat_map(|d| &d.reads));
         let kept = |a: &Atom| match a {
             Atom::Aux(n) => {
-                (*n < h.own[0] && !defined.contains(n) && !own.contains(a))
+                (!h.inputs.is_empty() && *n < h.own[0] && !defined.contains(n) && !own.contains(a))
                     || h.own.binary_search(n).is_ok()
             }
             Atom::Sym(_) => syms.contains(a),
             Atom::Product(..) => false,
         };
-        let out: BTreeSet<Atom> = atoms
+        let mut out: BTreeSet<Atom> = atoms
             .filter(|a| match a {
                 // A product the cone may hold, one whose factors it may hold: the solver reads
                 // it as an atom of its own, so a summary keeps it as it keeps a variable.
@@ -2714,6 +2811,20 @@ impl Summaries {
             })
             .cloned()
             .collect();
+        let earlier: Vec<u32> = (out.iter())
+            .filter_map(|a| match a {
+                Atom::Aux(n) if *n < h.own[0] => Some(*n),
+                _ => None,
+            })
+            .collect();
+        for n in earlier {
+            if let Some(m) = Def::of(def(n), def)
+                && m.inputs.is_empty()
+            {
+                out.extend(syms.iter().cloned());
+                out.insert(Atom::Aux(m.own[0]));
+            }
+        }
         Ok((h.id, out.into_iter().collect()))
     }
 
@@ -2849,10 +2960,92 @@ fn enter(
     true
 }
 
+/// `rows` without the inequalities that bound one atom `y` (coefficient 1 or -1, the first such
+/// in the row) by a multiple of one form `f` of the other atoms (the row's other terms over
+/// their greatest common divisor, the first coefficient positive), and that lie on no open part
+/// of the envelope of the others of their group (`y`, `f`, lower or upper): `y >= m * f + b`
+/// read as a line in `f`. Such a row holds wherever the lines kept do, over the reals and so
+/// over the integers, whatever values `f` and the rest take. Of lines of one slope the highest
+/// alone is kept. `x >= 2^k * (q3 + q4) - 9 * 2^k` for k = 1 to 7 (the bounds of
+/// `max(H div 2, x mod 5 + x div 7 - 9)` after k halvings) leave k = 1 and 7, which
+/// [`decide`] cannot show: it refuses the question (its rows grow).
+// Complexity tradeoff: naive version, each row tried against the others by [`decide`] as
+// [`lean`] does, one decision for each row, and refused here. Used: the rows grouped by hash,
+// each group sorted by slope and swept once keeping the upper hull (the convex hull trick),
+// O(r log r) for r rows of t terms each, O(r t) for the forms. Tradeoffs: a row implied by rows
+// of other groups, or by several forms together, is left to [`lean`]'s decisions.
+fn envelope(rows: Vec<Con>) -> Vec<Con> {
+    type Terms = BTreeMap<Atom, Int>;
+    type Group = (Atom, Terms, bool);
+    // Row `i` as `y >= m * f + b` (`lower`) or `y <= m * f + b`, as (group, m, b, i), the upper
+    // ones negated: `-y >= -m * f - b`.
+    let mut groups: HashMap<Group, Vec<(Int, Int, usize)>> = HashMap::new();
+    for (i, r) in rows.iter().enumerate() {
+        if r.rel != Rel::Ge || r.lin.terms.len() < 2 {
+            continue;
+        }
+        let Some((y, e)) = r.lin.terms.iter().find(|(_, k)| k.is_unit()) else {
+            continue;
+        };
+        let g = (r.lin.terms.iter())
+            .filter(|(a, _)| *a != y)
+            .fold(Int::ZERO, |g, (_, k)| g.gcd(k));
+        let first = r
+            .lin
+            .terms
+            .iter()
+            .find(|(a, _)| *a != y)
+            .map(|(_, k)| k.is_negative());
+        let g = if first == Some(true) { -&g } else { g };
+        let f: Terms = (r.lin.terms.iter())
+            .filter(|(a, _)| *a != y)
+            .map(|(a, k)| (a.clone(), k.div_floor(&g)))
+            .collect();
+        // e * y + g * f + c >= 0: y >= -g * f - c (e = 1), or y <= g * f + c (e = -1), which is
+        // -y >= -g * f - c: the line (-g, -c) either way.
+        let c = &r.lin.constant;
+        let lower = e.is_positive();
+        groups
+            .entry((y.clone(), f, lower))
+            .or_default()
+            .push((-&g, -c, i));
+    }
+    let mut drop: HashSet<usize> = HashSet::new();
+    for (_, mut lines) in groups {
+        lines.sort();
+        let mut hull: Vec<usize> = Vec::new();
+        for j in 0..lines.len() {
+            // Of one slope the highest, the last, holds the others.
+            if j + 1 < lines.len() && lines[j + 1].0 == lines[j].0 {
+                drop.insert(lines[j].2);
+                continue;
+            }
+            while let [.., p, q] = hull[..] {
+                let ((ma, ba, _), (mb, bb, _), (mc, bc, _)) = (&lines[p], &lines[q], &lines[j]);
+                // Slopes ma < mb < mc: line b is under max(a, c) everywhere when at the
+                // crossing of a and c, t = (ba - bc) / (mc - ma), it is under a.
+                if &(mb - ma) * &(ba - bc) <= &(ba - bb) * &(mc - ma) {
+                    drop.insert(lines[q].2);
+                    hull.pop();
+                } else {
+                    break;
+                }
+            }
+            hull.push(j);
+        }
+    }
+    (rows.into_iter().enumerate())
+        .filter(|(i, _)| !drop.contains(i))
+        .map(|(_, r)| r)
+        .collect()
+}
+
 /// `rows` without each row the others imply over the integers, each tried in turn against
 /// those left: [`decide`] shows the others and the row's negation have no point. A row whose
-/// question is refused is kept. Time of one decision of the rows for each row.
-fn lean(mut rows: Vec<Con>) -> Vec<Con> {
+/// question is refused is kept. Time of one decision of the rows for each row, after
+/// [`envelope`].
+fn lean(rows: Vec<Con>) -> Vec<Con> {
+    let mut rows = envelope(rows);
     let mut i = 0;
     while i < rows.len() {
         let others = (rows.iter().enumerate())
@@ -2866,6 +3059,353 @@ fn lean(mut rows: Vec<Con>) -> Vec<Con> {
         }
     }
     rows
+}
+
+/// The division pairs of `rows`: rows `i` and `j`, `e - m * v >= 0` and `m * v + m - 1 - e >=
+/// 0` for an atom `v` (no product), whose terms are opposite and whose constants add to `m -
+/// 1`, and which hold together exactly where `v == e div m`; each as `(m, v, i, j)`. Time of
+/// the rows' terms, each row's looked up by hash.
+fn pairs(rows: &[Con]) -> Vec<(Int, Atom, usize, usize)> {
+    let mut by_terms: HashMap<&BTreeMap<Atom, Int>, usize> = HashMap::new();
+    for (i, r) in rows.iter().enumerate() {
+        if r.rel == Rel::Ge {
+            by_terms.entry(&r.lin.terms).or_insert(i);
+        }
+    }
+    let mut out = Vec::new();
+    for (i, a) in rows.iter().enumerate() {
+        if a.rel != Rel::Ge {
+            continue;
+        }
+        let neg: BTreeMap<Atom, Int> = a.lin.terms.iter().map(|(k, c)| (k.clone(), -c)).collect();
+        let Some(&j) = by_terms.get(&neg) else {
+            continue;
+        };
+        let k = &a.lin.constant + &rows[j].lin.constant;
+        if k.is_negative() {
+            continue;
+        }
+        let m = &k + &Int::ONE;
+        for (v, c) in &a.lin.terms {
+            if *c == -&m && !matches!(v, Atom::Product(..)) {
+                out.push((m.clone(), v.clone(), i, j));
+            }
+        }
+    }
+    out
+}
+
+/// `rows` read through their division pairs ([`pairs`]) of the atoms `elim` names: for a pair
+/// `v == e div m`, each other inequality holding `v` with coefficient 1 is combined with the
+/// pair's first row into one without `v` (`v >= L` into `e >= m * L`), and each holding it
+/// with coefficient -1 with the second (`v <= U` into `e <= m * U + m - 1`), both exact since
+/// `v` is `e div m` and `L` and `U` are integers; the pair itself stays, so the rows hold
+/// exactly where they held. The projection that follows then meets `v` in the pair alone
+/// (`x <= 2 * q + 10` beside `8 * q <= x <= 8 * q + 7` becomes `x <= 2 * (x div 8)` read
+/// through the pair). Pairs are taken by `m`, then atom; a pair a rewrite has changed is
+/// skipped. Time of the rows rewritten, each found through the rows holding its atom.
+// Complexity tradeoff: naive version, each pair scans every row for its atom, O(p r t) for
+// p pairs over r rows of t terms. Used: the rows holding each atom, kept as rows are
+// rewritten, so each pair reads only its atom's rows, O(r t + w t) for w rewrites in all.
+// Tradeoffs: one hash map of row lists; a list keeps an entry of a row that no longer holds
+// the atom, skipped where it is read.
+fn by_pairs(mut rows: Vec<Con>, elim: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
+    rows.sort();
+    let mut pairs = pairs(&rows);
+    pairs.retain(|(_, v, _, _)| elim(v));
+    pairs.sort();
+    // The rows holding each atom: a rewritten row is added under its new atoms, and an entry
+    // whose row no longer holds the atom is skipped.
+    let mut at: HashMap<Atom, Vec<usize>> = HashMap::new();
+    for (n, r) in rows.iter().enumerate() {
+        for a in r.lin.terms.keys() {
+            at.entry(a.clone()).or_default().push(n);
+        }
+    }
+    let mut done: HashSet<Atom> = HashSet::new();
+    for (m, v, i, j) in pairs {
+        if !done.insert(v.clone()) {
+            continue;
+        }
+        let (a, b) = (rows[i].clone(), rows[j].clone());
+        if a.lin.terms.get(&v) != Some(&-&m)
+            || b.lin.terms.get(&v) != Some(&m)
+            || !a.lin.plus(&b.lin).terms.is_empty()
+        {
+            continue;
+        }
+        let mut holders = at.remove(&v).unwrap_or_default();
+        holders.sort_unstable();
+        holders.dedup();
+        for n in holders {
+            let r = &mut rows[n];
+            if n == i || n == j || r.rel != Rel::Ge {
+                continue;
+            }
+            let side = match r.lin.terms.get(&v) {
+                Some(c) if *c == Int::ONE => &a,
+                Some(c) if *c == -&Int::ONE => &b,
+                _ => continue,
+            };
+            let lin = r.lin.times(m.clone()).plus(&side.lin);
+            let g = lin.terms.values().fold(Int::ZERO, |g, c| g.gcd(c));
+            r.lin = if g.is_zero() || g == Int::ONE {
+                lin
+            } else {
+                Lin {
+                    terms: (lin.terms.iter())
+                        .map(|(k, c)| (k.clone(), c.div_floor(&g)))
+                        .collect(),
+                    constant: lin.constant.div_floor(&g),
+                }
+            };
+            for t in r.lin.terms.keys() {
+                at.entry(t.clone()).or_default().push(n);
+            }
+        }
+    }
+    rows
+}
+
+/// The atoms outside `keep` to keep beside it in a projection of `rows`, read as any value
+/// there: an atom `v` with a division pair `v == e div m` ([`pairs`]) whose `e` holds only kept
+/// atoms and that another row holds with a coefficient other than 1 or -1 (`2 * q` in `x <=
+/// 2 * q + 10` beside `8 * q <= x <= 8 * q + 7`), whose elimination needs a remainder of `e`
+/// in general; and, for a pair with `m` above 1 and a kept `v`, the symbols of its `e` (the
+/// `x` of `q == x div 3` with `q` kept), which the next link would otherwise need a remainder
+/// of `q` to eliminate. Time of the rows' terms.
+// Complexity tradeoff: naive version, each pair scans every row for its atom with a
+// coefficient other than 1 or -1, O(p r t). Used: those rows of each atom gathered once,
+// O(r t) and a lookup for each pair. Tradeoffs: one hash map of row lists.
+fn kept_quotients(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> HashSet<Atom> {
+    // The rows holding each atom with a coefficient other than 1 or -1.
+    let mut wide: HashMap<&Atom, Vec<usize>> = HashMap::new();
+    for (n, r) in rows.iter().enumerate() {
+        for (a, c) in &r.lin.terms {
+            if *c != Int::ONE && *c != -&Int::ONE {
+                wide.entry(a).or_default().push(n);
+            }
+        }
+    }
+    let mut out = HashSet::new();
+    for (m, v, i, j) in pairs(rows) {
+        let e = rows[i].lin.terms.keys().filter(|b| **b != v);
+        if keep(&v) {
+            if m != Int::ONE {
+                out.extend(e.filter(|b| !keep(b) && matches!(b, Atom::Sym(_))).cloned());
+            }
+            continue;
+        }
+        let other = || {
+            wide.get(&v)
+                .is_some_and(|ns| ns.iter().any(|&n| n != i && n != j))
+        };
+        if e.clone().all(keep) && other() {
+            out.insert(v);
+        }
+    }
+    out
+}
+
+/// `rows` with each remainder written as a division pair: an atom `r` outside `keep` (no
+/// product) with coefficient 1 or -1 in an equation and held by exactly two other rows, each
+/// a bound of `r` alone, is solved from the equation into the bounds, so that `e == m * v +
+/// r, 0 <= r <= m - 1` reads as `m * v <= e <= m * v + m - 1`; the three rows are replaced by
+/// the two. The rows hold where they held with some `r`. Time of the rows' terms.
+fn remainders_as_pairs(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
+    let mut at: HashMap<&Atom, Vec<usize>> = HashMap::new();
+    for (i, r) in rows.iter().enumerate() {
+        for a in r.lin.terms.keys() {
+            at.entry(a).or_default().push(i);
+        }
+    }
+    let mut gone: HashSet<usize> = HashSet::new();
+    let mut out: Vec<Con> = Vec::new();
+    for (i, e) in rows.iter().enumerate() {
+        if e.rel != Rel::Eq || gone.contains(&i) {
+            continue;
+        }
+        for (r, c) in &e.lin.terms {
+            if keep(r) || matches!(r, Atom::Product(..)) || (*c != Int::ONE && *c != -&Int::ONE) {
+                continue;
+            }
+            let uses = &at[r];
+            if uses.len() != 3 {
+                continue;
+            }
+            let bounds: Vec<usize> = uses.iter().copied().filter(|&n| n != i).collect();
+            if (bounds.iter()).any(|&n| {
+                gone.contains(&n) || rows[n].rel != Rel::Ge || rows[n].lin.terms.len() != 1
+            }) {
+                continue;
+            }
+            // `e` is `c * r + rest == 0`, so `r == -c * rest` for `c` 1 or -1.
+            let mut rest = e.lin.clone();
+            rest.terms.remove(r);
+            let val = rest.times(-c);
+            for &n in &bounds {
+                let k = &rows[n].lin.terms[r];
+                let lin = val
+                    .times(k.clone())
+                    .plus(&Lin::constant(rows[n].lin.constant.clone()));
+                out.push(Con { lin, rel: Rel::Ge });
+            }
+            gone.insert(i);
+            gone.extend(bounds);
+            break;
+        }
+    }
+    out.extend(
+        (rows.iter().enumerate())
+            .filter(|(n, _)| !gone.contains(n))
+            .map(|(_, r)| r.clone()),
+    );
+    out
+}
+
+/// `pieces` with any two equal but for the bounds of one linear form, whose intervals of
+/// integers for it overlap or touch, or whose rest holds at no integer point with the form
+/// between them ([`decide`]), merged into one with the interval holding both, until no two
+/// merge: the union of the two is the merged piece's points, since the rest is the same and
+/// the rest's points with the form between the two intervals are none. A form is a row's
+/// terms with the first coefficient positive. `min(H div 2, x)` cases split at `x` meet again
+/// this way, and the values `max(H - 1, x mod 5 + x div 7 - 9)` takes as its second
+/// argument, at intervals of `x - (x mod 5) - (x div 7)` with no integer point between them.
+// Complexity tradeoff: naive version, each pass groups all pieces by form and merges, and
+// passes repeat while one merges, O(p) passes over p pieces of r rows, O(p² r²). Used: a work
+// list, each piece put in the groups of its forms, where the intervals of the pieces in a
+// group never overlap, touch or hold an empty gap and so are ordered by their lower bounds: a
+// piece meets the one before and the one after its interval only, found in O(log p) (one
+// further off has a piece with a point in the gap), and two that merge are taken out and
+// their merge put back on the list; each merge leaves one piece fewer, so p pieces are put
+// in at most 2p times, O(p r² + p r log p) (the rest of a piece for each of its forms is
+// O(r) to make), and two decisions of the rest with the gap for each, O(p) decisions of
+// O(r) rows. Tradeoffs: one hash map and one ordered map for each group; two pieces whose
+// union is no interval of one form (`x <= 2` and `x >= 4` with a point at 3, or two forms
+// changing at once) stay apart, exact but more pieces; a gap whose decision is refused is
+// taken to have a point. `max(H - 1, x mod 5 + x div 7 - 9)`: n^2.0 from 10 to 80 links
+// before the gap test (0.67 to 32.6 G instructions, one piece more every few links), n^1.0
+// with it (0.63 to 5.8 G).
+fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
+    type Terms = BTreeMap<Atom, Int>;
+    type Group = (Vec<Con>, Terms);
+    // The pieces of one group by lower bound: upper bound and index in `live`.
+    type Intervals = BTreeMap<Option<Int>, (Option<Int>, usize)>;
+    // Each form of piece `p`: `p` without its rows of the form, the form, and the lower and
+    // upper bounds the rows give it (`None` none).
+    fn forms(p: &[Con]) -> Vec<(Group, Option<Int>, Option<Int>)> {
+        let form = |c: &Con| -> (Terms, bool) {
+            let neg = c.lin.terms.values().next().is_some_and(|k| k.is_negative());
+            let t = if neg {
+                c.lin.terms.iter().map(|(a, k)| (a.clone(), -k)).collect()
+            } else {
+                c.lin.terms.clone()
+            };
+            (t, neg)
+        };
+        let mut bounds: BTreeMap<Terms, (Option<Int>, Option<Int>)> = BTreeMap::new();
+        for r in p.iter().filter(|r| !r.lin.terms.is_empty()) {
+            let (t, neg) = form(r);
+            let b = bounds.entry(t).or_insert((None, None));
+            // The row is `t + c` (or `-t + c`) `>= 0` or `== 0`.
+            let c = &r.lin.constant;
+            let (lo, hi) = match (r.rel, neg) {
+                (Rel::Ge, false) => (Some(-c), None),
+                (Rel::Ge, true) => (None, Some(c.clone())),
+                (Rel::Eq, false) => (Some(-c), Some(-c)),
+                (Rel::Eq, true) => (Some(c.clone()), Some(c.clone())),
+            };
+            if let Some(l) = lo {
+                b.0 = Some(b.0.take().map_or(l.clone(), |o| o.max(l)));
+            }
+            if let Some(h) = hi {
+                b.1 = Some(b.1.take().map_or(h.clone(), |o| o.min(h)));
+            }
+        }
+        (bounds.into_iter())
+            .map(|(t, (lo, hi))| {
+                let rest = (p.iter())
+                    .filter(|r| r.lin.terms.is_empty() || form(r).0 != t)
+                    .cloned()
+                    .collect();
+                ((rest, t), lo, hi)
+            })
+            .collect()
+    }
+    // Whether `[lo, hi]` and `[l, h]` of the form of group `g` overlap or touch, `None`
+    // unbounded, or the rest of `g` holds at no integer point with the form between them.
+    let touch = |g: &Group, hi: &Option<Int>, l: &Option<Int>| match (hi, l) {
+        (Some(h), Some(l)) if &(h + &Int::ONE) < l => {
+            let t = Lin {
+                terms: g.1.clone(),
+                constant: Int::ZERO,
+            };
+            let gap = [
+                Con::ge(&t, &Lin::constant(h + &Int::ONE)),
+                Con::ge(&Lin::constant(l - &Int::ONE), &t),
+            ];
+            let rows = g.0.iter().chain(&gap).map(|c| Formula::Con(c.clone()));
+            decide(&Formula::and(rows.collect())) == Ok(false)
+        }
+        _ => true,
+    };
+    let mut live: Vec<Option<Vec<Con>>> = Vec::new();
+    let mut groups: HashMap<Group, Intervals> = HashMap::new();
+    let mut work: Vec<Vec<Con>> = pieces.into_iter().collect();
+    while let Some(p) = work.pop() {
+        let fs = forms(&p);
+        let hit = fs.iter().find_map(|(g, lo, hi)| {
+            let m = groups.get(g)?;
+            let before = (m.range(..=lo.clone()).next_back()).filter(|(_, (h, _))| touch(g, h, lo));
+            let after = (m.range((
+                std::ops::Bound::Excluded(lo.clone()),
+                std::ops::Bound::Unbounded,
+            )))
+            .next()
+            .filter(|(l, _)| touch(g, hi, l));
+            let (l, (h, id)) = before.or(after)?;
+            Some((g, lo, hi, l.clone(), h.clone(), *id))
+        });
+        // A piece in a group is live: its entries leave the groups when it is merged.
+        let hit = hit.and_then(|(g, lo, hi, l, h, id)| Some((g, lo, hi, l, h, live[id].take()?)));
+        let Some((g, lo, hi, l, h, q)) = hit else {
+            for (g, lo, hi) in fs {
+                groups.entry(g).or_default().insert(lo, (hi, live.len()));
+            }
+            live.push(Some(p));
+            continue;
+        };
+        for (g, lo, _) in forms(&q) {
+            if let Some(m) = groups.get_mut(&g) {
+                m.remove(&lo);
+            }
+        }
+        let lo = lo.clone().min(l);
+        let hi = match (hi, h) {
+            (Some(a), Some(b)) => Some(a.clone().max(b)),
+            _ => None,
+        };
+        let t = Lin {
+            terms: g.1.clone(),
+            constant: Int::ZERO,
+        };
+        let mut merged = g.0.clone();
+        match (&lo, &hi) {
+            (Some(l), Some(h)) if l == h => merged.push(Con::eq(&t, &Lin::constant(l.clone()))),
+            _ => {
+                if let Some(l) = &lo {
+                    merged.push(Con::ge(&t, &Lin::constant(l.clone())));
+                }
+                if let Some(h) = &hi {
+                    merged.push(Con::ge(&Lin::constant(h.clone()), &t));
+                }
+            }
+        }
+        merged.sort();
+        merged.dedup();
+        work.push(merged);
+    }
+    live.into_iter().flatten().collect()
 }
 
 /// Whether `f` is the definition of a variable with no definition: `true`.
@@ -3142,5 +3682,63 @@ mod tests {
         // A row that no other implies is kept, and a lone row too.
         let lone = vec![con(&[(0, 1)], 1, Rel::Ge)];
         assert_eq!(lean(lone.clone()), lone);
+    }
+
+    #[test]
+    fn envelope_drops_the_bounds_under_the_others_of_their_form() {
+        // `x >= 2^k * (q3 + q4) - 9 * 2^k`, k = 1 to 7: lines through one point, so the middle
+        // ones lie under the steepest and the flattest. `decide` refuses to show it (k = 2 to 6
+        // stay in `lean` without the envelope).
+        let powers: Vec<Con> = (1..=7)
+            .map(|k| {
+                let m = 1i64 << k;
+                con(&[(0, 1), (3, -m), (4, -m)], 9 * m, Rel::Ge)
+            })
+            .collect();
+        assert_eq!(
+            envelope(powers.clone()),
+            vec![powers[0].clone(), powers[6].clone()]
+        );
+        // Of one slope the highest; upper bounds likewise (`x <= 2 * q1` under `x <= q1` and
+        // `x <= 3 * q1`); the rows of other forms or other atoms kept.
+        let rows = vec![
+            con(&[(0, 1), (1, -2)], -3, Rel::Ge),
+            con(&[(0, 1), (1, -2)], -5, Rel::Ge),
+            con(&[(0, -1), (1, 1)], 0, Rel::Ge),
+            con(&[(0, -1), (1, 3)], 0, Rel::Ge),
+            con(&[(0, -1), (1, 2)], 0, Rel::Ge),
+            con(&[(0, 1), (2, -2)], 0, Rel::Ge),
+            con(&[(0, 1), (1, -2)], 0, Rel::Eq),
+        ];
+        let kept = envelope(rows.clone());
+        let want = [1, 2, 3, 5, 6].map(|i| rows[i].clone());
+        assert_eq!(kept, want);
+        // Each line on the envelope is kept: `x >= 2 * q1 + 1` is above `x >= q1` and `x >= 3 *
+        // q1 - 10` where they cross (q1 = 5).
+        let hull = vec![
+            con(&[(0, 1), (1, -1)], 0, Rel::Ge),
+            con(&[(0, 1), (1, -2)], -1, Rel::Ge),
+            con(&[(0, 1), (1, -3)], 10, Rel::Ge),
+        ];
+        assert_eq!(envelope(hull.clone()), hull);
+    }
+
+    #[test]
+    fn merge_pieces_joins_intervals_whose_gap_has_no_point() {
+        // `x == 0` and `x == 2` beside `x == 2 * y`: `x == 1` has no point there, so the two are
+        // `0 <= x <= 2` beside it.
+        let even = con(&[(0, 1), (1, -2)], 0, Rel::Eq);
+        let at = |c: i64| con(&[(0, 1)], -c, Rel::Eq);
+        let pieces = BTreeSet::from([vec![even.clone(), at(0)], vec![even.clone(), at(2)]]);
+        let mut want = vec![
+            even,
+            con(&[(0, 1)], 0, Rel::Ge),
+            con(&[(0, -1)], 2, Rel::Ge),
+        ];
+        want.sort();
+        assert_eq!(merge_pieces(pieces), vec![want]);
+        // Alone, `x == 1` is a point between them: the two stay apart.
+        let pieces = BTreeSet::from([vec![at(0)], vec![at(2)]]);
+        assert_eq!(merge_pieces(pieces.clone()).len(), 2);
     }
 }
