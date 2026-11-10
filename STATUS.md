@@ -1737,23 +1737,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | A55-spec | impl attempt 1 | 2026-11-09 16:33 | ready: wt/a55 507f7121, wt/a55-spec eb375db; A55 answer A applied, parity typed, soundness law + Galois text added; sync --check 0, grammar check 0; l01/m0_03/l |
-| A56-spec | impl attempt 1 | 2026-11-09 16:18 | ready: zed-impl 9e3a6f6e on wt/a56, spec 72af31b on wt/a56-spec; 121 pieces 1 failed (l01_10 count 1919 vs 1917, same on origin/main fences, pre-existing); sync |
 | BLOCKS-remove-local | impl attempt 1 | 2026-11-09 15:18 | ready: 6d34cd6e on wt/blocks-remove-local; 391 pieces pass, doc/clippy/fmt clean; not pushed / load 23.20 |
 | CK-data-memo | impl attempt 2 | 2026-11-07 23:45 | negative controls (not committed, reverted): exact set walk per row -> disjoint 56.0x bytes (fails); memos off -> shared-rows test killed at 60 s, load1 27-30 |
-| CX-tradeoff-krows | impl attempt 1 | 2026-11-09 15:42 | ready 611c7ec4 on wt/cx-krows: 477 rows checked, 101 comments added, 67 completed, 9 stale fixed; 80 test pieces and doc pass / load 18.34 |
-| CX-tradeoff-review | impl attempt 1 | 2026-11-09 15:11 | ready wt/cx-tradeoff-review 1373f81f: 48 partial + 2 stale tradeoff comments fixed, comments only; K-row search for missing comments left; fmt, clippy, doc, s_0 |
-| GROUP-overlaps-names | impl attempt 1 | 2026-11-09 14:55 | TEMP code removed; scaling test 8.1/8.1/8.2x; negative control 57.8x bytes (fails); docs updated; final run with doc check started / load 13.72 |
+| GROUP-overlaps-names | impl attempt 1 | 2026-11-09 14:55 | ready f35c9a00: 302 pieces 0 failed with doc check, clippy and fmt clean; open GROUP-overlaps-lower / load 14.17 |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
-| PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | repair ready b9a464bd: reference walk now same order as the walk, quadratic copy deleted after 8,000-seed agreement; walk's own superlinear forms (a)-(c) open f |
-| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | ready: wt/lto-cost d61b1c8d on origin/main eae094cc; Cargo.toml deps cgu1; 757M->719M / 1077M->1016M / 989M->943M; 54/54 pieces pass; deletes: perf data and scr |
 | PA-walk-nest-cost | impl attempt 1 | 2026-11-09 15:39 | ready 078dca93 on origin/main 87a45509; targeted 527 pieces 0 failed / load 37.20 47.47 36.21 |
 | PRES-each-settle-share | impl attempt 1 | 2026-11-09 15:16 | started on 55b632b9, worktree /home/luke/Work/wt/pres-each-settle-share / load 11.77 11.55 14.83 |
 | PRES-pendants-wider | impl attempt 1 | 2026-11-09 15:16 | candidate ends from disjunct projections: 11/226 z1 and 14/271 z0 now exact; disj_groups 20/20 / load 13.53 23.67 24.12 |
-| PRES-product-parity | impl attempt 1 | 2026-11-09 15:51 | ready 9f60144e on wt/product-parity (rebased on ecb20b59): 519 pieces 0 failed with doc check, load 12-35; l01_38 instr after/before 0.968-1.006; PRES-model-pro |
-| PRES-small-front | impl attempt 1 | 2026-11-09 14:43 | ready 4d29be86 on wt/small-front (stacked on wt/pres-small-cost): bounds in propagation + fast-path constant halved; point tried for decide dropped (changed ref |
 | QUESTIONS-cleanup | impl attempt 1 | 2026-11-09 16:52 | ready: zed c2dcb5b (wt/questions-cleanup), zed-impl df82d402 (wt/questions-cleanup-impl); not pushed |
-| R2-frames-gaps | impl attempt 1 | 2026-11-09 15:08 | ready: zed-impl c2fe4350 on wt/r2-frames-gaps, spec b4113c8 on wt/r2-frames-gaps-spec; keys kept as step numbers (not renumbered); laws over ::frames not reads; |
-| TEST-group-oracle-enum | impl attempt 1 | 2026-11-09 15:42 | rebased (no conflict) on origin/main eae094cc; commit is fe298ed1; ledger ready |
 | TIGHTEN-each-whole | impl attempt 1 | 2026-11-09 14:19 | ready: wt/tighten-each-whole 757335f3; final run 526 pieces, 1 failed (l01_07 copies: spec DESIGN.md changed at 16:43, not this branch); clippy, fmt clean; foll |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
