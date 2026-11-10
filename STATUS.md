@@ -1737,7 +1737,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | A55-spec | impl attempt 1 | 2026-11-09 16:33 | ready: wt/a55 507f7121, wt/a55-spec eb375db; A55 answer A applied, parity typed, soundness law + Galois text added; sync --check 0, grammar check 0; l01/m0_03/l |
-| BATCH-90 | running | 2026-11-09 17:33 |  |
 | BLOCKS-remove-local | impl attempt 1 | 2026-11-09 15:18 | ready: 6d34cd6e on wt/blocks-remove-local; 391 pieces pass, doc/clippy/fmt clean; not pushed / load 23.20 |
 | CK-data-memo | impl attempt 2 | 2026-11-07 23:45 | negative controls (not committed, reverted): exact set walk per row -> disjoint 56.0x bytes (fails); memos off -> shared-rows test killed at 60 s, load1 27-30 |
 | GROUP-overlaps-names | impl attempt 1 | 2026-11-09 14:55 | ready f35c9a00: 302 pieces 0 failed with doc check, clippy and fmt clean; open GROUP-overlaps-lower / load 14.17 |
