@@ -591,6 +591,8 @@ pub const LATER_TYPES: &[(&str, u32)] = &[
     ("FloatClass", 11),
     ("Constraints", 11),
     ("UnitText", 12),
+    ("UnitDef", 12),
+    ("UnitSpelling", 12),
     ("complex", 14),
     ("quat", 14),
     ("oct", 14),

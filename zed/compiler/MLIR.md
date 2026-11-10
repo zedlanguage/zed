@@ -141,7 +141,7 @@ Inline sizes, `size_of` on x86-64 (the heap cell as the tests build it, with fea
 | `zir::Node` | 112 |
 | `zir::Op` | 40 |
 | `zir::Src` | 56 |
-| `zir::Edge` | 120 |
+| `zir::Edge` | 104 |
 | `zir::Region` | 80 |
 | `native Word` | 16 |
 | `native heap cell` | 144 |
@@ -156,6 +156,9 @@ record):
 - ZIR: 694 nodes in the 109 graphs of the closed terms the tables run, 649,448 bytes, 935
   bytes per node. A node's inline 112 bytes are a small part; its input, output and region
   vectors (56 bytes per input, 120 per output edge) and each region's vectors hold the rest.
+  Since item INTERVAL-persistent (2026-11-10) an output edge takes 104 bytes: the interval set
+  of its domain is one pointer to a shared tree instead of a 24-byte vector. The figures in this
+  list are those of 2026-11-05.
 - Native values: 109 runs allocated 195 heap cells, at most 8 live at once in one run. An
   unboxed value is one 16-byte word; a boxed one is a word and a 144-byte cell, plus its
   payload's own blocks. An atom with no payload is a word and takes no cell; one with a payload
