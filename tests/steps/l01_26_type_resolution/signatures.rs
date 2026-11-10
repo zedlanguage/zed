@@ -4,7 +4,7 @@
 
 use zedc::check::ty::{OTHER, Row};
 
-use super::{sig, sig_of, type_errors};
+use super::{menu, sig, sig_of, type_errors};
 
 #[test]
 fn arithmetic_gives_a_variable_bounded_by_the_numeric_carriers() {
@@ -130,10 +130,17 @@ fn a_default_is_checked_at_its_parameters_type() {
     // a decimal literal in it a carrier, as nothing does in `rate = 0.2;` (step L1.26b).
     assert_eq!(
         type_errors("tax(price, rate = 0.2) = price * rate;\n"),
-        [
-            "the literal `0.2` is a decimal, and nothing here gives it a carrier; a decimal literal takes the carrier of its use, never `int`, and Zed does not choose one for it; write `rate = 0.2f64`, `rate = 0.2r` or `rate: f64 = 0.2` [0.2]"
-        ]
+        [format!(
+            "the literal `0.2` is a decimal, and nothing here gives it a carrier; a decimal \
+             literal takes the carrier of its use, never `int`, and Zed does not choose one for \
+             it{} [0.2]",
+            menu(&[
+                ("tax(price, rate = 0.2f64) = price * rate;", "rate is 0.2"),
+                ("tax(price, rate = 0.2r) = price * rate;", "rate is 1r/5r"),
+            ])
+        )]
     );
+    assert!(type_errors("tax(price, rate = 0.2r) = price * rate;\n").is_empty());
     assert_eq!(sig("f(x = 1) = x;\n", "f"), "(x: int) -> int");
     assert_eq!(sig("f(x: f64 = 1 / 2) = x;\n", "f"), "(x: f64) -> f64");
 }

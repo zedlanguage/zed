@@ -10,7 +10,7 @@ use zed_kernel::{F64, Value};
 use zed_tests::scaling;
 use zedc::testing::test;
 
-use super::{info, type_errors};
+use super::{info, menu, type_errors};
 use zed_tests::step_helpers::l01_16_elaboration::value;
 
 /// The values the literals of `text` adopt, sorted by position.
@@ -25,16 +25,26 @@ fn f64(x: f64) -> Value {
     Value::Float(F64::new(x))
 }
 
-/// The rejection of the literal `lit` at `rat | f64`, which can be either.
-fn two_carriers(lit: &str) -> String {
-    let digits = lit.trim_start_matches('-');
-    let float = match digits.contains('.') {
-        true => format!("{lit}f64"),
-        false => format!("{lit}.0f64"),
+/// The rejection of the literal `lit` at `rat | f64`, which can be either, with a fix for
+/// each: the line `line` gives with the literal written with that carrier.
+fn two_carriers(lit: &str, line: impl Fn(&str) -> String) -> String {
+    let float = match lit.contains('.') {
+        true => lit.to_string(),
+        false => format!("{lit}.0"),
     };
     format!(
         "the literal `{lit}` can be a `rat` or an `f64` at `rat | f64`, and nothing here chooses \
-         one; write `{lit}r` or `{float}` [{lit}]"
+         one{} [{lit}]",
+        menu(&[
+            (
+                &line(&format!("{lit}r")),
+                &format!("the literal is then exactly {lit}, a rat")
+            ),
+            (
+                &line(&format!("{float}f64")),
+                &format!("the literal is then the f64 {float}")
+            ),
+        ])
     )
 }
 
@@ -127,7 +137,7 @@ fn a_literal_at_a_union_of_two_carriers() {
     // Two carriers, neither `int`: nothing chooses one. The note that writes `f`'s type names
     // the part it uses twice, `T1`.
     for lit in ["1", "-1", "0.5"] {
-        let defined = two_carriers(lit).replace(
+        let defined = two_carriers(lit, |w| format!("y = f({w});")).replace(
             &format!(" [{lit}]"),
             &format!(
                 "\n  T1 stands for a part written more than once:\n    type T1 = rat | f64; [{lit}]"
@@ -156,11 +166,14 @@ fn literals_in_a_tuple_take_its_components_carriers() {
     // An inexact component is an error at that literal.
     assert_eq!(
         type_errors("f(positional p: (f64, f64)) = p;\ny = f((9007199254740993, 1));\n"),
-        [
+        [format!(
             "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact; write `9007199254740992` \
-             [9007199254740993]"
-        ]
+             integer literal takes a carrier only where it is exact{} [9007199254740993]",
+            menu(&[(
+                "y = f((9007199254740992, 1));",
+                "the literal is then 9007199254740992.0, the nearer f64 by ties to even"
+            )])
+        )]
     );
 }
 
@@ -185,7 +198,7 @@ fn literals_in_a_tuple_take_the_carrier_every_shape_of_its_length_holds_there() 
     // carrier, the same error as for a lone literal.
     assert_eq!(
         type_errors("tu(positional p: (f64, String) | (rat, String)) = p;\ny = tu((1, \"a\"));\n"),
-        [two_carriers("1")]
+        [two_carriers("1", |w| format!("y = tu(({w}, \"a\"));"))]
     );
     // Two carriers, int among them: the integer literal is an `int`, nothing adopted.
     let text = "tu(positional p: (int, String) | (f64, String)) = p;\ny = tu((1, \"a\"));\n";
@@ -239,11 +252,21 @@ fn literals_in_a_tuple_compared_with_a_tuple() {
     // A bare decimal meets only a bare integer, so nothing gives it a carrier.
     assert_eq!(
         type_errors("y = (1, (2, 3)) == (1.0, (2r, 3));\n"),
-        [
+        [format!(
             "the literal `1.0` is a decimal, and nothing here gives it a carrier; a decimal \
              literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-             it; write `1.0f64` or `1.0r` [1.0]"
-        ]
+             it{} [1.0]",
+            menu(&[
+                (
+                    "y = (1, (2, 3)) == (1.0f64, (2r, 3));",
+                    "the literal is then the f64 1.0"
+                ),
+                (
+                    "y = (1, (2, 3)) == (1.0r, (2r, 3));",
+                    "the literal is then exactly 1.0, a rat"
+                ),
+            ])
+        )]
     );
     // A literal beside a value in a tuple: `(x, 1) == (y, z)` with `z: f64`.
     assert!(
@@ -397,49 +420,79 @@ fn a_literal_compared_with_a_union() {
     // Two, neither `int`: nothing chooses one, on either side.
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = x == 1;\n"),
-        [two_carriers("1")]
+        [two_carriers("1", |w| format!(
+            "f(positional x: f64 | rat) = x == {w};"
+        ))]
     );
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = 1 != x;\n"),
-        [two_carriers("1")]
+        [two_carriers("1", |w| format!(
+            "f(positional x: f64 | rat) = {w} != x;"
+        ))]
     );
 }
 
 #[test]
 fn a_number_literal_compared_with_a_string_is_rejected() {
     // Author decision A15 (2026-11-09): no carrier of `1` is a string, so `x == 1` is never
-    // true; the repairs compare the text or read the number it holds.
-    let want = "the literal `1` is a number, and `x` is a `String` here, which no number \
-                equals, so the comparison always gives the same answer; write `x == \"1\"` to \
-                compare the text or `int(x) == 1` to compare the number the text holds [1]";
-    assert_eq!(type_errors("f(positional x: String) = x == 1;\n"), [want]);
+    // true; the fixes compare the text or read the number it holds.
+    let want = |head: &str, tail: &str| {
+        never_equal(
+            "String",
+            &[
+                (&format!("{head}x == \"1\"{tail}"), "compares the text"),
+                (
+                    &format!("{head}int(x) == 1{tail}"),
+                    "compares the number the text holds",
+                ),
+            ],
+        )
+    };
+    assert_eq!(
+        type_errors("f(positional x: String) = x == 1;\n"),
+        [want("f(positional x: String) = ", ";")]
+    );
     assert_eq!(
         type_errors("f(positional x: #none | String) = x == 1;\n"),
-        [want]
+        [want("f(positional x: #none | String) = ", ";")]
     );
     // An inferred parameter that `++` makes a string, before the comparison or after it.
     assert_eq!(
         type_errors("f(positional x) = (x ++ \"a\" == \"a\") && x == 1;\n"),
-        [want]
+        [want("f(positional x) = (x ++ \"a\" == \"a\") && ", ";")]
     );
     assert_eq!(
         type_errors("f(positional x) = x == 1 && (x ++ \"a\" == \"a\");\n"),
-        [want]
+        [want("f(positional x) = ", " && (x ++ \"a\" == \"a\");")]
     );
-    // A decimal on the left of `!=`: the repairs keep the operator and the order.
+    // A decimal on the left of `!=`: the fixes keep the operator and the order.
     assert_eq!(
         type_errors("f(positional x: String) = 1.5 != x;\n"),
-        [
+        [format!(
             "the literal `1.5` is a number, and `x` is a `String` here, which no number equals, \
-             so the comparison always gives the same answer; write `\"1.5\" != x` to compare \
-             the text, `1.5 != f64(x)` or `1.5 != rat(x)` to compare the number the text holds \
-             [1.5]"
-        ]
+             so the comparison always gives the same answer{} [1.5]",
+            menu(&[
+                (
+                    "f(positional x: String) = \"1.5\" != x;",
+                    "compares the text"
+                ),
+                (
+                    "f(positional x: String) = 1.5 != f64(x);",
+                    "compares the number the text holds"
+                ),
+                (
+                    "f(positional x: String) = 1.5 != rat(x);",
+                    "compares the number the text holds"
+                ),
+            ])
+        )]
     );
-    // Each repair checks, and so does a comparison with an atom.
+    // Each fix checks, and so does a comparison with an atom.
     for ok in [
         "f(positional x: String) = x == \"1\";\n",
         "f(positional x: String) = int(x) == 1;\n",
+        "f(positional x) = (x ++ \"a\" == \"a\") && int(x) == 1;\n",
+        "f(positional x) = x == \"1\" && (x ++ \"a\" == \"a\");\n",
         "f(positional x: String) = 1.5 != f64(x);\n",
         "f(positional x: String) = 1.5 != rat(x);\n",
         "f(positional x: String | #none) = x == #none;\n",
@@ -457,12 +510,23 @@ fn a_number_literal_compared_with_a_string_is_rejected() {
 }
 
 /// The rejection of `1` compared by `==` or `!=` with `x` of the type `ty`, which holds no
-/// number, with the repairs `repairs`.
-fn never_equal(ty: &str, repairs: &str) -> String {
+/// number, with the fixes `fixes`.
+fn never_equal(ty: &str, fixes: &[(&str, &str)]) -> String {
     format!(
         "the literal `1` is a number, and `x` is a `{ty}` here, which no number equals, so the \
-         comparison always gives the same answer; write {repairs} [1]"
+         comparison always gives the same answer{} [1]",
+        menu(fixes)
     )
+}
+
+/// The fixes of a comparison with a `bool`: `line` with `true`, then with `false`.
+fn truth(line: impl Fn(&str) -> String) -> [(String, &'static str); 2] {
+    ["true", "false"].map(|b| (line(b), "compares with a truth value"))
+}
+
+/// `fixes` as the pairs [`menu`] takes.
+fn refs<'a>(fixes: &'a [(String, &'static str)]) -> Vec<(&'a str, &'static str)> {
+    fixes.iter().map(|(l, h)| (l.as_str(), *h)).collect()
 }
 
 #[test]
@@ -474,87 +538,133 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
         type_errors("f(positional x: bool) = x == 1;\n"),
         [never_equal(
             "bool",
-            "`x == true` or `x == false` to compare with a truth value"
+            &refs(&truth(|b| format!("f(positional x: bool) = x == {b};")))
         )]
     );
     assert_eq!(
         type_errors("f(positional x: bool | #none) = 1 != x;\n"),
         [never_equal(
             "bool",
-            "`true != x` or `false != x` to compare with a truth value"
+            &refs(&truth(|b| format!(
+                "f(positional x: bool | #none) = {b} != x;"
+            )))
         )]
     );
-    let pair = "`x[0] == 1` or `x[1] == 1` to compare a component";
+    let pair = |head: &str| {
+        [0, 1].map(|i| {
+            (
+                format!("{head}x[{i}] == 1;"),
+                format!("compares component {i}"),
+            )
+        })
+    };
+    let menu_of = |ty: &str, p: [(String, String); 2]| {
+        let p: Vec<(&str, &str)> = p.iter().map(|(l, h)| (l.as_str(), h.as_str())).collect();
+        never_equal(ty, &p)
+    };
     assert_eq!(
         type_errors("f(positional x: (int, int)) = x == 1;\n"),
-        [never_equal("(int, int)", pair)]
+        [menu_of(
+            "(int, int)",
+            pair("f(positional x: (int, int)) = ")
+        )]
     );
     assert_eq!(
         type_errors("f(positional x: (int, String)) = 1 == x;\n"),
         [never_equal(
             "(int, String)",
-            "`1 == x[0]` to compare a component"
+            &[(
+                "f(positional x: (int, String)) = 1 == x[0];",
+                "compares component 0"
+            )]
         )]
     );
     // Shapes of two lengths: an index both have.
     assert_eq!(
         type_errors("f(positional x: (int, int) | (int, int, int) | #none) = x == 1;\n"),
-        [never_equal("(int, int) | (int, int, int)", pair)]
+        [menu_of(
+            "(int, int) | (int, int, int)",
+            pair("f(positional x: (int, int) | (int, int, int) | #none) = ")
+        )]
     );
     // A string on the other side too, and both orders for it.
     assert_eq!(
         type_errors("f(positional x: String) = 1 == x;\n"),
         [never_equal(
             "String",
-            "`\"1\" == x` to compare the text or `1 == int(x)` to compare the number the text \
-             holds"
+            &[
+                ("f(positional x: String) = \"1\" == x;", "compares the text"),
+                (
+                    "f(positional x: String) = 1 == int(x);",
+                    "compares the number the text holds"
+                ),
+            ]
         )]
     );
+    let either = "f(positional x: bool | String) = x == ";
     assert_eq!(
         type_errors("f(positional x: bool | String) = x == 1;\n"),
         [never_equal(
             "bool | String",
-            "`x == \"1\"` to compare the text, `x == true` or `x == false` to compare with a \
-             truth value"
+            &[
+                (&format!("{either}\"1\";"), "compares the text"),
+                (&format!("{either}true;"), "compares with a truth value"),
+                (&format!("{either}false;"), "compares with a truth value"),
+            ]
         )]
     );
     // An inferred parameter that `&&` makes a `bool`, before the comparison or after it.
-    let bool_menu = "`x == true` or `x == false` to compare with a truth value";
     assert_eq!(
         type_errors("f(positional x) = (x && true) || x == 1;\n"),
-        [never_equal("bool", bool_menu)]
+        [never_equal(
+            "bool",
+            &refs(&truth(|b| format!(
+                "f(positional x) = (x && true) || x == {b};"
+            )))
+        )]
     );
     assert_eq!(
         type_errors("f(positional x) = 1 == x || (x && true);\n"),
         [never_equal(
             "bool",
-            "`true == x` or `false == x` to compare with a truth value"
+            &refs(&truth(|b| format!(
+                "f(positional x) = {b} == x || (x && true);"
+            )))
         )]
     );
-    // An operand that is no name: the repairs say what to write where.
+    // An operand that is no name: the fixes write in place of the literal.
     assert_eq!(
         type_errors("f(positional x: bool) = (x && x) == 1;\n"),
-        [
+        [format!(
             "the literal `1` is a number, compared by `==` with a `bool`, which no number \
-             equals; write `true` or `false` in place of the literal to compare with a truth \
-             value [1]"
-        ]
+             equals, so the comparison always gives the same answer{} [1]",
+            menu(&refs(&truth(|b| format!(
+                "f(positional x: bool) = (x && x) == {b};"
+            ))))
+        )]
     );
-    // No repair of those fits: the answer the comparison always gives.
+    // No fix of those fits: the answer the comparison always gives.
     assert_eq!(
         type_errors("f(positional x: (String, bool)) = x != 1;\n"),
-        [
+        [format!(
             "the literal `1` is a number, and `x` is a `(String, bool)` here, which no number \
-             equals, so the comparison always gives `true`; write `true` in place of `x != 1` [1]"
-        ]
+             equals, so the comparison always gives `true`{} [1]",
+            menu(&[(
+                "f(positional x: (String, bool)) = true;",
+                "the answer the comparison always gives"
+            )])
+        )]
     );
     assert_eq!(
         type_errors("f(positional x: (int, int)) = 1.5 == x;\n"),
-        [
+        [format!(
             "the literal `1.5` is a number, and `x` is a `(int, int)` here, which no number \
-             equals, so the comparison always gives `false`; write `false` in place of \
-             `1.5 == x` [1.5]"
-        ]
+             equals, so the comparison always gives `false`{} [1.5]",
+            menu(&[(
+                "f(positional x: (int, int)) = false;",
+                "the answer the comparison always gives"
+            )])
+        )]
     );
 }
 
@@ -563,20 +673,28 @@ fn a_number_literal_in_a_tuple_compared_with_a_component_that_holds_no_number_is
     // Component by component, as a literal in a tuple reads a declared tuple type.
     assert_eq!(
         type_errors("f(positional p: (String, int)) = p == (1, 2);\n"),
-        [
+        [format!(
             "the literal `1` is a number, and the component of `p` it is compared with by `==` \
              is a `String` here, which no number equals, so the comparison always gives the \
-             same answer; write `\"1\"` in its place to compare the text [1]"
-        ]
+             same answer{} [1]",
+            menu(&[(
+                "f(positional p: (String, int)) = p == (\"1\", 2);",
+                "compares the text"
+            )])
+        )]
     );
     assert_eq!(
         type_errors("f(positional p: (bool, int)) = (1, 2) != p;\n"),
-        [
+        [format!(
             "the literal `1` is a number, and the component of `p` it is compared with by `!=` \
              is a `bool` here, which no number equals, so the comparison always gives the same \
-             answer; write `true` or `false` in its place to compare with a truth value [1]"
-        ]
+             answer{} [1]",
+            menu(&refs(&truth(|b| format!(
+                "f(positional p: (bool, int)) = ({b}, 2) != p;"
+            ))))
+        )]
     );
+    // No value of a tuple type is offered: the message asks for one.
     assert_eq!(
         type_errors("f(positional p: ((int, int), int)) = p == (1, 2);\n"),
         [
@@ -669,7 +787,13 @@ fn literals_in_a_tuple_compared_with_a_union_of_tuple_shapes_take_across_the_sha
     // Numbers of two carriers at a component across the shapes, neither `int`.
     assert_eq!(
         type_errors("isAt(positional p: (f64, f64) | (rat, rat)) = p == (1, 2.0);\n"),
-        [two_carriers("1"), two_carriers("2.0")]
+        {
+            let at = |w: &str| format!("isAt(positional p: (f64, f64) | (rat, rat)) = p == {w};");
+            [
+                two_carriers("1", |w| at(&format!("({w}, 2.0)"))),
+                two_carriers("2.0", |w| at(&format!("(1, {w})"))),
+            ]
+        }
     );
 }
 

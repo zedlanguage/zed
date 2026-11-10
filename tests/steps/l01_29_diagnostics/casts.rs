@@ -287,7 +287,8 @@ fn a_plain_literal_beside_a_value_of_another_carrier_is_a_case_of_the_row() {
     assert!(
         out.starts_with(
             "1:20: the literal `1.5` is a decimal, and `+` expects `int`, the carrier of `q`; a \
-             decimal literal is never an `int`; write `f64(q) + 1.5`"
+             decimal literal is never an `int`\n  fixes, each checked here:\n    half(q: int) = \
+             f64(q) + 1.5;    q is cast to f64, and `+` takes two f64\n"
         ),
         "{out}"
     );

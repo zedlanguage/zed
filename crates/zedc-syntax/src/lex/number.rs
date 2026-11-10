@@ -172,9 +172,10 @@ fn run_on(text: &str, pos: usize, end: usize, radix: u32) -> Error {
     } else if radix == 10 && ["f16", "bf16", "f32", "f64"].contains(&&text[end..run]) {
         // An integer takes no format suffix (DESIGN.md L1.26b): `1f64`.
         let name = &text[end..run];
+        let a = if name == "bf16" { "a" } else { "an" };
         format!(
-            "the number `{d}` runs into the name `{name}` with nothing between them, and an \
-             integer takes no format suffix. Write `{d}.0{name}` for an `{name}`, or `{d}`, which \
+            "`{d}{name}` is the integer `{d}` with the format suffix `{name}`, and only a decimal \
+             literal takes a format suffix. Write `{d}.0{name}` for {a} `{name}`, or `{d}`, which \
              takes the carrier of its use."
         )
     } else {

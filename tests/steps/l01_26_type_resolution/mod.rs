@@ -37,5 +37,5 @@ mod soundness;
 mod tuple_keys;
 
 pub(crate) use zed_tests::step_helpers::l01_26_type_resolution::{
-    Resolved, info, sig, sig_of, type_errors,
+    Resolved, info, menu, sig, sig_of, type_errors,
 };

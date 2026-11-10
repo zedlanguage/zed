@@ -12,7 +12,7 @@ use zed_kernel::{Shared, Term};
 
 use crate::address::ContentAddress;
 use crate::ast::{self, Error, Stmt, StmtKind};
-use crate::elab::{Unit, elaborate};
+use crate::elab::{Unit, elaborate_text};
 use crate::lex::{self, Span};
 use crate::parse::{TOP, parse};
 use crate::resolve::{self, Alone};
@@ -504,7 +504,9 @@ pub(crate) fn compile(text: &str) -> Front {
     let mut errors = work::stage(Stage::Docs, None, || {
         docs::check(text, &tokens, &docs, &res)
     });
-    let elaborated = work::stage(Stage::Elaborate, None, || elaborate(&stmts, &res));
+    let elaborated = work::stage(Stage::Elaborate, None, || {
+        elaborate_text(&stmts, &res, Some(text))
+    });
     let mut unit = match elaborated {
         Ok(unit) if errors.is_empty() => unit,
         Ok(_) => return Err(all(errors)),

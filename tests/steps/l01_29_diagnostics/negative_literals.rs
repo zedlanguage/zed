@@ -38,22 +38,24 @@ fn a_negative_literal_a_carrier_holds_takes_it() {
 
 #[test]
 fn each_menu_names_the_signed_forms_the_type_holds() {
+    // The first line of each rejection; the fixes under it, each the corrected line with its
+    // signed literal, are pinned and checked in l01_26a_generic_literals/fixes.rs.
     let decimal_at_int = |lit: &str, forms: &str| {
         format!(
             "2:7: the literal `{lit}` is a decimal, and `int` is expected here; a decimal literal \
              is never an `int`{forms}"
         )
     };
-    let two_carriers = |lit: &str, forms: &str| {
+    let two_carriers = |lit: &str| {
         format!(
             "2:7: the literal `{lit}` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
-             chooses one; write {forms}"
+             chooses one"
         )
     };
-    let no_exact = |lit: &str, forms: &str| {
+    let no_exact = |lit: &str| {
         format!(
             "2:7: the literal `{lit}` has no exact `f64`, and `f64` is expected here; an integer \
-             literal takes a carrier only where it is exact{forms}"
+             literal takes a carrier only where it is exact"
         )
     };
     let cases = [
@@ -61,32 +63,19 @@ fn each_menu_names_the_signed_forms_the_type_holds() {
         (
             "int",
             "-3.0",
-            decimal_at_int("-3.0", ", even when its value is an integer; write `-3`"),
+            decimal_at_int("-3.0", ", even when its value is an integer"),
         ),
         (
             "rat",
             "-2.5f64",
             "2:7: the literal `-2.5f64` is an `f64` by its suffix, and `rat` is expected here; a \
-             suffix fixes a literal's carrier; write `-2.5r`"
+             suffix fixes a literal's carrier"
                 .to_string(),
         ),
-        ("f64 | rat", "-3", two_carriers("-3", "`-3r` or `-3.0f64`")),
-        (
-            "f64 | rat",
-            "-2.5",
-            two_carriers("-2.5", "`-2.5r` or `-2.5f64`"),
-        ),
-        (
-            "f64",
-            "-9007199254740993",
-            no_exact("-9007199254740993", "; write `-9007199254740992`"),
-        ),
-        // A literal in another base gets no decimal form.
-        (
-            "f64",
-            "-0x20000000000001",
-            no_exact("-0x20000000000001", ""),
-        ),
+        ("f64 | rat", "-3", two_carriers("-3")),
+        ("f64 | rat", "-2.5", two_carriers("-2.5")),
+        ("f64", "-9007199254740993", no_exact("-9007199254740993")),
+        ("f64", "-0x20000000000001", no_exact("-0x20000000000001")),
     ];
     let wrong: Vec<String> = cases
         .iter()
@@ -96,6 +85,9 @@ fn each_menu_names_the_signed_forms_the_type_holds() {
         })
         .collect();
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    // A literal in another base gets no decimal form, so no fix.
+    let hex = rejected("f(positional x: f64) = x;\ny = f(-0x20000000000001);\n");
+    assert!(!hex.contains("fixes, each checked here"), "{hex}");
 }
 
 #[test]
@@ -105,7 +97,7 @@ fn an_operand_and_an_argument_at_a_fixed_class_point_at_the_minus() {
     assert_eq!(
         head("offset(positional x: int) = x + -2.5;\n"),
         "1:33: the literal `-2.5` is a decimal, and `+` expects `int`, the carrier of `x`; a \
-         decimal literal is never an `int`; write `f64(x) + -2.5`"
+         decimal literal is never an `int`"
     );
     assert_eq!(
         head("isTwo(positional x) = x div 2 == 1;\ny = isTwo(-2.5);\n"),

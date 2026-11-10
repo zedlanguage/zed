@@ -7,6 +7,7 @@
 //! The carriers here are `int`, `f64` and `rat`: `bf16`, `f16` and `f32` join the bounds of
 //! these signatures with item FLOAT-f32.
 
+mod fixes;
 mod scaling;
 
 use zed_tests::tokens;
@@ -63,7 +64,8 @@ fn a_generic_function_runs_at_each_carrier() {
         [
             "the literal `2.5` is a decimal, and nothing here gives it a carrier; a decimal \
              literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-             it; write `2.5f64` or `2.5r` [2.5]"
+             it\n  fixes, each checked here:\n    y = inc(x: 2.5f64);    the literal is then the f64 \
+             2.5\n    y = inc(x: 2.5r);      the literal is then exactly 2.5, a rat [2.5]"
         ]
     );
 }
@@ -188,8 +190,9 @@ fn literals_that_nothing_fixes_and_that_no_int_holds_are_rejected_with_a_menu() 
         type_errors("half = 1 / 2;\n"),
         [
             "`half = 1 / 2` divides two integer literals, and nothing here gives them a \
-             carrier; `/` has no arrow at `int`, and Zed does not choose `f64` or `rat` for it; \
-             write `half = f64(1) / 2`, `half = 1.0f64 / 2` or `half: f64 = 1 / 2` [1 / 2]"
+             carrier; `/` has no arrow at `int`, and Zed does not choose `f64` or `rat` for \
+             it\n  fixes, each checked here:\n    half = f64(1) / 2;    half is 0.5\n    \
+             half = 1.0f64 / 2;    half is 0.5\n    half = 1r / 2;        half is 1r/2r [1 / 2]"
         ]
     );
     assert_eq!(
@@ -197,7 +200,8 @@ fn literals_that_nothing_fixes_and_that_no_int_holds_are_rejected_with_a_menu() 
         [
             "the literal `0.1` is a decimal, and nothing here gives it a carrier; a decimal \
              literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-             it; write `y = 0.1f64`, `y = 0.1r` or `y: f64 = 0.1` [0.1]"
+             it\n  fixes, each checked here:\n    y = 0.1f64;    y is 0.1\n    y = 0.1r;      y is \
+             1r/10r [0.1]"
         ]
     );
     assert_eq!(
@@ -205,7 +209,8 @@ fn literals_that_nothing_fixes_and_that_no_int_holds_are_rejected_with_a_menu() 
         [
             "the literal `1.0` is a decimal, and nothing here gives it a carrier; a decimal \
              literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-             it; write `1.0f64` or `1.0r` [1.0]"
+             it\n  fixes, each checked here:\n    y = 1 == 1.0f64;    y is true\n    y = 1 == 1.0r;      \
+             y is true [1.0]"
         ]
     );
     // The fixes the menus name each check.
@@ -227,15 +232,17 @@ fn a_literal_at_one_declared_carrier_takes_it_exactly_or_not_at_all() {
         type_errors(&id("f64", "9007199254740993")),
         [
             "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact; write `9007199254740992` \
-             [9007199254740993]"
+             integer literal takes a carrier only where it is exact\n  fixes, each checked here:\n    \
+             x = id(9007199254740992);    the literal is then 9007199254740992.0, the nearer \
+             f64 by ties to even [9007199254740993]"
         ]
     );
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = x;\ny = f(1);\n"),
         [
             "the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
-             chooses one; write `1r` or `1.0f64`\n  T1 stands for a part written more than \
+             chooses one\n  fixes, each checked here:\n    y = f(1r);        the literal is then \
+             exactly 1, a rat\n    y = f(1.0f64);    the literal is then the f64 1.0\n  T1 stands for a part written more than \
              once:\n    type T1 = rat | f64; [1]"
         ]
     );
@@ -278,7 +285,9 @@ fn a_decimal_literal_takes_a_float_format_or_rat_and_never_int() {
         type_errors("twice(x: int) = x * 2.0;\n"),
         [
             "the literal `2.0` is a decimal, and `*` expects `int`, the carrier of `x`; a \
-             decimal literal is never an `int`; write `x * 2` or `f64(x) * 2.0` [2.0]"
+             decimal literal is never an `int`\n  fixes, each checked here:\n    \
+             twice(x: int) = x * 2;           2 takes the int of x\n    \
+             twice(x: int) = f64(x) * 2.0;    x is cast to f64, and `*` takes two f64 [2.0]"
         ]
     );
     assert_eq!(
@@ -309,8 +318,14 @@ fn the_lexer_reads_no_suffix_on_an_integer() {
     );
     assert_eq!(
         err("1f64"),
-        "the number `1` runs into the name `f64` with nothing between them, and an integer \
-         takes no format suffix. Write `1.0f64` for an `f64`, or `1`, which takes the carrier \
+        "`1f64` is the integer `1` with the format suffix `f64`, and only a decimal literal \
+         takes a format suffix. Write `1.0f64` for an `f64`, or `1`, which takes the carrier of \
+         its use."
+    );
+    assert_eq!(
+        err("2bf16"),
+        "`2bf16` is the integer `2` with the format suffix `bf16`, and only a decimal literal \
+         takes a format suffix. Write `2.0bf16` for a `bf16`, or `2`, which takes the carrier \
          of its use."
     );
 }
@@ -351,7 +366,7 @@ fn batch_and_single_file_checking_agree() {
         first(1),
         Some(
             "2:12: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
-             chooses one; write `1r` or `1.0f64`"
+             chooses one"
         )
     );
     assert_eq!(alone[2], None);

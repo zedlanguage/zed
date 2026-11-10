@@ -10,7 +10,7 @@
 use zed_tests::scaling;
 
 use zed_tests::step_helpers::l01_16_elaboration::{checked, elab};
-use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
+use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, sig, type_errors};
 
 /// A function of `n` untyped parameters, each added with a generic literal: `n` class
 /// merges and `n` generic literals, nested `2n` deep.
@@ -122,4 +122,49 @@ fn a_body_of_many_generic_literal_arguments_scales() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+/// A value bound outside a function, `y = (1 + 0) /* … */ * (1 + 0) /* … */ * … * 0.5`, of `n`
+/// parenthesized sums of integer literals and a decimal: nothing gives its literals a carrier,
+/// and each sum is typed on its own, so each fix writes the first literal of every sum with a
+/// carrier, on one line of length of order n, and names the value of `y`, folded over the `2n`
+/// operations (MSG-literal-fixes). The comments make the line long beside the checker's work
+/// on each sum. Negative controls (each run once, not committed), at n = 500 and 4,000:
+/// `Rewrite::line` building a new line for each edit failed at 33.0 times the bytes;
+/// applying each edit in place by `String::replace_range`, which moves the rest of the line
+/// each time, passed at 8.2 times the work, since `memmove` costs a small fraction of an
+/// instruction per byte against the checker's work on each sum, so this test does not see
+/// that form.
+fn product(n: usize) -> String {
+    format!(
+        "y = {} * 0.5;\n",
+        vec!["(1 + 0) /* a comment the fixes keep, which makes the line long */"; n].join(" * ")
+    )
+}
+
+#[test]
+fn a_menu_of_many_edits_scales() {
+    scaling::on_a_thread(1 << 29, || {
+        let c = "/* a comment the fixes keep, which makes the line long */";
+        let one = format!(
+            "  fixes, each checked here:\n    y = (1.0f64 + 0) {c} * 0.5;    y is 0.5\n    \
+             y = (1r + 0) {c} * 0.5;        y is 1r/2r"
+        );
+        let [m] = &type_errors(&product(1))[..] else {
+            panic!("one rejection")
+        };
+        assert!(m.ends_with(&format!("{one} [0.5]")), "{m}");
+        let n = 500;
+        let units = scaling::inputs(n, |m| Resolved::new(&product(m)));
+        for (m, u) in &units {
+            let [e] = &u.type_errors()[..] else {
+                panic!("one rejection")
+            };
+            assert_eq!(e.matches("1.0f64 + 0").count(), *m, "{e}");
+            assert!(e.contains("y is 0.5\n"), "{e}");
+        }
+        scaling::check("rejecting a value of n sums with a menu", n, |m| {
+            std::hint::black_box(units[&m].type_errors());
+        });
+    });
 }

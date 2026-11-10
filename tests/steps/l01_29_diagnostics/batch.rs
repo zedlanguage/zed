@@ -118,7 +118,10 @@ fn batch_and_single_file_checking_agree() {
         batch[at].as_deref(),
         Some(
             "2:12: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
-             chooses one; write `1r` or `1.0f64`\n  \
+             chooses one\n  \
+             fixes, each checked here:\n    \
+             main() = f(1r);        the literal is then exactly 1, a rat\n    \
+             main() = f(1.0f64);    the literal is then the f64 1.0\n  \
              T1 stands for a part written more than once:\n    \
              type T1 = rat | f64;\n  \
              [1] 1:1: `f` is declared here with no type written for its result; the type the \

@@ -4,7 +4,7 @@ use zed_kernel::{Evaluator, Term, World};
 use zedc::ast::{Stmt, unit};
 use zedc::check::Info;
 use zedc::check::walk::check;
-use zedc::elab::{Unit, elaborate, elaborate_checked};
+use zedc::elab::{Unit, elaborate_checked, elaborate_text};
 use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
 use zedc::resolve::{Resolution, resolve};
@@ -15,7 +15,7 @@ pub fn elab(text: &str) -> Result<Unit, Vec<String>> {
     let tree = parse(text, &tokens, "Unit", TOP).unwrap();
     let stmts = unit(text, &tokens, &tree).unwrap();
     let res = resolve(&stmts).unwrap_or_else(|e| panic!("{text}: {e:?}"));
-    elaborate(&stmts, &res).map_err(|es| {
+    elaborate_text(&stmts, &res, Some(text)).map_err(|es| {
         es.iter()
             .map(|e| format!("{} [{}]", e.message, &text[e.span.start..e.span.end]))
             .collect()

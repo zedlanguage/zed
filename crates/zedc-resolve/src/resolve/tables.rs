@@ -30,6 +30,9 @@ pub struct Tables<'a> {
     /// lambda parameter's, an output port's and an `is` test's. The checker checks their
     /// bounds.
     pub written: Vec<&'a Type>,
+    /// The unit's text, when it is known, which a message quotes: the line a fix rewrites
+    /// (DESIGN.md sec:diagnostics).
+    pub text: Option<&'a str>,
 }
 
 /// The uses of one list of binders.
@@ -122,6 +125,11 @@ fn collect_expr<'a>(e: &'a Expr, todo: &mut Vec<Collect<'a>>) {
 impl<'a> Tables<'a> {
     /// The tables of the unit `unit`, whose resolution is `res`.
     pub fn new(unit: &'a [Stmt], res: &'a Resolution) -> Self {
+        Tables::with_text(unit, res, None)
+    }
+
+    /// [`Tables::new`], with the unit's text when it is known, which a message quotes.
+    pub fn with_text(unit: &'a [Stmt], res: &'a Resolution, text: Option<&'a str>) -> Self {
         let ids = res
             .binders
             .iter()
@@ -152,6 +160,7 @@ impl<'a> Tables<'a> {
             uses,
             groups_of,
             written: Vec::new(),
+            text,
         };
         t.collect_functions(unit);
         t

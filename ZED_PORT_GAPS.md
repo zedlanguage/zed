@@ -3383,3 +3383,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | The matches of pairs at one level pushed in place onto a `Vec`, sorted, cut into groups by pair with `slice::chunk_by`, each group copied into a reused `Vec` sorted and deduplicated in place | `add`, `compute` | Mutation (gap 11) | The matches as a list built by a fold, `sort` and `group` from the L3 library, and a dedup over each sorted group |
 | A reused `Vec<u32>` of the items that touch a path, sorted by (level, id) with `sort_unstable_by_key` and deduplicated in place | `compute` | Mutation (gap 11) | A fresh list per path, `sort` by a key and a dedup |
 | `std::fs::read_to_string` (through `text::read_text`) and `std::fs::write` of a path from the command line | `run` | Computed paths (gap 6) | The file ports of step L7.3f |
+
+## Entries from MSG-literal-fixes (`crates/zedc-check/src/check/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Walks of an expression on an explicit `Vec` stack of steps (`Visit`, `Apply`) with a second `Vec` of values, popped in a `while let` loop | `folded`, `unfixed_binding`, `carrier_leaves` | Mutation (gap 11) | recursion on the expression, whose depth is that of the text, or a fold over a list carried by a loop |
+| `fmt::from_fn` closures that write a message or a fix line straight into the formatter, with `?` on each `write!` | `Msg::written`, `lit_holds`, `binder_holds`, `never_equal` | Early exit (gap 12) | a function that returns the text as a list of parts, joined once |
+| A `HashSet<Span>` of the literals on the carrier's path, tested for each literal | `unfixed_binding` | none | a set of spans |
+| `String::truncate` and `String::drain` to trim the corrected line in place | `Rewrite::line` | Mutation (gap 11) | a slice of the line between its first and last non-blank characters |

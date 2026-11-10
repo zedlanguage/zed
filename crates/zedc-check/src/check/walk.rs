@@ -21,7 +21,13 @@ use zedc_resolve::resolve::tables::recursion;
 
 /// Checks a resolved unit.
 pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
-    check_with(&Tables::new(unit, res), unit)
+    check_text(unit, res, None)
+}
+
+/// [`check`], with the unit's text when it is known, which a message quotes: the line each
+/// fix of a rejected literal rewrites.
+pub fn check_text(unit: &[Stmt], res: &Resolution, text: Option<&str>) -> Info {
+    check_with(&Tables::with_text(unit, res, text), unit)
 }
 
 /// Checks a unit whose binder tables are `t`, as [`check`] does with tables it builds.
@@ -1538,7 +1544,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `before`, are dropped where they lie in `value`: there an operator met an operation on
     /// integer literals typed `int`, as `/` meets `1 + 2` in `y = (1 + 2) / 3`, which is
     /// rejected as the value's `/`, not as its operands (step L1.26a).
-    fn rejects_unfixed(&mut self, value: &Expr, before: usize, at: Span, message: String) {
+    fn rejects_unfixed(&mut self, value: &Expr, before: usize, at: Span, message: Msg) {
+        let message = self.written(message);
         let found = self.info.errors.split_off(before);
         let inside = |e: &Error| value.span.start <= e.span.start && e.span.end <= value.span.end;
         (self.info.errors).extend(found.into_iter().filter(|e| !inside(e)));
@@ -1905,7 +1912,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         && lit_carrier(&l.value) != Carrier::Int
                     {
                         let notes = self.derive(&[l.site]);
-                        let message = unfixed(&l, &[Carrier::F64, Carrier::Rat], None);
+                        let message =
+                            self.written(unfixed(&l, &[Carrier::F64, Carrier::Rat], None));
                         self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
                     }
                     s.hole = Some(h);
@@ -2218,7 +2226,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 && lit_carrier(&l.value) != Carrier::Int
             {
                 let notes = self.derive(&[l.site]);
-                let message = unfixed(l, &[Carrier::F64, Carrier::Rat], None);
+                let message = self.written(unfixed(l, &[Carrier::F64, Carrier::Rat], None));
                 self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
             }
         }
@@ -6589,7 +6597,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: &str,
         sig: &Sig,
         args: &[Option<Arg<'a>>],
-        (s, mut m): (Span, String),
+        (s, mut m): (Span, Msg),
         pass: bool,
         span: Span,
     ) {
@@ -6616,8 +6624,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             && lit_carrier(&l.value) == Carrier::F64
         {
             let t = self.t;
-            let name = match o.at.and_then(|at| self.seen.get(&at)) {
-                Some((_, Src::Name(id))) => Some(t.res.binders[*id].name.as_str()),
+            let name = match o.at.and_then(|at| Some((at, self.seen.get(&at)?))) {
+                Some((at, (_, Src::Name(id)))) => Some((t.res.binders[*id].name.as_str(), at)),
                 _ => None,
             };
             // The operator's symbol, and whether the literal is its left operand, where it is
@@ -6637,6 +6645,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 });
             m = decimal_at_int(l, what, name, op);
         }
+        let m = self.written(m);
         if self.no_arrow_at_carrier(what, sig, args) {
             let notes = self.derive(&[s]);
             self.rejects_with(Row::NoArrowAtCarrier, s, m, notes);
@@ -6798,7 +6807,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                         .find(|l| lit_carrier(&l.value) == Carrier::F64)
                                         .unwrap_or(&lits[0]);
                                     let notes = self.derive(&[l.site]);
-                                    let message = unfixed(l, &takes, None);
+                                    let message = self.written(unfixed(l, &takes, None));
                                     self.rejects_with(Row::UnfixedDecimal, l.site, message, notes);
                                     c
                                 }
