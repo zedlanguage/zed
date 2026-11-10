@@ -1763,18 +1763,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| A9-spec | impl attempt 1 | 2026-11-09 21:17 | started; spec worktree /home/luke/Work/wt/a9-spec from origin/main |
+| A9-spec | impl attempt 1 | 2026-11-09 21:17 | ready again: sec:diagnostics addition split into short sentences, 677a88c5 on wt/a9-spec; sync --check rc 0; load 32.41 22.18 23.41 |
 | ALWAYS-atom-cast | running | 2026-11-09 20:05 |  |
 | ALWAYS-atom-div | running | 2026-11-09 20:05 |  |
 | ALWAYS-atom-lookup | running | 2026-11-09 20:05 |  |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | PRES-disj-cost-xr | impl attempt 1 | 2026-11-09 19:19 | /home down to 1 MB free; moved reviewer build dirs pdcx-tgt-r1-claude/gemini to scratchpad tmpfs with links back (2.5G free now); no delete |
-| PRES-nest-empty | impl attempt 2 | 2026-11-09 18:58 | Parts::atoms one-origin unions: two-atoms chain 904M->124M at depth 512 (exp 1.03), pair 539M->151M (exp 1.03), check_order 8.7x; negative control = previous ru |
+| PRES-nest-empty | impl attempt 2 | 2026-11-09 18:58 | ready 5d4304f2 on wt/pres-nest-empty, rebased on fa4f925a; 428 pieces 0 failed; fmt, clippy ok |
 | PROJECT-each-chain-xr | impl attempt 1 | 2026-11-09 20:07 | started / load 21.19 16.46 17.59 |
-| R2-frames-from-end | impl attempt 1 | 2026-11-09 19:10 | started; worktrees frames-from-end and frames-from-end-spec from origin/main |
-| README-limit | running | 2026-11-09 21:47 |  |
+| R2-frames-from-end | impl attempt 1 | 2026-11-09 19:10 | ready: impl 5023945c, spec 4add71f; 32/33 pieces pass, m0_03 cite failure is pre-existing (L18.2, fixed by STORE-l02-03 d673abe3); load 12.30 16.78 20.07 |
+| README-limit | impl attempt 1 | 2026-11-09 21:47 | ready 13de6150 on wt/readme-limit: README limit, fence enabled but held by WORD_LATER (Utf8String, STR-types); plan_dag L18.2 rows split; l01_07_fences 44/44 pa |
 | REFUSAL-front-xr | impl attempt 1 | 2026-11-09 20:30 | own probe: hand-rewritten chain variant of the front family |
-| STORE-l02-03 | repair attempt 1 | 2026-11-09 21:47 | start |
+| STORE-l02-03 | repair attempt 1 | 2026-11-09 21:47 | ready: wt/store-l02-03 64b95626 7cd6aed7 d673abe3, spec wt/store-l02-03-spec 1cd5ad2 (Lattice row, merge with 7cd6aed7); 66 pieces vs spec branch, 1 failure m0_ |
 | W11-note | running | 2026-11-09 19:51 |  |
 | W1-premise | running | 2026-11-09 19:51 |  |
 
