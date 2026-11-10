@@ -302,15 +302,17 @@ fn keys<'a>(keys: &'a [IndexKey], out: &mut Vec<Show<'a>>) {
     out.push(Text(")"));
 }
 
-/// ` (with (= x e) (= x ((at k)) e))` for boundary values, nothing for none.
+/// ` (with (initial x e) (= x ((at k)) e))` for boundary values, nothing for none.
 fn boundary_items<'a>(items: &'a [BoundaryItem], out: &mut Vec<Show<'a>>) {
     if items.is_empty() {
         return;
     }
     out.push(Text(" (with"));
     for b in items {
-        out.extend([Text(" (= "), Text(&b.name), Text(" ")]);
-        if !b.keys.is_empty() {
+        if b.keys.is_empty() {
+            out.extend([Text(" (initial "), Text(&b.name), Text(" ")]);
+        } else {
+            out.extend([Text(" (= "), Text(&b.name), Text(" ")]);
             keys(&b.keys, out);
             out.push(Text(" "));
         }

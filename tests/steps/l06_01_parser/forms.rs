@@ -6,19 +6,19 @@ use super::check;
 fn loops_build_with_and_without_a_step_name() {
     check(&[
         (
-            "f(n) = loop t { while t < n; x' = x + 1 with x = 0; };",
-            "(def f (n) = (loop t (block (while (< t n)) (= (x') (+ x 1) (with (= x 0))))))",
+            "f(n) = loop t { while t < n; x' = x + 1 with initial x = 0; };",
+            "(def f (n) = (loop t (block (while (< t n)) (= (x') (+ x 1) (with (initial x 0))))))",
         ),
         (
-            "f(n) = loop { until x' > n; x' = x * 2 with x = 1; };",
-            "(def f (n) = (loop (block (= (x') (* x 2) (with (= x 1))) (until (> x' n)))))",
+            "f(n) = loop { until x' > n; x' = x * 2 with initial x = 1; };",
+            "(def f (n) = (loop (block (= (x') (* x 2) (with (initial x 1))) (until (> x' n)))))",
         ),
         ("f(x) = loop { };", "(def f (x) = (loop (block)))"),
         (
             "p = loop t { while t < edits::len && !closed; \
-             doc' = doc.patch(edits[t]) with doc = empty; };",
+             doc' = doc.patch(edits[t]) with initial doc = empty; };",
             "(= (p) (loop t (block (while (&& (< t (:: edits len)) (! closed))) \
-             (= (doc') (call (. doc patch) (index edits t)) (with (= doc empty))))))",
+             (= (doc') (call (. doc patch) (index edits t)) (with (initial doc empty))))))",
         ),
     ]);
 }
@@ -54,8 +54,8 @@ fn mutable_bindings_and_spread_calls_build() {
              prev)))",
         ),
         (
-            "f(n) = loop { mutable c = Counter(n: 0) with c = z; until c > n; };",
-            "(def f (n) = (loop (block (mutable (= (c) (call Counter (n: 0)) (with (= c z)))) \
+            "f(n) = loop { mutable c = Counter(n: 0) with initial c = z; until c > n; };",
+            "(def f (n) = (loop (block (mutable (= (c) (call Counter (n: 0)) (with (initial c z)))) \
              (until (> c n)))))",
         ),
         ("f(x) = g(x)*.h;", "(def f (x) = (*. (call g x) h))"),
@@ -73,8 +73,8 @@ fn indexed_definitions_build_with_their_keys_and_boundary() {
              1))) 0)))",
         ),
         (
-            "g[i in 0..<n][j] = i + j with g[0][k in s] = 1, h = 2;",
-            "(indexed g ((in i (..< 0 n)) (at j)) (+ i j) (with (= g ((at 0) (in k s)) 1) (= h \
+            "g[i in 0..<n][j] = i + j with g[0][k in s] = 1, initial h = 2;",
+            "(indexed g ((in i (..< 0 n)) (at j)) (+ i j) (with (= g ((at 0) (in k s)) 1) (initial h \
              2)))",
         ),
         (
@@ -95,7 +95,10 @@ fn pushes_and_expression_statements_build() {
             "f(x) = { out' <- x; g(x); 0 };",
             "(def f (x) = (block (<- out' x) (do (call g x)) (return 0)))",
         ),
-        ("f(x) = loop { acc' <- acc + x with acc = 0; };", "syntax"),
+        (
+            "f(x) = loop { acc' <- acc + x with initial acc = 0; };",
+            "syntax",
+        ),
         (
             "f(x) = { (x); 0 };",
             "(def f (x) = (block (do x) (return 0)))",

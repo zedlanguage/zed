@@ -49,13 +49,13 @@ fn linear(what: &str, base: usize, make: impl Fn(usize) -> String) {
     scaling::check(what, base, |n| pass(&units[&n], true));
 }
 
-/// `f(n) = loop t { x0' = x0 + t with x0 = 0; until x1' > n; … };`, a loop body of `n`
+/// `f(n) = loop t { x0' = x0 + t with initial x0 = 0; until x1' > n; … };`, a loop body of `n`
 /// statements: bindings with a boundary, guards of both kinds and expression statements, which
 /// the formatter reorders.
 fn body(n: usize) -> String {
     let stmts: Vec<String> = (0..n)
         .map(|i| match i % 4 {
-            0 => format!("x{i}' = x{i} + t with x{i} = 0;"),
+            0 => format!("x{i}' = x{i} + t with initial x{i} = 0;"),
             1 => format!("until x{i}' > n;"),
             2 => format!("while t < {i};"),
             _ => format!("g(x{i})*.h({i});"),

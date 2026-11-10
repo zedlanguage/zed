@@ -79,10 +79,10 @@ fn each_form_names_the_step_that_compiles_it() {
             )],
         ),
         (
-            "x = 1 with x = 0;",
+            "x = 1 with initial x = 0;",
             &[concat!(
                 zed_tests::not_yet!("a boundary `with`"),
-                " [x = 1 with x = 0;]"
+                " [x = 1 with initial x = 0;]"
             )],
         ),
         (
@@ -128,10 +128,10 @@ fn declared_names_are_bound_and_refused_once() {
             ],
         ),
         (
-            "a', b = (1, 2) with a = 0;\nc = b;",
+            "a', b = (1, 2) with initial a = 0;\nc = b;",
             &[concat!(
                 zed_tests::not_yet!("a boundary `with`"),
-                " [a', b = (1, 2) with a = 0;]"
+                " [a', b = (1, 2) with initial a = 0;]"
             )],
         ),
         (

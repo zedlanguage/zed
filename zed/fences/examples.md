@@ -156,7 +156,7 @@ allowed = age >= 18 && member || override;      // (age >= 18 && member) || over
 ```zed
 // [d4] sec:generations — a conditional write goes through the value
 collatz = loop {
-  n' = if (n mod 2) == 0 { n div 2 } else { 3 * n + 1 } with n = 27;
+  n' = if (n mod 2) == 0 { n div 2 } else { 3 * n + 1 } with initial n = 27;
   until n' == 1;
 };
 ```
@@ -550,8 +550,8 @@ a3 = withdraw(a, 10r) else #insufficient(short: _) -> a with { frozen = true }; 
 // [d4] sec:tour_loops — a simulation
 sim = loop t {
   while t < maxSteps;                      // a read history needs a proven bound on the steps (sec:generations)
-  pos' = pos + vel * dt   with pos = p0;
-  vel' = vel + acc * dt   with vel = v0;
+  pos' = pos + vel * dt   with initial pos = p0;
+  vel' = vel + acc * dt   with initial vel = v0;
   until pos.y < 0;
 };
 final   = sim.pos;                        // the last generation's value
@@ -571,16 +571,16 @@ run = loop {
 <!-- EXAMPLES.md:598 layer L6: ring L6, word none, label none; section [13. Loops and state] 3 -->
 ```zed
 // [d4] sec:generations — the three guards
-once    = loop { i' = i + 1 with i = 0; until i' == 10; };     // tested at the end of a step: runs at least once
-maybe   = loop { i' = i + 1 with i = 0; while i < 10; };       // tested at the start: may run zero times
-counted = loop t { x' = step(x) with x = seed; until t == 99; };   // t is the step ordinal
+once    = loop { i' = i + 1 with initial i = 0; until i' == 10; };     // tested at the end of a step: runs at least once
+maybe   = loop { i' = i + 1 with initial i = 0; while i < 10; };       // tested at the start: may run zero times
+counted = loop t { x' = step(x) with initial x = seed; until t == 99; };   // t is the step ordinal
 ```
 
 <!-- EXAMPLES.md:605 layer L6: ring L6, word none, label none; section [13. Loops and state] 4 -->
 ```zed
 // [d4*] sec:generations — break carries a value out of the frame
 found = loop {
-  i' = i + 1 with i = 0;
+  i' = i + 1 with initial i = 0;
   hit = if xs[i] == target { break i } else { i };
   while i < xs::len;
 };
@@ -590,7 +590,7 @@ found = loop {
 ```zed
 // [d4] sec:tour_loops, sec:kernel — a convergence-shaped guard: without evidence for every T-Fix premise of simplifyOnce (monotone and inflationary on a carrier with ACC, and total) this is a gen that runs serially; with it, a fix (T-Fix)
 simplified = loop {
-  terms' = simplifyOnce(terms) with terms = input;
+  terms' = simplifyOnce(terms) with initial terms = input;
   until terms' == terms;                  // convergence-shaped: consumed as the termination test
 };
 ```
@@ -598,7 +598,7 @@ simplified = loop {
 <!-- EXAMPLES.md:622 layer L6: ring L6, word L6 (::frames), label none; section [13. Loops and state] 6 -->
 ```zed
 // [d4] sec:generations, sec:power — history, retention, and a piecewise family
-run  = loop t { while t < edits::len && !closed; doc' = doc.patch(edits[t]) with doc = empty; };
+run  = loop t { while t < edits::len && !closed; doc' = doc.patch(edits[t]) with initial doc = empty; };
 past = run::frames[run::len - 2].doc else empty;
 
 x[i in 0..<warm]  = warmup(i);
@@ -609,8 +609,8 @@ x[i in warm..<n]  = x[i-1] + delta(i);    // one family, two pieces; overlapping
 ```zed
 // [d4] sec:generations — local hides a generation variable from the loop's result (a step-local is never in the frame)
 s = loop {
-  local tally' = tally + step(a) with tally = 0;   // a generation variable, kept out of s
-  a' = a + 1 with a = 0;
+  local tally' = tally + step(a) with initial tally = 0;   // a generation variable, kept out of s
+  a' = a + 1 with initial a = 0;
   until a' > 100;
 };
 ```
@@ -678,7 +678,7 @@ checked(positional t: PTree(Utf8String)) = asInts(t.map(A: s -> int(s)));   // a
 edges: Id ->? [Id] = { 1 -> [2, 3], 2 -> [4], 3 -> [4], 4 -> [] };
 succ(positional s) = s.flatMap(n -> edges[n] else []).image;  // [lib] image: the set of values
 reach = loop {
-  r' = r.union(succ(r)) with r = { start };             // r' = r ⊔ e: monotone, so the guard below is read as the fixpoint's test
+  r' = r.union(succ(r)) with initial r = { start };             // r' = r ⊔ e: monotone, so the guard below is read as the fixpoint's test
   until r' == r;
 };
 ```
@@ -696,7 +696,7 @@ addD(positional d: Dist, positional w: int[0..]) -> Dist { if d is #inf { #inf }
 minD(positional a: Dist, positional b: Dist) -> Dist { if a is #inf { b } else if b is #inf { a } else { min(a, b) } }
 dist = loop {
   d'[v in nodes] = minD(d[v], (for u in preds[v] { addD(d[u], w[u][v]) }) >< minD else #inf)
-                   with d = for v in nodes { if v == start { 0 } else { #inf } };
+                   with initial d = for v in nodes { if v == start { 0 } else { #inf } };
   until d' == d;
 };
 ```
@@ -919,7 +919,7 @@ law sortIdempotent(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(
 // [d4] sec:verification, sec:generations — a loop is a state machine: `@invariant` is loop induction, and the reachable set is a fixpoint the compiler evaluates ([lib] image)
 amt(positional t: int) = withdrawals[t] else 0;                                                 // withdrawals : [int]; past the end nothing is withdrawn
 account = loop t {
-  @invariant(balance >= 0) balance' = if amt(t) <= balance { balance - amt(t) } else { balance }   with balance = 0;
+  @invariant(balance >= 0) balance' = if amt(t) <= balance { balance - amt(t) } else { balance }   with initial balance = 0;
   until t + 1 >= withdrawals::len;
 };
 law neverNegative(t: int[0..<account::len]) = account::frames[t].balance >= 0;   // what @invariant asserts, as a law over the history: init, then p(s).implies(p(step(s))) — an `until` step runs before its guard is read
@@ -927,7 +927,7 @@ law neverNegative(t: int[0..<account::len]) = account::frames[t].balance >= 0;  
 type Lamp = #green | #yellow | #red;
 type Cmd  = #tick | #fault;
 advance(positional l: Lamp, positional c: Cmd) = if c == #fault { #red } else { match l { #green -> #yellow, #yellow -> #red, #red -> #green } };
-reachable = loop { R' = R.union(R.flatMap(l -> [advance(l, #tick), advance(l, #fault)]).image) with R = { #red }; };   // monotone, so no guard; finite, so computed at compile time
+reachable = loop { R' = R.union(R.flatMap(l -> [advance(l, #tick), advance(l, #fault)]).image) with initial R = { #red }; };   // monotone, so no guard; finite, so computed at compile time
 law faultStops(l: Lamp) = (l in reachable.R).implies(advance(l, #fault) == #red);    // CheckedExhaustive(Lamp): the model check is partial evaluation; a refutation would carry the (state, command) trace
 ```
 
@@ -1017,7 +1017,7 @@ edits(positional tx) = match tx {
   #withdraw(id:, amt:) -> ({ id -> #update(a -> a with { bal = a.bal - amt }) }),
 };
 book = loop t {
-  accts' = accts.patch(edits(txs[t])) with accts = opening;
+  accts' = accts.patch(edits(txs[t])) with initial accts = opening;
   while t in txs::domain;
 };
 closing = book.accts;
@@ -1028,7 +1028,7 @@ closing = book.accts;
 // [d4] sec:generations — a state machine
 type Light = #green | #yellow | #red;
 next(positional l: Light) = match l { #green -> #yellow, #yellow -> #red, #red -> #green };
-lights = loop t { l' = next(l) with l = #red; until t == 10; };
+lights = loop t { l' = next(l) with initial l = #red; until t == 10; };
 trace  = lights::frames.map(f -> f.l);    // [Light]
 ```
 
@@ -1045,7 +1045,7 @@ alive(positional cells, positional p) -> bool {
   if (cells[p] else false) { (n == 2) || (n == 3) } else { n == 3 }
 }
 life = loop t {
-  cells' = for p -> _ in cells { alive(cells, p) } with cells = seed;
+  cells' = for p -> _ in cells { alive(cells, p) } with initial cells = seed;
   until t == 100;
 };
 ```

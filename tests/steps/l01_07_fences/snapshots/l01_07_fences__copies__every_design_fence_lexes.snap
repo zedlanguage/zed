@@ -28,8 +28,8 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   2 | ( a , b ) «into» ( r -> k -> c >< ( + ) -> a [ r ] [ c ] * b [ c ] [ k ] ) ;
 == DESIGN.md [sec:generations] 1 L6
   1 | sim = «loop» {
-  2 | pos' = pos + vel * dt «with» pos = p0 ;
-  3 | vel' = vel + a ( pos ) * dt «with» vel = v0 ;
+  2 | pos' = pos + vel * dt «with» initial pos = p0 ;
+  3 | vel' = vel + a ( pos ) * dt «with» initial vel = v0 ;
   4 | «until» pos' . x > bound ;
   5 | } ;
 == DESIGN.md [sec:generations] 2 L6
@@ -387,15 +387,15 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   6 | total = cdf . last «else» 0₍10₎ ;
   9 | sim = «loop» t {
  10 | «while» t < maxSteps ;
- 11 | pos' = pos + vel * dt «with» pos = p0 ;
- 12 | vel' = vel + a ( pos ) * dt «with» vel = v0 ;
+ 11 | pos' = pos + vel * dt «with» initial pos = p0 ;
+ 12 | vel' = vel + a ( pos ) * dt «with» initial vel = v0 ;
  13 | «until» pos' . x > bound ;
  14 | } ;
  15 | final = sim . pos ;
  16 | history = sim :: frames ;
  17 | steps = sim :: len ;
  20 | simplified = «loop» {
- 21 | terms' = simplifyOnce ( terms ) «with» terms = input ;
+ 21 | terms' = simplifyOnce ( terms ) «with» initial terms = input ;
  22 | «until» terms' == terms ;
  23 | } ;
  26 | sessions = events . chunkBy ( e -> e . userId ) ;
@@ -453,7 +453,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  19 | state [ i ] = csvStep ( state [ i - 1₍10₎ ] , text :: codepoints [ i ] ) «with» state [ - 1₍10₎ ] = #outsideQuotes ;
  24 | firstPrime = ( «for» i «in» n .. { i } ) . where ( isPrime ) . first ;
  30 | sessions = clicks . chunkBy ( c -> c . userId ) . map ( s -> Session ( start : s . first . time , count : s . count ) ) ;
- 34 | run = «loop» t { «while» t < edits :: len && ! closed ; doc' = doc . patch ( edits [ t ] ) «with» doc = empty ; } ;
+ 34 | run = «loop» t { «while» t < edits :: len && ! closed ; doc' = doc . patch ( edits [ t ] ) «with» initial doc = empty ; } ;
  36 | past = run :: frames [ run :: len - 2₍10₎ ] . doc «else» empty ;
  39 | @memoized report = sales . join ( costs , on : #sku ) . group ( ( ( s , c ) ) -> s . region ) . map ( rows -> rows . map ( ( ( s , c ) ) -> margin ( s , c ) ) . sum ) ;
  44 | rows = exec ( db , str["SELECT * WHERE name = "] ++ sanitize ( userName ) ) ;

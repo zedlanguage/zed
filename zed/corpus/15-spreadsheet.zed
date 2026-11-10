@@ -21,7 +21,7 @@ show(positional sheet) = (for c -> _ in sheet { "${c}=${valueOf(sheet, c)}" }).c
 
 main(stdin: Lines) -> (stdout: Lines) {
   run = loop t {
-    sheet' = sheet.patch(edit(stdin[t])) with sheet = {};
+    sheet' = sheet.patch(edit(stdin[t])) with initial sheet = {};
     while t in stdin::domain;
   };
   stdout <- run::frames.map(f -> show(f.sheet));

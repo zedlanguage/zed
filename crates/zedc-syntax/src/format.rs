@@ -647,7 +647,8 @@ impl<'a> Formatter<'a> {
                         sep: ", ",
                         ind,
                     });
-                    self.put(format!("{sep}{}", b.name));
+                    let initial = if b.keys.is_empty() { "initial " } else { "" };
+                    self.put(format!("{sep}{initial}{}", b.name));
                     then![stack;
                         Job::Keys { keys: &b.keys, ind },
                         put(" = "),

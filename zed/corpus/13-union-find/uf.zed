@@ -10,6 +10,6 @@ components(positional n, positional edges) = loop {
     min(label[v], (for e in edges where e.a == v || e.b == v {
       label[if e.a == v { e.b } else { e.a }]
     }) >< min else label[v])
-  } with label = for v in 0..<n { v };
+  } with initial label = for v in 0..<n { v };
   until label' == label;
 }.label;

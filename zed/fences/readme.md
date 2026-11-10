@@ -65,8 +65,8 @@ running[i] = running[i-1] + east[i] with running[-1] = 0;
 ```zed
 trend = loop t {
   while t < east::len;
-  prev' = east[t] with prev = 0;
-  change' = east[t] - prev with change = 0;
+  prev' = east[t] with initial prev = 0;
+  change' = east[t] - prev with initial change = 0;
 };
 ```
 
@@ -355,8 +355,8 @@ state[i] = csvStep(state[i-1], text::codepoints[i]) with state[-1] = #outsideQuo
 ```zed
 sim = loop t {
   while t < maxSteps;
-  pos' = pos + vel * dt with pos = p0;
-  vel' = vel + accel(pos) * dt with vel = v0;
+  pos' = pos + vel * dt with initial pos = p0;
+  vel' = vel + accel(pos) * dt with initial vel = v0;
   until pos'.x > bound;
 };
 
@@ -369,7 +369,7 @@ steps = sim::len;
 ```zed
 run = loop t {
   while t < edits::len;
-  doc' = doc.patch(edits[t]) with doc = empty;
+  doc' = doc.patch(edits[t]) with initial doc = empty;
 };
 
 previous = run::frames[run::len - 2]?.doc else empty;
@@ -564,7 +564,7 @@ advance(positional j: Junction, positional c: Cmd) = match c {
 
 reachable = loop {
   R' = R.union(R.flatMap(j -> [advance(j, #goNs), advance(j, #goEw), advance(j, #stop)]).image)
-    with R = { Junction(ns: #red, ew: #red) };
+    with initial R = { Junction(ns: #red, ew: #red) };
 };
 
 law neverBothGreen(ns: Signal, ew: Signal) =

@@ -102,6 +102,10 @@ pub fn unit_all_errors(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<
                 Err(e) => errors.push(e),
             }
         }
+        if let Err(e) = b.initial_once(&out) {
+            errors.push(e);
+            errors.sort_by_key(|e| e.span);
+        }
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -733,5 +737,48 @@ impl fmt::Write for Count {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.0 += s.len();
         Ok(())
+    }
+}
+
+/// A parse error as an error of the source: at a boundary item written with neither `initial`
+/// nor an index, the row "Boundary item with neither `initial` nor an index" with its
+/// statement and its repairs (DESIGN.md sec:diagnostics).
+impl From<crate::parse::Error> for Error {
+    fn from(e: crate::parse::Error) -> Error {
+        let message = e.to_string();
+        let Some(b) = e.bare else {
+            return Error {
+                span: e.span,
+                message,
+                notes: Vec::new(),
+                row: None,
+            };
+        };
+        let (name, value) = (&b.name, &b.value);
+        let mut notes = vec![
+            Note {
+                span: b.stmt,
+                text: "the statement whose boundary clause holds the item".into(),
+            },
+            Note {
+                span: b.item,
+                text: format!("repair: `with initial {name} = {value}`, the sentinel value"),
+            },
+        ];
+        if let Some(k) = &b.below {
+            notes.push(Note {
+                span: b.item,
+                text: format!(
+                    "repair: `with {name}[{k}] = {value}`, the entry one below the low edge of \
+                     the domain of `{name}`"
+                ),
+            });
+        }
+        Error {
+            span: b.item,
+            message,
+            notes,
+            row: Some(zedc_base::rejection::Row::BareBoundary),
+        }
     }
 }

@@ -50,7 +50,7 @@ TypedBinding  : `x: T = e` is PlainBinding's `x = e`, also checking e against T
 PlainBinding  : `x = e;` is let x = ⟦e⟧ over the block, in dependency order; `a, b = e` is let t = ⟦e⟧ with a = t[0], b = t[1], and `_` binds nothing; a boundary gives the entries before generation 0
 Target        : a bound name, or `_`, which binds nothing
 Boundary      : the entries a generation variable or indexed definition holds before its first step or round: the init of its gen, or entries defined before a fix's first round
-BoundaryItem  : `x = e` is the entry `x[lo-1] = e`, lo the low edge of x's domain (`x[-1]` for a loop); `x[k] = e` the entry at k; `x[i in D] = e` the entries at the keys of ⟦D⟧, each ⟦e⟧ with i bound to its key
+BoundaryItem  : `initial x = e` gives the sentinel value of x, the entry `x[lo-1] = e`, lo the low edge of x's domain (`x[-1]` for a loop); `x[k] = e` the entry at k; `x[i in D] = e` the entries at the keys of ⟦D⟧, each ⟦e⟧ with i bound to its key
 Signature     : the type of a name with no definition, a foreign function (sec:ffi) or a declared accumulator; no term
 Expr          : ⟦Lambda⟧, ⟦Break⟧ or ⟦Expr12⟧
 Break         : ends the enclosing gen: the step's guard returns #break(⟦e⟧) and the loop's result is ⟦e⟧

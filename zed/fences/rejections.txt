@@ -16,6 +16,8 @@ Positional `.map`, or a name that is no parameter, on a value that is not a morp
 Key outside the permission bound
 Undischarged region assertion
 Read below the domain with no boundary entry
+Boundary item with neither `initial` nor an index
+Two `with initial` items for one variable
 Cross-unit overlapping incomparable arrows
 Ambiguous imported name
 Need met only by an arrow in the caller's scope

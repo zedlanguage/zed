@@ -32,7 +32,7 @@ sessions = clicks.chunkBy(c -> c.userId).map(s -> Session(start: s.first.time, c
 // a chunk exists only because a click fell into it (L ≠ ∅), so .first is exact — no #none case
 
 // 7 — Undo, redo, and time travel are field reads, not an architecture.
-run  = loop t { while t < edits::len && !closed; doc' = doc.patch(edits[t])  with doc = empty; };
+run  = loop t { while t < edits::len && !closed; doc' = doc.patch(edits[t])  with initial doc = empty; };
      // history bounded by edits::len; retained because ::frames is demanded below
 past = run::frames[run::len - 2].doc else empty;  // any past state, O(log n), shared
 

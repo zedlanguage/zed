@@ -9,7 +9,7 @@
 //! node, and the rule's match is the node of the marked rule.
 //!
 //! A literal in the grammar matches a keyword, an operator or a name with its text, so the
-//! positional words `where` and `sep` are names the grammar matches by their text.
+//! positional words `where`, `sep` and `initial` are names the grammar matches by their text.
 //!
 //! A left-recursive rule grows from a failed seed, by the Squirrel parser's algorithm
 //! (`squirrel_parser.tex`, fig. Code); a grammar with no left recursion never reaches that code.
@@ -85,6 +85,40 @@ pub struct Error {
     pub expected: Vec<String>,
     /// A message that says more than the expected tokens: [`DOTS`] for a `..` in a list.
     pub message: Option<&'static str>,
+    /// The boundary item written with neither `initial` nor an index that the parse stopped
+    /// at, as `with x = 0`; the error's span is its `=`.
+    pub bare: Option<Box<Bare>>,
+}
+
+/// A boundary item with neither `initial` nor an index, as `with x = 0` (row "Boundary item
+/// with neither `initial` nor an index", DESIGN.md sec:generations).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Bare {
+    /// The variable.
+    pub name: String,
+    /// The text of the value, `…` when there is none.
+    pub value: String,
+    /// The item, from its name to the end of its value.
+    pub item: Span,
+    /// The statement it stands on, its `;` included where there is one.
+    pub stmt: Span,
+    /// For an indexed definition of the variable over one key `i in lo..`, the key of the entry
+    /// below the domain: `lo - 1`, worked out when `lo` is an integer literal.
+    pub below: Option<String>,
+}
+
+impl Bare {
+    /// What the error says.
+    pub fn message(&self) -> String {
+        let Bare { name, value, .. } = self;
+        format!(
+            "`with {name} = {value}` gives `{name}` no sentinel value: a boundary item is \
+             written `initial {name} = {value}`, which gives the sentinel value, or with an \
+             index, as `{name}[k] = {value}`. Without `initial`, `with {name} = {value}` reads \
+             as though `{name}` took the value `{value}` anew on every step, while a boundary \
+             item gives `{name}` one value, below its first step or index, once."
+        )
+    }
 }
 
 /// The message for a `..` written in a list with other items, as `(int, ..)`, `#a(int, ..)` or
@@ -95,6 +129,9 @@ pub const DOTS: &str = "`..` stands alone between its brackets: `(..)` is every 
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(b) = &self.bare {
+            return f.write_str(&b.message());
+        }
         match self.message {
             Some(m) => f.write_str(m),
             None => write!(f, "expected {}", self.expected.join(" or ")),
@@ -205,10 +242,13 @@ fn parse_one<'t>(
         let mut expected: Vec<String> = p.expected().iter().map(shown).collect();
         expected.sort();
         let dots = dots_in_list(&toks, p.far);
+        let bare = bare_item(g, ring, start, &toks, p.far)
+            .map(|n| Box::new(bare(text, tokens, &toks, n, end)));
         return Err(Error {
             span: span(dots.unwrap_or(p.far)),
             expected,
             message: dots.map(|_| DOTS),
+            bare,
         });
     };
     let mut holes = Vec::new();
@@ -257,4 +297,146 @@ fn shown(e: &Expected<'_>) -> String {
         Expected::Name(n) => (*n).into(),
         Expected::Class => unreachable!("a grammar over tokens holds no character class"),
     }
+}
+
+/// The index of the name of a boundary item written with neither `initial` nor an index, as
+/// `with x = 0` or `, x = 0` in a boundary clause, at whose `=` a parse of `toks` as rule
+/// `start` failed (token `far`). Such an item is one exactly when the parse gets past that `=`
+/// once `initial` is written before the name, so a failure at an `=` after `with x` that is no
+/// boundary item, as in a push `p <- e with x = 0`, gives no item. The second parse runs only
+/// when the first has failed, at the cost of one parse.
+fn bare_item(
+    g: &Grammar,
+    ring: u32,
+    start: usize,
+    toks: &[(Kind, &str)],
+    far: usize,
+) -> Option<usize> {
+    let n = far.checked_sub(1).filter(|&n| n > 0)?;
+    let shaped = toks.get(far).is_some_and(|t| t.1 == "=")
+        && toks[n].0 == Kind::Ident
+        && matches!(toks[n - 1].1, "with" | ",");
+    if !shaped {
+        return None;
+    }
+    let mut fixed = Vec::with_capacity(toks.len() + 1);
+    fixed.extend_from_slice(&toks[..n]);
+    fixed.push((Kind::Ident, "initial"));
+    fixed.extend_from_slice(&toks[n..]);
+    let mut p = Parser::new(g, ring, fixed.as_slice());
+    let reached = match p.rule_node(start, 0, false) {
+        Some((e, _)) => e.max(p.far),
+        None => p.far,
+    };
+    // The `=` is at `far + 1` in `fixed`.
+    (reached > far + 1).then_some(n)
+}
+
+/// How the bracket depth changes at a token: up at an opening bracket, down at a closing one.
+fn depth(t: &str) -> i32 {
+    match t {
+        "(" | "[" | "{" => 1,
+        ")" | "]" | "}" => -1,
+        _ => 0,
+    }
+}
+
+/// The [`Bare`] item whose name is token `n` of `toks`, lexed from `text` as `tokens`; `end` is
+/// the span of the end of the tokens. The value runs from the `=` to the next `,` or `;` at its
+/// own bracket depth; the statement from the token after the `;` or unmatched opening bracket
+/// before the item to the `;` after it. Each scan stops at the statement's ends, so the cost is
+/// the statement's length.
+fn bare(text: &str, tokens: &[Token], toks: &[(Kind, &str)], n: usize, end: Span) -> Bare {
+    let span = |i: usize| tokens.get(i).map_or(end, |t| t.span);
+    let mut d = 0;
+    let mut last = n + 2;
+    while last < tokens.len() {
+        let t = toks[last].1;
+        if d == 0 && matches!(t, "," | ";") || d + depth(t) < 0 {
+            break;
+        }
+        d += depth(t);
+        last += 1;
+    }
+    let value = if last > n + 2 {
+        text[span(n + 2).start..span(last - 1).end].to_string()
+    } else {
+        "…".to_string()
+    };
+    let mut stop = last;
+    let mut d = 0;
+    while stop < tokens.len() && !(d == 0 && toks[stop].1 == ";") && d + depth(toks[stop].1) >= 0 {
+        d += depth(toks[stop].1);
+        stop += 1;
+    }
+    let close = if stop < tokens.len() && toks[stop].1 == ";" {
+        stop
+    } else {
+        stop.saturating_sub(1)
+    };
+    let mut first = n;
+    let mut d = 0;
+    while first > 0 {
+        let t = toks[first - 1].1;
+        if d == 0 && t == ";" || d - depth(t) < 0 {
+            break;
+        }
+        d -= depth(t);
+        first -= 1;
+    }
+    Bare {
+        name: toks[n].1.to_string(),
+        value,
+        item: Span {
+            start: span(n).start,
+            end: span(last.max(n + 3) - 1).end,
+        },
+        stmt: Span {
+            start: span(first).start,
+            end: span(close).end,
+        },
+        below: below(&toks[first..n], toks[n].1),
+    }
+}
+
+/// The key of the entry below the domain of the indexed definition `stmt` of `name`, the
+/// tokens before its boundary item, when it has one key `i in lo..<hi`, `lo..=hi` or `lo..`:
+/// `lo - 1`, worked out when `lo` is an integer literal, possibly negated.
+fn below(stmt: &[(Kind, &str)], name: &str) -> Option<String> {
+    let [(_, f), (_, "["), (Kind::Ident, _), (_, "in"), rest @ ..] = stmt else {
+        return None;
+    };
+    if *f != name {
+        return None;
+    }
+    let mut d = 0;
+    let mut range = None;
+    let mut close = None;
+    for (i, &(_, t)) in rest.iter().enumerate() {
+        if d == 0 && range.is_none() && matches!(t, ".." | "..<" | "..=") {
+            range = Some(i);
+        }
+        if d + depth(t) < 0 {
+            close = Some(i);
+            break;
+        }
+        d += depth(t);
+    }
+    let (range, close) = (range?, close?);
+    if range == 0 || rest.get(close + 1).map(|t| t.1) != Some("=") {
+        return None;
+    }
+    let lo = &rest[..range];
+    let int = |t: &str| t.replace('_', "").parse::<i128>().ok();
+    let folded = match lo {
+        [(Kind::Int, t)] => int(t).and_then(|v| v.checked_sub(1)),
+        [(_, "-"), (Kind::Int, t)] => int(t).and_then(|v| (-v).checked_sub(1)),
+        _ => None,
+    };
+    let words: Vec<&str> = lo.iter().map(|t| t.1).collect();
+    Some(match (folded, lo.len()) {
+        (Some(v), _) => v.to_string(),
+        (None, 1) => format!("{} - 1", words[0]),
+        (None, _) => format!("({}) - 1", words.join(" ")),
+    })
 }

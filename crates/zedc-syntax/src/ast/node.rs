@@ -311,7 +311,7 @@ pub struct Stmt {
 #[derive(Debug)]
 pub enum StmtKind {
     /// `a = e;`, or `a, b = e;` destructuring a tuple, each followed by its boundary values
-    /// `with x = e0` if written.
+    /// `with initial x = e0` if written.
     Bind {
         /// The targets, in order.
         targets: Vec<Target>,
@@ -514,12 +514,13 @@ pub enum IndexKey {
     At(Expr),
 }
 
-/// A boundary value `x = e` or `x[-1] = e` of a `with` clause.
+/// A boundary value of a `with` clause: `initial x = e`, the sentinel value of `x`, or the
+/// indexed entry `x[-2] = e`.
 #[derive(Debug)]
 pub struct BoundaryItem {
     /// The variable.
     pub name: String,
-    /// Its keys, outermost first; none for a generation variable.
+    /// Its keys, outermost first; none for `initial x = e`, which the grammar gives no keys.
     pub keys: Vec<IndexKey>,
     /// The value.
     pub value: Expr,

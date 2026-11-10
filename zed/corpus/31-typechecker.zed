@@ -33,7 +33,7 @@ main(stdin: Lines) -> (stdout: Lines) {
   ty = loop {
     ty' = for n -> s in syms {
       match s { #one(decl:) -> infer(decl.expr, ty), _ -> #error }
-    } with ty = for n -> _ in syms { #unknown };
+    } with initial ty = for n -> _ in syms { #unknown };
     until ty' == ty;
   }.ty;
 

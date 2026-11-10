@@ -177,7 +177,28 @@ const NEAR_MISSES: &[NearMiss] = &[
         "1:5",
         None,
     ),
+    (
+        Row::BareBoundary,
+        "",
+        "x = 1 with initial x = 0;\n",
+        "x = 1 with x = 0;\n",
+        "1:12",
+        Some("`with initial x = 0`, the sentinel value"),
+    ),
+    (
+        Row::TwoInitials,
+        "x = 1 with initial x = 0;\n",
+        "y = x;\n",
+        "y = x with initial x = 0;\n",
+        "2:12",
+        Some("keep the first and delete this one: `y = x;`"),
+    ),
 ];
+
+/// Rows the parser raises for a form that name resolution does not compile yet (a boundary
+/// `with`, step L6.2): their accepted program is refused only with the message that names the
+/// form as not compiled yet. Once it is accepted, the row leaves this list.
+const LATER: &[Row] = &[Row::BareBoundary, Row::TwoInitials];
 
 /// The `.rs` files under `dir`, in no order.
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -231,11 +252,20 @@ fn each_near_miss_gives_its_row_place_and_first_repair() {
     let mut failed = Vec::new();
     for &(row, head, accepted, rejected, at, first) in NEAR_MISSES {
         let good = format!("{head}{accepted}");
-        if let Err(ds) = &*Db::new().front(&good) {
-            failed.push(format!(
+        match (&*Db::new().front(&good), LATER.contains(&row)) {
+            (Err(ds), true)
+                if ds
+                    .iter()
+                    .all(|d| d.message.ends_with(zed_tests::not_yet!(""))) => {}
+            (Err(ds), _) => failed.push(format!(
                 "{}: the accepted program is rejected: {ds:?}",
                 row.name()
-            ));
+            )),
+            (Ok(_), true) => failed.push(format!(
+                "{}: the accepted program is accepted now: remove the row from LATER",
+                row.name()
+            )),
+            (Ok(_), false) => {}
         }
         let text = format!("{head}{rejected}");
         let front = Db::new().front(&text);

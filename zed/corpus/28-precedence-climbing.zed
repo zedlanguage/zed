@@ -43,7 +43,7 @@ step(positional s, positional tok) =
 evalLine(positional l) = {
   toks = l.split(" ");
   run = loop t {
-    s' = if t == toks::len { flush(s) } else { step(s, toks[t] else "") } with s = S(vals: [], ops: []);
+    s' = if t == toks::len { flush(s) } else { step(s, toks[t] else "") } with initial s = S(vals: [], ops: []);
     while t <= toks::len;
   };
   run.s.vals.first else 0

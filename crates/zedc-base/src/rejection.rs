@@ -51,6 +51,8 @@ rows! {
     KeyOutsideBound => "Key outside the permission bound",
     UndischargedRegion => "Undischarged region assertion",
     ReadBelowDomain => "Read below the domain with no boundary entry",
+    BareBoundary => "Boundary item with neither `initial` nor an index",
+    TwoInitials => "Two `with initial` items for one variable",
     OverlappingArrows => "Cross-unit overlapping incomparable arrows",
     AmbiguousImport => "Ambiguous imported name",
     NeedInCallerScope => "Need met only by an arrow in the caller's scope",

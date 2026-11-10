@@ -19,7 +19,7 @@ main(stdin: Lines) -> (stdout: Lines) {
   last = evs.map(e -> e.tick) >< max else -1;
   game = loop t {
     pos' = for p -> x in pos { min(10, max(0, x + (moves[t][p] else 0))) }
-      with pos = for p -> _ in players { 5 };
+      with initial pos = for p -> _ in players { 5 };
     while t <= last;
   };
   stdout <- for t -> f in game::frames { "${t} ${(for p -> x in f.pos { "${p}=${x}" }).concat(" ")}" };

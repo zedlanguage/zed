@@ -490,7 +490,7 @@ pub(crate) fn compile(text: &str) -> Front {
     let (tokens, docs) = work::stage(Stage::Lex, None, || lex::lex_with_docs(text))
         .map_err(|e| at(e.span, e.to_string()))?;
     let tree = work::stage(Stage::Parse, None, || parse(text, &tokens, "Unit", TOP))
-        .map_err(|e| at(e.span, e.to_string()))?;
+        .map_err(|e| placed(text, &lines, &[], Severity::Rejection, vec![e.into()]))?;
     let stmts = work::stage(Stage::Syntax, None, || {
         ast::unit_all_errors(text, &tokens, &tree)
     })
@@ -980,7 +980,7 @@ pub(crate) fn error(span: Span, message: String) -> Error {
 /// [`Query::Parse`]: crate::query::Query::Parse
 pub(crate) fn parse_unit(text: &str) -> Parsed {
     let tokens = lex::lex(text).map_err(|e| vec![error(e.span, e.to_string())])?;
-    let tree = parse(text, &tokens, "Unit", TOP).map_err(|e| vec![error(e.span, e.to_string())])?;
+    let tree = parse(text, &tokens, "Unit", TOP).map_err(|e| vec![ast::Error::from(e)])?;
     let stmts = ast::unit_all_errors(text, &tokens, &tree)?;
     // The imports are found by the resolver's own walk, which meets every import in every
     // scope; read alone, the unit resolves with no other unit, and only the imports are kept.

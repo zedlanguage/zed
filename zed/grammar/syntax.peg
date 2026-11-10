@@ -94,7 +94,8 @@ TypedBinding  = Name ':' Type '=' Expr Boundary? ';'                            
 PlainBinding  = Target % ',' '=' Expr Boundary? ';'                                L1
 Target        = Name | WILD                                                        L1
 Boundary      = 'with' BoundaryItem % ','                                          L6
-BoundaryItem  = Name ('[' IndexKey ']')* '=' Expr                                  L6
+BoundaryItem  = 'initial' Name '=' Expr                                            L6
+              | Name ('[' IndexKey ']')+ '=' Expr                                  L6
 Signature     = Name ':' Type ';'                                                  L7
 
 Expr          = Lambda                                                             L1
