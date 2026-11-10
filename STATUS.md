@@ -1767,15 +1767,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| GROUP-cycle-dup-across | impl attempt 1 | 2026-11-09 11:08 | started on wt/group-cycle-dup-across from origin/main 31f57138 / load 11.69 15.63 18.34 |
+| DBU-scope | impl attempt 1 | 2026-11-09 23:17 | started; load 32.32 |
+| GROUP-cycle-dup-across | impl attempt 1 | 2026-11-09 11:08 | ready: impl af3ccccb on wt/group-cycle-dup-across, spec 46a98ab on wt/group-cycle-dup-across-spec; 94 pieces 968 passed 0 failed with doc check; seeds 34841 and |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
-| LOAD-chain-sep-rest | impl attempt 1 | 2026-11-07 07:07 | base control at 50/100 links (s): H div x 3.26/20.0; if-branch 3.35/20.2; abs(H) div 2+1 3.41/13.7; abs(H-5) div 2 3.06/18.0; min(H div 2,x) 1.45/6.33; max(H di |
-| NARROW-eager-star-redo | impl attempt 1 | 2026-11-07 07:57 | groups ^(l01_25/l01_29/l01_38/l01_39) with the family check on: 487 pieces, 0 failed / load 42.27 35.82 34.13 |
+| LAPS-preimage-cost | impl attempt 1 | 2026-11-09 23:40 | started; rebasing wt/project-each-chain-xr on origin/main (7 behind), load 30 |
+| LOAD-chain-sep-rest | impl attempt 1 | 2026-11-07 07:07 | ready 13215610 on wt/load-chain-sep-rest: piecewise + two-input summaries, key keeps read own atoms only, lean; 438 pieces 0 failed (l01_25,l01_29,l01_38,l01_39 |
+| NARROW-eager-star-redo | impl attempt 2 | 2026-11-07 07:57 | rebased on 501a3330; new scaling tests red on base: eager class of k stars 67.3x bytes (16->128), one star with k distinct disjunctions 16.9x bytes (limit 15.4) |
 | PRES-disj-cost-xr | impl attempt 1 | 2026-11-09 19:19 | /home down to 1 MB free; moved reviewer build dirs pdcx-tgt-r1-claude/gemini to scratchpad tmpfs with links back (2.5G free now); no delete |
-| PRES-nest-empty | merge attempt 1 | 2026-11-09 18:58 | dropped from batch 98: l01_25 s22 random_guarded_chains_keep_their_preimages_0000 fails (exact boxes 52 vs 53) on main after batch 97; ledger back to merging |
-| PROJECT-each-chain-xr | impl attempt 1 | 2026-11-09 20:07 | started / load 21.19 16.46 17.59 |
 | REFUSAL-front-xr | impl attempt 1 | 2026-11-09 20:30 | own probe: hand-rewritten chain variant of the front family |
-| ST-formula-set | impl attempt 1 | 2026-11-04 13:51 | started: Q55 answer A, hash check before exact parse on Formula ==; load 16.28 28.17 32.48 |
 | W11-note | running | 2026-11-09 19:51 |  |
 | W1-premise | running | 2026-11-09 19:51 |  |
 
