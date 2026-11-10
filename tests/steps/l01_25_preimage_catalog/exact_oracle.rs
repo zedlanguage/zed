@@ -291,6 +291,15 @@ fn exact(seeds: std::ops::Range<u64>) -> Vec<Run> {
 // transfer too in the 13 where it was not exact already. The interpreter met the demand at
 // every point checked in each new box (7 to 108 points) and at none checked outside it. No
 // case lost its exact mark, and the counts of `c - e` did not change.
+//
+// more_mixed_terms_match_the_interpreter_1 rose again, 36149 -> 36153, when the solver began
+// to answer a disjunction of difference rows exactly (PROJECT-each-chain-xr). Two cases
+// changed, each from not exact to exact in both transfers, and no other case changed its box:
+// `max(x ^ 0, x) == 10` demanded false keeps `x` in (-inf, 9] or [11, inf) instead of all of
+// `x`, and `(if y <= 7 then -2 else x) != x or not (0 <= 7)` demanded true over `y` in [1, 12]
+// keeps `y` in [1, 7] and `x` in (-inf, -3] or [-1, 22] instead of all of `x` up to 22. Each
+// new box is the term's whole solution set, which the interpreter confirmed at every point
+// checked. No case lost its exact mark, and the counts of `c - e` did not change.
 
 #[test]
 fn s22_random_terms_match_the_interpreter_1() {
@@ -309,7 +318,7 @@ fn s22_random_terms_match_the_interpreter_3() {
 
 #[test]
 fn more_mixed_terms_match_the_interpreter_1() {
-    check_runs(&mixed(10_000..10_010), 36149, 3);
+    check_runs(&mixed(10_000..10_010), 36153, 3);
 }
 
 #[test]
