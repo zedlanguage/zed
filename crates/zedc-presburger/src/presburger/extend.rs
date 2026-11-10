@@ -4674,4 +4674,28 @@ mod tests {
         ];
         assert_eq!(decide_cons(rows), Ok(true));
     }
+
+    #[test]
+    fn a_quotient_read_outside_its_pair_is_not_dropped() {
+        // Cross-review of LOAD-max-div-xr, round 3 (Claude's control NC3): `q == x div 3` with
+        // `q >= 5` and `x <= 10` has no point (q >= 5 makes x >= 15). The pair of `q` is read
+        // by a third row, so it is not free; dropped, the rest would have points.
+        let (x, q) = (0, 1);
+        let rows = vec![
+            con(&[(x, 1), (q, -3)], 0, Rel::Ge),
+            con(&[(q, 3), (x, -1)], 2, Rel::Ge),
+            con(&[(q, 1)], -5, Rel::Ge),
+            con(&[(x, -1)], 10, Rel::Ge),
+        ];
+        assert_eq!(decide_cons(rows.clone()), Ok(false));
+        assert_eq!(
+            decide(&Formula::and(
+                without_free_pairs(rows)
+                    .into_iter()
+                    .map(Formula::Con)
+                    .collect()
+            )),
+            Ok(false)
+        );
+    }
 }
