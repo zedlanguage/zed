@@ -111,6 +111,10 @@ main(args: CommandLine) -> (stdout: Lines) {
     max ${f64Bits(max(one, -nan))}
     abs ${f64Bits(abs(-nan))}
     negative to the half ${f64Bits(m^0.5)}
+    nan to the zero ${f64Bits(nan^z)}
+    one to the nan ${f64Bits(one^nan)}
+    nan to the nan ${f64Bits(nan^nan)}
+    zero to the nan ${f64Bits(z^nan)}
     read ${f64Bits(r)}
     read negated ${f64Bits(-r)}
     read plus one ${f64Bits(r + one)}
@@ -119,7 +123,7 @@ main(args: CommandLine) -> (stdout: Lines) {
 "#;
 
 /// The labels of [`ROUTES`]' lines, in order.
-const LABELS: [&str; 19] = [
+const LABELS: [&str; 23] = [
     "zero over zero",
     "inf minus inf",
     "zero times inf",
@@ -136,6 +140,10 @@ const LABELS: [&str; 19] = [
     "max",
     "abs",
     "negative to the half",
+    "nan to the zero",
+    "one to the nan",
+    "nan to the nan",
+    "zero to the nan",
     "read",
     "read negated",
     "read plus one",
@@ -176,6 +184,8 @@ main(args: CommandLine) -> (stdout: Lines) {
     negated ${f64Bits(-(0.0 / 0.0))}
     nan plus one ${f64Bits(0.0 / 0.0 + 1.0)}
     negative to the half ${f64Bits((-1.0)^0.5)}
+    nan to the zero ${f64Bits((0.0 / 0.0)^0.0)}
+    one to the nan ${f64Bits(1.0^(0.0 / 0.0))}
     """;
 }
 "#;
@@ -193,6 +203,8 @@ fn nans_of_literal_operands_give_the_canonical_nan_in_the_interpreter_and_the_ex
         "negated",
         "nan plus one",
         "negative to the half",
+        "nan to the zero",
+        "one to the nan",
     ]
     .iter()
     .map(|l| format!("{l} {CANONICAL}\n"))

@@ -2576,7 +2576,17 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::Div, [Float(a), Float(b)]) => Value::float(a.get() / b.get()),
         (Prim::Neg, [Float(a)]) => Value::float(-a.get()),
         (Prim::Concat, [Str(a), Str(b)]) => Str(crate::text::Text::join(a, b)?),
-        (Prim::Pow, [Float(a), Float(b)]) => Value::float(a.get().powf(b.get())),
+        // NaN in, NaN out, as for every float operation (DESIGN.md sec:domains, NaN rule 5):
+        // IEEE 754 `pow` gives `pow(NaN, 0) = 1` and `pow(1, NaN) = 1`, so a NaN operand is
+        // tested first.
+        (Prim::Pow, [Float(a), Float(b)]) => {
+            let (a, b) = (a.get(), b.get());
+            Value::float(if a.is_nan() || b.is_nan() {
+                f64::NAN
+            } else {
+                a.powf(b)
+            })
+        }
         (Prim::Eq, [a, b]) => Bool(a.surface_eq(b)),
         (Prim::Ne, [a, b]) => Bool(!a.surface_eq(b)),
         // Two floats compare as IEEE 754 does, so every comparison with a NaN is false.

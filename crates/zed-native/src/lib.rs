@@ -153,7 +153,7 @@ fn run_in(
         b.symbol(*name, a);
     }
     let mut m = Jit(ManuallyDrop::new(JITModule::new(b)));
-    let f = codegen::define(&mut *m.0, &t, &plans)?;
+    let f = codegen::define(&mut *m.0, &t, &plans, None)?;
     m.0.finalize_definitions().map_err(bug)?;
     let code = m.0.get_finalized_function(f.root);
     // SAFETY: `code` is `zed_root`, which the generator defines with no parameters and two
@@ -173,8 +173,18 @@ fn run_in(
 pub fn object(g: &Legalized, plan: &Plan) -> Result<Vec<u8>, String> {
     let (t, plans) = Tables::new(g, plan)?;
     let mut m = object_module()?;
-    codegen::define(&mut m, &t, &plans)?;
+    codegen::define(&mut m, &t, &plans, None)?;
     m.finish().emit().map_err(bug)
+}
+
+/// The Cranelift IR of graph `g`, made by [`legalize`], under `plan`, as the generator emits
+/// it, before Cranelift's own passes: each function's text in turn.
+pub fn ir(g: &Legalized, plan: &Plan) -> Result<String, String> {
+    let (t, plans) = Tables::new(g, plan)?;
+    let mut m = object_module()?;
+    let mut s = String::new();
+    codegen::define(&mut m, &t, &plans, Some(&mut s))?;
+    Ok(s)
 }
 
 /// The object file of an executable that runs the lowered graph `g`, planned with `fuse`, with
@@ -195,7 +205,7 @@ pub fn executable_object(
     let plan = plan(g.graph(), fuse);
     let (t, plans) = Tables::new(&g, &plan)?;
     let mut m = object_module()?;
-    let f = codegen::define(&mut m, &t, &plans)?;
+    let f = codegen::define(&mut m, &t, &plans, None)?;
     exe::define_main(&mut m, f.root, &data)?;
     m.finish().emit().map_err(bug)
 }

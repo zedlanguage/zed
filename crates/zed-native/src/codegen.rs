@@ -9,7 +9,8 @@
 //! `if` and `match` are emitted inline. Each node's dups and drops are calls of `rt_inc` and
 //! `rt_dec`. Integer, float and boolean arithmetic and comparisons run inline when the tags
 //! say the operands are scalars; overflow and every other case call the runtime, which runs
-//! the node as the counting machine does. After each call that returns a word, an error
+//! the node as the counting machine does. Float `^` calls `rt_pow`, after a NaN test of each
+//! operand the graph does not prove NaN-free. After each call that returns a word, an error
 //! word leaves the function, returning the error word.
 
 use std::collections::HashMap;
@@ -84,6 +85,9 @@ struct Gen<'a, M: Module> {
     hooks: HashMap<&'static str, FuncId>,
     bodies: Vec<FuncId>,
     entries: Vec<FuncId>,
+    /// Where each function's IR text goes, as emitted and before Cranelift's passes, when
+    /// asked for.
+    ir: Option<&'a mut String>,
 }
 
 /// One function being built.
@@ -120,11 +124,13 @@ struct Open {
     early: bool,
 }
 
-/// Declares and defines every function of the graph in `t`, with `plans` by region, in `m`.
-pub(crate) fn define<M: Module>(
-    m: &mut M,
-    t: &Tables,
-    plans: &[&RegionPlan],
+/// Declares and defines every function of the graph in `t`, with `plans` by region, in `m`;
+/// appends each function's IR text to `ir` when given.
+pub(crate) fn define<'a, M: Module>(
+    m: &'a mut M,
+    t: &'a Tables,
+    plans: &'a [&'a RegionPlan],
+    ir: Option<&'a mut String>,
 ) -> Result<Funcs, String> {
     let mut hooks = HashMap::new();
     for (name, p, r) in HOOKS {
@@ -157,6 +163,7 @@ pub(crate) fn define<M: Module>(
         hooks,
         bodies,
         entries,
+        ir,
     };
     cg.root(root)?;
     for i in 0..t.lambdas.len() {
@@ -203,6 +210,9 @@ impl<M: Module> Gen<'_, M> {
             fx.b.seal_all_blocks();
             let fc = self.m.isa().frontend_config();
             fx.b.finalize(fc);
+        }
+        if let Some(s) = self.ir.as_deref_mut() {
+            s.push_str(&ctx.func.display().to_string());
         }
         self.m.define_function(id, &mut ctx).map_err(err)?;
         self.m.clear_context(&mut ctx);
@@ -675,6 +685,9 @@ impl<M: Module> Gen<'_, M> {
                 }
                 fx.b.switch_to_block(next);
             }
+            if p == Prim::Pow {
+                self.pow(fx, id, a, b, merge);
+            }
             if matches!(p, Prim::And | Prim::Or) {
                 let next = fx.b.create_block();
                 let c = self.both(fx, a, b, Word::BOOL);
@@ -693,6 +706,38 @@ impl<M: Module> Gen<'_, M> {
         self.jump(fx, merge, &[w]);
         fx.b.switch_to_block(merge);
         self.params(fx, merge)[0]
+    }
+
+    /// Float `^` of node `id` on words `a` and `b` when both are floats, by `rt_pow`, its
+    /// result jumping to `merge`; any other operands continue in a new block. NaN in, NaN out
+    /// (DESIGN.md sec:domains, NaN rule 5), where IEEE 754 `pow` gives `pow(NaN, 0) = 1` and
+    /// `pow(1, NaN) = 1`: an operand the graph does not rule the NaN out of is tested, one
+    /// `fcmp uno` for one such operand or for two, and an operand it does is not.
+    fn pow(&mut self, fx: &mut Fx<'_>, id: usize, a: W, b: W, merge: Block) {
+        let t = self.t;
+        let ni = &t.nodes[id];
+        let next = fx.b.create_block();
+        let c = self.both(fx, a, b, Word::FLOAT);
+        self.when(fx, c, next);
+        let tag = fx.b.ins().iconst(I64, Word::FLOAT);
+        let test = match (ni.may_be_nan(0), ni.may_be_nan(1)) {
+            (true, true) => Some((a.1, b.1)),
+            (true, false) => Some((a.1, a.1)),
+            (false, true) => Some((b.1, b.1)),
+            (false, false) => None,
+        };
+        if let Some((u, v)) = test {
+            let (x, y) = (self.float(fx, u), self.float(fx, v));
+            let nan = fx.b.ins().fcmp(FloatCC::Unordered, x, y);
+            let canon = fx.b.ins().iconst(I64, f64::NAN.to_bits() as i64);
+            let call = fx.b.create_block();
+            fx.b.ins()
+                .brif(nan, merge, &args(&[(tag, canon)]), call, &[]);
+            fx.b.switch_to_block(call);
+        }
+        let r = self.call(fx, "rt_pow", &[a.1, b.1])[0];
+        self.jump(fx, merge, &[(tag, r)]);
+        fx.b.switch_to_block(next);
     }
 
     /// A call: directly when the plan resolves the callee and the closure is it, through
@@ -838,7 +883,7 @@ fn inline(p: Prim, n: usize) -> bool {
                 || int_cmp(p).is_some()
                 || float_op(p)
                 || float_cmp(p).is_some()
-                || matches!(p, Prim::And | Prim::Or)
+                || matches!(p, Prim::And | Prim::Or | Prim::Pow)
         }
         _ => false,
     }

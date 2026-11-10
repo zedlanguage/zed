@@ -139,6 +139,7 @@ pub(crate) const HOOKS: &[(&str, usize, usize)] = &[
     ("rt_out", 1, 2),
     ("rt_pending", 0, 2),
     ("rt_error", 1, 2),
+    ("rt_pow", 2, 1),
 ];
 
 /// Each hook's address, in the order of [`HOOKS`].
@@ -157,7 +158,23 @@ pub(crate) fn addresses() -> Vec<*const u8> {
         rt_out as extern "C" fn(i64) -> Word as *const u8,
         rt_pending as extern "C" fn() -> Word as *const u8,
         rt_error as extern "C" fn(i64) -> Word as *const u8,
+        rt_pow as extern "C" fn(i64, i64) -> i64 as *const u8,
     ]
+}
+
+/// Float `^` on the bits of two floats, neither a NaN: IEEE 754 `pow`, a NaN it makes (a
+/// finite base below `-0.0` to a finite non-integer power) replaced by the canonical NaN, as
+/// the kernel does. Generated code sends a NaN operand to the NaN before this call wherever
+/// the graph does not rule the NaN out (DESIGN.md sec:domains, NaN rule 5), since `pow` gives
+/// `pow(NaN, 0) = 1` and `pow(1, NaN) = 1`. It reads and writes no run state.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
+extern "C" fn rt_pow(a: i64, b: i64) -> i64 {
+    let r = f64::from_bits(a as u64).powf(f64::from_bits(b as u64));
+    zed_kernel::F64::new(r).get().to_bits() as i64
 }
 
 #[unsafe(no_mangle)]

@@ -18,6 +18,7 @@ mod legalize;
 mod levels;
 mod minmax;
 mod ports;
+mod pow_nan;
 mod reuse;
 mod scalars;
 mod scaling;

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use zed_kernel::{Prim, Value};
 use zedc::zir::legalize::{Legalized, Swapped, nodes_in};
 use zedc::zir::memory::{Mode, Plan, RegionPlan};
-use zedc::zir::{Node, Op, Region, Src};
+use zedc::zir::{Edge, Node, Op, Region, Src};
 
 use zed_rt::Word;
 
@@ -46,6 +46,22 @@ impl NodeInfo {
     /// The node.
     pub fn node(&self) -> &Node {
         &self.region.nodes[self.k]
+    }
+
+    /// Whether input `i` may be a NaN by what the graph records: a constant only when it is
+    /// the NaN, an argument or an output unless its edge's type excludes the NaN. No
+    /// analysis runs here; the edge types are what earlier passes wrote.
+    pub fn may_be_nan(&self, i: usize) -> bool {
+        let nan = Value::float(f64::NAN);
+        let edge = match &self.node().inputs[i] {
+            Src::Const(v) => return *v == nan,
+            Src::Arg(a) => &self.region.args[*a],
+            Src::Out(n, p) => &self.region.nodes[*n].outputs[*p],
+        };
+        match edge {
+            Edge::Value(e) => e.ty.contains(&nan),
+            Edge::State(_) => false,
+        }
     }
 }
 

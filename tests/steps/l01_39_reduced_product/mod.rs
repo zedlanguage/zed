@@ -24,6 +24,7 @@ mod linked;
 mod named_test;
 mod nests;
 mod pendants;
+mod pow_nan;
 mod random;
 mod refused;
 mod scaling;

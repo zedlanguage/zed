@@ -8,6 +8,9 @@ use zed_tests::step_helpers::l01_16_elaboration::errors;
 fn one_failure_flows_through_the_arithmetic() {
     assert_eq!(x("int(\"x\") * 2 + 1"), "#invalid");
     assert_eq!(x("-(10 div 0)"), "#divByZero");
+    // A term with an undefined operand is undefined, the exponent 0 included, as NaN in,
+    // NaN out holds for float `^` (item FLOAT-pow-nan).
+    assert_eq!(x("(10 div 0) ^ 0"), "#divByZero");
 }
 
 #[test]

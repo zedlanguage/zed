@@ -3222,3 +3222,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 |---|---|---|---|
 | A `HashMap<usize, (Option<Int>, Option<Int>)>` of the farthest finite ends each disjunct's projection gives a symbol, filled in place through `entry().or_default()` in one pass over the projections kept | `project_parts` (`open`) | Mutation (gap 11) | a fold over the projections into a persistent map from symbol to its two ends, O(n log n) |
 | A doubling search away from a finite end, a `loop` whose state (`a`, `step`) is reassigned until a question has no proof of no point, then `break (a, v)` with the interval to bisect | `Hull::tighten` (`new_lo`, `new_hi`) | Mutation (gap 11), early exit (gap 12) | a recursive function of the end and the step that returns the interval; at most about `log2 w` calls |
+
+## Entries from FLOAT-pow-nan (`crates/zed-kernel/src/eval.rs`, `crates/zed-native/src/`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An optional `&mut String` held in the code generator (`Gen::ir`) that each function's IR text is appended to before Cranelift compiles it | `Gen::ir`, `codegen::define`, `zed_native::ir` | Mutation (gap 11) | None needed: `codegen.rs` and the hooks stay in Rust (section "What stays in Rust"); a port would return the text with each function instead |
+| The hook `rt_pow`, an `extern "C"` function on the bits of two `f64` | `hooks.rs` | stays in Rust | None: hooks stay in Rust |
