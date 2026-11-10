@@ -4437,15 +4437,17 @@ fn point_with(
 /// Complexity tradeoff: one search per disjunct, as [`probe_to`] made before (item
 /// PROJECT-canon-precision, method (b)), costs `r` searches of the whole formula for `r`
 /// disjuncts no earlier point holds, `O(r n log n)`, which grew with `n` on the difference
-/// chain (37.3 times the bytes at `8n`), the three-atom chain (16.5 times) and the wide named
-/// disjunction (18.0 times). Here a set of `s` forced disjuncts that has a point costs one
+/// chain (39.4 times the bytes at `8n`, limit 13.2), the three-atom chain (16.6 times) and the
+/// wide named disjunction (25.8 times), measured after batch 101. Here a set of `s` forced disjuncts that has a point costs one
 /// search, and one without costs two more, of its halves, so that `f` disjuncts with no point
 /// cost `O(f log r)` searches and the others `O(f log r + 1)` together: on those chains, where
 /// the disjuncts that no greedy point holds all have a point together, one search does all.
 /// The disjuncts are forced in rounds: one whose bounds of one atom exclude those of a
 /// disjunct forced before it in the round waits for the next, so a disjunction of `m` cases
 /// that exclude each other, each with a point, costs `m` rounds of one search each,
-/// `O(m n log n)`. On the remainder chains `m` stops at the classes of the modulus (spread and
+/// `O(m n log n)`. Forced all in one round (method (c)), such cases share no point, so their
+/// halves cost a search each down to one case: the chain of guarded remainders took 77.7
+/// times the bytes at `8n` (limit 15.4); in rounds 8.8 times. On the remainder chains `m` stops at the classes of the modulus (spread and
 /// sliced chains, sizes 8 to 64: 6.8 and 7.5 times the work, limit 17.6; 32 to 256: 7.5 and
 /// 11.1 times). A set of values of one atom, which would cost a round per piece, is not
 /// tested here ([`one_atom_set`] in [`probe_unhandled`]).
