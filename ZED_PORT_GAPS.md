@@ -3338,3 +3338,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | The comparison's context (`Ck.comparing: Option<Comparison>`, now with the operand expressions, the span and the error count at its start) set in `binary_end` and read deep inside `Ck::pair` and `Ck::apart` | `walk.rs` `binary_end`, `Ck::pair`, `Ck::apart` | Mutation (gap 11) | a parameter of `equal`, `pair`, `follow` and `apart`, as for LIT-eq-kind |
 | The path of component places (`places`) and the first leaf found apart (`last`) updated in place in `pair`'s loop over its explicit stack, through a closure that borrows them mutably (`leaf`) | `Ck::pair` | Mutation (gap 11) | a fold over the pairs of components threading the path and the first leaf found apart |
 | An early `return` of `apart` when an error was already reported inside the comparison (`errors.len() == from`) | `Ck::apart` | Early exit (gap 12) | a guard on the count, as an `if` around the body |
+
+## Entries from INTERVAL-persistent (`crates/zedc-lattice/src/interval.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A persistent AVL tree of pieces with its nodes in `Arc`, each holding the summaries of its subtree (count, first and last ends, longest gap, hash), split and joined as in Blelloch, Ferizovic and Sun | `IntervalSet`, `Node`, `node`, `join`, `split`, `concat`, `union`, `intersection`, `difference` | Reference counts | A persistent tree value of the runtime, which shares and frees nodes; the summaries are fields |
+| `Arc::try_unwrap` to move the children and piece out of a node held once, and clone them when it is shared | `parts` | Identity, mutation (gap 11) | Removed: a value with one owner is updated in place by the runtime, as a primed receiver |
+| `Arc::ptr_eq` and `std::ptr::eq` to pass by a subtree two sets share in a union, intersection, difference, inclusion or equality test | `union`, `intersection`, `difference`, `same`, `IntervalSet::is_subset`, `PartialEq for IntervalSet` | Identity (gap 1) | The content hash and count of the subtree compared first, then the pieces; the shortcut by address is a constant factor only when the hashes agree |
+| Iterators over the tree on an explicit stack of node references (`Pieces`, both ends; `Walk`, of `Step::Tree` and `Step::Piece`) | `Pieces`, `Walk`, `IntervalSet::pieces`, `pieces_from`, `pieces_after` | Borrowed references into a value | A walk that returns the stack with each piece, or a fold over the tree |
