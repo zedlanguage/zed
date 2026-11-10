@@ -357,9 +357,28 @@ fn more_deep_terms_match_the_interpreter_2() {
     check_runs(&deep(2_100..2_200), 35171, 1);
 }
 
+// The seeds 3000 to 3039 of `@exact` terms ran as one test of 56.5 s at load 41 (68.8 s at
+// load 71), above the 60 s limit; each seed's 250 cases take 0.6 to 2.6 s, so they are split
+// by seed into four tests, whose counts add up to the whole's 19134 and 2 (SPLIT-exact-oracle).
+
 #[test]
-fn more_exact_terms_match_the_interpreter() {
-    check_runs(&exact(3_000..3_040), 19134, 2);
+fn more_exact_terms_match_the_interpreter_1() {
+    check_runs(&exact(3_000..3_010), 4764, 0);
+}
+
+#[test]
+fn more_exact_terms_match_the_interpreter_2() {
+    check_runs(&exact(3_010..3_020), 4778, 1);
+}
+
+#[test]
+fn more_exact_terms_match_the_interpreter_3() {
+    check_runs(&exact(3_020..3_030), 4800, 1);
+}
+
+#[test]
+fn more_exact_terms_match_the_interpreter_4() {
+    check_runs(&exact(3_030..3_040), 4792, 0);
 }
 
 fn var(x: &str) -> Term {
