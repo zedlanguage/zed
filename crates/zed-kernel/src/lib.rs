@@ -10,6 +10,7 @@
 pub mod address;
 pub mod bits;
 mod deep;
+pub mod digest;
 pub mod eval;
 pub mod exact;
 pub mod frames;

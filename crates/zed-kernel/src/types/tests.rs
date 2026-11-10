@@ -247,3 +247,31 @@ fn a_tuple_with_an_empty_component_is_empty() {
     assert!(met.is_empty() && kept.is_empty());
     assert_ne!(kept, never);
 }
+
+/// Equal types built apart hash alike under the kernel's hasher (`digest::Digest`), alone and
+/// in the keys the type tables use: a group's number with its arguments, and a pair of ids; a
+/// type that differs hashes apart.
+#[test]
+fn equal_types_built_apart_hash_alike() {
+    use std::hash::{BuildHasher, BuildHasherDefault};
+    let h = BuildHasherDefault::<crate::digest::Digest>::default();
+    let build = |name: &str| {
+        Type::tuple(vec![
+            Type::int(),
+            &Type::atom(name) | &Type::bool(),
+            Type::tuple(vec![Type::atom("b")]),
+        ])
+    };
+    let (a, b, c) = (build("a"), build("a"), build("c"));
+    assert_eq!(a, b);
+    assert_ne!(a, c);
+    assert_eq!(h.hash_one(&a), h.hash_one(&b));
+    assert_ne!(h.hash_one(&a), h.hash_one(&c));
+    let args = |t: &Type| (7u64, vec![t.clone(), Type::int()]);
+    assert_eq!(h.hash_one(args(&a)), h.hash_one(args(&b)));
+    assert_ne!(h.hash_one(args(&a)), h.hash_one(args(&c)));
+    assert_eq!(
+        h.hash_one((a.digest(), 3u32)),
+        h.hash_one((b.digest(), 3u32))
+    );
+}

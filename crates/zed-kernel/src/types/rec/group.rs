@@ -9,7 +9,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 
 use super::unfold::{ENVS, Show, eval, thread};
 use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, free, same};
-use crate::types::bdd::KeyHasher;
+use crate::digest::Digest;
 use crate::types::{Type, bytes, defs, mix};
 
 /// The accepted groups, one per distinct definition list, by the digest of the definitions
@@ -20,10 +20,10 @@ static GROUPS: LazyLock<Mutex<HashMap<u64, Vec<Weak<Checked>>>>> = LazyLock::new
 
 /// The live instances of each thread that has any, by the thread that made them, then by the
 /// group's number and the arguments, each held weakly.
-type Instances = HashMap<u64, ThreadInstances, BuildHasherDefault<KeyHasher>>;
+type Instances = HashMap<u64, ThreadInstances, BuildHasherDefault<Digest>>;
 
 /// One thread's live instances, by the group's number and the arguments.
-type ThreadInstances = HashMap<(u64, Vec<Type>), Weak<Env>, BuildHasherDefault<KeyHasher>>;
+type ThreadInstances = HashMap<(u64, Vec<Type>), Weak<Env>, BuildHasherDefault<Digest>>;
 
 /// The live instances, by the thread that made them (`Unit::thread`), the group's number and
 /// the arguments. Each thread's instances are a table of their own, removed when its last
@@ -50,7 +50,7 @@ struct Numbering {
     /// The first node built of each shape, by its digest and its place among the shapes of that
     /// digest. A node whose head equals one's and whose children are of that one's children's
     /// classes is equal to it, and takes its class.
-    first: HashMap<(u64, u32), Arc<Node>, BuildHasherDefault<KeyHasher>>,
+    first: HashMap<(u64, u32), Arc<Node>, BuildHasherDefault<Digest>>,
 }
 
 impl Node {

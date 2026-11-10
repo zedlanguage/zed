@@ -48,7 +48,7 @@ use super::mix;
 
 mod set;
 
-pub(crate) use super::hash::KeyHasher;
+use crate::digest::Digest;
 use list::Cell;
 use set::{Key, NEXT, Set};
 
@@ -196,7 +196,7 @@ impl<A: Literal> Drop for Expr<A> {
 /// Removes the entry of `key` when it is the node `is_self` names, in one probe: an entry left by
 /// a node dropped on another thread, or replaced since, stays.
 fn untable<K: std::hash::Hash + Eq, N>(
-    table: &mut HashMap<K, Weak<N>, BuildHasherDefault<KeyHasher>>,
+    table: &mut HashMap<K, Weak<N>, BuildHasherDefault<Digest>>,
     key: K,
     is_self: impl FnOnce(&Weak<N>) -> bool,
 ) {
@@ -1907,7 +1907,7 @@ mod xor {
     use std::sync::{Arc, Weak};
 
     use super::set::{self, Set, Tree};
-    use super::{Bdd, Expr, Form, KeyHasher, Literal, Op, Operands, Owned, Part, joined_digest};
+    use super::{Bdd, Digest, Expr, Form, Literal, Op, Operands, Owned, Part, joined_digest};
 
     /// An exclusive or: the set of its atoms, each taken, and the constant joined to them.
     pub(super) type Tag<A> = (Arc<Set<A>>, bool);
@@ -1944,13 +1944,13 @@ mod xor {
 
     /// The live exclusive ors of a thread, by the id of their set's tree node and their constant.
     pub(in crate::types) type XorTable<A> =
-        HashMap<(u64, bool), Weak<Expr<A>>, std::hash::BuildHasherDefault<KeyHasher>>;
+        HashMap<(u64, bool), Weak<Expr<A>>, std::hash::BuildHasherDefault<Digest>>;
 
     /// The live inner exclusive ors of a thread, each of a tree node's left subtree and its atom
     /// ([`node`]), by the ids of the two ([`Pair::inner_key`]); the constant is `false`, and the
     /// complement is held by the exclusive or.
     pub(in crate::types) type InnerTable<A> =
-        HashMap<(u64, u64), Weak<Expr<A>>, std::hash::BuildHasherDefault<KeyHasher>>;
+        HashMap<(u64, u64), Weak<Expr<A>>, std::hash::BuildHasherDefault<Digest>>;
 
     /// The exclusive or of the one literal on `atom`, taken or refused.
     fn literal<A: Literal>(atom: &A, taken: bool) -> Tag<A> {
@@ -2296,7 +2296,7 @@ mod list {
     use std::sync::{Arc, OnceLock, Weak};
 
     use super::set::{self, Key, NEXT, Set, Tree};
-    use super::{Bdd, KeyHasher, Literal, Owned, Part, mix};
+    use super::{Bdd, Digest, Literal, Owned, Part, mix};
 
     /// A node of a sequence of blocks: a block and the sequences of the blocks before and after
     /// it. A cell that is the root of a list's sequence is the list, with the value of its first
@@ -2326,7 +2326,7 @@ mod list {
     /// The live cells of a thread, by the ids of their children and block, each held weakly: a cell
     /// leaves the table when it is dropped (step TABLE-life).
     pub(in crate::types) type CellTable<A> =
-        HashMap<(u64, u64, u64), Weak<Cell<A>>, std::hash::BuildHasherDefault<KeyHasher>>;
+        HashMap<(u64, u64, u64), Weak<Cell<A>>, std::hash::BuildHasherDefault<Digest>>;
 
     /// A cell leaves its thread's table, and its children and views are freed in a loop (module
     /// `deep`).
@@ -2373,7 +2373,7 @@ mod list {
 
     /// The pieces of the cells restricted, by twice the cell's id plus the value of its first block
     /// (`Part::restrict`'s memo for lists).
-    pub(super) type Memo<A> = HashMap<u64, Piece<A>, std::hash::BuildHasherDefault<KeyHasher>>;
+    pub(super) type Memo<A> = HashMap<u64, Piece<A>, std::hash::BuildHasherDefault<Digest>>;
 
     fn id<A: Literal>(t: &Seq<A>) -> u64 {
         t.as_ref().map_or(0, |c| c.id)

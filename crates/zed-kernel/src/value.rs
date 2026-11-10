@@ -47,6 +47,7 @@ use num_bigint::{BigInt, BigUint};
 use num_traits::ToPrimitive;
 
 use crate::deep::{self, Queue};
+use crate::digest::Digest;
 use crate::num::{Exact, Rat, TooLarge, bytes_of, read_decimal, room, sign_of};
 use crate::text::{Text, TooLong};
 
@@ -761,60 +762,9 @@ impl Hash for Value {
     }
 }
 
-/// splitmix64's finalizer on each `u64` in turn, from no seed, so a value's digest is the same
-/// on every run; bytes go in eight at a time, and a small integer as one word. Also the hasher
-/// of maps keyed by values and other small keys (`zedc_types::ty::Holders`), where SipHash, the
-/// standard map's, cost about a quarter of filing a tuple again (TY-row-hash).
-#[derive(Default)]
-pub struct Digest(u64);
-
-impl Hasher for Digest {
-    fn write(&mut self, bytes: &[u8]) {
-        let (words, rest) = bytes.as_chunks::<8>();
-        for w in words {
-            self.write_u64(u64::from_le_bytes(*w));
-        }
-        if !rest.is_empty() {
-            let mut w = [0; 8];
-            w[..rest.len()].copy_from_slice(rest);
-            self.write_u64(u64::from_le_bytes(w));
-        }
-    }
-
-    // A small integer, such as an enum's discriminant, goes in as one word, not as bytes.
-    fn write_u8(&mut self, x: u8) {
-        self.write_u64(u64::from(x));
-    }
-
-    fn write_u16(&mut self, x: u16) {
-        self.write_u64(u64::from(x));
-    }
-
-    fn write_u32(&mut self, x: u32) {
-        self.write_u64(u64::from(x));
-    }
-
-    fn write_usize(&mut self, x: usize) {
-        self.write_u64(x as u64);
-    }
-
-    fn write_u64(&mut self, x: u64) {
-        let mut z = (self.0.rotate_left(29) ^ x).wrapping_add(0x9e37_79b9_7f4a_7c15);
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        self.0 = z ^ (z >> 31);
-    }
-
-    fn finish(&self) -> u64 {
-        self.0
-    }
-}
-
-/// `a` and `b` combined by [`Digest`].
+/// `a` and `b` combined by [`Digest`]'s step.
 fn mix(a: u64, b: u64) -> u64 {
-    let mut d = Digest(a);
-    d.write_u64(b);
-    d.0
+    crate::digest::step(a, b)
 }
 
 /// The digest of a value that holds no sequence: a boolean, number, string or family. Two such

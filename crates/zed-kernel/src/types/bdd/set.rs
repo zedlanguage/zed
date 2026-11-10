@@ -66,7 +66,7 @@ pub(in crate::types) type Tree<A> = Option<Arc<Set<A>>>;
 pub(in crate::types) type SetTable<A> = std::collections::HashMap<
     Slot,
     Bucket<Set<A>>,
-    std::hash::BuildHasherDefault<crate::types::hash::KeyHasher>,
+    std::hash::BuildHasherDefault<crate::digest::Digest>,
 >;
 
 /// The key of a node's bucket in its [`SetTable`]: the hash of its atom, whether the atom is

@@ -8,11 +8,7 @@ pub(crate) fn mix(a: u64, b: u64) -> u64 {
     if crate::address::SHORT {
         return crate::address::short64(salted(mix_byte(a, b)));
     }
-    // splitmix64's finalizer.
-    let mut z = (a.rotate_left(29) ^ b).wrapping_add(0x9e37_79b9_7f4a_7c15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    salted(z ^ (z >> 31))
+    salted(crate::digest::step(a, b))
 }
 
 /// `mix` of the short-addresses build, whose digests keep 8 bits: a function of the two
@@ -39,32 +35,6 @@ fn spread(x: u8) -> u8 {
     let x = (x ^ (x >> 4)).wrapping_mul(0xc5);
     let x = (x ^ (x >> 3)).wrapping_mul(0x9d);
     x ^ (x >> 4)
-}
-
-/// The hasher of the memo of restricted list cells (`bdd::list::Memo`), of the thread's tables of
-/// live rows, morphism types and set nodes: splitmix64's finalizer on each `u64` in turn.
-/// SipHash took an eighth of the restriction of a list of three blocks. It is here, beside
-/// `mix`, so that `bdd::set` hashes with it without importing `bdd` (s_01f_import_graph).
-#[derive(Default)]
-pub(crate) struct KeyHasher(u64);
-
-impl std::hash::Hasher for KeyHasher {
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.write_u64(u64::from(b));
-        }
-    }
-
-    fn write_u64(&mut self, x: u64) {
-        let mut z = (self.0.rotate_left(29) ^ x).wrapping_add(0x9e37_79b9_7f4a_7c15);
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        self.0 = z ^ (z >> 31);
-    }
-
-    fn finish(&self) -> u64 {
-        self.0
-    }
 }
 
 #[cfg(test)]

@@ -16,10 +16,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use zed_kernel::digest::Digest;
 use zed_kernel::frames::{Deep, Stack};
 pub use zed_kernel::types::names::{Names, ProgramNames, fresh_name};
 use zed_kernel::types::{Refusal, TextPlace, Type as KType, Verdict};
-use zed_kernel::value::Digest;
 use zed_kernel::{Items, Universe, Value};
 
 use zedc_syntax::lex::Span;

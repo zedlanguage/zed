@@ -713,9 +713,9 @@ pub(crate) struct Holds {
     families: HashMap<Id, Option<Family>, ById>,
 }
 
-/// The hasher of the maps of [`Holds`]: `types::KeyHasher`, a few multiplications per id in
+/// The hasher of the maps of [`Holds`]: `digest::Digest`, a few multiplications per id in
 /// place of the default hasher's SipHash.
-type ById = std::hash::BuildHasherDefault<crate::types::KeyHasher>;
+type ById = std::hash::BuildHasherDefault<crate::digest::Digest>;
 
 /// What [`Holds::of`] does next.
 enum Visit<'v> {

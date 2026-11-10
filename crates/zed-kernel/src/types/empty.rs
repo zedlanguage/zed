@@ -81,10 +81,10 @@ use num_bigint::BigUint;
 
 use super::bdd::{Bdd, Form, Part};
 use super::bes::{Answer, Bes, Decision, Kind, decide};
-use super::hash::KeyHasher;
 use super::rec::unfold::eval;
 use super::rec::{self, Env, Judgment, Why};
 use super::{Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Type, Universes, Verdict};
+use crate::digest::Digest;
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
 
@@ -92,7 +92,7 @@ use crate::value::Value;
 /// is built, so a lookup reads one node of the type, where a search of a `BTreeMap` compared the
 /// key with some `log n` others, each comparison reading another node (EMPTY-morphism-next).
 /// Equal digests are told apart by `Eq`, which compares contents.
-type Digests = BuildHasherDefault<KeyHasher>;
+type Digests = BuildHasherDefault<Digest>;
 
 /// A map keyed by types, hashed by their digests.
 type ByType<V> = HashMap<Type, V, Digests>;

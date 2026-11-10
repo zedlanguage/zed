@@ -29,7 +29,7 @@ mod empty;
 mod hash;
 #[cfg(test)]
 use hash::SALT;
-pub(crate) use hash::{KeyHasher, mix};
+pub(crate) use hash::mix;
 mod print;
 pub use print::{defs, names};
 
@@ -461,7 +461,7 @@ struct Shared<K: Tabled> {
 /// The thread's live nodes of one kind, by digest; nodes of one digest that differ share a
 /// bucket, ordered by their keys (module `bucket`).
 type Live<K> =
-    RefCell<HashMap<u64, Bucket<Shared<K>>, std::hash::BuildHasherDefault<bdd::KeyHasher>>>;
+    RefCell<HashMap<u64, Bucket<Shared<K>>, std::hash::BuildHasherDefault<crate::digest::Digest>>>;
 
 /// A kind of key kept in a table of live nodes, with the thread-local that holds the table.
 trait Tabled: PartialEq + Sized + 'static {
@@ -694,9 +694,9 @@ enum Step<'a> {
     Equal(u64, u64),
 }
 
-/// The pairs of node ids [`order`] found equal, hashed by `hash::KeyHasher`: the default hasher
+/// The pairs of node ids [`order`] found equal, hashed by `digest::Digest`: the default hasher
 /// seeds itself per set and runs SipHash on each pair (EMPTY-morphism-next).
-type Equal = HashSet<(u64, u64), std::hash::BuildHasherDefault<hash::KeyHasher>>;
+type Equal = HashSet<(u64, u64), std::hash::BuildHasherDefault<crate::digest::Digest>>;
 
 /// The order of the pair in `first`, the order of contents that `Ord` gives every type, row,
 /// morphism type, part, diagram and expression: two types by digest, then by their parts field
