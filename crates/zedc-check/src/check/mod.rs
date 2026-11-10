@@ -52,7 +52,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use zed_kernel::num::TooLarge;
-use zed_kernel::types::{Type as KType, Universes, Verdict, defs};
+use zed_kernel::types::{Spell, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
 use zedc_base::rejection::Row;
@@ -607,9 +607,9 @@ type Masks = Vec<(Arc<str>, u8)>;
 
 /// `t` shown with each class of `masks`, a variable of `t` with its carriers, shown as the
 /// union of those carriers.
-fn show_with(t: &Ty, masks: &Masks) -> String {
+fn show_with(t: &Ty, masks: &Masks, spell: Spell<'_>) -> String {
     if masks.is_empty() {
-        return t.to_string();
+        return t.text_spelled(false, spell);
     }
     let mut rest = t.clone();
     let mut parts = Vec::new();
@@ -620,7 +620,7 @@ fn show_with(t: &Ty, masks: &Masks) -> String {
         rest.vars.remove(v);
     }
     if !rest.is_empty() {
-        parts.push(rest.text_in_union());
+        parts.push(rest.text_spelled(true, spell));
     }
     let text = parts.join(" | ");
     #[cfg(feature = "printed-types")]
@@ -936,6 +936,20 @@ struct Ck<'t, 'a> {
     /// For each binder read by a binder's value, what its summary read in the scope of its
     /// last such read ([`images::Read`]), from which the next is found.
     reads: HashMap<usize, images::Read<Rc<arms::Summarized>, zedc_preimage::product::Product>>,
+    /// Each numeric literal the program writes: its value, without its `-`, and where each
+    /// literal of that value starts, to where it ends; a message prints the value as one of
+    /// them ([`Self::spelling`]).
+    // Complexity tradeoff: one entry per literal, found by the value's hash, O(the value's
+    // size), then O(log n) in the n literals of that value to record one or to find the first
+    // at or after a place; each spelling is a span into the text, so no literal is copied until
+    // printed. Ordering the values themselves in one tree, as a first version did, compares a
+    // rat such as `1e-Nr` with `10eNr` at a cost above linear in the digits of `N`. The naive
+    // way, keeping each literal's text in its type, would make equal types print apart and the
+    // printed text depend on which literal was met first.
+    spelled: HashMap<Value, BTreeMap<usize, usize>>,
+    /// The span of the text a message being written is about, whose own literals it prints as
+    /// they are written there ([`Self::near`]).
+    near: std::cell::Cell<Option<Span>>,
 }
 
 /// Atoms that a function value applied in a check of a need passed by (rule 6 of
@@ -1003,7 +1017,57 @@ impl<'t, 'a> Ck<'t, 'a> {
             tried: HashMap::new(),
             arms: arms::Arms::new(),
             reads: HashMap::new(),
+            spelled: HashMap::new(),
+            near: std::cell::Cell::new(None),
         }
+    }
+
+    /// Records that the program writes the literal value `v`, without its `-`, at `span`.
+    fn spells(&mut self, v: &Value, span: Span) {
+        match self.spelled.get_mut(v) {
+            Some(at) => at.insert(span.start, span.end),
+            None => (self.spelled.entry(v.clone()).or_default()).insert(span.start, span.end),
+        };
+    }
+
+    /// `f` of the checker, writing a message about the text at `span`: a literal value written
+    /// there is printed as it is written there.
+    fn near<T>(&self, span: Option<Span>, f: impl FnOnce(&Self) -> T) -> T {
+        let was = self.near.replace(span);
+        let out = f(self);
+        self.near.set(was);
+        out
+    }
+
+    /// The program's spelling of the literal value `v`: a literal with that value, or `-` and
+    /// one with the negated value; one written in the span of the message being written
+    /// ([`Self::near`]) if there is one, else the first in the text. `None` when the program
+    /// writes neither, or its text is not known; the value is then printed in canonical form.
+    // Complexity tradeoff: two hash lookups, O(the value's size), which printing it costs
+    // anyway, and in each two range lookups, O(log n) in the n literals of the value. The naive
+    // way, a scan of the literals for one inside the span, costs O(n) per value printed.
+    fn spelling(&self, v: &Value) -> Option<Cow<'a, str>> {
+        let text = self.t.text?;
+        if !matches!(
+            v,
+            Value::Int(_) | Value::Big(_) | Value::Rat(_) | Value::Float(_)
+        ) {
+            return None;
+        }
+        let find = |v: &Value| {
+            let at = self.spelled.get(v)?;
+            let first = |from: usize, to: usize| {
+                (at.range(from..to).next())
+                    .filter(|&(_, &end)| end <= to)
+                    .map(|(&start, &end)| &text[start..end])
+            };
+            (self.near.get().and_then(|s| first(s.start, s.end))).or_else(|| first(0, usize::MAX))
+        };
+        if let Some(s) = find(v) {
+            return Some(Cow::Borrowed(s));
+        }
+        let s = find(&neg_value(v, true))?;
+        Some(Cow::Owned(format!("-{s}")))
     }
 
     /// The type an undeclared parameter `id` of the class variable `v` is bound to in its
@@ -1524,7 +1588,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .filter(|(v, _)| t.vars.contains(v))
                         .cloned()
                         .collect();
-                    format!("`{b}` is declared `{}`", show_with(&t, &masks))
+                    format!(
+                        "`{b}` is declared `{}`",
+                        show_with(&t, &masks, &|v| self.spelling(v))
+                    )
                 }
             },
             Why::Default(t) => format!("`{b}` is {}, the carrier of its default", self.text(t)),
@@ -2333,7 +2400,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             })
             .collect();
         let t = &t.replace(&lits);
-        show_with(t, &self.masks(t))
+        show_with(t, &self.masks(t), &|v| self.spelling(v))
     }
 
     /// The classes of `t` narrowed to some carriers, each with its carriers: what
@@ -2445,21 +2512,21 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The text of `t` in a message.
     fn text(&self, t: &Ty) -> String {
-        self.settled(t).to_string()
+        self.settled(t).text_spelled(false, &|v| self.spelling(v))
     }
 
     /// The text of `t` in a message as one operand of a union, `T | U`: a function in it is
     /// parenthesized.
     fn text_in_union(&self, t: &Ty) -> String {
-        self.settled(t).text_in_union()
+        self.settled(t).text_spelled(true, &|v| self.spelling(v))
     }
 
     /// [`Self::show`] as one operand of a union, `T | U`: a function in it is parenthesized.
     fn show_in_union(&self, t: &Ty) -> String {
         let t = &self.settled(t);
         match self.masks(t) {
-            masks if masks.is_empty() => t.text_in_union(),
-            masks => show_with(t, &masks),
+            masks if masks.is_empty() => t.text_spelled(true, &|v| self.spelling(v)),
+            masks => show_with(t, &masks, &|v| self.spelling(v)),
         }
     }
 
@@ -3838,15 +3905,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         at: Option<(usize, &Piece, &Ty)>,
         why: &str,
     ) -> String {
-        let shown: Vec<String> = args
-            .iter()
-            .enumerate()
-            .map(|(i, a)| match (a, at) {
-                (_, Some((j, p, _))) if i == j => self.show(&p.ty()),
-                (Some(a), _) => self.show(&a.ty),
-                (None, _) => "_".into(),
-            })
-            .collect();
+        // The arguments' literals are printed as written there: in the text from the first
+        // argument's start to the last's end.
+        let spans = || args.iter().filter_map(|a| a.as_ref()?.at);
+        let near = (spans().map(|s| s.start).min())
+            .zip(spans().map(|s| s.end).max())
+            .map(|(start, end)| Span { start, end });
+        let shown: Vec<String> = self.near(near, |ck| {
+            (args.iter().enumerate())
+                .map(|(i, a)| match (a, at) {
+                    (_, Some((j, p, _))) if i == j => ck.show(&p.ty()),
+                    (Some(a), _) => ck.show(&a.ty),
+                    (None, _) => "_".into(),
+                })
+                .collect()
+        });
         let why = at
             .and_then(|(i, p, q)| Some(args[i].as_ref()?.ty.of_piece(p).refused(q)))
             .filter(|w| !w.is_empty())
@@ -5420,8 +5493,8 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
 /// operator). `name` is the operand's name and span where it is a name, and `op` the
 /// operator's symbol and whether the literal is its left operand. Where both are known, the
 /// fixes rewrite the operation: `x * 2` where the literal's value is an integer and the
-/// operator has an arrow at `int`, and `f64(x) * 2.0`; otherwise the fix is the integer
-/// literal alone, `2`.
+/// operator has an arrow at `int`, then `f64(x) * 2.0` and `rat(x) * 2.0`; otherwise the fix is
+/// the integer literal alone, `2`.
 fn decimal_at_int(
     l: &Lit,
     what: &str,
@@ -5446,15 +5519,20 @@ fn decimal_at_int(
                     &alone,
                 ));
             }
-            let alone = fmt::from_fn(|f| match left {
-                true => write!(f, "{lit} {op} f64({n})"),
-                false => write!(f, "f64({n}) {op} {lit}"),
-            });
-            fixes.push(Rewrite::new(
-                &[(point(at.start), &"f64("), (point(at.end), &")")],
-                &format_args!("{n} is cast to f64, and {what} takes two f64"),
-                &alone,
-            ));
+            // Each cast of the operand that checks: a decimal literal takes `f64` and `rat`
+            // (DESIGN.md L1.26b), and each takes `+`, `-`, `*` and `/` at two of it.
+            for c in ["f64", "rat"] {
+                let alone = fmt::from_fn(|f| match left {
+                    true => write!(f, "{lit} {op} {c}({n})"),
+                    false => write!(f, "{c}({n}) {op} {lit}"),
+                });
+                let open = format!("{c}(");
+                fixes.push(Rewrite::new(
+                    &[(point(at.start), &open), (point(at.end), &")")],
+                    &format_args!("{n} is cast to {c}, and {what} takes two {c}"),
+                    &alone,
+                ));
+            }
         }
         _ => fixes.extend(whole_part(l).map(|w| {
             Rewrite::lit(

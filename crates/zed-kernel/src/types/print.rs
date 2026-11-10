@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use super::TextPlace as At;
 use super::bdd::{Bdd, Form, Part};
-use super::{Lits, Morphism, Node, Row, Surface, Surfaces, Tuples, Type};
+use super::{Lits, Morphism, Node, Row, Spell, Surface, Surfaces, Tuples, Type};
 
 pub mod defs;
 pub mod names;
@@ -99,6 +99,20 @@ impl Type {
         }
         .print(types)
     }
+
+    /// Several types written as [`Type::surfaces_by_name`] writes them, each literal value that
+    /// `spell` spells written so, as the program wrote it (DESIGN.md sec:diagnostics: a message
+    /// prints a literal as written), and any other in canonical form. A spelling must read back
+    /// to the value it spells. Time as [`Type::surfaces_by_name`], with one lookup in `spell`
+    /// per literal written.
+    pub fn surfaces_spelled(types: &[(Type, At)], spell: Spell<'_>) -> Surfaces {
+        Printer {
+            by_name: true,
+            spell: Some(spell),
+            ..Printer::default()
+        }
+        .print(types)
+    }
 }
 
 impl Surfaces {
@@ -114,7 +128,7 @@ impl Surfaces {
     }
 }
 
-impl Printer {
+impl Printer<'_> {
     /// The texts of `types`, each at its place, with one set of definitions.
     fn print(mut self, types: &[(Type, At)]) -> Surfaces {
         let p = &mut self;
@@ -432,7 +446,7 @@ fn node_id<A: super::bdd::Literal>(b: &Bdd<A>) -> u64 {
 }
 
 #[derive(Default)]
-struct Printer {
+struct Printer<'s> {
     index: BTreeMap<Key, usize>,
     texts: Vec<Option<Text>>,
     uses: Vec<u32>,
@@ -448,6 +462,9 @@ struct Printer {
     by_name: bool,
     /// The value of each part met outside every atom, by its node's id ([`Printer::outside`]).
     outsides: HashMap<u64, bool>,
+    /// The program's own spelling of a literal value, where a message has one
+    /// ([`Type::surfaces_spelled`]).
+    spell: Option<Spell<'s>>,
 }
 
 enum Step {
@@ -466,7 +483,7 @@ fn push_children(stack: &mut Vec<Step>, segs: &[Seg]) {
     stack.extend(children.into_iter().rev().map(Step::Enter));
 }
 
-impl Printer {
+impl Printer<'_> {
     /// The text that refers to `item`, counting the use; `put` says where it stands.
     fn refer(&mut self, item: Item) -> Text {
         let key = item.key();
@@ -753,7 +770,7 @@ impl Printer {
             ("f64", &p.floats),
             ("String", &p.strings),
         ] {
-            lits(&mut items, name, l);
+            lits(&mut items, name, l, self.spell);
         }
         if p.atoms.cofinite {
             let mut except: Vec<Text> = Vec::new();
@@ -1411,11 +1428,19 @@ impl Printer {
     }
 }
 
-fn lits(items: &mut Vec<Text>, name: &str, l: &Lits) {
+fn lits(items: &mut Vec<Text>, name: &str, l: &Lits, spell: Option<Spell<'_>>) {
+    // Complexity tradeoff: a value with a spelling is written as the program spells it, one
+    // lookup each, O(log s) in the s spellings (`Spell`), and its text copied once, as the
+    // canonical text it replaces is made once; the text stays linear in what it prints. Naively
+    // reparsing the printed text to swap each literal back would cost a second pass and a copy.
     let each = || {
-        l.values
-            .iter()
-            .map(|v| Text::word(super::lit_text(v), Class::Prim))
+        l.values.iter().map(move |v| {
+            let text = match spell.and_then(|s| s(v)) {
+                Some(s) => s.into_owned(),
+                None => super::lit_text(v),
+            };
+            Text::word(text, Class::Prim)
+        })
     };
     match (l.cofinite, l.values.is_empty()) {
         (true, true) => items.push(Text::word(name, Class::Prim)),

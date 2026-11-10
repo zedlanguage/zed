@@ -9,6 +9,7 @@
 
 mod fixes;
 mod scaling;
+mod spelling;
 mod tuples;
 
 use zed_tests::tokens;
@@ -288,7 +289,8 @@ fn a_decimal_literal_takes_a_float_format_or_rat_and_never_int() {
             "the literal `2.0` is a decimal, and `*` expects `int`, the carrier of `x`; a \
              decimal literal is never an `int`\n  fixes, each checked here:\n    \
              twice(x: int) = x * 2;           2 takes the int of x\n    \
-             twice(x: int) = f64(x) * 2.0;    x is cast to f64, and `*` takes two f64 [2.0]"
+             twice(x: int) = f64(x) * 2.0;    x is cast to f64, and `*` takes two f64\n    \
+             twice(x: int) = rat(x) * 2.0;    x is cast to rat, and `*` takes two rat [2.0]"
         ]
     );
     assert_eq!(

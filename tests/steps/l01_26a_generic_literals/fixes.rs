@@ -167,6 +167,10 @@ fn a_decimal_at_an_int_lists_both_casts() {
                 "twice(x: int) = f64(x) * 2.0;",
                 "x is cast to f64, and `*` takes two f64"
             ),
+            (
+                "twice(x: int) = rat(x) * 2.0;",
+                "x is cast to rat, and `*` takes two rat"
+            ),
         ])
     );
 }
@@ -265,10 +269,16 @@ fn a_negative_literal_keeps_its_minus_in_each_fix() {
     );
     assert_eq!(
         checked("offset(positional x: int) = x + -2.5;\n"),
-        pairs(&[(
-            "offset(positional x: int) = f64(x) + -2.5;",
-            "x is cast to f64, and `+` takes two f64"
-        )])
+        pairs(&[
+            (
+                "offset(positional x: int) = f64(x) + -2.5;",
+                "x is cast to f64, and `+` takes two f64"
+            ),
+            (
+                "offset(positional x: int) = rat(x) + -2.5;",
+                "x is cast to rat, and `+` takes two rat"
+            ),
+        ])
     );
 }
 

@@ -134,6 +134,11 @@ fn scalar(v: &Value) -> u64 {
     }
 }
 
+/// The program's own spelling of a literal value, if it has one: the text of a literal it
+/// wrote, which reads back to that value ([`Type::surfaces_spelled`]). Borrowed where the
+/// program's text holds it, made where it adds a sign.
+pub type Spell<'a> = &'a dyn Fn(&Value) -> Option<std::borrow::Cow<'a, str>>;
+
 /// A literal as a type prints it: a `rat` in canonical form ([`Rat::literal_text`]), so its
 /// text costs the literal's length; any other as the value prints.
 pub(crate) fn lit_text(v: &Value) -> String {

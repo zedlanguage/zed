@@ -1742,6 +1742,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// fitted to it, else the expression's type.
     fn arg(&mut self, m: &mut M<'a>, e: &'a Expr, want: Want) {
         if let Some(l) = literal(e) {
+            self.spells(&l.value, l.span);
             m.ret = Ret::Arg(Arg {
                 ty: lit_ty(&l.value, l.neg()),
                 lit: Some(l),
@@ -1769,6 +1770,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         if let (Some(l), Some(c)) = (literal(e), want.num) {
+            self.spells(&l.value, l.span);
             let from = self.info.errors.len();
             let t = self.adopt_to(&l, c);
             // A rejected literal is its own error: read at the carrier wanted, it causes no
@@ -1785,6 +1787,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn expr_of(&mut self, m: &mut M<'a>, e: &'a Expr) {
         match read_literal(e) {
             Ok(Some(l)) => {
+                self.spells(&l.value, l.span);
                 let t = match self.info.adopt.get(&l.span) {
                     Some(v) => lit_ty(v, l.neg()),
                     None => lit_ty(&l.value, l.neg()),
@@ -1829,9 +1832,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             // A `rat` literal is decorated and keeps its carrier.
             ExprKind::Rat(s) => match Rat::decimal(s) {
-                Ok(r) => m.ty(Ty::lit(&Value::rat(
-                    r.expect("the lexer's rat text is a decimal"),
-                ))),
+                Ok(r) => {
+                    let v = Value::rat(r.expect("the lexer's rat text is a decimal"));
+                    self.spells(&v, e.span);
+                    m.ty(Ty::lit(&v))
+                }
                 Err(r) => {
                     self.error(e.span, unread_literal(&r));
                     m.ty(Ty::empty())
@@ -7301,13 +7306,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut out = Ty::empty();
         for (alive, dyn_, at, path) in &states {
             let shown = |ck: &Self| {
-                let shown: Vec<String> = (path.iter().zip(&no_value))
-                    .map(|(p, &none)| match p {
-                        Some(p) => ck.show(&p.ty()),
-                        None if none => ck.show(&Ty::empty()),
-                        None => "_".into(),
-                    })
-                    .collect();
+                // The call's literals are printed as written there.
+                let shown: Vec<String> = ck.near(Some(span), |ck| {
+                    (path.iter().zip(&no_value))
+                        .map(|(p, &none)| match p {
+                            Some(p) => ck.show(&p.ty()),
+                            None if none => ck.show(&Ty::empty()),
+                            None => "_".into(),
+                        })
+                        .collect()
+                });
                 let pieces: Vec<Option<Ty>> =
                     path.iter().map(|p| p.as_ref().map(Piece::ty)).collect();
                 let pieces: Vec<Option<&Ty>> = pieces.iter().map(Option::as_ref).collect();

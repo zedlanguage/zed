@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use zed_kernel::digest::Digest;
 use zed_kernel::frames::{Deep, Stack};
 pub use zed_kernel::types::names::{Names, ProgramNames, fresh_name};
-use zed_kernel::types::{Refusal, TextPlace, Type as KType, Verdict};
+use zed_kernel::types::{Refusal, Spell, TextPlace, Type as KType, Verdict};
 use zed_kernel::{Items, Universe, Value};
 
 use zedc_syntax::lex::Span;
@@ -8398,7 +8398,7 @@ impl Ty {
     /// string and copied into the whole: copying cost the depth of each part, so O(n^2) for a
     /// function type n deep. A variable `scope` does not name is printed `_`, once.
     fn write(&self, out: &mut String, scope: &mut Scope) {
-        write_parts(Print::Ty(self, PrintAt::Any), out, scope);
+        write_parts(Print::Ty(self, PrintAt::Any), out, scope, None);
     }
 
     /// Its text, in type syntax, as one operand of a union: a function in it is parenthesized,
@@ -8409,7 +8409,28 @@ impl Ty {
             Print::Ty(self, PrintAt::Union),
             &mut out,
             &mut Scope::default(),
+            None,
         );
+        out
+    }
+
+    /// Its text, in type syntax, as its Display writes it, or as one operand of a union with
+    /// `union` ([`Ty::text_in_union`]), each literal value that `spell` spells written as the
+    /// program wrote it, as a message prints a literal (DESIGN.md sec:diagnostics), and any
+    /// other in canonical form.
+    pub fn text_spelled(&self, union: bool, spell: Spell<'_>) -> String {
+        let at = if union { PrintAt::Union } else { PrintAt::Any };
+        let mut out = String::new();
+        write_parts(
+            Print::Ty(self, at),
+            &mut out,
+            &mut Scope::default(),
+            Some(spell),
+        );
+        #[cfg(feature = "printed-types")]
+        if !union {
+            printed::record(self, &out);
+        }
         out
     }
 
@@ -8628,7 +8649,12 @@ impl<'a> Morphism<'a> {
 /// ([`KType::surfaces_by_name`]), each where it stands: a part used more than once among them
 /// gets a definition `type Tk = …;`, declared on a line of its own before the whole text
 /// ([`zed_kernel::types::defs::declare`]), so the text stays linear in the sets' graph.
-fn write_parts<'a>(start: Print<'a>, out: &mut String, scope: &mut Scope) {
+fn write_parts<'a>(
+    start: Print<'a>,
+    out: &mut String,
+    scope: &mut Scope,
+    spell: Option<Spell<'_>>,
+) {
     let base = out.len();
     let mut kernel = Kernel::default();
     let mut stack = vec![start];
@@ -8656,7 +8682,10 @@ fn write_parts<'a>(start: Print<'a>, out: &mut String, scope: &mut Scope) {
     if kernel.sets.is_empty() {
         return;
     }
-    let texts = KType::surfaces_by_name(&kernel.sets);
+    let texts = match spell {
+        Some(spell) => KType::surfaces_spelled(&kernel.sets, spell),
+        None => KType::surfaces_by_name(&kernel.sets),
+    };
     let rest = out.split_off(base);
     for (name, body) in &texts.defs {
         zed_kernel::types::defs::declare(out, name, body).expect("a String takes any text");
@@ -8701,7 +8730,7 @@ impl Sig {
     /// Writes its text, in type syntax, to `out`: its variables bounded by carriers by name, in
     /// a bounds clause after the arrows, and the others `_`.
     fn write(&self, out: &mut String, scope: &mut Scope) {
-        write_parts(Print::Sig(self, PrintAt::Any), out, scope);
+        write_parts(Print::Sig(self, PrintAt::Any), out, scope, None);
     }
 
     /// Opens its variables in `scope` and pushes the parts of its text to `parts`, in order. It

@@ -601,7 +601,8 @@ fn the_rest_of_k30_is_exact_when_its_ask_is_given() {
         messages,
         [format!(
             "the literal `0.{nines}` is a decimal, and `+` expects `int`, the carrier of `n`; a \
-             decimal literal is never an `int`; write `f64(n) + 0.{nines}`"
+             decimal literal is never an `int`; write `f64(n) + 0.{nines}` or \
+             `rat(n) + 0.{nines}`"
         )]
     );
 }

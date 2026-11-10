@@ -3416,3 +3416,13 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | Parts of a value kept as parent links in a `Vec<(Option<usize>, PartStep)>`, with the path to a part written by walking the links back | `value_parts`, `ValueParts::place` | Mutation (gap 11) | recursion on the value that passes the path down as a list built by prepending, written out only at a rejected part |
 | A walk of an argument against its parameter type on an explicit `Vec` stack of `(Src, &Ty)` pairs, `Src` an enum of borrowed views | `Ck::unfixed_args` | Mutation (gap 11) | recursion on the argument and the type together |
 | `partition_point` on the sorted spans of the rejected parts, to drop the errors found inside them | `Ck::rejects_unfixed` | none | a binary search over a sorted list |
+
+## Entries from MSG-literal-print-form (`crates/zedc-check/src/check/mod.rs`, `walk.rs`; `zed-kernel/src/types/print.rs`; `zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap<Value, BTreeMap<usize, usize>>` of each literal's value to its spans, filled in place as the walk reads literals (`get_mut`, then `entry` for a new value) | `Ck::spells`, `Ck::spelled` | Mutation (gap 11) | a map from value to the ordered map of spans, returned by the walk with the other findings |
+| `BTreeMap::range(from..to).next()` for the first literal of a value at or after a place | `Ck::spelling` | Key range queries on ordered maps (gap 9) | `from` on the ordered map (L5.8a) |
+| A `Cell<Option<Span>>` set around a closure and restored after it, so a printer deep in the call reads the span of the message being written | `Ck::near`, `Ck::spelling` | Mutation (gap 11) | the span passed to the printer as an argument, with the spelling function built from it |
+| A spelling function passed as `&dyn Fn(&Value) -> Option<Cow<'a, str>>` (`Spell`) through the type printer | `Printer::spell`, `KType::surfaces_spelled`, `Ty::write_parts`, `Ty::text_spelled`, `show_with` | Function values (`dyn Fn`) | a function value |
+| `Cow<'a, str>`: a spelling borrowed from the program's text, or `-` and the spelling of the negated value formatted | `Ck::spelling` | None | Zed shares strings, so the spelling is a plain `String` |

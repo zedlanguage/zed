@@ -75,15 +75,18 @@ fn mixed_kinds_select_no_arrow() {
         errors("n = 1;\nx = n + 1.5;\n"),
         [
             "the literal `1.5` is a decimal, and `+` expects `int`, the carrier of `n`; a \
-             decimal literal is never an `int`\n  fixes, each checked here:\n    \
-             x = f64(n) + 1.5;    n is cast to f64, and `+` takes two f64 [1.5]"
+             decimal literal is never an `int`\n  \
+             fixes, each checked here:\n    \
+             x = f64(n) + 1.5;    n is cast to f64, and `+` takes two f64\n    \
+             x = rat(n) + 1.5;    n is cast to rat, and `+` takes two rat [1.5]"
         ]
     );
     assert_eq!(
         errors("x = 1r/2r * 2.5f64;\n"),
         [
             "the literal `2.5f64` is an `f64` by its suffix, and `rat` is expected here; a \
-             suffix fixes a literal's carrier\n  fixes, each checked here:\n    \
+             suffix fixes a literal's carrier\n  \
+             fixes, each checked here:\n    \
              x = 1r/2r * 2.5r;    the literal is then exactly 2.5, a rat [2.5f64]"
         ]
     );
