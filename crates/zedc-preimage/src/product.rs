@@ -2573,6 +2573,10 @@ impl Scope {
     /// so it empties no leaf, and the scope is bottom exactly when the eager one is. A star
     /// that goes or changes makes its leaf's conjuncts due at the next projection, which
     /// settles the leaf.
+    ///
+    /// Settling can give a finer product than the eager scope holds: an eager part projected
+    /// before a constraint on another term of its names is not due again, and keeps the
+    /// coarser product (`Scope::refresh`, seed 22671 of `l01_39_reduced_product::lazy`).
     pub fn lazy(mut self) -> Scope {
         self.lazy = true;
         self
@@ -2659,6 +2663,57 @@ impl Scope {
             return;
         }
         let blocks = self.stale(names);
+        self.settle_blocks(blocks, false);
+    }
+
+    /// Before a join ([`Scope::join`]), brings the stars of the leaves among `names` to the
+    /// product their present core gives: settles them in a lazy scope; in an eager one,
+    /// projects again each star's block that holds exactly one conjunct that is not a
+    /// constraint, as well as its due parts. Each such conjunct `g` is projected as `g` met
+    /// with the block's constraints, and its part is due only when the constraints on the
+    /// terms `g` compares, or those terms' products, changed (`Scope::is_projected`). A
+    /// constraint added later on another term of the block's names then leaves `g`'s
+    /// projection made with the old constraints, which holds but is coarser than `g`
+    /// projected with the new ones. With leaves `a >= n && a >= -m` and `g` = `m + n <= -7 ||
+    /// m + n >= 2`, a case that adds `m <= n + 5` reads `a >= -2` where the enumeration of
+    /// the hubs in `-10..=10` gives `a >= -1`, and the eager join of two such cases took the
+    /// union of the coarse sides (`l01_39_reduced_product::lazy`, seed 22671). The lazy join
+    /// escapes this because the tests that left the leaf stale made each part of its block
+    /// due. If refreshing finds an eager scope empty, the join is the other side
+    /// ([`Scope::join_refreshed`]).
+    ///
+    /// Complexity tradeoff: naive version, every part of each star's block projected again,
+    /// O(d) projections per star of d disjunctions per join and O(k²) over k stars that share
+    /// d = k distinct disjunctions (57.4× the bytes at 8×k on
+    /// `l01_39_reduced_product::scaling::an_eager_scope_with_many_distinct_disjunctions_among_the_hubs_of_a_star_scales`).
+    /// Used: only a block with one conjunct not a constraint has that part projected again,
+    /// one part per star, with the classes of `Scope::settle` (C37) shared. Tradeoff: a block
+    /// of two such conjuncts or more keeps the parts its constraints did not make due, as
+    /// before; S16 projects such a core one disjunction at a time in any case. Tests:
+    /// `l01_39_reduced_product::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction`
+    /// (the eager join against the enumeration) and
+    /// `l01_39_reduced_product::scaling::an_eager_join_projects_again_the_stars_it_settles_and_scales`;
+    /// COMPLEXITY.md row C45.
+    fn refresh<'a>(&mut self, names: impl IntoIterator<Item = &'a Arc<str>>) {
+        if self.lazy {
+            return self.settle(names);
+        }
+        if self.bottom {
+            return;
+        }
+        let mut seen: BTreeSet<BlockId> = BTreeSet::new();
+        let blocks: Vec<BlockId> = names
+            .into_iter()
+            .filter_map(|x| self.relation.star(x))
+            .filter(|b| seen.insert(*b))
+            .collect();
+        self.settle_blocks(blocks, true);
+    }
+
+    /// Projects the due parts of `blocks` ([`Scope::settle`]), and with `fresh` also the one
+    /// part of a block that holds exactly one conjunct not a constraint (`Scope::refresh`),
+    /// then reduces.
+    fn settle_blocks(&mut self, blocks: Vec<BlockId>, fresh: bool) {
         if blocks.is_empty() {
             return;
         }
@@ -2667,7 +2722,20 @@ impl Scope {
         type Before = (Projected, (IntervalSet, Congruence));
         let mut done: BTreeMap<conjuncts::Class, (Before, IntervalSet)> = BTreeMap::new();
         for id in blocks {
-            let (b, due) = self.block(&self.relation, id);
+            let (b, mut due) = self.block(&self.relation, id);
+            if fresh {
+                let mut free = b.parts.iter().filter(|(_, p)| p.of.is_some());
+                if let (Some((at, _)), None) = (free.next(), free.next())
+                    && !due.contains(at)
+                {
+                    due.push(at.clone());
+                }
+                // A block with nothing to project, as most in an eager scope, is kept as it is.
+                if due.is_empty() {
+                    self.keep(b);
+                    continue;
+                }
+            }
             let class = b.leaf.as_ref().and_then(|x| {
                 let c = self.relation.class_of(x)?.clone();
                 Some((x.clone(), c))
@@ -2705,7 +2773,7 @@ impl Scope {
             }
         }
         self.reduce_with(false);
-        debug_assert!(!self.bottom, "settling a leaf emptied a scope");
+        debug_assert!(fresh || !self.bottom, "settling a leaf emptied a scope");
     }
 
     /// The product of `name` as the eager scope has it: [`Scope::get`] of the scope with the
@@ -3176,6 +3244,11 @@ impl Scope {
     /// product on both sides, so it stays stale in the join, where settling it gives that
     /// product.
     ///
+    /// An eager scope picks the same leaves, as if each were stale, and projects their stars
+    /// again on each side (`Scope::refresh`): a star's projection may still be the one made
+    /// before the case's tests on other terms of its names, and the join of two such sides
+    /// would keep the coarser of the two.
+    ///
     /// A name of a conjunct one side holds alone whose free conjuncts differ between the sides
     /// changes the core ([`Conjuncts::core`]) of each star of two hubs or more at it, so its
     /// leaf, of one product `L` on both sides, settles to `L` met with the projection `pA` of
@@ -3244,9 +3317,6 @@ impl Scope {
         if other.bottom {
             return self.clone();
         }
-        if !self.lazy && !other.lazy {
-            return self.join_settled(other);
-        }
         let mut differ: BTreeSet<Arc<str>> = BTreeSet::new();
         // The names held differently or mentioned by a written constraint one side holds
         // alone, at which the core of every star ([`Conjuncts::core`]) may differ.
@@ -3285,9 +3355,9 @@ impl Scope {
             }
         }
         let (mut a, mut b) = (self.clone(), other.clone());
-        a.settle(&leaves);
-        b.settle(&leaves);
-        let joined = a.join_settled(&b);
+        a.refresh(&leaves);
+        b.refresh(&leaves);
+        let joined = Scope::join_refreshed(&a, &b);
         if joined.bottom {
             return joined;
         }
@@ -3337,9 +3407,19 @@ impl Scope {
         if due.is_empty() {
             return joined;
         }
-        a.settle(&due);
-        b.settle(&due);
-        a.join_settled(&b)
+        a.refresh(&due);
+        b.refresh(&due);
+        Scope::join_refreshed(&a, &b)
+    }
+
+    /// [`Scope::join_settled`] of two sides after [`Scope::refresh`], which may find one side
+    /// empty: the join is then the other side.
+    fn join_refreshed(a: &Scope, b: &Scope) -> Scope {
+        match (a.bottom, b.bottom) {
+            (true, _) => b.clone(),
+            (_, true) => a.clone(),
+            _ => a.join_settled(b),
+        }
     }
 
     /// [`Scope::join`] of two sides that differ at no stale leaf.

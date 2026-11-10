@@ -773,146 +773,35 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
     const LO: i64 = -10;
     const HI: i64 = 10;
 
-    /// The case: hubs in `LO - 1..=HI`, leaves `ai >= n` and `ai >= sign·m`, the disjunction
-    /// `d1`, the move of both hubs to `LO`; then `z >= 0` and `yes`, or `z < 0` and `no`,
-    /// tested together when `with_z` and one after the other otherwise. Checks each name of
-    /// the join against settling every name first, and against the eager scope when `eager`,
-    /// and each leaf's least value against the enumeration of the hubs; returns how many
-    /// leaves one case or the other holds stale before the join. (The eager scope is at
-    /// times less tight than the lazy one, so the random cases do not compare with it.)
-    fn run(
+    /// A case of the join: leaves `ai >= n` and `ai >= sign·m`, the disjunction `d1`, then
+    /// `z >= 0` and `yes`, or `z < 0` and `no`, tested together when `with_z` and one after
+    /// the other otherwise.
+    struct Case {
         sign: i64,
-        d1: &[HubTest],
-        yes: &[HubTest],
-        no: &[HubTest],
+        d1: Vec<HubTest>,
+        yes: Vec<HubTest>,
+        no: Vec<HubTest>,
         with_z: bool,
-        eager: bool,
-        trace: &str,
-    ) -> usize {
-        let all_names = names(&["n", "m", "z", "a0", "a1", "a2"]);
-        let p = Premises::new();
-        let mut t: Vec<Term> = Vec::new();
-        for h in HUBS {
-            t.push(prim(Prim::Ge, var(h), int(LO - 1)));
-            t.push(prim(Prim::Le, var(h), int(HI)));
-        }
-        for x in ["a0", "a1", "a2"] {
-            t.push(diff_ge(x, "n", 0));
-            t.push(if sign == 1 {
-                diff_ge(x, "m", 0)
-            } else {
-                prim(Prim::Ge, prim(Prim::Add, var(x), var("m")), int(0))
-            });
-        }
-        t.push(d1.iter().map(|g| g.term()).reduce(or).expect("a test"));
-        for h in HUBS {
-            t.push(prim(Prim::Ge, var(h), int(LO)));
-        }
-        let mut lazy = ints(&all_names).lazy();
-        for t in &t {
-            lazy = lazy.assume(t, true, &p);
-        }
-        let z = prim(Prim::Ge, var("z"), int(0));
-        let arms = |s: &Scope| {
-            if with_z {
-                let not_z = prim(Prim::Lt, var("z"), int(0));
-                (
-                    s.assume(&and(z.clone(), conj(yes)), true, &p),
-                    s.assume(&and(not_z, conj(no)), true, &p),
-                )
-            } else {
-                (
-                    s.assume(&z, true, &p).assume(&conj(yes), true, &p),
-                    s.assume(&z, false, &p).assume(&conj(no), true, &p),
-                )
-            }
-        };
-        let (ly, ln) = arms(&lazy);
-        let (mut sy, mut sn) = (ly.clone(), ln.clone());
-        sy.settle(&all_names);
-        sn.settle(&all_names);
-        let (every, joined) = (sy.join(&sn), ly.join(&ln));
-        let eager = eager.then(|| {
-            let mut eager = ints(&all_names);
-            for t in &t {
-                eager = eager.assume(t, true, &p);
-            }
-            let (ey, en) = arms(&eager);
-            ey.join(&en)
-        });
-        let d1_holds = |n, m| d1.iter().any(|g: &HubTest| g.holds(n, m));
-        let least = (LO..=HI)
-            .flat_map(|n| (LO..=HI).map(move |m| (n, m)))
-            .filter(|&(n, m)| d1_holds(n, m) && (all(yes, n, m) || all(no, n, m)))
-            .map(|(n, m)| n.max(sign * m))
-            .min();
-        assert_eq!(joined.bottom, least.is_none(), "{trace}");
-        let Some(least) = least else {
-            return 0;
-        };
-        let mut stale = 0;
-        for x in &all_names {
-            let s = joined.settled(x);
-            assert_eq!(s, every.settled(x), "{x} after {trace}");
-            if let Some(eager) = &eager {
-                assert_eq!(s, eager.get(x), "{x} eagerly after {trace}");
-            }
-            if x.starts_with('a') {
-                let ints = s.ints();
-                assert!(
-                    ints.contains(least) && !ints.contains(least - 1),
-                    "{x} is {ints}, least {least}, after {trace}"
-                );
-                stale += usize::from(ly.get(x) != ly.settled(x) || ln.get(x) != ln.settled(x));
-            }
-        }
-        stale
     }
 
-    /// The case that tests `z` with a test on the hubs: the join's disjunction
-    /// `(z >= 0 && n + m <= -7) || (z < 0 && n - m >= -30)` mentions `z`, which no hub relates
-    /// to, so the join holds no star, and the leaves, at `-11` from before the move, read as
-    /// they are unless the join settles them first.
-    #[test]
-    fn a_case_that_tests_another_name_drops_the_star() {
-        let d1 = [HubTest(-1, -1, 10)];
-        let (yes, no) = ([HubTest(-1, -1, 7)], [HubTest(1, -1, -30)]);
-        let trace = "n + m <= -10; z >= 0 && n + m <= -7, or z < 0 && n - m >= -30";
-        assert!(run(1, &d1, &yes, &no, true, true, trace) > 0);
-    }
-
-    /// Cases that test the hubs alone: the join's core holds `n - m >= -6 || n <= -8` and
-    /// `n - m >= -8 || n - m >= -6`, two disjunctions, and is projected one disjunction at a
-    /// time, which gives `ai >= -4`; each case's core holds one disjunction and gives the
-    /// least value `-3` (at `n = -3`, `m = 3`).
-    #[test]
-    fn a_join_that_adds_a_second_disjunction_to_the_core() {
-        let d1 = [HubTest(1, -1, -6), HubTest(-1, 0, 8)];
-        let (yes, no) = ([HubTest(1, -1, -8)], [HubTest(1, -1, -6)]);
-        let trace = "n - m >= -6 || n <= -8; n - m >= -8, or n - m >= -6";
-        assert!(run(-1, &d1, &yes, &no, false, true, trace) > 0);
-    }
-
-    /// Random cases of both kinds: `d1` of two or three tests, each case of one or two, kept
-    /// when no case narrows a hub (otherwise the join settles the stars at it at once).
-    fn part(seeds: std::ops::Range<u64>) {
-        let (mut joins, mut kept) = (0, 0);
-        let shapes = [
-            (1, 0),
-            (-1, 0),
-            (0, 1),
-            (0, -1),
-            (1, 1),
-            (-1, -1),
-            (1, -1),
-            (-1, 1),
-        ];
-        for seed in seeds {
+    impl Case {
+        /// The random case of `seed`: `d1` of two or three tests, each arm of one or two. A
+        /// test of one hub narrows it, and so does a test of two whose bound is above 0 on
+        /// this box, so the arms draw tests of two hubs with bounds at or below 0.
+        fn of(seed: u64) -> Case {
+            let shapes = [
+                (1, 0),
+                (-1, 0),
+                (0, 1),
+                (0, -1),
+                (1, 1),
+                (-1, -1),
+                (1, -1),
+                (-1, 1),
+            ];
             let mut rng = Rng::new(seed);
-            // A test of one hub narrows it, and so does a test of two whose bound is above 0
-            // on this box, so the cases draw tests of two hubs with bounds at or below 0.
-            let test = |rng: &mut Rng, case: bool| {
-                if case {
+            let test = |rng: &mut Rng, arm: bool| {
+                if arm {
                     let (a, b) = rng.pick(&shapes[4..]);
                     HubTest(a, b, rng.int(-20, 0))
                 } else {
@@ -930,43 +819,315 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
                 .map(|_| test(&mut rng, true))
                 .collect();
             let (sign, with_z) = (rng.pick(&[1, -1]), rng.below(2) == 0);
-            let d1_holds = |n, m| d1.iter().any(|g: &HubTest| g.holds(n, m));
-            let keeps = |case: &[HubTest]| {
-                let (mut ns, mut ms) = (BTreeSet::new(), BTreeSet::new());
-                for n in LO..=HI {
-                    for m in LO..=HI {
-                        if d1_holds(n, m) && all(case, n, m) {
-                            ns.insert(n);
-                            ms.insert(m);
-                        }
-                    }
-                }
+            Case {
+                sign,
+                d1,
+                yes,
+                no,
+                with_z,
+            }
+        }
+
+        fn trace(&self, seed: u64) -> String {
+            let Case {
+                sign,
+                d1,
+                yes,
+                no,
+                with_z,
+            } = self;
+            format!("seed {seed}: sign {sign} d1 {d1:?} yes {yes:?} no {no:?} z {with_z}")
+        }
+
+        fn d1_holds(&self, n: i64, m: i64) -> bool {
+            self.d1.iter().any(|g| g.holds(n, m))
+        }
+
+        /// The hubs' values in `LO..=HI` that `d1` and `arm` admit.
+        fn points(&self, arm: &[HubTest]) -> Vec<(i64, i64)> {
+            (LO..=HI)
+                .flat_map(|n| (LO..=HI).map(move |m| (n, m)))
+                .filter(|&(n, m)| self.d1_holds(n, m) && all(arm, n, m))
+                .collect()
+        }
+
+        /// Whether neither arm narrows a hub on the box (otherwise the lazy join settles the
+        /// stars at it at once).
+        fn keeps(&self) -> bool {
+            [&self.yes, &self.no].iter().all(|arm| {
+                let points = self.points(arm);
+                let ns: BTreeSet<i64> = points.iter().map(|p| p.0).collect();
+                let ms: BTreeSet<i64> = points.iter().map(|p| p.1).collect();
                 ns.len() == ms.len() && ns.len() == (HI - LO + 1) as usize
+            })
+        }
+
+        /// The tests before the arms: hubs in `LO - 1..=HI`, the leaves, `d1`, and the move of
+        /// both hubs to `LO`.
+        fn before(&self) -> Vec<Term> {
+            let mut t: Vec<Term> = Vec::new();
+            for h in HUBS {
+                t.push(prim(Prim::Ge, var(h), int(LO - 1)));
+                t.push(prim(Prim::Le, var(h), int(HI)));
+            }
+            for x in ["a0", "a1", "a2"] {
+                t.push(diff_ge(x, "n", 0));
+                t.push(if self.sign == 1 {
+                    diff_ge(x, "m", 0)
+                } else {
+                    prim(Prim::Ge, prim(Prim::Add, var(x), var("m")), int(0))
+                });
+            }
+            t.push(self.d1.iter().map(|g| g.term()).reduce(or).expect("a test"));
+            for h in HUBS {
+                t.push(prim(Prim::Ge, var(h), int(LO)));
+            }
+            t
+        }
+
+        /// The scope after the tests before the arms, lazy or eager.
+        fn scope(&self, lazy: bool, p: &Premises) -> Scope {
+            let s = ints(&names(&["n", "m", "z", "a0", "a1", "a2"]));
+            let s = if lazy { s.lazy() } else { s };
+            self.before().iter().fold(s, |s, t| s.assume(t, true, p))
+        }
+
+        fn arms(&self, s: &Scope, p: &Premises) -> (Scope, Scope) {
+            let z = prim(Prim::Ge, var("z"), int(0));
+            if self.with_z {
+                let not_z = prim(Prim::Lt, var("z"), int(0));
+                (
+                    s.assume(&and(z, conj(&self.yes)), true, p),
+                    s.assume(&and(not_z, conj(&self.no)), true, p),
+                )
+            } else {
+                (
+                    s.assume(&z, true, p).assume(&conj(&self.yes), true, p),
+                    s.assume(&z, false, p).assume(&conj(&self.no), true, p),
+                )
+            }
+        }
+
+        /// The least value of a leaf in either arm, by the enumeration of the hubs.
+        fn least(&self) -> Option<i64> {
+            (self.points(&self.yes).into_iter())
+                .chain(self.points(&self.no))
+                .map(|(n, m)| n.max(self.sign * m))
+                .min()
+        }
+
+        /// The join of the eager arms, checked against the enumeration of the hubs and the
+        /// lazy join: empty exactly when no point is left; each leaf's least value that of the
+        /// enumeration; each hub holding every value a point gives it; and each name no
+        /// coarser than in the lazy join, so a hub is exact wherever the lazy join's is. A hub
+        /// is not compared with the enumeration's least and greatest values: at seeds 781, 1515
+        /// and 1820 the lazy join's is coarser than them.
+        fn eager_join(&self, trace: &str) -> Scope {
+            let p = Premises::new();
+            let (ey, en) = self.arms(&self.scope(false, &p), &p);
+            let joined = ey.join(&en);
+            let least = self.least();
+            assert_eq!(joined.bottom, least.is_none(), "eagerly after {trace}");
+            let Some(least) = least else {
+                return joined;
             };
-            if !keeps(&yes) || !keeps(&no) {
+            let (ly, ln) = self.arms(&self.scope(true, &p), &p);
+            let lazy = ly.join(&ln);
+            for x in &names(&["n", "m", "z", "a0", "a1", "a2"]) {
+                let (e, l) = (joined.get(x), lazy.settled(x));
+                assert!(
+                    e.ints().is_subset(l.ints()),
+                    "{x} is {}, lazily {}, eagerly after {trace}",
+                    e.ints(),
+                    l.ints()
+                );
+            }
+            let points: Vec<(i64, i64)> = (self.points(&self.yes).into_iter())
+                .chain(self.points(&self.no))
+                .collect();
+            for (h, at) in [("n", 0), ("m", 1)] {
+                let ints = joined.get(&Arc::from(h)).ints().clone();
+                for p in &points {
+                    let v = if at == 0 { p.0 } else { p.1 };
+                    assert!(
+                        ints.contains(v),
+                        "{h} is {ints}, holds no {v}, eagerly after {trace}"
+                    );
+                }
+            }
+            for x in ["a0", "a1", "a2"] {
+                let ints = joined.get(&Arc::from(x)).ints().clone();
+                assert!(
+                    ints.contains(least) && !ints.contains(least - 1),
+                    "{x} is {ints}, least {least}, eagerly after {trace}"
+                );
+            }
+            joined
+        }
+
+        /// Checks each name of the lazy join against settling every name first, and against
+        /// the eager join, and each leaf's least value against the enumeration of the hubs;
+        /// returns how many leaves one arm or the other holds stale before the join.
+        fn run(&self, trace: &str) -> usize {
+            let all_names = names(&["n", "m", "z", "a0", "a1", "a2"]);
+            let p = Premises::new();
+            let (ly, ln) = self.arms(&self.scope(true, &p), &p);
+            let (mut sy, mut sn) = (ly.clone(), ln.clone());
+            sy.settle(&all_names);
+            sn.settle(&all_names);
+            let (every, joined) = (sy.join(&sn), ly.join(&ln));
+            let eager = self.eager_join(trace);
+            let least = self.least();
+            assert_eq!(joined.bottom, least.is_none(), "{trace}");
+            let Some(least) = least else {
+                return 0;
+            };
+            let mut stale = 0;
+            for x in &all_names {
+                let s = joined.settled(x);
+                assert_eq!(s, every.settled(x), "{x} after {trace}");
+                assert_eq!(s, eager.get(x), "{x} eagerly after {trace}");
+                if x.starts_with('a') {
+                    let ints = s.ints();
+                    assert!(
+                        ints.contains(least) && !ints.contains(least - 1),
+                        "{x} is {ints}, least {least}, after {trace}"
+                    );
+                    stale += usize::from(ly.get(x) != ly.settled(x) || ln.get(x) != ln.settled(x));
+                }
+            }
+            stale
+        }
+    }
+
+    /// The case that tests `z` with a test on the hubs: the join's disjunction
+    /// `(z >= 0 && n + m <= -7) || (z < 0 && n - m >= -30)` mentions `z`, which no hub relates
+    /// to, so the join holds no star, and the leaves, at `-11` from before the move, read as
+    /// they are unless the join settles them first.
+    #[test]
+    fn a_case_that_tests_another_name_drops_the_star() {
+        let case = Case {
+            sign: 1,
+            d1: vec![HubTest(-1, -1, 10)],
+            yes: vec![HubTest(-1, -1, 7)],
+            no: vec![HubTest(1, -1, -30)],
+            with_z: true,
+        };
+        assert!(case.run("n + m <= -10; z >= 0 && n + m <= -7, or z < 0 && n - m >= -30") > 0);
+    }
+
+    /// Cases that test the hubs alone: the join's core holds `n - m >= -6 || n <= -8` and
+    /// `n - m >= -8 || n - m >= -6`, two disjunctions, and is projected one disjunction at a
+    /// time, which gives `ai >= -4`; each case's core holds one disjunction and gives the
+    /// least value `-3` (at `n = -3`, `m = 3`).
+    #[test]
+    fn a_join_that_adds_a_second_disjunction_to_the_core() {
+        let case = Case {
+            sign: -1,
+            d1: vec![HubTest(1, -1, -6), HubTest(-1, 0, 8)],
+            yes: vec![HubTest(1, -1, -8)],
+            no: vec![HubTest(1, -1, -6)],
+            with_z: false,
+        };
+        assert!(case.run("n - m >= -6 || n <= -8; n - m >= -8, or n - m >= -6") > 0);
+    }
+
+    /// Seeds at which the eager join was coarser than the lazy one: an arm's test on a term of
+    /// the hubs that `d1` does not compare left the projection of `d1` with the leaves as it
+    /// was, so each eager arm read a leaf or a hub below the enumeration, and the join took the
+    /// union (at seed 22671 `m <= n + 5` under `m + n <= -7 || m + n >= 2` gave `a0 >= -2`,
+    /// least `-1`; at seed 272 `m` reached `1`, greatest `0`). The eager join projects those
+    /// stars again (`Scope::refresh`). Seeds 116 and 237, reported with them, show no
+    /// difference from cc9b8f5b on, and are kept here as checks.
+    #[test]
+    fn the_eager_join_is_as_tight_as_the_lazy_one_at_these_seeds() {
+        for seed in [116, 237, 272, 2_220, 22_490, 22_671] {
+            let case = Case::of(seed);
+            let trace = case.trace(seed);
+            if case.keeps() {
+                case.run(&trace);
+            } else {
+                case.eager_join(&trace);
+            }
+        }
+    }
+
+    /// Random cases of both kinds. Each case's eager join is checked against the enumeration;
+    /// a case where neither arm narrows a hub (`Case::keeps`) is also checked by
+    /// `Case::run`.
+    fn part(seeds: std::ops::Range<u64>) {
+        let (mut joins, mut kept) = (0, 0);
+        for seed in seeds {
+            let case = Case::of(seed);
+            let trace = case.trace(seed);
+            if !case.keeps() {
+                case.eager_join(&trace);
                 continue;
             }
-            let trace =
-                format!("seed {seed}: sign {sign} d1 {d1:?} yes {yes:?} no {no:?} z {with_z}");
-            kept += run(sign, &d1, &yes, &no, with_z, false, &trace);
+            kept += case.run(&trace);
             joins += 1;
         }
         println!("{joins} joins, {kept} leaves stale before a join");
-        assert!(joins > 100 && kept > 0, "{joins} joins, {kept} stale");
+        assert!(joins > 25 && kept > 0, "{joins} joins, {kept} stale");
     }
 
     #[test]
-    fn seeds_0_to_399() {
-        part(0..400);
+    fn seeds_0_to_99() {
+        part(0..100);
     }
 
     #[test]
-    fn seeds_400_to_799() {
-        part(400..800);
+    fn seeds_100_to_199() {
+        part(100..200);
     }
 
     #[test]
-    fn seeds_800_to_1199() {
-        part(800..1_200);
+    fn seeds_200_to_299() {
+        part(200..300);
+    }
+
+    #[test]
+    fn seeds_300_to_399() {
+        part(300..400);
+    }
+
+    #[test]
+    fn seeds_400_to_499() {
+        part(400..500);
+    }
+
+    #[test]
+    fn seeds_500_to_599() {
+        part(500..600);
+    }
+
+    #[test]
+    fn seeds_600_to_699() {
+        part(600..700);
+    }
+
+    #[test]
+    fn seeds_700_to_799() {
+        part(700..800);
+    }
+
+    #[test]
+    fn seeds_800_to_899() {
+        part(800..900);
+    }
+
+    #[test]
+    fn seeds_900_to_999() {
+        part(900..1_000);
+    }
+
+    #[test]
+    fn seeds_1000_to_1099() {
+        part(1_000..1_100);
+    }
+
+    #[test]
+    fn seeds_1100_to_1199() {
+        part(1_100..1_200);
     }
 }

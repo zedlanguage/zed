@@ -1484,3 +1484,56 @@ fn a_disjunction_beside_a_wide_one_in_its_block_costs_its_own_part() {
         },
     );
 }
+
+/// The `k` stars of [`stars_of_two_hubs`] with the hubs at most `100000` and the disjunction
+/// `n + m <= -1 || n + m >= 2`, lazy or eager.
+fn stars_under_a_disjunction(k: usize, lazy: bool) -> Scope {
+    let p = Premises::new();
+    let s = stars_of_two_hubs(k);
+    let s = if lazy { s.lazy() } else { s };
+    let sum = || prim(Prim::Add, var("n"), var("m"));
+    let tests = [
+        prim(Prim::Le, var("n"), int(100_000)),
+        prim(Prim::Le, var("m"), int(100_000)),
+        prim(
+            Prim::Or,
+            prim(Prim::Le, sum(), int(-1)),
+            prim(Prim::Ge, sum(), int(2)),
+        ),
+    ];
+    tests.iter().fold(s, |s, t| s.assume(t, true, &p))
+}
+
+#[test]
+fn an_eager_join_projects_again_the_stars_it_settles_and_scales() {
+    // The arms of `if n - m <= 5` test a term the disjunction does not compare, and the eager
+    // join projects each of the `k` stars again (`Scope::refresh`): its lone part that is not
+    // a constraint, the disjunction with the star, once per star, O(k) in all (COMPLEXITY
+    // C45). The naive version, every part of each star projected again, costs the same here,
+    // where each star has one such part; with k parts per star it fails
+    // `an_eager_scope_with_many_distinct_disjunctions_among_the_hubs_of_a_star_scales`.
+    let p = Premises::new();
+    let test = hubs_within(5);
+    let inputs = scaling::inputs(16, |k| stars_under_a_disjunction(k, false));
+    let eager = &inputs[&16];
+    let joined = eager
+        .assume(&test, true, &p)
+        .join(&eager.assume(&test, false, &p));
+    let lazy = stars_under_a_disjunction(16, true);
+    let lazy = lazy
+        .assume(&test, true, &p)
+        .join(&lazy.assume(&test, false, &p));
+    for i in 0..16 {
+        let a: Arc<str> = format!("a{i}").into();
+        assert_eq!(joined.get(&a), lazy.settled(&a), "a{i}");
+        assert_eq!(joined.get(&a).ints().to_string(), "[-1..]", "a{i}");
+    }
+    scaling::check(
+        "the join of an if among the hubs of k stars, eager",
+        16,
+        |k| {
+            let s = &inputs[&k];
+            s.assume(&test, true, &p).join(&s.assume(&test, false, &p));
+        },
+    );
+}
