@@ -1742,7 +1742,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BATCH-91 | running | 2026-11-09 18:01 |  |
 | FACET-typed | impl attempt 1 | 2026-11-09 17:10 | started; worktrees facet-typed (6cab7e76) and facet-typed-spec (e12afda) created and seeded |
 | GROUP-overlaps-lower | impl attempt 1 | 2026-11-09 17:22 | started; worktree from 6cab7e76; load 9.56 8.65 11.90 |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
