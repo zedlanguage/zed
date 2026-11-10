@@ -1832,7 +1832,7 @@ fn summaries_of_max_min_div_chains_give_the_values_of_the_chains() {
     use zedc::store::presburger::extend::Extending;
     // A link, `H` its input, and its value from `H` and `x`.
     type Step = (&'static str, fn(i64, i64) -> i64);
-    let steps: [Step; 16] = [
+    let steps: [Step; 17] = [
         ("max(H div 2, x - 9)", |h, x| h.div_euclid(2).max(x - 9)),
         ("min(H div 2, x + 9)", |h, x| h.div_euclid(2).min(x + 9)),
         ("max(H div 3, x - 9)", |h, x| h.div_euclid(3).max(x - 9)),
@@ -1862,6 +1862,9 @@ fn summaries_of_max_min_div_chains_give_the_values_of_the_chains() {
         }),
         ("max(H div 2, x mod 5 + x div 7 - 9)", |h, x| {
             h.div_euclid(2).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
+        }),
+        ("max(H div 2, x div 5 + x div 7 - 9)", |h, x| {
+            h.div_euclid(2).max(x.div_euclid(5) + x.div_euclid(7) - 9)
         }),
         ("max(H - 1, x mod 5 + x div 7 - 9)", |h, x| {
             (h - 1).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
