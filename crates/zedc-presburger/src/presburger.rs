@@ -1885,7 +1885,7 @@ fn decide_kept(f: &Formula, mut kept: Option<&mut Vec<Model>>) -> Result<bool, R
         // per round. A complete solution re-tests, when a disjunct joins the base, only the
         // disjunctions that share an atom with it. Tests:
         // `l01_38_presburger::probe::twin_chains_of_absolute_values_scale`, COMPLEXITY.md row
-        // C43 (PROJECT-abs-chain-quadratic).
+        // C47 (PROJECT-abs-chain-quadratic).
         if drop_by_bounds(&mut p, &|_| false).is_none() {
             return Ok(false);
         }
@@ -4432,8 +4432,16 @@ fn read_order(units: &[Unit<'_>], x: Option<&Atom>) -> Vec<usize> {
 // `l01_38_presburger::probe::a_nested_chain_of_absolute_values_scales`,
 // `l01_38_presburger::probe::twin_chains_of_absolute_values_scale` and
 // `l01_38_presburger::probe::a_nested_chain_of_absolute_values_is_projected_exactly`.
-// COMPLEXITY.md row C43 (PROJECT-abs-chain-quadratic).
+// COMPLEXITY.md row C47 (PROJECT-abs-chain-quadratic).
 fn drop_by_bounds(p: &mut Parts, spared: &dyn Fn(&Parts) -> bool) -> Option<bool> {
+    // A conjunction has no disjunct to remove, and is left to [`settle`] as before. Its names
+    // are kept as written ([`Renamed`] renames only a formula with disjunctions), so the order
+    // of the readings would follow the names, and four readings, which stop short of the
+    // bounds' fixed point, would show some systems empty under one naming and not another
+    // (`l01_38_presburger::oracle::answers_do_not_depend_on_names_or_order`).
+    if p.ors.is_empty() {
+        return Some(false);
+    }
     let n_cons = p.cons.len();
     let mut dead: Vec<Vec<bool>> = p.ors.iter().map(|o| vec![false; o.len()]).collect();
     {

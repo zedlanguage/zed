@@ -1903,13 +1903,11 @@ fn refused_projections_of_random_parts_keep_sound_boxes_first_half() {
 
 /// Seeds 15 to 18 (of item PROJECT-each-canon), checked by [`refused_names_in`]. Item
 /// PRES-project-each-cost answers one name refused before, with the hull brute force finds.
-/// Item PROJECT-abs-chain-quadratic answers one more, `b` of seed 17 case 28, with the hull
-/// brute force finds, `-2 <= b <= 3`, where the box gave `-5 <= b <= 3`.
 #[test]
 fn refused_projections_of_random_parts_keep_sound_boxes_second_half() {
     let count = refused_names_in(15..19, 0..400, false);
     eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
-    assert_eq!(count, (2, 9, 8));
+    assert_eq!(count, (2, 10, 8));
 }
 
 /// Cases 0 to 199 of seed 11 with each part two random parts joined, checked by

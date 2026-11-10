@@ -1370,8 +1370,10 @@ guarded_ranges!(
 /// and 326): case 1084, demand `[-23, -11] ∪ [3, 10]` on `if ((i mod 3) == 0) { min(…, -6) }
 /// else { min(…, -3) }`, whose box before narrows from `{9}`, inexact with a relation, to the
 /// exact empty box, and case 2695, `if ((i mod 3) == 1) { min(…, 1) } else { (4 - …) }` with
-/// demand `(-inf, -9] ∪ [18, 33]`, from `[-4, 1]`, inexact, to the exact `[-4, -3]`. No other
-/// count changes and no box of the transfer here changes.
+/// demand `(-inf, -9] ∪ [18, 33]`, from `[-4, 1]`, inexact, to the exact `[-4, -3]`. One more
+/// box before narrows and stays inexact, `i <= -20 || i >= 3` to `i <= -21 || i >= 3`
+/// (`i = -20` has no point), so no count moves for it. No other count changes and no box of
+/// the transfer here changes.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
