@@ -434,7 +434,9 @@ struct Same<'a> {
     left: Vec<(&'a Ty, &'a Ty)>,
     /// The union-find forest, by address: for each node met, the node it was joined to, or
     /// itself, and, for the root of a class, the number of nodes in it. One table, so the
-    /// first node recorded costs one allocation.
+    /// first node recorded costs one allocation. Every key is the address of a row, shape or
+    /// function reachable from the two operands `==` borrows, so none is freed while the table
+    /// lives, and the table is only read by key, never iterated.
     ids: HashMap<*const (), (*const (), usize), std::hash::BuildHasherDefault<AddressHasher>>,
     /// The functions the rows and shapes on the path to the pair now compared keep as held or
     /// unchecked, on the left and on the right ([`Same::shared_sigs`]).
@@ -1759,7 +1761,9 @@ struct Replacer<'b> {
 /// The rows and payload shapes a walk that rebuilds a type met, by address, with what it made
 /// of each: both are shared, so a walk without it would rebuild one once per path to it,
 /// `2^n` times for `n` rows or shapes that each hold the one below twice. The addresses are
-/// those of rows and shapes the input holds, which outlive the walk.
+/// those of rows and shapes the input holds: each walk ([`Replacer`], [`Subst`], [`Widen`],
+/// [`Settle`]) is made and dropped within one call that borrows the input, so no key names a
+/// freed node, and the maps are only read by key, never iterated.
 #[derive(Default)]
 struct Made {
     rows: HashMap<*const RowData, Row>,
@@ -1767,7 +1771,9 @@ struct Made {
 }
 
 /// The rows, payload shapes and signatures a [`Replacer`] met under one set of hidden
-/// variables, by address, with what it made of each.
+/// variables, by address, with what it made of each. As in [`Made`], the signatures are held by
+/// the input the walk borrows for its whole life, and `sigs` is only read by key, never
+/// iterated.
 #[derive(Default)]
 struct Memo {
     made: Made,
@@ -3390,9 +3396,10 @@ struct Cx<'s> {
     /// refused comparison answers false, whatever else it found ([`Cx::decided`]).
     unchosen: Option<String>,
     /// The tuple and payload shapes of each component of a row or payload shape compared, filed
-    /// once for the comparison ([`Filed`]), by the address of the row or shape and the
-    /// component's place, the row or shape kept so that the address is not reused.
-    filed: HashMap<(usize, usize), (Pin, Arc<Filed>)>,
+    /// once for the comparison ([`Filed`]), by the number of the row or shape ([`NodeId`]) and
+    /// the component's place. The rows and shapes may be made during the comparison and dropped
+    /// before it ends, so they are keyed by number, which no later node takes, not by address.
+    filed: HashMap<(NodeId, usize), Arc<Filed>>,
 }
 
 impl Cx<'_> {
@@ -3543,16 +3550,6 @@ macro_rules! comparing {
     }};
 }
 
-/// A row or payload shape whose components' shapes are filed in [`Cx::filed`], kept there.
-#[expect(
-    dead_code,
-    reason = "a row or shape is held only so that its address is not reused"
-)]
-enum Pin {
-    Row(Row),
-    Shape(Shape),
-}
-
 /// Where the type a comparison holds pieces against sits: a component of a row or payload shape
 /// of the expected side, at its place (items, then fields), or elsewhere.
 #[derive(Clone, Copy)]
@@ -3569,19 +3566,11 @@ enum Holder<'a> {
 }
 
 impl Holder<'_> {
-    /// Its address, a key of [`Cx::filed`] with the place.
-    fn addr(self) -> usize {
+    /// Its number, a key of [`Cx::filed`] with the place.
+    fn node(self) -> NodeId {
         match self {
-            Holder::Row(r) => Arc::as_ptr(&r.0) as usize,
-            Holder::Shape(s) => Arc::as_ptr(&s.0) as usize,
-        }
-    }
-
-    /// It, kept in [`Cx::filed`] while its address is a key.
-    fn pin(self) -> Pin {
-        match self {
-            Holder::Row(r) => Pin::Row(r.clone()),
-            Holder::Shape(s) => Pin::Shape(s.clone()),
+            Holder::Row(r) => r.node(),
+            Holder::Shape(s) => s.node(),
         }
     }
 }
@@ -4371,7 +4360,9 @@ enum Tried {
 }
 
 /// The tuples of each length of each type node read by one [`Ty::contains`], by the node's
-/// address, which stays put while the type is borrowed.
+/// address, which stays put while the type is borrowed: the map is made for one walk, every
+/// key is a node of the type that walk borrows to its end, and the map is only read by
+/// `entry`, never iterated.
 type Filings = HashMap<(*const Ty, usize), Visits>;
 
 #[cfg(test)]
@@ -4722,9 +4713,9 @@ impl<'m, 's> Comparing<'m, 's> {
             Site::Other => Arc::new(Filed::new(t)),
             Site::In(h, j) => {
                 let mut cx = self.cx.borrow_mut();
-                let (_, f) = (cx.filed.entry((h.addr(), j)))
-                    .or_insert_with(|| (h.pin(), Arc::new(Filed::new(t))));
-                f.clone()
+                (cx.filed.entry((h.node(), j)))
+                    .or_insert_with(|| Arc::new(Filed::new(t)))
+                    .clone()
             }
         };
         search.filed = Some(f.clone());
@@ -5199,7 +5190,10 @@ struct Forms {
     /// The functions of the side compared that each function of the other side holds, at
     /// each place, by number.
     fits: HashMap<(Place, Arc<Sig>), Vec<usize>>,
-    /// The form of each node of the rows and shapes met, by [`Node::key`].
+    /// The form of each node of the rows and shapes met, by [`Node::key`], an address. A
+    /// `Forms` lives within one call ([`Comparing::form_verdict`], [`Forms::tie`]) whose two
+    /// borrowed types hold every node met, so no key names a freed node; the map is only read
+    /// by key, never iterated. So is the visited set of [`Forms::fns`].
     made: HashMap<(*const (), bool, Option<Arc<str>>), KType>,
     /// The names of the marks of the field names of the payloads met on either side.
     fields: HashSet<String>,
@@ -5399,8 +5393,10 @@ impl Forms {
 #[derive(Default)]
 pub struct Vars {
     seen: HashSet<Arc<str>>,
-    /// The rows and payload shapes [`Ty::vars_outside`] entered: a shared one is entered once.
-    outside: HashSet<*const ()>,
+    /// The rows and payload shapes [`Ty::vars_outside`] entered, by number: a shared one is
+    /// entered once. The set lasts over several walks, whose types may be dropped between
+    /// them, so it is keyed by number, which no later node takes, not by address.
+    outside: HashSet<NodeId>,
     /// The variables, in order.
     pub order: Vec<Arc<str>>,
 }
@@ -6222,6 +6218,8 @@ impl Ty {
             Row(&'a Row),
             Shape(&'a Shape),
         }
+        // By address: every row and shape is borrowed from `self` for the whole walk, so no key
+        // names a freed node, and the sets are only read by insert, never iterated.
         let mut rows = HashSet::new();
         let mut shapes = HashSet::new();
         let mut stack = vec![Walk::Ty(self)];
@@ -6297,12 +6295,12 @@ impl Ty {
             let from = stack.len();
             match w {
                 Walk::Row(r) => {
-                    if out.outside.insert(r.addr()) {
+                    if out.outside.insert(r.node()) {
                         stack.extend(r.iter().map(Walk::Ty));
                     }
                 }
                 Walk::Shape(s) => {
-                    if out.outside.insert(s.as_ptr().cast()) {
+                    if out.outside.insert(s.node()) {
                         stack.extend(s.items.iter().chain(s.fields.values()).map(Walk::Ty));
                     }
                 }
@@ -6419,7 +6417,8 @@ impl Ty {
 /// frame, as measured at [`Comparing`]. COMPLEXITY.md row F128.
 struct Pairs<'m, K, V> {
     stack: Stack<'m>,
-    /// The answer for each pair walked, by the addresses of the two.
+    /// The answer for each pair walked, by the addresses of the two, both borrowed until the
+    /// walk ends (above); only read by key, never iterated.
     memo: &'m RefCell<HashMap<K, V>>,
 }
 
@@ -8117,6 +8116,9 @@ impl Sig {
                 .flat_map(|t| t.fns.iter().map(|f| &**f))
                 .collect()
         };
+        // `seen` by address: every signature is borrowed from `self` for the whole walk, so no
+        // key names a freed one, and the set is only read by insert, never iterated; `order`
+        // keeps the order.
         let (mut seen, mut order) = (HashSet::new(), Vec::new());
         // Each signature is entered with the signatures it holds still to visit, and left
         // once they are done.
@@ -8157,6 +8159,8 @@ impl Sig {
         }
         let mut out = Vec::new();
         let mut left = want.clone();
+        // By address: every row and shape is borrowed from `self` for the whole walk, so no key
+        // names a freed node, and the set is only read by insert, never iterated.
         let mut entered: HashSet<*const ()> = HashSet::new();
         let mut stack = vec![Item::Sig(self)];
         while let Some(item) = stack.pop()
@@ -9956,6 +9960,27 @@ mod tests {
         assert!(!unknown.closed() && unknown.kernel().is_none(), "{unknown}");
         let data = row_of_atom(Ty::set(KType::int()));
         assert!(!data.tuples[0].open() && data.closed() && data.kernel().is_some());
+    }
+
+    /// One [`Vars`] read over several types, each dropped before the next is made, finds the
+    /// variables of each: a row or payload shape made after one is dropped may take its
+    /// address, so the rows and shapes entered are kept by number (PTR-keys-ty).
+    #[test]
+    fn variables_of_types_made_after_others_are_dropped_are_all_found() {
+        for (what, make) in [
+            (
+                "a tuple",
+                (|x| Ty::tuple(vec![Ty::var(x)])) as fn(Arc<str>) -> Ty,
+            ),
+            ("a payload", |x| atom_of(Ty::var(x))),
+        ] {
+            let mut vars = Vars::default();
+            let names: Vec<Arc<str>> = (0..64).map(|i| format!("$x{i}").into()).collect();
+            for x in &names {
+                make(x.clone()).vars_outside(&mut vars);
+            }
+            assert_eq!(vars.order, names, "{what}");
+        }
     }
 
     /// A function in a payload is held at any depth, so the type has no kernel type.
