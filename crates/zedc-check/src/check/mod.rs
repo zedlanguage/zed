@@ -352,6 +352,12 @@ pub struct Info {
     /// other operand is generic too (L1.26a). Its value is the binder of a parameter of the
     /// literal's class in scope at it, whose value has the class's carrier at run time.
     pub witness: HashMap<Span, usize>,
+    /// Each read `v[k]` whose receiver is a family, by the read's span: whether every
+    /// function the receiver may be is a family whose keys are one integer interval, every key
+    /// present ([`Sig::dense`]), so that a miss there is `#outOfBounds` (DESIGN.md
+    /// sec:type_language, the `m[k]` row). A read checked more than once is such a read only
+    /// if it is one each time.
+    pub dense: HashMap<Span, bool>,
     /// The type errors.
     pub errors: Vec<Error>,
 }
@@ -2755,14 +2761,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                  pushed here may be something other than text",
                 self.show(t)
             );
+            // The example handler names an atom the value holds, so that it applies as written.
+            let atom = t
+                .set
+                .atom_names()
+                .and_then(|mut names| names.find(|&(_, bare)| bare).map(|(n, _)| n))
+                .unwrap_or("notFound");
             let menu = [
                 format!(
                     "repair: write the value into a string, as `{port} <- \"${{v}}\";`, where `v` \
                      is the value"
                 ),
-                "repair: handle the values that are not text first, with `match` or with `else`, \
-                 as `v else #notFound -> \"\"`"
-                    .to_string(),
+                format!(
+                    "repair: handle the values that are not text first, with `match` or with \
+                     `else`, as `v else #{atom} -> \"\"`"
+                ),
             ];
             self.error_offering(span, message, menu);
         }
@@ -3104,7 +3117,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The tuple `cs` at the computed key `x`, by the `m[k]` row of DESIGN.md sec:types: a
     /// tuple's keys are the positions `0..<n`, each guaranteed (sec:types, the tuple/struct
     /// distinction), so the result is the union of the components the key's integers select,
-    /// with `#notFound` when the key may lie outside `0..<n`; a key that selects no component
+    /// with `#outOfBounds` when the key may lie outside `0..<n`, since those keys are one
+    /// integer interval, every key present (the `m[k]` row); a key that selects no component
     /// is an error, as a literal one is. The key's loose atoms pass. Listed integers are read
     /// once each and a cofinite set is tested at each of the `n` positions, so this costs
     /// `O((n + m) log m)` for a key of `m` listed integers.
@@ -3153,7 +3167,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let outside = unknown || !self.subtype(&key, &Ty::set(keys));
         out = out.union(&Ty::union_all(picked.iter().map(|j| &cs[*j])));
         if outside {
-            out = out.union(&Ty::set(KType::atom("notFound")));
+            out = out.union(&Ty::set(KType::atom("outOfBounds")));
         }
         out
     }
@@ -3178,6 +3192,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 arrows: vec![arrow.clone()],
                 bounds: sig.bounds.clone(),
                 data: sig.data,
+                dense: sig.dense,
                 word: None,
                 needs: Vec::new(),
                 own: sig.own.clone(),
@@ -4988,6 +5003,7 @@ fn op_sig(op: &str) -> Sig {
         arrows,
         bounds: BTreeMap::new(),
         data: false,
+        dense: false,
         word: None,
         needs: Vec::new(),
         own: BTreeSet::new(),
@@ -5061,6 +5077,7 @@ fn word_sig(w: &str) -> Arc<Sig> {
         arrows,
         bounds: BTreeMap::new(),
         data: false,
+        dense: false,
         word: Some(w.into()),
         needs: Vec::new(),
         own: BTreeSet::new(),
@@ -5106,6 +5123,7 @@ fn bit_sig(p: Prim) -> Arc<Sig> {
         }],
         bounds: BTreeMap::new(),
         data: false,
+        dense: false,
         word: None,
         needs: Vec::new(),
         own: BTreeSet::new(),
@@ -5679,8 +5697,9 @@ fn io_error() -> Ty {
 /// The type of a port of `main` (L1.19): a `Lines` input is the family of its lines by number
 /// from 1, each a `String` or `#ioError(op:, path:, why:)`, and a `Files` input answers a path
 /// with its text, `#notFound` or `#ioError(op:, path:, why:)`; a lookup outside the family's
-/// keys is `#notFound`. A `CommandLine` input (L1.19a) is the family of the arguments by
-/// position from 1, each a `String`. `key` is the key's carrier and `io` whether a read can be
+/// keys is `#notFound` in its arrows, and `#outOfBounds` at a read `v[k]` of an `int`-keyed
+/// port, whose keys are one interval, every key present ([`Sig::dense`]). A `CommandLine`
+/// input (L1.19a) is the family of the arguments by position from 1, each a `String`. `key` is the key's carrier and `io` whether a read can be
 /// `#ioError`; a port keyed by `int` is a family, data, and one keyed by path a lookup.
 fn port(key: Carrier, io: bool) -> Ty {
     let mut result = Ty::carrier(Carrier::Str).union(&Ty::set(KType::atom("notFound")));
@@ -5695,6 +5714,7 @@ fn port(key: Carrier, io: bool) -> Ty {
         }],
         bounds: BTreeMap::new(),
         data: key == Carrier::Int,
+        dense: key == Carrier::Int,
         word: None,
         needs: Vec::new(),
         own: BTreeSet::new(),

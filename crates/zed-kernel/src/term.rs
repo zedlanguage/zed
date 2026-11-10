@@ -158,6 +158,10 @@ pub enum Prim {
     /// `funnelShr(hi, lo, k, width: w)`: the low `w` digits of `hi * 2^w + lo` shifted `k` places
     /// toward the low.
     FunnelShr,
+    /// `v[k]` at a read the checker proved is of a family whose keys are one integer interval,
+    /// every key present: the entry at `k`, or `#outOfBounds` (DESIGN.md sec:type_language, the
+    /// `m[k]` row); on a tuple, `TupleGet`.
+    At,
 }
 
 impl Prim {
@@ -245,6 +249,7 @@ impl Prim {
             Pext => 59,
             FunnelShl => 60,
             FunnelShr => 61,
+            At => 62,
         }
     }
 }

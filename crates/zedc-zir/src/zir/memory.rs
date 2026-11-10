@@ -1304,8 +1304,12 @@ impl<'g> Machine<'g, '_> {
             Op::Prim(Prim::TupleGet) => {
                 let v = self.kernel(node, id, &ins)?;
                 match (&ins[0], &ins[1]) {
-                    (Mv::Data(Value::Tuple(_), Some(c)), Mv::Data(Value::Int(i), _)) => {
-                        let kid = self.heap[*c].kids[*i as usize];
+                    // A key outside the tuple is `#outOfBounds`, a fresh value.
+                    (Mv::Data(Value::Tuple(_), Some(c)), Mv::Data(Value::Int(i), _))
+                        if let Some(kid) = usize::try_from(*i)
+                            .ok()
+                            .and_then(|i| self.heap[*c].kids.get(i).copied()) =>
+                    {
                         self.inc(kid);
                         vec![Mv::Data(v, kid)]
                     }

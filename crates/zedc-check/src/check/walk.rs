@@ -1152,12 +1152,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::AtKey(v, span) => {
                 let x = m.take_arg();
-                let t = self.at_key(&v, x, span);
+                let dense = self.dense_read(&v, span);
+                let t = self.at_key(&v, x, span, dense);
                 m.ty(t);
             }
             Frame::AtIndex(v, i, span) => {
                 let x = m.take_arg();
-                let t = self.at_index(&v, i, x, span);
+                let dense = self.dense_read(&v, span);
+                let t = self.at_index(&v, i, x, span, dense);
                 m.ty(t);
             }
             Frame::LambdaEnd {
@@ -4378,10 +4380,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let start = self.refused.len();
         let out = match &n.kind {
-            NeedKind::Component { i, key } => self.at_index(&on, *i, Arg::of(key.clone()), span),
+            NeedKind::Component { i, key } => self.at_index(&on, *i, Arg::of(key.clone()), span, false),
             NeedKind::Index(k) => {
                 let k = Arg::of(self.bound(k, binds));
-                self.at_key(&on, k, span)
+                self.at_key(&on, k, span, false)
             }
             NeedKind::Destructure { i, n } => self.component(&on, *i, *n, span),
             NeedKind::Call {
@@ -5978,6 +5980,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             arrows,
             bounds: sig.bounds.clone(),
             data: false,
+            dense: false,
             // A word applied to fewer arguments than its arity is not the word: `min` and `max`
             // take two tuples only when both are given (sec:reduction, item 5).
             word: None,
@@ -5992,9 +5995,35 @@ impl<'t, 'a> Ck<'t, 'a> {
         Ty::func(Arc::new(rest.replace(&binds)))
     }
 
+    /// Whether the read `v[k]` at `span` is of a family whose keys are one integer interval,
+    /// every key present, so that it misses with `#outOfBounds` (DESIGN.md sec:type_language,
+    /// the `m[k]` row): `v` is such a family or a tuple, and is one at least once. A variable
+    /// or an unknown value may be a family that misses with `#notFound`, so it reads as one.
+    /// The verdict is recorded for the elaborator, which writes the read that answers
+    /// `#outOfBounds`; a site checked twice keeps it only if both checks gave it.
+    fn dense_read(&mut self, v: &Ty, span: Span) -> bool {
+        let mut family = false;
+        let mut dense = true;
+        for p in v.pieces() {
+            match p {
+                Piece::Fn(sig) => {
+                    family = true;
+                    dense &= sig.data && sig.dense;
+                }
+                Piece::Tuple(_) => {}
+                p if p.is_atoms() => {}
+                _ => dense = false,
+            }
+        }
+        let dense = family && dense;
+        *self.info.dense.entry(span).or_insert(dense) &= dense;
+        dense
+    }
+
     /// `v[x]` with `x` no literal: an application of each function `v` may be, and a
-    /// computed index of each tuple `v` may be.
-    fn at_key(&mut self, v: &Ty, x: Arg<'a>, span: Span) -> Ty {
+    /// computed index of each tuple `v` may be. With `dense`, a family misses with
+    /// `#outOfBounds` ([`Self::dense_read`]).
+    fn at_key(&mut self, v: &Ty, x: Arg<'a>, span: Span, dense: bool) -> Ty {
         let mut out = self.passing(v, "a call", span);
         for p in v.pieces() {
             match p {
@@ -6006,6 +6035,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let r = self
                         .apply("this function", &sig, vec![Some(x.clone())], false, span)
                         .0;
+                    let r = if dense { out_of_bounds(r, &x.ty) } else { r };
                     out = out.union(&r);
                 }
                 Piece::Var(_) if let Some(k) = self.class_of(&p) => {
@@ -6035,8 +6065,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// `v[i]` with the literal `x`, `i` if it is a component number: a tuple's component, or
-    /// a family's entry.
-    fn at_index(&mut self, v: &Ty, i: Option<usize>, x: Arg<'a>, span: Span) -> Ty {
+    /// a family's entry. With `dense`, a family misses with `#outOfBounds`
+    /// ([`Self::dense_read`]).
+    fn at_index(&mut self, v: &Ty, i: Option<usize>, x: Arg<'a>, span: Span, dense: bool) -> Ty {
         let mut out = self.passing(v, "an index", span);
         let shown = x.ty.to_string();
         for p in v.pieces() {
@@ -6045,6 +6076,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let r = self
                         .apply("this family", &sig, vec![Some(x.clone())], true, span)
                         .0;
+                    let r = if dense { out_of_bounds(r, &x.ty) } else { r };
                     out = out.union(&r);
                 }
                 Piece::Tuple(cs) => match i.and_then(|i| cs.get(i)) {
@@ -6163,6 +6195,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let permuted = Sig {
             bounds: s.bounds.clone(),
             data: s.data,
+            dense: s.dense,
             word: s.word.clone(),
             needs: s.needs.clone(),
             own: s.own.clone(),
@@ -7363,6 +7396,7 @@ mod tests {
             }],
             bounds: BTreeMap::new(),
             data: false,
+            dense: false,
             word: None,
             needs: Vec::new(),
             own: BTreeSet::new(),
@@ -7378,4 +7412,19 @@ mod tests {
         dynamic.insert(v, Ty::dynamic());
         assert_eq!(ck.bound(&row, &mut Binds::new()), row.replace(&dynamic));
     }
+}
+
+/// `r`, the entry type of a read of a family whose keys are one integer interval, every key
+/// present, with its miss `#notFound` written `#outOfBounds` (DESIGN.md sec:type_language, the
+/// `m[k]` row). A `#notFound` the key `key` brings is passed by, not a miss, so it stays.
+fn out_of_bounds(r: Ty, key: &Ty) -> Ty {
+    let not_found = KType::atom("notFound");
+    if (&r.atoms() & &not_found).is_empty() {
+        return r;
+    }
+    let r = match (&key.loose() & &not_found).is_empty() {
+        true => r.without(&not_found),
+        false => r,
+    };
+    r.union(&Ty::set(KType::atom("outOfBounds")))
 }

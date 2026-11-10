@@ -129,7 +129,7 @@ fn a_function_whose_atoms_reach_its_result_gives_a_string_for_a_string() {
 
 #[test]
 fn an_argument_that_may_be_an_atom_selects_the_arrow_that_takes_it() {
-    // `stdin[2]` is `#notFound` on one line, and the body maps it to "empty"; `stdin[1]` is
+    // `stdin[2]` is `#outOfBounds` on one line, and the body maps it to "empty"; `stdin[1]` is
     // the line. The lambda is the same function written as a value.
     let src = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
                main(stdin: Lines) -> (stdout: Lines) {\n\
@@ -290,32 +290,32 @@ fn output_on(name: &str, src: &str, input: &str) -> String {
 
 #[test]
 fn a_line_that_may_be_missing_or_unreadable_runs_the_body_that_tests_for_a_missing_one() {
-    // `stdin[2]` is `String | #notFound | #ioError(..)`. A parameter tested only for
-    // `#notFound`, by `is` or by a pattern `else`, takes that atom and omits `#ioError`: rule 6
-    // treats each region of the argument apart, so `#ioError` passes the call by and
-    // `#notFound` runs the body. The call was rejected, since the atoms passed by only when
+    // `stdin[2]` is `String | #outOfBounds | #ioError(..)`. A parameter tested only for
+    // `#outOfBounds`, by `is` or by a pattern `else`, takes that atom and omits `#ioError`:
+    // rule 6 treats each region of the argument apart, so `#ioError` passes the call by and
+    // `#outOfBounds` runs the body. The call was rejected, since the atoms passed by only when
     // no arrow took any of them; a declared parameter was rejected the same way.
     let main =
         "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- g(stdin[2]) else \"gone\";\n}\n";
     for (name, g, missing) in [
         (
             "is_only",
-            "g(positional x) = if x is #notFound { \"nf\" } else { trim(x) };\n",
+            "g(positional x) = if x is #outOfBounds { \"nf\" } else { trim(x) };\n",
             "nf\n",
         ),
         (
             "pattern_else",
-            "g(positional x) = trim(x else #notFound -> \"\");\n",
+            "g(positional x) = trim(x else #outOfBounds -> \"\");\n",
             "\n",
         ),
         (
             "pattern_else_in_a_test",
-            "g(positional x) = if (x else #notFound -> \"\") == \"-\" { \"dash\" } else { trim(x) };\n",
+            "g(positional x) = if (x else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { trim(x) };\n",
             "gone\n",
         ),
         (
             "declared",
-            "g(positional x: String | #notFound) = if x is #notFound { \"nf\" } else { trim(x) };\n",
+            "g(positional x: String | #outOfBounds) = if x is #outOfBounds { \"nf\" } else { trim(x) };\n",
             "nf\n",
         ),
     ] {
@@ -327,7 +327,7 @@ fn a_line_that_may_be_missing_or_unreadable_runs_the_body_that_tests_for_a_missi
 
 #[test]
 fn an_atom_the_parameter_omits_passes_by_while_the_one_it_tests_runs_the_body() {
-    let g = "g(positional x) = if x is #notFound { \"nf\" } else { trim(x) };\n";
+    let g = "g(positional x) = if x is #outOfBounds { \"nf\" } else { trim(x) };\n";
     let main = "main(stdin: Lines) -> (stdout: Lines) {\n  \
                 stdout <- if g(if stdin[1] == \"o\" { #other } else { stdin[2] }) is #other { \"other passed\" } else { \"ran\" };\n}\n";
     let src = format!("{g}{main}");

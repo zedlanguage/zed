@@ -116,13 +116,13 @@ fn an_argument_that_is_not_utf8_is_a_usage_error_naming_its_position() {
 }
 
 #[test]
-fn a_read_may_be_not_found_so_the_checker_asks_for_its_disposal() {
+fn a_read_may_be_out_of_bounds_so_the_checker_asks_for_its_disposal() {
     let src = "main(args: CommandLine) -> (stdout: Lines) {\n  stdout <- args[1];\n}\n";
     let out = run("undisposed", src, &["--", "a"]);
     assert_eq!(out.status, 1);
     assert!(
         out.stderr.contains(
-            "a `Lines` port takes a `String` or a family of strings, not String | #notFound"
+            "a `Lines` port takes a `String` or a family of strings, not String | #outOfBounds"
         ),
         "{}",
         out.stderr

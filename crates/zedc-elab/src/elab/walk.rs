@@ -166,7 +166,7 @@ enum Frame<'a> {
     /// A member call made, wrapped for `?.` by the receiver's temporary and value.
     MemberEnd(Option<(Arc<str>, Term)>),
     IndexDeclared(usize, &'a Expr),
-    Index(&'a Expr),
+    Index(&'a Expr, Span),
     FitBody(Box<FitF<'a>>),
     FitExtras(Box<FitF<'a>>, Term),
     Lambda(Vec<Arc<str>>),
@@ -691,7 +691,7 @@ impl<'a> Elab<'a> {
                         m.stack.push(Job::Expr(k));
                     }
                     None => {
-                        m.k(Frame::Index(k));
+                        m.k(Frame::Index(k, e.span));
                         m.seq(vec![of, k], false);
                     }
                 }
@@ -1685,10 +1685,15 @@ impl<'a> Elab<'a> {
                 };
                 m.give(t);
             }
-            Frame::Index(k) => {
+            Frame::Index(k, span) => {
+                // A read the checker found to be of a family whose keys are one integer
+                // interval, every key present, misses with `#outOfBounds` (DESIGN.md
+                // sec:type_language, the `m[k]` row).
+                let dense = self.info.dense.get(&span) == Some(&true);
                 let t = all(m.got()).map(|ts| {
                     let [v, i]: [Term; 2] = ts.try_into().expect("two terms");
                     match &k.kind {
+                        _ if dense => Term::Prim(Prim::At, vec![v, i]),
                         ExprKind::Int { .. } => Term::Prim(Prim::TupleGet, vec![v, i]),
                         _ => Term::App(Shared::new(v), vec![i]),
                     }

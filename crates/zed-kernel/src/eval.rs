@@ -2657,14 +2657,20 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             .cloned()
             .unwrap_or_else(|| Value::atom("notFound")),
         (Prim::PathLen, [Value::Path(keys)]) => Int(keys.len() as i64),
-        // A tuple's keys are its positions `0..<n`; any other integer is a key outside the
-        // domain, `#notFound` (DESIGN.md sec:types, the `m[k]` row).
-        (Prim::TupleGet, [Value::Tuple(items), Int(i)]) => usize::try_from(*i)
+        // A tuple's keys are its positions `0..<n`, one integer interval with every key
+        // present, so any other key misses with `#outOfBounds` (DESIGN.md sec:type_language,
+        // the `m[k]` row).
+        (Prim::TupleGet | Prim::At, [Value::Tuple(items), Int(i)]) => usize::try_from(*i)
             .ok()
             .and_then(|i| items.get(i))
             .cloned()
-            .unwrap_or_else(|| Value::atom("notFound")),
-        (Prim::TupleGet, [Value::Tuple(_), _]) => Value::atom("notFound"),
+            .unwrap_or_else(|| Value::atom("outOfBounds")),
+        (Prim::TupleGet | Prim::At, [Value::Tuple(_), _]) => Value::atom("outOfBounds"),
+        // A read the checker proved is of a family whose keys are one integer interval, every
+        // key present: a key it lacks lies outside the interval.
+        (Prim::At, [Value::Family(f), k]) => {
+            f.get(k).cloned().unwrap_or_else(|| Value::atom("outOfBounds"))
+        }
         (
             Prim::Show
             | Prim::CastInt

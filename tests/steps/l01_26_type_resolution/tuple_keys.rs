@@ -1,8 +1,8 @@
-//! A tuple indexed by a computed key, `t[i]` (DESIGN.md sec:types, the `m[k]` row). A tuple's
-//! keys are its positions `0..<n`, each guaranteed, so the result is the union of the
-//! components the key may select, with `#notFound` when the key may lie outside `0..<n`; a key
-//! that selects no component is a static error, as a literal one is. At run time a key
-//! outside `0..<n`, negative or past the end, is `#notFound`.
+//! A tuple indexed by a computed key, `t[i]` (DESIGN.md sec:type_language, the `m[k]` row). A
+//! tuple's keys are its positions `0..<n`, one integer interval with every key present, so the
+//! result is the union of the components the key may select, with `#outOfBounds` when the key
+//! may lie outside `0..<n`; a key that selects no component is a static error, as a literal one
+//! is. At run time a key outside `0..<n`, negative or past the end, is `#outOfBounds`.
 
 use zed_tests::scaling;
 
@@ -32,7 +32,7 @@ fn a_column_number_typed_by_the_user_reads_that_column() {
 }
 
 #[test]
-fn a_column_number_outside_the_record_is_not_found() {
+fn a_column_number_outside_the_record_is_out_of_bounds() {
     // One past the end, negative, and beyond every machine integer.
     assert_eq!(column("tuple_keys_out", "3"), "no such column\n");
     assert_eq!(column("tuple_keys_out", "-1"), "no such column\n");
@@ -43,10 +43,10 @@ fn a_column_number_outside_the_record_is_not_found() {
 }
 
 #[test]
-fn the_result_is_the_union_of_the_components_and_not_found() {
+fn the_result_is_the_union_of_the_components_and_out_of_bounds() {
     assert_eq!(
         sig("pick(t: (int, String, int), i: int) = t[i];", "pick"),
-        "(t: (int, String, int), i: int) -> int | String | #notFound"
+        "(t: (int, String, int), i: int) -> int | String | #outOfBounds"
     );
     // A key of two numbers, both in range, selects two components and cannot miss.
     assert_eq!(
@@ -62,7 +62,7 @@ fn the_result_is_the_union_of_the_components_and_not_found() {
             "pick(t: (int, String, f64), b: bool) = t[if b { 1 } else { 7 }];",
             "pick"
         ),
-        "(t: (int, String, f64), b: bool) -> String | #notFound"
+        "(t: (int, String, f64), b: bool) -> String | #outOfBounds"
     );
     // A string is no position of a tuple.
     assert_eq!(
@@ -70,7 +70,7 @@ fn the_result_is_the_union_of_the_components_and_not_found() {
             "pick(t: (int, int), b: bool) = t[if b { 1 } else { \"one\" }];",
             "pick"
         ),
-        "(t: (int, int), b: bool) -> int | #notFound"
+        "(t: (int, int), b: bool) -> int | #outOfBounds"
     );
 }
 
@@ -78,7 +78,7 @@ fn the_result_is_the_union_of_the_components_and_not_found() {
 fn the_failures_of_the_key_pass_through() {
     assert_eq!(
         sig("pick(t: (int, int), s: String) = t[int(s)];", "pick"),
-        "(t: (int, int), s: String) -> int | #invalid | #notFound"
+        "(t: (int, int), s: String) -> int | #invalid | #outOfBounds"
     );
     // A key that is only a failure selects nothing and passes it.
     assert_eq!(
@@ -132,7 +132,7 @@ fn a_possibly_missing_component_is_disposed_of_before_a_port() {
     assert_eq!(out.status, 1);
     assert!(
         out.stderr.contains(
-            "a `Lines` port takes a `String` or a family of strings, not String | #notFound"
+            "a `Lines` port takes a `String` or a family of strings, not String | #outOfBounds"
         ),
         "{}",
         out.stderr

@@ -8,9 +8,10 @@ use zedc::zir::text::PRIMS;
 use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
 /// The primitives no program names by a word of its own: elaboration builds them from other
-/// forms (a tuple, a component `p[0]`, an atom), or they belong to later layers. A refusal
-/// names them by the form DESIGN.md writes, or else as the kernel's printer writes them.
-const UNNAMED: [Prim; 9] = [
+/// forms (a tuple, a component `p[0]`, an atom, a read of a family whose keys are one integer
+/// interval), or they belong to later layers. A refusal names them by the form DESIGN.md writes,
+/// or else as the kernel's printer writes them.
+const UNNAMED: [Prim; 10] = [
     Prim::Tuple,
     Prim::TupleGet,
     Prim::Atom,
@@ -20,6 +21,7 @@ const UNNAMED: [Prim; 9] = [
     Prim::Path,
     Prim::PathKey,
     Prim::PathLen,
+    Prim::At,
 ];
 
 /// `f` applied to `n` functions where data is needed: the one refusal every primitive has.
@@ -98,11 +100,12 @@ fn a_refusal_names_each_primitive_as_the_program_writes_it() {
 
 /// The forms of the primitives with no word of their own: DESIGN.md's `(..)`, `p[0]`, `f[k]`,
 /// `.count` and `.union`; `#_(..)`, any atom, whose name a fixed text cannot carry; and the
-/// printer's words for the keypath primitives, which DESIGN.md does not write.
+/// printer's words for the keypath primitives, which DESIGN.md does not write; and `f[k]` again
+/// for `at`, the read of a family whose keys are one integer interval.
 #[test]
 fn a_primitive_with_no_word_is_named_by_its_written_form() {
     let forms = [
-        "(..)", "[i]", "#_(..)", "[k]", ".count", ".union", "path", "pathKey", "pathLen",
+        "(..)", "[i]", "#_(..)", "[k]", ".count", ".union", "path", "pathKey", "pathLen", "[k]",
     ];
     for (p, w) in UNNAMED.into_iter().zip(forms) {
         assert_eq!(p.written(), w, "{p:?}");
