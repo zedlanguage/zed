@@ -63,8 +63,8 @@ pub enum Kind {
     Type,
     /// A parameter `T` of a type declaration `type Tree(T) = …;`.
     TypeParam,
-    /// A field of a struct. Fields are named through a value of the struct, never alone, so no
-    /// scope holds them.
+    /// A field of a struct. Outside its field list a field is named through a value of the
+    /// struct, never alone; inside it, a default or a type names the fields above it.
     Field,
     /// A method `T.m(…) = e;`, bound as `T.m`.
     Method,
@@ -616,11 +616,17 @@ const CARRIERS: &[&str] = &["int", "f64", "rat", "String", "bool"];
 /// The resolution of `unit`, read alone, or every error in it and every form it uses that a
 /// later step compiles, in text order.
 pub fn resolve(unit: &[Stmt]) -> Result<Resolution, Vec<Error>> {
+    resolve_text(unit, None)
+}
+
+/// [`resolve`], with the unit's text when it is known, which a message quotes: the lines of a
+/// definition used above it ("Name used above its definition").
+pub fn resolve_text(unit: &[Stmt], text: Option<&str>) -> Result<Resolution, Vec<Error>> {
     let Resolved {
         res,
         mut errors,
         later,
-    } = resolve_in(unit, &Alone);
+    } = resolve_in_text(unit, &Alone, text);
     if errors.is_empty() && later.is_empty() {
         return Ok(res);
     }
@@ -632,8 +638,14 @@ pub fn resolve(unit: &[Stmt]) -> Result<Resolution, Vec<Error>> {
 /// The resolution of `unit`, which reads the other units through `units`, with its errors and
 /// its forms of later steps, each in text order.
 pub fn resolve_in(unit: &[Stmt], units: &dyn Units) -> Resolved {
+    resolve_in_text(unit, units, None)
+}
+
+/// [`resolve_in`], with the unit's text when it is known, as [`resolve_text`].
+pub fn resolve_in_text(unit: &[Stmt], units: &dyn Units, text: Option<&str>) -> Resolved {
     let mut r = Resolver {
         units: Some(units),
+        text,
         ..Resolver::default()
     };
     // The top level is two scopes: the outer holds what its imports bring in (tier 3), the
@@ -641,6 +653,7 @@ pub fn resolve_in(unit: &[Stmt], units: &dyn Units) -> Resolved {
     r.scopes.push(Vec::new());
     r.scopes.push(Vec::new());
     r.walk(Task::Unit(unit));
+    r.above_errors();
     r.errors.sort_by_key(|e| e.span);
     r.later.sort_by_key(|e| e.span);
     Resolved {
@@ -731,6 +744,32 @@ struct Resolver<'u> {
     /// The region of each `else`'s operand, by the `else`'s text: an `else` inside another
     /// region gets its region when that region's flow is walked, before the `else` itself.
     else_regions: HashMap<Span, usize>,
+    /// The unit's text, when known, which the message of a name used above its definition
+    /// quotes.
+    text: Option<&'u str>,
+    /// Each binder of a block, a field list or a parameter list used above its definition,
+    /// with its first use in the text (DESIGN.md sec:lexical, "A name is defined above every
+    /// use"): one error each, made when the walk ends ([`Resolver::above_errors`]).
+    // Complexity tradeoff (COMPLEXITY.md F16b): the naive check rescans the block for the
+    // binding's line at each use, O(uses · bindings) over a block (a chain of n uses in a
+    // block of n bindings is O(n²)); each binder's text position is recorded when it is bound,
+    // so a use is compared with it in O(1), at no memory beyond the binder table and one entry
+    // here per binder used too early.
+    above: HashMap<usize, Span>,
+    /// Each block, parameter list and field list of the unit below the top level that binds a
+    /// name, in the order its binders were made: where a definition used above it may move.
+    lists: Vec<List>,
+    /// The binders of the top level and of its imports.
+    tops: HashSet<usize>,
+    /// The binders bound to a lambda, `f = (x) -> e;`, which call like functions.
+    lambdas: HashSet<usize>,
+}
+
+/// A block, a parameter list or a field list: its binders, and each of its items (a statement,
+/// a parameter or port, a field) in text order with its binder when it binds one name.
+struct List {
+    ids: Range<usize>,
+    items: Vec<(Span, Option<usize>)>,
 }
 
 /// A type variable of a bounds clause, while its type is walked.
@@ -868,6 +907,7 @@ impl Resolver<'_> {
         b.imported = false;
         if level == TOP {
             self.out.exports.add(name, kind, self.local);
+            self.tops.insert(id);
         }
         if self.local {
             self.out.local.insert(id);
@@ -932,6 +972,9 @@ impl Resolver<'_> {
                 v.insert(pos, b);
                 self.scopes[level - 1].push(name.into());
             }
+        }
+        if level == IMPORTS {
+            self.tops.insert(id);
         }
         self.out.imports.insert(id, unit.clone());
         self.out.binders.push(Binder {
@@ -1010,6 +1053,211 @@ impl Resolver<'_> {
         });
     }
 
+    /// Notes the use at `span` of `name`, which names `ids`, when it stands above its
+    /// definition in a block, a field list or a parameter list. A unit's top-level
+    /// declarations and its imports may be named in any order (DESIGN.md sec:lexical), so only
+    /// the binders of an inner scope are compared. `O(1)`.
+    fn order(&mut self, name: &str, span: Span, ids: &Vector<usize>) {
+        let inner = (self.visible.get(name))
+            .and_then(|v| v.last())
+            .is_some_and(|b| b.level > TOP && !b.imported);
+        let id = ids[0];
+        if inner && self.out.binders[id].span.start > span.start {
+            let first = self.above.entry(id).or_insert(span);
+            *first = (*first).min(span);
+        }
+    }
+
+    /// The error "Name used above its definition" for each binder [`Resolver::order`] noted,
+    /// at its first use: the use and the definition, each with its line, why the text is
+    /// written in that order, and the menu of repairs (DESIGN.md sec:diagnostics).
+    fn above_errors(&mut self) {
+        if self.above.is_empty() {
+            return;
+        }
+        // The first byte of each line, found once, so each line number is a binary search.
+        let starts: Vec<usize> = self.text.map_or_else(Vec::new, |t| {
+            std::iter::once(0)
+                .chain(t.match_indices('\n').map(|(i, _)| i + 1))
+                .collect()
+        });
+        let line = |at: usize| starts.partition_point(|&s| s <= at);
+        let quote = |s: Span| self.text.map(|t| t[s.start..s.end].trim().to_string());
+        let mut found: Vec<(usize, Span)> = self.above.drain().collect();
+        found.sort_by_key(|&(_, s)| s);
+        let mut errors = Vec::new();
+        for (id, used) in found {
+            let def = &self.out.binders[id];
+            let (name, d) = (&def.name, def.span);
+            let (list, what) = match def.kind {
+                Kind::Field => ("a field list", "field"),
+                Kind::Param | Kind::Port | Kind::Receiver => ("a parameter list", "parameter"),
+                _ => ("a block", "definition"),
+            };
+            let block = what == "definition";
+            let (lu, ld) = (line(used.start), line(d.start));
+            let place = match self.text {
+                None => String::new(),
+                Some(_) if lu == ld => {
+                    format!(" on line {lu}, before its definition later on that line")
+                }
+                Some(_) => format!(" on line {lu}, above its definition on line {ld}"),
+            };
+            let order = if block {
+                "the lines".to_string()
+            } else {
+                format!("the {what}s")
+            };
+            let message = format!(
+                "`{name}` is used{place}. In {list} a name is used only below its definition, \
+                 so that the text reads from the top. The order of {order} changes no result, \
+                 since evaluation follows the dependencies, so moving the {what} above its \
+                 first use changes nothing else."
+            );
+            let mut notes = vec![
+                Note {
+                    span: used,
+                    text: format!("`{name}` is used here, above its definition"),
+                },
+                Note {
+                    span: d,
+                    text: if block {
+                        format!("the definition of `{name}`, below its first use")
+                    } else {
+                        format!("the {what} `{name}`, below its first use")
+                    },
+                },
+            ];
+            // The item of the list that holds the first use, which the definition moves above.
+            let held = self
+                .lists
+                .partition_point(|l| l.ids.start <= id)
+                .checked_sub(1)
+                .map(|i| &self.lists[i])
+                .filter(|l| l.ids.contains(&id))
+                .and_then(|l| {
+                    let k = l.items.partition_point(|(s, _)| s.start <= used.start);
+                    k.checked_sub(1).map(|k| l.items[k])
+                })
+                .filter(|(s, _)| s.end > used.start);
+            if let Some((s, user)) = held {
+                // Moving the definition above `s` puts it above every line from `s` down to
+                // it, so the move is offered only when the definition names none of them.
+                // Complexity tradeoff (COMPLEXITY.md F16b): this reads the uses inside the
+                // reported definition, O(u log n) for its u uses. Definitions of one block do
+                // not overlap, so this is linear over a block; only nested definitions that are
+                // all reported read a use once per level, O(uses · depth), and a program with
+                // no error pays nothing.
+                let names_between = self.uses_in(d).any(|b| {
+                    let b = self.out.binders[b].span.start;
+                    b >= s.start && b < d.start
+                });
+                if !names_between {
+                    let text = match (block, quote(d), quote(s)) {
+                        (true, Some(moved), _) => {
+                            let ls = line(s.start);
+                            let moved = match line(d.end.saturating_sub(1)) {
+                                last if last == ld => format!("`{moved}`"),
+                                last => {
+                                    format!("lines {ld} to {last}, the definition of `{name}`,")
+                                }
+                            };
+                            if ls == lu {
+                                format!(
+                                    "repair: move {moved} above line {lu}, where `{name}` is first used"
+                                )
+                            } else {
+                                format!(
+                                    "repair: move {moved} above line {ls}, where the statement \
+                                     that first uses `{name}` begins"
+                                )
+                            }
+                        }
+                        (true, None, _) => format!(
+                            "repair: move the definition of `{name}` above the statement that \
+                             first uses `{name}`"
+                        ),
+                        (false, Some(moved), Some(user)) => {
+                            format!("repair: move `{moved}` in front of `{user}`")
+                        }
+                        (false, _, _) => format!(
+                            "repair: move the {what} `{name}` in front of the {what} whose \
+                             default or type uses it"
+                        ),
+                    };
+                    notes.push(Note { span: d, text });
+                }
+                // Functions that call each other: at the top level they may name each other in
+                // any order. Offered when neither reads a value of the block, and the top level
+                // has neither name yet.
+                if let Some(user) = user
+                    && block
+                    && names_between
+                    && self.function_like(id)
+                    && self.function_like(user)
+                    && self.out.exports.get(name).is_none()
+                    && self.out.exports.get(&self.out.binders[user].name).is_none()
+                    && self.closed(d, s, [id, user])
+                    && self.closed(s, d, [id, user])
+                {
+                    let other = &self.out.binders[user].name;
+                    let text = match (quote(s), quote(d)) {
+                        (Some(a), Some(b)) => format!(
+                            "repair: `{other}` and `{name}` call each other, so define both at \
+                             the top level of the unit, where definitions may name each other in \
+                             any order: move `{a}` and `{b}` out of the block to the top level"
+                        ),
+                        _ => format!(
+                            "repair: `{other}` and `{name}` call each other, so define both at \
+                             the top level of the unit, where definitions may name each other in \
+                             any order"
+                        ),
+                    };
+                    notes.push(Note { span: d, text });
+                }
+            }
+            errors.push(Error {
+                row: Some(Row::NameAboveDefinition),
+                span: used,
+                message,
+                notes,
+            });
+        }
+        self.errors.extend(errors);
+    }
+
+    /// The binders the uses inside `span` name, each use once. `O(k log n)` for `k` uses.
+    fn uses_in(&self, span: Span) -> impl Iterator<Item = usize> + '_ {
+        let from = Span {
+            start: span.start,
+            end: span.start,
+        };
+        let to = Span {
+            start: span.end,
+            end: span.end,
+        };
+        self.out.uses.range(from..to).filter_map(|(_, r)| match r {
+            Ref::Bound(ids) => Some(ids[0]),
+            _ => None,
+        })
+    }
+
+    /// Whether the binder `id` is a function: declared as one, or bound to a lambda.
+    fn function_like(&self, id: usize) -> bool {
+        self.out.binders[id].kind == Kind::Function || self.lambdas.contains(&id)
+    }
+
+    /// Whether the definition at `span` reads nothing of its block but itself, the definition
+    /// at `other` and the binders `own`: every name it uses is of the top level, an import or
+    /// the prelude, or bound inside one of the two.
+    fn closed(&self, span: Span, other: Span, own: [usize; 2]) -> bool {
+        let inside = |s: Span, t: Span| s.start >= t.start && s.end <= t.end;
+        self.uses_in(span).all(|b| {
+            let at = self.out.binders[b].span;
+            own.contains(&b) || self.tops.contains(&b) || inside(at, span) || inside(at, other)
+        })
+    }
+
     /// Records the use of `name` at `span`, or the error that it names nothing at L1.
     fn name(&mut self, name: &str, span: Span) {
         if name.ends_with('\'') {
@@ -1025,6 +1273,7 @@ impl Resolver<'_> {
                 )
             }
             Some(Found::Bound(ids)) => {
+                self.order(name, span, &ids);
                 self.out.uses.insert(span, Ref::Bound(ids));
                 return;
             }
@@ -1230,6 +1479,7 @@ impl Resolver<'_> {
                     } else if let Some(Found::Bound(ids)) = self.find(name)
                         && !self.dead.contains(&ids[0])
                     {
+                        self.order(name, span, &ids);
                         self.out.uses.insert(span, Ref::Bound(ids));
                     }
                 }
@@ -1242,10 +1492,25 @@ impl Resolver<'_> {
         }
     }
 
-    /// The statements of the innermost scope: their binders first, since order has no meaning.
+    /// Records the list whose items are `items`, in text order, and whose binders were made
+    /// from `first` on, when it binds a name.
+    fn list(&mut self, first: usize, items: Vec<(Span, Option<usize>)>) {
+        let end = self.out.binders.len();
+        if end > first {
+            self.lists.push(List {
+                ids: first..end,
+                items,
+            });
+        }
+    }
+
+    /// The statements of the innermost scope: their binders first, so that a use finds its
+    /// binder wherever it stands, and a use above its definition is reported as one.
     /// They are the unit's own statements when `top` holds.
     fn stmts<'a>(&mut self, stmts: &'a [Stmt], top: bool, todo: &mut Vec<Task<'a>>) {
         let mut families = HashSet::new();
+        let first = self.out.binders.len();
+        let mut items = Vec::new();
         for s in stmts {
             if !matches!(
                 s.kind,
@@ -1258,7 +1523,18 @@ impl Resolver<'_> {
             ) {
                 self.out.decls.insert(s.span.start);
             }
+            let id = self.out.binders.len();
             self.declare(s, false, &mut families);
+            let one = (self.out.binders.len() == id + 1).then_some(id);
+            if let (Some(id), StmtKind::Bind { value, .. }) = (one, &s.kind)
+                && matches!(value.kind, ExprKind::Lambda { .. })
+            {
+                self.lambdas.insert(id);
+            }
+            items.push((s.span, one));
+        }
+        if !top {
+            self.list(first, items);
         }
         todo.extend(stmts.iter().rev().map(|s| Task::Stmt(s, top)));
     }
@@ -1527,11 +1803,18 @@ impl Resolver<'_> {
         }
     }
 
-    /// The fields of the struct `st`, declared by the statement at `span`: each a binder no
-    /// scope holds, named once. A field's type and default are read in the struct's scope.
+    /// The fields of the struct `st`, declared by the statement at `span`: each a binder, named
+    /// once. A field's type and default are read in a scope of the field list, which holds the
+    /// fields, so a default or a type names the fields declared before it (DESIGN.md
+    /// sec:lexical) and a field declared after it is "Name used above its definition"; outside
+    /// the list a field is named only through a value of the struct.
     fn fields<'a>(&mut self, st: &'a Struct, span: Span, todo: &mut Vec<Task<'a>>) {
         let start = self.out.binders.len();
         let mut seen: HashMap<&str, Span> = HashMap::new();
+        self.open();
+        todo.push(Task::Close);
+        let level = self.scopes.len();
+        let mut items = Vec::new();
         for f in &st.fields {
             match f {
                 Field::Typed {
@@ -1556,11 +1839,20 @@ impl Resolver<'_> {
                         });
                     } else {
                         seen.insert(name, *at);
+                        let id = self.out.binders.len();
+                        let mut b = Bound::new(level, Kind::Field, false);
+                        b.ids.push_back(id);
+                        self.visible.entry(name.clone()).or_default().push(b);
+                        self.scopes
+                            .last_mut()
+                            .expect("opened above")
+                            .push(name.clone());
                         self.out.binders.push(Binder {
                             name: name.clone(),
                             span: *at,
                             kind: Kind::Field,
                         });
+                        items.push((*at, Some(id)));
                     }
                     todo.extend(default.as_ref().map(Task::Expr));
                     todo.push(Task::Ty(ty));
@@ -1570,6 +1862,7 @@ impl Resolver<'_> {
         }
         let end = self.out.binders.len();
         self.out.fields.insert(span, start..end);
+        self.list(start, items);
     }
 
     /// The type declaration `t`, the statement at `span`: its parameters, in scope in its type.
@@ -1820,7 +2113,10 @@ impl Resolver<'_> {
         if let Some(at) = this {
             self.bind("this", at, at, Kind::Receiver, None);
         }
+        let first = self.out.binders.len();
+        let mut items = Vec::new();
         for p in params {
+            let id = self.out.binders.len();
             match &p.tuple {
                 None => self.bind(&p.name, p.name_at, p.span, Kind::Param, None),
                 Some(targets) => {
@@ -1831,10 +2127,14 @@ impl Resolver<'_> {
                     }
                 }
             }
+            items.push((p.span, (self.out.binders.len() == id + 1).then_some(id)));
         }
         for p in ports {
+            let id = self.out.binders.len();
             self.bind(&p.name, name_at(p.span, &p.name), p.span, Kind::Port, None);
+            items.push((p.span, (self.out.binders.len() == id + 1).then_some(id)));
         }
+        self.list(first, items);
         todo.push(Task::Close);
         todo.push(match &body.kind {
             ExprKind::Block(stmts) => Task::Stmts(stmts),
@@ -2258,6 +2558,7 @@ impl Resolver<'_> {
         let message = match self.find(n) {
             Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => return,
             Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind.is_type() => {
+                self.order(n, span, &ids);
                 self.out.uses.insert(span, Ref::Bound(ids));
                 return;
             }

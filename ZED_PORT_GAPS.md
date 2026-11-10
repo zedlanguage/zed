@@ -3272,3 +3272,11 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A field of the checker (`Ck.comparing`, the operator and the operands' spans) set before `Ck::equal` and cleared after it, read deep inside it by `Ck::follow` | `walk.rs` `binary_end`, `Ck::follow` | Mutation (gap 11) | a parameter of `equal`, `pair` and `follow` passed down the comparison |
+
+## Entries from DBU-scope (`crates/zedc-resolve/src/resolve.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap` held in the resolver and updated in place at each use (`entry(id).or_insert(span)`, then the smaller of the two spans), drained once at the end | `Resolver::order`, `Resolver::above_errors` | Mutation (gap 11) | A map from binder to its first early use, built by a keyed push with `min` as the merge, read once after the walk |
+| Binary search on sorted vectors (`partition_point`) for a line number and for the statement of a block that holds a use | `Resolver::above_errors` | Key range queries (gap 9) | `before` on a map keyed by line start or by statement start |
+| A range query on the ordered map of uses by span (`BTreeMap::range`) | `Resolver::uses_in` | Key range queries (gap 9) | `after` and `before` on the uses map |

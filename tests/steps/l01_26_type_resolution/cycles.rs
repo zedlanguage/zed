@@ -78,12 +78,17 @@ fn every_shape_of_cycle_leaves_the_other_definitions_checked() {
 
 #[test]
 fn a_cycle_inside_a_body_is_rejected_and_the_rest_of_the_body_checked() {
-    // The block's other statements are checked: `f(true)` is rejected beside the cycle.
-    let text = format!("g(positional n: int) = {{ x = y; y = x; z = f(true); z + n }};\n{F}");
+    // The block's other statements are checked: `f(true)` is rejected beside the cycle. In a
+    // block a name is used only below its definition (DESIGN.md sec:lexical), so two bindings
+    // that read each other are rejected before this check; a function that calls itself is
+    // the cycle a block can hold.
+    let text = format!(
+        "g(positional n: int) = {{ x(positional k: int) = x(k); z = f(true); z + n }};\n{F}"
+    );
     assert_eq!(
         type_errors(&text),
         [
-            recursion("`x`, `y`", "x = y;"),
+            recursion("`x`", "x(positional k: int) = x(k);"),
             "`f` does not take (true): these are the types of its arguments here, and `f` has \
              no arrow that takes them all [f(true)]"
                 .into(),

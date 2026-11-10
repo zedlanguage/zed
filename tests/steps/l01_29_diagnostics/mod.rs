@@ -3,6 +3,7 @@
 //! and signatures it met, every failing combination of a signature search, and the repairs
 //! the checker discharges.
 
+mod above;
 mod always_fails;
 mod batch;
 mod binder_type;

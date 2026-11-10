@@ -22,8 +22,8 @@ fn spacing_and_parentheses_are_normalized() {
 #[test]
 fn a_block_puts_its_export_last() {
     check(
-        "total(xs){return n+m;n=xs.length;m=1;}\n",
-        "total(xs) {\n  n = xs.length;\n  m = 1;\n  n + m\n}\n",
+        "total(xs){n=xs.length;m=1;return n+m;k=2;}\n",
+        "total(xs) {\n  n = xs.length;\n  m = 1;\n  k = 2;\n  n + m\n}\n",
     );
     check(
         "pair(x){a=x;return a,a;}\n",
@@ -76,8 +76,8 @@ fn lambdas_calls_and_else_are_written_short() {
 #[test]
 fn comments_stay_with_their_statements() {
     check(
-        "// Totals.\ntotal(xs) {\n  return n; // the count\n\n  // xs is a list\n  n = xs.length;\n  // done\n}\n",
-        "// Totals.\ntotal(xs) {\n  // xs is a list\n  n = xs.length;\n  n // the count\n  // done\n}\n",
+        "// Totals.\ntotal(xs) {\n  // xs is a list\n  n = xs.length;\n  return n; // the count\n\n  // a step\n  k = 1;\n  // done\n}\n",
+        "// Totals.\ntotal(xs) {\n  // xs is a list\n  n = xs.length;\n\n  // a step\n  k = 1;\n  n // the count\n  // done\n}\n",
     );
     check(
         "f(x) = g(x, /* why */ 1); // after\n",

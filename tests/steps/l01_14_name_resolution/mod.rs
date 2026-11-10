@@ -2,6 +2,7 @@
 //! then in the unit's top level, then in the prelude; one test per rule of that order, and
 //! one per error a resolution reports.
 
+mod above;
 mod fences;
 mod order;
 pub(crate) mod scaling;

@@ -209,6 +209,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         "2:12",
         Some("keep the first and delete this one: `y = x;`"),
     ),
+    (
+        Row::NameAboveDefinition,
+        "f(n) {\n",
+        "  b = n * 2;\n  a = b + 1;\n  a\n}\n",
+        "  a = b + 1;\n  b = n * 2;\n  a\n}\n",
+        "2:7",
+        Some("move `b = n * 2;` above line 2, where `b` is first used"),
+    ),
 ];
 
 /// Rows the parser raises for a form that name resolution does not compile yet (a boundary

@@ -496,7 +496,10 @@ pub(crate) fn compile(text: &str) -> Front {
     })
     .map_err(|es| placed(text, &lines, &[], Severity::Rejection, es))?;
     let all = |errors: Vec<ast::Error>| placed(text, &lines, &stmts, Severity::Rejection, errors);
-    let res = work::stage(Stage::Resolve, None, || resolve::resolve(&stmts)).map_err(all)?;
+    let res = work::stage(Stage::Resolve, None, || {
+        resolve::resolve_text(&stmts, Some(text))
+    })
+    .map_err(all)?;
     // Doc comments are checked after parsing; their errors join elaboration's.
     let mut errors = work::stage(Stage::Docs, None, || {
         docs::check(text, &tokens, &docs, &res)

@@ -91,8 +91,8 @@ fn a_one_tuple_prints_back_as_written() {
     assert_eq!(fmt("x = ((1,));\n"), "x = (1,);\n");
     // A block's one export is written last, the one-tuple still a one-tuple.
     assert_eq!(
-        fmt("g(x) { return (a,); a = x; }\n"),
-        "g(x) {\n  a = x;\n  (a,)\n}\n"
+        fmt("g(x) { a = x; return (a,); b = 1; }\n"),
+        "g(x) {\n  a = x;\n  b = 1;\n  (a,)\n}\n"
     );
 }
 

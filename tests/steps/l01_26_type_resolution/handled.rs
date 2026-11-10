@@ -216,10 +216,10 @@ fn a_function_that_calls_itself_waits_for_layer_l6() {
 #[test]
 fn a_line_bound_to_another_name_takes_the_atoms_that_name_handles() {
     // `s` is `line` under another name, so `s else ""` handles every loose atom for `line`,
-    // in whichever order the block writes its bindings, and through a chain of names.
+    // and through a chain of names.
     for body in [
         "{ s = line; trim(s else \"\") }",
-        "{ t = s; s = line; trim(t else \"\") }",
+        "{ s = line; t = s; trim(t else \"\") }",
     ] {
         let a = arrow(body);
         assert!(

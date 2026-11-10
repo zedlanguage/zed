@@ -31,7 +31,7 @@ fn each_row_gives_what_its_body_says_for_a_missing_line() {
         ("(line else 0) + 1", "1"),
         ("{ s = line else \"\"; trim(s) }", "\"\""),
         ("{ s = line; trim(s else \"\") }", "\"\""),
-        ("{ t = s; s = line; trim(t else \"\") }", "\"\""),
+        ("{ s = line; t = s; trim(t else \"\") }", "\"\""),
     ] {
         assert_eq!(r(body, "#notFound"), want, "{body}");
     }

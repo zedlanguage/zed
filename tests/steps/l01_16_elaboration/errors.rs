@@ -1,11 +1,28 @@
 //! The errors elaboration reports, one case each.
 
 use super::errors;
+use zedc::ast::unit;
+use zedc::lex::lex_fence;
+use zedc::parse::{TOP, parse};
+use zedc::rejection::Row;
+use zedc::resolve::resolve;
 
 fn one(src: &str) -> String {
     let es = errors(src);
     assert_eq!(es.len(), 1, "{src}: {es:?}");
     es[0].clone()
+}
+
+/// The one error name resolution gives the unit `src`, which then never reaches elaboration:
+/// a name used above its definition.
+fn above(src: &str) -> String {
+    let tokens = lex_fence(src).unwrap();
+    let tree = parse(src, &tokens, "Unit", TOP).unwrap();
+    let stmts = unit(src, &tokens, &tree).unwrap();
+    let es = resolve(&stmts).err().unwrap_or_default();
+    assert_eq!(es.len(), 1, "{src}: {es:?}");
+    assert_eq!(es[0].row, Some(Row::NameAboveDefinition), "{src}: {es:?}");
+    es[0].message.clone()
 }
 
 #[test]
@@ -20,9 +37,12 @@ fn recursion_is_layer_l6() {
         e.starts_with("`a`, `b` are defined in terms of each other"),
         "{e}"
     );
-    let e = one("total = { x = y; y = x; x };\n");
+    // In a block a name is used only below its definition, so two bindings of a block that
+    // read each other are rejected by name resolution, before elaboration (DESIGN.md
+    // sec:lexical).
+    let e = above("total = { x = y; y = x; x };\n");
     assert!(
-        e.contains("are defined in terms of each other, which is recursion. Recursion is part"),
+        e.starts_with("`y` is used. In a block a name is used only below"),
         "{e}"
     );
 }
@@ -76,10 +96,13 @@ fn too_many_arguments() {
 
 #[test]
 fn defaults_that_read_each_other() {
-    let e = one("f(a = b, b = a) = a;\ny = f();\n");
-    assert_eq!(
-        e,
-        "the defaults of `a`, `b` read each other in a cycle, so none of them can be computed first. Write one of them without reading the others. [f()]"
+    // A default reads only the parameters before it (DESIGN.md sec:lexical), so defaults
+    // cannot read each other in a cycle: the first that reads a later one is rejected by name
+    // resolution, before elaboration.
+    let e = above("f(a = b, b = a) = a;\ny = f();\n");
+    assert!(
+        e.starts_with("`b` is used. In a parameter list a name is used only below"),
+        "{e}"
     );
 }
 

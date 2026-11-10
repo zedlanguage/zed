@@ -35,23 +35,23 @@ fn a_parameter_tested_against_many_atoms_scales() {
     });
 }
 
-/// A function whose undeclared parameter `line` is bound to `n` names in a chain, written
-/// last first, each tested against an atom of its own, the last trimmed.
+/// A function whose undeclared parameter `line` is bound to `n` names in a chain, each below
+/// the one it reads (DESIGN.md sec:lexical), each tested against an atom of its own, the last
+/// trimmed.
 fn chain_of_names(n: usize) -> String {
     let names: String = (1..n)
-        .rev()
         .map(|i| format!("s{i} = s{}; b{i} = s{i} is #a{i}; ", i - 1))
         .collect();
     format!(
-        "r(positional line) = {{ {names}s0 = line; b0 = s0 is #a0; trim(s{}) }};\n",
+        "r(positional line) = {{ s0 = line; b0 = s0 is #a0; {names}trim(s{}) }};\n",
         n - 1
     )
 }
 
 #[test]
 fn a_parameter_bound_to_a_chain_of_names_scales() {
-    // The union-find joins each name to the chain's class in near-constant time, whatever
-    // order the bindings are written in, and each test then adds its atom to the class's set.
+    // The union-find joins each name to the chain's class in near-constant time, and each test
+    // then adds its atom to the class's set.
     let (i, _) = info(&chain_of_names(3));
     assert!(i.errors.is_empty(), "{:?}", i.errors);
     let a = i.sigs.values().next().unwrap().expand().pop().unwrap();
@@ -365,15 +365,14 @@ fn one_call_passing_the_atoms_of_many_arguments_by_scales() {
 }
 
 /// A function whose undeclared parameter `line` is trimmed through a chain of `n` names, each
-/// bound to the one before it trimmed and written last first, each tested against an atom of
-/// its own: every atom passes out of the chain's trims back to `line` (the author's Q5).
+/// bound to the one before it trimmed and written below it, each tested against an atom of its
+/// own: every atom passes out of the chain's trims back to `line` (the author's Q5).
 fn chain_of_computed_names(n: usize) -> String {
     let names: String = (1..n)
-        .rev()
         .map(|i| format!("s{i} = trim(s{}); b{i} = s{i} is #a{i}; ", i - 1))
         .collect();
     format!(
-        "r(positional line) = {{ {names}s0 = trim(line); b0 = s0 is #a0; s{} else \"\" }};\n",
+        "r(positional line) = {{ s0 = trim(line); b0 = s0 is #a0; {names}s{} else \"\" }};\n",
         n - 1
     )
 }
@@ -381,7 +380,7 @@ fn chain_of_computed_names(n: usize) -> String {
 #[test]
 fn a_parameter_trimmed_through_a_chain_of_names_scales() {
     // Each name's set is the next one's with one atom added, in the order Tarjan's walk
-    // finishes them, whatever order the bindings are written in.
+    // finishes them.
     let (i, _) = info(&chain_of_computed_names(3));
     assert!(i.errors.is_empty(), "{:?}", i.errors);
     let a = i.sigs.values().next().unwrap().expand().pop().unwrap();

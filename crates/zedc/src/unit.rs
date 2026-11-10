@@ -688,7 +688,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         }
         let k = query::key("resolve", &parts);
         let linked = Linked { deps, prelude };
-        let r = db.resolve(k, || resolve::resolve_in(stmts, &linked));
+        let r = db.resolve(k, || resolve::resolve_in_text(stmts, &linked, Some(text)));
         let file = &pkg.units[u].file;
         for e in r.errors.iter().chain(&r.later) {
             pkg.problems.push(Problem {

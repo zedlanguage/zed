@@ -67,7 +67,7 @@ fn with_sentinels() {
 fn primes_on_a_receiver_and_on_a_field() {
     check(&[
         (
-            "f(b) = loop { until pos'.x > b; pos' = pos.step() with initial pos = start; };",
+            "f(b) = loop { pos' = pos.step() with initial pos = start; until pos'.x > b; };",
             "(def f (b) = (loop (block (= (pos') (call (. pos step)) (with (initial pos start))) \
              (until (> (. pos' x) b)))))",
         ),
@@ -96,7 +96,7 @@ fn primes_on_a_receiver_and_on_a_field() {
 #[test]
 fn while_and_until_in_one_loop() {
     check(&[(
-        "f(n) = loop t { until x' > n; x' = x + t with initial x = 0; while t < 10; };",
+        "f(n) = loop t { x' = x + t with initial x = 0; until x' > n; while t < 10; };",
         "(def f (n) = (loop t (block (while (< t 10)) (= (x') (+ x t) (with (initial x 0))) \
          (until (> x' n)))))",
     )]);

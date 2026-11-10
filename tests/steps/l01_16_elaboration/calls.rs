@@ -20,10 +20,10 @@ fn a_default_is_filled_where_the_call_omits_it() {
 #[test]
 fn defaults_read_earlier_parameters_in_dependency_order() {
     let src =
-        "box(positional w, d = h, h = w) = w * h * d;\ncube = box(2);\nslab = box(2, d: 1);\n";
+        "box(positional w, h = w, d = h) = w * h * d;\ncube = box(2);\nslab = box(2, d: 1);\n";
     assert_eq!(value(src, "cube"), "8");
     assert_eq!(value(src, "slab"), "4");
-    assert_eq!(term(src, "cube"), "{ w = 2; h = w; d = h; box(w, d, h) }");
+    assert_eq!(term(src, "cube"), "{ w = 2; h = w; d = h; box(w, h, d) }");
 }
 
 #[test]

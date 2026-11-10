@@ -21,6 +21,7 @@ Boundary item with neither `initial` nor an index
 Two `with initial` items for one variable
 Cross-unit overlapping incomparable arrows
 Ambiguous imported name
+Name used above its definition
 Need met only by an arrow in the caller's scope
 Two members of one name with different declarations in a struct or interface body
 File read at the compile-time stage by a path that leaves the package root
@@ -62,7 +63,7 @@ Cell read on a path back to its own cell
 Meaning function with a case `@decides` cannot reify
 Linear question outside the polynomial fragment of the linear-relation domain
 Statement that writes nothing, or drops a declared result
-Cycle through state and value edges
+Two operations on one port that may not commute, with nothing ordering them
 Operator with no arrow at its operands' carrier
 Units that differ where an operation requires equal ones
 Taint at a sink whose parameter does not take it

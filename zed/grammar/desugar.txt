@@ -42,12 +42,12 @@ Proof         : a derivation checked by the proof checker (sec:verification); no
 IndexedDef    : `f[i in D] = e` is fam(⟦D⟧, i -> ⟦e⟧) when e does not read f, the definedness fix(⟦D⟧, step, ev) with `this` = f when it does, and gen when the reads are a bounded number of steps back in a time order, the gen's state being the window of that many frames (sec:generations); several `[ ]` nest; the boundary's entries are defined before the first round
 IndexKey      : `i in D` binds i over the keys of ⟦D⟧; an expression is the key of one case of a piecewise definition
 Push          : a push
-AckPush       : `a = p <- e` is the push `p <- e`, keyed as written, with `a` bound to its acknowledgment (*T-Port*), so the port's failure policy does not apply to it
+AckPush       : `a = p <- e` is the push `p <- e`, keyed as written, with `a` bound to its acknowledgment (*T-Port*), a failure in which bubbles out of the block only when nothing reads `a` (sec:ports)
 KeyedPush     : writes ⟦e⟧ at keypath ⟦k⟧ of a keyed accumulator, whose writes at one keypath are folded by its reducer
 WholePush     : push(p, ⟦e⟧)
 Binding       : the binding of its alternative
 TypedBinding  : `x: T = e` is PlainBinding's `x = e`, also checking e against T
-PlainBinding  : `x = e;` is let x = ⟦e⟧ over the block, in dependency order; `a, b = e` is let t = ⟦e⟧ with a = t[0], b = t[1], and `_` binds nothing; a boundary gives the entries before generation 0
+PlainBinding  : `x = e;` is let x = ⟦e⟧ over the lines below it, in dependency order; `a, b = e` is let t = ⟦e⟧ with a = t[0], b = t[1], and `_` binds nothing; a boundary gives the entries before generation 0
 Target        : a bound name, or `_`, which binds nothing
 Boundary      : the entries a generation variable or indexed definition holds before its first step or round: the init of its gen, or entries defined before a fix's first round
 BoundaryItem  : `initial x = e` gives the sentinel value of x, the entry `x[lo-1] = e`, lo the low edge of x's domain (`x[-1]` for a loop); `x[k] = e` the entry at k; `x[i in D] = e` the entries at the keys of ⟦D⟧, each ⟦e⟧ with i bound to its key
@@ -104,7 +104,7 @@ ArrayExpr     : the array {0 -> ⟦e0⟧, …, n−1 -> ⟦en−1⟧} of type in
 HoleExpr      : a hole, reported, whose term is #hole
 Literal       : the literal value; a float literal rounds once to the nearest value of its format, the narrowest it fits or the one its suffix names (sec:domains)
 BinOp         : the operator's primitive as a function; `&&` and `||` are λ(a, b). ⟦a && b⟧ and λ(a, b). ⟦a || b⟧
-Block         : its bindings as lets in dependency order (statement order has no meaning), over the final expression or the return tuple; its `Display` alternative, a display in body position, is rejected after parsing (sec:diagnostics)
+Block         : its bindings as lets in dependency order (each name used only below its binding, sec:lexical; the written order fixes no evaluation order), over the final expression or the return tuple; its `Display` alternative, a display in body position, is rejected after parsing (sec:diagnostics)
 Display       : `{ n: e, … }` is the record {#n -> ⟦e⟧, …}, `n:` alone is `n: n`; `{}` the empty family; `{ k -> v, … }` the family of those entries, a repeated key being a collision; `{ k, … }` the set of those keys
 Entry         : one entry of a display
 If            : if(⟦c⟧, ⟦a⟧, ⟦b⟧)

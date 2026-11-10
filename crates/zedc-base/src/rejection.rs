@@ -56,6 +56,7 @@ rows! {
     TwoInitials => "Two `with initial` items for one variable",
     OverlappingArrows => "Cross-unit overlapping incomparable arrows",
     AmbiguousImport => "Ambiguous imported name",
+    NameAboveDefinition => "Name used above its definition",
     NeedInCallerScope => "Need met only by an arrow in the caller's scope",
     MemberTwice =>
         "Two members of one name with different declarations in a struct or interface body",
@@ -107,7 +108,8 @@ rows! {
     NonLinearQuestion =>
         "Linear question outside the polynomial fragment of the linear-relation domain",
     WritesNothing => "Statement that writes nothing, or drops a declared result",
-    StateValueCycle => "Cycle through state and value edges",
+    // No diagnostic uses this row yet: plan row L7.2 emits it.
+    UncommutedPortOps => "Two operations on one port that may not commute, with nothing ordering them",
     NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",
     UnitsDiffer => "Units that differ where an operation requires equal ones",
     TaintAtSink => "Taint at a sink whose parameter does not take it",

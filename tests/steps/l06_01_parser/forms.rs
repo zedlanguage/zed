@@ -10,7 +10,7 @@ fn loops_build_with_and_without_a_step_name() {
             "(def f (n) = (loop t (block (while (< t n)) (= (x') (+ x 1) (with (initial x 0))))))",
         ),
         (
-            "f(n) = loop { until x' > n; x' = x * 2 with initial x = 1; };",
+            "f(n) = loop { x' = x * 2 with initial x = 1; until x' > n; };",
             "(def f (n) = (loop (block (= (x') (* x 2) (with (initial x 1))) (until (> x' n)))))",
         ),
         ("f(x) = loop { };", "(def f (x) = (loop (block)))"),
