@@ -76,6 +76,7 @@ const NOT_MODES: &[&str] = &[
     "runtime",
     "source",
     "compiler",
+    "checker",
     "itself",
     "number",
     "doubling",
