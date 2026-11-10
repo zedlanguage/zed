@@ -185,6 +185,25 @@ taint-through-concatenation
 ]
   checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 75, col: 55, failure: Some("the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.") }]
 
+two-point-readings-added
+  rejected: [
+    Diagnostic {
+        line: 2,
+        col: 34,
+        message: "the reduction `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 3,
+        col: 23,
+        message: "the reduction `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 2, col: 34, failure: Some("the reduction `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 23, failure: Some("the reduction `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 6, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+
 two-writers-of-one-generation
   rejected: [
     Diagnostic {

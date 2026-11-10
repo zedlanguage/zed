@@ -1,4 +1,4 @@
-// variant: // e = energy + force;            // ✗ Units that differ where an operation requires equal ones: kg m s^-2 is not kg m^2 s^-2
+// variant: // e = energy + force;            // ✗ Units that differ where an operation requires equal ones: kg m^2/s^2 (J) and kg m/s^2 (N), ratio m
 // 1 — Deterministic parallel float sum: bit-identical at any core count.
 total = readings >< (+);
 // Elsewhere: parallel float reduction is nondeterministic unless you build the tree yourself.
@@ -45,8 +45,8 @@ past = run::frames[run::len - 2].doc else empty;  // any past state, O(log n), s
 rows = exec(db, "SELECT * WHERE name = " ++ sanitize(userName));  // ✓ and the sanitizer is auditable
 
 // 10 — Wrong physics doesn't build.
-energy = m * v * v / 2;        // energy::units == "kg m^2 s^-2"  (a joule)
-e = energy + force;            // ✗ Units that differ where an operation requires equal ones: kg m s^-2 is not kg m^2 s^-2
+energy = m * v * v / 2;        // energy::units == "J", printed kg m^2/s^2 (J): the alias J is kg m^2/s^2
+e = energy + force;            // ✗ Units that differ where an operation requires equal ones: kg m^2/s^2 (J) and kg m/s^2 (N), ratio m
 
 // 11 — One declaration = type + parser + printer, with round-trip guaranteed.
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }

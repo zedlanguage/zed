@@ -52,6 +52,13 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
         ),
         ("taint-through-concatenation", none(44)),
         (
+            "two-point-readings-added",
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"K\")`")
+            ),
+        ),
+        (
             "two-writers-of-one-generation",
             format!("8: {}", zed_tests::not_yet!("the declared result type `-> int`")),
         ),

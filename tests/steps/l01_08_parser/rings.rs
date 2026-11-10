@@ -9,7 +9,7 @@ use zedc::parse::{TOP, parse};
 #[test]
 fn every_fence_parses_first_at_its_recorded_ring() {
     let all = fences::all();
-    assert_eq!(all.len(), 160);
+    assert_eq!(all.len(), 162);
     let mut wrong = Vec::new();
     for f in &all {
         let tokens = lex_fence(&f.text).unwrap();

@@ -1,0 +1,6 @@
+// variant: // both = morning + noon;                      // ✗ No `+` of two point readings: morning and noon are Celsius readings; add a difference in K
+morning = Celsius(fromZero: 12.5 with units("K"));
+noon = morning + (6.0 with units("K"));        // a Celsius(f64) reading, 18.5 °C
+rise = noon - morning;                         // 6.0 with units("K")
+absolute = noon.kelvin;                        // 291.65 with units("K")
+both = morning + noon;                      // ✗ No `+` of two point readings: morning and noon are Celsius readings; add a difference in K
