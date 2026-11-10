@@ -1733,11 +1733,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | A55-spec | impl attempt 1 | 2026-11-09 16:33 | ready: wt/a55 507f7121, wt/a55-spec eb375db; A55 answer A applied, parity typed, soundness law + Galois text added; sync --check 0, grammar check 0; l01/m0_03/l |
 | A56-spec | impl attempt 1 | 2026-11-09 16:18 | ready: zed-impl 9e3a6f6e on wt/a56, spec 72af31b on wt/a56-spec; 121 pieces 1 failed (l01_10 count 1919 vs 1917, same on origin/main fences, pre-existing); sync |
-| BLOCKS-remove-local | impl attempt 1 | 2026-11-09 15:18 | baseline reproduced: take-apart 34.0x bytes, random build with bounds 16.6x bytes (limit 13.2) / load 33.32 20.02 16.86 |
+| BLOCKS-remove-local | impl attempt 1 | 2026-11-09 15:18 | name-by-block index added (Blocks::at/put); hub test 9.0x instr 7.9x bytes (31.4x bytes before); targets 10.7x/8.4x and 10.7x/8.8x; clippy, fmt clean; group run |
 | CK-data-memo | impl attempt 2 | 2026-11-07 23:45 | negative controls (not committed, reverted): exact set walk per row -> disjoint 56.0x bytes (fails); memos off -> shared-rows test killed at 60 s, load1 27-30 |
 | CX-tradeoff-krows | impl attempt 1 | 2026-11-09 15:42 | ready 611c7ec4 on wt/cx-krows: 477 rows checked, 101 comments added, 67 completed, 9 stale fixed; 80 test pieces and doc pass / load 18.34 |
 | CX-tradeoff-review | impl attempt 1 | 2026-11-09 15:11 | ready wt/cx-tradeoff-review 1373f81f: 48 partial + 2 stale tradeoff comments fixed, comments only; K-row search for missing comments left; fmt, clippy, doc, s_0 |
-| GROUP-overlaps-names | impl attempt 1 | 2026-11-09 14:55 | stopped own run_tests started without zrun (built build/cargo, to remove); rerun via zrun / load 82.14 |
+| FACET-typed | impl attempt 1 | 2026-11-09 17:10 | start: type parity example via declared Facet on wt/a55-spec |
+| GROUP-overlaps-names | impl attempt 1 | 2026-11-09 14:55 | names ring new 0.65/1.10/2.28/4.55 ms vs old 3.84/15.8/58.1/268 ms (k 64-512); lower-group ring stays k^2 (6-504 ms); covers for wholes tried and dropped (unrea |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | repair ready b9a464bd: reference walk now same order as the walk, quadratic copy deleted after 8,000-seed agreement; walk's own superlinear forms (a)-(c) open f |
 | PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | ready: wt/lto-cost d61b1c8d on origin/main eae094cc; Cargo.toml deps cgu1; 757M->719M / 1077M->1016M / 989M->943M; 54/54 pieces pass; deletes: perf data and scr |
@@ -1746,10 +1747,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRES-pendants-wider | impl attempt 1 | 2026-11-09 15:16 | candidate ends from disjunct projections: 11/226 z1 and 14/271 z0 now exact; disj_groups 20/20 / load 13.53 23.67 24.12 |
 | PRES-product-parity | impl attempt 1 | 2026-11-09 15:51 | ready 9f60144e on wt/product-parity (rebased on ecb20b59): 519 pieces 0 failed with doc check, load 12-35; l01_38 instr after/before 0.968-1.006; PRES-model-pro |
 | PRES-small-front | impl attempt 1 | 2026-11-09 14:43 | ready 4d29be86 on wt/small-front (stacked on wt/pres-small-cost): bounds in propagation + fast-path constant halved; point tried for decide dropped (changed ref |
-| QUESTIONS-cleanup | impl attempt 1 | 2026-11-09 16:52 | started |
+| QUESTIONS-cleanup | impl attempt 1 | 2026-11-09 16:52 | ready: zed c2dcb5b (wt/questions-cleanup), zed-impl df82d402 (wt/questions-cleanup-impl); not pushed |
 | R2-frames-gaps | impl attempt 1 | 2026-11-09 15:08 | ready: zed-impl c2fe4350 on wt/r2-frames-gaps, spec b4113c8 on wt/r2-frames-gaps-spec; keys kept as step numbers (not renumbered); laws over ::frames not reads; |
 | TEST-group-oracle-enum | impl attempt 1 | 2026-11-09 15:42 | rebased (no conflict) on origin/main eae094cc; commit is fe298ed1; ledger ready |
-| TIGHTEN-each-whole | impl attempt 1 | 2026-11-09 14:19 | tests: 526 pieces, 0 failed (load 21-55); residual hub (k vars in {0,1}, sum<=1), tighten stage 16/32/64: new 2.9/16/118 ms, old 6.2/37/244 ms; whole projection |
+| TIGHTEN-each-whole | impl attempt 1 | 2026-11-09 14:19 | ready: wt/tighten-each-whole 757335f3; final run 526 pieces, 1 failed (l01_07 copies: spec DESIGN.md changed at 16:43, not this branch); clippy, fmt clean; foll |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
