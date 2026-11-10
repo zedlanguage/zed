@@ -1033,7 +1033,7 @@ const GUARDED: [Counts; 16] = [
     (0, (0, 0, 44), (10, &[]), 0),
     (
         250,
-        (0, 0, 35),
+        (0, 0, 34),
         (
             9,
             &["i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]"],
@@ -1339,6 +1339,15 @@ guarded_ranges!(
 /// rows 1250 and 3750, 1 in rows 1750, 2000 and 2250 (323 in the first half, 327 in the
 /// second), and reflected counts none. No box of the transfer here changes, no box before is
 /// wider, and every other answer before is the same.
+///
+/// Since S22-guard-exact, which carries the holes of each `c - x` down as doubted values of
+/// `x` and meets the inputs that take them with the boxes of the enclosing guards, that box of
+/// row 250 (case 263) is exact again. Its hole is not at `(0 - A)`, as said above, but at the
+/// `(2 - i)` of `if (i == -7) { i } else { (2 - i) }` inside `A`, read in the arm taken where
+/// `i <= 4` fails: the hole `{2}` doubts the input `i = 2`, which that guard removes. The
+/// interpreter agrees with the exact box at all 25 points of the domain. So made exact is 34
+/// in row 250 (322 in the first half). Over all 4000 cases and the other tests of this file no
+/// other answer before changes.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1364,7 +1373,7 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
         (
             0,
             0,
-            323,
+            322,
             81,
             vec![
                 "i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]",
@@ -3792,5 +3801,40 @@ fn constant_minus_holes_scale() {
             let (t, ds, d) = if k == n { &a } else { &b };
             before::preimage(t, ds, &old(d));
         });
+    });
+}
+
+/// The chain `t_j = if (i <= j mod 7 - 3) { t } else { (3j + 1) - t }` of `n` levels over `i`
+/// in `[-20, 20]`, asked `t_n != 0`. Every level's `c - t` has holes that meet the forward
+/// image of `t`, and the guards remove them, so the preimage is exact. The transfer before
+/// carries the holes down as one set of doubted values and meets them with the guards' boxes
+/// where `i` is read (S22-guard-exact). Measured with the whole preimage: 63 and 594 ms at 256
+/// and 2,048 (9.4 times); a transfer of the holes at each level as a demand of their own, met
+/// with the guards' boxes (not kept), 9.4 and 511 ms at 32 and 256 (55 times); the check before
+/// (S22-exact-mislabel), which left these boxes not exact, 69 ms and 6.1 s at 8 and 64, all of
+/// it in the stages after the transfer (load about 18).
+#[test]
+fn guarded_holes_scale() {
+    let case = |n: usize| {
+        let g = |j: i64| prim(Prim::Le, var("i"), int(j % 7 - 3));
+        let t = chain(n, var("i"), g, |j, t| prim(Prim::Sub, int(3 * j + 1), t));
+        (prim(Prim::Ne, t, int(0)), i_in(-20, 20), Demand::Bool(true))
+    };
+    let n = 256;
+    let (a, b) = (case(n), case(n * scaling::FACTOR));
+    on_big_stack(|| {
+        for (t, ds, d) in [&a, &b] {
+            let p = before::preimage(t, ds, &old(d));
+            assert!(p.exact && !p.enumerated, "{p:?}");
+            assert_eq!(first_refuted(t, ds, d, &[(&p.domains, true)]), None);
+        }
+        scaling::check(
+            "the transfer before of a guarded chain of `c - t` with holes",
+            n,
+            |k| {
+                let (t, ds, d) = if k == n { &a } else { &b };
+                before::preimage(t, ds, &old(d));
+            },
+        );
     });
 }

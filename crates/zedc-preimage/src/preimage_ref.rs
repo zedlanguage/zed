@@ -2,8 +2,9 @@
 //! S22a (main at fdf7918, which holds the 397f1c9 transfer and later changes), kept unchanged
 //! but for the exact interval ends of TD-ends, the failure of a base raised to 0
 //! (SOUND-div-exact), and a box of `c - x` no longer marked exact when the forward image of
-//! `{c} - z` merged pieces (S22-exact-mislabel), so that tests can compare the whole `Preimage`
-//! of [`super::preimage`] with it. Nothing outside the tests uses it.
+//! `{c} - z` merged pieces (S22-exact-mislabel) unless an enclosing guard removes every input
+//! that takes a value in the merged pieces (S22-guard-exact), so that tests can compare the
+//! whole `Preimage` of [`super::preimage`] with it. Nothing outside the tests uses it.
 //!
 //! The tonicity of the scalar primitives and the scalar entries of the preimage catalog
 //! (DESIGN.md sec:domains, "Backward transfer, and `@ensure`", and sec:constraints, "Both
@@ -773,6 +774,11 @@ struct Res {
     /// Whether the box holds no point.
     none: bool,
     exact: bool,
+    /// When the box is not exact: `Some(d)` when every point of the box outside the box `d`
+    /// meets the demand (and avoids the doubted values, [`Tx::back_doubt`]), `None` when no
+    /// such box is known. Only the reflection of `c - x` leaves such points, which an
+    /// enclosing guard may remove ([`Tx::meet`]).
+    doubt: Option<Sets>,
 }
 
 impl Res {
@@ -781,6 +787,23 @@ impl Res {
             dom: Sets::new(),
             none: false,
             exact: true,
+            doubt: None,
+        }
+    }
+
+    /// Marks the box not exact, with no box known to hold the points that fail.
+    fn inexact(&mut self) {
+        self.exact = false;
+        self.doubt = None;
+    }
+
+    /// The box outside which every point meets the demand: `Some(None)` when that is every
+    /// point, `Some(Some(d))` for `d`, `None` when no such box is known.
+    fn doubted(&self) -> Option<Option<&Sets>> {
+        if self.exact {
+            Some(None)
+        } else {
+            self.doubt.as_ref().map(Some)
         }
     }
 
@@ -886,7 +909,8 @@ struct Memo {
     mentions: HashMap<At, Option<bool>>,
     constant: HashMap<At, Option<Value>>,
     fwd: HashMap<At, Fwd>,
-    back: HashMap<(At, Demand), Res>,
+    /// By term, scope, demand and doubted values ([`Tx::back_doubt`]).
+    back: HashMap<(At, Demand, IntervalSet), Res>,
     scan: HashSet<At>,
     lin: HashMap<At, Option<Lin>>,
     formula: HashMap<At, Option<Formula>>,
@@ -1437,11 +1461,19 @@ impl<'t> Tx<'t> {
     }
 
     /// The meet, in time of the smaller box's names.
+    ///
+    /// Where both sides are exact but for the points of their doubted boxes ([`Res::doubt`]),
+    /// the meet is exact but for those points that lie in it: a doubted box the other side
+    /// (an enclosing guard's box among them) leaves empty is dropped, and with none left the
+    /// meet is exact.
     fn meet(&self, a: Res, b: Res) -> Res {
         if self.empty(&a) || self.empty(&b) {
             return Res::none();
         }
-        let exact = a.exact && b.exact;
+        let doubts = match (a.doubted(), b.doubted()) {
+            (Some(x), Some(y)) => Some([x.cloned(), y.cloned()]),
+            _ => None,
+        };
         let (mut dom, small) = if a.dom.len() < b.dom.len() {
             (b.dom, a.dom)
         } else {
@@ -1457,11 +1489,44 @@ impl<'t> Tx<'t> {
             }
             dom.insert(k.clone(), met);
         }
+        let (exact, doubt) = match doubts {
+            None => (false, None),
+            Some(ds) => {
+                let left = ds
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|d| self.doubt_in(d, &dom));
+                match left.reduce(|x, y| hull(&x, &y)) {
+                    None => (true, None),
+                    Some(d) => (false, Some(d)),
+                }
+            }
+        };
         Res {
             dom,
             none: false,
             exact,
+            doubt,
         }
+    }
+
+    /// The doubted box `d` narrowed by the box `dom` in the names `d` narrows, or `None` when
+    /// it holds no point of `dom`. A name `dom` alone narrows is left whole in `d`, which is
+    /// still a box holding every doubted point; the time is that of `d`'s names.
+    fn doubt_in(&self, mut d: Sets, dom: &Sets) -> Option<Sets> {
+        if self.run.void {
+            return None;
+        }
+        for (k, v) in &d.clone() {
+            if let Some(w) = dom.get(k) {
+                let met = v.meet(w);
+                if met.is_empty() {
+                    return None;
+                }
+                d.insert(k.clone(), Rc::new(met));
+            }
+        }
+        Some(d)
     }
 
     /// The union, as the per-input join of the two boxes: exact when both are and the union
@@ -1508,10 +1573,18 @@ impl<'t> Tx<'t> {
         large_within &= common == small.len();
         let differ = small.len() + large.len() - 2 * common + changed;
         let boxed = differ <= 1 || small_within || large_within;
+        // A point of a union that is a box lies in one side, so it meets the demand unless it
+        // lies in that side's doubted box, which the hull of the two holds.
+        let doubt = match (a.doubted(), b.doubted()) {
+            (Some(Some(x)), Some(Some(y))) if boxed => Some(hull(x, y)),
+            (Some(Some(x)), Some(None)) | (Some(None), Some(Some(x))) if boxed => Some(x.clone()),
+            _ => None,
+        };
         Res {
             dom,
             none: false,
             exact: a.exact && b.exact && boxed,
+            doubt,
         }
     }
 
@@ -2126,29 +2199,49 @@ impl<'t> Tx<'t> {
     }
 
     fn back_at(&mut self, t: Tid, env: Eid, d: &Demand) -> Res {
+        self.back_doubt(t, env, d, &IntervalSet::empty())
+    }
+
+    /// The box of the inputs where `t` meets the demand `d`, as [`Tx::back_at`] gives it,
+    /// with the doubted values `dd`: values in `d` the enclosing terms do not accept (the
+    /// holes of a `c - x`). The box is exact only where no point of it takes a value in `dd`;
+    /// where the only points that may are those of a box `D`, the result is not exact and
+    /// carries `D` ([`Res::doubt`]), which an enclosing guard may leave empty ([`Tx::meet`]).
+    /// The doubted values are kept to those in `d` that `t` may take, so that the memo key
+    /// does not hold values that cannot matter.
+    fn back_doubt(&mut self, t: Tid, env: Eid, d: &Demand, dd: &IntervalSet) -> Res {
+        let dd = match d {
+            Demand::Ints(z) if !dd.is_empty() => dd.meet(z).meet(&self.fwd(t, env).ints),
+            _ => IntervalSet::empty(),
+        };
         self.cached(
             |m| &mut m.back,
-            ((t, env), d.clone()),
-            |s| s.back_in(t, env, d),
+            ((t, env), d.clone(), dd.clone()),
+            |s| s.back_in(t, env, d, &dd),
         )
     }
 
-    fn back_in(&mut self, t: Tid, env: Eid, d: &Demand) -> Res {
+    fn back_in(&mut self, t: Tid, env: Eid, d: &Demand, dd: &IntervalSet) -> Res {
         if let Demand::Ints(z) = d
             && z.is_empty()
         {
             return Res::none();
         }
-        // A term that reads no input is decided by running it.
+        // A term that reads no input is decided by running it: its value in `dd` (which is
+        // then its one value) meets the demand at no point of the box.
         if !matches!(self.node(t), Node::Var(_))
             && let Some(v) = self.constant(t, env)
         {
-            return if d.holds(&v) { Res::all() } else { Res::none() };
+            return match d.holds(&v) {
+                true if dd.is_empty() => Res::all(),
+                true => Res::unknown(),
+                false => Res::none(),
+            };
         }
         let holds = |v: &Value| if d.holds(v) { Res::all() } else { Res::none() };
         match self.node(t) {
             Node::Var(x) => match self.lookup(env, x) {
-                Some((bt, be)) => self.back_at(bt, be, d),
+                Some((bt, be)) => self.back_doubt(bt, be, d, dd),
                 None => {
                     let x = self.name(x);
                     match (self.cx.inputs.get(x), d) {
@@ -2157,9 +2250,14 @@ impl<'t> Tx<'t> {
                             if met.is_empty() {
                                 return Res::none();
                             }
+                            let bad = met.meet(dd);
                             let mut r = Res::all();
                             if met != **dom {
                                 r.dom.insert(x.clone(), Rc::new(met));
+                            }
+                            if !bad.is_empty() {
+                                r.exact = false;
+                                r.doubt = Some(Sets::unit(x.clone(), Rc::new(bad)));
                             }
                             r
                         }
@@ -2176,13 +2274,13 @@ impl<'t> Tx<'t> {
             Node::Lit(v) => holds(v),
             Node::Let(n, e, b) => {
                 let inner = self.let_env(n, e, env);
-                self.back_at(b, inner, d)
+                self.back_doubt(b, inner, d, dd)
             }
             Node::If(g, a, b) => {
                 let gt = self.back_at(g, env, &Demand::Bool(true));
-                let at = self.back_at(a, env, d);
+                let at = self.back_doubt(a, env, d, dd);
                 let gf = self.back_at(g, env, &Demand::Bool(false));
-                let bf = self.back_at(b, env, d);
+                let bf = self.back_doubt(b, env, d, dd);
                 let yes = self.meet(gt, at);
                 let no = self.meet(gf, bf);
                 self.union(yes, no)
@@ -2191,17 +2289,25 @@ impl<'t> Tx<'t> {
                 Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
                     self.through(t, body, Res::unknown(), |s, place| {
                         match s.summon(ps, body, lam, args, env) {
-                            Some(call) => s.call_back(call, body, lam, args, env, d, place),
+                            // A summary is kept by demand alone; the doubted values are not
+                            // followed into it.
+                            Some(call) => {
+                                let mut r = s.call_back(call, body, lam, args, env, d, place);
+                                if !dd.is_empty() {
+                                    r.inexact();
+                                }
+                                r
+                            }
                             None => {
                                 let inner = s.call_env(ps, args, lam, env);
-                                s.back_at(body, inner, d)
+                                s.back_doubt(body, inner, d, dd)
                             }
                         }
                     })
                 }
                 Ok(Callee::Prim(p)) => {
                     let c = self.terms.call(t, p, args);
-                    self.back_at(c, env, d)
+                    self.back_doubt(c, env, d, dd)
                 }
                 Err(Some(name)) => self.stop(StopKind::Foreign(name), t),
                 _ => self.stop(StopKind::Outside, t),
@@ -2210,13 +2316,21 @@ impl<'t> Tx<'t> {
                 if p.arity().is_some_and(|n| n != args.len()) {
                     return self.stop(StopKind::Outside, t);
                 }
-                self.back_prim(t, p, args, env, d)
+                self.back_prim(t, p, args, env, d, dd)
             }
             _ => self.stop(StopKind::Outside, t),
         }
     }
 
-    fn back_prim(&mut self, t: Tid, p: Prim, args: Span, env: Eid, d: &Demand) -> Res {
+    fn back_prim(
+        &mut self,
+        t: Tid,
+        p: Prim,
+        args: Span,
+        env: Eid,
+        d: &Demand,
+        dd: &IntervalSet,
+    ) -> Res {
         use Prim::*;
         let ints_of = |d: &Demand| match d {
             Demand::Ints(z) => Some(z.clone()),
@@ -2246,7 +2360,9 @@ impl<'t> Tx<'t> {
                     // only when the other cannot fail.
                     let strict = self.fwd(x, env).is_bool() && self.fwd(y, env).is_bool();
                     let mut r = self.union(a, b);
-                    r.exact &= strict;
+                    if !strict {
+                        r.inexact();
+                    }
                     r
                 }
             },
@@ -2258,11 +2374,11 @@ impl<'t> Tx<'t> {
                 }
             },
             Add | Sub | Mul | IntDiv | Mod | Neg | Abs | Pow => match ints_of(d) {
-                Some(z) => self.back_arith(t, p, args, env, &z),
+                Some(z) => self.back_arith(t, p, args, env, &z, dd),
                 None => Res::none(),
             },
             Min | Max => match ints_of(d) {
-                Some(z) => self.back_arith(t, p, args, env, &z),
+                Some(z) => self.back_arith(t, p, args, env, &z, dd),
                 // `min` and `max` of two tests are tests.
                 None => self.stop(StopKind::Outside, t),
             },
@@ -2383,23 +2499,33 @@ impl<'t> Tx<'t> {
         }
     }
 
-    fn back_arith(&mut self, t: Tid, p: Prim, args: Span, env: Eid, z: &IntervalSet) -> Res {
+    /// The arithmetic `t` in `z`, with the doubted values `dd` ([`Tx::back_doubt`]) moved to
+    /// the operand by the same inverse as `z` where the catalog inverts the operator.
+    fn back_arith(
+        &mut self,
+        t: Tid,
+        p: Prim,
+        args: Span,
+        env: Eid,
+        z: &IntervalSet,
+        dd: &IntervalSet,
+    ) -> Res {
         use Prim::*;
         let ints = |s: IntervalSet| Demand::Ints(s);
         if p == Mul
             && let Some((base, be, k)) = self.power(t, env)
         {
-            return self.back_unary(Op::Pow(k.into()), base, be, z);
+            return self.back_unary(Op::Pow(k.into()), base, be, z, dd);
         }
         let a = self.arg(args, 0);
         match p {
             Neg | Abs => {
-                return self.back_unary(op(p, None).expect("scalar"), a, env, z);
+                return self.back_unary(op(p, None).expect("scalar"), a, env, z, dd);
             }
             Pow => {
                 let b = self.arg(args, 1);
                 return match self.constant_int(b, env).map(u32::try_from) {
-                    Some(Ok(k)) => self.back_unary(Op::Pow(k.into()), a, env, z),
+                    Some(Ok(k)) => self.back_unary(Op::Pow(k.into()), a, env, z, dd),
                     // A variable exponent: only the points where both operands are integers.
                     _ => self.both_ints(a, b, env),
                 };
@@ -2410,50 +2536,74 @@ impl<'t> Tx<'t> {
         let ca = self.constant_int(a, env);
         let cb = self.constant_int(b, env);
         match (p, ca, cb) {
-            (Add, Some(c), _) => self.back_at(b, env, &ints(shift(z, -(c as i128)))),
+            (Add, Some(c), _) => {
+                let c = -(c as i128);
+                self.back_doubt(b, env, &ints(shift(z, c)), &shift(dd, c))
+            }
             (Add, _, Some(c)) | (Sub, _, Some(c)) => {
                 let c = if p == Add { -(c as i128) } else { c as i128 };
-                self.back_at(a, env, &ints(shift(z, c)))
+                self.back_doubt(a, env, &ints(shift(z, c)), &shift(dd, c))
             }
             (Sub, Some(c), _) => {
                 // The forward image `r` of `{c} - z` caps the pieces of each sign region
                 // (`revision::map2`), so it may merge pieces it moves across zero and hold values
                 // `v` whose `c - v` is outside `z`: the holes, `r` less the reflection of `z`. The
-                // box is kept as it was; it is exact only when `b` takes no value in the holes, by
-                // its forward image (item S22-exact-mislabel: the transfer marked such boxes exact
-                // whether or not it did). With no value of `b` there, the inputs whose `b` lies in
-                // `r` are those whose `c - b` lies in `z`.
+                // box is that of `b` in `r`, which holds every input whose `c - b` lies in `z`; it
+                // is exact only where no input in it has `b` in the holes (item
+                // S22-exact-mislabel: the transfer marked such boxes exact whether or not one
+                // did). So the holes are doubted values of `b`, with the reflection of the values
+                // doubted here: an input with `b` in neither has `c - b` in `z` and not doubted.
                 //
-                // Complexity tradeoff: naive version: decide exactness by running the term at
-                // each point of the box, a cost in the box's width, or not at all for an
-                // unbounded box; used: the reflection in O(k) for the k pieces of `z`, and the
-                // holes and their meet with the f pieces of the forward image of `b` in
-                // O(m log(n/m + 1)) each for sets of m <= n pieces, O((k + f) log(k + f)) at most;
-                // the forward image is memoized by term and binding, so it is computed once for the
-                // whole transfer. Given up: a box whose holes meet the forward image of `b` though
-                // no input in the box takes a value there is reported not exact, such as one where
-                // an enclosing guard keeps `b` out of the holes (deciding that would take the back
-                // transfer of the holes at each such `c - x`, twice the demands at each level of a
-                // chain of them).
+                // Complexity tradeoff: naive version: decide exactness by the back transfer of
+                // the holes at each `c - x` as a demand of its own, met with the box of each
+                // enclosing guard; in a chain of n nested `c - x` each level repeats that
+                // transfer over everything below it with holes that differ from level to level,
+                // O(n^2) terms followed with the memo (negative control, item S22-guard-exact:
+                // 9.4 and 511 ms at 32 and 256 levels, 55 times). Used: the holes are carried
+                // down as one set of doubted values with the demand ([`Tx::back_doubt`]), joined
+                // with the reflection of those doubted above, and are met with the guards' boxes
+                // once, where an input is reached, as a doubted box ([`Tx::meet`]); the
+                // reflection costs O(k) for the k pieces of `z`, the holes O(m log(n/m + 1)) for
+                // sets of m <= n pieces. The memo is keyed by the doubted set too; on the chains
+                // measured, with a constant that differs at each level, that did not raise the
+                // order: 63 and 594 ms at 256 and 2,048 levels, 9.4 times (test
+                // `l01_25_preimage_catalog::s22::guarded_holes_scale`). Given up: the doubted
+                // values are not followed into a summarized call, a projection of two operands
+                // that read inputs, `min` or `max` of two such operands, or a `mod` whose inverse
+                // merges periods; there the box is reported not exact. A doubted box is the box
+                // hull of the doubted points, so a guard that removes those points but not their
+                // hull leaves the box not exact.
                 let r = revision::forward(&Op::Sub, &IntervalSet::single(c), z);
                 let holes = r.minus(&reflect(z, c as i128));
-                let missed = !holes.is_empty() && !holes.meet(&self.fwd(b, env).ints).is_empty();
-                let mut res = self.back_at(b, env, &ints(r));
-                res.exact &= !missed;
-                res
+                let doubted = holes.join(&reflect(dd, c as i128));
+                self.back_doubt(b, env, &ints(r), &doubted)
             }
-            (Mul, Some(c), _) => self.back_at(b, env, &ints(times_pre(z, c))),
-            (Mul, _, Some(c)) => self.back_at(a, env, &ints(times_pre(z, c))),
-            (IntDiv, _, Some(c)) => self.back_at(a, env, &ints(div_pre(z, c))),
+            (Mul, Some(c), _) => self.back_doubt(b, env, &ints(times_pre(z, c)), &times_pre(dd, c)),
+            (Mul, _, Some(c)) => self.back_doubt(a, env, &ints(times_pre(z, c)), &times_pre(dd, c)),
+            (IntDiv, _, Some(c)) => self.back_doubt(a, env, &ints(div_pre(z, c)), &div_pre(dd, c)),
             (Mod, _, Some(c)) => {
                 let fa = self.fwd(a, env).ints;
                 let (s, exact) = mod_pre(z, c, &fa);
-                let mut r = self.back_at(a, env, &ints(s));
-                r.exact &= exact;
+                let mut r = self.back_doubt(a, env, &ints(s), &mod_pre(dd, c, &fa).0);
+                if !exact {
+                    r.inexact();
+                }
                 r
             }
-            (Min | Max, Some(c), _) => self.back_at(b, env, &ints(minmax_pre(p, z, c))),
-            (Min | Max, _, Some(c)) => self.back_at(a, env, &ints(minmax_pre(p, z, c))),
+            (Min | Max, Some(c), _) => {
+                let (s, ds) = (minmax_pre(p, z, c), minmax_pre(p, dd, c));
+                self.back_doubt(b, env, &ints(s), &ds)
+            }
+            (Min | Max, _, Some(c)) => {
+                let (s, ds) = (minmax_pre(p, z, c), minmax_pre(p, dd, c));
+                self.back_doubt(a, env, &ints(s), &ds)
+            }
+            (Min | Max, None, None) if !dd.is_empty() => {
+                // The doubted values are not followed into two operands.
+                let mut r = self.back_arith(t, p, args, env, z, &IntervalSet::empty());
+                r.inexact();
+                r
+            }
             (Min | Max, None, None) => {
                 let f = self.fwd(t, env).ints;
                 let zf = z.meet(&f);
@@ -2500,19 +2650,31 @@ impl<'t> Tx<'t> {
     }
 
     /// `op(c)` in `z`, for an operator the revision table inverts exactly within the forward
-    /// interval of `c`.
-    fn back_unary(&mut self, o: Op, c: Tid, env: Eid, z: &IntervalSet) -> Res {
+    /// interval of `c`; the doubted values `dd` are moved to `c` by the same inverse, which
+    /// holds every value of `c` the operator takes into them.
+    fn back_unary(&mut self, o: Op, c: Tid, env: Eid, z: &IntervalSet, dd: &IntervalSet) -> Res {
         if matches!(&o, Op::Pow(k) if k.is_zero()) {
             // `c ^ 0` is 1 wherever `c` is an integer.
+            let top = IntervalSet::top();
+            let doubted = if dd.contains(1) {
+                top.clone()
+            } else {
+                IntervalSet::empty()
+            };
             return if z.contains(1) {
-                self.back_at(c, env, &Demand::Ints(IntervalSet::top()))
+                self.back_doubt(c, env, &Demand::Ints(top), &doubted)
             } else {
                 Res::none()
             };
         }
         let fc = self.fwd(c, env).ints;
         let zc = revision::backward(&o, 0, &fc, &fc, z);
-        self.back_at(c, env, &Demand::Ints(zc))
+        let doubted = if dd.is_empty() {
+            IntervalSet::empty()
+        } else {
+            revision::backward(&o, 0, &fc, &fc, dd)
+        };
+        self.back_doubt(c, env, &Demand::Ints(zc), &doubted)
     }
 
     /// The HC4 projection onto each operand: necessary, not exact.
@@ -2538,7 +2700,9 @@ impl<'t> Tx<'t> {
         let ra = self.back_at(a, env, &Demand::Ints(za));
         let rb = self.back_at(b, env, &Demand::Ints(zb));
         let mut r = self.meet(ra, rb);
-        r.exact = self.empty(&r);
+        if !self.empty(&r) {
+            r.inexact();
+        }
         r
     }
 
@@ -2547,7 +2711,9 @@ impl<'t> Tx<'t> {
         let ra = self.back_at(a, env, &top);
         let rb = self.back_at(b, env, &top);
         let mut r = self.meet(ra, rb);
-        r.exact = self.empty(&r);
+        if !self.empty(&r) {
+            r.inexact();
+        }
         r
     }
 }
@@ -2641,6 +2807,16 @@ fn ray(p: Prim, c: i64) -> IntervalSet {
     }
 }
 
+/// The box hull of two boxes: the per-name join, where a name only one box narrows is whole.
+/// The time is that of the smaller box's names.
+fn hull(a: &Sets, b: &Sets) -> Sets {
+    let (small, large) = if a.len() < b.len() { (a, b) } else { (b, a) };
+    small
+        .iter()
+        .filter_map(|(k, v)| large.get(k).map(|w| (k.clone(), Rc::new(v.join(w)))))
+        .collect()
+}
+
 /// Each piece of `z` moved up by `c`, exact.
 fn shift(z: &IntervalSet, c: i128) -> IntervalSet {
     let c = Num::from(c);
@@ -2652,8 +2828,8 @@ fn shift(z: &IntervalSet, c: i128) -> IntervalSet {
 }
 
 /// The integers `c - v` for each member `v` of `z`, each piece reflected and moved by `c`,
-/// exact at any magnitude: used only to tell whether the forward image of `{c} - z` merged
-/// pieces.
+/// exact at any magnitude: used to tell whether the forward image of `{c} - z` merged
+/// pieces, and to move doubted values through `c - x` ([`Tx::back_doubt`]).
 fn reflect(z: &IntervalSet, c: i128) -> IntervalSet {
     let c = Num::from(c);
     let m = |e: &End| match e {
