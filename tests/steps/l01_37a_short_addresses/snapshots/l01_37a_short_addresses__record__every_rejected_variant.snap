@@ -19,7 +19,7 @@ decimal-literal-at-int
     Diagnostic {
         line: 4,
         col: 11,
-        message: "the literal `2.0` is a decimal, and `*` expects `int`, the carrier of `x`; a decimal literal is never an `int`\n  fixes, each checked here:\n    bad = x * 2;           2 takes the int of x\n    bad = f64(x) * 2.0;    x is cast to f64, and `*` takes two f64",
+        message: "the literal `2.0` is a decimal, and `*` expects `int`, the carrier of `x`; a decimal literal is never an `int`\n  fixes, each checked here:\n    bad = x * 2;           2 takes the int of x\n    bad = f64(x) * 2.0;    x is cast to f64, and `*` takes two f64\n    bad = rat(x) * 2.0;    x is cast to rat, and `*` takes two rat",
         steps: [
             Step {
                 line: 4,
