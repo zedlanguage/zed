@@ -8,7 +8,7 @@
 //! conjuncts found, in time near the number of changes. The conjuncts are in the order of
 //! formulas, so a relation does not depend on the order its conjuncts were added in.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::ops::{Bound, RangeBounds};
 use std::sync::Arc;
@@ -1753,14 +1753,17 @@ pub type BlockId = u64;
 /// blocks are then the biconnected components of the graph whose vertices are these groups and
 /// the names, with an edge from a group to each name it mentions, where components that share
 /// a group are one block. Two blocks share at most one name, and blocks and names form a
-/// forest, each tree rooted somewhere and held by parent links, with a union-find of the trees.
+/// forest, each tree rooted somewhere and held by parent links, each node labeled with its
+/// tree; when two trees join, the smaller one's nodes are labeled again.
 ///
 /// A new conjunct is a block of its own: it is linked to each tree of a name it mentions that
 /// is not yet its own, by rerooting the smaller tree (so a node is rerooted O(log n) times),
 /// and when it meets its own tree a second time, the blocks on the tree path between are
 /// merged into one, the smaller blocks' conjuncts moved into the largest (so a conjunct is
 /// moved O(log n) times): with the persistent maps, O(log² n) amortized per conjunct. A
-/// removed conjunct that is a block alone and shares at most one name with the rest is
+/// removed conjunct of two names and no other atom is taken out in time near the smaller
+/// side of each split it makes, searched from both of its names in turn (`Blocks::cut`). Any
+/// other removed conjunct that is a block alone and shares at most one name with the rest is
 /// unlinked in O(log n); a removal from a block of names whose other conjuncts still link all
 /// its names places those conjuncts again, in time near the block (`Blocks::split`); any
 /// other removal rebuilds the blocks of the conjuncts linked to it, in time near their number.
@@ -1778,12 +1781,22 @@ pub struct Blocks {
     members: OrdMap<BlockId, OrdSet<Arc<Formula>>>,
     /// Each node's parent in its tree; a root has none.
     up: OrdMap<BlockId, BlockId>,
-    /// The union-find of the trees: each node's link toward its tree's representative.
-    link: OrdMap<BlockId, BlockId>,
-    /// The number of nodes of each tree, at its representative.
-    size: OrdMap<BlockId, usize>,
+    /// The tree of each node of the forest: a number of its own, never a node's.
+    tree_of: OrdMap<BlockId, BlockId>,
+    /// The nodes of each tree.
+    trees: OrdMap<BlockId, OrdSet<BlockId>>,
     /// The conjuncts that mention each name as an atom of its own.
     syms: Uses<Arc<Formula>>,
+    /// The conjuncts of each block that mention each name, the entries of `syms` cut by `of`;
+    /// none empty.
+    // Complexity tradeoff: the searches of `Blocks::cut` could read a name's conjuncts from
+    // `syms` and skip those of other blocks, O(1) to keep but O(d) per name read for a name
+    // of d conjuncts in all blocks, so a removal beside a name of many blocks cost near d and
+    // d such removals O(d²). This index gives a name's conjuncts in one block, so a search
+    // reads only the block's; it costs O(log n) per name of a conjunct each time the
+    // conjunct changes block, the order those moves already cost, and one entry per name of
+    // each conjunct.
+    at: OrdMap<(Arc<str>, BlockId), OrdSet<Arc<Formula>>>,
     /// The conjuncts that mention each atom that is not a name.
     shared: OrdMap<Atom, OrdSet<Arc<Formula>>>,
     /// The blocks apart from the forest, each its own tree ([`Blocks::detach`]).
@@ -1891,7 +1904,7 @@ impl Blocks {
         let b = self.fresh();
         let mut ms = OrdSet::new();
         for g in gs {
-            let was = self.of.insert(g.clone(), b);
+            let was = self.put(&g, &g.atoms(), Some(b));
             debug_assert!(was.is_none(), "a conjunct detached is in no block");
             ms.insert(g);
         }
@@ -1905,8 +1918,43 @@ impl Blocks {
         let removed = self.apart.remove(&b);
         debug_assert!(removed.is_some(), "a block apart from the forest");
         for g in self.members.remove(&b).into_iter().flatten() {
-            self.of.remove(&g);
+            self.put(&g, &g.atoms(), None);
         }
+    }
+
+    /// Puts `g`, of the atoms `atoms`, in block `to`, or in none, and gives the block it was
+    /// in; `of` and `at` change together. In O(log n) per name of `g`.
+    fn put(
+        &mut self,
+        g: &Arc<Formula>,
+        atoms: &BTreeSet<Atom>,
+        to: Option<BlockId>,
+    ) -> Option<BlockId> {
+        let was = match to {
+            Some(b) => self.of.insert(g.clone(), b),
+            None => self.of.remove(g),
+        };
+        if was == to {
+            return was;
+        }
+        for a in atoms {
+            let Atom::Sym(x) = a else {
+                continue;
+            };
+            if let Some(w) = was {
+                let key = (x.clone(), w);
+                if let Some(set) = self.at.get_mut(&key) {
+                    set.remove(g);
+                    if set.is_empty() {
+                        self.at.remove(&key);
+                    }
+                }
+            }
+            if let Some(t) = to {
+                self.at.entry((x.clone(), t)).or_default().insert(g.clone());
+            }
+        }
+        was
     }
 
     fn fresh(&mut self) -> BlockId {
@@ -1914,29 +1962,195 @@ impl Blocks {
         self.next
     }
 
-    /// The representative of `x`'s tree. The union-find links smaller trees under larger and
-    /// never compresses, so that it stays persistent: O(log n) links.
-    fn find(&self, mut x: BlockId) -> BlockId {
-        while let Some(&p) = self.link.get(&x) {
-            x = p;
+    /// Checks the forest, for tests: each conjunct of the forest is in the block that holds
+    /// it, conjuncts that share an atom other than a name are in one block, each name is
+    /// mentioned, and each name's conjuncts by block are those of the blocks; the parent
+    /// links are exactly the pairs of a block and a name it mentions, each tree has one root
+    /// that every node's links lead to, and the labels of the trees are those links'
+    /// components; each tree's counts are those of its conjuncts and names.
+    /// In time near the forest's size times its depth.
+    pub fn well_formed(&self) -> Result<(), String> {
+        let mut nodes: BTreeSet<BlockId> = BTreeSet::new();
+        let mut names_of: BTreeMap<BlockId, BTreeSet<BlockId>> = BTreeMap::new();
+        let mut others: BTreeMap<BlockId, usize> = BTreeMap::new();
+        let mut gaps: BTreeMap<BlockId, usize> = BTreeMap::new();
+        let mut at: BTreeMap<(Arc<str>, BlockId), BTreeSet<Arc<Formula>>> = BTreeMap::new();
+        for (&b, ms) in &self.members {
+            for h in ms {
+                if self.of.get(h) != Some(&b) {
+                    return Err(format!("{h} is in block {b} but not held there"));
+                }
+                for a in h.atoms() {
+                    if let Atom::Sym(x) = a {
+                        at.entry((x, b)).or_default().insert(h.clone());
+                    }
+                }
+            }
+            if self.apart.contains(&b) {
+                if self.tree_of.contains_key(&b) || self.up.contains_key(&b) {
+                    return Err(format!("block {b} apart from the forest is in a tree"));
+                }
+                continue;
+            }
+            nodes.insert(b);
+            let t = self.find(b);
+            let mut ns = BTreeSet::new();
+            for h in ms {
+                if edges(h).is_none() {
+                    *others.entry(t).or_default() += 1;
+                }
+                for a in h.atoms() {
+                    match a {
+                        Atom::Sym(n) => match self.name.get(&n) {
+                            Some(&id) => {
+                                ns.insert(id);
+                            }
+                            None => return Err(format!("{n} of {h} has no number")),
+                        },
+                        a => {
+                            let gs = self.shared.get(&a).into_iter().flatten();
+                            if let Some(o) = gs.map(|o| self.of.get(o)).find(|o| *o != Some(&b)) {
+                                return Err(format!("{h} of block {b} shares {a:?}, in {o:?}"));
+                            }
+                        }
+                    }
+                }
+            }
+            names_of.insert(b, ns);
         }
-        x
+        let held = self
+            .at
+            .iter()
+            .map(|(k, s)| (k.clone(), s.iter().cloned().collect()));
+        if !held.eq(at) {
+            return Err("the conjuncts of the names by block are not those of the blocks".into());
+        }
+        for (n, &id) in &self.name {
+            if self.syms.count(n) == 0 {
+                return Err(format!("{n} is mentioned by no conjunct"));
+            }
+            nodes.insert(id);
+            if self.gapped.contains(n) {
+                *gaps.entry(self.find(id)).or_default() += 1;
+            }
+        }
+        for &x in &nodes {
+            let Some(t) = self.tree_of.get(&x) else {
+                return Err(format!("node {x} has no tree"));
+            };
+            if !self.trees.get(t).is_some_and(|s| s.contains(&x)) {
+                return Err(format!("node {x} is not among the nodes of its tree {t}"));
+            }
+        }
+        let labeled: usize = self.trees.values().map(OrdSet::len).sum();
+        if self.tree_of.len() != nodes.len() || labeled != nodes.len() {
+            return Err(format!(
+                "{} nodes, {} labels, {labeled} nodes of trees",
+                nodes.len(),
+                self.tree_of.len()
+            ));
+        }
+        let mut links = 0;
+        for (&b, ns) in &names_of {
+            for &n in ns {
+                if (self.up.get(&b) == Some(&n)) == (self.up.get(&n) == Some(&b)) {
+                    return Err(format!("block {b} and its name {n} are not linked once"));
+                }
+                links += 1;
+            }
+        }
+        if self.up.len() != links {
+            return Err(format!(
+                "parent links {:?}, names of the blocks {names_of:?}, names {:?}",
+                self.up, self.name
+            ));
+        }
+        let mut roots: BTreeMap<BlockId, BlockId> = BTreeMap::new();
+        for &x in &nodes {
+            let mut at = x;
+            for _ in 0..=nodes.len() {
+                match self.up.get(&at) {
+                    Some(&p) => at = p,
+                    None => break,
+                }
+            }
+            if self.up.contains_key(&at) {
+                return Err(format!("the links from {x} make a cycle"));
+            }
+            let t = self.find(x);
+            if self.find(at) != t || *roots.entry(t).or_insert(at) != at {
+                return Err(format!("node {x} of tree {t} leads to root {at}"));
+            }
+        }
+        let counts = |kept: &OrdMap<BlockId, usize>| -> BTreeMap<BlockId, usize> {
+            kept.iter().map(|(&t, &n)| (t, n)).collect()
+        };
+        if counts(&self.others) != others || counts(&self.gaps) != gaps {
+            return Err(format!(
+                "counts {:?} and {:?}, by the trees {others:?} and {gaps:?}",
+                self.others, self.gaps
+            ));
+        }
+        Ok(())
+    }
+
+    /// The tree of `x`, in O(log n): its label, or `x` itself for a block apart from the
+    /// forest or a tree's own number.
+    fn find(&self, x: BlockId) -> BlockId {
+        self.tree_of.get(&x).copied().unwrap_or(x)
     }
 
     fn tree_size(&self, r: BlockId) -> usize {
-        self.size.get(&r).copied().unwrap_or(1)
+        self.trees.get(&r).map_or(1, OrdSet::len)
     }
 
+    /// Puts the new node `x` in tree `t`, or in a new tree of its own when `t` is `None`.
+    fn new_node(&mut self, x: BlockId, t: Option<BlockId>) {
+        let t = t.unwrap_or_else(|| self.fresh());
+        self.tree_of.insert(x, t);
+        self.trees.entry(t).or_default().insert(x);
+    }
+
+    /// Takes the node `x` out of its tree; a tree left with no node goes.
+    fn drop_node(&mut self, x: BlockId) {
+        let Some(t) = self.tree_of.remove(&x) else {
+            return;
+        };
+        if let Some(s) = self.trees.get_mut(&t) {
+            s.remove(&x);
+            if s.is_empty() {
+                self.trees.remove(&t);
+                debug_assert!(
+                    !self.others.contains_key(&t) && !self.gaps.contains_key(&t),
+                    "a tree with no node has no count"
+                );
+            }
+        }
+    }
+
+    /// Joins the trees of `a` and `b` by labeling the nodes of the smaller with the larger's
+    /// number.
+    // Complexity tradeoff: a union-find with parent links joins two trees in O(log n) but can
+    // never split one, so a removal that splits a tree had to build its blocks again, in time
+    // near the whole tree. Labels joined by relabeling the smaller tree cost O(s log n) for a
+    // smaller tree of s nodes (O(log² n) amortized per node while trees only grow) and let a
+    // split relabel the side it finds first ([`Blocks::bridge`]); a sequence that splits and
+    // joins one large tree again and again pays near its smaller side each time.
     fn union(&mut self, a: BlockId, b: BlockId) {
         let (ra, rb) = (self.find(a), self.find(b));
         if ra == rb {
             return;
         }
-        let (sa, sb) = (self.tree_size(ra), self.tree_size(rb));
-        let (small, big) = if sa < sb { (ra, rb) } else { (rb, ra) };
-        self.link.insert(small, big);
-        self.size.remove(&small);
-        self.size.insert(big, sa + sb);
+        let (small, big) = if self.tree_size(ra) < self.tree_size(rb) {
+            (ra, rb)
+        } else {
+            (rb, ra)
+        };
+        let moved = self.trees.remove(&small).unwrap_or_default();
+        for &x in &moved {
+            self.tree_of.insert(x, big);
+        }
+        self.trees.entry(big).or_default().extend(moved);
         for counts in [&mut self.others, &mut self.gaps] {
             if let Some(n) = counts.remove(&small) {
                 tally(counts, big, n as isize);
@@ -2026,8 +2240,9 @@ impl Blocks {
         for &b in blocks.iter().filter(|&&b| b != keep) {
             let moved = self.members.remove(&b).unwrap_or_default();
             for g in &moved {
-                self.of.insert(g.clone(), keep);
-                for a in g.atoms() {
+                let atoms = g.atoms();
+                self.put(g, &atoms, Some(keep));
+                for a in atoms {
                     if let Atom::Sym(n) = a
                         && let Some(&id) = self.name.get(&n)
                         && self.up.get(&id) == Some(&b)
@@ -2037,6 +2252,7 @@ impl Blocks {
                 }
             }
             self.up.remove(&b);
+            self.drop_node(b);
             self.members.entry(keep).or_default().extend(moved);
         }
         match top {
@@ -2057,16 +2273,15 @@ impl Blocks {
             let (x, y) = if small_first { (a, b) } else { (b, a) };
             self.reroot(x);
             let top = self.up.get(&y).copied();
-            let keep = self.merge(&[x, y], top);
+            // Before the merge, which takes one of the two blocks out of its tree.
             self.union(a, b);
-            return keep;
+            return self.merge(&[x, y], top);
         }
         let (path, top) = self.path(a, b);
-        let blocks: Vec<BlockId> = path
+        let (blocks, names): (Vec<BlockId>, Vec<BlockId>) = path
             .iter()
             .copied()
-            .filter(|n| self.members.contains_key(n))
-            .collect();
+            .partition(|n| self.members.contains_key(n));
         if blocks.len() < 2 {
             return a;
         }
@@ -2076,10 +2291,10 @@ impl Blocks {
             Some(top)
         };
         let keep = self.merge(&blocks, parent);
-        for &n in &path {
-            if n != top && !self.members.contains_key(&n) {
-                self.up.insert(n, keep);
-            }
+        // The names of the path, told apart before the merge: the blocks it merges away are
+        // no blocks after it, and linking them again left links of blocks gone in `up`.
+        for n in names.into_iter().filter(|&n| n != top) {
+            self.up.insert(n, keep);
         }
         keep
     }
@@ -2088,11 +2303,13 @@ impl Blocks {
     fn place(&mut self, g: &Arc<Formula>) {
         let b = self.fresh();
         self.members.insert(b, OrdSet::unit(g.clone()));
-        self.of.insert(g.clone(), b);
-        if edges(g).is_none() {
-            tally(&mut self.others, b, 1);
-        }
         let atoms = g.atoms();
+        self.put(g, &atoms, Some(b));
+        self.new_node(b, None);
+        if edges(g).is_none() {
+            let r = self.find(b);
+            tally(&mut self.others, r, 1);
+        }
         let mut met: Vec<BlockId> = Vec::new();
         for a in &atoms {
             if let Atom::Sym(n) = a {
@@ -2102,9 +2319,9 @@ impl Blocks {
                         let id = self.fresh();
                         self.name.insert(n.clone(), id);
                         self.up.insert(id, b);
-                        self.union(id, b);
+                        let r = self.find(b);
+                        self.new_node(id, Some(r));
                         if self.gapped.contains(n) {
-                            let r = self.find(b);
                             tally(&mut self.gaps, r, 1);
                         }
                     }
@@ -2150,10 +2367,11 @@ impl Blocks {
 
     /// Puts `new` in the place of `old`, a conjunct of the same atoms.
     pub fn replace(&mut self, old: &Arc<Formula>, new: &Arc<Formula>) {
-        let Some(b) = self.of.remove(old) else {
+        let atoms = old.atoms();
+        let Some(b) = self.put(old, &atoms, None) else {
             return self.add(new);
         };
-        self.of.insert(new.clone(), b);
+        self.put(new, &atoms, Some(b));
         if let Some(m) = self.members.get_mut(&b) {
             m.remove(old);
             m.insert(new.clone());
@@ -2163,7 +2381,7 @@ impl Blocks {
             let r = self.find(b);
             tally(&mut self.others, r, by);
         }
-        for a in old.atoms() {
+        for a in atoms {
             match a {
                 Atom::Sym(n) => {
                     self.syms.remove(&n, old);
@@ -2179,12 +2397,14 @@ impl Blocks {
         }
     }
 
-    /// Removes the conjuncts `gs`, block by block. A block that loses its one conjunct, which
-    /// shares at most one name and no other atom with the rest, is unlinked; a block that loses
-    /// some of its conjuncts is split once by placing its other conjuncts again
-    /// (`Blocks::split`); if that fails, the blocks of every conjunct linked to one of `gs`
-    /// are built again. Each block is split once for all the conjuncts it loses, so a removal
-    /// costs near the blocks it touches, not their size times the conjuncts removed.
+    /// Removes the conjuncts `gs`, block by block. A conjunct of two names and no other atom is
+    /// taken out alone (`Blocks::cut`), in time near the smaller side of each split it makes.
+    /// Otherwise a block that loses its one conjunct, which shares at most one name and no
+    /// other atom with the rest, is unlinked; a block that loses some of its conjuncts is split
+    /// once by placing its other conjuncts again (`Blocks::split`); if that fails, the blocks of
+    /// every conjunct linked to one of `gs` are built again. Each such block is split once for
+    /// all the conjuncts it loses, so a removal costs near the blocks it touches, not their
+    /// size times the conjuncts removed.
     // Complexity tradeoff: naive version, the block is split once per conjunct removed, each
     // split placing the block's other conjuncts again, and `place` and `split` look a placed
     // disjunction up in `of` once per name it mentions, each lookup comparing the whole
@@ -2215,6 +2435,17 @@ impl Blocks {
         let mut rebuild = false;
         for b in order {
             let out = &from[&b];
+            if !rebuild && !self.is_apart(b) {
+                let pairs: Option<Vec<[Arc<str>; 2]>> = out.iter().map(|g| pair(g)).collect();
+                if let Some(pairs) = pairs {
+                    for (g, [u, v]) in out.iter().zip(pairs) {
+                        self.unuse(g);
+                        let b = self.of[*g];
+                        self.cut(b, g, &u, &v);
+                    }
+                    continue;
+                }
+            }
             for g in out {
                 self.unuse(g);
             }
@@ -2229,6 +2460,237 @@ impl Blocks {
         if rebuild {
             self.rebuild(gs);
         }
+    }
+
+    /// Takes `g`, a conjunct of the two names `u` and `v` and no other atom, already out of
+    /// `syms`, out of its block `b` of the forest. Alone in `b`, it is unlinked when one of its
+    /// names is mentioned no more, and otherwise its tree splits in two ([`Blocks::bridge`]);
+    /// with other conjuncts, `b` splits into a path of blocks ([`Blocks::peel`]).
+    fn cut(&mut self, b: BlockId, g: &Arc<Formula>, u: &Arc<str>, v: &Arc<str>) {
+        if self.unlink(b, g) {
+            return;
+        }
+        let r = self.find(b);
+        if edges(g).is_none() {
+            tally(&mut self.others, r, -1);
+        }
+        self.put(g, &g.atoms(), None);
+        let ms = self.members.get_mut(&b).expect("the block of a conjunct");
+        ms.remove(g);
+        let (iu, iv) = (self.name[u], self.name[v]);
+        if ms.is_empty() {
+            self.bridge(b, r, (u, iu), (v, iv));
+        } else {
+            self.peel(b, r, (u, iu), (v, iv));
+        }
+    }
+
+    /// Takes block `b` of tree `r`, emptied of its one conjunct, which linked the names `u` and
+    /// `v` that other conjuncts still mention, out of the forest: the tree splits into the
+    /// side of `u` and the side of `v`. Both sides are walked one entry at a time in turn, and
+    /// the side found whole first takes a new tree number, with its counts.
+    // Complexity tradeoff: building the blocks of the tree again, as a removal that split a
+    // tree did before, costs near the whole tree, O(n log² n). Walking both sides in turn costs
+    // O(s log n) for the smaller side of s entries (twice the smaller at most), and the labels
+    // of [`Blocks::union`] let that side alone be relabeled; the larger side is not read.
+    fn bridge(&mut self, b: BlockId, r: BlockId, u: (&Arc<str>, BlockId), v: (&Arc<str>, BlockId)) {
+        self.members.remove(&b);
+        self.up.remove(&b);
+        for id in [u.1, v.1] {
+            if self.up.get(&id) == Some(&b) {
+                self.up.remove(&id);
+            }
+        }
+        self.drop_node(b);
+        let mut walks = [TreeWalk::new(u), TreeWalk::new(v)];
+        let side = 'walk: loop {
+            for (i, w) in walks.iter_mut().enumerate() {
+                if !w.step(self) {
+                    break 'walk i;
+                }
+            }
+        };
+        let [first, second] = walks;
+        let found = if side == 0 { first } else { second };
+        let t = self.fresh();
+        let (mut others, mut gaps) = (0isize, 0isize);
+        for (x, name) in &found.nodes {
+            match name {
+                Some(n) => gaps += isize::from(self.gapped.contains(n)),
+                None => {
+                    others += self.members(*x).filter(|h| edges(h).is_none()).count() as isize;
+                }
+            }
+            self.tree_of.insert(*x, t);
+            if let Some(s) = self.trees.get_mut(&r) {
+                s.remove(x);
+            }
+        }
+        let nodes: OrdSet<BlockId> = found.nodes.iter().map(|(x, _)| *x).collect();
+        self.trees.insert(t, nodes);
+        for (counts, by) in [(&mut self.others, others), (&mut self.gaps, gaps)] {
+            tally(counts, r, -by);
+            tally(counts, t, by);
+        }
+    }
+
+    /// Takes the conjunct of the names `u` and `v`, already out of the indexes, out of block
+    /// `b` of tree `r`, which keeps other conjuncts. `b` was one block with it, so without it
+    /// the blocks are a path from the block of `u` to the block of `v`, each two consecutive
+    /// ones sharing a name that every path from `u` to `v` crosses. A first path `P` from `u`
+    /// to `v` within `b` is found by a search from both ends that meets in the middle. The
+    /// names on `P` that cut `u` from `v` are those a flow of two along paths from `u` to `v`
+    /// that share no name cannot pass: a search for a second path in the residual graph of `P`
+    /// from `u` and one from `v` toward `u`, run one entry at a time in turn, stop when either
+    /// meets its end, which leaves one block, or runs out first; the conjuncts it reached are
+    /// the end block, cut at the name of `P` it entered and could not leave, which is given a
+    /// new number before the searches start again from that name. The block left last keeps
+    /// `b`; then the parent links are set along the path, from `b`'s parent.
+    // Complexity tradeoff: placing the block's other conjuncts again (`Blocks::split`) costs
+    // O(|b| log n) for each conjunct taken out, so O(d²) to take apart a block of d conjuncts
+    // one at a time. The searches cost O((|P| + c + s) log n), where c is the size of the blocks
+    // split off, each found by the search that ran out first, so at most twice the smaller side
+    // at its cut, and s the cost of the last search, which met its end; a block only taken
+    // apart then costs O(d log² n) in all, each conjunct moving to a new block on the smaller
+    // side. Still near the block each time: taking a chord out of a long cycle, which leaves
+    // one block, when `P` or the meeting search is long, and a name of many conjuncts in other
+    // blocks, whose entries the searches pass over. Holm, de Lichtenberg and Thorup's dynamic
+    // biconnectivity bounds every case by O(log⁵ n) amortized, at the cost of a far larger
+    // structure.
+    fn peel(&mut self, b: BlockId, r: BlockId, u: (&Arc<str>, BlockId), v: (&Arc<str>, BlockId)) {
+        let path = self.route(
+            b,
+            Node::Name(u.0.clone(), u.1),
+            Node::Name(v.0.clone(), v.1),
+        );
+        let at: HashMap<Key, usize> = path.iter().enumerate().map(|(i, n)| (n.key(), i)).collect();
+        // The blocks split off at either end, each with the position on `P` of its cut.
+        let mut ends: [Vec<(BlockId, usize)>; 2] = [Vec::new(), Vec::new()];
+        let (mut lo, mut hi) = (0, path.len() - 1);
+        loop {
+            let mut flows = [Flow::new(&path, lo, hi), Flow::new(&path, hi, lo)];
+            let ran_out = 'search: loop {
+                for (i, f) in flows.iter_mut().enumerate() {
+                    match f.step(self, b, &path, &at) {
+                        Step::On => {}
+                        Step::Met => break 'search None,
+                        Step::Out(cut) => break 'search Some((i, cut)),
+                    }
+                }
+            };
+            let Some((i, cut)) = ran_out else { break };
+            let [first, second] = flows;
+            let found = if i == 0 { first } else { second };
+            let nb = self.fresh();
+            let ms = self.members.get_mut(&b).expect("the block split");
+            for h in &found.conjs {
+                ms.remove(h);
+            }
+            for h in &found.conjs {
+                self.put(h, &h.atoms(), Some(nb));
+            }
+            self.members.insert(nb, found.conjs.into_iter().collect());
+            self.new_node(nb, Some(r));
+            ends[i].push((nb, cut));
+            if i == 0 {
+                lo = cut;
+            } else {
+                hi = cut;
+            }
+        }
+        // The blocks from `u`'s end to `v`'s, and the names between each two.
+        let [left, right] = ends;
+        let mut seq: Vec<BlockId> = left.iter().map(|&(nb, _)| nb).collect();
+        seq.push(b);
+        seq.extend(right.iter().rev().map(|&(nb, _)| nb));
+        let cut_id = |i: usize| match &path[i] {
+            Node::Name(_, id) => *id,
+            _ => unreachable!("a cut is a name"),
+        };
+        let cuts: Vec<BlockId> = left
+            .iter()
+            .chain(right.iter().rev())
+            .map(|&(_, c)| cut_id(c))
+            .collect();
+        let parent = self.up.get(&b).copied();
+        // The block that hangs from `b`'s parent: the one after it when it is a cut, so that the
+        // one before hangs from it too; else the one that mentions it, else `b`.
+        let mut top = left.len();
+        if let Some(p) = parent
+            && let Some(i) = cuts.iter().position(|&c| c == p)
+        {
+            top = i + 1;
+        }
+        let is_cut: HashSet<BlockId> = cuts.iter().copied().collect();
+        for (i, &nb) in seq.iter().enumerate() {
+            if nb == b {
+                continue;
+            }
+            let ms: Vec<Arc<Formula>> = self.members(nb).cloned().collect();
+            for h in ms {
+                for a in h.atoms() {
+                    let Atom::Sym(n) = a else { continue };
+                    let id = self.name[&n];
+                    if Some(id) == parent {
+                        if !is_cut.contains(&id) {
+                            top = i;
+                        }
+                    } else if !is_cut.contains(&id) {
+                        self.up.insert(id, nb);
+                    }
+                }
+            }
+        }
+        for (i, &nb) in seq.iter().enumerate() {
+            let (link, next) = match i.cmp(&top) {
+                std::cmp::Ordering::Equal => {
+                    match parent {
+                        Some(p) => self.up.insert(nb, p),
+                        None => self.up.remove(&nb),
+                    };
+                    continue;
+                }
+                std::cmp::Ordering::Less => (cuts[i], seq[i + 1]),
+                std::cmp::Ordering::Greater => (cuts[i - 1], seq[i - 1]),
+            };
+            self.up.insert(nb, link);
+            if Some(link) != parent {
+                self.up.insert(link, next);
+            }
+        }
+    }
+
+    /// A path from `u` to `v`, two nodes of block `b`, within `b`: a breadth-first search from
+    /// each end, one entry at a time in turn, until one reaches a node the other has.
+    fn route(&self, b: BlockId, u: Node, v: Node) -> Vec<Node> {
+        let mut sides = [Search::new(u), Search::new(v)];
+        let (k0, k1) = 'search: loop {
+            for i in 0..2 {
+                let [s0, s1] = &mut sides;
+                let (me, other) = if i == 0 { (s0, s1) } else { (s1, s0) };
+                match me.step(self, b) {
+                    None => {}
+                    Some((from, k, n)) => {
+                        if other.seen.contains_key(&k) {
+                            break 'search if i == 0 { (from, k) } else { (k, from) };
+                        }
+                        if !me.seen.contains_key(&k) {
+                            me.seen.insert(k.clone(), (n, Some(from)));
+                            me.queue.push_back(k);
+                        }
+                    }
+                }
+                assert!(
+                    me.cur.is_some() || !me.queue.is_empty(),
+                    "two names of a block of two conjuncts or more are linked within it"
+                );
+            }
+        };
+        let [s0, s1] = sides;
+        let mut path = s0.chain(k0);
+        path.reverse();
+        path.extend(s1.chain(k1));
+        path
     }
 
     /// Takes `g` out of the index of the atoms it mentions.
@@ -2281,6 +2743,7 @@ impl Blocks {
                 if counted && self.gapped.contains(n) {
                     tally(&mut self.gaps, r, -1);
                 }
+                self.drop_node(id);
             }
         }
         if let Some(s) = kept.first()
@@ -2291,7 +2754,8 @@ impl Blocks {
         }
         self.up.remove(&b);
         self.members.remove(&b);
-        self.of.remove(g);
+        self.drop_node(b);
+        self.put(g, &g.atoms(), None);
         true
     }
 
@@ -2299,7 +2763,7 @@ impl Blocks {
     /// block's other conjuncts again, in time near the block's size, when that keeps the tree
     /// whole: every atom of the block is a name, and the other conjuncts link every name of
     /// the block that some conjunct still mentions. Removing `b` from the tree leaves one piece
-    /// per name of it, all in one tree of the union-find, which cannot split; the pieces of
+    /// per name of it, all under one tree label, which cannot split; the pieces of
     /// the names `b` is the parent of are rooted at those names, so linking a piece to the rest
     /// reroots it within the block's nodes only. Whether it did; if not, nothing is changed.
     fn split(&mut self, b: BlockId, out: &[&Arc<Formula>]) -> bool {
@@ -2368,17 +2832,18 @@ impl Blocks {
         // The tree stays whole: take `b` out and place its other conjuncts again.
         let top = self.up.remove(&b);
         self.members.remove(&b);
+        let r = self.find(b);
+        self.drop_node(b);
         for (h, _) in &rest {
-            self.of.remove(h);
+            self.put(h, &h.atoms(), None);
         }
         for g in out {
-            self.of.remove(*g);
+            self.put(g, &g.atoms(), None);
         }
         // The local pieces: each kept name of the block and each new block, with the piece
         // that holds `top`, which hangs from the rest of the tree, never rerooted.
         let mut piece: BTreeMap<BlockId, BlockId> = BTreeMap::new();
         let mut count: BTreeMap<BlockId, usize> = BTreeMap::new();
-        let mut removed = 1usize;
         // The conjuncts and names the tree loses that its counts hold.
         let others = out.iter().filter(|g| edges(g).is_none()).count();
         let mut gaps = 0usize;
@@ -2389,7 +2854,7 @@ impl Blocks {
             if self.syms.of(n).next().is_none() {
                 self.name.remove(n);
                 self.up.remove(&id);
-                removed += 1;
+                self.drop_node(id);
                 gaps += usize::from(self.gapped.contains(n));
                 continue;
             }
@@ -2404,12 +2869,11 @@ impl Blocks {
             }
             x
         }
-        let any = *self.name.get(&rest[0].1[0]).expect("a kept name");
         for (h, ns) in &rest {
             let nb = self.fresh();
             self.members.insert(nb, OrdSet::unit(h.clone()));
-            self.of.insert(h.clone(), nb);
-            self.union(nb, any);
+            self.put(h, &h.atoms(), Some(nb));
+            self.new_node(nb, Some(r));
             count.insert(nb, 1);
             // The block that holds `h`.
             let mut cur = nb;
@@ -2435,9 +2899,6 @@ impl Blocks {
             }
         }
         // The tree lost `b` and the names no conjunct mentions, and gained the new blocks.
-        let r = self.find(any);
-        let s = self.tree_size(r) + rest.len();
-        self.size.insert(r, s.saturating_sub(removed).max(1));
         tally(&mut self.others, r, -(others as isize));
         tally(&mut self.gaps, r, -(gaps as isize));
         true
@@ -2493,21 +2954,385 @@ impl Blocks {
             }
         }
         for g in gs.iter().chain(&found) {
-            if let Some(b) = self.of.remove(g) {
+            if let Some(b) = self.put(g, &g.atoms(), None) {
                 self.members.remove(&b);
                 self.up.remove(&b);
+                self.drop_node(b);
             }
             for a in g.atoms() {
                 if let Atom::Sym(n) = a
                     && let Some(id) = self.name.remove(&n)
                 {
                     self.up.remove(&id);
+                    self.drop_node(id);
                 }
             }
         }
         for g in &found {
             self.place(g);
         }
+    }
+}
+
+/// The two names of `g` when it mentions two names and no other atom.
+fn pair(g: &Formula) -> Option<[Arc<str>; 2]> {
+    let mut atoms = g.atoms().into_iter();
+    match (atoms.next(), atoms.next(), atoms.next()) {
+        (Some(Atom::Sym(u)), Some(Atom::Sym(v)), None) => Some([u, v]),
+        _ => None,
+    }
+}
+
+/// A node of the graph of a block that [`Blocks::peel`] searches: a name, with its number, a
+/// conjunct, or an atom other than a name, which links the conjuncts that mention it.
+#[derive(Clone, Debug)]
+enum Node {
+    Name(Arc<str>, BlockId),
+    Conj(Arc<Formula>),
+    Atom(Atom),
+}
+
+/// What a search marks a [`Node`] by: a conjunct by its address, the one it has in every
+/// index of a [`Blocks`]; a name by its number, on the side a path enters it (`In`) or the
+/// side it leaves it (`Out`), so that a flow passes each name at most once.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+enum Key {
+    In(BlockId),
+    Out(BlockId),
+    Conj(usize),
+    Atom(Atom),
+}
+
+impl Node {
+    /// The key of the node, a name's on the side a path leaves it.
+    fn key(&self) -> Key {
+        match self {
+            Node::Name(_, id) => Key::Out(*id),
+            Node::Conj(h) => Key::Conj(Arc::as_ptr(h) as *const () as usize),
+            Node::Atom(a) => Key::Atom(a.clone()),
+        }
+    }
+}
+
+/// The neighbors of a node not yet given: the conjuncts of a name or an atom after the last
+/// one given, so that a search can stop after any entry and go on in O(log n), or the atoms of
+/// a conjunct.
+enum Cursor {
+    Name(Arc<str>, Option<Arc<Formula>>),
+    Atom(Atom, Option<Arc<Formula>>),
+    Atoms(Vec<Node>),
+}
+
+/// The first element of `set` after `last`, or its first when `last` is `None`, in O(log n).
+fn after<'a>(
+    set: &'a OrdSet<Arc<Formula>>,
+    last: Option<&Arc<Formula>>,
+) -> Option<&'a Arc<Formula>> {
+    match last {
+        None => set.iter().next(),
+        Some(l) => set
+            .range::<_, Arc<Formula>>((Bound::Excluded(l), Bound::Unbounded))
+            .next(),
+    }
+}
+
+impl Blocks {
+    /// A cursor over the neighbors of `n`.
+    fn cursor(&self, n: &Node) -> Cursor {
+        match n {
+            Node::Name(x, _) => Cursor::Name(x.clone(), None),
+            Node::Atom(a) => Cursor::Atom(a.clone(), None),
+            Node::Conj(h) => Cursor::Atoms(
+                h.atoms()
+                    .into_iter()
+                    .map(|a| match a {
+                        Atom::Sym(x) => {
+                            let id = self.name[&x];
+                            Node::Name(x, id)
+                        }
+                        a => Node::Atom(a),
+                    })
+                    .collect(),
+            ),
+        }
+    }
+
+    /// The next entry of `c`: `Some(Some(n))` for a neighbor in block `b`, `Some(None)` for a
+    /// conjunct of another block, `None` when no entry is left. A name's entries are its
+    /// conjuncts in `b` alone (`at`); an atom other than a name has all its conjuncts in one
+    /// block.
+    fn advance(&self, c: &mut Cursor, b: BlockId) -> Option<Option<Node>> {
+        let (set, last, check) = match c {
+            Cursor::Atoms(ns) => return ns.pop().map(Some),
+            Cursor::Name(x, last) => (self.at.get(&(x.clone(), b))?, last, false),
+            Cursor::Atom(a, last) => (self.shared.get(a)?, last, true),
+        };
+        let h = after(set, last.as_ref())?.clone();
+        *last = Some(h.clone());
+        Some((!check || self.of.get(&h) == Some(&b)).then_some(Node::Conj(h)))
+    }
+}
+
+/// One side of the search of [`Blocks::route`]: each node reached with the node it was
+/// reached from.
+struct Search {
+    seen: HashMap<Key, (Node, Option<Key>)>,
+    queue: VecDeque<Key>,
+    cur: Option<(Key, Cursor)>,
+}
+
+impl Search {
+    fn new(n: Node) -> Search {
+        let k = n.key();
+        Search {
+            seen: HashMap::from([(k.clone(), (n, None))]),
+            queue: VecDeque::from([k]),
+            cur: None,
+        }
+    }
+
+    /// Reads one entry: a neighbor in block `b` of the node being read, with that node's key.
+    fn step(&mut self, blocks: &Blocks, b: BlockId) -> Option<(Key, Key, Node)> {
+        let (k, c) = match &mut self.cur {
+            Some(cur) => cur,
+            None => {
+                let k = self.queue.pop_front()?;
+                let c = blocks.cursor(&self.seen[&k].0);
+                self.cur.insert((k, c))
+            }
+        };
+        match blocks.advance(c, b) {
+            None => {
+                self.cur = None;
+                None
+            }
+            Some(None) => None,
+            Some(Some(n)) => Some((k.clone(), n.key(), n)),
+        }
+    }
+
+    /// The nodes from the one of key `k` back to where the search started.
+    fn chain(&self, k: Key) -> Vec<Node> {
+        let mut out = Vec::new();
+        let mut at = Some(k);
+        while let Some(k) = at {
+            let (n, from) = &self.seen[&k];
+            out.push(n.clone());
+            at = from.clone();
+        }
+        out
+    }
+}
+
+/// What a step of a [`Flow`] found.
+enum Step {
+    /// More is left to read.
+    On,
+    /// The search reached its end: a second path.
+    Met,
+    /// The search read all it can reach; the position on the path of the name it entered and
+    /// could not leave.
+    Out(usize),
+}
+
+/// A search of [`Blocks::peel`] for a second path from the name at `start` of the path `P`
+/// to the one at `end`, sharing no name between them with the part of `P` from `start` to
+/// `end`, in the residual graph of a flow of one along that part: a name of it between the
+/// two may be left only on the side it was entered, `In`, after reaching it from its successor
+/// on `P`, `Out`; a node of it may be reached back from its successor.
+struct Flow {
+    start: usize,
+    end: usize,
+    seen: HashSet<Key>,
+    queue: VecDeque<(Key, Node)>,
+    cur: Option<Cursor>,
+    /// The conjuncts reached.
+    conjs: Vec<Arc<Formula>>,
+    /// The positions of the names between `start` and `end` entered.
+    entered: Vec<usize>,
+}
+
+impl Flow {
+    fn new(path: &[Node], start: usize, end: usize) -> Flow {
+        let n = path[start].clone();
+        Flow {
+            start,
+            end,
+            seen: HashSet::from([n.key()]),
+            queue: VecDeque::from([(n.key(), n)]),
+            cur: None,
+            conjs: Vec::new(),
+            entered: Vec::new(),
+        }
+    }
+
+    /// Whether position `i` lies strictly between `start` and `end`.
+    fn inside(&self, i: usize) -> bool {
+        self.start.min(self.end) < i && i < self.start.max(self.end)
+    }
+
+    /// The node before position `i` on the way from `start`, when `i` lies after `start` and
+    /// not after `end`.
+    fn before<'a>(&self, path: &'a [Node], i: usize) -> Option<&'a Node> {
+        let (lo, hi) = (self.start.min(self.end), self.start.max(self.end));
+        if i == self.start || i < lo || i > hi {
+            return None;
+        }
+        Some(&path[if self.start < self.end { i - 1 } else { i + 1 }])
+    }
+
+    /// Marks `k` reached; whether it is the end.
+    fn reach(&mut self, k: Key, n: Node, at: &HashMap<Key, usize>) -> bool {
+        if let Key::In(id) = k
+            && let Some(&i) = at.get(&Key::Out(id))
+        {
+            if i == self.end {
+                return true;
+            }
+            if self.inside(i) && !self.seen.contains(&k) {
+                self.entered.push(i);
+            }
+        }
+        if self.seen.insert(k.clone()) {
+            if let Node::Conj(h) = &n {
+                self.conjs.push(h.clone());
+            }
+            self.queue.push_back((k, n));
+        }
+        false
+    }
+
+    /// Reads one entry within block `b`.
+    fn step(
+        &mut self,
+        blocks: &Blocks,
+        b: BlockId,
+        path: &[Node],
+        at: &HashMap<Key, usize>,
+    ) -> Step {
+        let c = match &mut self.cur {
+            Some(c) => c,
+            None => {
+                let Some((k, n)) = self.queue.pop_front() else {
+                    let out = self.entered.iter().copied().find(|&i| {
+                        let Node::Name(_, id) = &path[i] else {
+                            return false;
+                        };
+                        !self.seen.contains(&Key::Out(*id))
+                    });
+                    return Step::Out(out.expect("a search that runs out stops at a name of P"));
+                };
+                // The arcs of the flow's residual graph that are not edges of the block.
+                let pos = |id: &BlockId| at.get(&Key::Out(*id)).copied();
+                let mut extra: Vec<(Key, Node)> = Vec::new();
+                match (&k, &n) {
+                    (Key::Out(id), _) => {
+                        if pos(id).is_some_and(|i| self.inside(i)) {
+                            extra.push((Key::In(*id), n.clone()));
+                        }
+                    }
+                    (Key::In(id), _) => {
+                        if !pos(id).is_some_and(|i| self.inside(i)) {
+                            extra.push((Key::Out(*id), n.clone()));
+                        }
+                        if let Some(p) = pos(id).and_then(|i| self.before(path, i)) {
+                            extra.push((p.key(), p.clone()));
+                        }
+                    }
+                    _ => {
+                        if let Some(&i) = at.get(&k)
+                            && let Some(p @ Node::Name(_, pid)) = self.before(path, i)
+                        {
+                            extra.push((Key::Out(*pid), p.clone()));
+                        }
+                    }
+                }
+                for (k, n) in extra {
+                    if self.reach(k, n, at) {
+                        return Step::Met;
+                    }
+                }
+                if matches!(k, Key::In(_)) {
+                    return Step::On;
+                }
+                self.cur.insert(blocks.cursor(&n))
+            }
+        };
+        match blocks.advance(c, b) {
+            None => self.cur = None,
+            Some(None) => {}
+            Some(Some(n)) => {
+                let k = match &n {
+                    Node::Name(_, id) => Key::In(*id),
+                    n => n.key(),
+                };
+                if self.reach(k, n, at) {
+                    return Step::Met;
+                }
+            }
+        }
+        Step::On
+    }
+}
+
+/// One side of the walk of [`Blocks::bridge`] over a tree of the forest: the nodes reached,
+/// a name with its text, and the one being read with the last conjunct read at it.
+struct TreeWalk {
+    seen: HashSet<BlockId>,
+    nodes: Vec<(BlockId, Option<Arc<str>>)>,
+    next: usize,
+    cur: Option<(usize, Option<Arc<Formula>>)>,
+}
+
+impl TreeWalk {
+    fn new((x, id): (&Arc<str>, BlockId)) -> TreeWalk {
+        TreeWalk {
+            seen: HashSet::from([id]),
+            nodes: vec![(id, Some(x.clone()))],
+            next: 0,
+            cur: None,
+        }
+    }
+
+    /// Reads one entry: a conjunct of a name, which gives its block, or a conjunct of a block,
+    /// which gives its names. Whether anything was left to read.
+    fn step(&mut self, blocks: &Blocks) -> bool {
+        let (i, last) = match &mut self.cur {
+            Some(cur) => cur,
+            None => {
+                if self.next == self.nodes.len() {
+                    return false;
+                }
+                self.next += 1;
+                self.cur.insert((self.next - 1, None))
+            }
+        };
+        let (x, name) = &self.nodes[*i];
+        let set = match name {
+            Some(n) => blocks.syms.0.get(&**n),
+            None => blocks.members.get(x),
+        };
+        let Some(h) = set.and_then(|s| after(s, last.as_ref())).cloned() else {
+            self.cur = None;
+            return true;
+        };
+        *last = Some(h.clone());
+        if name.is_some() {
+            let b = blocks.of[&h];
+            if self.seen.insert(b) {
+                self.nodes.push((b, None));
+            }
+        } else {
+            for a in h.atoms() {
+                if let Atom::Sym(n) = a {
+                    let id = blocks.name[&n];
+                    if self.seen.insert(id) {
+                        self.nodes.push((id, Some(n)));
+                    }
+                }
+            }
+        }
+        true
     }
 }
 

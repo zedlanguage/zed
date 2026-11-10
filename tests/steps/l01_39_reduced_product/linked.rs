@@ -10,7 +10,7 @@ use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::cell::Premises;
-use zedc::store::conjuncts::{Conjuncts, edges, names};
+use zedc::store::conjuncts::{Blocks, Conjuncts, edges, names};
 use zedc::store::interval::End;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Rel, Shared};
 use zedc::store::product::{Product, Scope};
@@ -164,6 +164,9 @@ fn star_conjunct(r: &mut Rng) -> Formula {
 /// The blocks of `c`, each as the set of its conjuncts.
 pub(super) fn partition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
     let blocks = c.blocks();
+    if let Err(e) = blocks.well_formed() {
+        panic!("the forest of {:?}: {e}", c.set());
+    }
     let mut by: BTreeMap<u64, BTreeSet<Arc<Formula>>> = BTreeMap::new();
     for g in c.set() {
         let b = blocks.of(g).unwrap_or_else(|| panic!("{g} has no block"));
@@ -283,17 +286,29 @@ pub(super) fn partition_by_definition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Fo
         .filter(|g| !starred.contains(g))
         .cloned()
         .collect();
+    blocks_by_definition(&gs)
+        .into_iter()
+        .chain(stars.into_values())
+        .collect()
+}
+
+/// The root of `i` in the union-find `g`.
+fn find(g: &mut [usize], i: usize) -> usize {
+    if g[i] == i {
+        i
+    } else {
+        let r = find(g, g[i]);
+        g[i] = r;
+        r
+    }
+}
+
+/// The blocks of the conjuncts `gs`, stars left aside, by brute force: those that share an
+/// atom other than a name are one group, and two groups are in one block when no single name
+/// separates them in the graph of groups and the names they mention as atoms of their own.
+fn blocks_by_definition(gs: &[Arc<Formula>]) -> Vec<BTreeSet<Arc<Formula>>> {
     let n = gs.len();
     let mut group: Vec<usize> = (0..n).collect();
-    fn find(g: &mut [usize], i: usize) -> usize {
-        if g[i] == i {
-            i
-        } else {
-            let r = find(g, g[i]);
-            g[i] = r;
-            r
-        }
-    }
     let atoms: Vec<BTreeSet<Atom>> = gs.iter().map(|g| g.atoms()).collect();
     for i in 0..n {
         for j in 0..i {
@@ -357,7 +372,7 @@ pub(super) fn partition_by_definition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Fo
             }
         }
     }
-    blocks.into_iter().chain(stars.into_values()).collect()
+    blocks
 }
 
 #[test]
@@ -631,6 +646,9 @@ fn differences_only_by_definition(
     case: usize,
 ) -> (bool, bool) {
     let blocks = c.blocks();
+    if let Err(e) = blocks.well_formed() {
+        panic!("case {case}: the forest: {e} after {log:#?}");
+    }
     let mut trees: BTreeMap<_, Vec<&Arc<Formula>>> = BTreeMap::new();
     for g in c.set() {
         if let Some(b) = blocks.of(g).filter(|b| !blocks.is_apart(*b)) {
@@ -702,6 +720,180 @@ fn the_blocks_stay_those_of_the_definition_when_many_conjuncts_go_at_once() {
         }
     }
     assert!(many > 250, "{many} removals of three conjuncts or more");
+}
+
+const PAIR_NAMES: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+/// A random conjunct over [`PAIR_NAMES`], seventeen times in twenty a constraint on two names
+/// and no other atom, which [`Blocks::remove`] takes out alone (`Blocks::cut`); otherwise a
+/// bound on one name, a constraint on three names or fewer, or one with a product of two names.
+fn pair_conjunct(r: &mut Rng) -> Formula {
+    let x = r.pick(&PAIR_NAMES);
+    let other = |r: &mut Rng| loop {
+        let y = r.pick(&PAIR_NAMES);
+        if y != x {
+            break y;
+        }
+    };
+    let sym = |n: &str| Lin::atom(Atom::Sym(n.into()));
+    let mut lin = Lin::constant(r.int(-3, 3)).plus(&sym(x));
+    match r.below(20) {
+        0 => {}
+        1 => {
+            let (y, z) = (other(r), r.pick(&PAIR_NAMES));
+            lin = lin.plus(&sym(y).times(-1)).plus(&sym(z).times(2));
+        }
+        2 => {
+            let y = other(r);
+            lin = lin.plus(&Lin::atom(Atom::product(&x.into(), &y.into())));
+        }
+        _ => lin = lin.plus(&sym(other(r)).times(-1)),
+    }
+    Formula::Con(Con::ge(&lin, &Lin::constant(0)))
+}
+
+/// Mostly constraints on two names come and go, one at a time and several at once, in the
+/// forest of blocks alone ([`Blocks`]): after each step the forest is well formed
+/// ([`Blocks::well_formed`]), its blocks are those of the definition, and its trees are the
+/// conjuncts linked by a name or another atom. One removal often splits a block in three
+/// pieces or more (`Blocks::peel`) and a tree in two (`Blocks::bridge`).
+#[test]
+fn the_blocks_stay_those_of_the_definition_as_constraints_on_two_names_come_and_go() {
+    let mut r = Rng::new(0x9ee1);
+    // States where one removal split a block in three pieces or more, or split a tree, and
+    // removals of several constraints on two names at once (196, 500 and 434 states).
+    let (mut pieces, mut trees, mut several) = (0, 0, 0);
+    for case in 0..400 {
+        let mut b = Blocks::default();
+        let mut set: BTreeSet<Arc<Formula>> = BTreeSet::new();
+        let mut log: Vec<String> = Vec::new();
+        for _ in 0..40 {
+            let k = r.below(10);
+            if k < 4 && !set.is_empty() {
+                let gs: Vec<Arc<Formula>> = set.iter().cloned().collect();
+                let gone: Vec<Arc<Formula>> = if k == 0 {
+                    gs.into_iter().filter(|_| r.below(3) == 0).collect()
+                } else {
+                    vec![r.pick(&gs)]
+                };
+                let pair = |g: &Formula| {
+                    let a = g.atoms();
+                    a.len() == 2 && a.iter().all(|a| matches!(a, Atom::Sym(_)))
+                };
+                several += usize::from(gone.len() > 1 && gone.iter().all(|g| pair(g)));
+                let mates: Vec<Arc<Formula>> = match &gone[..] {
+                    [g] => b
+                        .members(b.of(g).expect("a block"))
+                        .filter(|h| *h != g)
+                        .cloned()
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let tree_count = |b: &Blocks, gs: &mut dyn Iterator<Item = &Arc<Formula>>| {
+                    gs.map(|g| b.tree(b.of(g).expect("a block")))
+                        .collect::<BTreeSet<_>>()
+                        .len()
+                };
+                let rest = || set.iter().filter(|g| !gone.contains(g));
+                let before = tree_count(&b, &mut rest());
+                log.push(format!("remove {gone:?}"));
+                b.remove(&gone);
+                let after = tree_count(&b, &mut rest());
+                let split: BTreeSet<_> = mates.iter().map(|h| b.of(h)).collect();
+                pieces += usize::from(split.len() > 2);
+                trees += usize::from(gone.len() == 1 && after > before);
+                for g in &gone {
+                    set.remove(g);
+                }
+            } else {
+                let g = Arc::new(pair_conjunct(&mut r));
+                if set.insert(g.clone()) {
+                    log.push(format!("add {g}"));
+                    b.add(&g);
+                }
+            }
+            if let Err(e) = b.well_formed() {
+                panic!("case {case}: {e} after {log:#?}");
+            }
+            let gs: Vec<Arc<Formula>> = set.iter().cloned().collect();
+            let mut got: BTreeMap<u64, BTreeSet<Arc<Formula>>> = BTreeMap::new();
+            for g in &gs {
+                let id = b.of(g).unwrap_or_else(|| panic!("{g} has no block"));
+                got.entry(id).or_default().insert(g.clone());
+            }
+            for (id, ms) in &got {
+                let members: BTreeSet<Arc<Formula>> = b.members(*id).cloned().collect();
+                assert_eq!(&members, ms, "case {case}: block {id} after {log:#?}");
+            }
+            assert_eq!(b.all().count(), got.len(), "case {case} after {log:#?}");
+            let want: BTreeSet<_> = blocks_by_definition(&gs).into_iter().collect();
+            let got: BTreeSet<_> = got.into_values().collect();
+            assert_eq!(got, want, "case {case} after {log:#?}");
+            // The trees: the conjuncts linked by any atom they share.
+            let mut comp: Vec<usize> = (0..gs.len()).collect();
+            let mut first: BTreeMap<Atom, usize> = BTreeMap::new();
+            for (i, g) in gs.iter().enumerate() {
+                for a in g.atoms() {
+                    let j = *first.entry(a).or_insert(i);
+                    let (x, y) = (find(&mut comp, i), find(&mut comp, j));
+                    comp[x] = y;
+                }
+            }
+            let (mut tree_of, mut comp_of) = (BTreeMap::new(), BTreeMap::new());
+            for (i, g) in gs.iter().enumerate() {
+                let (c, t) = (find(&mut comp, i), b.tree(b.of(g).expect("a block")));
+                assert_eq!(*tree_of.entry(c).or_insert(t), t, "case {case}: {g}");
+                assert_eq!(*comp_of.entry(t).or_insert(c), c, "case {case}: {g}");
+            }
+        }
+    }
+    assert!(
+        pieces > 130,
+        "{pieces} removals that split a block in three"
+    );
+    assert!(trees > 330, "{trees} removals that split a tree");
+    assert!(several > 290, "{several} removals of several pairs at once");
+}
+
+/// `x - y >= 0` as a conjunct.
+fn at_least(x: &str, y: &str) -> Arc<Formula> {
+    let lin = Lin::atom(Atom::Sym(x.into())).plus(&Lin::atom(Atom::Sym(y.into())).times(-1));
+    Arc::new(Formula::Con(Con::ge(&lin, &Lin::constant(0))))
+}
+
+/// A name `h` that `d` other blocks mention, and a block of five constraints on `h`, `a`, `b`
+/// and `x` that loses `a - b >= 0` and gets it back `d` times. The searches that find the block
+/// still whole without it (`Blocks::peel`) reach `h` off their path and read its conjuncts in
+/// this block alone, so each removal costs near the block, not near the blocks of `h`. Reading
+/// all of `h`'s conjuncts and skipping those of other blocks, as before, cost O(d) per removal:
+/// 31.4 times the bytes at 64 and 512. Now 9.0 times the instructions and 7.9 times the bytes,
+/// limit 13.2 (2026-11-09). COMPLEXITY.md C37.
+#[test]
+fn a_constraint_taken_from_a_block_beside_a_name_of_many_blocks_takes_time_near_the_block() {
+    scaling::check(
+        "a constraint taken from a block beside a name of many blocks and put back",
+        64,
+        |d| {
+            let mut b = Blocks::default();
+            for i in 0..d {
+                b.add(&at_least("h", &format!("y{i}")));
+            }
+            let ab = at_least("a", "b");
+            for g in [
+                at_least("h", "a"),
+                ab.clone(),
+                at_least("b", "h"),
+                at_least("a", "x"),
+                at_least("x", "b"),
+            ] {
+                b.add(&g);
+            }
+            for _ in 0..d {
+                b.remove(std::slice::from_ref(&ab));
+                b.add(&ab);
+            }
+        },
+    );
 }
 
 #[test]
@@ -1719,30 +1911,30 @@ fn a_satellite_of_every_hub_costs_its_related_names_once_in_any_order() {
 
 /// With bounds on the hubs ([`satellite_conjuncts`]), a leaf that becomes a star while its
 /// conjuncts are in the one block that the satellite and the other leaves make takes its
-/// conjuncts out of that block, and `Blocks::remove` builds the blocks of the whole component
-/// again (`Blocks::split` cannot keep the leaf linked): O(d) for each such star, and in a random
-/// order the number of such stars grows with `d`. Built at 64 and 512 in a random order: 22.5
-/// times the instructions and 16.6 times the bytes, limit 13.2; 9,888 conjuncts placed again at
-/// `d` 512 and 101,149 at 2048 (2026-11-09). Without the bounds no leaf becomes a star and the
-/// build is linear ([`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`]).
-/// Open as item BLOCKS-remove-local (COMPLEXITY.md C37).
+/// conjuncts out of that block. Each is a constraint on two names, which `Blocks::remove` takes
+/// out alone (`Blocks::cut`), in time near the smaller side of each split it makes; building
+/// the blocks of the whole component again, as before, cost O(d) for each such star, and in a
+/// random order the number of such stars grows with `d`. Built at 64 and 512 in a random
+/// order: 10.7 times the instructions and 8.4 times the bytes, limit 13.2; before, 22.5 and
+/// 16.6 times (2026-11-09). Without the bounds no leaf becomes a star
+/// ([`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`]). COMPLEXITY.md C37.
 #[test]
-#[ignore = "BLOCKS-remove-local: 22.5 times the instructions at 64 and 512, limit 13.2; open"]
 fn stars_formed_in_the_block_of_a_satellite_take_time_near_the_block() {
     satellite_built_in_a_random_order(64, true);
 }
 
 /// The conjuncts of [`satellite_conjuncts`] without bounds, built and then taken away one at a
-/// time in a random order. All of them are one block, and `Blocks::remove` splits it by
-/// placing its other conjuncts again (`Blocks::split`), O(d) for each conjunct taken away, so
-/// O(d^2) in all, in any order. Built and taken apart at 64 and 512: 374 M and 16,472 M
-/// instructions, 44.0 times, and 34.0 times the bytes, limit 13.2; taken apart leaves first at
-/// `d` 128 and 256: 4,114 M and 17,582 M instructions (2026-11-09). The star index is not the
-/// cost: the needs stay within three per hub
-/// ([`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`]).
-/// Open as item BLOCKS-remove-local (COMPLEXITY.md C37).
+/// time in a random order. All of them are one block. Each is a constraint on two names, which
+/// `Blocks::remove` takes out alone (`Blocks::cut`): the block splits along a path of pieces
+/// found by searches from both ends of the constraint run in turn (`Blocks::peel`), in time near
+/// the pieces split off rather than the block. Splitting the block by placing its other
+/// conjuncts again (`Blocks::split`), as before, cost O(d) for each conjunct taken away, so
+/// O(d^2) in all. Built and taken apart at 64 and 512: 148 M and 1,582 M instructions, 10.7
+/// times, and 8.8 times the bytes, limit 13.2; before, 374 M and 16,472 M, 44.0 times, and 34.0
+/// times the bytes (2026-11-09). The star index is not the cost: the needs stay within three
+/// per hub ([`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`]).
+/// COMPLEXITY.md C37.
 #[test]
-#[ignore = "BLOCKS-remove-local: 44.0 times the instructions at 64 and 512, limit 13.2; open"]
 fn a_satellite_of_every_hub_taken_apart_takes_time_near_the_block_per_conjunct() {
     let orders = satellite_orders(64, false);
     scaling::check(
