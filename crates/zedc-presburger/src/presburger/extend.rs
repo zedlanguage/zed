@@ -2468,13 +2468,20 @@ impl Summaries {
     // 50 and 100 links before (load about 35): `if H > 3 { H div 2 } else { H + 1 }` 3.35 and
     // 20.2, `abs(H - 5) div 2` 3.06 and 18.0, `min(H div 2, H div 3 + 1)` 18.5 and over 60;
     // now 0.04, 0.05 and 0.10 at 50 links and 0.39, 0.47 and 0.97 at 400.
-    // Tradeoffs: no summary is made, and the question is decided with every definition it
-    // reaches as before, O(n) for each and O(n²) or worse over the chain, for a definition
-    // with products of variables (`H * x`, a `div` by a variable, whose value is not linear in
-    // its input: 41.8 and 74.5 times the instructions from 10 to 80 links), and for a piece
-    // whose projection keeps an atom outside the key: values that are no union of polyhedra
-    // without a remainder of a kept atom (`max(H div 2, x - 9)` keeping `x` holds where `x -
-    // 10 <= 2 * (x div 8)`: 132 times from 10 to 80 links). Also a definition whose formula
+    // A product of variables (`H * x`, the `x * q` of a `div` by a variable) is an atom of its
+    // own in the pieces, as the solver reads it ([`decide`]), kept in a key where its factors
+    // are (LOAD-chain-sep-nonlinear): 8.3 times the instructions from 25 to 200 links for
+    // `H div x`, against 74.5 times from 10 to 80 before. Tradeoffs: no summary is made, and
+    // the question is decided with every definition it reaches as before, O(n) for each and
+    // O(n²) or worse over the chain, for a piece whose projection keeps an atom outside the
+    // key: values that are no union of polyhedra without a remainder of a kept atom (`max(H
+    // div 2, x - 9)` keeping `x` holds where `x - 10 <= 2 * (x div 8)`: n^2.4 to n^2.5 from 10
+    // to 80 links, all of it in the questions decided whole). Tried for it
+    // (LOAD-chain-sep-nonlinear): dropping the rows of each piece the others imply ([`lean`]
+    // on every piece) leaves the row `x <= 2 * q + 10` beside `8 * q <= x <= 8 * q + 7`, which
+    // the next link needs to eliminate `q` across two coefficients above 1; the values of
+    // `h{i}` are `max(x div 2^i, x - 9)`, two pieces, but the pieces made follow each path
+    // of cases and are merged only where written alike. Also a definition whose formula
     // holds a negation of more than one constraint. The pieces of a summary are merged only
     // where written alike, so a link whose values on the kept atoms take a new shape at each
     // depth keeps O(depth) pieces and the chain O(n²). Two definitions read together whose
@@ -2690,14 +2697,20 @@ impl Summaries {
         };
         let defined: HashSet<u32> = beside.iter().flat_map(|d| d.own.iter().copied()).collect();
         let atoms = (keep.iter().chain(reads)).chain(beside.iter().flat_map(|d| &d.reads));
+        let kept = |a: &Atom| match a {
+            Atom::Aux(n) => {
+                (*n < h.own[0] && !defined.contains(n) && !own.contains(a))
+                    || h.own.binary_search(n).is_ok()
+            }
+            Atom::Sym(_) => syms.contains(a),
+            Atom::Product(..) => false,
+        };
         let out: BTreeSet<Atom> = atoms
             .filter(|a| match a {
-                Atom::Aux(n) => {
-                    (*n < h.own[0] && !defined.contains(n) && !own.contains(a))
-                        || h.own.binary_search(n).is_ok()
-                }
-                Atom::Sym(_) => syms.contains(a),
-                Atom::Product(..) => false,
+                // A product the cone may hold, one whose factors it may hold: the solver reads
+                // it as an atom of its own, so a summary keeps it as it keeps a variable.
+                Atom::Product(f, g) => kept(&f.atom()) && kept(&g.atom()),
+                a => kept(a),
             })
             .cloned()
             .collect();
@@ -2775,17 +2788,16 @@ struct Def {
 }
 
 impl Def {
-    /// The definition `f`, `None` where no summary is made of it: one with a product of
-    /// variables, whose quotient or value is not linear in its inputs, and one that defines no
-    /// variable it reads. Time of `f`.
+    /// The definition `f`, `None` where no summary is made of it: one that defines no variable it
+    /// reads. A product of variables is read as an atom of its own, as the solver reads it
+    /// ([`decide`]), and the definitions of its factors as inputs. Time of `f`.
     fn of(f: Formula, def: &dyn Fn(u32) -> Formula) -> Option<Def> {
         let id = Id::any(&f);
-        let reads = f.atoms();
+        let reads = reads(&f);
         let (mut own, mut inputs) = (Vec::new(), Vec::new());
         for a in &reads {
             match a {
-                Atom::Product(..) => return None,
-                Atom::Sym(_) => {}
+                Atom::Product(..) | Atom::Sym(_) => {}
                 Atom::Aux(n) => {
                     let d = def(*n);
                     if Id::any(&d) == id {
@@ -2861,19 +2873,16 @@ fn free(f: &Formula) -> bool {
     matches!(f, Formula::And(gs) if gs.is_empty())
 }
 
-/// The atoms `f` reads, the factors of a product in place of the product.
+/// The atoms `f` reads, a product with its factors: the solver reads a product as an atom of
+/// its own ([`decide`]), and its factors' definitions are among those `f` reaches ([`reached`]).
 fn reads(f: &Formula) -> BTreeSet<Atom> {
     let mut out = BTreeSet::new();
     for a in f.atoms() {
-        match a {
-            Atom::Product(g, h) => {
-                out.insert(g.atom());
-                out.insert(h.atom());
-            }
-            a => {
-                out.insert(a);
-            }
+        if let Atom::Product(g, h) = &a {
+            out.insert(g.atom());
+            out.insert(h.atom());
         }
+        out.insert(a);
     }
     out
 }

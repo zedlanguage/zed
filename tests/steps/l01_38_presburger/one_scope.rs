@@ -1291,7 +1291,8 @@ fn separate_tests_over_a_chain_of_largest_values_scale() {
     // a link are not a union of polyhedra without a remainder of `x` (they hold where `x - 10
     // <= 2 * (x div 8)`), so no summary is made, and each test is decided with every
     // definition it reaches: 1.30 s at 50 links, 4.9 s at 100; 132 times the instructions from
-    // 10 to 80 links.
+    // 10 to 80 links. Still so after LOAD-chain-sep-nonlinear (n^2.4 to n^2.5 from 10 to 80
+    // links); what was tried is at `Summaries::summary`.
     separate_tests_scale(
         "separate tests over a chain of `max`s",
         10,
@@ -1351,13 +1352,15 @@ fn separate_conjunctions_over_the_links_of_one_chain_scale() {
 
 #[test]
 fn separate_tests_over_a_chain_of_divisions_by_a_parameter_scale() {
-    // Complexity tradeoff (Summaries::summary): a quotient by a variable is not linear in its
-    // input, so no summary is made: 0.58 s at 50 links, 55 s at 400; 74.5 times the
-    // instructions from 10 to 80 links.
+    // LOAD-chain-sep-nonlinear: the product `x * q` of a quotient by `x` is read as an atom of
+    // its own, as the solver reads it, so each definition has a summary. Before, no summary was
+    // made and each test was decided with every definition it reaches: 0.58 s at 50 links, 55 s
+    // at 400; 74.5 times the instructions from 10 to 80 links, and 112 times the bytes from 25
+    // to 200. Now 77.0 and 641 million instructions at 25 and 200 links, 8.3 times.
     separate_tests_scale(
         "separate tests over a chain of divisions by a parameter",
-        10,
-        2,
+        25,
+        1,
         "H div x",
         "H > 0",
     );
@@ -1365,12 +1368,16 @@ fn separate_tests_over_a_chain_of_divisions_by_a_parameter_scale() {
 
 #[test]
 fn separate_tests_over_a_chain_of_products_scale() {
-    // Complexity tradeoff (Summaries::summary): a product of variables, as above: 0.072 s at
-    // 50 links, 3.46 s at 400; 41.8 times the instructions from 10 to 80 links.
+    // LOAD-chain-sep-nonlinear: the translation of each body fails at the product
+    // `h{i-1}(x: x) * x`, and the failed translations of the chain below it are kept for the
+    // next body (`Tx::forget`), so a body reads only its own link. Before, each body read the
+    // chain below it again: 0.072 s at 50 links, 3.46 s at 400; 41.8 times the instructions
+    // from 10 to 80 links, and 52 times the bytes from 25 to 200. Now 17.2 and 137 million
+    // instructions at 25 and 200 links, 8.0 times.
     separate_tests_scale(
         "separate tests over a chain of products",
-        10,
-        2,
+        25,
+        1,
         "H * x + 1",
         "H > 0",
     );
@@ -1482,9 +1489,27 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
         // Steps whose remainder no other link reads, projected out with the input.
         chain("(2 * H) div 3", "H > 0", 5),
         chain("(2 * H + 1) div 3", "H == 2", 5),
-        // A division by a variable and a product: no summary is made.
+        // A division by a variable and a product (LOAD-chain-sep-nonlinear): the product is
+        // an atom of its own in the summaries, as the solver reads it. Zero, negative and
+        // large values, the input at zero and at -1 and 1, a value that holds nowhere, a test
+        // over two links, and a product of inputs that every link and a test read.
         chain("H div x", "H > 0", 4),
+        chain("H div x", "H == 0", 4),
+        chain("H div x", "H < 0", 4),
+        chain("H div x", "H > 1000", 4),
+        chain("H div x", "H > 0 && x == 1", 4),
+        chain("H div x", "H > 0 && x == 0 - 1", 4),
+        chain("H div x", "H != 0 && x == 0", 4),
+        chain("H div x + 1", "H < 1 && x > 0 && x < 3", 4),
+        chain("H div x", "H > h1(x: x)", 5),
         chain("H * x + 1", "H > 0", 4),
+        chain("H * x + 1", "H == 1", 4),
+        chain("H * x + 1", "H < 0", 4),
+        chain("H * x + 1", "H > 1000000", 4),
+        chain("H * x + 1", "H != 1 && x == 0", 4),
+        chain("x * x - H", "H < 0", 5),
+        chain("x * x + H", "H == 3", 5),
+        chain("H + x * x", "H < x * x", 5),
         // Conjunctions with no kept part, decided with the summaries, and tests extending
         // them, whose points are found then (`Extending::fill`).
         chain("H div 2 + 1", "H > 0 && x < 1000", 5),

@@ -4570,18 +4570,36 @@ impl<'t> Tx<'t> {
         cut >= place
     }
 
-    /// Removes the translation's entries made after the first `mark`.
+    /// Removes the translation's entries made after the first `mark`, but for those that found
+    /// no translation wherever they are reached (`None`, with no stop below them): a failure
+    /// names no auxiliary variable, so undoing the attempt does not touch it.
+    ///
+    /// Complexity tradeoff: the naive version removed every entry the undone attempt made, the
+    /// failures too. A chain of n functions each multiplying the one before by a parameter
+    /// (`h(x) * x + 1`) fails at each body's comparison, and each body then read the chain
+    /// below it again: O(n) per body, O(n²) for the n bodies (LOAD-chain-sep-nonlinear). Kept,
+    /// a failure is found again in O(1), so the chain costs O(n). Tradeoff: a kept failure
+    /// stays in the table for the scope's later bodies, as a success does. Test:
+    /// `l01_38_presburger::one_scope::separate_tests_over_a_chain_of_products_scale`;
+    /// COMPLEXITY.md row LOAD-chain-sep-nonlinear.
     fn forget(&mut self, mark: usize) {
+        fn undo<K: Hash + Eq, V>(t: &mut HashMap<K, Entry<Option<V>>>, k: &K) {
+            if t.get(k)
+                .is_some_and(|(v, cut)| v.is_some() || *cut != usize::MAX)
+            {
+                t.remove(k);
+            }
+        }
         let m = &mut self.run.memo;
         for e in m.log.drain(mark..) {
             match e {
-                Logged::Lin(k) => _ = m.lin.remove(&k),
-                Logged::Formula(k) => _ = m.formula.remove(&k),
-                Logged::LinCall(k) => _ = m.lin_calls.remove(&k),
-                Logged::FormulaCall(k) => _ = m.formula_calls.remove(&k),
-                Logged::Projection(k) => _ = m.projections.remove(&k),
-                Logged::Defined(k) => _ = m.defined.remove(&k),
-                Logged::DefinedCall(k) => _ = m.defined_calls.remove(&k),
+                Logged::Lin(k) => undo(&mut m.lin, &k),
+                Logged::Formula(k) => undo(&mut m.formula, &k),
+                Logged::LinCall(k) => undo(&mut m.lin_calls, &k),
+                Logged::FormulaCall(k) => undo(&mut m.formula_calls, &k),
+                Logged::Projection(k) => undo(&mut m.projections, &k),
+                Logged::Defined(k) => undo(&mut m.defined, &k),
+                Logged::DefinedCall(k) => undo(&mut m.defined_calls, &k),
             }
         }
     }

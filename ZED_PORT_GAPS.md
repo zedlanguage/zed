@@ -2190,6 +2190,13 @@ These replace the DIAG-suppress-rest rows (that section is now empty and removed
 | A `BTreeSet<Vec<Con>>` deduplicating pieces, and `Vec::swap_remove` in a `while` loop dropping implied rows | `Summaries::make`, `extend::lean` | Mutation (gap 11) | A set value; a fold over the rows building the kept list |
 | An explicit stack of `(Formula, bool)` for a post-order fill of the points of known conjunctions | `Extending::fill` | Mutation (gap 11) | A list value used as a stack |
 
+## Entries from LOAD-chain-sep-nonlinear (`zedc-preimage/src/preimage.rs`, `zedc-presburger/src/presburger/extend.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A generic nested `fn undo<K: Hash + Eq, V>(t: &mut HashMap<K, Entry<Option<V>>>, k: &K)` removing an entry unless `Option::is_some_and` finds it a failure with no stop | `preimage::Tx::forget` | Mutation (gap 11) | A function over a map value returning the map with the entry removed or kept |
+| A closure `kept` over an `Atom` used inside a `match` filtering a key, a product kept when both factors are kept | `extend::Summaries::key` | None | A local function over the atom |
+
 ## Entries from LOAD-chain-affine (`zedc-preimage/src/preimage.rs`, `zedc-presburger/src/presburger/extend.rs`, `zedc/src/front.rs`)
 
 The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer apply: both are removed.
