@@ -8755,6 +8755,27 @@ fn project_parts(
             None => hull_from(base_of(g), s, &model),
         });
     }
+    // Complexity tradeoff: the naive way, still taken below for every disjunction not handled
+    // here, asks each disjunction about every symbol of its group: `L(s) ∩ ⋂_j U_j(s)` costs
+    // Θ(n) disjunctions for each of `n` symbols, Θ(n²) on a chain of `n` holes. Here each
+    // component of difference rows, bounds and disjunctions over one or two tie classes that
+    // is a forest once its tie classes are contracted gets every atom's exact values by two
+    // passes of arc revision ([`forest_domains`]), O(n log n) plus the size of the answer,
+    // and its disjunctions are then asked about no symbol. The tradeoffs: the answer is exact
+    // where main's may be a hull, so it can be narrower (sound), and its size is that of the
+    // answer (`x[k+1] - x[k]` in {0, 10} gives `x[n]` n + 1 intervals); a component with a
+    // cycle, two disjunctions on one edge, a disjunction over three classes or more, or a
+    // row that is not a difference row keeps the naive way.
+    let (tree_doms, tree_handled) = if !old_path() && !ors.is_empty() {
+        forest_domains(&linked, &ors, &model)
+    } else {
+        (HashMap::new(), vec![false; ors.len()])
+    };
+    for (k, s) in syms.iter().enumerate() {
+        if let (Some(d), Ok(o)) = (tree_doms.get(s), &mut out[k]) {
+            *o = o.meet(d);
+        }
+    }
     // For each disjunction, its disjuncts with a point and their projections, each sorted by
     // symbol; read only to tighten a hull, so kept only with two disjunctions or more.
     let mut seen: Vec<Option<Vec<Projected>>> = Vec::new();
@@ -8838,7 +8859,9 @@ fn project_parts(
                         .cloned()
                         .collect()
                 };
-                set.extend(touched(atoms, &roots).into_iter().map(|k| syms[k].clone()));
+                if !tree_handled[j] {
+                    set.extend(touched(atoms, &roots).into_iter().map(|k| syms[k].clone()));
+                }
                 keep.push(set);
                 place.push((j, t));
             }
@@ -8906,7 +8929,11 @@ fn project_parts(
                 // search for one would choose by name.
                 let maybe = !matches!(s, Ok(None));
                 if maybe {
-                    let ks = touched(d.atoms(), &roots);
+                    let ks = if tree_handled[j] {
+                        Vec::new()
+                    } else {
+                        touched(d.atoms(), &roots)
+                    };
                     wanted = Some(match wanted {
                         None => ks,
                         Some(ws) => ws
@@ -8937,6 +8964,7 @@ fn project_parts(
                         None => atoms.contains(&syms[k]),
                     })
                     .collect(),
+                None if tree_handled[j] => Vec::new(),
                 None => touched(atoms, &roots),
             };
             let sub: Vec<Atom> = ks.iter().map(|&k| syms[k].clone()).collect();
@@ -10390,6 +10418,586 @@ fn is_difference(c: &Con) -> bool {
         }
         _ => false,
     }
+}
+
+/// The exact domain of each atom of a component whose base rows are difference rows and
+/// bounds and whose disjunctions name atoms of one or two tie classes each (atoms whose
+/// differences the base fixes), with difference rows and bounds in every disjunct, when the
+/// component, with its tie classes contracted, is a forest. Two passes of arc revision over a forest
+/// give each atom the values it takes at some point (Freuder 1982). Also, for each
+/// disjunction, whether its component was handled so.
+fn forest_domains(
+    linked: &Linked,
+    ors: &[Vec<Rc<Parts>>],
+    model: &Model,
+) -> (HashMap<Atom, IntervalSet>, Vec<bool>) {
+    let mut handled = vec![false; ors.len()];
+    let mut doms: HashMap<Atom, IntervalSet> = HashMap::new();
+    let n_base = linked.parent.len();
+    let mut free: Vec<&Atom> = Vec::new();
+    let mut free_id: HashMap<&Atom, usize> = HashMap::new();
+    let mut units_of: Vec<Vec<usize>> = Vec::with_capacity(ors.len());
+    for ds in ors {
+        let atoms: BTreeSet<&Atom> = ds.iter().flat_map(|d| d.atoms().iter()).collect();
+        let us: Vec<usize> = atoms
+            .iter()
+            .map(|a| match linked.ids.get(*a) {
+                Some(i) => linked.root(*i),
+                None => {
+                    let k = *free_id.entry(*a).or_insert_with(|| {
+                        free.push(*a);
+                        free.len() - 1
+                    });
+                    n_base + k
+                }
+            })
+            .collect();
+        units_of.push(us);
+    }
+    let n_units = n_base + free.len();
+    let mut uf: Vec<usize> = (0..n_units).collect();
+    fn find(uf: &mut [usize], mut i: usize) -> usize {
+        while uf[i] != i {
+            uf[i] = uf[uf[i]];
+            i = uf[i];
+        }
+        i
+    }
+    for us in &units_of {
+        for u in us.iter().skip(1) {
+            let (a, b) = (find(&mut uf, us[0]), find(&mut uf, *u));
+            if a != b {
+                uf[a.max(b)] = a.min(b);
+            }
+        }
+    }
+    // Each component, by its least unit.
+    let mut comps: BTreeMap<usize, ForestComponent> = BTreeMap::new();
+    for (j, ds) in ors.iter().enumerate() {
+        let Some(&u0) = units_of[j].first() else {
+            continue;
+        };
+        let c = find(&mut uf, u0);
+        let e = comps.entry(c).or_insert_with(|| ForestComponent {
+            groups: BTreeSet::new(),
+            free: Vec::new(),
+            ors: Vec::new(),
+            simple: true,
+        });
+        e.simple &= ds
+            .iter()
+            .all(|d| d.ors.is_empty() && d.cons.iter().all(is_difference));
+        e.ors.push(j);
+        for &u in &units_of[j] {
+            if u < n_base {
+                e.groups.insert(u);
+            }
+        }
+    }
+    for (k, a) in free.iter().enumerate() {
+        let c = find(&mut uf, n_base + k);
+        if let Some(e) = comps.get_mut(&c) {
+            e.free.push(*a);
+        }
+    }
+    for ForestComponent {
+        groups,
+        free: free_atoms,
+        ors: js,
+        simple,
+    } in comps.values()
+    {
+        if !*simple {
+            continue;
+        }
+        let cons: Vec<&Con> = groups
+            .iter()
+            .flat_map(|r| linked.held[*r].iter().map(|i| &linked.cons[*i]))
+            .collect();
+        if !cons.iter().all(|c| is_difference(c)) {
+            continue;
+        }
+        let g = if cons.is_empty() {
+            Differences {
+                atoms: Vec::new(),
+                node: HashMap::new(),
+                out: vec![Vec::new()],
+                back: vec![Vec::new()],
+                p: vec![Int::ZERO],
+            }
+        } else {
+            match Differences::of(&cons, model) {
+                Some(g) => g,
+                None => continue,
+            }
+        };
+        if let Some(d) = forest_component_domains(&g, free_atoms, js, ors) {
+            doms.extend(d);
+            for &j in js {
+                handled[j] = true;
+            }
+        }
+    }
+    (doms, handled)
+}
+
+/// One component for [`forest_domains`]: its groups of base rows, its atoms in no group, its
+/// disjunctions, and whether every disjunct holds only difference rows and bounds.
+struct ForestComponent<'a> {
+    groups: BTreeSet<usize>,
+    free: Vec<&'a Atom>,
+    ors: Vec<usize>,
+    simple: bool,
+}
+
+/// `set` with each piece moved by `[lo, hi]` (`None`: unbounded): `{x + t : x in set, lo <= t
+/// <= hi}`.
+fn shifted(set: &IntervalSet, lo: &Option<Int>, hi: &Option<Int>) -> IntervalSet {
+    if let (Some(l), Some(h)) = (lo, hi)
+        && l > h
+    {
+        return IntervalSet::empty();
+    }
+    let add = |e: &End, k: &Option<Int>| match (e, k) {
+        (End::Fin(x), Some(k)) => End::Fin(x + &Num::from(k)),
+        (End::Fin(_), None) => End::NegInf,
+        (e, _) => e.clone(),
+    };
+    IntervalSet::from_pieces(
+        set.pieces()
+            .iter()
+            .map(|(a, b)| {
+                let lo_end = add(a, lo);
+                let hi_end = match (b, hi) {
+                    (End::Fin(x), Some(k)) => End::Fin(x + &Num::from(k)),
+                    (End::Fin(_), None) => End::PosInf,
+                    (e, _) => e.clone(),
+                };
+                (lo_end, hi_end)
+            })
+            .collect(),
+    )
+}
+
+/// The meet (`meet`) or the join of `sets`, taken in pairs level by level, so that `k` sets
+/// of `P` intervals in all cost O(P log k), where one after another they cost O(P k): the
+/// `n` holes of one atom, each a disjunction, are met into one set.
+fn fold_in_pairs(mut sets: Vec<IntervalSet>, meet: bool) -> IntervalSet {
+    if sets.is_empty() {
+        return if meet {
+            IntervalSet::top()
+        } else {
+            IntervalSet::empty()
+        };
+    }
+    while sets.len() > 1 {
+        let mut next = Vec::with_capacity(sets.len().div_ceil(2));
+        let mut it = sets.into_iter();
+        while let Some(a) = it.next() {
+            next.push(match it.next() {
+                Some(b) if meet => a.meet(&b),
+                Some(b) => a.join(&b),
+                None => a,
+            });
+        }
+        sets = next;
+    }
+    sets.pop().expect("one set")
+}
+
+fn lower_to(a: &mut Option<Int>, v: Int) {
+    if a.as_ref().is_none_or(|x| v < *x) {
+        *a = Some(v);
+    }
+}
+
+fn raise_to(a: &mut Option<Int>, v: Int) {
+    if a.as_ref().is_none_or(|x| v > *x) {
+        *a = Some(v);
+    }
+}
+
+/// One disjunct on an edge or a class: the values of the first class (`ia`), of the second
+/// (`ib`), and the bounds of `second - first`.
+struct ForestPart {
+    ia: IntervalSet,
+    ib: IntervalSet,
+    lo: Option<Int>,
+    hi: Option<Int>,
+}
+
+/// An edge between classes `a < b`: bounds of `rep(b) - rep(a)`, and the disjunction on it.
+struct ForestEdge {
+    a: usize,
+    b: usize,
+    lo: Option<Int>,
+    hi: Option<Int>,
+    parts: Option<Vec<ForestPart>>,
+}
+
+fn forest_component_domains(
+    g: &Differences,
+    free_atoms: &[&Atom],
+    js: &[usize],
+    ors: &[Vec<Rc<Parts>>],
+) -> Option<HashMap<Atom, IntervalSet>> {
+    // Nodes: 0 is z, 1..=atoms the graph's atoms, then the free atoms.
+    let n0 = g.out.len();
+    let n = n0 + free_atoms.len();
+    let mut node: HashMap<&Atom, usize> = g.node.iter().map(|(a, v)| (*a, *v)).collect();
+    for (k, a) in free_atoms.iter().enumerate() {
+        node.insert(*a, n0 + k);
+    }
+    let p = |v: usize| -> Int { if v < n0 { g.p[v].clone() } else { Int::ZERO } };
+    // Tie classes: strongly connected components of the edges of reduced weight 0 between
+    // atoms (Kosaraju, explicit stacks).
+    let mut tout: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut tin: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (u, es) in g.out.iter().enumerate().skip(1) {
+        for (v, w) in es {
+            if *v != 0 && (w + &(&g.p[u] - &g.p[*v])).is_zero() {
+                tout[u].push(*v);
+                tin[*v].push(u);
+            }
+        }
+    }
+    let mut seen = vec![false; n];
+    let mut post: Vec<usize> = Vec::with_capacity(n);
+    for s in 1..n {
+        if seen[s] {
+            continue;
+        }
+        seen[s] = true;
+        let mut st = vec![(s, 0usize)];
+        while let Some((u, i)) = st.pop() {
+            if i < tout[u].len() {
+                st.push((u, i + 1));
+                let v = tout[u][i];
+                if !seen[v] {
+                    seen[v] = true;
+                    st.push((v, 0));
+                }
+            } else {
+                post.push(u);
+            }
+        }
+    }
+    let mut class = vec![usize::MAX; n];
+    let mut reps: Vec<usize> = Vec::new();
+    for &s in post.iter().rev() {
+        if class[s] != usize::MAX {
+            continue;
+        }
+        let c = reps.len();
+        reps.push(s);
+        class[s] = c;
+        let mut st = vec![s];
+        while let Some(u) = st.pop() {
+            for &v in &tin[u] {
+                if class[v] == usize::MAX {
+                    class[v] = c;
+                    st.push(v);
+                }
+            }
+        }
+    }
+    let off: Vec<Int> = (0..n)
+        .map(|v| {
+            if v == 0 {
+                Int::ZERO
+            } else {
+                &p(v) - &p(reps[class[v]])
+            }
+        })
+        .collect();
+    let nc = reps.len();
+    let mut dom: Vec<IntervalSet> = vec![IntervalSet::top(); nc];
+    let fin = |k: Int| End::Fin(Num::from(&k));
+    let mut edges: Vec<ForestEdge> = Vec::new();
+    let mut key: HashMap<(usize, usize), usize> = HashMap::new();
+    let mut cuf: Vec<usize> = (0..nc).collect();
+    fn find(uf: &mut [usize], mut i: usize) -> usize {
+        while uf[i] != i {
+            uf[i] = uf[uf[i]];
+            i = uf[i];
+        }
+        i
+    }
+    // The edge between classes `x` and `y`, made when new; `None` when it closes a cycle.
+    let mut edge = |x: usize,
+                    y: usize,
+                    edges: &mut Vec<ForestEdge>,
+                    key: &mut HashMap<(usize, usize), usize>|
+     -> Option<usize> {
+        let k = (x.min(y), x.max(y));
+        if let Some(e) = key.get(&k) {
+            return Some(*e);
+        }
+        let (a, b) = (find(&mut cuf, x), find(&mut cuf, y));
+        if a == b {
+            return None;
+        }
+        cuf[a.max(b)] = a.min(b);
+        edges.push(ForestEdge {
+            a: k.0,
+            b: k.1,
+            lo: None,
+            hi: None,
+            parts: None,
+        });
+        key.insert(k, edges.len() - 1);
+        Some(edges.len() - 1)
+    };
+    // `v <= u + k` between atoms, as a bound on `rep(b) - rep(a)` of `(lo, hi)`.
+    let le = |u: usize, v: usize, k: &Int, a: usize, lo: &mut Option<Int>, hi: &mut Option<Int>| {
+        // rep(cv) - rep(cu) <= k + off(u) - off(v)
+        let kk = &(k + &off[u]) - &off[v];
+        if class[u] == a {
+            lower_to(hi, kk);
+        } else {
+            raise_to(lo, -&kk);
+        }
+    };
+    for u in 0..n0 {
+        for (v, w) in &g.out[u] {
+            let v = *v;
+            match (u, v) {
+                (0, v) => {
+                    let c = class[v];
+                    dom[c] = dom[c].meet(&IntervalSet::range(End::NegInf, fin(w - &off[v])));
+                }
+                (u, 0) => {
+                    let c = class[u];
+                    dom[c] = dom[c].meet(&IntervalSet::range(fin(&(-w) - &off[u]), End::PosInf));
+                }
+                (u, v) if class[u] == class[v] => {}
+                (u, v) => {
+                    let e = edge(class[u], class[v], &mut edges, &mut key)?;
+                    let a = edges[e].a;
+                    let (mut lo, mut hi) = (edges[e].lo.take(), edges[e].hi.take());
+                    le(u, v, w, a, &mut lo, &mut hi);
+                    edges[e].lo = lo;
+                    edges[e].hi = hi;
+                }
+            }
+        }
+    }
+    // The disjunctions; those over one class are met into its set at the end, all at once.
+    let mut unary: Vec<Vec<IntervalSet>> = vec![Vec::new(); nc];
+    for &j in js {
+        let mut cls: Vec<usize> = Vec::new();
+        for d in &ors[j] {
+            for a in d.atoms().iter() {
+                cls.push(class[*node.get(a)?]);
+            }
+        }
+        cls.sort_unstable();
+        cls.dedup();
+        let (ca, cb) = match cls[..] {
+            [c] => (c, None),
+            [x, y] => (x, Some(y)),
+            _ => return None,
+        };
+        let mut parts: Vec<ForestPart> = Vec::new();
+        'd: for d in &ors[j] {
+            let mut part = ForestPart {
+                ia: IntervalSet::top(),
+                ib: IntervalSet::top(),
+                lo: None,
+                hi: None,
+            };
+            for c in &d.cons {
+                let ts: Vec<(usize, bool)> = c
+                    .lin
+                    .terms
+                    .iter()
+                    .map(|(a, k)| node.get(a).map(|v| (*v, k.is_positive())))
+                    .collect::<Option<_>>()?;
+                // Each row as edges `x → y` of weight `k` (`y <= x + k`), `x` or `y` 0 for z.
+                let (x, y) = match ts[..] {
+                    [(i, true)] => (i, 0),
+                    [(i, false)] => (0, i),
+                    [(i, true), (j2, false)] => (i, j2),
+                    [(i, false), (j2, true)] => (j2, i),
+                    _ => return None,
+                };
+                let k = c.lin.constant.clone();
+                let mut rows = vec![(x, y, k.clone())];
+                if c.rel == Rel::Eq {
+                    rows.push((y, x, -&k));
+                }
+                for (x, y, k) in rows {
+                    match (x, y) {
+                        (0, v) => {
+                            let s = IntervalSet::range(End::NegInf, fin(&k - &off[v]));
+                            if class[v] == ca {
+                                part.ia = part.ia.meet(&s)
+                            } else {
+                                part.ib = part.ib.meet(&s)
+                            }
+                        }
+                        (u, 0) => {
+                            let s = IntervalSet::range(fin(&(-&k) - &off[u]), End::PosInf);
+                            if class[u] == ca {
+                                part.ia = part.ia.meet(&s)
+                            } else {
+                                part.ib = part.ib.meet(&s)
+                            }
+                        }
+                        (u, v) if class[u] == class[v] => {
+                            // A fixed difference: holds or empties the disjunct.
+                            if &off[v] - &off[u] > k {
+                                continue 'd;
+                            }
+                        }
+                        (u, v) => le(u, v, &k, ca, &mut part.lo, &mut part.hi),
+                    }
+                }
+            }
+            if part.ia.is_empty() || part.ib.is_empty() {
+                continue;
+            }
+            parts.push(part);
+        }
+        match cb {
+            None => {
+                unary[ca].push(fold_in_pairs(
+                    parts.iter().map(|pt| pt.ia.clone()).collect(),
+                    false,
+                ));
+            }
+            Some(cb) => {
+                let e = edge(ca, cb, &mut edges, &mut key)?;
+                if edges[e].parts.is_some() {
+                    return None;
+                }
+                edges[e].parts = Some(parts);
+            }
+        }
+    }
+    for (d, us) in dom.iter_mut().zip(unary) {
+        if !us.is_empty() {
+            *d = d.meet(&fold_in_pairs(us, true));
+        }
+    }
+    // Two passes of arc revision over each tree.
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nc];
+    for (i, e) in edges.iter().enumerate() {
+        adj[e.a].push(i);
+        adj[e.b].push(i);
+    }
+    let revise = |e: &ForestEdge, x: usize, dx: &IntervalSet| -> IntervalSet {
+        // The values of the other end `y` that some value of `x` in `dx` supports.
+        let fwd = x == e.a;
+        let orient = |lo: &Option<Int>, hi: &Option<Int>| -> (Option<Int>, Option<Int>) {
+            if fwd {
+                (lo.clone(), hi.clone())
+            } else {
+                (hi.as_ref().map(|h| -h), lo.as_ref().map(|l| -l))
+            }
+        };
+        match &e.parts {
+            None => {
+                let (lo, hi) = orient(&e.lo, &e.hi);
+                shifted(dx, &lo, &hi)
+            }
+            Some(parts) => {
+                let mut s: Vec<IntervalSet> = Vec::with_capacity(parts.len());
+                for pt in parts {
+                    let (mut lo, mut hi) = (e.lo.clone(), e.hi.clone());
+                    if let Some(l) = &pt.lo {
+                        raise_to(&mut lo, l.clone())
+                    }
+                    if let Some(h) = &pt.hi {
+                        lower_to(&mut hi, h.clone())
+                    }
+                    let (lo, hi) = orient(&lo, &hi);
+                    let (ix, iy) = if fwd {
+                        (&pt.ia, &pt.ib)
+                    } else {
+                        (&pt.ib, &pt.ia)
+                    };
+                    s.push(shifted(&dx.meet(ix), &lo, &hi).meet(iy));
+                }
+                fold_in_pairs(s, false)
+            }
+        }
+    };
+    // Each tree in BFS order from its least class: (node, parent, edge).
+    let mut visited = vec![false; nc];
+    let mut orders: Vec<Vec<(usize, usize, usize)>> = Vec::new();
+    for root in 0..nc {
+        if visited[root] {
+            continue;
+        }
+        visited[root] = true;
+        let mut order: Vec<(usize, usize, usize)> = Vec::new();
+        let mut q = std::collections::VecDeque::from([root]);
+        while let Some(u) = q.pop_front() {
+            for &ei in &adj[u] {
+                let e = &edges[ei];
+                let v = if e.a == u { e.b } else { e.a };
+                if !visited[v] {
+                    visited[v] = true;
+                    order.push((v, u, ei));
+                    q.push_back(v);
+                }
+            }
+        }
+        orders.push(order);
+    }
+    let hull = |s: &IntervalSet| match s.bounds() {
+        Some((l, h)) => IntervalSet::range(l.clone(), h.clone()),
+        None => IntervalSet::empty(),
+    };
+    // First the two passes on the hulls alone, each set one interval, so that the exact
+    // passes below start from sets no wider than the bounds the whole tree gives: a set built
+    // leaves to root then holds only values inside them (`x[k+1] - x[k]` in {0, 10} with both
+    // ends 0 keeps `{0}` at every step, not `k + 1` intervals).
+    let mut hdom: Vec<IntervalSet> = dom.iter().map(hull).collect();
+    for order in &orders {
+        for &(v, u, ei) in order.iter().rev() {
+            let s = hull(&revise(&edges[ei], v, &hdom[v]));
+            hdom[u] = hdom[u].meet(&s);
+        }
+        for &(v, u, ei) in order {
+            let s = hull(&revise(&edges[ei], u, &hdom[u]));
+            hdom[v] = hdom[v].meet(&s);
+        }
+    }
+    for (d, h) in dom.iter_mut().zip(&hdom) {
+        *d = d.meet(h);
+    }
+    for order in &orders {
+        for &(v, u, ei) in order.iter().rev() {
+            let s = revise(&edges[ei], v, &dom[v]);
+            dom[u] = dom[u].meet(&s);
+        }
+        for &(v, u, ei) in order {
+            let s = revise(&edges[ei], u, &dom[u]);
+            dom[v] = dom[v].meet(&s);
+        }
+    }
+    if dom.iter().any(IntervalSet::is_empty) {
+        return None;
+    }
+    Some(
+        (1..n)
+            .map(|v| {
+                let c = &off[v];
+                let k = Some(c.clone());
+                (
+                    (if v < n0 {
+                        g.atoms[v - 1]
+                    } else {
+                        free_atoms[v - n0]
+                    })
+                    .clone(),
+                    shifted(&dom[class[v]], &k, &k),
+                )
+            })
+            .collect(),
+    )
 }
 
 /// The bounds that the row `lin >= 0` gives each of its atoms from the bounds `b` of the
@@ -12774,10 +13382,21 @@ mod by_halves_against_old {
                                 );
                                 if x != y {
                                     narrower += 1;
-                                    assert!(
-                                        !skipped.is_empty() || general,
-                                        "{sym} {x:?} narrower than {y:?} with nothing refused, case {case}: {f}"
-                                    );
+                                    // A narrower hull is sound when every value it drops has
+                                    // no point: `decide` on the old path says so for each.
+                                    for val in (0..=20i128).filter(|&val| {
+                                        y.contains(val as i64) && !x.contains(val as i64)
+                                    }) {
+                                        let g = Formula::and(vec![
+                                            f.clone(),
+                                            eq(Lin::atom(sym.clone()).minus(&Lin::constant(val))),
+                                        ]);
+                                        assert_eq!(
+                                            old(|| decide(&g)).ok(),
+                                            Some(false),
+                                            "{sym} {x:?} drops {val}, which has a point, case {case}: {f}"
+                                        );
+                                    }
                                 }
                                 let one = project(&f, sym);
                                 assert_eq!(

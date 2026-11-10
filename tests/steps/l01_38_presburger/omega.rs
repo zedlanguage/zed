@@ -1119,3 +1119,354 @@ fn project_each_on_a_chained_pipeline_scales() {
         },
     );
 }
+
+/// Families of `n` holes, each a disjunction, on a chain of difference rows (item
+/// PROJECT-each-chain-xr). `chain`: [`dead2`] chained; `both`: [`dead2`] chained both ways (`|y[k+1] - y[k]| <= 2`);
+/// `slope`: `1 <= y[k+1] - y[k] <= 5`, `y[k]` in `{3k, 3k + 2}`; `acc`: `x[k+1] == x[k] + y[k]`,
+/// `x0 == 0`, `y[k]` in `{0, 2}`; `mono`/`mono1`: `y[k+1] >= y[k]`, `0 <= y[k] <= 20`, `y[k]` in
+/// `{9, 11}` / `{10, 11}`; `eqchain`: `y[k+1] == y[k]`; `band`: `0 <= y[k+1] - y[k] <= 1`, both with
+/// `y[k]` in `{0, 10}`; `wide`: `band` with `y[k]` in `{0, 4n}`; `twoway`: `|y[k+1] - y[k]| <= 2`,
+/// `y[k]` in `{0, 2}`, `y[k] == 1 || z[k] >= 0`, `z[k] <= 5`; `pair`: `y[k+1] >= y[k] - 2`,
+/// `(y[k], y[k+1])` in `{(0, 0), (2, 2)}` for even `k`; `steps`: `x[k+1] - x[k]` in `{0, 10}`,
+/// `x0 == 0`; `pinned`: also `x[n] == 0`; `pinlast`: also `x[n] <= 10`.
+fn holes_family(fam: &str, n: usize) -> (Formula, Vec<Atom>) {
+    let y = |k: usize| format!("y{k}");
+    let x = |k: usize| format!("x{k}");
+    match fam {
+        "chain" => (
+            dead2(n, true, "z"),
+            (0..n)
+                .flat_map(|k| [sym(&format!("z{k}")), sym(&y(k))])
+                .collect(),
+        ),
+        "both" => {
+            let mut fs = vec![dead2(n, true, "z")];
+            for k in 0..n.saturating_sub(1) {
+                fs.push(ge(&[(&y(k), 1), (&y(k + 1), -1)], 2));
+            }
+            let syms = (0..n)
+                .flat_map(|k| [sym(&format!("z{k}")), sym(&y(k))])
+                .collect();
+            (Formula::and(fs), syms)
+        }
+        "mono" | "mono1" | "eqchain" | "band" | "wide" | "twoway" | "pair" => {
+            let mut fs = Vec::new();
+            let mut names = Vec::new();
+            for k in 0..n {
+                let (yk, y1) = (y(k), y(k + 1));
+                match fam {
+                    "mono" | "mono1" => {
+                        let lo = if fam == "mono" { -9 } else { -10 };
+                        if k + 1 < n {
+                            fs.push(ge(&[(&y1, 1), (&yk, -1)], 0));
+                        }
+                        fs.push(ge(&[(&yk, 1)], 0));
+                        fs.push(ge(&[(&yk, -1)], 20));
+                        fs.push(Formula::or(vec![eq(&[(&yk, 1)], lo), eq(&[(&yk, 1)], -11)]));
+                    }
+                    "eqchain" | "band" | "wide" => {
+                        if k + 1 < n {
+                            if fam == "eqchain" {
+                                fs.push(eq(&[(&y1, 1), (&yk, -1)], 0));
+                            } else {
+                                fs.push(ge(&[(&y1, 1), (&yk, -1)], 0));
+                                fs.push(ge(&[(&yk, 1), (&y1, -1)], 1));
+                            }
+                        }
+                        let top = if fam == "wide" { -4 * n as i128 } else { -10 };
+                        fs.push(Formula::or(vec![eq(&[(&yk, 1)], 0), eq(&[(&yk, 1)], top)]));
+                    }
+                    "twoway" => {
+                        let z = format!("z{k}");
+                        if k + 1 < n {
+                            fs.push(ge(&[(&y1, 1), (&yk, -1)], 2));
+                            fs.push(ge(&[(&yk, 1), (&y1, -1)], 2));
+                        }
+                        fs.push(Formula::or(vec![eq(&[(&yk, 1)], 0), eq(&[(&yk, 1)], -2)]));
+                        fs.push(Formula::or(vec![eq(&[(&yk, 1)], -1), ge(&[(&z, 1)], 0)]));
+                        fs.push(ge(&[(&z, -1)], 5));
+                        names.push(sym(&z));
+                    }
+                    _ => {
+                        fs.push(ge(&[(&y1, 1), (&yk, -1)], 2));
+                        if k % 2 == 0 {
+                            fs.push(Formula::or(vec![
+                                Formula::and(vec![eq(&[(&yk, 1)], 0), eq(&[(&y1, 1)], 0)]),
+                                Formula::and(vec![eq(&[(&yk, 1)], -2), eq(&[(&y1, 1)], -2)]),
+                            ]));
+                        }
+                    }
+                }
+                names.push(sym(&yk));
+            }
+            (Formula::and(fs), names)
+        }
+        "steps" | "pinned" | "pinlast" => {
+            let mut fs = vec![eq(&[(&x(0), 1)], 0)];
+            for k in 0..n {
+                fs.push(Formula::or(vec![
+                    eq(&[(&x(k + 1), 1), (&x(k), -1)], 0),
+                    eq(&[(&x(k + 1), 1), (&x(k), -1)], -10),
+                ]));
+            }
+            if fam == "pinned" {
+                fs.push(eq(&[(&x(n), 1)], 0));
+            }
+            if fam == "pinlast" {
+                fs.push(ge(&[(&x(n), -1)], 10));
+            }
+            (Formula::and(fs), (1..=n).map(|k| sym(&x(k))).collect())
+        }
+        "slope" => {
+            let mut fs = Vec::new();
+            for k in 0..n {
+                if k + 1 < n {
+                    fs.push(ge(&[(&y(k + 1), 1), (&y(k), -1)], -1));
+                    fs.push(ge(&[(&y(k), 1), (&y(k + 1), -1)], 5));
+                }
+                let c = 3 * k as i128;
+                fs.push(Formula::or(vec![
+                    eq(&[(&y(k), 1)], -c),
+                    eq(&[(&y(k), 1)], -c - 2),
+                ]));
+            }
+            (Formula::and(fs), (0..n).map(|k| sym(&y(k))).collect())
+        }
+        f => panic!("no family {f}"),
+    }
+}
+
+/// Projecting every symbol of a family of `n` holes (each a disjunction) on a chain of
+/// difference rows costs O(n log n): each component of difference rows and disjunctions over
+/// one or two tie classes that is a forest gets every atom's values by two passes of arc
+/// revision, where each disjunction was asked about every symbol of its group before, Θ(n²)
+/// in all (item PROJECT-each-chain-xr; 16.5 to 41.5 times the instructions from 64 to 128
+/// before, 2.2 times from 128 to 256 after).
+#[test]
+fn holes_on_difference_chains_scale() {
+    for fam in [
+        "chain", "both", "twoway", "pair", "mono", "mono1", "eqchain", "band", "wide", "slope",
+        "steps", "pinned", "pinlast",
+    ] {
+        let inputs = scaling::inputs(16, |n| holes_family(fam, n));
+        scaling::check_order(&format!("every symbol of the family {fam}"), 16, 1, |n| {
+            let (f, s) = &inputs[&n];
+            let _ = std::hint::black_box(project_each(f, s));
+        });
+    }
+}
+
+/// `x[k+1] - x[k]` in `{0, 10}` from `x0 == 0` gives `x[k]` exactly the multiples of 10 up to
+/// `10k`; with `x[n] == 0` every `x[k]` is 0, and with `x[n] <= 10` every `x[k]` is 0 or 10
+/// (the steps rise and never fall). Before item PROJECT-each-chain-xr each answer was the hull,
+/// `[0..=10k]` and `[0..=10]`.
+#[test]
+fn steps_of_ten_are_exact() {
+    let n = 6;
+    for fam in ["steps", "pinned", "pinlast"] {
+        let (f, syms) = holes_family(fam, n);
+        let (each, skipped) = project_each(&f, &syms).expect("projected");
+        assert!(skipped.is_empty(), "{fam}: {skipped:?}");
+        for (i, h) in each.into_iter().enumerate() {
+            let k = i as i128 + 1;
+            let values: Vec<i128> = match fam {
+                "steps" => (0..=k).map(|j| 10 * j).collect(),
+                "pinned" => vec![0],
+                _ => vec![0, 10],
+            };
+            assert_eq!(
+                h.expect("a set").to_string(),
+                runs(&values),
+                "{fam}: x{k} of {n}"
+            );
+        }
+    }
+}
+
+/// `values`, sorted, as [`IntervalSet`] prints them: `[a..=b, c..=d]`, one piece per run.
+fn runs(values: &[i128]) -> String {
+    let mut pieces: Vec<(i128, i128)> = Vec::new();
+    for &v in values {
+        match pieces.last_mut() {
+            Some((_, hi)) if *hi + 1 == v => *hi = v,
+            _ => pieces.push((v, v)),
+        }
+    }
+    let inner: Vec<String> = pieces.iter().map(|(a, b)| format!("{a}..={b}")).collect();
+    format!("[{}]", inner.join(", "))
+}
+
+/// A row `Σ c·v[i] + k >= 0`, or `== 0` with `eq`, over atoms `v0, v1, ...`.
+#[derive(Clone)]
+struct Row {
+    terms: Vec<(usize, i128)>,
+    k: i128,
+    eq: bool,
+}
+
+impl Row {
+    fn formula(&self) -> Formula {
+        let names: Vec<String> = self.terms.iter().map(|(i, _)| format!("v{i}")).collect();
+        let terms: Vec<(&str, i128)> = (names.iter().zip(&self.terms))
+            .map(|(s, (_, c))| (s.as_str(), *c))
+            .collect();
+        if self.eq {
+            eq(&terms, self.k)
+        } else {
+            ge(&terms, self.k)
+        }
+    }
+
+    fn holds(&self, p: &[i128]) -> bool {
+        let s: i128 = self.terms.iter().map(|(i, c)| c * p[*i]).sum::<i128>() + self.k;
+        if self.eq { s == 0 } else { s >= 0 }
+    }
+}
+
+/// A random row between the atoms `a` and `b` (the same atom for a bound): `b - a >= k`,
+/// `b - a == k`, `a <= k` or `b >= k`, with `|k| <= 2`.
+fn random_row(rng: &mut Rng, a: usize, b: usize) -> Row {
+    let k = rng.int(-2, 2) as i128;
+    match rng.below(4) {
+        0 if a != b => Row {
+            terms: vec![(b, 1), (a, -1)],
+            k: -k,
+            eq: false,
+        },
+        1 if a != b => Row {
+            terms: vec![(b, 1), (a, -1)],
+            k: -k,
+            eq: true,
+        },
+        2 => Row {
+            terms: vec![(a, -1)],
+            k,
+            eq: false,
+        },
+        _ => Row {
+            terms: vec![(b, 1)],
+            k: -k,
+            eq: false,
+        },
+    }
+}
+
+/// Random components that are forests once their tie classes are contracted: 2 to 3 classes
+/// of 1 or 2 atoms (`v[j] == v[i] + c` ties the second to the first), each atom in `[-2..=2]`,
+/// each tree edge a pair of difference rows or a disjunction of two conjunctions of one or
+/// two rows over its two classes, and up to two disjunctions over one atom. Every atom's
+/// answer is the set of values it takes at the points found by counting over `[-2..=2]` one
+/// by one, which hold every point. Before item PROJECT-each-chain-xr an answer could be the
+/// hull of that set.
+#[test]
+fn forest_answers_match_enumeration() {
+    let mut rng = Rng::new(38);
+    let mut checked = 0;
+    for case in 0..150 {
+        let classes = 2 + rng.below(2);
+        let mut members: Vec<Vec<usize>> = Vec::new();
+        let mut base: Vec<Row> = Vec::new();
+        let mut atoms = 0;
+        for _ in 0..classes {
+            let first = atoms;
+            atoms += 1;
+            let mut m = vec![first];
+            if rng.below(2) == 0 {
+                let c = rng.int(-1, 1) as i128;
+                base.push(Row {
+                    terms: vec![(atoms, 1), (first, -1)],
+                    k: -c,
+                    eq: true,
+                });
+                m.push(atoms);
+                atoms += 1;
+            }
+            members.push(m);
+        }
+        for v in 0..atoms {
+            base.push(Row {
+                terms: vec![(v, 1)],
+                k: 2,
+                eq: false,
+            });
+            base.push(Row {
+                terms: vec![(v, -1)],
+                k: 2,
+                eq: false,
+            });
+        }
+        let mut ors: Vec<Vec<Vec<Row>>> = Vec::new();
+        for c in 1..classes {
+            let p = rng.below(c);
+            let a = rng.pick(&members[p]);
+            let b = rng.pick(&members[c]);
+            if rng.below(2) == 0 {
+                base.push(random_row(&mut rng, a, b));
+                base.push(random_row(&mut rng, a, b));
+            } else {
+                let mut d = Vec::new();
+                for _ in 0..2 {
+                    d.push(
+                        (0..1 + rng.below(2))
+                            .map(|_| random_row(&mut rng, a, b))
+                            .collect(),
+                    );
+                }
+                ors.push(d);
+            }
+        }
+        for _ in 0..rng.below(3) {
+            let v = rng.below(atoms);
+            ors.push(vec![
+                vec![random_row(&mut rng, v, v)],
+                vec![random_row(&mut rng, v, v)],
+            ]);
+        }
+        let mut seen: Vec<Vec<i128>> = vec![Vec::new(); atoms];
+        let mut p = vec![-2i128; atoms];
+        loop {
+            let holds = base.iter().all(|r| r.holds(&p))
+                && ors
+                    .iter()
+                    .all(|d| d.iter().any(|rs| rs.iter().all(|r| r.holds(&p))));
+            if holds {
+                for (s, v) in seen.iter_mut().zip(&p) {
+                    s.push(*v);
+                }
+            }
+            let Some(i) = p.iter().position(|v| *v < 2) else {
+                break;
+            };
+            p[i] += 1;
+            for v in &mut p[..i] {
+                *v = -2;
+            }
+        }
+        if seen[0].is_empty() {
+            continue;
+        }
+        let mut fs: Vec<Formula> = base.iter().map(Row::formula).collect();
+        for d in &ors {
+            fs.push(Formula::or(
+                d.iter()
+                    .map(|rs| Formula::and(rs.iter().map(Row::formula).collect()))
+                    .collect(),
+            ));
+        }
+        let f = Formula::and(fs);
+        let syms: Vec<Atom> = (0..atoms).map(|v| sym(&format!("v{v}"))).collect();
+        let (each, skipped) = project_each(&f, &syms).expect("projected");
+        assert!(skipped.is_empty(), "case {case}: {skipped:?}");
+        for (v, (h, s)) in each.into_iter().zip(&mut seen).enumerate() {
+            s.sort_unstable();
+            s.dedup();
+            assert_eq!(
+                h.expect("a set").to_string(),
+                runs(s),
+                "case {case}: v{v} of {f}"
+            );
+        }
+        checked += 1;
+    }
+    assert!(checked >= 50, "only {checked} cases have a point");
+}

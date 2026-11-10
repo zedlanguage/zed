@@ -3280,3 +3280,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A `HashMap` held in the resolver and updated in place at each use (`entry(id).or_insert(span)`, then the smaller of the two spans), drained once at the end | `Resolver::order`, `Resolver::above_errors` | Mutation (gap 11) | A map from binder to its first early use, built by a keyed push with `min` as the merge, read once after the walk |
 | Binary search on sorted vectors (`partition_point`) for a line number and for the statement of a block that holds a use | `Resolver::above_errors` | Key range queries (gap 9) | `before` on a map keyed by line start or by statement start |
 | A range query on the ordered map of uses by span (`BTreeMap::range`) | `Resolver::uses_in` | Key range queries (gap 9) | `after` and `before` on the uses map |
+
+## Entries from PROJECT-each-chain-xr (`crates/zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Union-find arrays (`uf` over groups and free atoms, `cuf` over tie classes) mutated in place, with path halving | `forest_domains`, `forest_component_domains` (the closure `edge`) | Mutation (gap 11) | a persistent union-find (a persistent array of parents), O(log n) a step; or the components as one sort of the links |
+| Kosaraju's two searches with explicit stacks of `(node, next edge)` and in-place `seen`, `post` and `class` arrays | `forest_component_domains` (tie classes) | Mutation (gap 11) | a fold over the nodes threading a persistent visited set and the postorder list |
+| A labeled `continue 'd` that drops a disjunct as soon as one of its rows inside a tie class fails | `forest_component_domains` | Early exit (gap 12) | a quantifier over the disjunct's rows (`all`), as step L3.15a gives |
+| Domains of tie classes (`dom`, `hdom`) updated in place by the two passes over each tree's breadth-first order | `forest_component_domains` | Mutation (gap 11) | two folds over the order, leaves to root and back, threading a persistent map from class to set |
