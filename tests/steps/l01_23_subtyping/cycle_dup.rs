@@ -216,6 +216,74 @@ fn many_arms_scale() {
     });
 }
 
+/// `(int) -> (x0 & x1 & …)`, the parts in the order given.
+fn returns_meet(parts: Vec<Expr>) -> Expr {
+    f(Expr::And(parts))
+}
+
+/// `Node` with `n` more arms `(int) -> ((Node | #bk, top) & Tree)`, each written once, or with
+/// `twice` written a second time with the parts of its meet the other way round,
+/// `(int) -> (Tree & (Node | #bk, top))`.
+fn meets_in_orders(n: usize, twice: bool) -> [Expr; 3] {
+    let mut arms = vec![f(r(THUNK)), tt()];
+    for k in 0..n {
+        let b = || {
+            pair(
+                or(vec![r(NODE), atom(&format!("b{k}"))]),
+                Expr::Type(Type::top()),
+            )
+        };
+        arms.push(returns_meet(vec![b(), r(TREE)]));
+        if twice {
+            arms.push(returns_meet(vec![r(TREE), b()]));
+        }
+    }
+    base(or(arms))
+}
+
+/// A meet is one type whatever the order of its parts, as a union is whatever the order of its
+/// arms (item GROUP-search-canon-key): `(int) -> ((Node | #bk, top) & Tree)` and the same with
+/// the parts of its meet the other way round are one morphism type, so writing each arm a
+/// second time in the other order changes no verdict. (The decider and the search already
+/// agreed here before the item; the order differences it removed are those of
+/// `group_oracle::meets_whose_parts_differ_in_order_agree_across_orders`.)
+#[test]
+fn many_meets_written_in_two_orders_are_read_as_written_once() {
+    for n in [1, 2, 5] {
+        assert_eq!(
+            verdicts(meets_in_orders(n, true)),
+            verdicts(meets_in_orders(n, false)),
+            "n = {n}"
+        );
+    }
+}
+
+/// Deciding the group of [`meets_in_orders`] with every meet written twice, at `n` and `8n`
+/// arms: each part is read once and the operands of a meet are of one color, so building the
+/// canonical form stays within `n log n` (item GROUP-search-canon-key).
+#[test]
+fn many_meets_in_two_orders_scale() {
+    let n = 512;
+    let groups = scaling::inputs(n, |m| {
+        let defs = (["Node", "Tree", "Thunk"]
+            .into_iter()
+            .zip(meets_in_orders(m, true)))
+        .map(|(name, body)| Def {
+            name: name.into(),
+            params: vec![],
+            body,
+        })
+        .collect();
+        Group::new(defs).unwrap_or_else(|e| panic!("{}", e.message))
+    });
+    scaling::check_order("a union of n meets each written in two orders", n, 1, |m| {
+        Type::forget_emptiness();
+        for t in &groups[&m].instance(vec![]) {
+            std::hint::black_box(t.decided_by_group());
+        }
+    });
+}
+
 /// The group of `bodies` named `Node`, `Tree`, `Thunk`, then `A1`, `A2` and on.
 fn named(bodies: Vec<Expr>) -> Group {
     let defs = (bodies.into_iter().enumerate())

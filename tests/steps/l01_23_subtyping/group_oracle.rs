@@ -2835,6 +2835,26 @@ fn verdicts_agree_across_orders(
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
 
+/// Systems of the meets family whose verdicts depend on the order of the parts of their meets
+/// while a meet is keyed by its spelling: seed 11 is refused for want of a witness in three of
+/// its four orders and inhabited in the fourth, as a meet written in two orders is two types,
+/// and a morphism type returning it two morphism types. Once a meet is one type in either
+/// order, each of these should be decided alike in every order tried, the arms and parts
+/// shuffled too. Red on main. Of the candidate keys of item GROUP-search-canon-key, one made
+/// these agree but not the whole sweep, and changed printing; the other leaves seed 8022
+/// refused in two of its orders.
+#[test]
+#[ignore = "GROUP-search-canon-key: blocked; verdicts still depend on meet order; open"]
+fn meets_whose_parts_differ_in_order_agree_across_orders() {
+    for seed in [
+        11, 213, 374, 399, 433, 441, 952, 1059, 1847, 2153, 2700, 3763, 3855, 4676, 5276, 5302,
+        5373, 5522, 5933, 6219, 6304, 7932, 8022, 8040, 8754, 8858, 9454, 10677, 11489, 12718,
+        12856, 13004, 13161, 13383, 13665, 14180, 14382, 14702, 14813, 15093, 15218, 15717,
+    ] {
+        verdicts_agree_across_orders("meets", gen_meets, seed..seed + 1, (true, true));
+    }
+}
+
 /// Groups of four, five and six definitions of the X14 family give the same verdicts in every
 /// order tried, up to the reason of a refusal (GROUP-closure-order).
 #[test]
