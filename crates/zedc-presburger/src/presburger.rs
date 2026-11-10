@@ -89,7 +89,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-use imbl::OrdSet;
+use imbl::{OrdMap, OrdSet};
 
 use zed_kernel::refine::Refine;
 use zed_kernel::value::fresh_id;
@@ -975,7 +975,7 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
     let implied = if old_path() {
         Vec::new()
     } else {
-        disjunction_hulls(&p.ors)
+        disjunction_hulls(&p.ors, &mut DeepHulls::default())
     };
     let ask = |mut p: Parts, rows: Vec<Con>| -> Result<Option<Model>, Refusal> {
         p.cons.extend(rows);
@@ -1078,52 +1078,330 @@ fn unit_rows_have_a_point(f: &Formula) -> Option<bool> {
     Some(!utvpi::integer_empty(ids.len(), &rows))
 }
 
-/// For each disjunction, the bounds on a linear form that every disjunct's own rows put on
-/// it, joined: when each disjunct bounds `l` from below by its rows on `l` alone, the
-/// disjunction implies the least of those bounds, and likewise above. A form is read up to
-/// its sign and constant (`s <= 1` and `s >= 3` are both rows on `s`), so the rows returned
-/// have the points of the disjunctions and more, and the formula with them has its own
-/// points. One pass over the disjuncts' rows. On `k` disjunctions such as `s == 2 || s == 3`
-/// along a chain, the rows `2 <= s <= 3` show by one solve of the base that a bound on the
-/// chain's end past what they allow leaves no point, where [`probe`] tests each disjunct by a
-/// propagation of the whole formula (COMPLEXITY.md DISJ-incremental).
-fn disjunction_hulls(ors: &[Vec<Rc<Parts>>]) -> Vec<Con> {
-    // The bounds each disjunct's rows put on each form ([`values::form_bounds`]).
-    let own = |d: &Parts| values::form_bounds(&d.cons);
+/// For each disjunction, the bounds on a linear form that every disjunct puts on it, joined:
+/// when each disjunct bounds `l` from below, the disjunction implies the least of those
+/// bounds, and likewise above. A disjunct's bounds are its deep hull ([`DeepHulls`]): those of its
+/// own rows on `l` alone, met with those its own disjunctions imply, at every level of the
+/// nest, so that `z >= 1` at the bottom of a nest of disjunctions is implied at its top. A
+/// disjunct whose deep hull shows it has no point is left out of the join, and a disjunction
+/// left with none gives the row `0 >= 1`. A form is read up to its sign and constant
+/// (`s <= 1` and `s >= 3` are both rows on `s`), so the rows returned have the points of the
+/// disjunctions and more, and the formula with them has its own points. On `k` disjunctions
+/// such as `s == 2 || s == 3` along a chain, the rows `2 <= s <= 3` show by one solve of the
+/// base that a bound on the chain's end past what they allow leaves no point, where [`probe`]
+/// tests each disjunct by a propagation of the whole formula (COMPLEXITY.md DISJ-incremental).
+/// `deep` keeps the hulls of the disjunctions found, so that a caller asking again joins each
+/// once; the hull of each disjunct is kept on it ([`Parts`]), so that it is found once in its
+/// life, however many questions read the formulas that hold it.
+fn disjunction_hulls(ors: &[Vec<Rc<Parts>>], deep: &mut DeepHulls) -> Vec<Con> {
     let mut rows = Vec::new();
     for ds in ors {
-        let Some((first, rest)) = ds.split_first() else {
+        if ds.is_empty() {
+            continue;
+        }
+        let Some(join) = deep.join(ds) else {
+            rows.push(Con::ge(&Lin::constant(0), &Lin::constant(1)));
             continue;
         };
-        let mut join = own(first);
-        for d in rest {
-            let b = own(d);
-            join.retain(|terms, (lo, hi)| {
-                let Some((l, h)) = b.get(terms) else {
-                    return false;
-                };
-                *lo = lo.take().zip(l.clone()).map(|(a, b)| a.min(b));
-                *hi = hi.take().zip(h.clone()).map(|(a, b)| a.max(b));
-                lo.is_some() || hi.is_some()
-            });
-            if join.is_empty() {
-                break;
-            }
-        }
-        for (terms, (lo, hi)) in join {
+        for (terms, (lo, hi)) in join.iter() {
             let form = Lin {
-                terms: terms.into_iter().collect(),
+                terms: terms.iter().cloned().collect(),
                 constant: Int::ZERO,
             };
             if let Some(l) = lo {
-                rows.push(Con::ge(&form, &Lin::constant(l)));
+                rows.push(Con::ge(&form, &Lin::constant(l.clone())));
             }
             if let Some(h) = hi {
-                rows.push(Con::ge(&Lin::constant(h), &form));
+                rows.push(Con::ge(&Lin::constant(h.clone()), &form));
             }
         }
     }
     rows
+}
+
+/// The bounds that each linear form has at every point of a part, each form read up to its
+/// sign and constant as [`values::form_bounds`] reads a row. A persistent map, so that a hull
+/// that is another with a few forms changed shares the rest.
+type HullMap = OrdMap<values::Form, values::Bounds>;
+
+/// A hull of [`DeepHulls`], under an id that no other hull of one call has, with the hull it
+/// was made from, if any: its id, its map, and the forms changed from it, so that hulls made
+/// from one hull are joined or met at those forms alone.
+#[derive(Clone)]
+struct Rooted {
+    id: u64,
+    map: HullMap,
+    from: Option<Rc<(u64, HullMap, Vec<values::Form>)>>,
+}
+
+/// A part read by [`DeepHulls`]: its base, the meet of the hulls of its disjunctions (`None`
+/// when one of them has no point), and the bounds of its own rows; its hull is the two met.
+struct Read {
+    base: Option<Rooted>,
+    own: values::FormBounds,
+}
+
+impl Read {
+    /// Whether the part has points as far as its hull shows: a base, and no form whose bounds
+    /// cross once its own are met with the base's.
+    fn live(&self) -> bool {
+        let Some(b) = &self.base else { return false };
+        (self.own.iter()).all(|(t, o)| met(b.map.get(t), o).is_some())
+    }
+
+    /// The bounds of the form `t` in the part's hull; the part is live.
+    fn at(&self, t: &values::Form) -> Option<values::Bounds> {
+        let b = self.base.as_ref().expect("a live part").map.get(t);
+        match self.own.get(t) {
+            Some(o) => met(b, o),
+            None => b.cloned(),
+        }
+    }
+}
+
+/// The deep hulls of parts ([`disjunction_hulls`]): of a part, the bounds its own rows put on
+/// each form ([`values::form_bounds`]) met with those of its base, the meet of the hulls of
+/// its disjunctions; of a disjunction, the join of the deep hulls of its disjuncts that have
+/// points. Every bound is implied by the part, so the rows they give hold at each of its
+/// points; a part with no hull has none. The hulls depend only on the rows of the parts, not
+/// on which parts are shared: a part held in two places has the same hull in both, and the
+/// formula written out with a copy at each place has the same hulls.
+// Complexity tradeoff: the naive version finds the hulls of each part from the formula
+// written out, one per path through the nest, `2^k` for `k` levels of a disjunction held by
+// both disjuncts of the one above (PRES-nest-empty, the family of `nest_empty`); with a
+// plain map for each part, built from those below it, O(n·d) for `n` rows and depth `d`,
+// and a join form by form over the smallest hull, O(n²) on a chain of two disjunctions each
+// held by both at the level above; and with the hulls kept for one call, O(n) again for
+// each question on a formula that holds the nest, O(n²) where `project_parts` asks one at
+// each level (`l01_39_reduced_product::deep_condition`, the bound that moves at each
+// level). Used: each part is read once in its life, its hull kept on it, on an explicit
+// stack, so a question on a formula of parts read before reads only its top; a hull is
+// never built in full; a disjunction's hull is the join of its disjuncts' bases with the
+// forms of their own rows joined again, made from that join; the join of bases is kept by
+// their ids, and bases that are one hull, or that are made from one hull, are joined at
+// the forms changed from it alone; a part's base likewise. So a disjunction costs
+// O(r log n) for the `r` forms of its disjuncts' own rows and of those of the level below,
+// O(n log n) in all on both chains whatever their depth (`l01_38_presburger::nest_empty`,
+// COMPLEXITY.md PRES-nest-empty). What is given up: the hull kept on each disjunct for its
+// life, and maps from ids to the hulls of disjunctions for one call. Bases made from
+// different hulls are joined over the smallest, O(s log n) for its `s` forms, and met by
+// adding the smaller to the largest: a formula whose disjunctions each join hulls with no
+// common origin and many forms still costs O(n·s).
+#[derive(Default)]
+struct DeepHulls {
+    /// The hull of each disjunction, by the ids of its disjuncts; `None` when none has points.
+    ors: HashMap<Vec<u64>, Option<Rooted>>,
+    /// The base of each part, by the ids of the hulls of its disjunctions, sorted.
+    meets: HashMap<Vec<u64>, Option<Rooted>>,
+    /// The join of the bases of the live disjuncts of a disjunction, by their ids, sorted.
+    joins: HashMap<Vec<u64>, Rooted>,
+}
+
+impl DeepHulls {
+    /// The hull of the disjunction `ds`, reading each part below it that is not yet read,
+    /// each before the parts that hold it, on an explicit stack (a nest can be deeper than a
+    /// thread's stack allows).
+    fn join(&mut self, ds: &[Rc<Parts>]) -> Option<HullMap> {
+        let mut stack: Vec<&Parts> = ds.iter().map(|d| &**d).collect();
+        while let Some(&p) = stack.last() {
+            if p.hull.get().is_some() {
+                stack.pop();
+                continue;
+            }
+            let open = stack.len();
+            let below = p.ors.iter().flatten().map(|d| &**d);
+            stack.extend(below.filter(|d| d.hull.get().is_none()));
+            if stack.len() > open {
+                continue;
+            }
+            stack.pop();
+            let base = self.base(&p.ors);
+            let own = values::form_bounds(&p.cons);
+            let _ = p.hull.set(Read { base, own });
+        }
+        self.disjunction(ds).map(|h| h.map)
+    }
+
+    /// The meet of the hulls of the disjunctions `ors`, whose disjuncts are all read; the
+    /// empty hull, id 0, when there are none.
+    fn base(&mut self, ors: &[Vec<Rc<Parts>>]) -> Option<Rooted> {
+        let mut hulls: Vec<Rooted> = (ors.iter())
+            .map(|ds| self.disjunction(ds))
+            .collect::<Option<_>>()?;
+        hulls.sort_unstable_by_key(|h| h.id);
+        hulls.dedup_by_key(|h| h.id);
+        if hulls.len() <= 1 {
+            return Some(hulls.pop().unwrap_or_else(|| Rooted {
+                id: 0,
+                map: OrdMap::new(),
+                from: None,
+            }));
+        }
+        let ids: Vec<u64> = hulls.iter().map(|h| h.id).collect();
+        if let Some(m) = self.meets.get(&ids) {
+            return m.clone();
+        }
+        let map = match one_origin(&hulls) {
+            Some((map, forms)) => forms.into_iter().try_fold(map, |mut map, t| {
+                let mut b: values::Bounds = (None, None);
+                for h in &hulls {
+                    if let Some(hb) = h.map.get(&t) {
+                        b = met(Some(&b), hb)?;
+                    }
+                }
+                match b {
+                    (None, None) => map.remove(&t),
+                    b => map.insert(t, b),
+                };
+                Some(map)
+            }),
+            None => {
+                let largest = (0..hulls.len()).max_by_key(|&i| hulls[i].map.len());
+                let mut map = hulls.swap_remove(largest.expect("two hulls")).map;
+                let others = hulls.iter().flat_map(|h| h.map.iter());
+                let crossed = others.into_iter().any(|(t, b)| match met(map.get(t), b) {
+                    Some(m) => {
+                        map.insert(t.clone(), m);
+                        false
+                    }
+                    None => true,
+                });
+                (!crossed).then_some(map)
+            }
+        };
+        let out = map.map(|map| Rooted {
+            id: fresh_id(),
+            map,
+            from: None,
+        });
+        self.meets.insert(ids, out.clone());
+        out
+    }
+
+    /// The join of the hulls of the disjuncts of `ds` that have points, all read: the join of
+    /// their bases ([`join_bases`]) with the forms of their own rows joined again.
+    fn disjunction(&mut self, ds: &[Rc<Parts>]) -> Option<Rooted> {
+        let key: Vec<u64> = ds.iter().map(|d| d.id()).collect();
+        if let Some(h) = self.ors.get(&key) {
+            return h.clone();
+        }
+        let live: Vec<&Read> = (ds.iter())
+            .map(|d| d.hull.get().expect("a part read"))
+            .filter(|r| r.live())
+            .collect();
+        let out = (!live.is_empty()).then(|| {
+            let bases: Vec<&Rooted> = live
+                .iter()
+                .map(|r| r.base.as_ref().expect("live"))
+                .collect();
+            let join = join_bases(&mut self.joins, &bases);
+            let forms: BTreeSet<&values::Form> = live.iter().flat_map(|r| r.own.keys()).collect();
+            let mut map = join.map.clone();
+            for &t in &forms {
+                match joined(live.iter().map(|r| r.at(t))) {
+                    Some(b) => map.insert(t.clone(), b),
+                    None => map.remove(t),
+                };
+            }
+            let forms = forms.into_iter().cloned().collect();
+            Rooted {
+                id: fresh_id(),
+                map,
+                from: Some(Rc::new((join.id, join.map, forms))),
+            }
+        });
+        self.ors.insert(key, out.clone());
+        out
+    }
+}
+
+/// The join of the hulls `bases`, kept in `joins` by their ids: one hull is itself; hulls
+/// made from one hull ([`one_origin`]) are it with the forms changed from it joined; others
+/// are joined form by form over the smallest.
+fn join_bases(joins: &mut HashMap<Vec<u64>, Rooted>, bases: &[&Rooted]) -> Rooted {
+    let mut bases: Vec<&Rooted> = bases.to_vec();
+    bases.sort_unstable_by_key(|h| h.id);
+    bases.dedup_by_key(|h| h.id);
+    if let [one] = bases[..] {
+        return one.clone();
+    }
+    let ids: Vec<u64> = bases.iter().map(|h| h.id).collect();
+    if let Some(j) = joins.get(&ids) {
+        return j.clone();
+    }
+    let at = |t: &values::Form| joined(bases.iter().map(|h| h.map.get(t).cloned()));
+    let owned: Vec<Rooted> = bases.iter().map(|h| (*h).clone()).collect();
+    let map = match one_origin(&owned) {
+        Some((mut map, forms)) => {
+            for t in forms {
+                match at(&t) {
+                    Some(b) => map.insert(t, b),
+                    None => map.remove(&t),
+                };
+            }
+            map
+        }
+        None => {
+            let smallest = bases.iter().min_by_key(|h| h.map.len()).expect("two hulls");
+            (smallest.map.keys())
+                .filter_map(|t| Some((t.clone(), at(t)?)))
+                .collect()
+        }
+    };
+    let out = Rooted {
+        id: fresh_id(),
+        map,
+        from: None,
+    };
+    joins.insert(ids, out.clone());
+    out
+}
+
+/// When every hull of `hulls` was made from one hull, that hull's map and the forms changed
+/// from it in any of them; outside those forms each of `hulls` is that hull.
+fn one_origin(hulls: &[Rooted]) -> Option<(HullMap, BTreeSet<values::Form>)> {
+    let first = hulls.first()?.from.as_ref()?;
+    let mut forms = BTreeSet::new();
+    for h in hulls {
+        let from = h.from.as_ref()?;
+        if from.0 != first.0 {
+            return None;
+        }
+        forms.extend(from.2.iter().cloned());
+    }
+    Some((first.1.clone(), forms))
+}
+
+/// The join of the bounds `bs` of one form, one from each disjunct: the least of the lower
+/// bounds and the greatest of the upper ones, a side left open where any disjunct leaves it
+/// open; `None` when both sides are open, or a disjunct does not bound the form.
+fn joined(mut bs: impl Iterator<Item = Option<values::Bounds>>) -> Option<values::Bounds> {
+    let (mut lo, mut hi) = bs.next()??;
+    for b in bs {
+        let (l, h) = b?;
+        lo = lo.zip(l).map(|(a, b)| a.min(b));
+        hi = hi.zip(h).map(|(a, b)| a.max(b));
+        if lo.is_none() && hi.is_none() {
+            return None;
+        }
+    }
+    (lo.is_some() || hi.is_some()).then_some((lo, hi))
+}
+
+/// The bounds `a` met with `b`: the greater lower bound and the lesser upper one; `None`
+/// when they cross.
+fn met(a: Option<&values::Bounds>, b: &values::Bounds) -> Option<values::Bounds> {
+    let (lo, hi) = match a {
+        None => b.clone(),
+        Some((l, u)) => (
+            [l, &b.0].into_iter().flatten().max().cloned(),
+            [u, &b.1].into_iter().flatten().min().cloned(),
+        ),
+    };
+    match (&lo, &hi) {
+        (Some(l), Some(u)) if l > u => None,
+        _ => Some((lo, hi)),
+    }
 }
 
 /// Removes from `ors` each disjunct that has no point with `rows` and the rows that the
@@ -1178,8 +1456,9 @@ fn disjunction_hulls(ors: &[Vec<Rc<Parts>>]) -> Vec<Con> {
 fn drop_jointly_empty(rows: &[Con], ors: &mut [Vec<Rc<Parts>>]) -> Option<usize> {
     let mut order = by_structure(rows, ors);
     let mut passes = 0;
+    let mut deep = DeepHulls::default();
     loop {
-        let implied = disjunction_hulls(ors);
+        let implied = disjunction_hulls(ors, &mut deep);
         if implied.is_empty() {
             return Some(passes);
         }
@@ -1210,7 +1489,7 @@ fn drop_jointly_empty(rows: &[Con], ors: &mut [Vec<Rc<Parts>>]) -> Option<usize>
                 return Ok(Vec::new());
             }
             removed = true;
-            Ok(disjunction_hulls(std::slice::from_ref(ds)))
+            Ok(disjunction_hulls(std::slice::from_ref(ds), &mut deep))
         });
         if ran.is_err() {
             return None;
@@ -1491,7 +1770,7 @@ fn decide_kept(f: &Formula, mut kept: Option<&mut Vec<Model>>) -> Result<bool, R
     let implied = if old_path() {
         Vec::new()
     } else {
-        disjunction_hulls(&p.ors)
+        disjunction_hulls(&p.ors, &mut DeepHulls::default())
     };
     let point_of_f = |mut m: Model| {
         repair(&mut m, &gone);
@@ -1959,7 +2238,8 @@ enum Settled {
 /// refuse with [`Refusal::Unordered`]. What is given up: such a formula whose only points lie
 /// under other choices, or two of whose disjuncts tie on the key, and every such formula with no
 /// point (`false` becomes the refusal; [`settle_as_sets`] still shows no point when a
-/// disjunction loses every disjunct against the base). Why: a search that tries the
+/// disjunction loses every disjunct against the base, and the rows the disjunctions imply
+/// show it when the base has no point beside them). Why: a search that tries the
 /// disjuncts in turn needs an order among those of equal key, and that order would come from
 /// the names; testing every disjunct with every other disjunction instead, as the probe that
 /// this replaced did, cost the disjuncts times a settling for each round, cubic on a star of
@@ -1975,6 +2255,21 @@ enum Settled {
 /// labeling, exponential in the worst case too.
 fn settle_tied(f: &Formula, color: &HashMap<Atom, usize>, want: bool) -> Result<Settled, Refusal> {
     let (p, gone) = absorbed(f, &[]);
+    // The rows the disjunctions imply ([`disjunction_hulls`]) hold at every point of `f` and
+    // depend on its rows alone, not on the names, so a base with no point beside them shows
+    // `f` empty at once: a nest every path of which is empty (PRES-nest-empty). They serve
+    // that test alone: settled with them in the base, the random guarded chains of
+    // `l01_25_preimage_catalog::s22` made fewer boxes exact (49 against 53), so a base with a
+    // point beside them is settled as before.
+    if !old_path() && !p.ors.is_empty() {
+        let implied = disjunction_hulls(&p.ors, &mut DeepHulls::default());
+        if !implied.is_empty() {
+            let rows: Vec<&Con> = p.cons.iter().chain(implied.iter()).collect();
+            if let Ok(None) = solve(&rows, false) {
+                return Ok(Settled::Empty);
+            }
+        }
+    }
     let Some(AsSets { p, proven }) = settle_as_sets(p)? else {
         return Ok(Settled::Empty);
     };
@@ -3345,6 +3640,7 @@ fn probe_to(mut p: Parts, points: &mut Vec<Model>, stop: bool) -> Result<Option<
                         cons: p.cons.clone(),
                         ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
                         atoms: OnceCell::new(),
+                        hull: OnceCell::new(),
                         failed: Cell::new(0),
                         id: Cell::new(0),
                     };
@@ -3427,6 +3723,7 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
         cons: p.cons.clone(),
         ors,
         atoms: OnceCell::new(),
+        hull: OnceCell::new(),
         failed: Cell::new(0),
         id: Cell::new(0),
     };
@@ -3586,6 +3883,7 @@ fn refuted_by_links(p: &Parts, links: &[usize], base: &Near, d: &Parts) -> bool 
             .filter(|o| !o.is_empty())
             .collect(),
         atoms: OnceCell::new(),
+        hull: OnceCell::new(),
         failed: Cell::new(0),
         id: Cell::new(0),
     };
@@ -3829,6 +4127,7 @@ fn point_with(
             })
             .collect(),
         atoms: OnceCell::new(),
+        hull: OnceCell::new(),
         failed: Cell::new(0),
         id: Cell::new(0),
     };
@@ -3851,9 +4150,14 @@ fn point_with(
 struct Parts {
     cons: Vec<Con>,
     ors: Vec<Vec<Rc<Parts>>>,
-    /// The atoms of the parts, found the first time they are asked for ([`Parts::atoms`]).
+    /// The atoms of the parts' disjunctions (their base, with its id and origin), and the
+    /// atoms of the parts, found the first time they are asked for ([`Parts::atoms`]).
     /// They are asked only of a disjunct, which is not changed once it is made.
-    atoms: OnceCell<OrdSet<Atom>>,
+    atoms: OnceCell<(AtomSet, OrdSet<Atom>)>,
+    /// The deep hull of the parts ([`DeepHulls`]), found the first time a disjunction holding
+    /// them is joined, and kept for the parts' life, so that a later question on a formula
+    /// that holds them reads them at no cost. Asked only of a disjunct, as the atoms are.
+    hull: OnceCell<Read>,
     /// The stamp of the last search ([`Parts::witness`]) that found the parts not to hold at its
     /// values, so that the search does not read them again while its values are unchanged.
     failed: Cell<u64>,
@@ -3869,6 +4173,7 @@ impl Clone for Parts {
             cons: self.cons.clone(),
             ors: self.ors.clone(),
             atoms: self.atoms.clone(),
+            hull: OnceCell::new(),
             failed: self.failed.clone(),
             id: Cell::new(0),
         }
@@ -4181,12 +4486,33 @@ impl Parts {
         self.id.get()
     }
 
-    /// The atoms of the parts. Each disjunct's set is found once, from its disjuncts' sets:
-    /// it starts as the largest of them, shared, and the atoms of the others and of its own
-    /// constraints are added to it. An atom is then added only to a set at least twice the
-    /// size of the one it came from, so the sets of a nest of `n` constraints cost
-    /// O(n log² n) together, however deep it is, and asking again costs nothing.
+    /// The atoms of the parts. Each disjunct's set is found once, from its disjuncts' sets,
+    /// with the set of the atoms of its disjunctions alone (its base) kept beside it, under an
+    /// id ([`AtomSet`]). The union of a disjunction's sets is the union of its disjuncts' bases
+    /// ([`union_sets`]) with their own atoms added ([`union_of`]); the base of a part is the
+    /// union of its disjunctions' sets. Each union is found once per call for each list of
+    /// ids it is made from, so that two disjunctions whose disjuncts have the same bases and
+    /// atoms of their own share one set and one id, as do the parts that hold them.
+    // Complexity tradeoff: the naive version adds every atom of each disjunct's set to the
+    // largest: on a tree an atom is then added only to a set at least twice the size of the
+    // one it came from, O(n log² n) for a nest of `n` constraints; but where the disjuncts at
+    // each level hold the same disjunctions of the level below (PRES-nest-empty), the sets
+    // are equal or differ in a few atoms and are not shared, and each level adds all of one
+    // to the other, O(n² log n). Used: unions kept by the ids of the sets they are made from,
+    // and each set made by adding atoms to one set records it as its origin, so that sets of
+    // one origin are united by adding the atoms each added to it, O(r log n) for `r` such
+    // atoms: O(n log n) on the nest, on a chain of two disjunctions each held by one disjunct
+    // of both at the level above, and on two disjunctions each held by both disjuncts of both
+    // at the level above, with atoms of their own that the other lacks
+    // (`l01_38_presburger::nest_empty`, COMPLEXITY.md PRES-nest-empty). What is given up:
+    // maps from ids to sets for one call, and the cost of the naive union for sets of no
+    // common origin (made from different disjunctions with different atoms), O(s log n) for
+    // the atoms `s` of the smaller sets, O(n log² n) on a tree. A complete solution keeps the
+    // sets as trees whose equal parts are one node, so that a union costs the parts that
+    // differ.
     fn atoms(&self) -> &OrdSet<Atom> {
+        // The unions found, each with its id, by the ids they are made from.
+        let mut memo = Unions::default();
         // An explicit stack, since a nest can be deeper than a thread's stack allows; a
         // disjunct shared by two disjunctions is found once, its set marking it as visited.
         let mut stack: Vec<&Parts> = vec![self];
@@ -4202,23 +4528,105 @@ impl Parts {
                 continue;
             }
             stack.pop();
-            let mut sets: Vec<&OrdSet<Atom>> = (p.ors.iter().flatten())
-                .map(|d| d.atoms.get().expect("a set found below"))
-                .collect();
-            let largest = (0..sets.len()).max_by_key(|&i| sets[i].len());
-            let mut set = largest.map_or_else(OrdSet::new, |i| sets.swap_remove(i).clone());
-            for a in sets.into_iter().flatten() {
-                set.insert(a.clone());
-            }
-            for c in &p.cons {
-                for a in c.lin.terms.keys() {
-                    set.insert(a.clone());
-                }
-            }
-            let _ = p.atoms.set(set);
+            let sets: Vec<AtomSet> = (p.ors.iter()).map(|ds| union_of(ds, &mut memo)).collect();
+            let base = union_sets(sets, &mut memo.sets);
+            let mut set = base.set.clone();
+            set.extend(p.cons.iter().flat_map(|c| c.lin.terms.keys().cloned()));
+            let _ = p.atoms.set((base, set));
         }
-        self.atoms.get().expect("the set just found")
+        &self.atoms.get().expect("the set just found").1
     }
+}
+
+/// A set of atoms of [`Parts::atoms`], under an id that no other set has (0 for the empty set
+/// that is the base of a part with no disjunctions), with the set it was made from by adding
+/// atoms, if any: its id, its atoms, and the atoms added, so that sets made from one set are
+/// united by adding those alone.
+#[derive(Clone)]
+struct AtomSet {
+    id: u64,
+    set: OrdSet<Atom>,
+    from: Option<Rc<Origin>>,
+}
+
+/// The set an [`AtomSet`] was made from: its id and atoms, and the atoms added to it.
+type Origin = (u64, OrdSet<Atom>, Vec<Atom>);
+
+/// The unions found by [`Parts::atoms`] in one call: of sets, by their sorted ids; of a set and
+/// atoms added to it, by its id and the sorted atoms.
+#[derive(Default)]
+struct Unions {
+    sets: HashMap<Vec<u64>, AtomSet>,
+    added: HashMap<(u64, Vec<Atom>), AtomSet>,
+}
+
+/// The union of the atoms of the disjuncts `ds`, whose sets are found ([`Parts::atoms`]): the
+/// union of their bases ([`union_sets`]) with the atoms of their own rows added, made from
+/// that union, kept in `memo` by its id and those atoms.
+fn union_of(ds: &[Rc<Parts>], memo: &mut Unions) -> AtomSet {
+    let bases = (ds.iter()).map(|d| d.atoms.get().expect("a set found below").0.clone());
+    let base = union_sets(bases.collect(), &mut memo.sets);
+    let own = ds.iter().flat_map(|d| d.cons.iter());
+    let own: BTreeSet<Atom> = own.flat_map(|c| c.lin.terms.keys().cloned()).collect();
+    let own: Vec<Atom> = own.into_iter().filter(|a| !base.set.contains(a)).collect();
+    if own.is_empty() {
+        return base;
+    }
+    (memo.added.entry((base.id, own)))
+        .or_insert_with_key(|(_, own)| {
+            let mut set = base.set.clone();
+            set.extend(own.iter().cloned());
+            AtomSet {
+                id: fresh_id(),
+                set,
+                from: Some(Rc::new((base.id, base.set.clone(), own.clone()))),
+            }
+        })
+        .clone()
+}
+
+/// The union of `sets`, kept in `memo` by their ids: one set is itself; sets made from one set
+/// are it with the atoms each added; others start as the largest, shared, with the atoms of
+/// the others added.
+fn union_sets(mut sets: Vec<AtomSet>, memo: &mut HashMap<Vec<u64>, AtomSet>) -> AtomSet {
+    sets.sort_unstable_by_key(|s| s.id);
+    sets.dedup_by_key(|s| s.id);
+    if sets.len() <= 1 {
+        return sets.pop().unwrap_or_else(|| AtomSet {
+            id: 0,
+            set: OrdSet::new(),
+            from: None,
+        });
+    }
+    let ids: Vec<u64> = sets.iter().map(|s| s.id).collect();
+    if let Some(u) = memo.get(&ids) {
+        return u.clone();
+    }
+    let origin = sets[0].from.as_ref().map(|f| f.0);
+    let one_origin =
+        origin.is_some() && sets.iter().all(|s| s.from.as_ref().map(|f| f.0) == origin);
+    let set = if one_origin {
+        let mut set = sets[0].from.as_ref().expect("an origin").1.clone();
+        set.extend(
+            sets.iter()
+                .flat_map(|s| s.from.as_ref().expect("an origin").2.iter().cloned()),
+        );
+        set
+    } else {
+        let largest = (0..sets.len())
+            .max_by_key(|&i| sets[i].set.len())
+            .expect("two sets");
+        let mut set = sets.swap_remove(largest).set;
+        set.extend(sets.iter().flat_map(|s| s.set.iter().cloned()));
+        set
+    };
+    let u = AtomSet {
+        id: fresh_id(),
+        set,
+        from: None,
+    };
+    memo.insert(ids, u.clone());
+    u
 }
 
 /// `f`, negated when `!sign`, with each negation pushed to the constraints: not `t >= 0` is
@@ -8702,7 +9110,7 @@ fn project_parts(
     // The rows the disjuncts left imply, read below for the hulls and by [`tighten_each`] for a
     // point at each end.
     let implied = if !sets && n_ors > 1 && !old_path() && out.iter().any(Result::is_ok) {
-        disjunction_hulls(&ors)
+        disjunction_hulls(&ors, &mut DeepHulls::default())
     } else {
         Vec::new()
     };
@@ -9203,7 +9611,7 @@ impl Hull {
     ) -> Hull {
         let mut parts = absorbed(&f, &[]).0;
         let mut rows = mem::take(&mut parts.cons);
-        rows.extend(disjunction_hulls(&parts.ors));
+        rows.extend(disjunction_hulls(&parts.ors, &mut DeepHulls::default()));
         rows.extend(hint);
         let ks: Vec<(usize, Lin)> = (ks.into_iter())
             .map(|k| (k, Lin::atom(syms[k].clone())))

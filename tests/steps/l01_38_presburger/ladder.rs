@@ -540,9 +540,14 @@ fn conditionals_are_refused_raw_and_proved_once_joined() {
     // Rung 5: "Rung 2 is first asked about a part with each conditional's value the join of
     // its arms in the store's lattices, each arm with its condition as a premise, so
     // `(if a > 0 { 1 } else { 0 }) + (if b > 0 { 1 } else { 0 }) <= 2` is proved with no
-    // split." Asked raw, rung 2 refuses: `a` and `b` are interchangeable, which the
-    // Presburger layer refuses (sec:domains). Joined, each value in `0..=1`, it is proved.
+    // split." Asked raw, rung 2 proves it too: the rows each conditional implies, its value in
+    // `0..=1`, hold at every point and leave the negation no point, which no name decides
+    // (PRES-nest-empty). A sum those rows do not decide is refused raw: `a` and `b` are
+    // interchangeable, and telling the arms apart needs a choice that the Presburger layer
+    // would make by the names (sec:domains). Joined, each value in `0..=1`, it is proved.
     let raw = "ok(a, b) = (if a > 0 { 1 } else { 0 }) + (if b > 0 { 1 } else { 0 }) <= 2;";
+    assert_proved("ok(a, b) = true;", raw);
+    let raw = "ok(a, b) = (if a > 0 { 2 } else { 0 }) + (if b > 0 { 2 } else { 0 }) != 3;";
     let e = rung2("ok(a, b) = true;", raw);
     assert!(matches!(e, Entailment::Refused(_)), "{e}");
     assert_proved(
@@ -616,6 +621,14 @@ fn the_verdict_does_not_depend_on_order_or_names() {
             [
                 "ok(x, n) = (if x > 0 { 1 } else { 0 }) + (if n > 0 { 1 } else { 0 }) <= 2;",
                 "ok(x, n) = (if n > 0 { 1 } else { 0 }) + (if x > 0 { 1 } else { 0 }) <= 2;",
+            ],
+            "proved",
+        ),
+        (
+            ["ok(x, n) = true;", "ok(x, n) = true;"],
+            [
+                "ok(x, n) = (if x > 0 { 2 } else { 0 }) + (if n > 0 { 2 } else { 0 }) != 3;",
+                "ok(x, n) = (if n > 0 { 2 } else { 0 }) + (if x > 0 { 2 } else { 0 }) != 3;",
             ],
             "refused",
         ),

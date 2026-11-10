@@ -3240,6 +3240,13 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | An optional `&mut String` held in the code generator (`Gen::ir`) that each function's IR text is appended to before Cranelift compiles it | `Gen::ir`, `codegen::define`, `zed_native::ir` | Mutation (gap 11) | None needed: `codegen.rs` and the hooks stay in Rust (section "What stays in Rust"); a port would return the text with each function instead |
 | The hook `rt_pow`, an `extern "C"` function on the bits of two `f64` | `hooks.rs` | stays in Rust | None: hooks stay in Rust |
 
+## Entries from PRES-nest-empty (`crates/zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `OnceCell` on each disjunct for its deep hull (`Parts::hull`) and its atom sets (`Parts::atoms`), filled through `&self` the first time a disjunction holding it is read, and kept for the disjunct's life (PRES-nest-empty) | `DeepHulls::join`, `Parts::atoms` | Lazy cells (gap 3) | A map from the disjunct's id to its hull and sets, threaded through the solver as a state receiver |
+| Memos keyed by lists of `fresh_id` ids of hulls and atom sets (`DeepHulls::ors`, `meets`, `joins`; `Unions`), and each hull or set holding an `Rc` to the one it was made from (`Rooted::from`, `AtomSet::from`), so that values of one origin are joined or united at the entries changed from it (PRES-nest-empty) | `DeepHulls`, `join_bases`, `one_origin`, `union_of`, `union_sets` | Identity (gap 1) | Ids as fields of the values, as gap 1 proposes; the origin is a plain field holding a shared value |
+
 ## Entries from LIT-eq-kind (`zedc-check/src/check/mod.rs`, `check/walk.rs`)
 
 | Rust construct | Sites | Gap | At the port |
