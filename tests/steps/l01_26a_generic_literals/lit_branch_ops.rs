@@ -390,6 +390,55 @@ fn a_call_of_a_value_the_other_operand_cannot_hold_is_rejected() {
     assert_eq!(value(&fixed, "a"), "5r");
 }
 
+#[test]
+fn a_name_bound_to_a_call_of_literal_values_is_not_read() {
+    // Item LIT-name-reads-call, held for QUESTIONS A63 ("Does a read of a name give the
+    // name's literal value a carrier?"), which the author has not answered: DESIGN says two
+    // things here. L1.26a reads an integer literal as an `int` where it is "bound to a name
+    // alone, `y = 1`", and rejects "`y = g(c)` at the `2.5`, which nothing fixes", so the name
+    // fixes the values where it is bound; step 4 of the `q` example in sec:diagnostics reads a
+    // literal binder at the carrier of its use. This test pins today's result, which agrees
+    // with L1.26a and with A63's recommended answer B; answer A would change it.
+    let name = format!("{G}{H}f(positional c: bool) = {{ y = g(c); h(y) }};\n");
+    assert_eq!(
+        type_errors(&name),
+        vec![
+            "`h` does not take (1 | 2): these are the types of its arguments here, and `h` has \
+             no arrow that takes them all [h(y)]"
+                .to_string()
+        ]
+    );
+    // The same at an operator.
+    let op = format!("{G}f(positional c: bool, x: f64) = {{ y = g(c); x * y }};\n");
+    assert_eq!(
+        type_errors(&op),
+        vec![
+            "`*` does not take (f64, 1 | 2): these are the types of its arguments here, and `*` \
+             has no arrow that takes them all [x * y]"
+                .to_string()
+        ]
+    );
+    // The call itself is read, and so is the name where its declared type fixes the values.
+    let call = format!("{G}{H}f(positional c: bool) = h(g(c));\na = f(true);\n");
+    assert_eq!(type_errors(&call), Vec::<String>::new());
+    assert_eq!(value(&call, "a"), "2.0");
+    // A binding with a declared type, `y: f64 = g(c);`, is not compiled yet; a cast fixes
+    // the carrier where the name is bound.
+    let cast = format!("{G}{H}f(positional c: bool) = {{ y = f64(g(c)); h(y) }};\na = f(true);\n");
+    assert_eq!(type_errors(&cast), Vec::<String>::new());
+    assert_eq!(value(&cast, "a"), "2.0");
+    // Bound to a name alone at the top level, the same rule as in a body.
+    let top = format!("{G}{H}y = g(true);\na = h(y);\n");
+    assert_eq!(
+        type_errors(&top),
+        vec![
+            "`h` does not take (1 | 2): these are the types of its arguments here, and `h` has \
+             no arrow that takes them all [h(y)]"
+                .to_string()
+        ]
+    );
+}
+
 /// A call of a parameter of type `f64` on a nest of `n` `if`s, each branch its own operation
 /// on literals: `n + 1` operations, each fixed at `f64`.
 fn nest(n: usize) -> String {
