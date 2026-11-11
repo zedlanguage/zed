@@ -30,7 +30,7 @@ use zedc::store::preimage::{
     forward_pieces, preimage, preimage_listed, touched_paths,
 };
 use zedc::store::preimage_ref as before;
-use zedc::store::presburger::{Atom, Model, Refusal};
+use zedc::store::presburger::{Atom, Formula, Model, Refusal, Relation, member, satisfiable};
 
 use super::check;
 use super::random::{bool_term, domains, int_demand, int_term, with_functions};
@@ -2994,6 +2994,175 @@ remainder_shapes!(
     remainder_reads_outside_a_split_match_the_interpreter_a_test_of_the_chain 2,
     remainder_reads_outside_a_split_match_the_interpreter_remainders_of_two_inputs 3,
     remainder_reads_outside_a_split_match_the_interpreter_two_moduli_of_one_input 4,
+);
+
+/// The seed of the case of [`wide_remainders_match_the_interpreter`] at modulus `m`, `p`
+/// periods and shape `s` of [`REMAINDER_SHAPES`]: the three numbers written in one, so a seed
+/// names its case.
+fn wide_remainder_seed(m: i64, p: i64, s: usize) -> u64 {
+    ((m as u64) << 16) | ((p as u64) << 8) | s as u64
+}
+
+/// The variable naming one seed of [`wide_remainder_seed`]: when it is set, a test of
+/// [`wide_remainders_match_the_interpreter`] runs that case alone.
+const WIDE_REMAINDER_SEED: &str = "ZED_REMAINDER_SEED";
+
+/// Whether the relation `rel` holds at the point `pt` of the inputs `names`: whether some
+/// values of its auxiliary variables meet its definitions and its body there. `None` when the
+/// solver refuses the question.
+fn relation_holds(rel: &Relation, names: &[Arc<str>], pt: &[i64]) -> Option<bool> {
+    let mut parts = vec![rel.defined(), rel.body.clone()];
+    for (n, &v) in names.iter().zip(pt) {
+        parts.push(member(&Atom::Sym(n.clone()), &IntervalSet::of(v, v)));
+    }
+    satisfiable(&Formula::and(parts)).ok().map(|m| m.is_some())
+}
+
+/// The first point of the box `ds` at which the interpreter refutes `p` as the preimage of
+/// `d` under `t`, with the reason: a point that meets `d` lies outside the box or fails the
+/// relation, or, where the box is exact, a point inside fails `d`, or a point of the box that
+/// meets the relation fails `d`. A point where the solver refuses the relation's question is
+/// a refutation too, since the relation then decides nothing there. `window` holds every
+/// input's domain.
+fn wide_remainder_refuted(
+    t: &Term,
+    ds: &Domains,
+    d: &Demand,
+    p: &Preimage,
+    window: (i64, i64),
+) -> Option<String> {
+    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+    super::points(ds, &names, window)
+        .into_iter()
+        .find_map(|pt| {
+            let meets = super::meets(t, &names, &pt, d);
+            let inside = names
+                .iter()
+                .zip(&pt)
+                .all(|(n, &v)| p.domains[n].contains(v));
+            let why = if meets && !inside {
+                "meets the demand but lies outside the box"
+            } else if !meets && inside && p.exact {
+                "fails the demand but lies inside the exact box"
+            } else {
+                match (&p.relation, inside) {
+                    (Some(rel), true) => match (relation_holds(rel, &names, &pt), meets) {
+                        (None, _) => "is where the solver refuses the relation's question",
+                        (Some(false), true) => "meets the demand but fails the relation",
+                        (Some(true), false) => {
+                            "lies in the box and meets the relation but fails the demand"
+                        }
+                        _ => return None,
+                    },
+                    _ => return None,
+                }
+            };
+            Some(format!("{names:?} = {pt:?} {why}"))
+        })
+}
+
+/// DESIGN.md sec:domains, "Backward transfer": Euclidean `mod` by a constant inverts
+/// exactly, a branch's preimage is the union of its arms' preimages under their guards, and
+/// `min` and `max` invert exactly; step L1.25: every entry's preimage is sound against the
+/// interpreter on random domains, and `x mod c` inverts to the set of `x` in its interval
+/// whose remainder is demanded, exact whatever the width of the interval; where the preimage
+/// is not a box, the box is its projection, marked necessary, and the relation (step L1.38)
+/// holds at every point meeting the demand and, inside the box, only there.
+///
+/// For each modulus `m` of `moduli`, each count of periods `p` of `periods` and each shape of
+/// [`REMAINDER_SHAPES`], one case seeded by [`wide_remainder_seed`]: a chain of 1 to 13
+/// guards `x mod m == r` with arms drawn at random ([`moved_remainder_chain`]), `x` over
+/// `p * m - e` integers (`e` in `[0, m)`, so the run is longer than `p - 1` periods of `m`
+/// and no longer than `p`) from a random start in `[-100, 100]`, and `y` over a random interval
+/// in `[-8, 8]`. The interpreter runs at every point of the box and is compared with the
+/// preimage by [`wide_remainder_refuted`]. A failure prints the case's seed and the command
+/// that reruns it alone.
+fn wide_remainders_match_the_interpreter(
+    test: &str,
+    moduli: std::ops::RangeInclusive<i64>,
+    periods: std::ops::RangeInclusive<i64>,
+) {
+    let only: Option<u64> = std::env::var(WIDE_REMAINDER_SEED)
+        .ok()
+        .map(|s| s.parse().expect("a seed is a number"));
+    on_big_stack(|| {
+        let d = Demand::Bool(true);
+        for m in moduli {
+            for p in periods.clone() {
+                for (s, shape) in REMAINDER_SHAPES.iter().enumerate() {
+                    let seed = wide_remainder_seed(m, p, s);
+                    if only.is_some_and(|o| o != seed) {
+                        continue;
+                    }
+                    let mut rng = Rng::new(seed);
+                    let k = rng.int(1, 13) as usize;
+                    let chain = moved_remainder_chain(rng.next_u64(), k, "x", m);
+                    let t = remainder_shape(shape, chain);
+                    let x0 = rng.int(-100, 100);
+                    let x1 = x0 + p * m - 1 - rng.int(0, m - 1);
+                    let y0 = rng.int(-8, 8);
+                    let y1 = rng.int(y0, 8);
+                    let ds = over(&[
+                        ("x", IntervalSet::of(x0, x1)),
+                        ("y", IntervalSet::of(y0, y1)),
+                    ]);
+                    let pre = preimage(&t, &ds, &d);
+                    let window = (x0.min(y0), x1.max(y1));
+                    if let Some(why) = wide_remainder_refuted(&t, &ds, &d, &pre, window) {
+                        // The chain shares its arms, so the term printed as a tree can run to
+                        // hundreds of kilobytes; it is printed only when the case runs alone.
+                        let term = match only {
+                            Some(_) => t.to_string(),
+                            None => "the term (printed when the case runs alone)".to_string(),
+                        };
+                        panic!(
+                            "seed {seed} (modulus {m}, {p} periods, shape {shape:?}, {k} guards): \
+                             {term} over {ds:?}: {why}; the preimage is {} with relation {:?}.\n\
+                             Rerun this case alone from the worktree root:\n  \
+                             {WIDE_REMAINDER_SEED}={seed} /home/luke/Work/wt/zcargo test -p zed-tests \
+                             --test l01_25_preimage_catalog -- --exact s22::{test}",
+                            super::shown(&pre),
+                            pre.relation.as_ref().map(|r| r.to_string()),
+                        );
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// One test per group of moduli and periods of [`wide_remainders_match_the_interpreter`], each a
+/// piece of its own. The 900 cases in one test took 82.5 s at load 18: 11 s in `preimage` and
+/// the rest in the comparison, most of it the solver's answers on whether the relation holds at
+/// each point of the box, which grow with the modulus and the periods (6 s for the moduli 2 to
+/// 5 together, 12 s for 16 alone). In seven groups each took 18 s to 30 s at load 12 to 16,
+/// six at once; in these fourteen, 8 s to 18 s at load 17 to 19, six at once.
+macro_rules! wide_remainders {
+    ($($name:ident $moduli:expr, $periods:expr);* $(;)?) => {
+        $(
+            #[test]
+            fn $name() {
+                wide_remainders_match_the_interpreter(stringify!($name), $moduli, $periods);
+            }
+        )*
+    };
+}
+
+wide_remainders!(
+    wide_remainders_match_the_interpreter_moduli_2_to_5 2..=5, 1..=12;
+    wide_remainders_match_the_interpreter_modulus_6 6..=6, 1..=12;
+    wide_remainders_match_the_interpreter_modulus_7 7..=7, 1..=12;
+    wide_remainders_match_the_interpreter_modulus_8 8..=8, 1..=12;
+    wide_remainders_match_the_interpreter_modulus_9 9..=9, 1..=12;
+    wide_remainders_match_the_interpreter_modulus_10 10..=10, 1..=12;
+    wide_remainders_match_the_interpreter_modulus_11 11..=11, 1..=12;
+    wide_remainders_match_the_interpreter_modulus_12 12..=12, 1..=12;
+    wide_remainders_match_the_interpreter_modulus_13 13..=13, 1..=12;
+    wide_remainders_match_the_interpreter_modulus_14 14..=14, 1..=12;
+    wide_remainders_match_the_interpreter_modulus_15_periods_1_to_8 15..=15, 1..=8;
+    wide_remainders_match_the_interpreter_modulus_15_periods_9_to_12 15..=15, 9..=12;
+    wide_remainders_match_the_interpreter_modulus_16_periods_1_to_8 16..=16, 1..=8;
+    wide_remainders_match_the_interpreter_modulus_16_periods_9_to_12 16..=16, 9..=12;
 );
 
 /// The shapes of [`counted_shapes`] at their corners, each agreeing with the interpreter: the
