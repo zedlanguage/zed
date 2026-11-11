@@ -773,6 +773,43 @@ impl From<crate::lex::Error> for Error {
 impl From<crate::parse::Error> for Error {
     fn from(e: crate::parse::Error) -> Error {
         let message = e.to_string();
+        if let Some(c) = e.case {
+            let mut notes = vec![
+                Note {
+                    span: c.table,
+                    text: "the test table that holds the case".into(),
+                },
+                Note {
+                    span: c.case_span,
+                    text: "the test case, which takes no boundary clause".into(),
+                },
+            ];
+            if let Some(d) = &c.deleted {
+                notes.push(Note {
+                    span: c.case_span,
+                    text: format!("repair: `{d}`, the case with the `with` clause deleted"),
+                });
+            }
+            if let Some(u) = &c.update {
+                notes.push(Note {
+                    span: c.case_span,
+                    text: format!(
+                        "repair: `{u}`, the case with `{}` updated in its fields",
+                        c.before
+                    ),
+                });
+            }
+            return Error {
+                menu: String::new(),
+                span: c.clause_span,
+                message,
+                notes,
+                row: c
+                    .bare
+                    .is_some()
+                    .then_some(zedc_base::rejection::Row::BareBoundary),
+            };
+        }
         let Some(b) = e.bare else {
             return Error {
                 menu: String::new(),

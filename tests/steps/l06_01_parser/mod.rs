@@ -9,6 +9,7 @@ mod forms;
 mod initial;
 mod later;
 mod scaling;
+mod test_case;
 
 use zedc::ast::{Stmt, unit};
 use zedc::format::format;

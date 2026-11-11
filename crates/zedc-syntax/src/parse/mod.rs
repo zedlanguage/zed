@@ -88,6 +88,113 @@ pub struct Error {
     /// The boundary item written with neither `initial` nor an index that the parse stopped
     /// at, as `with x = 0`; the error's span is its `=`.
     pub bare: Option<Box<Bare>>,
+    /// The boundary clause written in a test case that the parse stopped at, as
+    /// `1 with x = 0 -> 1`; when it is set, `bare` is not.
+    pub case: Option<Box<InCase>>,
+}
+
+/// A boundary clause written in a test case, as `1 with x = 0 -> 1`. A test case is
+/// `Expr12 '->' Expr12` (DESIGN.md sec:grammar), and inside an expression `with` begins only a
+/// facet `with f(…)` or an update `with { … }`, so a test case takes no boundary clause.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InCase {
+    /// The function or method the test table follows, as `double` or `Counter.tick`, when the
+    /// unit parses once the clause is deleted.
+    pub function: Option<String>,
+    /// The test case, as written.
+    pub case: String,
+    /// Its span.
+    pub case_span: Span,
+    /// The span of `test {`, which opens the table.
+    pub table: Span,
+    /// The clause, from `with` to the end of its last item's value.
+    pub clause: String,
+    /// Its span.
+    pub clause_span: Span,
+    /// The code before `with`, as written.
+    pub before: String,
+    /// The first item up to its `=`: `x =`, `initial x =` or `x[k] =`.
+    pub head: String,
+    /// The first item's variable.
+    pub name: String,
+    /// The first item, from its name to the end of its value: `x = 0`.
+    pub item: String,
+    /// The text of the first item's value.
+    pub value: String,
+    /// The value of the first item written with neither `initial` nor an index, and its
+    /// variable, when the clause holds one.
+    pub bare: Option<(String, String)>,
+    /// The two sides of the test case without the clause, when the case has its `->`.
+    pub sides: Option<(String, String)>,
+    /// Whether the clause stands on the left side, so the first item's value ends before the
+    /// case's `->`.
+    pub left: bool,
+    /// The test case with the clause deleted, when that parses.
+    pub deleted: Option<String>,
+    /// The test case with the clause written as an update of fields, `with { x = 0 }`, when
+    /// every item is `x = e`, the code before `with` is not a lone literal, and that parses.
+    pub update: Option<String>,
+}
+
+impl InCase {
+    /// What the error says.
+    pub fn message(&self) -> String {
+        let InCase {
+            function,
+            case,
+            clause,
+            before,
+            head,
+            name,
+            item,
+            value,
+            ..
+        } = self;
+        let of = function
+            .as_ref()
+            .map(|f| format!(" of `{f}`"))
+            .unwrap_or_default();
+        let mut m = format!(
+            "The test case `{case}`{of} holds the boundary clause `{clause}`, and a test case \
+             takes no boundary clause."
+        );
+        if let Some((a, b)) = &self.sides {
+            m.push_str(&match function.as_deref() {
+                Some("main") => format!(
+                    " It states that a wave of `main` reading the ports `{a}` writes the bytes \
+                     `{b}`."
+                ),
+                Some(f) => format!(" It states that `{f}` applied to `{a}` gives `{b}`."),
+                None => format!(
+                    " It states that the function the table follows, applied to `{a}`, gives \
+                     `{b}`."
+                ),
+            });
+        }
+        m.push_str(&format!(
+            " Each side of a test case is an expression, and in an expression `with` is followed \
+             only by a facet, as `{before} with f(…)`, or by an update of fields, as `{before} \
+             with {{ {name} = … }}`; here `with` is followed by `{head}`, which begins a boundary \
+             item. A boundary clause gives a variable its value below its first step or index, \
+             and it follows only the value of a binding, as `{name}' = … with initial {name} = \
+             {value};`, or of an indexed definition, as `{name}[i in 0..<n] = … with initial \
+             {name} = {value};`."
+        ));
+        if self.left {
+            m.push_str(&format!(
+                " The item is read as `{item}`: its value ends before `->`, the arrow of the test \
+                 case."
+            ));
+        }
+        if let Some((n, v)) = &self.bare {
+            m.push_str(&format!(
+                " Written with neither `initial` nor an index, `with {n} = {v}` would be refused \
+                 after a binding too: it reads as though `{n}` took the value `{v}` anew on every \
+                 step, and the sentinel value is written `with initial {n} = {v}`."
+            ));
+        }
+        m
+    }
 }
 
 /// A boundary item with neither `initial` nor an index, as `with x = 0` (row "Boundary item
@@ -179,6 +286,9 @@ pub const DOTS: &str = "`..` stands alone between its brackets: `(..)` is every 
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(c) = &self.case {
+            return f.write_str(&c.message());
+        }
         if let Some(b) = &self.bare {
             return f.write_str(&b.message());
         }
@@ -292,7 +402,12 @@ fn parse_one<'t>(
         let mut expected: Vec<String> = p.expected().iter().map(shown).collect();
         expected.sort();
         let dots = dots_in_list(&toks, p.far);
-        let bare = bare_item(g, ring, start, &toks, p.far).map(|(n, clause)| {
+        let case = case_item(g, ring, start, &toks, p.far)
+            .map(|at| Box::new(in_case(text, tokens, &toks, end, at)));
+        let found = case
+            .is_none()
+            .then(|| bare_item(g, ring, start, &toks, p.far));
+        let bare = found.flatten().map(|(n, clause)| {
             let reaches =
                 |fixed: &[(Kind, &str)], edit: usize| reaches(g, ring, start, fixed, edit);
             Box::new(bare(
@@ -305,10 +420,13 @@ fn parse_one<'t>(
             ))
         });
         return Err(Error {
-            span: span(dots.unwrap_or(p.far)),
+            span: case
+                .as_ref()
+                .map_or_else(|| span(dots.unwrap_or(p.far)), |c| c.clause_span),
             expected,
             message: dots.map(|_| DOTS),
             bare,
+            case,
         });
     };
     let mut holes = Vec::new();
@@ -401,6 +519,303 @@ fn reaches(g: &Grammar, ring: u32, start: usize, toks: &[(Kind, &str)], edit: us
         None => p.far,
     };
     reached > edit
+}
+
+/// What starts a boundary item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ItemHead {
+    /// `x =`, with neither `initial` nor an index.
+    Bare,
+    /// `initial x =`.
+    Initial,
+    /// `x[k] =`, one or more indices.
+    Indexed,
+}
+
+/// The kind of boundary item that starts at token `i` of `toks`, and the token its value starts
+/// at: `initial x =`, `x[k]… =` or `x =`. The scan over the brackets of an index stops at the
+/// end of the tokens.
+fn item_head(toks: &[(Kind, &str)], i: usize) -> Option<(ItemHead, usize)> {
+    let at = |k: usize| toks.get(k).copied().unwrap_or((Kind::End, ""));
+    if at(i).0 != Kind::Ident {
+        return None;
+    }
+    match (at(i).1, at(i + 1), at(i + 2)) {
+        ("initial", (Kind::Ident, _), (_, "=")) => Some((ItemHead::Initial, i + 3)),
+        (_, (_, "="), _) => Some((ItemHead::Bare, i + 2)),
+        (_, (_, "["), _) => {
+            let mut k = i + 1;
+            while at(k).1 == "[" {
+                let mut d = 0;
+                loop {
+                    let t = at(k);
+                    if t.0 == Kind::End {
+                        return None;
+                    }
+                    d += depth(t.1);
+                    k += 1;
+                    if d == 0 {
+                        break;
+                    }
+                }
+            }
+            (at(k).1 == "=").then_some((ItemHead::Indexed, k + 1))
+        }
+        _ => None,
+    }
+}
+
+/// Where [`case_item`] found a boundary clause in a test case, by token index.
+struct CaseAt {
+    /// The `{` after `test`.
+    open: usize,
+    /// The case's first token.
+    first: usize,
+    /// The `with`.
+    w: usize,
+    /// Each item: its first token, what starts it, and the token its value starts at and the
+    /// one after its value.
+    items: Vec<(usize, ItemHead, usize, usize)>,
+    /// The token after the clause.
+    cut: usize,
+    /// The `,` or `}` that ends the case.
+    stop: usize,
+    /// The case's `->`, when the case has one.
+    arrow: Option<usize>,
+    /// The first token of the code before `with`: the case's first, or the token after `->`.
+    before: usize,
+    /// The first token of the function or method the table follows, and whether it is a
+    /// method, when the unit parses with the clause deleted.
+    function: Option<(usize, bool)>,
+    /// Whether the unit parses past the case with the clause deleted.
+    deleted: bool,
+    /// Whether the clause is offered as an update of fields, `with { x = 0 }`.
+    update: bool,
+}
+
+/// The boundary clause in a test case at whose first item a parse of `toks` as rule `start`
+/// failed (token `far`): `with` two tokens before `far`, a boundary item after it, and the `{`
+/// of `test {` as the bracket around it. No rule reads a boundary item after an expression, so
+/// `with x =`, `with initial x =` and `with x[k] =` each fail one token after the item's first
+/// word, where a facet `with f(…)` wants its `(`. Each item's value is matched as an `Expr12`,
+/// the rule of a side of a test case (`TestCase = Expr12 '->' Expr12`), so the case's `->`
+/// ends it as it ends the left side.
+///
+/// Cost, on the error path only: a scan back to the table's `{` and forward to the case's end;
+/// one packrat parser for the values and the case's left side, linear in what it reads; at
+/// most two parses of the unit with the clause rewritten; and one walk down the tree from the
+/// root to the case. Linear in the unit.
+fn case_item(
+    g: &Grammar,
+    ring: u32,
+    start: usize,
+    toks: &[(Kind, &str)],
+    far: usize,
+) -> Option<CaseAt> {
+    // Complexity tradeoff: the naive way reparses each case of the table on its own as a
+    // `TestCase` to find the one that fails, O(cases × unit); here the case is cut out by one
+    // scan back from `with` and one forward at bracket depth 0, O(unit), and only its values and
+    // left side are parsed.
+    let w = far.checked_sub(2)?;
+    if toks[w] != (Kind::Keyword, "with") {
+        return None;
+    }
+    item_head(toks, w + 1)?;
+    // Back to the bracket around the case; the case starts after the nearest `,` at its depth.
+    let mut open = w;
+    let mut first = None;
+    let mut d = 0;
+    while open > 0 {
+        let t = toks[open - 1].1;
+        if d - depth(t) < 0 {
+            break;
+        }
+        if d == 0 && t == "," && first.is_none() {
+            first = Some(open);
+        }
+        d -= depth(t);
+        open -= 1;
+    }
+    if open < 2 || toks[open - 1].1 != "{" || toks[open - 2] != (Kind::Keyword, "test") {
+        return None;
+    }
+    let open = open - 1;
+    let first = first.unwrap_or(open + 1);
+    let e12 = g.rule("Expr12")?;
+    let mut p = Parser::new(g, ring, toks);
+    let mut items = Vec::new();
+    let mut i = w + 1;
+    while let Some((h, v)) = item_head(toks, i) {
+        let (e, _) = p.rule_node(e12, v, false)?;
+        items.push((i, h, v, e));
+        if toks[e].1 != "," {
+            break;
+        }
+        i = e + 1;
+    }
+    let cut = items.last()?.3;
+    // Forward to the `,` or `}` that ends the case.
+    let mut stop = cut;
+    let mut d = 0;
+    while toks[stop].0 != Kind::End
+        && !(d == 0 && toks[stop].1 == ",")
+        && d + depth(toks[stop].1) >= 0
+    {
+        d += depth(toks[stop].1);
+        stop += 1;
+    }
+    let (l, _) = p.rule_node(e12, first, false)?;
+    let arrow = if l == w {
+        (toks[cut].1 == "->").then_some(cut)
+    } else {
+        (l < w && toks[l].1 == "->").then_some(l)
+    };
+    let before = arrow.filter(|&a| a < w).map_or(first, |a| a + 1);
+    // The clause deleted: the menu's first repair, and the tree the function's name is read
+    // from.
+    let mut fixed = toks[..w].to_vec();
+    fixed.extend_from_slice(&toks[cut..]);
+    let mut q = Parser::new(g, ring, fixed.as_slice());
+    let (deleted, function) = match q.rule_node(start, 0, false) {
+        Some((e, root)) if e + 1 >= fixed.len() => (true, enclosing(&q.nodes, root, w)),
+        Some((e, _)) => (e.max(q.far) > w, None),
+        None => (q.far > w, None),
+    };
+    // The clause as an update of fields: only items `x = e`, after code that can be a struct.
+    let literal = matches!(
+        &toks[before..w],
+        [(
+            Kind::Int | Kind::Float | Kind::Rat | Kind::Str | Kind::Atom,
+            _
+        )] | [(_, "-"), (Kind::Int | Kind::Float | Kind::Rat, _)]
+            | [(Kind::Keyword, "true" | "false")]
+    );
+    let update = !literal && items.iter().all(|it| it.1 == ItemHead::Bare) && {
+        let mut fixed = toks[..=w].to_vec();
+        fixed.push((toks[open].0, "{"));
+        fixed.extend_from_slice(&toks[w + 1..cut]);
+        fixed.push((toks[open].0, "}"));
+        fixed.extend_from_slice(&toks[cut..]);
+        reaches(g, ring, start, &fixed, cut + 1)
+    };
+    Some(CaseAt {
+        open,
+        first,
+        w,
+        items,
+        cut,
+        stop,
+        arrow,
+        before,
+        function,
+        deleted,
+        update,
+    })
+}
+
+/// The first token of the innermost `Function` or `Method` node of the tree under `root` whose
+/// span holds token `at`, and whether it is a method. One walk from the root down the nodes
+/// that hold `at`, each step a scan of one node's kids: linear in the tree.
+fn enclosing(nodes: &[Node], root: usize, at: usize) -> Option<(usize, bool)> {
+    let g = grammar();
+    let mut n = root;
+    let mut found = None;
+    loop {
+        let node = &nodes[n];
+        match g.rules[node.rule].name.as_str() {
+            "Function" => found = Some((node.start, false)),
+            "Method" => found = Some((node.start, true)),
+            _ => {}
+        }
+        let holds = |&&k: &&usize| nodes[k].start <= at && at < nodes[k].end;
+        match node.kids.iter().find(holds) {
+            Some(&k) => n = k,
+            None => return found,
+        }
+    }
+}
+
+/// The [`InCase`] the clause `at` found by [`case_item`] makes, from `text` lexed as `tokens`;
+/// `end` is the span of the end of the tokens.
+fn in_case(text: &str, tokens: &[Token], toks: &[(Kind, &str)], end: Span, at: CaseAt) -> InCase {
+    let span = |i: usize| tokens.get(i).map_or(end, |t| t.span);
+    // The text of tokens `a` to `b`, `b` not included; empty when there are none.
+    let sl = |a: usize, b: usize| {
+        if b > a {
+            &text[span(a).start..span(b - 1).end]
+        } else {
+            ""
+        }
+    };
+    let glue = |a: &str, b: &str| match (a.is_empty(), b.is_empty()) {
+        (_, true) => a.to_string(),
+        (true, _) => b.to_string(),
+        _ => format!("{a} {b}"),
+    };
+    let CaseAt {
+        open,
+        first,
+        w,
+        ref items,
+        cut,
+        stop,
+        arrow,
+        before,
+        function,
+        deleted,
+        update,
+    } = at;
+    let (i0, h0, v0, e0) = items[0];
+    let rest = sl(cut, stop);
+    let sides = arrow.and_then(|a| {
+        let sides = if a == cut {
+            (sl(first, w).to_string(), sl(a + 1, stop).to_string())
+        } else {
+            (sl(first, a).to_string(), glue(sl(a + 1, w), rest))
+        };
+        (!sides.0.is_empty() && !sides.1.is_empty()).then_some(sides)
+    });
+    let function = function.map(|(f, method)| match method {
+        true => format!("{}.{}", toks[f].1, toks[f + 2].1),
+        false => toks[f].1.to_string(),
+    });
+    InCase {
+        function,
+        case: sl(first, stop).to_string(),
+        case_span: Span {
+            start: span(first).start,
+            end: span(stop - 1).end,
+        },
+        table: Span {
+            start: span(open - 1).start,
+            end: span(open).end,
+        },
+        clause: sl(w, cut).to_string(),
+        clause_span: Span {
+            start: span(w).start,
+            end: span(cut - 1).end,
+        },
+        before: sl(before, w).to_string(),
+        head: sl(i0, v0).to_string(),
+        name: toks[i0 + usize::from(h0 == ItemHead::Initial)]
+            .1
+            .to_string(),
+        item: sl(i0, e0).to_string(),
+        value: sl(v0, e0).to_string(),
+        bare: items
+            .iter()
+            .find(|it| it.1 == ItemHead::Bare)
+            .map(|&(i, _, v, e)| (toks[i].1.to_string(), sl(v, e).to_string())),
+        sides,
+        left: arrow == Some(cut),
+        deleted: deleted.then(|| glue(sl(first, w), rest)),
+        update: update.then(|| {
+            glue(
+                &format!("{} {{ {} }}", sl(first, w + 1), sl(w + 1, cut)),
+                rest,
+            )
+        }),
+    }
 }
 
 /// Checks that a rewritten token sequence parses past its last edit, for [`bare`].
