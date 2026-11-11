@@ -693,6 +693,103 @@ fn an_inexact_literal_of_an_if_in_a_tuple_is_its_own_error() {
     }
 }
 
+#[test]
+fn the_probe_programs_of_lit_branch_op_value_keep_their_results() {
+    // Item TESTS-lbo-probe-cases: the programs of LIT-branch-op-value's probe that no test
+    // above pins whole. A decimal with the suffix `r` beside an integer literal, read at
+    // `rat` through a call.
+    let src = "g(positional c: bool) = if c { 1 } else { 2.5r };\nh(positional z: rat) = z;\n\
+               f(positional c: bool) = h(g(c));\na = f(false);\nb = f(true);\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(sig(src, "g"), "(bool) -> 1 | 25e-1r");
+    assert_eq!(sig(src, "f"), "(bool) -> rat");
+    assert_eq!(value(src, "a"), "5r/2r");
+    assert_eq!(value(src, "b"), "1r");
+    // An operation on literals beside a decimal, read at `f64` through a call.
+    let src = format!(
+        "g(positional c: bool) = if c {{ 1 + 1 }} else {{ 1.5 }};\n{H}\
+         f(positional c: bool) = h(g(c));\na = f(true);\nb = f(false);\n"
+    );
+    assert_eq!(type_errors(&src), Vec::<String>::new());
+    assert_eq!(sig(&src, "f"), "(bool) -> f64");
+    assert_eq!(value(&src, "a"), "2.0");
+    assert_eq!(value(&src, "b"), "1.5");
+    // A negated operation as a branch written at the parameter; another operator beside it.
+    for (branch, v) in [("-(2 + 1)", "-3.0"), ("-(2 * 3)", "-6.0")] {
+        let src = format!(
+            "{H}f(positional c: bool) = h(if c {{ {branch} }} else {{ 1 }});\na = f(true);\n"
+        );
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        assert_eq!(sig(&src, "f"), "(bool) -> f64", "{src}");
+        assert_eq!(value(&src, "a"), v, "{src}");
+    }
+}
+
+#[test]
+fn an_operation_on_literals_past_two_to_the_53_differs_by_where_it_is_fixed() {
+    // Item TESTS-lbo-probe-cases. Written at the `f64` parameter, `2 + 9007199254740991`
+    // is `f64` addition of two literals `f64` holds exactly, 9007199254740992.0 by ties to
+    // even. Returned by `g`, where nothing fixes it, it is `int` addition, the integer
+    // 9007199254740993, which `f64` does not hold exactly, so the call is rejected as one of
+    // the literal 9007199254740993 is.
+    let inline = format!(
+        "{H}f(positional c: bool) = h(if c {{ 2 + 9007199254740991 }} else {{ 1 }});\n\
+         a = f(true);\n"
+    );
+    assert_eq!(type_errors(&inline), Vec::<String>::new());
+    assert_eq!(sig(&inline, "f"), "(bool) -> f64");
+    assert_eq!(value(&inline, "a"), "9007199254740992.0");
+    let call = format!(
+        "g(positional c: bool) = if c {{ 2 + 9007199254740991 }} else {{ 1 }};\n{H}\
+         f(positional c: bool) = h(g(c));\n"
+    );
+    assert_eq!(sig(&call, "g"), "(bool) -> 1 | 9007199254740993");
+    assert_eq!(
+        type_errors(&call),
+        vec![
+            "`h` does not take (1 | 9007199254740993): `g(c)` may give the integer \
+             9007199254740993, which `f64` does not hold exactly, so it cannot be read as the \
+             `f64` that `h` takes here; an integer a call gives is read at `f64` only where \
+             `f64` holds it exactly, as an integer literal is. Make that value one `f64` holds \
+             exactly where it is written, or give this parameter of `h` a type that holds \
+             9007199254740993, such as `int` [h(g(c))]"
+                .to_string()
+        ]
+    );
+}
+
+#[test]
+fn a_call_of_literal_values_beside_a_generic_operand_is_an_int_today() {
+    // Item TESTS-lbo-probe-cases pins today's result: beside a generic `x` the call is not
+    // read at `x`'s carrier, so the values are `int` and fix `x` at `int`. Reading the call
+    // at the class of `x`, as `x + (if c { 2 + 1 } else { 1 })` is read, is a follow-up of
+    // LIT-op-reads-call, not done here.
+    let src = "g(positional c: bool) = if c { 2 + 1 } else { 1 };\n\
+               f(positional c: bool, x) = x + g(c);\na = f(true, x: 1);\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(sig(src, "f"), "(bool, x: int) -> int");
+    assert_eq!(value(src, "a"), "4");
+}
+
+#[test]
+fn a_call_of_literal_values_at_a_union_of_carriers_is_rejected_whole() {
+    // Item TESTS-lbo-probe-cases: the full message of the `f64 | rat` case above. Its last
+    // part names `T1`, which the message never uses, for a type written once; a printer fix
+    // changes this pin.
+    let src = "g(positional c: bool) = if c { 2 } else { 1 };\nh(positional z: f64 | rat) = z;\n\
+               f(positional c: bool) = h(g(c));\n";
+    assert_eq!(
+        type_errors(src),
+        vec![
+            "`h` does not take (1 | 2): these are the types of its arguments here, and `h` has \
+             no arrow that takes them all\n  T1 stands for a part written more than once:\n    \
+             type T1 = rat | f64; [h(g(c))]"
+                .to_string()
+        ]
+    );
+    assert_eq!(sig(src, "f"), "(bool) -> Never");
+}
+
 /// A body of `n` calls `k((if c { 2 + 1 } else { 1 }, 1))`, each `if` read at `f64`.
 fn tuple_calls(n: usize) -> String {
     let mut body = String::new();
