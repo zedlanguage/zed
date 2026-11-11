@@ -8060,6 +8060,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         // Each bounded variable's binding is within its bound, and of one carrier, or of
         // other values only: the arrows of an operator each take one. So the classes in it
         // merge, and what else it holds flows into them.
+        //
+        // A bounded variable stands for a carrier, not for the values the arguments hold
+        // (DESIGN.md step L1.26: a call "checks that its arguments' carriers are one
+        // carrier in the bound"): the body's operators make new values of that carrier. So
+        // each scalar piece of the binding is widened to its whole carrier before the result
+        // is read. Bound to the arguments' own values, `f(x, p) = x + p[0]` called as
+        // `f(x: 1r, p: (2r, 1))` gave `1r | 2r`, the two literals the call passes, for a value
+        // `3r` outside it (LIT-generic-parts-type). Classes, variables and other values stay
+        // as they are. Complexity tradeoff (COMPLEXITY.md F165): naive, a second walk over the
+        // binding after this check, O(p) for p pieces, reading each piece's class and carrier
+        // again; used, the widened binding built in the pass this check makes already, O(p),
+        // one union per piece.
         for (v, &m) in &sig.bounds {
             let Some(t) = binds.get(v).cloned() else {
                 continue;
@@ -8067,8 +8079,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             let mut kinds = 0u8;
             let mut class: Option<usize> = None;
             let mut rest = Ty::empty();
+            let mut whole = Ty::empty();
             for piece in t.pieces() {
-                let ok = match (self.class_of(&piece), piece.carrier()) {
+                let (of, carrier) = (self.class_of(&piece), piece.carrier());
+                whole = whole.union(&match (of, carrier) {
+                    (None, Some(c)) => Ty::carrier(c),
+                    _ => piece.ty(),
+                });
+                let ok = match (of, carrier) {
                     (Some(k), _) => {
                         self.restrict(k, m, what, span)
                             && match class {
@@ -8102,6 +8120,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             {
                 return fail(self);
             }
+            binds.insert(v.clone(), whole);
         }
         binds.retain(|v, _| !self.is_class(v));
         let mut out = Ty::empty();

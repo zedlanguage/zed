@@ -13,6 +13,7 @@ mod fixes;
 mod lazy_carrier;
 mod lit_branch_ops;
 mod lit_branches;
+mod parts_type;
 mod scaling;
 mod spelling;
 mod tuple_rest;
