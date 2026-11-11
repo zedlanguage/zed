@@ -62,13 +62,14 @@ test("crossing reduction from a seeded order scales as n log n in the layer widt
   decrossSeeded(g.index, g.x, g.y)(g.layers);
   const after = crossings(g.layers);
   assert.ok(after <= before, `${after} crossings after, ${before} before`);
-  const control = [w, 8 * w].map((k) => {
+  // The control is timed as the seeded path is, the least of three runs, so one
+  // run slowed by parallel load does not shrink its ratio.
+  const greedy = (k: number) => () => {
     const h = wide(L, k);
     for (const row of h.layers) row.sort((p: any, q: any) => h.x[p.data.node] - h.x[q.data.node]);
-    const t0 = performance.now();
-    decrossTwoLayer().order(twolayerGreedy()).inits([]).passes(1)(h.layers as any);
-    return performance.now() - t0;
-  });
+    return () => decrossTwoLayer().order(twolayerGreedy()).inits([]).passes(1)(h.layers as any);
+  };
+  const control = [w, 8 * w].map((k) => best(greedy(k)));
   // 8 times the nodes at n log n is 8 log(8n) / log n times the time, about
   // 10; the limit is twice that, and more when the 1-minute load is above the
   // 32 cores. The control's ratio, 64 if its pair count were all its time,

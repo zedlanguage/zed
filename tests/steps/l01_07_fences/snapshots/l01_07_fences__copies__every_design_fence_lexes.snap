@@ -75,6 +75,82 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | runs = m . args . map ( f -> run ( [ str["gzip"] , str["--keep"] , str["--"] , f ] , unconsumedStderr : #suppress ) . status ) ;
   4 | m . stdout <- runs . map ( s -> «match» s { #ok -> str["compressed"] , _ -> str["gzip failed"] } ) ;
   5 | }
+== DESIGN.md [sec:codecs] 1 L22
+  1 | «type» DecodeFailure = #badEncoding ( at : int , layer : Utf8String , why : Utf8String )
+  2 | | #syntaxError ( pos : int , expected : [ Utf8String ] , open : [ #open ( rule : Utf8String , pos : int ) ] )
+  3 | | #parseError ( pos : int , expected : [ Utf8String ] , open : [ #open ( rule : Utf8String , pos : int ) ] , msg : Utf8String ) ;
+  6 | «type» LossyCodec ( «positional» W , «positional» V ) = {
+  7 | name : Utf8String ,
+  8 | decode : ( Stream ( W | DecodeFailure ) ) -> Stream ( V | DecodeFailure ) ,
+  9 | encode : ( Stream ( V ) ) -> Stream ( W ) ,
+ 10 | } ;
+ 13 | «interface» Codec ( «positional» W , «positional» V ) {
+ 14 | name : Utf8String ,
+ 15 | decode : ( Stream ( W | DecodeFailure ) ) -> Stream ( V | DecodeFailure ) ,
+ 16 | encode : ( Stream ( V ) ) -> Stream ( W ) ,
+ 17 | «law» roundTrip ( vs : Stream ( V ) ) = decode ( encode ( vs ) ) == vs ,
+ 18 | }
+ 21 | «interface» CanonicalCodec ( «positional» W , «positional» V ) {
+ 22 | «import» Codec ( W , V ) ,
+ 23 | «law» canonical ( ws : Stream ( W ) , vs : Stream ( V ) ) = ( decode ( ws ) == vs ) . implies ( encode ( vs ) == ws ) ,
+ 24 | }
+== DESIGN.md [sec:codecs] 2 L22
+  1 | then ( «positional» a : Codec ( A , B ) , «positional» b : Codec ( B , C ) ) -> Codec ( A , C ) = {
+  2 | name : b . name ,
+  3 | decode : ws -> b . decode ( a . decode ( ws ) ) ,
+  4 | encode : vs -> a . encode ( b . encode ( vs ) ) ,
+  5 | } ;
+  7 | «law» thenRoundTrip ( a : Codec ( A , B ) , b : Codec ( B , C ) , vs : Stream ( C ) ) =
+  8 | b . decode ( a . decode ( a . encode ( b . encode ( vs ) ) ) ) == vs
+  9 | «proof» {
+ 10 | b . decode ( a . decode ( a . encode ( b . encode ( vs ) ) ) )
+ 11 | == b . decode ( b . encode ( vs ) )
+ 12 | == vs
+ 13 | }
+== DESIGN.md [sec:codecs] 3 L7
+  2 | main ( m : MainArgs ) {
+  3 | m . stdout <- str[${m . stdin :: bytes :: len} " bytes"] ;
+  4 | }
+== DESIGN.md [sec:codecs] 4 L20
+  3 | «struct» Event { name : Utf8String , at : int }
+  5 | main ( m : MainArgs ) {
+  6 | events = m . stdin :: bytes . via ( utf8Text ( ) . then ( json ( Event ) ) ) ;
+  7 | m . stdout <- events . map ( e -> e . name «else» str["(a value that did not parse)"] ) ;
+  8 | }
+== DESIGN.md [sec:codecs] 5 L10
+  2 | «type» Line = ( s : Utf8String where ! s . contains ( str["\n"] ) && ! s . endsWith ( str["\r"] ) ) ;
+  3 | «type» RawLine = ( s : Utf8String where ! s . contains ( str["\n"] ) ) ;
+  4 | «type» Lines = Stream ( Utf8String ) ;
+  6 | textLines = utf8Text ( ) . then ( lines ( ) ) ;
+== DESIGN.md [sec:codecs] 6 L10
+  2 | shifted ( k : u8 ) -> CanonicalCodec ( u8 , u8 ) = {
+  3 | name : str["shifted"] ,
+  4 | decode : ws -> ws . map ( b -> ( b + 256₍10₎ - k ) «mod» 256₍10₎ ) ,
+  5 | encode : vs -> vs . map ( b -> ( b + k ) «mod» 256₍10₎ ) ,
+  6 | } ;
+  9 | trimmed ( «positional» c : LossyCodec ( W , Line ) ) -> LossyCodec ( W , Line ) = {
+ 10 | name : str["trimmed"] ,
+ 11 | decode : ws -> c . decode ( ws ) . map ( l -> l . trim ) ,
+ 12 | encode : c . encode ,
+ 13 | } ;
+ 15 | main ( m : MainArgs ) {
+ 17 | m . stdout <- m . stdin :: bytes . via ( shifted ( k : 13₍10₎ ) . then ( textLines ) ) . map ( l -> l «else» str[] ) ;
+ 18 | }
+== DESIGN.md [sec:codecs] 7 L20
+  2 | @foreign «struct» Sample { t : u64 , value : f64 }
+  3 | @foreign ( str["sensor"] , str["sensor_free"] ) freeSamples : ( p : Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) ) -> #ok ;
+  4 | @foreign ( str["sensor"] , str["sensor_read"] ) readSamples : ( count : i32 ) -> Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) «with» release ( freeSamples ) ;
+  6 | main ( m : MainArgs ) {
+  7 | fs = files ( ) ;
+  8 | samples = readSamples ( count : 1024₍10₎ ) «else» [ ] ;
+  9 | fs :: bytes [ str["samples.bin"] ] <- records ( Sample ) . encode ( samples ) ;
+ 10 | m . stdout <- str[${samples :: len} " samples written"] ;
+ 11 | }
+== DESIGN.md [sec:codecs] 8 L20
+  2 | main ( m : MainArgs ) {
+  3 | back = ( files ( ) :: bytes [ str["samples.bin"] ] «else» [ ] ) . via ( records ( Sample ) ) ;
+  4 | m . stdout <- str[${back :: len} " samples read"] ;
+  5 | }
 == DESIGN.md [sec:constraints] 1 L10
   1 | «type» Small = ( x : int where x * x < 100₍10₎ ) ;
   2 | «type» Even = ( n : int where n «mod» 2₍10₎ == 0₍10₎ ) ;

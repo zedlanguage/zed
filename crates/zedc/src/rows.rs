@@ -186,8 +186,8 @@ impl Lookup for NotFound {
 }
 
 /// The arguments a test gives a `CommandLine` port as the `String` `s`, one per line, the
-/// lines read as a `Lines` input's are: a line ends at `\n`, a `\r` before it is dropped, and a
-/// last line needs no `\n`.
+/// lines read as a `Lines` input's are: a line ends at `\n`, every `\r` right before its end is
+/// dropped, and a last line needs no `\n`.
 fn given_args(s: &str) -> Vec<String> {
     let mut lines: Vec<&str> = s.split('\n').collect();
     if lines.last().is_some_and(|l| l.is_empty()) {
@@ -195,7 +195,7 @@ fn given_args(s: &str) -> Vec<String> {
     }
     lines
         .into_iter()
-        .map(|l| l.strip_suffix('\r').unwrap_or(l).to_string())
+        .map(|l| l.trim_end_matches('\r').to_string())
         .collect()
 }
 

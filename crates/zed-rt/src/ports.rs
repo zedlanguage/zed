@@ -5,8 +5,8 @@
 use zed_kernel::{Family, Value};
 
 /// The lines of `bytes`, the input of port `port`, keyed from 1: a line ends at `\n`, which a
-/// last line may lack; a `\r` before the `\n` is not part of the line; a line that is not
-/// UTF-8 is `#ioError(op: "read", path: port, why: "line N is not UTF-8")`.
+/// last line may lack; every `\r` right before a line's end is not part of the line; a line
+/// that is not UTF-8 is `#ioError(op: "read", path: port, why: "line N is not UTF-8")`.
 pub fn lines(port: &str, bytes: &[u8]) -> Value {
     let mut out = Vec::new();
     let mut start = 0;
@@ -16,7 +16,7 @@ pub fn lines(port: &str, bytes: &[u8]) -> Value {
             .position(|b| *b == b'\n')
             .map_or(bytes.len(), |i| start + i);
         let mut line = &bytes[start..end];
-        if let [rest @ .., b'\r'] = line {
+        while let [rest @ .., b'\r'] = line {
             line = rest;
         }
         let v = match std::str::from_utf8(line) {

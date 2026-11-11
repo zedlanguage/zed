@@ -247,11 +247,17 @@ impl<'a, 's> Builder<'a, 's> {
         }
     }
 
-    /// The port the push target node `t`, `PushTarget = Name ('.' Name)*`, names: the name
-    /// itself, or `m.stdout` and `m.stderr` for the parameter `m` of the `main` whose body
-    /// holds it, recorded as pushed to ([`Mains`]); or why the target cannot be pushed to.
+    /// The port the push target node `t`, `PushTarget = Name ('.' Name)* ('::' Name)?`,
+    /// names: the name itself, or `m.stdout` and `m.stderr` for the parameter `m` of the
+    /// `main` whose body holds it, recorded as pushed to ([`Mains`]); or why the target
+    /// cannot be pushed to. A target ending in a view (`m.stdout::bytes`, DESIGN step L7.3h)
+    /// is not compiled yet. The tokens alternate a name and a separator, `.` or `::`, and the
+    /// grammar allows `::` only before the last name.
     pub(super) fn push_target(&self, t: usize) -> Result<String, Error> {
         let node = &self.tree.nodes[t];
+        if node.end - node.start > 1 && self.word(node.end - 2) == "::" {
+            return Err(self.later_as(t, "a push to a view of a port"));
+        }
         let names: Vec<&str> = (node.start..node.end)
             .step_by(2)
             .map(|i| self.word(i))

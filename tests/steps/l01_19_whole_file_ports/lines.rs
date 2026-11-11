@@ -42,6 +42,27 @@ fn lines_are_numbered_from_one_and_crlf_is_one_line_end() {
 }
 
 #[test]
+fn every_cr_right_before_a_line_end_is_dropped() {
+    // DESIGN step L1.19: a line ends at `\n`, every `\r` right before its end is dropped, and
+    // a last line needs no `\n`; a `\r` inside a line is kept.
+    for input in [&b"a"[..], b"a\n", b"a\r\n", b"a\r\r\n", b"a\r", b"a\r\r"] {
+        assert_eq!(
+            split_lines("stdin", input).to_string(),
+            "{1 -> \"a\"}",
+            "{input:?}"
+        );
+    }
+    assert_eq!(
+        split_lines("stdin", b"a\rb\r\n\r\nc").to_string(),
+        "{1 -> \"a\\rb\", 2 -> \"\", 3 -> \"c\"}"
+    );
+    // A run of `\r` costs one step each: 100000 of them before one `\n` leave one empty line.
+    let mut many = vec![b'\r'; 100_000];
+    many.push(b'\n');
+    assert_eq!(split_lines("stdin", &many).to_string(), "{1 -> \"\"}");
+}
+
+#[test]
 fn a_line_that_is_not_utf8_is_an_io_error_at_its_key() {
     let lines = split_lines("stdin", b"ok\n\xff\xfe\nfine\n");
     let Value::Family(f) = &lines else {

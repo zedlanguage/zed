@@ -143,3 +143,41 @@ fn the_arguments_are_an_input() {
         )
     );
 }
+
+#[test]
+fn a_push_target_may_end_in_one_view() {
+    // `PushTarget = Name ('.' Name)* ('::' Name)?` (sec:grammar): `m.stdout::bytes` parses as
+    // the view `bytes` of `m.stdout` (DESIGN step L7.3h), which this zedc does not compile yet;
+    // `m::stdout` is the view `stdout` of `m`, never the field `m.stdout`.
+    for target in ["m.stdout::bytes", "m::stdout"] {
+        let src = format!("main(m: MainArgs) {{\n  {target} <- \"a\";\n}}\n");
+        assert_eq!(
+            zedc::run::load(src.as_bytes()).err().as_deref(),
+            Some(
+                format!(
+                    "2:3: a push to a view of a port `{target}` is part of the Zed language, and \
+                     this version of zedc does not compile it yet. Write the program without \
+                     it, with the forms this zedc compiles."
+                )
+                .as_str()
+            ),
+            "{target}"
+        );
+    }
+}
+
+#[test]
+fn a_push_target_has_at_most_one_view_and_it_comes_last() {
+    // Neither is a push target, so each reads as an expression, which stops at the `<-`.
+    for (target, at) in [
+        ("m.stdout::bytes::len", "2:24"),
+        ("m::stdout.bytes", "2:19"),
+    ] {
+        let src = format!("main(m: MainArgs) {{\n  {target} <- \"a\";\n}}\n");
+        let err = zedc::run::load(src.as_bytes()).err().unwrap_or_default();
+        assert!(
+            err.starts_with(&format!("{at}: expected ")),
+            "{target}: {err}"
+        );
+    }
+}

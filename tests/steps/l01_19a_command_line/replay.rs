@@ -99,3 +99,11 @@ fn a_main_row_gives_the_arguments_one_per_line() {
         ]
     );
 }
+
+#[test]
+fn a_main_rows_arguments_drop_every_cr_before_a_line_end() {
+    let src = "main(m: MainArgs) {\n  \
+               m.stdout <- \"${m.args[1] else \"-\"}+${m.args[2] else \"-\"}\";\n}\n\
+               test { (\"\", \"a\\r\\r\\nb\\rc\\r\\n\") -> \"a+b\\rc\\n\", (\"\", \"a\\r\") -> \"a+-\\n\" }\n";
+    assert_eq!(checks(src), ["4:8: ok", "4:47: ok"]);
+}

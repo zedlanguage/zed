@@ -629,7 +629,8 @@ pub fn commit(
 }
 
 /// The lines of `bytes`, the input of `Lines` port `port`, keyed from 1. A line ends at `\n`,
-/// a `\r` before it is dropped, and a last line needs no `\n`; a line that is not UTF-8 is
+/// every `\r` right before its end is dropped, and a last line needs no `\n`; a `\r` inside a
+/// line is kept. Each line costs O(its length). A line that is not UTF-8 is
 /// `#ioError(op: "read", path: port, why:)`, its path the port's name, since standard input
 /// has no path.
 pub fn split_lines(port: &str, bytes: &[u8]) -> Value {
@@ -638,7 +639,10 @@ pub fn split_lines(port: &str, bytes: &[u8]) -> Value {
         parts.pop();
     }
     let lines = parts.into_iter().enumerate().map(|(i, line)| {
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let mut line = line;
+        while let [rest @ .., b'\r'] = line {
+            line = rest;
+        }
         let v = match std::str::from_utf8(line) {
             Ok(s) => Value::str(s),
             Err(_) => Value::io_error("read", port, &not_utf8(i + 1)),
