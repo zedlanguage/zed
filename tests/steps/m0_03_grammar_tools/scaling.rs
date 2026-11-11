@@ -152,7 +152,9 @@ fn the_checklist_comparison_scales_with_its_entries() {
         };
         let alts: String = (0..m).map(|i| format!(" `R{i}#0` `S{i}#0`")).collect();
         let words: String = (0..m).map(|i| format!(" `w{i}` `x{i}`")).collect();
-        let list = format!("## Part A\n\n| L1 |{alts} |{words} |\n");
+        let list = format!(
+            "## Part A\n\n| Layer | Alternatives | Words |\n|---|---|---|\n| L1 |{alts} |{words} |\n"
+        );
         (needs, list)
     });
     check("checklist comparison, by entries", 2000, |m| {

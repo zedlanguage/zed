@@ -140,32 +140,129 @@ pub struct Needs {
     pub words: BTreeMap<String, u32>,
 }
 
-/// The entries of Part A of a checklist, each with the layer of the row that lists it.
+/// The entries of Part A of a checklist, each with the layer of the row that lists it, and a
+/// message for each line of its table that cannot be read.
 #[derive(Debug, Default)]
 struct Listed<'a> {
     alts: BTreeMap<&'a str, u32>,
     words: BTreeMap<&'a str, u32>,
+    unread: Vec<(usize, String, &'a str)>,
+}
+
+/// The entries of a cell of Part A, named `column` in messages: spans in backticks separated by
+/// spaces, or none when the cell is empty or `—`.
+fn cell_entries<'a>(column: &str, cell: &'a str) -> Result<Vec<&'a str>, String> {
+    let cell = strip(cell);
+    if cell.is_empty() || cell == "—" {
+        return Ok(Vec::new());
+    }
+    let parts: Vec<&str> = cell.split('`').collect();
+    if parts.len().is_multiple_of(2) {
+        return Err(format!(
+            "its column of {column} has a backtick with no closing backtick"
+        ));
+    }
+    let mut out = Vec::new();
+    for (i, part) in parts.into_iter().enumerate() {
+        if i % 2 == 0 {
+            if !strip(part).is_empty() {
+                return Err(format!(
+                    "its column of {column} has `{}` outside backticks",
+                    strip(part)
+                ));
+            }
+        } else if part.is_empty() || part.contains(zedc::parse::is_space) {
+            return Err(format!(
+                "its column of {column} has `{part}` in backticks, but an entry in backticks is \
+                 one name with no spaces"
+            ));
+        } else {
+            out.push(part);
+        }
+    }
+    Ok(out)
 }
 
 /// The table of the section `## Part A` of the checklist `text`, or `None` if it has no such
-/// section. A row is a line `| L<k> | <alternatives> | <words> |`; an entry is a span in
-/// backticks.
+/// section. Every line of the section that holds a bar `|` is a line of the table: first a
+/// header row, then a row of dashes, then the rows `| L<k> | <alternatives> | <words> |`, where
+/// an entry is a span in backticks. A line that is not of this form is not skipped: it gets a
+/// message in `unread`, with its line number in the file.
 fn part_a(text: &str) -> Option<Listed<'_>> {
-    let mut lines = text.split('\n');
-    lines.find(|l| l.starts_with("## Part A"))?;
+    let mut lines = text.split('\n').enumerate();
+    lines.find(|(_, l)| l.starts_with("## Part A"))?;
     let mut out = Listed::default();
-    for l in lines.take_while(|l| !l.starts_with("## ")) {
-        let cells: Vec<&str> = l.split('|').collect();
-        let [_, layer, alts, words, ..] = cells[..] else {
+    let mut rows = 0;
+    for (n, l) in lines.take_while(|(_, l)| !l.starts_with("## ")) {
+        let row = strip(l);
+        if !row.contains('|') {
             continue;
-        };
-        let Some(Ok(k)) = strip(layer).strip_prefix('L').map(str::parse::<u32>) else {
-            continue;
-        };
-        for (map, cell) in [(&mut out.alts, alts), (&mut out.words, words)] {
-            for entry in cell.split('`').skip(1).step_by(2) {
-                map.entry(entry).or_insert(k);
+        }
+        rows += 1;
+        let read = (|| {
+            if !row.starts_with('|') || !row.ends_with('|') || row.len() < 2 {
+                return Err(
+                    "it does not start and end with a bar `|`, as a row of a table \
+                            does"
+                        .to_string(),
+                );
             }
+            let cells: Vec<&str> = row[1..row.len() - 1].split('|').collect();
+            let [layer, alts, words] = cells[..] else {
+                return Err(format!(
+                    "it has {} cells, but a row of Part A has 3: the layer, the grammar \
+                     alternatives and the defined words, each between bars `|`",
+                    cells.len()
+                ));
+            };
+            match rows {
+                1 if strip(layer)
+                    .strip_prefix('L')
+                    .is_some_and(|d| d.parse::<u32>().is_ok()) =>
+                {
+                    return Err("it is the first row of the table, which is the header \
+                                `| Layer | Grammar alternatives | Defined words |`, followed by \
+                                the row of dashes `|---|---|---|`"
+                        .to_string());
+                }
+                1 => return Ok(()),
+                2 if cells.iter().all(|c| {
+                    let c = strip(c);
+                    !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':')
+                }) =>
+                {
+                    return Ok(());
+                }
+                2 => {
+                    return Err(
+                        "it is the second row of the table, which is the row of dashes \
+                                `|---|---|---|` that ends the header"
+                            .to_string(),
+                    );
+                }
+                _ => {}
+            }
+            let k = match strip(layer).strip_prefix('L').map(str::parse::<u32>) {
+                Some(Ok(k)) => k,
+                _ => {
+                    return Err(format!(
+                        "its first cell is `{}`, but a row starts with one layer, written L and \
+                         a number, such as L3",
+                        strip(layer)
+                    ));
+                }
+            };
+            let alts = cell_entries("grammar alternatives", alts)?;
+            let words = cell_entries("defined words", words)?;
+            for (map, entries) in [(&mut out.alts, alts), (&mut out.words, words)] {
+                for entry in entries {
+                    map.entry(entry).or_insert(k);
+                }
+            }
+            Ok(())
+        })();
+        if let Err(what) = read {
+            out.unread.push((n + 1, what, row));
         }
     }
     Some(out)
@@ -214,7 +311,9 @@ fn why_alt_unneeded(
 /// Complexity tradeoff: the earlier form searched the whole checklist text for each needed
 /// entry (`listed.contains`), O(e·t) for e entries and a text of t bytes, and did not look for
 /// listed entries the program does not need at all; comparing both ways by that search would
-/// cost the same again. Here the text is read once into ordered maps, O(t + e log e), and each
+/// cost the same again. Here the text is read once into ordered maps, O(t + e log e), each line
+/// of Part A checked once in time linear in its length (O(t) for the lines that cannot be
+/// read, with no line skipped), and each
 /// entry of either side is one tree or hash lookup in the other, O(e log e) in all, with no
 /// refused input. The grammar's rules and the table of defined words are hash maps already.
 /// Test: `m0_03_grammar_tools::scaling::the_checklist_comparison_scales_with_its_entries`.
@@ -236,6 +335,32 @@ pub fn compare(
         );
         return Ok(false);
     };
+    if !list.unread.is_empty() {
+        say!(
+            out,
+            "checklist: {} of Part A of {name} cannot be read, so the audit does not \
+             compare Part A with what {} needs",
+            match list.unread.len() {
+                1 => "1 line".to_string(),
+                k => format!("{k} lines"),
+            },
+            needs.program
+        );
+        for (line, what, row) in &list.unread {
+            say!(
+                out,
+                "  line {line} of {name} cannot be read: {what}. The line is:\n    {row}"
+            );
+        }
+        say!(
+            out,
+            "To repair {name}: write each of these lines as a row of the table of Part A, \
+             `| L<layer> | <alternatives> | <words> |`, with the layer written L and a number, \
+             each entry in backticks and separated by spaces, and — in a cell with no entry. \
+             Text that is not part of the table goes on a line with no bar `|`."
+        );
+        return Ok(false);
+    }
     let text = bodies(&spec.syn_text)?;
     let g = &spec.syntactic;
 

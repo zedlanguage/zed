@@ -432,6 +432,54 @@ fn audit_fails_on_a_checklist_with_no_part_a() {
 }
 
 #[test]
+fn audit_fails_on_a_row_of_part_a_it_cannot_read_and_names_its_line() {
+    let dir = spec_dir("audit_bad_rows", &design(""), "");
+    let program = dir.write("p.zed", LENGTHS);
+    let (alts, words) = audit_needs(&dir.root(), &program);
+    let good = checklist(&alts, &words);
+    let (head, tail) = good.split_once("\n## Part B").expect("a Part B");
+    let first = head.lines().count() + 1;
+    let bad = [
+        "| L1–L6 | `Unit#0` | — |",
+        "| L2 | Unit#0 | — |",
+        "| L3 | `Unit#0` |",
+        "| L4 | — | `len |",
+        "L5 | `Unit#0` | — |",
+    ];
+    let text = format!("{head}{}\n\n## Part B{tail}", bad.join("\n"));
+    let list = dir.write("ZED0.md", &text);
+    let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
+    assert_eq!(outcome, Ok(false), "{out}");
+    assert!(
+        out.contains("checklist: 5 lines of Part A of ZED0.md cannot be read"),
+        "{out}"
+    );
+    let expect = [
+        "its first cell is `L1–L6`, but a row starts with one layer, written L and a number, such as L3",
+        "its column of grammar alternatives has `Unit#0` outside backticks",
+        "it has 2 cells, but a row of Part A has 3",
+        "its column of defined words has a backtick with no closing backtick",
+        "it does not start and end with a bar `|`",
+    ];
+    for (k, (row, what)) in bad.iter().zip(expect).enumerate() {
+        let line = format!("  line {} of ZED0.md cannot be read: {what}", first + k);
+        assert!(out.contains(&line), "{line}\n---\n{out}");
+        assert!(out.contains(&format!("\n    {row}\n")), "{row}\n---\n{out}");
+    }
+    assert!(!out.contains("missing"), "{out}");
+
+    // A table with no header row: its first row would be taken as the header.
+    let list = dir.write("NOHEAD.md", "## Part A\n\n| L1 | `Unit#0` | — |\n");
+    let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
+    assert_eq!(outcome, Ok(false), "{out}");
+    assert!(
+        out.contains("checklist: 1 line of Part A of NOHEAD.md cannot be read")
+            && out.contains("  line 3 of NOHEAD.md cannot be read: it is the first row of the table, which is the header"),
+        "{out}"
+    );
+}
+
+#[test]
 fn fuzz_gives_the_same_report_for_the_same_seed() {
     let dir = spec_dir("fuzz", &design(""), "");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
