@@ -175,8 +175,10 @@ fn collect_atoms(f: &Formula, out: &mut BTreeSet<Atom>) {
 fn rename_formula(f: &Formula, map: &BTreeMap<Atom, Atom>) -> Formula {
     match f {
         Formula::Con(c) => {
-            let mut l = Lin::default();
-            l.constant = c.lin.constant.clone();
+            let mut l = Lin {
+                constant: c.lin.constant.clone(),
+                ..Lin::default()
+            };
             for (a, coeff) in &c.lin.terms {
                 let na = map.get(a).cloned().unwrap_or_else(|| a.clone());
                 l.terms.insert(na, coeff.clone());

@@ -1650,14 +1650,14 @@ fn sweep_row(disjs: Vec<DisjInfo>, solve_ord: Vec<usize>, target: Int) -> Option
         idx += 1;
         while idx <= k_r {
             bit[idx] = &bit[idx] + val;
-            idx += idx & idx.wrapping_neg();
+            idx += idx.isolate_lowest_one();
         }
     };
     let bit_sum = |bit: &[Int], mut idx: usize| -> Int {
         let mut s = Int::ZERO;
         while idx > 0 {
             s = &s + &bit[idx];
-            idx -= idx & idx.wrapping_neg();
+            idx -= idx.isolate_lowest_one();
         }
         s
     };
@@ -1816,10 +1816,10 @@ fn sweep_row_unbounded(disjs: Vec<DisjInfo>, target: Int) -> RowPlan {
         } else {
             None
         };
-        for u in low_u..high_u {
-            if floor_atom.is_none_or(|fa| disjs[u].atom > *fa) {
+        for (u, d) in disjs.iter().enumerate().take(high_u).skip(low_u) {
+            if floor_atom.is_none_or(|fa| d.atom > *fa) {
                 sub_inc.push(u);
-                floor_atom = Some(&disjs[u].atom);
+                floor_atom = Some(&d.atom);
             }
         }
         sub_inc.reverse();
@@ -1833,7 +1833,7 @@ fn sweep_row_unbounded(disjs: Vec<DisjInfo>, target: Int) -> RowPlan {
     for loc in 0..k_r {
         let gm = if loc == gmax1 { gmax2 } else { gmax1 };
         let xl = if loc == 0 { 1 } else { 0 };
-        for arm_idx in 0..2 {
+        for (arm_idx, hit) in hit_table[loc].iter_mut().enumerate() {
             let v_loc = if arm_idx == disjs[loc].high_arm {
                 &disjs[loc].weight
             } else {
@@ -1844,7 +1844,7 @@ fn sweep_row_unbounded(disjs: Vec<DisjInfo>, target: Int) -> RowPlan {
                 continue;
             }
             if rem.is_zero() {
-                hit_table[loc][arm_idx] = HitKind::Exact { split: 0 };
+                *hit = HitKind::Exact { split: 0 };
                 if any_hit.is_none() {
                     any_hit = Some((loc, arm_idx));
                 }
@@ -1852,7 +1852,7 @@ fn sweep_row_unbounded(disjs: Vec<DisjInfo>, target: Int) -> RowPlan {
             }
             if use_fast {
                 if rem == disjs[gm].weight {
-                    hit_table[loc][arm_idx] = HitKind::UnboundedFast {
+                    *hit = HitKind::UnboundedFast {
                         gmax: gm,
                         rem: rem.clone(),
                         at_gmax: true,
@@ -1869,7 +1869,7 @@ fn sweep_row_unbounded(disjs: Vec<DisjInfo>, target: Int) -> RowPlan {
                     }
                     let rem_xl = &rem - &s;
                     if rem_xl.is_zero() || rem_xl == disjs[xl].weight {
-                        hit_table[loc][arm_idx] = HitKind::UnboundedFast {
+                        *hit = HitKind::UnboundedFast {
                             gmax: gm,
                             rem: rem.clone(),
                             at_gmax: false,
@@ -1916,7 +1916,7 @@ fn sweep_row_unbounded(disjs: Vec<DisjInfo>, target: Int) -> RowPlan {
                 }
             };
             if slow_hit {
-                hit_table[loc][arm_idx] = HitKind::UnboundedSlow { rem };
+                *hit = HitKind::UnboundedSlow { rem };
                 if any_hit.is_none() {
                     any_hit = Some((loc, arm_idx));
                 }
@@ -1990,11 +1990,11 @@ fn fill_row_model(plan: &RowPlan, loc: usize, arm_idx: usize, m: &mut Model) -> 
             }
             take_high[*l] = arm_idx == plan.disjs[*l].high_arm;
             let mut cur = b_rem.clone();
-            for x in *x_star..k_r {
+            for (x, d) in plan.disjs.iter().enumerate().take(k_r).skip(*x_star) {
                 if x == *l {
                     continue;
                 }
-                let w = &plan.disjs[x].weight;
+                let w = &d.weight;
                 if *w <= cur {
                     cur = &cur - w;
                     take_high[x] = true;
@@ -2015,13 +2015,13 @@ fn fill_row_model(plan: &RowPlan, loc: usize, arm_idx: usize, m: &mut Model) -> 
             } else {
                 let xl = if loc == 0 { 1 } else { 0 };
                 let mut cur = rem.clone();
-                for x in (xl + 1)..=*gmax {
+                for (x, d) in plan.disjs.iter().enumerate().take(*gmax + 1).skip(xl + 1) {
                     if x == loc {
                         continue;
                     }
-                    if plan.disjs[x].high_arm == 0 {
+                    if d.high_arm == 0 {
                         take_high[x] = true;
-                        cur = &cur - &plan.disjs[x].weight;
+                        cur = &cur - &d.weight;
                     }
                 }
                 if cur == plan.disjs[xl].weight {
@@ -2524,7 +2524,7 @@ impl BoundedPickRow {
         idx += 1;
         while idx <= n {
             self.bit[idx] = &self.bit[idx] + delta;
-            idx += idx & idx.wrapping_neg();
+            idx += idx.isolate_lowest_one();
         }
     }
 
@@ -3126,10 +3126,8 @@ pub(super) fn try_pick_disjoint_wide<'a>(
                 } else {
                     Int::ZERO
                 };
-                if active_atoms.is_empty() {
-                    if *rem != v0 {
-                        return Some(Err(super::Refusal::Disjuncts));
-                    }
+                if active_atoms.is_empty() && *rem != v0 {
+                    return Some(Err(super::Refusal::Disjuncts));
                 }
                 *rem = &*rem - &v0;
                 stamp = super::fresh_stamp();

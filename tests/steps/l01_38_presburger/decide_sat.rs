@@ -16,7 +16,10 @@ struct Rng(u64);
 
 impl Rng {
     fn next(&mut self, n: u64) -> i64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((self.0 >> 33) % n) as i64
     }
 }
@@ -62,16 +65,30 @@ fn formulas(n: u64) -> Vec<(Formula, bool)> {
         let mut rows: Vec<(Vec<i64>, i64, bool)> = Vec::new();
         let nrows = 1 + (rng.next(4) == 0) as u64;
         for r in 0..nrows {
-            let cs: Vec<i64> = (0..k).map(|_| [1, 1, 1, 1, 1, -1, 2][rng.next(7) as usize]).collect();
+            let cs: Vec<i64> = (0..k)
+                .map(|_| [1, 1, 1, 1, 1, -1, 2][rng.next(7) as usize])
+                .collect();
             let is_eq = r == 0 || rng.next(2) == 0;
             let t = if rng.next(2) == 0 {
-                (0..k).map(|i| cs[i] * doms[i][rng.next(doms[i].len() as u64) as usize]).sum()
+                (0..k)
+                    .map(|i| cs[i] * doms[i][rng.next(doms[i].len() as u64) as usize])
+                    .sum()
             } else {
-                let hi: i64 = (0..k).map(|i| cs[i].abs() * doms[i][doms[i].len() - 1]).sum();
+                let hi: i64 = (0..k)
+                    .map(|i| cs[i].abs() * doms[i][doms[i].len() - 1])
+                    .sum();
                 rng.next(hi.max(1) as u64 + 1)
             };
-            let terms: Vec<(&str, i64)> = names.iter().zip(&cs).map(|(n, c)| (n.as_str(), *c)).collect();
-            fs.push(if is_eq { eq(&terms, -t) } else { ge(&terms, -t) });
+            let terms: Vec<(&str, i64)> = names
+                .iter()
+                .zip(&cs)
+                .map(|(n, c)| (n.as_str(), *c))
+                .collect();
+            fs.push(if is_eq {
+                eq(&terms, -t)
+            } else {
+                ge(&terms, -t)
+            });
             rows.push((cs, t, is_eq));
         }
         // Every point of the domains, in the order of an odometer.
@@ -102,7 +119,9 @@ fn formulas(n: u64) -> Vec<(Formula, bool)> {
 #[test]
 fn decide_answers_where_satisfiable_answers() {
     let fs = formulas(2474);
-    for case in [78, 91, 399, 590, 646, 918, 1093, 1312, 1711, 1911, 2156, 2473] {
+    for case in [
+        78, 91, 399, 590, 646, 918, 1093, 1312, 1711, 1911, 2156, 2473,
+    ] {
         let (f, truth) = &fs[case];
         answers(f, *truth);
     }

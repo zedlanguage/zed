@@ -413,7 +413,10 @@ fn satisfiable_on_a_box_and_one_row_scales() {
 fn a_box_and_an_extreme_row_build_their_models_in_near_linear_work() {
     for (what, build) in [
         ("dense model", dense as fn(usize) -> Formula),
-        ("zero model", (|k| choice_sum(&weights(k), 0)) as fn(usize) -> Formula),
+        (
+            "zero model",
+            (|k| choice_sum(&weights(k), 0)) as fn(usize) -> Formula,
+        ),
     ] {
         let (small, large) = (build(64), build(512));
         for f in [&small, &large] {
