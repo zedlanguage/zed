@@ -29,6 +29,11 @@
 // after, 126 rows, as rows over the limit that no move can empty are split
 // as before. The spring weight does not change it: with W = 1, 4, 16 and
 // 2K + 1 in balanceLayers the plan was 8,844 to 8,888 px wide.
+//
+// With every source directly above its highest child (lowerSources,
+// spreadSources and the source rule of splitRows in d3dag.ts, 2026-11-11) the
+// limits stand: 4,322 x 12,058 (0.358), 4,594 x 48,698 (0.0943, close to its
+// limit of 0.095) and the plan 8,756 x 11,930 (0.734), at load 20 to 30.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

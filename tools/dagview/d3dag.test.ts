@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { graph, layerSeparation, layeringSimplex } from "d3-dag";
-import { balanceCounts, balanceLayers, compactLayers, fromPrevious, layers, lowerSources, rowLimit, splitRows } from "./d3dag.ts";
+import { balanceCounts, balanceLayers, compactLayers, fromPrevious, layers, lowerSources, rowLimit, splitRows, spreadSources } from "./d3dag.ts";
 import type { Graph } from "./layout.ts";
 import { planLike } from "./synthetic.ts";
 
@@ -77,13 +77,16 @@ test("after lowerSources every source of the plan and of a plan-shaped graph sit
   }
 });
 
-test("count balancing ends; each move lowers the sum of squared layer counts by at least 2 and lands in a layer still below the count of the one left; no edge points up", () => {
+// The layers of the nodes that are not sources (sources, nodes with no parents
+// and some children, are placed by lowerSources and not counted by balanceCounts).
+const notSources = (y: Int32Array, parents: number[][], children: number[][]) => y.filter((_, i) => parents[i].length || !children[i].length);
+
+test("count balancing ends; each move lowers the sum of squared layer counts of the nodes other than sources by at least 2 and lands in a layer still below the count of the one left; with the sources placed after it no edge points up", () => {
   for (const [name, g] of [["the plan", plan], ["a plan-shaped graph of 1000 nodes", planLike(1000, 2700)]] as const) {
     const { y, parents, children } = simplexOf(g);
-    lowerSources(y, parents, children);
-    const before = counts(y);
+    const before = counts(notSources(y, parents, children));
     const c = new Map<number, number>();
-    for (const v of y) c.set(v, (c.get(v) ?? 0) + 1);
+    for (const v of notSources(y, parents, children)) c.set(v, (c.get(v) ?? 0) + 1);
     let sq = 0;
     for (const k of c.values()) sq += k * k;
     const sq0 = sq;
@@ -99,25 +102,28 @@ test("count balancing ends; each move lowers the sum of squared layer counts by 
       sq = now;
       moves++;
     });
-    edgesDown(y, children);
     assert.ok(moves <= (sq0 - sq) / 2 && passes <= moves + 1);
     // The layering is a fixed point: one more call makes one pass and no move.
     assert.equal(balanceCounts(y, parents, children, () => assert.fail("moved after convergence")), 1);
-    const after = counts(y);
+    const after = counts(notSources(y, parents, children));
+    lowerSources(y, parents, children);
+    edgesDown(y, children);
     console.log(`${name}: ${passes} passes, ${moves} moves, sum of squares ${sq0} -> ${sq}, widest layer ${Math.max(...before)} -> ${Math.max(...after)} nodes`);
     assert.ok(Math.max(...after) < Math.max(...before));
   }
 });
 
 test("count balancing leaves alone a node whose least crowded layer would, with it, reach the count of its own", () => {
-  // Two chains 0 -> 1 -> 2 and 3 -> 4 -> 5 with no slack, and node 6 with no
-  // edges in layer 1: counts 2, 3, 2. Moving 6 would make a layer of 3 out of
-  // one of 3, so nothing moves.
-  const y = Int32Array.from([0, 1, 2, 0, 1, 2, 1]);
-  const parents = [[], [0], [1], [], [3], [4], []];
-  const children = [[1], [2], [], [4], [5], [], []];
+  // Source 7 in layer -1 with children 0, 3 and 6; two chains 0 -> 1 -> 2 and
+  // 3 -> 4 -> 5 with no slack, and node 6, with no children, in layer 1:
+  // counts 2, 3, 2 without the source. Moving 6 (to layer 0 or 2; not to -1,
+  // as its source must stay above it) would make a layer of 3 out of one of
+  // 3, so nothing moves.
+  const y = Int32Array.from([0, 1, 2, 0, 1, 2, 1, -1]);
+  const parents = [[7], [0], [1], [7], [3], [4], [7], []];
+  const children = [[1], [2], [], [4], [5], [], [], [0, 3, 6]];
   assert.equal(balanceCounts(y, parents, children, () => assert.fail("moved")), 1);
-  assert.deepEqual([...y], [0, 1, 2, 0, 1, 2, 1]);
+  assert.deepEqual([...y], [0, 1, 2, 0, 1, 2, 1, -1]);
 });
 
 // A spine 0 -> 1 -> ... -> L-1, one node per layer and none with slack;
@@ -149,8 +155,9 @@ test("of the least crowded layers of its slack, a node with more parents than ch
 });
 
 test("of the least crowded layers of its slack, a node with more children than parents takes the bottommost", () => {
-  // Children 4 and 5: slack 0 to 3. Layer 1 is crowded; 0, 2 and 3 hold 1 each.
-  assert.equal(moverEndsIn(6, [[0, 2]], [], [4, 5], 1), 3);
+  // Parent 0, children 4 and 5: slack 1 to 3. Layer 1 is crowded; 2 and 3
+  // hold 1 each. (A node with no parents is a source and does not move.)
+  assert.equal(moverEndsIn(6, [[0, 2]], [0], [4, 5], 1), 3);
 });
 
 test("of the least crowded layers of its slack, a node with as many parents as children takes the nearest, the upper of two equally near", () => {
@@ -190,12 +197,19 @@ test("a row of exactly 1.5 times the median count is not split", () => {
   assert.ok(splitRows(z, z.map((_, i) => i)));
 });
 
-test("after balancing and splitting the plan no edge points up, and no row is over the split limit, so none is split", () => {
+test("after layers on the plan no edge points up, every source sits directly above its highest child, and the layers are a fixed point: balanceLayers and spreadSources at K each make one pass and no move", () => {
   const { dag, nodes, parents, children } = dagOf(plan);
-  const { y } = layers(dag, nodes, parents, children);
+  const { y, K } = layers(dag, nodes, parents, children);
   edgesDown(y, children);
-  assert.ok(Math.max(...counts(y)) <= rowLimit(y), `widest ${Math.max(...counts(y))}, limit ${rowLimit(y)}`);
-  assert.equal(splitRows(y, nodes.map((_, i) => i)), null);
+  assert.deepEqual(sourceGaps(y, parents, children), []);
+  const z = Int32Array.from(y);
+  assert.equal(balanceLayers(z, parents, children, K, () => assert.fail("balanceLayers moved")), 1);
+  assert.equal(spreadSources(z, parents, children, K, () => assert.fail("spreadSources moved")), 1);
+  // Sources pinned above their highest child can leave rows over the split
+  // limit (27 boxes or more are forced in the row of SCALE-cover's 27
+  // sources); splitRows splits those for drawing.
+  const c = counts(y);
+  console.log(`plan: K = ${K}, ${c.length} layers, widest ${Math.max(...c)}, rows over the split limit ${c.filter((v) => v > rowLimit(y)).length}`);
 });
 
 test("splitting keeps every edge pointing down", () => {
@@ -342,18 +356,44 @@ test("count balancing and layering from an earlier layering scale as n log n: pl
   for (const [what, t] of [["balanceCounts", balance], ["layers", again], ["whole-spine slack", wide]] as const) assert.ok(t[1] / t[0] < limit, `${what}: ratio ${(t[1] / t[0]).toFixed(1)}`);
 });
 
-// Sources (no parents, some children) left more than one layer above their
-// highest child although a layer between them has room (fewer than K nodes).
-function stranded(y: Int32Array, parents: number[][], children: number[][], K: number): number {
-  const c = new Map<number, number>();
-  for (const v of y) c.set(v, (c.get(v) ?? 0) + 1);
-  let total = 0;
+// A spine of k / 4 nodes, one per layer, and k sources q_j in layer 1, each
+// with one child x_j in layer 2; x_j has parent spine 0 and child the last
+// spine node, so it can move anywhere between. Rows 1 and 2 hold k + 1 nodes.
+function crowdedSources(k: number) {
+  const D = k / 4, n = D + 2 * k;
+  const y = new Int32Array(n);
+  const edges: [number, number][] = [];
+  for (let l = 0; l < D; l++) { y[l] = l; if (l) edges.push([l - 1, l]); }
+  for (let j = 0; j < k; j++) { const x = D + 2 * j; y[x] = 2; y[x + 1] = 1; edges.push([0, x], [x, D - 1], [x + 1, x]); }
+  return { y, ...adjacency(n, edges) };
+}
+
+test("spreadSources on k sources crowded into one row spreads them to rows of at most K, each still directly above its child, and scales as n log n: k = 4000 and 32000", () => {
+  const K = 16;
+  const t = [4000, 32000].map((k) => best(() => {
+    const g = crowdedSources(k);
+    return () => {
+      spreadSources(g.y, g.parents, g.children, K);
+      edgesDown(g.y, g.children);
+      assert.deepEqual(sourceGaps(g.y, g.parents, g.children), []);
+      assert.ok(Math.max(...counts(g.y)) <= K);
+    };
+  }));
+  const limit = scalingLimit(4000);
+  console.log(`spreadSources on crowded sources: ${t[0].toFixed(1)} and ${t[1].toFixed(1)} ms (ratio ${(t[1] / t[0]).toFixed(1)}); limit ${limit.toFixed(1)}`);
+  assert.ok(t[1] / t[0] < limit, `ratio ${(t[1] / t[0]).toFixed(1)}`);
+});
+
+// The sources (no parents, some children) whose highest child is not exactly
+// one layer below them: [index, gap].
+function sourceGaps(y: Int32Array, parents: number[][], children: number[][]): [number, number][] {
+  const out: [number, number][] = [];
   for (let i = 0; i < y.length; i++) {
     if (parents[i].length || !children[i].length) continue;
-    const top = Math.min(...children[i].map((k) => y[k]));
-    for (let r = y[i] + 1; r < top; r++) if ((c.get(r) ?? 0) <= K - 1) { total++; break; }
+    const gap = Math.min(...children[i].map((k) => y[k])) - y[i];
+    if (gap !== 1) out.push([i, gap]);
   }
-  return total;
+  return out;
 }
 
 // parents and children of a graph given as edges between n numbered nodes.
@@ -487,31 +527,34 @@ test("the spring rule: a node with more parents than children moves up to the ro
   }
 });
 
-test("a source moves down to the row above its child when the rows between have room, and stays when every row between is full", () => {
-  // Spine 0 -> 1 -> 2 -> 3; source s in layer 0 with child spine 3; `fill`
+test("balanceLayers and balanceCounts never move a source; lowerSources puts it in the row above its child whether the rows between have room or are full", () => {
+  // Spine 0 -> 1 -> 2 -> 3; source s = 4 in layer 0 with child spine 3; `fill`
   // fixed fillers in each of layers 1 and 2.
   const K = 3;
-  for (const [fill, want] of [[0, 2], [K - 1, 0]] as const) {
+  for (const fill of [0, K - 1]) {
     const edges: [number, number][] = [[0, 1], [1, 2], [2, 3], [4, 3]];
     const y = [0, 1, 2, 3, 0];
     for (const l of [1, 2]) for (let f = 0; f < fill; f++) { const v = y.length; y.push(l); edges.push([l - 1, v], [v, l + 1]); }
     const { parents, children } = adjacency(y.length, edges);
     const Y = Int32Array.from(y);
-    balanceLayers(Y, parents, children, K);
+    balanceLayers(Y, parents, children, K, (i) => assert.notEqual(i, 4, "balanceLayers moved the source"));
+    balanceCounts(Y, parents, children, (i) => assert.notEqual(i, 4, "balanceCounts moved the source"));
+    assert.equal(Y[4], 0);
+    lowerSources(Y, parents, children);
     edgesDown(Y, children);
-    assert.equal(Y[4], want, `with ${fill} fillers per row`);
-    assert.equal(stranded(Y, parents, children, K), 0);
+    assert.equal(Y[4], Y[3] - 1, `with ${fill} fillers per row`);
   }
 });
 
-test("on the plan no source is stranded above a row with room (at the row limit K the layers were balanced at) after layers; after balanceCounts alone some are; no move of balanceLayers fills a row past K except the move out of a fuller row", () => {
+test("on the plan balanceCounts leaves sources above their highest child (it moves the children, not the sources); lowerSources then puts every one directly above, and balanceLayers keeps them there; no move of balanceLayers fills a row past K except the move out of a fuller row", () => {
   const { dag, nodes, parents, children } = dagOf(plan);
   layeringSimplex()(dag as any, layerSeparation);
   const y = Int32Array.from(nodes, (n: any) => n.y);
-  lowerSources(y, parents, children);
   balanceCounts(y, parents, children);
+  const before = sourceGaps(y, parents, children).length;
+  lowerSources(y, parents, children);
+  assert.deepEqual(sourceGaps(y, parents, children), []);
   const K = rowLimit(y);
-  const before = stranded(y, parents, children, K);
   let top = Infinity;
   for (const v of y) top = Math.min(top, v);
   const c = counts(y.map((v) => v - top));
@@ -521,11 +564,7 @@ test("on the plan no source is stranded above a row with room (at the row limit 
     if (c[b] + 1 > K) { assert.ok(c[b] + 1 < c[a], `a move to layer ${b} of ${c[b]} from one of ${c[a]}`); fallbacks++; }
     c[a]--; c[b]++;
   });
-  const after = stranded(y, parents, children, K);
-  const full = layers(dag, nodes, parents, children);
-  const last = stranded(full.y, parents, children, full.K);
-  console.log(`plan: K = ${K}; stranded sources after balanceCounts ${before}, after balanceLayers ${after}, after layers ${last} (at its K = ${full.K}); ${fallbacks} moves out of rows over K into rows at K or more`);
-  assert.ok(before > 0, "control: balanceCounts alone leaves sources stranded");
-  assert.equal(after, 0);
-  assert.equal(last, 0);
+  assert.deepEqual(sourceGaps(y, parents, children), []);
+  console.log(`plan: K = ${K}; sources above their highest child by more than one layer after balanceCounts ${before}; ${fallbacks} moves out of rows over K into rows at K or more`);
+  assert.ok(before > 0, "control: balanceCounts leaves sources where they were while their children move");
 });

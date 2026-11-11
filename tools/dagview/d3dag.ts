@@ -74,6 +74,33 @@ export interface Operators { decross: any; coord: any; narrow: boolean }
 //   of the counts against the edge lengths, against 1, 1/4 and 1/16: 30,454,
 //   31,472, 30,424 and 31,207 crossings, 22,479, 22,673, 22,473 and 22,481
 //   rows of span, 0, 21, 3 and 0 such sources.
+// - Sources pinned (2026-11-11, the author's rule: a source sits directly
+//   above its highest child, never higher). balanceCounts and balanceLayers
+//   moved sources like other nodes, up into emptier rows, and the earlier path
+//   lowered only added sources, so in the final layers of the live plan of
+//   2026-11-11 (1,707 nodes, 2,693 edges) 141 of 327 sources sat more than one
+//   layer above their highest child (up to 22), and 173 in the drawn rows (up
+//   to 45). Now no balancing pass moves a source; lowerSources places them
+//   after balanceCounts; balanceLayers leaves alone a source's only highest
+//   child; and spreadSources moves a source together with its only highest
+//   child out of a row over K. Old and new run at once, load 24 to 26, so the
+//   times are rough; source gaps (largest), drawn rows, most boxes in a drawn
+//   row, width x height px, crossings of the drawn edges, time:
+//                           gaps     rows  most  w x h px          cross   time
+//     live, before        141 (22)   135   25    6,190 x 14,296  31,220  3.1 s
+//     live, after           0        113   30    8,104 x 11,964  26,275  2.7 s
+//     plan, before        130 (23)   104   27    8,862 x 11,824  29,598  1.8 s
+//     plan, after           0        105   28    8,756 x 11,930  25,983  2.6 s
+//     4,000 nodes, before   0        372   15    4,444 x 48,698 196,145  8.1 s
+//     4,000 nodes, after    0        372   15    4,594 x 48,698 200,045  8.3 s
+//   The most boxes in a drawn row rise on the live plan from 25 to 30: 27
+//   sources have SCALE-cover as their only child, so any layout under the rule
+//   puts them in one row, and 3 over L1.41-harness sit in the same layer.
+//   Crossings fall by 16 % on the live plan, as no source pulls long edges up,
+//   and rise by 2 % on the 4,000-node graph. With sources pinned and nothing
+//   else, the most boxes in a drawn row were 37 on the live plan; spreadSources
+//   brought it to 30. Spreading once after the loop instead of inside it
+//   broke the fixed point: an unchanged graph moved 1,400 of 1,661 nodes.
 // - From an earlier layout (Layout.layers, fromPrevious and decrossSeeded
 //   below): the layers start from the earlier ones instead of simplex, the
 //   order in each layer from the earlier picture, and the layout runs once,
@@ -211,7 +238,7 @@ export function d3dagLayout(g: Graph, ops: Operators = operators, prev?: Record<
     for (const n of nodes) if (had(n)) top.set(prev[n.data.id], Math.min(top.get(prev[n.data.id]) ?? Infinity, prevAt[n.data.id].y));
     half = Int8Array.from(nodes, (n) => (had(n) ? (prevAt[n.data.id].y > top.get(prev[n.data.id])! ? 1 : 0) : -1));
   }
-  const split = splitRows(balanced, x, half);
+  const split = splitRows(balanced, x, half, parents, children);
   // From an earlier layout, the rows after the split start from the earlier
   // picture in the same way, so that a relayout moves few nodes.
   if (prevAt) {
@@ -276,44 +303,62 @@ export function d3dagLayout(g: Graph, ops: Operators = operators, prev?: Record<
   return { w: w + 2 * PAD, h: height + 2 * PAD, boxes, edges: drawn, layers: kept, rowLimit: rowLimitUsed };
 }
 
-// The layers, top = 0, every edge going down at least one layer, and K, the
-// row limit they were balanced at. With no earlier layering, or none of whose
-// nodes is still in the graph, they come from network simplex, every source is
-// put directly above its highest child (lowerSources), nodes move to less
-// crowded layers until none can (balanceCounts), and K is the split rule's
-// row limit of those layers (rowLimit). Otherwise they start from the earlier
-// layering (fromPrevious), which does the same for added sources only, and K
-// is the earlier one, prevK, times the number of nodes over the earlier number
-// (prev's size), rounded down: for an unchanged graph the same K. Then nodes
-// move to shorten their edges into rows with room (balanceLayers). If that
-// leaves the rows' own limit below K, balancing runs again at that limit,
-// so no row is over the split rule's limit of the result; and empty layers are
-// dropped (compactLayers).
-// An unchanged graph keeps its layers: balanceLayers ended on them at K, the
-// loop ended with their limit at K or more, and from them K is the same. With
-// balanceCounts on the earlier path too, or K taken from the rows each time,
-// it did not: on the plan of 2026-11-10 K went 25, 27, 25, 27 ... (moves
-// each round) when recomputed from the result, and from an unchanged graph
-// 14 nodes moved.
+// The layers, top = 0, every edge going down at least one layer, every source
+// (no parents, some children) exactly one layer above its highest child, and
+// K, the row limit they were balanced at. With no earlier layering, or none of
+// whose nodes is still in the graph, they come from network simplex and nodes
+// other than sources move to less crowded layers until none can
+// (balanceCounts). Otherwise they start from the earlier layering
+// (fromPrevious). Either way every source is then put directly above its
+// highest child (lowerSources: on the earlier path a source whose children
+// moved since is put back too), and K is the split rule's row limit of those
+// layers (rowLimit) from scratch, or the earlier one, prevK, times the number
+// of nodes over the earlier number (prev's size), rounded down: for an
+// unchanged graph the same K. Then, until neither moves a node, nodes move to
+// shorten their edges into rows with room (balanceLayers) and sources move
+// with their only highest child out of rows over K (spreadSources). If that
+// leaves the rows' own limit below K, both run again at that limit. Last,
+// empty layers are dropped (compactLayers), which keeps every source directly
+// above its highest child as it keeps the order of the layers.
+// No step after lowerSources moves a source away from its highest child:
+// balanceCounts and balanceLayers never move a source, balanceLayers never
+// moves a source's only highest child (another highest child may move, as
+// one stays), a child moving up to the layer below a source becomes one of
+// its highest children, and spreadSources moves a source only with its only
+// highest child, one layer above it. Rows can stay over K where sources share
+// a child (27 over one child on the live plan of 2026-11-11); splitRows
+// splits those for the picture, keeping each source in the row above its
+// child.
+// An unchanged graph keeps its layers: the loop ended on them at K, with
+// balanceLayers and spreadSources each making no move, their limit at K or
+// more, and from them K is the same. With balanceCounts on the earlier path
+// too, or K taken from the rows each time, it did not: on the plan of
+// 2026-11-10 K went 25, 27, 25, 27 ... (moves each round) when recomputed from
+// the result, and from an unchanged graph 14 nodes moved.
 // The result is what Layout.layers keeps, and K Layout.rowLimit; splitRows
 // then splits the most crowded rows for the picture only.
-// Complexity tradeoff: each round of the loop is one balanceLayers run and K
-// falls by at least one per round, so at most K rounds; on the plan, the live
-// plan of 2026-11-11 and plan-shaped graphs of 1000 and 4000 nodes it ran
-// once. Running balanceLayers at one fixed K would leave rows over the split
-// limit whenever the result's median falls.
+// Complexity tradeoff: each round of the inner loop is one run of
+// balanceLayers and one of spreadSources, each O((n + m) log L) per pass (and
+// n K log L for balanceLayers' best layer), and it ends as both lower the same
+// (Q, F) (see spreadSources); K falls by at least one per outer round, so at
+// most K outer rounds. On the plan and the live plan of 2026-11-11 the inner
+// loop ran 4 times in all, with 11 passes of balanceLayers (384 to 417 moves,
+// 56 to 69 ms) and 9 to 10 of spreadSources (28 to 36 moves, 45 ms); on the
+// plan-shaped graph of 4,000 nodes 2 times, 6 and 2 passes. Running
+// balanceLayers at one fixed K would leave rows over the split limit whenever
+// the result's median falls.
 export function layers(dag: any, nodes: any[], parents: number[][], children: number[][], prev?: Record<string, number>, prevK?: number): { y: Int32Array; K: number } {
   let y = prev ? fromPrevious(nodes.map((n) => (Object.hasOwn(prev, n.data.id) ? prev[n.data.id] : undefined)), parents, children) : null;
-  let K: number;
+  const fresh = !y;
   if (!y) {
     layeringSimplex()(dag, layerSeparation);
     y = Int32Array.from(nodes, (n) => n.y);
-    lowerSources(y, parents, children);
     balanceCounts(y, parents, children);
-    K = rowLimit(y);
-  } else K = prevK === undefined ? rowLimit(y) : Math.max(1, Math.floor((prevK * nodes.length) / Object.keys(prev!).length));
+  }
+  lowerSources(y, parents, children);
+  let K = fresh || prevK === undefined ? rowLimit(y) : Math.max(1, Math.floor((prevK * nodes.length) / Object.keys(prev!).length));
   for (;;) {
-    balanceLayers(y, parents, children, K);
+    while (balanceLayers(y, parents, children, K) + spreadSources(y, parents, children, K) > 2);
     const k = rowLimit(y);
     if (k >= K) break;
     K = k;
@@ -384,19 +429,34 @@ export function fromPrevious(old: (number | undefined)[], parents: number[][], c
 // child. A source's children are not sources, so moving one source changes no
 // other source's place, and one pass in any order gives every source its
 // place. A node with neither parents nor children stays where it is.
-export function lowerSources(y: Int32Array, parents: number[][], children: number[][]): void {
+// Returns the number of sources moved.
+export function lowerSources(y: Int32Array, parents: number[][], children: number[][]): number {
+  let moved = 0;
   for (let i = 0; i < y.length; i++) {
-    if (parents[i].length || !children[i].length) continue;
+    if (!isSource(i, parents, children)) continue;
     let hi = Infinity;
     for (const c of children[i]) hi = Math.min(hi, y[c]);
+    if (y[i] !== hi - 1) moved++;
     y[i] = hi - 1;
   }
+  return moved;
 }
 
-// Moves nodes, one at a time, into the least crowded layer of their slack, the
-// layers below their lowest parent and above their highest child within the
-// current top and bottom layers, so every edge still goes down and the number
-// of layers does not grow. With c[l] the number of nodes in layer l, node i
+// A source here is a node with no parents and at least one child: its layer
+// is fixed by its children (lowerSources), so the balancing passes never move
+// it.
+function isSource(i: number, parents: number[][], children: number[][]): boolean {
+  return !parents[i].length && children[i].length > 0;
+}
+
+// Moves nodes other than sources, one at a time, into the least crowded layer
+// of their slack, the layers below their lowest parent and above their highest
+// child within the current top and bottom layers, so every edge still goes
+// down and the number of layers does not grow. Sources are neither moved nor
+// counted: lowerSources places them afterward, directly above their highest
+// child, wherever that is, so the slack of a child of a source starts at layer
+// 1, leaving layer 0 for the source. With c[l] the number of other nodes in
+// layer l, node i
 // moves from layer a to the layer b of its slack with the fewest nodes only
 // if c[b] + 1 < c[a]: it then lands in a layer that, with it, still holds
 // fewer nodes than the layer it left did. Of several layers with the fewest
@@ -421,11 +481,12 @@ export function lowerSources(y: Int32Array, parents: number[][], children: numbe
 // in a range and the first or last layer at or below a count in O(log L), and
 // a move updates it in O(log L), so a pass costs O((n + m) log L). The bound on
 // moves above is quadratic in n in the worst case (a sum near n^2 when most
-// nodes start in one layer), but the passes measured are few: 13 passes and
-// 1,936 moves on the plan of 2026-11-10 (1,661 nodes, sum of squares 106,111
-// to 32,361), 12 and 1,961 on the plan of 2026-11-11 (1,690 nodes), 3 and 82
-// on the plan-shaped graph of 1,000 nodes and 3 and 329 at 4,000. The
-// scaling test in d3dag.test.ts times it at 4,000 and 32,000 nodes.
+// nodes start in one layer), but the passes measured are few: 12 passes and
+// 1,428 moves on the plan of 2026-11-10 (1,661 nodes, sum of squares of the
+// nodes other than sources 63,883 to 20,807) and 3 and 90 on the plan-shaped
+// graph of 1,000 nodes. Counting sources too, before they were left alone: 13
+// and 1,936 on the same plan, 3 and 82 at 1,000 nodes. The scaling test in
+// d3dag.test.ts times it at 4,000 and 32,000 nodes.
 export function balanceCounts(y: Int32Array, parents: number[][], children: number[][], onMove?: (i: number, from: number, to: number) => void): number {
   const n = y.length;
   if (!n) return 0;
@@ -433,7 +494,7 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
   for (const v of y) { top = Math.min(top, v); bottom = Math.max(bottom, v); }
   const L = bottom - top + 1;
   const c = new Counts(L);
-  for (let i = 0; i < n; i++) c.add(y[i] - top, 1);
+  for (let i = 0; i < n; i++) if (!isSource(i, parents, children)) c.add(y[i] - top, 1);
   let passes = 0;
   for (let moved = true; moved;) {
     moved = false;
@@ -446,9 +507,10 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
     const order = new Int32Array(n);
     for (let i = 0; i < n; i++) order[start[n - c.at(y[i] - top)]++] = i;
     for (const i of order) {
+      if (isSource(i, parents, children)) continue;
       const a = y[i] - top;
       let lo = 0, hi = L - 1;
-      for (const q of parents[i]) lo = Math.max(lo, y[q] - top + 1);
+      for (const q of parents[i]) lo = Math.max(lo, isSource(q, parents, children) ? 1 : y[q] - top + 1);
       for (const k of children[i]) hi = Math.min(hi, y[k] - top - 1);
       const m = c.min(lo, hi);
       if (m + 1 >= c.at(a)) continue;
@@ -474,7 +536,10 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
 // Moves nodes, one at a time, within their slack (the layers below their
 // lowest parent and above their highest child, within the current top and
 // bottom layers), so every edge still goes down and the number of layers does
-// not grow. The author's rule (2026-11-11): each edge pulls its two ends
+// not grow. Sources are not moved, nor is a node that is the only highest
+// child of a source (the one child in the layer directly below it), so every
+// source stays directly above its highest child (see layers). The author's
+// rule (2026-11-11): each edge pulls its two ends
 // together like a spring, so a node with more edges up than down is pulled
 // up and one with more down than up is pulled down, by how much the moves
 // shorten its edges; a move to a less crowded row is better than one to a
@@ -489,9 +554,10 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
 // Of the allowed layers it takes the one where F is least; of equals, the
 // topmost if s > 0, the bottommost if s < 0 and the nearest if s = 0.
 // Since 2 (c[b] - c[a] + 1) <= 2 (K - 1) < 2K + 1 when b has room, any move
-// that shortens the edges lowers F, whatever the counts: a source (s = -C)
-// moves down to the lowest row with room above its highest child, and a node
-// pulled up as far as its slack allows. The counts decide only between moves
+// that shortens the edges lowers F, whatever the counts: a node with more
+// children than parents moves down to the lowest row with room above its
+// highest child, and one with more parents up as far as its slack allows.
+// The counts decide only between moves
 // that change the edge lengths equally, as for a node with as many parents as
 // children: it moves to the least crowded layer if, with it, that holds fewer
 // nodes than the layer it left.
@@ -508,8 +574,9 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
 // F_max = (2K + 1) m (L - 1) + n^2 for m edges, so there are at most Q0 moves
 // out of rows over K, at most F_max other moves between two of those, and so
 // at most Q0 + (Q0 + 1) F_max moves, with at most one pass more than moves.
-// On the plan of 2026-11-11, after balanceCounts, one layer holds 30 nodes at
-// K = 27, so Q0 = 9.
+// After balanceCounts and lowerSources, Q0 = 1,554 on the plan of 2026-11-10
+// (K = 24, 15 rows over it, the widest 54, sources gathered in it) and 1,289 on
+// the live plan of 2026-11-11 (K = 25).
 // That bound is quadratic or worse in n. The number of passes can be linear in
 // n: in the chain of d3dag.test.ts ("a chain of moves"), each pass can move
 // only the next node of a chain, as each move frees the row the next one
@@ -520,7 +587,8 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
 // count in a range and the first or last layer at or below a count in
 // O(log L), and a move updates it in O(log L); the best layer for a node with
 // s != 0 is found by Counts.bestLayer in at most K steps of O(log L). A pass
-// then costs O((n + m) log L + n K log L).
+// then costs O((n + m) log L + n K log L). The number of highest children of
+// each source (highest) costs O(n + m) per call and O(deg) per move to keep.
 export function balanceLayers(y: Int32Array, parents: number[][], children: number[][], K: number, onMove?: (i: number, from: number, to: number) => void, W = 2 * K + 1): number {
   const n = y.length;
   if (!n) return 0;
@@ -529,6 +597,7 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
   const L = bottom - top + 1;
   const c = new Counts(L);
   for (let i = 0; i < n; i++) c.add(y[i] - top, 1);
+  const high = highest(y, parents, children);
   let passes = 0;
   for (let moved = true; moved;) {
     moved = false;
@@ -541,6 +610,7 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
     const order = new Int32Array(n);
     for (let i = 0; i < n; i++) order[start[n - c.at(y[i] - top)]++] = i;
     for (const i of order) {
+      if (isSource(i, parents, children) || parents[i].some((q) => isSource(q, parents, children) && y[q] === y[i] - 1 && high[q] === 1)) continue;
       const a = y[i] - top;
       let lo = 0, hi = L - 1;
       for (const q of parents[i]) lo = Math.max(lo, y[q] - top + 1);
@@ -570,7 +640,135 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
       }
       c.add(a, -1);
       c.add(b, 1);
+      for (const q of parents[i]) {
+        if (!isSource(q, parents, children)) continue;
+        if (a === y[q] - top + 1) high[q]--;
+        if (b === y[q] - top + 1) high[q]++;
+      }
       y[i] = b + top;
+      onMove?.(i, a + top, b + top);
+      moved = true;
+    }
+  }
+  return passes;
+}
+
+// high[q] for each source q: the number of its children in the layer directly
+// below it, its highest children. O(n + m).
+function highest(y: Int32Array, parents: number[][], children: number[][]): Int32Array {
+  const high = new Int32Array(y.length);
+  for (let q = 0; q < y.length; q++) if (isSource(q, parents, children)) for (const k of children[q]) if (y[k] === y[q] + 1) high[q]++;
+  return high;
+}
+
+// Moves a node i whose parents' layer above it is over K (c[a - 1] > K, for
+// i in layer a) together with the sources it is the only highest child of
+// (its carried sources, w of them, in layer a - 1), so that i lands in layer b
+// and they in b - 1: each source stays directly above its highest child, and a
+// row over K that sources share is relieved, which balanceLayers cannot do as
+// it moves neither sources nor their only highest children. Every edge still
+// goes down: b lies above i's children and the carried sources' other
+// children, below i's other parents, and b - 1 >= 0. A move is taken only if
+// it lowers balanceLayers' Q (the squared excess of rows over K) or keeps Q
+// and lowers its F (W times the sum of edge lengths plus the sum of squared
+// counts), counted exactly over the rows the move changes (a - 1, a, b - 1 and
+// b), with s, the change in edge length per layer moved, +1 for each other
+// parent of i, -1 for each child of i and -1 for each other child of a carried
+// source (the edge from a carried source to i keeps its length). Candidates,
+// in this order, the first that lowers (Q, F) taken: b = a - 1 (i into the
+// sources' own row, they into the one above), then the nearer and the farther
+// of the nearest layers above and below where neither b nor b - 1 holds
+// c[a - 1] - w nodes or more. Passes repeat until one moves nothing; it
+// returns the number of passes. onMove, if given, sees each move of i.
+//
+// It ends, with no pass count set: every move lowers (Q, F) in the order of
+// first Q then F, as every move of balanceLayers does, Q and F are integers
+// at least 0, and F <= F_max as in balanceLayers. So the moves of the two
+// together are at most Q0 + (Q0 + 1) F_max, and the loop in layers that runs
+// them in turn until neither moves ends. The candidates are a choice of three,
+// not the best layer: a move ends where Q or F is lower, so the order of
+// trying them changes the result, not the ending.
+//
+// Complexity tradeoff: scanning every layer of i's slack for the best b is
+// O(L) per node and O(n L) per pass. A segment tree over pair(l) = max(c[l -
+// 1], c[l]) gives the nearest layer above or below where both b - 1 and b hold
+// fewer than a bound in O(log L); a move changes six of its entries, each
+// O(log L). A source is carried only by its one highest child, so the carried
+// sources' edges are read once per pass: a pass costs O((n + m) + n log L).
+// On crowdedSources of d3dag.test.ts (k sources in one row) it made 18 passes
+// and 48,912 moves at k = 4,000 (56 ms) and 24 passes and 559,780 moves at
+// 32,000 (719 ms); the moves per source grow slowly, 12 to 17.5.
+export function spreadSources(y: Int32Array, parents: number[][], children: number[][], K: number, onMove?: (i: number, from: number, to: number) => void, W = 2 * K + 1): number {
+  const n = y.length;
+  if (!n) return 0;
+  let top = Infinity, bottom = -Infinity;
+  for (const v of y) { top = Math.min(top, v); bottom = Math.max(bottom, v); }
+  const L = bottom - top + 1;
+  const c = new Int32Array(L);
+  for (let i = 0; i < n; i++) c[y[i] - top]++;
+  const pair = (l: number) => (l ? Math.max(c[l - 1], c[l]) : 0x3fffffff);
+  const p = new Counts(L);
+  for (let l = 0; l < L; l++) p.add(l, pair(l));
+  const fix = (l: number) => { if (l >= 0 && l < L) p.add(l, pair(l) - p.at(l)); };
+  const over = (v: number) => (v > K ? (v - K) * (v - K) : 0);
+  const high = highest(y, parents, children);
+  const carried: number[] = [], isCarried = new Uint8Array(n);
+  const rows: number[] = [], delta: number[] = [];
+  let passes = 0;
+  for (let moved = true; moved;) {
+    moved = false;
+    passes++;
+    for (let i = 0; i < n; i++) {
+      if (!parents[i].length) continue;
+      const a = y[i] - top;
+      if (c[a - 1] <= K) continue;
+      // The sources that have i as their only highest child move with it.
+      for (const q of carried) isCarried[q] = 0;
+      carried.length = 0;
+      let lo = 1, hi = L - 1, s = 0;
+      for (const k of children[i]) { hi = Math.min(hi, y[k] - top - 1); s--; }
+      for (const q of parents[i]) {
+        if (parents[q].length || y[q] !== y[i] - 1 || high[q] !== 1) { lo = Math.max(lo, y[q] - top + 1); s++; continue; }
+        carried.push(q);
+        isCarried[q] = 1;
+        for (const k of children[q]) if (k !== i) { hi = Math.min(hi, y[k] - top - 1); s--; }
+      }
+      const w = carried.length;
+      if (!w) continue;
+      // The exact change in Q and F (balanceLayers) over the rows touched by
+      // a move to b; true if it lowers Q, or keeps Q and lowers F.
+      const lowers = (b: number) => {
+        if (b < 0) return false;
+        rows.length = 0; delta.length = 0;
+        const touch = (l: number, d: number) => { const k = rows.indexOf(l); if (k >= 0) delta[k] += d; else { rows.push(l); delta.push(d); } };
+        touch(a, -1); touch(a - 1, -w); touch(b, 1); touch(b - 1, w);
+        let dQ = 0, dF = W * s * (b - a);
+        for (let k = 0; k < rows.length; k++) {
+          const v = c[rows[k]], u = v + delta[k];
+          dQ += over(u) - over(v);
+          dF += u * u - v * v;
+        }
+        return dQ < 0 || (dQ === 0 && dF < 0);
+      };
+      // Candidates, nearest first: the layer of the sources themselves, and
+      // the nearest layers above and below where neither that layer nor the
+      // one above it holds c[a - 1] - w nodes or more.
+      const T = c[a - 1] - w - 1;
+      const up = a - 1 > lo ? p.last(lo, a - 2, T) : -1;
+      const down = a < hi ? p.first(a + 1, hi, T) : -1;
+      const [near, far] = up < 0 || (down >= 0 && down - a < a - up) ? [down, up] : [up, down];
+      let b = -1;
+      for (const t of [a - 1 >= lo ? a - 1 : -1, near, far]) if (lowers(t)) { b = t; break; }
+      if (b < 0) continue;
+      for (let k = 0; k < rows.length; k++) c[rows[k]] += delta[k];
+      y[i] = b + top;
+      for (const q of carried) y[q] = b + top - 1;
+      for (const q of parents[i]) {
+        if (parents[q].length || isCarried[q]) continue;
+        if (a + top === y[q] + 1) high[q]--;
+        if (b + top === y[q] + 1) high[q]++;
+      }
+      for (const l of [a - 1, a, a + 1, b - 1, b, b + 1]) fix(l);
       onMove?.(i, a + top, b + top);
       moved = true;
     }
@@ -693,10 +891,17 @@ export function compactLayers(y: Int32Array): number {
 // middle counts when the number of rows is even. Returns the new rows, or null
 // if no row is split. Rows are not split again: the cutoff is the author's,
 // for one split of each long row.
-// Complexity tradeoff: O(n log n) for sorting the counts and each split row by
-// x, against O(n) with a selection algorithm for the median; n log n is
-// milliseconds here.
-export function splitRows(y: Int32Array, x: ArrayLike<number>, half?: Int8Array): Int32Array | null {
+// Given parents and children, sources stay directly above their highest child
+// in the drawn rows: a source in a split row goes to its lower half, and of a
+// source's highest children in a split row the leftmost goes to the upper
+// half; the other nodes of a split row then fill the upper half to half the
+// row, evenly from left to right. Without that rule, 173 sources of the live
+// plan of 2026-11-11 were more than one drawn row above their highest child
+// where the layers had 141.
+// Complexity tradeoff: O(n log n + m) for sorting the counts and each split
+// row by x and reading each source's children once, against O(n + m) with a
+// selection algorithm for the median; n log n is milliseconds here.
+export function splitRows(y: Int32Array, x: ArrayLike<number>, half?: Int8Array, parents?: number[][], children?: number[][]): Int32Array | null {
   const n = y.length;
   let L = 0;
   for (const v of y) L = Math.max(L, v + 1);
@@ -718,14 +923,47 @@ export function splitRows(y: Int32Array, x: ArrayLike<number>, half?: Int8Array)
       r.push(i);
     }
   }
-  for (const r of rows.values()) {
-    r.sort((p, q) => x[p] - x[q] || p - q);
-    let last = 1;
-    for (const i of r) {
-      last = half && half[i] >= 0 ? half[i] : 1 - last;
-      out[i] += last;
+  // 1 for a node going to the lower half, 0 for the upper, -1 not decided.
+  const lower = new Int8Array(n).fill(-1);
+  // A source in a split row is directly above its highest child only from the
+  // lower half, and a child in a split row only from the upper half, so every
+  // source of a split row goes to the lower half, and for every source whose
+  // children in the layer just below are in a split row, the leftmost of them
+  // goes to the upper half. Children are never sources, so no node is asked
+  // for both halves.
+  if (children) {
+    for (let i = 0; i < n; i++) {
+      if (!isSource(i, parents!, children)) continue;
+      if (c[y[i]] > 1.5 * median) lower[i] = 1;
+      let pick = -1;
+      for (const k of children[i]) {
+        if (y[k] !== y[i] + 1 || !(c[y[k]] > 1.5 * median)) continue;
+        if (pick < 0 || x[k] < x[pick] || (x[k] === x[pick] && k < pick)) pick = k;
+      }
+      if (pick >= 0) lower[pick] = 0;
     }
   }
+  for (const r of rows.values()) {
+    r.sort((p, q) => x[p] - x[q] || p - q);
+    // The other nodes, F of them in x order, fill the upper half to half the
+    // row, ceil(|r| / 2), spread evenly from left to right: free node j goes up
+    // when floor((j + 1) u / F + 1/2) > floor(j u / F + 1/2), for u of them going up. With
+    // no forced node that is every other node, starting with the first. Given
+    // half, a node keeps its earlier half and one with none takes the other
+    // half from the node to its left.
+    let up = Math.ceil(r.length / 2), F = 0;
+    for (const i of r) if (lower[i] === 0) up--; else if (lower[i] < 0) F++;
+    const u = Math.max(0, Math.min(F, up));
+    let j = 0, last = 1;
+    for (const i of r) {
+      if (lower[i] >= 0) continue;
+      if (half) last = half[i] >= 0 ? half[i] : 1 - last;
+      else last = Math.floor((2 * (j + 1) * u + F) / (2 * F)) > Math.floor((2 * j * u + F) / (2 * F)) ? 0 : 1;
+      lower[i] = last;
+      j++;
+    }
+  }
+  for (const r of rows.values()) for (const i of r) out[i] += lower[i];
   return out;
 }
 
