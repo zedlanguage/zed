@@ -3,6 +3,7 @@
 //! contraction, and naturality.
 
 use zed_kernel::term::build::{app, if_, let_, lit, prim, var};
+use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Family, GuardPos, Pattern, Prim, Term, Value, World, eval};
 use zed_tests::check::{holds, refuted};
 use zed_tests::instances::{Rng, bmc_floats, bmc_ints, shortlex};
@@ -520,6 +521,123 @@ fn law_16_a_check_on_the_output_is_a_check_on_the_input() {
         (a, b),
         (Ok(Value::atom("divByZero")), Ok(Value::atom("invalid")))
     );
+}
+
+// The predicate forms of step M0.10's law 16 entry: a predicate that replaces a failure by a
+// bool, by `is`, `match` or `else`, is refuted on `x div 0`, and one that tests a failure and
+// returns that same failure passes. Each is built as the front end elaborates it.
+
+/// `12 div x`: doses a day for a dose every `x` hours, `#divByZero` at `x = 0`.
+fn doses(x: Term) -> Term {
+    idiv(lit(12), x)
+}
+
+/// `v is #name`: a match whose first arm tests the type, `true` there and `false` elsewhere.
+fn is_atom(v: Term, name: &str) -> Term {
+    Term::Match(
+        rc(v),
+        vec![
+            (Pattern::Is(Type::atom(name)), lit(true)),
+            (Pattern::Wild, lit(false)),
+        ],
+    )
+}
+
+/// `e else #name -> d` when `name` is given, `e else d` when not: `d` in place of the atom
+/// `#name` with any payload or none, or in place of any atom, and `e` itself otherwise.
+fn or_else(e: Term, name: Option<&str>, d: Term) -> Term {
+    let arm = match name {
+        Some(n) => Pattern::Is(Type::union_all([
+            Type::atom(n),
+            Type::atom_with(n, &Type::top()),
+        ])),
+        None => Pattern::AnyAtom,
+    };
+    let t = fresh("t");
+    Term::Match(
+        rc(e),
+        vec![(arm, d), (Pattern::Bind(t.as_str().into()), var(&t))],
+    )
+}
+
+/// Checks that hoisting the predicate `narrowing` through `doses` is refuted at `x = 0` and
+/// nowhere else, the left side giving `#divByZero` and the hoisted side `#invalid`, and that
+/// the harness reports the instance in full.
+fn refuted_on_div_zero(narrowing: &Term) {
+    let (x, a, b) = refuted(refine_inputs(), |x| hoist(&doses, narrowing, x));
+    assert_eq!(x, lit(0));
+    assert_eq!(
+        (a, b),
+        (Ok(Value::atom("divByZero")), Ok(Value::atom("invalid")))
+    );
+    let others = refine_inputs().into_iter().filter(|x| *x != lit(0));
+    assert_eq!(holds(others, |x| hoist(&doses, narrowing, x)), 17);
+    let report = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        holds(refine_inputs(), |x| hoist(&doses, narrowing, x))
+    }))
+    .expect_err("the harness must report the refutation");
+    assert_eq!(
+        report.downcast_ref::<String>().map(String::as_str),
+        Some(
+            "the law fails on Lit(Int(0)):\n  \
+             left  Ok(Atom(Atom { name: \"divByZero\", fields: [], args: [] }))\n  \
+             right Ok(Atom(Atom { name: \"invalid\", fields: [], args: [] }))"
+        )
+    );
+}
+
+#[test]
+fn law_16_an_is_test_that_turns_the_failure_into_a_bool_is_refuted() {
+    // `v -> if v is #divByZero { false } else { 0 < v }` decides the failure itself, so the
+    // hoisted check rejects `x = 0` where the unhoisted one passes `#divByZero` on.
+    refuted_on_div_zero(&func(|[v]| {
+        if_(is_atom(v.clone(), "divByZero"), lit(false), lt(lit(0), v))
+    }));
+    // `v -> if v is #divByZero { #divByZero } else { 0 < v }` tests the failure and returns
+    // it, so both sides give `#divByZero` at `x = 0`.
+    let passing = func(|[v]| {
+        if_(
+            is_atom(v.clone(), "divByZero"),
+            atom("divByZero"),
+            lt(lit(0), v),
+        )
+    });
+    assert_eq!(holds(refine_inputs(), |x| hoist(&doses, &passing, x)), 18);
+}
+
+#[test]
+fn law_16_an_else_that_turns_the_failure_into_a_bool_is_refuted() {
+    // `v -> 0 < v else false`.
+    refuted_on_div_zero(&func(|[v]| or_else(lt(lit(0), v), None, lit(false))));
+    // `v -> 0 < v else #divByZero -> #divByZero`.
+    let passing = func(|[v]| or_else(lt(lit(0), v), Some("divByZero"), atom("divByZero")));
+    assert_eq!(holds(refine_inputs(), |x| hoist(&doses, &passing, x)), 18);
+}
+
+#[test]
+fn law_16_a_match_that_turns_the_failure_into_a_bool_is_refuted() {
+    // `v -> match v { #divByZero -> false, _ -> 0 < v }`, the refutation of the test above
+    // with the harness's report.
+    refuted_on_div_zero(&func(|[v]| {
+        Term::Match(
+            rc(v.clone()),
+            vec![
+                (Pattern::Atom("divByZero".into(), vec![]), lit(false)),
+                (Pattern::Wild, lt(lit(0), v)),
+            ],
+        )
+    }));
+    // `v -> match v { #divByZero -> #divByZero, _ -> 0 < v }`.
+    let passing = func(|[v]| {
+        Term::Match(
+            rc(v.clone()),
+            vec![
+                (Pattern::Atom("divByZero".into(), vec![]), atom("divByZero")),
+                (Pattern::Wild, lt(lit(0), v)),
+            ],
+        )
+    });
+    assert_eq!(holds(refine_inputs(), |x| hoist(&doses, &passing, x)), 18);
 }
 
 // Law 17: fold promotion.
