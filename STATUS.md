@@ -1840,17 +1840,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DAGVIEW-step-count | impl attempt 1 | 2026-11-11 11:09 | baseline origin/main 9b9a31d68: dagview node --test 86/86 pass, 20.5 s; balanceCounts ratio 10.7, layers 16.2, wide 10.3 (limit 20.0), spreadSources 12.0, decro |
-| FLOAT-half-order | impl attempt 1 | 2026-11-11 10:30 | started: worktree wt/float-half-order from origin/main 285f42b72; plan-only fix of L1.18a/L3.15 order / load5 48.54 |
-| FLOAT-sqrt-layer | impl attempt 1 | 2026-11-11 10:39 | started: worktree from wt/float-half-order 645f72981 / 32.40 |
+| DAGVIEW-step-count | impl attempt 1 | 2026-11-11 11:09 | counted steps (Work in d3dag.ts): balanceCounts 231971 -> 2011775 (8.67x), layers earlier path 1268912 -> 17191522 (13.55x), whole-spine 274997 -> 2632913 (9.57 |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
 | HAS-point-probe | running | 2026-11-10 22:35 |  |
 | LOAD-max-div-xr | coord attempt 5 | 2026-11-10 01:18 | start rounds 5-10 coordinator; committed Claude seat's unfinished round-4 tree as b07e4522 on wt/lmd-claude; load5 32.66 |
 | PERF-negated-chain-xr | impl attempt 2 | 2026-11-10 06:16 | started rounds 4-9: Claude round-3 tree committed 9a579263 (wt/pncx-claude), rebased onto origin/main 9bbeb1ff as 448bad52 on wt/perf-negated-chain; control tre |
 | REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | rounds 7-8 started; committing review tree (Claude R5 + probe), bringing Claude R6 onto the branch, rebasing on origin/main 4777a33e / load 52.67 38.82 33.29 |
-| RT-cell-size | impl attempt 1 | 2026-11-11 01:59 | started; worktree rcs-wt on 9b9a31d68 / 19.14 |
-| TEST-l01_36b-leftover | impl attempt 1 | 2026-11-11 11:09 | start: worktree tlf-wt on 9b9a31d68 / 19.14 |
-| TOOLS-layer-zed0 | impl attempt 1 | 2026-11-11 11:09 | started; worktree tlz-wt from 9b9a31d68 / load5 19.14 |
+| RT-cell-size | impl attempt 1 | 2026-11-11 01:59 | baseline 119 pieces 0 failed (670 tests); bytes/2-tuple level (counts build, cell 144): heap 220.7 net, 346.6 peak in fresh, +128 kernel value kept by cache; de |
+| TEST-l01_36b-leftover | impl attempt 1 | 2026-11-11 11:09 | cause found and reproduced: lock fd copied into children other test threads fork (held until exec) keeps the running dir locked past drop; repro red (left sign. |
+| TOOLS-layer-zed0 | impl attempt 1 | 2026-11-11 11:09 | layer.rs: TypeParam, ArrowParams, RecordType, FieldType, TypeBounds, AckPush names now bindings; new m0_03 test red on origin/main (7 of 7 programs counted grou |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
