@@ -1687,7 +1687,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         match why {
             Why::Declared(sig) => self.declared_step(id, sig),
             Why::Defined(v) => format!("`{b}` is defined as this expression, {}", self.text(v)),
-            Why::Component(i, c) => format!("`{b}` is component {i} of this, {}", self.text(c)),
+            Why::Component(i, c) => {
+                format!("`{b}` is {}, component {i} of this tuple", self.text(c))
+            }
             Why::Port => format!("`{b}` is an output port"),
             Why::Untracked(a) => {
                 let shown = declared_text(a).unwrap_or_else(|| Ty::dynamic().to_string());
@@ -1712,7 +1714,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     )
                 }
             },
-            Why::Default(t) => format!("`{b}` is {}, the carrier of its default", self.text(t)),
+            Why::Default(t) => format!("`{b}` is {}, the type of its default", self.text(t)),
             Why::Untyped(k) => format!("`{b}` has no declared type; its uses give it $${k}"),
             Why::Narrowed(t) => format!(
                 "`{b}` is narrowed to {} where this test decides",

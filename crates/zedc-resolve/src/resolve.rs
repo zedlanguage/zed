@@ -2604,13 +2604,19 @@ impl Resolver<'_> {
             }
             Some(Found::Ambiguous(a, b)) => return self.ambiguous(n, span, a, b),
             Some(Found::Unit(unit)) => {
+                // `find` gives the prelude unit only for a name the unit exports.
                 let kind = (self.units.and_then(|u| u.prelude()))
                     .and_then(|(_, e)| e.get(n))
-                    .map(|e| e.kind);
-                if kind.is_some_and(Kind::is_type) {
+                    .map(|e| e.kind)
+                    .expect("the prelude unit exports the name found in it");
+                if kind.is_type() {
                     return self.prelude_unit(n, span, unit);
                 }
-                undefined_type(n)
+                format!(
+                    "`{n}` stands where a type is written, and the prelude unit `{unit}` \
+                     declares `{n}` as {}, which is no type",
+                    kind.binder()
+                )
             }
             None if n == MAIN_ARGS => main_args_elsewhere(),
             Some(Found::Word(_)) | None => match later_type_layer(n) {

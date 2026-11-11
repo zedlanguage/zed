@@ -600,6 +600,20 @@ impl Program {
     /// [`Program::check_record`] finds it a record of this program.
     pub fn replay(&self, record: &Record) -> Result<Wave, String> {
         self.check_record(record)?;
+        // A run records the input of every `Lines` port of the program, so a record of this
+        // program that lacks one has been changed since it was written.
+        for (name, kind) in &self.ports.inputs {
+            if *kind == PortKind::Lines && !record.lines.contains_key(name) {
+                return Err(format!(
+                    "the record holds no input for the port `{name}`, which the program \
+                     reads, so the replay cannot go on: a replay reads nothing from outside, \
+                     only what the record holds. Every run records the input of each port it \
+                     reads, so the record has been changed since it was written. Replay with \
+                     the record as it was written, or make a new record with `zedc run <file> \
+                     --record <out>`."
+                ));
+            }
+        }
         self.run_args(&record.lines, &record.args, |name| {
             Arc::new(Recorded(
                 record.files.get(name).cloned().unwrap_or_default(),

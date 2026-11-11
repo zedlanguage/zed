@@ -94,3 +94,9 @@ fn a_repeated_import_is_written_once() {
         "struct P { import a.B, z: f64 }\n",
     );
 }
+
+#[test]
+fn a_struct_with_no_fields_is_written_with_empty_braces() {
+    check("struct Unit{}\n", "struct Unit {}\n");
+    check("struct Unit {\n\n}\n", "struct Unit {}\n");
+}

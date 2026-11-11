@@ -162,3 +162,18 @@ fn test_tables() {
         "{e}"
     );
 }
+
+#[test]
+fn an_index_of_a_function_with_no_parameters_is_rejected() {
+    // The checker lets the index through; elaboration finds that `f` has no parameter for it.
+    assert_eq!(
+        zedc::run::load(b"f() = 1;\nx = f[0];\n").err().as_deref(),
+        Some(
+            "2:5: `f` takes no arguments, and this indexes it with one. Write `f` without the \
+             index, or give `f` a parameter for it.\n  \
+             [1] 1:1: `f` is declared here with no parameters\n      \
+             1 | f() = 1;\n        \
+             | ^^^^^^^^"
+        )
+    );
+}

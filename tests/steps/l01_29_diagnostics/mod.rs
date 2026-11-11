@@ -25,6 +25,7 @@ mod negative_literals;
 mod neglit;
 mod order;
 mod printed;
+mod rare;
 mod recursion;
 mod rejection_addresses;
 mod repairs;

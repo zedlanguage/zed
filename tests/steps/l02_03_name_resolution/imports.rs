@@ -1,5 +1,7 @@
 //! The three forms of import, the qualifier as a name, ambiguity, and overloads across units.
 
+use std::path::Path;
+
 use super::{mistakes, package, use_of};
 
 const SHAPES: &str = "\
@@ -232,5 +234,78 @@ fn a_block_import_shadows_the_top_level() {
     assert_eq!(
         use_of(&p, "main", "unitRadius", 2),
         ["binding import geometry.shapes.{unitRadius}; from geometry.shapes"]
+    );
+}
+
+#[test]
+fn a_binding_after_a_block_import_of_its_name_is_a_rebinding() {
+    let p = package(&[
+        ("geometry/shapes.zed", SHAPES),
+        (
+            "main.zed",
+            "f(x) = {\n  import geometry.shapes.{unitRadius};\n  unitRadius = 2.0;\n  x * unitRadius\n};\n",
+        ),
+    ]);
+    assert_eq!(
+        mistakes(&p),
+        [
+            "main.zed:3:3: `unitRadius` is already bound in this scope, by an import, and a scope \
+             binds each name once\n  \
+             [1] 2:3: the import that brings `unitRadius` into this scope\n      \
+             2 |   import geometry.shapes.{unitRadius};\n        \
+             |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  \
+             [2] 3:3: repair: give this binding a new name\n      \
+             3 |   unitRadius = 2.0;\n        \
+             |   ^^^^^^^^^^^^^^^^^\n  \
+             [3] 3:3: repair: move this binding into a nested block, where it shadows the first"
+        ]
+    );
+}
+
+#[test]
+fn an_import_after_a_block_binding_of_its_name_is_a_rebinding() {
+    let p = package(&[
+        ("geometry/shapes.zed", SHAPES),
+        (
+            "main.zed",
+            "f(x) = {\n  unitRadius = 2.0;\n  import geometry.shapes.{unitRadius};\n  x * unitRadius\n};\n",
+        ),
+    ]);
+    assert_eq!(
+        mistakes(&p),
+        [
+            "main.zed:3:3: `unitRadius` is already bound in this scope, and a scope binds each \
+             name once\n  \
+             [1] 2:3: the binding of `unitRadius` the import would hide\n      \
+             2 |   unitRadius = 2.0;\n        \
+             |   ^^^^^^^^^^^^^^^^^\n  \
+             [2] 2:3: repair: give this binding a new name"
+        ]
+    );
+}
+
+#[test]
+fn a_type_of_another_unit_is_not_yet_linked() {
+    let p = package(&[
+        ("geometry/shapes.zed", "struct Point { x: f64 }\n"),
+        (
+            "main.zed",
+            "import geometry.shapes;\nf(positional p: shapes.Point) = p;\n",
+        ),
+    ]);
+    // Without the filter `mistakes` applies, which drops the forms a later step links.
+    assert_eq!(
+        p.report(Path::new("")),
+        [
+            "geometry/shapes.zed:1:1: a struct declaration is part of the Zed language, and this \
+             version of zedc does not compile it yet. Write the program without it, with the \
+             forms this zedc compiles.",
+            "main.zed:1:1: an import is part of the Zed language, and this version of zedc does \
+             not yet tie a name an import brings in to the other unit's definition. Write the \
+             definitions this file uses in it, and remove the import.",
+            "main.zed:2:17: `shapes.Point`, a type of another unit, is used here, and this \
+             version of zedc does not yet link a use to a definition in another unit. Write the \
+             definition in this file instead, and use it from there."
+        ]
     );
 }

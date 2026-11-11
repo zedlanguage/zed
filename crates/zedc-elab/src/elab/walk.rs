@@ -22,7 +22,9 @@ use zedc_resolve::resolve::tables::recursion;
 use zedc_resolve::resolve::topo::topo;
 use zedc_resolve::resolve::{Ref, prelude_layer};
 use zedc_stage::defs::Test;
-use zedc_syntax::ast::{Expr, ExprKind, Function, Pattern, Stmt, StmtKind, StrPart, Target};
+use zedc_syntax::ast::{
+    Error, Expr, ExprKind, Function, Note, Pattern, Stmt, StmtKind, StrPart, Target,
+};
 use zedc_syntax::lex::{Span, unread_literal};
 
 use super::mark::{Mark, mutable};
@@ -1692,15 +1694,27 @@ impl<'a> Elab<'a> {
                     Some(k) => {
                         let f = self.t.funcs[&id];
                         match f.params.len() {
-                            0 => self.error(
-                                of.span,
-                                format!(
-                                    "`{0}` takes no arguments, and this indexes it with one. \
-                                     Write `{0}` without the index, or give `{0}` a parameter \
-                                     for it.",
-                                    f.name
-                                ),
-                            ),
+                            0 => {
+                                self.errors.push(Error {
+                                    menu: String::new(),
+                                    row: None,
+                                    span: of.span,
+                                    message: format!(
+                                        "`{0}` takes no arguments, and this indexes it with \
+                                         one. Write `{0}` without the index, or give `{0}` a \
+                                         parameter for it.",
+                                        f.name
+                                    ),
+                                    notes: vec![Note {
+                                        span: self.t.res.binders[id].span,
+                                        text: format!(
+                                            "`{}` is declared here with no parameters",
+                                            f.name
+                                        ),
+                                    }],
+                                });
+                                None
+                            }
                             1 => Some(Term::App(self.fv(id), vec![k])),
                             n => {
                                 let rest: Vec<Arc<str>> = (1..n).map(|_| self.temp()).collect();

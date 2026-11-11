@@ -116,3 +116,33 @@ fn a_damaged_record_is_rejected() {
         );
     }
 }
+
+#[test]
+fn a_record_that_lacks_the_input_of_a_port_stops_the_replay() {
+    let p = load(b"main(m: MainArgs) {\n  m.stdout <- m.stdin[1] else \"\";\n}\n").unwrap();
+    // Every run records the input of `m.stdin`, so only a changed record lacks it.
+    let record = Record {
+        program: Some(p.address().unwrap()),
+        ..Record::default()
+    };
+    assert_eq!(
+        p.replay(&record).err().as_deref(),
+        Some(
+            "the record holds no input for the port `m.stdin`, which the program reads, so the \
+             replay cannot go on: a replay reads nothing from outside, only what the record \
+             holds. Every run records the input of each port it reads, so the record has been \
+             changed since it was written. Replay with the record as it was written, or make a \
+             new record with `zedc run <file> --record <out>`."
+        )
+    );
+    // A run through the API that gives the port no bytes is the caller's mistake, not the
+    // record's.
+    let files = |_: &str| -> Arc<dyn zed_kernel::Lookup> { unreachable!("no `Files` port") };
+    assert_eq!(
+        p.run(&BTreeMap::new(), files).err().as_deref(),
+        Some(
+            "the input port `m.stdin` was given nothing to read: a run gives each `Lines` input \
+             its bytes by the name of its port, and no bytes were given for `m.stdin`."
+        )
+    );
+}

@@ -24,15 +24,16 @@ fn run(src: &str, stdin: &str) -> String {
     }
 }
 
-/// Checks that the program with these definitions and this `stdout` expression is rejected.
-fn rejected(defs: &str, out: &str) {
+/// The diagnostics of the program with these definitions and this `stdout` expression, which
+/// must be rejected.
+fn rejected(defs: &str, out: &str) -> String {
     let src = format!("{defs}\nmain(m: MainArgs) {{\n  m.stdout <- {out};\n}}\n");
-    if let Ok(p) = load(src.as_bytes()) {
-        let _ = p;
-        panic!(
+    match load(src.as_bytes()) {
+        Err(e) => e,
+        Ok(_) => panic!(
             "accepted, and on input 7 it gives {:?}:\n{src}",
             run(&src, "7")
-        );
+        ),
     }
 }
 
@@ -119,6 +120,26 @@ fn an_int_power_needs_an_exponent_of_at_least_zero() {
 }
 
 #[test]
+#[ignore = "MSG-power-exponent: the rejection of `2^-1` does not show the exponent -1, and its repairs put the base, already 2, in int[0..] through a value `v` the program does not have; open"]
+fn an_int_power_rejection_shows_the_negative_exponent() {
+    // Today: "3:18: `^` with an exponent not shown to be at least 0 takes no int base, and
+    // this value may be int: the checker cannot show that it lies in int[0..]", with the
+    // steps "this use needs it here" and the repairs "test the value first, as `if v is
+    // int[0..] { … } else { … }`, …" and "declare the value with a type in int[0..], as
+    // `v: int[0..]`".
+    let out = rejected("", r#""${2^-1}""#);
+    // The first line or a step names the exponent; the source line shown always holds it.
+    let source = |l: &str| {
+        let l = l.trim_start();
+        l.starts_with('|')
+            || l.split_once(" |")
+                .is_some_and(|(n, _)| n.parse::<u32>().is_ok())
+    };
+    assert!(out.lines().any(|l| !source(l) && l.contains("-1")), "{out}");
+    assert!(!out.contains("`v"), "{out}");
+}
+
+#[test]
 fn a_prelude_word_takes_its_number_of_arguments() {
     rejected("", r#""${len("ab", "c") + 1}""#);
 }
@@ -126,7 +147,22 @@ fn a_prelude_word_takes_its_number_of_arguments() {
 #[test]
 fn a_function_is_not_shown_and_not_put_in_a_tuple() {
     rejected(INC, r#""${inc}""#);
-    rejected(INC, "String(inc)");
+    assert_eq!(
+        rejected(INC, "String(inc)"),
+        "3:15: `String` takes data, and this value may hold a function, `(T) -> T for T in int \
+         | f64 | rat`: data is a value that holds no function at any depth\n  \
+         [1] 3:22: `inc` is (T) -> T for T in int | f64 | rat here\n      \
+         3 |   m.stdout <- String(inc);\n        \
+         |               ^^^^^^^^^^^ [3, 4]\n        \
+         |                      ^^^ [1]\n  \
+         [2] 1:1: `inc` is declared here with no type written for `x` or its result; the type \
+         the checker found for `inc` is `(T) -> T for T in int | f64 | rat`\n      \
+         1 | inc(positional x) = x + 1;\n        \
+         | ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  \
+         [3] 3:15: repair: call the function before the value gets here, so that the value \
+         holds its result and not the function\n  \
+         [4] 3:15: repair: keep the function under its own name, out of the value"
+    );
     rejected(INC, r#""${(inc, 1)[1]}""#);
     rejected(
         &format!("pair(positional a, positional b) = (a, b);\n{INC}"),
