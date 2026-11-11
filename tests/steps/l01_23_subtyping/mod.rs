@@ -27,6 +27,7 @@ mod rec_order;
 mod refusals;
 mod scaling;
 mod setop;
+mod sweep_agreement;
 mod two_sat;
 mod witnesses;
 mod x13;

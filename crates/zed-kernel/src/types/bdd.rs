@@ -1790,6 +1790,54 @@ impl<A: Literal> Part<A> {
         Some(out)
     }
 
+    /// The atoms the part takes and those it refuses, when the part is their meet: `true`,
+    /// a literal, a meet of literals, a meet of such parts, or the complement of a union of
+    /// atoms. `None` for any other part, `false` included. Each expression is visited once,
+    /// from a stack, so the cost is the size of the part.
+    pub(super) fn clause(&self) -> Option<(Vec<A>, Vec<A>)> {
+        let (mut seen, mut taken, mut refused) = (HashSet::new(), Vec::new(), Vec::new());
+        let mut stack = vec![self];
+        while let Some(p) = stack.pop() {
+            match p {
+                Part::Bdd(Bdd::Leaf(true)) => {}
+                Part::Bdd(Bdd::Leaf(false)) => return None,
+                Part::Bdd(b) => match b.as_literal() {
+                    Some((a, true)) => taken.push(a.clone()),
+                    Some((a, false)) => refused.push(a.clone()),
+                    None => {
+                        for (a, t) in b.chain(Op::And)? {
+                            match t {
+                                true => taken.push(a.clone()),
+                                false => refused.push(a.clone()),
+                            }
+                        }
+                    }
+                },
+                Part::Expr(e) => {
+                    if !seen.insert(e.id) {
+                        continue;
+                    }
+                    match &e.form {
+                        Form::And(a, b) => {
+                            stack.push(b);
+                            stack.push(a);
+                        }
+                        Form::Not(Part::Bdd(b)) if b.as_literal().is_some() => {
+                            match b.as_literal() {
+                                Some((a, true)) => refused.push(a.clone()),
+                                Some((a, false)) => taken.push(a.clone()),
+                                None => unreachable!("tested by the guard"),
+                            }
+                        }
+                        Form::Not(x) => refused.extend(x.union_rows()?),
+                        Form::Or(..) => return None,
+                    }
+                }
+            }
+        }
+        Some((taken, refused))
+    }
+
     /// The id of an expression; a diagram part has none of its own.
     pub(super) fn expr_id(&self) -> Option<u64> {
         match self {

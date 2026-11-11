@@ -366,6 +366,11 @@ impl Type {
         if let Some(b) = MEMO.with(|m| m.borrow().get(self).copied()) {
             return b;
         }
+        if let Some(v) = sweep::front_sweep(self) {
+            let b = v == Verdict::Empty;
+            MEMO.with(|m| m.borrow_mut().insert(self.clone(), b));
+            return b;
+        }
         // Complexity tradeoff: a fork of recursive tuple types (`Searching::narrow_tuples`,
         // `Searching::tuples_on`) ends the search, and `self` counts as inhabited, as for
         // `Type::verdict`, which refuses it. Why: following both tuple types of a fork is the
@@ -601,8 +606,31 @@ impl Type {
         }
     }
 
+    /// The verdict of `self` by the front sweep ([`sweep::front_sweep`]), else by the
+    /// prefix-chain sweep ([`Searching::sweep_verdict`]); `None` when `self` is outside both
+    /// classes or both leave it to the search. For tests, which check it against an oracle of
+    /// their own.
+    pub fn sweep_verdict(&self) -> Option<Verdict> {
+        sweep::front_sweep(self).or_else(|| self.chain_verdict())
+    }
+
+    /// The prefix-chain sweep's verdict of `self` alone ([`Searching::sweep_verdict`]). For
+    /// tests that check which of the two sweeps decides an input.
+    pub fn chain_verdict(&self) -> Option<Verdict> {
+        let mut s = Search {
+            strict: true,
+            refuse_forks: true,
+            ..Search::default()
+        };
+        let t = self.clone();
+        s.run(|d| Box::pin(async move { d.sweep_verdict(&t).await }))
+    }
+
     /// The verdict of `self` by a search of its own.
     fn verdict_alone(&self) -> Verdict {
+        if let Some(v) = sweep::front_sweep(self) {
+            return v;
+        }
         let mut s = Search {
             strict: true,
             refuse_forks: true,
@@ -961,6 +989,12 @@ struct Search {
     keys: BTreeSet<Type>,
     /// What is known of each list type met, by the rule on pure cycles.
     cycles: ByType<Option<Cycle>>,
+    /// What is known of each list type met, by the sweep over prefix chains.
+    chains: ByType<Option<ChainPlan>>,
+    /// Nesting depth inside the general tuple/parts fallback for a list type outside
+    /// [`Searching::prefix_chains`]; while non-zero, internal narrowed residual tail types go
+    /// straight to the general decider without re-running `prefix_chains`.
+    in_list_fallback: usize,
     /// The meet, difference or union of each pair of nodes the search built
     /// ([`Searching::cut`]), built once, by the nodes' local numbers ([`Type::node_id`]), which
     /// are never reused; the operands are kept with it. Read only by `entry`, never iterated.
@@ -998,6 +1032,44 @@ struct Cycle {
     item: Type,
     period: u64,
     at: u64,
+}
+
+/// What [`Searching::prefix_chains`] finds for a list type whose link payload is a period-1
+/// carrier cycle less prefix chains: either no list remains, or a witness list with item types
+/// `heads` (from front to back) ending in `stop` remains.
+#[derive(Clone)]
+enum ChainPlan {
+    Empty,
+    Inhabited {
+        stop: std::sync::Arc<str>,
+        link: std::sync::Arc<str>,
+        heads: Vec<Type>,
+    },
+}
+
+/// One node in the DAG of finite prefix chains ending at the carrier cycle.
+struct ChainNode {
+    has_stop: bool,
+    head: Type,
+    emit: Option<Type>,
+    depth: usize,
+    child: usize,
+    run: usize,
+    /// For `depth >= 2`, the node reached after `run` steps of `(has_stop, head, emit)`.
+    jump: Option<usize>,
+}
+
+/// Active depth-`>= 2` chain tokens in [`Searching::find_prefix_chains`] that share
+/// `(has_stop, head, emit)`.
+struct ChainGroup {
+    has_stop: bool,
+    head: Type,
+    emit: Option<Type>,
+    active: usize,
+    jumping_next: usize,
+    jumping_stop_next: bool,
+    jump_target: Option<usize>,
+    multi_target: bool,
 }
 
 /// The prime powers of `n`.
@@ -1888,6 +1960,9 @@ impl Search {
         let (mut stop, mut link, mut item, mut at) = (None, None, None, None);
         loop {
             if x != *t && matches!(self.cycles.get(&x), Some(None)) {
+                for y in path {
+                    self.cycles.insert(y, None);
+                }
                 return None;
             }
             if let Some(&i) = seen.get(&x) {
@@ -1905,7 +1980,10 @@ impl Search {
                 return None;
             };
             if let Some(s) = s {
-                if at.is_some() {
+                if let Some(r) = at {
+                    for y in path.drain(..=r as usize) {
+                        self.cycles.insert(y, None);
+                    }
                     return None;
                 }
                 at = Some(steps);
@@ -1914,6 +1992,9 @@ impl Search {
             if *link.get_or_insert_with(|| l.clone()) != l
                 || *item.get_or_insert_with(|| e.clone()) != e
             {
+                for y in path.drain(..path.len() - 1) {
+                    self.cycles.insert(y, None);
+                }
                 return None;
             }
             x = next;
@@ -2176,7 +2257,43 @@ impl<'m> Searching<'m> {
                 self.s().give_up(Refusal::Residues);
                 false
             }
-            None => self.parts(&ty.p()).await,
+            None => {
+                if self.s().in_list_fallback > 0 {
+                    self.parts(&ty.p()).await
+                } else {
+                    match self.prefix_chains(&ty).await {
+                        Some(ChainPlan::Empty) => true,
+                        Some(plan @ ChainPlan::Inhabited { .. }) => {
+                            if self.chain_rep(&ty, plan).await.is_some() {
+                                self.s().witnessed.insert(t);
+                                false
+                            } else {
+                                self.s().chains.insert(ty.clone(), None);
+                                let is_atom_list = !ty.p().atoms.names.is_empty();
+                                if is_atom_list {
+                                    self.s().in_list_fallback += 1;
+                                }
+                                let res = self.parts(&ty.p()).await;
+                                if is_atom_list {
+                                    self.s().in_list_fallback -= 1;
+                                }
+                                res
+                            }
+                        }
+                        None => {
+                            let is_atom_list = !ty.p().atoms.names.is_empty();
+                            if is_atom_list {
+                                self.s().in_list_fallback += 1;
+                            }
+                            let res = self.parts(&ty.p()).await;
+                            if is_atom_list {
+                                self.s().in_list_fallback -= 1;
+                            }
+                            res
+                        }
+                    }
+                }
+            }
         };
         let mut guard = self.s();
         let s = &mut *guard;
@@ -3492,15 +3609,22 @@ impl<'m> Searching<'m> {
         }
         let f = &q.tuples.lens[&2];
         let (taken, refused) = f.forced();
-        let atoms = f.distinct_atoms();
-        if taken.len() + refused.len() != atoms.len() || atoms.is_empty() {
+        // Complexity tradeoff: `f.distinct_atoms()` and `f.eval(...)` walk the diagram `f`, which
+        // has `O(n)` nodes on a list difference of `n` rows (`front(n)`, `end(n)`). Most list
+        // differences are not pure cycles: their first forced row `a` fails `s.cycle(&a[1])` at
+        // once (in `O(log n)` once `cycles` holds `None`). Checking `read(&mut s, a)` on `taken`
+        // and `refused` first rejects a non-cycle list in `O(1)` cycle lookups before
+        // `f.distinct_atoms()`, and `taken_set: BTreeSet<&Row>` makes `f.eval` `O(k log k)`
+        // instead of `O(k^2)`. Nothing is given up: the `Meet` returned is identical.
+        if taken.is_empty() && refused.is_empty() {
             return None;
         }
-        if !f.eval(&|a| taken.contains(a)) {
-            return None;
-        }
+        let item = taken
+            .first()
+            .or_else(|| refused.first())
+            .expect("taken or refused is non-empty")[0]
+            .clone();
         let mut stop: Option<std::sync::Arc<str>> = bare;
-        let item = atoms[0][0].clone();
         let mut all = Vec::with_capacity(taken.len());
         let mut none = Vec::with_capacity(refused.len());
         {
@@ -3518,6 +3642,14 @@ impl<'m> Searching<'m> {
             for a in &refused {
                 none.push(read(&mut s, a)?);
             }
+        }
+        let atoms = f.distinct_atoms();
+        if taken.len() + refused.len() != atoms.len() || atoms.is_empty() {
+            return None;
+        }
+        let taken_set: BTreeSet<&Row> = taken.iter().collect();
+        if !f.eval(&|a| taken_set.contains(a)) {
+            return None;
         }
         if self.empty(&item).await {
             return None;
@@ -3554,6 +3686,1972 @@ impl<'m> Searching<'m> {
             item,
             len,
         }))
+    }
+
+    /// The front sweep's verdict of `t` alone, or of a single product of sweep-decidable list
+    /// types, with every `Inhabited` answer verified by [`Searching::chain_rep`].
+    async fn sweep_verdict(&'m self, t: &Type) -> Option<Verdict> {
+        let p = t.p();
+        if p.bools == 0
+            && !p.ints.cofinite
+            && p.ints.values.is_empty()
+            && !p.rats.cofinite
+            && p.rats.values.is_empty()
+            && !p.floats.cofinite
+            && p.floats.values.is_empty()
+            && !p.strings.cofinite
+            && p.strings.values.is_empty()
+            && !p.structs
+            && p.morphisms.is_leaf() == Some(false)
+            && !p.atoms.cofinite
+            && p.atoms.names.is_empty()
+            && !p.tuples.rest
+            && p.tuples.lens.len() == 1
+            && let Some(f) = p.tuples.lens.values().next()
+            && f.forced().1.is_empty()
+            && let Some(rows) = f.union_rows()
+            && rows.len() == 1
+        {
+            let mut all_inhabited = true;
+            for c in &rows[0] {
+                match Box::pin(self.sweep_verdict(c)).await {
+                    Some(Verdict::Empty) => return Some(Verdict::Empty),
+                    Some(Verdict::Inhabited) => {}
+                    _ => all_inhabited = false,
+                }
+            }
+            return all_inhabited.then_some(Verdict::Inhabited);
+        }
+        match self.prefix_chains(t).await? {
+            ChainPlan::Empty => Some(Verdict::Empty),
+            plan @ ChainPlan::Inhabited { .. } => self
+                .chain_rep(t, plan)
+                .await
+                .map(|_| Verdict::Inhabited),
+        }
+    }
+
+    /// Decides `t`, or builds a witness plan for it, when `t` is a list type made of a period-1
+    /// carrier cycle and finite prefix chains ending at that carrier (`front` and `far`
+    /// families). Memoized per type in `Search::chains`.
+    async fn prefix_chains(&'m self, t: &Type) -> Option<ChainPlan> {
+        if let Some(plan) = self.s().chains.get(t).cloned() {
+            return plan;
+        }
+        self.s().chains.insert(t.clone(), None);
+        let plan = self.find_prefix_chains(t).await;
+        self.s().chains.insert(t.clone(), plan.clone());
+        plan
+    }
+
+    /// A single-pass position sweep over a conjunction of positive and negative rows on a
+    /// `link(head, tail)` atom whose tails are either the period-1 carrier cycle `L` or finite
+    /// prefix chains ending at `L`.
+    // Complexity tradeoff: the general coinductive tuple-box decider (`narrow_tuples`) narrows the
+    // tail component by subtracting each active chain's tail (`L & M_{n-1} - F_2 - ... - F_n`),
+    // building a fresh intersection/difference type of size `O(k)` at each of `n` unfolding depths
+    // and testing all `k` remaining cells against it in `retest`: `Θ(n^2)` work on `front(n)` and
+    // `far(n)`. Used: unfold the DAG of prefix chains once (`O(n log n)` via `node_of` and
+    // `canon_node` with carrier-relative head normalization), group active depth-`>= 2` chain
+    // runs by `(has_stop, head, emit)`, maintain only the active groups and step-indexed jump
+    // lists (`active_pos`, `active_neg`, `pos_jumps_at`, `neg_jumps_at`), coalesce partial jumping
+    // heads per landing node by De Morgan subtraction, and defer uncovered roots on a single
+    // disjoint-hole spine (`clcofront`, `clstaggerholes`) to their depth-1 arrival steps where
+    // earliest-deadline prefix matching assigns holes in `O(n log n)`.
+    // Tradeoff: when the surviving head slice at a step partially overlaps a group's head without
+    // covering its target and outside a single disjoint-hole spine (`had_loose`), the sweep still
+    // proves `Empty` soundly if a later step becomes empty, and otherwise returns `None` so the
+    // general decider runs unchanged.
+    async fn find_prefix_chains(&'m self, t: &Type) -> Option<ChainPlan> {
+        let p = t.p();
+        if p.bools != 0
+            || p.ints.cofinite
+            || !p.ints.values.is_empty()
+            || p.rats.cofinite
+            || !p.rats.values.is_empty()
+            || p.floats.cofinite
+            || !p.floats.values.is_empty()
+            || p.strings.cofinite
+            || !p.strings.values.is_empty()
+            || p.structs
+            || p.morphisms.is_leaf() != Some(false)
+            || !p.tuples.is_default()
+            || p.atoms.cofinite
+        {
+            return None;
+        }
+        let mut link: Option<(std::sync::Arc<str>, Type)> = None;
+        for (name, a) in &p.atoms.names {
+            match (a.bare, a.payload == Type::empty()) {
+                (true, _) => return None,
+                (false, true) => {}
+                (false, false) => {
+                    if link.is_some() {
+                        return None;
+                    }
+                    link = Some((name.clone(), a.payload.clone()));
+                }
+            }
+        }
+        let (link_name, payload) = link?;
+        let q = payload.p();
+        if q.tuples.rest || q.tuples.lens.len() != 1 || !q.tuples.lens.contains_key(&2) {
+            return None;
+        }
+        let f = &q.tuples.lens[&2];
+        let (taken, refused) = f.forced();
+        if taken.is_empty() || refused.is_empty() {
+            return None;
+        }
+
+        // Find the period-1 carrier cycle among the positive rows or at the base of the positive
+        // chains.
+        let mut carrier_cycle: Option<Cycle> = None;
+        let mut carriers: Vec<Type> = Vec::new();
+        let mut has_top_carrier = false;
+        {
+            let mut s = self.s();
+            for a in &taken {
+                if let Some(c) = s.cycle(&a[1])
+                    && c.period == 1
+                    && c.at == 0
+                    && c.link == link_name
+                    && a[0] == c.item
+                {
+                    has_top_carrier = true;
+                    match &carrier_cycle {
+                        None => {
+                            carrier_cycle = Some(c);
+                            carriers.push(a[1].clone());
+                        }
+                        Some(prev) if prev == &c => {
+                            if !carriers.contains(&a[1]) {
+                                carriers.push(a[1].clone());
+                            }
+                        }
+                        Some(_) => return None,
+                    }
+                }
+            }
+            if carrier_cycle.is_none() {
+                for a in &taken {
+                    let mut cur = a[1].clone();
+                    let mut vis: TypeSet = TypeSet::with_hasher(Digests::new());
+                    while vis.insert(cur.clone()) {
+                        if let Some(c) = s.cycle(&cur) {
+                            if c.period == 1 && c.at == 0 && c.link == link_name {
+                                match &carrier_cycle {
+                                    None => {
+                                        carrier_cycle = Some(c);
+                                        carriers.push(cur);
+                                    }
+                                    Some(prev) if prev == &c => {
+                                        if !carriers.contains(&cur) {
+                                            carriers.push(cur);
+                                        }
+                                    }
+                                    Some(_) => return None,
+                                }
+                            }
+                            break;
+                        }
+                        let Some((_, l, _, next)) = list_step(&cur) else {
+                            break;
+                        };
+                        if l != link_name {
+                            break;
+                        }
+                        cur = next;
+                    }
+                }
+            }
+        }
+        let c = carrier_cycle?;
+        let stop_name = c.stop.clone();
+        let carrier_head = c.item.clone();
+
+        let mut carrier_set: TypeSet = TypeSet::with_hasher(Digests::new());
+        for car in &carriers {
+            carrier_set.insert(car.clone());
+        }
+
+        let norm_head = |h: &Type| -> Type {
+            if *h == carrier_head {
+                h.clone()
+            } else {
+                self.cut(h, &carrier_head, Cut::Meet)
+            }
+        };
+
+        let is_carrier = |cand: &Type| -> bool {
+            if carrier_set.contains(cand) {
+                return true;
+            }
+            let Some((s, l, h, next)) = list_step(cand) else {
+                return false;
+            };
+            s.as_ref() == Some(&stop_name)
+                && l == link_name
+                && next == *cand
+                && norm_head(&h) == carrier_head
+        };
+
+        let step_of = |x: &Type| -> Option<(bool, Type, Option<Type>, Type)> {
+            if let Some((s, l, h, next)) = list_step(x) {
+                if l != link_name || s.as_ref().is_some_and(|st| *st != stop_name) {
+                    return None;
+                }
+                return Some((s.is_some(), norm_head(&h), None, next));
+            }
+            let xp = x.p();
+            if xp.bools != 0
+                || xp.ints.cofinite
+                || !xp.ints.values.is_empty()
+                || xp.rats.cofinite
+                || !xp.rats.values.is_empty()
+                || xp.floats.cofinite
+                || !xp.floats.values.is_empty()
+                || xp.strings.cofinite
+                || !xp.strings.values.is_empty()
+                || xp.structs
+                || xp.morphisms.is_leaf() != Some(false)
+                || !xp.tuples.is_default()
+                || xp.atoms.cofinite
+            {
+                return None;
+            }
+            let mut has_stop = false;
+            let mut l_payload: Option<Type> = None;
+            for (n, a) in &xp.atoms.names {
+                match (a.bare, a.payload == Type::empty()) {
+                    (true, true) if *n == stop_name => has_stop = true,
+                    (false, true) => {}
+                    (false, false) if *n == link_name && l_payload.is_none() => {
+                        l_payload = Some(a.payload.clone());
+                    }
+                    _ => return None,
+                }
+            }
+            let Some(l_payload) = l_payload else {
+                return has_stop.then(|| (true, Type::empty(), None, carriers[0].clone()));
+            };
+            let xq = l_payload.p();
+            if xq.tuples.rest || xq.tuples.lens.len() != 1 || !xq.tuples.lens.contains_key(&2) {
+                return None;
+            }
+            let rows = xq.tuples.lens[&2].union_rows()?;
+            if rows.len() < 2 {
+                return None;
+            }
+            let mut car_heads: BTreeSet<Type> = BTreeSet::new();
+            let mut car_tail: Option<Type> = None;
+            let mut chain_row: Option<(Type, Type)> = None;
+            for row in rows {
+                if is_carrier(&row[1]) {
+                    car_heads.insert(norm_head(&row[0]));
+                    if car_tail.is_none() {
+                        car_tail = Some(row[1].clone());
+                    }
+                } else if chain_row.is_none() {
+                    chain_row = Some((norm_head(&row[0]), row[1].clone()));
+                } else {
+                    return None;
+                }
+            }
+            if car_heads.is_empty() {
+                return None;
+            }
+            let mut car_iter = car_heads.into_iter();
+            let first_car = car_iter.next().expect("non-empty");
+            let joined_car = car_iter.fold(first_car, |acc, h| self.cut(&acc, &h, Cut::Join));
+            match chain_row {
+                None => Some((
+                    has_stop,
+                    joined_car,
+                    None,
+                    car_tail.expect("car_heads non-empty"),
+                )),
+                Some((h_next, next)) => Some((has_stop, h_next, Some(joined_car), next)),
+            }
+        };
+
+        // Check 1 step on every row tail first so a non-chain row alongside a deep chain fails in
+        // O(|R|) without walking the deep chain or evaluating the full BDD.
+        for a in taken.iter().chain(&refused) {
+            if !is_carrier(&a[1]) && step_of(&a[1]).is_none() {
+                return None;
+            }
+        }
+
+        let atoms = f.distinct_atoms();
+        if taken.len() + refused.len() != atoms.len() || atoms.is_empty() {
+            return None;
+        }
+        let taken_set: BTreeSet<&Row> = taken.iter().collect();
+        if !f.eval(&|a| taken_set.contains(a)) {
+            return None;
+        }
+        if self.empty(&carrier_head).await {
+            return Some(ChainPlan::Empty);
+        }
+
+        let mut nodes = vec![ChainNode {
+            has_stop: true,
+            head: carrier_head.clone(),
+            emit: None,
+            depth: 0,
+            child: 0,
+            run: 0,
+            jump: None,
+        }];
+        let mut node_of: ByType<Option<usize>> = ByType::with_hasher(Digests::new());
+        for car in &carriers {
+            node_of.insert(car.clone(), Some(0));
+        }
+        let mut canon_node: HashMap<(bool, Type, Option<Type>, usize), usize, Digests> =
+            HashMap::with_hasher(Digests::new());
+
+        let mut walk = |start: &Type, nodes: &mut Vec<ChainNode>| -> Option<usize> {
+            if let Some(&res) = node_of.get(start) {
+                return res;
+            }
+            let mut path: Vec<(Type, bool, Type, Option<Type>)> = Vec::new();
+            let mut visiting: TypeSet = TypeSet::with_hasher(Digests::new());
+            let mut cur = start.clone();
+            let base = loop {
+                if let Some(&res) = node_of.get(&cur) {
+                    if let Some(idx) = res {
+                        break idx;
+                    }
+                    for (ty, _, _, _) in path {
+                        node_of.insert(ty, None);
+                    }
+                    return None;
+                }
+                if is_carrier(&cur) {
+                    node_of.insert(cur, Some(0));
+                    break 0;
+                }
+                if !visiting.insert(cur.clone()) {
+                    node_of.insert(cur, None);
+                    for (ty, _, _, _) in path {
+                        node_of.insert(ty, None);
+                    }
+                    return None;
+                }
+                let Some((has_stop, h, emit, next)) = step_of(&cur) else {
+                    node_of.insert(cur, None);
+                    for (ty, _, _, _) in path {
+                        node_of.insert(ty, None);
+                    }
+                    return None;
+                };
+                path.push((cur, has_stop, h, emit));
+                cur = next;
+            };
+
+            let mut child = base;
+            while let Some((ty, has_stop, h, emit)) = path.pop() {
+                let d_child = nodes[child].depth;
+                let (depth, run, jump) = if d_child == 0 {
+                    if emit.is_some() {
+                        node_of.insert(ty, None);
+                        for (rem, _, _, _) in path {
+                            node_of.insert(rem, None);
+                        }
+                        return None;
+                    }
+                    (1, 1, None)
+                } else if d_child >= 2
+                    && nodes[child].has_stop == has_stop
+                    && nodes[child].head == h
+                    && nodes[child].emit == emit
+                {
+                    (d_child + 1, nodes[child].run + 1, nodes[child].jump)
+                } else {
+                    (d_child + 1, 1, Some(child))
+                };
+                let key = (has_stop, h.clone(), emit.clone(), child);
+                let idx = *canon_node.entry(key).or_insert_with(|| {
+                    let id = nodes.len();
+                    nodes.push(ChainNode {
+                        has_stop,
+                        head: h,
+                        emit,
+                        depth,
+                        child,
+                        run,
+                        jump,
+                    });
+                    id
+                });
+                node_of.insert(ty, Some(idx));
+                child = idx;
+            }
+            Some(child)
+        };
+
+        let mut pos_rows: Vec<(Type, Option<usize>)> = Vec::with_capacity(taken.len());
+        for a in &taken {
+            let a0 = norm_head(&a[0]);
+            if !has_top_carrier && !self.settles(&a[0], &carrier_head, false).await {
+                return None;
+            }
+            if carrier_set.contains(&a[1]) && a0 == carrier_head {
+                pos_rows.push((a0, None));
+            } else {
+                let u = walk(&a[1], &mut nodes)?;
+                if nodes[u].depth == 0 {
+                    pos_rows.push((a0, None));
+                } else {
+                    if nodes[u].emit.is_some() {
+                        return None;
+                    }
+                    pos_rows.push((a0, Some(u)));
+                }
+            }
+        }
+
+        // `norm_head` cuts every step head to the carrier head. For a positive step that is exact
+        // only when its head lies in the carrier head, or when a top carrier row already bounds
+        // the list to carrier elements. Otherwise a value with a non-carrier element further in
+        // is lost and `Empty` would be wrong (R5: `the_sweep_agrees_on_random_positive_chains`
+        // case 936). Each type reachable from a positive tail is checked once.
+        if !has_top_carrier {
+            let mut seen: TypeSet = TypeSet::with_hasher(Digests::new());
+            let mut todo: Vec<Type> = taken.iter().map(|a| a[1].clone()).collect();
+            while let Some(cur) = todo.pop() {
+                if carrier_set.contains(&cur) || !seen.insert(cur.clone()) {
+                    continue;
+                }
+                let rows: Vec<(Type, Type)> = if let Some((_, _, h, next)) = list_step(&cur) {
+                    vec![(h, next)]
+                } else {
+                    let xp = cur.p();
+                    let link_payload = xp
+                        .atoms
+                        .names
+                        .iter()
+                        .find(|(n, a)| **n == link_name && !a.bare && a.payload != Type::empty())
+                        .map(|(_, a)| a.payload.clone());
+                    match link_payload {
+                        None => Vec::new(),
+                        Some(pl) => (pl.p().tuples.lens.get(&2)?.union_rows()?)
+                            .into_iter()
+                            .map(|r| (r[0].clone(), r[1].clone()))
+                            .collect(),
+                    }
+                };
+                for (h, next) in rows {
+                    if !self.settles(&h, &carrier_head, false).await {
+                        return None;
+                    }
+                    todo.push(next);
+                }
+            }
+        }
+
+        let mut neg_depth0: BTreeSet<Type> = BTreeSet::new();
+        let mut neg_rows_by_head: ByType<Vec<usize>> = ByType::with_hasher(Digests::new());
+        let mut neg_heads: BTreeSet<Type> = BTreeSet::new();
+        for a in &refused {
+            let b0 = norm_head(&a[0]);
+            let v = walk(&a[1], &mut nodes)?;
+            if nodes[v].depth == 0 {
+                neg_depth0.insert(b0);
+            } else {
+                neg_heads.insert(b0.clone());
+                neg_rows_by_head.entry(b0).or_default().push(v);
+            }
+        }
+
+        // Step 1: intersect positive row heads with the carrier head and subtract depth-0 negative
+        // row heads in canonical `BTreeSet` order so `r0` is independent of input row order.
+        let mut r0 = carrier_head.clone();
+        let mut pos1_seen: TypeSet = TypeSet::with_hasher(Digests::new());
+        pos1_seen.insert(r0.clone());
+        let mut pos1_sorted: BTreeSet<Type> = BTreeSet::new();
+        for (a0, _) in &pos_rows {
+            if pos1_seen.insert(a0.clone()) {
+                pos1_sorted.insert(a0.clone());
+            }
+        }
+        for a0 in &pos1_sorted {
+            r0 = self.cut(&r0, a0, Cut::Meet);
+        }
+        for b0 in &neg_depth0 {
+            r0 = self.cut(&r0, b0, Cut::Minus);
+        }
+        if self.empty(&r0).await {
+            return Some(ChainPlan::Empty);
+        }
+
+        let max_step = 1 + nodes.iter().map(|n| n.depth).max().unwrap_or(0);
+        let mut pos_depth1: Vec<Vec<usize>> = vec![Vec::new(); max_step + 2];
+        let mut neg_depth1: Vec<Vec<usize>> = vec![Vec::new(); max_step + 2];
+        let mut pos_seen_u: Vec<usize> = vec![0; nodes.len()];
+        let mut neg_seen_u: Vec<usize> = vec![0; nodes.len()];
+        let mut pos_jumps_at: Vec<Vec<(usize, usize)>> = vec![Vec::new(); max_step + 3];
+        let mut neg_jumps_at: Vec<Vec<(usize, usize)>> = vec![Vec::new(); max_step + 3];
+        let mut covered_neg_at: Vec<Vec<usize>> = vec![Vec::new(); max_step + 3];
+        let mut pos_groups: Vec<ChainGroup> = Vec::new();
+        let mut active_pos: Vec<usize> = Vec::new();
+        let mut pos_group_of: [ByType<usize>; 2] = [
+            ByType::with_hasher(Digests::new()),
+            ByType::with_hasher(Digests::new()),
+        ];
+        let mut neg_groups: Vec<ChainGroup> = Vec::new();
+        let mut active_neg: Vec<usize> = Vec::new();
+        let mut neg_group_of: HashMap<(bool, Type, Option<Type>), usize, Digests> =
+            HashMap::with_hasher(Digests::new());
+
+        let activate_pos = |u: usize,
+                            target_step: usize,
+                            nodes: &[ChainNode],
+                            pos_seen_u: &mut [usize],
+                            pos_depth1: &mut [Vec<usize>],
+                            pos_group_of: &mut [ByType<usize>; 2],
+                            pos_groups: &mut Vec<ChainGroup>,
+                            active_pos: &mut Vec<usize>,
+                            pos_jumps_at: &mut [Vec<(usize, usize)>]| {
+            if pos_seen_u[u] == target_step {
+                return;
+            }
+            pos_seen_u[u] = target_step;
+            if nodes[u].depth == 1 {
+                pos_depth1[target_step].push(u);
+            } else {
+                let s_idx = usize::from(nodes[u].has_stop);
+                let g_idx = *pos_group_of[s_idx]
+                    .entry(nodes[u].head.clone())
+                    .or_insert_with(|| {
+                        let id = pos_groups.len();
+                        pos_groups.push(ChainGroup {
+                            has_stop: nodes[u].has_stop,
+                            head: nodes[u].head.clone(),
+                            emit: None,
+                            active: 0,
+                            jumping_next: 0,
+                            jumping_stop_next: false,
+                            jump_target: None,
+                            multi_target: false,
+                        });
+                        id
+                    });
+                if pos_groups[g_idx].active == 0 {
+                    active_pos.push(g_idx);
+                }
+                pos_groups[g_idx].active += 1;
+                pos_jumps_at[target_step + nodes[u].run]
+                    .push((g_idx, nodes[u].jump.expect("depth >= 2 has jump")));
+            }
+        };
+
+        let activate_neg = |v: usize,
+                            target_step: usize,
+                            nodes: &[ChainNode],
+                            neg_seen_u: &mut [usize],
+                            neg_depth1: &mut [Vec<usize>],
+                            neg_group_of: &mut HashMap<(bool, Type, Option<Type>), usize, Digests>,
+                            neg_groups: &mut Vec<ChainGroup>,
+                            active_neg: &mut Vec<usize>,
+                            neg_jumps_at: &mut [Vec<(usize, usize)>]| {
+            if neg_seen_u[v] == target_step {
+                return;
+            }
+            neg_seen_u[v] = target_step;
+            if nodes[v].depth == 1 {
+                neg_depth1[target_step].push(v);
+            } else {
+                let key = (
+                    nodes[v].has_stop,
+                    nodes[v].head.clone(),
+                    nodes[v].emit.clone(),
+                );
+                let g_idx = *neg_group_of.entry(key).or_insert_with(|| {
+                    let id = neg_groups.len();
+                    neg_groups.push(ChainGroup {
+                        has_stop: nodes[v].has_stop,
+                        head: nodes[v].head.clone(),
+                        emit: nodes[v].emit.clone(),
+                        active: 0,
+                        jumping_next: 0,
+                        jumping_stop_next: false,
+                        jump_target: None,
+                        multi_target: false,
+                    });
+                    id
+                });
+                if neg_groups[g_idx].active == 0 {
+                    active_neg.push(g_idx);
+                }
+                neg_groups[g_idx].active += 1;
+                neg_jumps_at[target_step + nodes[v].run]
+                    .push((g_idx, nodes[v].jump.expect("depth >= 2 has jump")));
+            }
+        };
+
+        for (_, idx) in &pos_rows {
+            if let Some(u) = *idx {
+                activate_pos(
+                    u,
+                    2,
+                    &nodes,
+                    &mut pos_seen_u,
+                    &mut pos_depth1,
+                    &mut pos_group_of,
+                    &mut pos_groups,
+                    &mut active_pos,
+                    &mut pos_jumps_at,
+                );
+            }
+        }
+
+        let mut had_loose = false;
+        let mut non_disjoint_stop_step1: BTreeSet<Type> = BTreeSet::new();
+        let mut forced_stop_forbid1 = false;
+        let mut target_rem1: HashMap<usize, Option<Type>> = HashMap::new();
+        for b0 in &neg_heads {
+            let vs = &neg_rows_by_head[b0];
+            if pos1_seen.contains(b0) {
+                for &v in vs {
+                    if nodes[v].has_stop {
+                        forced_stop_forbid1 = true;
+                    }
+                    target_rem1.insert(v, None);
+                    activate_neg(
+                        v,
+                        2,
+                        &nodes,
+                        &mut neg_seen_u,
+                        &mut neg_depth1,
+                        &mut neg_group_of,
+                        &mut neg_groups,
+                        &mut active_neg,
+                        &mut neg_jumps_at,
+                    );
+                }
+            }
+        }
+        for b0 in &neg_heads {
+            if pos1_seen.contains(b0) {
+                continue;
+            }
+            let vs = &neg_rows_by_head[b0];
+            let forbids_stop = vs.iter().any(|&v| nodes[v].has_stop);
+            if !forbids_stop && vs.iter().all(|&v| target_rem1.get(&v) == Some(&None)) {
+                continue;
+            }
+            if self.settles(&r0, b0, false).await {
+                if forbids_stop {
+                    forced_stop_forbid1 = true;
+                }
+                for &v in vs {
+                    target_rem1.insert(v, None);
+                    activate_neg(
+                        v,
+                        2,
+                        &nodes,
+                        &mut neg_seen_u,
+                        &mut neg_depth1,
+                        &mut neg_group_of,
+                        &mut neg_groups,
+                        &mut active_neg,
+                        &mut neg_jumps_at,
+                    );
+                }
+            } else if self.settles(&r0, b0, true).await {
+                // Disjoint from `r0`: none of these rows can match at step 1.
+            } else {
+                if forbids_stop {
+                    non_disjoint_stop_step1.insert(b0.clone());
+                }
+                for &v in vs {
+                    let entry = target_rem1.entry(v).or_insert_with(|| Some(r0.clone()));
+                    if let Some(rem) = entry {
+                        let next_rem = self.cut(rem, b0, Cut::Minus);
+                        if self.empty(&next_rem).await {
+                            *entry = None;
+                        } else {
+                            *rem = next_rem;
+                        }
+                    }
+                }
+            }
+        }
+        let mut loose_targets1: Vec<(usize, Type)> = Vec::new();
+        for (v, rem_opt) in target_rem1 {
+            if let Some(rem) = rem_opt {
+                loose_targets1.push((v, rem));
+            } else {
+                activate_neg(
+                    v,
+                    2,
+                    &nodes,
+                    &mut neg_seen_u,
+                    &mut neg_depth1,
+                    &mut neg_group_of,
+                    &mut neg_groups,
+                    &mut active_neg,
+                    &mut neg_jumps_at,
+                );
+            }
+        }
+
+        // Check whether uncovered step-1 targets `(v, rem)` form a single disjoint-hole spine
+        // ending at a depth-1 node `u1` with `has_stop = false` and `emit = None` (`clcofront`,
+        // `clstaggerholes`, and staggered single-spine families).
+        let mut spine_u1: Option<usize> = None;
+        let mut spine_all_holes = true;
+        let mut spine_holes: Vec<Option<Type>> = vec![None; max_step + 2];
+        let mut spine_arrival: Vec<Option<Type>> = vec![None; max_step + 2];
+        // Every value of every spine hole and arrival remainder: a step whose head meets none
+        // of them kills no spine root, so passing over it cannot spoil the greedy matching.
+        let mut spine_union = Type::empty();
+        if !loose_targets1.is_empty() {
+            loose_targets1.sort_by_key(|&(v, _)| nodes[v].depth);
+            let mut spine_ok = non_disjoint_stop_step1.is_empty()
+                && loose_targets1
+                    .windows(2)
+                    .all(|w| nodes[w[0].0].depth < nodes[w[1].0].depth);
+            let mut spine_node_at_depth: Vec<Option<usize>> = vec![None; max_step + 2];
+            let mut max_v_depth = 0usize;
+            if spine_ok {
+                for &(v, _) in &loose_targets1 {
+                    max_v_depth = max_v_depth.max(nodes[v].depth);
+                    let mut cur = v;
+                    while cur != 0 {
+                        let d = nodes[cur].depth;
+                        if nodes[cur].has_stop || nodes[cur].emit.is_some() {
+                            spine_ok = false;
+                            break;
+                        }
+                        if let Some(prev) = spine_node_at_depth[d] {
+                            if prev != cur {
+                                spine_ok = false;
+                            }
+                            break;
+                        }
+                        spine_node_at_depth[d] = Some(cur);
+                        cur = nodes[cur].child;
+                    }
+                    if !spine_ok {
+                        break;
+                    }
+                }
+            }
+            if spine_ok
+                && let Some(u1) = spine_node_at_depth[1]
+            {
+                let mut holes_union = nodes[u1].head.clone();
+                for d in 2..=max_v_depth {
+                    let w = spine_node_at_depth[d].expect("spine is contiguous");
+                    let hole_w = self.cut(&carrier_head, &nodes[w].head, Cut::Minus);
+                    if self.empty(&hole_w).await {
+                        spine_all_holes = false;
+                    } else {
+                        if !self.settles(&hole_w, &holes_union, true).await {
+                            spine_ok = false;
+                            break;
+                        }
+                        holes_union = self.cut(&holes_union, &hole_w, Cut::Join);
+                        spine_holes[d] = Some(hole_w);
+                    }
+                }
+                if spine_ok {
+                    for &(v, ref rem) in &loose_targets1 {
+                        let t_arr = nodes[v].depth + 1;
+                        let covered_by_spine_hole = if let Some(Some(sh)) =
+                            spine_holes.get(t_arr)
+                        {
+                            self.settles(rem, sh, false).await
+                        } else {
+                            false
+                        };
+                        if !covered_by_spine_hole {
+                            if !self.settles(rem, &holes_union, true).await {
+                                spine_ok = false;
+                                break;
+                            }
+                            holes_union = self.cut(&holes_union, rem, Cut::Join);
+                        }
+                    }
+                }
+                if spine_ok {
+                    spine_u1 = Some(u1);
+                    for hole in spine_holes.iter().flatten() {
+                        spine_union = self.cut(&spine_union, hole, Cut::Join);
+                    }
+                    for (v, rem) in loose_targets1 {
+                        spine_union = self.cut(&spine_union, &rem, Cut::Join);
+                        spine_arrival[nodes[v].depth + 1] = Some(rem);
+                    }
+                } else {
+                    had_loose = true;
+                }
+            } else {
+                had_loose = true;
+            }
+        }
+
+        // Check whether a 1-element list `link(v0, stop)` already satisfies `t`.
+        let pos_allows_stop1 = pos_rows
+            .iter()
+            .all(|(_, idx)| idx.is_none_or(|u| nodes[u].has_stop));
+        if pos_allows_stop1 && !forced_stop_forbid1 {
+            if non_disjoint_stop_step1.is_empty() {
+                return Some(ChainPlan::Inhabited {
+                    stop: stop_name,
+                    link: link_name,
+                    heads: vec![r0],
+                });
+            }
+            let mut w0 = r0.clone();
+            for b0 in &non_disjoint_stop_step1 {
+                w0 = self.cut(&w0, b0, Cut::Minus);
+            }
+            if !self.empty(&w0).await {
+                return Some(ChainPlan::Inhabited {
+                    stop: stop_name,
+                    link: link_name,
+                    heads: vec![w0],
+                });
+            }
+        }
+        if had_loose
+            && active_pos.is_empty()
+            && pos_depth1[2].is_empty()
+            && neg_depth1[2].is_empty()
+            && active_neg
+                .iter()
+                .all(|&g| neg_groups[g].has_stop && neg_groups[g].emit.is_none())
+        {
+            return None;
+        }
+
+        let mut witness_heads = vec![r0];
+        let mut step_exact = vec![false; max_step + 2];
+        step_exact[1] = !had_loose && non_disjoint_stop_step1.is_empty();
+        let mut committed_step = vec![false; max_step + 2];
+        let mut committed_count = 0usize;
+        let mut next_uncommitted_s = 2usize;
+        // Set when a root's scan passes over a free step that meets some hole but cannot take
+        // this root. Giving each forced root the earliest free step that kills it is a maximum
+        // matching only while the steps each root can use grow with its arrival; a pass-over
+        // like this can break that (R5 `r5greedy`: [4, 2, 1, 1] escapes, yet the greedy gives
+        // step 1 to the earlier root), so `Empty` is then left to the search.
+        let mut greedy_unsafe = false;
+
+        for step in 2..=max_step + 1 {
+            let pos_jumps = std::mem::take(&mut pos_jumps_at[step]);
+            let mut pos_to_activate: Vec<usize> = Vec::with_capacity(pos_jumps.len());
+            for (g_idx, u) in pos_jumps {
+                if pos_groups[g_idx].active > 0 {
+                    pos_groups[g_idx].active -= 1;
+                    pos_to_activate.push(u);
+                }
+            }
+            for u in pos_to_activate {
+                activate_pos(
+                    u,
+                    step,
+                    &nodes,
+                    &mut pos_seen_u,
+                    &mut pos_depth1,
+                    &mut pos_group_of,
+                    &mut pos_groups,
+                    &mut active_pos,
+                    &mut pos_jumps_at,
+                );
+            }
+            active_pos.retain(|&g_idx| pos_groups[g_idx].active > 0);
+
+            let neg_jumps = std::mem::take(&mut neg_jumps_at[step]);
+            let mut neg_to_activate: Vec<usize> = Vec::with_capacity(neg_jumps.len());
+            for (g_idx, u) in neg_jumps {
+                if neg_groups[g_idx].active > 0 {
+                    neg_groups[g_idx].active -= 1;
+                    neg_to_activate.push(u);
+                }
+            }
+            let cov_neg = std::mem::take(&mut covered_neg_at[step]);
+            neg_to_activate.extend(cov_neg);
+            for w in neg_to_activate {
+                activate_neg(
+                    w,
+                    step,
+                    &nodes,
+                    &mut neg_seen_u,
+                    &mut neg_depth1,
+                    &mut neg_group_of,
+                    &mut neg_groups,
+                    &mut active_neg,
+                    &mut neg_jumps_at,
+                );
+            }
+            active_neg.retain(|&g_idx| neg_groups[g_idx].active > 0);
+
+            let pos_stop_now = pos_depth1[step].iter().all(|&u| nodes[u].has_stop)
+                && active_pos.iter().all(|&g_idx| pos_groups[g_idx].has_stop);
+            let neg_stop_now = neg_depth1[step].iter().any(|&u| nodes[u].has_stop)
+                || active_neg.iter().any(|&g_idx| neg_groups[g_idx].has_stop);
+            if pos_stop_now && !neg_stop_now {
+                return (!had_loose).then_some(ChainPlan::Inhabited {
+                    stop: stop_name,
+                    link: link_name,
+                    heads: witness_heads,
+                });
+            }
+            if step > max_step {
+                return None;
+            }
+
+            let mut r0 = carrier_head.clone();
+            let mut pos_seen: TypeSet = TypeSet::with_hasher(Digests::new());
+            pos_seen.insert(r0.clone());
+            let mut pos_step_sorted: BTreeSet<Type> = BTreeSet::new();
+            for &u in &pos_depth1[step] {
+                if pos_seen.insert(nodes[u].head.clone()) {
+                    pos_step_sorted.insert(nodes[u].head.clone());
+                }
+            }
+            for &g_idx in &active_pos {
+                let pg = &pos_groups[g_idx];
+                if pos_seen.insert(pg.head.clone()) {
+                    pos_step_sorted.insert(pg.head.clone());
+                }
+            }
+            for h in &pos_step_sorted {
+                r0 = self.cut(&r0, h, Cut::Meet);
+            }
+            let mut neg_seen: TypeSet = TypeSet::with_hasher(Digests::new());
+            let mut neg_step_sorted: BTreeSet<Type> = BTreeSet::new();
+            for &u in &neg_depth1[step] {
+                if neg_seen.insert(nodes[u].head.clone()) {
+                    neg_step_sorted.insert(nodes[u].head.clone());
+                }
+            }
+            for &g_idx in &active_neg {
+                if let Some(ref h_emit) = neg_groups[g_idx].emit
+                    && neg_seen.insert(h_emit.clone())
+                {
+                    neg_step_sorted.insert(h_emit.clone());
+                }
+            }
+            for h in &neg_step_sorted {
+                r0 = self.cut(&r0, h, Cut::Minus);
+            }
+            if self.empty(&r0).await {
+                return (!greedy_unsafe
+                    && (committed_count == 0 || (spine_all_holes && !had_loose)))
+                    .then_some(ChainPlan::Empty);
+            }
+
+            for &(g_idx, u) in &neg_jumps_at[step + 1] {
+                let ng = &mut neg_groups[g_idx];
+                if ng.active > 0 {
+                    ng.jumping_next += 1;
+                    ng.jumping_stop_next |= nodes[u].has_stop;
+                    if ng.jumping_next == 1 {
+                        ng.jump_target = Some(u);
+                        ng.multi_target = false;
+                    } else if ng.jump_target != Some(u) {
+                        ng.multi_target = true;
+                    }
+                }
+            }
+
+            // If a deferred disjoint-hole spine root arrives at its depth-1 leaf `u1` at `step`,
+            // decide whether to kill it at an uncommitted earlier step `s < step` or subtract
+            // `nodes[u1].head` from `r0` at `step`.
+            if let (Some(u1), Some(rem1)) = (spine_u1, spine_arrival[step].clone()) {
+                let h1 = &nodes[u1].head;
+                let r0_without_h1 = self.cut(&r0, h1, Cut::Minus);
+                let spine_union = &spine_union;
+                let try_kill = async |witness_heads: &mut [Type],
+                                      committed_step: &mut [bool],
+                                      committed_count: &mut usize,
+                                      next_uncommitted_s: &mut usize,
+                                      greedy_unsafe: &mut bool|
+                       -> bool {
+                    // A free step passed over: unsafe unless its head meets no hole at all.
+                    let passed = async |head: &Type| {
+                        !self.empty(&self.cut(head, spine_union, Cut::Meet)).await
+                    };
+                    if !committed_step[1] {
+                        if step_exact[1] {
+                            let cand1 = self.cut(&witness_heads[0], &rem1, Cut::Meet);
+                            if !self.empty(&cand1).await {
+                                witness_heads[0] = cand1;
+                                committed_step[1] = true;
+                                *committed_count += 1;
+                                return true;
+                            }
+                        }
+                        *greedy_unsafe |= passed(&witness_heads[0]).await;
+                    }
+                    let start_s = if spine_all_holes {
+                        *next_uncommitted_s
+                    } else {
+                        2
+                    };
+                    for s in start_s..step {
+                        if committed_step[s] || !step_exact[s] {
+                            if spine_all_holes && s == *next_uncommitted_s {
+                                *next_uncommitted_s = s + 1;
+                            }
+                            if !committed_step[s] && !*greedy_unsafe {
+                                *greedy_unsafe = passed(&witness_heads[s - 1]).await;
+                            }
+                            continue;
+                        }
+                        if let Some(ref h_hole) = spine_holes[step + 1 - s] {
+                            let cand = self.cut(&witness_heads[s - 1], h_hole, Cut::Meet);
+                            if !self.empty(&cand).await {
+                                witness_heads[s - 1] = cand;
+                                committed_step[s] = true;
+                                *committed_count += 1;
+                                if spine_all_holes && s == *next_uncommitted_s {
+                                    *next_uncommitted_s = s + 1;
+                                }
+                                return true;
+                            }
+                        }
+                        if !*greedy_unsafe {
+                            *greedy_unsafe = passed(&witness_heads[s - 1]).await;
+                        }
+                    }
+                    false
+                };
+
+                if self.empty(&r0_without_h1).await {
+                    if !try_kill(
+                        &mut witness_heads,
+                        &mut committed_step,
+                        &mut committed_count,
+                        &mut next_uncommitted_s,
+                        &mut greedy_unsafe,
+                    )
+                    .await
+                    {
+                        return (!greedy_unsafe
+                            && (committed_count == 0 || (spine_all_holes && !had_loose)))
+                            .then_some(ChainPlan::Empty);
+                    }
+                } else {
+                    // Check whether keeping `h1` allows stopping right after `step`.
+                    let mut pos_allows_stop_next = true;
+                    for &(g_idx, u) in &pos_jumps_at[step + 1] {
+                        let pg = &mut pos_groups[g_idx];
+                        if pg.active > 0 {
+                            pg.jumping_next += 1;
+                            pg.jumping_stop_next |= !nodes[u].has_stop;
+                        }
+                    }
+                    for &g_idx in &active_pos {
+                        let pg = &mut pos_groups[g_idx];
+                        let staying = pg.active - pg.jumping_next;
+                        let ok = (staying == 0 || pg.has_stop) && !pg.jumping_stop_next;
+                        pg.jumping_next = 0;
+                        pg.jumping_stop_next = false;
+                        pos_allows_stop_next &= ok;
+                    }
+                    if !had_loose && pos_allows_stop_next {
+                        let mut stop_forbid_heads: BTreeSet<Type> = BTreeSet::new();
+                        for &g_idx in &active_neg {
+                            let ng = &neg_groups[g_idx];
+                            let staying = ng.active - ng.jumping_next;
+                            if (staying > 0 && ng.has_stop) || ng.jumping_stop_next {
+                                stop_forbid_heads.insert(ng.head.clone());
+                            }
+                        }
+                        let mut w0_full = r0.clone();
+                        for h in &stop_forbid_heads {
+                            w0_full = self.cut(&w0_full, h, Cut::Minus);
+                        }
+                        if !self.empty(&w0_full).await {
+                            let w0_no_h1 = self.cut(&w0_full, h1, Cut::Minus);
+                            if !self.empty(&w0_no_h1).await {
+                                witness_heads.push(w0_no_h1);
+                                return Some(ChainPlan::Inhabited {
+                                    stop: stop_name,
+                                    link: link_name,
+                                    heads: witness_heads,
+                                });
+                            }
+                            if try_kill(
+                                &mut witness_heads,
+                                &mut committed_step,
+                                &mut committed_count,
+                                &mut next_uncommitted_s,
+                                &mut greedy_unsafe,
+                            )
+                            .await
+                            {
+                                witness_heads.push(w0_full);
+                                return Some(ChainPlan::Inhabited {
+                                    stop: stop_name,
+                                    link: link_name,
+                                    heads: witness_heads,
+                                });
+                            }
+                        }
+                    }
+                    r0 = r0_without_h1;
+                }
+            }
+
+            let mut non_disjoint_stop_heads: BTreeSet<Type> = BTreeSet::new();
+            let mut forced_stop_forbid = false;
+            let mut step_loose = false;
+            let mut target_rem: HashMap<usize, Option<Type>> = HashMap::new();
+            let mut multi_partial_groups: HashSet<usize> = HashSet::new();
+
+            // Pass 1: active negative groups whose head is already guaranteed to hold on `r0`.
+            for &g_idx in &active_neg {
+                let ng = &mut neg_groups[g_idx];
+                if !pos_seen.contains(&ng.head) {
+                    continue;
+                }
+                let staying = ng.active - ng.jumping_next;
+                let forbids_stop_next = (staying > 0 && ng.has_stop) || ng.jumping_stop_next;
+                ng.jumping_next = 0;
+                ng.jumping_stop_next = false;
+                if forbids_stop_next {
+                    forced_stop_forbid = true;
+                }
+                if !ng.multi_target
+                    && let Some(w) = ng.jump_target.take()
+                {
+                    target_rem.insert(w, None);
+                }
+            }
+            for &(g_idx, w) in &neg_jumps_at[step + 1] {
+                if neg_groups[g_idx].active > 0 && pos_seen.contains(&neg_groups[g_idx].head) {
+                    target_rem.insert(w, None);
+                }
+            }
+
+            // Pass 2: remaining active negative groups, coalescing partial jumps per landing node.
+            for &g_idx in &active_neg {
+                if pos_seen.contains(&neg_groups[g_idx].head) {
+                    continue;
+                }
+                let ng = &mut neg_groups[g_idx];
+                let staying = ng.active - ng.jumping_next;
+                let jumping_next = ng.jumping_next;
+                let forbids_stop_next = (staying > 0 && ng.has_stop) || ng.jumping_stop_next;
+                let jump_target = ng.jump_target.take();
+                let multi_target = ng.multi_target;
+                ng.jumping_next = 0;
+                ng.jumping_stop_next = false;
+                ng.multi_target = false;
+
+                if staying == 0
+                    && !forbids_stop_next
+                    && !multi_target
+                    && jump_target.is_some_and(|w| target_rem.get(&w) == Some(&None))
+                {
+                    // A killed group leaves its scheduled jumps in `neg_jumps_at`. Dropping its
+                    // key makes a later token with the same key start a new group, so the stale
+                    // jumps meet `active == 0` and are ignored instead of counting against that
+                    // token (R5: `r5_sat_check` at k = 4, m = 3 overflowed `staying`).
+                    ng.active = 0;
+                    neg_group_of.remove(&(ng.has_stop, ng.head.clone(), ng.emit.clone()));
+                    continue;
+                }
+
+                if self.settles(&r0, &ng.head, false).await {
+                    if forbids_stop_next {
+                        forced_stop_forbid = true;
+                    }
+                    if !multi_target
+                        && let Some(w) = jump_target
+                    {
+                        target_rem.insert(w, None);
+                    }
+                } else if self.settles(&r0, &ng.head, true).await {
+                    ng.active = 0;
+                    neg_group_of.remove(&(ng.has_stop, ng.head.clone(), ng.emit.clone()));
+                } else {
+                    if forbids_stop_next {
+                        non_disjoint_stop_heads.insert(ng.head.clone());
+                    }
+                    if staying > 0 || jumping_next == 0 {
+                        step_loose = true;
+                    } else if !multi_target
+                        && let Some(w) = jump_target
+                    {
+                        let entry = target_rem.entry(w).or_insert_with(|| Some(r0.clone()));
+                        if let Some(rem) = entry {
+                            let next_rem = self.cut(rem, &ng.head, Cut::Minus);
+                            if self.empty(&next_rem).await {
+                                *entry = None;
+                            } else {
+                                *rem = next_rem;
+                            }
+                        }
+                    } else {
+                        multi_partial_groups.insert(g_idx);
+                    }
+                    ng.active = 0;
+                    neg_group_of.remove(&(ng.has_stop, ng.head.clone(), ng.emit.clone()));
+                }
+            }
+
+            if !multi_partial_groups.is_empty() {
+                for &(g_idx, w) in &neg_jumps_at[step + 1] {
+                    if multi_partial_groups.contains(&g_idx) {
+                        let h = &neg_groups[g_idx].head;
+                        let entry = target_rem.entry(w).or_insert_with(|| Some(r0.clone()));
+                        if let Some(rem) = entry {
+                            let next_rem = self.cut(rem, h, Cut::Minus);
+                            if self.empty(&next_rem).await {
+                                *entry = None;
+                            } else {
+                                *rem = next_rem;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut rem_cuts: BTreeSet<Type> = BTreeSet::new();
+            for (w, rem_opt) in target_rem {
+                if let Some(rem) = rem_opt {
+                    rem_cuts.insert(rem);
+                } else {
+                    covered_neg_at[step + 1].push(w);
+                }
+            }
+            if !rem_cuts.is_empty() {
+                if !step_loose && non_disjoint_stop_heads.is_empty() && spine_u1.is_none() {
+                    let mut r0_narrow = r0.clone();
+                    for rem in &rem_cuts {
+                        r0_narrow = self.cut(&r0_narrow, rem, Cut::Meet);
+                    }
+                    if !self.empty(&r0_narrow).await {
+                        r0 = r0_narrow;
+                    } else {
+                        step_loose = true;
+                    }
+                } else {
+                    step_loose = true;
+                }
+            }
+
+            if !had_loose && !forced_stop_forbid {
+                for &(g_idx, u) in &pos_jumps_at[step + 1] {
+                    let pg = &mut pos_groups[g_idx];
+                    if pg.active > 0 {
+                        pg.jumping_next += 1;
+                        pg.jumping_stop_next |= !nodes[u].has_stop;
+                    }
+                }
+                let mut pos_allows_stop_next = true;
+                for &g_idx in &active_pos {
+                    let pg = &mut pos_groups[g_idx];
+                    let staying = pg.active - pg.jumping_next;
+                    let ok = (staying == 0 || pg.has_stop) && !pg.jumping_stop_next;
+                    pg.jumping_next = 0;
+                    pg.jumping_stop_next = false;
+                    pos_allows_stop_next &= ok;
+                }
+                if pos_allows_stop_next {
+                    if non_disjoint_stop_heads.is_empty() {
+                        witness_heads.push(r0);
+                        return Some(ChainPlan::Inhabited {
+                            stop: stop_name,
+                            link: link_name,
+                            heads: witness_heads,
+                        });
+                    }
+                    let mut w0 = r0.clone();
+                    for h in &non_disjoint_stop_heads {
+                        w0 = self.cut(&w0, h, Cut::Minus);
+                    }
+                    if !self.empty(&w0).await {
+                        witness_heads.push(w0);
+                        return Some(ChainPlan::Inhabited {
+                            stop: stop_name,
+                            link: link_name,
+                            heads: witness_heads,
+                        });
+                    }
+                }
+            }
+
+            had_loose |= step_loose;
+            step_exact[step] = !step_loose && non_disjoint_stop_heads.is_empty();
+            witness_heads.push(r0);
+        }
+
+        None
+    }
+
+    /// Builds and independently verifies the witness list of a [`ChainPlan::Inhabited`] plan.
+    /// The witness is checked against `t` from scratch by [`Searching::check_chain_witness`]
+    /// before it is shown or recorded in `Search::members` and `Search::reps`; if verification
+    /// fails, returns `None`.
+    async fn chain_rep(&'m self, t: &Type, plan: ChainPlan) -> Option<usize> {
+        if let Some(Some(r)) = self.s().reps.get(t).copied() {
+            return Some(r);
+        }
+        let ChainPlan::Inhabited { stop, link, heads } = plan else {
+            return None;
+        };
+        let (seeding, walking, current) = {
+            let mut s = self.s();
+            (
+                std::mem::replace(&mut s.seeding, false),
+                std::mem::replace(&mut s.walking, false),
+                s.current.take(),
+            )
+        };
+        let mut head_reps: ByType<usize> = ByType::with_hasher(Digests::new());
+        let mut items: Vec<usize> = Vec::with_capacity(heads.len());
+        for h in &heads {
+            if let Some(&r) = head_reps.get(h) {
+                items.push(r);
+            } else {
+                let Some(r) = self.rep(h).await else {
+                    let mut s = self.s();
+                    s.seeding = seeding;
+                    s.walking = walking;
+                    s.current = current;
+                    return None;
+                };
+                head_reps.insert(h.clone(), r);
+                items.push(r);
+            }
+        }
+        let verified = self.check_chain_witness(t, &link, &items, &stop).await;
+        {
+            let mut s = self.s();
+            s.seeding = seeding;
+            s.walking = walking;
+            s.current = current;
+        }
+        if !verified {
+            return None;
+        }
+        let mut cur = self.s().show(Rep::Value(Value::atom(&stop)));
+        for &item in items.iter().rev() {
+            let tup = self.s().show(Rep::Tuple(vec![item, cur]));
+            cur = self.s().show(Rep::Atom(link.clone(), tup));
+        }
+        let mut s = self.s();
+        s.members.insert((cur, t.clone()), Some(true));
+        s.reps.insert(t.clone(), Some(cur));
+        Some(cur)
+    }
+
+    /// Independently checks that the list with item representatives `items` (from front to back)
+    /// linked by `link` and ending in `stop` belongs to `t`, without reading `ChainPlan`,
+    /// `ChainNode` or `ChainGroup`. Each row of `t`'s link payload is evaluated by unfolding its
+    /// tail graph from scratch, normalizing heads against the carrier head once all witness items
+    /// are checked against it, compressing acyclic runs of identical `(has_stop, head, emit)`
+    /// steps, and jumping across constant-item witness runs along non-uniform chains with
+    /// memoized pass lengths and binary lifting.
+    // Complexity tradeoff: checking a length-`O(n)` list witness against `n` chain rows by walking
+    // the witness step-by-step per row (`Searching::holds` / `member_known`) takes `O(k)` steps on
+    // row `F_k` and `Θ(n^2)` in total; preallocating a length-`n` table for every distinct head
+    // type also takes `Θ(n^2)` when `n` rows have `n` distinct head types (`groupsfar`,
+    // `manyheadsfar`, `clmanyheadsfar`). Used: verify all witness items against the carrier head
+    // first so heads differing only outside the carrier (`clstaggerfar`) normalize to one head;
+    // compress acyclic runs of identical `(has_stop, head, emit)` nodes into `(run, jump)`;
+    // precompute maximal runs of identical witness item IDs (`run_end` and `run_start`) in `O(m)`;
+    // and on non-uniform chains (`clstaggerholes`), memoize `pass_memo[(node, item)]` along the
+    // chain and jump `O(n)` links in `O(log n)` via binary-lifting pointers `up: [usize; 18]`.
+    // Total work across all rows is `O(n log n)`.
+    async fn check_chain_witness(
+        &'m self,
+        t: &Type,
+        link: &std::sync::Arc<str>,
+        items: &[usize],
+        stop: &std::sync::Arc<str>,
+    ) -> bool {
+        if items.is_empty() {
+            let p = t.p();
+            return p.atoms.names.get(stop).map_or(p.atoms.cofinite, |a| a.bare);
+        }
+        let p = t.p();
+        let Some(a) = p.atoms.names.get(link) else {
+            return p.atoms.cofinite;
+        };
+        let q = a.payload.p();
+        let Some(f) = q.tuples.lens.get(&2) else {
+            return q.tuples.rest;
+        };
+        let atoms = f.distinct_atoms();
+        if items.len() == 1 {
+            let mut known: BTreeMap<Row, Option<bool>> = BTreeMap::new();
+            for row in atoms {
+                let head0 = self.member_known(items[0], &row[0]).await;
+                let fits = match head0 {
+                    Some(false) => Some(false),
+                    other => {
+                        let rp = row[1].p();
+                        let tail_ok = rp
+                            .atoms
+                            .names
+                            .get(stop)
+                            .map_or(rp.atoms.cofinite, |x| x.bare);
+                        if tail_ok { other } else { Some(false) }
+                    }
+                };
+                known.insert(row, fits);
+            }
+            return f.eval3(&|row| known.get(row).copied().flatten()) == Some(true);
+        }
+
+        // If `t` has a self-looping carrier cycle `L = stop | link(c_head, L)` and every witness
+        // item belongs to `c_head`, any head `h` tested on witness items agrees with `h & c_head`.
+        let mut verified_carrier: Option<Type> = None;
+        {
+            let (taken, _) = f.forced();
+            let mut cand_head: Option<Type> = None;
+            for row in &taken {
+                if let Some((s, l, h, next)) = list_step(&row[1])
+                    && s.as_ref() == Some(stop)
+                    && l == *link
+                    && next == row[1]
+                    && row[0] == h
+                {
+                    cand_head = Some(h);
+                    break;
+                }
+            }
+            if cand_head.is_none()
+                && let Some(row) = taken.first()
+            {
+                let mut cur = row[1].clone();
+                let mut vis: TypeSet = TypeSet::with_hasher(Digests::new());
+                while vis.insert(cur.clone()) {
+                    let Some((s, l, h, next)) = list_step(&cur) else {
+                        break;
+                    };
+                    if l != *link {
+                        break;
+                    }
+                    if s.as_ref() == Some(stop) && next == cur {
+                        cand_head = Some(h);
+                        break;
+                    }
+                    cur = next;
+                }
+            }
+            if let Some(ch) = cand_head {
+                let mut all_in_ch = true;
+                let mut checked_items: HashSet<usize> = HashSet::new();
+                for &item in items {
+                    if checked_items.insert(item)
+                        && self.member_known(item, &ch).await != Some(true)
+                    {
+                        all_in_ch = false;
+                        break;
+                    }
+                }
+                if all_in_ch {
+                    verified_carrier = Some(ch);
+                }
+            }
+        }
+
+        struct VerifyNode {
+            has_stop: bool,
+            head: usize,
+            emit: Option<(usize, usize)>,
+            next: usize,
+            on_cycle: bool,
+            run: usize,
+            jump: usize,
+            up: [usize; 18],
+        }
+
+        let mut heads: Vec<Type> = Vec::new();
+        let mut head_ids: ByType<usize> = ByType::with_hasher(Digests::new());
+        let mut intern_head = |ty: &Type| -> usize {
+            let norm = match &verified_carrier {
+                Some(ch) if *ty != *ch => self.cut(ty, ch, Cut::Meet),
+                _ => ty.clone(),
+            };
+            if let Some(&id) = head_ids.get(&norm) {
+                return id;
+            }
+            let id = heads.len();
+            heads.push(norm.clone());
+            head_ids.insert(norm, id);
+            id
+        };
+
+        let verify_step = |x: &Type,
+                           intern_head: &mut dyn FnMut(&Type) -> usize|
+         -> Option<(bool, usize, Option<(usize, usize)>, Type)> {
+            if let Some((s, l, h, next)) = list_step(x) {
+                if l != *link || s.as_ref().is_some_and(|st| st != stop) {
+                    return None;
+                }
+                return Some((s.is_some(), intern_head(&h), None, next));
+            }
+            let xp = x.p();
+            if xp.bools != 0
+                || xp.ints.cofinite
+                || !xp.ints.values.is_empty()
+                || xp.rats.cofinite
+                || !xp.rats.values.is_empty()
+                || xp.floats.cofinite
+                || !xp.floats.values.is_empty()
+                || xp.strings.cofinite
+                || !xp.strings.values.is_empty()
+                || xp.structs
+                || xp.morphisms.is_leaf() != Some(false)
+                || !xp.tuples.is_default()
+                || xp.atoms.cofinite
+            {
+                return None;
+            }
+            let mut has_stop = false;
+            let mut l_payload: Option<Type> = None;
+            for (n, at) in &xp.atoms.names {
+                match (at.bare, at.payload == Type::empty()) {
+                    (true, true) if n == stop => has_stop = true,
+                    (false, true) => {}
+                    (false, false) if n == link && l_payload.is_none() => {
+                        l_payload = Some(at.payload.clone());
+                    }
+                    _ => return None,
+                }
+            }
+            let Some(l_payload) = l_payload else {
+                return has_stop.then(|| (true, intern_head(&Type::empty()), None, x.clone()));
+            };
+            let xq = l_payload.p();
+            if xq.tuples.rest || xq.tuples.lens.len() != 1 || !xq.tuples.lens.contains_key(&2) {
+                return None;
+            }
+            let rows = xq.tuples.lens[&2].union_rows()?;
+            if rows.len() < 2 {
+                return None;
+            }
+            let self_loop = |cand: &Type| -> Option<Type> {
+                let (s, l, h_loop, next) = list_step(cand)?;
+                (s.as_ref() == Some(stop) && l == *link && next == *cand).then_some(h_loop)
+            };
+            let mut loop_heads: BTreeSet<Type> = BTreeSet::new();
+            let mut loop_item: Option<Type> = None;
+            let mut loop_tail: Option<Type> = None;
+            let mut chain_row: Option<(Type, Type)> = None;
+            for row in rows {
+                if let Some(h_loop) = self_loop(&row[1]) {
+                    if let Some(ref prev_loop) = loop_item
+                        && *prev_loop != h_loop
+                    {
+                        return None;
+                    }
+                    loop_item = Some(h_loop);
+                    loop_heads.insert(row[0].clone());
+                    if loop_tail.is_none() {
+                        loop_tail = Some(row[1].clone());
+                    }
+                } else if chain_row.is_none() {
+                    chain_row = Some((row[0].clone(), row[1].clone()));
+                } else {
+                    return None;
+                }
+            }
+            if loop_heads.is_empty() {
+                return None;
+            }
+            let mut loop_iter = loop_heads.into_iter();
+            let first_loop = loop_iter.next().expect("non-empty");
+            let joined_loop = loop_iter.fold(first_loop, |acc, h| self.cut(&acc, &h, Cut::Join));
+            match chain_row {
+                None => Some((
+                    has_stop,
+                    intern_head(&joined_loop),
+                    None,
+                    loop_tail.expect("non-empty"),
+                )),
+                Some((h_next, next)) => {
+                    let emit = (
+                        intern_head(&joined_loop),
+                        intern_head(&loop_item.expect("non-empty")),
+                    );
+                    Some((has_stop, intern_head(&h_next), Some(emit), next))
+                }
+            }
+        };
+
+        let mut nodes: Vec<VerifyNode> = Vec::new();
+        let mut node_of: ByType<Option<usize>> = ByType::with_hasher(Digests::new());
+        let mut canon_verify: HashMap<(bool, usize, Option<(usize, usize)>, usize), usize> =
+            HashMap::new();
+
+        let mut unfold = |start: &Type,
+                          intern_head: &mut dyn FnMut(&Type) -> usize|
+         -> Option<usize> {
+            if let Some(&res) = node_of.get(start) {
+                return res;
+            }
+            let mut path: Vec<(Type, bool, usize, Option<(usize, usize)>)> = Vec::new();
+            let mut seen_on_path: ByType<usize> = ByType::with_hasher(Digests::new());
+            let mut cur = start.clone();
+            let mut child = loop {
+                if let Some(&res) = node_of.get(&cur) {
+                    if let Some(idx) = res {
+                        break idx;
+                    }
+                    for (ty, _, _, _) in path {
+                        node_of.insert(ty, None);
+                    }
+                    return None;
+                }
+                if let Some(&cyc_start) = seen_on_path.get(&cur) {
+                    let cyc_len = path.len() - cyc_start;
+                    let base_id = nodes.len();
+                    for (offset, (ty, has_stop, head, emit)) in
+                        path.drain(cyc_start..).enumerate()
+                    {
+                        let next_id = base_id + (offset + 1) % cyc_len;
+                        let id = nodes.len();
+                        nodes.push(VerifyNode {
+                            has_stop,
+                            head,
+                            emit,
+                            next: next_id,
+                            on_cycle: true,
+                            run: 1,
+                            jump: next_id,
+                            up: [id; 18],
+                        });
+                        node_of.insert(ty, Some(id));
+                    }
+                    break base_id;
+                }
+                let Some((has_stop, head, emit, next)) = verify_step(&cur, intern_head) else {
+                    node_of.insert(cur, None);
+                    for (ty, _, _, _) in path {
+                        node_of.insert(ty, None);
+                    }
+                    return None;
+                };
+                seen_on_path.insert(cur.clone(), path.len());
+                path.push((cur, has_stop, head, emit));
+                cur = next;
+            };
+
+            while let Some((ty, has_stop, head, emit)) = path.pop() {
+                let (run, jump) = if !nodes[child].on_cycle
+                    && nodes[child].has_stop == has_stop
+                    && nodes[child].head == head
+                    && nodes[child].emit == emit
+                {
+                    (1 + nodes[child].run, nodes[child].jump)
+                } else {
+                    (1, child)
+                };
+                let id = *canon_verify
+                    .entry((has_stop, head, emit, child))
+                    .or_insert_with(|| {
+                        let new_id = nodes.len();
+                        let mut up = [child; 18];
+                        for b in 1..18 {
+                            up[b] = nodes[up[b - 1]].up[b - 1];
+                        }
+                        nodes.push(VerifyNode {
+                            has_stop,
+                            head,
+                            emit,
+                            next: child,
+                            on_cycle: false,
+                            run,
+                            jump,
+                            up,
+                        });
+                        new_id
+                    });
+                node_of.insert(ty, Some(id));
+                child = id;
+            }
+            Some(child)
+        };
+
+        let m = items.len();
+        let mut run_end = vec![m; m];
+        let mut run_start = vec![0; m];
+        {
+            let mut i = 0;
+            while i < m {
+                let mut j = i + 1;
+                while j < m && items[j] == items[i] {
+                    j += 1;
+                }
+                for k in i..j {
+                    run_end[k] = j;
+                    run_start[k] = i;
+                }
+                i = j;
+            }
+        }
+
+        let mut eval_memo: HashMap<(usize, usize), Option<bool>> = HashMap::new();
+        let mut jump_memo: HashMap<(usize, usize, bool), usize> = HashMap::new();
+        let mut last_miss_memo: HashMap<usize, Option<usize>> = HashMap::new();
+        let mut pass_memo: HashMap<(usize, usize), Option<usize>> = HashMap::new();
+
+        let mut row_states: Vec<(Row, Option<bool>, Option<usize>)> =
+            Vec::with_capacity(atoms.len());
+        for row in atoms {
+            let h0 = intern_head(&row[0]);
+            let head0 = if let Some(&res) = eval_memo.get(&(h0, items[0])) {
+                res
+            } else {
+                let res = self.member_known(items[0], &row[0]).await;
+                eval_memo.insert((h0, items[0]), res);
+                res
+            };
+            let root_u = if head0 == Some(false) {
+                None
+            } else {
+                unfold(&row[1], &mut intern_head)
+            };
+            row_states.push((row, head0, root_u));
+        }
+
+        let first_index = async |h: usize,
+                                 from: usize,
+                                 to: usize,
+                                 want: bool,
+                                 heads: &[Type],
+                                 eval_memo: &mut HashMap<(usize, usize), Option<bool>>,
+                                 jump_memo: &mut HashMap<(usize, usize, bool), usize>|
+               -> Option<usize> {
+            let mut i = from;
+            let mut path: Vec<usize> = Vec::new();
+            while i < to {
+                if let Some(&j) = jump_memo.get(&(h, i, want)) {
+                    if j == i {
+                        break;
+                    }
+                    path.push(i);
+                    i = j;
+                    continue;
+                }
+                let item = items[i];
+                let eval = if let Some(&res) = eval_memo.get(&(h, item)) {
+                    res
+                } else {
+                    let res = self.member_known(item, &heads[h]).await;
+                    eval_memo.insert((h, item), res);
+                    res
+                };
+                let b = eval?;
+                if b == want {
+                    jump_memo.insert((h, i, want), i);
+                    break;
+                }
+                path.push(i);
+                i = run_end[i];
+            }
+            for p in path {
+                jump_memo.insert((h, p, want), i);
+            }
+            Some(i.min(to))
+        };
+
+        let last_miss_from_1 = async |h: usize,
+                                      heads: &[Type],
+                                      eval_memo: &mut HashMap<(usize, usize), Option<bool>>,
+                                      last_miss_memo: &mut HashMap<usize, Option<usize>>|
+               -> Option<usize> {
+            if let Some(&cached) = last_miss_memo.get(&h) {
+                return cached;
+            }
+            let mut p = m;
+            let mut ans = 0;
+            while p > 1 {
+                let r = run_start[p - 1];
+                let item = items[r];
+                let eval = if let Some(&res) = eval_memo.get(&(h, item)) {
+                    res
+                } else {
+                    let res = self.member_known(item, &heads[h]).await;
+                    eval_memo.insert((h, item), res);
+                    res
+                };
+                let Some(b) = eval else {
+                    last_miss_memo.insert(h, None);
+                    return None;
+                };
+                if !b {
+                    ans = p - 1;
+                    break;
+                }
+                p = r;
+            }
+            last_miss_memo.insert(h, Some(ans));
+            Some(ans)
+        };
+
+        let mut known: BTreeMap<Row, Option<bool>> = BTreeMap::new();
+        for (row, head0, root_u) in row_states {
+            if head0 == Some(false) {
+                known.insert(row, Some(false));
+                continue;
+            }
+            let Some(mut u) = root_u else {
+                known.insert(row, None);
+                continue;
+            };
+            let mut d = 1usize;
+            let tail_fits: Option<bool> = 'walk: loop {
+                if d == m {
+                    break 'walk Some(nodes[u].has_stop);
+                }
+                if nodes[u].on_cycle && nodes[u].next == u && nodes[u].emit.is_none() {
+                    if !nodes[u].has_stop {
+                        break 'walk Some(false);
+                    }
+                    let Some(miss) = first_index(
+                        nodes[u].head,
+                        d,
+                        m,
+                        false,
+                        &heads,
+                        &mut eval_memo,
+                        &mut jump_memo,
+                    )
+                    .await
+                    else {
+                        break 'walk None;
+                    };
+                    break 'walk Some(miss == m);
+                }
+                if !nodes[u].on_cycle && nodes[u].run == 1 && run_end[d] > d + 1 {
+                    let item = items[d];
+                    let mut stack: Vec<usize> = Vec::new();
+                    let mut cur = u;
+                    let base_steps: Option<usize> = loop {
+                        if nodes[cur].on_cycle {
+                            break Some(0);
+                        }
+                        if let Some(&cached) = pass_memo.get(&(cur, item)) {
+                            break cached;
+                        }
+                        let h = nodes[cur].head;
+                        let eval_h = if let Some(&res) = eval_memo.get(&(h, item)) {
+                            res
+                        } else {
+                            let res = self.member_known(item, &heads[h]).await;
+                            eval_memo.insert((h, item), res);
+                            res
+                        };
+                        let Some(bh) = eval_h else {
+                            break None;
+                        };
+                        if !bh {
+                            pass_memo.insert((cur, item), Some(0));
+                            break Some(0);
+                        }
+                        if let Some((h_emit, _)) = nodes[cur].emit {
+                            let eval_e = if let Some(&res) = eval_memo.get(&(h_emit, item)) {
+                                res
+                            } else {
+                                let res = self.member_known(item, &heads[h_emit]).await;
+                                eval_memo.insert((h_emit, item), res);
+                                res
+                            };
+                            let Some(be) = eval_e else {
+                                break None;
+                            };
+                            if be {
+                                pass_memo.insert((cur, item), Some(0));
+                                break Some(0);
+                            }
+                        }
+                        stack.push(cur);
+                        cur = nodes[cur].next;
+                    };
+                    let Some(mut acc) = base_steps else {
+                        break 'walk None;
+                    };
+                    while let Some(v) = stack.pop() {
+                        acc += 1;
+                        pass_memo.insert((v, item), Some(acc));
+                    }
+                    let rem_run = (run_end[d] - d).min(m - d);
+                    let step_cnt = acc.min(rem_run);
+                    if step_cnt > 0 {
+                        let rem = step_cnt;
+                        for b in 0..18 {
+                            if (rem >> b) & 1 != 0 {
+                                u = nodes[u].up[b];
+                            }
+                        }
+                        d += step_cnt;
+                        continue 'walk;
+                    }
+                }
+                let k = nodes[u].run.min(m - d);
+                let end = d + k;
+                let Some(miss) = first_index(
+                    nodes[u].head,
+                    d,
+                    end,
+                    false,
+                    &heads,
+                    &mut eval_memo,
+                    &mut jump_memo,
+                )
+                .await
+                else {
+                    break 'walk None;
+                };
+                if let Some((h_emit, h_loop)) = nodes[u].emit {
+                    let Some(q_last) =
+                        last_miss_from_1(h_loop, &heads, &mut eval_memo, &mut last_miss_memo).await
+                    else {
+                        break 'walk None;
+                    };
+                    let reach_end = (miss + 1).min(end);
+                    let start = d.max(q_last);
+                    if start < reach_end {
+                        let Some(hit) = first_index(
+                            h_emit,
+                            start,
+                            reach_end,
+                            true,
+                            &heads,
+                            &mut eval_memo,
+                            &mut jump_memo,
+                        )
+                        .await
+                        else {
+                            break 'walk None;
+                        };
+                        if hit < reach_end {
+                            break 'walk Some(true);
+                        }
+                    }
+                }
+                if miss < end {
+                    break 'walk Some(false);
+                }
+                if k < nodes[u].run {
+                    break 'walk Some(nodes[u].has_stop);
+                }
+                u = nodes[u].jump;
+                d = end;
+            };
+            let fits = match (head0, tail_fits) {
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (Some(true), Some(true)) => Some(true),
+                _ => None,
+            };
+            known.insert(row, fits);
+        }
+        f.eval3(&|row| known.get(row).copied().flatten()) == Some(true)
     }
 
     /// Whether the list numbered `v` among the values shown, of `len` links of the item
@@ -3906,6 +6004,21 @@ impl<'m> Searching<'m> {
         if let Some(m) = self.cycle_meet(t).await {
             return self.cycle_rep(&m).await;
         }
+        // A list of a carrier cycle less prefix chains: a witness list from the sweep,
+        // verified independently by `check_chain_witness` before being returned.
+        if self.s().in_list_fallback == 0
+            && let Some(plan) = self.prefix_chains(t).await
+        {
+            match plan {
+                ChainPlan::Empty => return None,
+                plan @ ChainPlan::Inhabited { .. } => {
+                    if let Some(r) = self.chain_rep(t, plan).await {
+                        return Some(r);
+                    }
+                    self.s().chains.insert(t.clone(), None);
+                }
+            }
+        }
         let p = t.p();
         if p.bools != 0 {
             return Some(self.s().show(Rep::Value(Value::Bool(p.bools & 1 == 0))));
@@ -3935,11 +6048,19 @@ impl<'m> Searching<'m> {
             let name = name.expect("a name is free");
             return Some(self.s().show(Rep::Value(Value::atom(&name))));
         }
+        let list_fallback = matches!(self.s().chains.get(t), Some(None));
         for (name, a) in &p.atoms.names {
             if a.bare {
                 return Some(self.s().show(Rep::Value(Value::atom(name))));
             }
-            if let Some(r) = self.rep(&a.payload).await {
+            if list_fallback {
+                self.s().in_list_fallback += 1;
+            }
+            let r = self.rep(&a.payload).await;
+            if list_fallback {
+                self.s().in_list_fallback -= 1;
+            }
+            if let Some(r) = r {
                 let tuple = {
                     let mut s = self.s();
                     let l = s.local(r);
@@ -7894,6 +10015,7 @@ fn system(env: &Arc<Env>) -> System {
 
 mod names;
 mod refused;
+mod sweep;
 
 #[cfg(test)]
 mod tests;

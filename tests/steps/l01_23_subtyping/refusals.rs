@@ -895,13 +895,13 @@ fn by_place_from_the_end(n: usize, skip: Option<usize>, tag: &str) -> Type {
         cons(Expr::Type(lit(1)), r(a + n)),
     ]);
     defs.push(def(&format!("H{tag}"), far));
-    let ts = Group::new(defs).unwrap().instance(vec![]);
+    let ts = r3_instance(defs);
     let no_one = list_named(&Type::int() - &lit(1), &format!("N{tag}"));
     (1..=n)
         .filter(|&i| Some(i) != skip)
         .map(|i| &ts[n + i])
         .chain([&ts[a + n + 1], &no_one])
-        .fold(Type::empty(), |u, t| &u | t)
+        .fold(Type::empty(), |u, t| r3_union(&u, t))
 }
 
 /// The lists of integers with a 1 at each place `i` from the front, for `i` up to `n`, except
@@ -922,12 +922,12 @@ fn by_place_from_the_front(n: usize, skip: Option<usize>, tag: &str) -> Type {
         let body = Expr::Union(vec![nil(), cons(not_one.clone(), rest)]);
         def(&format!("M{k}{tag}"), body)
     }));
-    let ts = Group::new(defs).unwrap().instance(vec![]);
+    let ts = r3_instance(defs);
     (1..=n)
         .filter(|&i| Some(i) != skip)
         .map(|i| &ts[i])
         .chain([&ts[2 * n]])
-        .fold(Type::empty(), |u, t| &u | t)
+        .fold(Type::empty(), |u, t| r3_union(&u, t))
 }
 
 /// The lists of integers with a 1 at place `n` from the front, or with no 1 there (shorter
@@ -954,7 +954,7 @@ fn by_one_place_from_the_front(n: usize, two: bool, tag: &str) -> Type {
         let body = Expr::Union(vec![nil(), cons(int(), r(n + k - 1))]);
         def(&format!("P{k}{tag}"), body)
     }));
-    let ts = Group::new(defs).unwrap().instance(vec![]);
+    let ts = r3_instance(defs);
     &list_named(Type::int(), tag) - &(&ts[n] | &ts[2 * n])
 }
 
@@ -1179,4 +1179,2805 @@ fn each_refusal_message_reads_as_written() {
     for (r, text) in pinned {
         assert_eq!(r.message(), text, "{r:?}");
     }
+}
+
+#[test]
+#[ignore]
+fn rfx_probe() {
+    let which = std::env::var("RFX").unwrap_or_default();
+    let sizes: Vec<usize> = std::env::var("RFX_N")
+        .unwrap_or("8,16,32,64".into())
+        .split(',')
+        .map(|s| s.parse().unwrap())
+        .collect();
+    big(move || {
+        for n in sizes {
+            Type::forget_emptiness();
+            let tag = format!("_rfx{n}");
+            let t = rfx_case(&which, n, &tag);
+            if std::env::var("RFX_SWEEP").is_ok() {
+                Type::forget_emptiness();
+                eprintln!("rfx sweep {which} n {n} {:?} chains {:?}", t.sweep_verdict(), { Type::forget_emptiness(); t.chain_verdict() });
+                Type::forget_emptiness();
+            }
+            let mut m = scaling::Meter::new();
+            let mut v = None;
+            let w = m.work(|| v = Some(t.verdict()));
+            eprintln!("rfx {which} n {n} {:?} units {} bytes {}", v, w.units, w.bytes);
+        }
+    });
+}
+
+/// The probe's families: the lists of `all`, and the lists with a `one` at place `i` from the
+/// front for each `i` up to `n` but `skip`, or with no `one` among the first `m` places;
+/// `split` puts the `M{k}` in a group of their own, with its own `L`.
+fn rfx_family(
+    n: usize,
+    skip: Option<usize>,
+    m: usize,
+    all: &Type,
+    one: &Type,
+    split: bool,
+    tag: &str,
+) -> (Type, Type) {
+    let l = list_named(all.clone(), tag);
+    let ldef = || {
+        let body = Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]);
+        def(&format!("L{tag}"), body)
+    };
+    let mut fdefs = vec![ldef()];
+    fdefs.push(def(&format!("F1{tag}"), cons(Expr::Type(one.clone()), r(0))));
+    fdefs.extend((2..=n).map(|i| {
+        def(&format!("F{i}{tag}"), cons(Expr::Type(all.clone()), r(i - 1)))
+    }));
+    let not_one = Expr::Type(all - one);
+    let base = if split { 0 } else { n };
+    let mut mdefs = if split { vec![ldef()] } else { vec![] };
+    mdefs.extend((1..=m).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(base + k - 1) };
+        let body = Expr::Union(vec![nil(), cons(not_one.clone(), rest)]);
+        def(&format!("M{k}{tag}"), body)
+    }));
+    let (fs, ms) = if split {
+        let f = r3_instance(fdefs);
+        (f, r3_instance(mdefs))
+    } else {
+        fdefs.extend(mdefs);
+        let g = r3_instance(fdefs);
+        (g.clone(), g)
+    };
+    let mi = base + m;
+    let u = (1..=n)
+        .filter(|&i| Some(i) != skip)
+        .map(|i| &fs[i])
+        .chain([&ms[mi]])
+        .fold(Type::empty(), |u, t| r3_union(&u, t));
+    (l, u)
+}
+
+/// The probe's cases at size `n`: `front` and `far` are the lists of integers less the lists
+/// by the place of a 1 from the front ([`by_place_from_the_front`]), all places or all but `n`;
+/// the others vary them ([`rfx_family`]): another place left out, booleans, a shorter or longer
+/// `M`, the `M{k}` in a group of their own, a meet, a pair; and the lists by one place
+/// ([`by_one_place_from_the_front`]) and by the place from the end ([`by_place_from_the_end`]).
+fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
+    let l = list_named(Type::int(), tag);
+    let (int, one, b, yes) = (Type::int(), lit(1), Type::bool(), Type::lit(&Value::Bool(true)));
+    let yes = yes.unwrap();
+    let fam = |skip, m, all: &Type, one: &Type, split| {
+        let (l, u) = rfx_family(n, skip, m, all, one, split, tag);
+        &l - &u
+    };
+    let half = (n / 2).max(1);
+    match which {
+        "far" => &l - &by_place_from_the_front(n, Some(n), tag),
+        "skip1" => fam(Some(1), n, &int, &one, false),
+        "skipmid" => fam(Some(half), n, &int, &one, false),
+        "bool" => fam(None, n, &b, &yes, false),
+        "boolfar" => fam(Some(n), n, &b, &yes, false),
+        "mshort" => fam(None, half, &int, &one, false),
+        "mlong" => fam(None, n + 1, &int, &one, false),
+        "split" => fam(None, n, &int, &one, true),
+        "splitfar" => fam(Some(n), n, &int, &one, true),
+        "meet" => &fam(Some(n), n, &int, &one, false)
+            & &fam(Some(n - 1).filter(|&k| k > 0), n, &int, &one, false),
+        "pair" => Type::tuple(vec![
+            fam(None, n, &int, &one, false),
+            fam(Some(n), n, &int, &one, false),
+        ]),
+        "pairfar" => Type::tuple(vec![
+            fam(Some(n), n, &int, &one, false),
+            fam(Some(n), n, &int, &one, false),
+        ]),
+        "tuple" => {
+            let pi = Type::tuple(vec![int.clone(), int.clone()]);
+            let po = Type::tuple(vec![one.clone(), int.clone()]);
+            fam(None, n, &pi, &po, false)
+        }
+        "tuplefar" => {
+            let pi = Type::tuple(vec![int.clone(), int.clone()]);
+            let po = Type::tuple(vec![one.clone(), int.clone()]);
+            fam(Some(n), n, &pi, &po, false)
+        }
+        "tupleflip" => {
+            let pi = Type::tuple(vec![int.clone(), int.clone()]);
+            let po = Type::tuple(vec![int.clone(), one.clone()]);
+            fam(None, n, &pi, &po, false)
+        }
+        "tupleflipfar" => {
+            let pi = Type::tuple(vec![int.clone(), int.clone()]);
+            let po = Type::tuple(vec![int.clone(), one.clone()]);
+            fam(Some(n), n, &pi, &po, false)
+        }
+        "multi" => &l - &rfx_multi(n, half, tag),
+        "multifar" => &l - &rfx_multi(n, n, tag),
+        "groups" => &l - &rfx_groups(n, false, tag),
+        "groupsfar" => &l - &rfx_groups(n, true, tag),
+        "groupsholes" => &l - &rfx_groups_holes(n, false, tag),
+        "groupsholesfar" => &l - &rfx_groups_holes(n, true, tag),
+        "groupssingles" => &l - &rfx_groups_singles(n, false, tag),
+        "groupssinglesfar" => &l - &rfx_groups_singles(n, true, tag),
+        "cxstagger" => rfx_cx_stagger(n, false, tag),
+        "cxstaggerfar" => rfx_cx_stagger(n, true, tag),
+        "cxstaggerwide" => rfx_cx_stagger_wide(n, false, tag),
+        "cxstaggerwidefar" => rfx_cx_stagger_wide(n, true, tag),
+        "clmanyheads" => &l - &rfx_cl_many_heads(n, false, tag),
+        "clmanyheadsfar" => &l - &rfx_cl_many_heads(n, true, tag),
+        "clstagger" => &l - &rfx_cl_stagger(n, false, false, tag),
+        "clstaggerfar" => &l - &rfx_cl_stagger(n, true, false, tag),
+        "clstaggerholes" => &l - &rfx_cl_stagger(n, false, true, tag),
+        "clcofront" => &l - &rfx_cl_cofront(n, tag),
+        "clcofrontones" => rfx_cl_cofront_var(n, true, |i| i + 2, tag),
+        "clcofrontsame" => rfx_cl_cofront_var(n, false, |_| 4, tag),
+        "clcofrontsameones" => rfx_cl_cofront_var(n, true, |_| 4, tag),
+        "clcofrontsameblock" => rfx_cl_cofront_block(n, true, |_| 4, true, tag),
+        "clcofrontshared" => rfx_cl_cofront_var(n, false, |i| 4 + i % 2, tag),
+        "emitheads" => rfx_cx_emitheads(n, false, tag),
+        "emitheadsfar" => rfx_cx_emitheads(n, true, tag),
+        "manyheads" => rfx_many_heads(n, false, tag),
+        "manyheadsfar" => rfx_many_heads(n, true, tag),
+        "stagger" => &l - &rfx_stagger(n, false, tag),
+        "staggerfar" => &l - &rfx_stagger(n, true, tag),
+        "chain" => &l - &rfx_chain(n, false, tag),
+        "chainfar" => &l - &rfx_chain(n, true, tag),
+        "boundaryinside" => &l - &r4_boundary(n, true, tag),
+        "boundaryoutside" => &l - &r4_boundary(n, false, tag),
+        "cxprivateheads" => r4_private_heads(n,false,tag),
+        "cxprivateheadsfar" => r4_private_heads(n,true,tag),
+        "manyheadsv0" => rfx_manyheads_v0(n,false,tag),
+        "manyheadsfarv0" => rfx_manyheads_v0(n,true,tag),
+        "clstaggerholesin" => &l - &rfx_cl_stagger_boundary(n, false, tag),
+        "clstaggerholesout" => &l - &rfx_cl_stagger_boundary(n, true, tag),
+        "u4cofrontones" => u4_cofront_block(n, true, |i| i + 2, false, tag),
+        "u4cofrontsame" => u4_cofront_block(n, false, |_| 4, false, tag),
+        "u4cofrontsameones" => u4_cofront_block(n, true, |_| 4, false, tag),
+        "u4cofrontsameblock" => u4_cofront_block(n, true, |_| 4, true, tag),
+        "u4cofrontshared" => u4_cofront_block(n, false, |i| 4 + i % 2, false, tag),
+        "u4holesin" => u4_stagger_boundary(n, false, tag),
+        "u4holesout" => u4_stagger_boundary(n, true, tag),
+        "u4boundaryin" => u4_boundary(n, true, tag),
+        "u4boundaryout" => u4_boundary(n, false, tag),
+        "u4width" => u4_width(n, tag),
+        "r5greedy" => r5_greedy(tag),
+        // Round 5, Q2 boundary: the 3-SAT reduction's type for n copies of one clause (length
+        // 2 + 3n, or 1 + 2n for `k1n`). With literals the case is in the remainder (no sweep
+        // decides it); `r5satnone` (n empty clauses, the same shape without holes) is decided
+        // by the front sweep.
+        "r5sat2lit" => r5_sat_type(2, &vec![vec![(1, true), (2, true)]; n], tag),
+        "r5sat1lit" => r5_sat_type(2, &vec![vec![(1, true)]; n], tag),
+        "r5satnone" => r5_sat_type(2, &vec![vec![]; n], tag),
+        "r5satk1n" => r5_sat_type(1, &vec![vec![(1, false)]; n], tag),
+        "r5varywidth" => r5_varying_width(n),
+        "r5slotsin" => r5_slots(n, false),
+        "r5slotsout" => r5_slots(n, true),
+        "r5remin" => r5_remainder_boundary(n, false, tag),
+        "r5remout" => r5_remainder_boundary(n, true, tag),
+        "one" => by_one_place_from_the_front(n, false, tag),
+        "onetwo" => by_one_place_from_the_front(n, true, tag),
+        "end" => &l - &by_place_from_the_end(n, None, tag),
+        _ => &l - &by_place_from_the_front(n, None, tag),
+    }
+}
+
+/// Lists with a 1 at a place up to `n`, or a 2 at a place up to `n / 2` (at least 1), or with
+/// neither among the first `m` places: Empty for `m <= n / 2`, Inhabited for `m = n`.
+fn rfx_multi(n: usize, m: usize, tag: &str) -> Type {
+    let h = (n / 2).max(1);
+    // 0: L; 1..=n: F; n+1..=n+h: G; n+h+1..=n+h+m: M
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i - 1)))));
+    defs.push(def(&format!("G1{tag}"), cons(Expr::Type(lit(2)), r(0))));
+    defs.extend((2..=h).map(|i| def(&format!("G{i}{tag}"), cons(Expr::Type(Type::int()), r(n + i - 1)))));
+    let neither = Expr::Type(&Type::int() - &(&lit(1) | &lit(2)));
+    defs.extend((1..=m).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(n + h + k - 1) };
+        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(neither.clone(), rest)]))
+    }));
+    let ts = r3_instance(defs);
+    (1..=n + h).map(|i| &ts[i]).chain([&ts[n + h + m]]).fold(Type::empty(), |u, t| r3_union(&u, t))
+}
+
+/// The front union written as one chain: `G1 = cons(1, L)`, `Gk = cons(1, L) | cons(int, G{k-1})`
+/// (the same set as `F1 | .. | Fk`), with `M{n}`; `far` uses `G{n-1}` (n >= 2).
+fn rfx_chain(n: usize, far: bool, tag: &str) -> Type {
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    defs.push(def(&format!("G1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| {
+        def(&format!("G{i}{tag}"), Expr::Union(vec![cons(Expr::Type(lit(1)), r(0)), cons(Expr::Type(Type::int()), r(i - 1))]))
+    }));
+    let not_one = Expr::Type(&Type::int() - &lit(1));
+    defs.extend((1..=n).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+    }));
+    let ts = r3_instance(defs);
+    let g = if far { n - 1 } else { n };
+    &ts[g] | &ts[2 * n]
+}
+
+/// The front family plus `cons(int, A_k)` for k = 1..n, `A_k = cons(int | #a_k, F1)`: n chains
+/// of depth 3 whose second heads differ (each a 1 at place 3, so Empty; Inhabited with `far`).
+fn rfx_groups(n: usize, far: bool, tag: &str) -> Type {
+    // 0: L; 1..=n: F; n+1..=2n: M; 2n+1..=3n: A; 3n+1..=4n: B
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i - 1)))));
+    let not_one = Expr::Type(&Type::int() - &lit(1));
+    defs.extend((1..=n).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+    }));
+    defs.extend((1..=n).map(|k| {
+        let h = &Type::int() | &Type::atom(&format!("a{k}"));
+        def(&format!("A{k}{tag}"), cons(Expr::Type(h), r(1)))
+    }));
+    defs.extend((1..=n).map(|k| def(&format!("B{k}{tag}"), cons(Expr::Type(Type::int()), r(2 * n + k)))));
+    let ts = r3_instance(defs);
+    let top = if far { n - 1 } else { n };
+    (1..=top).chain([2 * n]).chain(3 * n + 1..=4 * n).map(|i| &ts[i]).fold(Type::empty(), |u, t| r3_union(&u, t))
+}
+
+/// Stress X3: redundant finite chains with distinct overlapping scalar heads.
+fn rfx_groups_holes(n: usize, far: bool, tag: &str) -> Type {
+    // 0: L; 1..=n: F; n+1..=2n: M; 2n+1..=3n: A; 3n+1..=4n: B
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i - 1)))));
+    let not_one = Expr::Type(&Type::int() - &lit(1));
+    defs.extend((1..=n).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+    }));
+    defs.extend((1..=n).map(|k| {
+        let h = &Type::int() - &lit(k as i64 + 2);
+        def(&format!("A{k}{tag}"), cons(Expr::Type(h), r(1)))
+    }));
+    defs.extend((1..=n).map(|k| def(&format!("B{k}{tag}"), cons(Expr::Type(Type::int()), r(2 * n + k)))));
+    let ts = r3_instance(defs);
+    let top = if far { n - 1 } else { n };
+    (1..=top).chain([2 * n]).chain(3 * n + 1..=4 * n).map(|i| &ts[i]).fold(Type::empty(), |u, t| r3_union(&u, t))
+}
+
+/// Stress X13: as `rfx_groups_holes` with singleton heads `{k + 2}`, so no union of them covers `int`.
+fn rfx_groups_singles(n: usize, far: bool, tag: &str) -> Type {
+    // 0: L; 1..=n: F; n+1..=2n: M; 2n+1..=3n: A; 3n+1..=4n: B
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i - 1)))));
+    let not_one = Expr::Type(&Type::int() - &lit(1));
+    defs.extend((1..=n).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+    }));
+    defs.extend((1..=n).map(|k| {
+        let h = lit(k as i64 + 2);
+        def(&format!("A{k}{tag}"), cons(Expr::Type(h), r(1)))
+    }));
+    defs.extend((1..=n).map(|k| def(&format!("B{k}{tag}"), cons(Expr::Type(Type::int()), r(2 * n + k)))));
+    let ts = r3_instance(defs);
+    let top = if far { n - 1 } else { n };
+    (1..=top).chain([2 * n]).chain(3 * n + 1..=4 * n).map(|i| &ts[i]).fold(Type::empty(), |u, t| r3_union(&u, t))
+}
+
+/// Codex R3 families (copied from its probe, renamed rfx_cx_*).
+// n roots join a shared uniform chain at distinct depths. Supplementary rows
+// are subsets of existing F rows, so truth remains front/far for n >= 3.
+fn rfx_cx_stagger(n: usize, far: bool, tag: &str) -> Type {
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i-1)))));
+    defs.extend((1..=n).map(|i| def(&format!("M{i}{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(&Type::int()-&lit(1)), r(if i==1 {0} else {n+i-1}))]))));
+    for i in 1..n-1 {
+        defs.push(def(&format!("B{i}{tag}"), cons(Expr::Type(&Type::int()-&lit(i as i64+2)), r(i))));
+    }
+    let ts = r3_instance(defs);
+    let top = if far { n-1 } else { n };
+    let u = (1..=top).chain([2*n]).chain(2*n+1..ts.len()).fold(Type::empty(), |u,i| r3_union(&u, &ts[i]));
+    &ts[0] - &u
+}
+
+// Linear-DAG encoding of the same positional exclusions, using carrier emits.
+/// X10: `N_j = cons(int \ {j+2}, L) | cons({j+2}, N_{j+1})` for j = 1..n, `N_{n+1} = cons(int, L)`
+/// (`cons(1, L)` with `far`), and `S_n` the lists of length at most n. `L` less `N_1 | S_n` is
+/// Empty; with `far` its values are the lists starting 3, 4, .., n+2 and then not a 1: n + 1
+/// runs, and n distinct cofinite negative heads, the j-th first read at step j.
+fn rfx_cl_many_heads(n: usize, far: bool, tag: &str) -> Type {
+    // 0: L; 1..=n+1: N; n+2..=2n+2: S_0..S_n
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
+    defs.extend((1..=n).map(|j| {
+        let k = j as i64 + 2;
+        let side = cons(Expr::Type(&Type::int() - &lit(k)), r(0));
+        def(
+            &format!("N{j}{tag}"),
+            Expr::Union(vec![side, cons(Expr::Type(lit(k)), r(j + 1))]),
+        )
+    }));
+    let last = if far { lit(1) } else { Type::int() };
+    defs.push(def(
+        &format!("N{}{tag}", n + 1),
+        cons(Expr::Type(last), r(0)),
+    ));
+    defs.push(def(&format!("S0{tag}"), nil()));
+    defs.extend((1..=n).map(|k| {
+        def(
+            &format!("S{k}{tag}"),
+            Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(n + 1 + k))]),
+        )
+    }));
+    let ts = r3_instance(defs);
+    &ts[1] | &ts[2 * n + 2]
+}
+
+/// X12: one chain `Y_i = cons(int | #a_i, Y_{i+1})` for i = 1..2n, `Y_{2n+1} = cons(1, L)`,
+/// entered at the n staggered roots `Y_1..Y_n` (`Y_k`: a 1 at place 2n - k + 2), every link
+/// with its own head; `N` the lists with no 1 at places n+2..2n+1. `L` less the roots and `N`
+/// is Empty; `far` leaves out `Y_n`, so `[0; n+1] ++ [1]` is a value. With `holes` the heads
+/// are `int \ {i+2}` instead, distinct inside the integers, and `[n+2] ++ [0; n] ++ [1]` is a
+/// value (the first head of `Y_n` leaves out n+2).
+fn rfx_cl_stagger(n: usize, far: bool, holes: bool, tag: &str) -> Type {
+    let m = 2 * n;
+    // 0: L; 1..=m+1: Y; m+2..=2m+2: N_1..N_{m+1}
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
+    defs.extend((1..=m).map(|i| {
+        let h = if holes {
+            &Type::int() - &lit(i as i64 + 2)
+        } else {
+            &Type::int() | &Type::atom(&format!("a{i}"))
+        };
+        def(&format!("Y{i}{tag}"), cons(Expr::Type(h), r(i + 1)))
+    }));
+    defs.push(def(
+        &format!("Y{}{tag}", m + 1),
+        cons(Expr::Type(lit(1)), r(0)),
+    ));
+    defs.extend((1..=m + 1).map(|j| {
+        let h = if j <= n + 1 {
+            Type::int()
+        } else {
+            &Type::int() - &lit(1)
+        };
+        let next = if j == m + 1 { r(0) } else { r(m + 2 + j) };
+        def(
+            &format!("N{j}{tag}"),
+            Expr::Union(vec![nil(), cons(Expr::Type(h), next)]),
+        )
+    }));
+    let ts = r3_instance(defs);
+    let top = if far { n - 1 } else { n };
+    (1..=top)
+        .map(|k| &ts[k])
+        .chain([&ts[m + 2]])
+        .fold(Type::empty(), |u, t| r3_union(&u, t))
+}
+
+/// The front family with distinct cofinite heads: `F_1 = cons(1, L)`,
+/// `F_i = cons(int \ {i+2}, F_{i-1})`, and `M_n`. `L` less `F_1 | .. | F_n | M_n` holds `[4, 1]`
+/// for n >= 2: n distinct heads at the first step, on n different links.
+fn rfx_cl_cofront(n: usize, tag: &str) -> Type {
+    // 0: L; 1..=n: F; n+1..=2n: M
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| {
+        def(
+            &format!("F{i}{tag}"),
+            cons(Expr::Type(&Type::int() - &lit(i as i64 + 2)), r(i - 1)),
+        )
+    }));
+    let not_one = Expr::Type(&Type::int() - &lit(1));
+    defs.extend((1..=n).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+        def(
+            &format!("M{k}{tag}"),
+            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+        )
+    }));
+    let ts = r3_instance(defs);
+    (1..=n)
+        .chain([2 * n])
+        .map(|i| &ts[i])
+        .fold(Type::empty(), |u, t| r3_union(&u, t))
+}
+/// Q2 boundary families around [`rfx_cl_cofront`], whose rows `F_i` (a root each, and the tail
+/// of `F_{i+1}`) are joins with a new signature at every link below: outside the sweep's bounded
+/// class ([`Sweep::bounded`]). `excl` gives the value `F_i` leaves out of its head for i >= 2:
+/// `same` leaves out 4 in every row, so the links below a join share its signature, inside the
+/// class, and `[4, 1]` is a value; `shared` leaves out `4 + i mod 2`, outside the class, and
+/// `[4, 1]` is a value. `ones`: the positive side is `P = cons(int, Q_2)`,
+/// `Q_k = cons(1, Q_{k+1})` for k = 2..n, `Q_{n+1} = L`; with distinct exclusions `[x, 1, ..]`
+/// escapes `F_2` only with x = 4 and is then in `F_3`, so it is empty for n >= 3.
+fn rfx_cl_cofront_var(n: usize, ones: bool, excl: fn(usize) -> usize, tag: &str) -> Type {
+    rfx_cl_cofront_block(n, ones, excl, false, tag)
+}
+
+/// [`rfx_cl_cofront_var`]; `block` also takes out `K = cons(int, cons(1, L))`, every list with
+/// a 1 second, so with `ones` (each such list has one) the difference is empty.
+fn rfx_cl_cofront_block(n: usize, ones: bool, excl: fn(usize) -> usize, block: bool, tag: &str) -> Type {
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| {
+        let h = &Type::int() - &lit(excl(i) as i64);
+        def(&format!("F{i}{tag}"), cons(Expr::Type(h), r(i - 1)))
+    }));
+    let not_one = Expr::Type(&Type::int() - &lit(1));
+    defs.extend((1..=n).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+    }));
+    // 2n+1: P; 2n+k: Q_k for k = 2..n
+    let next = |k: usize| if k <= n { r(2 * n + k) } else { r(0) };
+    defs.push(def(&format!("P{tag}"), cons(int(), next(2))));
+    defs.extend((2..=n).map(|k| def(&format!("Q{k}{tag}"), cons(Expr::Type(lit(1)), next(k + 1)))));
+    // 3n+1: K1 = cons(1, L); 3n+2: K = cons(int, K1)
+    defs.push(def(&format!("K1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.push(def(&format!("K{tag}"), cons(int(), r(3 * n + 1))));
+    let ts = r3_instance(defs);
+    let block = block.then_some(3 * n + 2);
+    let u = (1..=n).chain([2 * n]).chain(block).map(|i| &ts[i]).fold(Type::empty(), |u, t| r3_union(&u, t));
+    let pos = if ones { ts[2 * n + 1].clone() } else { ts[0].clone() };
+    &pos - &u
+}
+
+fn rfx_cx_emitheads(n: usize, far: bool, tag: &str) -> Type {
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    for i in (1..=n).rev() {
+        let h = if !far && i==n { Type::int() } else { &Type::int()-&lit(i as i64) };
+        let mut branches = vec![cons(Expr::Type(h),r(0))];
+        if i < n { branches.push(cons(Expr::Type(Type::int()),r(defs.len()-1))); }
+        defs.push(def(&format!("G{i}{tag}"),Expr::Union(branches)));
+    }
+    let mut p = 0;
+    for i in (1..=n).rev() {
+        let idx=defs.len();
+        defs.push(def(&format!("Q{i}{tag}"),cons(Expr::Type(Type::int()),r(p))));
+        p=idx;
+    }
+    let ts=r3_instance(defs);
+    &ts[p]-&ts[n]
+}
+
+// Shared staggered suffixes with heads containing the whole carrier.
+fn rfx_cx_stagger_wide(n: usize, far: bool, tag: &str) -> Type {
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i-1)))));
+    defs.extend((1..=n).map(|i| def(&format!("M{i}{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(&Type::int()-&lit(1)), r(if i==1 {0} else {n+i-1}))]))));
+    for i in 1..n-1 {
+        defs.push(def(&format!("B{i}{tag}"), cons(Expr::Type(&Type::int() | &Type::atom(&format!("wide{i}"))), r(i))));
+    }
+    let ts = r3_instance(defs);
+    let top = if far { n-1 } else { n };
+    let u = (1..=top).chain([2*n]).chain(2*n+1..ts.len()).fold(Type::empty(), |u,i| r3_union(&u, &ts[i]));
+    &ts[0] - &u
+}
+
+
+/// Stress X10: Theta(n) distinct heads along a positive chain `P1..P{n-1}` and negative chains
+/// `C1..Cn` whose `far` witness `[n, n - 1, ..., 2, 1]` has Theta(n) distinct single-item runs.
+fn rfx_many_heads(n: usize, far: bool, tag: &str) -> Type {
+    let p_top = (n - 1).max(1);
+    // 0: L; 1..=p_top: P; p_top+1..=p_top+n: F; p_top+n+1..=p_top+2n: M;
+    // p_top+2n+1..=p_top+3n: B; p_top+3n+1..=p_top+4n: C
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
+    defs.extend((1..=p_top).map(|k| {
+        let h = &lit(1) | &lit(k as i64 + 1);
+        let rest = if k == 1 { r(0) } else { r(k - 1) };
+        def(
+            &format!("P{k}{tag}"),
+            Expr::Union(vec![nil(), cons(Expr::Type(h), rest)]),
+        )
+    }));
+    let f_base = p_top;
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| {
+        def(
+            &format!("F{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(f_base + i - 1)),
+        )
+    }));
+    let m_base = f_base + n;
+    let not_one = Expr::Type(&Type::int() - &lit(1));
+    defs.extend((1..=n).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(m_base + k - 1) };
+        def(
+            &format!("M{k}{tag}"),
+            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+        )
+    }));
+    let b_base = m_base + n;
+    let v0 = (p_top + 1) as i64;
+    defs.extend((1..=n).map(|k| {
+        let g = &(&lit(1) | &lit(v0)) | &lit((n + k) as i64 + 2);
+        def(&format!("B{k}{tag}"), cons(Expr::Type(g), r(f_base + 1)))
+    }));
+    let c_base = b_base + n;
+    defs.extend((1..=n).map(|k| {
+        let g = &(&lit(1) | &lit(v0)) | &lit((n + k) as i64 + 2);
+        def(
+            &format!("C{k}{tag}"),
+            cons(Expr::Type(g), r(b_base + k)),
+        )
+    }));
+    let ts = r3_instance(defs);
+    let top = if far { n - 1 } else { n };
+    let u = (f_base + 1..=f_base + top)
+        .chain([m_base + n])
+        .chain(c_base + 1..=c_base + n)
+        .map(|i| &ts[i])
+        .fold(Type::empty(), |u, t| r3_union(&u, t));
+    &(&ts[0] & &ts[p_top]) - &u
+}
+
+/// Stress X12: chains `R1..Rh` of distinct lengths sharing a staggered chain `P1..Ph` that
+/// joins `Fd` at depth `d >= 2`.
+fn rfx_stagger(n: usize, far: bool, tag: &str) -> Type {
+    let d = ((n.saturating_sub(2)) / 2).max(1);
+    let h = (n.saturating_sub(2).saturating_sub(d)).max(1);
+    // 0: L; 1..=n: F; n+1..=2n: M; 2n+1..=2n+h: P; 2n+h+1..=2n+2h: R
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| {
+        def(
+            &format!("F{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(i - 1)),
+        )
+    }));
+    let not_one = Expr::Type(&Type::int() - &lit(1));
+    defs.extend((1..=n).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+        def(
+            &format!("M{k}{tag}"),
+            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+        )
+    }));
+    let ha = &Type::int() | &Type::atom("a");
+    defs.extend((1..=h).map(|k| {
+        let rest = if k == 1 { r(d) } else { r(2 * n + k - 1) };
+        def(&format!("P{k}{tag}"), cons(Expr::Type(ha.clone()), rest))
+    }));
+    defs.extend((1..=h).map(|k| {
+        let hb = &Type::int() | &Type::atom(&format!("b{k}"));
+        def(
+            &format!("R{k}{tag}"),
+            cons(Expr::Type(hb), r(2 * n + k)),
+        )
+    }));
+    let ts = r3_instance(defs);
+    let top = if far { n - 1 } else { n };
+    let r_indices = (1..=h)
+        .filter(|&k| d + k + 1 <= top)
+        .map(|k| 2 * n + h + k);
+    (1..=top)
+        .chain([2 * n])
+        .chain(r_indices)
+        .map(|i| &ts[i])
+        .fold(Type::empty(), |u, t| r3_union(&u, t))
+}
+
+#[test]
+fn a_union_of_lists_by_the_place_of_a_one_from_the_front_is_decided_in_its_size() {
+    big(|| {
+        for (case, want) in [
+            ("front", Verdict::Empty),
+            ("far", Verdict::Inhabited),
+            ("tuple", Verdict::Empty),
+            ("tuplefar", Verdict::Inhabited),
+            ("tupleflip", Verdict::Empty),
+            ("tupleflipfar", Verdict::Inhabited),
+            ("multi", Verdict::Empty),
+            ("multifar", Verdict::Inhabited),
+            ("groups", Verdict::Empty),
+            ("groupsfar", Verdict::Inhabited),
+            ("groupsholes", Verdict::Empty),
+            ("groupsholesfar", Verdict::Inhabited),
+            ("manyheads", Verdict::Empty),
+            ("manyheadsfar", Verdict::Inhabited),
+            ("stagger", Verdict::Empty),
+            ("staggerfar", Verdict::Inhabited),
+            ("chain", Verdict::Empty),
+            ("chainfar", Verdict::Inhabited),
+        ] {
+            let (s_runs, l_runs) = scaling::Meter::new().runs();
+            let small: Vec<Type> = (0..s_runs)
+                .map(|i| rfx_case(case, 8, &format!("_fs_{case}_8_{i}")))
+                .collect();
+            let large: Vec<Type> = (0..l_runs)
+                .map(|i| rfx_case(case, 64, &format!("_fs_{case}_64_{i}")))
+                .collect();
+            let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
+            scaling::check(&format!("front family {case}"), 8, |n| {
+                Type::forget_emptiness();
+                let t = if n == 8 {
+                    &small[si.fetch_add(1, Relaxed)]
+                } else {
+                    &large[li.fetch_add(1, Relaxed)]
+                };
+                assert_eq!(t.verdict(), want, "{case} at {n}");
+            });
+        }
+    });
+}
+
+/// Independent oracle: enumerates all lists of length `0..=max_len` over `samples` and tests
+/// whether any list value is contained in `t` (`t.contains(&v)`).
+fn list_oracle_inhabited(t: &Type, samples: &[Value], max_len: usize) -> bool {
+    let mut cur = vec![Value::atom("nil")];
+    if t.contains(&cur[0]) {
+        return true;
+    }
+    for _ in 1..=max_len {
+        let mut next = Vec::with_capacity(cur.len() * samples.len());
+        for h in samples {
+            for tl in &cur {
+                let v = Value::atom_with("cons", vec![h.clone(), tl.clone()]);
+                if t.contains(&v) {
+                    return true;
+                }
+                next.push(v);
+            }
+        }
+        cur = next;
+    }
+    false
+}
+
+/// Rewrites `Expr::Ref(i, args)` in `e` according to `inv_perm` (`old_index -> new_index`).
+fn rewrite_expr_refs(e: &Expr, inv_perm: &[usize]) -> Expr {
+    match e {
+        Expr::Ref(i, args) => Expr::Ref(
+            inv_perm[*i],
+            args.iter().map(|a| rewrite_expr_refs(a, inv_perm)).collect(),
+        ),
+        Expr::Union(xs) => Expr::Union(
+            xs.iter().map(|x| rewrite_expr_refs(x, inv_perm)).collect(),
+        ),
+        Expr::And(xs) => Expr::And(
+            xs.iter().map(|x| rewrite_expr_refs(x, inv_perm)).collect(),
+        ),
+        Expr::Diff(a, b) => Expr::Diff(
+            Box::new(rewrite_expr_refs(a, inv_perm)),
+            Box::new(rewrite_expr_refs(b, inv_perm)),
+        ),
+        Expr::Not(a) => Expr::Not(Box::new(rewrite_expr_refs(a, inv_perm))),
+        Expr::Tuple(xs) => Expr::Tuple(
+            xs.iter().map(|x| rewrite_expr_refs(x, inv_perm)).collect(),
+        ),
+        Expr::Atom(name, xs) => Expr::Atom(
+            name.clone(),
+            xs.iter().map(|x| rewrite_expr_refs(x, inv_perm)).collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Permutes `defs` so that the new definition at position `j` is the old definition `perm[j]`,
+/// rewriting all `Expr::Ref` indices so every member denotes the exact same recursive type.
+fn permute_defs(defs: Vec<Def>, perm: &[usize]) -> (Vec<Def>, Vec<usize>) {
+    let mut inv = vec![0; defs.len()];
+    for (new_idx, &old_idx) in perm.iter().enumerate() {
+        inv[old_idx] = new_idx;
+    }
+    let old: Vec<Def> = defs;
+    let out = perm
+        .iter()
+        .map(|&old_idx| {
+            let d = &old[old_idx];
+            Def {
+                name: d.name.clone(),
+                params: d.params.clone(),
+                body: rewrite_expr_refs(&d.body, &inv),
+            }
+        })
+        .collect();
+    (out, inv)
+}
+
+#[test]
+fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
+    big(|| {
+        let int_samples = [Value::Int(0), Value::Int(1), Value::Int(2)];
+        // X18: the random heads list 0, 1 and 2; 3 stands for every other integer.
+        let random_int_samples = [Value::Int(0), Value::Int(1), Value::Int(2), Value::Int(3)];
+        let bool_samples = [Value::Bool(false), Value::Bool(true)];
+        let bool_tys = [
+            Type::lit(&Value::Bool(false)).unwrap(),
+            Type::lit(&Value::Bool(true)).unwrap(),
+        ];
+        let mut tag_id = 0usize;
+        let mut next_tag = || {
+            tag_id += 1;
+            format!("_or{tag_id}")
+        };
+
+        for n in 1..=5 {
+            for skip_idx in 0..=n {
+                let skip = (skip_idx > 0).then_some(skip_idx);
+                for m in 1..=n + 1 {
+                    for split in [false, true] {
+                        for (is_bool, all, one) in [
+                            (false, Type::int(), lit(1)),
+                            (true, Type::bool(), bool_tys[1].clone()),
+                        ] {
+                            Type::forget_emptiness();
+                            let tag = next_tag();
+                            let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
+                            let t = &l - &u;
+                            let samples: &[Value] = if is_bool {
+                                &bool_samples[..]
+                            } else {
+                                &int_samples[..2]
+                            };
+                            let max_len = n.max(m) + 1;
+                            let inhab = list_oracle_inhabited(&t, samples, max_len);
+                            let want = if inhab {
+                                Verdict::Inhabited
+                            } else {
+                                Verdict::Empty
+                            };
+                            assert_eq!(
+                                t.verdict(),
+                                want,
+                                "rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool}"
+                            );
+                            assert_eq!(
+                                t.is_empty(),
+                                !inhab,
+                                "is_empty rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Meet and pair combinations at size n.
+            for (s1, s2) in [(None, Some(n)), (Some(1), Some(n)), (Some(n), Some(n))] {
+                Type::forget_emptiness();
+                let (t1, t2) = (next_tag(), next_tag());
+                let (l1, u1) = rfx_family(n, s1, n, &Type::int(), &lit(1), false, &t1);
+                let (l2, u2) = rfx_family(n, s2, n, &Type::int(), &lit(1), false, &t2);
+                let f1 = &l1 - &u1;
+                let f2 = &l2 - &u2;
+                let meet = &f1 & &f2;
+                let want_meet = if list_oracle_inhabited(&meet, &int_samples[..2], n + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(meet.verdict(), want_meet, "meet n={n} s1={s1:?} s2={s2:?}");
+
+                let pair = Type::tuple(vec![f1, f2]);
+                let want_pair = if list_oracle_inhabited(&(&l1 - &u1), &int_samples[..2], n + 1)
+                    && list_oracle_inhabited(&(&l2 - &u2), &int_samples[..2], n + 1)
+                {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(pair.verdict(), want_pair, "pair n={n} s1={s1:?} s2={s2:?}");
+            }
+
+            // Multi, groups, groupsholes, manyheads, stagger, and chain variants at small sizes.
+            for m in 1..=n + 1 {
+                Type::forget_emptiness();
+                let tag = next_tag();
+                let l = list_named(Type::int(), &tag);
+                let t = &l - &rfx_multi(n, m, &tag);
+                let want = if list_oracle_inhabited(&t, &int_samples, n.max(m) + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(t.verdict(), want, "rfx_multi n={n} m={m}");
+            }
+            if n >= 2 {
+                let mh_samples: Vec<Value> = (1..=n as i64).map(Value::Int).collect();
+                for far in [false, true] {
+                    Type::forget_emptiness();
+                    let tag = next_tag();
+                    let l = list_named(Type::int(), &tag);
+                    let tg = &l - &rfx_groups(n, far, &tag);
+                    let want_g = if list_oracle_inhabited(&tg, &int_samples[..2], n + 1) {
+                        Verdict::Inhabited
+                    } else {
+                        Verdict::Empty
+                    };
+                    assert_eq!(tg.verdict(), want_g, "rfx_groups n={n} far={far}");
+
+                    Type::forget_emptiness();
+                    let tag = next_tag();
+                    let l = list_named(Type::int(), &tag);
+                    let tgh = &l - &rfx_groups_holes(n, far, &tag);
+                    // X18: one value of every class: 1, each excluded `k + 2`, and 0 for the rest.
+                    let gh_samples: Vec<Value> =
+                        [0, 1].into_iter().chain(3..=n as i64 + 2).map(Value::Int).collect();
+                    let want_gh = if list_oracle_inhabited(&tgh, &gh_samples, n + 1) {
+                        Verdict::Inhabited
+                    } else {
+                        Verdict::Empty
+                    };
+                    assert_eq!(tgh.verdict(), want_gh, "rfx_groups_holes n={n} far={far}");
+
+                    Type::forget_emptiness();
+                    let tag = next_tag();
+                    let tmh = rfx_many_heads(n, far, &tag);
+                    let want_mh = if list_oracle_inhabited(&tmh, &mh_samples, n + 1) {
+                        Verdict::Inhabited
+                    } else {
+                        Verdict::Empty
+                    };
+                    assert_eq!(tmh.verdict(), want_mh, "rfx_many_heads n={n} far={far}");
+
+                    Type::forget_emptiness();
+                    let tag = next_tag();
+                    let l = list_named(Type::int(), &tag);
+                    let tst = &l - &rfx_stagger(n, far, &tag);
+                    let want_st = if list_oracle_inhabited(&tst, &int_samples[..2], n + 1) {
+                        Verdict::Inhabited
+                    } else {
+                        Verdict::Empty
+                    };
+                    assert_eq!(tst.verdict(), want_st, "rfx_stagger n={n} far={far}");
+
+                    Type::forget_emptiness();
+                    let tag = next_tag();
+                    let l = list_named(Type::int(), &tag);
+                    let tc = &l - &rfx_chain(n, far, &tag);
+                    let want_c = if list_oracle_inhabited(&tc, &int_samples[..2], n + 1) {
+                        Verdict::Inhabited
+                    } else {
+                        Verdict::Empty
+                    };
+                    assert_eq!(tc.verdict(), want_c, "rfx_chain n={n} far={far}");
+                }
+            }
+
+            // Tuple and tupleflip variants at small sizes.
+            let pair_samples = [
+                Value::tuple(vec![Value::Int(0), Value::Int(0)]),
+                Value::tuple(vec![Value::Int(1), Value::Int(0)]),
+                Value::tuple(vec![Value::Int(0), Value::Int(1)]),
+                Value::tuple(vec![Value::Int(1), Value::Int(1)]),
+            ];
+            for case in ["tuple", "tuplefar", "tupleflip", "tupleflipfar"] {
+                Type::forget_emptiness();
+                let tag = next_tag();
+                let t = rfx_case(case, n, &tag);
+                let want = if list_oracle_inhabited(&t, &pair_samples, n + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(t.verdict(), want, "{case} n={n}");
+            }
+        }
+
+        // Random small prefix-chain families over int (including cofinite heads) and bool.
+        let mut seed = 0x5eed_cafe_d00d_u64;
+        let mut rng = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let head_for = |bits: u64, is_bool: bool| -> Type {
+            if is_bool {
+                match bits % 3 {
+                    0 => bool_tys[0].clone(),
+                    1 => bool_tys[1].clone(),
+                    _ => Type::bool(),
+                }
+            } else {
+                let mask = (bits % 7) + 1;
+                if bits & 8 != 0 {
+                    let mut t = Type::int();
+                    for i in 0..3 {
+                        if (mask >> i) & 1 == 0 {
+                            t = &t - &lit(i as i64);
+                        }
+                    }
+                    t
+                } else {
+                    let mut t = Type::empty();
+                    for i in 0..3 {
+                        if (mask >> i) & 1 != 0 {
+                            t = &t | &lit(i as i64);
+                        }
+                    }
+                    t
+                }
+            }
+        };
+        for _ in 0..40 {
+            Type::forget_emptiness();
+            let is_bool = (rng() & 1) != 0;
+            let all = if is_bool { Type::bool() } else { Type::int() };
+            let samples: &[Value] = if is_bool {
+                &bool_samples
+            } else {
+                &random_int_samples
+            };
+            let tag = next_tag();
+            let mut defs = vec![def(
+                &format!("L{tag}"),
+                Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
+            )];
+            let num_chains = 2 + (rng() % 3) as usize;
+            let mut endpoints = Vec::new();
+            let mut max_depth = 1usize;
+            for c in 0..num_chains {
+                let depth = 1 + (rng() % 4) as usize;
+                max_depth = max_depth.max(depth);
+                let allow_nil = (rng() & 1) != 0;
+                for k in 1..=depth {
+                    let h = head_for(rng(), is_bool);
+                    let prev = if k == 1 { 0 } else { defs.len() - 1 };
+                    let step = cons(Expr::Type(h), r(prev));
+                    let body = if allow_nil && ((rng() & 1) != 0 || k == 1) {
+                        Expr::Union(vec![nil(), step])
+                    } else {
+                        step
+                    };
+                    defs.push(def(&format!("C{c}_{k}{tag}"), body));
+                }
+                endpoints.push(defs.len() - 1);
+            }
+            let ts = Group::new(defs).unwrap().instance(vec![]);
+            let u = endpoints
+                .iter()
+                .map(|&i| &ts[i])
+                .fold(Type::empty(), |u, t| &u | t);
+            let l = list_named(all, &tag);
+            let t = &l - &u;
+            let inhab = list_oracle_inhabited(&t, samples, max_depth + 1);
+            let want = if inhab {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            assert_eq!(t.verdict(), want, "random chain seed={seed:#x}");
+            assert_eq!(t.is_empty(), !inhab, "is_empty random chain seed={seed:#x}");
+        }
+    });
+}
+
+#[test]
+fn lists_by_the_place_from_the_front_verdicts_are_independent_of_order() {
+    big(|| {
+        let int_samples = [Value::Int(0), Value::Int(1)];
+        let mut tag_id = 0usize;
+        let mut next_tag = || {
+            tag_id += 1;
+            format!("_ord{tag_id}")
+        };
+        for n in 2..=6 {
+            for skip in [None, Some(1), Some(n / 2), Some(n)] {
+                let tag_base = next_tag();
+                let want = {
+                    Type::forget_emptiness();
+                    let (l, u) = rfx_family(n, skip, n, &Type::int(), &lit(1), false, &tag_base);
+                    let t = &l - &u;
+                    let v = t.verdict();
+                    let oracle = if list_oracle_inhabited(&t, &int_samples, n + 1) {
+                        Verdict::Inhabited
+                    } else {
+                        Verdict::Empty
+                    };
+                    assert_eq!(v, oracle, "base order n={n} skip={skip:?}");
+                    v
+                };
+
+                // Test permutations of both Group definition indices and union operand order,
+                // including staggered chains sharing `Fd` and holes chains.
+                for perm_kind in 0..4 {
+                    Type::forget_emptiness();
+                    let tag = next_tag();
+                    let mut defs = vec![def(
+                        &format!("L{tag}"),
+                        Expr::Union(vec![nil(), cons(int(), r(0))]),
+                    )];
+                    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+                    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(int(), r(i - 1)))));
+                    let not_one = Expr::Type(&Type::int() - &lit(1));
+                    defs.extend((1..=n).map(|k| {
+                        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+                        def(
+                            &format!("M{k}{tag}"),
+                            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+                        )
+                    }));
+                    let d = (n / 2).max(1);
+                    let ha = &Type::int() | &Type::atom("a");
+                    defs.push(def(&format!("P1{tag}"), cons(Expr::Type(ha.clone()), r(d))));
+                    defs.push(def(&format!("P2{tag}"), cons(Expr::Type(ha), r(2 * n + 1))));
+
+                    let k_len = defs.len();
+                    let mut perm: Vec<usize> = (0..k_len).collect();
+                    match perm_kind {
+                        0 => perm.reverse(),
+                        1 => perm.rotate_left(k_len / 2),
+                        2 => {
+                            perm = (0..k_len)
+                                .step_by(2)
+                                .chain((1..k_len).step_by(2))
+                                .collect();
+                        }
+                        _ => {
+                            perm[1..].reverse();
+                        }
+                    }
+                    let (pdefs, inv) = permute_defs(defs, &perm);
+                    let ts = Group::new(pdefs).unwrap().instance(vec![]);
+                    let mut u_indices: Vec<usize> = (1..=n)
+                        .filter(|&i| Some(i) != skip)
+                        .chain([2 * n])
+                        .collect();
+                    if d + 1 <= n && skip != Some(d + 1) {
+                        u_indices.push(2 * n + 1);
+                    }
+                    if d + 2 <= n && skip != Some(d + 2) {
+                        u_indices.push(2 * n + 2);
+                    }
+                    if perm_kind % 2 == 1 {
+                        u_indices.reverse();
+                    } else {
+                        let mid = u_indices.len() / 2;
+                        u_indices.rotate_left(mid);
+                    }
+                    let u = u_indices
+                        .iter()
+                        .map(|&old_i| &ts[inv[old_i]])
+                        .fold(Type::empty(), |acc, t| &acc | t);
+                    let l = list_named(Type::int(), &tag);
+                    let t = &l - &u;
+                    assert_eq!(
+                        t.verdict(),
+                        want,
+                        "order-independence n={n} skip={skip:?} perm_kind={perm_kind}"
+                    );
+                }
+            }
+        }
+    });
+}
+
+// Ported from the round-3 peer patch (oracle, order and scaling tests).
+// Independent finite-state oracle. A state is the set of still-matching negative
+// equations; the positive carrier is implicit. This explores every class, not
+// the sweep's selected class, and never calls emptiness or type membership.
+#[derive(Clone)]
+struct R3Node { stop: bool, mask: u64, next: usize }
+
+fn r3_spec(n: usize, m: usize, skip: usize, holes: usize, stagger: bool) -> (Vec<R3Node>, Vec<usize>, u64) {
+    let all = (1u64 << (n+3))-1;
+    let mut ns = vec![R3Node { stop:true,mask:all,next:0 }];
+    for i in 1..=n { ns.push(R3Node {stop:false,mask:if i==1 {2} else {all},next:if i==1 {0} else {i-1}}); }
+    for i in 1..=m { ns.push(R3Node {stop:true,mask:all^2,next:if i==1 {0} else {n+i-1}}); }
+    let mut roots: Vec<_> = (1..=n).filter(|&i|i!=skip).chain([n+m]).collect();
+    for k in 0..holes {
+        if stagger {
+            let b=ns.len();
+            ns.push(R3Node {stop:false,mask:all^(1 << (k+2)),next:1+k%n});
+            roots.push(b);
+            continue;
+        }
+        let a=ns.len();
+        ns.push(R3Node {stop:false,mask:all^(1 << (k+2)),next:1});
+        let b=ns.len();
+        ns.push(R3Node {stop:false,mask:all,next:a});
+        roots.push(b);
+    }
+    (ns,roots,all)
+}
+
+fn r3_oracle(ns: &[R3Node], roots: &[usize], all:u64) -> bool {
+    let mut root=roots.to_vec(); root.sort_unstable(); root.dedup();
+    let mut seen=BTreeSet::new(); let mut todo=vec![root];
+    while let Some(state)=todo.pop() {
+        if !seen.insert(state.clone()) {continue;}
+        if state.iter().all(|&i| !ns[i].stop) {return true;}
+        for bit in 0..64 {
+            if all & (1u64 << bit)==0 {continue;}
+            let mut next:Vec<_>=state.iter().filter(|&&i| ns[i].mask & (1u64<<bit)!=0).map(|&i|ns[i].next).collect();
+            next.sort_unstable(); next.dedup(); todo.push(next);
+        }
+    }
+    false
+}
+
+fn r3_build(ns:&[R3Node], roots:&[usize], all:u64, reverse:bool, tag:&str, mode:usize) -> Type {
+    let size=ns.len();
+    let index=|i|if reverse {size-1-i} else {i};
+    let mut defs=Vec::new();
+    for (i,nd) in ns.iter().enumerate() {
+        let mut h=if nd.mask&1!=0 {Type::int()} else {Type::empty()};
+        for bit in 1..64 {
+            if all & (1u64<<bit)==0 {continue;}
+            let v=lit(bit as i64);
+            if nd.mask & (1u64<<bit)!=0 {h=&h|&v;} else {h=&h-&v;}
+        }
+        if mode==1 {h=Type::tuple(vec![h,Type::int()]);}
+        if mode==2 {
+            h=Type::empty();
+            for (bit,value) in [(0,false),(1,true)] {
+                if nd.mask & (1<<bit)!=0 {h=&h | &Type::lit(&Value::Bool(value)).unwrap();}
+            }
+        }
+        let step=cons(Expr::Type(h),r(index(nd.next)));
+        let body=if nd.stop {
+            Expr::Union(if reverse {vec![step,nil()]} else {vec![nil(),step]})
+        } else {step};
+        defs.push(def(&format!("R3_{i}_{tag}"),body));
+    }
+    if reverse {defs.reverse();}
+    let ts=Group::new(defs).unwrap().instance(vec![]);
+    let mut order=roots.to_vec(); if reverse {order.reverse();}
+    let u=order.iter().fold(Type::empty(),|u,&i|&u|&ts[index(i)]);
+    &ts[index(0)]-&u
+}
+
+#[test]
+fn r3_cofinite_redundant_oracle_and_order() {
+    big(|| {
+        let mut cases=0;
+        for n in 1..=6 {
+            for m in 1..=n+2 {
+                for skip in 0..=n {
+                    for (mode,holes,stagger) in [(0,0,false),(0,1,false),(0,n,false),(1,0,false),(1,1,false),(1,n,false),(2,0,false),(0,n,true),(1,n,true)] {
+                        let (ns,roots,mut all)=r3_spec(n,m,skip,holes,stagger);
+                        if mode==2 {all=3;}
+                        let expected=if r3_oracle(&ns,&roots,all) {Verdict::Inhabited} else {Verdict::Empty};
+                        let tag=format!("{n}_{m}_{skip}_{holes}_{stagger}");
+                        let a=r3_build(&ns,&roots,all,false,&tag,mode);
+                        let b=r3_build(&ns,&roots,all,true,&tag,mode);
+                        Type::forget_emptiness();
+                        let av=a.verdict(); let bv=b.verdict();
+                        assert_eq!(av,expected,"oracle n={n} m={m} skip={skip} holes={holes} mode={mode} stagger={stagger}");
+                        assert_eq!(bv,av,"definition/union order {tag}");
+                        assert_eq!(a.is_empty(),expected==Verdict::Empty,"is_empty {tag}");
+                        Type::forget_emptiness();
+                        assert_eq!(b.verdict(),bv,"b first {tag}");
+                        assert_eq!(a.verdict(),av,"a second {tag}");
+                        cases+=1;
+                    }
+                }
+            }
+        }
+        eprintln!("R3 cofinite oracle/order cases={cases}");
+    });
+}
+
+#[test]
+fn r3_stress_scale_prebuilt() {
+    for (case,want) in [
+        ("bool",Verdict::Empty),
+        ("boolfar",Verdict::Inhabited),
+        ("chain",Verdict::Empty),
+        ("chainfar",Verdict::Inhabited),
+        ("clmanyheads",Verdict::Empty),
+        ("clmanyheadsfar",Verdict::Inhabited),
+        ("clstagger",Verdict::Empty),
+        ("clstaggerfar",Verdict::Inhabited),
+        ("cxstagger",Verdict::Empty),
+        ("cxstaggerfar",Verdict::Inhabited),
+        ("cxstaggerwide",Verdict::Empty),
+        ("cxstaggerwidefar",Verdict::Inhabited),
+        ("emitheads",Verdict::Empty),
+        ("emitheadsfar",Verdict::Inhabited),
+        ("far",Verdict::Inhabited),
+        ("front",Verdict::Empty),
+        ("groups",Verdict::Empty),
+        ("groupsfar",Verdict::Inhabited),
+        ("groupsholes",Verdict::Empty),
+        ("groupsholesfar",Verdict::Inhabited),
+        ("groupssingles",Verdict::Empty),
+        ("groupssinglesfar",Verdict::Inhabited),
+        ("manyheads",Verdict::Empty),
+        ("manyheadsfar",Verdict::Inhabited),
+        ("meet",Verdict::Empty),
+        ("mlong",Verdict::Inhabited),
+        ("mshort",Verdict::Empty),
+        ("multi",Verdict::Empty),
+        ("multifar",Verdict::Inhabited),
+        ("one",Verdict::Empty),
+        ("onetwo",Verdict::Inhabited),
+        ("pair",Verdict::Empty),
+        ("pairfar",Verdict::Inhabited),
+        ("skip1",Verdict::Inhabited),
+        ("skipmid",Verdict::Inhabited),
+        ("split",Verdict::Empty),
+        ("splitfar",Verdict::Inhabited),
+        ("stagger",Verdict::Empty),
+        ("staggerfar",Verdict::Inhabited),
+        ("tuple",Verdict::Empty),
+        ("tuplefar",Verdict::Inhabited),
+        ("tupleflip",Verdict::Empty),
+        ("tupleflipfar",Verdict::Inhabited),
+    ] {
+        big(move || {
+            let inputs:Vec<_>=[8,64].into_iter().map(|n| (n,rfx_case(case,n,&format!("_scale3_{case}_{n}")))).collect();
+            scaling::check(case,8,|n| {
+                Type::forget_emptiness();
+                let t=&inputs.iter().find(|(k,_)|*k==n).unwrap().1;
+                assert_eq!(t.verdict(),want,"{case} n={n}");
+            });
+        });
+    }
+}
+// Test input construction only. The kernel reads neither this flag nor any
+// environment variable. Reindex all references, then restore the returned
+// vector's indexing so every caller denotes the same equations.
+thread_local! { static R3_REVERSE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+fn r3_instance(mut defs: Vec<Def>) -> Vec<Type> {
+    let reverse=R3_REVERSE.with(|x|x.get());
+    if reverse {
+        let count=defs.len();
+        for d in &mut defs {
+            let mut todo=vec![&mut d.body];
+            while let Some(e)=todo.pop() {
+                match e {
+                    Expr::Ref(i,args)=>{*i=count-1-*i;todo.extend(args.iter_mut());},
+                    Expr::Union(xs)=>{xs.reverse();todo.extend(xs.iter_mut());},
+                    Expr::And(xs)|Expr::Tuple(xs)|Expr::Atom(_,xs)=>todo.extend(xs.iter_mut()),
+                    Expr::Not(x)=>todo.push(x),
+                    Expr::Diff(a,b)=>{todo.push(a);todo.push(b);},
+                    Expr::Morphism(a,b,c)=>{todo.push(a);todo.push(b);todo.push(c);},
+                    Expr::Type(_)|Expr::Param(_)=>{},
+                }
+            }
+        }
+        defs.reverse();
+    }
+    let mut ts=Group::new(defs).unwrap().instance(vec![]);
+    if reverse {ts.reverse();}
+    ts
+}
+fn r3_union(a:&Type,b:&Type)->Type {
+    if R3_REVERSE.with(|x|x.get()) {b|a} else {a|b}
+}
+
+#[test]
+fn r3_all_probe_and_family_orders() {
+    big(|| {
+        let cases=["front","far","skip1","skipmid","bool","boolfar","mshort","mlong","split","splitfar","meet","pair","pairfar","tuple","tuplefar","tupleflip","tupleflipfar","multi","multifar","groups","groupsfar","groupsholes","groupsholesfar","groupssingles","groupssinglesfar","cxstagger","cxstaggerfar","cxstaggerwide","cxstaggerwidefar","clmanyheads","clmanyheadsfar","clstagger","clstaggerfar","clstaggerholes","clcofront","clcofrontones","clcofrontsame","clcofrontsameones","clcofrontsameblock","clcofrontshared","emitheads","emitheadsfar","manyheads","manyheadsfar","stagger","staggerfar","chain","chainfar","one","onetwo","end","boundaryinside","boundaryoutside","cxprivateheads","cxprivateheadsfar","manyheadsv0","manyheadsfarv0"];
+        let mut count=0;
+        for case in cases {
+            for n in 3..=6 {
+                let tag=format!("_order3_{case}_{n}");
+                R3_REVERSE.with(|x|x.set(false));
+                let a=rfx_case(case,n,&tag);
+                R3_REVERSE.with(|x|x.set(true));
+                let b=rfx_case(case,n,&tag);
+                R3_REVERSE.with(|x|x.set(false));
+                Type::forget_emptiness(); let av=a.verdict();let bv=b.verdict();
+                assert_eq!(av,bv,"probe definition/operand order {case} {n}");
+                Type::forget_emptiness(); assert_eq!(b.verdict(),bv);assert_eq!(a.verdict(),av);
+                count+=1;
+            }
+        }
+        for (all,one) in [(Type::int(),lit(1)),(Type::bool(),Type::lit(&Value::Bool(true)).unwrap()),(Type::tuple(vec![Type::int(),Type::int()]),Type::tuple(vec![lit(1),Type::int()]))] {
+            for n in 1..=6 {
+                for skip in std::iter::once(None).chain((1..=n).map(Some)) {
+                    for m in 1..=n+2 {
+                        for split in [false,true] {
+                            let tag=format!("_orderf3_{count}");
+                            R3_REVERSE.with(|x|x.set(false));
+                            let (l,u)=rfx_family(n,skip,m,&all,&one,split,&tag);let a=&l-&u;
+                            R3_REVERSE.with(|x|x.set(true));
+                            let (l,u)=rfx_family(n,skip,m,&all,&one,split,&tag);let b=&l-&u;
+                            R3_REVERSE.with(|x|x.set(false));
+                            Type::forget_emptiness();let av=a.verdict();let bv=b.verdict();
+                            assert_eq!(av,bv,"family definitions/operands n={n} skip={skip:?} m={m} split={split}");
+                            Type::forget_emptiness();assert_eq!(b.verdict(),bv);assert_eq!(a.verdict(),av);
+                            count+=1;
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("R3 all-probe/family order cases={count}");
+    });
+}
+
+#[test]
+#[ignore]
+fn r3_cofinite_survey() {
+    big(|| {
+        let (mut bad, mut cases) = (0, 0);
+        for n in 1..=6 {
+            for m in 1..=n+2 {
+                for skip in 0..=n {
+                    for (mode,holes,stagger) in [(0,0,false),(0,1,false),(0,n,false),(1,0,false),(1,1,false),(1,n,false),(2,0,false),(0,n,true),(1,n,true)] {
+                        let (ns,roots,mut all)=r3_spec(n,m,skip,holes,stagger);
+                        if mode==2 {all=3;}
+                        let expected=if r3_oracle(&ns,&roots,all) {Verdict::Inhabited} else {Verdict::Empty};
+                        let tag=format!("s{n}_{m}_{skip}_{holes}_{stagger}_{mode}");
+                        let a=r3_build(&ns,&roots,all,false,&tag,mode);
+                        let b=r3_build(&ns,&roots,all,true,&tag,mode);
+                        Type::forget_emptiness();
+                        let av=a.verdict(); Type::forget_emptiness(); let bv=b.verdict();
+                        cases+=1;
+                        if av!=expected || bv!=expected {
+                            bad+=1;
+                            eprintln!("MISMATCH n={n} m={m} skip={skip} mode={mode} holes={holes} stagger={stagger} want={expected:?} fwd={av:?} rev={bv:?}");
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("survey cases={cases} mismatches={bad}");
+    });
+}
+
+// ---- Codex R4 tests and helpers, verbatim ----
+
+#[test]
+fn codex_r3_variants_agree_with_the_oracle() {
+    big(|| {
+        let int_ty = Type::int();
+        let one_ty = lit(1);
+        let bool_ty = Type::bool();
+        let yes_ty = Type::lit(&Value::Bool(true)).unwrap();
+        let tup_all = Type::tuple(vec![int_ty.clone(), int_ty.clone()]);
+        let tup_one = Type::tuple(vec![one_ty.clone(), int_ty.clone()]);
+
+        let carriers: [(&str, &Type, &Type, Vec<Value>); 3] = [
+            ("int", &int_ty, &one_ty, vec![Value::Int(0), Value::Int(1)]),
+            (
+                "bool",
+                &bool_ty,
+                &yes_ty,
+                vec![Value::Bool(false), Value::Bool(true)],
+            ),
+            (
+                "tuple",
+                &tup_all,
+                &tup_one,
+                vec![
+                    Value::tuple(vec![Value::Int(0), Value::Int(0)]),
+                    Value::tuple(vec![Value::Int(1), Value::Int(0)]),
+                ],
+            ),
+        ];
+
+        let mut seq = 0usize;
+        for (cname, all, one, alpha) in &carriers {
+            for n in 1..=6 {
+                for skip in std::iter::once(None).chain((1..=n).map(Some)) {
+                    for m in 1..=n + 2 {
+                        for split in [false, true] {
+                            seq += 1;
+                            Type::forget_emptiness();
+                            let tag = format!("_or_{cname}_{seq}");
+                            let (l, u) = rfx_family(n, skip, m, all, one, split, &tag);
+                            let t = &l - &u;
+                            let inhab = oracle_inhabited(&t, alpha, n.max(m) + 1);
+                            let want = if inhab {
+                                Verdict::Inhabited
+                            } else {
+                                Verdict::Empty
+                            };
+                            assert_eq!(
+                                t.verdict(),
+                                want,
+                                "carrier={cname} n={n} skip={skip:?} m={m} split={split}"
+                            );
+                            assert_eq!(
+                                t.is_empty(),
+                                !inhab,
+                                "is_empty carrier={cname} n={n} skip={skip:?} m={m} split={split}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        let int_alpha = [Value::Int(0), Value::Int(1)];
+        let multi_alpha = [Value::Int(0), Value::Int(1), Value::Int(2)];
+        let group_alpha = [Value::Int(0), Value::Int(1), Value::atom("a1")];
+        for n in 2..=6 {
+            for m in 1..=n + 1 {
+                seq += 1;
+                Type::forget_emptiness();
+                let tag = format!("_orm_{seq}");
+                let l = list_named(Type::int(), &tag);
+                let t = &l - &rfx_multi(n, m, &tag);
+                let inhab = oracle_inhabited(&t, &multi_alpha, n.max(m) + 1);
+                let want = if inhab {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(t.verdict(), want, "multi n={n} m={m}");
+                assert_eq!(t.is_empty(), !inhab, "multi is_empty n={n} m={m}");
+            }
+            for far in [false, true] {
+                for which in ["chain", "groups", "one"] {
+                    seq += 1;
+                    Type::forget_emptiness();
+                    let tag = format!("_orcg_{seq}");
+                    let t = match (which, far) {
+                        ("chain", false) => rfx_case("chain", n, &tag),
+                        ("chain", true) => rfx_case("chainfar", n, &tag),
+                        ("groups", false) => rfx_case("groups", n, &tag),
+                        ("groups", true) => rfx_case("groupsfar", n, &tag),
+                        ("one", false) => rfx_case("one", n, &tag),
+                        _ => rfx_case("onetwo", n, &tag),
+                    };
+                    let alpha: &[Value] = if which == "groups" {
+                        &group_alpha
+                    } else if which == "one" {
+                        &multi_alpha
+                    } else {
+                        &int_alpha
+                    };
+                    let inhab = oracle_inhabited(&t, alpha, n + 1);
+                    let want = if inhab {
+                        Verdict::Inhabited
+                    } else {
+                        Verdict::Empty
+                    };
+                    assert_eq!(t.verdict(), want, "{which} far={far} n={n}");
+                    assert_eq!(t.is_empty(), !inhab, "{which} is_empty far={far} n={n}");
+                }
+            }
+            for s1 in [None, Some(1), Some(n / 2), Some(n)] {
+                for s2 in [None, Some(1), Some(n - 1), Some(n)] {
+                    seq += 1;
+                    Type::forget_emptiness();
+                    let tag1 = format!("_ormp1_{seq}");
+                    let tag2 = format!("_ormp2_{seq}");
+                    let (l1, u1) = rfx_family(n, s1, n, &int_ty, &one_ty, false, &tag1);
+                    let (l2, u2) = rfx_family(n, s2, n, &int_ty, &one_ty, false, &tag2);
+                    let t1 = &l1 - &u1;
+                    let t2 = &l2 - &u2;
+                    let i1 = oracle_inhabited(&t1, &int_alpha, n + 1);
+                    let i2 = oracle_inhabited(&t2, &int_alpha, n + 1);
+                    let meet = &t1 & &t2;
+                    let i_meet = oracle_inhabited(&meet, &int_alpha, n + 1);
+                    assert_eq!(
+                        meet.verdict(),
+                        if i_meet {
+                            Verdict::Inhabited
+                        } else {
+                            Verdict::Empty
+                        },
+                        "meet n={n} s1={s1:?} s2={s2:?}"
+                    );
+                    assert_eq!(meet.is_empty(), !i_meet, "meet is_empty n={n}");
+                    let pair = Type::tuple(vec![t1, t2]);
+                    let i_pair = i1 && i2;
+                    assert_eq!(
+                        pair.verdict(),
+                        if i_pair {
+                            Verdict::Inhabited
+                        } else {
+                            Verdict::Empty
+                        },
+                        "pair n={n} s1={s1:?} s2={s2:?}"
+                    );
+                    assert_eq!(pair.is_empty(), !i_pair, "pair is_empty n={n}");
+                }
+            }
+        }
+
+        // Random small chain families over `int` with predicates from `{1, 2, 1|2, int\1, int\2, int\(1|2), int}`.
+        let preds = [
+            lit(1),
+            lit(2),
+            &lit(1) | &lit(2),
+            &Type::int() - &lit(1),
+            &Type::int() - &lit(2),
+            &Type::int() - &(&lit(1) | &lit(2)),
+            Type::int(),
+        ];
+        let mut rng = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next_u64 = || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        for trial in 0..120 {
+            Type::forget_emptiness();
+            let tag = format!("_orr_{trial}");
+            let mut defs = vec![def(
+                &format!("L{tag}"),
+                Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+            )];
+            let num_neg = 1 + (next_u64() % 5) as usize;
+            let mut neg_roots = Vec::new();
+            let mut max_d = 1usize;
+            for c in 0..num_neg {
+                let d = 1 + (next_u64() % 5) as usize;
+                max_d = max_d.max(d);
+                let leaf_h = preds[(next_u64() as usize) % preds.len()].clone();
+                let leaf_stop = (next_u64() & 1) != 0;
+                let step_h = if (next_u64() % 4) == 0 {
+                    preds[(next_u64() as usize) % preds.len()].clone()
+                } else {
+                    Type::int()
+                };
+                let step_stop = (next_u64() & 1) != 0;
+                let base_idx = defs.len();
+                let leaf_body = if leaf_stop {
+                    Expr::Union(vec![nil(), cons(Expr::Type(leaf_h), r(0))])
+                } else {
+                    cons(Expr::Type(leaf_h), r(0))
+                };
+                defs.push(def(&format!("N{c}_1{tag}"), leaf_body));
+                for k in 2..=d {
+                    let step_body = if step_stop {
+                        Expr::Union(vec![
+                            nil(),
+                            cons(Expr::Type(step_h.clone()), r(base_idx + k - 2)),
+                        ])
+                    } else {
+                        cons(Expr::Type(step_h.clone()), r(base_idx + k - 2))
+                    };
+                    defs.push(def(&format!("N{c}_{k}{tag}"), step_body));
+                }
+                neg_roots.push(base_idx + d - 1);
+            }
+            let reverse_defs = defs.clone();
+            let ts = r3_instance(defs);
+            let u = neg_roots
+                .iter()
+                .map(|&i| &ts[i])
+                .fold(Type::empty(), |acc, x| &acc | x);
+            let t = &ts[0] - &u;
+            let inhab = oracle_inhabited(&t, &multi_alpha, max_d + 1);
+            match t.verdict() {
+                Verdict::Empty => assert!(!inhab, "random trial {trial} unsound Empty"),
+                Verdict::Inhabited => assert!(inhab, "random trial {trial} unsound Inhabited"),
+                Verdict::Refused(_) => {}
+            }
+            if t.is_empty() {
+                assert!(!inhab, "random trial {trial} unsound is_empty=true");
+            }
+            let original = t.verdict();
+            R3_REVERSE.with(|x| x.set(true));
+            let rev = r3_instance(reverse_defs);
+            let ru = neg_roots.iter().fold(Type::empty(), |u, &i| r3_union(&u, &rev[i]));
+            let rt = &rev[0] - &ru;
+            R3_REVERSE.with(|x| x.set(false));
+            Type::forget_emptiness();
+            assert_eq!(rt.verdict(), original, "random definition/union order {trial}");
+            assert_eq!(t.verdict(), original, "random query order {trial}");
+        }
+    });
+}
+
+fn oracle_inhabited(t: &Type, alphabet: &[Value], max_len: usize) -> bool {
+    let mut lists = vec![Value::atom("nil")];
+    if t.contains(&lists[0]) {
+        return true;
+    }
+    for _ in 1..=max_len {
+        let mut next = Vec::with_capacity(alphabet.len() * lists.len());
+        for a in alphabet {
+            for tail in &lists {
+                let v = Value::atom_with("cons", vec![a.clone(), tail.clone()]);
+                if t.contains(&v) {
+                    return true;
+                }
+                next.push(v);
+            }
+        }
+        lists = next;
+    }
+    false
+}
+
+// Inside the short-escape class even with one excluded value repeated at many heads.
+// Outside removes the holes; it is exactly the ordinary Empty front family.
+fn r4_boundary(n: usize, holes: bool, tag: &str) -> Type {
+    let mut defs=vec![def(&format!("L{tag}"), Expr::Union(vec![nil(),cons(int(),r(0))]))];
+    defs.push(def(&format!("F1{tag}"),cons(Expr::Type(lit(1)),r(0))));
+    for i in 2..=n {
+        let h=if holes {&Type::int()-&lit(4)} else {Type::int()};
+        defs.push(def(&format!("F{i}{tag}"),cons(Expr::Type(h),r(i-1))));
+    }
+    for i in 1..=n {
+        defs.push(def(&format!("M{i}{tag}"),Expr::Union(vec![nil(),cons(Expr::Type(&Type::int()-&lit(1)),r(if i==1 {0} else {n+i-1}))])));
+    }
+    let ts=r3_instance(defs);
+    let u=(1..=n).chain([2*n]).fold(Type::empty(),|u,i|r3_union(&u,&ts[i]));
+    u
+}
+
+#[test]
+#[ignore]
+fn r4_diagnostic_routes_and_head_width() {
+    big(|| {
+        for case in ["front","emitheads","emitheadsfar","cxstagger","clcofront","clstaggerholes"] {
+            let t=rfx_case(case,8,&format!("route_{case}"));
+            eprintln!("route {case} {:?}",t.sweep_verdict());
+        }
+        for width in [4,8,12,16] {
+            let all=Type::tuple(vec![Type::bool();width]);
+            let mut coords=vec![Type::bool();width];
+            coords[0]=Type::lit(&Value::Bool(true)).unwrap();
+            let one=Type::tuple(coords);
+            let (l,u)=rfx_family(2,Some(2),2,&all,&one,false,&format!("width_{width}"));
+            let t=&l-&u;
+            Type::forget_emptiness();
+            let mut got=None;
+            let w=scaling::Meter::new().work(||got=Some(t.verdict()));
+            eprintln!("headwidth {width} {:?} units {} bytes {}",got,w.units,w.bytes);
+            assert_eq!(got,Some(Verdict::Inhabited));
+        }
+    });
+}
+
+#[test]
+fn r4_exact_classes_random_and_short_escape() {
+    big(|| {
+        let mut seed=0x9183ab12u64;
+        let mut rng=|| {seed^=seed<<13;seed^=seed>>7;seed^=seed<<17;seed};
+        let mut cases=0;
+        for trial in 0..200 {
+            let n=2+(rng()%4) as usize;
+            let m=1+(rng()%(n+2) as u64) as usize;
+            let (mut ns,roots,all)=r3_spec(n,m,0,n,true);
+            // Bit zero is a fresh integer; bits 1..=n+2 are all listed literals.
+            for nd in &mut ns[1..] { if rng()%3==0 {nd.mask=rng()&all;} }
+            let inhab=r3_oracle(&ns,&roots,all);
+            let a=r3_build(&ns,&roots,all,false,&format!("r4random{trial}"),0);
+            let b=r3_build(&ns,&roots,all,true,&format!("r4random{trial}"),0);
+            let av=a.sweep_verdict(); let bv=b.sweep_verdict();
+            assert_eq!(av,bv,"sweep definition order trial {trial}");
+            for t in [&a,&b] {
+                Type::forget_emptiness();
+                match t.verdict() {
+                    Verdict::Empty=>assert!(!inhab,"oracle has witness {trial}"),
+                    Verdict::Inhabited=>assert!(inhab,"oracle empty {trial}"),
+                    Verdict::Refused(_)=>{},
+                }
+                assert!(!t.is_empty() || !inhab);
+            }
+            cases+=1;
+        }
+        for n in 2..=6 {
+            for (case,want) in [("clcofront",Verdict::Inhabited),("clstaggerholes",Verdict::Inhabited),("boundaryinside",Verdict::Inhabited),("boundaryoutside",Verdict::Empty)] {
+                let tag=format!("r4boundary{n}{case}");
+                R3_REVERSE.with(|v|v.set(false)); let a=rfx_case(case,n,&tag);
+                R3_REVERSE.with(|v|v.set(true)); let b=rfx_case(case,n,&tag);
+                R3_REVERSE.with(|v|v.set(false));
+                assert_eq!(a.sweep_verdict(),Some(want),"{case} {n}");
+                assert_eq!(b.sweep_verdict(),Some(want),"reverse {case} {n}");
+                Type::forget_emptiness();assert_eq!(a.verdict(),want);assert_eq!(b.verdict(),want);
+                Type::forget_emptiness();assert_eq!(b.verdict(),want);assert_eq!(a.verdict(),want);
+                cases+=1;
+            }
+        }
+        eprintln!("R4 exact-class random/boundary cases={cases}");
+    });
+}
+
+fn r4_private_heads(n: usize, far: bool, tag: &str) -> Type {
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut roots = Vec::new();
+    for i in 1..=n {
+        let h = if !far && i == n { Type::int() } else { &Type::int() - &lit(i as i64) };
+        let leaf = defs.len();
+        defs.push(def(&format!("H{i}{tag}"), cons(Expr::Type(h), r(0))));
+        for j in 1..i {
+            let prev = defs.len() - 1;
+            defs.push(def(&format!("P{i}_{j}{tag}"), cons(Expr::Type(Type::int()), r(prev))));
+        }
+        roots.push(leaf + i - 1);
+    }
+    // A positive uniform prefix supplies the minimum length requirement.
+    let mut positive = 0;
+    for i in (1..=n).rev() {
+        let idx = defs.len();
+        defs.push(def(&format!("Q{i}{tag}"), cons(Expr::Type(Type::int()), r(positive))));
+        positive = idx;
+    }
+    let ts = r3_instance(defs);
+    let u = roots.iter().fold(Type::empty(), |u, &i| r3_union(&u, &ts[i]));
+    &(&ts[0] & &ts[positive]) - &u
+}
+
+fn rfx_manyheads_v0(n: usize, far: bool, tag: &str) -> Type {
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut roots = Vec::new();
+    for i in 1..=n {
+        let h = if !far && i == n { Type::int() } else { &Type::int() - &lit(i as i64) };
+        let leaf = defs.len();
+        defs.push(def(&format!("H{i}{tag}"), cons(Expr::Type(h), r(0))));
+        for j in 1..i {
+            let prev = defs.len() - 1;
+            defs.push(def(&format!("P{i}_{j}{tag}"), cons(Expr::Type(Type::int()), r(prev))));
+        }
+        roots.push(leaf + i - 1);
+    }
+    // A positive uniform prefix supplies the minimum length requirement.
+    let mut positive = 0;
+    for i in (1..=n).rev() {
+        let idx = defs.len();
+        defs.push(def(&format!("Q{i}{tag}"), cons(Expr::Type(Type::int()), r(positive))));
+        positive = idx;
+    }
+    let ts = r3_instance(defs);
+    let u = roots.iter().fold(Type::empty(), |u, &i| r3_union(&u, &ts[i]));
+    &ts[positive] - &u
+}
+
+
+// ---- Gemini R4 tests and helpers ----
+
+/// Q2 boundary families for the Disjoint-Hole Spine class:
+/// - `overlap = false` (`clstaggerholesin`): just inside the class (link `2n` excludes `{2n+2, 2n+3}`,
+///   disjoint from all earlier links' holes `{3}..{2n+1}`; decided in O(n log n)).
+/// - `overlap = true` (`clstaggerholesout`): just outside the class (link `2n` excludes `{3}`,
+///   overlapping link `1`'s hole `{3}`; rejected by the disjoint-hole check in O(n log n) and left
+///   to the base search).
+fn rfx_cl_stagger_boundary(n: usize, overlap: bool, tag: &str) -> Type {
+    let m = 2 * n;
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
+    defs.extend((1..=m).map(|i| {
+        let h = if i == m {
+            if overlap {
+                &Type::int() - &lit(3)
+            } else {
+                &(&Type::int() - &lit(m as i64 + 2)) - &lit(m as i64 + 3)
+            }
+        } else {
+            &Type::int() - &lit(i as i64 + 2)
+        };
+        def(&format!("Y{i}{tag}"), cons(Expr::Type(h), r(i + 1)))
+    }));
+    defs.push(def(
+        &format!("Y{}{tag}", m + 1),
+        cons(Expr::Type(lit(1)), r(0)),
+    ));
+    defs.extend((1..=m + 1).map(|j| {
+        let h = if j <= n + 1 {
+            Type::int()
+        } else {
+            &Type::int() - &lit(1)
+        };
+        let next = if j == m + 1 { r(0) } else { r(m + 2 + j) };
+        def(
+            &format!("N{j}{tag}"),
+            Expr::Union(vec![nil(), cons(Expr::Type(h), next)]),
+        )
+    }));
+    let ts = Group::new(defs).unwrap().instance(vec![]);
+    (1..=n)
+        .map(|k| &ts[k])
+        .chain([&ts[m + 2]])
+        .fold(Type::empty(), |u, t| &u | t)
+}
+
+#[test]
+fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
+    big(|| {
+        let int_samples = [Value::Int(0), Value::Int(1), Value::Int(2)];
+        let bool_samples = [Value::Bool(false), Value::Bool(true)];
+        let bool_tys = [
+            Type::lit(&Value::Bool(false)).unwrap(),
+            Type::lit(&Value::Bool(true)).unwrap(),
+        ];
+        let mut tag_id = 0usize;
+        let mut next_tag = || {
+            tag_id += 1;
+            format!("_or{tag_id}")
+        };
+
+        for n in 1..=5 {
+            for skip_idx in 0..=n {
+                let skip = (skip_idx > 0).then_some(skip_idx);
+                for m in 1..=n + 1 {
+                    for split in [false, true] {
+                        for (is_bool, all, one) in [
+                            (false, Type::int(), lit(1)),
+                            (true, Type::bool(), bool_tys[1].clone()),
+                        ] {
+                            Type::forget_emptiness();
+                            let tag = next_tag();
+                            let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
+                            let t = &l - &u;
+                            let samples: &[Value] = if is_bool {
+                                &bool_samples[..]
+                            } else {
+                                &int_samples[..2]
+                            };
+                            let max_len = n.max(m) + 1;
+                            let inhab = list_oracle_inhabited(&t, samples, max_len);
+                            let want = if inhab {
+                                Verdict::Inhabited
+                            } else {
+                                Verdict::Empty
+                            };
+                            assert_eq!(
+                                t.verdict(),
+                                want,
+                                "rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool}"
+                            );
+                            assert_eq!(
+                                t.is_empty(),
+                                !inhab,
+                                "is_empty rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Meet and pair combinations at size n.
+            for (s1, s2) in [(None, Some(n)), (Some(1), Some(n)), (Some(n), Some(n))] {
+                Type::forget_emptiness();
+                let (t1, t2) = (next_tag(), next_tag());
+                let (l1, u1) = rfx_family(n, s1, n, &Type::int(), &lit(1), false, &t1);
+                let (l2, u2) = rfx_family(n, s2, n, &Type::int(), &lit(1), false, &t2);
+                let f1 = &l1 - &u1;
+                let f2 = &l2 - &u2;
+                let meet = &f1 & &f2;
+                let want_meet = if list_oracle_inhabited(&meet, &int_samples[..2], n + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(meet.verdict(), want_meet, "meet n={n} s1={s1:?} s2={s2:?}");
+
+                let pair = Type::tuple(vec![f1, f2]);
+                let want_pair = if list_oracle_inhabited(&(&l1 - &u1), &int_samples[..2], n + 1)
+                    && list_oracle_inhabited(&(&l2 - &u2), &int_samples[..2], n + 1)
+                {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(pair.verdict(), want_pair, "pair n={n} s1={s1:?} s2={s2:?}");
+            }
+
+            // Multi, groups, groupsholes, manyheads, stagger, and chain variants at small sizes.
+            for m in 1..=n + 1 {
+                Type::forget_emptiness();
+                let tag = next_tag();
+                let l = list_named(Type::int(), &tag);
+                let t = &l - &rfx_multi(n, m, &tag);
+                let want = if list_oracle_inhabited(&t, &int_samples, n.max(m) + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(t.verdict(), want, "rfx_multi n={n} m={m}");
+            }
+            if n >= 2 {
+                let mh_samples: Vec<Value> = (0..=(n as i64 + 3)).map(Value::Int).collect();
+                for far in [false, true] {
+                    for case in [
+                        if far { "groupsfar" } else { "groups" },
+                        if far { "groupsholesfar" } else { "groupsholes" },
+                        if far { "groupssinglesfar" } else { "groupssingles" },
+                        if far { "manyheadsfar" } else { "manyheads" },
+                        if far { "staggerfar" } else { "stagger" },
+                        if far { "chainfar" } else { "chain" },
+                        if far { "cxstaggerfar" } else { "cxstagger" },
+                        if far { "cxstaggerwidefar" } else { "cxstaggerwide" },
+                        if far { "emitheadsfar" } else { "emitheads" },
+                        if far { "clmanyheadsfar" } else { "clmanyheads" },
+                    ] {
+                        if n <= 3 || !matches!(case, "manyheads" | "manyheadsfar" | "groupsholes" | "groupsholesfar" | "groupssingles" | "groupssinglesfar" | "cxstagger" | "cxstaggerfar" | "emitheads" | "emitheadsfar" | "clmanyheads" | "clmanyheadsfar") {
+                            Type::forget_emptiness();
+                            let tag = next_tag();
+                            let t = rfx_case(case, n, &tag);
+                            let samples = if matches!(case, "manyheads" | "manyheadsfar" | "groupsholes" | "groupsholesfar" | "groupssingles" | "groupssinglesfar" | "cxstagger" | "cxstaggerfar" | "emitheads" | "emitheadsfar" | "clmanyheads" | "clmanyheadsfar") {
+                                &mh_samples[..]
+                            } else {
+                                &int_samples[..2]
+                            };
+                            let want = if list_oracle_inhabited(&t, samples, n + 1) {
+                                Verdict::Inhabited
+                            } else {
+                                Verdict::Empty
+                            };
+                            assert_eq!(t.sweep_verdict(), Some(want), "sweep {case} n={n}");
+                            Type::forget_emptiness();
+                            assert_eq!(t.verdict(), want, "{case} n={n}");
+                        }
+                    }
+                }
+                if n <= 2 {
+                    let stag_samples: Vec<Value> =
+                        (0..=(2 * n as i64 + 3)).map(Value::Int).collect();
+                    for case in [
+                        "clstagger",
+                        "clstaggerfar",
+                        "clstaggerholes",
+                        "clstaggerholesin",
+                        "clstaggerholesout",
+                        "clcofront",
+                    ] {
+                        Type::forget_emptiness();
+                        let tag = next_tag();
+                        let t = rfx_case(case, n, &tag);
+                        let samples = if matches!(case, "clstagger" | "clstaggerfar") {
+                            &int_samples[..2]
+                        } else if case == "clcofront" {
+                            &mh_samples[..]
+                        } else {
+                            &stag_samples[..]
+                        };
+                        let max_l = if case == "clcofront" { n + 1 } else { 2 * n + 1 };
+                        let want = if list_oracle_inhabited(&t, samples, max_l) {
+                            Verdict::Inhabited
+                        } else {
+                            Verdict::Empty
+                        };
+                        if case == "clstaggerholesout" {
+                            // The prefix chains leave this case to the search (Gemini R4); in the
+                            // combined tree the front sweep decides it.
+                            assert_eq!(t.chain_verdict(), None, "chains {case} n={n}");
+                            assert_eq!(t.sweep_verdict(), Some(want), "sweep {case} n={n}");
+                        } else {
+                            assert_eq!(t.sweep_verdict(), Some(want), "sweep {case} n={n}");
+                        }
+                        Type::forget_emptiness();
+                        assert_eq!(t.verdict(), want, "{case} n={n}");
+                    }
+                }
+            }
+
+            // Tuple and tupleflip variants at small sizes.
+            let pair_samples = [
+                Value::tuple(vec![Value::Int(0), Value::Int(0)]),
+                Value::tuple(vec![Value::Int(1), Value::Int(0)]),
+                Value::tuple(vec![Value::Int(0), Value::Int(1)]),
+                Value::tuple(vec![Value::Int(1), Value::Int(1)]),
+            ];
+            for case in ["tuple", "tuplefar", "tupleflip", "tupleflipfar"] {
+                Type::forget_emptiness();
+                let tag = next_tag();
+                let t = rfx_case(case, n, &tag);
+                let want = if list_oracle_inhabited(&t, &pair_samples, n + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(t.verdict(), want, "{case} n={n}");
+            }
+        }
+
+        // Random small prefix-chain families over int (including cofinite heads) and bool.
+        // Fix X18: heads exclude/include literals from 0..4, and `rand_int_samples` includes
+        // every literal 0..4 plus one fresh integer 4 so every equivalence class of the head
+        // predicates is sampled.
+        let rand_int_samples = [
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+        ];
+        let mut seed = 0x5eed_cafe_d00d_u64;
+        let mut rng = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let head_for = |bits: u64, is_bool: bool| -> Type {
+            if is_bool {
+                match bits % 3 {
+                    0 => bool_tys[0].clone(),
+                    1 => bool_tys[1].clone(),
+                    _ => Type::bool(),
+                }
+            } else {
+                let mask = (bits % 15) + 1;
+                if bits & 16 != 0 {
+                    let mut t = Type::int();
+                    for i in 0..4 {
+                        if (mask >> i) & 1 == 0 {
+                            t = &t - &lit(i as i64);
+                        }
+                    }
+                    t
+                } else {
+                    let mut t = Type::empty();
+                    for i in 0..4 {
+                        if (mask >> i) & 1 != 0 {
+                            t = &t | &lit(i as i64);
+                        }
+                    }
+                    t
+                }
+            }
+        };
+        for _ in 0..60 {
+            Type::forget_emptiness();
+            let is_bool = (rng() & 1) != 0;
+            let all = if is_bool { Type::bool() } else { Type::int() };
+            let samples: &[Value] = if is_bool {
+                &bool_samples
+            } else {
+                &rand_int_samples
+            };
+            let tag = next_tag();
+            let mut defs = vec![def(
+                &format!("L{tag}"),
+                Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
+            )];
+            let num_chains = 2 + (rng() % 3) as usize;
+            let mut endpoints = Vec::new();
+            let mut max_depth = 1usize;
+            for c in 0..num_chains {
+                let depth = 1 + (rng() % 4) as usize;
+                max_depth = max_depth.max(depth);
+                let allow_nil = (rng() & 1) != 0;
+                for k in 1..=depth {
+                    let h = head_for(rng(), is_bool);
+                    let prev = if k == 1 { 0 } else { defs.len() - 1 };
+                    let step = cons(Expr::Type(h), r(prev));
+                    let body = if allow_nil && ((rng() & 1) != 0 || k == 1) {
+                        Expr::Union(vec![nil(), step])
+                    } else {
+                        step
+                    };
+                    defs.push(def(&format!("C{c}_{k}{tag}"), body));
+                }
+                endpoints.push(defs.len() - 1);
+            }
+            let ts = Group::new(defs).unwrap().instance(vec![]);
+            let u = endpoints
+                .iter()
+                .map(|&i| &ts[i])
+                .fold(Type::empty(), |u, t| &u | t);
+            let l = list_named(all, &tag);
+            let t = &l - &u;
+            let inhab = list_oracle_inhabited(&t, samples, max_depth + 1);
+            let want = if inhab {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            if let Some(sv) = t.sweep_verdict() {
+                assert_eq!(sv, want, "sweep random chain seed={seed:#x}");
+            }
+            Type::forget_emptiness();
+            match t.verdict() {
+                Verdict::Empty => assert!(!inhab, "random chain seed={seed:#x}"),
+                Verdict::Inhabited => assert!(inhab, "random chain seed={seed:#x}"),
+                Verdict::Refused(_) => {}
+            }
+            assert!(!(t.is_empty() && inhab), "is_empty random chain seed={seed:#x}");
+        }
+
+        // Random in-class prefix-chain families (uniform carrier prefix per chain, cofinite/finite
+        // leaf heads over 0..4, sampled over 0..=4): must be decided (Empty or Inhabited, never
+        // Refused) and agree with the oracle.
+        for _ in 0..60 {
+            Type::forget_emptiness();
+            let is_bool = (rng() & 1) != 0;
+            let all = if is_bool { Type::bool() } else { Type::int() };
+            let samples: &[Value] = if is_bool {
+                &bool_samples
+            } else {
+                &rand_int_samples
+            };
+            let tag = next_tag();
+            let mut defs = vec![def(
+                &format!("L{tag}"),
+                Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
+            )];
+            let num_chains = 2 + (rng() % 4) as usize;
+            let mut endpoints = Vec::new();
+            let mut max_depth = 1usize;
+            for c in 0..num_chains {
+                let depth = 1 + (rng() % 4) as usize;
+                max_depth = max_depth.max(depth);
+                let leaf_h = head_for(rng(), is_bool);
+                let leaf_nil = c == 0 || (rng() & 1) != 0;
+                let step_nil = c == 0 || (leaf_nil && (rng() & 1) != 0);
+                for k in 1..=depth {
+                    let h = if k == 1 { leaf_h.clone() } else { all.clone() };
+                    let prev = if k == 1 { 0 } else { defs.len() - 1 };
+                    let step = cons(Expr::Type(h), r(prev));
+                    let has_nil = if k == 1 { leaf_nil } else { step_nil };
+                    let body = if has_nil {
+                        Expr::Union(vec![nil(), step])
+                    } else {
+                        step
+                    };
+                    defs.push(def(&format!("U{c}_{k}{tag}"), body));
+                }
+                endpoints.push(defs.len() - 1);
+            }
+            let ts = Group::new(defs).unwrap().instance(vec![]);
+            let u = endpoints
+                .iter()
+                .map(|&i| &ts[i])
+                .fold(Type::empty(), |u, t| &u | t);
+            let l = list_named(all, &tag);
+            let t = &l - &u;
+            let inhab = list_oracle_inhabited(&t, samples, max_depth + 1);
+            let want = if inhab {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            assert_eq!(t.sweep_verdict(), Some(want), "sweep uniform random seed={seed:#x}");
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), want, "uniform random seed={seed:#x}");
+            assert_eq!(t.is_empty(), !inhab, "is_empty uniform random seed={seed:#x}");
+        }
+    });
+}
+
+#[test]
+fn lists_by_the_place_from_the_front_verdicts_are_independent_of_order_gemini() {
+    big(|| {
+        let int_samples = [Value::Int(0), Value::Int(1)];
+        let mut tag_id = 0usize;
+        let mut next_tag = || {
+            tag_id += 1;
+            format!("_ord{tag_id}")
+        };
+        for n in 2..=6 {
+            for skip in [None, Some(1), Some(n / 2), Some(n)] {
+                let tag_base = next_tag();
+                let want = {
+                    Type::forget_emptiness();
+                    let (l, u) = rfx_family(n, skip, n, &Type::int(), &lit(1), false, &tag_base);
+                    let t = &l - &u;
+                    let v = t.verdict();
+                    let oracle = if list_oracle_inhabited(&t, &int_samples, n + 1) {
+                        Verdict::Inhabited
+                    } else {
+                        Verdict::Empty
+                    };
+                    assert_eq!(v, oracle, "base order n={n} skip={skip:?}");
+                    v
+                };
+
+                // Test permutations of both Group definition indices and union operand order,
+                // including staggered chains sharing `Fd` and holes chains.
+                for perm_kind in 0..4 {
+                    Type::forget_emptiness();
+                    let tag = next_tag();
+                    let mut defs = vec![def(
+                        &format!("L{tag}"),
+                        Expr::Union(vec![nil(), cons(int(), r(0))]),
+                    )];
+                    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+                    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(int(), r(i - 1)))));
+                    let not_one = Expr::Type(&Type::int() - &lit(1));
+                    defs.extend((1..=n).map(|k| {
+                        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+                        def(
+                            &format!("M{k}{tag}"),
+                            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+                        )
+                    }));
+                    let d = (n / 2).max(1);
+                    let ha = &Type::int() | &Type::atom("a");
+                    defs.push(def(&format!("P1{tag}"), cons(Expr::Type(ha.clone()), r(d))));
+                    defs.push(def(&format!("P2{tag}"), cons(Expr::Type(ha), r(2 * n + 1))));
+
+                    let k_len = defs.len();
+                    let mut perm: Vec<usize> = (0..k_len).collect();
+                    match perm_kind {
+                        0 => perm.reverse(),
+                        1 => perm.rotate_left(k_len / 2),
+                        2 => {
+                            perm = (0..k_len)
+                                .step_by(2)
+                                .chain((1..k_len).step_by(2))
+                                .collect();
+                        }
+                        _ => {
+                            perm[1..].reverse();
+                        }
+                    }
+                    let (pdefs, inv) = permute_defs(defs, &perm);
+                    let ts = Group::new(pdefs).unwrap().instance(vec![]);
+                    let mut u_indices: Vec<usize> = (1..=n)
+                        .filter(|&i| Some(i) != skip)
+                        .chain([2 * n])
+                        .collect();
+                    if d + 1 <= n && skip != Some(d + 1) {
+                        u_indices.push(2 * n + 1);
+                    }
+                    if d + 2 <= n && skip != Some(d + 2) {
+                        u_indices.push(2 * n + 2);
+                    }
+                    if perm_kind % 2 == 1 {
+                        u_indices.reverse();
+                    } else {
+                        let mid = u_indices.len() / 2;
+                        u_indices.rotate_left(mid);
+                    }
+                    let u = u_indices
+                        .iter()
+                        .map(|&old_i| &ts[inv[old_i]])
+                        .fold(Type::empty(), |acc, t| &acc | t);
+                    let l = list_named(Type::int(), &tag);
+                    let t = &l - &u;
+                    assert_eq!(
+                        t.sweep_verdict(),
+                        Some(want),
+                        "sweep order-independence n={n} skip={skip:?} perm_kind={perm_kind}"
+                    );
+                    Type::forget_emptiness();
+                    assert_eq!(
+                        t.verdict(),
+                        want,
+                        "order-independence n={n} skip={skip:?} perm_kind={perm_kind}"
+                    );
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn a_union_of_lists_by_the_place_of_a_one_from_the_front_is_decided_in_its_size_gemini() {
+    big(|| {
+        for (case, want) in [
+            ("front", Verdict::Empty),
+            ("far", Verdict::Inhabited),
+            ("tuple", Verdict::Empty),
+            ("tuplefar", Verdict::Inhabited),
+            ("tupleflip", Verdict::Empty),
+            ("tupleflipfar", Verdict::Inhabited),
+            ("multi", Verdict::Empty),
+            ("multifar", Verdict::Inhabited),
+            ("groups", Verdict::Empty),
+            ("groupsfar", Verdict::Inhabited),
+            ("groupsholes", Verdict::Empty),
+            ("groupsholesfar", Verdict::Inhabited),
+            ("groupssingles", Verdict::Empty),
+            ("groupssinglesfar", Verdict::Inhabited),
+            ("cxstagger", Verdict::Empty),
+            ("cxstaggerfar", Verdict::Inhabited),
+            ("cxstaggerwide", Verdict::Empty),
+            ("cxstaggerwidefar", Verdict::Inhabited),
+            ("clmanyheads", Verdict::Empty),
+            ("clmanyheadsfar", Verdict::Inhabited),
+            ("clstagger", Verdict::Empty),
+            ("clstaggerfar", Verdict::Inhabited),
+            ("clstaggerholes", Verdict::Inhabited),
+            ("clstaggerholesin", Verdict::Inhabited),
+            ("clcofront", Verdict::Inhabited),
+            ("emitheads", Verdict::Empty),
+            ("emitheadsfar", Verdict::Inhabited),
+            ("manyheads", Verdict::Empty),
+            ("manyheadsfar", Verdict::Inhabited),
+            ("stagger", Verdict::Empty),
+            ("staggerfar", Verdict::Inhabited),
+            ("chain", Verdict::Empty),
+            ("chainfar", Verdict::Inhabited),
+        ] {
+            let (s_runs, l_runs) = scaling::Meter::new().runs();
+            let small: Vec<Type> = (0..s_runs)
+                .map(|i| rfx_case(case, 8, &format!("_fs_{case}_8_{i}")))
+                .collect();
+            let large: Vec<Type> = (0..l_runs)
+                .map(|i| rfx_case(case, 64, &format!("_fs_{case}_64_{i}")))
+                .collect();
+            let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
+            scaling::check(&format!("front family {case}"), 8, |n| {
+                Type::forget_emptiness();
+                let t = if n == 8 {
+                    &small[si.fetch_add(1, Relaxed)]
+                } else {
+                    &large[li.fetch_add(1, Relaxed)]
+                };
+                assert_eq!(t.verdict(), want, "{case} at {n}");
+            });
+        }
+    });
+}
+
+
+// Round-4 union probe (orchestrator): the new families of all three reviewers under u4 names.
+fn u4_inst(defs: Vec<Def>) -> Vec<Type> {
+    Group::new(defs).unwrap().instance(vec![])
+}
+
+fn u4_cofront_block(n: usize, ones: bool, excl: fn(usize) -> usize, block: bool, tag: &str) -> Type {
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| {
+        let h = &Type::int() - &lit(excl(i) as i64);
+        def(&format!("F{i}{tag}"), cons(Expr::Type(h), r(i - 1)))
+    }));
+    let not_one = Expr::Type(&Type::int() - &lit(1));
+    defs.extend((1..=n).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+    }));
+    let next = |k: usize| if k <= n { r(2 * n + k) } else { r(0) };
+    defs.push(def(&format!("P{tag}"), cons(Expr::Type(Type::int()), next(2))));
+    defs.extend((2..=n).map(|k| def(&format!("Q{k}{tag}"), cons(Expr::Type(lit(1)), next(k + 1)))));
+    defs.push(def(&format!("K1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.push(def(&format!("K{tag}"), cons(Expr::Type(Type::int()), r(3 * n + 1))));
+    let ts = u4_inst(defs);
+    let block = block.then_some(3 * n + 2);
+    let u = (1..=n).chain([2 * n]).chain(block).map(|i| &ts[i]).fold(Type::empty(), |u, t| &u | t);
+    let pos = if ones { ts[2 * n + 1].clone() } else { ts[0].clone() };
+    &pos - &u
+}
+
+fn u4_stagger_boundary(n: usize, overlap: bool, tag: &str) -> Type {
+    let m = 2 * n;
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    defs.extend((1..=m).map(|i| {
+        let h = if i == m {
+            if overlap { &Type::int() - &lit(3) } else { &(&Type::int() - &lit(m as i64 + 2)) - &lit(m as i64 + 3) }
+        } else {
+            &Type::int() - &lit(i as i64 + 2)
+        };
+        def(&format!("Y{i}{tag}"), cons(Expr::Type(h), r(i + 1)))
+    }));
+    defs.push(def(&format!("Y{}{tag}", m + 1), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((1..=m + 1).map(|j| {
+        let h = if j <= n + 1 { Type::int() } else { &Type::int() - &lit(1) };
+        let next = if j == m + 1 { r(0) } else { r(m + 2 + j) };
+        def(&format!("N{j}{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(h), next)]))
+    }));
+    let ts = u4_inst(defs);
+    let l = ts[0].clone();
+    let u = (1..=n).map(|k| &ts[k]).chain([&ts[m + 2]]).fold(Type::empty(), |u, t| &u | t);
+    &l - &u
+}
+
+fn u4_boundary(n: usize, holes: bool, tag: &str) -> Type {
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    for i in 2..=n {
+        let h = if holes { &Type::int() - &lit(4) } else { Type::int() };
+        defs.push(def(&format!("F{i}{tag}"), cons(Expr::Type(h), r(i - 1))));
+    }
+    for i in 1..=n {
+        defs.push(def(&format!("M{i}{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(&Type::int() - &lit(1)), r(if i == 1 { 0 } else { n + i - 1 }))])));
+    }
+    let ts = u4_inst(defs);
+    let l = ts[0].clone();
+    let u = (1..=n).chain([2 * n]).fold(Type::empty(), |u, i| &u | &ts[i]);
+    &l - &u
+}
+
+fn u4_width(w: usize, tag: &str) -> Type {
+    let all = Type::tuple(vec![Type::bool(); w]);
+    let mut coords = vec![Type::bool(); w];
+    coords[0] = Type::lit(&Value::Bool(true)).unwrap();
+    let one = Type::tuple(coords);
+    let (l, u) = rfx_family(2, Some(2), 2, &all, &one, false, tag);
+    &l - &u
+}
+
+// Round 5: holes not nested as prefixes. P - (u3 | u4) has the one value class [4, 2, 1, 1, ..];
+// a matching that gives step 1 to u3 (x1 = 3) leaves u4 unkillable and would answer Empty.
+fn r5_greedy(tag: &str) -> Type {
+    let not = |i: i64| Expr::Type(&Type::int() - &lit(i));
+    let one = || Expr::Type(lit(1));
+    let defs = vec![
+        def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(int(), r(0))])),
+        def(&format!("U1{tag}"), cons(one(), r(0))),
+        def(&format!("U2{tag}"), cons(not(2), r(1))),
+        def(&format!("U3{tag}"), cons(not(3), r(2))),
+        def(&format!("U4{tag}"), cons(not(4), r(3))),
+        def(&format!("P{tag}"), cons(int(), cons(Expr::Type(&lit(2) | &lit(5)), cons(one(), cons(one(), r(0)))))),
+    ];
+    let ts = u4_inst(defs);
+    &ts[5] - &(&ts[3] | &ts[4])
+}
+
+// Round 5: the one-chain 3-SAT reduction of R4 (variable i at place i, clause c at place
+// k + c(k+1)), checked against brute force over every set of distinct 3-literal clauses.
+fn r5_sat_type(k: usize, cls: &[Vec<(usize, bool)>], tag: &str) -> Type {
+    let rc = |c: usize| k + c * (k + 1);
+    let len = rc(cls.len());
+    let mut h = vec![Type::int(); len + 1];
+    h[1] = lit(2);
+    for (c, cl) in cls.iter().enumerate() {
+        for &(i, pos) in cl {
+            h[rc(c + 1) - i + 1] = &Type::int() - &lit(if pos { 0 } else { 1 });
+        }
+    }
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(int(), r(0))]))];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(h[1].clone()), r(0))));
+    defs.extend((2..=len).map(|d| def(&format!("F{d}{tag}"), cons(Expr::Type(h[d].clone()), r(d - 1)))));
+    let clause_place = |p: usize| p > k && (p - k) % (k + 1) == 0;
+    let mut e = nil();
+    for p in (1..=len).rev() {
+        let head = if p <= k { &lit(0) | &lit(1) } else if clause_place(p) { lit(2) } else { lit(7) };
+        e = cons(Expr::Type(head), e);
+    }
+    defs.push(def(&format!("P{tag}"), e));
+    let ts = u4_inst(defs);
+    let u = (1..=len).fold(Type::empty(), |u, d| &u | &ts[d]);
+    &ts[len + 1] - &u
+}
+
+fn r5_sat(k: usize, cls: &[Vec<(usize, bool)>]) -> bool {
+    // Value 0 at place i makes a positive literal true; value 1 a negative one.
+    (0..1u32 << k).any(|a| cls.iter().all(|cl| cl.iter().any(|&(i, pos)| ((a >> (i - 1)) & 1 == 0) == pos)))
+}
+
+#[test]
+#[ignore]
+fn r5_sat_check() {
+    let spec: Vec<usize> = std::env::var("R5SAT").unwrap_or("3,1,4,3,0,1".into()).split(',').map(|s| s.parse().unwrap()).collect();
+    // k variables, mlo..=mhi clauses of wmin..=3 literals on distinct variables, shard of nsh.
+    let (k, mlo, mhi, wmin, shard, nsh) = (spec[0], spec[1], spec[2], spec[3], spec[4], spec[5]);
+    let mut all: Vec<Vec<(usize, bool)>> = vec![];
+    for vs in 1u32..1 << k {
+        let vars: Vec<usize> = (1..=k).filter(|i| vs >> (i - 1) & 1 == 1).collect();
+        if vars.len() < wmin || vars.len() > 3 { continue; }
+        for s in 0..1u32 << vars.len() {
+            all.push(vars.iter().enumerate().map(|(j, &i)| (i, s >> j & 1 == 0)).collect());
+        }
+    }
+    let mut seen = 0usize;
+    big(move || {
+        let mut counts = std::collections::BTreeMap::new();
+        let (mut bad, mut units, mut most) = (0, 0u64, 0u64);
+        let n = all.len();
+        let mut stack: Vec<Vec<usize>> = vec![vec![]];
+        while let Some(set) = stack.pop() {
+            let mine = set.len() >= mlo && { seen += 1; seen % nsh == shard };
+            if mine {
+                let cls: Vec<_> = set.iter().map(|&i| all[i].clone()).collect();
+                Type::forget_emptiness();
+                let t = r5_sat_type(k, &cls, &format!("_sat{k}_{}", set.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("_")));
+                let sat = r5_sat(k, &cls);
+                let mut m = scaling::Meter::new();
+                let mut v = None;
+                let w = m.work(|| v = Some(t.verdict()));
+                let v = v.unwrap();
+                units += w.units as u64;
+                most = most.max(w.units as u64);
+                let wrong = matches!((&v, sat), (Verdict::Empty, true) | (Verdict::Inhabited, false));
+                if wrong { bad += 1; eprintln!("r5sat WRONG k {k} {cls:?} sat {sat} {v:?}"); }
+                *counts.entry(format!("m{} sat {sat} {v:?}", set.len())).or_insert(0usize) += 1;
+                // Which mechanism answers on its own: the front sweep, the prefix chains, or
+                // neither (the instance is in the remainder and goes to the search).
+                Type::forget_emptiness();
+                let sw = t.sweep_verdict();
+                Type::forget_emptiness();
+                let ch = t.chain_verdict();
+                let by = match (&sw, &ch) {
+                    (None, _) => "none",
+                    (Some(_), Some(_)) => "chains",
+                    (Some(_), None) => "front",
+                };
+                if matches!((&sw, sat), (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)) {
+                    bad += 1;
+                    eprintln!("r5sat WRONG SWEEP k {k} {cls:?} sat {sat} {sw:?}");
+                }
+                *counts.entry(format!("mech m{} {by} {sw:?}", set.len())).or_insert(0usize) += 1;
+            }
+            if set.len() < mhi {
+                let from = set.last().map_or(0, |&l| l + 1);
+                for i in from..n { let mut s = set.clone(); s.push(i); stack.push(s); }
+            }
+        }
+        for (key, c) in &counts { eprintln!("r5sat k {k} {key}: {c}"); }
+        eprintln!("r5sat k {k} m {mlo}..{mhi} w {wmin} shard {shard}/{nsh} cases {} wrong {bad} units {units} most {most}", counts.iter().filter(|(k, _)| !k.starts_with("mech")).map(|(_, c)| c).sum::<usize>());
+        assert_eq!(bad, 0);
+    });
+}
+
+/// Round 5: every probe case of rounds 3 and 4 (and `u4width`, of `w` columns) is decided in
+/// its size, with the verdict the round-5 measurements found. `end` is out of shape and kept
+/// on the search, so it is not here.
+fn r5_cases_scale(cases: &[(&str, Verdict)]) {
+    big(|| {
+        for &(case, want) in cases {
+            let (s_runs, l_runs) = scaling::Meter::new().runs();
+            let small: Vec<Type> = (0..s_runs)
+                .map(|i| rfx_case(case, 8, &format!("_r5s_{case}_8_{i}")))
+                .collect();
+            let large: Vec<Type> = (0..l_runs)
+                .map(|i| rfx_case(case, 64, &format!("_r5s_{case}_64_{i}")))
+                .collect();
+            let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
+            scaling::check(&format!("probe case {case}"), 8, |n| {
+                Type::forget_emptiness();
+                let t = if n == 8 {
+                    &small[si.fetch_add(1, Relaxed)]
+                } else {
+                    &large[li.fetch_add(1, Relaxed)]
+                };
+                assert_eq!(t.verdict(), want, "{case} at {n}");
+            });
+        }
+    });
+}
+
+#[test]
+fn r5_probe_cases_are_decided_in_their_size_1() {
+    r5_cases_scale(&[
+        ("front", Verdict::Empty),
+        ("far", Verdict::Inhabited),
+        ("skip1", Verdict::Inhabited),
+        ("skipmid", Verdict::Inhabited),
+        ("bool", Verdict::Empty),
+        ("boolfar", Verdict::Inhabited),
+        ("mshort", Verdict::Empty),
+        ("mlong", Verdict::Inhabited),
+        ("split", Verdict::Empty),
+        ("splitfar", Verdict::Inhabited),
+        ("meet", Verdict::Empty),
+        ("pair", Verdict::Empty),
+        ("pairfar", Verdict::Inhabited),
+        ("tuple", Verdict::Empty),
+        ("tuplefar", Verdict::Inhabited),
+        ("tupleflip", Verdict::Empty),
+        ("tupleflipfar", Verdict::Inhabited),
+        ("multi", Verdict::Empty),
+        ("multifar", Verdict::Inhabited),
+    ]);
+}
+
+#[test]
+fn r5_probe_cases_are_decided_in_their_size_2() {
+    r5_cases_scale(&[
+        ("groups", Verdict::Empty),
+        ("groupsfar", Verdict::Inhabited),
+        ("groupsholes", Verdict::Empty),
+        ("groupsholesfar", Verdict::Inhabited),
+        ("groupssingles", Verdict::Empty),
+        ("groupssinglesfar", Verdict::Inhabited),
+        ("cxstagger", Verdict::Empty),
+        ("cxstaggerfar", Verdict::Inhabited),
+        ("cxstaggerwide", Verdict::Empty),
+        ("cxstaggerwidefar", Verdict::Inhabited),
+        ("emitheads", Verdict::Empty),
+        ("emitheadsfar", Verdict::Inhabited),
+        ("manyheads", Verdict::Empty),
+        ("manyheadsfar", Verdict::Inhabited),
+        ("stagger", Verdict::Empty),
+        ("staggerfar", Verdict::Inhabited),
+        ("clmanyheads", Verdict::Empty),
+        ("clmanyheadsfar", Verdict::Inhabited),
+        ("clstagger", Verdict::Empty),
+    ]);
+}
+
+#[test]
+fn r5_probe_cases_are_decided_in_their_size_3() {
+    r5_cases_scale(&[
+        ("clstaggerfar", Verdict::Inhabited),
+        ("clstaggerholes", Verdict::Inhabited),
+        ("clcofront", Verdict::Inhabited),
+        ("chain", Verdict::Empty),
+        ("chainfar", Verdict::Inhabited),
+        ("one", Verdict::Empty),
+        ("onetwo", Verdict::Inhabited),
+        ("u4cofrontones", Verdict::Empty),
+        ("u4cofrontsame", Verdict::Inhabited),
+        ("u4cofrontsameones", Verdict::Inhabited),
+        ("u4cofrontsameblock", Verdict::Empty),
+        ("u4cofrontshared", Verdict::Inhabited),
+        ("u4holesin", Verdict::Inhabited),
+        ("u4holesout", Verdict::Inhabited),
+        ("u4boundaryin", Verdict::Inhabited),
+        ("u4boundaryout", Verdict::Empty),
+        ("u4width", Verdict::Inhabited),
+    ]);
+}
+
+/// Round 5: a greedy matching of non-nested holes to steps answered Empty here (Gemini R4
+/// prefix chains); the value [4, 2, 1, 1] is in the type.
+#[test]
+fn holes_not_nested_as_prefixes_are_not_matched_greedily() {
+    big(|| {
+        let t = r5_greedy("_r5greedy_t");
+        let v = [4, 2, 1, 1]
+            .iter()
+            .rev()
+            .fold(Value::atom("nil"), |tl, &h| {
+                Value::atom_with("cons", vec![Value::Int(h), tl])
+            });
+        assert!(t.contains(&v));
+        Type::forget_emptiness();
+        assert_ne!(t.chain_verdict(), Some(Verdict::Empty));
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+    });
+}
+
+/// Round 5: a negative chain group killed at one step and started again by a later token kept
+/// the earlier token's scheduled jumps, which overflowed `active - jumping_next` in the prefix
+/// chains. The formula is satisfiable (x2 = x3 = x4 = false).
+#[test]
+fn a_negative_chain_group_started_again_ignores_its_old_jumps() {
+    big(|| {
+        let cls = vec![
+            vec![(2, false), (4, false)],
+            vec![(1, false), (2, false), (4, true)],
+            vec![(3, false), (4, false)],
+        ];
+        assert!(r5_sat(4, &cls));
+        let t = r5_sat_type(4, &cls, "_r5_regroup");
+        Type::forget_emptiness();
+        assert_ne!(t.verdict(), Verdict::Empty);
+    });
+}
+
+/// Round 5, Q2: the boundary of the sweeps on the 3-SAT reduction. Clauses without literals
+/// (unsatisfiable) are decided by the front sweep; the same shape with one literal per clause
+/// is left to the search, which still answers correctly.
+#[test]
+fn the_reduction_without_literals_is_swept_and_with_literals_is_not() {
+    big(|| {
+        let none = r5_sat_type(2, &vec![vec![]; 4], "_r5_bnone");
+        Type::forget_emptiness();
+        assert_eq!(none.sweep_verdict(), Some(Verdict::Empty));
+        Type::forget_emptiness();
+        assert_eq!(none.verdict(), Verdict::Empty);
+        let one = r5_sat_type(2, &vec![vec![(1, true)]; 4], "_r5_bone");
+        Type::forget_emptiness();
+        assert_eq!(one.sweep_verdict(), None);
+        Type::forget_emptiness();
+        assert_eq!(one.verdict(), Verdict::Inhabited);
+    });
+}
+
+// rfx port (verification only)
+fn r5_slots(n: usize, outside: bool) -> Type {
+    let mut ds = vec![def("R5L", Expr::Union(vec![nil(),cons(int(),r(0))]))];
+    ds.push(def("R5F1",cons(Expr::Type(lit(1)),r(0))));
+    for k in 2..=6 { ds.push(def(&format!("R5F{k}"),cons(Expr::Type(&Type::int()-&lit(k as i64)),r(k-1)))); }
+    let hs=[&lit(4)|&(&lit(5)|&lit(6)), if outside {&lit(4)|&lit(5)} else {Type::int()},if outside {lit(2)} else {Type::int()},lit(1),lit(1),lit(1)];
+    let mut p=r(0);
+    for _ in 0..n { p=cons(int(),p); }
+    for h in hs.iter().rev() {p=cons(Expr::Type(h.clone()),p);}
+    ds.push(def("R5P",p));
+    let g=r3_instance(ds);
+    &g[7]-&(&g[4]|&(&g[5]|&g[6]))
+}
+fn r5_varying_width(w: usize) -> Type {
+    let all=Type::tuple(vec![Type::bool();w]);
+    let mut defs=vec![def("R5WidthL",Expr::Union(vec![nil(),cons(Expr::Type(all.clone()),r(0))]))];
+    for j in 0..w {
+        let mut cs=vec![Type::bool();w];cs[j]=Type::lit(&Value::Bool(true)).unwrap();
+        defs.push(def(&format!("R5WidthF{j}"),cons(Expr::Type(Type::tuple(cs)),r(0))));
+    }
+    defs.push(def("R5WidthP",cons(Expr::Type(all),r(0))));
+    let g=Group::new(defs).unwrap().instance(vec![]);
+    let u=(1..=w).fold(Type::empty(),|u,j|&u|&g[j]);
+    &g[w+1]-&u
+}
+#[test]
+fn rfxx_r5_matching_non_nested_slots() {
+    let mut ds = vec![def("R5L", Expr::Union(vec![nil(),cons(int(),r(0))]))];
+    ds.push(def("R5F1",cons(Expr::Type(lit(1)),r(0))));
+    for k in 2..=6 { ds.push(def(&format!("R5F{k}"),cons(Expr::Type(&Type::int()-&lit(k as i64)),r(k-1)))); }
+    let hs=[&lit(4)|&(&lit(5)|&lit(6)), &lit(4)|&lit(5),lit(2),lit(1),lit(1),lit(1)];
+    let mut p=r(0);
+    for h in hs.iter().rev() {p=cons(Expr::Type(h.clone()),p);}
+    ds.push(def("R5P",p));
+    let g=r3_instance(ds);
+    let t=&g[7]-&(&g[4]|&(&g[5]|&g[6]));
+    let witness=[5,5,2,1,1,1].iter().rev().fold(Value::atom("nil"),|tail,&x|Value::atom_with("cons",vec![Value::Int(x),tail]));
+    assert!(t.contains(&witness));
+    eprintln!("matching nonnested sweep={:?} verdict={:?} witness_checked=true",t.sweep_verdict(),t.verdict());
+    assert_ne!(t.verdict(),Verdict::Empty);
+    assert!(!t.is_empty());
+}
+#[test]
+fn rfxx_r5_carrier_only_constrains_the_suffix() {
+    let ds=vec![
+        def("R5SuffixL",Expr::Union(vec![nil(),cons(int(),r(0))])),
+        def("R5SuffixR",cons(int(),r(0))),
+        def("R5SuffixQ",Expr::Union(vec![nil(),cons(Expr::Type(&Type::int()|&Type::atom("a")),r(1))])),
+        def("R5SuffixP",cons(Expr::Type(&Type::int()-&lit(1)),r(2))),
+        def("R5SuffixN",cons(Expr::Type(&Type::int()-&lit(1)),r(0))),
+    ];
+    let g=Group::new(ds).unwrap().instance(vec![]);
+    let t=&g[3]-&g[4];
+    let w=[Value::Int(0),Value::atom("a"),Value::Int(0)].into_iter().rev().fold(Value::atom("nil"),|tail,x|Value::atom_with("cons",vec![x,tail]));
+    assert!(t.contains(&w));
+    assert_ne!(t.sweep_verdict(),Some(Verdict::Empty));
+    assert_ne!(t.verdict(),Verdict::Empty);
+    assert!(!t.is_empty());
+}
+/// Q2 remainder boundary family:
+/// Single spine `F_1 = cons(1, L)`, `F_i = cons(h_i, F_{i-1})` for `i = 2..=n` with roots
+/// `F_1, F_3..=F_n`, `M_n` (no `1` in the first `n` steps), and positive chain
+/// `P_1 = cons(int, cons(1, cons(1, L)))` forcing `1` at steps 2 and 3.
+/// - When `in_remainder == false` (`r5remin`), `h_i = int \ {i + 2}` (all holes `E_i = {i + 2}`
+///   pairwise disjoint): short-escape fails (positive side `P_1` is not `L` and forces `1` at
+///   steps 2 and 3) and uniform-hole dominance fails (`E_2 = {4} != E_3 = {5}`), so it is decided
+///   in `O(n log n)` specifically by disjoint-hole prefix matching (`Inhabited`, witness `[5, 1, 1]`).
+/// - When `in_remainder == true` (`r5remout`), `F_2` has `h_2 = int \ {4, 5}` (`E_2 = {4, 5}`)
+///   while `F_i` (`i >= 3`) has `h_i = int \ {i + 2}` (`E_3 = {5}`): at step 3, `E_2` and `E_3`
+///   both contain `5` (`!spine_disjoint`) and `E_2 != E_3` (`!spine_same_hole`), placing it just
+///   inside the coNP-hard remainder (`sweep_verdict() == None`, decided `Inhabited` by the base
+///   search).
+fn r5_remainder_boundary(n: usize, in_remainder: bool, tag: &str) -> Type {
+    let n = n.max(3);
+    // 0: L
+    // 1..=n: F_1..F_n
+    // n+1..=2n: M_1..M_n
+    // 2n+1..=2n+3: P_1..P_3
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    for i in 2..=n {
+        let h = if in_remainder && i == 2 {
+            &(&Type::int() - &lit(4)) - &lit(5)
+        } else {
+            &Type::int() - &lit(i as i64 + 2)
+        };
+        defs.push(def(&format!("F{i}{tag}"), cons(Expr::Type(h), r(i - 1))));
+    }
+    let not_one = Expr::Type(&Type::int() - &lit(1));
+    for k in 1..=n {
+        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+        defs.push(def(
+            &format!("M{k}{tag}"),
+            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+        ));
+    }
+    let p_base = 2 * n;
+    defs.push(def(
+        &format!("P1{tag}"),
+        cons(Expr::Type(Type::int()), r(p_base + 2)),
+    ));
+    defs.push(def(
+        &format!("P2{tag}"),
+        cons(Expr::Type(lit(1)), r(p_base + 3)),
+    ));
+    defs.push(def(&format!("P3{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    let ts = r3_instance(defs);
+    let u = [1]
+        .into_iter()
+        .chain(3..=n)
+        .chain([2 * n])
+        .map(|i| &ts[i])
+        .fold(Type::empty(), |u, t| r3_union(&u, t));
+    &ts[p_base + 1] - &u
 }
