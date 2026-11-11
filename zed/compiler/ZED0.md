@@ -23,7 +23,7 @@ freezes this list against the compiler's design and inserts a step for each gap 
 
 `cargo run -q -p zed-tools --bin audit -- ../../../zed ../corpus/31-typechecker.zed --checklist ZED0.md`
 (run by hand, since CI does not read the spec repository, which must be beside this one;
-last run at spec commit eb34700, exit status 0, 115 grammar alternatives and 14 words
+last run at spec commit 7674aaf, exit status 0, 115 grammar alternatives and 14 words
 needed, none missing, and 129 entries listed, none not needed). An alternative is needed when program 31's units stop parsing, or parse to a
 different tree, without it, so the list is exact for the grammar of DESIGN.md sec:grammar.
 `Rule#i` is alternative `i` (from 0) of the rule, in the grammar's order. The words are
