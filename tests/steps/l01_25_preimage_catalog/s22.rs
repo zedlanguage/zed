@@ -1033,7 +1033,7 @@ const GUARDED: [Counts; 16] = [
     (0, (0, 0, 44), (10, &[]), 0),
     (
         250,
-        (0, 0, 34),
+        (0, 0, 32),
         (
             9,
             &["i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]"],
@@ -1058,7 +1058,7 @@ const GUARDED: [Counts; 16] = [
     ),
     (
         1250,
-        (0, 0, 47),
+        (0, 0, 45),
         (4, &["i [-7..] before i [..=-6, -4..]"]),
         0,
     ),
@@ -1074,10 +1074,10 @@ const GUARDED: [Counts; 16] = [
         ),
         0,
     ),
-    (1750, (0, 0, 41), (13, &[]), 0),
+    (1750, (0, 0, 40), (13, &[]), 0),
     (
         2000,
-        (0, 0, 41),
+        (0, 0, 40),
         (17, &["i [1..] before i [1..=4, 7..]"]),
         0,
     ),
@@ -1099,7 +1099,7 @@ const GUARDED: [Counts; 16] = [
     (3500, (0, 0, 38), (5, &[]), 0),
     (
         3750,
-        (0, 0, 46),
+        (0, 0, 45),
         (
             11,
             &[
@@ -1348,6 +1348,21 @@ guarded_ranges!(
 /// interpreter agrees with the exact box at all 25 points of the domain. So made exact is 34
 /// in row 250 (322 in the first half). Over all 4000 cases and the other tests of this file no
 /// other answer before changes.
+///
+/// Since PERF-s22-const-chain, whose linear stage before decides the one point the transfer
+/// doubts with the rest of the formula and, where that point fails the demand, gives the box
+/// without it, exact, seven inexact boxes before are now exact and equal to the box of the
+/// transfer, so they leave the made-exact count (317 in the first half, 325 in the second).
+/// Each loses one point: in row 250, `i` over `[-18, +inf)` with demand true loses -5 and
+/// over `(-inf, 18]` with demand true loses 4; in row 1250, `[-15, -4] ∪ [1, 4] ∪ [10, 18]`
+/// with demand false loses -4 and `[-5, +inf)` with demand true loses 2; in row 1750,
+/// `[-14, +inf)` with demand false loses -10, where the linear stage refused before; in row
+/// 2000, `[-6, -2]` with demand true loses -5; in row 3750, the box `[-8, -5] ∪ [-1, 0]` over
+/// `[-15, -14] ∪ [-10, -5] ∪ [-2, 0]` with demand `[-17, -4] ∪ [7, 12]` loses -5. The
+/// interpreter refutes none of them on the points within (-60, 60); no box of the transfer
+/// changes, and over all 4000 cases and the other tests of this file no other answer before
+/// changes but these same cases in `reversed_parts_give_the_same_boxes_*` and one box of
+/// `ends_of_i64_and_other_corners_keep_their_preimages`.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1373,7 +1388,7 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
         (
             0,
             0,
-            322,
+            317,
             81,
             vec![
                 "i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]",
@@ -1391,7 +1406,7 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
         (
             0,
             0,
-            327,
+            325,
             80,
             vec![
                 "i [1..] before i [1..=4, 7..]",
@@ -1756,8 +1771,12 @@ fn ends_of_i64_and_other_corners_keep_their_preimages() {
         }
         // Two reflections, counted as reflected until S22-exact-mislabel: the boxes before
         // were marked exact while holding points that fail the demand; they are now inexact,
-        // so the new exact boxes count as made exact.
-        diffs.none_but(4000, 0, 0, 2);
+        // so the new exact boxes count as made exact. One, since PERF-s22-const-chain: the
+        // other box before, `i` in `[-25, -20] ∪ {-5} ∪ [3, 5] ∪ [12, 17] ∪ [27, 32]` over
+        // `[-30, -20] ∪ [-5, 5] ∪ [12, 40]` with demand `[-25, -20] ∪ [-10, -5] ∪ [3, 4] ∪
+        // [10, 12]`, doubted only `i = 5`, which the linear stage decides alone; the box
+        // before is now the exact box of the transfer, without 5.
+        diffs.none_but(4000, 0, 0, 1);
     });
 }
 
@@ -3833,6 +3852,46 @@ fn guarded_holes_scale() {
             n,
             |k| {
                 let (t, ds, d) = if k == n { &a } else { &b };
+                before::preimage(t, ds, &old(d));
+            },
+        );
+    });
+}
+
+/// The chain `t_j = if (i <= j mod 7 - 3) { t } else { c - t }` of `n` levels over `i` in
+/// `[-20, 20]`, asked `t_n != 0`, with the constant `c = 2`, or `c = j mod 5`. The transfer
+/// before is exact but for one doubted value of `i`, the point where `t_n` may be 0, and the
+/// linear stage decides that one slice of the relation: the preimage is exact, the box less
+/// that point. Measured with the whole preimage before, `c = 2`: 32.8 M and 263.8 M
+/// instructions at 64 and 512 (8.0 times), 5.3 MB and 42.6 MB (8.0 times), limit 13.2, load
+/// 31 (item PERF-s22-const-chain). Negative control, not kept: the linear stage by the
+/// projection of the relation onto `i` and the decision of its complement leaves the box
+/// `[-20, 20]` inexact, and, with that check skipped, allocates 247 MB and 3.53 GB (14.3
+/// times) and takes 178 ms and 3.3 s, the decision alone up to 418 G instructions at 192
+/// levels. With `c = j mod 5` the preimage is exact too; its transfer is not linear in the
+/// chain (COMPLEXITY.md row C48), so it is checked here at one size only.
+#[test]
+fn constant_guarded_chains_scale() {
+    let case = |n: usize, c: fn(i64) -> i64| {
+        let g = |j: i64| prim(Prim::Le, var("i"), int(j % 7 - 3));
+        let t = chain(n, var("i"), g, |j, t| prim(Prim::Sub, int(c(j)), t));
+        (prim(Prim::Ne, t, int(0)), i_in(-20, 20), Demand::Bool(true))
+    };
+    let n = 64;
+    let cases = scaling::inputs(n, |m| case(m, |_| 2));
+    let moving = case(n, |j| j % 5);
+    on_big_stack(|| {
+        for (t, ds, d) in cases.values().chain([&moving]) {
+            let p = before::preimage(t, ds, &old(d));
+            assert!(p.exact && !p.enumerated, "{p:?}");
+            assert_eq!(first_refuted(t, ds, d, &[(&p.domains, true)]), None);
+        }
+        scaling::check_order(
+            "the transfer and linear stage before of a guarded chain of `2 - t`",
+            n,
+            1,
+            |k| {
+                let (t, ds, d) = &cases[&k];
                 before::preimage(t, ds, &old(d));
             },
         );

@@ -305,6 +305,14 @@ fn exact(seeds: std::ops::Range<u64>) -> Vec<Run> {
 // [-6, 4]), so the counts are unchanged. 13 of the 14 boxes before were refuted at the points
 // checked here; the 14th, `x` in [-7, 47] for the `x div -3` case, fails at `x` from 21 to 44,
 // outside the window and away from the ends, which a dense check of `x` from -7 to 60 showed.
+//
+// Since PERF-s22-const-chain, whose linear stage before decides the one point the transfer
+// doubts with the rest of the formula, three inexact boxes of the transfer before are exact
+// and one point narrower, and no other answer changes: in more_deep_1, `x` in [-13, 1] with
+// demand true loses 0, and in more_mixed_2, `y` with demand false loses 2, so each count
+// gains 1; in more_exact_2, `x` in [1, 12] loses 2 and its count is unchanged, since the exact
+// search before listed an exact box there too (it no longer runs on that case). The
+// interpreter refutes none of the three.
 
 #[test]
 fn s22_random_terms_match_the_interpreter_1() {
@@ -328,12 +336,12 @@ fn more_mixed_terms_match_the_interpreter_1() {
 
 #[test]
 fn more_mixed_terms_match_the_interpreter_2() {
-    check_runs(&mixed(10_010..10_020), 36045);
+    check_runs(&mixed(10_010..10_020), 36046);
 }
 
 #[test]
 fn more_deep_terms_match_the_interpreter_1() {
-    check_runs(&deep(2_000..2_100), 35185);
+    check_runs(&deep(2_000..2_100), 35186);
 }
 
 #[test]

@@ -261,11 +261,12 @@ fn preimage_in(
 ) -> Preimage {
     let marks = tx.landmarks(inputs, demand);
     tx.start(inputs, marks.clone());
-    let r = tx.back(root, ROOT, demand);
+    let back = tx.back(root, ROOT, demand);
     let mut r = Whole {
-        dom: tx.whole(&r),
-        exact: r.exact,
+        dom: tx.whole(&back),
+        exact: back.exact,
     };
+    let doubt = back.doubt;
     let mut stops = std::mem::take(&mut tx.run.stops);
     let mut enumerated = false;
     if !r.exact && !is_empty(&r.dom) {
@@ -277,7 +278,7 @@ fn preimage_in(
     let (mut relation, mut refusal) = (None, None);
     if !r.exact
         && !is_empty(&r.dom)
-        && let Some((rel, found)) = linear(tx, root, &r.dom, demand)
+        && let Some((rel, found)) = linear(tx, root, &r.dom, demand, doubt.as_ref())
     {
         match found {
             Ok((dom, exact, why)) => {
@@ -346,13 +347,15 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
 /// The linear stage: the relation of the demand over the box `dom`, the box narrowed to its
 /// projections and whether the box entails the relation, with the refusal that left the latter
 /// undecided, or the refusal that left the projections undecided. `None` when the term
-/// is outside the domain or the relation is refused.
+/// is outside the domain or the relation is refused. `doubt` is the transfer's doubted box
+/// ([`Res::doubt`]): every point of `dom` outside it meets the demand.
 #[allow(clippy::type_complexity)]
 fn linear(
     tx: &mut Tx<'_>,
     root: Tid,
     dom: &Domains,
     demand: &Demand,
+    doubt: Option<&Sets>,
 ) -> Option<(Relation, Result<(Domains, bool, Option<Refusal>), Refusal>)> {
     tx.start(dom, Landmarks::none());
     let mut tr = Tr {
@@ -391,6 +394,9 @@ fn linear(
             .map(|k| presburger::Atom::Sym(k.clone()))
             .filter(|a| mentioned.contains(a))
             .collect();
+        if let Some(found) = doubt.and_then(|d| pinned_slice(&whole, dom, d, &mentioned)) {
+            return Ok(found);
+        }
         let (each, skipped) = presburger::project_each(&whole, &syms)?;
         let mut each = each.into_iter();
         let mut out = Domains::new();
@@ -423,6 +429,76 @@ fn linear(
     };
     let found = go();
     Some((rel, found))
+}
+
+/// The linear stage's answer where the doubted box `doubt` fixes every input the relation
+/// mentions to one value `p` within `dom`: every point of `dom` outside the slice of `dom` at
+/// `p` meets the demand, and whether the slice does is one decision, since the relation reads
+/// no other input. `whole` is the relation met with `dom`. `None` when the box fixes no such
+/// slice or the decision is refused, or when the slice fails and more than one mentioned
+/// input takes other values in `dom`, for the general path.
+///
+/// Complexity tradeoff: naive version: the projection of the relation onto each input
+/// ([`presburger::project_each`]) and the decision of its complement, which on a chain of n
+/// nested `c - x` under guards that read one input is superlinear in the solver (measured
+/// 178 ms and 3.3 s at 64 and 512 levels). Used: the slice is one point of the mentioned
+/// inputs, so the relation met with it fixes every input and, through the definitions,
+/// every auxiliary variable, and one decision answers, measured linear in n; the answer is
+/// the exact preimage: `dom`, or `dom` less the slice when the slice fails, a box when every
+/// mentioned input but one is fixed by `dom` too. Test
+/// `l01_25_preimage_catalog::s22::constant_guarded_chains_scale`; COMPLEXITY.md row C48.
+/// Given up: a doubted box that holds more than one value of a mentioned input, and a failing
+/// slice with two inputs left free, take the general path, which costs what it did.
+fn pinned_slice(
+    whole: &Formula,
+    dom: &Domains,
+    doubt: &Sets,
+    mentioned: &BTreeSet<presburger::Atom>,
+) -> Option<(Domains, bool, Option<Refusal>)> {
+    let mut p = Vec::new();
+    for (k, v) in dom {
+        if !mentioned.contains(&presburger::Atom::Sym(k.clone())) {
+            continue;
+        }
+        let at = doubt.get(k).map_or_else(|| v.clone(), |d| d.meet(v));
+        if !is_point(&at) {
+            return None;
+        }
+        p.push((k, at));
+    }
+    // A name the relation mentions that is not an input leaves the slice more than a point.
+    let syms = mentioned
+        .iter()
+        .filter(|a| matches!(a, presburger::Atom::Sym(_)))
+        .count();
+    if syms != p.len() {
+        return None;
+    }
+    let slice = p
+        .iter()
+        .map(|(k, v)| presburger::member(&presburger::Atom::Sym((*k).clone()), v))
+        .chain([whole.clone()])
+        .collect();
+    if presburger::decide(&Formula::and(slice)).ok()? {
+        return Some((dom.clone(), true, None));
+    }
+    // The slice fails: the preimage is `dom` less the slice, whose projection onto an input
+    // loses the input's value at `p` only where every other mentioned input is fixed by
+    // `dom` to its value at `p`.
+    let loose: Vec<&(&Arc<str>, IntervalSet)> = p.iter().filter(|(k, v)| dom[*k] != *v).collect();
+    match loose[..] {
+        [] => {
+            let none = dom.keys().map(|k| (k.clone(), IntervalSet::empty()));
+            Some((none.collect(), true, None))
+        }
+        [(k, v)] => {
+            let mut out = dom.clone();
+            out.insert((*k).clone(), dom[*k].minus(v));
+            Some((out, true, None))
+        }
+        // `dom` less the slice is not a box; the general path projects it.
+        _ => None,
+    }
 }
 
 /// The translation of terms into the linear-relation domain: the definitions of the auxiliary
