@@ -507,6 +507,9 @@ fi
 # l01_36_cranelift mul_edges took 32.8 s whole at load 25: its differential of 100,000 integer
 # pairs takes 26 to 27 s alone and that of 100,000 float pairs 14 to 16 s at load 22 to 26; each
 # test is a piece (2026-11-11, TESTS-L1.36-mul-edges-and-differential).
+# l01_39 families holds four audit parts of 7 to 8 s each, the hop families of 13 s and a
+# scaling test of 6 s at load 22 to 24, about 70 s together; each test is a piece
+# (2026-11-11, TESTS-lhx-families).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
@@ -536,6 +539,7 @@ split="
   l01_39_reduced_product::linked::holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch
   l01_39_reduced_product::exact
   l01_39_reduced_product::exact::constraints_reduced_one_at_a_time_decide_as_all_at_once
+  l01_39_reduced_product::families
   l01_39a_bit_words l01_39a_bit_words::scaling
   l25_08_mutate l25_08_mutate::scaling
 "
