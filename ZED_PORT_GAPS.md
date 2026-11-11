@@ -1024,7 +1024,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A cell's index and generation packed into one `i64` by shifts and masks | `Word::cell`, `Word::index`, `Word::generation` | Bit operations | A pair of integers in the word, or the bit words of gap 4 |
 | A free list of cell indices, a `Vec` popped and pushed, beside the cells the heap mutates in place | `Heap::alloc`, `Heap::free_cell` | Mutation | A state receiver over the cells and the free list |
 | `BTreeMap<Value, usize>` that interns the empty tuple and bare atoms across calls | `Heap::uncounted` (`bare`) | Shared tables across pure calls | A map in the heap's state receiver |
-| `Option<Value>` in each cell, set at the first read and cleared when the cell is freed (T14-R1) | `Cell::value`, `Heap::value`, `Heap::fresh`, `Heap::free_cell` | Lazy cells (gap 3), Mutation | A map from cell to value in the heap's state receiver, its entry removed when the cell is freed |
+| `Option<Value>` in each cell, set at the first read and cleared when the cell is freed (T14-R1; since RT-cell-size `Option<Items>`, the sequence only) | `Cell::items`, `Cell::kept`, `Heap::value`, `Heap::fresh`, `Heap::free_cell` | Lazy cells (gap 3), Mutation | A map from cell to value in the heap's state receiver, its entry removed when the cell is freed |
 | A `match` arm guarded by `if let` on the cell's kept value | `Heap::read` | None | An `is` test before the `match` |
 | `Result<(), String>` from `inc`, passed on by `?`; `rt_inc` records it in the run with `get_or_insert` (was an `Option<String>` kept until the next `dec`, changed in T14-heap-rest) | `Heap::inc`, `hooks::rt_inc` | Early exit | `inc` returns the error as a value |
 | An `enum` whose variants borrow the heap's cells or table (`Shape<'h>`) while a `match` reads them | `Heap::shape` | None | A value returned by the read |
@@ -3494,3 +3494,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `RefCell` in each entry of the table of `main` bodies, `MainBody::uses`, that records where each field of `main`'s argument is first read or pushed to, written through a shared `&Mains` while the builder builds the body's forms and read when it builds `main`'s header | `builder.rs` `MainBody::uses`, `FieldUses`, `Builder::main_use`, `Builder::push_target`; `stmts.rs` `main_header` | Mutation (gap 11) | The builder returns the first use of each field with the form it built, and `main`'s header takes the earliest of its body's, a fold over the built forms |
+
+## Entries from RT-cell-size (`crates/zed-rt/src/heap.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A cell's generation and its shared flag packed into one `u32` by a mask and a top bit, to keep the cell at 80 bytes | `Cell::stamp`, `Cell::generation`, `Heap::inc`, `Heap::free_cell` | Bit operations | Two fields of the cell's struct; the compiler's layout packs them, or the bit words of gap 4 |
+| An `enum` that holds a pair in place and any other number of words in a `Box<[Word]>`, read through `impl Deref<Target = [Word]>` and made by two `impl From` | `Parts`, `Obj::Tuple`, `Heap::fresh`, `hooks::node` | None (`Deref`, `From`: named functions) | A tuple field whose layout the compiler chooses; reads by a named function `parts` |
+| `Box<Value>` and `Box<[Word]>` in `Obj`, to keep the largest variant at 40 bytes | `Obj::Data`, `Obj::Atom`, `Obj::Clo` | None | Vanish: a value's layout is the compiler's |
+| One buffer of words shared by the levels of an explicit stack, each level holding where its words start and truncating it when its cell is made | `Heap::fresh` (`Making::start`) | Mutation | A fold whose state is the buffer, or each level's words as a list built by its own loop |

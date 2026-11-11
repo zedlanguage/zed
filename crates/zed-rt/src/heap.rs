@@ -23,6 +23,7 @@
 //! R3, R6).
 
 use std::collections::{BTreeMap, HashMap};
+use std::ops::Deref;
 use std::sync::Arc;
 use std::{mem, slice};
 
@@ -143,12 +144,20 @@ const INDEX_MASK: i64 = (1 << INDEX_BITS) - 1;
 const GENERATIONS: u32 = 1 << (64 - INDEX_BITS);
 
 /// What a cell holds.
+// Complexity tradeoff: the naive form holds a kernel value in place and each sequence of words
+// in a `Vec`, which makes `Obj` 56 bytes, the size of a kernel value, and each sequence 24
+// bytes. Here the kernel value is boxed and each sequence is a boxed slice of exactly its
+// length or a pair in place (`Parts`), so `Obj` is 48 bytes and the cell 80, 96 with feature
+// `counts` (R16). Tradeoffs: a big integer, a rational, a keypath or a family takes one
+// allocation of its own; on a list of pairs each holding a big integer, making a level costs
+// 709 instructions against 772 before, since the pair beside it no longer allocates. Nothing
+// is refused. Tests `l01_36_cranelift::deep_heap`.
 #[derive(Clone, Debug)]
 pub enum Obj {
     /// A string.
     Str(Text),
     /// A non-empty tuple.
-    Tuple(Vec<Word>),
+    Tuple(Parts),
     /// An atom with a payload, its parts in the order of [`Atom::args`].
     Atom {
         /// The atom's name.
@@ -156,16 +165,16 @@ pub enum Obj {
         /// The field names of a struct payload, sorted; empty for a tuple payload.
         fields: Fields,
         /// The payload.
-        args: Vec<Word>,
+        args: Box<[Word]>,
     },
     /// A big integer, a rational, a keypath or a family, as the kernel holds it.
-    Data(Value),
+    Data(Box<Value>),
     /// A closure: the index of its lambda in the program's table, and its captures.
     Clo {
         /// The lambda.
         lambda: usize,
         /// The captures, in the lambda node's input order.
-        caps: Vec<Word>,
+        caps: Box<[Word]>,
     },
 }
 
@@ -177,11 +186,13 @@ impl Obj {
             Obj::Str(_) => "String",
             Obj::Tuple(_) => "tuple",
             Obj::Atom { .. } => "atom",
-            Obj::Data(Value::Int(_) | Value::Big(_)) => "int",
-            Obj::Data(Value::Rat(_)) => "rat",
-            Obj::Data(Value::Path(_)) => "keypath",
-            Obj::Data(Value::Family(_)) => "family",
-            Obj::Data(_) => "kernel value",
+            Obj::Data(v) => match **v {
+                Value::Int(_) | Value::Big(_) => "int",
+                Value::Rat(_) => "rat",
+                Value::Path(_) => "keypath",
+                Value::Family(_) => "family",
+                _ => "kernel value",
+            },
             Obj::Clo { .. } => "closure",
         }
     }
@@ -194,40 +205,122 @@ impl Obj {
             Obj::Str(_) | Obj::Data(_) => &[],
         }
     }
+}
 
-    fn take_parts(self) -> Vec<Word> {
+/// The parts of a tuple: a pair in place, any other number in a block of their own.
+// Complexity tradeoff: the naive form keeps every tuple's parts in a `Vec` of their own: 24
+// bytes in the cell, and a block of 32 bytes for a pair, one allocation per tuple (R16). Here
+// a pair is held in the cell, in the 40 bytes of `Parts`, so making a pair allocates nothing
+// beyond its cell; any other tuple is a boxed slice of exactly its length, with no growth
+// slack. Tradeoffs: reading a part first tests which variant holds the parts, a two-way
+// branch (matching a list of pairs: 381.6 instructions a level against 380.9 with a `Vec`,
+// R16); a single part is boxed, since a third variant in place made each read a three-way
+// branch, 389.6. Nothing is refused. Tests
+// `l01_36_cranelift::deep_heap::a_level_of_a_list_of_pairs_is_one_small_cell`.
+#[derive(Clone, Debug)]
+pub enum Parts {
+    /// Two parts.
+    Two([Word; 2]),
+    /// One part, or three or more.
+    Many(Box<[Word]>),
+}
+
+impl Deref for Parts {
+    type Target = [Word];
+
+    fn deref(&self) -> &[Word] {
         match self {
-            Obj::Tuple(xs) => xs,
-            Obj::Atom { args, .. } => args,
-            Obj::Clo { caps, .. } => caps,
-            Obj::Str(_) | Obj::Data(_) => Vec::new(),
+            Parts::Two(ws) => ws,
+            Parts::Many(ws) => ws,
         }
     }
 }
 
-/// A heap cell: its count, its generation, its contents until it is freed, whether it was ever
-/// shared in this generation, and the kernel value of a string, tuple or atom once made. A
-/// cell's contents do not change while it is live, and its parts live at least as long, so the
-/// value holds until the cell is freed (COMPLEXITY.md R1).
+impl From<&[Word]> for Parts {
+    fn from(ws: &[Word]) -> Parts {
+        match *ws {
+            [a, b] => Parts::Two([a, b]),
+            _ => Parts::Many(ws.into()),
+        }
+    }
+}
+
+impl From<Vec<Word>> for Parts {
+    fn from(ws: Vec<Word>) -> Parts {
+        match *ws {
+            [a, b] => Parts::Two([a, b]),
+            _ => Parts::Many(ws.into_boxed_slice()),
+        }
+    }
+}
+
+/// A heap cell: its count, its generation and whether it was ever shared in this generation,
+/// its contents until it is freed, and the kernel sequence of a tuple's parts or an atom's
+/// payload once made. A cell's contents do not change while it is live, and its parts live at
+/// least as long, so the sequence holds until the cell is freed (COMPLEXITY.md R1). A string
+/// keeps nothing: its kernel value is its `Text`, which the cell holds already.
 // Complexity tradeoff: the naive slow path copies each input into a kernel value and back at
 // every kernel call, O(size) per call, so a value of n words handed to the kernel n times
-// costs O(n²) (R1: 47.8 times the instructions for 8 times the size). Here each string, tuple
-// or atom cell keeps the kernel value made from it, set when a kernel result becomes cells or
-// on the first read, cleared when the cell is freed, so a value is read once however often it
-// is handed over, and a cell met on several paths (R6) is read once. Tradeoffs: the memory of
-// one kernel value per such cell while it lives, shared with the value's parts; correct only
+// costs O(n²) (R1: 47.8 times the instructions for 8 times the size). Here each tuple or atom
+// cell keeps the kernel sequence made from it, set when a kernel result becomes cells or on
+// the first read, cleared when the cell is freed, so a value is read once however often it is
+// handed over, and a cell met on several paths (R6) is read once; the atom's name and field
+// names come from the cell. Tradeoffs: 24 bytes in every cell (R16), and the memory of one
+// kernel sequence per such cell while it lives, shared with the value's parts; correct only
 // because a live cell's contents never change (the one write is the reuse of a freed slot,
-// which clears the value). Nothing is refused. Tests `l01_36_cranelift::kernel_inputs`.
+// which clears the sequence). A map from cell index to sequence beside the cells costs 55 to
+// 75 bytes per filled entry and a hash lookup at each read and each free; runs fill 37 to 84
+// percent of tuple and atom cells (R16), so the map saves at most 4 bytes a cell at the
+// lowest fill and costs up to 39 more at the highest. Nothing is refused. Tests
+// `l01_36_cranelift::kernel_inputs`.
 #[derive(Debug)]
 struct Cell {
     count: u32,
-    generation: u32,
+    /// The generation, below [`GENERATIONS`], and [`SHARED`] when the count has exceeded 1 in
+    /// this generation: one word for both, since a generation needs 24 bits.
+    stamp: u32,
     obj: Option<Obj>,
-    shared: bool,
-    value: Option<Value>,
+    items: Option<Items>,
     /// The node that allocated it, none outside every node (feature `counts`).
     #[cfg(feature = "counts")]
     site: Option<usize>,
+}
+
+/// The bit of [`Cell::stamp`] that says the cell was shared in this generation.
+const SHARED: u32 = 1 << 31;
+
+const _: () = assert!(
+    GENERATIONS <= SHARED,
+    "a generation never reaches the shared bit"
+);
+
+impl Cell {
+    /// The cell's generation.
+    fn generation(&self) -> u32 {
+        self.stamp & !SHARED
+    }
+
+    /// The kernel value the cell keeps: a tuple or an atom whose sequence it has made.
+    fn kept(&self) -> Option<Value> {
+        let items = self.items.as_ref()?;
+        Some(match self.obj.as_ref()? {
+            Obj::Atom { name, fields, .. } => Value::Atom(Atom {
+                name: name.clone(),
+                fields: fields.clone(),
+                args: items.clone(),
+            }),
+            _ => Value::Tuple(items.clone()),
+        })
+    }
+}
+
+/// The sequence of a tuple or of an atom's payload.
+fn items_of(v: &Value) -> Option<&Items> {
+    match v {
+        Value::Tuple(xs) => Some(xs),
+        Value::Atom(a) => Some(&a.args),
+        _ => None,
+    }
 }
 
 /// The bytes of one heap cell in the heap's table, its contents' own blocks not included: what a
@@ -301,8 +394,8 @@ struct Shape<'h> {
 }
 
 /// A tuple or an atom [`Heap::fresh`] has entered: its payload's atom, its parts still to make,
-/// and the words of those made. Values nest as deep as a program builds them, so the values in
-/// progress are on a stack.
+/// and where the words of those made start. Values nest as deep as a program builds them, so
+/// the values in progress are on a stack.
 struct Making<'v> {
     /// The value, which the cell keeps as its kernel value.
     value: &'v Value,
@@ -311,7 +404,8 @@ struct Making<'v> {
     /// The shared sequence it holds, whose cell later meetings take; none when held once.
     shared: Option<SharedParts<'v>>,
     rest: slice::Iter<'v, Value>,
-    parts: Vec<Word>,
+    /// Where its words start in the buffer of words made.
+    start: usize,
 }
 
 /// A cell [`Heap::value`] has entered: its word, and the values of its parts read so far, which
@@ -355,7 +449,7 @@ fn obj_in(cells: &[Cell], w: Word) -> Result<Option<&Obj>, String> {
     }
     let c = &cells[w.index()];
     match &c.obj {
-        Some(o) if c.generation == w.generation() => Ok(Some(o)),
+        Some(o) if c.generation() == w.generation() => Ok(Some(o)),
         _ => Err(freed(Freed::Used, w.index())),
     }
 }
@@ -490,7 +584,7 @@ impl Heap {
         let i = match self.free.pop() {
             Some(i) => {
                 let c = &mut self.cells[i];
-                (c.count, c.obj, c.shared) = (1, Some(obj), false);
+                (c.count, c.obj) = (1, Some(obj));
                 #[cfg(feature = "counts")]
                 {
                     c.site = self.site;
@@ -500,17 +594,16 @@ impl Heap {
             None => {
                 self.cells.push(Cell {
                     count: 1,
-                    generation: 0,
+                    stamp: 0,
                     obj: Some(obj),
-                    shared: false,
-                    value: None,
+                    items: None,
                     #[cfg(feature = "counts")]
                     site: self.site,
                 });
                 self.cells.len() - 1
             }
         };
-        Word::cell(i, self.cells[i].generation)
+        Word::cell(i, self.cells[i].generation())
     }
 
     /// Frees cell `i`, whose count has reached 0: its contents, which it gives back, and its
@@ -518,9 +611,10 @@ impl Heap {
     fn free_cell(&mut self, i: usize) -> Obj {
         let c = &mut self.cells[i];
         let obj = c.obj.take().expect("a live cell holds its contents");
-        c.value = None;
-        c.generation += 1;
-        if c.generation < GENERATIONS {
+        c.items = None;
+        // The next generation, not yet shared.
+        c.stamp = c.generation() + 1;
+        if c.stamp < GENERATIONS {
             self.free.push(i);
         }
         self.stats.frees += 1;
@@ -544,6 +638,9 @@ impl Heap {
     // `l01_36_cranelift::shared_values`.
     pub fn fresh(&mut self, v: &Value) -> Result<Word, String> {
         let mut stack: Vec<Making<'_>> = Vec::new();
+        // The words made of the values on the stack, each value's from its `start`: one buffer,
+        // so a level allocates nothing for its words but its cell's own block, if any.
+        let mut words: Vec<Word> = Vec::new();
         // The cell of each shared sequence made so far, by the sequence's identity.
         let mut made: HashMap<SharedParts<'_>, Word> = HashMap::new();
         let mut next = v;
@@ -567,7 +664,7 @@ impl Heap {
                             atom,
                             shared,
                             rest,
-                            parts: Vec::with_capacity(items.len()),
+                            start: words.len(),
                         });
                         next = first;
                         continue;
@@ -580,21 +677,24 @@ impl Heap {
                 let Some(top) = stack.last_mut() else {
                     return Ok(w);
                 };
-                top.parts.push(w);
+                words.push(w);
                 if let Some(x) = top.rest.next() {
                     next = x;
                     break;
                 }
                 let m = stack.pop().expect("the stack has a top");
-                w = self.alloc(match m.atom {
-                    None => Obj::Tuple(m.parts),
+                let parts = &words[m.start..];
+                let obj = match m.atom {
+                    None => Obj::Tuple(parts.into()),
                     Some(a) => Obj::Atom {
                         name: a.name.clone(),
                         fields: a.fields.clone(),
-                        args: m.parts,
+                        args: parts.into(),
                     },
-                });
-                self.cells[w.index()].value = Some(m.value.clone());
+                };
+                words.truncate(m.start);
+                w = self.alloc(obj);
+                self.cells[w.index()].items = items_of(m.value).cloned();
                 if let Some(k) = m.shared {
                     made.insert(k, w);
                 }
@@ -609,12 +709,8 @@ impl Heap {
         }
         match v {
             Value::Tuple(_) | Value::Atom(_) => self.uncounted(v.clone()),
-            Value::Str(s) => {
-                let w = self.alloc(Obj::Str(s.clone()));
-                self.cells[w.index()].value = Some(v.clone());
-                w
-            }
-            _ => self.alloc(Obj::Data(v.clone())),
+            Value::Str(s) => self.alloc(Obj::Str(s.clone())),
+            _ => self.alloc(Obj::Data(Box::new(v.clone()))),
         }
     }
 
@@ -632,10 +728,10 @@ impl Heap {
         })
     }
 
-    /// The kernel value of data word `w`; a string is shared, not written out. Each string,
-    /// tuple or atom cell keeps the value made from it until it is freed, so a cell met again,
-    /// on another path or in a later call, is read once: the value shares its parts as the cells
-    /// do, and a value handed to the kernel many times costs its size once (COMPLEXITY.md R1).
+    /// The kernel value of data word `w`; a string is shared, not written out. Each tuple or atom
+    /// cell keeps the sequence made from it until it is freed, so a cell met again, on another
+    /// path or in a later call, is read once: the value shares its parts as the cells do, and a
+    /// value handed to the kernel many times costs its size once (COMPLEXITY.md R1).
     pub fn value(&mut self, w: Word) -> Result<Value, String> {
         let mut stack = Vec::new();
         let mut made = self.read(w, &mut stack)?;
@@ -649,15 +745,16 @@ impl Heap {
                 Some(&part) => made = self.read(part, &mut stack)?,
                 None => {
                     let r = stack.pop().expect("the stack has a top");
+                    let items = Items::from(r.parts);
                     let v = match self.obj(r.w)? {
                         Some(Obj::Atom { name, fields, .. }) => Value::Atom(Atom {
                             name: name.clone(),
                             fields: fields.clone(),
-                            args: r.parts.into(),
+                            args: items.clone(),
                         }),
-                        _ => Value::Tuple(r.parts.into()),
+                        _ => Value::Tuple(items.clone()),
                     };
-                    self.cells[r.w.index()].value = Some(v.clone());
+                    self.cells[r.w.index()].items = Some(items);
                     made = Some(v);
                 }
             }
@@ -674,7 +771,7 @@ impl Heap {
             Word::BOOL => Value::Bool(w.bits != 0),
             Word::VAL => self.vals[w.bits as usize].value.clone(),
             Word::CELL => match obj_in(&self.cells, w)? {
-                _ if let Some(v) = &self.cells[w.index()].value => v.clone(),
+                _ if let Some(v) = self.cells[w.index()].kept() => v,
                 Some(Obj::Str(r)) => Value::Str(r.clone()),
                 Some(o @ (Obj::Tuple(_) | Obj::Atom { .. })) => {
                     stack.push(Reading {
@@ -683,7 +780,7 @@ impl Heap {
                     });
                     return Ok(None);
                 }
-                Some(Obj::Data(v)) => v.clone(),
+                Some(Obj::Data(v)) => (**v).clone(),
                 Some(Obj::Clo { .. }) => return Err(closure_as_data()),
                 None => unreachable!("obj_in checks the cell is live"),
             },
@@ -699,7 +796,7 @@ impl Heap {
             return Ok(());
         }
         let c = &mut self.cells[w.index()];
-        if c.count == 0 || c.generation != w.generation() {
+        if c.count == 0 || c.generation() != w.generation() {
             return Err(freed(Freed::Shared, w.index()));
         }
         c.count = c
@@ -707,8 +804,8 @@ impl Heap {
             .checked_add(1)
             .ok_or_else(|| full_count(w.index()))?;
         self.stats.increments += 1;
-        if c.count == 2 && !c.shared {
-            c.shared = true;
+        if c.count == 2 && c.stamp & SHARED == 0 {
+            c.stamp |= SHARED;
             self.stats.shared += 1;
         }
         Ok(())
@@ -716,7 +813,7 @@ impl Heap {
 
     /// Drops a reference to `w`, when it is a cell, freeing it and dropping its parts at 0.
     /// Work beyond the one count write happens only when a cell with parts is freed, and that
-    /// work is paid for by the parts' allocation.
+    /// work is paid for by the cell's allocation.
     pub fn dec(&mut self, w: Word) -> Result<(), String> {
         let Some(obj) = self.drop_ref(w)? else {
             return Ok(());
@@ -728,10 +825,10 @@ impl Heap {
         // leaves `self.todo` empty and gives up only the capacity.
         let mut todo = mem::take(&mut self.todo);
         // In reverse, so the parts are dropped first to last.
-        todo.extend(obj.take_parts().into_iter().rev());
+        todo.extend(obj.parts().iter().rev().copied());
         while let Some(w) = todo.pop() {
             if let Some(obj) = self.drop_ref(w)? {
-                todo.extend(obj.take_parts().into_iter().rev());
+                todo.extend(obj.parts().iter().rev().copied());
             }
         }
         self.todo = todo;
@@ -746,7 +843,7 @@ impl Heap {
         }
         self.stats.decrements += 1;
         let c = &mut self.cells[w.index()];
-        if c.count == 0 || c.generation != w.generation() {
+        if c.count == 0 || c.generation() != w.generation() {
             return Err(freed(Freed::Dropped, w.index()));
         }
         c.count -= 1;
@@ -793,7 +890,8 @@ impl Heap {
         let c = &mut self.cells[w.index()];
         if c.count == 1 {
             c.count = 0;
-            let parts = self.free_cell(w.index()).take_parts();
+            let obj = self.free_cell(w.index());
+            let parts = obj.parts();
             // Each child goes to the part it reads, in one step.
             let mut sub = vec![Vec::new(); parts.len()];
             for kid in at.iter().flat_map(|&x| tree.kids(x)) {
@@ -809,7 +907,7 @@ impl Heap {
                 };
                 s.push(kid);
             }
-            todo.extend(parts.into_iter().zip(sub).rev());
+            todo.extend(parts.iter().copied().zip(sub).rev());
         } else {
             for &x in at {
                 self.inc_kept(w, tree, x)?;
@@ -936,7 +1034,7 @@ impl Heap {
                         Value::Str(s) if r.len() == s.len() => r == s,
                         _ => false,
                     },
-                    Some(Obj::Data(v)) => v == l,
+                    Some(Obj::Data(v)) => **v == *l,
                     Some(Obj::Tuple(xs)) => match l {
                         Value::Tuple(ys) if ys.len() == xs.len() => {
                             todo.extend(xs.iter().copied().zip(ys.iter()));
@@ -1243,7 +1341,7 @@ mod tests {
     fn a_drop_after_a_free_inside_a_nest_is_an_error_and_the_next_drop_starts_clean() {
         let mut h = Heap::new();
         let s = h.fresh(&Value::str("a")).unwrap();
-        let w = h.alloc(Obj::Tuple(vec![s, s]));
+        let w = h.alloc(Obj::Tuple(vec![s, s].into()));
         assert_eq!(h.dec(w).unwrap_err(), freed(Freed::Dropped, s.index()));
         assert!(h.todo.is_empty());
         let w = h.fresh(&Value::tuple(vec![Value::str("b")])).unwrap();
@@ -1275,7 +1373,7 @@ mod tests {
     fn a_shared_release_stops_at_a_constant_and_writes_no_count_for_it() {
         let mut h = Heap::new();
         let k = h.uncounted(Value::tuple(vec![Value::Int(1), Value::str("x")]));
-        let t = h.alloc(Obj::Tuple(vec![k, Word::int(2)]));
+        let t = h.alloc(Obj::Tuple(vec![k, Word::int(2)].into()));
         h.inc(t).unwrap();
         let (paths, end) = one_path(&[0, 1]);
         h.release(t, &paths, &[end]).unwrap();
@@ -1286,7 +1384,7 @@ mod tests {
     #[test]
     fn a_path_into_a_scalar_is_an_error() {
         let mut h = Heap::new();
-        let t = h.alloc(Obj::Tuple(vec![Word::int(1)]));
+        let t = h.alloc(Obj::Tuple(vec![Word::int(1)].into()));
         h.inc(t).unwrap();
         let (paths, end) = one_path(&[0, 0]);
         assert_eq!(
@@ -1335,7 +1433,7 @@ mod tests {
         h.dec(w).unwrap();
         let w = h.alloc(Obj::Str("b".into()));
         assert_eq!((w.index(), w.generation()), (0, 1));
-        h.cells[0].generation = GENERATIONS - 1;
+        h.cells[0].stamp = GENERATIONS - 1;
         let last = Word::cell(0, GENERATIONS - 1);
         h.dec(last).unwrap();
         let next = h.alloc(Obj::Str("c".into()));

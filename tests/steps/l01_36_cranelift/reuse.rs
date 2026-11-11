@@ -231,7 +231,7 @@ fn a_literal_pattern_reads_a_string_only_when_the_lengths_agree() {
 fn a_literal_pattern_compares_a_tuple_part_by_part() {
     let mut h = Heap::new();
     let x = h.fresh(&Value::str("x")).unwrap();
-    let t = h.alloc(Obj::Tuple(vec![Word::int(1), x]));
+    let t = h.alloc(Obj::Tuple(vec![Word::int(1), x].into()));
     let k = h.uncounted(Value::tuple(vec![Value::Int(1), Value::str("x")]));
     let lit = |l: Value| Pattern::Lit(l);
     let one_x = Value::tuple(vec![Value::Int(1), Value::str("x")]);
@@ -319,7 +319,7 @@ fn a_value_whose_parts_share_one_cell_is_read_once_per_cell() {
     let mut want = Value::str("total 12");
     for _ in 0..64 {
         h.inc(w).unwrap();
-        w = h.alloc(Obj::Tuple(vec![w, w]));
+        w = h.alloc(Obj::Tuple(vec![w, w].into()));
         want = Value::tuple(vec![want.clone(), want]);
     }
     assert_eq!(h.value(w).unwrap(), want);

@@ -153,9 +153,9 @@ fn a_shared_tail_stays_for_its_other_owner() {
     // `tail` is held by the list and by the caller; the head is released keeping `name`.
     let mut h = Heap::new();
     let name = h.fresh(&Value::str("Ada")).unwrap();
-    let tail = h.alloc(Obj::Tuple(vec![name, Word::int(1)]));
+    let tail = h.alloc(Obj::Tuple(vec![name, Word::int(1)].into()));
     h.inc(tail).unwrap();
-    let head = h.alloc(Obj::Tuple(vec![Word::int(0), tail]));
+    let head = h.alloc(Obj::Tuple(vec![Word::int(0), tail].into()));
     let (paths, end) = one_path(&[1, 0]);
     h.release(head, &paths, &[end]).unwrap();
     assert_eq!(h.live(), 2, "the head goes; the tail and the name stay");
@@ -238,9 +238,9 @@ fn a_function_matches_a_binder_and_no_shape() {
     let mut h = Heap::new();
     let f = h.alloc(Obj::Clo {
         lambda: 0,
-        caps: Vec::new(),
+        caps: Box::new([]),
     });
-    let w = h.alloc(Obj::Tuple(vec![f, Word::int(1)]));
+    let w = h.alloc(Obj::Tuple(vec![f, Word::int(1)].into()));
     let (mut paths, mut out) = (Paths::default(), Vec::new());
     let p = Pattern::Tuple(vec![bind("f"), Pattern::Wild]);
     assert!(h.matches(&p, w, &mut paths, &mut out).unwrap());
@@ -283,7 +283,7 @@ fn a_rope_inside_a_tuple_is_shared_not_copied_when_read() {
     }
     let mut h = Heap::new();
     let s = h.alloc(Obj::Str(r.clone()));
-    let w = h.alloc(Obj::Tuple(vec![Word::int(1), s]));
+    let w = h.alloc(Obj::Tuple(vec![Word::int(1), s].into()));
     for _ in 0..2 {
         let Value::Tuple(parts) = h.value(w).unwrap() else {
             panic!("not a tuple")
@@ -299,7 +299,7 @@ fn a_rope_inside_a_tuple_is_shared_not_copied_when_read() {
     let r = Text::join(&a.as_str().into(), &b.as_str().into()).unwrap();
     assert!(!r.is_flat());
     let s = h.alloc(Obj::Str(r));
-    let w = h.alloc(Obj::Tuple(vec![Word::int(1), s]));
+    let w = h.alloc(Obj::Tuple(vec![Word::int(1), s].into()));
     let want = Value::tuple(vec![Value::Int(1), Value::str(&format!("{a}{b}"))]);
     assert_eq!(h.value(w).unwrap(), want);
 }
@@ -309,9 +309,9 @@ fn a_closure_below_a_value_is_not_data() {
     let mut h = Heap::new();
     let f = h.alloc(Obj::Clo {
         lambda: 0,
-        caps: Vec::new(),
+        caps: Box::new([]),
     });
-    let w = h.alloc(Obj::Tuple(vec![Word::int(1), f]));
+    let w = h.alloc(Obj::Tuple(vec![Word::int(1), f].into()));
     let e = h.value(w).unwrap_err();
     assert_eq!(
         e,
@@ -326,7 +326,7 @@ fn a_closure_below_a_value_is_not_data() {
 fn a_freed_cell_below_a_value_is_reported() {
     let mut h = Heap::new();
     let s = h.fresh(&Value::str("gone")).unwrap();
-    let w = h.alloc(Obj::Tuple(vec![s]));
+    let w = h.alloc(Obj::Tuple(vec![s].into()));
     h.dec(s).unwrap();
     let e = h.value(w).unwrap_err();
     assert_eq!(
@@ -341,7 +341,7 @@ fn a_freed_cell_below_a_value_is_reported() {
 #[test]
 fn a_state_word_is_not_data() {
     let mut h = Heap::new();
-    let w = h.alloc(Obj::Tuple(vec![Word::state()]));
+    let w = h.alloc(Obj::Tuple(vec![Word::state()].into()));
     let e = h.value(w).unwrap_err();
     assert_eq!(
         e,
@@ -481,4 +481,34 @@ fn a_wide_function_runs_in_time_linear_in_its_width() {
             },
         )
     });
+}
+
+/// The levels of the list the bytes test makes: a power of two, so the table of cells has no
+/// growth slack at the end and the bytes are the cells' own.
+const BYTES_LEVELS: usize = 1 << 17;
+
+/// The bytes the heap holds for each level of a list of pairs, measured on 2026-11-11 in this
+/// build (feature `counts`): one cell of 96 bytes, the two parts in it (COMPLEXITY.md R16).
+/// Before, a level held a cell of 144 bytes and a block of 32 for its parts.
+const BYTES_PER_LEVEL: f64 = 96.0;
+
+/// The heap of a list of pairs `(k, rest)` holds at most 1.25 times [`BYTES_PER_LEVEL`] a level,
+/// counted exactly on this thread, the kernel value it was made from living outside the count.
+/// A block of its own for a pair's parts (32 bytes) or a kernel value in each cell (56) is past
+/// the bound.
+#[test]
+fn a_level_of_a_list_of_pairs_is_one_small_cell() {
+    let n = BYTES_LEVELS;
+    let v = nested(in_tuple, n, Value::Int(0));
+    let (h, live) = zed_alloc_count::live(|| {
+        let mut h = Heap::new();
+        h.fresh(&v).unwrap();
+        h
+    });
+    assert_eq!(h.cell_slots(), n);
+    let per_level = live.net as f64 / n as f64;
+    assert!(
+        per_level <= 1.25 * BYTES_PER_LEVEL,
+        "{per_level} bytes a level, measured {BYTES_PER_LEVEL}"
+    );
 }

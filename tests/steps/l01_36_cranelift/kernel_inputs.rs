@@ -87,7 +87,7 @@ fn a_cell_freed_and_taken_again_gives_its_new_value() {
     // The program builds a new record, whose cells take freed ones that kept values.
     let customer = h.alloc(Obj::Str("acme".into()));
     let note = h.alloc(Obj::Str("hold".into()));
-    let new = h.alloc(Obj::Tuple(vec![customer, note]));
+    let new = h.alloc(Obj::Tuple(vec![customer, note].into()));
     assert_eq!(h.cell_slots(), 8);
     assert!(
         h.value(old).is_err(),
@@ -132,8 +132,8 @@ fn a_cell_shared_by_two_tuples_is_read_once() {
     let mut h = Heap::new();
     let lines = h.fresh(&order("rush")).unwrap();
     h.inc(lines).unwrap();
-    let a = h.alloc(Obj::Tuple(vec![lines, Word::int(1)]));
-    let b = h.alloc(Obj::Tuple(vec![lines, Word::int(2)]));
+    let a = h.alloc(Obj::Tuple(vec![lines, Word::int(1)].into()));
+    let b = h.alloc(Obj::Tuple(vec![lines, Word::int(2)].into()));
     let va = h.value(a).unwrap();
     let before = h.stats.converted;
     let vb = h.value(b).unwrap();
@@ -192,10 +192,10 @@ fn a_record_handed_to_the_kernel_many_times_scales() {
 /// its word.
 fn manifest(n: usize) -> Mutex<(Heap, Word)> {
     let mut h = Heap::new();
-    let lines = (0..64 * n)
+    let lines: Vec<Word> = (0..64 * n)
         .map(|i| h.alloc(Obj::Str(format!("crate {i}").into())))
         .collect();
-    let w = h.alloc(Obj::Tuple(lines));
+    let w = h.alloc(Obj::Tuple(lines.into()));
     Mutex::new((h, w))
 }
 

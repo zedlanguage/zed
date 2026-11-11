@@ -434,7 +434,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
     let ni = &t.nodes[id];
     match &ni.node().op {
         Op::Prim(Prim::Tuple) if !ins.is_empty() && all_data(s, ins)? => {
-            Ok(s.heap.alloc(Obj::Tuple(ins.to_vec())))
+            Ok(s.heap.alloc(Obj::Tuple(ins.into())))
         }
         // The atom is made from its words, as the kernel would make it: the payload moves
         // into the cell, and the name and field names are borrowed.
@@ -495,7 +495,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         }
         Op::Lambda => Ok(s.heap.alloc(Obj::Clo {
             lambda: ni.lambda.expect("a lambda's index"),
-            caps: ins.to_vec(),
+            caps: ins.into(),
         })),
         Op::Read(p) => match s.ev.world.inputs.get(&**p) {
             Some(v) => {
@@ -934,7 +934,7 @@ mod tests {
         for _ in 0..DEPTH {
             w = s.run.heap.alloc(Obj::Clo {
                 lambda: inner,
-                caps: vec![w],
+                caps: vec![w].into(),
             });
         }
         // The kernel's terms drop by recursion, so this one is left to the end of the process.
@@ -968,7 +968,7 @@ mod tests {
             s.run.heap.inc(w).unwrap();
             w = s.run.heap.alloc(Obj::Clo {
                 lambda: inner,
-                caps: vec![w, w],
+                caps: vec![w, w].into(),
             });
         }
         // A tree of every path would hold 2^64 copies of the bottom closure.
@@ -1002,7 +1002,7 @@ mod tests {
         let (mut s, inner) = two_captures();
         let clo = |a, b| Obj::Clo {
             lambda: inner,
-            caps: vec![Word::int(a), Word::int(b)],
+            caps: vec![Word::int(a), Word::int(b)].into(),
         };
         let mut lets = Lets::default();
         let old = s.run.heap.alloc(clo(1, 2));

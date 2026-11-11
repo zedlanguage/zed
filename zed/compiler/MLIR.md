@@ -149,7 +149,7 @@ Inline sizes, `size_of` on x86-64 (the heap cell as the tests build it, with fea
 | `zir::Edge` | 104 |
 | `zir::Region` | 80 |
 | `native Word` | 16 |
-| `native heap cell` | 144 |
+| `native heap cell` | 96 |
 
 Measured on the 10 step units the front end accepts (4 more are refused by design and give no
 record):
@@ -165,7 +165,7 @@ record):
   of its domain is one pointer to a shared tree instead of a 24-byte vector. The figures in this
   list are those of 2026-11-05.
 - Native values: 109 runs allocated 195 heap cells, at most 8 live at once in one run. An
-  unboxed value is one 16-byte word; a boxed one is a word and a 144-byte cell, plus its
+  unboxed value is one 16-byte word; a boxed one is a word and a 96-byte cell, plus its
   payload's own blocks. An atom with no payload is a word and takes no cell; one with a payload
   takes a cell. Each row also allocates one cell for the closure of the function it applies,
   so the `#leaf` row allocates 1 cell (the closure) and the six-field `#node(…)` row 3 (the

@@ -541,7 +541,7 @@ fn paired(depth: usize) -> (Heap, Word) {
     let mut w = h.fresh(&Value::str("total 12")).unwrap();
     for _ in 0..depth {
         h.inc(w).unwrap();
-        w = h.alloc(Obj::Tuple(vec![w, w]));
+        w = h.alloc(Obj::Tuple(vec![w, w].into()));
     }
     (h, w)
 }
