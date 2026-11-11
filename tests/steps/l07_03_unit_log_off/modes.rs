@@ -29,6 +29,7 @@ const NOT_MODES: &[&str] = &[
     "every",
     "per",
     "no",
+    "one",
     "two",
     "three",
     "other",
