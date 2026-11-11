@@ -23,15 +23,26 @@ freezes this list against the compiler's design and inserts a step for each gap 
 
 `cargo run -q -p zed-tools --bin audit -- ../../../zed ../corpus/31-typechecker.zed --checklist ZED0.md`
 (run by hand, since CI does not read the spec repository, which must be beside this one;
-last run at spec commit 5f01729, exit status 0, 115 grammar alternatives and 13 words
-needed, none missing). An alternative is needed when program 31's units stop parsing, or parse to a
+last run at spec commit eb34700, exit status 0, 115 grammar alternatives and 13 words
+needed, none missing, and 128 entries listed, none not needed). An alternative is needed when program 31's units stop parsing, or parse to a
 different tree, without it, so the list is exact for the grammar of DESIGN.md sec:grammar.
 `Rule#i` is alternative `i` (from 0) of the rule, in the grammar's order. The words are
 those `layer -v` reports. The indices follow the grammar: after a grammar change, rerun
 the audit and update the list.
 
+The audit reads only the table of Part A, and Part A lists exactly what the audit finds: the
+audit names each needed entry Part A lacks, and each entry Part A lists that program 31 does
+not need (a rule or alternative the grammar no longer has, a word the table of defined words
+no longer lists, or an alternative or word that exists but program 31 does not use), and exits
+1 if either list is not empty. No entry is listed for any other reason; a need of the compiler
+that program 31 does not show belongs in Part B.
+
 Step S.1 reruns this audit over the current grammar. Negative controls: with the entry for
-alternative 0 of Loop deleted from this file, the audit exits 1 and names it; a synthetic program
+alternative 0 of Loop deleted from this file, the audit exits 1 and names it as missing; with
+`Prefix#2` written as `Prefix#1` (its index before AnnotExpr was inserted above it), it exits 1
+and names `Prefix#2` as missing and `Prefix#1` as not needed; with `Port#0` (a rule the grammar no
+longer has), `Result#0` (an alternative program 31 does not use) and the word `String` (no longer
+in the table) added, it exits 1 and names all three as not needed; a synthetic program
 that uses a word of a layer after row S (L25 or above) audits to that word, above the bootstrap subset.
 
 ## Part A: what program 31 needs

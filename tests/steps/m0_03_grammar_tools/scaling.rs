@@ -2,7 +2,7 @@
 //! timing, at n and 8n, and a tool's constant cost of reading the grammars is small beside the
 //! work at these sizes.
 
-use zed_tests::scaling::check;
+use zed_tests::scaling::{check, inputs};
 use zed_tools::spec::Spec;
 use zed_tools::{audit, cases, check as check_tool, fences, fuzz, layer, progress, ring, sync};
 
@@ -133,6 +133,34 @@ fn audit_scales_with_the_length_of_a_program() {
     scales("audit", 12, &sized, |d| {
         let args = [spec.root(), d.at("p.zed")];
         assert!(audit::run(&args, &mut String::new()).is_ok());
+    });
+}
+
+/// The audit's comparison of a checklist with what a program needs, at `n` needed alternatives
+/// and `n` needed words, all listed, and `n` of each listed that are not needed (rules the
+/// grammar does not have, words the table does not list), so both directions are measured.
+#[test]
+fn the_checklist_comparison_scales_with_its_entries() {
+    let dir = spec_dir("scale_checklist", &design(""), "");
+    let spec = Spec::open(&dir.root()).expect("the spec reads");
+    let table = layer::WordTable::read(&spec.design).expect("the table reads");
+    let sized = inputs(2000, |m| {
+        let needs = audit::Needs {
+            program: "p.zed".into(),
+            alts: (0..m).map(|i| (1, format!("R{i}"), 0)).collect(),
+            words: (0..m).map(|i| (format!("w{i}"), 1)).collect(),
+        };
+        let alts: String = (0..m).map(|i| format!(" `R{i}#0` `S{i}#0`")).collect();
+        let words: String = (0..m).map(|i| format!(" `w{i}` `x{i}`")).collect();
+        let list = format!("## Part A\n\n| L1 |{alts} |{words} |\n");
+        (needs, list)
+    });
+    check("checklist comparison, by entries", 2000, |m| {
+        let (needs, list) = &sized[&m];
+        let mut out = String::new();
+        let outcome = audit::compare(&spec, &table, needs, "ZED0.md", list, &mut out);
+        assert_eq!(outcome, Ok(false));
+        assert!(out.contains(&format!(", {} not needed `", 2 * m)), "{out}");
     });
 }
 

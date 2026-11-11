@@ -255,6 +255,182 @@ fn audit_names_what_a_program_needs_and_fails_when_the_checklist_lacks_it() {
     assert!(outcome.expect_err("no program").contains("usage"));
 }
 
+/// A program of two functions that needs the word `len` of the test spec's table.
+const LENGTHS: &str =
+    "// layer L3\ndouble(x: int) -> int = x * 2;\nsize(x: [int]) -> int = len(x);\n";
+
+/// Checklist entries, each with the layer of its row.
+type Entries = Vec<(u32, String)>;
+
+/// The audit's report on `program`, with no checklist: each needed alternative as
+/// (layer, `Rule#i`) and each needed word as (layer, word).
+fn audit_needs(spec: &str, program: &str) -> (Entries, Entries) {
+    let (outcome, out) = tool(audit::run, &[spec, program]);
+    assert_eq!(outcome, Ok(true), "{out}");
+    let layer = |s: &str| s.strip_prefix('L')?.parse::<u32>().ok();
+    let (mut alts, mut words) = (Vec::new(), Vec::new());
+    for l in out.lines() {
+        let mut parts = l.split_whitespace();
+        let (Some(k), Some(entry)) = (parts.next().and_then(layer), parts.next()) else {
+            continue;
+        };
+        if l.starts_with("      L") {
+            words.push((k, entry.to_string()));
+        } else if l.starts_with('L') && entry.contains('#') {
+            alts.push((k, entry.to_string()));
+        }
+    }
+    (alts, words)
+}
+
+/// A checklist whose Part A lists `alts` and `words`, each in the row of its layer.
+fn checklist(alts: &[(u32, String)], words: &[(u32, String)]) -> String {
+    let mut rows: std::collections::BTreeMap<u32, (String, String)> = Default::default();
+    for (k, a) in alts {
+        rows.entry(*k).or_default().0 += &format!(" `{a}`");
+    }
+    for (k, w) in words {
+        rows.entry(*k).or_default().1 += &format!(" `{w}`");
+    }
+    let mut text = "# Checklist\n\n## Part A: what the program needs\n\n\
+                    | Layer | Grammar alternatives | Defined words |\n|---|---|---|\n"
+        .to_string();
+    for (k, (a, w)) in rows {
+        let cell = |s: String| if s.is_empty() { " —".into() } else { s };
+        text += &format!("| L{k} |{} |{} |\n", cell(a), cell(w));
+    }
+    text + "\n## Part B: more\n\n`Port#0` and `String` here are prose, not entries.\n"
+}
+
+#[test]
+fn audit_accepts_a_checklist_that_lists_exactly_what_the_program_needs() {
+    let dir = spec_dir("audit_exact", &design(""), "");
+    let program = dir.write("p.zed", LENGTHS);
+    let (alts, words) = audit_needs(&dir.root(), &program);
+    assert!(
+        !alts.is_empty() && words == [(1, "len".to_string())],
+        "{words:?}"
+    );
+    let list = dir.write("ZED0.md", &checklist(&alts, &words));
+    let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
+    assert_eq!(outcome, Ok(true), "{out}");
+    let n = alts.len() + words.len();
+    assert!(
+        out.contains(&format!("checklist: {n} needed, 0 missing\n")),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!("checklist: {n} listed, 0 not needed\n")),
+        "{out}"
+    );
+}
+
+#[test]
+fn audit_fails_on_a_listed_entry_the_grammar_or_the_table_no_longer_has() {
+    let dir = spec_dir("audit_stale", &design(""), "");
+    let program = dir.write("p.zed", LENGTHS);
+    let (mut alts, mut words) = audit_needs(&dir.root(), &program);
+    // A rule that was removed, alternatives past the end of a rule of one alternative and of a
+    // rule of many, a word the table of defined words does not list, and a word it lists that
+    // the program does not use.
+    alts.push((1, "Port#0".into()));
+    alts.push((1, "Unit#1".into()));
+    alts.push((2, "Primary#400".into()));
+    words.push((1, "String".into()));
+    words.push((3, "sorted".into()));
+    let list = dir.write("ZED0.md", &checklist(&alts, &words));
+    let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
+    assert_eq!(outcome, Ok(false), "{out}");
+    let g = Spec::open(&dir.root()).expect("the spec reads").syntactic;
+    assert_eq!(g.rules[g.rule("Unit").expect("a rule Unit")].alts.len(), 1);
+    let primary = g.rules[g.rule("Primary").expect("a rule Primary")]
+        .alts
+        .len();
+    for line in [
+        " 5 not needed `Port#0` `Primary#400` `Unit#1` `String` `sorted`\n".to_string(),
+        "  `Port#0`, in the row L1 of Part A of ZED0.md, is not needed: the grammar has no rule \
+         Port."
+            .to_string(),
+        "  `Unit#1`, in the row L1 of Part A of ZED0.md, is not needed: rule Unit has one \
+         alternative, numbered 0."
+            .to_string(),
+        format!(
+            "  `Primary#400`, in the row L2 of Part A of ZED0.md, is not needed: rule Primary has \
+             {primary} alternatives, numbered 0 to {}.",
+            primary - 1
+        ),
+        "  `String`, in the row L1 of Part A of ZED0.md, is not needed: the table of defined \
+         words in DESIGN.md does not list it."
+            .to_string(),
+        "  `sorted`, in the row L3 of Part A of ZED0.md, is not needed: the table of defined words \
+         lists it at L3, but p.zed does not use it."
+            .to_string(),
+    ] {
+        assert!(out.contains(&line), "no line {line:?} in\n{out}");
+    }
+    assert!(out.contains(", 0 missing\n"), "{out}");
+    assert!(out.contains("To repair ZED0.md"), "{out}");
+}
+
+#[test]
+fn audit_fails_on_an_alternative_listed_under_its_old_index_and_names_both() {
+    let dir = spec_dir("audit_renumbered", &design(""), "");
+    let program = dir.write("p.zed", LENGTHS);
+    let (mut alts, words) = audit_needs(&dir.root(), &program);
+    // A needed alternative listed under the index of another alternative of its rule, one the
+    // program does not need, as when an alternative was inserted above it.
+    let spec = Spec::open(&dir.root()).expect("the spec reads");
+    let g = &spec.syntactic;
+    let listed: std::collections::HashSet<String> = alts.iter().map(|a| a.1.clone()).collect();
+    let (at, old, new) = alts
+        .iter()
+        .enumerate()
+        .find_map(|(at, (_, entry))| {
+            let (rule, _) = entry.split_once('#')?;
+            let n = g.rules[g.rule(rule)?].alts.len();
+            let other = (0..n)
+                .map(|j| format!("{rule}#{j}"))
+                .find(|e| !listed.contains(e))?;
+            Some((at, other, entry.clone()))
+        })
+        .expect("a needed alternative whose rule has one the program does not need");
+    alts[at].1 = old.clone();
+    let list = dir.write("ZED0.md", &checklist(&alts, &words));
+    let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
+    assert_eq!(outcome, Ok(false), "{out}");
+    let (rule, i) = new.split_once('#').unwrap();
+    let (_, j) = old.split_once('#').unwrap();
+    for line in [
+        format!(", 1 missing `{new}`\n"),
+        format!(
+            "  `{new}` is missing from Part A of ZED0.md: p.zed needs alternative {i} of rule \
+             {rule}, `"
+        ),
+        format!(", 1 not needed `{old}`\n"),
+        format!(
+            "  `{old}`, in the row L{} of Part A of ZED0.md, is not needed: alternative {j} of \
+             rule {rule}, `",
+            alts[at].0
+        ),
+        "still parses to the same trees.".to_string(),
+    ] {
+        assert!(out.contains(&line), "no text {line:?} in\n{out}");
+    }
+}
+
+#[test]
+fn audit_fails_on_a_checklist_with_no_part_a() {
+    let dir = spec_dir("audit_no_part_a", &design(""), "");
+    let program = dir.write("p.zed", LENGTHS);
+    let list = dir.write(
+        "ZED0.md",
+        "Nothing here, and `Unit#0` outside any Part A.\n",
+    );
+    let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
+    assert_eq!(outcome, Ok(false), "{out}");
+    assert!(out.contains("ZED0.md has no section `## Part A`"), "{out}");
+}
+
 #[test]
 fn fuzz_gives_the_same_report_for_the_same_seed() {
     let dir = spec_dir("fuzz", &design(""), "");
