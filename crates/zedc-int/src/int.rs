@@ -171,15 +171,44 @@ impl Int {
                 };
                 i128::try_from(g).map_or_else(|_| BigInt::from(g).into(), Int::from)
             }
-            // Complexity tradeoff: num-bigint's `gcd` is Stein's algorithm over the whole
-            // width, O(n^2) in the wider operand's bits even when the other is one word;
-            // `gcd_uint` takes out the powers of 2 by shifts, reduces the wider operand modulo
-            // the narrower by one division, O(M(n)), and runs the half gcd at the narrower
-            // width, O(M(n) log n). The answer is the same. Trigger: the solver's rational
-            // cross products past i128 (LOAD-max-div-xr I25, 37% of cycles at 160 links of
-            // the mixed family before). Test:
-            // `int::tests::the_big_gcd_agrees_with_num_bigint`.
-            _ => BigInt::from(gcd_uint(self.big().magnitude(), other.big().magnitude())).into(),
+            (Repr::Small(0), _) => other.abs(),
+            (_, Repr::Small(0)) => self.abs(),
+            (Repr::Small(1 | -1), _) | (_, Repr::Small(1 | -1)) => Int::ONE,
+            // Complexity tradeoff: naive `self.big()` on a `Small` operand against `Big`
+            // heap-allocates a `BigInt` and runs wide division even when the small operand is one
+            // word (as in `Q::new` on small coefficients against `2^k` constants); streaming the
+            // wide operand's words modulo an odd `u64` part finishes in registers in O(words)
+            // with zero heap allocations. Past one odd word, `gcd_uint` takes out powers of 2 by
+            // shifts, reduces the wider odd part modulo the narrower by `fast::rem`, O(M(n)), and
+            // runs the half gcd (with in-place word-buffer Stein below `GCD_LEAF`) at the
+            // narrower width, O(M(n) log n), instead of num-bigint's O(n^2) whole-width Stein
+            // (LOAD-max-div-xr I25). Test: `int::tests::the_big_gcd_agrees_with_num_bigint`.
+            (Repr::Small(s), Repr::Big(b)) | (Repr::Big(b), Repr::Small(s)) => {
+                let u = s.unsigned_abs();
+                let zs = u.trailing_zeros();
+                if let Ok(d) = u64::try_from(u >> zs) {
+                    let bm = b.magnitude();
+                    let zb = bm.trailing_zeros().unwrap_or(0);
+                    let z = u64::from(zs).min(zb);
+                    let g_odd = if d == 1 {
+                        1
+                    } else {
+                        let dm = u128::from(d);
+                        let r = bm
+                            .iter_u64_digits()
+                            .rev()
+                            .fold(0u128, |acc, w| ((acc << 64) | u128::from(w)) % dm)
+                            as u64;
+                        stein64(r, d)
+                    };
+                    let g = u128::from(g_odd) << z;
+                    return i128::try_from(g).map_or_else(|_| BigInt::from(g).into(), Int::from);
+                }
+                BigInt::from(gcd_uint(self.big().magnitude(), other.big().magnitude())).into()
+            }
+            (Repr::Big(a), Repr::Big(b)) => {
+                BigInt::from(gcd_uint(a.magnitude(), b.magnitude())).into()
+            }
         }
     }
 
@@ -3191,8 +3220,14 @@ mod tests {
         let big: BigInt = BigInt::from(3u8).pow(200) * BigInt::from(2u8).pow(70) * 1_000_003;
         let other: BigInt = BigInt::from(3u8).pow(150) * BigInt::from(2u8).pow(90) * 999_983;
         let cases: Vec<(BigInt, BigInt)> = vec![
+            (BigInt::ZERO, BigInt::ZERO),
             (big.clone(), other.clone()),
+            (big.clone(), BigInt::from(1)),
             (big.clone(), BigInt::from(6)),
+            (big.clone(), BigInt::from(35)),
+            (big.clone(), BigInt::from(u64::MAX)),
+            (BigInt::from(i128::MIN), big.clone()),
+            (BigInt::from(i128::MIN), BigInt::from(1u8) << 200),
             (BigInt::from(1u8) << 300, BigInt::from(3u8) << 200),
             (big.clone(), BigInt::ZERO),
             (big.clone(), big.clone()),

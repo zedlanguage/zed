@@ -231,11 +231,12 @@ pub fn preimage_listed(
 /// The work of [`preimage`] and [`preimage_listed`].
 fn preimage_of(term: &Term, inputs: &Domains, listed: &Listed, demand: &Demand) -> Preimage {
     if let Some(p) = order_with_literal(term, inputs, demand) {
-        return p;
+        p
+    } else {
+        let mut tx = Tx::new();
+        let root = tx.terms.add(term);
+        preimage_in(&mut tx, root, term, inputs, listed, demand)
     }
-    let mut tx = Tx::new();
-    let root = tx.terms.add(term);
-    preimage_in(&mut tx, root, term, inputs, listed, demand)
 }
 
 /// The preimage of the outcome `demand` under `term` when the term orders its one input
@@ -2652,6 +2653,7 @@ impl What {
             What::Min(a, b) => format!("min({}, {})", l(a), l(b)),
             What::Max(a, b) => format!("max({}, {})", l(a), l(b)),
             What::Bind(pairs) => bindings(pairs, &l),
+            What::Value(v, pairs) if pairs.is_empty() => format!("{}", l(v)),
             What::Value(v, pairs) => format!("{} where {}", l(v), bindings(pairs, &l)),
         }
     }
@@ -8636,9 +8638,36 @@ impl<'m, 't> Walk<'m, 't> {
         use presburger::Atom;
         if let Some(key) = self.claimable(ps, &k) {
             if key == k.1 {
-                return self
+                let l = self
                     .canonical_lin_read(t, ps, (body, lam), args, env, key)
                     .await;
+                // Complexity tradeoff: naive version returns a multi-term `Lin` directly on a
+                // class-keyed call (`H mod 7 + H` returns `r_k + r_{k-1} + ... + r_1 + x`),
+                // leaving no per-link `Def` node so each caller carries O(k) leaf remainders and
+                // refuses past three live variables. Used: when `!tr.bodies`, a multi-term `Lin`
+                // holding an `Aux` and no `Product` is bound once to a fresh `Aux(n) == l`
+                // (`What::Value(l, [])`), O(l.terms) per link, giving `extend::Summaries` a
+                // single `Def` node per link while `Scoped::written` and `value_projected`
+                // substitute `l` back unchanged (LOAD-max-div-xr I12/I26). Tradeoffs: one `Def`
+                // entry per class-keyed multi-term `Aux` call.
+                if let Some(v) = &l
+                    && !self.tr(|tr| tr.bodies)
+                    && v.terms.len() > 1
+                    && v.terms.keys().any(|a| matches!(a, Atom::Aux(_)))
+                    && !v.terms.keys().any(|a| matches!(a, Atom::Product(..)))
+                {
+                    let a = self.tr(|tr| {
+                        let b = Lin::atom(Atom::Aux(tr.defs.len() as u32));
+                        tr.aux(
+                            What::Value(v.clone(), Vec::new()),
+                            Formula::And(presburger::Shared::new(vec![Formula::Con(Con::eq(
+                                &b, v,
+                            ))])),
+                        )
+                    });
+                    return Some(Lin::atom(a));
+                }
+                return l;
             }
             let canonical = self.canonical_lin(t, ps, (body, lam), args, env, key.clone());
             let l = canonical.await;

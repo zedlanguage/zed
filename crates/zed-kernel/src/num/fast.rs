@@ -1363,6 +1363,193 @@ fn half_leaf(a: &BigInt, b: &BigInt, k: u64) -> (u64, Mat) {
     (j, Mat([m00, m01, m10, m11].map(BigInt::from)))
 }
 
+/// 2-adic Lehmer binary gcd on the positive odd parts `a >> za` and `b >> zb`: each outer pass
+/// advances up to 30 halving steps in 128-bit registers from the low 128 bits (`[[m00, m01],
+/// [m10, m11]]` with `|m_ij| < 2^62`, determinant `+-2^(2j)`) and applies the resulting signed
+/// `i64` matrix to two reusable `u64` word buffers in one pass, dropping to 128-bit and 64-bit
+/// Stein registers once both operands fit in two words, with no per-pass heap allocations.
+fn stein_odd(a: &BigUint, za: u64, b: &BigUint, zb: u64) -> BigUint {
+    fn odd_words(x: &BigUint, z: u64) -> Vec<u64> {
+        let w = (z / 64) as usize;
+        let sh = (z % 64) as u32;
+        let mut v: Vec<u64> = x.iter_u64_digits().skip(w).collect();
+        if sh != 0 && !v.is_empty() {
+            for i in 0..v.len() - 1 {
+                v[i] = (v[i] >> sh) | (v[i + 1] << (64 - sh));
+            }
+            if let Some(last) = v.last_mut() {
+                *last >>= sh;
+            }
+        }
+        while v.last() == Some(&0) {
+            v.pop();
+        }
+        v
+    }
+    fn cmp_words(u: &[u64], v: &[u64]) -> std::cmp::Ordering {
+        u.len().cmp(&v.len()).then_with(|| {
+            for i in (0..u.len()).rev() {
+                if u[i] != v[i] {
+                    return u[i].cmp(&v[i]);
+                }
+            }
+            std::cmp::Ordering::Equal
+        })
+    }
+    fn shr_odd_in_place(u: &mut Vec<u64>) {
+        while u.last() == Some(&0) {
+            u.pop();
+        }
+        let Some(w) = u.iter().position(|&x| x != 0) else {
+            u.clear();
+            return;
+        };
+        let sh = u[w].trailing_zeros();
+        let len = u.len() - w;
+        if sh == 0 {
+            if w != 0 {
+                u.copy_within(w.., 0);
+                u.truncate(len);
+            }
+        } else {
+            for j in 0..len - 1 {
+                u[j] = (u[j + w] >> sh) | (u[j + w + 1] << (64 - sh));
+            }
+            u[len - 1] = u[len - 1 + w] >> sh;
+            u.truncate(len);
+            while u.last() == Some(&0) {
+                u.pop();
+            }
+        }
+    }
+    fn sub_shr_odd(u: &mut Vec<u64>, v: &[u64]) {
+        let mut borrow = 0u64;
+        for (ui, &vi) in u.iter_mut().zip(v) {
+            let (d1, b1) = ui.overflowing_sub(vi);
+            let (d2, b2) = d1.overflowing_sub(borrow);
+            *ui = d2;
+            borrow = u64::from(b1 | b2);
+        }
+        let mut i = v.len();
+        while borrow != 0 {
+            let (d, b) = u[i].overflowing_sub(1);
+            u[i] = d;
+            borrow = u64::from(b);
+            i += 1;
+        }
+        shr_odd_in_place(u);
+    }
+    fn lin_shr_odd(out: &mut Vec<u64>, m0: i64, m1: i64, u: &[u64], v: &[u64]) {
+        out.clear();
+        let len = u.len().max(v.len());
+        let (c0, c1) = (i128::from(m0), i128::from(m1));
+        let mut carry = 0i128;
+        for i in 0..len {
+            let ui = i128::from(u.get(i).copied().unwrap_or(0));
+            let vi = i128::from(v.get(i).copied().unwrap_or(0));
+            let acc = carry + c0 * ui + c1 * vi;
+            out.push(acc as u64);
+            carry = acc >> 64;
+        }
+        if carry > 0 {
+            out.push(carry as u64);
+        } else if carry < 0 {
+            out.push(carry as u64);
+            let mut borrow = 0u64;
+            for w in out.iter_mut() {
+                let (d1, b1) = 0u64.overflowing_sub(*w);
+                let (d2, b2) = d1.overflowing_sub(borrow);
+                *w = d2;
+                borrow = u64::from(b1 | b2);
+            }
+        }
+        shr_odd_in_place(out);
+    }
+    let mut u = odd_words(a, za);
+    let mut v = odd_words(b, zb);
+    let mut c_buf: Vec<u64> = Vec::new();
+    let mut d_buf: Vec<u64> = Vec::new();
+    loop {
+        if u.len() <= 2 && v.len() <= 2 {
+            let mut uu = v128_from(&u);
+            let mut vv = v128_from(&v);
+            loop {
+                if uu <= u128::from(u64::MAX) && vv <= u128::from(u64::MAX) {
+                    let (mut a64, mut b64) = (uu as u64, vv as u64);
+                    while a64 != b64 {
+                        if a64 < b64 {
+                            (a64, b64) = (b64, a64);
+                        }
+                        a64 -= b64;
+                        a64 >>= a64.trailing_zeros();
+                    }
+                    return BigUint::from(a64);
+                }
+                if uu == vv {
+                    return BigUint::from(uu);
+                }
+                if uu < vv {
+                    (uu, vv) = (vv, uu);
+                }
+                uu -= vv;
+                uu >>= uu.trailing_zeros();
+            }
+        }
+        match cmp_words(&u, &v) {
+            std::cmp::Ordering::Equal => return from_words(u),
+            std::cmp::Ordering::Less => std::mem::swap(&mut u, &mut v),
+            std::cmp::Ordering::Greater => {}
+        }
+        let mut x = v128_from(&u);
+        let mut y = v128_from(&v).wrapping_sub(x);
+        let [mut m00, mut m01, mut m10, mut m11] = [1i64, 0, -1, 1];
+        let mut j = 0u32;
+        while y != 0 {
+            let tz = y.trailing_zeros();
+            if j + tz > 30 {
+                break;
+            }
+            let y1 = y >> tz;
+            let y1_64 = y1 as u64;
+            let mut inv = 1u64;
+            for _ in 0..6 {
+                inv = inv.wrapping_mul(2u64.wrapping_sub(y1_64.wrapping_mul(inv)));
+            }
+            let mask = (1u64 << (tz + 1)) - 1;
+            let t = (x as u64).wrapping_neg().wrapping_mul(inv) & mask;
+            let q = if t > (1u64 << tz) {
+                (t as i64) - (1i64 << (tz + 1))
+            } else {
+                t as i64
+            };
+            let q128 = (q as i128) as u128;
+            (x, y) = (y1, x.wrapping_add(q128.wrapping_mul(y1)) >> tz);
+            (m00, m01, m10, m11) = (
+                m10 << tz,
+                m11 << tz,
+                (m00 << tz) + q * m10,
+                (m01 << tz) + q * m11,
+            );
+            j += tz;
+        }
+        if j == 0 {
+            sub_shr_odd(&mut u, &v);
+        } else {
+            lin_shr_odd(&mut c_buf, m00, m01, &u, &v);
+            lin_shr_odd(&mut d_buf, m10, m11, &u, &v);
+            if d_buf.is_empty() {
+                return from_words(c_buf);
+            }
+            std::mem::swap(&mut u, &mut c_buf);
+            std::mem::swap(&mut v, &mut d_buf);
+        }
+    }
+}
+
+fn v128_from(v: &[u64]) -> u128 {
+    u128::from(v[0]) | (v.get(1).copied().map_or(0, u128::from) << 64)
+}
+
 /// The greatest common divisor of `a` and `b`. The powers of 2 are taken out first; the odd
 /// parts then go through the binary gcd, half of what is left at a time by [`half`], whose
 /// steps keep the odd part of the gcd. O(M(n) log n).
@@ -1370,22 +1557,30 @@ pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
     let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
         return a | b;
     };
+    let z = za.min(zb);
+    if (a.bits() - za).max(b.bits() - zb) <= GCD_LEAF {
+        return stein_odd(a, za, b, zb) << z;
+    }
     let mut x = BigInt::from(a >> za);
     let mut y = BigInt::from(b >> zb) - &x;
     // Complexity tradeoff: the half gcd costs O(M(n) log n) = O(n log^2 n), a log factor above
     // a product, accepted because no faster gcd is known: the subquadratic gcds (Schönhage 1971;
     // the binary recursive gcd of Stehlé and Zimmermann, ANTS 2004, used here; Möller 2008)
     // all take O(M(n) log n) (author decision A47, 2026-11-09; COMPLEXITY.md C31). The
-    // scaling test holds it to the limit of work of order n log^2 n. num-bigint's Stein gcd
-    // below `GCD_LEAF` is O(n^2) in a leaf of bounded width. Measured on 2026-11-06: 1.8 s at
-    // 32768 words, 11.0 s at 131072; num-bigint's gcd is faster below about 300 words at load
-    // 1 (2026-11-06), 512 to 1024 at load 45 to 75 (2026-11-05); see `GCD_LEAF`. Test
-    // `a_gcd_of_wide_numbers_scales`.
+    // scaling test holds it to the limit of work of order n log^2 n. Below `GCD_LEAF`,
+    // `stein_odd` runs 2-adic Lehmer passes (up to 30 halvings per pass in 128-bit registers,
+    // applied in one pass over two reusable word buffers) and drops to 128-bit and 64-bit Stein
+    // registers once both operands fit in two words, avoiding num-bigint's per-step shift
+    // allocations while keeping O(n^2) bounded to the leaf width with a 30x smaller pass count.
+    // Measured on 2026-11-06: 1.8 s at 32768 words, 11.0 s at 131072; Stein's gcd is faster
+    // below about 300 words at load 1 (2026-11-06), 512 to 1024 at load 45 to 75 (2026-11-05);
+    // see `GCD_LEAF`. Test `a_gcd_of_wide_numbers_scales`.
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
         if n <= GCD_LEAF {
-            x = BigInt::from(x.magnitude().gcd(y.magnitude()));
-            break;
+            let (xm, ym) = (x.magnitude(), y.magnitude());
+            let (zx, zy) = (xm.trailing_zeros().unwrap(), ym.trailing_zeros().unwrap());
+            return (stein_odd(xm, zx, ym, zy) << zx.min(zy)) << z;
         }
         let (j, r) = half(&x, &y, n / 2);
         if j > 0 {
@@ -1397,7 +1592,7 @@ pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
             (x, y) = (a1, b1);
         }
     }
-    x.magnitude() << za.min(zb)
+    x.magnitude() << z
 }
 
 // ------------------------------------------------------------------------------------------

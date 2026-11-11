@@ -1048,11 +1048,56 @@ pub fn gcd_uint(a: &BigUint, b: &BigUint) -> BigUint {
     let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
         return a | b;
     };
+    let z = za.min(zb);
     // The powers of 2 come out first, by shifts, so that `2^m` against `2^n 3` costs O(m + n)
-    // and not a division of `m` bits by `n`. The half gcd (`fast::gcd`) costs O(M(n) log n) in
-    // the wider width even when the other is a word, so the wider odd part is then reduced
-    // modulo the narrower by one division, O(M(n)) and linear when the narrower is a word, and
-    // the gcd runs at the narrower width.
+    // and not a division of `m` bits by `n`. When an odd part fits in 64 bits, the other
+    // operand's remainder modulo it is streamed over its words with no shift or allocation (since
+    // `gcd(2^za, d) == 1` for odd `d`) and finished in registers. Otherwise, equal odd parts
+    // return at once, and the wider odd part is reduced modulo the narrower by `fast::rem` (with
+    // no quotient built, O(M(n))) before the half gcd (`fast::gcd`) runs at the narrower width.
+    fn odd_u64(x: &BigUint, zx: u64) -> Option<u64> {
+        if x.bits() - zx > 64 {
+            return None;
+        }
+        let w = (zx / 64) as usize;
+        let sh = (zx % 64) as u32;
+        let mut it = x.iter_u64_digits().skip(w);
+        let lo = it.next().unwrap_or(0);
+        let hi = it.next().unwrap_or(0);
+        Some(if sh == 0 {
+            lo
+        } else {
+            (lo >> sh) | (hi << (64 - sh))
+        })
+    }
+    fn gcd_mod_odd_u64(x: &BigUint, mut d: u64) -> u64 {
+        if d == 1 {
+            return 1;
+        }
+        let dm = u128::from(d);
+        let mut r = x
+            .iter_u64_digits()
+            .rev()
+            .fold(0u128, |acc, w| ((acc << 64) | u128::from(w)) % dm) as u64;
+        if r == 0 {
+            return d;
+        }
+        r >>= r.trailing_zeros();
+        while r != d {
+            if r < d {
+                (r, d) = (d, r);
+            }
+            r -= d;
+            r >>= r.trailing_zeros();
+        }
+        d
+    }
+    if let Some(da) = odd_u64(a, za) {
+        return BigUint::from(gcd_mod_odd_u64(b, da)) << z;
+    }
+    if let Some(db) = odd_u64(b, zb) {
+        return BigUint::from(gcd_mod_odd_u64(a, db)) << z;
+    }
     fn odd(x: &BigUint, z: u64) -> Cow<'_, BigUint> {
         match z {
             0 => Cow::Borrowed(x),
@@ -1060,12 +1105,15 @@ pub fn gcd_uint(a: &BigUint, b: &BigUint) -> BigUint {
         }
     }
     let (a, b) = (odd(a, za), odd(b, zb));
+    if *a == *b {
+        return a.into_owned() << z;
+    }
     let g = match a.bits().cmp(&b.bits()) {
-        Ordering::Greater => fast::gcd(&b, &fast::div_rem(&a, &b).1),
-        Ordering::Less => fast::gcd(&a, &fast::div_rem(&b, &a).1),
+        Ordering::Greater => fast::gcd(&b, &fast::rem(&a, &b)),
+        Ordering::Less => fast::gcd(&a, &fast::rem(&b, &a)),
         Ordering::Equal => fast::gcd(&a, &b),
     };
-    g << za.min(zb)
+    g << z
 }
 
 /// The digits `read_decimal` hands to num-bigint whole. The value read does not depend on it.

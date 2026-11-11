@@ -126,11 +126,14 @@ pub struct Extending {
 /// The definitions a definition reaches, projected exactly ([`Summary`]): by the definition (the
 /// formula `def` gives, held as a key, so that the quotient and the remainder it defines share
 /// it) and the atoms kept beside its own variables, `None` where none is made; and the
-/// symbols the definitions each definition reaches read ([`Summaries::syms`]).
+/// symbols, cone and non-leaf cone of each definition ([`Summaries::syms`]).
 #[derive(Default)]
 struct Summaries {
     by: HashMap<Key, Option<Summary>>,
     syms: HashMap<Id, Arc<imbl::OrdSet<Atom>>>,
+    cone: HashMap<Id, Arc<imbl::HashSet<Id>>>,
+    branch_cone: HashMap<Id, Arc<imbl::HashSet<Id>>>,
+    cyclic: HashSet<Id>,
 }
 
 /// The key of a summary: the definition's, and the atoms kept beside its own variables, in
@@ -155,8 +158,6 @@ type Key = (Id, Vec<Atom>);
 #[derive(Clone)]
 struct Summary {
     pieces: Vec<Vec<Con>>,
-    /// Every atom of `pieces`.
-    atoms: BTreeSet<Atom>,
 }
 
 impl Extending {
@@ -2437,7 +2438,7 @@ impl Summaries {
                 Local::Need(n) => self.made(n, def),
                 Local::Unmade => return None,
                 Local::Ready(mut beside, below) => {
-                    beside.extend(below.map(Summary::rows));
+                    beside.extend(below.into_iter().map(Summary::rows));
                     return Some(beside);
                 }
             }
@@ -2587,7 +2588,7 @@ impl Summaries {
             return Made::Done(None, None);
         };
         let own: BTreeSet<Atom> = d.own.iter().map(|&n| Atom::Aux(n)).collect();
-        let (beside, below) = match self.local(&d.reads, &own, Some(d.own[0]), &k.1, def) {
+        let (beside, below) = match self.local(&d.reads, &own, Some(d.id), &k.1, def) {
             Local::Ready(beside, below) => (beside, below),
             Local::Need(n) => return Made::First(n),
             Local::Unmade => return Made::Done(None, None),
@@ -2607,109 +2608,139 @@ impl Summaries {
             _ => false,
         };
         let alone = [Vec::new()];
-        let below_pieces = below.map_or(&alone[..], |s| &s.pieces[..]);
+        let crossed: Vec<Vec<Con>>;
+        let below_pieces: &[Vec<Con>] = match below.as_slice() {
+            [] => &alone,
+            [s] => &s.pieces,
+            [first, rest @ ..] => {
+                crossed = rest
+                    .iter()
+                    .fold(first.pieces.clone(), |acc, s| cross(&acc, &s.pieces));
+                &crossed
+            }
+        };
         let mut pieces: BTreeSet<Vec<Con>> = BTreeSet::new();
         let mut all_wide = true;
         for c in &all {
-            'piece: for p in below_pieces {
-                let mut rows: Vec<Con> = c.iter().chain(p).cloned().collect();
-                rows.sort();
-                rows.dedup();
-                if decide_cons(rows.clone()) == Ok(false) {
-                    continue 'piece;
-                }
-                // The atoms kept beside the key: those whose elimination needs a remainder of a
-                // kept atom ([`kept_quotients`]). They stay in the piece, read as any value.
-                let more =
-                    kept_quotients(&remainders_as_pairs(&rows, &|a| key.contains(a)), &|a| {
-                        key.contains(a)
-                    });
-                let syms: HashSet<&Atom> = (rows.iter())
-                    .flat_map(|c| c.lin.terms.keys())
-                    .filter(|a| matches!(a, Atom::Sym(_)) || leaf(a))
-                    .collect();
-                let mut wide = false;
-                let out = loop {
-                    let keep = |a: &Atom| {
-                        key.contains(a) || more.contains(a) || (wide && syms.contains(a))
-                    };
-                    let elim = |a: &Atom| !keep(a);
-                    let Some(mut out) = shadow_whole(&by_pairs(rows.clone(), &elim), &keep) else {
-                        continue 'piece;
-                    };
-                    out = envelope(out);
-                    // Before that, the rows the projection made are read through their division
-                    // pairs again ([`by_pairs`]), which leaves the projection one atom fewer to
-                    // eliminate across coefficients above 1.
-                    let left = |out: &[Con]| (out.iter()).any(|c| c.lin.terms.keys().any(&elim));
-                    if left(&out) {
-                        match shadow_whole(&by_pairs(out, &elim), &keep) {
-                            Some(o) => out = envelope(o),
-                            None => continue 'piece,
-                        }
-                    }
-                    let other = |c: &Con| {
-                        c.lin
-                            .terms
-                            .keys()
-                            .any(|a| elim(a) && !matches!(a, Atom::Sym(_)) && !leaf(a))
-                    };
-                    if !wide
-                        && out
-                            .iter()
-                            .any(|c| c.lin.terms.keys().any(|a| elim(a) && leaf(a)))
-                    {
-                        wide = true;
-                        continue;
-                    }
-                    // A piece with no point is dropped: [`shadow`] shows it only where an
-                    // elimination makes a false row, and not by two bounds of a kept atom
-                    // (`q <= 4 && q >= 9`) or when it cannot eliminate an atom. A piece that
-                    // keeps an atom outside the key otherwise leaves no summary.
-                    if decide_cons(out.clone()) == Ok(false) {
+            for p in below_pieces {
+                let mut rows0: Vec<Con> = c.iter().chain(p).cloned().collect();
+                rows0.sort();
+                rows0.dedup();
+                let mut work: Vec<(Vec<Con>, bool)> = vec![(rows0, false)];
+                'piece: while let Some((rows, mut wide)) = work.pop() {
+                    if decide_cons(rows.clone()) == Ok(false) {
                         continue 'piece;
                     }
-                    // A row the others imply may pair with a remainder's bound so that the dark
-                    // shadow is not the real one (`x >= 2 * q` beside `x >= 4 * q` and `x >= -1`,
-                    // with `4 * r` on both sides of `x`): such rows are dropped, and the piece
-                    // projected again.
-                    if left(&out) {
-                        match shadow_whole(&lean(out), &keep) {
-                            Some(o) => out = o,
-                            None => continue 'piece,
+                    // The atoms kept beside the key: those whose elimination needs a remainder of
+                    // a kept atom ([`kept_quotients`]). They stay in the piece, read as any value.
+                    let more =
+                        kept_quotients(&remainders_as_pairs(&rows, &|a| key.contains(a)), &|a| {
+                            key.contains(a)
+                        });
+                    let syms: HashSet<&Atom> = (rows.iter())
+                        .flat_map(|c| c.lin.terms.keys())
+                        .filter(|a| matches!(a, Atom::Sym(_)) || leaf(a))
+                        .collect();
+                    let out = loop {
+                        let keep = |a: &Atom| {
+                            key.contains(a) || more.contains(a) || (wide && syms.contains(a))
+                        };
+                        let elim = |a: &Atom| !keep(a);
+                        let Some(mut out) = shadow_whole(&by_pairs(rows.clone(), &elim), &keep)
+                        else {
+                            continue 'piece;
+                        };
+                        out = envelope(out);
+                        // Before that, the rows the projection made are read through their
+                        // division pairs again ([`by_pairs`]), which leaves the projection one
+                        // atom fewer to eliminate across coefficients above 1.
+                        let left =
+                            |out: &[Con]| (out.iter()).any(|c| c.lin.terms.keys().any(&elim));
+                        if left(&out) {
+                            match shadow_whole(&by_pairs(out, &elim), &keep) {
+                                Some(o) => out = envelope(o),
+                                None => continue 'piece,
+                            }
                         }
-                    }
-                    // A symbol left (`x` of `2 * x == q + 9`, whose projection is a congruence of
-                    // `q`) is kept, read as any value: the symbols of a chain are its inputs, read
-                    // through the key. Any other atom left leaves no summary.
-                    if !wide
-                        && out.iter().any(|c| {
+                        let other = |c: &Con| {
                             c.lin
                                 .terms
                                 .keys()
-                                .any(|a| elim(a) && !matches!(a, Atom::Sym(_)))
-                        })
-                    {
-                        wide = true;
-                        continue;
-                    }
-                    if out.iter().any(other) {
-                        return Made::Done(None, None);
-                    }
-                    if !wide
-                        || kept_quotients(
-                            &remainders_as_pairs(&rows, &|a| key.contains(a) || syms.contains(a)),
-                            &|a| key.contains(a) || syms.contains(a),
-                        ) != more
-                    {
-                        all_wide = false;
-                    }
-                    break out;
-                };
-                let mut out = lean(out);
-                out.sort();
-                out.dedup();
-                pieces.insert(out);
+                                .any(|a| elim(a) && !matches!(a, Atom::Sym(_)) && !leaf(a))
+                        };
+                        if !wide
+                            && out
+                                .iter()
+                                .any(|c| c.lin.terms.keys().any(|a| elim(a) && leaf(a)))
+                        {
+                            wide = true;
+                            continue;
+                        }
+                        // A piece with no point is dropped: [`shadow`] shows it only where an
+                        // elimination makes a false row, and not by two bounds of a kept atom
+                        // (`q <= 4 && q >= 9`) or when it cannot eliminate an atom. A piece that
+                        // keeps an atom outside the key otherwise leaves no summary.
+                        if decide_cons(out.clone()) == Ok(false) {
+                            continue 'piece;
+                        }
+                        // A row the others imply may pair with a remainder's bound so that the
+                        // dark shadow is not the real one (`x >= 2 * q` beside `x >= 4 * q` and
+                        // `x >= -1`, with `4 * r` on both sides of `x`): such rows are dropped,
+                        // and the piece projected again.
+                        if left(&out) {
+                            match shadow_whole(&lean(out), &keep) {
+                                Some(o) => out = o,
+                                None => continue 'piece,
+                            }
+                        }
+                        // A symbol left (`x` of `2 * x == q + 9`, whose projection is a
+                        // congruence of `q`) is kept, read as any value: the symbols of a chain
+                        // are its inputs, read through the key. Any other atom left leaves no
+                        // summary unless its periodic quotient offset is finitely bounded
+                        // ([`quotient_offsets`]).
+                        if !wide
+                            && out.iter().any(|c| {
+                                c.lin
+                                    .terms
+                                    .keys()
+                                    .any(|a| elim(a) && !matches!(a, Atom::Sym(_)))
+                            })
+                        {
+                            wide = true;
+                            continue;
+                        }
+                        if out.iter().any(other) {
+                            if let Some(split) = quotient_offsets(&rows, &keep, &leaf, def) {
+                                all_wide = false;
+                                for mut branch in split.into_iter().rev() {
+                                    branch.sort();
+                                    branch.dedup();
+                                    work.push((branch, true));
+                                }
+                                continue 'piece;
+                            }
+                            return Made::Done(None, None);
+                        }
+                        if !wide
+                            || kept_quotients(
+                                &remainders_as_pairs(&rows, &|a| {
+                                    key.contains(a) || syms.contains(a)
+                                }),
+                                &|a| key.contains(a) || syms.contains(a),
+                            ) != more
+                        {
+                            all_wide = false;
+                        }
+                        break out;
+                    };
+                    let Some(out) = normalize_own_leaf(out, &d.own, &leaf) else {
+                        continue 'piece;
+                    };
+                    let mut out = lean(out);
+                    out.sort();
+                    out.dedup();
+                    pieces.insert(out);
+                }
             }
         }
         let pieces = merge_pieces(pieces);
@@ -2727,9 +2758,11 @@ impl Summaries {
                     .collect();
             (wide_atoms != k.1
                 && matches!(
-                    self.local(&d.reads, &own, Some(d.own[0]), &wide_atoms, def),
+                    self.local(&d.reads, &own, Some(d.id), &wide_atoms, def),
                     Local::Ready(b2, s2)
-                        if b2 == beside && s2.map(std::ptr::from_ref) == below.map(std::ptr::from_ref)
+                        if b2 == beside
+                            && s2.len() == below.len()
+                            && s2.iter().zip(&below).all(|(a, b)| std::ptr::eq(*a, *b))
                 ))
             .then_some((k.0, wide_atoms))
         } else {
@@ -2738,135 +2771,212 @@ impl Summaries {
         Made::Done(
             Some(Summary {
                 pieces: pieces.into_iter().collect(),
-                atoms,
             }),
             extra,
         )
     }
 
     /// The definitions read beside `reads`, the atoms of a definition whose own variables are
-    /// `own`, the first numbered `first`, or of a question (`first` none), and the summary of
-    /// the one definition left below them, whose key keeps `keep` too: the definitions of the
-    /// variables `reads` reads are a frontier, and while it holds two or more, the one with the
-    /// highest numbers is read beside, its inputs joining the frontier, unless the others are
-    /// all in its cone, which its summary keeping their variables shows (their variables are
-    /// in it); where its summary shows some are not, those are read beside in its place, so
-    /// that what is read does not depend on the order the definitions were numbered in; so
-    /// that a question reading two variables on one path (`h{i}(x: x) > h1(x: x)`)
-    /// reads the higher's summary alone, and a link reading two definitions over one input
-    /// (`min(H div 2, H div 3 + 1)`) reads them beside it down to the input. The conjunction of
-    /// `reads`'s formula, those beside it and the summary below, projected onto the atoms of
-    /// `own`, `keep` and `reads`, is then that of all the definitions it reaches: the summary
-    /// keeps every atom of its cone the others read, and every other definition reached is in
-    /// its cone or beside. Time of the definitions read beside and of the summaries looked up.
+    /// `own` and whose key is `self_id`, or of a question (`self_id` none), and the summaries of
+    /// the definitions left below them with pairwise-disjoint non-leaf cones, whose keys keep
+    /// `keep` and any symbol shared between two of those cones: the definitions of the variables
+    /// `reads` reads are a frontier; any definition strictly inside another frontier definition's
+    /// cone (`Summaries::cone`) is dropped; with two or more left, leaf definitions (reading
+    /// symbols alone) are read beside, and among definitions whose non-leaf cones overlap
+    /// (`Summaries::branch_cone`) all tied at the smallest cone size are read beside, their
+    /// inputs joining the frontier, until the remaining non-leaf cones are pairwise disjoint.
+    /// Functional symbol leaves (`v == e(syms)` and Euclidean division pairs over symbols) are
+    /// single-valued functions of the symbols, so two chains sharing them keep both summaries
+    /// once their shared symbols are in `keep`. Because cone membership and size depend only on
+    /// the definition DAG and never on `Aux` numbering, answers do not depend on query or
+    /// numbering order (LOAD-max-div-xr I21).
+    // Complexity tradeoff: naive version, pop the frontier by highest `Aux` number and unroll
+    // every lower-numbered definition into `beside` whenever two cones are apart, costing O(depth)
+    // rows per question (and order-dependent `Refusal::Growth` on `I21-unit.txt` when an earlier
+    // test numbers one chain before another). Used: persistent `cone` and `branch_cone` sets
+    // built once per definition (`Summaries::syms`), overlapping non-leaf cones expanded from the
+    // smallest cone down to where they meet, and pairwise-disjoint frontier cones kept as
+    // separate summaries with shared symbols found by probing the smaller sets in the largest,
+    // O(|smaller| log |largest|). Tradeoffs: persistent `cone` and `branch_cone` sets per
+    // definition; where an overlapping cone cannot summarize keeping an ancestor variable, the
+    // question falls back to `decide_defined` whole as before.
     fn local<'a>(
         &'a self,
         reads: &BTreeSet<Atom>,
         own: &BTreeSet<Atom>,
-        first: Option<u32>,
+        self_id: Option<Id>,
         keep: &[Atom],
         def: &dyn Fn(u32) -> Formula,
     ) -> Local<'a> {
-        let mut beside: Vec<Def> = Vec::new();
-        // By the highest number each defines.
-        let mut frontier: BTreeMap<u32, Def> = BTreeMap::new();
-        let mut seen: HashSet<Id> = HashSet::new();
-        let ins: Vec<u32> = reads.iter().flat_map(auxes).collect();
-        if !enter(&ins, own, first, def, &mut seen, &mut frontier) {
-            return Local::Unmade;
-        }
-        while let Some((top, h)) = frontier.pop_last() {
-            if frontier.is_empty() {
-                let k = match self.key(&h, reads, own, keep, &beside, def) {
-                    Ok(k) => k,
-                    Err(n) => return Local::Need(n),
+        let mut frontier: Vec<Def> = Vec::new();
+        let mut seen_init: HashSet<Id> = HashSet::new();
+        for a in reads {
+            for n in auxes(a) {
+                let f = def(n);
+                if free(&f) || own.contains(&Atom::Aux(n)) {
+                    continue;
+                }
+                let id = Id::any(&f);
+                if Some(id) == self_id {
+                    return Local::Unmade;
+                }
+                if !seen_init.insert(id) {
+                    continue;
+                }
+                let Some(d) = Def::of(f, def) else {
+                    return Local::Unmade;
                 };
-                return match self.by.get(&k) {
-                    None => Local::Need(Need::Summary(k, h.f)),
-                    Some(None) => Local::Unmade,
-                    Some(Some(s)) => {
-                        Local::Ready(beside.into_iter().map(|d| d.f).collect(), Some(s))
-                    }
-                };
+                frontier.push(d);
             }
-            // The others may be in `h`'s cone only when numbered before it.
-            if !h.inputs.is_empty() && frontier.keys().next_back().is_some_and(|&n| n < h.own[0]) {
-                let k = match self.key(&h, reads, own, keep, &beside, def) {
-                    Ok(k) => k,
-                    Err(n) => return Local::Need(n),
-                };
-                match self.by.get(&k) {
-                    None => return Local::Need(Need::Summary(k, h.f)),
-                    Some(None) => return Local::Unmade,
-                    Some(Some(s)) => {
-                        let inside =
-                            |m: &Def| m.own.iter().any(|&n| s.atoms.contains(&Atom::Aux(n)));
-                        if frontier.values().all(inside) {
-                            let beside = beside.into_iter().map(|d| d.f).collect();
-                            return Local::Ready(beside, Some(s));
-                        }
-                        // Those outside `h`'s summary are read beside in its place, and `h`
-                        // stays: a question reading a definition apart from a chain
-                        // (`h{i}(x: x) < x div 64 - 1`, its `x div 64` numbered before the
-                        // links where an earlier test made it) reads the chain through its
-                        // summary, as when that definition is numbered after the links, and not
-                        // every link beside (cross-review of LOAD-max-div-xr, round 2).
-                        let out: Vec<u32> = (frontier.iter())
-                            .filter(|(_, m)| !inside(m))
-                            .map(|(&n, _)| n)
-                            .collect();
-                        frontier.insert(top, h);
-                        for n in out {
-                            let Some(m) = frontier.remove(&n) else {
-                                continue;
-                            };
-                            if !enter(
-                                &m.inputs,
-                                own,
-                                Some(m.own[0]),
-                                def,
-                                &mut seen,
-                                &mut frontier,
-                            ) {
-                                return Local::Unmade;
-                            }
+        }
+        for d in &frontier {
+            if !self.cone.contains_key(&d.id) && !self.cyclic.contains(&d.id) {
+                return Local::Need(Need::Syms(d.f.clone()));
+            }
+            if self.cyclic.contains(&d.id)
+                || self_id.is_some_and(|sid| self.cone[&d.id].contains(&sid))
+            {
+                return Local::Unmade;
+            }
+        }
+        let overlaps = |a: &Arc<imbl::HashSet<Id>>, b: &Arc<imbl::HashSet<Id>>| {
+            if Arc::ptr_eq(a, b) {
+                return !a.is_empty();
+            }
+            let (small, big) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+            small.iter().any(|x| big.contains(x))
+        };
+        let mut beside: Vec<Def> = Vec::new();
+        let mut expanded: HashSet<Id> = HashSet::new();
+        loop {
+            let f_ids: Vec<Id> = frontier.iter().map(|d| d.id).collect();
+            frontier.retain(|m| {
+                !f_ids
+                    .iter()
+                    .any(|&o| o != m.id && self.cone[&o].contains(&m.id))
+            });
+            if frontier.is_empty() {
+                break;
+            }
+            if frontier.len() > 1 && frontier.iter().any(|m| m.inputs.is_empty()) {
+                let mut next_f = Vec::with_capacity(frontier.len());
+                for m in frontier {
+                    if m.inputs.is_empty() {
+                        if expanded.insert(m.id) {
                             beside.push(m);
                         }
-                        continue;
+                    } else {
+                        next_f.push(m);
+                    }
+                }
+                frontier = next_f;
+                continue;
+            }
+            if frontier.len() <= 1 {
+                break;
+            }
+            let overlap: Vec<usize> = (0..frontier.len())
+                .filter(|&i| {
+                    let ci = &self.branch_cone[&frontier[i].id];
+                    (0..frontier.len())
+                        .any(|j| i != j && overlaps(ci, &self.branch_cone[&frontier[j].id]))
+                })
+                .collect();
+            if overlap.is_empty() {
+                break;
+            }
+            let min_cone = overlap
+                .iter()
+                .map(|&i| self.cone[&frontier[i].id].len())
+                .min()
+                .expect("non-empty overlap");
+            let to_expand: HashSet<Id> = overlap
+                .into_iter()
+                .map(|i| frontier[i].id)
+                .filter(|id| self.cone[id].len() == min_cone)
+                .collect();
+            let mut next_f: Vec<Def> = Vec::new();
+            let mut next_seen: HashSet<Id> = HashSet::new();
+            for m in frontier {
+                if to_expand.contains(&m.id) {
+                    for &inp in &m.inputs {
+                        let df = def(inp);
+                        if free(&df) || own.contains(&Atom::Aux(inp)) {
+                            continue;
+                        }
+                        let cid = Id::any(&df);
+                        if Some(cid) == self_id || self.cyclic.contains(&cid) {
+                            return Local::Unmade;
+                        }
+                        if expanded.contains(&cid) || !next_seen.insert(cid) {
+                            continue;
+                        }
+                        let Some(child) = Def::of(df, def) else {
+                            return Local::Unmade;
+                        };
+                        if !self.cone.contains_key(&child.id) {
+                            return Local::Need(Need::Syms(child.f));
+                        }
+                        next_f.push(child);
+                    }
+                    if expanded.insert(m.id) {
+                        beside.push(m);
+                    }
+                } else if next_seen.insert(m.id) {
+                    next_f.push(m);
+                }
+            }
+            frontier = next_f;
+        }
+        frontier.sort_by(|a, b| {
+            self.cone[&a.id]
+                .len()
+                .cmp(&self.cone[&b.id].len())
+                .then_with(|| self.syms[&a.id].cmp(&self.syms[&b.id]))
+                .then_with(|| a.own.cmp(&b.own))
+        });
+        let mut full_keep: Vec<Atom> = keep.to_vec();
+        if frontier.len() > 1 {
+            let mut sym_sets: Vec<&Arc<imbl::OrdSet<Atom>>> =
+                frontier.iter().map(|d| &self.syms[&d.id]).collect();
+            sym_sets.sort_by_key(|s| std::cmp::Reverse(s.len()));
+            let (big, rest) = sym_sets.split_first().expect("at least two");
+            let mut rest_counts: BTreeMap<&Atom, usize> = BTreeMap::new();
+            for s in rest {
+                if Arc::ptr_eq(s, big) {
+                    full_keep.extend(big.iter().cloned());
+                } else {
+                    for a in s.iter() {
+                        *rest_counts.entry(a).or_default() += 1;
                     }
                 }
             }
-            if !enter(
-                &h.inputs,
-                own,
-                Some(h.own[0]),
-                def,
-                &mut seen,
-                &mut frontier,
-            ) {
-                return Local::Unmade;
+            for (a, c) in rest_counts {
+                if c >= 2 || big.contains(a) {
+                    full_keep.push(a.clone());
+                }
             }
-            beside.push(h);
         }
-        Local::Ready(beside.into_iter().map(|d| d.f).collect(), None)
+        let mut summaries: Vec<&'a Summary> = Vec::with_capacity(frontier.len());
+        for h in &frontier {
+            let k = match self.key(h, reads, own, &full_keep, &beside, def) {
+                Ok(k) => k,
+                Err(n) => return Local::Need(n),
+            };
+            match self.by.get(&k) {
+                None => return Local::Need(Need::Summary(k, h.f.clone())),
+                Some(None) => return Local::Unmade,
+                Some(Some(s)) => summaries.push(s),
+            }
+        }
+        Local::Ready(beside.into_iter().map(|d| d.f).collect(), summaries)
     }
 
     /// The key of the summary of `h`, read beside `reads` (whose own variables are `own`), the
     /// definitions `beside` and an outer key `keep`: the atoms of these that `h` or its cone
-    /// may hold, but those `own` and `beside` define: a variable of `h`'s own, so that one no
-    /// other reads (the remainder of `(2 * H) div 3`) is projected out of the summary, a
-    /// variable numbered before `h`'s own (every variable of its cone is, [`enter`]) and a
-    /// symbol of `h`'s cone
-    /// ([`Summaries::syms`]), so that a question reading a symbol the chain does not
-    /// (`h{i}(x: x) > 0 && x < 1000`, its own `x`) shares the chain's summaries. A variable
-    /// numbered before `h`'s own is kept only when `h` reads another definition: the
-    /// variables of a definition of symbols alone (`x div 3`) are in no cone of its. Where the
-    /// key keeps such a variable, the symbols of the cone and the first variable of its
-    /// definition join it, so the pieces meet it beside the symbols it is a function of (a
-    /// summary keyed without it is then never read with its definition, which [`Summaries::local`]
-    /// enters only through an atom of the key). `Err` with the symbols to find first. Time of
-    /// the atoms, O(log n) each, and of one [`Def::of`] for each variable numbered before
-    /// `h`'s own.
+    /// hold, except those `own` and `beside` define (`Summaries::cone` and `Summaries::syms`).
+    /// Where the key keeps a variable of a leaf definition in `h`'s cone (`x div 3`), the
+    /// symbols of the cone and the first variable of that leaf definition join it.
     fn key(
         &self,
         h: &Def,
@@ -2876,15 +2986,25 @@ impl Summaries {
         beside: &[Def],
         def: &dyn Fn(u32) -> Formula,
     ) -> Result<Key, Need> {
-        let Some(syms) = self.syms.get(&h.id) else {
+        let (Some(syms), Some(cone)) = (self.syms.get(&h.id), self.cone.get(&h.id)) else {
             return Err(Need::Syms(h.f.clone()));
         };
         let defined: HashSet<u32> = beside.iter().flat_map(|d| d.own.iter().copied()).collect();
         let atoms = (keep.iter().chain(reads)).chain(beside.iter().flat_map(|d| &d.reads));
         let kept = |a: &Atom| match a {
             Atom::Aux(n) => {
-                (!h.inputs.is_empty() && *n < h.own[0] && !defined.contains(n) && !own.contains(a))
-                    || h.own.binary_search(n).is_ok()
+                if defined.contains(n) || own.contains(a) {
+                    return false;
+                }
+                if h.own.binary_search(n).is_ok() {
+                    return true;
+                }
+                let dn = def(*n);
+                if free(&dn) {
+                    syms.contains(a)
+                } else {
+                    !h.inputs.is_empty() && cone.contains(&Id::any(&dn))
+                }
             }
             Atom::Sym(_) => syms.contains(a),
             Atom::Product(..) => false,
@@ -2900,7 +3020,7 @@ impl Summaries {
             .collect();
         let earlier: Vec<u32> = (out.iter())
             .filter_map(|a| match a {
-                Atom::Aux(n) if *n < h.own[0] => Some(*n),
+                Atom::Aux(n) if h.own.binary_search(n).is_err() && !free(&def(*n)) => Some(*n),
                 _ => None,
             })
             .collect();
@@ -2908,49 +3028,61 @@ impl Summaries {
             if let Some(m) = Def::of(def(n), def)
                 && m.inputs.is_empty()
             {
-                out.extend(syms.iter().cloned());
+                out.extend(syms.iter().filter(|a| matches!(a, Atom::Sym(_))).cloned());
                 out.insert(Atom::Aux(m.own[0]));
             }
         }
         Ok((h.id, out.into_iter().collect()))
     }
 
-    /// Finds the symbols of the cone of the definition `h`: those it reads and those of the
-    /// definitions it reaches, each definition's found once and remembered, after its inputs':
-    /// an explicit stack, since the chain is as deep as the program. Each definition on the
-    /// stack holds its inputs, read once, and the place of the next one to visit, so that
-    /// every input is visited before the union is made (a definition that reads two others
-    /// whose sets are not yet found visits both: cross-review of LOAD-max-div-xr, round 2). A
-    /// definition whose symbols are those of its input with none added shares its input's
-    /// set. Time of the definitions and inputs reached and of the sets made.
+    /// Finds the symbols, cone and non-leaf cone of the definition `h`: those it reads and those
+    /// of the definitions it reaches, each definition's found once and remembered, after its
+    /// distinct inputs': an explicit stack, since the chain is as deep as the program. Each
+    /// definition on the stack holds its distinct inputs (`seen_in`, LOAD-max-div-xr I24), read
+    /// once, and the place of the next one to visit, so that every input is visited before the
+    /// union is made (cross-review of LOAD-max-div-xr, round 2). A definition whose symbols are
+    /// those of its largest input with none added shares its input's set. Time of the
+    /// definitions and distinct inputs reached and of the persistent sets made.
     fn syms(&mut self, h: Formula, def: &dyn Fn(u32) -> Formula) {
-        // A definition on the stack: its key, the atoms it reads, its inputs, and the place
-        // of the next input to visit.
         struct Frame {
             id: Id,
             atoms: Vec<Atom>,
             inputs: Vec<Formula>,
+            func_leaf: bool,
+            invalid: bool,
             next: usize,
         }
         let frame = |f: &Formula| {
             let id = Id::any(f);
+            let parsed = Def::of(f.clone(), def);
+            let func_leaf = parsed.as_ref().is_some_and(is_func_sym_leaf);
+            let invalid = parsed.is_none();
             let atoms: Vec<Atom> = reads(f).into_iter().collect();
+            // Complexity tradeoff: naive version collects every `Aux` input occurrence (`q` and
+            // `r` of one division pair push the same `Formula` twice), revisiting shared inputs
+            // and re-merging their `OrdSet`s in `sets`, O(n log^2 n) or worse on fresh-symbol
+            // division chains (LOAD-max-div-xr I24). Used: deduplicate `inputs` per frame by
+            // `seen_in`, O(d) per definition. Tradeoffs: one small `HashSet<Id>` per frame.
+            let mut seen_in = HashSet::from([id]);
             let inputs: Vec<Formula> = (atoms.iter().flat_map(auxes))
                 .map(def)
-                .filter(|d| !free(d) && Id::any(d) != id)
+                .filter(|d| !free(d) && seen_in.insert(Id::any(d)))
                 .collect();
             Frame {
                 id,
                 atoms,
                 inputs,
+                func_leaf,
+                invalid,
                 next: 0,
             }
         };
-        if self.syms.contains_key(&Id::any(&h)) {
+        let root_id = Id::any(&h);
+        if self.cone.contains_key(&root_id) || self.cyclic.contains(&root_id) {
             return;
         }
         // The keys of the definitions on the stack: an input among them is on a cycle.
-        let mut open: HashSet<Id> = HashSet::from([Id::any(&h)]);
+        let mut open: HashSet<Id> = HashSet::from([root_id]);
         let mut stack: Vec<Frame> = vec![frame(&h)];
         while let Some(top) = stack.last_mut() {
             // Complexity tradeoff: searching the inputs from the first at each return to a
@@ -2962,7 +3094,7 @@ impl Summaries {
                 };
                 top.next += 1;
                 let k = Id::any(d);
-                if !self.syms.contains_key(&k) && !open.contains(&k) {
+                if !self.cone.contains_key(&k) && !self.cyclic.contains(&k) && !open.contains(&k) {
                     break Some(d.clone());
                 }
             };
@@ -2973,17 +3105,35 @@ impl Summaries {
             }
             let Some(top) = stack.pop() else { break };
             open.remove(&top.id);
-            // Its inputs' sets, the largest first, those missing (on a cycle) left out; the
-            // definition is in no summary then ([`Def::of`] numbers each input before it).
+            if top.invalid
+                || top.inputs.iter().any(|d| {
+                    let k = Id::any(d);
+                    open.contains(&k) || self.cyclic.contains(&k) || !self.cone.contains_key(&k)
+                })
+            {
+                self.cyclic.insert(top.id);
+                continue;
+            }
             let mut sets: Vec<&Arc<imbl::OrdSet<Atom>>> = (top.inputs.iter())
                 .filter_map(|d| self.syms.get(&Id::any(d)))
                 .collect();
             sets.sort_by_key(|s| std::cmp::Reverse(s.len()));
-            let mine = top.atoms.iter().filter(|a| matches!(a, Atom::Sym(_)));
+            let mine: Vec<Atom> = top
+                .atoms
+                .iter()
+                .filter(|a| match a {
+                    Atom::Sym(_) => true,
+                    Atom::Aux(n) => free(&def(*n)),
+                    Atom::Product(..) => false,
+                })
+                .cloned()
+                .collect();
             let set = match sets.split_first() {
                 Some((big, rest))
-                    if mine.clone().all(|a| big.contains(a))
-                        && rest.iter().all(|s| s.iter().all(|a| big.contains(a))) =>
+                    if mine.iter().all(|a| big.contains(a))
+                        && rest
+                            .iter()
+                            .all(|s| Arc::ptr_eq(s, big) || s.iter().all(|a| big.contains(a))) =>
                 {
                     Arc::clone(big)
                 }
@@ -2997,13 +3147,55 @@ impl Summaries {
                     let mut set: imbl::OrdSet<Atom> = sets
                         .first()
                         .map_or_else(imbl::OrdSet::new, |s| (***s).clone());
-                    for a in sets.iter().skip(1).flat_map(|s| s.iter()).chain(mine) {
+                    for a in sets
+                        .iter()
+                        .skip(1)
+                        .flat_map(|s| s.iter())
+                        .chain(mine.iter())
+                    {
                         set.insert(a.clone());
                     }
                     Arc::new(set)
                 }
             };
+            let mut cones: Vec<&Arc<imbl::HashSet<Id>>> = (top.inputs.iter())
+                .filter_map(|d| self.cone.get(&Id::any(d)))
+                .collect();
+            cones.sort_by_key(|s| std::cmp::Reverse(s.len()));
+            let mut cone: imbl::HashSet<Id> = cones
+                .first()
+                .map_or_else(imbl::HashSet::new, |s| (***s).clone());
+            for s in cones.iter().skip(1) {
+                if !Arc::ptr_eq(s, cones[0]) {
+                    for id in s.iter() {
+                        cone.insert(*id);
+                    }
+                }
+            }
+            cone.insert(top.id);
+            let branch_cone = if top.func_leaf {
+                Arc::new(imbl::HashSet::new())
+            } else {
+                let mut bsets: Vec<&Arc<imbl::HashSet<Id>>> = (top.inputs.iter())
+                    .filter_map(|d| self.branch_cone.get(&Id::any(d)))
+                    .collect();
+                bsets.sort_by_key(|s| std::cmp::Reverse(s.len()));
+                let mut bc: imbl::HashSet<Id> = bsets
+                    .first()
+                    .map_or_else(imbl::HashSet::new, |s| (***s).clone());
+                for s in bsets.iter().skip(1) {
+                    if !Arc::ptr_eq(s, bsets[0]) {
+                        for id in s.iter() {
+                            bc.insert(*id);
+                        }
+                    }
+                }
+                bc.insert(top.id);
+                Arc::new(bc)
+            };
             self.syms.insert(top.id, set);
+            self.cone.insert(top.id, Arc::new(cone));
+            self.branch_cone.insert(top.id, branch_cone);
         }
     }
 }
@@ -3057,35 +3249,47 @@ impl Def {
     }
 }
 
-/// Puts the definitions of the variables `ins` on `frontier`, by the highest number each
-/// defines, each once (`seen`), but those of `own`, and of variables with no definition: false
-/// where no summary is made of one ([`Def::of`]), or where one defines a variable numbered at
-/// or after `first`, the first variable of the definition that reads it, so that every
-/// variable of a definition's cone is numbered before its own (the order a scope numbers them
-/// in, `preimage::Scoped::def`), which [`Summaries::key`] reads.
-fn enter(
-    ins: &[u32],
-    own: &BTreeSet<Atom>,
-    first: Option<u32>,
-    def: &dyn Fn(u32) -> Formula,
-    seen: &mut HashSet<Id>,
-    frontier: &mut BTreeMap<u32, Def>,
-) -> bool {
-    for &n in ins {
-        let f = def(n);
-        if free(&f) || own.contains(&Atom::Aux(n)) || !seen.insert(Id::any(&f)) {
-            continue;
-        }
-        let Some(d) = Def::of(f, def) else {
-            return false;
-        };
-        let last = d.own[d.own.len() - 1];
-        if first.is_some_and(|m| last >= m) {
-            return false;
-        }
-        frontier.insert(last, d);
+/// Whether `d` is a single-valued symbol leaf: `d` reads no other definition or product, and
+/// defines either one variable by a unit linear equation `v == e(syms)` or a Euclidean quotient
+/// and remainder `e(syms) == m * q + r, 0 <= r <= m - 1`. Such variables are uniquely determined
+/// by the symbols at every integer assignment, so two chains sharing `d` may summarize their cones
+/// apart once their shared symbols are kept.
+fn is_func_sym_leaf(d: &Def) -> bool {
+    if !d.inputs.is_empty()
+        || d.reads.iter().any(|a| match a {
+            Atom::Sym(_) => false,
+            Atom::Aux(n) => d.own.binary_search(n).is_err(),
+            Atom::Product(..) => true,
+        })
+    {
+        return false;
     }
-    true
+    let Some(cs) = cases(&d.f) else {
+        return false;
+    };
+    let [rows] = cs.as_slice() else {
+        return false;
+    };
+    match d.own.as_slice() {
+        [v] => {
+            rows.len() == 1
+                && rows[0].rel == Rel::Eq
+                && rows[0]
+                    .lin
+                    .terms
+                    .get(&Atom::Aux(*v))
+                    .is_some_and(Int::is_unit)
+        }
+        [u, w] => {
+            rows.len() == 3
+                && [(*u, *w), (*w, *u)].into_iter().any(|(q, _)| {
+                    let qa = Atom::Aux(q);
+                    let rp = remainders_as_pairs(rows, &|a| *a == qa);
+                    rp.len() == 2 && pairs(&rp).iter().any(|(_, v, _, _)| *v == qa)
+                })
+        }
+        _ => false,
+    }
 }
 
 type Terms = BTreeMap<Atom, Int>;
@@ -3093,21 +3297,21 @@ type LineGroup = (Atom, Terms, bool);
 
 /// The lines `e * y >= m * f + b` of `rows` by `(y, f, lower)`, the explicit 1-form bounds
 /// `[lo, hi]` on each primitive form `f`, and whether those bounds are consistent. The groups
-/// are ordered by key, so that [`lean`], which rewrites rows group by group, reads them in one
-/// order on every run.
+/// and form bounds are ordered by key, so that [`lean`] and [`quotient_offsets`] read them in
+/// one order on every run.
 // Complexity tradeoff: naive version, the groups in a hash map, O(t) a row, whose order of
 // iteration changes from run to run, so the rows `lean` keeps, and the summary's key and cost,
-// could too (LOAD-max-div-xr I23). Used: an ordered map, O(t log g) a row for g groups, O(r t
+// could too (LOAD-max-div-xr I23). Used: ordered maps, O(t log g) a row for g groups, O(r t
 // log r) in all. Tradeoffs: a log factor on the grouping.
 fn group_lines(
     rows: &[Con],
 ) -> (
     BTreeMap<LineGroup, Vec<(Int, Int, usize)>>,
-    HashMap<Terms, (Option<Int>, Option<Int>)>,
+    BTreeMap<Terms, (Option<Int>, Option<Int>)>,
     bool,
 ) {
     let mut groups: BTreeMap<LineGroup, Vec<(Int, Int, usize)>> = BTreeMap::new();
-    let mut bounds: HashMap<Terms, (Option<Int>, Option<Int>)> = HashMap::new();
+    let mut bounds: BTreeMap<Terms, (Option<Int>, Option<Int>)> = BTreeMap::new();
     let mut ok = true;
     let tighten = |b: &mut (Option<Int>, Option<Int>), lo: Option<Int>, hi: Option<Int>| {
         if let Some(l) = lo {
@@ -3261,26 +3465,43 @@ fn envelope(rows: Vec<Con>) -> Vec<Con> {
         .collect()
 }
 
+/// Every atom that occurs as a factor of an [`Atom::Product`] in `rows`: dropping or folding a
+/// linear row that constrains such an atom while leaving its product in `rows` would unconstrain
+/// the factor inside the product.
+fn product_factors(rows: &[Con]) -> HashSet<Atom> {
+    let mut out = HashSet::new();
+    for r in rows {
+        for a in r.lin.terms.keys() {
+            if let Atom::Product(x, y) = a {
+                out.insert(x.atom());
+                out.insert(y.atom());
+            }
+        }
+    }
+    out
+}
+
 /// `rows` without division pairs `(m, v, i, j)` of `elim` whose quotient `v` occurs in no other
-/// row: `0 <= e - m * v <= m - 1` holds for `v == e div m` at every integer point of the other
-/// atoms, so dropping the pair preserves integer satisfiability.
+/// row or product: `0 <= e - m * v <= m - 1` holds for `v == e div m` at every integer point of
+/// the other atoms, so dropping the pair preserves integer satisfiability.
 // Complexity tradeoff: naive version, rescan `rows` and `pairs` in a loop until no free pair
 // remains, O(p r t). Used: a worklist queue of quotients whose occurrence count reaches 2,
 // decrementing the counts of the dividend's atoms as each pair is dropped, O(r t),
 // plus O(r log r) row comparisons for the sort and deduplication. Tradeoffs:
-// two hash maps of atom counts and pairs.
+// a hash map of atom counts and an ordered map of pairs.
 fn without_free_pairs_for(mut rows: Vec<Con>, elim: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
     rows.sort();
     rows.dedup();
+    let factors = product_factors(&rows);
     let mut count: HashMap<Atom, usize> = HashMap::new();
     for r in &rows {
         for a in r.lin.terms.keys() {
             *count.entry(a.clone()).or_default() += 1;
         }
     }
-    let mut pair_of: HashMap<Atom, (usize, usize)> = HashMap::new();
+    let mut pair_of: BTreeMap<Atom, (usize, usize)> = BTreeMap::new();
     for (_, v, i, j) in pairs(&rows) {
-        if elim(&v) {
+        if elim(&v) && !factors.contains(&v) {
             pair_of.entry(v).or_insert((i, j));
         }
     }
@@ -3324,18 +3545,113 @@ thread_local! {
     static REST_ROW_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// `rows` with division pairs `(m, v, i, j)` outside `factors` whose quotient `v` occurs in every
+/// other row only as an inequality (`Rel::Ge`) with coefficient 1 or -1 folded into those
+/// inequalities and dropped, repeated until none applies. Substituting `v = e div m` into
+/// `v >= L` (`e >= m * L`) and `v <= U` (`e <= m * U + m - 1`) is exact over the integers, and
+/// leaves `v` in `(i, j)` alone, where `v = e div m` witnesses every integer point of the rest.
+/// A quotient with any non-unit or equality occurrence (`q5` in `x >= 2^k * (q5 + q7) - 9 * 2^k`
+/// beside `q5 + q7 <= 9`) is left untouched so 1-form bounds on kept quotients stay intact.
+// Complexity tradeoff: naive version, leave non-free auxiliary quotients (`q_H = h_{k-1} div 2`
+// and `h_{k-1} = x div 2^{k-1}`) in `decide_cons`, hiding the upper ray `x <= 2^k * (r5 + q7) -
+// (9 * 2^k + 1)` from the two-pointer hull check and sending every candidate piece of `max(H div
+// 2, x mod 5 + x div 7 - 9)` into `Omega::run` and `live3` over k-bit coefficients (55.6% of
+// cycles at 320 links). Used: peel free pairs first (`without_free_pairs_for`), then fold only
+// division pairs whose remaining occurrences are all unit `Rel::Ge` rows and drop the folded
+// pair, O(r t + w t) term visits for w rewrites per pass over at most p <= r / 2 passes (at most
+// 2 passes per chain link). Tradeoffs: quotients with wide coefficients or equations are left to
+// `decide`.
+fn fold_free_unit_pairs(mut rows: Vec<Con>, factors: &HashSet<Atom>) -> Vec<Con> {
+    loop {
+        rows = without_free_pairs_for(rows, &|_| true);
+        let mut pairs = pairs(&rows);
+        pairs.retain(|(_, v, _, _)| !factors.contains(v));
+        if pairs.is_empty() {
+            return rows;
+        }
+        pairs.sort();
+        let mut at: HashMap<Atom, Vec<usize>> = HashMap::new();
+        for (n, r) in rows.iter().enumerate() {
+            for a in r.lin.terms.keys() {
+                at.entry(a.clone()).or_default().push(n);
+            }
+        }
+        let mut done: HashSet<Atom> = HashSet::new();
+        let mut dropped: HashSet<usize> = HashSet::new();
+        for (m, v, i, j) in pairs {
+            if dropped.contains(&i) || dropped.contains(&j) || !done.insert(v.clone()) {
+                continue;
+            }
+            let (a, b) = (rows[i].clone(), rows[j].clone());
+            if a.lin.terms.get(&v) != Some(&-&m)
+                || b.lin.terms.get(&v) != Some(&m)
+                || a.lin.plus(&b.lin) != Lin::constant(&m - &Int::ONE)
+            {
+                continue;
+            }
+            let mut holders = at.remove(&v).unwrap_or_default();
+            holders.sort_unstable();
+            holders.dedup();
+            holders.retain(|&n| {
+                n != i && n != j && !dropped.contains(&n) && rows[n].lin.terms.contains_key(&v)
+            });
+            if holders.is_empty()
+                || !holders
+                    .iter()
+                    .all(|&n| rows[n].rel == Rel::Ge && rows[n].lin.terms[&v].is_unit())
+            {
+                continue;
+            }
+            for n in holders {
+                let r = &mut rows[n];
+                let side = if r.lin.terms.get(&v) == Some(&Int::ONE) {
+                    &a
+                } else {
+                    &b
+                };
+                let lin = r.lin.times(m.clone()).plus(&side.lin);
+                let g = lin.terms.values().fold(Int::ZERO, |g, c| g.gcd(c));
+                r.lin = if g.is_zero() || g == Int::ONE {
+                    lin
+                } else {
+                    Lin {
+                        terms: (lin.terms.iter())
+                            .map(|(k, c)| (k.clone(), c.div_floor(&g)))
+                            .collect(),
+                        constant: lin.constant.div_floor(&g),
+                    }
+                };
+                for t in r.lin.terms.keys() {
+                    at.entry(t.clone()).or_default().push(n);
+                }
+            }
+            dropped.insert(i);
+            dropped.insert(j);
+        }
+        if dropped.is_empty() {
+            return rows;
+        }
+        rows = (rows.into_iter().enumerate())
+            .filter(|(n, _)| !dropped.contains(n))
+            .map(|(_, r)| r)
+            .collect();
+    }
+}
+
 /// `rows` simplified preserving integer satisfiability: remainders converted to division pairs,
-/// equations with a single-use unit variable dropped, and free division pairs peeled.
+/// equations with a single-use unit variable dropped, and free or unit-bounded division pairs
+/// peeled.
 // Complexity tradeoff: naive version, pass all definition rows to [`decide`], which eliminates
 // auxiliary quotients and remainders alongside big-integer bounds in `live3`. Used: peel
 // single-use unit equations by queue, with the rows left that use each atom counted down as
-// rows are dropped, and run [`without_free_pairs_for`], O(r t) plus O(r log r) row comparisons
-// for its sort. Counting the uses left by a scan of the atom's occurrence list after each drop
-// costs O(r²) on `y_i == x` (cross-review of LOAD-max-div-xr, round 3, Codex). Tradeoffs: hash
-// maps of occurrences and counts.
+// rows are dropped, and run [`fold_free_unit_pairs`], O(r t) plus O(r log r) row comparisons
+// for its sort and any unit-pair folds. Counting the uses left by a scan of the atom's
+// occurrence list after each drop costs O(r²) on `y_i == x` (cross-review of LOAD-max-div-xr,
+// round 3, Codex). Tradeoffs: maps of occurrences and counts.
 fn without_free_pairs(rows: Vec<Con>) -> Vec<Con> {
     let mut rows = remainders_as_pairs(&rows, &|_| false);
-    let mut at: HashMap<Atom, Vec<usize>> = HashMap::new();
+    let factors = product_factors(&rows);
+    let mut at: BTreeMap<Atom, Vec<usize>> = BTreeMap::new();
     for (i, r) in rows.iter().enumerate() {
         for a in r.lin.terms.keys() {
             at.entry(a.clone()).or_default().push(i);
@@ -3345,7 +3661,8 @@ fn without_free_pairs(rows: Vec<Con>) -> Vec<Con> {
     let mut left: HashMap<Atom, usize> = (at.iter()).map(|(a, ns)| (a.clone(), ns.len())).collect();
     let mut queue: Vec<Atom> = (at.iter())
         .filter_map(|(a, ns)| {
-            (ns.len() == 1 && !matches!(a, Atom::Product(..))).then_some(a.clone())
+            (ns.len() == 1 && !matches!(a, Atom::Product(..)) && !factors.contains(a))
+                .then_some(a.clone())
         })
         .collect();
     let mut drop: HashSet<usize> = HashSet::new();
@@ -3365,7 +3682,7 @@ fn without_free_pairs(rows: Vec<Con>) -> Vec<Con> {
             OCCURRENCE_VISITS.with(|v| v.set(v.get() + 1));
             if let Some(n) = left.get_mut(b) {
                 *n -= 1;
-                if *n == 1 && !matches!(b, Atom::Product(..)) {
+                if *n == 1 && !matches!(b, Atom::Product(..)) && !factors.contains(b) {
                     queue.push(b.clone());
                 }
             }
@@ -3375,7 +3692,7 @@ fn without_free_pairs(rows: Vec<Con>) -> Vec<Con> {
         .filter(|(i, _)| !drop.contains(i))
         .map(|(_, r)| r)
         .collect();
-    without_free_pairs_for(rows, &|_| true)
+    fold_free_unit_pairs(rows, &factors)
 }
 
 /// Whether the conjunction of `rows` has an integer point: `Ok(false)` when two bounds on a
@@ -3679,14 +3996,15 @@ fn kept_quotients(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> HashSet<Atom> {
 }
 
 /// `rows` with each remainder written as a division pair: an atom `r` outside `keep` (no
-/// product) with coefficient 1 or -1 in an equation and held by exactly two other rows, each
-/// a bound of `r` alone, is solved from the equation into the bounds, so that `e == m * v +
-/// r, 0 <= r <= m - 1` reads as `m * v <= e <= m * v + m - 1`; the three rows are replaced by
-/// the two. The rows hold where they held with some `r`. Time of the rows' terms.
+/// product or product factor) with coefficient 1 or -1 in an equation and held by exactly two
+/// other rows, each a bound of `r` alone, is solved from the equation into the bounds, so that
+/// `e == m * v + r, 0 <= r <= m - 1` reads as `m * v <= e <= m * v + m - 1`; the three rows are
+/// replaced by the two. The rows hold where they held with some `r`. Time of the rows' terms.
 fn remainders_as_pairs(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
     let mut rows: Vec<Con> = rows.to_vec();
     rows.sort();
     rows.dedup();
+    let factors = product_factors(&rows);
     let mut at: HashMap<&Atom, Vec<usize>> = HashMap::new();
     for (i, r) in rows.iter().enumerate() {
         for a in r.lin.terms.keys() {
@@ -3700,7 +4018,11 @@ fn remainders_as_pairs(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
             continue;
         }
         for (r, c) in &e.lin.terms {
-            if keep(r) || matches!(r, Atom::Product(..)) || (*c != Int::ONE && *c != -&Int::ONE) {
+            if keep(r)
+                || matches!(r, Atom::Product(..))
+                || factors.contains(r)
+                || (*c != Int::ONE && *c != -&Int::ONE)
+            {
                 continue;
             }
             let uses = &at[r];
@@ -3735,6 +4057,476 @@ fn remainders_as_pairs(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
             .map(|(_, r)| r.clone()),
     );
     out
+}
+
+/// `rows` with each row mentioning `own` reduced by the piece's own non-`own` leaf equations:
+/// a division equation `m * q0 + unit_rest == 0` (`|m| > 1`, `q0` a leaf atom) eliminates any
+/// exact multiple of `m * q0` from an `own` row (`h1 - 2 * x + 7 * q0 == 0` beside `x - 7 * q0 -
+/// r0 == 0` becomes `h1 - x - r0 == 0`), and a unary leaf equation `r0 == c` substitutes `c` into
+/// an `own` row (`h1 - x - 1 == 0`). Both equations stay in `rows`, so integer points are
+/// unchanged; `None` if a reduced `own` row contradicts itself.
+fn normalize_own_leaf(
+    mut rows: Vec<Con>,
+    own: &[u32],
+    leaf: &dyn Fn(&Atom) -> bool,
+) -> Option<Vec<Con>> {
+    rows.sort();
+    rows.dedup();
+    let is_own = |a: &Atom| matches!(a, Atom::Aux(n) if own.binary_search(n).is_ok());
+    let eqs: Vec<Con> = (rows.iter())
+        .filter(|c| c.rel == Rel::Eq && !c.lin.terms.keys().any(&is_own))
+        .cloned()
+        .collect();
+    if eqs.is_empty() {
+        return Some(rows);
+    }
+    let quot_eqs: Vec<(Atom, Int, Con)> = (eqs.iter())
+        .filter_map(|eq| {
+            let mut non_unit = (eq.lin.terms.iter())
+                .filter(|(a, k)| !k.is_unit() || (!matches!(a, Atom::Sym(_)) && !leaf(a)));
+            let (q0, kq) = non_unit.next()?;
+            if non_unit.next().is_some() || !leaf(q0) || kq.is_unit() {
+                return None;
+            }
+            let others_ok = (eq.lin.terms.iter())
+                .filter(|(a, _)| *a != q0)
+                .all(|(a, k)| k.is_unit() && (matches!(a, Atom::Sym(_)) || leaf(a)));
+            others_ok.then(|| (q0.clone(), kq.clone(), eq.clone()))
+        })
+        .collect();
+    let fixed_eqs: Vec<(Atom, Int, Con)> = (eqs.iter())
+        .filter_map(|eq| {
+            if eq.lin.terms.len() != 1 {
+                return None;
+            }
+            let (a, ca) = eq.lin.terms.iter().next()?;
+            (leaf(a) && ca.is_unit()).then(|| (a.clone(), ca.clone(), eq.clone()))
+        })
+        .collect();
+    if quot_eqs.is_empty() && fixed_eqs.is_empty() {
+        return Some(rows);
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for mut r in rows {
+        if !r.lin.terms.keys().any(&is_own) {
+            out.push(r);
+            continue;
+        }
+        let mut changed = false;
+        for (q0, kq, eq) in &quot_eqs {
+            if let Some(cr) = r.lin.terms.get(q0).cloned()
+                && cr.mod_floor(kq).is_zero()
+            {
+                r.lin = r.lin.minus(&eq.lin.times(cr.div_floor(kq)));
+                changed = true;
+            }
+        }
+        for (a, ca, eq) in &fixed_eqs {
+            if let Some(cr) = r.lin.terms.get(a).cloned() {
+                r.lin = r.lin.minus(&eq.lin.times(&cr * ca));
+                changed = true;
+            }
+        }
+        if changed {
+            if r.lin.terms.is_empty() {
+                let holds = match r.rel {
+                    Rel::Eq => r.lin.constant.is_zero(),
+                    Rel::Ge => !r.lin.constant.is_negative(),
+                };
+                if !holds {
+                    return None;
+                }
+                continue;
+            }
+            let g = r.lin.terms.values().fold(Int::ZERO, |g, k| g.gcd(k));
+            if r.rel == Rel::Eq && !r.lin.constant.mod_floor(&g).is_zero() {
+                return None;
+            }
+            if !g.is_unit() {
+                r.lin = Lin {
+                    terms: (r.lin.terms.iter())
+                        .map(|(a, k)| (a.clone(), k.div_floor(&g)))
+                        .collect(),
+                    constant: r.lin.constant.div_floor(&g),
+                };
+            }
+        }
+        out.push(r);
+    }
+    Some(out)
+}
+
+/// `rows` split on the integer values of the narrowest finitely bounded periodic quotient-offset
+/// form `Q = q + sum c_i * b_i` (`q` an uneliminated non-leaf variable, one or more `b_i`
+/// unbounded kept leaf variables), when projecting `rows` onto `{q}` and the kept leaf variables
+/// bounds `Q` to `[lo, hi]` directly or through leaf remainders narrower than `q`'s modulus (`r`
+/// of `x mod m` with `0 <= r <= m - 1`): each branch adds `Q == d` (`lo <= d <= hi`), giving `q`
+/// coefficient 1 over kept variables so the next [`shadow_whole`] eliminates `q` in one step.
+/// Exact over the integers (`rows` implies `lo <= Q <= hi`), and `None` when no non-leaf variable
+/// has a finitely bounded multi-term quotient offset (`(3 * H + 1) div 2`, `(x mod M) div 2`).
+// Complexity tradeoff: naive version, branch on every residue `0..m - 1` of a bounded remainder,
+// O(m) pieces per step (exploding on large moduli `m`), or inline multi-term call values so the
+// key gains one remainder atom a link, O(n²) (LOAD-max-div-xr I12). Used: project onto `{q}` and
+// the kept leaf variables, bound `Q = q + sum c_i * b_i` over at least one unbounded kept leaf
+// quotient `b_i` from the projected rows and leaf remainders narrower than `m`, and split only on
+// `lo <= Q <= hi` (width at most 1 for `H mod m + H`, independent of `m`). Tradeoffs: one
+// `shadow_whole` per uneliminated non-leaf variable when normal projection fails (`0` calls when
+// normal projection succeeds); non-periodic steps (`(3 * H + 1) div 2`) leave `Q` unbounded and
+// return `None` in one pass.
+fn quotient_offsets(
+    rows: &[Con],
+    keep: &dyn Fn(&Atom) -> bool,
+    leaf: &dyn Fn(&Atom) -> bool,
+    def: &dyn Fn(u32) -> Formula,
+) -> Option<Vec<Vec<Con>>> {
+    let ceil_div = |x: &Int, g: &Int| -(&(-x).div_floor(g));
+    let tighten = |b: &mut (Option<Int>, Option<Int>), lo: Option<Int>, hi: Option<Int>| {
+        if let Some(l) = lo {
+            b.0 = Some(b.0.take().map_or(l.clone(), |o| o.max(l)));
+        }
+        if let Some(h) = hi {
+            b.1 = Some(b.1.take().map_or(h.clone(), |o| o.min(h)));
+        }
+    };
+    let unary_bounds = |cs: &[Con], target: &Atom| -> Option<(Option<Int>, Option<Int>)> {
+        let mut b = (None, None);
+        for r in cs {
+            if r.lin.terms.is_empty() {
+                let ok = if r.rel == Rel::Eq {
+                    r.lin.constant.is_zero()
+                } else {
+                    !r.lin.constant.is_negative()
+                };
+                if !ok {
+                    return None;
+                }
+                continue;
+            }
+            if r.lin.terms.len() != 1 {
+                continue;
+            }
+            let Some(ka) = r.lin.terms.get(target) else {
+                continue;
+            };
+            let g = ka.abs();
+            let c = &r.lin.constant;
+            match (r.rel, ka.is_positive()) {
+                (Rel::Ge, true) => tighten(&mut b, Some(ceil_div(&(-c), &g)), None),
+                (Rel::Ge, false) => tighten(&mut b, None, Some(c.div_floor(&g))),
+                (Rel::Eq, _) => {
+                    if !c.mod_floor(&g).is_zero() {
+                        return None;
+                    }
+                    let v = if ka.is_positive() {
+                        -&c.div_floor(&g)
+                    } else {
+                        c.div_floor(&g)
+                    };
+                    tighten(&mut b, Some(v.clone()), Some(v));
+                }
+            }
+            if let (Some(l), Some(h)) = (&b.0, &b.1)
+                && l > h
+            {
+                return None;
+            }
+        }
+        Some(b)
+    };
+    let is_other = |a: &Atom| !keep(a) && !matches!(a, Atom::Sym(_)) && !leaf(a);
+    let mut targets: BTreeSet<Atom> = BTreeSet::new();
+    let mut def_bounds: BTreeMap<Atom, (Int, Int)> = BTreeMap::new();
+    for r in rows {
+        for a in r.lin.terms.keys() {
+            if is_other(a) {
+                targets.insert(a.clone());
+            } else if let Atom::Aux(n) = a
+                && leaf(a)
+                && keep(a)
+                && !def_bounds.contains_key(a)
+                && let Some(cs) = cases(&def(*n))
+                && !cs.is_empty()
+            {
+                let mut all_lo: Option<Int> = None;
+                let mut all_hi: Option<Int> = None;
+                let mut every_bounded = true;
+                for c in &cs {
+                    match unary_bounds(c, a) {
+                        None => {}
+                        Some((Some(l), Some(h))) => {
+                            all_lo = Some(all_lo.take().map_or(l.clone(), |o| o.min(l)));
+                            all_hi = Some(all_hi.take().map_or(h.clone(), |o| o.max(h)));
+                        }
+                        Some(_) => {
+                            every_bounded = false;
+                            break;
+                        }
+                    }
+                }
+                if every_bounded {
+                    match (all_lo, all_hi) {
+                        (Some(l), Some(h)) => {
+                            def_bounds.insert(a.clone(), (l, h));
+                        }
+                        _ => return Some(Vec::new()),
+                    }
+                }
+            }
+        }
+    }
+    let mut best: Option<(Int, Terms, Int, Int)> = None;
+    for q_star in targets {
+        let keep_q = |a: &Atom| *a == q_star || (!matches!(a, Atom::Sym(_)) && leaf(a) && keep(a));
+        let elim_q = |a: &Atom| !keep_q(a);
+        let Some(mut proj) = shadow_whole(&by_pairs(rows.to_vec(), &elim_q), &keep_q) else {
+            return Some(Vec::new());
+        };
+        proj.retain(|c| c.lin.terms.keys().all(&keep_q));
+        let (_, form_bounds, ok) = group_lines(&proj);
+        if !ok {
+            return Some(Vec::new());
+        }
+        let mut rem_bounds = def_bounds.clone();
+        // Tighten unary remainder rows first, then propagate once across multi-remainder rows.
+        for unary_pass in [true, false] {
+            for r in &proj {
+                if r.lin.terms.is_empty()
+                    || (r.lin.terms.len() == 1) != unary_pass
+                    || !r.lin.terms.keys().all(|a| rem_bounds.contains_key(a))
+                {
+                    continue;
+                }
+                if unary_pass {
+                    let (_a, ka) = r.lin.terms.iter().next().expect("one term");
+                    if r.rel == Rel::Eq && !r.lin.constant.mod_floor(&ka.abs()).is_zero() {
+                        return Some(Vec::new());
+                    }
+                }
+                let atoms: Vec<(Atom, Int)> = (r.lin.terms.iter())
+                    .map(|(a, k)| (a.clone(), k.clone()))
+                    .collect();
+                for (a, ka) in &atoms {
+                    let mut rest_lo = r.lin.constant.clone();
+                    let mut rest_hi = r.lin.constant.clone();
+                    for (b, kb) in &atoms {
+                        if b == a {
+                            continue;
+                        }
+                        let (lb, hb) = &rem_bounds[b];
+                        if kb.is_positive() {
+                            rest_lo = &rest_lo + &(kb * lb);
+                            rest_hi = &rest_hi + &(kb * hb);
+                        } else {
+                            rest_lo = &rest_lo + &(kb * hb);
+                            rest_hi = &rest_hi + &(kb * lb);
+                        }
+                    }
+                    let g = ka.abs();
+                    let entry = rem_bounds.get_mut(a).expect("bounded leaf");
+                    match (r.rel, ka.is_positive()) {
+                        (Rel::Ge, true) => {
+                            let lo = ceil_div(&(-&rest_hi), &g);
+                            if lo > entry.0 {
+                                entry.0 = lo;
+                            }
+                        }
+                        (Rel::Ge, false) => {
+                            let hi = rest_hi.div_floor(&g);
+                            if hi < entry.1 {
+                                entry.1 = hi;
+                            }
+                        }
+                        (Rel::Eq, true) => {
+                            let lo = ceil_div(&(-&rest_hi), &g);
+                            let hi = (-&rest_lo).div_floor(&g);
+                            if lo > entry.0 {
+                                entry.0 = lo;
+                            }
+                            if hi < entry.1 {
+                                entry.1 = hi;
+                            }
+                        }
+                        (Rel::Eq, false) => {
+                            let lo = ceil_div(&rest_lo, &g);
+                            let hi = rest_hi.div_floor(&g);
+                            if lo > entry.0 {
+                                entry.0 = lo;
+                            }
+                            if hi < entry.1 {
+                                entry.1 = hi;
+                            }
+                        }
+                    }
+                    if entry.0 > entry.1 {
+                        return Some(Vec::new());
+                    }
+                }
+            }
+        }
+        let mut cand: BTreeMap<Terms, (Option<Int>, Option<Int>)> = BTreeMap::new();
+        for (t, (lo, hi)) in &form_bounds {
+            let Some(kq) = t.get(&q_star) else { continue };
+            if !kq.is_unit() || t.keys().any(|a| rem_bounds.contains_key(a)) {
+                continue;
+            }
+            if kq.is_positive() {
+                tighten(cand.entry(t.clone()).or_default(), lo.clone(), hi.clone());
+            } else {
+                let neg_t: Terms = t.iter().map(|(a, k)| (a.clone(), -k)).collect();
+                tighten(
+                    cand.entry(neg_t).or_default(),
+                    hi.as_ref().map(|h| -h),
+                    lo.as_ref().map(|l| -l),
+                );
+            }
+        }
+        let leaf_eqs: Vec<&Con> = (proj.iter())
+            .filter(|c| c.rel == Rel::Eq && !c.lin.terms.contains_key(&q_star))
+            .collect();
+        for r in &proj {
+            let Some(kq) = r.lin.terms.get(&q_star) else {
+                continue;
+            };
+            let m = kq.abs();
+            let mut lin = r.lin.clone();
+            loop {
+                let bad = (lin.terms.iter()).find(|&(a, k)| {
+                    *a != q_star && !rem_bounds.contains_key(a) && !k.mod_floor(&m).is_zero()
+                });
+                let Some((u, ku)) = bad.map(|(a, k)| (a.clone(), k.clone())) else {
+                    break;
+                };
+                let rep = leaf_eqs.iter().find_map(|eq| {
+                    let cu = eq.lin.terms.get(&u)?;
+                    if !ku.mod_floor(cu).is_zero() {
+                        return None;
+                    }
+                    let next = lin.minus(&eq.lin.times(ku.div_floor(cu)));
+                    let fewer = next
+                        .terms
+                        .iter()
+                        .filter(|&(a, k)| {
+                            *a != q_star
+                                && !rem_bounds.contains_key(a)
+                                && !k.mod_floor(&m).is_zero()
+                        })
+                        .count()
+                        < lin
+                            .terms
+                            .iter()
+                            .filter(|&(a, k)| {
+                                *a != q_star
+                                    && !rem_bounds.contains_key(a)
+                                    && !k.mod_floor(&m).is_zero()
+                            })
+                            .count();
+                    fewer.then_some(next)
+                });
+                match rep {
+                    Some(next) => lin = next,
+                    None => break,
+                }
+            }
+            let Some(kq) = lin.terms.get(&q_star) else {
+                continue;
+            };
+            let m = kq.abs();
+            let neg_q = kq.is_negative();
+            let mut q_terms: Terms = BTreeMap::new();
+            let mut r_min = Int::ZERO;
+            let mut r_max = Int::ZERO;
+            let mut bounded = true;
+            for (a, raw_k) in &lin.terms {
+                let k = if neg_q { -raw_k } else { raw_k.clone() };
+                if let Some((lo_a, hi_a)) = rem_bounds.get(a) {
+                    if &(hi_a - lo_a) >= &m {
+                        bounded = false;
+                        break;
+                    }
+                    if k.is_positive() {
+                        r_min = &r_min + &(&k * lo_a);
+                        r_max = &r_max + &(&k * hi_a);
+                    } else {
+                        r_min = &r_min + &(&k * hi_a);
+                        r_max = &r_max + &(&k * lo_a);
+                    }
+                } else if k.mod_floor(&m).is_zero() {
+                    let qk = k.div_floor(&m);
+                    if !qk.is_zero() {
+                        q_terms.insert(a.clone(), qk);
+                    }
+                } else {
+                    bounded = false;
+                    break;
+                }
+            }
+            if !bounded {
+                continue;
+            }
+            let c = &lin.constant;
+            match (r.rel, neg_q) {
+                (Rel::Ge, false) => {
+                    let lo = ceil_div(&-&(c + &r_max), &m);
+                    tighten(cand.entry(q_terms).or_default(), Some(lo), None);
+                }
+                (Rel::Ge, true) => {
+                    let cap = c - &r_min;
+                    let hi = cap.div_floor(&m);
+                    tighten(cand.entry(q_terms).or_default(), None, Some(hi));
+                }
+                (Rel::Eq, _) => {
+                    let c_pos = if neg_q { -c } else { c.clone() };
+                    let lo = ceil_div(&-&(&c_pos + &r_max), &m);
+                    let hi = (-&(&c_pos + &r_min)).div_floor(&m);
+                    tighten(cand.entry(q_terms).or_default(), Some(lo), Some(hi));
+                }
+            }
+        }
+        for (q_terms, (lo, hi)) in cand {
+            if let (Some(l), Some(h)) = (&lo, &hi)
+                && l > h
+            {
+                return Some(Vec::new());
+            }
+            if q_terms.len() < 2 {
+                continue;
+            }
+            let (Some(l), Some(h)) = (lo, hi) else {
+                continue;
+            };
+            let q_lin = Lin {
+                terms: q_terms.clone(),
+                constant: Int::ZERO,
+            };
+            let eq_l = Con::eq(&q_lin, &Lin::constant(l.clone()));
+            let eq_neg = Con::eq(&Lin::constant(l.clone()), &q_lin);
+            if l == h && (rows.contains(&eq_l) || rows.contains(&eq_neg)) {
+                continue;
+            }
+            let width = &h - &l;
+            let take = match &best {
+                None => true,
+                Some((bw, _, _, _)) => width < *bw,
+            };
+            if take {
+                best = Some((width, q_terms, l, h));
+            }
+        }
+    }
+    let (_, q_terms, lo, hi) = best?;
+    let q_lin = Lin {
+        terms: q_terms,
+        constant: Int::ZERO,
+    };
+    let mut out = Vec::new();
+    let mut d = lo;
+    while d <= hi {
+        let mut b = rows.to_vec();
+        b.push(Con::eq(&q_lin, &Lin::constant(d.clone())));
+        out.push(b);
+        d = &d + &Int::ONE;
+    }
+    Some(out)
 }
 
 /// `pieces` with any two equal but for the bounds of one linear form, whose intervals of
@@ -3882,6 +4674,30 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
         merged.dedup();
         merged
     };
+    let unindex =
+        |id: usize,
+         forms_of: &mut [Vec<(Group, Option<Int>, Option<Int>)>],
+         groups: &mut HashMap<Group, Intervals>,
+         sides: &mut HashMap<Terms, (BTreeMap<Int, usize>, BTreeMap<Int, usize>)>| {
+            for (gq, lq, hq) in std::mem::take(&mut forms_of[id]) {
+                if let Some(m) = groups.get_mut(&gq) {
+                    m.remove(&lq);
+                }
+                // Another piece with the same bound may hold the entry since.
+                if let Some((u, w)) = sides.get_mut(&gq.1) {
+                    if let Some(hq) = hq
+                        && u.get(&hq) == Some(&id)
+                    {
+                        u.remove(&hq);
+                    }
+                    if let Some(lq) = lq
+                        && w.get(&lq) == Some(&id)
+                    {
+                        w.remove(&lq);
+                    }
+                }
+            }
+        };
     // For each form, the pieces holding a bound of it, by upper bound and by lower bound (an
     // entry of a piece merged since is skipped where read).
     let mut sides: HashMap<Terms, (BTreeMap<Int, usize>, BTreeMap<Int, usize>)> = HashMap::new();
@@ -3904,9 +4720,12 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
             let (l, (h, id)) = before.or(after)?;
             Some((g, lo, hi, l.clone(), h.clone(), *id))
         });
-        // A piece in a group is live: its entries leave the groups when it is merged.
-        let hit = hit.and_then(|(g, lo, hi, l, h, id)| Some((g, lo, hi, l, h, live[id].take()?)));
-        let Some((g, lo, hi, l, h, q)) = hit else {
+        // A piece in a group is live: its entries leave the groups and sides when it is merged.
+        let hit = hit.and_then(|(g, lo, hi, l, h, id)| {
+            live[id].take()?;
+            Some((g, lo, hi, l, h, id))
+        });
+        let Some((g, lo, hi, l, h, id)) = hit else {
             // Else the piece next to it on one of its forms whose rest differs: they merge when
             // each rest holds wherever the other piece does and the two rests hold at no integer
             // point with the form between them.
@@ -3958,26 +4777,9 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
                     })
             });
             if let Some((both, lo, hi, l, h, id)) = cross {
-                if let Some(q) = live[id].take() {
-                    for (gq, lq, hq) in forms(&q) {
-                        if let Some(m) = groups.get_mut(&gq) {
-                            m.remove(&lq);
-                        }
-                        // Another piece with the same bound may hold the entry since.
-                        if let Some((u, w)) = sides.get_mut(&gq.1) {
-                            if let Some(hq) = hq {
-                                if u.get(&hq) == Some(&id) {
-                                    u.remove(&hq);
-                                }
-                            }
-                            if let Some(lq) = lq {
-                                if w.get(&lq) == Some(&id) {
-                                    w.remove(&lq);
-                                }
-                            }
-                        }
-                    }
-                    work.push(joined(
+                if live[id].take().is_some() {
+                    unindex(id, &mut forms_of, &mut groups, &mut sides);
+                    let mut m = lean(joined(
                         &both,
                         lo.min(l),
                         match (hi, h) {
@@ -3985,6 +4787,9 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
                             _ => None,
                         },
                     ));
+                    m.sort();
+                    m.dedup();
+                    work.push(m);
                     continue;
                 }
             }
@@ -4002,11 +4807,7 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
             live.push(Some(p));
             continue;
         };
-        for (g, lo, _) in forms(&q) {
-            if let Some(m) = groups.get_mut(&g) {
-                m.remove(&lo);
-            }
-        }
+        unindex(id, &mut forms_of, &mut groups, &mut sides);
         let lo = lo.clone().min(l);
         let hi = match (hi, h) {
             (Some(a), Some(b)) => Some(a.clone().max(b)),
@@ -4077,8 +4878,9 @@ fn cross(a: &[Vec<Con>], b: &[Vec<Con>]) -> Vec<Vec<Con>> {
 
 /// What [`Summaries::local`] gives.
 enum Local<'a> {
-    /// The definitions read beside, and the summary of the one left below them, if any.
-    Ready(Vec<Formula>, Option<&'a Summary>),
+    /// The definitions read beside, and the summaries of those left below them with pairwise
+    /// disjoint non-leaf cones.
+    Ready(Vec<Formula>, Vec<&'a Summary>),
     /// What to make first.
     Need(Need),
     /// No summary is made.
@@ -4742,5 +5544,191 @@ mod tests {
             }
         }
         assert!(capped > 0, "no system had a capped ray");
+    }
+
+    #[test]
+    fn a_ray_cap_refused_in_one_group_order_is_answered_in_another() {
+        // Red witness for I23 (`group_lines` ordered by `BTreeMap` vs `HashMap`):
+        // `yA = Aux(0)` (form `f_A = 2*z + x0 + x2`) and `yB = Aux(1)` (form `f_B = 2*z + x1 + x2`)
+        // have no upper bounds, while `z = Aux(2)` starts with 1 lower bound (`z - x0 + 10 >= 0`)
+        // and 2 unit upper bounds (`-z + x0 >= 0`, `-z + x1 >= 0`). Before either group is capped,
+        // adding `f >= 1` gives `z` 2 lower bounds and 2 unit upper bounds (exact dark shadow,
+        // 2 * 2 <= 4 rows), so `Omega` eliminates `z` and `live3` on `(x0, x1, x2)` (`Aux(3..=5)`)
+        // answers `Ok(false)`. Whichever group runs first replaces its steeper ray with `-f >= 0`
+        // (`-2*z - ... >= 0`, a non-unit upper bound on `z`); when the second group tries `f' >= 1`
+        // (`+2*z + ... - 1 >= 0`), `z` has `+2*z` against `-2*z` (inexact dark shadow) and 2 * 3 >
+        // 5 rows, so `decide_cons` refuses with `Err(Growth)`. Thus order `(A, B)` caps Group A and
+        // leaves Group B uncapped, whereas order `(B, A)` caps Group B and leaves Group A uncapped;
+        // `HashMap` visits both orders across runs.
+        let base = vec![
+            con(&[(3, 1)], 4, Rel::Ge),
+            con(&[(3, -1)], 0, Rel::Ge),
+            con(&[(4, 1)], 4, Rel::Ge),
+            con(&[(4, -1)], 0, Rel::Ge),
+            con(&[(5, 1)], 4, Rel::Ge),
+            con(&[(5, -1)], 4, Rel::Ge),
+            con(&[(3, -2), (4, 2), (5, 3)], 2, Rel::Ge),
+            con(&[(3, -4), (4, -3), (5, -3)], -13, Rel::Ge),
+            con(&[(3, 4), (4, -3), (5, -2)], 2, Rel::Ge),
+            con(&[(3, 4), (4, 4), (5, 3)], 19, Rel::Ge),
+            con(&[(2, 1), (3, -1)], 10, Rel::Ge),
+            con(&[(2, -1), (3, 1)], 0, Rel::Ge),
+            con(&[(2, -1), (4, 1)], 0, Rel::Ge),
+            con(&[(0, 1), (2, -2), (3, -1), (5, -1)], 0, Rel::Ge),
+            con(&[(0, 1), (2, -4), (3, -2), (5, -2)], 0, Rel::Ge),
+            con(&[(1, 1), (2, -2), (4, -1), (5, -1)], 0, Rel::Ge),
+            con(&[(1, 1), (2, -4), (4, -2), (5, -2)], 0, Rel::Ge),
+        ];
+        assert_eq!(decide_cons(base.clone()), Ok(true));
+
+        let mut above_a_first = base.clone();
+        above_a_first.push(con(&[(2, 2), (3, 1), (5, 1)], -1, Rel::Ge));
+        assert_eq!(decide_cons(above_a_first), Ok(false));
+
+        let mut above_b_first = base.clone();
+        above_b_first.push(con(&[(2, 2), (4, 1), (5, 1)], -1, Rel::Ge));
+        assert_eq!(decide_cons(above_b_first), Ok(false));
+
+        let mut after_a = base.clone();
+        after_a[14] = con(&[(2, -2), (3, -1), (5, -1)], 0, Rel::Ge);
+        let mut above_b_after_a = after_a;
+        above_b_after_a.push(con(&[(2, 2), (4, 1), (5, 1)], -1, Rel::Ge));
+        assert_eq!(decide_cons(above_b_after_a), Err(Refusal::Growth));
+
+        let mut after_b = base.clone();
+        after_b[16] = con(&[(2, -2), (4, -1), (5, -1)], 0, Rel::Ge);
+        let mut above_a_after_b = after_b;
+        above_a_after_b.push(con(&[(2, 2), (3, 1), (5, 1)], -1, Rel::Ge));
+        assert_eq!(decide_cons(above_a_after_b), Err(Refusal::Growth));
+
+        let first = lean(base.clone());
+        assert!(
+            !first.contains(&con(&[(0, 1), (2, -4), (3, -2), (5, -2)], 0, Rel::Ge)),
+            "ordered groups cap Group A and drop its steep ray: {first:?}"
+        );
+        assert!(
+            first.contains(&con(&[(1, 1), (2, -4), (4, -2), (5, -2)], 0, Rel::Ge)),
+            "Group B stays uncapped after Group A's cap blocks z elimination: {first:?}"
+        );
+        for _ in 0..40 {
+            assert_eq!(lean(base.clone()), first);
+        }
+    }
+
+    #[test]
+    fn factors_of_a_product_keep_their_equations_and_division_pairs() {
+        // Row-simplifier invariant for `product_factors` in `without_free_pairs`,
+        // `without_free_pairs_for`, `fold_free_unit_pairs` and `remainders_as_pairs` (matching
+        // `Bound::of`, `twins_merged` and `shift_free`): an atom occurring as a factor of an
+        // `Atom::Product` is not dropped as single-use or folded out of its division pair.
+        let prod_on_0 = Con {
+            lin: Lin {
+                terms: BTreeMap::from([(Atom::Product(Factor::Aux(0), Factor::Aux(1)), Int::ONE)]),
+                constant: Int::from(-1),
+            },
+            rel: Rel::Eq,
+        };
+        let prod_other = Con {
+            lin: Lin {
+                terms: BTreeMap::from([(Atom::Product(Factor::Aux(2), Factor::Aux(1)), Int::ONE)]),
+                constant: Int::from(-1),
+            },
+            rel: Rel::Eq,
+        };
+        let unit_eq = vec![con(&[(0, 1)], -2, Rel::Eq), prod_on_0.clone()];
+        assert_eq!(without_free_pairs(unit_eq).len(), 2);
+        assert_eq!(
+            without_free_pairs(vec![con(&[(0, 1)], -2, Rel::Eq), prod_other.clone()]),
+            vec![prod_other.clone()]
+        );
+
+        let div_pair = vec![
+            con(&[(0, -2)], 5, Rel::Ge),
+            con(&[(0, 2)], -4, Rel::Ge),
+            prod_on_0.clone(),
+        ];
+        assert_eq!(without_free_pairs(div_pair.clone()).len(), 3);
+        assert_eq!(without_free_pairs_for(div_pair, &|_| true).len(), 3);
+        assert_eq!(
+            without_free_pairs(vec![
+                con(&[(0, -2)], 5, Rel::Ge),
+                con(&[(0, 2)], -4, Rel::Ge),
+                prod_other,
+            ])
+            .len(),
+            1
+        );
+
+        let rem_eq = vec![
+            con(&[(3, -2), (0, -1)], 5, Rel::Eq),
+            con(&[(0, 1)], 0, Rel::Ge),
+            con(&[(0, -1)], 1, Rel::Ge),
+            prod_on_0,
+        ];
+        assert_eq!(remainders_as_pairs(&rem_eq, &|_| false).len(), 4);
+    }
+
+    #[test]
+    fn merge_pieces_leans_the_rest_of_a_cross_merge() {
+        // I27: 13 pieces `[t == k, u == 0, z + k * u >= 0]` (`k = 1..=13`) have pairwise-implied
+        // distinct rests (`u == 0` makes `z + k * u >= 0` equivalent to `z >= 0`). Without `lean`
+        // on the cross-rest merge, `joined` concatenates all 13 `z + k * u >= 0` rows into a
+        // 16-row piece; with `lean`, redundant rows are dropped at each merge, leaving <= 4 rows.
+        let pieces: BTreeSet<Vec<Con>> = (1..=13i64)
+            .map(|k| {
+                let mut p = vec![
+                    con(&[(0, 1)], -k, Rel::Eq),
+                    con(&[(1, 1)], 0, Rel::Eq),
+                    con(&[(2, 1), (1, k)], 0, Rel::Ge),
+                ];
+                p.sort();
+                p
+            })
+            .collect();
+        let out = merge_pieces(pieces);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!(
+            out[0].len() <= 4,
+            "unleaned rest grew to {} rows: {:?}",
+            out[0].len(),
+            out[0]
+        );
+    }
+
+    #[test]
+    fn merge_pieces_drops_sides_of_a_same_rest_merge() {
+        // Same-rest `hit` must remove the merged piece's bounds from `sides` as well as `groups`:
+        // `p1` (`x <= -3, x == 4*w + 1, y >= x`, `hi = -3`) and `p4` (`x >= 1, x == 4*w + 1,
+        // y >= 2*x - 1`, `lo = 1`) have empty gap `-2 <= x <= 0` and mutually implied rests, while
+        // `p2` (`x == 0, y == -100`, `hi = 0`) and `p3` (`1 <= x <= 2, y == -100`) merge by the
+        // same-rest path into `0 <= x <= 2, y == -100` (`hi = 2`). If `p2`'s `hi = 0` stays in
+        // `sides`, `uppers.range(..1).next_back()` for `p4` hits dead `hi = 0` instead of live
+        // `hi = -3` and misses the cross-rest merge of `p1` and `p4`.
+        let mod4 = con(&[(0, 1), (2, -4)], -1, Rel::Eq);
+        let mut p1 = vec![
+            con(&[(0, -1)], -3, Rel::Ge),
+            mod4.clone(),
+            con(&[(1, 1), (0, -1)], 0, Rel::Ge),
+        ];
+        let mut p2 = vec![con(&[(0, 1)], 0, Rel::Eq), con(&[(1, 1)], 100, Rel::Eq)];
+        let mut p3 = vec![
+            con(&[(0, 1)], -1, Rel::Ge),
+            con(&[(0, -1)], 2, Rel::Ge),
+            con(&[(1, 1)], 100, Rel::Eq),
+        ];
+        let mut p4 = vec![
+            con(&[(0, 1)], -1, Rel::Ge),
+            mod4,
+            con(&[(1, 1), (0, -2)], 1, Rel::Ge),
+        ];
+        for p in [&mut p1, &mut p2, &mut p3, &mut p4] {
+            p.sort();
+        }
+        let out = merge_pieces(BTreeSet::from([p1, p2, p3, p4]));
+        assert_eq!(
+            out.len(),
+            2,
+            "stale sides entry blocked cross-rest merge: {out:?}"
+        );
     }
 }

@@ -1377,19 +1377,18 @@ fn separate_tests_over_a_chain_of_largest_values_of_remainders_scale() {
 fn separate_tests_over_a_chain_of_largest_values_of_two_divisions_scale() {
     // LOAD-max-div-xr: `x mod 5 + x div 7` beside `H div 2`. Its projection left a quotient of
     // the chain in rows over both divisions; a piece is now projected again keeping the
-    // symbols and the variables of definitions of symbols alone, and the bounds `x >= 2^k *
-    // (q3 + q4) - 9 * 2^k` piling up at each link are cut to two ([`envelope`] in
-    // presburger::extend). Before: 37.3 and 477 billion instructions at 10 and 20 links, 6 and
-    // 16 tests refused, n^3.7. Now the summaries, pieces and rows grow linearly (116 summaries,
-    // 746 pieces and 6041 rows at 40 links, 56, 326 and 2641 at 20), and the work by n^1.6 to
-    // n^1.9 from 10 to 80 links (13.4, 40.5, 123 and 453 billion instructions; 6.7, 14.4 and 59.2
-    // to 40 links since pieces of different rests merge, round 2): the solver's
-    // arithmetic on the coefficients `2^i` of link i, in rows of three atoms. Held to n^2, at
-    // 4 and 32 links to stay under 60 s; the item for n log n is LOAD-max-div-bits.
+    // symbols and the variables of definitions of symbols alone, the bounds `x >= 2^k * (q3 +
+    // q4) - 9 * 2^k` piling up at each link are cut to two ([`envelope`] in presburger::extend),
+    // unit-bounded division pairs are folded in [`without_free_pairs`] so [`decide_cons`]'s
+    // two-pointer hull check discharges empty candidate pieces without `live3`, and big-integer
+    // `gcd` uses in-place binary Stein below the half-gcd threshold (`zed_kernel::num::fast`).
+    // Before: 37.3 and 477 billion instructions at 10 and 20 links, 6 and 16 tests refused,
+    // n^3.7; 15.2 to 240 billion from 40 to 320 links (15.7 times, failing n log n) before
+    // unit-pair folding and slice Stein gcd. Now held to O(n log n) at 40 and 320 links.
     separate_tests_scale(
         "separate tests over a chain of `max`s of two divisions",
-        4,
-        2,
+        40,
+        1,
         "max(H div 2, x mod 5 + x div 7 - 9)",
         "H < 0",
     );
@@ -1472,6 +1471,107 @@ fn separate_tests_over_a_chain_reading_a_new_symbol_at_each_link_scale() {
             }
         },
     );
+}
+
+#[test]
+fn separate_tests_over_a_chain_reading_a_new_division_pair_at_each_link_scale() {
+    // LOAD-max-div-xr (cross-review round 3, I24): each link reads both `q_{i-1}` and `r_{i-1}` of
+    // the multi-output division pair below it plus a fresh symbol `s{i}`. Without input
+    // deduplication in `Summaries::syms`, each frame pushed the child `Formula` twice and merged
+    // its `i`-element `OrdSet` into itself (14.41 times from 200 to 1600 links, failing the 14.08
+    // limit). With `seen_in` per frame, each distinct input is visited once.
+    use zedc::store::presburger::extend::Extending;
+    use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared};
+    let inputs = zed_tests::scaling::inputs(200, |m| {
+        let sym = |i: usize| Lin::atom(Atom::Sym(format!("s{i}").into()));
+        let q = |i: usize| Lin::atom(Atom::Aux((2 * i) as u32));
+        let r = |i: usize| Lin::atom(Atom::Aux((2 * i + 1) as u32));
+        let defs: Vec<Formula> = (0..m)
+            .flat_map(|i| {
+                let dividend = if i == 0 {
+                    sym(0)
+                } else {
+                    q(i - 1).plus(&r(i - 1)).plus(&sym(i))
+                };
+                let eq = Con::eq(&dividend, &q(i).times(7).plus(&r(i)));
+                let lo = Con::ge(&r(i), &Lin::constant(0));
+                let hi = Con::ge(&Lin::constant(6), &r(i));
+                let d = Formula::And(Shared::new(vec![
+                    Formula::Con(eq),
+                    Formula::Con(lo),
+                    Formula::Con(hi),
+                ]));
+                [d.clone(), d]
+            })
+            .collect();
+        let asks: Vec<Formula> = (0..m)
+            .map(|i| Formula::Con(Con::ge(&q(i), &Lin::constant(0))))
+            .collect();
+        (defs, asks)
+    });
+    zed_tests::scaling::check(
+        "separate tests over a chain reading a new division pair at each link",
+        200,
+        |m| {
+            let (defs, asks) = &inputs[&m];
+            let mut extending = Extending::new();
+            for f in asks {
+                let a = extending.defined(f, &|n| defs[n as usize].clone());
+                assert_eq!(a.holds, Ok(true));
+            }
+        },
+    );
+}
+
+#[test]
+fn separate_tests_over_a_periodic_remainder_chain_scale() {
+    // LOAD-max-div-xr (I12, I26): `H mod 7 + H` has period 7 (`h_k(x) = x + d_k(x mod 7)`, at most
+    // 7 pieces), but inlining multi-term call values added one remainder atom a link to the key
+    // and left no summary (1.07 G and 16 refused at 20 links, 12.0 G and 36 refused at 40, timed
+    // out past 60 s at 160). Binding multi-term call values to a value variable in `preimage` and
+    // splitting on bounded periodic quotient offsets (`quotient_offsets`, `normalize_own_leaf`)
+    // summarizes every link in O(n log n) with 0 refusals.
+    separate_tests_scale(
+        "separate tests over a periodic remainder chain",
+        20,
+        1,
+        "H mod 7 + H",
+        "H < 0",
+    );
+}
+
+#[test]
+fn separate_tests_over_two_chains_sharing_an_input_scale() {
+    // LOAD-max-div-xr (I21): a test at each depth reading two independent chains `g{i}(x)` and
+    // `p{i}(x, y)` that share both input `x` and a functional leaf `x div 7`, after an earlier
+    // test numbered `g{m}` first. Before, `Summaries::local` kept at most one summary and unrolled
+    // the entire lower-numbered chain into `beside`, O(n^2) with refusals.
+    let inputs = zed_tests::scaling::inputs(25, |m| {
+        let mut src = "g0(x: int) = x;\np0(x: int, y: int) = x + y;\n".to_string();
+        for i in 1..=m {
+            src += &format!("g{i}(x: int) = max(g{}(x: x) div 2, x div 7 - 9);\n", i - 1);
+            src += &format!(
+                "p{i}(x: int, y: int) = if p{}(x: x, y: y) > x div 7 {{ p{}(x: x, y: y) + 1 }} else {{ p{}(x: x, y: y) }};\n",
+                i - 1,
+                i - 1,
+                i - 1
+            );
+        }
+        src += &format!("u(x: int) = g{m}(x: x) < 0;\n");
+        for i in 1..=m {
+            src +=
+                &format!("t{i}(x: int, y: int) = g{i}(x: x) + p{i}(x: x, y: y) < 0 && y == 0;\n");
+        }
+        let stmts = zed_tests::deep::statements(&src);
+        let tokens = zedc::lex::lex_fence(&src).expect("lex");
+        let unit = elab(&src).expect("elab");
+        (src, tokens, stmts, unit)
+    });
+    zed_tests::scaling::check("separate tests over two chains sharing an input", 25, |m| {
+        let (src, tokens, stmts, unit) = &inputs[&m];
+        let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
+        assert!(refused.is_empty(), "m = {m}: {} refused", refused.len());
+    });
 }
 
 #[test]
@@ -1799,6 +1899,41 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
             "t(x: int, y: int) = g2(x: x, y: y) != p2(x: x, y: y);\n",
         )
         .to_string(),
+        // Cross-review round 3 (Gemini, I21): a test `t` reading two chains over different inputs,
+        // after a test `u` has numbered the links of `g5` before those of `p2`.
+        concat!(
+            "g0(x: int) = x;\n",
+            "g1(x: int) = max(g0(x: x) div 2, x mod 5 + x div 7 - 9);\n",
+            "g2(x: int) = max(g1(x: x) div 2, x mod 5 + x div 7 - 9);\n",
+            "g3(x: int) = max(g2(x: x) div 2, x mod 5 + x div 7 - 9);\n",
+            "g4(x: int) = max(g3(x: x) div 2, x mod 5 + x div 7 - 9);\n",
+            "g5(x: int) = max(g4(x: x) div 2, x mod 5 + x div 7 - 9);\n",
+            "p0(y: int) = y;\n",
+            "p1(y: int) = if p0(y: y) > 0 { p0(y: y) + 1 } else { p0(y: y) };\n",
+            "p2(y: int) = if p1(y: y) > 0 { p1(y: y) + 1 } else { p1(y: y) };\n",
+            "u(x: int) = g5(x: x) < 0;\n",
+            "t(x: int, y: int) = p2(y: y) + g5(x: x) < 0 && y == 0;\n",
+        )
+        .to_string(),
+        // Two independent chains sharing input `x` and functional leaf `x div 7`: both cones
+        // summarize with `x` kept in both keys regardless of query order.
+        concat!(
+            "g0(x: int) = x;\n",
+            "g1(x: int) = max(g0(x: x) div 2, x div 7 - 9);\n",
+            "g2(x: int) = max(g1(x: x) div 2, x div 7 - 9);\n",
+            "g3(x: int) = max(g2(x: x) div 2, x div 7 - 9);\n",
+            "g4(x: int) = max(g3(x: x) div 2, x div 7 - 9);\n",
+            "g5(x: int) = max(g4(x: x) div 2, x div 7 - 9);\n",
+            "p0(x: int, y: int) = x + y;\n",
+            "p1(x: int, y: int) = if p0(x: x, y: y) > x div 7 { p0(x: x, y: y) + 1 } else { p0(x: x, y: y) };\n",
+            "p2(x: int, y: int) = if p1(x: x, y: y) > x div 7 { p1(x: x, y: y) + 1 } else { p1(x: x, y: y) };\n",
+            "u(x: int) = g5(x: x) < 0;\n",
+            "t(x: int, y: int) = p2(x: x, y: y) + g5(x: x) < 0 && y == 0;\n",
+        )
+        .to_string(),
+        // Periodic remainder chains (I12, I26): answered at depth 8 without refusal in every order.
+        chain("H mod 7 + H", "H < 0", 8),
+        chain("if H mod 6 == 0 { H + 1 } else { H + 2 }", "H > 10", 8),
     ];
     for src in &units {
         let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
@@ -1852,7 +1987,7 @@ fn summaries_of_max_min_div_chains_give_the_values_of_the_chains() {
     use zedc::store::presburger::extend::Extending;
     // A link, `H` its input, and its value from `H` and `x`.
     type Step = (&'static str, fn(i64, i64) -> i64);
-    let steps: [Step; 17] = [
+    let steps: [Step; 19] = [
         ("max(H div 2, x - 9)", |h, x| h.div_euclid(2).max(x - 9)),
         ("min(H div 2, x + 9)", |h, x| h.div_euclid(2).min(x + 9)),
         ("max(H div 3, x - 9)", |h, x| h.div_euclid(3).max(x - 9)),
@@ -1891,6 +2026,10 @@ fn summaries_of_max_min_div_chains_give_the_values_of_the_chains() {
         }),
         ("max(H - 4, x mod 5 + x div 7 - 9)", |h, x| {
             (h - 4).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
+        }),
+        ("H mod 7 + H", |h, _| h.rem_euclid(7) + h),
+        ("if H mod 6 == 0 { H + 1 } else { H + 2 }", |h, _| {
+            if h.rem_euclid(6) == 0 { h + 1 } else { h + 2 }
         }),
     ];
     let xs: [i64; 10] = [-1_000_000, -19, -1, 0, 1, 9, 10, 18, 19, 1_000_000];
