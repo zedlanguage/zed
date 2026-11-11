@@ -602,6 +602,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut m = M::new();
         m.job(Job::Scope(unit, true));
         self.drive(&mut m);
+        // A statement other than a binding drops the errors of its operations on literals
+        // that met a carrier here.
+        self.drop_met(0);
     }
 
     /// A call through a value of `f` with arguments already found, as a need of a generic
@@ -700,6 +703,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // A `-` of an operation on literals alone at the top level is one too, and
                 // takes the carrier of what it meets, as `-(1 + 2)` in `-(1 + 2) * 0.5f64`
                 // ([`Self::lit_op_meets`]).
+                let from = self.errors.len();
                 if self.level == 0
                     && op == "-"
                     && x.expr.is_some_and(|e| self.lit_ops.contains(&e.span))
@@ -710,6 +714,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self
                     .apply(&format!("`{op}`"), &sig, vec![Some(x)], true, span)
                     .0;
+                self.lit_wrote(span, from);
                 m.ty(t);
             }
             Frame::Tuple(s) => self.tuple_step(m, s),
@@ -1458,6 +1463,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             unreachable!("a binding")
         };
         if self.level == 0 {
+            self.drop_met(before);
             // Each target is bound to its component where the value is a tuple display of
             // as many components, `a, b = (0.5, 1)`; `_` names none.
             let name = |t: &'a Target| match t {
@@ -1600,6 +1606,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // rejected as `rate = 0.2;` is (step L1.26b).
             let p = &s.f.params[s.given.len()];
             let d = p.default.as_ref().expect("a closed default");
+            self.drop_met(before);
             self.rejects_unfixed(before, unfixed_parts(d, &p.name, true));
             let mut out = Ty::empty();
             for piece in t.pieces() {
@@ -2046,36 +2053,44 @@ impl<'t, 'a> Ck<'t, 'a> {
         a.union(b)
     }
 
-    /// At the top level, an operation on bare literals alone, as `3 + 4`, is typed `int` as it
-    /// is walked, since nothing in it gives a carrier; but it is a literal too, and takes the
-    /// carrier of what it meets (DESIGN.md sec:diagnostics, "A `/` of integer literals": "an
-    /// operation on literals alone is an `int` only where nothing at all gives it a
-    /// carrier"). So where the operator `op` at `span` has one operand `x` or `y` that is such
-    /// an operation and the other of one numeric carrier other than `int`, each literal of
-    /// the operation adopts that carrier and the operand takes its type: in
-    /// `q = (1.0f64 + 2) / (3 + 4)`, `3 + 4` is an `f64`, and in `(1 + 2) < 0.5f64`, `1 + 2` is.
-    /// The operators are the arithmetic ones but `^`, whose exponent need not have the carrier
-    /// of its base, and the comparisons. An operation of `+`, `-` or `*` on two such operands,
-    /// and a `-` of one, is recorded as one ([`Ck::lit_ops`]). A `/` is not: a `/` of two
-    /// bare integer literals is rejected as it is walked, since no arrow of `/` takes `int`
-    /// ([`Ck::apply`]), so `y = 1.0f64 + 7 / 2` is rejected at the `7`, against DESIGN.md's
-    /// "an operation on literals alone is an `int` only where nothing at all gives it a
-    /// carrier" (LIT-menu-match-design, an open case for QUESTIONS.md).
+    /// At the top level, an operation on bare literals alone, as `3 + 4`, is typed as it is
+    /// walked, `int` where its arrows take one, since nothing in it gives a carrier; but it is
+    /// a literal too, and takes the carrier of what it meets (DESIGN.md sec:diagnostics, "A
+    /// `/` of integer literals": "an operation on literals alone is an `int` only where
+    /// nothing at all gives it a carrier"). So where the operator `op` at `span` has one
+    /// operand `x` or `y` that is such an operation and the other of one numeric carrier other
+    /// than `int`, each literal of the operation adopts that carrier and the operand takes its
+    /// type: in `q = (1.0f64 + 2) / (3 + 4)`, `3 + 4` is an `f64`, in `(1 + 2) < 0.5f64`,
+    /// `1 + 2` is, and in `y = 1.0f64 + 7 / 2`, `7 / 2` is. The operators are the arithmetic
+    /// ones but `^`, whose exponent need not have the carrier of its base, and the
+    /// comparisons. An operation of `+`, `-`, `*`, `/` or `^` on two such operands, and a `-`
+    /// of one, is recorded as one ([`Ck::lit_ops`]). A `/` of two integer literals, which no
+    /// arrow of `/` takes, and a negative exponent of the `int` power are rejected as they are
+    /// walked; the errors are dropped where the operation meets a carrier
+    /// ([`Ck::lit_wrote`], [`Ck::drop_met`]).
+    ///
+    /// An operation is left as it was where its value at the carrier is no value of it
+    /// ([`folded`]), as `1r + 1 / 0`, whose `/` always fails: its rejection stands. A `rat`
+    /// does not reach a `^`, which has no arrow at `rat`.
     ///
     /// Complexity tradeoff: the naive test walks each operand to see whether it holds literals
     /// alone, which costs the depth of the operation at each operator, the square of the
     /// depth over a nest of them. Each operation is recorded as it ends, from its two operands'
     /// entries, so the test is one lookup, and the literals of an operation are walked once,
     /// when it takes its carrier: after that the operand is of that carrier, and the operation
-    /// around it holds a value of a carrier, not literals alone.
+    /// around it holds a value of a carrier, not literals alone. The walk that folds an
+    /// operation holding a `/` or a `^` costs its size again, once.
     fn lit_op_meets(&mut self, op: &str, x: &mut Arg<'a>, y: &mut Arg<'a>, span: Span) {
         let op_of = |a: &Arg| a.expr.is_some_and(|e| self.lit_ops.contains(&e.span));
         let bare = |a: &Arg| a.lit.as_ref().is_some_and(|l| l.bare);
         let (ox, oy) = (op_of(x), op_of(y));
         if (ox || bare(x)) && (oy || bare(y)) {
-            if matches!(op, "+" | "-" | "*") {
+            if matches!(op, "+" | "-" | "*" | "/" | "^") {
                 self.lit_ops.insert(span);
             }
+            return;
+        }
+        if op == "^" {
             return;
         }
         let (side, other) = match (ox, oy) {
@@ -2089,19 +2104,148 @@ impl<'t, 'a> Ck<'t, 'a> {
         let Some(e) = side.expr else {
             return;
         };
+        if self.lit_takes(e, c) {
+            side.ty = Ty::carrier(c);
+        }
+    }
+
+    /// Each literal of `e`, an operation on bare literals alone ([`Ck::lit_ops`]), adopting
+    /// `c`, and the errors its operations wrote as they were walked dropped
+    /// ([`Ck::lit_wrote`]); `false`, with nothing changed, where `e` holds a `^` and `c` is
+    /// `rat`, which no arrow of `^` takes, or where `e` holds a `/` or a `^` and its value at
+    /// `c` is no value of `c` ([`folded`]), as `1 / 0` at `rat`: the rejection of the
+    /// operation stands. It costs the size of `e`, twice where it holds a `/` or a `^`.
+    fn lit_takes(&mut self, e: &Expr, c: Carrier) -> bool {
+        let mut nodes = Vec::new();
+        let (mut div, mut pow) = (false, false);
         let mut todo = vec![e];
         while let Some(e) = todo.pop() {
-            if let Some(l) = literal(e) {
-                self.adopt_to(&l, c);
+            nodes.push(e);
+            if literal(e).is_some() {
                 continue;
             }
             match &e.kind {
-                ExprKind::Binary(_, a, b) => todo.extend([&**b, &**a]),
+                ExprKind::Binary(op, a, b) => {
+                    div |= *op == "/";
+                    pow |= *op == "^";
+                    todo.extend([&**b, &**a]);
+                }
                 ExprKind::Unary("-", a) => todo.push(a),
                 _ => {}
             }
         }
-        side.ty = Ty::carrier(c);
+        if (pow && c == Carrier::Rat) || ((div || pow) && folded(e, c).is_none()) {
+            return false;
+        }
+        let live = !self.trying && self.replaying == 0;
+        for e in nodes {
+            if let Some(l) = literal(e) {
+                self.adopt_to(&l, c);
+            } else if live && let Some(r) = self.lit_written.remove(&e.span) {
+                self.lit_dropped.insert(r.start, r.end);
+            }
+        }
+        true
+    }
+
+    /// The errors after the first `from` that the operation at `span` wrote, recorded where it
+    /// is an operation on literals alone at the top level ([`Ck::lit_written`]) and the check
+    /// is not a repair's trial nor a run again of a function's body, whose errors are dropped
+    /// with it.
+    fn lit_wrote(&mut self, span: Span, from: usize) {
+        let to = self.errors.len();
+        if self.level == 0
+            && to > from
+            && !self.trying
+            && self.replaying == 0
+            && self.lit_ops.contains(&span)
+        {
+            self.lit_written.insert(span, from..to);
+            self.lit_order.push(span);
+        }
+    }
+
+    /// Drops the errors of the operations on literals alone that met a carrier
+    /// ([`Ck::lit_op_meets`]) of the statement whose check wrote the errors after the first
+    /// `before`, and forgets the errors its operations wrote: the statement has ended.
+    ///
+    /// Complexity tradeoff: the naive way removes each dropped range from the errors in turn,
+    /// shifting the errors after it, the product of the ranges and the errors. The ranges of
+    /// the statement are the last ones in the order of the errors, so they are split off
+    /// the map, the errors after `before` split off once and the kept ones put back in one
+    /// pass, `O(k log k + e)` for `k` ranges and `e` errors.
+    fn drop_met(&mut self, before: usize) {
+        while let Some(&s) = self.lit_order.last() {
+            match self.lit_written.get(&s) {
+                Some(r) if r.start < before => break,
+                Some(_) => {
+                    self.lit_written.remove(&s);
+                }
+                None => {}
+            }
+            self.lit_order.pop();
+        }
+        let dropped = self.lit_dropped.split_off(&before);
+        if dropped.is_empty() {
+            return;
+        }
+        let found = self.errors.split_off(before);
+        let mut ranges = dropped.into_iter().peekable();
+        for (i, e) in found.into_iter().enumerate() {
+            let at = before + i;
+            while ranges.next_if(|&(_, end)| end <= at).is_some() {}
+            if !ranges.peek().is_some_and(|&(start, _)| start <= at) {
+                self.errors.push(e);
+            }
+        }
+    }
+
+    /// At the top level, the components of two tuple displays `x` and `y` of one shape that
+    /// `==` or `!=` compares, where one of a pair is an operation on bare literals alone
+    /// ([`Ck::lit_ops`]) and the other is of one numeric carrier other than `int`: the
+    /// operation takes that carrier, as it would where the pair were compared alone (step
+    /// L1.26a: "two tuples compare component by component, each pair under this rule", and an
+    /// operation on literals alone "takes the carrier of what it meets"). In
+    /// `(1 + 2, 0) == (3.0f64, 0)`, `1 + 2` is an `f64`. The display's type is made again with
+    /// the new components. A literal with no suffix gives no carrier.
+    ///
+    /// Complexity tradeoff: each pair is one lookup of each component's type, found as it was
+    /// walked ([`Ck::seen`]), so the pairs cost the size of the displays, and an operation's
+    /// literals are walked once ([`Ck::lit_takes`]); each display changed is made again once,
+    /// bottom up, which costs its size, not the size times the depth that making it again at
+    /// each changed component would.
+    fn lit_pairs(&mut self, x: &mut Arg<'a>, y: &mut Arg<'a>) {
+        let (Some(a), Some(b)) = (x.expr, y.expr) else {
+            return;
+        };
+        if !matches!((&a.kind, &b.kind), (ExprKind::Tuple(_), ExprKind::Tuple(_))) {
+            return;
+        }
+        let Some(pairs) = paired(a, b) else {
+            return;
+        };
+        let mut new: HashMap<Span, Ty> = HashMap::new();
+        for (p, q) in pairs {
+            for (side, other) in [(p, q), (q, p)] {
+                if !self.lit_ops.contains(&side.span)
+                    || self.lit_ops.contains(&other.span)
+                    || literal(other).is_some_and(|l| l.bare)
+                {
+                    continue;
+                }
+                let found = self.seen.get(&other.span).and_then(|(t, _)| t.as_ref());
+                let Some(c) = found.and_then(Ty::numeric_carrier) else {
+                    continue;
+                };
+                if c != Carrier::Int && self.lit_takes(side, c) {
+                    new.insert(side.span, Ty::carrier(c));
+                }
+            }
+        }
+        if !new.is_empty() {
+            x.ty = retyped(&x.ty, a, &new);
+            y.ty = retyped(&y.ty, b, &new);
+        }
     }
 
     /// A binary operator other than `&&` and `||` applied to its arguments `x` and `y`, the
@@ -2141,13 +2285,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.level == 0
             && matches!(
                 op,
-                "+" | "-" | "*" | "/" | "<" | "<=" | ">" | ">=" | "==" | "!="
+                "+" | "-" | "*" | "/" | "^" | "<" | "<=" | ">" | ">=" | "==" | "!="
             )
         {
             self.lit_op_meets(op, &mut x, &mut y, span);
         }
         match op {
             "==" | "!=" => {
+                if self.level == 0 {
+                    self.lit_pairs(&mut x, &mut y);
+                }
                 let from = self.errors.len();
                 self.data(&x.ty, &format!("`{op}`"), span, x.at.unwrap_or(span));
                 self.data(&y.ty, &format!("`{op}`"), span, y.at.unwrap_or(span));
@@ -2175,6 +2322,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             "<" | "<=" | ">" | ">=" => self.compare(op, x, y, span),
             _ => {
+                let from = self.errors.len();
                 // A divisor whose type holds no zero cannot fail with `#divByZero`.
                 let nonzero = matches!(op, "/" | "div" | "mod")
                     && !y.ty.contains(&Value::Int(0))
@@ -2202,6 +2350,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 {
                     self.divides_by_zero(op, why, &dividend, b, span);
                 }
+                self.lit_wrote(span, from);
                 if op == "*" {
                     // `*` and `/` take the same (f64, f64) and (rat, rat), and only `*` takes
                     // (int, int): `/` is defined where the product holds no `int`.
@@ -8085,6 +8234,49 @@ fn out_of_bounds(r: Ty, key: &Ty) -> Ty {
         false => r,
     };
     r.union(&Ty::set(KType::atom("outOfBounds")))
+}
+
+/// The type `t` of the tuple display `e`, with the component of each span of `new` of the
+/// type `new` gives it, made bottom up: a display's type is the row of its components'
+/// types ([`Ck::tuple_step`]). The walk keeps its own stack, since displays nest as deep as
+/// the text; it costs the size of `e`.
+fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>) -> Ty {
+    enum Step<'e> {
+        Visit(Ty, &'e Expr),
+        Make(bool, usize),
+    }
+    let mut todo = vec![Step::Visit(t.clone(), e)];
+    let mut out: Vec<Ty> = Vec::new();
+    while let Some(step) = todo.pop() {
+        match step {
+            Step::Visit(t, e) => {
+                if let Some(n) = new.get(&e.span) {
+                    out.push(n.clone());
+                    continue;
+                }
+                match (&e.kind, &t.tuples[..]) {
+                    (ExprKind::Tuple(es), [row]) => {
+                        let cs = row.to_vec();
+                        if cs.len() != es.len() {
+                            out.push(t);
+                            continue;
+                        }
+                        todo.push(Step::Make(row.data(), cs.len()));
+                        todo.extend(cs.into_iter().zip(es).rev().map(|(c, e)| Step::Visit(c, e)));
+                    }
+                    _ => out.push(t),
+                }
+            }
+            Step::Make(data, n) => {
+                let cs = out.split_off(out.len() - n);
+                out.push(Ty::of_row(match data {
+                    true => ty::Row::of_data(cs),
+                    false => ty::Row::new(cs),
+                }));
+            }
+        }
+    }
+    out.pop().expect("one type")
 }
 
 #[cfg(test)]

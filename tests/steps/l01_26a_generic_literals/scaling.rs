@@ -192,9 +192,10 @@ fn an_operation_on_many_literals_takes_its_carrier_in_linear_time() {
     });
 }
 
-/// `y = (1 / 1) * (1 / 1) * … * (1 / 1)`, of `n` divisions of integer literals: a `/` of two
-/// integer literals takes no carrier from outside, so each fix writes the first literal of
-/// every one, `n` edits on one line, chosen in one walk of the value (`unreached`).
+/// `y = (1 / 1) * (1 / 1) * … * (1 / 1)`, of `n` divisions of integer literals: a `/` of
+/// literals takes the carrier of what it meets, so each fix writes the first literal of the
+/// value alone, and the `*` carry its carrier to every `/` (DESIGN.md sec:diagnostics, "A `/`
+/// of integer literals": "the menu writes the carrier at the first literal of the value").
 ///
 /// Each `/` of two literals is also rejected as it is walked, and those `n` rejections are
 /// dropped for the binding's one (`Ck::rejects_unfixed`). Their menus are written only for the
@@ -207,17 +208,14 @@ fn a_menu_that_writes_a_literal_in_each_of_many_divisions_scales() {
     scaling::on_a_thread(1 << 29, || {
         let n = 500;
         let units = scaling::inputs(n, |m| Resolved::new(&quotients(m)));
-        for (m, u) in &units {
+        for u in units.values() {
             let [e] = &u.type_errors()[..] else {
                 panic!("one rejection")
             };
-            for fix in ["(1.0f64 / 1)", "(1r / 1)", "(f64(1) / 1)"] {
-                assert_eq!(e.matches(fix).count(), *m, "{e}");
+            for fix in ["y = (1.0f64 / 1) * (1 / 1)", "y = (1r / 1) * (1 / 1)"] {
+                assert_eq!(e.matches(fix).count(), 1, "{e}");
             }
-            assert!(
-                e.contains(" * (1r / 1);") && e.contains(" y is 1r\n"),
-                "{e}"
-            );
+            assert!(e.contains(" * (1 / 1);") && e.contains(" y is 1r\n"), "{e}");
         }
         scaling::check("rejecting a value of n divisions with a menu", n, |m| {
             std::hint::black_box(units[&m].type_errors());
@@ -226,9 +224,9 @@ fn a_menu_that_writes_a_literal_in_each_of_many_divisions_scales() {
 }
 
 /// `y = 1 / 1 / … / 1`, `n` divisions nested to depth `n`: only the innermost divides two
-/// literals, and each fix writes its first literal alone. Whether a written carrier reaches
-/// each `/` is kept for each operand as the walk leaves it (`unreached`), so the walk does
-/// not look into an operand again at the `/` around it.
+/// literals, and each fix writes its first literal alone, whose carrier reaches each `/`.
+/// The walk that finds the literals a fix writes follows the path to the written literal
+/// alone (`unreached`), so it does not look into an operand again at the `/` around it.
 #[test]
 fn a_menu_of_divisions_nested_deep_scales() {
     let quotients = |n: usize| format!("y = 1{};\n", " / 1".repeat(n));
@@ -246,5 +244,65 @@ fn a_menu_of_divisions_nested_deep_scales() {
         scaling::check("rejecting n nested divisions with a menu", n, |m| {
             std::hint::black_box(units[&m].type_errors());
         });
+    });
+}
+
+/// `y = (1 / 2 + 1 / 2 + … + 1 / 2) + 1.0f64`, a sum of `n` divisions of integer literals, each
+/// on a line of its own, that meets an `f64`. Each `/` is rejected as it is walked, since it
+/// divides two integer literals, and the sum's `2n` literals take the `f64` where the sum
+/// meets it, walked once (`Ck::lit_takes`); the `n` rejections are dropped when the binding
+/// ends, the errors after the binding's first split off once (`Ck::drop_met`). Each `/` is on
+/// a line of its own so that the menu `Ck::reject` writes for each rejection, before it is
+/// dropped, costs its own line and not the whole value.
+///
+/// Negative control (run once, not committed), at n = 500 and 4,000: `Ck::drop_met` testing
+/// each error against every dropped range, which is quadratic with a small step, passed at
+/// 9.3 times, below the limit of 11.74, so this test does not catch that form.
+#[test]
+fn a_sum_of_many_divisions_of_literals_takes_its_carrier_in_linear_time() {
+    let sum = |n: usize| format!("y = ({}) + 1.0f64;\n", vec!["1 / 2"; n].join("\n  + "));
+    scaling::on_a_thread(1 << 29, || {
+        assert_eq!(type_errors(&sum(3)), Vec::<String>::new());
+        let n = 500;
+        let units = scaling::inputs(n, |m| Resolved::new(&sum(m)));
+        for u in units.values() {
+            assert_eq!(u.type_errors(), Vec::<String>::new());
+        }
+        scaling::check("checking a sum of n divisions that meets an f64", n, |m| {
+            std::hint::black_box(units[&m].type_errors());
+        });
+    });
+}
+
+/// `y = (1 + 1, 1 + 1, …) == (2.0f64, 2.0f64, …)`, two tuples of `n` components: each `1 + 1`
+/// takes the `f64` of the component it is compared with, one lookup of that component's type
+/// each (`Ck::lit_pairs`), and the left tuple's type is made again once, bottom up
+/// (`retyped`).
+///
+/// Negative control (run once, not committed), at n = 500 and 4,000: making the type again
+/// at each component changed, which is quadratic, did not end within 60 s.
+#[test]
+fn a_comparison_of_tuples_of_many_operations_scales() {
+    let pairs = |n: usize| {
+        format!(
+            "y = ({}) == ({});\n",
+            vec!["1 + 1"; n].join(", "),
+            vec!["2.0f64"; n].join(", ")
+        )
+    };
+    scaling::on_a_thread(1 << 29, || {
+        assert_eq!(type_errors(&pairs(3)), Vec::<String>::new());
+        let n = 500;
+        let units = scaling::inputs(n, |m| Resolved::new(&pairs(m)));
+        for u in units.values() {
+            assert_eq!(u.type_errors(), Vec::<String>::new());
+        }
+        scaling::check(
+            "checking a comparison of two tuples of n components",
+            n,
+            |m| {
+                std::hint::black_box(units[&m].type_errors());
+            },
+        );
     });
 }

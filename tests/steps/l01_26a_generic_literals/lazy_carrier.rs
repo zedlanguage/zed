@@ -119,3 +119,61 @@ fn a_tuple_comparison_gives_a_component_its_carrier() {
     // With nothing to give a carrier the component is an `int`.
     assert_eq!(y("y = (1 + 2, 0) == (3, 0);\n"), "true");
 }
+
+#[test]
+fn a_tuple_menu_names_the_value_where_a_pair_is_an_operation() {
+    // sec:diagnostics, "The value a fix names": the binder is named "where the binder's value
+    // is a literal or an operation on literals". `1 + 2` takes the carrier of `3.0f64` in its
+    // pair, so the fix that writes `0.5` with a carrier gives `y` a value.
+    let src = "y = (1 + 2, 0.5) == (3.0f64, 1);\n";
+    assert_eq!(
+        checked(src),
+        pairs(&[
+            ("y = (1 + 2, 0.5f64) == (3.0f64, 1);", "y is false"),
+            ("y = (1 + 2, 0.5r) == (3.0f64, 1);", "y is false"),
+        ])
+    );
+    assert_eq!(
+        checked("y = (1 + 2, 0.5) == (3r, 0.5);\n"),
+        pairs(&[
+            ("y = (1 + 2, 0.5f64) == (3r, 0.5);", "y is true"),
+            ("y = (1 + 2, 0.5r) == (3r, 0.5);", "y is true"),
+        ])
+    );
+    // The fixed decimal gives its carrier to the operation in the other component.
+    assert_eq!(
+        checked("y = (1 + 0.5, 0) == (2 + 1, 0);\n"),
+        pairs(&[
+            ("y = (1 + 0.5f64, 0) == (2 + 1, 0);", "y is false"),
+            ("y = (1 + 0.5r, 0) == (2 + 1, 0);", "y is false"),
+        ])
+    );
+    // Each fix compiles and gives the value it names.
+    assert_eq!(y("y = (1 + 2, 0.5f64) == (3.0f64, 1);\n"), "false");
+    assert_eq!(y("y = (1 + 2, 0.5r) == (3r, 0.5);\n"), "true");
+    assert_eq!(y("y = (1 + 0.5f64, 0) == (2 + 1, 0);\n"), "false");
+}
+
+#[test]
+fn a_menu_writes_the_exponent_of_a_power_that_its_carrier_does_not_reach() {
+    // "the menu writes the carrier at the first literal of the value": the carrier of `2`
+    // reaches the `/` and the base of `^`, but not its exponent, since `^` has no arrow that
+    // takes an `f64` and an `int`, so the exponent's first literal is written too.
+    let src = "y = 2 ^ (1 + 1) / 2;\n";
+    assert_eq!(
+        checked(src),
+        pairs(&[
+            ("y = 2.0f64 ^ (1.0f64 + 1) / 2;", "y is 2.0"),
+            ("y = f64(2) ^ (f64(1) + 1) / 2;", "y is 2.0"),
+        ])
+    );
+    assert_eq!(y("y = 2.0f64 ^ (1.0f64 + 1) / 2;\n"), "2.0");
+    assert_eq!(y("y = f64(2) ^ (f64(1) + 1) / 2;\n"), "2.0");
+    // A literal exponent takes the carrier of the base it meets, so only the first literal
+    // of the value is written: `2 ^ 2` meets `f64(0xFF)` under `/`.
+    assert_eq!(
+        checked("y = 0xFF / 2 ^ 2;\n"),
+        pairs(&[("y = f64(0xFF) / 2 ^ 2;", "y is 63.75")])
+    );
+    assert_eq!(y("y = f64(0xFF) / 2 ^ 2;\n"), "63.75");
+}
