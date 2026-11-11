@@ -35,6 +35,10 @@ Import cycle
 Order read on a level with no natural order — origin keys outside their `Seq`
 Two declared orders meet in one key type
 Emission-disjointness
+Bit-field of a foreign struct with no C unit
+Grammar item narrower than a byte with no bit order
+Release of a foreign value while a result that keeps it is still read
+One C symbol exported twice
 Rebinding in the same scope
 Binder naming a type
 Numeric literal at a carrier that cannot take it

@@ -102,7 +102,7 @@ intervalsFromParity = Reduction(of: intervals, reads: [parity],
     reduce: (e, s) -> if s.of(parity) == #even { e.roundInwardToEven } else { e });
 ```
 
-<!-- DESIGN.md:807 layer L10: ring L10, word L6 (Ast), label none; section [sec:constraints] 3 -->
+<!-- DESIGN.md:809 layer L10: ring L10, word L6 (Ast), label none; section [sec:constraints] 3 -->
 ```zed
 type Bound = int | Ast | #unbounded;                         // an affine bound is an expression over names in scope
 struct Interval   { min: Bound, max: Bound }
@@ -120,14 +120,14 @@ struct Constraints(positional V) {
 }
 ```
 
-<!-- DESIGN.md:877 layer L2: ring L2, word none, label none; section [sec:units] 1 -->
+<!-- DESIGN.md:879 layer L2: ring L2, word none, label none; section [sec:units] 1 -->
 ```zed
 import geometry.shapes;               // qualified: shapes.area(s: c)
 import geometry.shapes as g;          // aliased:   g.area(s: c)
 import geometry.shapes.{area, Rect};  // selective: area(s: c), Rect(…)
 ```
 
-<!-- DESIGN.md:943 layer L20: ring L20, word L1 (Utf8String), label none; section [sec:facets] 1 -->
+<!-- DESIGN.md:945 layer L20: ring L20, word L1 (Utf8String), label none; section [sec:facets] 1 -->
 ```zed
 type Nonzero = Utf8String matching grammar { "0"* ("1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") digit* };
 type UnitName = Utf8String matching grammar { alpha (alpha | "_")* | "°" alpha* | "%" | "′" | "″" };
@@ -140,7 +140,7 @@ type UnitText = Utf8String matching grammar { (UnitProduct | "1") ("/" (UnitFact
 // rejected: "m2", "J/kg K", "m^1.5", "m / s", "m^(3/0)", "m #", "N m #torque #energy"
 ```
 
-<!-- DESIGN.md:959 layer L12: ring L12, word L12 (UnitText), label none; section [sec:facets] 2 -->
+<!-- DESIGN.md:961 layer L12: ring L12, word L12 (UnitText), label none; section [sec:facets] 2 -->
 ```zed
 struct UnitDef {
   name: UnitName,
@@ -171,7 +171,7 @@ micron = UnitSpelling(spelling: "micron", means: "μm");
 px = UnitDef(name: "px", unit: #base);                              // a program's own base name
 ```
 
-<!-- DESIGN.md:1097 layer L12: ring L7, word L12 (units), label none; section [sec:facets] 3 -->
+<!-- DESIGN.md:1099 layer L12: ring L7, word L12 (units), label none; section [sec:facets] 3 -->
 ```zed
 force = 3.0 with units("N");
 arm = 2.0 with units("m");
@@ -184,7 +184,7 @@ part = share.to("1");                        // 1/4 with units("1"), no kind
 // total = work + moment;                    // ✗ Units that differ where an operation requires equal ones: work is in kg m^2/s^2 (J) and moment in kg m^2/s^2 #torque
 ```
 
-<!-- DESIGN.md:1120 layer L12: ring L7, word L12 (units), label none; section [sec:facets] 4 -->
+<!-- DESIGN.md:1122 layer L12: ring L7, word L12 (units), label none; section [sec:facets] 4 -->
 ```zed
 noon = 20.0 with units("°C");
 morning = 12.5 with units("degC");
@@ -197,7 +197,7 @@ warmer = noon > morning;                     // true
 // gradient = noon / (2.0 with units("m")); // ✗ Point unit in a product, quotient or power: noon is a reading in °C; write noon.to("K")
 ```
 
-<!-- DESIGN.md:1191 layer L14: ring L10, word L14 (quat), label none; section [sec:linalg] 1 -->
+<!-- DESIGN.md:1193 layer L14: ring L10, word L14 (quat), label none; section [sec:linalg] 1 -->
 ```zed
 matmul(positional v: (c -> T), positional b: (c -> k -> T)) = (v, b) into (k -> c >< (+) -> v[c] * b[c][k]);
 matmul(positional a: (r -> c -> T), positional v: (c -> T)) = (a, v) into (r -> c >< (+) -> a[r][c] * v[c]);
@@ -206,14 +206,14 @@ cross(positional u: (int[0..<3] -> T), positional v: (int[0..<3] -> T)) = (quat(
 cross(positional u: (int[0..<7] -> T), positional v: (int[0..<7] -> T)) = (oct(0, u) * oct(0, v)).im;
 ```
 
-<!-- DESIGN.md:1203 layer L14: ring L14, word L14 (layout), label none; section [sec:linalg] 2 -->
+<!-- DESIGN.md:1205 layer L14: ring L14, word L14 (layout), label none; section [sec:linalg] 2 -->
 ```zed
 type Rgb = [f32; 3];                                              // int[0..<3] -> f32
 type Batch = [f32; n: _, h: 224, w: 224, c: 3] with layout(n, h, w, c);
 scale(positional s: T, positional v: [T; n]) = s * v;            // : [T; n]
 ```
 
-<!-- DESIGN.md:1215 layer L14: ring L10, word L14 (matmul), label none; section [sec:linalg] 3 -->
+<!-- DESIGN.md:1217 layer L14: ring L10, word L14 (matmul), label none; section [sec:linalg] 3 -->
 ```zed
 type State = int[0..<2];
 step(positional f: ((i: State with units(["m", "m/s"])) -> (j: State with units(["1/m", "s/m"])) -> f64),
@@ -221,7 +221,7 @@ step(positional f: ((i: State with units(["m", "m/s"])) -> (j: State with units(
 // step(f, x) : (i: State with units(["m", "m/s"])) -> f64
 ```
 
-<!-- DESIGN.md:1259 layer L11: ring L10, word L11 (Constraints), label none; section [sec:introspection] 1 -->
+<!-- DESIGN.md:1261 layer L11: ring L10, word L11 (Constraints), label none; section [sec:introspection] 1 -->
 ```zed
 type Shape =
     #scalar(name: Utf8String, constraints: Constraints)  // int, rat, f64, bool, …, with its refinement: int[0..<10]
@@ -240,7 +240,7 @@ struct Field { key: _, name: Utf8String, valueType: Type, default: Ast | #none, 
 struct Param { name: Utf8String | #none, kind: #positional | #named, valueType: Type, default: Ast | #none }
 ```
 
-<!-- DESIGN.md:1301 layer L11: ring L10, word L11 (::shape), label none; section [sec:introspection] 2 -->
+<!-- DESIGN.md:1303 layer L11: ring L10, word L11 (::shape), label none; section [sec:introspection] 2 -->
 ```zed
 encode(positional v: T) -> Utf8String = match T::shape {
   #struct(fields:) -> "{" ++ (fields.map(f -> quote(f.name) ++ ": " ++ encode(v[f.key])) >< ((a, b) -> a ++ ", " ++ b) else "") ++ "}",
@@ -252,21 +252,21 @@ encode(positional v: T) -> Utf8String = match T::shape {
 // the match, the map over the two fields, and the fold all run at build.
 ```
 
-<!-- DESIGN.md:1322 layer L22: ring L3, word L22 (expand), label none; section [sec:symbolic] 1 -->
+<!-- DESIGN.md:1324 layer L22: ring L3, word L22 (expand), label none; section [sec:symbolic] 1 -->
 ```zed
 p = ((x: rat) -> (x + 1r)^2)::source;
 e = expand(p);         // the tree of (x: rat) -> x^2 + 2r * x + 1r
 d = derivative(p);     // the tree of (x: rat) -> 2r * x + 2r
 ```
 
-<!-- DESIGN.md:1343 layer L15: ring L15, word L5 (sort), label none; section [sec:verification] 1 -->
+<!-- DESIGN.md:1345 layer L15: ring L15, word L5 (sort), label none; section [sec:verification] 1 -->
 ```zed
 law addComm(a: int, b: int) = a + b == b + a;
 law sortIdempotent(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(asc x -> x);
 law noOverdraft(s: Account, t: Txn where t.amount > 0) = (apply(s, t) else s).balance >= 0;   // `else` strips the loose #rejected: the body is exactly bool
 ```
 
-<!-- DESIGN.md:1378 layer L6: ring L3, word L6 (Ast), label none; section [sec:verification] 2 -->
+<!-- DESIGN.md:1380 layer L6: ring L3, word L6 (Ast), label none; section [sec:verification] 2 -->
 ```zed
 type Proof = #eval                                            // discharge by enumeration (rung 1)
            | #domain                                          // by the store's lattices and Presburger layer (rung 2)
@@ -280,7 +280,7 @@ type Proof = #eval                                            // discharge by en
            | #assume(why: Utf8String);                            // rung 9, recorded at the site
 ```
 
-<!-- DESIGN.md:1455 layer L12: ring L12, word L6 (Store), label none; section [sec:checking_in_zed] 1 -->
+<!-- DESIGN.md:1457 layer L12: ring L12, word L6 (Store), label none; section [sec:checking_in_zed] 1 -->
 ```zed
 struct Lattice(positional E) {
   le:     (E, E) -> bool,                               // the order: le(a, b) when a is below b
@@ -374,7 +374,7 @@ struct Rejection(positional W) {                        // (sec:diagnostics)
 }
 ```
 
-<!-- DESIGN.md:1550 layer L12: ring L10, word L12 (parity), label none; section [sec:checking_in_zed] 2 -->
+<!-- DESIGN.md:1552 layer L12: ring L10, word L12 (parity), label none; section [sec:checking_in_zed] 2 -->
 ```zed
 type Parity = #even | #odd | #either;
 parity: Facet(Parity, int) = Facet(
@@ -395,7 +395,7 @@ h(n: int with parity(#odd), m: int with parity(#even)) = half(n * m);   // ✓ t
 seven = 7 with parity(#odd);                                            // attaching a fact to a value is an obligation: holds(#odd, 7), rung 1
 ```
 
-<!-- DESIGN.md:1606 layer L22: ring L22, word none, label none; section [sec:theories] 1 -->
+<!-- DESIGN.md:1608 layer L22: ring L22, word none, label none; section [sec:theories] 1 -->
 ```zed
 interface Semigroup(positional T) {
   mul: (T, T) -> T,
@@ -430,7 +430,7 @@ interface CommRing(positional T) {
 intRing: CommRing(int) = { mul: (*), one: 1, add: (+), zero: 0, neg: (a -> -a) };
 ```
 
-<!-- DESIGN.md:1648 layer L22: ring L22, word L22 (CommRing), label none; section [sec:theories] 2 -->
+<!-- DESIGN.md:1650 layer L22: ring L22, word L22 (CommRing), label none; section [sec:theories] 2 -->
 ```zed
 law square(R: CommRing(T), a: T, b: T) = (a + b) * (a + b) == a * a + 2 * a * b + b * b
 proof {
@@ -441,7 +441,7 @@ proof {
 }
 ```
 
-<!-- DESIGN.md:1662 layer L22: ring L15, word L22 (Monoid), label none; section [sec:theories] 3 -->
+<!-- DESIGN.md:1664 layer L22: ring L15, word L22 (Monoid), label none; section [sec:theories] 3 -->
 ```zed
 pow(M: Monoid(T), x: T, n: int[0..]) -> T = if n == 0 { 1 } else { pow(M:, x:, n: n - 1) * x };
 
@@ -450,12 +450,12 @@ law powAdd(M: Monoid(T), x: T, m: int[0..], n: int[0..]) =
 proof { byInduction(n) }                        // base by mulOne; step by ih and mulAssoc at rung 3
 ```
 
-<!-- DESIGN.md:1672 layer L22: ring L10, word L22 (Monoid), label none; section [sec:theories] 4 -->
+<!-- DESIGN.md:1674 layer L22: ring L10, word L22 (Monoid), label none; section [sec:theories] 4 -->
 ```zed
 additive(R: CommRing(T)) -> Monoid(T) = { mul: R.add, one: R.zero };   // mulAssoc is R.addAssoc; mulOne is R.addZero; oneMul by addComm
 ```
 
-<!-- DESIGN.md:1751 layer L22: ring L22, word none, label none; section [sec:theories] 5 -->
+<!-- DESIGN.md:1753 layer L22: ring L22, word none, label none; section [sec:theories] 5 -->
 ```zed
 interface MonoInt {
   f: (int) -> int,
