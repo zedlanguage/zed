@@ -1845,6 +1845,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | HAS-point-probe | running | 2026-11-10 22:35 |  |
 | LOAD-max-div-xr | coord attempt 5 | 2026-11-10 01:18 | start rounds 5-10 coordinator; committed Claude seat's unfinished round-4 tree as b07e4522 on wt/lmd-claude; load5 32.66 |
 | PERF-negated-chain-xr | impl attempt 2 | 2026-11-10 06:16 | started rounds 4-9: Claude round-3 tree committed 9a579263 (wt/pncx-claude), rebased onto origin/main 9bbeb1ff as 448bad52 on wt/perf-negated-chain; control tre |
+| PLAN-rename-L14.1a | impl attempt 1 | 2026-11-11 10:13 | started: worktree wt/plan-rename-impl at 8908c1c65; CITE-sec-operators d609f38ad not yet on main / load 20.45 |
 | REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | rounds 7-8 started; committing review tree (Claude R5 + probe), bringing Claude R6 onto the branch, rebasing on origin/main 4777a33e / load 52.67 38.82 33.29 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
