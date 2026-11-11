@@ -20,8 +20,14 @@
 # binaries are rebuilt. --logs puts the logs, the table and the piece list in <dir> instead of
 # build/test-logs. Two runs in one checkout need different directories: a second run on a
 # directory in use stops at once and names the run using it.
-# The build is `cargo test --workspace --no-run`, which does nothing on a tree already built
-# that way, so a run after such a build starts the pieces at once.
+# Without --only the build is `cargo test --workspace --no-run`, which does nothing on a tree
+# already built that way, so a run after such a build starts the pieces at once. With --only it
+# builds only the test binaries of the groups the pattern names, and the libraries under them,
+# and runs only binaries this build reported, never one left from an earlier build (author,
+# 2026-11-10: rebuild only the test binaries being worked on, whatever an upstream change
+# touched). The binaries are chosen before the build, from their groups' names alone, so a test
+# or a module is selected only with its binary's group, as <group>::<path>: a part of the pattern
+# (an alternative at its top level) that selects no binary stops the run with an error naming it.
 # A failed piece keeps its output in build/test-logs/<piece>.log, or in the --logs directory.
 # Every piece runs in the systemd slice zedtests.slice, whose 112 GB limit holds across all
 # checkouts together. A load above the number of cores raises the limit of the pieces that start under it in proportion.
@@ -132,10 +138,180 @@ fi
 # A run without --only writes the table of every piece; a run with it, a table of its own.
 table=$out/table
 [ -z "$only" ] || table=$out/listing
-if ! cargo test --workspace $features --no-run --message-format=short >"$out/build.log" 2>&1; then
-  tail -40 "$out/build.log"
-  echo "BUILD FAILED"
-  exit 1
+# The step folder of each test binary of tests/Cargo.toml whose source lies in a step folder of
+# another name: deep_types, deep_search, deep_heap, deep_values and deep_scaling.
+declare -A step_of
+while read -r b s; do
+  step_of[$b]=$s
+done < <(awk '
+  /^\[\[test\]\]/ { name = "" }
+  /^name = "/ { name = $3; gsub(/"/, "", name) }
+  /^path = "steps\// && name != "" { split($3, p, "/"); if (p[2] != name) print name, p[2] }
+' tests/Cargo.toml)
+# The alternatives at the top level of the extended regular expression $1, one per line: it is
+# split at each | outside parentheses, bracket expressions and escapes.
+alternatives() {
+  local re=$1 n=${#1} i=0 j depth=0 cur= c rest close
+  while [ "$i" -lt "$n" ]; do
+    c=${re:i:1}
+    case $c in
+      \\) cur+=${re:i:2} i=$((i + 2)) && continue ;;
+      \[)
+        # A ] first in a bracket expression, after an optional ^, is a member, and [:class:],
+        # [.symbol.] and [=class=] hold a ] of their own.
+        j=$((i + 1))
+        [ "${re:j:1}" != ^ ] || j=$((j + 1))
+        [ "${re:j:1}" != ] ] || j=$((j + 1))
+        while [ "$j" -lt "$n" ] && [ "${re:j:1}" != ] ]; do
+          case ${re:j:2} in
+            '[:' | '[.' | '[=')
+              close=${re:j+1:1}]
+              rest=${re:j+2}
+              rest=${rest%%"$close"*}
+              j=$((j + 3 + ${#rest}))
+              ;;
+          esac
+          j=$((j + 1))
+        done
+        cur+=${re:i:j-i+1} i=$((j + 1))
+        continue
+        ;;
+      \() depth=$((depth + 1)) ;;
+      \)) depth=$((depth - 1)) ;;
+      \|)
+        if [ "$depth" = 0 ]; then
+          echo "$cur"
+          cur= i=$((i + 1))
+          continue
+        fi
+        ;;
+    esac
+    cur+=$c i=$((i + 1))
+  done
+  echo "$cur"
+}
+# Whether the alternative $1 of --only selects a piece of the test binary of group $2 in step
+# folder $3. A piece's name is its group or <group>::<path>, and it matches as <group>::<name> or
+# <step>::<name> too (selected above), so an alternative selects one of the binary's pieces when it
+# matches the group or the step, or when the text before its first :: matches either at its end.
+# The second can hold for a binary none of whose pieces it selects; that binary is built and its
+# pieces listed for nothing, which costs time but drops no test.
+wants() {
+  [[ $2 =~ $1 || $3 =~ $1 ]] && return 0
+  [[ $1 == *::* ]] || return 1
+  local end="${1%%::*}$"
+  [[ $2 =~ $end || $3 =~ $end ]]
+}
+# Without --only every test binary is built. With it, only the binaries of the groups it selects
+# are built, and the libraries under them (author, 2026-11-10: rebuild only the test binaries
+# being worked on, whatever an upstream change touched), from the targets of the workspace's
+# packages: a step folder's binary or another test of a package with --test, a command's unit
+# tests with --bin, and a library's unit tests with -p <package> --lib. The groups are the names
+# cargo gives the binaries, the target's name with each - made _. The short-addresses build and
+# tests/full are selected below, by their pieces' names, as before; short_steps names the steps of
+# the short-addresses build.
+short_steps="l01_37a_short_addresses l01_37_oracle"
+if [ -z "$only" ]; then
+  if ! cargo test --workspace $features --no-run --message-format=short >"$out/build.log" 2>&1; then
+    tail -40 "$out/build.log"
+    echo "BUILD FAILED"
+    exit 1
+  fi
+else
+  mapfile -t alts < <(alternatives "$only")
+  for a in "${alts[@]}"; do
+    { [[ x =~ ${a%%::*} ]]; } 2>/dev/null
+    if [ $? = 2 ]; then
+      echo "--only: cannot tell which test binaries '$a' names: the text before its first ::,"
+      echo "'${a%%::*}', is not an extended regular expression by itself. Write each binary's"
+      echo "pieces as an alternative of its own at the top level, <group>::<path>|<group>::<path>."
+      exit 2
+    fi
+  done
+  # The targets of the workspace's packages, from the package name and each target's first kind
+  # and name in cargo's metadata, which lists them in this order.
+  targets=$(cargo metadata --no-deps --format-version 1 |
+    grep -oE '"name":"[^"]*","version":"[^"]*","id"|"kind":\[[^]]*\],"crate_types":\[[^]]*\],"name":"[^"]*"' |
+    awk -F '"' '/"version"/ { package = $4; next } { print package, $4, $(NF - 1) }')
+  if [ -z "$targets" ]; then
+    echo "--only: cargo metadata listed no target of the workspace"
+    exit 1
+  fi
+  tests= libs= unused=
+  for a in "${alts[@]}"; do
+    any=
+    while read -r package kind name; do
+      g=${name//-/_}
+      case $kind in
+        custom-build | example | bench) continue ;;
+        test) [ "$g" != full ] || [ -n "$full_suite" ] || continue ;;
+      esac
+      wants "$a" "$g" "${step_of[$g]:-$g}" || continue
+      any=1
+      case $kind in
+        test)
+          # tests/full is one binary, its pieces the folders of tests/full.
+          [ "$g" != full ] && tests+="--test $name"$'\n'
+          ;;
+        bin) tests+="--bin $name"$'\n' ;;
+        *) libs+="-p $package"$'\n' ;;
+      esac
+    done <<<"$targets"
+    if [ -n "$full_suite" ]; then
+      for d in tests/full/*/; do
+        d=$(basename "$d")
+        wants "$a" "$d" "$d" && any=1 && tests+="--test full"$'\n'
+      done
+    fi
+    for s in $short_steps; do
+      wants "$a" "short-$s" "short-$s" && any=1
+    done
+    [ -n "$any" ] || unused+=" '$a'"
+  done
+  # A test or a module is selected only with the group of its binary, since the binaries are
+  # chosen from their groups before they are built; a part that selects none stops the run.
+  hint="A test or a module is selected only with its binary's group, as <group>::<path>."
+  if [ "$unused" = "$(printf " '%s'" "${alts[@]}")" ]; then
+    echo "NO PIECE MATCHES --only '$only'"
+    echo "$hint"
+    exit 1
+  fi
+  if [ -n "$unused" ]; then
+    echo "--only: no test binary is selected by the part$unused of '$only'."
+    echo "$hint"
+    exit 1
+  fi
+  tests=$(printf %s "$tests" | sort -u | tr '\n' ' ')
+  libs=$(printf %s "$libs" | sort -u | tr '\n' ' ')
+  : >"$out/build.log"
+  if [ -n "$tests" ] &&
+    ! cargo test --workspace $features --no-run --message-format=short $tests >>"$out/build.log" 2>&1; then
+    tail -40 "$out/build.log"
+    echo "BUILD FAILED"
+    exit 1
+  fi
+  if [ -n "$libs" ]; then
+    # Cargo gives a package the features that the packages named on its command line ask for,
+    # and the compiler crates are dylibs, whose file names do not change with their features: a
+    # build of a package's unit tests with other features than the workspace build overwrites
+    # the library every test binary loads, and the next build rebuilds it. The packages ask for
+    # the workspace's features (dev-dependencies in crates/zed-native, crates/zed-tools and
+    # tests); this stops the build when one does not, before anything is overwritten.
+    features_of() { cargo tree "$@" -f '{p} [{f}]' --prefix none | sed 's/ (\*)$//' | sort -u; }
+    differ=$(comm -23 <(features_of $libs) <(features_of --workspace))
+    if [ -n "$differ" ]; then
+      echo "--only: cargo test --no-run $libs--lib would build these packages with features"
+      echo "the workspace build does not give them, and overwrite their libraries:"
+      echo "$differ"
+      echo "Give the package the features of the workspace build, as a dev-dependency."
+      exit 1
+    fi
+    if ! cargo test --no-run --message-format=short $libs --lib >>"$out/build.log" 2>&1; then
+      tail -40 "$out/build.log"
+      echo "BUILD FAILED"
+      exit 1
+    fi
+  fi
 fi
 # Cargo prints a binary path relative to the checkout only when the target directory is inside it.
 bins=$(sed -n -e "s|^ *Executable .*(\(/.*\))$|\1|p" -e "s|^ *Executable .*(\([^/].*\))$|$root/\1|p" "$out/build.log")
@@ -143,7 +319,6 @@ full=$(echo "$bins" | grep '/full-')
 # The short-addresses build (step L1.37a) keeps 8 bits of every content address and type digest,
 # so distinct values collide; its pieces check that every place that compares by address
 # confirms equal addresses by contents, and that verdicts and outputs match the full build.
-short_steps="l01_37a_short_addresses l01_37_oracle"
 short_build=
 for s in $short_steps; do
   selected "short-$s" "short-$s" && short_build=1
@@ -262,16 +437,6 @@ step_pieces() {
     step_pieces "$1" "$2" "$m"
   done
 }
-# The step folder of each test binary of tests/Cargo.toml whose source lies in a step folder of
-# another name: deep_types, deep_search, deep_heap, deep_values and deep_scaling.
-declare -A step_of
-while read -r b s; do
-  step_of[$b]=$s
-done < <(awk '
-  /^\[\[test\]\]/ { name = "" }
-  /^name = "/ { name = $3; gsub(/"/, "", name) }
-  /^path = "steps\// && name != "" { split($3, p, "/"); if (p[2] != name) print name, p[2] }
-' tests/Cargo.toml)
 {
   for p in $bins; do
     n=$(basename "$p")

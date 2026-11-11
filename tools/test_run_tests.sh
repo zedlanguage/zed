@@ -5,7 +5,8 @@
 # tree. The expected pieces of a group are found by the binary each piece runs, not by its name.
 # It lists the binaries once, in its own log directory, so a run_tests.sh in the same checkout
 # keeps its files, and checks each selection on the saved table (--reuse-table): a listing takes 7
-# to 13 s, and one per check ran past 60 s. One check compares a fresh listing with the table.
+# to 13 s, and one per check ran past 60 s. One check compares a fresh listing with the table;
+# a few list with --only afresh and check the binaries that listing built (build.log).
 fails=0
 check() {
   if [ "$2" = "$3" ]; then
@@ -63,6 +64,26 @@ check "zedc's unit tests are one piece" "$(by_binary zedc)" "$(selected '^zedc$'
 check "a short-addresses piece is selected by its name" "short-l01_37_oracle" "$(selected '^short-l01_37_oracle$')"
 check "a fresh listing selects what the table does" "$(selected '^l01_36_cranelift$')" \
   "$(run --list --only '^l01_36_cranelift$' | sort)"
+# The binaries the last run built, by name without the hash.
+built() {
+  sed -n 's/^ *Executable .*(.*\/\([^/]*\)-[0-9a-f]*)$/\1/p' "$logs/build.log" | sort | tr '\n' ' '
+}
+check "a listing with --only builds the binaries of its groups alone" "deep_heap l01_36_cranelift " "$(built)"
+run --list --only '^zedc$' >/dev/null
+check "zedc's unit tests are built from its library and its command" "zedc zedc " "$(built)"
+check "a module is built with its binary alone" "l01_38_presburger " \
+  "$(run --list --only '^l01_38_presburger::live3::' >/dev/null && built)"
+out=$(run --list --only '^zedc$|live3::')
+rc=$?
+check "a part naming no binary stops the run" "1 --only: no test binary is selected by the part 'live3::' of '^zedc\$|live3::'.
+A test or a module is selected only with its binary's group, as <group>::<path>." "$rc $out"
+out=$(run --list --only 'live3::')
+rc=$?
+check "a fresh listing that selects nothing stops the run" "1 NO PIECE MATCHES --only 'live3::'
+A test or a module is selected only with its binary's group, as <group>::<path>." "$rc $out"
+out=$(run --list --only '(l01_38::x|y)')
+rc=$?
+check "a part whose binary cannot be read off stops the run" "2" "$rc"
 check "a listing with --only leaves the table of all pieces" "$(echo "$all" | sort)" "$(selected .)"
 out=$(run --reuse-table --only '^zedc$')
 rc=$?

@@ -1026,8 +1026,10 @@ dependencies = [
  "rustix",
  "zed-alloc-count",
  "zed-kernel",
+ "zed-native",
  "zed-rt",
  "zedc",
+ "zedc-presburger",
 ]
 
 [[package]]
@@ -1061,6 +1063,7 @@ dependencies = [
  "zed-rt",
  "zed-tools",
  "zedc",
+ "zedc-presburger",
 ]
 
 [[package]]
@@ -1068,6 +1071,7 @@ name = "zed-tools"
 version = "0.0.0"
 dependencies = [
  "zedc",
+ "zedc-presburger",
 ]
 
 [[package]]

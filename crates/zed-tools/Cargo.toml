@@ -12,5 +12,11 @@ publish.workspace = true
 # crates/zed-native/Cargo.toml).
 zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref"] }
 
+[dev-dependencies]
+# zedc-presburger is a dylib too, with the feature `two-at-a-time` that the tests of zedc and its
+# crates give it in the workspace build; asked for here, so that `cargo test -p zed-tools` builds
+# it as that build does and does not overwrite it.
+zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
+
 [lints]
 workspace = true

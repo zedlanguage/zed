@@ -101,3 +101,7 @@ rustix.workspace = true
 # without the test counters.
 zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref"] }
 zed-rt = { workspace = true, features = ["counts"] }
+# Likewise this package with the feature `counts` zed-tests gives it, and zedc-presburger with
+# `two-at-a-time`, which the tests of zedc and its crates give it in the workspace build.
+zed-native = { path = ".", features = ["counts"] }
+zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
