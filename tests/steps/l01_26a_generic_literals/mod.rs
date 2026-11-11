@@ -11,6 +11,7 @@ mod call_arguments;
 mod design_menus;
 mod fixes;
 mod lazy_carrier;
+mod lit_branches;
 mod scaling;
 mod spelling;
 mod tuples;
@@ -265,7 +266,9 @@ fn a_literal_compared_with_a_class_leaves_its_carriers() {
 
 #[test]
 fn a_literal_survives_an_if() {
-    // Item LIT-if-print prints the branches in the order written, `2 | 1`.
+    // DESIGN.md step L1.26a writes this type `2 | 1`, the branches in the order written;
+    // zedc prints the values in ascending order, `1 | 2`. DESIGN states no order for the
+    // members of a printed union, so this is open (items LIT-if-print, LIT-print-order).
     assert_eq!(
         sig("g(positional c: bool) = if c { 2 } else { 1 };\n", "g"),
         "(bool) -> 1 | 2"
@@ -299,8 +302,9 @@ fn literal_branches_take_int_where_the_result_is_used_at_int() {
 }
 
 #[test]
-#[ignore = "open: zedc rejects literal branches `1 | 2` at a parameter of type `f64`, \
-            \"`h` does not take (1 | 2)\", where it accepts the literal `2` alone"]
+#[ignore = "open: through a call, `h(g(c))`, the result `2 | 1` of `g` is a value, not a \
+            literal, and nothing fixes it at `f64` without converting it; the `if` written \
+            in the argument is tested in lit_branches (LIT-branch-carrier)"]
 fn literal_branches_take_f64_where_the_result_is_used_at_f64() {
     // DESIGN.md step L1.26a: "`z: f64 = if c { 2 } else { 1 }` and `z: f64 = g(c)` read both
     // branches at `f64`". A declared binding is layer L10, so the result is used here at a
@@ -329,8 +333,6 @@ fn a_declared_binding_reads_literal_branches_at_its_carrier() {
 }
 
 #[test]
-#[ignore = "open: zedc types `1 + 1` in a branch as an `int`, so the other branch `1.5` is \
-            read alone and rejected; DESIGN keeps an operation on literals alone as its value"]
 fn an_operation_on_literals_keeps_its_value_in_an_if() {
     // DESIGN.md step L1.26a: "an operation on literals alone keeps its value in an `if`, so
     // `if c { 1 + 1 } else { 1.5 }` is `2 | 1.5`".

@@ -489,6 +489,10 @@ struct Arg<'a> {
     at: Option<Span>,
     expr: Option<&'a Expr>,
     parts: Option<Rc<[Part]>>,
+    /// The literals the argument's value comes from, when it is an `if` whose every branch,
+    /// at any depth of `if`, is a numeric literal, as `if c { 2 } else { 1 }`: each is fixed
+    /// where the argument is used as it would be alone (L1.26a).
+    branches: Option<Rc<[Lit]>>,
 }
 
 impl<'a> Arg<'a> {
@@ -499,6 +503,7 @@ impl<'a> Arg<'a> {
             at: None,
             expr: None,
             parts: None,
+            branches: None,
         }
     }
 }
@@ -4200,7 +4205,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             // adopted: a decimal literal's adoption at `rat` reads its digits (COMPLEXITY.md
             // K41), as at the `rat` arrow of `n + 0.5` with `n` an int.
             let mut ok = (args.iter().zip(&arrow.params)).all(|(a, p)| match a {
-                Some(a) if a.lit.is_none() && a.parts.is_none() => a.ty.is_empty() || a.ty.meets(p),
+                Some(a) if a.lit.is_none() && a.parts.is_none() && a.branches.is_none() => {
+                    a.ty.is_empty() || a.ty.meets(p)
+                }
                 _ => true,
             });
             if !ok {
@@ -4211,7 +4218,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let Some(a) = a else {
                     continue;
                 };
-                if a.lit.is_none() && a.parts.is_none() {
+                if a.lit.is_none() && a.parts.is_none() && a.branches.is_none() {
                     continue;
                 }
                 if self.subtype(&a.ty, p) || p.dynamic {
@@ -4915,6 +4922,20 @@ fn adopted(a: &Arg, p: &Ty, rough: bool) -> Result<Option<(Ty, Adoptions)>, (Spa
     };
     if let Some(l) = &a.lit {
         return Ok(lit(l, &[p], &mut ads)?.map(|t| (t, ads)));
+    }
+    // The branches of an `if` of literals, `if c { 2 } else { 1 }`, each adopt as a lone
+    // literal would, and the argument is the union of what they become: `2.0 | 1.0` at `f64`.
+    // Complexity tradeoff: one adoption per branch, then the n singletons joined in pairs by
+    // `Ty::union_all`, O(n log n); joining them one at a time costs O(n^2), since each union
+    // copies the type so far. The naive form, the type `2 | 1` tested against the parameter,
+    // fixes no literal and rejects the call. Tests:
+    // `l01_26a_generic_literals::lit_branches::scaling`.
+    if let Some(ls) = &a.branches {
+        let mut ts = Vec::with_capacity(ls.len());
+        for l in ls.iter() {
+            ts.push(lit(l, &[p], &mut ads)?.unwrap_or_else(|| lit_ty(&l.value, l.neg())));
+        }
+        return Ok((!ads.is_empty()).then(|| (Ty::union_all(&ts), ads)));
     }
     let Some(parts) = &a.parts else {
         return Ok(None);

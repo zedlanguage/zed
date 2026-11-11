@@ -703,6 +703,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::Str(s) => self.str_step(m, s),
             Frame::Unary(op, span) => {
                 let x = m.take_arg();
+                // A negated literal is a literal (L1.26a): `-3r` is the value -3 at `rat`, as
+                // `3r` is 3, so a divisor `-3r` holds no zero. An `int` or `f64` literal under
+                // `-` is read whole by `read_literal`; a `rat` literal keeps its carrier and
+                // comes here.
+                if op == "-"
+                    && let Some(ExprKind::Rat(d)) = x.expr.map(|e| &e.kind)
+                    && let Ok(Some(r)) = Rat::decimal(d)
+                {
+                    m.ty(lit_ty(&Value::rat(r), true));
+                    return;
+                }
                 // A `-` of an operation on literals alone at the top level is one too, and
                 // takes the carrier of what it meets, as `-(1 + 2)` in `-(1 + 2) * 0.5f64`
                 // ([`Self::lit_op_meets`]).
@@ -1026,6 +1037,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     at: Some(e.span),
                     expr: Some(e),
                     parts: parts(e, self.t.text),
+                    branches: branch_lits(e, self.t.text),
                     ..Arg::of(t)
                 });
             }
@@ -1784,6 +1796,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 at: Some(e.span),
                 expr: Some(e),
                 parts: None,
+                branches: None,
             });
             return;
         }
@@ -2053,6 +2066,25 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// only, as `1 + 1` is inside a function, and the other's type is one class, the literal joins the class,
     /// generic, or the classes merge, and the `if` has the class's type (L1.26a).
     fn branches(&mut self, then: &Expr, a: &Ty, otherwise: &Expr, b: &Ty) -> Ty {
+        // An operation on integer literals alone keeps its value in an `if` (L1.26a: "`if c
+        // { 1 + 1 } else { 1.5 }` is `2 | 1.5`") where the other branch is a decimal literal,
+        // a carrier or a union of values: it is its value, as a lone literal there is. Its own
+        // class, which nothing else joins, takes `int` as before, so at run time it is that
+        // `int`. Where the other branch is an integer literal or another such operation, the
+        // two still join one class, as before, so that the `if` takes the carrier of its use:
+        // `h(if c { 1 + 1 } else { 1 })` at an `f64` parameter. Kept as values there, `2 | 1`,
+        // the operation's value would have to be fixed at the use, which needs its class
+        // retyped at each site that adopts a literal (left open, LIT-branch-carrier).
+        let (ka, kb) = (self.kept(then, a), self.kept(otherwise, b));
+        let free = |ck: &Self, k: &Option<Ty>, t: &Ty| k.is_some() || ck.class_of_ty(t).is_none();
+        let int_lit = |e: &Expr| {
+            literal(exported(e), None)
+                .is_some_and(|l| l.bare && lit_carrier(&l.value) == Carrier::Int)
+        };
+        let ints = (ka.is_some() || int_lit(then)) && (kb.is_some() || int_lit(otherwise));
+        if (ka.is_some() || kb.is_some()) && !ints && free(self, &ka, a) && free(self, &kb, b) {
+            return ka.as_ref().unwrap_or(a).union(kb.as_ref().unwrap_or(b));
+        }
         for (e, t, other) in [(then, a, b), (otherwise, b, a)] {
             let Some(k) = self.class_of_ty(other) else {
                 continue;
@@ -2069,6 +2101,33 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         a.union(b)
+    }
+
+    /// The value of the branch `e`, of type `t`, as a literal type, when `e` is an operation on
+    /// integer literals alone with no `/`, as `1 + 1`, typed as the class of literals of its
+    /// own that such an operation makes inside a function: `2`. `None` for anything else,
+    /// and where its value is no number, as `2 ^ -1`. A `/`, a decimal literal or a `rat` one makes
+    /// no such value ([`literals_alone`]): a `/` of literals that meets no carrier is rejected, and
+    /// a decimal has no value until its carrier is fixed (L1.26b).
+    // Complexity tradeoff: one walk of the operation to see that it holds integer literals
+    // alone and one to fold it, O(its size), at the one `if` whose branch it is; an operation
+    // is the branch of at most one `if`, so a nest of them costs O(n) in all. The naive
+    // form, typing the branch by its class, joins the other branch's literal to that class
+    // and gives `int`, or rejects a decimal there.
+    fn kept(&self, e: &Expr, t: &Ty) -> Option<Ty> {
+        let k = self.class_of_ty(t)?;
+        if !self.classes[self.find(k)].generic {
+            return None;
+        }
+        let e = exported(e);
+        let (ls, rat, _) = literals_alone(e, None)?;
+        let ints = ls
+            .iter()
+            .all(|l| l.bare && lit_carrier(&l.value) == Carrier::Int);
+        if !ints || rat {
+            return None;
+        }
+        folded(e, Carrier::Int).map(|v| Ty::lit(&v))
     }
 
     /// At the top level, an operation on bare literals alone, as `3 + 4`, is typed as it is
@@ -3518,6 +3577,40 @@ fn exported(e: &Expr) -> &Expr {
         },
         _ => e,
     }
+}
+
+/// The numeric literals `e`'s value comes from when `e` is an `if` whose every branch, at
+/// any depth of `if`, is one, as `if c { 2 } else { 1 }` or `if a { 1 } else if b { 2 } else
+/// { -3 }`; `None` when `e` is no `if` or a branch is anything else. Each is fixed where the
+/// value is used as it would be alone (L1.26a: "each keeps its own value and is fixed where
+/// the result is used").
+// Complexity tradeoff: one walk over the `if`s of `e` with its own stack, O(n) in its
+// branches, which a nest of `if`s as deep as the text cannot overflow; it stops at the first
+// branch that is no literal. The naive form, the union type of the branches tested against
+// the parameter, needs no walk but cannot fix a literal's carrier, since a type `2 | 1`
+// holds the values, not the literals that wrote them. Tests:
+// `l01_26a_generic_literals::lit_branches`.
+fn branch_lits(e: &Expr, src: Option<&str>) -> Option<Rc<[Lit]>> {
+    if !matches!(exported(e).kind, ExprKind::If { .. }) {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut todo = vec![e];
+    while let Some(x) = todo.pop() {
+        let x = exported(x);
+        if let Some(l) = literal(x, src) {
+            out.push(l);
+            continue;
+        }
+        let ExprKind::If {
+            then, otherwise, ..
+        } = &x.kind
+        else {
+            return None;
+        };
+        todo.extend([&**otherwise, &**then]);
+    }
+    Some(out.into())
 }
 
 /// Whether the branch where `facts` hold is unreachable: a test narrows a name to a type with
@@ -7189,11 +7282,23 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let (mut carriers, mut classes, mut lits) = (0u8, Vec::new(), Vec::new());
             let mut valued = false;
+            // The branches of an `if` of literals, `x / (if c { 2 } else { -3 })`: each takes
+            // the carrier or joins the class of the other arguments as a lone literal does.
+            // Where the other arguments give neither, they are their own values' carriers, as
+            // before. Complexity tradeoff: each branch is read once here and adopted or joined
+            // once below, O(n) in the branches; the naive form reads the arguments' type
+            // `2 | -3`, whose `int` meets the `rat` of `x` and rejects the call.
+            let mut branched: Vec<&Arg> = Vec::new();
             for &i in &at {
                 grouped[i] = true;
                 let a = args[i].as_ref().expect("an argument");
                 if let Some(l) = &a.lit {
                     lits.push(l.clone());
+                    continue;
+                }
+                if a.branches.is_some() {
+                    valued = true;
+                    branched.push(a);
                     continue;
                 }
                 for p in a.ty.pieces() {
@@ -7204,6 +7309,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                         (None, Some(c)) => carriers |= c.bit(),
                         (None, None) => return fail(self),
                     }
+                }
+            }
+            for ls in branched.iter().filter_map(|a| a.branches.as_ref()) {
+                match carriers != 0 || !classes.is_empty() {
+                    true => lits.extend(ls.iter().cloned()),
+                    false => ls
+                        .iter()
+                        .for_each(|l| carriers |= lit_carrier(&l.value).bit()),
                 }
             }
             let bound = match (carriers.count_ones(), classes.first()) {
@@ -7321,9 +7434,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             // A parameter that is a class of the function around: the argument flows into it.
             if let Some(k) = self.class_of_ty(p) {
-                let ok = match &a.lit {
-                    Some(l) => self.join(k, &self.joining(l), false),
-                    None => self.flow(k, &a.ty, what, span),
+                // The branches of an `if` of literals each join it as a lone literal does.
+                let ok = match (&a.lit, &a.branches) {
+                    (Some(l), _) => self.join(k, &self.joining(l), false),
+                    (None, Some(ls)) => ls.iter().all(|l| self.join(k, &self.joining(l), false)),
+                    (None, None) => self.flow(k, &a.ty, what, span),
                 };
                 if !ok {
                     return fail(self);
@@ -7650,11 +7765,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let kept: Vec<usize> = match class {
             Some(k) => {
+                // A literal joins the class, and so does each branch of an `if` of literals,
+                // which has no other operand and takes the class's carrier from a parameter
+                // of it, as a lone literal argument does ([`Lit::joining`]).
                 for a in args.iter().flatten() {
                     if let Some(l) = &a.lit
                         && !self.join(k, l, false)
                     {
                         return Err(self.rejected(what, args));
+                    }
+                    for l in a.branches.iter().flat_map(|ls| ls.iter()) {
+                        if !self.join(k, &self.joining(l), false) {
+                            return Err(self.rejected(what, args));
+                        }
                     }
                 }
                 (0..sig.arrows.len()).collect()
@@ -7687,7 +7810,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // An argument of no value keeps every arrow; an argument of type `Never` the
                 // call does not need is one of them.
                 Some(_) if no_value[i] => vec![None],
-                Some(a) if a.lit.is_some() && class.is_some() => {
+                Some(a) if (a.lit.is_some() || a.branches.is_some()) && class.is_some() => {
                     vec![Some(Piece::Var(format!("${}", class.unwrap()).into()))]
                 }
                 Some(a) => a.ty.pieces().into_iter().map(Some).collect(),
