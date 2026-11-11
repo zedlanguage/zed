@@ -8135,7 +8135,6 @@ fn r10_irrelevant_shared_holes_preserve_the_finite_language() {
 }
 
 #[test]
-#[ignore = "R10-C2: needs the positive-head projection in escape.rs (Codex R10), not yet ported"]
 fn r10_shared_irrelevant_holes_are_projected_once_and_scale() {
     big(|| {
         let a = r10_padded_congruence(32, "_r10pad32");
@@ -8508,7 +8507,6 @@ fn r10_shared_payload_probe() {
 }
 
 #[test]
-#[ignore = "R10-C4: shared atom payload rows are read once per tag"]
 fn r10_shared_payload_rows_must_scale() {
     big(|| {
         let a = r10_shared_payloads(32, "_payload32");
@@ -8520,5 +8518,399 @@ fn r10_shared_payload_rows_must_scale() {
                 Verdict::Inhabited
             );
         });
+    });
+}
+
+/// R11-C1 (kind 3): the group-dependency walk must not read all bare names of
+/// each prefix of a persistent union. The written name-map DAG is shared.
+fn r11_failure_prefixes(n: usize) -> Type {
+    let mut a = Type::empty();
+    let fields = (0..n)
+        .map(|i| {
+            a = &a | &Type::atom(&format!("r11_failure_{i}"));
+            a.clone()
+        })
+        .collect();
+    Type::tuple(fields)
+}
+
+#[test]
+fn r11_group_reads_skip_bare_atom_names_and_scale() {
+    big(|| {
+        let a = r11_failure_prefixes(128);
+        let b = r11_failure_prefixes(1024);
+        scaling::check(
+            "group dependencies of shared failure-atom prefixes",
+            128,
+            |n| {
+                Type::forget_emptiness();
+                assert_eq!(
+                    (if n == 128 { &a } else { &b }).verdict(),
+                    Verdict::Inhabited
+                );
+            },
+        );
+    });
+}
+
+#[test]
+#[ignore]
+fn r11_failure_prefix_probe() {
+    big(|| {
+        for n in [16, 64, 256, 1024] {
+            let t = r11_failure_prefixes(n);
+            Type::forget_emptiness();
+            let mut m = scaling::Meter::new();
+            let w = m.work(|| assert_eq!(t.verdict(), Verdict::Inhabited));
+            eprintln!("R11FAIL n {n} units {} bytes {}", w.units, w.bytes);
+        }
+    });
+}
+
+/// A tagged version of C4: every row component has atoms, all under a name
+/// different from the many outer tags. It is still one shared payload diagram.
+fn r11_tagged_payloads(n: usize) -> Type {
+    let payload = (0..n).fold(Type::empty(), |p, i| {
+        let h = Type::atom_with("inner", &Type::tuple(vec![lit(i as i64)]));
+        &p | &Type::tuple(vec![h.clone(), h])
+    });
+    (0..n).fold(Type::empty(), |t, i| {
+        &t | &Type::atom_with(&format!("r11outer{i}"), &payload)
+    })
+}
+
+#[test]
+#[ignore]
+fn r11_tagged_payload_probe() {
+    big(|| {
+        for n in [16, 64, 256, 1024] {
+            let t = r11_tagged_payloads(n);
+            Type::forget_emptiness();
+            let mut m = scaling::Meter::new();
+            let w = m.work(|| assert_eq!(t.verdict(), Verdict::Inhabited));
+            eprintln!("R11TAG n {n} units {} bytes {}", w.units, w.bytes);
+        }
+    });
+}
+
+#[test]
+fn r11_front_end_keeps_wide_integer_literals() {
+    use zed_tests::step_helpers::l01_26_type_resolution::info;
+    for digits in [
+        "9223372036854775807",
+        "9223372036854775808",
+        "18446744073709551616",
+    ] {
+        let text = format!("x = {digits};\ny = (x, x);\n");
+        let (i, _) = info(&text);
+        assert!(i.errors.is_empty(), "{digits}: {:?}", i.errors);
+        let got = i.tops["x"].to_string();
+        eprintln!("front literal {digits}: {got}");
+        assert_ne!(got, "Never");
+        let read = zedc::check::read::parse_type(digits).unwrap();
+        assert_eq!(read.to_string(), digits);
+        // A nearby value must remain a different printed singleton.
+        assert_ne!(read.to_string(), "0");
+    }
+}
+
+#[test]
+fn r11_boolean_tail_two_links_down() {
+    big(|| {
+        for depth in [2, 3, 8] {
+            for (case, want) in [("chain", Verdict::Empty), ("r5remout", Verdict::Inhabited)] {
+                let mut t = rfx_case(case, 8, "_r11tail");
+                for _ in 0..depth {
+                    t = cons_of(Type::int(), t);
+                }
+                Type::forget_emptiness();
+                assert_eq!(t.verdict(), want, "{case}, depth {depth}");
+            }
+        }
+    });
+}
+
+#[test]
+fn r11_boolean_tail_behind_literal_prefix_scales() {
+    big(|| {
+        let make = |n| {
+            let mut t = rfx_case("r5remout", 8, "_r11deepscale");
+            for _ in 0..n {
+                t = cons_of(Type::int(), t);
+            }
+            t
+        };
+        let a = make(32);
+        let b = make(256);
+        scaling::check("Boolean list boundary behind a literal prefix", 32, |n| {
+            Type::forget_emptiness();
+            assert_eq!(
+                (if n == 32 { &a } else { &b }).verdict(),
+                Verdict::Inhabited
+            );
+        });
+    });
+}
+
+#[test]
+#[ignore]
+fn r11_literal_prefix_probe() {
+    big(|| {
+        for n in [16, 64, 256, 1024] {
+            let mut t = rfx_case("r5remout", 8, "_r11prefixprobe");
+            for _ in 0..n {
+                t = cons_of(Type::int(), t);
+            }
+            Type::forget_emptiness();
+            let mut m = scaling::Meter::new();
+            let w = m.work(|| assert_eq!(t.verdict(), Verdict::Inhabited));
+            let mut word = vec![0; n];
+            word.extend([5, 1, 1]);
+            assert!(t.contains(&r6_colour_list(&word)));
+            eprintln!("R11PREFIX n {n} units {} bytes {}", w.units, w.bytes);
+        }
+    });
+}
+
+#[test]
+fn r11_wide_literals_agree_in_a_batch_and_separate_files() {
+    use zed_tests::step_helpers::l01_26_type_resolution::info;
+    let literals = ["9223372036854775808", "18446744073709551616"];
+    let text = literals
+        .iter()
+        .enumerate()
+        .map(|(i, n)| format!("x{i} = {n};\n"))
+        .collect::<String>();
+    let (batch, _) = info(&text);
+    assert!(batch.errors.is_empty(), "{:?}", batch.errors);
+    for (i, n) in literals.iter().enumerate() {
+        let (single, _) = info(&format!("x{i} = {n};\n"));
+        assert!(single.errors.is_empty(), "{:?}", single.errors);
+        let name = format!("x{i}");
+        assert_eq!(
+            batch.tops[&name].to_string(),
+            single.tops[&name].to_string()
+        );
+        assert_eq!(single.tops[&name].to_string(), *n);
+    }
+}
+
+/// R11-C3: payload-bearing name prefixes share their persistent maps too.
+fn r11_payload_name_prefixes(n: usize) -> Type {
+    let payload = Type::tuple(vec![lit(0)]);
+    let mut a = Type::empty();
+    let fields = (0..n)
+        .map(|i| {
+            a = &a | &Type::atom_with(&format!("r11_named_{i}"), &payload);
+            a.clone()
+        })
+        .collect();
+    Type::tuple(fields)
+}
+
+#[test]
+#[ignore]
+fn r11_payload_name_prefix_probe() {
+    big(|| {
+        for n in [16, 64, 256, 1024] {
+            let t = r11_payload_name_prefixes(n);
+            Type::forget_emptiness();
+            let mut m = scaling::Meter::new();
+            let w = m.work(|| assert_eq!(t.verdict(), Verdict::Inhabited));
+            eprintln!("R11NAMES n {n} units {} bytes {}", w.units, w.bytes);
+        }
+    });
+}
+
+#[test]
+#[ignore = "R11-C3: payload-bearing prefixes still reread a shared persistent name map"]
+fn r11_payload_name_prefixes_must_scale() {
+    big(|| {
+        let a = r11_payload_name_prefixes(128);
+        let b = r11_payload_name_prefixes(1024);
+        scaling::check("shared payload-bearing name prefixes", 128, |n| {
+            Type::forget_emptiness();
+            assert_eq!(
+                (if n == 128 { &a } else { &b }).verdict(),
+                Verdict::Inhabited
+            );
+        });
+    });
+}
+
+/// A ternary-density alignment family: one row class has only the final two
+/// coordinates, two classes have every coordinate. Every product entry is 1.
+#[test]
+#[ignore]
+fn r11_ternary_alignment_probe() {
+    big(|| {
+        for n in [16usize, 64, 256, 1024, 4096] {
+            let m = n.isqrt().max(4);
+            let a: Vec<Vec<bool>> = (0..m)
+                .map(|i| (0..m).map(|q| i % 3 != 0 || q >= m - 2).collect())
+                .collect();
+            let b = vec![vec![true; m]; m];
+            assert!(r9_product_all_ones(&a, &b));
+            let t = r9_bmm(&a, &b, &format!("_r11ternary{n}"));
+            Type::forget_emptiness();
+            let mut meter = scaling::Meter::new();
+            let work = meter.work(|| assert_eq!(t.verdict(), Verdict::Inhabited));
+            let l0 = (m - 1) * (m + 1) + m + 1 + (m - 1) * m;
+            let word: Vec<i64> = (1..=l0)
+                .map(|j| {
+                    if (2..2 + m * m).contains(&j) && a[(j - 2) / m][(j - 2) % m] {
+                        100 + ((j - 2) % m) as i64
+                    } else {
+                        7
+                    }
+                })
+                .collect();
+            assert!(t.contains(&r6_colour_list(&word)));
+            eprintln!(
+                "R11TERN n {n} units {} cells {:?}",
+                work.units,
+                t.escape_cell_counts()
+            );
+        }
+    });
+}
+
+#[test]
+fn r11_fields_within_a_list_item_are_admitted_as_written_fields() {
+    big(|| {
+        for n in [3, 4, 8, 16] {
+            let inner = rfx_case("r5remout", n, "_r11mapitem");
+            assert!(inner.contains(&r6_colour_list(&[5, 1, 1])));
+            let map = Type::morphism(lit(0), Type::int(), inner);
+            assert_eq!(&lit(0) - &Type::int(), Type::empty());
+            Type::forget_emptiness();
+            assert_eq!(map.verdict(), Verdict::Inhabited);
+            let t = cons_of(map, list_named(Type::top(), "_r11outermapitem"));
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited, "map item at {n}");
+        }
+    });
+}
+
+#[test]
+fn r11_tuple_fields_within_list_items_scale() {
+    big(|| {
+        let a = rfx_case("listhead:pairfar", 32, "_r11pairitem32");
+        let b = rfx_case("listhead:pairfar", 256, "_r11pairitem256");
+        scaling::check("tuple fields within a list item", 32, |n| {
+            Type::forget_emptiness();
+            assert_eq!(
+                (if n == 32 { &a } else { &b }).verdict(),
+                Verdict::Inhabited
+            );
+        });
+    });
+}
+
+#[test]
+fn r11_item_field_scopes_agree_alone_forward_and_reverse() {
+    fn make() -> Vec<Type> {
+        ["listhead:pairfar", "listhead:r10mapvalue"]
+            .iter()
+            .map(|c| rfx_case(c, 8, "_r11scopeorder"))
+            .collect()
+    }
+    big(|| {
+        let types = make();
+        Type::forget_emptiness();
+        let batch: Vec<_> = types.iter().map(|t| (t.is_empty(), t.verdict())).collect();
+        Type::forget_emptiness();
+        let mut reverse: Vec<_> = types
+            .iter()
+            .rev()
+            .map(|t| (t.is_empty(), t.verdict()))
+            .collect();
+        reverse.reverse();
+        let alone: Vec<_> = (0..types.len())
+            .map(|i| {
+                std::thread::Builder::new()
+                    .stack_size(16 * 1024 * 1024)
+                    .spawn(move || {
+                        let t = make().swap_remove(i);
+                        (t.is_empty(), t.verdict())
+                    })
+                    .unwrap()
+                    .join()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(batch, vec![(false, Verdict::Inhabited); types.len()]);
+        assert_eq!(reverse, batch);
+        assert_eq!(alone, batch);
+    });
+}
+
+/// R11 probe for the name loop of `decide_groups_read`'s walk: n distinct types `E | i`, each
+/// holding the same n atom names, as the components of n tuples. Each type is walked once, and
+/// the walk reads all n names of each, so the walk alone does n^2 steps if no other part of the
+/// decider already does.
+fn r11_names_family(n: usize, tag: &str) -> Type {
+    let e = (0..n).fold(Type::empty(), |t, i| {
+        &t | &Type::atom(&format!("r11e{i}{tag}"))
+    });
+    (0..n).fold(Type::empty(), |t, i| {
+        let c = &e | &lit(i as i64);
+        &t | &Type::tuple(vec![c.clone(), c])
+    })
+}
+
+#[test]
+#[ignore]
+fn r11_many_names_probe() {
+    let sizes = std::env::var("RFX_N").unwrap_or("16,64,256,1024".into());
+    big(move || {
+        for n in sizes.split(',').map(|s| s.parse::<usize>().unwrap()) {
+            Type::forget_emptiness();
+            let t = r11_names_family(n, &format!("_n{n}"));
+            let mut v = None;
+            let mut meter = scaling::Meter::new();
+            let w = meter.work(|| v = Some(t.verdict()));
+            assert_eq!(v, Some(Verdict::Inhabited));
+            eprintln!("R11NAMES n {n} {v:?} units {} bytes {}", w.units, w.bytes);
+        }
+    });
+}
+
+#[test]
+fn r11_many_names_must_scale() {
+    big(|| {
+        let a = r11_names_family(32, "_s32");
+        let b = r11_names_family(256, "_s256");
+        scaling::check("types sharing many atom names", 32, |n| {
+            Type::forget_emptiness();
+            assert_eq!(
+                (if n == 32 { &a } else { &b }).verdict(),
+                Verdict::Inhabited
+            );
+        });
+    });
+}
+
+/// R11 probe for what the R10-C4 memo leaves: n tags sharing one payload diagram whose n rows
+/// each hold a component with an atom name, which every tag still reads.
+#[test]
+#[ignore]
+fn r11_named_payload_probe() {
+    let sizes = std::env::var("RFX_N").unwrap_or("16,64,256,1024".into());
+    big(move || {
+        for n in sizes.split(',').map(|s| s.parse::<usize>().unwrap()) {
+            Type::forget_emptiness();
+            let payload = (0..n).fold(Type::empty(), |p, i| {
+                &p | &Type::tuple(vec![Type::atom(&format!("r11q{i}_{n}")), lit(i as i64)])
+            });
+            let t = (0..n).fold(Type::empty(), |t, i| {
+                &t | &Type::atom_with(&format!("r11tag{i}_{n}"), &payload)
+            });
+            let mut v = None;
+            let mut meter = scaling::Meter::new();
+            let w = meter.work(|| v = Some(t.verdict()));
+            assert_eq!(v, Some(Verdict::Inhabited));
+            eprintln!("R11NAMED n {n} {v:?} units {} bytes {}", w.units, w.bytes);
+        }
     });
 }

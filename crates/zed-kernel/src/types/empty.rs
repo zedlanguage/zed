@@ -542,8 +542,13 @@ impl Type {
                     continue;
                 }
                 let p = t.p();
-                for a in p.atoms.names.values() {
-                    visit(&a.payload, &mut seen, &mut stack);
+                // Complexity tradeoff: reading all names at every node is quadratic
+                // on a chain of failure atoms. Only payload-bearing names have edges;
+                // read those in O(payload edges * log names), with the same seen set.
+                for name in &p.atoms.payloads {
+                    if let Some(a) = p.atoms.names.get(name) {
+                        visit(&a.payload, &mut seen, &mut stack);
+                    }
                 }
                 for part in p.tuples.lens.values() {
                     part.atoms_unseen(&mut rows, &mut |row| {
@@ -1016,9 +1021,9 @@ struct Search {
     /// the general fallback (`in_list_fallback`), so the lists in its payload are decided as
     /// roots.
     wraps: ByType<()>,
-    /// The list types among the roots written as the item of a list of the same atom names
-    /// ([`fields`], X43): decided as roots even inside the general fallback of the list they
-    /// are items of (`in_list_fallback`), which only skips the residual tails it builds.
+    /// Written list items and their field descendants (`fields`, X43 / R11-C4):
+    /// allowed their own sweeps inside the enclosing list fallback. Generated
+    /// residual literal tails are still skipped.
     items: ByType<()>,
     /// Nesting depth inside the general tuple/parts fallback for a list type outside
     /// [`Searching::prefix_chains`]; while non-zero, internal narrowed residual tail types go
@@ -2133,18 +2138,47 @@ impl Search {
 // instead, the chains cost `r6twowide` and `r6threeun` 45-65% more than main. A pair's first
 // component that is a list of the same atom names (a list's item, X43) is walked and kept in
 // `items`, still once per node, so the walk stays O(nodes); its tail (component 1) is not.
+// Complexity tradeoff (R10-C4): "each node read once" was kept for type nodes only, and the
+// rows of a tuple diagram were expanded again for each type that reads it, so K tags sharing
+// one payload diagram of n rows cost K·n (refusals::r10_shared_payload_rows_must_scale). The
+// rows of a payload diagram are now expanded once per (length, diagram id), split into the
+// components with no atom name, queued once per context, and those with one; the own tuple and
+// morphism diagrams are expanded once per (id, context). Given up: each tag still reads the
+// named components of a shared payload, so a cost of K times the named components remains
+// (refusals::r11_named_payload_probe, r11_tagged_payload_probe).
+// Complexity tradeoff (R11-C4, Codex R11): exempting only a direct list item left the lists in
+// its tuple or map fields to the fallback's searches (`listhead:pairfar` 641.9 times its bare
+// case at 256). The item context is carried through the written fields: each node is visited
+// at most twice, outside and inside an item, so O(nodes + edges) still.
 ///
 /// Also the atom types among them that are not lists (`Search::wraps`): each payload of a
 /// literal union of tuple rows with no link of a list in it.
 fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
     let (mut seen, mut out, mut wraps, mut items) =
         (HashSet::new(), Vec::new(), Vec::new(), Vec::new());
-    let mut stack: Vec<Type> = roots.iter().rev().cloned().collect();
-    while let Some(t) = stack.pop() {
-        if !seen.insert(t.node_addr()) {
+    // A payload diagram's distinct components with their place: those with no atom name
+    // (`plain`) and those with one (`named`), and in which contexts `plain` was queued.
+    struct Rows {
+        plain: Vec<(usize, Type)>,
+        named: Vec<(usize, Type)>,
+        queued: [bool; 2],
+    }
+    // Payload diagrams read, by (length, diagram id), `None` when not a union of rows; tuple
+    // and morphism diagrams of the types themselves walked, by (id, context); list tails
+    // followed by the X44 walk, by (node id, link name).
+    let mut payloads: HashMap<(usize, u64), Option<Rows>> = HashMap::new();
+    let (mut own, mut maps, mut tails_seen) = (HashSet::new(), HashSet::new(), HashSet::new());
+    let mut stack: Vec<(Type, bool)> = roots.iter().rev().map(|t| (t.clone(), false)).collect();
+    while let Some((t, in_item)) = stack.pop() {
+        if !seen.insert((t.node_id(), in_item)) {
             continue;
         }
-        out.push(t.clone());
+        if !seen.contains(&(t.node_id(), !in_item)) {
+            out.push(t.clone());
+        }
+        if in_item {
+            items.push(t.clone());
+        }
         let Node::Parts(p, _) = &*t.0 else {
             continue;
         };
@@ -2165,23 +2199,68 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
             let pp = a.payload.p();
             wrap &= !pp.tuples.rest && !pp.structs;
             for (len, b) in &pp.tuples.lens {
-                let Some(rows) = b.union_rows() else {
+                let rows = payloads.entry((*len, b.id())).or_insert_with(|| {
+                    let mut rows = Rows {
+                        plain: Vec::new(),
+                        named: Vec::new(),
+                        queued: [false; 2],
+                    };
+                    let mut met = HashSet::new();
+                    for row in b.union_rows()? {
+                        for (i, c) in row.iter().enumerate() {
+                            if !met.insert((i, c.node_id())) {
+                                continue;
+                            }
+                            if c.p().atoms.names.is_empty() {
+                                rows.plain.push((i, c.clone()));
+                            } else {
+                                rows.named.push((i, c.clone()));
+                            }
+                        }
+                    }
+                    Some(rows)
+                });
+                let Some(rows) = rows else {
                     wrap = false;
                     continue;
                 };
-                for row in rows {
-                    for (i, c) in row.iter().enumerate() {
-                        if c.p().atoms.names.contains_key(name) {
-                            wrap = false;
-                            // A pair's first component is a list's item, never its link
-                            // (`list_step` reads the link at component 1), so an item that is
-                            // itself a list of the same names is walked as a field (X43).
-                            if *len == 2 && (i == 0 || boolean_tail(c, name)) {
-                                items.push(c.clone());
-                                stack.push(c.clone());
+                // A pair's first component is a list's item, never its link (`list_step` reads
+                // the link at component 1); it and the fields written in it are in an item.
+                let pair = *len == 2;
+                if !std::mem::replace(&mut rows.queued[usize::from(in_item)], true) {
+                    for (i, c) in &rows.plain {
+                        stack.push((c.clone(), in_item || (pair && *i == 0)));
+                    }
+                }
+                for (i, c) in &rows.named {
+                    let item = pair && *i == 0;
+                    if !c.p().atoms.names.contains_key(name) {
+                        stack.push((c.clone(), in_item || item));
+                        continue;
+                    }
+                    wrap = false;
+                    if item {
+                        // An item that is itself a list of the same names is walked as a
+                        // field (X43).
+                        items.push(c.clone());
+                        stack.push((c.clone(), true));
+                    } else if pair {
+                        // The tail: follow its literal links, each (node, link name) once,
+                        // and admit only a Boolean list type met on the way (X44, at any
+                        // depth); literal intermediate tails are not roots.
+                        let mut tails = vec![c.clone()];
+                        while let Some(tail) = tails.pop() {
+                            if !tails_seen.insert((tail.node_id(), name.clone())) {
+                                continue;
                             }
-                        } else {
-                            stack.push(c.clone());
+                            if boolean_tail(&tail, name) {
+                                items.push(tail.clone());
+                                stack.push((tail, true));
+                            } else if let Some((_, link, _, next)) = list_step(&tail)
+                                && link == *name
+                            {
+                                tails.push(next);
+                            }
                         }
                     }
                 }
@@ -2191,12 +2270,16 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
             wraps.push(t.clone());
         }
         for b in p.tuples.lens.values() {
-            for row in b.union_rows().unwrap_or_default() {
-                stack.extend(row.iter().cloned());
+            if own.insert((b.id(), in_item)) {
+                for row in b.union_rows().unwrap_or_default() {
+                    stack.extend(row.iter().map(|c| (c.clone(), in_item)));
+                }
             }
         }
-        for m in p.morphisms.union_rows().unwrap_or_default() {
-            stack.push(m.value.clone());
+        if maps.insert((p.morphisms.id(), in_item)) {
+            for m in p.morphisms.union_rows().unwrap_or_default() {
+                stack.push((m.value.clone(), in_item));
+            }
         }
     }
     (out, wraps, items)
@@ -2206,10 +2289,9 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
 /// part under `name` is not a union of literal rows (a difference or a meet was written in it,
 /// X44). Such a tail is walked as a root; a tail written as a union of rows (the next link of a
 /// list) is not, so the walk does not make every tail of a written list a root.
-// Complexity tradeoff: O(1) BDD reads per tail met, and a tail admitted is not walked further
-// (its own pair part has no literal rows to enter), so the walk stays O(nodes). Tradeoff: a
-// Boolean list type reached after two or more literal links (`cons(int, cons(int, L - U))`) is
-// still left to the search.
+// Complexity tradeoff: this boundary test is unchanged; the fields walk now follows
+// literal links with its own visited set, so a Boolean boundary several links down is
+// admitted without admitting every literal intermediate tail as a separate sweep root.
 fn boolean_tail(c: &Type, name: &str) -> bool {
     let p = c.p();
     let Some(a) = p.atoms.names.get(name) else {
@@ -3869,7 +3951,7 @@ impl<'m> Searching<'m> {
     }
 
     /// Whether `t` is met inside the general fallback of a list (`in_list_fallback`) and is not
-    /// a list written as the item of a root list (`Search::items`): then neither the front sweep
+    /// an item or a written field within an item (`Search::items`): then neither the front sweep
     /// nor the prefix chains run on it.
     fn in_fallback(&self, t: &Type) -> bool {
         let s = self.s();
@@ -5101,6 +5183,9 @@ impl<'m> Searching<'m> {
                 }
             }
 
+            // A group key is (has_stop, head, emit), not a landing node. Each
+            // scheduled token keeps its own child. Pass 1 forces each such child;
+            // Pass 2 unions only the partial heads actually landing at that child.
             // Pass 2: remaining active negative groups, coalescing partial jumps per landing node.
             for &g_idx in &active_neg {
                 if pos_seen.contains(&neg_groups[g_idx].head) {
@@ -5189,6 +5274,15 @@ impl<'m> Searching<'m> {
                     covered_neg_at[step + 1].push(w);
                 }
             }
+            // Dominance at a fully jumping partial transition: for each child w,
+            // its rem is R minus the union of heads whose tokens land at w.
+            // None means that union covers R (or a forced token reaches w).
+            // If their intersection is nonempty, choosing x there kills all
+            // partial children simultaneously. Every other x retains at least
+            // the forced children. Positive obligations are uniform on R; with
+            // no partial stopping head and no deferred spine, replacing x this
+            // way cannot destroy a solution. Staying partial tokens are dropped
+            // only with step_loose, so this dominance is not asserted for them.
             if !rem_cuts.is_empty() {
                 if !step_loose && non_disjoint_stop_heads.is_empty() && spine_u1.is_none() {
                     let mut r0_narrow = r0.clone();

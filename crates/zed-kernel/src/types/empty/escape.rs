@@ -5,7 +5,7 @@
 //! The class, read from the type alone. `t` has atoms only, one atom name `link` with a payload
 //! and no bare atom; the payload is pairs only, a clause of rows (taken rows `P_i`, refused rows
 //! `N_k`, at least one of each, the payload exactly their meet less their union). Every row
-//! head is a set of integers (finite, or cofinite within the integers; 64-bit values only). From
+//! head is a set of integers (finite, or cofinite within the integers; arbitrary-width integer values). From
 //! each row tail, the types reached by [`super::list_step`] are *nodes*: a *cons* node
 //! `stop? | link(h, next)` with `h` a set of integers and `next` a node other than itself, an
 //! *end* node (the bare `stop` atom alone), or the *carrier* `L = stop | link(H, L)`, at most
@@ -229,9 +229,119 @@ struct Nodes {
     stop: Option<std::sync::Arc<str>>,
     link: std::sync::Arc<str>,
     carrier: Option<(Type, usize)>,
+    alphabet: Option<BTreeSet<Value>>,
+    heads: ByType<Option<Ints>>,
+}
+
+/// A finite alphabet containing every item of every positive row, if their
+/// written chains prove one. The actual parser still checks all terminals,
+/// names and cycles. Every node and head Type is visited once.
+// Complexity tradeoff: copying n shared width-w head predicates and scanning
+// their irrelevant holes at every node costs Theta(n*w). Read the positive
+// alphabet once, O(V+E+L log(2+A)) for L listed positive literals and A
+// alphabet values, and project each distinct
+// integer head onto it. Projection preserves every cell because each positive
+// place is a subset of this alphabet. Cofinite positive heads decline this
+// optional optimization; they keep the existing parser and finder.
+fn finite_positive_alphabet(rows: &[Row]) -> Option<BTreeSet<Value>> {
+    let mut pending: Vec<Type> = rows.iter().map(|r| r[1].clone()).collect();
+    let mut seen = ByType::with_hasher(Digests::new());
+    let mut seen_heads = ByType::with_hasher(Digests::new());
+    let mut alphabet = BTreeSet::new();
+    let mut add_head = |h: &Type| -> Option<()> {
+        if seen_heads.insert(h.clone(), ()).is_some() {
+            return Some(());
+        }
+        let p = h.p();
+        if !only_ints(&p) || p.ints.cofinite {
+            return None;
+        }
+        alphabet.extend(p.ints.values.iter().cloned());
+        Some(())
+    };
+    for row in rows {
+        add_head(&row[0])?;
+    }
+    while let Some(t) = pending.pop() {
+        if seen.insert(t.clone(), ()).is_some() {
+            continue;
+        }
+        if let Some((_, _, h, next)) = list_step(&t) {
+            add_head(&h)?;
+            pending.push(next);
+        } else {
+            // Complexity tradeoff: continuing after k unknown positives could
+            // reread a shared width-w diagram k times, O(k*w). Stop this
+            // optional prepass at its first mismatch, O(k+w) including roots.
+            // The only recognized non-link terminal is one bare stop atom.
+            let p = t.p();
+            let scalar_empty = p.bools == 0
+                && [&p.ints, &p.rats, &p.floats, &p.strings]
+                    .iter()
+                    .all(|l: &&Lits| !l.cofinite && l.values.is_empty());
+            if !scalar_empty
+                || !p.tuples.is_default()
+                || p.structs
+                || p.morphisms.is_leaf() != Some(false)
+                || p.atoms.cofinite
+                || p.atoms.names.len() != 1
+                || !p
+                    .atoms
+                    .names
+                    .values()
+                    .next()
+                    .is_some_and(|a| a.bare && a.payload == Type::empty())
+            {
+                return None;
+            }
+        }
+    }
+    Some(alphabet)
 }
 
 impl Nodes {
+    // Complexity tradeoff: convert a shared head once rather than once per
+    // chain node. Cache O(distinct projected head data); returning a clone still
+    // costs its projected width per node, so this is not a global finder bound.
+    fn ints(&mut self, t: &Type) -> Option<Ints> {
+        if let Some(v) = self.heads.get(t) {
+            return v.clone();
+        }
+        let value = match &self.alphabet {
+            None => Ints::of(t),
+            Some(alphabet) => {
+                let p = t.p();
+                if !only_ints(&p) {
+                    return None;
+                }
+                // Complexity tradeoff: either enumeration computes precisely the
+                // same intersection. K*log(2+A) versus A*log(2+K) is minimized
+                // by iterating the smaller set: x/log(2+x) is increasing.
+                // No verdict, cell, or structural refusal changes at this crossing.
+                let vals = if p.ints.values.len() <= alphabet.len() {
+                    p.ints
+                        .values
+                        .iter()
+                        .filter(|v| alphabet.contains(*v))
+                        .cloned()
+                        .collect()
+                } else {
+                    alphabet
+                        .iter()
+                        .filter(|v| p.ints.values.contains(*v))
+                        .cloned()
+                        .collect()
+                };
+                Some(Ints {
+                    cof: p.ints.cofinite,
+                    vals,
+                })
+            }
+        };
+        self.heads.insert(t.clone(), value.clone());
+        value
+    }
+
     /// The node of `x`, reading the nodes after it first; `None` outside the class.
     fn node(&mut self, x: &Type) -> Option<usize> {
         let mut path: Vec<(Type, bool, Ints)> = Vec::new();
@@ -255,7 +365,7 @@ impl Nodes {
                         Some(_) => return None,
                     }
                 }
-                let head = Ints::of(&h)?;
+                let head = self.ints(&h)?;
                 if next == cur {
                     // The carrier: a self-loop holding the empty list, the only one.
                     if s.is_none() || self.carrier.is_some() {
@@ -476,14 +586,16 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         stop: None,
         link: link.clone(),
         carrier: None,
+        alphabet: finite_positive_alphabet(&taken),
+        heads: ByType::with_hasher(Digests::new()),
     };
     let mut pos: Vec<(Ints, usize)> = Vec::with_capacity(taken.len());
     for row in &taken {
-        pos.push((Ints::of(&row[0])?, ns.node(&row[1])?));
+        pos.push((ns.ints(&row[0])?, ns.node(&row[1])?));
     }
     let mut neg: Vec<(Ints, usize)> = Vec::with_capacity(refused.len());
     for row in &refused {
-        neg.push((Ints::of(&row[0])?, ns.node(&row[1])?));
+        neg.push((ns.ints(&row[0])?, ns.node(&row[1])?));
     }
     let stop = ns.stop.clone()?;
     let nodes = &ns.nodes;
