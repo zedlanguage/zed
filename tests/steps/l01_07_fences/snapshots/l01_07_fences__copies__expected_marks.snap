@@ -5,6 +5,8 @@ expression: "marks_by_key(&fences::all())"
 DESIGN.md [sec:remap_law] 5: ✗ [1] variants []
 DESIGN.md [sec:facets] 3: ✗ [] variants [9]
 DESIGN.md [sec:facets] 4: ✗ [] variants [8, 9]
+DESIGN.md [sec:facets] 5: ✗ [] variants [11, 12, 13]
+DESIGN.md [sec:facets] 6: ✗ [] variants [7, 8]
 DESIGN.md [sec:corner_cases] 1: ✗ [] variants [6]
 DESIGN.md [sec:tour_methods] 1: ✗ [] variants [18, 29, 30]
 DESIGN.md [sec:tour_collections] 3: ✗ [2] variants []

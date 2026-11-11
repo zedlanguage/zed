@@ -1,0 +1,14 @@
+// variant: // bad = y * y;                              // ✗ Logarithmic unit in an operation that would change with the unit: y is in log(m), and a product of two logarithms has no unit
+len = 5.0 with units("m");
+y = log(len);                                // 1.6094379124341003 with units("log(m)")
+sq = log(len * len);                         // 3.2188758248682006 with units("log(m^2)")
+twice = 2.0 * y;                             // 3.2188758248682006 with units("log(m^2)")
+same = twice == sq;                          // true
+back = exp(y);                               // 4.999999999999999 with units("m")
+far = log10(1000.0 with units("m"));         // 3.0 with units("log10(m)")
+nearKm = far.to("log10(km)");                // 0.0 with units("log10(km)")
+inE = log(1.0 with units("km")).to("log(m)");  // 6.907755278982137 with units("log(m)")
+ratio = y - log(1.0 with units("m"));        // 1.6094379124341003 with units("1")
+bad = y * y;                              // ✗ Logarithmic unit in an operation that would change with the unit: y is in log(m), and a product of two logarithms has no unit
+// big = y > 0.0;                            // ✗ Logarithmic unit in an operation that would change with the unit: y is in log(m) and 0.0 has no unit; compare with log(1.0 with units("m"))
+// wrong = exp(far);                         // ✗ Exponential whose base differs from the logarithm's: far is in log10(m); write 10.0^far

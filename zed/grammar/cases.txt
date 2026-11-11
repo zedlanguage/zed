@@ -543,3 +543,9 @@ Expr ::: m into (k >< (+) -> (sold: q)) ::: (m (into ( ((k >< (( + ))) -> (( (so
 Expr ::: (s, p) into (sku -> (line: (q, price))) ::: ((( s , p )) (into ( (sku -> (( (line : (( q , price ))) ))) )))
 Expr@7 ::: m into (k -> (w: d)) ::: ERROR
 Expr ::: m into (week: d div 7 -> v) ::: (m (into ( ((week : (d div 7)) -> v) )))
+Expr ::: n without units("m") ::: (n (without (units ( "m" ))))
+Expr ::: (n without units("m")) div 100 ::: ((( (n (without (units ( "m" )))) )) div 100)
+Expr ::: a + b without units("m") ::: ((a + b) (without (units ( "m" ))))
+Expr ::: x without units("m") with units("s") ::: ((x (without (units ( "m" )))) (with (units ( "s" ))))
+Expr@11 ::: n without units("m") ::: ERROR
+Expr ::: n without units ::: ERROR

@@ -224,7 +224,9 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   4 | «type» UnitPower = Utf8String «matching» «grammar» { str["-"] ? digit + | str["("] str["-"] ? digit + str["/"] Nonzero str[")"] } ;
   5 | «type» UnitFactor = Utf8String «matching» «grammar» { UnitName ( str["^"] UnitPower ) ? } ;
   6 | «type» UnitProduct = Utf8String «matching» «grammar» { UnitFactor sep ( str[" "] | str["*"] | str["·"] ) } ;
-  7 | «type» UnitText = Utf8String «matching» «grammar» { ( UnitProduct | str["1"] ) ( str["/"] ( UnitFactor | str["("] UnitProduct str[")"] ) ) ? ( str[" "] UnitKind ) ? | UnitKind | str[] } ;
+  7 | «type» UnitLinear = Utf8String «matching» «grammar» { ( UnitProduct | str["1"] ) ( str["/"] ( UnitFactor | str["("] UnitProduct str[")"] ) ) ? } ;
+  8 | «type» UnitLog = Utf8String «matching» «grammar» { ( str["log10"] | str["log2"] | str["log"] ) str["("] UnitLinear str[")"] } ;
+  9 | «type» UnitText = Utf8String «matching» «grammar» { UnitLog | UnitLinear ( str[" "] UnitKind ) ? | UnitKind | str[] } ;
 == DESIGN.md [sec:facets] 2 L12
   1 | «struct» UnitDef {
   2 | name : UnitName ,
@@ -269,6 +271,24 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   5 | later = noon + ( 2.0f «with» units ( str["K"] ) ) ;
   6 | later2 = ( 25.0f «with» units ( str["degC"] ) ) + ( 5.0f «with» units ( str["K"] ) ) ;
   7 | warmer = noon > morning ;
+== DESIGN.md [sec:facets] 5 L12
+  1 | len = 5.0f «with» units ( str["m"] ) ;
+  2 | y = log ( len ) ;
+  3 | sq = log ( len * len ) ;
+  4 | twice = 2.0f * y ;
+  5 | same = twice == sq ;
+  6 | back = exp ( y ) ;
+  7 | far = log10 ( 1000.0f «with» units ( str["m"] ) ) ;
+  8 | nearKm = far . to ( str["log10(km)"] ) ;
+  9 | inE = log ( 1.0f «with» units ( str["km"] ) ) . to ( str["log(m)"] ) ;
+ 10 | ratio = y - log ( 1.0f «with» units ( str["m"] ) ) ;
+== DESIGN.md [sec:facets] 6 L12
+  1 | n = 1200₍10₎ «with» units ( str["m"] ) ;
+  2 | x = f64 ( n ) «else» round ( n ) ;
+  3 | label = str[${n}] ;
+  4 | column = str[${n without units ( str["m"] )}] ;
+  5 | count = ( n without units ( str["m"] ) ) «div» 100₍10₎ ;
+  6 | km = ( f64 ( n ) «else» round ( n ) ) . to ( str["km"] ) ;
 == DESIGN.md [sec:linalg] 1 L14
   1 | matmul ( «positional» v : ( c -> T ) , «positional» b : ( c -> k -> T ) ) = ( v , b ) «into» ( k -> c >< ( + ) -> v [ c ] * b [ c ] [ k ] ) ;
   2 | matmul ( «positional» a : ( r -> c -> T ) , «positional» v : ( c -> T ) ) = ( a , v ) «into» ( r -> c >< ( + ) -> a [ r ] [ c ] * v [ c ] ) ;
@@ -364,55 +384,56 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  37 | reject : ( ( E , E , Ast ) -> Rejection ( _ ) ) | #none = #none ,
  38 | printedForm : #annotation | #with = #with ,
  39 | typeChange : ( Type ) -> Type = t -> t ,
- 40 | «law» transferMono1 ( op : _ , a : E , c : E ) = lattice . le ( a , c ) . implies ( lattice . le ( transfer ( op , ( a , ) ) , transfer ( op , ( c , ) ) ) ) ,
- 41 | «law» transferMono2 ( op : _ , a : E , b : E , c : E , d : E ) =
- 42 | ( lattice . le ( a , c ) && lattice . le ( b , d ) ) . implies ( lattice . le ( transfer ( op , ( a , b ) ) , transfer ( op , ( c , d ) ) ) ) ,
- 43 | «law» projectMono1 ( op : _ , a : E , r : E , c : E , s : E , i : int [ 0₍10₎ ..= 1₍10₎ ] ) =
- 44 | ( lattice . le ( a , c ) && lattice . le ( r , s ) ) . implies ( lattice . le ( project ( op , ( a , r ) , i ) , project ( op , ( c , s ) , i ) ) ) ,
- 45 | «law» projectMono2 ( op : _ , a : E , b : E , r : E , c : E , d : E , s : E , i : int [ 0₍10₎ ..= 2₍10₎ ] ) =
- 46 | ( lattice . le ( a , c ) && lattice . le ( b , d ) && lattice . le ( r , s ) ) . implies ( lattice . le ( project ( op , ( a , b , r ) , i ) , project ( op , ( c , d , s ) , i ) ) ) ,
- 47 | «law» topSound ( x : V ) = «match» holds { #none -> «true» , h -> h ( lattice . top , x ) } ,
- 48 | «law» transferSound1 ( op : _ , a : E , x : V ) = «match» holds { #none -> «true» , h -> h ( a , x ) . implies ( h ( transfer ( op , ( a , ) ) , op ( x ) ) ) } ,
- 49 | «law» transferSound2 ( op : _ , a : E , b : E , x : V , y : V ) = «match» holds {
- 50 | #none -> «true» ,
- 51 | h -> ( h ( a , x ) && h ( b , y ) ) . implies ( h ( transfer ( op , ( a , b ) ) , op ( x , y ) ) ) ,
- 52 | } ,
- 53 | «law» projectSound1 ( op : _ , a : E , r : E , x : V ) = «match» holds {
- 54 | #none -> «true» ,
- 55 | h -> ( h ( a , x ) && h ( r , op ( x ) ) ) . implies ( h ( project ( op , ( a , r ) , 0₍10₎ ) , x ) && h ( project ( op , ( a , r ) , 1₍10₎ ) , op ( x ) ) ) ,
- 56 | } ,
- 57 | «law» projectSound2 ( op : _ , a : E , b : E , r : E , x : V , y : V ) = «match» holds {
- 58 | #none -> «true» ,
- 59 | h -> ( h ( a , x ) && h ( b , y ) && h ( r , op ( x , y ) ) ) . implies (
- 60 | h ( project ( op , ( a , b , r ) , 0₍10₎ ) , x ) && h ( project ( op , ( a , b , r ) , 1₍10₎ ) , y ) && h ( project ( op , ( a , b , r ) , 2₍10₎ ) , op ( x , y ) ) ) ,
- 61 | } ,
- 62 | «law» meetSound ( a : E , b : E , x : V ) = «match» ( holds , lattice . meet ) {
- 63 | ( #none , _ ) -> «true» ,
- 64 | ( _ , #none ) -> «true» ,
- 65 | ( h , m ) -> ( h ( a , x ) && h ( b , x ) ) . implies ( «match» m ( a , b ) { #empty -> «false» , c -> h ( c , x ) } ) ,
- 66 | } ,
- 67 | «law» sharesSound ( e : E , x : V ) = «match» ( holds , shares ( e ) ) {
- 68 | ( #none , _ ) -> «true» ,
- 69 | ( _ , #none ) -> «true» ,
- 70 | ( h , #constant ( c ) ) -> h ( e , x ) . implies ( x == c ) ,
- 71 | } ,
- 72 | }
- 74 | «struct» Reduction ( «positional» E ) {
- 75 | of : Facet ( E , _ ) ,
- 76 | reads : [ Facet ( _ , _ ) ] ,
- 77 | reduce : ( E , Store ) -> E ,
- 78 | «law» reduceMono ( e : E , e2 : E , s : Store , s2 : Store ) =
- 79 | ( of . lattice . le ( e , e2 ) && reads . all ( f -> f . lattice . le ( s . of ( f ) , s2 . of ( f ) ) ) ) . implies ( of . lattice . le ( reduce ( e , s ) , reduce ( e2 , s2 ) ) ) ,
- 80 | «law» reduceSound ( e : E , s : Store , x : _ ) = «match» of . holds {
- 81 | #none -> «true» ,
- 82 | h -> ( h ( e , x ) && reads . all ( f -> «match» f . holds { #none -> «true» , g -> g ( s . of ( f ) , x ) } ) ) . implies ( h ( reduce ( e , s ) , x ) ) ,
- 83 | } ,
- 84 | }
- 86 | «struct» Rejection ( «positional» W ) {
- 87 | site : Ast ,
- 88 | witness : W ,
- 89 | menu : [ Ast ] ,
- 90 | }
+ 40 | removable : bool = «false» ,
+ 41 | «law» transferMono1 ( op : _ , a : E , c : E ) = lattice . le ( a , c ) . implies ( lattice . le ( transfer ( op , ( a , ) ) , transfer ( op , ( c , ) ) ) ) ,
+ 42 | «law» transferMono2 ( op : _ , a : E , b : E , c : E , d : E ) =
+ 43 | ( lattice . le ( a , c ) && lattice . le ( b , d ) ) . implies ( lattice . le ( transfer ( op , ( a , b ) ) , transfer ( op , ( c , d ) ) ) ) ,
+ 44 | «law» projectMono1 ( op : _ , a : E , r : E , c : E , s : E , i : int [ 0₍10₎ ..= 1₍10₎ ] ) =
+ 45 | ( lattice . le ( a , c ) && lattice . le ( r , s ) ) . implies ( lattice . le ( project ( op , ( a , r ) , i ) , project ( op , ( c , s ) , i ) ) ) ,
+ 46 | «law» projectMono2 ( op : _ , a : E , b : E , r : E , c : E , d : E , s : E , i : int [ 0₍10₎ ..= 2₍10₎ ] ) =
+ 47 | ( lattice . le ( a , c ) && lattice . le ( b , d ) && lattice . le ( r , s ) ) . implies ( lattice . le ( project ( op , ( a , b , r ) , i ) , project ( op , ( c , d , s ) , i ) ) ) ,
+ 48 | «law» topSound ( x : V ) = «match» holds { #none -> «true» , h -> h ( lattice . top , x ) } ,
+ 49 | «law» transferSound1 ( op : _ , a : E , x : V ) = «match» holds { #none -> «true» , h -> h ( a , x ) . implies ( h ( transfer ( op , ( a , ) ) , op ( x ) ) ) } ,
+ 50 | «law» transferSound2 ( op : _ , a : E , b : E , x : V , y : V ) = «match» holds {
+ 51 | #none -> «true» ,
+ 52 | h -> ( h ( a , x ) && h ( b , y ) ) . implies ( h ( transfer ( op , ( a , b ) ) , op ( x , y ) ) ) ,
+ 53 | } ,
+ 54 | «law» projectSound1 ( op : _ , a : E , r : E , x : V ) = «match» holds {
+ 55 | #none -> «true» ,
+ 56 | h -> ( h ( a , x ) && h ( r , op ( x ) ) ) . implies ( h ( project ( op , ( a , r ) , 0₍10₎ ) , x ) && h ( project ( op , ( a , r ) , 1₍10₎ ) , op ( x ) ) ) ,
+ 57 | } ,
+ 58 | «law» projectSound2 ( op : _ , a : E , b : E , r : E , x : V , y : V ) = «match» holds {
+ 59 | #none -> «true» ,
+ 60 | h -> ( h ( a , x ) && h ( b , y ) && h ( r , op ( x , y ) ) ) . implies (
+ 61 | h ( project ( op , ( a , b , r ) , 0₍10₎ ) , x ) && h ( project ( op , ( a , b , r ) , 1₍10₎ ) , y ) && h ( project ( op , ( a , b , r ) , 2₍10₎ ) , op ( x , y ) ) ) ,
+ 62 | } ,
+ 63 | «law» meetSound ( a : E , b : E , x : V ) = «match» ( holds , lattice . meet ) {
+ 64 | ( #none , _ ) -> «true» ,
+ 65 | ( _ , #none ) -> «true» ,
+ 66 | ( h , m ) -> ( h ( a , x ) && h ( b , x ) ) . implies ( «match» m ( a , b ) { #empty -> «false» , c -> h ( c , x ) } ) ,
+ 67 | } ,
+ 68 | «law» sharesSound ( e : E , x : V ) = «match» ( holds , shares ( e ) ) {
+ 69 | ( #none , _ ) -> «true» ,
+ 70 | ( _ , #none ) -> «true» ,
+ 71 | ( h , #constant ( c ) ) -> h ( e , x ) . implies ( x == c ) ,
+ 72 | } ,
+ 73 | }
+ 75 | «struct» Reduction ( «positional» E ) {
+ 76 | of : Facet ( E , _ ) ,
+ 77 | reads : [ Facet ( _ , _ ) ] ,
+ 78 | reduce : ( E , Store ) -> E ,
+ 79 | «law» reduceMono ( e : E , e2 : E , s : Store , s2 : Store ) =
+ 80 | ( of . lattice . le ( e , e2 ) && reads . all ( f -> f . lattice . le ( s . of ( f ) , s2 . of ( f ) ) ) ) . implies ( of . lattice . le ( reduce ( e , s ) , reduce ( e2 , s2 ) ) ) ,
+ 81 | «law» reduceSound ( e : E , s : Store , x : _ ) = «match» of . holds {
+ 82 | #none -> «true» ,
+ 83 | h -> ( h ( e , x ) && reads . all ( f -> «match» f . holds { #none -> «true» , g -> g ( s . of ( f ) , x ) } ) ) . implies ( h ( reduce ( e , s ) , x ) ) ,
+ 84 | } ,
+ 85 | }
+ 87 | «struct» Rejection ( «positional» W ) {
+ 88 | site : Ast ,
+ 89 | witness : W ,
+ 90 | menu : [ Ast ] ,
+ 91 | }
 == DESIGN.md [sec:checking_in_zed] 2 L12
   1 | «type» Parity = #even | #odd | #either ;
   2 | parity : Facet ( Parity , int ) = Facet (

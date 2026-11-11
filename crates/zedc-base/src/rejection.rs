@@ -152,6 +152,13 @@ rows! {
     ConversionBetweenExpansions => "`.to` between units of different full expansions",
     SumOfPointReadings => "No `+` of two point readings",
     PointUnitInProduct => "Point unit in a product, quotient or power",
+    // No diagnostic uses the next six rows yet: plan rows L12.2h-L12.2k emit them.
+    FactDiffersFromCarried => "Fact written on a value that carries a different one",
+    RemovedFactNotCarried => "Fact removed that the value does not carry",
+    RemovedFactNotRemovable => "Fact removed from a facet that does not allow it",
+    UnitNotTaken => "Unit that an operation does not take",
+    LogUnitInOperation => "Logarithmic unit in an operation that would change with the unit",
+    ExponentialBaseDiffers => "Exponential whose base differs from the logarithm's",
     TaintAtSink => "Taint at a sink whose parameter does not take it",
     MutatingCallOnValue => "`*.` call on a receiver that is not a state variable",
     StoreSchemaMismatch => "Stored collection whose type and schema disagree",

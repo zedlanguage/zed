@@ -130,6 +130,7 @@ ReduceTail    = '><' Postfix ReducePolicy?                                      
               | 'into' '(' nest(OutPattern) ')' Suffix*                            L8
               | 'with' '{' nest(Update % ',' ','?) '}' Suffix*                     L2
               | 'with' FacetCall Suffix*                                           L7
+              | 'without' FacetCall Suffix*                                        L12
 ReducePolicy  = 'compensated' | 'tree' | 'unordered'                               L9
 Range         = Additive RangeTail                                                 L3
               | ~Additive                                                          L1

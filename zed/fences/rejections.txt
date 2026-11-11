@@ -92,6 +92,12 @@ Conversion whose factor the carrier cannot hold
 `.to` between units of different full expansions
 No `+` of two point readings
 Point unit in a product, quotient or power
+Fact written on a value that carries a different one
+Fact removed that the value does not carry
+Fact removed from a facet that does not allow it
+Unit that an operation does not take
+Logarithmic unit in an operation that would change with the unit
+Exponential whose base differs from the logarithm's
 Taint at a sink whose parameter does not take it
 `*.` call on a receiver that is not a state variable
 Stored collection whose type and schema disagree

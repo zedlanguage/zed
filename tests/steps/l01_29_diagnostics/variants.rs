@@ -80,6 +80,27 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "value-binding-has-no-next-generation",
             format!("8: {}", zed_tests::not_yet!("the declared result type `-> int`")),
         ),
+        // The logarithmic units and `without` of sec:facets (plan rows L12.2h and L12.2i).
+        (
+            "log-unit-product",
+            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"m\")`")),
+        ),
+        (
+            "log-unit-compared-with-number",
+            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"m\")`")),
+        ),
+        (
+            "exponential-base-differs",
+            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"m\")`")),
+        ),
+        (
+            "removed-fact-not-carried",
+            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"m\")`")),
+        ),
+        (
+            "removed-fact-not-removable",
+            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"m\")`")),
+        ),
     ];
     let names: Vec<String> = std::fs::read_dir(DIR)
         .unwrap()
