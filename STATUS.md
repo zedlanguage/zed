@@ -1841,12 +1841,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
 | HAS-point-probe | running | 2026-11-10 22:35 |  |
+| KILL-seq-2 | impl attempt 1 | 2026-11-11 07:47 | probes done: PDEATHSIG alone leaves setsid and group grandchildren alive and the scope active; helper on a pidfd of Zed writing children/cgroup.kill empties the |
+| KILL-seq | impl attempt 1 | 2026-11-11 07:32 | spec groups with ZED_SPEC_DIR=kill-seq-zed: 36 pieces, 3 failed (l01_08_parser::cases and l01_07_fences: copies not synced; m0_03 cite: stale labels); the same  |
 | LAZY-hub-coarse | impl attempt 1 | 2026-11-10 15:30 | blocked db342547: option C measured, same O(k^2) on the star (49,665 at k=128 vs main 897); needs cross-review; best method in C49 |
 | LOAD-max-div-xr | coord attempt 5 | 2026-11-10 01:18 | start rounds 5-10 coordinator; committed Claude seat's unfinished round-4 tree as b07e4522 on wt/lmd-claude; load5 32.66 |
-| MAIN-args | impl attempt 1 | 2026-11-11 05:35 | start; disk 169G free / 48.89 |
+| MAIN-args | impl attempt 1 | 2026-11-11 05:35 | baseline on main 8854d470 (ma-ctl), spec-check groups: 36 pieces, 2 failed: l01_07 copies::the_copies_match_the_spec (default spec dir /home/luke/Work/zed d4395 |
 | PERF-negated-chain-xr | impl attempt 2 | 2026-11-10 06:16 | started rounds 4-9: Claude round-3 tree committed 9a579263 (wt/pncx-claude), rebased onto origin/main 9bbeb1ff as 448bad52 on wt/perf-negated-chain; control tre |
 | Q51-answer | impl attempt 1 | 2026-11-11 04:49 | start: worktrees q51-zed, q51-impl / 28.20 |
 | REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | rounds 7-8 started; committing review tree (Claude R5 + probe), bringing Claude R6 onto the branch, rebasing on origin/main 4777a33e / load 52.67 38.82 33.29 |
+| STREAM-layers | impl attempt 1 | 2026-11-11 07:32 | started: worktrees stream-layers-zed (from cb87481) and stream-layers-impl (from 3a530692) / load5 28.02 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
