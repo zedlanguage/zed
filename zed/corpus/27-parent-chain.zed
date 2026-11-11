@@ -4,7 +4,7 @@
 // distance k (pointer jumping is a valid plan for all three). Each node prints
 // its root and its depth from the three spellings; any disagreement prints
 // MISMATCH. Input lines: "child parent", where parent "-" marks a root.
-struct Link { child: String, parent: String }
+struct Link { child: Utf8String, parent: Utf8String }
 
 main(m: MainArgs) {
   links = m.stdin.map(l -> { w = l.split(" "); Link(child: w[0] else "", parent: w[1] else "-") });

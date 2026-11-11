@@ -6,7 +6,7 @@
 // window's line must come out then: not before (it would miss words), and not
 // only when the socket closes (frontier completion). The test harness feeds
 // `sock` from 18-socket-wordfreq.in in arrival order. `.window` as in 17.
-sock: Stream(String);
+sock: Stream(Utf8String);
 
 main(m: MainArgs) {
   msgs = sock.map(l -> {

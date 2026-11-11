@@ -7,7 +7,7 @@
 // tokens and step len flushes the operator stack, so the end test is
 // inclusive; an exclusive test leaves operators unapplied.
 // Input: one expression per line, tokens separated by single spaces.
-struct S { vals: [int], ops: [String] }
+struct S { vals: [int], ops: [Utf8String] }
 
 wrap(positional x) = x mod 65536;
 

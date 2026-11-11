@@ -5,7 +5,7 @@
 // (escape skipping, then the UTF-8 decoder state); the plan must fuse them so
 // that neither the token sequence nor the decoder states are materialized.
 // Malformed UTF-8 is dropped, not repaired.
-struct Dec { need: int, cp: int, out: String }   // bytes still owed, code point so far, text emitted at this step
+struct Dec { need: int, cp: int, out: Utf8String }   // bytes still owed, code point so far, text emitted at this step
 
 hexVal(positional c) = "0123456789ABCDEF".indexOf(c.upper) else 0;
 

@@ -44,6 +44,13 @@ fn package(fs: &[(&str, &str)]) -> Package {
     load(&mut Db::new(), &files(fs), &["main"])
 }
 
+/// The error zedc gives for the corpus's string type, pending plan item STR-types. DESIGN.md
+/// (sec:order, "Defined words by layer") names the string types `U8String`, `Utf8String`,
+/// `Utf16String` and `Utf32String` and has no `String`; the corpus writes `Utf8String`, which
+/// zedc does not define until STR-types lands. Then each test that expects this error fails,
+/// and the expectation goes.
+const STR_TYPES_PENDING: &str = "the type `Utf8String` is not defined";
+
 /// Whether `message` is a form a later step compiles or links, which this step only reaches. A
 /// prelude word or type of a later layer is this step's own error, so it is kept.
 fn later(message: &str) -> bool {

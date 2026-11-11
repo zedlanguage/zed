@@ -1,11 +1,11 @@
 // unit ast (31-typechecker/ast.zed): the expression language and its parser.
 // Expr is a recursive union; #bad stands for a right side that does not
 // reduce to exactly one expression.
-type Expr = #num(n: int) | #bool(b: bool) | #var(name: String)
+type Expr = #num(n: int) | #bool(b: bool) | #var(name: Utf8String)
           | #add(l: Expr, r: Expr) | #eq(l: Expr, r: Expr)
           | #cond(c: Expr, t: Expr, e: Expr) | #bad;
 
-struct Decl { line: int, name: String, expr: Expr }
+struct Decl { line: int, name: Utf8String, expr: Expr }
 
 push(positional st, positional tok) =
   if tok == "+" || tok == "==" {

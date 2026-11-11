@@ -9,7 +9,7 @@
 // signature is written at step L7.5): tumbling windows keyed by start time
 // (time div width * width), absent when empty, each holding its readings
 // under their source keys.
-struct Reading { t: int, sensor: String, v: int }
+struct Reading { t: int, sensor: Utf8String, v: int }
 
 parse(positional l) = {
   w = l.split(" ");

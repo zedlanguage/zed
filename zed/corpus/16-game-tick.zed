@@ -4,7 +4,7 @@
 // summed per player and tick by the declared reducer, and each tick (one
 // generation) applies the coalesced move once, clamped to the track. Applying
 // the events one by one instead clamps in between and prints other positions.
-struct Ev { tick: int, player: String, dx: int }
+struct Ev { tick: int, player: Utf8String, dx: int }
 
 parse(positional l) = {
   w = l.split(" ");
@@ -13,7 +13,7 @@ parse(positional l) = {
 
 main(m: MainArgs) {
   evs = m.stdin.map(l -> parse(l));
-  moves: int ->? String ->? int with reducer((+));
+  moves: int ->? Utf8String ->? int with reducer((+));
   for e in evs { moves[e.tick][e.player] <- e.dx; };
   players = evs.group(e -> e.player);
   last = evs.map(e -> e.tick) >< max else -1;

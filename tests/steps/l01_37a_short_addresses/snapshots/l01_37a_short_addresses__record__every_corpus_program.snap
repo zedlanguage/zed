@@ -31,6 +31,7 @@ expression: without_addresses(&out)
 9:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
 12:32: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 08-utf8-percent.zed (L6): does not load: 8:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+8:39: the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.
 12:36: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 28:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 30:10: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
@@ -69,16 +70,20 @@ expression: without_addresses(&out)
 20:26: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 23:9: a `loop` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 27:15: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-16-game-tick.zed (L7): does not load: 16:3: the signature `moves: int ->? String ->? int with reducer((+));` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+16-game-tick.zed (L7): does not load: 16:3: the signature `moves: int ->? Utf8String ->? int with reducer((+));` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 17-sensor-pipeline.zed (L7): does not load: 12:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+12:34: the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.
 22:15: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 23:13: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 25:47: a reduction `><` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-18-socket-wordfreq.zed (L7): does not load: 9:1: the signature `sock: Stream(String);` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+18-socket-wordfreq.zed (L7): does not load: 9:1: the signature `sock: Stream(Utf8String);` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 19-bank-ledger.zed (L6): does not load: 13:1: a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 13:11: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-13:31: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-13:64: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+13:21: the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.
+13:35: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+13:48: the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.
+13:72: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+13:86: the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.
 26:38: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 27:17: a map display is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 28:26: a map display is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
@@ -96,10 +101,12 @@ expression: without_addresses(&out)
 12:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
 18:15: an array display is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 22-top-k.zed (L5): does not load: 7:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+7:22: the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.
 11:17: a sort key `asc` or `desc` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 11:36: a sort key `asc` or `desc` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 12:15: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 23-join-zoo.zed (L5): does not load: 11:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+11:20: the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.
 18:21: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 20:21: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 26:12: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
@@ -130,6 +137,8 @@ expression: without_addresses(&out)
 18:44: a range is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 19:15: an array display is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 27-parent-chain.zed (L6): does not load: 7:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+7:22: the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.
+7:42: the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.
 13:7: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 18:29: a `loop` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 20:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
@@ -147,7 +156,7 @@ expression: without_addresses(&out)
 40:71: an array display is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 41:28: an array display is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 45:9: a `loop` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-29-late-dedup.zed (L7): does not load: 21:1: the signature `sensors: Stream(String);` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+29-late-dedup.zed (L7): does not load: 21:1: the signature `sensors: Stream(Utf8String);` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 30-client-server.zed (L20): does not load: 11:1: the unit `api` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
 11:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
 12:1: the unit `server` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit

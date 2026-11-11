@@ -4,7 +4,7 @@
 // sorting everything (sort pruning); a pruned plan that keeps the wrong
 // entries on a tie, or drops the tie order, prints a different list.
 // Input lines: "name score".
-struct Entry { name: String, score: int }
+struct Entry { name: Utf8String, score: int }
 
 main(m: MainArgs) {
   es  = m.stdin.map(l -> { w = l.split(" "); Entry(name: w[0] else "", score: int(w[1] else "") else 0) });

@@ -10,7 +10,7 @@
 // splits the level and reduces the good side. A plan that drops the failure,
 // or lets it poison the total of the good accounts, prints something else.
 // Input lines: "open id", "dep id amount", "wd id amount".
-type Tx = #open(id: String) | #deposit(id: String, amt: int) | #withdraw(id: String, amt: int) | #bad;
+type Tx = #open(id: Utf8String) | #deposit(id: Utf8String, amt: int) | #withdraw(id: Utf8String, amt: int) | #bad;
 
 parse(positional l) = {
   w = l.split(" ");

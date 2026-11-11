@@ -6,7 +6,7 @@
 struct KeyVal  grammar { key: JsonStr ":" value: Json }
 struct JsonObj grammar { "{" entries: KeyVal* sep "," "}" }
 struct JsonArr grammar { "[" items: Json* sep "," "]" }
-type JsonStr = String matching grammar { "\"" (alpha | digit | " ")* "\"" };
-type JsonNum = String matching grammar { "-"? digit+ ("." digit+)? };
-type JsonLit = String matching grammar { "true" | "false" | "null" };
+type JsonStr = Utf8String matching grammar { "\"" (alpha | digit | " ")* "\"" };
+type JsonNum = Utf8String matching grammar { "-"? digit+ ("." digit+)? };
+type JsonLit = Utf8String matching grammar { "true" | "false" | "null" };
 type Json    = JsonObj | JsonArr | JsonStr | JsonNum | JsonLit;

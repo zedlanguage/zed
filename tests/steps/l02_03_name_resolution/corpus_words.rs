@@ -2,7 +2,7 @@
 //! and `Stream` is L7's type of a port's values (DESIGN.md, "Defined words by layer"), so no
 //! corpus file reports one of them as not defined.
 
-use super::{alone, describe, errors, later};
+use super::{STR_TYPES_PENDING, alone, describe, errors, later};
 use zedc::ast::unit;
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
@@ -59,7 +59,7 @@ fn stream_is_the_prelude_type_of_l7() {
         let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
         let e = unit(&text, &tokens, &tree).expect_err(path);
         assert!(
-            zed_tests::is_not_yet(&e.to_string()) && e.to_string().contains("Stream(String)"),
+            zed_tests::is_not_yet(&e.to_string()) && e.to_string().contains("Stream(Utf8String)"),
             "{path}: {e}"
         );
     }
@@ -105,6 +105,7 @@ fn no_corpus_file_uses_an_undefined_name() {
     files.sort();
     let (mut resolved, mut later_layer) = (0, 0);
     let mut undefined = Vec::new();
+    let mut pending = Vec::new();
     for p in &files {
         let name = p.strip_prefix(&dir).unwrap().display().to_string();
         let text = std::fs::read_to_string(p).unwrap();
@@ -125,12 +126,35 @@ fn no_corpus_file_uses_an_undefined_name() {
         resolved += 1;
         let r = resolve_in(&stmts, &Alone);
         for e in r.errors.iter().chain(&r.later) {
-            if !later(&e.message) && e.message.contains("is not defined") {
+            if e.message.starts_with(STR_TYPES_PENDING) {
+                pending.push(name.clone());
+            } else if !later(&e.message) && e.message.contains("is not defined") {
                 undefined.push(format!("{name}: {}", e.message));
             }
         }
     }
     assert_eq!(undefined, Vec::<String>::new());
+    // Each use of `Utf8String` in a resolved file, pending STR-types (see `STR_TYPES_PENDING`).
+    assert_eq!(
+        pending,
+        [
+            "08-utf8-percent.zed",
+            "10-regex-matcher/regex.zed",
+            "10-regex-matcher/regex.zed",
+            "10-regex-matcher/regex.zed",
+            "17-sensor-pipeline.zed",
+            "19-bank-ledger.zed",
+            "19-bank-ledger.zed",
+            "19-bank-ledger.zed",
+            "22-top-k.zed",
+            "23-join-zoo.zed",
+            "27-parent-chain.zed",
+            "27-parent-chain.zed",
+            "31-typechecker/ast.zed",
+            "31-typechecker/ast.zed",
+        ],
+        "uses of `Utf8String` pending STR-types; when it lands, this list is empty and goes"
+    );
     assert_eq!(
         (resolved, later_layer, files.len()),
         (37, 12, 50),

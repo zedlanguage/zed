@@ -5,7 +5,7 @@
 // adds the left-only region with pays[j] as #notFound, `j && ?i` the
 // right-only, and `i || j` all three. Must print what 23-join-zoo.zed prints
 // for those four blocks.
-struct Row { side: String, id: int, n: int }
+struct Row { side: Utf8String, id: int, n: int }
 
 parse(positional l) = {
   w = l.split(" ");

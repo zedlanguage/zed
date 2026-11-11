@@ -8,7 +8,7 @@
 // prints a different line. variants/23-join-zoo-remap.zed spells the four
 // joins as output-keypath constraints (L8).
 // Input lines: "O id amount" (an order) or "P id amount" (a payment).
-struct Row { side: String, id: int, n: int }
+struct Row { side: Utf8String, id: int, n: int }
 
 parse(positional l) = {
   w = l.split(" ");

@@ -1,7 +1,7 @@
 //! The binders of L2's declarations: struct names and fields, type names and parameters,
 //! methods and their receiver `this`, and the names `match` arms and patterns bind.
 
-use super::{alone, describe, errors};
+use super::{STR_TYPES_PENDING, alone, describe, errors};
 
 #[test]
 fn a_struct_name_is_a_type_and_its_fields_are_binders_no_scope_holds() {
@@ -122,7 +122,12 @@ fn the_utf8_corpus_program_resolves_the_code_points_its_match_arms_write() {
     );
     let text = std::fs::read_to_string(path).unwrap();
     let r = alone(&text);
-    assert_eq!(errors(&text), Vec::<String>::new());
+    // The decoder's state holds a `Utf8String`, pending STR-types (see `STR_TYPES_PENDING`).
+    let errors = errors(&text);
+    assert!(
+        errors.len() == 1 && errors[0].starts_with(STR_TYPES_PENDING),
+        "{errors:?}"
+    );
     assert_eq!(describe(&text, &r, "scalar", 0), ["prelude scalar"]);
     assert_eq!(describe(&text, &r, "b", 2), ["pattern #byte(b:)"]);
     assert_eq!(describe(&text, &r, "scalar", 1), ["prelude scalar"]);

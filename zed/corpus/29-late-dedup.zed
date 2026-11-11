@@ -11,14 +11,14 @@
 // `.window(width:, time:, lateness:, late:)` is the signature this corpus
 // assumes (its real signature is written at step L7.5), as in 17 plus the
 // lateness bound and the policy #drop.
-struct Reading { id: String, t: int, v: int }
+struct Reading { id: Utf8String, t: int, v: int }
 
 parse(positional l) = {
   w = l.split(" ");
   Reading(id: w[0] else "", t: int(w[1] else "") else -1, v: int(w[2] else "") else 0)
 };
 
-sensors: Stream(String);
+sensors: Stream(Utf8String);
 
 main(m: MainArgs) {
   rs   = sensors.map(l -> parse(l)).where(r -> r.t >= 0);
