@@ -9,6 +9,7 @@
 // `build_binary`, since only a test of that package can name the zedc executable.
 mod agreement;
 mod minmax;
+mod mul_edges;
 mod runtime;
 mod scaling;
 

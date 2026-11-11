@@ -17,6 +17,7 @@ mod kinds;
 mod legalize;
 mod levels;
 mod minmax;
+mod mul_edges;
 mod ports;
 mod pow_nan;
 mod reuse;

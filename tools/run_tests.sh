@@ -504,6 +504,9 @@ fi
 # constraints reduced one at a time took 32 s at load 39 and 10.6 to 12.1 s alone at load 24;
 # it is now two parts of two names each. Each test of both is a piece
 # (2026-11-10, SPLIT-l01_39-rest).
+# l01_36_cranelift mul_edges took 32.8 s whole at load 25: its differential of 100,000 integer
+# pairs takes 26 to 27 s alone and that of 100,000 float pairs 14 to 16 s at load 22 to 26; each
+# test is a piece (2026-11-11, TESTS-L1.36-mul-edges-and-differential).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
@@ -511,6 +514,7 @@ split="
   l01_25_preimage_catalog::exact_oracle
   l01_26_type_resolution l01_26_type_resolution::deep_ops
   l01_36_cranelift l01_36_cranelift::scaling l01_36_cranelift::table
+  l01_36_cranelift::mul_edges
   l01_38_presburger l01_38_presburger::oracle l01_38_presburger::omega
   l01_38_presburger::scaling l01_38_presburger::deep
   l01_38_presburger::names l01_38_presburger::live3
