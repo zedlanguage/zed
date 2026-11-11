@@ -53,32 +53,51 @@ fn held(at: &Path) -> File {
     f
 }
 
+/// The variable that makes this test executable, started by [`Elsewhere::new`], hold the
+/// directory it names locked in [`a_process_that_locks_a_directory_for_another_test`].
+const LOCK_DIR: &str = "ZED_TEST_LOCK_DIR";
+
 /// A process of its own that holds the directory `at` locked, as a running build in another
 /// process holds its working directory, until it is dropped. Its lock is not this process's:
 /// a lock this process held would last past its own release while any child forked in another
 /// test thread before the release has not yet reached exec, since the child holds a copy of
 /// every open file until then, and the lock belongs to the open file, not to the descriptor.
-/// `flock -F` takes the lock and replaces itself by `sh`, which says so and replaces itself by
-/// `cat`, which holds it until it is killed.
+/// The process is this test executable, running only the ignored test
+/// [`a_process_that_locks_a_directory_for_another_test`] with [`LOCK_DIR`] set to `at`; it
+/// takes the lock as a build does, says `held`, and keeps it until it is killed or its
+/// standard input ends, as it does when this process ends however it ends.
 struct Elsewhere(Child);
 
 impl Elsewhere {
     fn new(at: &Path) -> Elsewhere {
-        let mut child = Command::new("flock")
-            .arg("-F")
-            .arg(at)
-            .args(["sh", "-c", "echo held && exec cat"])
+        let exe = std::env::current_exe().unwrap();
+        let mut child = Command::new(&exe)
+            .args([
+                "leftover::a_process_that_locks_a_directory_for_another_test",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(LOCK_DIR, at)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
-            .unwrap_or_else(|e| panic!("flock -F {}: {e}", at.display()));
-        let mut line = String::new();
-        BufReader::new(child.stdout.take().unwrap())
-            .read_line(&mut line)
-            .unwrap();
+            .unwrap_or_else(|e| panic!("{}: {e}", exe.display()));
+        let stdout = BufReader::new(child.stdout.take().unwrap());
         let holder = Elsewhere(child);
-        assert_eq!(line, "held\n", "flock -F {}", at.display());
-        holder
+        // libtest writes its own lines first, and the name of the test on the line it says
+        // `held` on.
+        let mut said = String::new();
+        for line in stdout.lines() {
+            let line = line.unwrap();
+            said.push_str(&line);
+            said.push('\n');
+            if line.trim_end().ends_with("held") {
+                return holder;
+            }
+        }
+        panic!("the process to hold {} locked ended:\n{said}", at.display());
     }
 }
 
@@ -89,6 +108,24 @@ impl Drop for Elsewhere {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+/// Run only by [`Elsewhere::new`], in a process of its own, with [`LOCK_DIR`] set: locks that
+/// directory with the call a build locks its working directory with, says `held`, and keeps
+/// the lock until its standard input ends. Run any other way, it does nothing.
+#[test]
+#[ignore = "run only by Elsewhere::new, in a process of its own"]
+fn a_process_that_locks_a_directory_for_another_test() {
+    use std::io::{Read as _, Write as _};
+    let Some(at) = std::env::var_os(LOCK_DIR) else {
+        return;
+    };
+    let _lock = held(Path::new(&at));
+    let mut out = std::io::stdout();
+    writeln!(out, "held").unwrap();
+    out.flush().unwrap();
+    let mut rest = Vec::new();
+    std::io::stdin().read_to_end(&mut rest).unwrap();
 }
 
 /// A file at the name earlier builds gave the object file stops no build, and is not
