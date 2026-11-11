@@ -6798,13 +6798,19 @@ fn r8_batch_and_single_file_checking_agree() {
         Type::forget_emptiness();
         let batch: Vec<(Verdict, bool)> = ts_batch
             .iter()
-            .map(|t| (t.verdict(), t.is_empty()))
+            .map(|t| {
+                let empty = t.is_empty();
+                (t.verdict(), empty)
+            })
             .collect();
         Type::forget_emptiness();
         let mut rev: Vec<(Verdict, bool)> = ts_batch
             .iter()
             .rev()
-            .map(|t| (t.verdict(), t.is_empty()))
+            .map(|t| {
+                let empty = t.is_empty();
+                (t.verdict(), empty)
+            })
             .collect();
         rev.reverse();
         let alone: Vec<(Verdict, bool)> = (0..batch.len())
@@ -7574,12 +7580,21 @@ fn r9_nested_queries_agree_alone_forward_and_reverse() {
     big(|| {
         let ts = make();
         Type::forget_emptiness();
-        let forward: Vec<_> = ts.iter().map(|t| (t.verdict(), t.is_empty())).collect();
+        let forward: Vec<_> = ts
+            .iter()
+            .map(|t| {
+                let empty = t.is_empty();
+                (t.verdict(), empty)
+            })
+            .collect();
         Type::forget_emptiness();
         let mut reverse: Vec<_> = ts
             .iter()
             .rev()
-            .map(|t| (t.verdict(), t.is_empty()))
+            .map(|t| {
+                let empty = t.is_empty();
+                (t.verdict(), empty)
+            })
             .collect();
         reverse.reverse();
         assert_eq!(forward, reverse);
@@ -7588,7 +7603,10 @@ fn r9_nested_queries_agree_alone_forward_and_reverse() {
                 .stack_size(16 * 1024 * 1024)
                 .spawn(move || {
                     let ts = make();
-                    (ts[i].verdict(), ts[i].is_empty())
+                    {
+                        let empty = ts[i].is_empty();
+                        (ts[i].verdict(), empty)
+                    }
                 })
                 .unwrap()
                 .join()
