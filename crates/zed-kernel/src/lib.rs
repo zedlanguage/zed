@@ -9,6 +9,7 @@
 
 pub mod address;
 pub mod bits;
+pub(crate) mod btree;
 mod deep;
 pub mod digest;
 pub mod eval;

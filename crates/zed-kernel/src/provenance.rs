@@ -8,6 +8,7 @@
 //! [`Evaluator::with_provenance`](crate::Evaluator::with_provenance) asks for them; the
 //! record is the run graph, each fact naming the facts it read.
 
+use crate::btree::DiffItem as Change;
 use imbl::OrdMap;
 /// The persistent vector of a fact address's node and keypath.
 pub use imbl::Vector;
@@ -853,10 +854,8 @@ impl Holds {
                     Some(None) => found = true,
                     Some(Some(base)) => match base.shallow_diff(f, f.len()) {
                         Some(diff) => read(&mut diff.into_iter().filter_map(|d| match d {
-                            DiffItem::Add(_, new) | DiffItem::Update { new: (_, new), .. } => {
-                                Some(new)
-                            }
-                            DiffItem::Remove(..) => None,
+                            Change::Add(_, new) | Change::Update { new: (_, new), .. } => Some(new),
+                            Change::Remove(..) => None,
                         })),
                         None => read(&mut f.0.values()),
                     },
@@ -912,7 +911,7 @@ enum Part {
 }
 
 /// A family whose set is found from the set of `base` and the difference of the two maps.
-type FromBase<'a> = (&'a Family, Vec<DiffItem<'a, 'a, Value, Value>>);
+type FromBase<'a> = (&'a Family, Vec<Change<'a, 'a, Value, Value>>);
 
 /// What [`Held::of`] does next.
 enum Task<'a> {
@@ -996,8 +995,8 @@ impl<'a> Held<'a> {
                     Some((_, diff)) => diff
                         .iter()
                         .flat_map(|d| match d {
-                            DiffItem::Add(_, e) | DiffItem::Remove(_, e) => [Some(*e), None],
-                            DiffItem::Update { old, new } => [Some(old.1), Some(new.1)],
+                            Change::Add(_, e) | Change::Remove(_, e) => [Some(*e), None],
+                            Change::Update { old, new } => [Some(old.1), Some(new.1)],
                         })
                         .flatten()
                         .collect(),
@@ -1050,12 +1049,12 @@ impl<'a> Held<'a> {
                 let mut t = self.tallies[&base.id()].clone();
                 for d in diff {
                     match d {
-                        DiffItem::Add(_, e) => {
+                        Change::Add(_, e) => {
                             let s = self.read(e);
                             t.enter(&s, &self.nodes);
                         }
-                        DiffItem::Remove(_, e) => t.leave(&self.read(e)),
-                        DiffItem::Update { old, new } => {
+                        Change::Remove(_, e) => t.leave(&self.read(e)),
+                        Change::Update { old, new } => {
                             let (old, new) = (self.read(old.1), self.read(new.1));
                             t.swap(&old, &new, &self.nodes);
                         }

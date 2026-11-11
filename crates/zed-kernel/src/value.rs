@@ -40,9 +40,7 @@ use std::slice;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-use imbl::OrdMap;
-use imbl::ordmap::{DiffItem, Iter};
-use imbl::shared_ptr::DefaultSharedPtr;
+use crate::btree::{self, Hole};
 use num_bigint::{BigInt, BigUint};
 use num_traits::ToPrimitive;
 
@@ -446,7 +444,7 @@ impl Value {
     pub fn merge_failures<'a>(atoms: impl IntoIterator<Item = &'a Value>) -> Value {
         // Complexity tradeoff (COMPLEXITY.md K18): the naive merge copies every member of each
         // `#errs` set into a new set, O(n) per merge and O(n²) for a chain of `n` failing
-        // operands. Used: the largest set is shared (imbl) and extended by the others' members,
+        // operands. Used: the largest set is shared (a copy of its persistent map) and extended by the others' members,
         // O(m log n) for the `m` members added, so the chain costs O(n log n). Tradeoff: the
         // smaller sets are still copied in; merging many sets of equal size costs their sum.
         let atoms: Vec<&Value> = atoms.into_iter().collect();
@@ -935,7 +933,14 @@ pub fn fresh_id() -> Id {
 /// the family this one was made from by adding entries to a copy of its map, 0 for none: the
 /// two share all but the nodes the change copied, which provenance reads (`Provenance::origins`).
 #[derive(Clone, Default)]
-pub struct Family(pub(crate) OrdMap<Value, Value>, Id, Id);
+pub struct Family(pub(crate) btree::Map<Value, Value>, Id, Id);
+
+impl Hole for Value {
+    /// `false`, which holds nothing on the heap.
+    fn hole() -> Self {
+        Value::Bool(false)
+    }
+}
 
 impl Drop for Family {
     fn drop(&mut self) {
@@ -1066,13 +1071,13 @@ impl Family {
     }
 
     /// The family of the entries `map`, with an id of its own.
-    pub(crate) fn from_map(map: OrdMap<Value, Value>) -> Self {
+    pub(crate) fn from_map(map: btree::Map<Value, Value>) -> Self {
         Family::made_from(map, 0)
     }
 
     /// The family of the entries `map`, made by adding entries to a copy of the map of the
     /// family whose id is `from`.
-    fn made_from(map: OrdMap<Value, Value>, from: Id) -> Self {
+    fn made_from(map: btree::Map<Value, Value>, from: Id) -> Self {
         match map.is_empty() {
             true => Family::default(),
             false => Family(map, fresh_id(), from),
@@ -1237,7 +1242,7 @@ impl Family {
         &'a self,
         other: &'b Family,
         limit: usize,
-    ) -> Option<Vec<DiffItem<'a, 'b, Value, Value>>> {
+    ) -> Option<Vec<btree::DiffItem<'a, 'b, Value, Value>>> {
         /// Clears `shallow` ([`Comparisons`]) when the walk ends.
         struct Shallow;
         impl Drop for Shallow {
@@ -1272,9 +1277,9 @@ impl Family {
 /// add, and the entries so far.
 struct Merging<'a> {
     big: &'a Family,
-    left: Iter<'a, Value, Value, DefaultSharedPtr>,
+    left: btree::Iter<'a, Value, Value>,
     small_is_b: bool,
-    out: OrdMap<Value, Value>,
+    out: btree::Map<Value, Value>,
 }
 
 impl<'a> Merging<'a> {
@@ -1297,8 +1302,8 @@ impl<'a> Merging<'a> {
 // leaves of both, O(n + m) per union and O(n²) over a loop that adds one entry per step. Used: a
 // persistent ordered map; the smaller family's entries are inserted into a shared copy of the
 // larger's, recursing only where both hold a family under one key, O(m log n) for the smaller
-// size `m`. Tradeoffs: imbl's nodes cost a constant factor in time and memory over a flat
-// vector; a collision is reported where building `a`'s leaves then `b`'s would report it, so the
+// size `m`. Tradeoffs: the B-tree's nodes (`btree`) cost a constant factor in time over a flat
+// vector, each reallocated at its exact length at an insertion into it; a collision is reported where building `a`'s leaves then `b`'s would report it, so the
 // walk keeps the keypath prefix, O(depth) memory.
 fn union(a: &Family, b: &Family) -> Result<Family, KernelError> {
     let mut prefix = Vec::new();
@@ -1368,7 +1373,7 @@ pub(crate) type Pair = (Id, Id);
 #[expect(dead_code, reason = "a part is held only to be dropped")]
 pub(crate) enum Part {
     Items(Arc<[Value]>),
-    Map(OrdMap<Value, Value>),
+    Map(btree::Map<Value, Value>),
 }
 
 thread_local! {
@@ -1571,8 +1576,8 @@ impl ReadSet {
 ///
 /// Every pair of families a walk enters is kept, however the two are held. Keeping only the
 /// pairs that can be met again would need to know which families are held in more than one
-/// place, and nothing shows it: imbl counts the holders of a map's root and of each of its
-/// nodes but gives neither count; a copy of a family is one more holder of the root; and a
+/// place, and the counts kept do not show it: the `Arc` of each node of a map (`btree`) counts
+/// the holders of that node, not of the families in it; a copy of a family is one more holder of the root; and a
 /// family made by adding entries to a copy of another's map shares every node the addition did
 /// not copy, with the values in them. So a family held in one entry of one map is still met
 /// once per family that shares that map's node, and a pair met n times and read each time
@@ -1684,8 +1689,7 @@ fn open<'a>(
                 return Ok(None);
             }
             maps.push(MapLevel {
-                a: a.0.iter(),
-                b: b.0.iter(),
+                pairs: a.0.zip(&b.0),
                 values: None,
                 relation,
                 pair,
@@ -1697,8 +1701,8 @@ fn open<'a>(
 
 /// The entries of two families under comparison.
 struct MapLevel<'a> {
-    a: Iter<'a, Value, Value, DefaultSharedPtr>,
-    b: Iter<'a, Value, Value, DefaultSharedPtr>,
+    /// The entries of the two maps side by side.
+    pairs: btree::Zip<'a, Value, Value>,
     /// The values of the entry whose keys were compared last.
     values: Option<(&'a Value, &'a Value)>,
     relation: Relation,
@@ -1860,7 +1864,10 @@ fn advance<'a>(level: &mut Level<'a>, maps: &mut [MapLevel<'a>]) -> Step<'a> {
             if let Some((v, w)) = level.values.take() {
                 return step(v, w, level.relation);
             }
-            match (level.a.next(), level.b.next()) {
+            // A subtree both maps hold at the same place is equal to itself under every relation
+            // but the IEEE 754 ones, under which a NaN inside is not, so those read it.
+            let skip = !matches!(level.relation, Relation::SurfaceEq | Relation::SurfaceOrder);
+            match level.pairs.next(skip) {
                 (Some((k, v)), Some((l, w))) => {
                     level.values = Some((v, w));
                     // Keys are compared bitwise whichever relation the values are compared by.
@@ -1954,7 +1961,7 @@ fn walk_in(c: &Comparisons, first: Enter<'_>) -> Option<Ordering> {
 
 /// Finishes an identity walk that found `same` so far by reading the queued families. A walk
 /// started while the queue is being read leaves its families in the queue: `diff` calls `==`
-/// on the entries it finds, inside imbl, where no stack of ours can reach, and this keeps that
+/// on the entries it finds, inside `btree::Diff`, where no stack of ours can reach, and this keeps that
 /// call from nesting.
 fn settle(c: &Comparisons, same: bool) -> bool {
     if c.comparing.get() {
@@ -1980,7 +1987,8 @@ fn settle(c: &Comparisons, same: bool) -> bool {
 // one set per relation, kept until the outermost comparison ends (`Scope`). Used: a shared
 // sequence or map is equal to itself at once; each pair of shared parts is read once per
 // comparison, kept in `Comparisons` by the parts' ids, never their addresses;
-// two families under identity are read by imbl's `diff`, which skips the nodes they share. Cost
+// two families under identity are read by `btree::Map::diff`, and the other relations but the
+// IEEE 754 ones by `btree::Zip`, both of which pass over the subtrees the two share. Cost
 // O(distinct pairs of parts read), and for a lattice iterate the nodes the round changed.
 // Tradeoffs: the pair table's memory, kept between comparisons up to 8 times the last one's
 // pairs (`clear`); one hash insert per pair entered, 18 to 24% more instructions on families
