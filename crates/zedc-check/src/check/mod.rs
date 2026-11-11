@@ -70,7 +70,7 @@ use zedc_syntax::ast::{
     Type, TypeKind, shown,
 };
 use zedc_syntax::format::format_type;
-use zedc_syntax::lex::{Span, lex, unread_literal};
+use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
@@ -385,7 +385,7 @@ impl Operands {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
         let mut ck = Ck::new(&t);
-        let (lit, parts) = (literal(&self.e), parts(&self.e));
+        let (lit, parts) = (literal(&self.e, None), parts(&self.e, None));
         let y = (vec![&self.et], lit.as_ref(), parts.as_deref());
         ck.pair((vec![&self.x], None, None), y);
         ck.info.adopt.len()
@@ -404,9 +404,19 @@ struct Lit {
     span: Span,
     site: Span,
     value: Value,
-    /// The literal as written, made in memory asked for first ([`shown`]) and shared by every
-    /// copy of the literal, so a clone copies none of its digits.
+    /// The literal as the lexer reads it, without the `_` that separate its digits, from which
+    /// its value is read; made in memory asked for first ([`shown`]) and shared by every copy
+    /// of the literal, so a clone copies none of its digits.
     text: Rc<String>,
+    /// The literal as the program's text writes it, where that differs from `text`: where it
+    /// separates its digits with `_`, as `1_000.5`. A message quotes this ([`Lit::spelling`]);
+    /// `None` where the two are the same or the program's text is not known.
+    // Complexity tradeoff: a copy of the literal's text, O(its length), made only for a
+    // literal with a `_`, the one case where `text` cannot stand for it. Keeping the span
+    // alone and reading the program's text when printing copies nothing, but needs the text
+    // at each of the many places a message about a literal is written, most of which are
+    // given the literal alone.
+    spelled: Option<Rc<String>>,
     bare: bool,
     generic: bool,
     witness: bool,
@@ -428,11 +438,16 @@ impl Lit {
         self.site != self.span
     }
 
+    /// The literal as the program's text writes it, without its `-`: `1_000.5`, `0xF_F`.
+    fn spelling(&self) -> &str {
+        self.spelled.as_deref().unwrap_or(&self.text)
+    }
+
     /// The literal as the program writes it, with its `-`, written from the shared text when
     /// displayed, so it copies none of the digits.
     fn written(&self) -> impl fmt::Display + '_ {
         let sign = if self.neg() { "-" } else { "" };
-        fmt::from_fn(move |f| write!(f, "{sign}{}", self.text))
+        fmt::from_fn(move |f| write!(f, "{sign}{}", self.spelling()))
     }
 }
 
@@ -1088,7 +1103,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let first = |from: usize, to: usize| {
                 (at.range(from..to).next())
                     .filter(|&(_, &end)| end <= to)
-                    .map(|(&start, &end)| &text[start..end])
+                    .and_then(|(&start, &end)| number_at(text, Span { start, end }))
             };
             (self.near.get().and_then(|s| first(s.start, s.end))).or_else(|| first(0, usize::MAX))
         };
@@ -1531,7 +1546,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let verb = if parts.is_empty() { "is" } else { "gives" };
                     next.push(note(span, format!("{what} {verb} {ty}")));
                     for p in parts {
-                        next.push(match literal(p) {
+                        next.push(match literal(p, self.t.text) {
                             Some(l) => {
                                 note(p.span, literal_note(l.written(), lit_ty(&l.value, l.neg())))
                             }
@@ -3101,7 +3116,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some((_, Src::Name(id))) => Some(Operand::Name(&tables.res.binders[*id].name)),
             _ => exprs[s]
                 .filter(|e| path.is_empty() && is_literal(e))
-                .map(Operand::Literal),
+                .map(|e| Operand::Literal(e, tables.text)),
         });
         let sides = [a, b];
         let mut fixes = [Vec::new(), Vec::new()];
@@ -3233,13 +3248,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     false => menu(l, &held),
                     true => {
                         let own = lit_carrier(&l.value);
-                        let sign = if l.neg() { "-" } else { "" };
                         let names: Vec<&str> = Carrier::of_mask(mask).map(|c| c.name()).collect();
                         let (what, carrier, names) = (article(own), own.name(), names.join(" | "));
-                        let text = &l.text;
+                        let text = l.written();
                         quoting(
                             &format_args!(
-                                "`{sign}{text}` is {what} {carrier}, compared with a value of \
+                                "`{text}` is {what} {carrier}, compared with a value of \
                                  `{names}`, which holds no number"
                             ),
                             || {
@@ -4550,16 +4564,40 @@ fn flows(e: &Expr) -> Vec<Span> {
     }
 }
 
+/// The number `src` writes in `span`, the span of a literal, which holds the literal's grouping
+/// parentheses where it has some (`(1_000)`): the text of the number alone, as the program
+/// writes it; `None` where `span` is not in `src` or holds no number.
+// Complexity tradeoff: a literal without parentheses is its span, O(1); one with them is lexed,
+// O(the length of its span), which is at most the text a message quoting it prints. The naive
+// way, a number token recorded at each literal, would cost the syntax tree a span per literal.
+fn number_at(src: &str, span: Span) -> Option<&str> {
+    let s = src.get(span.start..span.end)?;
+    if !s.starts_with('(') {
+        return Some(s);
+    }
+    let tokens = lex(s).ok()?;
+    let t = (tokens.iter()).find(|t| {
+        matches!(
+            t.tok,
+            Tok::Int { .. } | Tok::Float { .. } | Tok::Rat(_) | Tok::Keyword(_)
+        )
+    })?;
+    s.get(t.span.start..t.span.end)
+}
+
 /// `e` as a numeric literal, perhaps under one `-`; `None` also where the system refuses the
-/// memory to read it, which [`Ck::expr_of`] reports through [`read_literal`].
-fn literal(e: &Expr) -> Option<Lit> {
-    read_literal(e).ok().flatten()
+/// memory to read it, which [`Ck::expr_of`] reports through [`read_literal`]. `src` is the
+/// program's text, from which a message quotes the literal ([`Lit::spelling`]); `None` where
+/// only the literal's value and kind are read.
+fn literal(e: &Expr, src: Option<&str>) -> Option<Lit> {
+    read_literal(e, src).ok().flatten()
 }
 
 /// `e` as a numeric literal, perhaps under one `-`; [`TooLarge`] when the system refuses the
 /// memory to read its digits or to copy its text. The lexer has removed the `_` from the
-/// digits, so they are read where they are, not copied.
-fn read_literal(e: &Expr) -> Result<Option<Lit>, TooLarge> {
+/// digits, so they are read where they are, not copied; the literal as `src`, the program's
+/// text, writes it is kept where it has a `_` ([`Lit::spelled`]).
+fn read_literal(e: &Expr, src: Option<&str>) -> Result<Option<Lit>, TooLarge> {
     let inner = match &e.kind {
         ExprKind::Unary("-", a) => &**a,
         _ => e,
@@ -4575,11 +4613,19 @@ fn read_literal(e: &Expr) -> Result<Option<Lit>, TooLarge> {
         },
         _ => return Ok(None),
     };
+    let text = shown(inner)?;
+    // The lexer keeps every character of a number but the `_`, so the two differ in length
+    // exactly where the program writes a `_`.
+    let spelled = match src.and_then(|s| number_at(s, inner.span)) {
+        Some(s) if s.len() != text.len() => Some(Rc::new(shown(&s)?)),
+        _ => None,
+    };
     Ok(Some(Lit {
         span: inner.span,
         site: e.span,
         value,
-        text: Rc::new(shown(inner)?),
+        text: Rc::new(text),
+        spelled,
         bare,
         generic: false,
         witness: false,
@@ -4590,7 +4636,7 @@ fn read_literal(e: &Expr) -> Result<Option<Lit>, TooLarge> {
 /// a tuple or holds no literal. The tuples nest as deep as the text, so the walk keeps its own
 /// stack: each open tuple's items, the next one, its parts so far, and whether one is a
 /// literal at some depth.
-fn parts(e: &Expr) -> Option<Rc<[Part]>> {
+fn parts(e: &Expr, src: Option<&str>) -> Option<Rc<[Part]>> {
     let ExprKind::Tuple(items) = &e.kind else {
         return None;
     };
@@ -4610,7 +4656,7 @@ fn parts(e: &Expr) -> Option<Rc<[Part]>> {
             continue;
         };
         *next += 1;
-        match (literal(item), &item.kind) {
+        match (literal(item, src), &item.kind) {
             (Some(l), _) => {
                 ps.push(Part::Lit(l));
                 *any = true;
@@ -4999,19 +5045,25 @@ fn only_numbers(t: &Ty) -> bool {
 enum Operand<'e> {
     /// A name.
     Name(&'e str),
-    /// A number or truth-value literal, with or without a `-` ([`is_literal`]).
-    Literal(&'e Expr),
+    /// A number or truth-value literal, with or without a `-` ([`is_literal`]), and the
+    /// program's text, which writes it, where it is known.
+    Literal(&'e Expr, Option<&'e str>),
 }
 
 impl fmt::Display for Operand<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut e = match self {
+        let (mut e, src) = match self {
             Operand::Name(n) => return f.write_str(n),
-            Operand::Literal(e) => *e,
+            Operand::Literal(e, src) => (*e, *src),
         };
         if let ExprKind::Unary("-", a) = &e.kind {
             f.write_str("-")?;
             e = a;
+        }
+        // The literal as the program writes it, `1_000`, where its text is known; else as the
+        // lexer reads it, without the `_`.
+        if let Some(s) = src.and_then(|s| number_at(s, e.span)) {
+            return f.write_str(s);
         }
         match &e.kind {
             ExprKind::Int { radix, digits } => {
@@ -5150,15 +5202,25 @@ fn write_repairs<R: Copy>(
     Ok(())
 }
 
-/// The digits of the literal `l` as written, without its `-` and without the suffix `f64`.
+/// The digits of the literal `l` as the lexer reads them, without its `-`, the `_` that
+/// separate them and the suffix `f64`, from which its value is read.
 fn lit_digits(l: &Lit) -> &str {
     l.text.strip_suffix("f64").unwrap_or(&l.text)
 }
 
+/// The digits of the literal `l` as the program writes them, with the `_` that separate them,
+/// without its `-` and the suffix `f64`: what a fix that rewrites the literal prints.
+fn spelled_digits(l: &Lit) -> &str {
+    let s = l.spelling();
+    s.strip_suffix("f64").unwrap_or(s)
+}
+
 /// The digits before the point of the decimal literal `l` when every digit after it is `0`
-/// and it has no exponent, as `2` for `2.0`: the integer literal of the same value.
+/// and it has no exponent, as `2` for `2.0`, as the program writes them, `1_000` for
+/// `1_000.0`: the integer literal of the same value.
 fn whole_part(l: &Lit) -> Option<&str> {
-    let (whole, frac) = lit_digits(l).split_once('.')?;
+    let (_, frac) = lit_digits(l).split_once('.')?;
+    let (whole, _) = spelled_digits(l).split_once('.')?;
     frac.bytes().all(|b| b == b'0').then_some(whole)
 }
 
@@ -5394,8 +5456,7 @@ fn lit_value(l: &Lit, c: Carrier) -> Option<Value> {
 /// exactly, so none are read.
 fn lit_holds(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
     let sign = if l.neg() { "-" } else { "" };
-    let d = lit_digits(l);
-    let d = d.strip_suffix('r').unwrap_or(d);
+    let d = spelled_digits(l);
     fmt::from_fn(move |f| match c {
         Carrier::F64 => match lit_value(l, c) {
             Some(v) => write!(f, "the literal is then the f64 {v}"),
@@ -5434,7 +5495,7 @@ fn folded(e: &Expr, c: Carrier) -> Option<Value> {
     while let Some(step) = todo.pop() {
         match step {
             Step::Visit(x) => {
-                if let Some(l) = literal(x) {
+                if let Some(l) = literal(x, None) {
                     values.push(lit_value(&l, c)?);
                     continue;
                 }
@@ -5483,9 +5544,9 @@ fn folded(e: &Expr, c: Carrier) -> Option<Value> {
 /// `0.5r`, where it is written in decimal digits, and otherwise in a cast, `f64(0xFF)`, since
 /// a literal in another base takes no suffix.
 fn with_carrier(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
-    let d = lit_digits(l);
     let decimal = lit_carrier(&l.value) == Carrier::F64;
-    let digits = decimal || d.bytes().all(|b| b.is_ascii_digit());
+    let digits = decimal || lit_digits(l).bytes().all(|b| b.is_ascii_digit());
+    let d = spelled_digits(l);
     fmt::from_fn(move |f| match (digits, c) {
         (true, Carrier::Rat) => write!(f, "{d}r"),
         (true, _) if decimal => write!(f, "{d}f64"),
@@ -5660,7 +5721,7 @@ fn unfixed(l: &Lit, cs: &[Carrier], bound: Option<(&str, &Expr)>) -> Msg {
         let with = with_carrier(l, c);
         // The binding rewritten, `y = 0.1f64`, where the literal is the whole value.
         let alone = fmt::from_fn(|f| match bound {
-            Some((n, e)) if literal(e).is_some() => write!(f, "{n} = {sign}{with}"),
+            Some((n, e)) if literal(e, None).is_some() => write!(f, "{n} = {sign}{with}"),
             _ => write!(f, "{sign}{with}"),
         });
         fixes.push(match bound {
@@ -5715,12 +5776,12 @@ fn paired<'e>(a: &'e Expr, b: &'e Expr) -> Option<Vec<(&'e Expr, &'e Expr)>> {
 /// operation on literals alone under `+`, `-`, `*`, `^` and a `-`; `None` otherwise, and for
 /// a `/`, whose rejection where nothing gives it a carrier is the `/`'s own, as it is walked
 /// ([`Ck::apply`]). It costs the size of `e`.
-fn literals_alone(e: &Expr) -> Option<(Vec<Lit>, bool, bool)> {
+fn literals_alone(e: &Expr, src: Option<&str>) -> Option<(Vec<Lit>, bool, bool)> {
     let mut out = Vec::new();
     let (mut rat, mut pow) = (false, false);
     let mut todo = vec![e];
     while let Some(x) = todo.pop() {
-        if let Some(l) = literal(x) {
+        if let Some(l) = literal(x, src) {
             out.push(l);
             continue;
         }
@@ -5750,7 +5811,11 @@ fn literals_alone(e: &Expr) -> Option<(Vec<Lit>, bool, bool)> {
 /// pair is equal; where the pairs' literals take no one carrier, the fix names the literal
 /// instead ([`lit_holds`]). `None` for any other value, which [`unfixed_binding`] then reads.
 /// It costs the size of `e` ([`folded`]).
-fn unfixed_comparison(e: &Expr, place: &dyn fmt::Display) -> Option<(Span, Msg)> {
+fn unfixed_comparison(
+    e: &Expr,
+    place: &dyn fmt::Display,
+    src: Option<&str>,
+) -> Option<(Span, Msg)> {
     let ExprKind::Binary(op @ ("==" | "!="), a, b) = &e.kind else {
         return None;
     };
@@ -5763,7 +5828,7 @@ fn unfixed_comparison(e: &Expr, place: &dyn fmt::Display) -> Option<(Span, Msg)>
     let mut rat_pow = false;
     let lits: Vec<(Vec<Lit>, Vec<Lit>, bool)> = (pairs.iter())
         .map(|(x, y)| {
-            let ((xs, r, p), (ys, s, q)) = (literals_alone(x)?, literals_alone(y)?);
+            let ((xs, r, p), (ys, s, q)) = (literals_alone(x, src)?, literals_alone(y, src)?);
             rat_pow |= (r || s) && (p || q);
             Some((xs, ys, r || s))
         })
@@ -5849,7 +5914,7 @@ fn unfixed_comparison(e: &Expr, place: &dyn fmt::Display) -> Option<(Span, Msg)>
 /// Complexity tradeoff: the naive test walks each operation to see whether a written literal
 /// reaches it, O(|e| · depth), O(|e|²) for `((1 ^ 2) ^ 3) ^ …`; here only the operations on
 /// the path to a written literal are visited, and the paths lie in disjoint operands.
-fn unreached(roots: &[&Expr], written: Span) -> Vec<Lit> {
+fn unreached(roots: &[&Expr], written: Span, src: Option<&str>) -> Vec<Lit> {
     let holds = |x: &Expr, at: usize| x.span.start <= at && at < x.span.end;
     let mut out: Vec<Lit> = Vec::new();
     let mut todo: Vec<(&Expr, usize)> = (roots.iter())
@@ -5857,7 +5922,7 @@ fn unreached(roots: &[&Expr], written: Span) -> Vec<Lit> {
         .map(|&r| (r, written.start))
         .collect();
     while let Some((x, at)) = todo.pop() {
-        if literal(x).is_some() {
+        if literal(x, None).is_some() {
             continue;
         }
         match &x.kind {
@@ -5868,8 +5933,8 @@ fn unreached(roots: &[&Expr], written: Span) -> Vec<Lit> {
                 };
                 todo.push((with, at));
                 if *op == "^"
-                    && literal(other).is_none()
-                    && let Some(l) = first_literal(other)
+                    && literal(other, None).is_none()
+                    && let Some(l) = first_literal(other, src)
                 {
                     todo.push((other, l.span.start));
                     out.push(l);
@@ -5885,9 +5950,9 @@ fn unreached(roots: &[&Expr], written: Span) -> Vec<Lit> {
 
 /// The first literal of `e` in the order of the text, down its left operands; it costs the
 /// depth of that path.
-fn first_literal(mut e: &Expr) -> Option<Lit> {
+fn first_literal(mut e: &Expr, src: Option<&str>) -> Option<Lit> {
     loop {
-        if let Some(l) = literal(e) {
+        if let Some(l) = literal(e, src) {
             return Some(l);
         }
         e = match &e.kind {
@@ -5927,8 +5992,9 @@ fn unfixed_binding(
     n: &str,
     place: &dyn fmt::Display,
     whole: bool,
+    src: Option<&str>,
 ) -> Option<(Span, Msg)> {
-    if let Some(r) = unfixed_comparison(e, place) {
+    if let Some(r) = unfixed_comparison(e, place, src) {
         return Some(r);
     }
     let mut stack = match &e.kind {
@@ -5948,9 +6014,9 @@ fn unfixed_binding(
                 pow |= *op == "^";
                 stack.extend([&**b, &**a]);
             }
-            ExprKind::Unary("-", a) if literal(x).is_none() => stack.push(a),
+            ExprKind::Unary("-", a) if literal(x, None).is_none() => stack.push(a),
             _ => {
-                let l = literal(x).filter(|l| l.bare)?;
+                let l = literal(x, src).filter(|l| l.bare)?;
                 lits.push(l);
             }
         }
@@ -5969,7 +6035,7 @@ fn unfixed_binding(
     if let Some(l) = lits.iter().find(is_decimal) {
         let mut m = unfixed(l, &[], Some((n, e)));
         let forms = forms.filter(|f| *f != Form::Cast);
-        let mut leaves = unreached(&roots, l.span);
+        let mut leaves = unreached(&roots, l.span, src);
         leaves.push(l.clone());
         leaves.sort_by_key(|l| l.span.start);
         m.fixes = forms
@@ -5981,7 +6047,7 @@ fn unfixed_binding(
     let ExprKind::Binary(_, a, b) = &d.kind else {
         unreachable!("a `/`")
     };
-    let two = lits.len() == 2 && literal(a).is_some() && literal(b).is_some();
+    let two = lits.len() == 2 && literal(a, None).is_some() && literal(b, None).is_some();
     let why = match pow {
         false => {
             "nothing here gives them a carrier; `/` has no arrow at `int`, and Zed does not \
@@ -5993,7 +6059,7 @@ fn unfixed_binding(
         }
     };
     let m = quoting(
-        &fmt::from_fn(|f| match (two, literal(a), literal(b)) {
+        &fmt::from_fn(|f| match (two, literal(a, src), literal(b, src)) {
             (true, Some(x), Some(y)) if whole => write!(
                 f,
                 "`{n} = {x} / {y}` divides two integer literals, and {why}",
@@ -6016,7 +6082,7 @@ fn unfixed_binding(
     // The first literal of the value, whose carrier reaches the rest ([`unreached`]), in a
     // cast, `f64(1)`; with the suffix, `1.0f64`, where each is written in decimal digits,
     // since otherwise that form is the cast; and at `rat`, but for a `^`.
-    let mut leaves = unreached(&roots, lits[0].span);
+    let mut leaves = unreached(&roots, lits[0].span, src);
     leaves.insert(0, lits[0].clone());
     let leaves = &leaves[..];
     let digits = (leaves.iter()).all(|p| lit_digits(p).bytes().all(|b| b.is_ascii_digit()));
@@ -6026,7 +6092,7 @@ fn unfixed_binding(
     if !digits {
         forms.sort_by_key(|f| *f != Form::Cast);
     }
-    let divisor = literal(b).filter(|_| two);
+    let divisor = literal(b, src).filter(|_| two);
     let bound = whole.then_some(n);
     let fixes =
         (forms.into_iter()).map(|f| leaves_with(leaves, f, place, bound, e, divisor.as_ref()));
@@ -6234,13 +6300,13 @@ impl ValueParts<'_> {
 /// `y[0] is 0.5`. `whole` is whether `e` is the whole value of `n`, not one component of a
 /// tuple bound to several names. It costs the size of `e` ([`value_parts`]), and the fixes
 /// the length of the line and the depth of each rejected part.
-fn unfixed_parts(e: &Expr, n: &str, whole: bool) -> Vec<(Span, Span, Msg)> {
+fn unfixed_parts(e: &Expr, n: &str, whole: bool, src: Option<&str>) -> Vec<(Span, Span, Msg)> {
     let parts = value_parts(e);
     let root = (n != "_").then_some(n);
     let mut out = Vec::new();
     for &(x, at) in &parts.leaves {
         let place = parts.place(root, at);
-        if let Some((s, m)) = unfixed_binding(x, n, &place, whole && at.is_none()) {
+        if let Some((s, m)) = unfixed_binding(x, n, &place, whole && at.is_none(), src) {
             out.push((x.span, s, m));
         }
     }
@@ -6285,7 +6351,7 @@ fn leaves_with(
         .map(|p| {
             let with = with_carrier(p, c);
             fmt::from_fn(move |f| match form {
-                Form::Cast => write!(f, "f64({})", lit_digits(p)),
+                Form::Cast => write!(f, "f64({})", spelled_digits(p)),
                 Form::Suffix(_) => write!(f, "{with}"),
             })
         })
@@ -6301,7 +6367,7 @@ fn leaves_with(
                     write!(f, "{n} = {sign}{t} / {}", y.written())
                 }
                 (Some(y), None) if y.site != p.site => write!(f, "{sign}{t} / {}", y.written()),
-                (_, Some(n)) if literal(e).is_some() => write!(f, "{n} = {sign}{t}"),
+                (_, Some(n)) if literal(e, None).is_some() => write!(f, "{n} = {sign}{t}"),
                 _ => write!(f, "{sign}{t}"),
             }
         }
@@ -6321,20 +6387,23 @@ fn leaves_with(
 /// literal, `k` or `-k` with `k` written `1r` or `0.5r`, each with its type and the repair
 /// that writes it, in the order of [`menu`]: the `f64` literal, `1.0` or `0.5`, where the
 /// number is an `f64` exactly, then the `int` literal, `1`, where it is written without a
-/// point; `None` when `e` is no `rat` literal. A literal has no length limit, so a repair
-/// that quotes it is written in memory asked for first ([`quoting`]).
-fn rat_forms(e: &Expr) -> Option<Vec<(Ty, String)>> {
-    let (neg, digits) = match &e.kind {
-        ExprKind::Rat(d) => (false, d),
-        ExprKind::Unary("-", a) => match &a.kind {
-            ExprKind::Rat(d) => (true, d),
-            _ => return None,
-        },
-        _ => return None,
+/// point; `None` when `e` is no `rat` literal. A repair writes the literal's digits as `src`,
+/// the program's text, writes them, `1_000.0` for `1_000r`, where it is known. A literal has
+/// no length limit, so a repair that quotes it is written in memory asked for first
+/// ([`quoting`]).
+fn rat_forms(e: &Expr, src: Option<&str>) -> Option<Vec<(Ty, String)>> {
+    let (neg, inner) = match &e.kind {
+        ExprKind::Unary("-", a) => (true, &**a),
+        _ => (false, e),
+    };
+    let ExprKind::Rat(digits) = &inner.kind else {
+        return None;
     };
     let v = neg_value(&Value::rat(Rat::decimal(digits).ok()??), neg);
     let sign = if neg { "-" } else { "" };
     let point = digits.contains('.');
+    let written = src.and_then(|s| number_at(s, inner.span));
+    let digits = written.and_then(|w| w.strip_suffix('r')).unwrap_or(digits);
     let mut out = Vec::new();
     for (prim, carrier, suffix) in [
         (Prim::CastF64, Carrier::F64, if point { "" } else { ".0" }),

@@ -1019,7 +1019,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.ret = Ret::Arg(Arg {
                     at: Some(e.span),
                     expr: Some(e),
-                    parts: parts(e),
+                    parts: parts(e, self.t.text),
                     ..Arg::of(t)
                 });
             }
@@ -1168,7 +1168,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     m.job(Job::Arg(k, Want::default()));
                     return;
                 };
-                let i = match literal(k).map(|l| l.value) {
+                let i = match literal(k, None).map(|l| l.value) {
                     Some(Value::Int(i)) => i,
                     _ => return m.ty(Ty::dynamic()),
                 };
@@ -1471,9 +1471,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Target::Wild => "_",
             };
             let found = match (&targets[..], &value.kind) {
-                ([t], _) => unfixed_parts(value, name(t), true),
+                ([t], _) => unfixed_parts(value, name(t), true, self.t.text),
                 (ts, ExprKind::Tuple(items)) if items.len() == ts.len() => (ts.iter().zip(items))
-                    .flat_map(|(t, x)| unfixed_parts(x, name(t), false))
+                    .flat_map(|(t, x)| unfixed_parts(x, name(t), false, self.t.text))
                     .collect(),
                 _ => Vec::new(),
             };
@@ -1607,7 +1607,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let p = &s.f.params[s.given.len()];
             let d = p.default.as_ref().expect("a closed default");
             self.drop_met(before);
-            self.rejects_unfixed(before, unfixed_parts(d, &p.name, true));
+            self.rejects_unfixed(before, unfixed_parts(d, &p.name, true, self.t.text));
             let mut out = Ty::empty();
             for piece in t.pieces() {
                 out = out.union(&match piece.carrier() {
@@ -1758,7 +1758,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// An argument: a numeric literal kept unadopted, a function in a slot of function type
     /// fitted to it, else the expression's type.
     fn arg(&mut self, m: &mut M<'a>, e: &'a Expr, want: Want) {
-        if let Some(l) = literal(e) {
+        if let Some(l) = literal(e, self.t.text) {
             self.spells(&l.value, l.span);
             m.ret = Ret::Arg(Arg {
                 ty: lit_ty(&l.value, l.neg()),
@@ -1786,7 +1786,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 return m.ty(t);
             }
         }
-        if let (Some(l), Some(c)) = (literal(e), want.num) {
+        if let (Some(l), Some(c)) = (literal(e, self.t.text), want.num) {
             self.spells(&l.value, l.span);
             let from = self.errors.len();
             let t = self.adopt_to(&l, c);
@@ -1802,7 +1802,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     fn expr_of(&mut self, m: &mut M<'a>, e: &'a Expr) {
-        match read_literal(e) {
+        match read_literal(e, self.t.text) {
             Ok(Some(l)) => {
                 self.spells(&l.value, l.span);
                 let t = match self.info.adopt.get(&l.span) {
@@ -1959,7 +1959,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // there, `"${(0.5, 1)}"`. The walk costs the size of the hole
                     // ([`value_parts`]).
                     for (x, _) in value_parts(h).leaves {
-                        if let Some(l) = literal(x).filter(|l| l.bare)
+                        if let Some(l) = literal(x, self.t.text).filter(|l| l.bare)
                             && lit_carrier(&l.value) != Carrier::Int
                         {
                             let notes = self.derive(&[l.site]);
@@ -2042,7 +2042,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let joined = match self.class_of_ty(t) {
                 Some(g) if self.classes[g].generic => self.merge(k, g, "an `if`", e.span),
                 Some(_) => false,
-                None => literal(exported(e))
+                None => literal(exported(e), None)
                     .filter(|l| l.bare)
                     .is_some_and(|l| self.join(k, &l.joining(), false)),
             };
@@ -2121,7 +2121,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut todo = vec![e];
         while let Some(e) = todo.pop() {
             nodes.push(e);
-            if literal(e).is_some() {
+            if literal(e, None).is_some() {
                 continue;
             }
             match &e.kind {
@@ -2139,7 +2139,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let live = !self.trying && self.replaying == 0;
         for e in nodes {
-            if let Some(l) = literal(e) {
+            if let Some(l) = literal(e, self.t.text) {
                 self.adopt_to(&l, c);
             } else if live && let Some(r) = self.lit_written.remove(&e.span) {
                 self.lit_dropped.insert(r.start, r.end);
@@ -2229,7 +2229,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             for (side, other) in [(p, q), (q, p)] {
                 if !self.lit_ops.contains(&side.span)
                     || self.lit_ops.contains(&other.span)
-                    || literal(other).is_some_and(|l| l.bare)
+                    || literal(other, None).is_some_and(|l| l.bare)
                 {
                     continue;
                 }
@@ -6670,7 +6670,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let t = self.t;
             let (name, written) = match self.seen.get(at) {
                 Some((_, Src::Name(id))) => (Some(&t.res.binders[*id].name), None),
-                Some((_, Src::Other(e))) => (None, rat_forms(e)),
+                Some((_, Src::Other(e))) => (None, rat_forms(e, self.t.text)),
                 _ => (None, None),
             };
             if let Some(forms) = written {
@@ -7977,6 +7977,13 @@ impl<'a> Ck<'_, 'a> {
         };
         let mut notes = Vec::new();
         let reason = match why {
+            // The literal as the program writes it, `0_0` or `0r`.
+            Zero::Literal if is_literal(b) => {
+                format!(
+                    "its divisor is the literal {}",
+                    Operand::Literal(b, self.t.text)
+                )
+            }
             Zero::Literal => "its divisor is the literal 0".to_string(),
             Zero::Type(t) => format!("its divisor has the type `{t}`, whose only value is 0"),
             Zero::Folded => "its divisor is built from constants and works out to 0".to_string(),

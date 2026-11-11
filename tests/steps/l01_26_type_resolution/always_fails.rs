@@ -36,11 +36,11 @@ fn a_divisor_that_is_always_zero_is_rejected() {
         ),
         (
             "f(x: int) = x div -0;",
-            div_zero("div", literal, "an int", "x div -0"),
+            div_zero("div", "its divisor is the literal -0", "an int", "x div -0"),
         ),
         (
             "f(x: rat) = x / 0r;",
-            div_zero("/", literal, "a rat", "x / 0r"),
+            div_zero("/", "its divisor is the literal 0r", "a rat", "x / 0r"),
         ),
         (
             "f(x: rat) = x / 0;",

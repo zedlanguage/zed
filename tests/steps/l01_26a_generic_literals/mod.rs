@@ -13,6 +13,7 @@ mod lazy_carrier;
 mod scaling;
 mod spelling;
 mod tuples;
+mod written;
 
 use zed_tests::tokens;
 use zedc::lex::lex_fence;
