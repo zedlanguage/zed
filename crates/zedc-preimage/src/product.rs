@@ -2425,6 +2425,17 @@ impl Block {
                 }
             }
         }
+        // Complexity tradeoff: naive version, main's rule, a part due only when the constraints
+        // on its own terms change, 7k + 1 projections for the star `a >= x + y` and k
+        // disjunctions `x + j * y >= 1 || x - j * y >= 1`, but coarser ends at seeds 781, 1515
+        // and 1820. Used: each part whose group changed is due at once, (3k + 1)(k + 1)
+        // projections on that star (833, 3,201, 12,545 at k = 16, 32, 64), O(k^2): each arm of
+        // a disjunction adds a constraint to the group of `a >= x + y`, which all k parts hold
+        // two variables of, and the join of the arms then drops each part's record, since the
+        // two arms projected it with different constraints, so the reduce after the join
+        // projects all k again. Projecting such parts only when a hub is read (option C, built
+        // and measured, not kept) gives the same counts, since the join reads both arms' hubs.
+        // Open, needs cross-review; the existing star scaling test fails. COMPLEXITY.md C52.
         for at in on {
             let Some(part) = self.parts.get_mut(&at) else {
                 continue;
