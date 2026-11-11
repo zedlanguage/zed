@@ -1856,12 +1856,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | DAGVIEW-counter-cost | impl attempt 1 | 2026-11-11 11:26 | fix 2 (per-pass counts, counted Fenwick walk only with a Work) against 1173067d2, instr/rep: spread 1.0106, balance 1.0049, layersPrev 0.981, decross 1.0001, li |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
+| LIT-tuple-rest | impl attempt 1 | 2026-11-10 12:02 | started: worktree lit-tuple-rest on e4d42c6ee, spec copy 86f31d5 at wt/ltr-scratch/spec |
 | LOAD-max-div-xr | coord attempt 5 | 2026-11-10 01:18 | start rounds 5-10 coordinator; committed Claude seat's unfinished round-4 tree as b07e4522 on wt/lmd-claude; load5 32.66 |
 | NAMES-levels-spec | spec attempt 1 | 2026-11-11 13:13 | started; making worktrees names-spec (zed) and names-spec-impl (zed-impl) |
 | PERF-negated-chain-xr | impl attempt 2 | 2026-11-10 06:16 | started rounds 4-9: Claude round-3 tree committed 9a579263 (wt/pncx-claude), rebased onto origin/main 9bbeb1ff as 448bad52 on wt/perf-negated-chain; control tre |
 | REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | rounds 7-8 started; committing review tree (Claude R5 + probe), bringing Claude R6 onto the branch, rebasing on origin/main 4777a33e / load 52.67 38.82 33.29 |
 | TESTS-coverage-projection-paths | impl attempt 1 | 2026-11-08 23:59 | started: worktree wt/tests-cpp at 0daabc071, spec copy ac7d365 in tcp-scratch/zedspec |
-| TESTS-messages-never-produced | impl attempt 1 | 2026-11-08 23:59 | started; worktree tests-mnp at 0daabc071 seeded |
+| TESTS-messages-never-produced | impl attempt 1 | 2026-11-08 23:59 | ready on wt/tests-mnp a4e545701: 14 tests pinned, 2 pending, 4 messages fixed, 7 DELETE-msg rows and 4 MSG rows queued / 31.71 31.40 30.12 |
+| WITH-initial-push-msg | impl attempt 1 | 2026-11-09 19:57 | started; making worktree wt/with-push-msg from origin/main e4d42c6ee |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
