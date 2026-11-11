@@ -1,5 +1,6 @@
-// Lays the plan out with ELK (layered: network-simplex layering, layer-sweep
-// crossing reduction, Brandes-Koepf node placement, edges from one node merged),
+// Lays the plan out with d3-dag (d3dag.ts, the default) or with ELK (layered:
+// network-simplex layering, layer-sweep crossing reduction, Brandes-Koepf
+// node placement, edges from one node merged),
 // narrows the result (narrow.ts) and has ELK route the edges again for the new
 // places (layoutTwice). One layout of the plan of 2026-11-07 (1,100 nodes, 1,800
 // direct edges) takes 3 to 4 s of one core, and 15 s with all 3,650 edges. It
@@ -10,7 +11,10 @@ import { Worker } from "node:worker_threads";
 import { narrow } from "./narrow.ts";
 
 export interface Box { id: string; w: number; h: number }
-export interface Graph { nodes: Box[]; edges: [string, string][] }
+// The layout methods; the page picks one and the server falls back to the first.
+export const METHODS = ["d3dag", "elk"] as const;
+export type Method = (typeof METHODS)[number];
+export interface Graph { nodes: Box[]; edges: [string, string][]; method?: Method }
 export interface Point { x: number; y: number }
 export interface Layout {
   key: string;
@@ -73,10 +77,10 @@ const options = {
 // Names the layout method in each key, so a layout saved by an older method is
 // not taken for a layout of the same graph by this one. Change it whenever the
 // layout changes.
-const METHOD = "narrowed 2026-11-07";
+const METHOD: Record<Method, string> = { elk: "narrowed 2026-11-07", d3dag: "d3-dag 1.2.2 narrowed 2026-11-10" };
 
 export function graphKey(g: Graph): string {
-  return `${METHOD} ${JSON.stringify(g)}`;
+  return `${METHOD[g.method ?? METHODS[0]]} ${JSON.stringify({ nodes: g.nodes, edges: g.edges })}`;
 }
 
 // Edges to unknown nodes are dropped; a cycle in the plan is broken by ELK,

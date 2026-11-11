@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { graphKey, Layouts, layoutInWorker } from "./layout.ts";
+import { graphKey, Layouts, layoutInWorker, METHODS } from "./layout.ts";
 import type { Graph, Layout } from "./layout.ts";
 
 const graph: Graph = {
@@ -14,22 +14,72 @@ const graph: Graph = {
   edges: [["A", "B"], ["B", "C"], ["C", "D"], ["D", "C"], ["A", "X"]],
 };
 
-test("the worker lays out every node at its size, top to bottom, and draws each known edge", async () => {
-  const l = await layoutInWorker(graph);
-  assert.equal(l.key, graphKey(graph));
-  assert.deepEqual(Object.keys(l.boxes).sort(), ["A", "B", "C", "D"]);
-  assert.equal(l.boxes.B.w, 330);
-  assert.equal(l.boxes.B.h, 147);
-  assert.ok(l.boxes.A.y < l.boxes.B.y && l.boxes.B.y < l.boxes.C.y);
-  for (const b of Object.values(l.boxes)) {
-    assert.ok(b.x - b.w / 2 >= 0 && b.x + b.w / 2 <= l.w && b.y - b.h / 2 >= 0 && b.y + b.h / 2 <= l.h);
-  }
-  assert.deepEqual(l.edges.map((e) => `${e.from}>${e.to}`).sort(), ["A>B", "B>C", "C>D", "D>C"]);
-  for (const e of l.edges) assert.ok(e.points.length >= 2);
+for (const method of METHODS) {
+  const g: Graph = { ...graph, method };
+  test(`the worker lays out every node at its size, top to bottom, and draws each known edge (${method})`, async () => {
+    const l = await layoutInWorker(g);
+    assert.equal(l.key, graphKey(g));
+    assert.deepEqual(Object.keys(l.boxes).sort(), ["A", "B", "C", "D"]);
+    assert.equal(l.boxes.B.w, 330);
+    assert.equal(l.boxes.B.h, 147);
+    assert.ok(l.boxes.A.y < l.boxes.B.y && l.boxes.B.y < l.boxes.C.y);
+    for (const b of Object.values(l.boxes)) {
+      assert.ok(b.x - b.w / 2 >= 0 && b.x + b.w / 2 <= l.w && b.y - b.h / 2 >= 0 && b.y + b.h / 2 <= l.h);
+    }
+    assert.deepEqual(l.edges.map((e) => `${e.from}>${e.to}`).sort(), ["A>B", "B>C", "C>D", "D>C"]);
+    for (const e of l.edges) assert.ok(e.points.length >= 2);
+  });
+
+  test(`the same graph gives the same layout (${method})`, async () => {
+    assert.deepEqual(await layoutInWorker(g), await layoutInWorker(g));
+  });
+}
+
+test("a graph with no method is laid out by the first method, and each method has its own key", () => {
+  assert.equal(METHODS[0], "d3dag");
+  assert.equal(graphKey(graph), graphKey({ ...graph, method: "d3dag" }));
+  assert.notEqual(graphKey({ ...graph, method: "d3dag" }), graphKey({ ...graph, method: "elk" }));
 });
 
-test("the same graph gives the same layout", async () => {
-  assert.deepEqual(await layoutInWorker(graph), await layoutInWorker(graph));
+test("d3-dag: each edge runs from its source's bottom to its target's top, an edge of a cycle is drawn upward, and repeated edges and loops are drawn", async () => {
+  const g: Graph = {
+    nodes: [...graph.nodes, { id: "E", w: 210, h: 52 }, { id: "F", w: 210, h: 52 }],
+    edges: [...graph.edges, ["A", "D"], ["E", "E"], ["A", "B"]],
+    method: "d3dag",
+  };
+  const l = await layoutInWorker(g);
+  // E stands alone; F has no edges at all.
+  assert.deepEqual(Object.keys(l.boxes).sort(), ["A", "B", "C", "D", "E", "F"]);
+  assert.deepEqual(l.edges.map((e) => `${e.from}>${e.to}`).sort(), ["A>B", "A>B", "A>D", "B>C", "C>D", "D>C", "E>E"]);
+  const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+  for (const e of l.edges) {
+    const s = l.boxes[e.from], t = l.boxes[e.to], p = e.points, a = p[0], z = p[p.length - 1];
+    for (const q of p) assert.ok(q.x >= 0 && q.x <= l.w && q.y >= 0 && q.y <= l.h, `${e.from}>${e.to} leaves the chart`);
+    if (e.from === e.to) {
+      assert.ok(near(a.x, s.x + s.w / 2) && near(z.x, s.x + s.w / 2), "a loop starts and ends on the right side");
+      continue;
+    }
+    // A cycle (C, D) is broken by drawing one of its edges upward.
+    const up = s.y > t.y;
+    assert.ok(near(a.y, up ? s.y - s.h / 2 : s.y + s.h / 2), `${e.from}>${e.to} starts off its source`);
+    assert.ok(near(z.y, up ? t.y + t.h / 2 : t.y - t.h / 2), `${e.from}>${e.to} ends off its target`);
+    assert.ok(Math.abs(a.x - s.x) <= s.w / 2 && Math.abs(z.x - t.x) <= t.w / 2);
+  }
+  assert.equal(l.edges.filter((e) => l.boxes[e.from].y > l.boxes[e.to].y).length, 1);
+  // A to D crosses the layers of B and C, so it bends there.
+  assert.ok(l.edges.find((e) => e.from === "A" && e.to === "D")!.points.length > 2);
+  // Boxes in one layer do not overlap.
+  const bs = Object.values(l.boxes);
+  for (const p of bs) for (const q of bs) {
+    if (p !== q && Math.abs(p.y - q.y) < (p.h + q.h) / 2) assert.ok(Math.abs(p.x - q.x) >= (p.w + q.w) / 2, "two boxes overlap");
+  }
+});
+
+test("d3-dag: an empty graph and a single node are laid out", async () => {
+  const empty = await layoutInWorker({ nodes: [], edges: [], method: "d3dag" });
+  assert.deepEqual([empty.boxes, empty.edges], [{}, []]);
+  const one = await layoutInWorker({ nodes: [{ id: "A", w: 210, h: 52 }], edges: [], method: "d3dag" });
+  assert.deepEqual(Object.keys(one.boxes), ["A"]);
 });
 
 test("the last layout is served while a newer graph is laid out; a running layout finishes, then the newest graph asked for meanwhile is laid out", async () => {

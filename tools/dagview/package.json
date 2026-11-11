@@ -8,6 +8,10 @@
     "test": "node --test"
   },
   "dependencies": {
+    "d3-dag": "1.2.2",
     "elkjs": "0.11.0"
+  },
+  "overrides": {
+    "d3-array": "3.2.4"
   }
 }

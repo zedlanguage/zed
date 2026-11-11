@@ -1,6 +1,7 @@
 // The page: reads /api/state when the server reports a change on /api/events,
 // and once a minute while visible for the durations and the load; asks the
-// server for a layout (/api/layout, laid out with ELK), draws it. It does no
+// server for a layout (/api/layout, laid out with d3-dag or ELK, as the
+// Layout control and the ?layout= parameter pick), draws it. It does no
 // work between those. The view (pan and zoom) survives every update; a new
 // layout is asked for only when the set of nodes, the set of expanded nodes or
 // the edge mode changes, and the last layout stays on screen until it arrives.
@@ -26,6 +27,10 @@ interface Layout {
 }
 
 const TICK_MS = 60_000;
+// The layout methods the server offers (METHODS in layout.ts), the default first.
+const METHODS: [string, string][] = [["d3dag", "d3-dag"], ["elk", "ELK"]];
+const asked = new URLSearchParams(location.search).get("layout");
+let method = METHODS.some(([m]) => m === asked) ? asked! : METHODS[0][0];
 const WIDE = 330;
 const NARROW = 210;
 
@@ -89,6 +94,8 @@ let selected: string | null = null;
 let freshBody = "";
 let drawnKey = "";
 let layoutNote = "";
+// Set when the layout method changes: the next layout drawn is fitted to the view again.
+let refit = false;
 let positions = new Map<string, { x: number; y: number; w: number; h: number }>();
 let extent = { w: 1, h: 1 };
 const view = { x: 0, y: 0, k: 1 };
@@ -165,6 +172,27 @@ button("+", "Zoom in", () => { const c = centerOf(); zoomAt(c.x, c.y, 1.3); });
 button("−", "Zoom out", () => { const c = centerOf(); zoomAt(c.x, c.y, 1 / 1.3); });
 button("Fit all", "Show the whole DAG", () => fit());
 button("In progress", "Show the nodes in progress and their neighbors", () => fit(focusIds()));
+const picker = el("select");
+picker.title = "Layout method";
+picker.setAttribute("aria-label", "Layout method");
+for (const [m, label] of METHODS) {
+  const o = el("option", "", `Layout: ${label}`);
+  o.value = m;
+  picker.append(o);
+}
+picker.value = method;
+// The choice is kept in the address (?layout=elk), so a reload or a shared link keeps it.
+picker.addEventListener("change", () => {
+  method = picker.value;
+  const u = new URL(location.href);
+  if (method === METHODS[0][0]) u.searchParams.delete("layout");
+  else u.searchParams.set("layout", method);
+  history.replaceState(null, "", u);
+  freshBody = "";
+  refit = true;
+  void refresh();
+});
+tools.append(picker);
 search.addEventListener("input", () => {
   const q = search.value.trim().toLowerCase();
   for (const [id, card] of cards) {
@@ -211,7 +239,7 @@ async function relayout(s: State): Promise<void> {
     nodes: s.nodes.map((n) => ({ id: n.id, ...sizeOf(n) })),
     edges: edgesOf(s),
   };
-  const body = JSON.stringify({ mode: "all", graph });
+  const body = JSON.stringify({ mode: "all", method, graph });
   if (body === freshBody) return;
   const res = await fetch("/api/layout", { method: "POST", body });
   if (!res.ok) throw new Error(String(res.status));
@@ -223,6 +251,10 @@ async function relayout(s: State): Promise<void> {
 
 function draw(l: Layout, s: State): void {
   drawnKey = l.key;
+  if (refit) {
+    refit = false;
+    placed = false;
+  }
   extent = { w: l.w, h: l.h };
   positions = new Map(Object.entries(l.boxes));
   svg.setAttribute("width", String(extent.w));
