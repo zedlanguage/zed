@@ -207,6 +207,8 @@ const PROGRAM_FACETS: &[(&str, &str)] = &[("L12", "parity"), ("L12", "latency"),
 /// holds that each is not yet known, so that row must take it out of this list.
 const PENDING: &[(&str, &str)] = &[
     ("failure", "PORT-ack-name"),
+    ("keeps", "L7.4"),
+    ("bitorder", "TERM-1"),
     ("fpwarn", "FPWARN"),
     ("fpsafe", "FPWARN"),
     ("approx", "L10.3d"),
