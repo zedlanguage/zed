@@ -406,3 +406,21 @@ fn satisfiable_on_a_box_and_one_row_scales() {
         });
     }
 }
+
+/// I19: public model construction uses the same exact class as public decision. Checking
+/// the certificate is outside the measured closure, so a cheap holds cannot hide slow search.
+#[test]
+fn a_box_and_an_extreme_row_build_their_models_in_near_linear_work() {
+    for (what, build) in [
+        ("dense model", dense as fn(usize) -> Formula),
+        ("zero model", (|k| choice_sum(&weights(k), 0)) as fn(usize) -> Formula),
+    ] {
+        let (small, large) = (build(64), build(512));
+        for f in [&small, &large] {
+            assert!(f.holds(&satisfiable(f).unwrap().unwrap()));
+        }
+        scaling::check_order(what, 64, 1, |k| {
+            drop(satisfiable(if k == 64 { &small } else { &large }));
+        });
+    }
+}

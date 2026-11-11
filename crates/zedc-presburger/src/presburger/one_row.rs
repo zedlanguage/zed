@@ -26,10 +26,10 @@
 //! product through its factors, so a formula with a product atom is left to them; inside the
 //! solver ([`super::solve`] without a model) it is read here as the solver reads it.
 //!
-//! Inside the solver a point is the solver's: the search over disjunctions ([`super::pick`])
-//! reads the solver's own point, and another point of the same box changes the questions it
-//! asks next. [`super::satisfiable`], asked of a box and one row itself, gives the point built
-//! here ([`OneRow::point`]) without asking the solver.
+//! The search over disjunctions ([`super::pick`]) still reads the solver's own point: another
+//! point of the same box changes the questions it asks next. The public [`super::satisfiable`]
+//! entry gives the point built here ([`OneRow::point`]) directly, in the same near-linear work
+//! as [`super::decide`], without changing those internal search models (I19).
 
 use std::collections::BTreeMap;
 

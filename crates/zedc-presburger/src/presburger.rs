@@ -972,14 +972,20 @@ fn reduced(facts: &Facts) -> Option<Formula> {
     ))
 }
 
+thread_local! {
+    /// Test control for I19: retain the public entry's old solver-first model construction.
+    /// This is a configuration switch only; no answer travels between calls through it.
+    pub static SOLVER_MODEL_FIRST: Cell<bool> = const { Cell::new(false) };
+}
+
 /// Whether `f` holds somewhere, and where. A formula whose forced equations fix its atoms one
 /// after another, as the preimage of a chain of `if` at a point gives, is answered by
 /// propagation alone in time linear in its size (module `forced`, PRES-small-cost), with every
-/// atom of the formula in its point; any other goes to the solver. A box and one row (module
-/// `one_row`), and one equation over finite unions of ranges that its residue or its ends settle
-/// (module `row_domains`), with no point is answered without the solver; with a point, the
-/// solver's point is given, and where the solver refuses, the point those modules build, so this
-/// answers wherever [`decide`] does. The solver's point may leave
+/// atom of the formula in its point. A box and one row (module `one_row`), and one equation
+/// over finite unions of ranges that its residue or its ends settle (module `row_domains`),
+/// are also answered directly, with the point those modules build when one exists (I19).
+/// Any other formula goes to the solver, so this answers wherever [`decide`] does.
+/// The solver's point may leave
 /// atoms of `f` out, and each atom left out is zero there, as [`Formula::holds`] reads it: an
 /// atom of a disjunction that `absorb` removed where zero lies between its bounds (`repair`), an
 /// atom of a disjunct the search did not take, and an atom of a disjunct it took because its rows
@@ -1018,21 +1024,34 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
                     Err(_) => or_old(|| satisfiable_named(f)),
                 },
             };
-            // A box and one row has its point built in O(n log n) ([`one_row::OneRow::point`]),
-            // which the solver need not be asked for.
-            // Complexity tradeoff: on 0d726475 the solver path cost O(n^2) here (I19: 42M and
-            // 2,318M instructions on `dense` at k = 64 and 512); the probes of
-            // [`slack`] bring it to 9.1M, 86M and 806M at k = 64, 512 and 4096, and this
-            // block to 1.0M, 9.3M and 86M, with no dependence on how the solver's search is
-            // tuned. The point built here is another point than the solver's; both hold. One
-            // equation its residue or its ends settle still answers only where the solver
-            // refuses. Test: `l01_38_presburger::one_row::satisfiable_on_a_box_and_one_row_scales`.
+            // Complexity tradeoff: I19: the old public model entry ran the general solver
+            // before the exact box/row witness, rewriting shrinking dense rows for O(n^2)
+            // term work even though public decide already answered the same class in
+            // O(n log n). Build the public witness directly from the recognized row:
+            // O(n log n) map/arithmetic operations, O(n) storage; solver models inside
+            // pick and probe are unchanged. A caller receives a valid point, possibly a
+            // different point from the old public entry. Arbitrary-precision arithmetic
+            // retains its bit cost. Test: one_row::a_box_and_an_extreme_row_build_their_models_in_near_linear_work.
+            // The thread-local switch is used only as a negative control.
             if let Some(b) = one_row::OneRow::of(f) {
-                return Ok(b.point());
+                if !b.exists() {
+                    return Ok(None);
+                }
+                return if SOLVER_MODEL_FIRST.with(Cell::get) {
+                    solver().or_else(|e| b.point().map(Some).ok_or(e))
+                } else {
+                    Ok(b.point())
+                };
             }
             match row_domains::settle(f) {
                 Some(row_domains::Settled::Empty) => Ok(None),
-                Some(row_domains::Settled::Point(m)) => solver().or(Ok(Some(m))),
+                Some(row_domains::Settled::Point(m)) => {
+                    if SOLVER_MODEL_FIRST.with(Cell::get) {
+                        solver().or(Ok(Some(m)))
+                    } else {
+                        Ok(Some(m))
+                    }
+                }
                 None => solver(),
             }
         }
