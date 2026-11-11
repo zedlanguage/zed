@@ -39,6 +39,15 @@ rows! {
     UndecidablePremise => "Undecidable premise class",
     // No diagnostic uses this row yet: plan row HULL-conic emits it.
     NumberTooWide => "Number too wide to factor",
+    // No diagnostic uses this row yet: plan row ASSOC-select emits it.
+    SelectionKeysNotInOneOrder => "Selection keys not in one order",
+    // No diagnostic uses this row yet: plan row ASSOC-table emits it.
+    TableLawNotDecided => "Table law not decided",
+    // No diagnostic uses this row yet: plan rows ASSOC-lattice, ASSOC-mod, ASSOC-gf2, ASSOC-gcd
+    // and ENUM-quotient emit it.
+    OutsideNormalForms => "Operator outside the normal forms",
+    // No diagnostic uses this row yet: plan row TERM-stall emits it.
+    ReadsOwnValue => "A definition that reads its own value",
     QuantifierNotFinite => "Quantifier in a law over a domain that is not finite",
     BelowProofGrade =>
         "Obligation below proof grade",

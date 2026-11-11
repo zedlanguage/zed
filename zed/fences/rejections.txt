@@ -6,6 +6,10 @@ Unsatisfiable declared constraints
 A test whose `||` alternatives limit each other's ranges in a loop
 Undecidable premise class
 Number too wide to factor
+Selection keys not in one order
+Table law not decided
+Operator outside the normal forms
+A definition that reads its own value
 Quantifier in a law over a domain that is not finite
 Obligation below proof grade
 Non-exhaustive `match`
