@@ -1,7 +1,7 @@
 # Gaps between the compiler's Rust and Zed
 
 This file lists what the Rust compiler relies on that Zed lacks or expresses differently, so
-that row S of DESIGN.md (the compiler rewritten in Zed₀) meets no surprises. It was started by
+that row S of DESIGN.md (the compiler rewritten in the bootstrap subset, which the file `zed/compiler/ZED0.md` lists and which was called Zed₀ until the answer to QUESTIONS Q34 of 2026-11-11 gave that name to the end of bootstrapping, step S.11) meets no surprises. It was started by
 item T13 of docs/plan_dag.md at commit f425b32 and spec commit cb3d910. Step L6.17 reads it.
 
 **Upkeep.** Each step, once its tests pass, adds an entry here for every Rust construct it
@@ -13,7 +13,7 @@ the entry then, in the same commit as the step that closes it.
 
 At the audit the Rust was 32,508 non-blank code lines without comments or tests; on 2026-11-05 it was about 75,800 (zedc 58,129, kernel 14,988, native 1,753, rt 959). Step S.1 recounts. No part of it needs a
 redesign of the language (inferred from the catalog below), and most constructs rewrite
-locally. Ten gaps need a decision, because Zed₀ as specified has no form for them or
+locally. Ten gaps need a decision, because the bootstrap subset as specified has no form for them or
 the form it has may not meet the cost the compiler needs:
 
 | Gap | Rust construct | Sites | Class | Blocks | Proposed fix |
@@ -90,7 +90,7 @@ each low-count construct was read at every site and each large one sampled.
   first scanner is still not in the repository, so the other counts cannot be reproduced from it.
 - `crates/zed-cert` has no code (a 5-line stub). `tests/` is not ported and was not audited.
 
-The classes: **missing**, Zed₀ has no form and DESIGN.md needs one. **Workaround**, a form exists
+The classes: **missing**, the bootstrap subset has no form and DESIGN.md needs one. **Workaround**, a form exists
 but with a different shape, or its cost depends on a named step. **Mechanical**, a local rewrite.
 **Retained**, stayed in Rust by DESIGN.md until the answer to QUESTIONS Q52 (2026-11-11); since then nothing stays in Rust, and each Retained entry is ported to libzed (plan row RT-port-libzed, DESIGN step S.7a) or leaves main with the Rust compiler (step S.11). "Zed₀" is the whole core, as step M0.8 and zed/compiler/ZED0.md define it since 2026-11-05: L1–L18 in full, the language parts of L19–L24 and the MLIR path of L28. Where an entry below was written when Zed₀ meant L1–L6 and says a form is above Zed₀, step S.1 rereads it.
 
@@ -187,7 +187,7 @@ hash walks a DAG as a tree, so it takes exponential time on the depth without a 
 rule of the memory note on DAG traversal). `Type::digest` and the pointer test are what prevent
 that today. Every visited set in a Zed port faces the same problem.
 
-Candidates (nothing can be run, since Zed₀ is not complete; scores are by reasoning):
+Candidates (nothing can be run, since the bootstrap subset is not complete; scores are by reasoning):
 
 | Solution | Empirical result | Score | Reasoning |
 |---|---|--:|---|
@@ -534,7 +534,7 @@ Forms, confirmed in DESIGN.md:
 
 - `&mut self` becomes a method with a primed receiver, whose fields are the frame (line 2387),
   called by `c*.m(a)` (line 2395). `Ck` (`check/mod.rs:234`), `Elab`, `Evaluator`, `Gen` port
-  this way. It needs L6 (step L6.3), which Zed₀ has.
+  this way. It needs L6 (step L6.3), which the bootstrap subset has.
 - A `let mut` outside a loop becomes new names. In a loop, `mutable` and `x'`, or a `foldl`.
 - Field and index writes become `with { … }` (L2) and `patch`, or a scatter `hist[i] <- e` (line 437) in a frame.
 - `&mut` on a non-receiver argument returns the new value. `each_edge_mut` (`zir/canon.rs:285`)
@@ -595,7 +595,7 @@ Confirmed against sec:grammar; counts in the appendix.
 | `#[derive]` | 223 | Equality, order, update are structural and free; `Default` becomes a written value |
 | `impl From` (14), `Deref` (2), `AsRef` (1), `IntoIterator` (1) | 18 | Named functions |
 | `impl Not`, `BitAnd`, `BitOr`, `Sub` on `Type`, `Neg` on `End` | 9 | Named `complement`, `meet`, `join`, `minus`: `&` and `\|` are type operators only (line 2408); overloading `-` needs its axioms (line 2778) |
-| Traits: `Lattice` (8 impls), `Lookup`, `Mark`, `Literal`, `Equations` | 5 traits | `interface` is L10, in Zed₀. Before it, a record of functions. `L::bottom()`, dispatched on a return type, becomes a field. Single-parameter cases become overloads |
+| Traits: `Lattice` (8 impls), `Lookup`, `Mark`, `Literal`, `Equations` | 5 traits | `interface` is L10, in the bootstrap subset. Before it, a record of functions. `L::bottom()`, dispatched on a return type, becomes a field. Single-parameter cases become overloads |
 | `dyn Fn`, `FnMut`, `impl Fn`, `fn` pointers | 37 `dyn` | Function values. `dyn Lookup`, `dyn Read`, `dyn Write` become ports |
 | Generics | 67 fns, 38 types | Implicit by inference (line 537), and `type N(X)` at L2 |
 | Tuple structs | 20 | `#sym(String)` for a distinction: same-shape structs are one type (line 2774). `Sym`, `Key`, `ContentAddress`, `Card` need this |

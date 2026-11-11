@@ -1,11 +1,18 @@
-# Zed₀: the bootstrap subset (step M0.8)
+# The bootstrap subset (step M0.8)
 
-Zed₀ is the part of the language the Rust-hosted compiler must run for the Zed compiler
-(row S) to be written in Zed. By the author's order of 2026-11-05, **Zed₀ is the whole core, not
+By the author's answer to QUESTIONS Q34 (2026-11-11), Zed₀ is the end of bootstrapping, step
+S.11 of DESIGN.md: the point where the Rust-hosted compiler and `zed-rt` leave main, after which
+the language server and the editor are built, in Zed. This file lists the bootstrap subset, which
+the order of 2026-11-05 and earlier versions of this file called Zed₀; the file keeps its name so
+that references to it stay valid.
+
+The bootstrap subset is the part of the language the Rust-hosted compiler must run for the Zed
+compiler (row S) to be written in Zed. By the author's order of 2026-11-05, which called the
+subset Zed₀, **Zed₀ is the whole core, not
 the smallest subset that compiles**: L1–L18 in full, the language parts of L19–L24 and the
 back end ZIR → MLIR → LLVM IR → x86-64 of L28 (DESIGN.md step M0.8). Row S follows them. Part
 A below records what the compiler needs at least; the audit found that L6 completes that
-much, and Zed₀ is larger because few rows should be written twice.
+much, and the subset is larger because few rows should be written twice.
 
 The checklist has two parts. Part A is audited mechanically against corpus program 31, the
 typechecker shaped like the compiler. Part B lists what the compiler needs that program 31
@@ -25,7 +32,7 @@ the audit and update the list.
 
 Step S.1 reruns this audit over the current grammar. Negative controls: with the entry for
 alternative 0 of Loop deleted from this file, the audit exits 1 and names it; a synthetic program
-that uses a word of a layer after row S (L25 or above) audits to that word, above Zed₀.
+that uses a word of a layer after row S (L25 or above) audits to that word, above the bootstrap subset.
 
 ## Part A: what program 31 needs
 
@@ -45,10 +52,10 @@ and a recursive union type, whose recursion is checked at L6.4 and folded at L6.
 ## Part B: what the compiler needs beyond program 31
 
 The audit of 2026-11-03 compared this list with `ZED_PORT_GAPS.md` and with the compiler's
-Rust, and moved each need it found after Zed₀ to a step in L1–L6 or in row S before the
+Rust, and moved each need it found after the bootstrap subset to a step in L1–L6 or in row S before the
 step that uses it.
 
-| Need | Zed₀ feature | Layer | Where |
+| Need | Feature of the subset | Layer | Where |
 |---|---|---|---|
 | read the source units | the `Files` port, `fs[path]`; an import names its unit's path, so no directory listing is needed | L1 | DESIGN.md "Ports are the only outside world", the words table |
 | read the command line | the `CommandLine` input port: the arguments after `--`, keyed by position from 1 | L1 | step L1.19a |
@@ -71,13 +78,13 @@ step that uses it.
 | computed output paths, bytes, exit status | a `U8String` input port, an output path computed at run time, the status from `main`'s failure member | L7 | step L7.3f (row FILE-bytes) |
 | the compiler's own later needs | every core row of L7–L24, each in `docs/plan_dag.md` before S.1, and the catalog of routines the Rust calls (row PORT-catalog) | L7–L24 | step S.1 |
 
-After row S, not in Zed₀: the breadth of the standard library beyond the seed (rows STD-seq,
+After row S, not in the bootstrap subset: the breadth of the standard library beyond the seed (rows STD-seq,
 STD-text, STD-num, STD-blake3, then STD-full), other back ends (wasm, GPU, HDL, AArch64 and RV64),
-microcontrollers, the editor, the sketchbook, the libraries of L33 and OS portability.
+microcontrollers, the language server and the editor (after Zed₀, step S.11), the sketchbook, the libraries of L33 and OS portability.
 
 ## After step S.8
 
-Zed₀ limits what the Rust-hosted compiler must run, and so what the Zed compiler's own source may
+The bootstrap subset limits what the Rust-hosted compiler must run, and so what the Zed compiler's own source may
 use, only while the Rust-hosted compiler is the bootstrap root. By the answer to QUESTIONS Q52
 (author, 2026-11-11), the Rust-hosted compiler is retired at step S.8, the first tagged release
 becomes the root (step S.9), and the Rust compiler and `zed-rt` are kept in the `rust-bootstrap`
@@ -91,6 +98,9 @@ uses a feature it cannot compile is preceded by a new release, recorded in `BOOT
 guide records which release can build which source. The runtime port of step S.7a needs forms
 this list does not cover (system calls through the OS layer, the heap's word layout of step
 L6.13f); step S.7a records any it finds missing here, under Gaps found, with the step that adds it.
+Step S.11 is Zed₀; the language server (step L25.1, in `zed/compiler/lsp/`) and the editor (L30,
+L34) follow it, and the server checks its own release version against the version each package's
+manifest declares (step L25.1a).
 
 ## Gaps found
 

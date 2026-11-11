@@ -72,7 +72,7 @@ dialect (mlir.llvm.org/docs/Dialects/Func), the `scf` dialect
    compiles fast; it needs no C++ toolchain, so CI builds it from a clean checkout. So `zedc run`,
    the tests, the differential oracle and the JIT stay on it. The compiler written in Zed reaches
    LLVM through the MLIR text port of step S.1a, under the author's order of 2026-11-05 that ZIR →
-   MLIR → LLVM IR → x86-64 works before Zed₀. What Cranelift lacks, loop optimization and
+   MLIR → LLVM IR → x86-64 works before row S (it is part of the bootstrap subset of ZED0.md). What Cranelift lacks, loop optimization and
    vectorization, is what L28 adds, and the two back ends check each other under the differential
    oracle until step S.8 retires the Rust-hosted compiler. Cranelift is a Rust crate, so it leaves
    main with the Rust compiler at step S.11 and is kept in the `rust-bootstrap` branch (the answer
