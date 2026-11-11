@@ -338,3 +338,47 @@ fn satisfiable_answers_wherever_decide_does() {
     agrees(&choice_sum(&w, w.iter().sum()), "target the whole sum");
     agrees(&dense(8), "a box and one row");
 }
+
+fn paired_chain(k: usize, reversed: bool) -> Formula {
+    let ys: Vec<_> = (0..=k)
+        .map(|i| sym(&format!("y{}", if reversed { k - i } else { i })))
+        .collect();
+    let mut fs = vec![eq(&[(ys[0].clone(), 1)], -1), eq(&[(ys[k].clone(), 1)], 0)];
+    for pair in ys.windows(2) {
+        fs.push(Formula::or(vec![
+            Formula::and(pair.iter().map(|y| eq(&[(y.clone(), 1)], 0)).collect()),
+            Formula::and(pair.iter().map(|y| eq(&[(y.clone(), 1)], -1)).collect()),
+        ]));
+    }
+    Formula::and(fs)
+}
+
+#[test]
+fn a_forced_contradiction_projects_to_empty_in_linear_work() {
+    scaling::check_order(
+        "paired chain projection via forced contradiction",
+        64,
+        1,
+        |k| {
+            let f = paired_chain(k, false);
+            let (each, skipped) = project_each(&f, &[sym("y0")]).unwrap();
+            assert_eq!(each, vec![Ok(IntervalSet::empty())]);
+            assert!(skipped.is_empty());
+        },
+    );
+}
+
+#[test]
+fn a_forced_contradiction_has_the_same_empty_projection_after_renaming() {
+    for k in [8, 64, 512] {
+        let f = paired_chain(k, false);
+        let g = paired_chain(k, true);
+        assert_eq!(decide(&f), Ok(false));
+        assert_eq!(decide(&g), Ok(false));
+        assert_eq!(satisfiable(&g).map(|m| m.is_some()), Ok(false));
+        assert_eq!(
+            project_each(&f, &[sym("y0")]),
+            project_each(&g, &[sym(&format!("y{k}"))])
+        );
+    }
+}

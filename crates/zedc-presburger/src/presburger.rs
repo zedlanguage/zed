@@ -9453,6 +9453,16 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
             return Ok((syms.iter().map(|a| Ok(at(a))).collect(), Vec::new()));
         }
     }
+    // Complexity tradeoff: projecting a contradiction by repeatedly settling the whole
+    // formula can cost O(k^2) on k paired disjunctions in a chain. The forced propagator
+    // already used by decide visits each part/term through its incidence queues, O(n)
+    // work and storage; use only its proof of emptiness, then return exact empty sets in
+    // O(syms.len()). Other results leave the existing projection untouched, at the price
+    // of this extra O(n) pass. In particular a trial point is not a unique projection.
+    // I17; one_row::a_forced_contradiction_projects_to_empty_in_linear_work.
+    if matches!(forced::forced(f, false), Forced::Empty) {
+        return Ok(no_points(syms));
+    }
     // The formula with each shared part taken out of the disjunctions that hold it in every
     // disjunct ([`factored`]) is asked first, and the formula as written where that leaves
     // anything refused, so no refusal or cause appears that the formula as written does not
