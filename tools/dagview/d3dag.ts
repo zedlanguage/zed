@@ -35,8 +35,29 @@ export interface Operators { layering: any; decross: any; coord: any; narrow: bo
 //   ELK: 33,742 x 11,306 px, 21,300 crossings, 5.5 million px of horizontal
 //   edge run, 5.7 s in all, and 27 s at 4,000 nodes. ELK with narrow.ts gave
 //   28,725 x 16,792 px, 26,871 crossings, 7.0 million px, 12 s, and 39 s at 4,000.
+// - Rebalancing (layeringBalanced below, measured 2026-11-10 at load 60 to 80;
+//   layers 10 to 19 of simplex's 104 held about half the boxes, up to 139 in
+//   one). Width x height px, crossings, horizontal edge run, total edge span
+//   in layers, and the widest layer in boxes:
+//     simplex alone              33,742 x 11,306  21,300  5.5 M   6,448  139
+//     Gansner et al.'s balance   33,112 x 11,306  21,637  5.3 M   6,448  134
+//     penalty 8                  32,040 x 11,380  22,237  4.9 M   6,570  129
+//     penalty 4                  25,124 x 11,380  25,403  4.7 M   7,287   99
+//     penalty 2                  18,162 x 11,454  31,418  4.4 M   8,340   70
+//     penalty 1                  14,962 x 11,528  29,586  4.1 M   9,058   56
+//     penalty 0.5                13,326 x 11,602  30,358  4.0 M   9,575   48
+//     penalty 0                   8,864 x 11,898  35,063  4.5 M  22,168   26
+//   Penalty 1 is where the curve bends: from 4 to 1 the picture loses 10,000
+//   px of width for about 4,000 more crossings, from 1 to 0.5 only 1,600 px.
+//   Penalty 0 nearly triples the span and took 51 s. Eight decrossing passes
+//   instead of four took three times as long for 28,467 crossings at penalty 1.
+//   Crossings do not fall steadily with the penalty (penalty 2 has more than
+//   1); the two-layer sweeps are heuristic. Layering with rebalancing took 0.7
+//   to 2.4 s, simplex alone 0.7 to 2.3 s. Nikolov and Tarassov's promote
+//   layering only makes moves that cut the number of dummies, and simplex
+//   already has the fewest, so it would change nothing here.
 export const operators: Operators = {
-  layering: layeringSimplex(),
+  layering: layeringBalanced(1),
   decross: decrossTwoLayer().passes(4),
   coord: coordCenter(),
   narrow: true,
@@ -145,4 +166,83 @@ export function d3dagLayout(g: Graph, ops: Operators = operators): Omit<Layout, 
     drawn.push({ from: a, to: b, points: p });
   }
   return { w: w + 2 * PAD, h: height + 2 * PAD, boxes, edges: drawn };
+}
+
+// A layering for d3-dag's sugiyama: network simplex, then rebalance below,
+// which moves nodes out of the widest layers. It reads the box widths from the
+// node data and assumes d3-dag's own layer separation, one layer between a node
+// and its child, which sugiyama passes (d3-dag 1.2.2 calls
+// layering(graph, layerSeparation) and takes the value returned as the last
+// layer's index).
+export function layeringBalanced(penalty: number) {
+  const simplex = layeringSimplex();
+  return (dag: any, sep: any): number => {
+    simplex(dag, sep);
+    const nodes: any[] = [...dag.nodes()];
+    const index = new Map(nodes.map((n, i) => [n, i]));
+    const y = Int32Array.from(nodes, (n) => n.y);
+    const box = Int32Array.from(nodes, (n) => Math.round(n.data.w) + GAP[0]);
+    const parents = nodes.map((n) => [...n.parents()].map((p: any) => index.get(p)!));
+    const children = nodes.map((n) => [...n.children()].map((c: any) => index.get(c)!));
+    rebalance(y, box, parents, children, GAP[0], penalty);
+    let top = Infinity, bottom = 0;
+    for (const v of y) { top = Math.min(top, v); bottom = Math.max(bottom, v); }
+    nodes.forEach((n, i) => { n.y = y[i] - top; });
+    return bottom - top;
+  };
+}
+
+// Moves nodes between layers, one at a time, each within its slack: below its
+// lowest parent and above its highest child, so every edge still goes down at
+// least one layer and the number of layers stays the same. B[l] is the width
+// in px of the boxes in layer l, each with the gap after it, and S is the
+// total edge span in layers. A node moves to the layer in its slack where
+//   Phi = sum over layers of B[l]^2 + p * S,  p = round(penalty * 2 * lane * mean B),
+// is lowest, if that is lower than where it is. The sum of squares falls when a
+// box leaves a wide layer for a narrower one; p prices one layer of added span
+// as one edge lane (lane px) added to a layer of mean width. Phi is a
+// non-negative integer that every move lowers by at least 1, so the passes
+// end, at the first pass that moves nothing; no pass count or width bound is
+// set.
+//
+// The lanes are left out of B on purpose. With them in, a box leaving a
+// crowded layer adds a lane per edge through the crowded layers next to it, so
+// each single move looked worse than staying, and the search stopped with the
+// widest layer at 30,114 px of 36,626 on the plan of 2026-11-10; with them out
+// it went to 21,056 px (lanes counted) and the picture from 33,742 to 14,972 px
+// wide (see operators above).
+//
+// Complexity tradeoff: a move changes two layers, so its change in Phi is
+// 2 * box * (B[to] - B[from] + box) + p * (parents - children) * (to - from),
+// O(1) for each layer in the slack, and a pass costs O(n + m + total slack).
+// Finding the layering of least width outright is NP-hard; moving one node with
+// the rest fixed is the step of Gansner et al.'s balancing, which moves only
+// nodes whose span does not change, by node count, in one pass.
+export function rebalance(y: Int32Array, box: Int32Array, parents: number[][], children: number[][], lane: number, penalty: number): void {
+  const n = y.length;
+  if (!n) return;
+  let layers = 0;
+  for (const v of y) layers = Math.max(layers, v + 1);
+  const B = new Float64Array(layers);
+  let total = 0;
+  for (let i = 0; i < n; i++) { B[y[i]] += box[i]; total += box[i]; }
+  const p = Math.round(penalty * 2 * lane * (total / layers));
+  for (let moved = true; moved;) {
+    moved = false;
+    for (let i = 0; i < n; i++) {
+      let lo = 0, hi = layers - 1;
+      for (const q of parents[i]) lo = Math.max(lo, y[q] + 1);
+      for (const c of children[i]) hi = Math.min(hi, y[c] - 1);
+      const a = y[i], w = box[i], net = p * (parents[i].length - children[i].length);
+      let best = 0, to = a;
+      for (let b = lo; b <= hi; b++) {
+        if (b === a) continue;
+        const delta = 2 * w * (B[b] - B[a] + w) + net * (b - a);
+        if (delta < best) { best = delta; to = b; }
+      }
+      if (to === a) continue;
+      B[a] -= w; B[to] += w; y[i] = to;
+      moved = true;
+    }
+  }
 }

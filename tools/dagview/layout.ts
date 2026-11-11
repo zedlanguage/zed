@@ -24,7 +24,7 @@ export interface Layout {
 // Names the layout method in each key, so a layout saved by an older method is
 // not taken for a layout of the same graph by this one. Change it whenever the
 // layout changes.
-const METHOD = "d3-dag 1.2.2 sorted 2026-11-10";
+const METHOD = "d3-dag 1.2.2 balanced layers 2026-11-10";
 
 // What a layout depends on: the node ids, each node's size and the edges.
 // Nodes are sorted by id and edges by their two ids, so the order the plan

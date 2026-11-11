@@ -8,11 +8,15 @@
 // took 13 s, 39 s and 8 to 15 s at load 33, and the 4,000-node layout did not
 // finish in 60 s at load 56 to 82.
 //
-// Each must also come out no wider for its height than it did when the method
-// was chosen (2026-11-10): 4,576 x 12,058 px (0.38), 4,868 x 48,698 (0.0999)
-// and the plan 33,742 x 11,306 (2.98). With d3-dag's greedy coordinates and no
-// narrowing the plan was 57,580 x 11,306 (5.1); ELK gave 4,795 x 12,058,
-// 4,749 x 48,822 and 28,725 x 16,792.
+// With the layers rebalanced (layeringBalanced in d3dag.ts): 8.8 s, 43 s and
+// 9.9 s at load 60 (2026-11-10).
+//
+// Each must also come out no wider for its height than it did when the
+// rebalancing was added (2026-11-10): 4,092 x 12,058 px (0.339), 4,198 x 48,698
+// (0.0862) and the plan 14,962 x 11,528 (1.30). Before it, with simplex layers
+// alone: 4,576 x 12,058, 4,868 x 48,698 and 33,742 x 11,306. With d3-dag's
+// greedy coordinates and no narrowing the plan was 57,580 x 11,306; ELK gave
+// 4,795 x 12,058, 4,749 x 48,822 and 28,725 x 16,792.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -23,9 +27,9 @@ import { planLike } from "./synthetic.ts";
 
 const plan = JSON.parse(readFileSync(new URL("./plan-graph-2026-11-10.json", import.meta.url), "utf8")) as Graph;
 const cases: [string, () => Graph, number][] = [
-  ["a plan-shaped graph of 1000 nodes and 2700 edges", () => planLike(1000, 2700), 0.39],
-  ["a plan-shaped graph of 4000 nodes and 10800 edges", () => planLike(4000, 10800), 0.101],
-  ["the plan of 2026-11-10", () => plan, 3.0],
+  ["a plan-shaped graph of 1000 nodes and 2700 edges", () => planLike(1000, 2700), 0.35],
+  ["a plan-shaped graph of 4000 nodes and 10800 edges", () => planLike(4000, 10800), 0.088],
+  ["the plan of 2026-11-10", () => plan, 1.32],
 ];
 
 // The three run at once, each in its own worker, so the file takes as long as the largest.
