@@ -9,5 +9,6 @@ mod grammar_scaling;
 mod grammar_shape;
 mod left_recursion;
 mod lr4_assoc;
+mod plain_names;
 mod rings;
 mod scaling;

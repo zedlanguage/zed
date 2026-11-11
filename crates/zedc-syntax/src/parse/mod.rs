@@ -81,7 +81,8 @@ pub struct Error {
     /// The span of that token (empty at the end of the text), or of the `..` that [`DOTS`]
     /// is about.
     pub span: Span,
-    /// The literals (quoted) and token kinds expected there, sorted.
+    /// The literals (quoted) and token kinds expected there, sorted, as the grammar writes
+    /// them (`'+'`, `IDENT`); the message names the kinds in the program's words instead.
     pub expected: Vec<String>,
     /// A message that says more than the expected tokens: [`DOTS`] for a `..` in a list.
     pub message: Option<&'static str>,
@@ -294,10 +295,47 @@ impl fmt::Display for Error {
         }
         match self.message {
             Some(m) => f.write_str(m),
-            None => write!(f, "expected {}", self.expected.join(" or ")),
+            None => {
+                // The quoted literals in their sorted order, then the kinds of token in the
+                // order of `KINDS`, each once: `INT`, `FLOAT` and `RAT` are all "a number".
+                let mut shown: Vec<(usize, &str)> = self
+                    .expected
+                    .iter()
+                    .map(|e| match KINDS.iter().position(|(name, _)| name == e) {
+                        Some(i) => (i + 1, KINDS[i].1),
+                        None => (0, e.as_str()),
+                    })
+                    .collect();
+                shown.sort_by_key(|&(rank, _)| rank);
+                shown.dedup_by(|a, b| a.1 == b.1);
+                f.write_str("expected ")?;
+                for (i, (_, e)) in shown.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" or ")?;
+                    }
+                    f.write_str(e)?;
+                }
+                Ok(())
+            }
         }
     }
 }
+
+/// Each kind of token the grammar names, by that name, with what a message calls it: the
+/// program's words, never the grammar's names. `WILD` is the one token `_`, so it is shown as
+/// the literal. `KW` and `OP` are no expected kind: the grammar writes a keyword or an operator
+/// as its literal.
+const KINDS: [(&str, &str); 9] = [
+    ("WILD", "'_'"),
+    ("IDENT", "a name"),
+    ("INT", "a number"),
+    ("FLOAT", "a number"),
+    ("RAT", "a number"),
+    ("STRING", "a string"),
+    ("ATOM", "an atom such as `#name`"),
+    ("ANNOT", "an annotation such as `@name`"),
+    ("END", "the end of the text"),
+];
 
 /// The index of the `..` that a parse failing at token `far` of `toks` stopped at or just
 /// after, when it stands in a list with other items: after a `,` (`(int, ..)`), or alone after
@@ -363,7 +401,18 @@ fn parse_to(
         let top = stack.last_mut().expect("the outermost tree returns");
         if let Some((tokens, close)) = top.holes.next() {
             let hole = hole.expect("the grammar has a rule `Expr` for a string's holes");
-            stack.push(parse_one(g, text, tokens, hole, ring, close)?);
+            // A hole's tokens end at its `}`, so where the parse expected their end, the
+            // program needs that `}`.
+            let open = parse_one(g, text, tokens, hole, ring, close).map_err(|mut e| {
+                for x in &mut e.expected {
+                    if x == "END" {
+                        *x = "'}'".into();
+                    }
+                }
+                e.expected.sort();
+                e
+            })?;
+            stack.push(open);
             continue;
         }
         let done = stack.pop().expect("the top was read above").tree;
