@@ -199,9 +199,14 @@ g5   = greet(name: "Al");               // ✗ Argument in the wrong form: name 
 onKey(positional k, handler: (key: Utf8String) -> Utf8String) = handler(key: k);
 shout = onKey("a", handler: key -> key ++ "!");  // the type names key, so the lambda's key is named
 bad  = onKey("a", handler: s -> s);     // ✗ Function whose parameter kinds do not fit the expected function type: the type names the parameter key. The menu renames s to key
+half(x: int) = x div 2;                 // one parameter, so `positional` is implied
+h1   = half(3);                         // 1: the argument by position
+h2   = half(x: 3);                      // 1: or by name
+halfBy(x: int, by: int = 2) = x div by;
+h3   = halfBy(3);                       // ✗ Argument in the wrong form: halfBy has two parameters, so x is named. The menu gives halfBy(x: 3)
 ```
 
-<!-- EXAMPLES.md:233 layer L3: ring L3, word L3 (map), label none; section [6. Functions] 4 -->
+<!-- EXAMPLES.md:238 layer L3: ring L3, word L3 (map), label none; section [6. Functions] 4 -->
 ```zed
 // [d4] sec:values_morphisms, sec:power — several results
 divmod(positional a, positional b) { return a div b, a mod b; }  // one return; a comma-list exports a tuple
@@ -216,7 +221,7 @@ stats(positional data: [f64]) {
 m = stats(xs).mean;
 ```
 
-<!-- EXAMPLES.md:247 layer L2: ring L1, word none, label L2; section [6. Functions] 5 -->
+<!-- EXAMPLES.md:252 layer L2: ring L1, word none, label L2; section [6. Functions] 5 -->
 ```zed
 // [d4] sec:type_language, sec:lexical — overloading is a second arrow of one name
 // layer L2
@@ -224,7 +229,7 @@ show(positional x: int)   = "int ${x}";
 show(positional p: Point) = "(${p.x}, ${p.y})";     // show : (int -> Utf8String) & (Point -> Utf8String)
 ```
 
-<!-- EXAMPLES.md:260 layer L6: ring L6, word L5 (zip), label none; section [7. Sequences] 1 -->
+<!-- EXAMPLES.md:265 layer L6: ring L6, word L5 (zip), label none; section [7. Sequences] 1 -->
 ```zed
 // [d4] sec:tour_collections, sec:type_language (bound table)
 xs  = [3, 1, 4, 1, 5];                   // [int] ≡ int[0..<5] -> int
@@ -242,14 +247,14 @@ last = cumul.last else 0;
 pairs = xs.zip(ys);                        // (int, int) per key; same domain, so no assertion is owed
 ```
 
-<!-- EXAMPLES.md:277 layer L5: ring L1, word none, label L5; section [7. Sequences] 2 -->
+<!-- EXAMPLES.md:282 layer L5: ring L1, word none, label L5; section [7. Sequences] 2 -->
 ```zed
 // [d4*] sec:order, sec:joins — concatenation on rank keys is the offset kind
 // layer L5
 all = xs ++ ys;                           // length 10; xs ++ xs is length 10 too (no collision on rank keys)
 ```
 
-<!-- EXAMPLES.md:283 layer L5: ring L5, word L5 (sort), label none; section [7. Sequences] 3 -->
+<!-- EXAMPLES.md:288 layer L5: ring L5, word L5 (sort), label none; section [7. Sequences] 3 -->
 ```zed
 // [d4] sec:remap_law (Ranking), sec:kernel (the slice row) — sorting
 srt  = xs.sort(desc x -> x);              // [5, 4, 3, 1, 1]: a ranked source sorts to a flat ranked result
@@ -257,14 +262,14 @@ top2 = srt.slice(0..<2);
 byLen = words.sort(asc w -> w.len);       // words : [Utf8String] — flat again
 ```
 
-<!-- EXAMPLES.md:292 layer L8: ring L8, word none, label none; section [7. Sequences] 4 -->
+<!-- EXAMPLES.md:297 layer L8: ring L8, word none, label none; section [7. Sequences] 4 -->
 ```zed
 // [d4*] sec:remap_law — reversing is a bijective rekey; [lib] the word for it
 rev  = xs as (i -> x) into (xs::len - 1 - i -> x);
 rev2 = xs.reverse;
 ```
 
-<!-- EXAMPLES.md:298 layer L5: ring L3, word L5 (takeWhile), label none; section [7. Sequences] 5 -->
+<!-- EXAMPLES.md:303 layer L5: ring L3, word L5 (takeWhile), label none; section [7. Sequences] 5 -->
 ```zed
 // [d4*] [lib] sec:order, sec:kernel, sec:remap_law (Ranking) — sequence words; [lib] marks the two the spec does not list
 has   = xs.contains(3);        // [lib]
@@ -275,7 +280,7 @@ idx   = xs.indexOf(4);                  // [lib] int | #none
 flat  = [[1, 2], [3]].orderedValues;             // [1, 2, 3]: the rank pass over the lexicographic order
 ```
 
-<!-- EXAMPLES.md:312 layer L8: ring L8, word L5 (patch), label none; section [8. Maps and sets] 1 -->
+<!-- EXAMPLES.md:317 layer L8: ring L8, word L5 (patch), label none; section [8. Maps and sets] 1 -->
 ```zed
 // [d4] sec:values_morphisms, sec:type_language (m[k] row), sec:generations
 ages  = { "ann" -> 31, "bob" -> 27 };     // {"ann", "bob"} -> int
@@ -293,13 +298,13 @@ ages2 = ages.patch({ "cy" -> [#insert(40)] });        // a delta: per key, a ran
 ages3 = ages.patch({ "bob" -> [#update(n -> n + 1)], "ann" -> [#delete] });
 ```
 
-<!-- EXAMPLES.md:329 layer L5: ring L3, word L5 (patch), label none; section [8. Maps and sets] 2 -->
+<!-- EXAMPLES.md:334 layer L5: ring L3, word L5 (patch), label none; section [8. Maps and sets] 2 -->
 ```zed
 // [d4] sec:generations — one edit per key needs no rank brackets: patch's second arrow
 ages4 = ages.patch({ "cy" -> #insert(40) });
 ```
 
-<!-- EXAMPLES.md:334 layer L5: ring L1, word L5 (maxBy), label none; section [8. Maps and sets] 3 -->
+<!-- EXAMPLES.md:339 layer L5: ring L1, word L5 (maxBy), label none; section [8. Maps and sets] 3 -->
 ```zed
 // [d4] sec:grouping, sec:tour_collections — keys that are not unique group; keys that are, rekey
 byId    = users.rekey(u -> u.id);          // ✗ Collision: unless u.id is witnessed injective
@@ -310,7 +315,7 @@ best    = scores.maxBy(v -> v);            // (score ->? (name -> score)) | #non
 one     = best?.first;
 ```
 
-<!-- EXAMPLES.md:346 layer L7: ring L7, word L7 (order), label none; section [8. Maps and sets] 4 -->
+<!-- EXAMPLES.md:351 layer L7: ring L7, word L7 (order), label none; section [8. Maps and sets] 4 -->
 ```zed
 // [d4] sec:order — every level has an order, and a sort is placed only where a fold reads it
 struct Entry { score: int with order(#desc), name: Utf8String with order(collate: "de"), id: int }
@@ -323,7 +328,7 @@ fprod = weights >< (*);                       // a float * takes the canonical t
 byLen2 = words.sort(by: (a, b) -> a.len <= b.len);  // a comparator: a total preorder; ties by the source's rank where it has one, otherwise by key order
 ```
 
-<!-- EXAMPLES.md:358 layer L5: ring L3, word L5 (diff), label none; section [8. Maps and sets] 5 -->
+<!-- EXAMPLES.md:363 layer L5: ring L3, word L5 (diff), label none; section [8. Maps and sets] 5 -->
 ```zed
 // [d4*] sec:tour_collections, sec:joins, sec:kernel (the fix row) — sets are self-maps; the spec shows diff only with on:
 tags   = { #red, #green };
@@ -333,7 +338,7 @@ both   = tags.union(other);               // union is also the spelling of ⊔ t
 common = tags.intersect(other);           // [lib] intersect — the meet is a library word
 ```
 
-<!-- EXAMPLES.md:369 layer L9: ring L9, word L3 (foldl), label none; section [9. Grouping, reduction, joins] 1 -->
+<!-- EXAMPLES.md:374 layer L9: ring L9, word L3 (foldl), label none; section [9. Grouping, reduction, joins] 1 -->
 ```zed
 // [d4] sec:reduction
 total = readings >< (+);                        // one level removed
@@ -345,7 +350,7 @@ num   = digits.foldl(0, (acc, d) -> acc * 10 + d);   // 123; non-associative, so
 fsum  = samples >< (+) unordered;               // floats: give up bit-reproducibility for speed, visibly
 ```
 
-<!-- EXAMPLES.md:380 layer L8: ring L8, word L5 (sort), label none; section [9. Grouping, reduction, joins] 2 -->
+<!-- EXAMPLES.md:385 layer L8: ring L8, word L5 (sort), label none; section [9. Grouping, reduction, joins] 2 -->
 ```zed
 // [d4] sec:grouping, sec:remap_law — group, then reduce per group
 struct Sale { region: Utf8String, product: Utf8String, amount: rat }
@@ -355,7 +360,7 @@ pivot    = sales as (i -> s) into (s.region -> s.product -> i >< (+) -> s.amount
 ranked   = totals.sort(desc t -> t);                                // rank -> (Region -> rat)
 ```
 
-<!-- EXAMPLES.md:391 layer L14: ring L8, word L14 (matmul), label none; section [9. Grouping, reduction, joins] 3 -->
+<!-- EXAMPLES.md:396 layer L14: ring L8, word L14 (matmul), label none; section [9. Grouping, reduction, joins] 3 -->
 ```zed
 // [d4] sec:tour_joins — joins in both registers
 paid   = orders.join(payments, on: #orderId, kind: #left);
@@ -369,7 +374,7 @@ prod   = a.matmul(b);
 prod2  = (a, b) into (r -> k -> c >< (+) -> a[r][c] * b[c][k]);
 ```
 
-<!-- EXAMPLES.md:404 layer L5: ring L1, word L5 (join), label none; section [9. Grouping, reduction, joins] 4 -->
+<!-- EXAMPLES.md:409 layer L5: ring L1, word L5 (join), label none; section [9. Grouping, reduction, joins] 4 -->
 ```zed
 // [d4*] sec:joins — join residues carry the shape: a side whose join key is unique erases its residue level
 full     = orders.join(payments, on: #orderId, kind: #outer);   // OrderId ->? (Order | #none, Payment | #none): both sides unique, so flat
@@ -378,7 +383,7 @@ perOrder = orders.join(payments, on: #orderId);                 // OrderId ->? P
 missingPayment = orders.diff(payments, on: #orderId);                      // the left-only region, asked for directly
 ```
 
-<!-- EXAMPLES.md:416 layer L2: ring L2, word none, label none; section [10. Structs and updates] 1 -->
+<!-- EXAMPLES.md:421 layer L2: ring L2, word none, label none; section [10. Structs and updates] 1 -->
 ```zed
 // [d4] sec:tour_basics
 struct Point { x: f64, y: f64 }
@@ -390,7 +395,7 @@ struct Circle { c: Point, r: f64 }
 struct Round  { import Rect, r: f64 }   // field embedding: Rect's fields, plus r
 ```
 
-<!-- EXAMPLES.md:427 layer L10: ring L10, word none, label none; section [10. Structs and updates] 2 -->
+<!-- EXAMPLES.md:432 layer L10: ring L10, word none, label none; section [10. Structs and updates] 2 -->
 ```zed
 // [d4] sec:domains — a field's refinement may name another field
 struct Span { lo: int, hi: int[lo..] }
@@ -399,7 +404,7 @@ w  = s.hi - s.lo;                        // s.hi : int[s.lo..], so w : int[0..]
 s2 = s with { hi = s.hi + 1 };           // still a Span: hi + 1 >= lo
 ```
 
-<!-- EXAMPLES.md:435 layer L2: ring L1, word none, label L2; section [10. Structs and updates] 3 -->
+<!-- EXAMPLES.md:440 layer L2: ring L1, word none, label L2; section [10. Structs and updates] 3 -->
 ```zed
 // [d4*] sec:power (Vec3) — a constructor takes its fields by name only; `x:` supplies the variable x
 // layer L2
@@ -409,7 +414,7 @@ q = Point(x:, y:);                 // Point(x: x, y: y)
 // q = Point(3, 4);                // ✗ Positional constructor call or pattern: a constructor is called by name, Point(x: 3, y: 4)
 ```
 
-<!-- EXAMPLES.md:444 layer L6: ring L6, word none, label none; section [10. Structs and updates] 4 -->
+<!-- EXAMPLES.md:449 layer L6: ring L6, word none, label none; section [10. Structs and updates] 4 -->
 ```zed
 // [d4] sec:tour_methods — methods: bare fields in scope; a prime on a field makes the receiver a result
 Point.norm     = (x*x + y*y).sqrt;                  // pure: no primes
@@ -423,13 +428,13 @@ walk = loop {
 };
 ```
 
-<!-- EXAMPLES.md:457 layer L3: ring L3, word none, label none; section [10. Structs and updates] 5 -->
+<!-- EXAMPLES.md:462 layer L3: ring L3, word none, label none; section [10. Structs and updates] 5 -->
 ```zed
 // [d4*] sec:values_morphisms — an anonymous struct is a display keyed by field atoms
 origin = { #x -> f64(0), #y -> f64(0) };   // has the fields of Point, so it is a Point
 ```
 
-<!-- EXAMPLES.md:462 layer L2: ring L2, word none, label none; section [10. Structs and updates] 6 -->
+<!-- EXAMPLES.md:467 layer L2: ring L2, word none, label none; section [10. Structs and updates] 6 -->
 ```zed
 // [d4] sec:lexical, sec:type_language — the record display and a nested update path
 origin2 = { x: f64(0), y: f64(0) };     // name: v is #name -> v — the same display as origin, spelled with field names
@@ -437,7 +442,7 @@ k  = Circle(c: p, r: 1);                // p : Point, from the first block of th
 k2 = k with { c.x = 0 };                // one level in: k with { c = k.c with { x = 0 } }
 ```
 
-<!-- EXAMPLES.md:469 layer L2: ring L2, word L1 (Utf8String), label none; section [10. Structs and updates] 7 -->
+<!-- EXAMPLES.md:474 layer L2: ring L2, word L1 (Utf8String), label none; section [10. Structs and updates] 7 -->
 ```zed
 // [d4] sec:introspection — a field reached by two imports
 struct Point { x: f64, y: f64 }
@@ -448,7 +453,7 @@ struct Sized { w: int }
 struct Bad { import Weighted, import Sized }         // ✗ Two members of one name with different declarations in a struct or interface body: w: f64 from Weighted, w: int from Sized
 ```
 
-<!-- EXAMPLES.md:481 layer L2: ring L2, word none, label none; section [11. Unions, atoms, match] 1 -->
+<!-- EXAMPLES.md:486 layer L2: ring L2, word none, label none; section [11. Unions, atoms, match] 1 -->
 ```zed
 // [d4] sec:tour_basics, sec:failure
 type Color = #red | #green | #blue;
@@ -461,7 +466,7 @@ area(s: Shape) = match s {
 };                                       // exhaustive, or it does not compile
 ```
 
-<!-- EXAMPLES.md:493 layer L2: ring L2, word none, label none; section [11. Unions, atoms, match] 2 -->
+<!-- EXAMPLES.md:498 layer L2: ring L2, word none, label none; section [11. Unions, atoms, match] 2 -->
 ```zed
 // [d4*] sec:type_language (recursive types), sec:failure — a recursive union with payload atoms
 type Expr = #num(f64) | #add(Expr, Expr) | #mul(Expr, Expr);
@@ -475,7 +480,7 @@ eval(positional e: Expr) -> f64 {
 three = eval(#add(#num(f64(1)), #num(f64(2))));
 ```
 
-<!-- EXAMPLES.md:506 layer L2: ring L2, word L1 (Utf8String), label none; section [11. Unions, atoms, match] 3 -->
+<!-- EXAMPLES.md:511 layer L2: ring L2, word L1 (Utf8String), label none; section [11. Unions, atoms, match] 3 -->
 ```zed
 // [d4] sec:failure — a payload is a struct, so it is built and matched like one
 type Fail = #syntaxError(pos: int, msg: Utf8String);
@@ -484,7 +489,7 @@ e1 = #syntaxError(pos: 3, msg: "unexpected )");  // built by name, like a struct
 position(f: Fail) = match f { #syntaxError(pos:) -> pos };   // matched by name too; msg omitted
 ```
 
-<!-- EXAMPLES.md:514 layer L2: ring L2, word none, label none; section [11. Unions, atoms, match] 4 -->
+<!-- EXAMPLES.md:519 layer L2: ring L2, word none, label none; section [11. Unions, atoms, match] 4 -->
 ```zed
 // [d4] sec:type_language — same-shape structs are one type; tell them apart with a tag
 struct Celsius    { deg: f64 }
@@ -497,14 +502,14 @@ show(positional t: Temp) = match t {
 type Temp2 = #c(f64) | #f(f64);          // ✓ the atom is the identity
 ```
 
-<!-- EXAMPLES.md:526 layer L3: ring L3, word none, label none; section [11. Unions, atoms, match] 5 -->
+<!-- EXAMPLES.md:531 layer L3: ring L3, word none, label none; section [11. Unions, atoms, match] 5 -->
 ```zed
 // [d4] sec:lexical — guards and range patterns in match arms
 classify(n) = match n { 0 -> #zero, x where x < 0 -> #neg, _ -> #pos };
 digit(n: int) = match n { 0..=9 -> #ok, _ -> #bad };
 ```
 
-<!-- EXAMPLES.md:536 layer L3: ring L3, word L3 (where), label none, documentation notation; section [12. Absence and failure] 1 -->
+<!-- EXAMPLES.md:541 layer L3: ring L3, word L3 (where), label none, documentation notation; section [12. Absence and failure] 1 -->
 ```zed
 // [d4] sec:tour_failure
 parse : (Utf8String) -> Config | #syntaxError(pos: int)     // an assumed input, shown as a type — no ';' (sec:lexical)
@@ -519,7 +524,7 @@ sumKept   = amounts.where(a -> a is int) >< (+);
 sumZeroed = amounts.map(a -> a else 0) >< (+);
 ```
 
-<!-- EXAMPLES.md:550 layer L2: ring L2, word none, label none; section [12. Absence and failure] 2 -->
+<!-- EXAMPLES.md:555 layer L2: ring L2, word none, label none; section [12. Absence and failure] 2 -->
 ```zed
 // [d4] sec:failure — declared propagation: the enclosing result type carries the atom
 loadPort(path) -> int | #ioError | #notFound | #syntaxError(pos: int) {
@@ -529,14 +534,14 @@ loadPort(path) -> int | #ioError | #notFound | #syntaxError(pos: int) {
 }
 ```
 
-<!-- EXAMPLES.md:559 layer L10: ring L1, word L10 (refine), label none; section [12. Absence and failure] 3 -->
+<!-- EXAMPLES.md:564 layer L10: ring L1, word L10 (refine), label none; section [12. Absence and failure] 3 -->
 ```zed
 // [d4] sec:domains — a refinement is a proof or a failure, never a crash
 age  = int(input)?.refine(a -> a >= 0);          // int | #invalid
 safe = age else 0;
 ```
 
-<!-- EXAMPLES.md:565 layer L2: ring L2, word none, label none; section [12. Absence and failure] 4 -->
+<!-- EXAMPLES.md:570 layer L2: ring L2, word none, label none; section [12. Absence and failure] 4 -->
 ```zed
 // [d4*] sec:failure — your own failures are atoms; the caller decides
 withdraw(positional a: Account, positional amt: rat) -> Account | #insufficient(short: rat) {
@@ -546,7 +551,7 @@ a2 = withdraw(a, 10r) else a;                                        // keep the
 a3 = withdraw(a, 10r) else #insufficient(short: _) -> a with { frozen = true };   // pattern form
 ```
 
-<!-- EXAMPLES.md:578 layer L6: ring L6, word L6 (::frames), label none; section [13. Loops and state] 1 -->
+<!-- EXAMPLES.md:583 layer L6: ring L6, word L6 (::frames), label none; section [13. Loops and state] 1 -->
 ```zed
 // [d4] sec:tour_loops — a simulation
 sim = loop t {
@@ -559,7 +564,7 @@ final   = sim.pos;                        // the last generation's value
 history = sim::frames;                    // int[0..<sim::len] -> Frame, kept only because it is demanded
 ```
 
-<!-- EXAMPLES.md:590 layer L6: ring L6, word none, label none; section [13. Loops and state] 2 -->
+<!-- EXAMPLES.md:595 layer L6: ring L6, word none, label none; section [13. Loops and state] 2 -->
 ```zed
 // [d4] sec:tour_methods — a mutable receiver inside a loop
 run = loop {
@@ -569,7 +574,7 @@ run = loop {
 };
 ```
 
-<!-- EXAMPLES.md:599 layer L6: ring L6, word none, label none; section [13. Loops and state] 3 -->
+<!-- EXAMPLES.md:604 layer L6: ring L6, word none, label none; section [13. Loops and state] 3 -->
 ```zed
 // [d4] sec:generations — the three guards
 once    = loop { i' = i + 1 with initial i = 0; until i' == 10; };     // tested at the end of a step: runs at least once
@@ -577,7 +582,7 @@ maybe   = loop { i' = i + 1 with initial i = 0; while i < 10; };       // tested
 counted = loop t { x' = step(x) with initial x = seed; until t == 99; };   // t is the step ordinal
 ```
 
-<!-- EXAMPLES.md:606 layer L6: ring L6, word none, label none; section [13. Loops and state] 4 -->
+<!-- EXAMPLES.md:611 layer L6: ring L6, word none, label none; section [13. Loops and state] 4 -->
 ```zed
 // [d4*] sec:generations — break carries a value out of the frame
 found = loop {
@@ -587,7 +592,7 @@ found = loop {
 };
 ```
 
-<!-- EXAMPLES.md:615 layer L6: ring L6, word none, label none; section [13. Loops and state] 5 -->
+<!-- EXAMPLES.md:620 layer L6: ring L6, word none, label none; section [13. Loops and state] 5 -->
 ```zed
 // [d4] sec:tour_loops, sec:kernel — a convergence-shaped guard: without evidence for every T-Fix premise of simplifyOnce (monotone and inflationary on a carrier with ACC, and total) this is a gen that runs serially; with it, a fix (T-Fix)
 simplified = loop {
@@ -596,7 +601,7 @@ simplified = loop {
 };
 ```
 
-<!-- EXAMPLES.md:623 layer L6: ring L6, word L6 (::frames), label none; section [13. Loops and state] 6 -->
+<!-- EXAMPLES.md:628 layer L6: ring L6, word L6 (::frames), label none; section [13. Loops and state] 6 -->
 ```zed
 // [d4] sec:generations, sec:power — history, retention, and a piecewise family
 run  = loop t { while t < edits::len && !closed; doc' = doc.patch(edits[t]) with initial doc = empty; };
@@ -606,7 +611,7 @@ x[i in 0..<warm]  = warmup(i);
 x[i in warm..<n]  = x[i-1] + delta(i);    // one family, two pieces; overlapping domains would collide
 ```
 
-<!-- EXAMPLES.md:632 layer L6: ring L6, word none, label none; section [13. Loops and state] 7 -->
+<!-- EXAMPLES.md:637 layer L6: ring L6, word none, label none; section [13. Loops and state] 7 -->
 ```zed
 // [d4] sec:generations — local hides a generation variable from the loop's result (a step-local is never in the frame)
 s = loop {
@@ -616,7 +621,7 @@ s = loop {
 };
 ```
 
-<!-- EXAMPLES.md:645 layer L6: ring L6, word none, label none; section [14. Recursion] 1 -->
+<!-- EXAMPLES.md:650 layer L6: ring L6, word none, label none; section [14. Recursion] 1 -->
 ```zed
 // [d4*] sec:tour_basics, sec:tour_loops
 fact(positional n) = if n == 0 { 1 } else { n * fact(n - 1) };
@@ -628,7 +633,7 @@ even(positional n) = if n == 0 { true } else { odd(n - 1) };              // mut
 odd(positional n)  = if n == 0 { false } else { even(n - 1) };
 ```
 
-<!-- EXAMPLES.md:656 layer L6: ring L6, word L3 (map), label none; section [14. Recursion] 2 -->
+<!-- EXAMPLES.md:661 layer L6: ring L6, word L3 (map), label none; section [14. Recursion] 2 -->
 ```zed
 // [d4*] sec:power — a pseudo-random sequence is a recurrence with a seed
 next(positional s) = (s * 6364136223846793005 + 1442695040888963407) mod (2^64);
@@ -637,7 +642,7 @@ dice = rnd.map(r -> ((r div 2^32) mod 6) + 1);   // the high bits: an LCG's low 
 tenRolls = for i in 0..<10 { dice[i] };
 ```
 
-<!-- EXAMPLES.md:666 layer L3: ring L3, word L3 (foldl), label none; section [15. Trees and graphs] 1 -->
+<!-- EXAMPLES.md:671 layer L3: ring L3, word L3 (foldl), label none; section [15. Trees and graphs] 1 -->
 ```zed
 // [d4*] sec:type_language (recursive types), sec:tour_basics
 type Tree = #leaf | Node;
@@ -660,7 +665,7 @@ inorder(positional t: Tree) -> [int] {
 }
 ```
 
-<!-- EXAMPLES.md:690 layer L15: ring L15, word L3 (map), label none; section [15. Trees and graphs] 2 -->
+<!-- EXAMPLES.md:695 layer L15: ring L15, word L3 (map), label none; section [15. Trees and graphs] 2 -->
 ```zed
 // [d4] sec:type_language, sec:failure — .map(A: f) maps the A positions; laws 20, 21 and 23 apply to it
 type PTree(A) = #leaf(A) | #fork(l: PTree(A), r: PTree(A));
@@ -673,7 +678,7 @@ asInts(positional t: PTree(int)) = t;
 checked(positional t: PTree(Utf8String)) = asInts(t.map(A: s -> int(s)));   // a PTree(int), or #invalid passed out of the A positions (rule 6)
 ```
 
-<!-- EXAMPLES.md:704 layer L10: ring L10, word L4 (flatMap), label none; section [15. Trees and graphs] 3 -->
+<!-- EXAMPLES.md:709 layer L10: ring L10, word L4 (flatMap), label none; section [15. Trees and graphs] 3 -->
 ```zed
 // [d4*] sec:values_morphisms, sec:generations — reachability is a fixpoint on sets
 edges: Id ->? [Id] = { 1 -> [2, 3], 2 -> [4], 3 -> [4], 4 -> [] };
@@ -684,7 +689,7 @@ reach = loop {
 };
 ```
 
-<!-- EXAMPLES.md:714 layer L16: ring L10, word L16 (@idempotent), label none; section [15. Trees and graphs] 4 -->
+<!-- EXAMPLES.md:719 layer L16: ring L10, word L16 (@idempotent), label none; section [15. Trees and graphs] 4 -->
 ```zed
 // [d4*] sec:generations, sec:corner_cases, sec:kernel — shortest paths: a fixpoint that lowers distances, on a carrier with a bottom.
 //   Dist has the explicit bottom #inf, so every step is total on the carrier (T-Fix): an unreached
@@ -702,7 +707,7 @@ dist = loop {
 };
 ```
 
-<!-- EXAMPLES.md:737 layer L5: ring L3, word L5 (last), label none; section [16. Generics and interfaces] 1 -->
+<!-- EXAMPLES.md:742 layer L5: ring L3, word L5 (last), label none; section [16. Generics and interfaces] 1 -->
 ```zed
 // [d4] sec:type_resolution
 head(positional xs) = xs[0];                        // (int[0..<n] -> T) -> T | #notFound
@@ -712,7 +717,7 @@ push(s: Stack(T), x: T) = s ++ [x];
 top(s: Stack(T)) = s.last;               // T | #none
 ```
 
-<!-- EXAMPLES.md:746 layer L10: ring L10, word L1 (Utf8String), label none; section [16. Generics and interfaces] 2 -->
+<!-- EXAMPLES.md:751 layer L10: ring L10, word L1 (Utf8String), label none; section [16. Generics and interfaces] 2 -->
 ```zed
 // [d4] sec:type_language, sec:type_notation — an interface is a named structural type
 interface Named { name: Utf8String }
@@ -723,7 +728,7 @@ g1 = greet(User(name: "Al", id: 1));
 g2 = greet(Cat(name: "Tom"));
 ```
 
-<!-- EXAMPLES.md:756 layer L10: ring L10, word none, label none; section [16. Generics and interfaces] 3 -->
+<!-- EXAMPLES.md:761 layer L10: ring L10, word none, label none; section [16. Generics and interfaces] 3 -->
 ```zed
 // [d4] sec:values_morphisms — a required name may be a field or a function in scope
 interface HasArea { area: f64 }
@@ -731,13 +736,13 @@ describe(positional s: HasArea) = "area ${s.area}";
 d = describe(Circle(c: origin, r: 1));   // area(s: Shape) is in scope, and s.area ≡ area(s:)
 ```
 
-<!-- EXAMPLES.md:763 layer L2: ring L2, word none, label none; section [16. Generics and interfaces] 4 -->
+<!-- EXAMPLES.md:768 layer L2: ring L2, word none, label none; section [16. Generics and interfaces] 4 -->
 ```zed
 // [d4] sec:type_language — a parameterized structural type
 type Pair(A, B) = { fst: A, snd: B };
 ```
 
-<!-- EXAMPLES.md:768 layer L22: ring L22, word none, label none; section [16. Generics and interfaces] 5 -->
+<!-- EXAMPLES.md:773 layer L22: ring L22, word none, label none; section [16. Generics and interfaces] 5 -->
 ```zed
 // [d4] sec:theories, sec:introspection — a shared base theory
 interface Eq(T) { eq: (T, T) -> bool, law eqRefl(a: T) = eq(a, a) }
@@ -746,7 +751,7 @@ interface Hashable(T) { import Eq(T), hash: (T) -> int }
 interface OrdHash(T) { import Ord(T), import Hashable(T) }   // eq and eqRefl once
 ```
 
-<!-- EXAMPLES.md:780 layer L2: ring L2, word none, label none; section [17. Modules] 1 -->
+<!-- EXAMPLES.md:785 layer L2: ring L2, word none, label none; section [17. Modules] 1 -->
 ```zed
 // [d4] sec:units — geometry/shapes.zed
 struct Point { x: f64, y: f64 }
@@ -754,7 +759,7 @@ local sq(positional v) = v * v;            // not exported
 dist(positional a: Point, positional b: Point) = (sq(a.x - b.x) + sq(a.y - b.y)).sqrt;
 ```
 
-<!-- EXAMPLES.md:787 layer L2: ring L2, word none, label none; section [17. Modules] 2 -->
+<!-- EXAMPLES.md:792 layer L2: ring L2, word none, label none; section [17. Modules] 2 -->
 ```zed
 // [d4] sec:units — main.zed: one import form per unit, not all at once
 import geometry.shapes.{Point, dist};    // unqualified; the alternatives are `import geometry.shapes;` (shapes.dist)
@@ -763,7 +768,7 @@ import geometry.shapes.{Point, dist};    // unqualified; the alternatives are `i
 far = dist(Point(x: 0, y: 0), Point(x: 3, y: 4));
 ```
 
-<!-- EXAMPLES.md:799 layer L3: ring L1, word L3 (map), label none; section [18. Files, stores, and the world] 1 -->
+<!-- EXAMPLES.md:804 layer L3: ring L1, word L3 (map), label none; section [18. Files, stores, and the world] 1 -->
 ```zed
 // [d4] sec:tour_failure, sec:ports — fs : Files, the file port, opened where it is needed (Files = Path ->? Utf8String | #ioError)
 fs    = files();
@@ -771,7 +776,7 @@ text  = fs["notes.txt"] else "";                // Utf8String: else strips #ioEr
 texts = files.map(f -> fs[f]);                  // Path -> Utf8String | #ioError | #notFound
 ```
 
-<!-- EXAMPLES.md:806 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 2 -->
+<!-- EXAMPLES.md:811 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 2 -->
 ```zed
 // [d4] sec:tour_grammar, sec:ports — a stored collection is always partial, and writes are deltas
 orders: OrderId ->? { total: rat, note: Utf8String | #none }
@@ -783,33 +788,33 @@ run = loop t {
 };
 ```
 
-<!-- EXAMPLES.md:817 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 3 -->
+<!-- EXAMPLES.md:822 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 3 -->
 ```zed
 // [d4] sec:units, sec:ports — the schema file is pinned by the build
 orders with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
 ```
 
-<!-- EXAMPLES.md:822 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 4 -->
+<!-- EXAMPLES.md:827 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 4 -->
 ```zed
 // [d4] sec:units — a path outside the package is rejected
 orders with store(postgres(dbUrl, table: "orders", schema: sql("../shared/orders.sql")));   // ✗ File read at the compile-time stage by a path that leaves the package root: `..`
 ```
 
-<!-- EXAMPLES.md:827 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 5 -->
+<!-- EXAMPLES.md:832 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 5 -->
 ```zed
 // [d4*] sec:ports — a key-value store and a file-backed table
 cache: Utf8String ->? [u8] with store(kv(endpoint));
 config: Utf8String ->? Utf8String with store(file("app.cfg", KeyVal));   // the format is a struct grammar
 ```
 
-<!-- EXAMPLES.md:833 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 6 -->
+<!-- EXAMPLES.md:838 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 6 -->
 ```zed
 // [d4] sec:ports, sec:staging — a timeout is declared on the port and adds #timeout to its failure member
 @timeout(0.2r with units("s")) cache: Utf8String ->? [u8] with store(kv(endpoint));   // lookup: [u8] | #ioError | #timeout | #notFound
 hit = cache[key] else fetch(key);                                                   // else strips #timeout with the rest: a read that ran out of time is a miss
 ```
 
-<!-- EXAMPLES.md:839 layer L7: ring L3, word L7 (clock), label L7; section [18. Files, stores, and the world] 7 -->
+<!-- EXAMPLES.md:844 layer L7: ring L3, word L7 (clock), label L7; section [18. Files, stores, and the world] 7 -->
 ```zed
 // [d4] sec:ports, steps L1.19a, L7.3 and L7.3f — the command line is a field of main's argument, a clock is opened where it is needed, and the exit status is main's result
 // layer L7
@@ -820,7 +825,7 @@ main(m: MainArgs) -> int {
 }
 ```
 
-<!-- EXAMPLES.md:849 layer L1: ring L1, word L1 (MainArgs), label none; section [18. Files, stores, and the world] 8 -->
+<!-- EXAMPLES.md:854 layer L1: ring L1, word L1 (MainArgs), label none; section [18. Files, stores, and the world] 8 -->
 ```zed
 // [d4] sec:ports, step L1.19c — the environment variables as a lookup port, a field of main's argument
 main(m: MainArgs) {
@@ -828,7 +833,7 @@ main(m: MainArgs) {
 }
 ```
 
-<!-- EXAMPLES.md:856 layer L7: ring L3, word L7 (spawn), label L7; section [18. Files, stores, and the world] 9 -->
+<!-- EXAMPLES.md:861 layer L7: ring L3, word L7 (spawn), label L7; section [18. Files, stores, and the world] 9 -->
 ```zed
 // [d4] sec:ports, step L7.3h — another program, run with no shell; its standard error, never read, passes through
 // layer L7
@@ -840,7 +845,7 @@ main(m: MainArgs) -> int {
 }
 ```
 
-<!-- EXAMPLES.md:867 layer L7: ring L3, word L7 (run), label L7; section [18. Files, stores, and the world] 10 -->
+<!-- EXAMPLES.md:872 layer L7: ring L3, word L7 (run), label L7; section [18. Files, stores, and the world] 10 -->
 ```zed
 // [d4] sec:ports, step L7.3h — runs that nothing orders may overlap; @after orders two
 // layer L7
@@ -853,13 +858,13 @@ main(m: MainArgs) {
 }
 ```
 
-<!-- EXAMPLES.md:879 layer L1: ring L1, word none, label none; section [18. Files, stores, and the world] 11 -->
+<!-- EXAMPLES.md:884 layer L1: ring L1, word none, label none; section [18. Files, stores, and the world] 11 -->
 ```zed
 // [lib] sec:tooling, sec:ports — an HTTP client: its name, its signature and its port are a guess
 page = http.get(url);                            // Response | #httpError(status: int) | #ioError
 ```
 
-<!-- EXAMPLES.md:888 layer L5: ring L1, word L5 (chunkBy), label none; section [19. Streams] 1 -->
+<!-- EXAMPLES.md:893 layer L5: ring L1, word L5 (chunkBy), label none; section [19. Streams] 1 -->
 ```zed
 // [d4] sec:tour_loops, sec:power
 sessions = events.chunkBy(e -> e.userId);
@@ -867,21 +872,21 @@ report   = sessions.map(s -> summarize(s));
 bigOnes  = events.where(e -> e.size > 1_000_000);
 ```
 
-<!-- EXAMPLES.md:895 layer L5: ring L1, word L4 (tag), label L5; section [19. Streams] 2 -->
+<!-- EXAMPLES.md:900 layer L5: ring L1, word L4 (tag), label L5; section [19. Streams] 2 -->
 ```zed
 // [d4] sec:order — two sources into one: tag the origin, or the keys collide
 // layer L5
 merged = a.tag(#a) ++ b.tag(#b);          // (#a | #b) -> origin -> V
 ```
 
-<!-- EXAMPLES.md:901 layer L4: ring L4, word L4 (flatMap), label none; section [19. Streams] 3 -->
+<!-- EXAMPLES.md:906 layer L4: ring L4, word L4 (flatMap), label none; section [19. Streams] 3 -->
 ```zed
 // [d4*] sec:lexical (the emit row) — one input, several outputs, when the signature says so
 expand(positional n: int) -> [int] { emit n; emit n * 10; }
 out = xs.flatMap(expand);                 // int[0..<5] -> int[0..<2] -> int
 ```
 
-<!-- EXAMPLES.md:907 layer L7: ring L7, word L7 (Stream), label none; section [19. Streams] 4 -->
+<!-- EXAMPLES.md:912 layer L7: ring L7, word L7 (Stream), label none; section [19. Streams] 4 -->
 ```zed
 // [d4] sec:power — a request/response service is a map over the request stream
 req: Stream(Query);
@@ -891,7 +896,7 @@ main() {
 }
 ```
 
-<!-- EXAMPLES.md:916 layer L7: ring L1, word L7 (window), label L7; section [19. Streams] 5 -->
+<!-- EXAMPLES.md:921 layer L7: ring L1, word L7 (window), label L7; section [19. Streams] 5 -->
 ```zed
 // [d4*] sec:order, step L7.5 — session windows, and two streams merged by arrival
 // layer L7
@@ -899,13 +904,13 @@ sessions = events.window(gap: 3).map(w -> w.count);     // a gap in the event ti
 input    = mouse.tag(#mouse).merge(keys.tag(#key));     // arrival order; the tags make the domains disjoint
 ```
 
-<!-- EXAMPLES.md:923 layer L12: ring L7, word L12 (units), label none; section [19. Streams] 6 -->
+<!-- EXAMPLES.md:928 layer L12: ring L7, word L12 (units), label none; section [19. Streams] 6 -->
 ```zed
 // [prop] — a fixed-width window: step L7.5 lists a width in the signature of .window and spells only gap:
 perMinute = events.window(width: 60r with units("s")).map(w -> w.count);
 ```
 
-<!-- EXAMPLES.md:930 layer L18: ring L10, word L18 (@memoized), label none; section [20. Testing, properties, and proofs] 1 -->
+<!-- EXAMPLES.md:935 layer L18: ring L10, word L18 (@memoized), label none; section [20. Testing, properties, and proofs] 1 -->
 ```zed
 // [d4] sec:tooling, sec:power, sec:property_tracking
 double(positional x) = x * 2 test { 0 -> 0, 2 -> 4, -3 -> -6 }
@@ -916,7 +921,7 @@ clamp(positional v, positional lo, positional hi) -> int { if v < lo { lo } else
 @memoized report = logs.map(rowCost).sum;
 ```
 
-<!-- EXAMPLES.md:940 layer L16: ring L3, word L16 (@commutative), label none; section [20. Testing, properties, and proofs] 2 -->
+<!-- EXAMPLES.md:945 layer L16: ring L3, word L16 (@commutative), label none; section [20. Testing, properties, and proofs] 2 -->
 ```zed
 // [d4*] sec:property_tracking, sec:reduction, sec:corner_cases — a user-written monoid: mean and variance in one parallel pass
 struct Moments { n: int, sum: rat, sumSq: rat }
@@ -927,7 +932,7 @@ mean     = m.sum / rat(m.n);                                                    
 variance = m.sumSq / rat(m.n) - mean * mean;                                    // both operands fail together with the same atom, so the merge is #divByZero again (sec:failure)
 ```
 
-<!-- EXAMPLES.md:952 layer L15: ring L10, word L15 (@ensure), label none; section [20. Testing, properties, and proofs] 3 -->
+<!-- EXAMPLES.md:957 layer L15: ring L10, word L15 (@ensure), label none; section [20. Testing, properties, and proofs] 3 -->
 ```zed
 // [d4] sec:domains, sec:kernel (law 16) — `@ensure`: the refinement is deleted by the preimage or the build fails; never a hidden run-time check
 @ensure scaledOdd(x: int[0..=100]) = (x * 2 + 1).refine(v -> v < 100);   // ✗ Undischargeable `@ensure`: int[0..=100] does not entail the preimage; the menu prints `x: int[0..=49]`
@@ -936,7 +941,7 @@ a = odd(12);                                                              // 25:
 b = odd(60);                                                              // ✗ Undischargeable `@ensure`: 60 is outside x <= 49; the call is rejected, and nothing runs to find out
 ```
 
-<!-- EXAMPLES.md:960 layer L15: ring L15, word L15 (byInduction), label none; section [20. Testing, properties, and proofs] 4 -->
+<!-- EXAMPLES.md:965 layer L15: ring L15, word L15 (byInduction), label none; section [20. Testing, properties, and proofs] 4 -->
 ```zed
 // [d4] sec:verification — a law is boolean Zed over binders, graded by the discharge ladder; a proof is a value the checker checks
 law doubleIsSum(x: int) = double(x) == x + x;                                           // Proved(#domain): the abelian normal form (rung 2)
@@ -949,7 +954,7 @@ law mirrorKeepsSize(t: Tree) = size(mirror(t)) == size(t)                       
 law sortIdempotent(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(asc x -> x);   // ✗ Obligation below proof grade: Obligated, which licenses nothing; the menu offers a `proof { }`
 ```
 
-<!-- EXAMPLES.md:972 layer L15: ring L15, word L15 (@invariant), label none; section [20. Testing, properties, and proofs] 5 -->
+<!-- EXAMPLES.md:977 layer L15: ring L15, word L15 (@invariant), label none; section [20. Testing, properties, and proofs] 5 -->
 ```zed
 // [d4] sec:verification, sec:generations — a loop is a state machine: `@invariant` is loop induction, and the reachable set is a fixpoint the compiler evaluates ([lib] image)
 amt(positional t: int) = withdrawals[t] else 0;                                                 // withdrawals : [int]; past the end nothing is withdrawn
@@ -966,7 +971,7 @@ reachable = loop { R' = R.union(R.flatMap(l -> [advance(l, #tick), advance(l, #f
 law faultStops(l: Lamp) = (l in reachable.R).implies(advance(l, #fault) == #red);    // CheckedExhaustive(Lamp): the model check is partial evaluation; a refutation would carry the (state, command) trace
 ```
 
-<!-- EXAMPLES.md:992 layer L20: ring L20, word L10 (refine), label none; section [21. Domains] 1 -->
+<!-- EXAMPLES.md:997 layer L20: ring L20, word L10 (refine), label none; section [21. Domains] 1 -->
 ```zed
 // [d4] sec:domains
 type Port  = int[1..=65535];
@@ -979,7 +984,7 @@ n = int(input);                           // int | #invalid
 p2 = n?.refine(v -> v in 1..=65535);      // int | #invalid, and the refinement is what the checker keeps
 ```
 
-<!-- EXAMPLES.md:1004 layer L10: ring L10, word none, label none; section [21. Domains] 2 -->
+<!-- EXAMPLES.md:1009 layer L10: ring L10, word none, label none; section [21. Domains] 2 -->
 ```zed
 // [d4] sec:type_language (m[k] row) — indexing is total on a matching domain
 grid: int[0..<w] -> int[0..<h] -> Cell = …;
@@ -987,7 +992,7 @@ cell = grid[x][y];                        // Cell when x : int[0..<w] and y : in
 all  = for x -> y -> _ in grid { grid[x][y] };   // total, by construction: the binder names grid's own keys
 ```
 
-<!-- EXAMPLES.md:1013 layer L13: ring L7, word L13 (taint), label none, documentation notation; section [22. Facets] 1 -->
+<!-- EXAMPLES.md:1018 layer L13: ring L7, word L13 (taint), label none, documentation notation; section [22. Facets] 1 -->
 ```zed
 // [d4] sec:tour_grammar, sec:facets
 v = 3.0 with units("m/s");
@@ -999,7 +1004,7 @@ exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's sig
 q = exec(db, "select …" ++ userInput);     // ✗ Taint at a sink whose parameter does not take it: taint flows through ++
 ```
 
-<!-- EXAMPLES.md:1026 layer L12: ring L7, word L12 (parity), label none; section [22. Facets] 2 -->
+<!-- EXAMPLES.md:1031 layer L12: ring L7, word L12 (parity), label none; section [22. Facets] 2 -->
 ```zed
 // [d4*] sec:checking_in_zed — `parity` is the evidence facet declared there
 half(positional x: int with parity(#even)) = x div 2;
@@ -1008,7 +1013,7 @@ k(n: int with parity(#odd), m: int) = half(n * m);    // ✗ Obligation below pr
 seven = 7 with parity(#odd);                          // attaching a fact is an obligation: holds(#odd, 7) runs at build
 ```
 
-<!-- EXAMPLES.md:1036 layer L15: ring L3, word L15 (@ensure), label none; section [22. Facets] 3 -->
+<!-- EXAMPLES.md:1041 layer L15: ring L3, word L15 (@ensure), label none; section [22. Facets] 3 -->
 ```zed
 // [d4*] sec:checking_in_zed (checked formats), sec:staging, sec:domains — `format` is the library function the spec names
 squares = (0..<256).map(i -> i * i);                     // computed at build, residualized as a literal
@@ -1016,7 +1021,7 @@ squares = (0..<256).map(i -> i * i);                     // computed at build, r
 @ensure oops = format(spec: "{} scored {}", args: [name]);          // ✗ Undischargeable `@ensure`: at build, with the library's message: two holes, one argument
 ```
 
-<!-- EXAMPLES.md:1047 layer L20: ring L20, word L20 (serialize), label none; section [23. Grammars] 1 -->
+<!-- EXAMPLES.md:1052 layer L20: ring L20, word L20 (serialize), label none; section [23. Grammars] 1 -->
 ```zed
 // [d4] sec:tour_grammar
 struct KeyVal  grammar { key: Ident ":" value: Json }
@@ -1026,7 +1031,7 @@ cfg = Json.parse(bytes);                  // Json | #syntaxError(..)
 out = cfg?.serialize;
 ```
 
-<!-- EXAMPLES.md:1056 layer L20: ring L20, word L3 (map), label none; section [23. Grammars] 2 -->
+<!-- EXAMPLES.md:1061 layer L20: ring L20, word L3 (map), label none; section [23. Grammars] 2 -->
 ```zed
 // [d4*] sec:tour_grammar, sec:tour_methods — an arithmetic language: grammar, then meaning by method
 struct Sum   grammar { terms: Prod sep "+" }
@@ -1041,7 +1046,7 @@ Number.eval = int(this) else 0;            // the grammar proved the digits; int
 value = Sum.parse("2*(3+4)")?.eval;        // 14, or #syntaxError
 ```
 
-<!-- EXAMPLES.md:1072 layer L7: ring L7, word L5 (patch), label none; section [24. Small programs] 1 -->
+<!-- EXAMPLES.md:1077 layer L7: ring L7, word L5 (patch), label none; section [24. Small programs] 1 -->
 ```zed
 // [d4*] sec:generations — a ledger: transactions are edits, the loop is the account book
 struct Account { bal: rat }
@@ -1058,7 +1063,7 @@ book = loop t {
 closing = book.accts;
 ```
 
-<!-- EXAMPLES.md:1088 layer L6: ring L6, word L6 (::frames), label none; section [24. Small programs] 2 -->
+<!-- EXAMPLES.md:1093 layer L6: ring L6, word L6 (::frames), label none; section [24. Small programs] 2 -->
 ```zed
 // [d4] sec:generations — a state machine
 type Light = #green | #yellow | #red;
@@ -1067,7 +1072,7 @@ lights = loop t { l' = next(l) with initial l = #red; until t == 10; };
 trace  = lights::frames.map(f -> f.l);    // [Light]
 ```
 
-<!-- EXAMPLES.md:1096 layer L6: ring L6, word L3 (where), label none; section [24. Small programs] 3 -->
+<!-- EXAMPLES.md:1101 layer L6: ring L6, word L3 (where), label none; section [24. Small programs] 3 -->
 ```zed
 // [d4*] sec:generations, sec:tour_loops — Conway's life on a torus
 alive(positional cells, positional p) -> bool {
@@ -1085,7 +1090,7 @@ life = loop t {
 };
 ```
 
-<!-- EXAMPLES.md:1113 layer L5: ring L3, word L5 (maxBy), label none; section [24. Small programs] 4 -->
+<!-- EXAMPLES.md:1118 layer L5: ring L3, word L5 (maxBy), label none; section [24. Small programs] 4 -->
 ```zed
 // [d4*] sec:grouping, sec:reduction — log analytics
 struct Req { path: Utf8String, status: int, ms: int }
@@ -1094,7 +1099,7 @@ errRate = byPath.map(rs -> f64(rs.where(r -> r.status >= 500).count) / f64(rs::c
 slowest = byPath.map(rs -> rs.map(r -> r.ms).max).maxBy(m -> m);      // (ms ->? (Path -> ms)) | #none; .max is exact: groups are nonempty
 ```
 
-<!-- EXAMPLES.md:1121 layer L21: ring L7, word L21 (store), label none; section [24. Small programs] 5 -->
+<!-- EXAMPLES.md:1126 layer L21: ring L7, word L21 (store), label none; section [24. Small programs] 5 -->
 ```zed
 // [d4*] sec:generations, sec:ports — a todo list with a store, driven by commands
 struct Todo { title: Utf8String, done: bool }
@@ -1109,7 +1114,7 @@ main(m: MainArgs) {
 }
 ```
 
-<!-- EXAMPLES.md:1137 layer L7: ring L7, word L7 (reducer), label none; section [25. Algorithms] 1 -->
+<!-- EXAMPLES.md:1142 layer L7: ring L7, word L7 (reducer), label none; section [25. Algorithms] 1 -->
 ```zed
 // [d4] sec:generations, sec:push_pull (hist), sec:tour_loops (cdf), sec:power (edit distance, with cost(a[i], b[j]) inlined as 0/1)
 hist: int ->? int with reducer((+));                                // the accumulator names its reducer, so many sites may push
@@ -1120,27 +1125,27 @@ d[i][j] = if a[i] == b[j] { d[i-1][j-1] } else { 1 + min(d[i-1][j], d[i][j-1], d
   with d[-1][j in -1..<b::len] = j + 1, d[i in 0..][-1] = i + 1;
 ```
 
-<!-- EXAMPLES.md:1147 layer L8: ring L8, word L3 (where), label none; section [25. Algorithms] 2 -->
+<!-- EXAMPLES.md:1152 layer L8: ring L8, word L3 (where), label none; section [25. Algorithms] 2 -->
 ```zed
 // [d4*] sec:tour_loops, sec:joins — two-sum is a self-join on the complementary value
 byVal = xs as (i -> v) into (v -> i -> _);                                       // int ->? set of positions
 pairs = for i -> v in xs where (target - v) in byVal::domain { (i, byVal[target - v].where(j -> j != i)) };   // a position never pairs with itself; the binder names the position and the value
 ```
 
-<!-- EXAMPLES.md:1153 layer L3: ring L3, word L3 (where), label none; section [25. Algorithms] 3 -->
+<!-- EXAMPLES.md:1158 layer L3: ring L3, word L3 (where), label none; section [25. Algorithms] 3 -->
 ```zed
 // [d4] sec:tour_collections — primes by trial division; a range is a domain
 isPrime(positional k) = k >= 2 && (2..<k).where(d -> (d * d) <= k && (k mod d) == 0).count == 0;
 primes = (2..=n).where(isPrime);
 ```
 
-<!-- EXAMPLES.md:1159 layer L5: ring L1, word L5 (first), label none; section [25. Algorithms] 4 -->
+<!-- EXAMPLES.md:1164 layer L5: ring L1, word L5 (first), label none; section [25. Algorithms] 4 -->
 ```zed
 // [d4*] sec:tour_loops — run-length encoding: chunks are nonempty, so first is exact
 rle = xs.chunkBy(x -> x).map(c -> (c.first, c.count));
 ```
 
-<!-- EXAMPLES.md:1164 layer L3: ring L3, word none, label none; section [25. Algorithms] 5 -->
+<!-- EXAMPLES.md:1169 layer L3: ring L3, word none, label none; section [25. Algorithms] 5 -->
 ```zed
 // [d4*] sec:failure, sec:type_language — binary search over xs sorted ascending (on unsorted input it can return #none for a t that is present), with the miss the type insists on
 bsearch(xs: [int], t: int) -> int | #none {
@@ -1158,14 +1163,14 @@ bsearch(xs: [int], t: int) -> int | #none {
 }
 ```
 
-<!-- EXAMPLES.md:1181 layer L5: ring L3, word L5 (first), label none; section [25. Algorithms] 6 -->
+<!-- EXAMPLES.md:1186 layer L5: ring L3, word L5 (first), label none; section [25. Algorithms] 6 -->
 ```zed
 // [d4] sec:kernel (law 22), sec:optimizer — the same search as a query: the least index whose entry is at least t. When the xs a call passes is a sorted view ascending (a .sort(asc …) result is one, and specialization carries that into the body, sec:order), i -> xs[i] >= t is monotone along the range, and the plan is bisection, O(log n); without it the plan is a scan with the same result
 lowerBound(positional xs: [int], positional t: int) = (0..<xs::len).where(i -> xs[i] >= t).first;   // int[0..<n] | #none, n = xs::len: #none when every entry is below t
 find(xs: [int], t: int) = match lowerBound(xs, t) { #none -> #none, i -> if xs[i] == t { i } else { #none } };   // i : int[0..<n], so the lookup cannot miss
 ```
 
-<!-- EXAMPLES.md:1187 layer L10: ring L10, word none, label none; section [25. Algorithms] 7 -->
+<!-- EXAMPLES.md:1192 layer L10: ring L10, word none, label none; section [25. Algorithms] 7 -->
 ```zed
 // [d4] sec:tour_joins, sec:remap_law — matrices are two-level morphisms
 type Mat(n, m) = int[0..<n] -> int[0..<m] -> f64;
@@ -1174,7 +1179,7 @@ at  = a as (r -> c -> v) into (c -> r -> v);                   // transpose: a r
 eye = for i in 0..<n { for j in 0..<n { if i == j { f64(1) } else { f64(0) } } };
 ```
 
-<!-- EXAMPLES.md:1195 layer L6: ring L5, word L5 (sort), label L6; section [25. Algorithms] 8 -->
+<!-- EXAMPLES.md:1200 layer L6: ring L5, word L5 (sort), label L6; section [25. Algorithms] 8 -->
 ```zed
 // [d4*] sec:remap_law, sec:power — a shuffle is a sort by a random key; Fisher–Yates is a serial swap loop, the rank pass is not
 // layer L6
