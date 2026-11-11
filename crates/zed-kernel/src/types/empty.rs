@@ -622,7 +622,22 @@ impl Type {
         s.run(|d| Box::pin(async move { d.sweep_verdict(&t).await }))
     }
 
-    /// The verdict of `self` by a search of its own.
+    /// Diagnostic version with each temporal run expanded to a single link.
+    /// It shares the grammar and set primitives but performs every scheduled step.
+    #[doc(hidden)]
+    pub fn chain_verdict_expanded(&self) -> Option<Verdict> {
+        let mut s = Search {
+            strict: true,
+            refuse_forks: true,
+            expand_chain_runs: true,
+            ..Search::default()
+        };
+        let t = self.clone();
+        s.roots.insert(t.clone(), ());
+        s.run(|d| Box::pin(async move { d.sweep_verdict(&t).await }))
+    }
+
+    /// The verdict of self by a search of its own.
     fn verdict_alone(&self) -> Verdict {
         if let Some(v) = sweep::front_sweep(self) {
             return v;
@@ -992,6 +1007,8 @@ struct Search {
     /// What is known of each root list type by the front sweep ([`Searching::swept`]): its
     /// verdict, with the checked value when it is inhabited; `None` outside the sweep's class.
     swept: ByType<Option<Option<Value>>>,
+    /// Diagnostic uncompressed temporal run, used only by chain_verdict_expanded.
+    expand_chain_runs: bool,
     /// The types the query asks about ([`Searching::solve`], [`Type::chain_verdict`]): the only
     /// ones [`Searching::prefix_chains`] decides.
     roots: ByType<()>,
@@ -1061,6 +1078,8 @@ struct ChainGroup {
     head: Type,
     emit: Option<Type>,
     active: usize,
+    /// Whether this generation already occurs in its active vector.
+    listed: bool,
     jumping_next: usize,
     jumping_stop_next: bool,
     jump_target: Option<usize>,
@@ -4353,6 +4372,17 @@ impl<'m> Searching<'m> {
             return Some(ChainPlan::Empty);
         }
 
+        // Complexity tradeoff: tests can compare the temporal compression with
+        // the naive one-link schedule, O(sum of expanded path lengths), while
+        // normal calls always keep maximal runs. No input-size switch is used.
+        if self.s().expand_chain_runs {
+            for node in &mut nodes {
+                if node.depth >= 2 {
+                    node.run = 1;
+                    node.jump = Some(node.child);
+                }
+            }
+        }
         let max_step = 1 + nodes.iter().map(|n| n.depth).max().unwrap_or(0);
         let mut pos_depth1: Vec<Vec<usize>> = vec![Vec::new(); max_step + 2];
         let mut neg_depth1: Vec<Vec<usize>> = vec![Vec::new(); max_step + 2];
@@ -4398,6 +4428,7 @@ impl<'m> Searching<'m> {
                             head: nodes[u].head.clone(),
                             emit: None,
                             active: 0,
+                            listed: false,
                             jumping_next: 0,
                             jumping_stop_next: false,
                             jump_target: None,
@@ -4405,7 +4436,8 @@ impl<'m> Searching<'m> {
                         });
                         id
                     });
-                if pos_groups[g_idx].active == 0 {
+                if !pos_groups[g_idx].listed {
+                    pos_groups[g_idx].listed = true;
                     active_pos.push(g_idx);
                 }
                 pos_groups[g_idx].active += 1;
@@ -4443,6 +4475,7 @@ impl<'m> Searching<'m> {
                             head: nodes[v].head.clone(),
                             emit: nodes[v].emit.clone(),
                             active: 0,
+                            listed: false,
                             jumping_next: 0,
                             jumping_stop_next: false,
                             jump_target: None,
@@ -4450,7 +4483,8 @@ impl<'m> Searching<'m> {
                         });
                         id
                     });
-                    if neg_groups[g_idx].active == 0 {
+                    if !neg_groups[g_idx].listed {
+                        neg_groups[g_idx].listed = true;
                         active_neg.push(g_idx);
                     }
                     neg_groups[g_idx].active += 1;
@@ -4734,7 +4768,15 @@ impl<'m> Searching<'m> {
                     &mut pos_jumps_at,
                 );
             }
-            active_pos.retain(|&g_idx| pos_groups[g_idx].active > 0);
+            // Complexity tradeoff: an exhausted group can be re-entered by another
+            // group's jump before this retain. Testing active == 0 when inserting
+            // appended its index again, giving Theta(n²) visits on two alternating
+            // chains of O(n) nodes. A listed bit makes the vector a set: O(1) per
+            // insertion/removal, one flag per group; token counts remain unchanged.
+            active_pos.retain(|&g_idx| {
+                pos_groups[g_idx].listed = pos_groups[g_idx].active > 0;
+                pos_groups[g_idx].listed
+            });
 
             let neg_jumps = std::mem::take(&mut neg_jumps_at[step]);
             let mut neg_to_activate: Vec<usize> = Vec::with_capacity(neg_jumps.len());
@@ -4759,7 +4801,12 @@ impl<'m> Searching<'m> {
                     &mut neg_jumps_at,
                 );
             }
-            active_neg.retain(|&g_idx| neg_groups[g_idx].active > 0);
+            // Complexity tradeoff: as for active_pos, retain one entry per live
+            // generation even when a jump re-enters an exhausted group this step.
+            active_neg.retain(|&g_idx| {
+                neg_groups[g_idx].listed = neg_groups[g_idx].active > 0;
+                neg_groups[g_idx].listed
+            });
 
             let pos_stop_now = pos_depth1[step].iter().all(|&u| nodes[u].has_stop)
                 && active_pos.iter().all(|&g_idx| pos_groups[g_idx].has_stop);

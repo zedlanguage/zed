@@ -1281,7 +1281,50 @@ fn rfx_family(
 /// `M`, the `M{k}` in a group of their own, a meet, a pair; and the lists by one place
 /// ([`by_one_place_from_the_front`]) and by the place from the end ([`by_place_from_the_end`]).
 fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
-    // The case as a field of a tuple or a record, which is not a root of the prefix chains.
+    if let Some(c) = which.strip_prefix("deep:") {
+        let mut t = rfx_case(c, 4, tag);
+        for _ in 0..n {
+            t = Type::tuple(vec![t]);
+        }
+        return t;
+    }
+    if let Some(c) = which.strip_prefix("deephead:") {
+        let mut t = rfx_case(c, 4, tag);
+        for _ in 0..n {
+            t = cons_of(t, Type::atom("nil"));
+        }
+        return t;
+    }
+    if let Some(c) = which.strip_prefix("listtail:") {
+        return cons_of(Type::int(), rfx_case(c, n, tag));
+    }
+    if let Some(c) = which.strip_prefix("atom2:") {
+        return Type::atom_with("wrap", &Type::tuple(vec![Type::int(), rfx_case(c, n, tag)]));
+    }
+    if let Some(c) = which.strip_prefix("atom:") {
+        return Type::atom_with("wrap", &Type::tuple(vec![rfx_case(c, n, tag)]));
+    }
+    if let Some(c) = which.strip_prefix("nested:") {
+        return Type::tuple(vec![Type::exact(
+            lit(0),
+            Type::atom_with("wrap", &Type::tuple(vec![rfx_case(c, n, tag)])),
+        )]);
+    }
+    if let Some(c) = which.strip_prefix("listhead:") {
+        return cons_of(
+            rfx_case(c, n, tag),
+            list_named(Type::top(), &format!("outer{tag}")),
+        );
+    }
+    if let Some(c) = which.strip_prefix("option:") {
+        return &(&Type::atom("none")
+            | &Type::atom_with("some", &Type::tuple(vec![rfx_case(c, n, tag)])))
+            - &Type::atom("none");
+    }
+    if let Some(c) = which.strip_prefix("map:") {
+        return Type::exact(Type::int(), rfx_case(c, n, tag));
+    }
+    // The case as a field of a tuple or a record.
     if let Some(c) = which.strip_prefix("tup:") {
         return Type::tuple(vec![Type::int(), rfx_case(c, n, tag)]);
     }
@@ -1316,6 +1359,10 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
     };
     let half = (n / 2).max(1);
     match which {
+        "r9cosets" => r9_cosets(n, true, tag),
+        "r9balanced" => r9_balanced(n, tag),
+        "r9posswap" => r9_swapping_groups(n, false, tag),
+        "r9negswap" => r9_swapping_groups(n, true, tag),
         "far" => &l - &by_place_from_the_front(n, Some(n), tag),
         "skip1" => fam(Some(1), n, &int, &one, false),
         "skipmid" => fam(Some(half), n, &int, &one, false),
@@ -7141,6 +7188,424 @@ fn r9_sparse_bmm_adversary_has_one_atom_per_row() {
             Type::forget_emptiness();
             let t0 = r9_bmm(&a, &b, &format!("_r9one_{m}_z"));
             assert_eq!(t0.verdict(), Verdict::Empty, "r9bmmone control side {m}");
+        }
+    });
+}
+
+fn r9_swapping_groups(n: usize, negative: bool, tag: &str) -> Type {
+    // Two alternating runs exhaust and enter each other's group on the same step.
+    let l = list_named(Type::int(), &format!("L{tag}"));
+    let mut a = cons_of(lit(1), l.clone());
+    let mut b = a.clone();
+    let ha = &Type::int() - &lit(2);
+    let hb = &Type::int() - &lit(3);
+    for _ in 0..n {
+        let na = cons_of(ha.clone(), b.clone());
+        let nb = cons_of(hb.clone(), a);
+        a = na;
+        b = nb;
+    }
+    if negative {
+        let mut p = l.clone();
+        for _ in 0..n + 2 {
+            p = cons_of(lit(0), p);
+        }
+        &(&p - &cons_of(Type::int(), a)) - &cons_of(Type::int(), b)
+    } else {
+        &(&cons_of(Type::int(), a) & &cons_of(Type::int(), b)) - &cons_of(lit(7), l)
+    }
+}
+
+#[test]
+fn r9_wrapped_witnesses_are_checked_and_empty_fields_remain_empty() {
+    big(|| {
+        for n in [4, 16, 32] {
+            for case in [
+                "chain",
+                "chainfar",
+                "r5remout",
+                "u4holesout",
+                "clstaggerholesout",
+            ] {
+                let t = rfx_case(case, n, "_r9nest");
+                let want = t.verdict();
+                for wrap in ["tup", "rec", "atom", "atom2", "nested", "option", "map"] {
+                    Type::forget_emptiness();
+                    let w = rfx_case(&format!("{wrap}:{case}"), n, "_r9nest");
+                    let got = w.verdict();
+                    eprintln!("r9 nesting {wrap}:{case} n {n}: {got:?}, bare {want:?}");
+                    assert_eq!(got, want, "{wrap}:{case} at {n}");
+                    assert_eq!(w.is_empty(), want == Verdict::Empty);
+                }
+            }
+        }
+        let t = r5_remainder_boundary(16, true, "_r9member");
+        let good = r6_colour_list(&[5, 1, 1]);
+        let bad = r6_colour_list(&[1, 1, 1]);
+        assert!(t.contains(&good));
+        assert!(!t.contains(&bad)); // negative control for the concrete witness
+        let w = Type::atom_with("wrap", &Type::tuple(vec![t]));
+        assert!(w.contains(&Value::atom_with("wrap", vec![good])));
+        assert!(!w.contains(&Value::atom_with("wrap", vec![bad])));
+        assert_eq!(w.verdict(), Verdict::Inhabited);
+    });
+}
+
+#[test]
+fn r9_wrapped_witness_cost_scales() {
+    big(|| {
+        for case in [
+            "clstaggerholesout",
+            "u4holesout",
+            "u4cofrontshared",
+            "r5remout",
+        ] {
+            for wrap in ["tup", "rec", "atom", "atom2", "nested", "option", "map"] {
+                let small = rfx_case(&format!("{wrap}:{case}"), 32, "_r9scale_small");
+                let large = rfx_case(&format!("{wrap}:{case}"), 256, "_r9scale_large");
+                scaling::check("a checked list witness inside a product", 32, |n| {
+                    Type::forget_emptiness();
+                    let t = if n == 32 { &small } else { &large };
+                    assert_eq!(t.verdict(), Verdict::Inhabited);
+                });
+            }
+        }
+    });
+}
+
+#[test]
+fn r9_active_groups_have_one_entry_across_simultaneous_reentry() {
+    big(|| {
+        let small = r9_swapping_groups(512, false, "_r9swap_small");
+        let large = r9_swapping_groups(4096, false, "_r9swap_large");
+        scaling::check(
+            "two positive chains re-enter each other's exhausted groups",
+            512,
+            |n| {
+                Type::forget_emptiness();
+                assert_eq!(
+                    (if n == 512 { &small } else { &large }).chain_verdict(),
+                    Some(Verdict::Inhabited)
+                );
+            },
+        );
+        for n in 1..=6 {
+            let t = r9_swapping_groups(n, false, "_r9swap_oracle");
+            // The last positive item is 1, previous items 0, and the first is 0.
+            let mut xs = vec![0; n + 1];
+            xs.push(1);
+            assert!(t.contains(&r6_colour_list(&xs)));
+            assert!(!t.contains(&r6_colour_list(&vec![0; n + 2])));
+            assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
+        }
+    });
+}
+
+/// Growing-alphabet adversary: every requested tail height is even. The colours of a
+/// positive place and an aligned negative hole occupy opposite parity blocks, so all
+/// later cells are empty even though each of sqrt(n) channels has sqrt(n) incidences.
+fn r9_balanced(n: usize, tag: &str) -> Type {
+    let n = n.max(8);
+    let q = n.isqrt() + 1;
+    let colour = |j: usize, flip: bool| -> i64 {
+        let mixed = j.wrapping_mul(1_103_515_245) ^ (j >> 2) ^ j.count_ones() as usize;
+        2 + (((j % 2) ^ usize::from(flip)) * q + mixed % q) as i64
+    };
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for e in 1..=n {
+        let excluded = &lit(0) | &lit(colour(e, true));
+        let h = &Type::int() - &excluded;
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if j == 1 {
+            &lit(0) | &lit(-1)
+        } else {
+            lit(colour(j, false))
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let u = (3..=n).step_by(2).fold(Type::empty(), |u, d| &u | &ts[d]);
+    &ts[n + 1] - &u
+}
+
+#[test]
+fn r9_compressed_and_expanded_runs_agree_with_enumeration() {
+    big(|| {
+        let mut rng = R6Rng(0x91842aabbccd);
+        for i in 0..2000 {
+            let input = r6_random_input(&mut rng, 4, 4, true);
+            let want = r6_oracle(&input);
+            let t = r6_input_type(&input, &format!("_r9expand{i}"));
+            for expanded in [false, true] {
+                Type::forget_emptiness();
+                let got = if expanded {
+                    t.chain_verdict_expanded()
+                } else {
+                    t.chain_verdict()
+                };
+                if let Some(v) = got {
+                    assert_eq!(
+                        v == Verdict::Inhabited,
+                        want,
+                        "case {i} expanded {expanded}: {input:?} {v:?}"
+                    );
+                }
+            }
+        }
+        for n in [2, 16, 64] {
+            let t = r9_swapping_groups(n, false, "_r9expand_swap");
+            assert_eq!(t.chain_verdict(), t.chain_verdict_expanded());
+        }
+        let yes = rfx_case("chainfar", 3, "_r9oracle_yes");
+        let no = rfx_case("chain", 3, "_r9oracle_no");
+        assert_eq!(yes.chain_verdict_expanded(), Some(Verdict::Inhabited));
+        assert_eq!(no.chain_verdict_expanded(), Some(Verdict::Empty));
+    });
+}
+
+#[test]
+#[ignore]
+fn r9_escape_probe() {
+    let which = std::env::var("RFX").unwrap();
+    let sizes: Vec<usize> = std::env::var("RFX_N")
+        .unwrap()
+        .split(',')
+        .map(|s| s.parse().unwrap())
+        .collect();
+    big(move || {
+        for n in sizes {
+            let t = rfx_case(&which, n, "_r9finder");
+            let mut meter = scaling::Meter::new();
+            let mut counts = (0, 0);
+            let work = meter.work(|| counts = t.escape_cell_counts());
+            eprintln!(
+                "rfx {which} n {n} finder units {} bytes {}",
+                work.units, work.bytes
+            );
+            eprintln!("escape cells {which} n {n} {counts:?}");
+        }
+    });
+}
+
+#[test]
+#[ignore]
+fn r9_wide_literal_probe() {
+    for text in [
+        "9223372036854775807",
+        "9223372036854775808",
+        "-9223372036854775809",
+        "18446744073709551616",
+    ] {
+        let v = Value::int(text.parse().unwrap());
+        let ty = zedc::check::read::parse_type(text);
+        match ty {
+            Ok(t) => eprintln!(
+                "r9 literal {text}: empty {} contains_literal {} contains_zero {}",
+                t.is_empty(),
+                t.contains(&v),
+                t.contains(&Value::Int(0))
+            ),
+            Err(e) => eprintln!("r9 literal {text}: error {e}"),
+        }
+        for arg in [text, "0"] {
+            let src = format!("f(x: {text}) = 0;\nmain() = f(x: {arg});\n");
+            eprintln!(
+                "r9 literal program {text} arg {arg}: {:?}",
+                zedc::run::load(src.as_bytes()).err()
+            );
+        }
+    }
+}
+
+/// X38 adversary with two positive and two negative residues mod 7. The tall
+/// off-coset root keeps the height suffix gcd at 1; adjacent positive residues
+/// keep the per-value gcd at 1. No aligned cell is nonempty, including the outlier's.
+fn r9_cosets(n: usize, subtract: bool, tag: &str) -> Type {
+    let n = n.max(16);
+    let height = 7 * ((n - 2) / 7);
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for e in 1..=height + 1 {
+        let h = if matches!(e % 7, 3 | 4) {
+            &Type::int() - &lit(0)
+        } else {
+            Type::int()
+        };
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if matches!(j % 7, 0 | 1) {
+            &lit(0) | &lit(-1)
+        } else {
+            lit(-1)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let p = ts[height + 2].clone();
+    if !subtract {
+        return p;
+    }
+    let u = (7..=height)
+        .step_by(7)
+        .map(|h| h + 1)
+        .chain([height])
+        .fold(Type::empty(), |u, d| &u | &ts[d]);
+    &p - &u
+}
+
+#[test]
+fn r9_wide_literals_are_preserved_and_compile_limits_are_reported() {
+    big(|| {
+        for text in [
+            "9223372036854775807",
+            "9223372036854775808",
+            "-9223372036854775809",
+            "18446744073709551616",
+        ] {
+            let v = Value::int(text.parse().unwrap());
+            let t = zedc::check::read::parse_type(text).unwrap();
+            assert!(!t.is_empty(), "{text}");
+            assert!(t.contains(&v), "{text}");
+            assert!(
+                !t.contains(&Value::Int(0)),
+                "negative membership control at {text}"
+            );
+            let src = format!(
+                "f(x: {text}) = 0;
+main() = f(x: {text});
+"
+            );
+            let batch = zedc::run::load(src.as_bytes())
+                .err()
+                .expect("literal type compilation must be reported");
+            assert!(batch.contains("does not compile it yet"), "{batch}");
+            let alone = std::thread::spawn(move || zedc::run::load(src.as_bytes()).err())
+                .join()
+                .unwrap();
+            assert_eq!(alone, Some(batch));
+        }
+    });
+}
+
+#[test]
+fn r9_coset_cover_agrees_with_enumeration() {
+    big(|| {
+        let t = r9_cosets(16, true, "_r9cosets");
+        let p = r9_cosets(16, false, "_r9cosetscontrol");
+        let variable: Vec<usize> = (1..=16).filter(|j| matches!(j % 7, 0 | 1)).collect();
+        for mask in 0..1usize << variable.len() {
+            let mut xs = vec![-1; 16];
+            for (i, &j) in variable.iter().enumerate() {
+                if mask >> i & 1 == 1 {
+                    xs[j - 1] = 0;
+                }
+            }
+            let value = r6_colour_list(&xs);
+            assert!(p.contains(&value));
+            assert!(!t.contains(&value), "mask {mask}");
+        }
+        assert_eq!(t.verdict(), Verdict::Empty);
+        assert_eq!(p.verdict(), Verdict::Inhabited);
+    });
+}
+
+#[test]
+fn r9_nested_queries_agree_alone_forward_and_reverse() {
+    fn make() -> Vec<Type> {
+        ["tup", "rec", "atom", "nested", "option", "map"]
+            .iter()
+            .flat_map(|w| {
+                ["chain", "chainfar", "r5remout", "u4holesout"]
+                    .iter()
+                    .map(move |c| rfx_case(&format!("{w}:{c}"), 8, "_r9order"))
+            })
+            .collect()
+    }
+    big(|| {
+        let ts = make();
+        Type::forget_emptiness();
+        let forward: Vec<_> = ts.iter().map(|t| (t.verdict(), t.is_empty())).collect();
+        Type::forget_emptiness();
+        let mut reverse: Vec<_> = ts
+            .iter()
+            .rev()
+            .map(|t| (t.verdict(), t.is_empty()))
+            .collect();
+        reverse.reverse();
+        assert_eq!(forward, reverse);
+        for (i, want) in forward.iter().enumerate() {
+            let got = std::thread::Builder::new()
+                .stack_size(16 * 1024 * 1024)
+                .spawn(move || {
+                    let ts = make();
+                    (ts[i].verdict(), ts[i].is_empty())
+                })
+                .unwrap()
+                .join()
+                .unwrap();
+            assert_eq!(&got, want, "index {i}");
+        }
+    });
+}
+
+/// X43 (open, round 9): a list of the front-sweep class as the head of another list of the same
+/// atom names (`listhead:`) is refused although the list alone is decided, and `is_empty` of
+/// `listhead:chain` at 8 is true after the other wrappers were asked and false in a fresh thread.
+/// Ignored until the fix; the three tests above leave `listhead` out until then.
+#[test]
+#[ignore]
+fn r9_x43_a_list_as_the_head_of_a_list_is_decided_as_the_list_alone() {
+    big(|| {
+        for case in ["chain", "chainfar", "r5remout", "u4holesout"] {
+            let want = rfx_case(case, 8, "_r9x43").verdict();
+            Type::forget_emptiness();
+            let t = rfx_case(&format!("listhead:{case}"), 8, "_r9x43");
+            assert_eq!(t.verdict(), want, "listhead:{case}");
+            assert_eq!(t.is_empty(), want == Verdict::Empty, "listhead:{case}");
+        }
+    });
+}
+
+/// Diagnostic for the remaining same-constructor tail boundary (R9-C5).
+#[test]
+#[ignore]
+fn r9_tail_admission_probe() {
+    big(|| {
+        for n in [3, 4, 8, 16] {
+            let t = rfx_case("listtail:r5remout", n, "_r9tailmember");
+            let good = Value::atom_with("cons", vec![Value::Int(0), r6_colour_list(&[5, 1, 1])]);
+            let bad = Value::atom_with("cons", vec![Value::Int(0), r6_colour_list(&[1, 1, 1])]);
+            assert!(t.contains(&good));
+            assert!(!t.contains(&bad));
+            eprintln!("r9 tail n {n}: {:?}, member [0,5,1,1] checked", t.verdict());
+        }
+        for n in 1..=6 {
+            let t = rfx_case("listtail:chain", n, "_r9tailempty");
+            // Integer heads distinguish only equality with 1. A chain test has
+            // horizon n; one extra tail item covers the unbounded carrier case.
+            for length in 0..=n + 1 {
+                for mask in 0..1usize << length {
+                    let xs: Vec<i64> = (0..length).map(|i| ((mask >> i) & 1) as i64).collect();
+                    let v = Value::atom_with("cons", vec![Value::Int(0), r6_colour_list(&xs)]);
+                    assert!(!t.contains(&v));
+                }
+            }
+            eprintln!(
+                "r9 empty tail n {n}: {:?}, enumeration found no member",
+                t.verdict()
+            );
         }
     });
 }
