@@ -18,8 +18,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { buildGraph, shapeProblems, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, parseQuestions, resolveId } from "./state.ts";
 import type { Override } from "./state.ts";
-import { Layouts, METHODS, layoutInWorker } from "./layout.ts";
-import type { Graph, Method } from "./layout.ts";
+import { Layouts, layoutInWorker } from "./layout.ts";
+import type { Graph } from "./layout.ts";
 
 const here = import.meta.dirname;
 const repo = process.env.DAGVIEW_REPO ?? resolve(here, "../..");
@@ -160,8 +160,15 @@ for (const dir of [repo, spec]) {
 }
 
 const savedLayouts = join(work, "dagview-layouts.json");
+// Each layout run is logged, so the log shows how often and for which graph one runs.
 const layouts = new Layouts(
-  layoutInWorker,
+  async (g) => {
+    const t0 = Date.now();
+    console.log(`${new Date(t0).toISOString()} layout started: ${g.nodes.length} nodes, ${g.edges.length} edges`);
+    const l = await layoutInWorker(g);
+    console.log(`${new Date().toISOString()} layout finished in ${Date.now() - t0} ms: ${l.key}`);
+    return l;
+  },
   JSON.parse(await readFile(savedLayouts, "utf8").catch(() => "{}")),
   (done) => {
     changed();
@@ -201,19 +208,10 @@ const server = createServer(async (req, res) => {
       case "/api/state":
         return send("application/json", JSON.stringify(await state()));
       case "/api/layout": {
-        // Each method keeps its own layouts, so switching back and forth in
-        // the page does not lay out again; with no method, the default (METHODS[0]).
-        const slot = (mode: string, method: Method) => `${mode} ${method}`;
-        const known = (m: unknown): m is Method => METHODS.includes(m as Method);
-        // GET /api/layout?mode=all&method=elk only reports; see Layouts.status.
-        if (req.method === "GET") {
-          const method = url.searchParams.get("method") ?? METHODS[0];
-          if (!known(method)) return send("text/plain", `no layout method ${method}`, 400);
-          return send("application/json", JSON.stringify(layouts.status(slot(url.searchParams.get("mode") ?? "all", method))));
-        }
-        const { mode, graph, method = METHODS[0] } = JSON.parse(await body(req)) as { mode: string; graph: Graph; method?: string };
-        if (!known(method)) return send("text/plain", `no layout method ${method}`, 400);
-        return send("application/json", JSON.stringify(layouts.request(slot(mode, method), { nodes: graph.nodes, edges: graph.edges, method })));
+        // GET /api/layout?mode=all only reports; see Layouts.status.
+        if (req.method === "GET") return send("application/json", JSON.stringify(layouts.status(url.searchParams.get("mode") ?? "all")));
+        const { mode, graph } = JSON.parse(await body(req)) as { mode: string; graph: Graph };
+        return send("application/json", JSON.stringify(layouts.request(mode, graph)));
       }
       case "/api/log": {
         const id = url.searchParams.get("id") ?? "";

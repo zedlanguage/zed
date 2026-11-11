@@ -1,13 +1,14 @@
-// Narrows a finished ELK layout (direction DOWN). Brandes-Koepf placement keeps
-// each node and each long edge on one straight vertical line where it can, and
-// those lines push one another sideways into a staircase: on the plan of
-// 2026-11-07 the chart was 56,000 px wide while its widest layer, packed, needs
-// 14,600 px. `narrow` keeps ELK's layers and the order within each layer, and
-// places every layer again within the width of the widest packed layer, letting
-// edges bend where they must. `layoutTwice` in layout.ts then gives the result
-// back to ELK, which routes the edges for the new places.
+// Narrows a finished layout, given in the shape ELK gives one (direction DOWN;
+// d3dag.ts converts d3-dag's layout to it). Written for ELK's Brandes-Koepf
+// placement, which keeps each node and each long edge on one straight vertical
+// line where it can, and those lines push one another sideways into a
+// staircase: on the plan of 2026-11-07 the chart was 56,000 px wide while its
+// widest layer, packed, needs 14,600 px. d3-dag's center coordinates leave a
+// similar width. `narrow` keeps the layers and the order within each layer,
+// and places every layer again within the width of the widest packed layer,
+// letting edges bend where they must.
 
-// Spacing within a layer, as in layout.ts: between nodes, a node and an edge, two edges.
+// Spacing within a layer: between nodes (GAP[0] in d3dag.ts), a node and an edge, two edges.
 const NODE_NODE = 26;
 const EDGE_NODE = 8;
 const EDGE_EDGE = 8;
@@ -98,7 +99,7 @@ export function narrow(out: { children: Kid[]; edges: Edge[] }): { children: Kid
   for (const r of rows) r.sort((a, b) => x0[a] - x0[b]);
   const sep = (a: number, b: number) => (isNode[a] && isNode[b] ? NODE_NODE : isNode[a] || isNode[b] ? EDGE_NODE : EDGE_EDGE);
   // The width: that of the widest layer packed at the least spacing, the least
-  // any placement that keeps ELK's layers and orders can have.
+  // any placement that keeps the layers and orders can have.
   let width = 0;
   for (const r of rows) {
     let s = 0;
@@ -159,7 +160,7 @@ export function narrow(out: { children: Kid[]; edges: Edge[] }): { children: Kid
       placeRow(r, t, wt);
     }
   }
-  // ELK reads each lane as two bend points, where the edge enters and leaves the layer.
+  // Each lane is given as two bend points, where the edge enters and leaves the layer.
   return {
     children: kids.map((c, i) => ({ id: c.id, x: x[i], y: c.y, width: c.width, height: c.height })),
     edges: out.edges.map((e, j) => {

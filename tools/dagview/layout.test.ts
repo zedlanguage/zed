@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { graphKey, Layouts, layoutInWorker, METHODS } from "./layout.ts";
+import { graphKey, Layouts, layoutInWorker } from "./layout.ts";
 import type { Graph, Layout } from "./layout.ts";
 
 const graph: Graph = {
@@ -14,38 +14,28 @@ const graph: Graph = {
   edges: [["A", "B"], ["B", "C"], ["C", "D"], ["D", "C"], ["A", "X"]],
 };
 
-for (const method of METHODS) {
-  const g: Graph = { ...graph, method };
-  test(`the worker lays out every node at its size, top to bottom, and draws each known edge (${method})`, async () => {
-    const l = await layoutInWorker(g);
-    assert.equal(l.key, graphKey(g));
-    assert.deepEqual(Object.keys(l.boxes).sort(), ["A", "B", "C", "D"]);
-    assert.equal(l.boxes.B.w, 330);
-    assert.equal(l.boxes.B.h, 147);
-    assert.ok(l.boxes.A.y < l.boxes.B.y && l.boxes.B.y < l.boxes.C.y);
-    for (const b of Object.values(l.boxes)) {
-      assert.ok(b.x - b.w / 2 >= 0 && b.x + b.w / 2 <= l.w && b.y - b.h / 2 >= 0 && b.y + b.h / 2 <= l.h);
-    }
-    assert.deepEqual(l.edges.map((e) => `${e.from}>${e.to}`).sort(), ["A>B", "B>C", "C>D", "D>C"]);
-    for (const e of l.edges) assert.ok(e.points.length >= 2);
-  });
+test("the worker lays out every node at its size, top to bottom, and draws each known edge", async () => {
+  const l = await layoutInWorker(graph);
+  assert.equal(l.key, graphKey(graph));
+  assert.deepEqual(Object.keys(l.boxes).sort(), ["A", "B", "C", "D"]);
+  assert.equal(l.boxes.B.w, 330);
+  assert.equal(l.boxes.B.h, 147);
+  assert.ok(l.boxes.A.y < l.boxes.B.y && l.boxes.B.y < l.boxes.C.y);
+  for (const b of Object.values(l.boxes)) {
+    assert.ok(b.x - b.w / 2 >= 0 && b.x + b.w / 2 <= l.w && b.y - b.h / 2 >= 0 && b.y + b.h / 2 <= l.h);
+  }
+  assert.deepEqual(l.edges.map((e) => `${e.from}>${e.to}`).sort(), ["A>B", "B>C", "C>D", "D>C"]);
+  for (const e of l.edges) assert.ok(e.points.length >= 2);
+});
 
-  test(`the same graph gives the same layout (${method})`, async () => {
-    assert.deepEqual(await layoutInWorker(g), await layoutInWorker(g));
-  });
-}
-
-test("a graph with no method is laid out by the first method, and each method has its own key", () => {
-  assert.equal(METHODS[0], "d3dag");
-  assert.equal(graphKey(graph), graphKey({ ...graph, method: "d3dag" }));
-  assert.notEqual(graphKey({ ...graph, method: "d3dag" }), graphKey({ ...graph, method: "elk" }));
+test("the same graph gives the same layout", async () => {
+  assert.deepEqual(await layoutInWorker(graph), await layoutInWorker(graph));
 });
 
 test("d3-dag: each edge runs from its source's bottom to its target's top, an edge of a cycle is drawn upward, and repeated edges and loops are drawn", async () => {
   const g: Graph = {
     nodes: [...graph.nodes, { id: "E", w: 210, h: 52 }, { id: "F", w: 210, h: 52 }],
     edges: [...graph.edges, ["A", "D"], ["E", "E"], ["A", "B"]],
-    method: "d3dag",
   };
   const l = await layoutInWorker(g);
   // E stands alone; F has no edges at all.
@@ -76,9 +66,9 @@ test("d3-dag: each edge runs from its source's bottom to its target's top, an ed
 });
 
 test("d3-dag: an empty graph and a single node are laid out", async () => {
-  const empty = await layoutInWorker({ nodes: [], edges: [], method: "d3dag" });
+  const empty = await layoutInWorker({ nodes: [], edges: [] });
   assert.deepEqual([empty.boxes, empty.edges], [{}, []]);
-  const one = await layoutInWorker({ nodes: [{ id: "A", w: 210, h: 52 }], edges: [], method: "d3dag" });
+  const one = await layoutInWorker({ nodes: [{ id: "A", w: 210, h: 52 }], edges: [] });
   assert.deepEqual(Object.keys(one.boxes), ["A"]);
 });
 
@@ -203,4 +193,38 @@ test("status reports on a mode without asking for a layout or replacing the grap
   assert.equal(done.waiting, false);
   // The other mode is untouched.
   assert.deepEqual(layouts.status("all", 0), { fresh: false, ageMs: null, runningMs: null, waiting: false, failed: false });
+});
+
+test("the layout is computed again only when its input changes: the nodes, the edges or a node's size, not their order or other fields", async () => {
+  let calls = 0;
+  const layouts = new Layouts(() => (calls++, Promise.resolve({ key: "", w: 1, h: 1, boxes: {}, edges: [] })));
+  const settle = () => new Promise((r) => setImmediate(r));
+  const g: Graph = {
+    nodes: [{ id: "A", w: 210, h: 52 }, { id: "B", w: 210, h: 52 }, { id: "C", w: 330, h: 147 }],
+    edges: [["A", "B"], ["A", "C"], ["B", "C"]],
+  };
+  layouts.request("all", g);
+  await settle();
+  assert.equal(calls, 1);
+  // The same graph in another order, with fields the layout does not read
+  // (a state, a note), is served from the stored layout.
+  const same = {
+    nodes: [{ id: "C", w: 330, h: 147, state: "active" }, { id: "A", w: 210, h: 52, note: "x" }, { id: "B", w: 210, h: 52 }],
+    edges: [["B", "C"], ["A", "C"], ["A", "B"]],
+  } as unknown as Graph;
+  assert.equal(layouts.request("all", same).fresh, true);
+  await settle();
+  assert.equal(calls, 1);
+  // An edge, a node or a new size is laid out again.
+  const steps: Graph[] = [
+    { nodes: g.nodes, edges: [...g.edges, ["B", "A"]] },
+    { nodes: [...g.nodes, { id: "D", w: 210, h: 52 }], edges: g.edges },
+    { nodes: [g.nodes[0], g.nodes[1], { id: "C", w: 330, h: 168 }], edges: g.edges },
+  ];
+  for (const [i, s] of steps.entries()) {
+    assert.equal(layouts.request("all", s).fresh, false);
+    await settle();
+    assert.equal(calls, 2 + i);
+    assert.equal(layouts.request("all", s).fresh, true);
+  }
 });
