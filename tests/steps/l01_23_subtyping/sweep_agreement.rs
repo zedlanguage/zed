@@ -541,6 +541,11 @@ fn both_orders(tally: &mut Tally, spec: &Spec, term: &Term, tag: &str, what: &st
     let va = a.verdict();
     Type::forget_emptiness();
     let vb = b.verdict();
+    Type::forget_emptiness();
+    let ca = a.chain_verdict();
+    Type::forget_emptiness();
+    let cb = b.chain_verdict();
+    assert_eq!(ca, cb, "{what}: the prefix chains depend on order");
     assert_eq!(sa, sb, "{what}: the sweep's answer depends on order");
     if sa.is_some() {
         assert_eq!(va, vb, "{what}: the verdict depends on order");
@@ -945,4 +950,137 @@ fn the_sweep_agrees_on_disjoint_and_overlapping_hole_spines() {
         tally
     });
     eprintln!("hole spines: {t:?}");
+}
+
+/// R6: acyclic carrier-plus-chains, with stops, mixed positives and multi-value holes.
+/// The DFA oracle reads masks only; no emptiness or membership query contributes to it.
+#[test]
+fn r6_random_carrier_chains_against_masks() {
+    let tally = big(|| {
+        let mut tally = Tally::default();
+        let mut rng = Rng::new(0x6c0de2026);
+        let palette = [INT, ONE, TWO, ONE | TWO, HOLES[0], HOLES[1],
+            HOLES[0] & HOLES[1], INT & !(ONE | TWO),
+            ONE | (1 << 8), INT & !ONE, INT & !TWO];
+        for id in 0..4000 {
+            let n = 3 + rng.below(9);
+            let mut ds = vec![D { nil: true, rows: vec![(INT, 0)] }];
+            for i in 1..=n {
+                ds.push(D {
+                    nil: rng.below(4) == 0,
+                    rows: vec![(palette[rng.below(palette.len())], rng.below(i))],
+                });
+            }
+            let p = 1 + rng.below(n);
+            let mut pos = vec![(0, p)];
+            if rng.below(2) == 0 { pos.push((0, 0)); }
+            if rng.below(3) == 0 { pos.push((0, 1 + rng.below(n))); }
+            let neg = (1..=n).filter(|&i| i != p && rng.below(3) != 0)
+                .map(|i| (0, i)).collect();
+            let term = Term { pos, neg };
+            let spec = Spec { groups: vec![ds] };
+            both_orders(&mut tally, &spec, &term, &format!("_r6c{id}"),
+                &format!("R6 chain masks {id}"));
+        }
+        tally
+    });
+    eprintln!("R6 carrier chains: {tally:?}");
+    assert!(tally.swept > 0);
+}
+
+/// Two escaping predicates per root do not imply 2-SAT when holes overlap.
+/// Selector positions choose a literal of each 3-clause. Each implication
+/// selector=j => literal_j holds has just two escaping predicates.
+pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce() {
+    big(|| {
+        let mut rng = Rng::new(0x6a705a7);
+        let domain = ONE | TWO | (1 << 8); // values 1,2,3
+        for id in 0..384 {
+            let k = 1 + rng.below(4);
+            let m = 1 + rng.below(4);
+            let clauses: Vec<Vec<(usize,bool)>> = (0..m).map(|_| (0..3)
+                .map(|_| (rng.below(k),rng.below(2)==0)).collect()).collect();
+            let sat = (0..1usize<<k).any(|a| clauses.iter().all(|cl|
+                cl.iter().any(|&(i,b)| ((a>>i)&1 != 0)==b)));
+            let mut ds = vec![D { nil: true, rows: vec![(INT,0)] }];
+            let len = k + m;
+            let mut positive = 0;
+            for j in (0..len).rev() {
+                ds.push(D { nil:false, rows:vec![(if j<k {ONE|TWO} else {domain},positive)] });
+                positive=ds.len()-1;
+            }
+            let mut neg=Vec::new();
+            for (c,cl) in clauses.iter().enumerate() {
+                for (j,&(i,b)) in cl.iter().enumerate() {
+                    let mut root=0;
+                    for s in (0..len).rev() {
+                        // Escape root iff selector != j OR the chosen literal is true.
+                        let hole = if s==k+c { domain & ![ONE,TWO,1<<8][j] }
+                            else if s==i { if b {TWO} else {ONE} } else {0};
+                        ds.push(D { nil:false, rows:vec![(INT & !hole,root)] });
+                        root=ds.len()-1;
+                    }
+                    neg.push((0,root));
+                }
+            }
+            let spec=Spec {groups:vec![ds]};
+            let term=Term {pos:vec![(0,positive)],neg};
+            assert_eq!(spec.inhabited(&term),sat,"selector reduction {id}: {clauses:?}");
+            let mut tally=Tally::default();
+            both_orders(&mut tally,&spec,&term,&format!("_r6sat{id}"),"two-predicate reduction");
+        }
+        eprintln!("R6 two-predicate selector reduction: 384 formulas checked");
+    });
+}
+
+/// R6-C2: avoiding the leaf head at an optional spine arrival is a
+/// commitment. Another negative chain can distinguish that choice.
+#[test]
+fn r6_optional_spine_arrival_must_not_force_a_later_empty() {
+    big(|| {
+        // 0 L; 1 F1; 2 F2; 3 F3; 4 A4; 5 A3; 6 A2; 7 A1;
+        // 8 P4; 9 P3; 10 P2; 11 P1.
+        let ds=vec![
+            D {nil:true, rows:vec![(INT,0)]},
+            D {nil:false, rows:vec![(ONE,0)]},
+            D {nil:false, rows:vec![(INT & !TWO,1)]},
+            D {nil:false, rows:vec![(HOLES[0],2)]},
+            D {nil:false, rows:vec![(INT,0)]},
+            D {nil:false, rows:vec![(INT & !ONE,4)]},
+            D {nil:false, rows:vec![(INT,5)]},
+            D {nil:false, rows:vec![(INT,6)]},
+            D {nil:false, rows:vec![(ONE,0)]},
+            D {nil:false, rows:vec![(INT,8)]},
+            D {nil:false, rows:vec![(INT,9)]},
+            D {nil:false, rows:vec![(INT,10)]},
+        ];
+        let spec=Spec {groups:vec![ds]};
+        let term=Term {pos:vec![(0,11)],neg:vec![(0,3),(0,7)]};
+        assert!(spec.inhabited(&term)); // [3,0,1,1]
+        let mut tally=Tally::default();
+        both_orders(&mut tally,&spec,&term,"_r6optional","optional spine arrival");
+    });
+}
+
+#[test]
+fn r6_greedy_guard_admits_a_partially_compatible_unused_slot() {
+    big(|| {
+        let spec=Spec {groups:vec![vec![
+            D {nil:true, rows:vec![(INT,0)]},
+            D {nil:false, rows:vec![(ONE,0)]},
+            D {nil:false, rows:vec![(INT & !TWO,1)]},
+            D {nil:false, rows:vec![(HOLES[0],2)]},
+            D {nil:false, rows:vec![(HOLES[1],3)]},
+            D {nil:false, rows:vec![(ONE,0)]},
+            D {nil:false, rows:vec![(ONE,5)]},
+            D {nil:false, rows:vec![(ONE|TWO,6)]},
+            D {nil:false, rows:vec![(INT,7)]},
+        ]]};
+        let term=Term {pos:vec![(0,8)],neg:vec![(0,4)]};
+        let ts=spec.build("_r6guard");
+        let t=spec.ty(&ts,&term);
+        assert_eq!(t.chain_verdict(),Some(Verdict::Inhabited));
+        let mut tally=Tally::default();
+        both_orders(&mut tally,&spec,&term,"_r6guardorder","unused partial slot");
+    });
 }

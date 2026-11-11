@@ -1044,7 +1044,20 @@ enum ChainPlan {
         stop: std::sync::Arc<str>,
         link: std::sync::Arc<str>,
         heads: Vec<Type>,
+        /// For refused rows of the link payload, an item of the witness each should miss
+        /// ([`ChainHint`]); [`Searching::check_chain_witness`] checks each one itself.
+        hints: Vec<(Row, ChainHint)>,
     },
+}
+
+/// Where a witness list should leave one refused row, for [`Searching::check_chain_witness`]:
+/// `Miss(i)`, its item `i` (from 0) is not in the row's head at that place; `Len`, the row's
+/// tail holds no list of the witness's length. A hint that does not hold costs only the
+/// row's full walk.
+#[derive(Clone, Copy, Debug)]
+enum ChainHint {
+    Miss(usize),
+    Len,
 }
 
 /// One node in the DAG of finite prefix chains ending at the carrier cycle.
@@ -3739,7 +3752,10 @@ impl<'m> Searching<'m> {
             return plan;
         }
         self.s().chains.insert(t.clone(), None);
-        let plan = self.find_prefix_chains(t).await;
+        let plan = match self.find_prefix_chains(t).await {
+            Some(plan) => Some(plan),
+            None => escape::decide(t),
+        };
         self.s().chains.insert(t.clone(), plan.clone());
         plan
     }
@@ -3991,7 +4007,11 @@ impl<'m> Searching<'m> {
         if !f.eval(&|a| taken_set.contains(a)) {
             return None;
         }
-        if self.empty(&carrier_head).await {
+        // A top carrier row puts the first item in the carrier head. Without one, the carrier
+        // only ends the positive chains, and its head being empty bounds nothing before it (R6:
+        // `L = nil | cons(E, L)` with `E` empty, `cons(int, cons(int, L)) \ cons(5, L)` holds
+        // [0, 0]); the head checks below then decide.
+        if has_top_carrier && self.empty(&carrier_head).await {
             return Some(ChainPlan::Empty);
         }
 
@@ -4109,6 +4129,24 @@ impl<'m> Searching<'m> {
                     }
                     pos_rows.push((a0, Some(u)));
                 }
+            }
+        }
+        // A positive node with a row into the carrier beside its chain row (`emit`) has two
+        // continuations, but the positive groups follow the chain row only, so a member through
+        // the carrier row would be lost and `Empty` would be wrong (R6: `(cons(int, cons(int,
+        // cons(1, L) | cons(2, B))) & L) \ ..` holds [0, 0, 1]). Each node is read once.
+        let mut pos_node_seen = vec![false; nodes.len()];
+        for (_, idx) in &pos_rows {
+            let mut cur = *idx;
+            while let Some(u) = cur {
+                if u == 0 || pos_node_seen[u] {
+                    break;
+                }
+                pos_node_seen[u] = true;
+                if nodes[u].emit.is_some() {
+                    return None;
+                }
+                cur = Some(nodes[u].child);
             }
         }
 
@@ -4504,6 +4542,7 @@ impl<'m> Searching<'m> {
                     stop: stop_name,
                     link: link_name,
                     heads: vec![r0],
+                    hints: Vec::new(),
                 });
             }
             let mut w0 = r0.clone();
@@ -4515,6 +4554,7 @@ impl<'m> Searching<'m> {
                     stop: stop_name,
                     link: link_name,
                     heads: vec![w0],
+                    hints: Vec::new(),
                 });
             }
         }
@@ -4600,6 +4640,7 @@ impl<'m> Searching<'m> {
                     stop: stop_name,
                     link: link_name,
                     heads: witness_heads,
+                    hints: Vec::new(),
                 });
             }
             if step > max_step {
@@ -4777,6 +4818,7 @@ impl<'m> Searching<'m> {
                                     stop: stop_name,
                                     link: link_name,
                                     heads: witness_heads,
+                                    hints: Vec::new(),
                                 });
                             }
                             if try_kill(
@@ -4793,6 +4835,7 @@ impl<'m> Searching<'m> {
                                     stop: stop_name,
                                     link: link_name,
                                     heads: witness_heads,
+                                    hints: Vec::new(),
                                 });
                             }
                         }
@@ -4964,6 +5007,7 @@ impl<'m> Searching<'m> {
                             stop: stop_name,
                             link: link_name,
                             heads: witness_heads,
+                            hints: Vec::new(),
                         });
                     }
                     let mut w0 = r0.clone();
@@ -4976,6 +5020,7 @@ impl<'m> Searching<'m> {
                             stop: stop_name,
                             link: link_name,
                             heads: witness_heads,
+                            hints: Vec::new(),
                         });
                     }
                 }
@@ -4997,7 +5042,7 @@ impl<'m> Searching<'m> {
         if let Some(Some(r)) = self.s().reps.get(t).copied() {
             return Some(r);
         }
-        let ChainPlan::Inhabited { stop, link, heads } = plan else {
+        let ChainPlan::Inhabited { stop, link, heads, hints } = plan else {
             return None;
         };
         let (seeding, walking, current) = {
@@ -5025,7 +5070,7 @@ impl<'m> Searching<'m> {
                 items.push(r);
             }
         }
-        let verified = self.check_chain_witness(t, &link, &items, &stop).await;
+        let verified = self.check_chain_witness(t, &link, &items, &stop, &hints).await;
         {
             let mut s = self.s();
             s.seeding = seeding;
@@ -5070,6 +5115,7 @@ impl<'m> Searching<'m> {
         link: &std::sync::Arc<str>,
         items: &[usize],
         stop: &std::sync::Arc<str>,
+        hints: &[(Row, ChainHint)],
     ) -> bool {
         if items.is_empty() {
             let p = t.p();
@@ -5167,6 +5213,10 @@ impl<'m> Searching<'m> {
             run: usize,
             jump: usize,
             up: [usize; 18],
+            /// Links to the first node on a cycle (0 on a cycle).
+            acyc: usize,
+            /// Nodes with an `emit` from this one to the first on a cycle, both counted.
+            emits: usize,
         }
 
         let mut heads: Vec<Type> = Vec::new();
@@ -5324,6 +5374,8 @@ impl<'m> Searching<'m> {
                             run: 1,
                             jump: next_id,
                             up: [id; 18],
+                            acyc: 0,
+                            emits: usize::from(emit.is_some()),
                         });
                         node_of.insert(ty, Some(id));
                     }
@@ -5359,6 +5411,8 @@ impl<'m> Searching<'m> {
                         for b in 1..18 {
                             up[b] = nodes[up[b - 1]].up[b - 1];
                         }
+                        let acyc = nodes[child].acyc + 1;
+                        let emits = nodes[child].emits + usize::from(emit.is_some());
                         nodes.push(VerifyNode {
                             has_stop,
                             head,
@@ -5368,6 +5422,8 @@ impl<'m> Searching<'m> {
                             run,
                             jump,
                             up,
+                            acyc,
+                            emits,
                         });
                         new_id
                     });
@@ -5494,6 +5550,22 @@ impl<'m> Searching<'m> {
             Some(ans)
         };
 
+        // The node `k` links after `u`, for `k` at most the links from `u` to a cycle: jumps of
+        // `2^17` while `k` is that large, then one jump per bit (`up` has 18 levels; a jump of
+        // `2^18` or more read by its low bits alone would land short).
+        let lift = |nodes: &[VerifyNode], mut u: usize, mut k: usize| -> usize {
+            while k >= 1 << 17 {
+                u = nodes[u].up[17];
+                k -= 1 << 17;
+            }
+            for b in 0..17 {
+                if (k >> b) & 1 != 0 {
+                    u = nodes[u].up[b];
+                }
+            }
+            u
+        };
+        let hint_of: BTreeMap<&Row, ChainHint> = hints.iter().map(|(r, h)| (r, *h)).collect();
         let mut known: BTreeMap<Row, Option<bool>> = BTreeMap::new();
         for (row, head0, root_u) in row_states {
             if head0 == Some(false) {
@@ -5504,6 +5576,42 @@ impl<'m> Searching<'m> {
                 known.insert(row, None);
                 continue;
             };
+            // A hint, checked here: the node `k` links after `u` reached on this module's own
+            // nodes by binary lifting, with no node on the way that leaves for a loop (`emit`),
+            // so the row's lists of length `m` pass through it; then the item there missing its
+            // head, or the node holding no list of the rest's length, puts the witness outside.
+            if let Some(&hint) = hint_of.get(&row) {
+                let reach = |k: usize| -> Option<usize> {
+                    if k > nodes[u].acyc {
+                        return None;
+                    }
+                    let w = lift(&nodes, u, k);
+                    let emits = nodes[u].emits - nodes[w].emits + usize::from(nodes[w].emit.is_some());
+                    (emits == 0).then_some(w)
+                };
+                let outside = match hint {
+                    ChainHint::Miss(i) if (1..m).contains(&i) => match reach(i - 1) {
+                        Some(w) => {
+                            let h = nodes[w].head;
+                            let res = if let Some(&res) = eval_memo.get(&(h, items[i])) {
+                                res
+                            } else {
+                                let res = self.member_known(items[i], &heads[h]).await;
+                                eval_memo.insert((h, items[i]), res);
+                                res
+                            };
+                            res == Some(false)
+                        }
+                        None => false,
+                    },
+                    ChainHint::Len => reach(m - 1).is_some_and(|w| !nodes[w].has_stop),
+                    ChainHint::Miss(_) => false,
+                };
+                if outside {
+                    known.insert(row, Some(false));
+                    continue;
+                }
+            }
             let mut d = 1usize;
             let tail_fits: Option<bool> = 'walk: loop {
                 if d == m {
@@ -5583,12 +5691,7 @@ impl<'m> Searching<'m> {
                     let rem_run = (run_end[d] - d).min(m - d);
                     let step_cnt = acc.min(rem_run);
                     if step_cnt > 0 {
-                        let rem = step_cnt;
-                        for b in 0..18 {
-                            if (rem >> b) & 1 != 0 {
-                                u = nodes[u].up[b];
-                            }
-                        }
+                        u = lift(&nodes, u, step_cnt);
                         d += step_cnt;
                         continue 'walk;
                     }
@@ -10013,6 +10116,7 @@ fn system(env: &Arc<Env>) -> System {
     }
 }
 
+mod escape;
 mod names;
 mod refused;
 mod sweep;

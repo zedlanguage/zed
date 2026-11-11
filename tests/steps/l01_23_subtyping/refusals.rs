@@ -1372,6 +1372,21 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
         "r5slotsout" => r5_slots(n, true),
         "r5remin" => r5_remainder_boundary(n, false, tag),
         "r5remout" => r5_remainder_boundary(n, true, tag),
+        "r6two" => { let (k, c) = r6_two_clauses(n, 0); r5_sat_type(k, &c, tag) }
+        "r6twoun" => { let (k, c) = r6_two_clauses(n, 1); r5_sat_type(k, &c, tag) }
+        "r6twowide" => { let (k, c) = r6_two_clauses(n, 2); r5_sat_type(k, &c, tag) }
+        "r6three" => r5_sat_type(3, &vec![vec![(1, true), (2, true), (3, true)]; n], tag),
+        "r6threeun" => {
+            let mut c = vec![vec![(1, true), (2, true), (3, true)]; n];
+            c.extend([vec![(1, false)], vec![(2, false)], vec![(3, false)]]);
+            r5_sat_type(3, &c, tag)
+        }
+        "r6wide" => r6_sat_type(2, &vec![vec![(1, true), (2, true)]; n], tag, &lit(0) | &lit(7), Type::int()),
+        "r6comb" => r6_sat_type(2, &vec![vec![(1, true)]; n], tag, lit(7), &(&lit(0) | &lit(1)) | &(&lit(2) | &lit(7))),
+        "r6parity" => r6_parity(n, tag),
+        "r6repeat3" => r5_sat_type(3, &vec![vec![(1, true), (2, true), (3, true)]; n], tag),
+        "r6distinct2" => r6_distinct_atoms(n, false, tag),
+        "r6distinct3" => r6_distinct_atoms(n, true, tag),
         "one" => by_one_place_from_the_front(n, false, tag),
         "onetwo" => by_one_place_from_the_front(n, true, tag),
         "end" => &l - &by_place_from_the_end(n, None, tag),
@@ -3646,6 +3661,18 @@ fn r5_sat(k: usize, cls: &[Vec<(usize, bool)>]) -> bool {
 #[ignore]
 fn r5_sat_check() {
     let spec: Vec<usize> = std::env::var("R5SAT").unwrap_or("3,1,4,3,0,1".into()).split(',').map(|s| s.parse().unwrap()).collect();
+    r5_sat_run(spec);
+}
+
+/// Round 6: every formula of three clauses over three variables (2,600), as in `r5_sat_check`.
+/// Many have clauses of three literals, whose rows have three atoms in the escape solve, so a
+/// solve that gave `Empty` from the first two atoms of such a row answers some of them wrongly.
+#[test]
+fn r6_every_three_clause_formula_on_three_variables_is_decided_correctly() {
+    r5_sat_run(vec![3, 3, 3, 0, 0, 1]);
+}
+
+fn r5_sat_run(spec: Vec<usize>) {
     // k variables, mlo..=mhi clauses of wmin..=3 literals on distinct variables, shard of nsh.
     let (k, mlo, mhi, wmin, shard, nsh) = (spec[0], spec[1], spec[2], spec[3], spec[4], spec[5]);
     let mut all: Vec<Vec<(usize, bool)>> = vec![];
@@ -3693,7 +3720,11 @@ fn r5_sat_check() {
                     bad += 1;
                     eprintln!("r5sat WRONG SWEEP k {k} {cls:?} sat {sat} {sw:?}");
                 }
-                *counts.entry(format!("mech m{} {by} {sw:?}", set.len())).or_insert(0usize) += 1;
+                if matches!((&ch, sat), (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)) {
+                    bad += 1;
+                    eprintln!("r5sat WRONG CHAINS k {k} {cls:?} sat {sat} {ch:?}");
+                }
+                *counts.entry(format!("mech m{} {by} {sw:?} chains {ch:?}", set.len())).or_insert(0usize) += 1;
             }
             if set.len() < mhi {
                 let from = set.last().map_or(0, |&l| l + 1);
@@ -3710,19 +3741,24 @@ fn r5_sat_check() {
 /// its size, with the verdict the round-5 measurements found. `end` is out of shape and kept
 /// on the search, so it is not here.
 fn r5_cases_scale(cases: &[(&str, Verdict)]) {
+    cases_scale_from(cases, 8);
+}
+
+/// [`r5_cases_scale`] at the sizes `base` and `8 * base`.
+fn cases_scale_from(cases: &[(&str, Verdict)], base: usize) {
     big(|| {
         for &(case, want) in cases {
             let (s_runs, l_runs) = scaling::Meter::new().runs();
             let small: Vec<Type> = (0..s_runs)
-                .map(|i| rfx_case(case, 8, &format!("_r5s_{case}_8_{i}")))
+                .map(|i| rfx_case(case, base, &format!("_r5s_{case}_{base}_{i}")))
                 .collect();
             let large: Vec<Type> = (0..l_runs)
-                .map(|i| rfx_case(case, 64, &format!("_r5s_{case}_64_{i}")))
+                .map(|i| rfx_case(case, 8 * base, &format!("_r5s_{case}_{}_{i}", 8 * base)))
                 .collect();
             let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
-            scaling::check(&format!("probe case {case}"), 8, |n| {
+            scaling::check(&format!("probe case {case}"), base, |n| {
                 Type::forget_emptiness();
-                let t = if n == 8 {
+                let t = if n == base {
                     &small[si.fetch_add(1, Relaxed)]
                 } else {
                     &large[li.fetch_add(1, Relaxed)]
@@ -3846,7 +3882,7 @@ fn a_negative_chain_group_started_again_ignores_its_old_jumps() {
 
 /// Round 5, Q2: the boundary of the sweeps on the 3-SAT reduction. Clauses without literals
 /// (unsatisfiable) are decided by the front sweep; the same shape with one literal per clause
-/// is left to the search, which still answers correctly.
+/// was left to the search in round 5 and is decided by the escape solve since round 6.
 #[test]
 fn the_reduction_without_literals_is_swept_and_with_literals_is_not() {
     big(|| {
@@ -3857,7 +3893,7 @@ fn the_reduction_without_literals_is_swept_and_with_literals_is_not() {
         assert_eq!(none.verdict(), Verdict::Empty);
         let one = r5_sat_type(2, &vec![vec![(1, true)]; 4], "_r5_bone");
         Type::forget_emptiness();
-        assert_eq!(one.sweep_verdict(), None);
+        assert_eq!(one.sweep_verdict(), Some(Verdict::Inhabited));
         Type::forget_emptiness();
         assert_eq!(one.verdict(), Verdict::Inhabited);
     });
@@ -3980,4 +4016,638 @@ fn r5_remainder_boundary(n: usize, in_remainder: bool, tag: &str) -> Type {
         .map(|i| &ts[i])
         .fold(Type::empty(), |u, t| r3_union(&u, t));
     &ts[p_base + 1] - &u
+}
+
+// Round 6: the boundary families of the escape solve (`empty/escape.rs`), on the one-chain
+// encoding of `r5_sat_type` (variable i at place i, clause c at place k + c(k + 1)).
+
+/// `n` distinct two-literal clauses over `k = isqrt(n) + 2` variables, each with a positive
+/// literal, with the cycle `x_i | !x_(i+1)` (all variables equal) and `x_1 | x_2` among them:
+/// satisfiable (all true) for `kind` 0; for `kind` 1 the last clause is `!x_1 | !x_2`
+/// (unsatisfiable, two atoms per root); for `kind` 2 it is `!x_1 | !x_2 | !x_3`
+/// (unsatisfiable, one root with three atoms, outside the 2-SAT `Empty`).
+fn r6_two_clauses(n: usize, kind: u8) -> (usize, Vec<Vec<(usize, bool)>>) {
+    let k = (n as f64).sqrt() as usize + 2;
+    let mut cls: Vec<Vec<(usize, bool)>> = (1..=k).map(|i| vec![(i, true), (i % k + 1, false)]).collect();
+    cls.push(vec![(1, true), (2, true)]);
+    let mut seen: BTreeSet<Vec<(usize, bool)>> = cls.iter().map(|c| { let mut c = c.clone(); c.sort(); c }).collect();
+    'fill: for a in 1..=k {
+        for b in a + 1..=k {
+            for (sa, sb) in [(true, true), (true, false), (false, true)] {
+                if cls.len() >= n {
+                    break 'fill;
+                }
+                let c = vec![(a, sa), (b, sb)];
+                if seen.insert(c.clone()) {
+                    cls.push(c);
+                }
+            }
+        }
+    }
+    match kind {
+        1 => *cls.last_mut().unwrap() = vec![(1, false), (2, false)],
+        2 => *cls.last_mut().unwrap() = vec![(1, false), (2, false), (3, false)],
+        _ => {}
+    }
+    (k, cls)
+}
+
+/// `r5_sat_type` with the positive head `filler` at the places that are neither variables nor
+/// clauses (`r5_sat_type` has `{7}`), and the refused rows' heads drawn from `base` (`r5_sat_type`
+/// has all integers): `base` less `{0}` or `{1}` at a literal.
+fn r6_sat_type(k: usize, cls: &[Vec<(usize, bool)>], tag: &str, filler: Type, base: Type) -> Type {
+    let rc = |c: usize| k + c * (k + 1);
+    let len = rc(cls.len());
+    let mut h = vec![base.clone(); len + 1];
+    h[1] = lit(2);
+    for (c, cl) in cls.iter().enumerate() {
+        for &(i, pos) in cl {
+            h[rc(c + 1) - i + 1] = &base - &lit(if pos { 0 } else { 1 });
+        }
+    }
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(int(), r(0))]))];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(h[1].clone()), r(0))));
+    defs.extend((2..=len).map(|d| def(&format!("F{d}{tag}"), cons(Expr::Type(h[d].clone()), r(d - 1)))));
+    let clause_place = |p: usize| p > k && (p - k) % (k + 1) == 0;
+    let mut e = nil();
+    for p in (1..=len).rev() {
+        let head = if p <= k { &lit(0) | &lit(1) } else if clause_place(p) { lit(2) } else { filler.clone() };
+        e = cons(Expr::Type(head), e);
+    }
+    defs.push(def(&format!("P{tag}"), e));
+    let ts = u4_inst(defs);
+    let u = (1..=len).fold(Type::empty(), |u, d| &u | &ts[d]);
+    &ts[len + 1] - &u
+}
+
+#[test]
+fn r5_probe_cases_are_decided_in_their_size_4() {
+    r5_cases_scale(&[
+        ("r5greedy", Verdict::Inhabited),
+        ("r5sat1lit", Verdict::Inhabited),
+        ("r5sat2lit", Verdict::Inhabited),
+        ("r5satk1n", Verdict::Inhabited),
+        ("r5satnone", Verdict::Empty),
+        ("r5slotsin", Verdict::Inhabited),
+        ("r5slotsout", Verdict::Inhabited),
+        ("r5remin", Verdict::Inhabited),
+        ("r5remout", Verdict::Inhabited),
+    ]);
+}
+
+#[test]
+fn r6_escape_families_are_decided_in_their_size() {
+    r5_cases_scale(&[
+        ("r6three", Verdict::Inhabited),
+        ("r6wide", Verdict::Inhabited),
+        ("r6comb", Verdict::Inhabited),
+    ]);
+}
+
+/// The two families that were quadratic before rows were retired after four cells (round 6:
+/// `r6wide` n^1.82, `r6comb` n^1.62 at 1024), at sizes large enough for that to show.
+#[test]
+fn r6_wide_rows_are_retired_and_decided_in_their_size() {
+    cases_scale_from(&[("r6wide", Verdict::Inhabited), ("r6comb", Verdict::Inhabited)], 128);
+}
+
+#[test]
+fn r6_two_atom_roots_over_many_variables_are_decided() {
+    big(|| {
+        for n in [8, 16, 64] {
+            for (kind, want) in [(0, Verdict::Inhabited), (1, Verdict::Empty)] {
+                let (k, cls) = r6_two_clauses(n, kind);
+                assert_eq!(r5_sat(k, &cls), kind == 0, "the formula at {n} kind {kind}");
+                Type::forget_emptiness();
+                let t = r5_sat_type(k, &cls, &format!("_r6two_{n}_{kind}"));
+                assert_eq!(t.chain_verdict(), Some(want), "chains at {n} kind {kind}");
+                Type::forget_emptiness();
+                assert_eq!(t.verdict(), want, "verdict at {n} kind {kind}");
+            }
+        }
+    });
+}
+
+/// The 3-colouring reduction for crossing atoms: place `u` holds vertex `u`'s colour in
+/// `{1, 2, 3}`; for each edge `uv` and colour `c` a refused row with the head `{c}` at `u` and at
+/// `v` (all integers elsewhere). A list of `P` escapes that row exactly when `x_u != c` or
+/// `x_v != c`, by the atoms `{1, 2, 3} \ {c}` at `u` and `v`, which cross; so `t` is inhabited
+/// exactly when the graph has a proper 3-colouring.
+fn r6_colour_type(nv: usize, edges: &[(usize, usize)], tag: &str) -> Type {
+    let three = &(&lit(1) | &lit(2)) | &lit(3);
+    let chain = |head: &dyn Fn(usize) -> Type| {
+        let mut e = nil();
+        for p in (1..=nv).rev() {
+            e = cons(Expr::Type(head(p)), e);
+        }
+        e
+    };
+    let mut defs = vec![def(&format!("P{tag}"), chain(&|_| three.clone()))];
+    for (i, &(u, v)) in edges.iter().enumerate() {
+        for c in 1..=3 {
+            let e = chain(&|p| if p == u || p == v { lit(c) } else { Type::int() });
+            defs.push(def(&format!("N{i}_{c}{tag}"), e));
+        }
+    }
+    let ts = u4_inst(defs);
+    let u = ts[1..].iter().fold(Type::empty(), |u, t| &u | t);
+    &ts[0] - &u
+}
+
+/// The same reduction on one comb, the shape the escape solve reads (as in `r5_sat_type`):
+/// `F_d = link(h_d, F_(d-1))` over the carrier, one block of `nv + 1` places per edge and colour,
+/// `P` with `{1, 2, 3}` at the vertex places, `0` at the end of each block and `7` elsewhere
+/// (`F_d` has `{0}` at place `d`, so every row but the block ends is killed there).
+/// The row ending block `b` (edge `uv`, colour `c`) has the head `int \ ({1, 2, 3} \ {c})` at
+/// `u` and `v`, so its atoms there are `{1, 2, 3} \ {c}`, which cross. Returns the type and its
+/// length.
+fn r6_colour_comb(nv: usize, edges: &[(usize, usize)], tag: &str) -> (Type, usize) {
+    let rc = |b: usize| nv + b * (nv + 1);
+    let blocks: Vec<(usize, usize, i64)> = edges.iter().flat_map(|&(u, v)| (1..=3).map(move |c| (u, v, c))).collect();
+    let len = rc(blocks.len());
+    let three = &(&lit(1) | &lit(2)) | &lit(3);
+    let mut h = vec![Type::int(); len + 1];
+    h[1] = lit(0);
+    for (b, &(u, v, c)) in blocks.iter().enumerate() {
+        let others = (1..=3).filter(|&x| x != c).fold(Type::empty(), |s, x| &s | &lit(x));
+        for p in [u, v] {
+            h[rc(b + 1) - p + 1] = &Type::int() - &others;
+        }
+    }
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(int(), r(0))]))];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(h[1].clone()), r(0))));
+    defs.extend((2..=len).map(|d| def(&format!("F{d}{tag}"), cons(Expr::Type(h[d].clone()), r(d - 1)))));
+    let mut e = nil();
+    for p in (1..=len).rev() {
+        let head = if p <= nv { three.clone() } else if (p - nv) % (nv + 1) == 0 { lit(0) } else { lit(7) };
+        e = cons(Expr::Type(head), e);
+    }
+    defs.push(def(&format!("P{tag}"), e));
+    let ts = u4_inst(defs);
+    let u = (1..=len).fold(Type::empty(), |u, d| &u | &ts[d]);
+    (&ts[len + 1] - &u, len)
+}
+
+fn r6_colour_list(xs: &[i64]) -> Value {
+    xs.iter().rev().fold(Value::atom("nil"), |tl, &h| Value::atom_with("cons", vec![Value::Int(h), tl]))
+}
+
+/// Every graph on `nv` vertices whose edge mask is `shard` mod `nsh`: the type is inhabited
+/// exactly when brute force finds a proper colouring (each colouring is a list of `P`, tested by
+/// membership), and no mechanism answers wrongly. With `comb`, also the comb form
+/// ([`r6_colour_comb`]), which the escape solve reads and must decline (its atoms cross).
+fn r6_colouring_check(nv: usize, shard: u32, nsh: u32, comb: bool) {
+    big(move || {
+        let mut counts = std::collections::BTreeMap::new();
+        {
+            let pairs: Vec<(usize, usize)> = (1..=nv).flat_map(|u| (u + 1..=nv).map(move |v| (u, v))).collect();
+            for mask in 0u32..1 << pairs.len() {
+                if mask % nsh != shard {
+                    continue;
+                }
+                let edges: Vec<(usize, usize)> = pairs.iter().enumerate().filter(|(i, _)| mask >> i & 1 == 1).map(|(_, &e)| e).collect();
+                if edges.is_empty() {
+                    continue;
+                }
+                let t = r6_colour_type(nv, &edges, &format!("_r6col{nv}_{mask}"));
+                let mut colourable = false;
+                for code in 0..3u32.pow(nv as u32) {
+                    let xs: Vec<i64> = (0..nv).map(|i| (code / 3u32.pow(i as u32) % 3) as i64 + 1).collect();
+                    let proper = edges.iter().all(|&(u, v)| xs[u - 1] != xs[v - 1]);
+                    assert_eq!(t.contains(&r6_colour_list(&xs)), proper, "nv {nv} mask {mask} {xs:?}");
+                    colourable |= proper;
+                }
+                Type::forget_emptiness();
+                let ch = t.chain_verdict();
+                Type::forget_emptiness();
+                let v = t.verdict();
+                let wrong = |x: &Verdict| matches!((x, colourable), (Verdict::Empty, true) | (Verdict::Inhabited, false));
+                assert!(!wrong(&v) && !ch.as_ref().is_some_and(wrong), "nv {nv} mask {mask} colourable {colourable} {v:?} {ch:?}");
+                *counts.entry(format!("nv {nv} colourable {colourable} {v:?} chains {ch:?}")).or_insert(0usize) += 1;
+                if !comb {
+                    continue;
+                }
+                // The comb form: the same colourings, padded with the block values.
+                let (t, len) = r6_colour_comb(nv, &edges, &format!("_r6cc{nv}_{mask}"));
+                for code in 0..3u32.pow(nv as u32) {
+                    let mut xs: Vec<i64> = (0..nv).map(|i| (code / 3u32.pow(i as u32) % 3) as i64 + 1).collect();
+                    let proper = edges.iter().all(|&(u, v)| xs[u - 1] != xs[v - 1]);
+                    xs.extend((nv + 1..=len).map(|p| if (p - nv) % (nv + 1) == 0 { 0 } else { 7 }));
+                    assert_eq!(t.contains(&r6_colour_list(&xs)), proper, "comb nv {nv} mask {mask} {xs:?}");
+                }
+                Type::forget_emptiness();
+                let ch = t.chain_verdict();
+                Type::forget_emptiness();
+                let v = t.verdict();
+                assert!(!wrong(&v) && !ch.as_ref().is_some_and(wrong), "comb nv {nv} mask {mask} colourable {colourable} {v:?} {ch:?}");
+                *counts.entry(format!("comb nv {nv} colourable {colourable} {v:?} chains {ch:?}")).or_insert(0usize) += 1;
+            }
+        }
+        for (k, c) in &counts {
+            eprintln!("r6 colouring {k}: {c}");
+        }
+    });
+}
+
+#[test]
+fn r6_three_colouring_reduction_is_checked_by_brute_force_4() {
+    r6_colouring_check(4, 0, 1, true);
+}
+
+#[test]
+fn r6_three_colouring_reduction_is_checked_by_brute_force_5a() {
+    r6_colouring_check(5, 0, 16, false);
+}
+
+#[test]
+fn r6_three_colouring_reduction_is_checked_by_brute_force_5b() {
+    r6_colouring_check(5, 7, 16, false);
+}
+
+/// A head of the random carrier-plus-chains inputs: `{0, 1, 2}` by `mask`, or all integers but
+/// those (`cof`). The value 3 stands for every other integer.
+#[derive(Clone, Copy, Debug)]
+struct R6Head {
+    cof: bool,
+    mask: u8,
+}
+
+impl R6Head {
+    fn holds(self, x: u8) -> bool {
+        if x == 3 { self.cof } else { (self.mask >> x & 1 == 1) != self.cof }
+    }
+    fn ty(self) -> Type {
+        let s = (0..3).filter(|&i| self.mask >> i & 1 == 1).fold(Type::empty(), |u, i| &u | &lit(i));
+        if self.cof { &Type::int() - &s } else { s }
+    }
+}
+
+/// Where a tail goes: a node of the pool, the end (`nil` only), or the carrier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum R6Tail {
+    Node(usize),
+    End,
+    Car,
+}
+
+#[derive(Debug)]
+struct R6Input {
+    carrier: Option<R6Head>,
+    /// Pool node `i`: holds `nil`, its head, its next (a node before it, or a terminal), and
+    /// optionally the head of a second row `cons(alt, carrier)`.
+    pool: Vec<(bool, R6Head, R6Tail, Option<R6Head>)>,
+    taken: Vec<(R6Head, R6Tail)>,
+    refused: Vec<(R6Head, R6Tail)>,
+}
+
+struct R6Rng(u64);
+
+impl R6Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+fn r6_random_input(g: &mut R6Rng, np_max: u64, nr_max: u64, alt_rows: bool) -> R6Input {
+    let head = |g: &mut R6Rng| {
+        // Mostly one-value holes (`int \ {v}`) and small finite sets, sometimes all integers.
+        match g.below(6) {
+            0 => R6Head { cof: true, mask: 0 },
+            1 | 2 => R6Head { cof: true, mask: 1 << g.below(3) },
+            3 => R6Head { cof: true, mask: g.below(8) as u8 },
+            _ => R6Head { cof: false, mask: 1 + g.below(7) as u8 },
+        }
+    };
+    let carrier = (g.below(4) != 0).then(|| if g.below(2) == 0 { R6Head { cof: true, mask: 0 } } else { head(g) });
+    let terminal = |g: &mut R6Rng| if carrier.is_some() && g.below(3) != 0 { R6Tail::Car } else { R6Tail::End };
+    let np = 1 + g.below(np_max) as usize;
+    let mut pool = Vec::new();
+    for i in 0..np {
+        let next = if i > 0 && g.below(3) != 0 { R6Tail::Node(g.below(i as u64) as usize) } else { terminal(g) };
+        let (stop, h) = (g.below(3) == 0, head(g));
+        // Drawn only when asked, so that the inputs of the other seeds stay as they were.
+        let alt = (alt_rows && carrier.is_some() && g.below(3) == 0).then(|| head(g));
+        pool.push((stop, h, next, alt));
+    }
+    if alt_rows {
+        // A twin of every node without its second row, its next the twin of its next, so that a
+        // row can follow a chain while the carrier rows of that chain stay open.
+        let twin = |t: R6Tail| match t {
+            R6Tail::Node(j) => R6Tail::Node(np + j),
+            t => t,
+        };
+        for i in 0..np {
+            let (stop, h, next, _) = pool[i];
+            pool.push((stop, h, twin(next), None));
+        }
+    }
+    let np = pool.len();
+    let tail =|g: &mut R6Rng| if g.below(4) == 0 { terminal(g) } else { R6Tail::Node(g.below(np as u64) as usize) };
+    let mut taken = vec![(head(g), tail(g))];
+    if g.below(2) == 0 {
+        // A second taken row: on the carrier (inside the class), or another chain (outside).
+        let t = if carrier.is_some() && g.below(4) != 0 { R6Tail::Car } else { tail(g) };
+        // With the carrier's own head this is a top carrier row, which bounds every item.
+        let top = alt_rows && t == R6Tail::Car && g.below(2) == 0;
+        taken.push((if top { carrier.unwrap() } else { head(g) }, t));
+    }
+    let refused = (0..1 + g.below(nr_max)).map(|_| (head(g), tail(g))).collect();
+    R6Input { carrier, pool, taken, refused }
+}
+
+fn r6_input_type(x: &R6Input, tag: &str) -> Type {
+    // Definitions: the carrier (if any), the pool nodes, then the rows.
+    let base = usize::from(x.carrier.is_some());
+    let tail = |t: R6Tail| match t {
+        R6Tail::Node(i) => r(base + i),
+        R6Tail::End => nil(),
+        R6Tail::Car => r(0),
+    };
+    let mut defs = Vec::new();
+    if let Some(h) = x.carrier {
+        defs.push(def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(h.ty()), r(0))])));
+    }
+    for (i, &(stop, h, next, alt)) in x.pool.iter().enumerate() {
+        let mut alts = vec![cons(Expr::Type(h.ty()), tail(next))];
+        if let Some(a) = alt {
+            alts.push(cons(Expr::Type(a.ty()), r(0)));
+        }
+        if stop {
+            alts.insert(0, nil());
+        }
+        let body = if alts.len() == 1 { alts.pop().unwrap() } else { Expr::Union(alts) };
+        defs.push(def(&format!("V{i}{tag}"), body));
+    }
+    for (i, &(h, t)) in x.taken.iter().chain(&x.refused).enumerate() {
+        defs.push(def(&format!("R{i}{tag}"), cons(Expr::Type(h.ty()), tail(t))));
+    }
+    let ts = u4_inst(defs);
+    let rows = &ts[base + x.pool.len()..];
+    let p = rows[1..x.taken.len()].iter().fold(rows[0].clone(), |u, t| &u & t);
+    let n = rows[x.taken.len()..].iter().fold(Type::empty(), |u, t| &u | t);
+    &p - &n
+}
+
+/// The brute-force oracle: a list over `{0, 1, 2, 3}` in every taken row and no refused row,
+/// sought by depth-first search over the rows' positions, reading only `x`. A row's positions
+/// are the set of types its rest may lie in (a node with a second row into the carrier can be
+/// left two ways): `None` the row itself (before its head), `Some(t)` a tail; an empty set is a
+/// dead row. Lists longer than the pool's depth plus two need not be tried: past it every live
+/// position is at the carrier, and dropping an item there changes no row's answer.
+fn r6_oracle(x: &R6Input) -> bool {
+    type Pos = BTreeSet<Option<R6Tail>>;
+    let accepts = |p: &Pos| {
+        p.iter().any(|q| match q {
+            Some(R6Tail::Node(i)) => x.pool[*i].0,
+            Some(_) => true,
+            None => false,
+        })
+    };
+    let rows: Vec<(R6Head, R6Tail)> = x.taken.iter().chain(&x.refused).copied().collect();
+    let nt = x.taken.len();
+    // The longest chain of pool nodes (each next is an earlier node).
+    let mut depth = vec![0usize; x.pool.len()];
+    for i in 0..x.pool.len() {
+        depth[i] = 1 + match x.pool[i].2 {
+            R6Tail::Node(j) => depth[j],
+            _ => 0,
+        };
+    }
+    let max_len = depth.iter().max().unwrap_or(&0) + 3;
+    fn go(
+        x: &R6Input,
+        rows: &[(R6Head, R6Tail)],
+        nt: usize,
+        pos: &[Pos],
+        len: usize,
+        max_len: usize,
+        accepts: &dyn Fn(&Pos) -> bool,
+    ) -> bool {
+        if len > 0 && pos[..nt].iter().all(accepts) && !pos[nt..].iter().any(accepts) {
+            return true;
+        }
+        if len == max_len {
+            return false;
+        }
+        for v in 0..4u8 {
+            let next: Vec<Pos> = pos
+                .iter()
+                .zip(rows)
+                .map(|(p, &(h0, t0))| {
+                    let mut out = Pos::new();
+                    for &q in p {
+                        match q {
+                            None => {
+                                if h0.holds(v) {
+                                    out.insert(Some(t0));
+                                }
+                            }
+                            Some(R6Tail::Node(i)) => {
+                                let (_, h, nx, alt) = x.pool[i];
+                                if h.holds(v) {
+                                    out.insert(Some(nx));
+                                }
+                                if alt.is_some_and(|a| a.holds(v)) {
+                                    out.insert(Some(R6Tail::Car));
+                                }
+                            }
+                            Some(R6Tail::End) => {}
+                            Some(R6Tail::Car) => {
+                                if x.carrier.unwrap().holds(v) {
+                                    out.insert(Some(R6Tail::Car));
+                                }
+                            }
+                        }
+                    }
+                    out
+                })
+                .collect();
+            if next[..nt].iter().all(|p| !p.is_empty()) && go(x, rows, nt, &next, len + 1, max_len, accepts) {
+                return true;
+            }
+        }
+        false
+    }
+    let start: Vec<Pos> = vec![Pos::from([None]); rows.len()];
+    go(x, &rows, nt, &start, 0, max_len, &accepts)
+}
+
+fn r6_oracle_run(seed: u64, count: usize, np_max: u64, nr_max: u64) {
+    r6_oracle_run_with(seed, count, np_max, nr_max, false);
+}
+
+fn r6_oracle_run_with(seed: u64, count: usize, np_max: u64, nr_max: u64, alt_rows: bool) {
+    big(move || {
+        let mut g = R6Rng(seed);
+        let mut counts = std::collections::BTreeMap::new();
+        for i in 0..count {
+            let x = r6_random_input(&mut g, np_max, nr_max, alt_rows);
+            let truth = r6_oracle(&x);
+            let t = r6_input_type(&x, &format!("_r6o{seed}_{i}"));
+            Type::forget_emptiness();
+            let ch = t.chain_verdict();
+            Type::forget_emptiness();
+            let v = t.verdict();
+            let wrong = |y: &Verdict| matches!((y, truth), (Verdict::Empty, true) | (Verdict::Inhabited, false));
+            assert!(!wrong(&v), "verdict {v:?} truth {truth} on {x:?}");
+            assert!(!ch.as_ref().is_some_and(wrong), "chains {ch:?} truth {truth} on {x:?}");
+            *counts.entry(format!("truth {truth} {v:?} chains {ch:?}")).or_insert(0usize) += 1;
+        }
+        for (k, c) in &counts {
+            eprintln!("r6 oracle seed {seed} {k}: {c}");
+        }
+    });
+}
+
+#[test]
+fn r6_carrier_and_chains_against_brute_force_1() {
+    r6_oracle_run(0x9e37_79b9_7f4a_7c15, 1500, 4, 6);
+}
+
+#[test]
+fn r6_carrier_and_chains_against_brute_force_2() {
+    r6_oracle_run(0x2545_f491_4f6c_dd1d, 1500, 4, 6);
+}
+
+/// Longer pools and more refused rows, so that rows with three or more atoms (whose `Empty` the
+/// escape solve must not give from their first two) are common.
+#[test]
+fn r6_carrier_and_chains_against_brute_force_3() {
+    r6_oracle_run(0x5851_f42d_4c95_7f2d, 600, 6, 12);
+}
+
+/// Pool nodes with a second row into the carrier, below the top of positive and refused chains.
+#[test]
+fn r6_carrier_and_chains_against_brute_force_4() {
+    r6_oracle_run_with(0x1405_7b7e_f767_814f, 3000, 4, 6, true);
+}
+
+/// A comb where no place of a root separates except its first: `F_e = cons(int \ {e mod 2},
+/// F_(e-1))`, roots `F_d` for even `d`, `P` of length `n` with `{0, 7}` first and `{j mod 2, 7}`
+/// at place `j`. The node `F_e` separates the places `j` of parity `e`, which no even root
+/// reaches through it; `x_1 = 0` escapes every root (`Inhabited`).
+fn r6_parity(n: usize, tag: &str) -> Type {
+    let n = n.max(2);
+    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(int(), r(0))]))];
+    for e in 1..=n {
+        let h = &Type::int() - &lit((e % 2) as i64);
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if j == 1 { &lit(0) | &lit(7) } else { &lit((j % 2) as i64) | &lit(7) };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let u = (2..=n).step_by(2).fold(Type::empty(), |u, d| &u | &ts[d]);
+    &ts[n + 1] - &u
+}
+
+/// Round 6: the prefix chains answered Empty when the carrier head was empty, also without a top
+/// carrier row (Gemini R4 code, kept through round 5). Here the carrier `L` only ends the
+/// positive chain, so it holds just `nil`, and [0, 0] is in the type.
+#[test]
+fn an_empty_carrier_head_bounds_only_a_top_carrier_row() {
+    big(|| {
+        // 0: L = nil | cons(E, L); 1: E = cons(int, E) (no finite value); 2: Q = cons(int, L);
+        // 3: P = cons(int, Q); 4: N = cons(5, L).
+        let ts = Group::new(vec![
+            def("L_e0", Expr::Union(vec![nil(), cons(r(1), r(0))])),
+            def("E_e0", cons(int(), r(1))),
+            def("Q_e0", cons(int(), r(0))),
+            def("P_e0", cons(int(), r(2))),
+            def("N_e0", cons(Expr::Type(lit(5)), r(0))),
+        ])
+        .unwrap()
+        .instance(vec![]);
+        let t = &ts[3] - &ts[4];
+        let v = [0, 0].iter().rev().fold(Value::atom("nil"), |tl, &h| {
+            Value::atom_with("cons", vec![Value::Int(h), tl])
+        });
+        assert!(t.contains(&v));
+        Type::forget_emptiness();
+        assert_ne!(t.chain_verdict(), Some(Verdict::Empty));
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+    });
+}
+
+/// Round 6: the prefix chains followed only the chain row of a positive node that also has a row
+/// into the carrier, and answered Empty; [0, 0, 1] is in the type through the carrier row.
+#[test]
+fn a_positive_row_into_the_carrier_below_the_top_is_not_dropped() {
+    big(|| {
+        // 0: L = nil | cons(int, L); 1: B = cons(3, L); 2: A = cons(1, L) | cons(2, B);
+        // 3: Z = cons(int, A); 4: P = cons(int, Z); 5: N = cons(int, cons(int, cons(2, B))).
+        let ts = Group::new(vec![
+            def("L_pe", Expr::Union(vec![nil(), cons(int(), r(0))])),
+            def("B_pe", cons(Expr::Type(lit(3)), r(0))),
+            def(
+                "A_pe",
+                Expr::Union(vec![
+                    cons(Expr::Type(lit(1)), r(0)),
+                    cons(Expr::Type(lit(2)), r(1)),
+                ]),
+            ),
+            def("Z_pe", cons(int(), r(2))),
+            def("P_pe", cons(int(), r(3))),
+            def(
+                "N_pe",
+                cons(int(), cons(int(), cons(Expr::Type(lit(2)), r(1)))),
+            ),
+        ])
+        .unwrap()
+        .instance(vec![]);
+        let t = &(&ts[4] & &ts[0]) - &ts[5];
+        for (xs, member) in [(vec![0, 0, 1], true), (vec![0, 0, 2, 3], false)] {
+            let v = xs.iter().rev().fold(Value::atom("nil"), |tl, &h| {
+                Value::atom_with("cons", vec![Value::Int(h), tl])
+            });
+            assert_eq!(t.contains(&v), member);
+        }
+        Type::forget_emptiness();
+        assert_ne!(t.chain_verdict(), Some(Verdict::Empty));
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+    });
+}
+// R6 boundary: root at offset i escapes iff x_i=0 or x_(i+1)=1 (plus
+// an additional x_(i+1)=0 before the final x_(i+2)=1 in the three-atom arm).
+// All-zero words satisfy both arms.
+fn r6_distinct_atoms(n: usize, three: bool, tag: &str) -> Type {
+    let mut ds = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(),cons(int(),r(0))]))];
+    ds.push(def(&format!("B1{tag}"), cons(Expr::Type(&Type::int()-&lit(1)), r(0))));
+    ds.push(def(&format!("B2{tag}"), cons(Expr::Type(&Type::int()-&lit(0)), r(1))));
+    let base = if three {
+        ds.push(def(&format!("B3{tag}"), cons(Expr::Type(&Type::int()-&lit(0)), r(2))));
+        3
+    } else { 2 };
+    for i in 1..n { ds.push(def(&format!("A{i}{tag}"), cons(int(),r(base+i-1)))); }
+    let mut p = r(0);
+    for _ in 0..n+base { p=cons(Expr::Type(&lit(0)|&lit(1)),p); }
+    ds.push(def(&format!("P{tag}"),p));
+    let ts = r3_instance(ds);
+    let u=(base..base+n).fold(Type::empty(),|u,i| &u|&ts[i]);
+    &ts[base+n]-&u
+}
+
+#[test]
+fn r6_remout_short_witness_and_negative_controls() {
+    big(|| {
+        let word = |x| [x,1,1].iter().rev().fold(Value::atom("nil"),
+            |tail,&v| Value::atom_with("cons",vec![Value::Int(v),tail]));
+        for n in [3,16,64,256,1024] {
+            let t=r5_remainder_boundary(n,true,&format!("_r6remwit{n}"));
+            assert!(t.contains(&word(5)),"short witness at {n}");
+            assert!(!t.contains(&word(1)),"F1 captures the first negative control");
+            assert!(!t.contains(&word(4)),"F3 captures the second negative control");
+        }
+    });
 }

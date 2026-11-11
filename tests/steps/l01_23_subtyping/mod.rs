@@ -31,3 +31,4 @@ mod sweep_agreement;
 mod two_sat;
 mod witnesses;
 mod x13;
+mod r6_reduction;
