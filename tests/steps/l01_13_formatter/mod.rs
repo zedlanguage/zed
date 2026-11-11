@@ -6,5 +6,6 @@ mod fences;
 mod layout;
 mod prelude;
 mod scaling;
+mod strings;
 
 pub(crate) use zed_tests::step_helpers::l01_13_formatter::{build, fmt};
