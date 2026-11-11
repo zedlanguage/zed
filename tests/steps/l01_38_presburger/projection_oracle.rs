@@ -359,3 +359,46 @@ fn each_answer_of_a_random_unit_through_projected_callees_is_the_interpreters_on
         "{decided} answers decided, {refused} refused"
     );
 }
+
+/// A callee whose body states its remainder's own definition, `x == 4 * (x div 4) + x mod 4`,
+/// before a bound on `x`. Written over its pair, that equation is the first row and the
+/// pair's definition rows that repeat it or are looser are dropped, so the bound `x <= 9` is
+/// the last row `presburger::eliminated` returns to `projected`, and the one row of the
+/// projection that is not the pair's own definition. `p3` asks for `x + 2 <= 9` and `x > 7`,
+/// which no `x` meets only because of that bound: without it, `x = 11` would meet `h1(x: 13)`.
+const BOUND_LAST: &str = "h1(x: int) = x == 4 * (x div 4) + x mod 4 && x mod 4 >= 1 && x mod 4 <= 2 && x > (0 - 12) && x < 10;\n\
+     p0(x: int) = x > (0 - 12) && x < 40;\n\
+     p1(x: int) = h1(x: x) && p0(x: x + 1);\n\
+     p2(x: int) = h1(x: x + 4) && p1(x: x + 1);\n\
+     p3(x: int) = h1(x: x + 2) && x > 7;\n";
+
+#[test]
+fn a_bound_written_after_the_remainders_definition_stays_in_the_callees_projection() {
+    let t = answers_are_the_interpreters(BOUND_LAST, "bound last");
+    assert_eq!(
+        (t.decided, t.refused),
+        (20, 0),
+        "bound last: answers decided, refused"
+    );
+    let unit = elab(BOUND_LAST).unwrap();
+    let lets = lets(&unit);
+    let mut scoped = Scoped::new(&lets);
+    let mut extending = Extending::new();
+    let mut got = Vec::new();
+    for (name, ps, body) in functions(&unit) {
+        let r = scoped.relation(body, ps, ps, true).unwrap();
+        let a = extending.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+        got.push((name, a.holds, a.fails));
+    }
+    let t = |name| (name, Ok(true), Ok(true));
+    assert_eq!(
+        got,
+        [
+            t("h1"),
+            t("p0"),
+            t("p1"),
+            t("p2"),
+            ("p3", Ok(false), Ok(true))
+        ]
+    );
+}
