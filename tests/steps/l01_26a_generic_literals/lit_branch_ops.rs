@@ -439,6 +439,269 @@ fn a_name_bound_to_a_call_of_literal_values_is_not_read() {
     );
 }
 
+/// A function `k` of the parameter type `t`, and `f` passing it `arg`.
+fn at_k(t: &str, arg: &str) -> String {
+    format!("k(positional p: {t}) = p;\nf(positional c: bool) = k({arg});\n")
+}
+
+#[test]
+fn an_if_of_literals_in_a_tuple_component_takes_the_carrier_of_the_component() {
+    // Item LIT-tuple-branch-ops: an `if` of literals written as a component of a tuple is
+    // read as the branches of an argument are (L1.26a: "each keeps its own value and is fixed
+    // where the result is used"), at the carrier its component has. Before, each of these was
+    // rejected: "`k` does not take ((1 | 3, 1.0)): these are the types of its arguments
+    // here, ...".
+    let cases = [
+        // (parameter type, argument, signature of `f`, value of `f(true)`, of `f(false)`)
+        (
+            "(f64, f64)",
+            "(if c { 2 + 1 } else { 1 }, 1)",
+            "(f64, f64)",
+            "(3.0, 1.0)",
+            "(1.0, 1.0)",
+        ),
+        (
+            "(f64, f64)",
+            "(if c { 2 } else { 1 }, 1)",
+            "(f64, f64)",
+            "(2.0, 1.0)",
+            "(1.0, 1.0)",
+        ),
+        (
+            "(f64, f64)",
+            "(1, if c { 2 * 3 } else { 1 })",
+            "(f64, f64)",
+            "(1.0, 6.0)",
+            "(1.0, 1.0)",
+        ),
+        (
+            "(f64, f64)",
+            "(if c { 0.5 } else { 1 }, 1)",
+            "(f64, f64)",
+            "(0.5, 1.0)",
+            "(1.0, 1.0)",
+        ),
+        (
+            "(rat, rat)",
+            "(if c { 2 + 1 } else { 1 }, 1)",
+            "(rat, rat)",
+            "(3r, 1r)",
+            "(1r, 1r)",
+        ),
+        (
+            "(f64, (f64, f64))",
+            "(1, (if c { 2 + 1 } else { 1 }, 2))",
+            "(f64, (f64, f64))",
+            "(1.0, (3.0, 2.0))",
+            "(1.0, (1.0, 2.0))",
+        ),
+        (
+            "(f64, f64) | (String, f64)",
+            "(if c { 2 + 1 } else { 1 }, 1)",
+            "(f64, f64) | (String, f64)",
+            "(3.0, 1.0)",
+            "(1.0, 1.0)",
+        ),
+        // The operation is `f64` arithmetic on its exact literals, as alone at `f64`.
+        (
+            "(f64, f64)",
+            "(if c { 9007199254740991 + 2 } else { 1 }, 1)",
+            "(f64, f64)",
+            "(9007199254740992.0, 1.0)",
+            "(1.0, 1.0)",
+        ),
+        // Where the component is an `int`, the branches keep their own carrier.
+        (
+            "(int, f64)",
+            "(if c { 2 + 1 } else { 1 }, 1)",
+            "(int, f64)",
+            "(3, 1.0)",
+            "(1, 1.0)",
+        ),
+    ];
+    for (t, arg, f, yes, no) in cases {
+        let src = at_k(t, arg) + "a = f(true);\nb = f(false);\n";
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        assert_eq!(sig(&src, "f"), format!("(bool) -> {f}"), "{src}");
+        assert_eq!(value(&src, "a"), yes, "{src}");
+        assert_eq!(value(&src, "b"), no, "{src}");
+    }
+    // An `if` of more than two branches.
+    let src = "k(positional p: (f64, f64)) = p;\nf(positional c: bool, d: bool) = k((if c { 2 + 1 } \
+               else if d { 4 - 1 } else { 1 }, 1));\na = f(false, d: true);\nb = f(false, d: false);\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(value(src, "a"), "(3.0, 1.0)");
+    assert_eq!(value(src, "b"), "(1.0, 1.0)");
+    // Outside every function.
+    let src = "k(positional p: (f64, f64)) = p;\nc = true;\na = k((if c { 2 } else { 1 }, 1));\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(value(src, "a"), "(2.0, 1.0)");
+    // Where nothing fixes the carrier, the tuple keeps the branches' values.
+    let src = "f(positional c: bool) = (if c { 2 + 1 } else { 1 }, 1);\na = f(true);\n";
+    assert_eq!(sig(src, "f"), "(bool) -> (1 | 3, 1)");
+    assert_eq!(value(src, "a"), "(3, 1)");
+}
+
+#[test]
+fn an_if_of_literals_in_a_tuple_joins_the_class_of_a_generic_component() {
+    // Item LIT-tuple-branch-ops: at a parameter that is a type variable, the `if` is a class
+    // of its own, which each branch joins as a lone literal does, and which takes the
+    // carrier of what it meets in the body.
+    let pair = "sumPair(p) = p[0] + p[1];\n";
+    let cases = [
+        // (`f`'s parameters, argument, signature of `f`, `f`'s call, value)
+        (
+            ", x: f64",
+            "(x, if c { 2 + 1 } else { 1 })",
+            "(bool, x: f64) -> f64",
+            "f(true, x: 0.5f64)",
+            "3.5",
+        ),
+        (
+            ", x: f64",
+            "(x, if c { 2 } else { 1 })",
+            "(bool, x: f64) -> f64",
+            "f(false, x: 0.5f64)",
+            "1.5",
+        ),
+        (
+            ", x: rat",
+            "(x, if c { 2 + 1 } else { 0.5 })",
+            "(bool, x: rat) -> rat",
+            "f(false, x: 0.5r)",
+            "1r",
+        ),
+        (
+            ", x: rat",
+            "(x, if c { 2 + 1 } else { 0.5 })",
+            "(bool, x: rat) -> rat",
+            "f(true, x: 0.5r)",
+            "7r/2r",
+        ),
+        (
+            "",
+            "(1, if c { 2 + 1 } else { 1 })",
+            "(bool) -> int",
+            "f(true)",
+            "4",
+        ),
+    ];
+    for (ps, arg, f, call, v) in cases {
+        let src = format!("{pair}f(positional c: bool{ps}) = sumPair(p: {arg});\na = {call};\n");
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        assert_eq!(sig(&src, "f"), f, "{src}");
+        assert_eq!(value(&src, "a"), v, "{src}");
+    }
+    // `sum` adds the components as `+` takes them: the branches adopt the `f64` of `x`.
+    let src = "f(positional c: bool, x: f64) = sum((x, if c { 2 + 1 } else { 1 }));\n\
+               a = f(true, x: 0.5f64);\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(sig(src, "f"), "(bool, x: f64) -> f64");
+    assert_eq!(value(src, "a"), "3.5");
+}
+
+#[test]
+fn an_if_of_literals_in_a_tuple_takes_the_carrier_of_the_other_tuple_of_min_and_max() {
+    // Item LIT-tuple-branch-ops: `min` and `max` pair the components, and the branches adopt
+    // the carrier of the component they are paired with, as the `if` alone does in
+    // `min(if c { 2 + 1 } else { 1 }, 0.5f64)`. Before, these were rejected: "the literal
+    // `0.5f64` is an `f64` by its suffix, and `int` is expected here; ...".
+    let cases = [
+        (
+            "min((if c { 2 + 1 } else { 1 }, 1), (0.5f64, 1.0f64))",
+            "(0.5 | 1.0 | 3.0, 1.0)",
+            "(0.5, 1.0)",
+            "(0.5, 1.0)",
+        ),
+        (
+            "max((0.5f64, 1.0f64), (if c { 2 + 1 } else { 1 }, 1))",
+            "(0.5 | 1.0 | 3.0, 1.0)",
+            "(3.0, 1.0)",
+            "(1.0, 1.0)",
+        ),
+        (
+            "max((0.5r, (1r, 2r)), (1, (if c { 2 * 3 } else { 1 }, 1)))",
+            "(5e-1r | 1r, (1r | 6r, 1r | 2r))",
+            "(1r, (6r, 1r))",
+            // `max` orders tuples by their first differing component: `1r` beats `0.5r`.
+            "(1r, (1r, 1r))",
+        ),
+        // Beside an `int`, the branches stay `int`.
+        (
+            "min((if c { 2 + 1 } else { 1 }, 1), (2, 1))",
+            "(1 | 2 | 3, 1)",
+            "(2, 1)",
+            "(1, 1)",
+        ),
+    ];
+    for (body, f, yes, no) in cases {
+        let src = format!("f(positional c: bool) = {body};\na = f(true);\nb = f(false);\n");
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        assert_eq!(sig(&src, "f"), format!("(bool) -> {f}"), "{src}");
+        assert_eq!(value(&src, "a"), yes, "{src}");
+        assert_eq!(value(&src, "b"), no, "{src}");
+    }
+}
+
+#[test]
+fn an_inexact_literal_of_an_if_in_a_tuple_is_its_own_error() {
+    // Item LIT-tuple-branch-ops: a branch literal with no exact value at its component's
+    // carrier is rejected as a lone literal there is, with the fix. Before, the tuple was
+    // rejected whole, "`k` does not take ((1 | 9007199254740993, 1.0))", and under `min` the
+    // message named the `0.5f64` that the `int` arrow rejects, also for the `if` alone.
+    let inexact = |src: &str, fixed: &str| {
+        vec![format!(
+            "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
+             integer literal takes a carrier only where it is exact\n  fixes, each checked \
+             here:\n    {fixed}    the literal is then 9007199254740992.0, the nearer f64 by \
+             ties to even [9007199254740993]"
+        )]
+        .into_iter()
+        .map(|m| (src.to_string(), m))
+        .collect::<Vec<_>>()
+    };
+    let cases = [
+        (
+            "k(positional p: (f64, f64)) = p;\n",
+            "f(positional c: bool) = k((if c { 9007199254740993 } else { 1 }, 1));",
+            "f(positional c: bool) = k((if c { 9007199254740992 } else { 1 }, 1));",
+        ),
+        (
+            "",
+            "f(positional c: bool) = min((if c { 9007199254740993 } else { 1 }, 1), (0.5f64, \
+             1.0f64));",
+            "f(positional c: bool) = min((if c { 9007199254740992 } else { 1 }, 1), (0.5f64, \
+             1.0f64));",
+        ),
+        (
+            "",
+            "f(positional c: bool) = min(if c { 9007199254740993 } else { 1 }, 0.5f64);",
+            "f(positional c: bool) = min(if c { 9007199254740992 } else { 1 }, 0.5f64);",
+        ),
+    ];
+    for (k, line, fixed) in cases {
+        let src = format!("{k}{line}\n");
+        let want = inexact(&src, fixed);
+        let got: Vec<(String, String)> = type_errors(&src)
+            .into_iter()
+            .map(|m| (src.clone(), m))
+            .collect();
+        assert_eq!(got, want);
+        // The fix the message offers checks.
+        let src = format!("{k}{fixed}\n");
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+    }
+}
+
+/// A body of `n` calls `k((if c { 2 + 1 } else { 1 }, 1))`, each `if` read at `f64`.
+fn tuple_calls(n: usize) -> String {
+    let mut body = String::new();
+    for i in 0..n {
+        body += &format!("p{i} = k((if c {{ {i} + 1 }} else {{ 1 }}, 1)); ");
+    }
+    format!("k(positional p: (f64, f64)) = p;\nf(positional c: bool) = {{ {body}c }};\n")
+}
+
 /// A call of a parameter of type `f64` on a nest of `n` `if`s, each branch its own operation
 /// on literals: `n + 1` operations, each fixed at `f64`.
 fn nest(n: usize) -> String {
@@ -504,6 +767,17 @@ fn scaling() {
             let units = scaling::inputs(n, |m| Resolved::new(&products(m)));
             scaling::check(
                 "reading the calls of n products `x * g(c)` at `f64`",
+                n,
+                |m| {
+                    units[&m].check();
+                },
+            );
+            // Item LIT-tuple-branch-ops: each tuple's components are read once, and each `if`
+            // there is walked once and adopts once, O(its size), so n calls cost O(n).
+            assert_eq!(type_errors(&tuple_calls(3)), Vec::<String>::new());
+            let units = scaling::inputs(n, |m| Resolved::new(&tuple_calls(m)));
+            scaling::check(
+                "reading the `if`s of n tuple arguments at `(f64, f64)`",
                 n,
                 |m| {
                     units[&m].check();

@@ -78,7 +78,7 @@ use ty::{
     SParam, Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, class_id, errs, fresh_name,
     mask_text,
 };
-use walk::read_call;
+use walk::{branch_lits, read_call};
 
 /// How a function argument fits the function type its slot expects.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -392,7 +392,10 @@ impl Operands {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
         let mut ck = Ck::new(&t);
-        let (lit, parts) = (literal(&self.e, None), parts(&self.e, None));
+        let (lit, parts) = (
+            literal(&self.e, None),
+            parts(&self.e, None, &HashMap::new()),
+        );
         let y = (vec![&self.et], lit.as_ref(), parts.as_deref());
         ck.pair((vec![&self.x], None, None), y);
         ck.info.adopt.len()
@@ -495,7 +498,7 @@ struct Arg<'a> {
     lit: Option<Lit>,
     at: Option<Span>,
     expr: Option<&'a Expr>,
-    parts: Option<Rc<[Part]>>,
+    parts: Option<Rc<[Part<'a>]>>,
     /// The literals the argument's value comes from, when it is an `if` whose every branch,
     /// at any depth of `if`, is a numeric literal or an operation on literals alone that
     /// keeps its value there, as `if c { 2 } else { 1 }` or `if c { 2 + 1 } else { 1 }`:
@@ -543,13 +546,17 @@ impl<'a> Arg<'a> {
     }
 }
 
-/// A component of a tuple argument as written: a numeric literal, a tuple holding one at
-/// some depth, or anything else. A literal in a tuple adopts the carrier the type its tuple
-/// meets gives its component, as a literal argument adopts its parameter's.
+/// A component of a tuple argument as written: a numeric literal, an `if` of literals, a
+/// tuple holding one of them at some depth, or anything else. A literal in a tuple adopts the
+/// carrier the type its tuple meets gives its component, as a literal argument adopts its
+/// parameter's, and so does each branch of an `if` of literals there, as the branches of an
+/// argument do ([`Arg::branches`]): `(if c { 2 + 1 } else { 1 }, 1)` at `(f64, f64)` is
+/// `(3.0 | 1.0, 1.0)`.
 #[derive(Clone)]
-enum Part {
+enum Part<'a> {
     Lit(Lit),
-    Tuple(Rc<[Part]>),
+    Branches(Rc<[Branch<'a>]>),
+    Tuple(Rc<[Part<'a>]>),
     Other,
 }
 
@@ -4322,9 +4329,18 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///
     /// The tuples nest as deep as the text, so the walk keeps its own stack, as [`adopted`]
     /// does; it costs the size of the tuple's text.
-    fn generic_parts(&mut self, a: &Arg) -> Option<Ty> {
-        let parts = (a.parts.as_deref()).filter(|_| self.replaying == 0)?;
-        let comps = only_tuple(&a.ty, parts.len())?;
+    ///
+    /// An `if` of literals written as a component, `(x, if c { 2 + 1 } else { 1 })`, is made a
+    /// class of its own in the same way, which each branch joins as the branches of an
+    /// argument join the class of a parameter ([`Ck::branch_joins`]). `Err` where a branch
+    /// cannot join it, which `what` at `span` reports.
+    fn generic_parts(&mut self, a: &Arg, what: &str, span: Span) -> Result<Option<Ty>, ()> {
+        let Some(parts) = (a.parts.as_deref()).filter(|_| self.replaying == 0) else {
+            return Ok(None);
+        };
+        let Some(comps) = only_tuple(&a.ty, parts.len()) else {
+            return Ok(None);
+        };
         let mut stack = vec![OpenTuple {
             parts,
             comps,
@@ -4338,7 +4354,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if i == open.parts.len() {
                 let t = Ty::tuple(stack.pop().expect("an open tuple").out);
                 match stack.last_mut() {
-                    None => return made.then_some(t),
+                    None => return Ok(made.then_some(t)),
                     Some(up) => up.out.push(t),
                 }
                 continue;
@@ -4347,6 +4363,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             match &open.parts[i] {
                 Part::Lit(l) if l.bare => {
                     let k = self.generic_class(l);
+                    if self.level == 0 {
+                        self.top_parts.push(k);
+                    }
+                    made = true;
+                    let open = stack.last_mut().expect("an open tuple");
+                    open.out.push(Ty::var(format!("${k}").into()));
+                }
+                Part::Branches(bs) => {
+                    let k = self.class();
+                    self.classes[k].generic = true;
+                    for b in bs.iter() {
+                        if !self.branch_joins(k, b, what, span) {
+                            return Err(());
+                        }
+                    }
                     if self.level == 0 {
                         self.top_parts.push(k);
                     }
@@ -4460,11 +4491,20 @@ impl<'t, 'a> Ck<'t, 'a> {
             // The message names a literal's rejection at an arrow the other arguments fit:
             // `x + 0.1` with `x: rat` at rat, not at int; and of two literals of two
             // carriers, as at `==`, the integer's, or else the decimal's: `1 + 0.5` at `1`.
+            // A literal of a branch counts as one: in
+            // `min(if c { 9007199254740993 } else { 1 }, 0.5f64)` the message names the
+            // integer, which has no exact `f64`, not the `0.5f64` the `int` arrow rejects.
             if let Some(e) = error {
                 let rank = |s: Span| {
                     args.iter()
                         .flatten()
-                        .filter_map(|a| a.lit.as_ref())
+                        .flat_map(|a| {
+                            let bs = a.branches.iter().flat_map(|bs| bs.iter());
+                            a.lit.iter().chain(bs.flat_map(|b| match b {
+                                Branch::Lit(l) => std::slice::from_ref(l),
+                                Branch::Op { lits, .. } => &lits[..],
+                            }))
+                        })
                         .find(|l| l.site == s)
                         .map_or(3, |l| match lit_carrier(&l.value) {
                             Carrier::Int => 0,
@@ -5017,11 +5057,21 @@ fn read_literal(e: &Expr, src: Option<&str>) -> Result<Option<Lit>, TooLarge> {
     }))
 }
 
-/// The literals written in the tuple `e`, by component, at any depth; `None` when `e` is not
-/// a tuple or holds no literal. The tuples nest as deep as the text, so the walk keeps its own
+/// The literals written in the tuple `e`, by component, at any depth, and the `if`s of
+/// literals there ([`branch_lits`], whose operations `kept` gives); `None` when `e` is not a
+/// tuple or holds neither. The tuples nest as deep as the text, so the walk keeps its own
 /// stack: each open tuple's items, the next one, its parts so far, and whether one is a
-/// literal at some depth.
-fn parts(e: &Expr, src: Option<&str>) -> Option<Rc<[Part]>> {
+/// literal or an `if` of them at some depth.
+// Complexity tradeoff: each component is read once, and [`branch_lits`] walks only a
+// component that is an `if`, once, O(its size), so the walk is O(the tuple's text). The
+// naive form, the component's type `1 | 3` tested against the parameter's `f64`, needs no
+// walk but rejects the call, since that type holds the values, not the literals that wrote
+// them.
+fn parts<'e>(
+    e: &'e Expr,
+    src: Option<&str>,
+    kept: &HashMap<Span, usize>,
+) -> Option<Rc<[Part<'e>]>> {
     let ExprKind::Tuple(items) = &e.kind else {
         return None;
     };
@@ -5047,7 +5097,13 @@ fn parts(e: &Expr, src: Option<&str>) -> Option<Rc<[Part]>> {
                 *any = true;
             }
             (None, ExprKind::Tuple(inner)) => stack.push((inner, 0, Vec::new(), false)),
-            (None, _) => ps.push(Part::Other),
+            (None, _) => match branch_lits(item, src, kept) {
+                Some(bs) => {
+                    ps.push(Part::Branches(bs));
+                    *any = true;
+                }
+                None => ps.push(Part::Other),
+            },
         }
     }
 }
@@ -5088,6 +5144,22 @@ fn with_adoptions(t: &Ty, parts: &[Part], adopt: &HashMap<Span, Value>) -> Ty {
                 Some(v) => lit_ty(v, l.neg()),
                 None => c.clone(),
             }),
+            // Each branch as it adopted, as [`adopted`] types it; one that adopted nothing
+            // leaves the component as it is.
+            Part::Branches(bs) => {
+                let at = |b: &Branch| match b {
+                    Branch::Lit(l) => adopt.get(&l.span).map(|v| lit_ty(v, l.neg())),
+                    Branch::Op { e, .. } => adopt.get(&e.span).map(Ty::lit),
+                };
+                out.push(match bs.iter().any(|b| at(b).is_some()) {
+                    true => Ty::union_all(
+                        &(bs.iter())
+                            .map(|b| at(b).unwrap_or_else(|| Ty::lit(b.value())))
+                            .collect::<Vec<_>>(),
+                    ),
+                    false => c.clone(),
+                })
+            }
             Part::Tuple(inner) => match only_tuple(c, inner.len()) {
                 Some(ics) => stack.push((inner, ics, Vec::new())),
                 None => out.push(c.clone()),
@@ -5113,7 +5185,7 @@ struct Comparison<'a> {
 /// One side of `==` as [`Ck::equal`] reads it: the types its value may have, one per tuple
 /// shape it is a component of, the literal it is, if it is one, and the literals written in
 /// it, by component, if it is a tuple that holds one.
-type Side<'a> = (Vec<&'a Ty>, Option<&'a Lit>, Option<&'a [Part]>);
+type Side<'a> = (Vec<&'a Ty>, Option<&'a Lit>, Option<&'a [Part<'a>]>);
 
 /// The argument `a` as a side of `==`.
 fn side<'b>(a: &'b Arg<'_>) -> Side<'b> {
@@ -5126,7 +5198,7 @@ fn side<'b>(a: &'b Arg<'_>) -> Side<'b> {
 /// the unknown, which could stand for a tuple of other components.
 fn sides<'a>(
     ts: &[&'a Ty],
-    ps: Option<&'a [Part]>,
+    ps: Option<&'a [Part<'a>]>,
     n: usize,
 ) -> Option<impl Iterator<Item = Side<'a>>> {
     if ts.iter().any(|t| !t.vars.is_empty() || t.dynamic) {
@@ -5162,6 +5234,10 @@ fn components<'a>(a: &Arg<'a>, n: usize) -> Option<Vec<Arg<'a>>> {
                 },
                 Some(Part::Tuple(ps)) => Arg {
                     parts: Some(ps.clone()),
+                    ..Arg::of(c.clone())
+                },
+                Some(Part::Branches(bs)) => Arg {
+                    branches: Some(bs.clone()),
                     ..Arg::of(c.clone())
                 },
                 _ => Arg::of(c.clone()),
@@ -5229,17 +5305,18 @@ fn adopted(a: &Arg, p: &Ty, rough: bool) -> Result<Option<(Ty, Adoptions)>, (Spa
     // rejects one that is not exactly a value of it, and the operation, folded at it
     // ([`folded`]), adopts its value whole, `3.0`. That walks each operation once, O(its
     // size), and an operation is the branch of one `if`.
-    if let Some(ls) = &a.branches {
+    // The same holds for an `if` of literals written as a component of a tuple, at the
+    // types its component has across the expected tuple shapes, as for a literal there.
+    let branched = |ls: &[Branch], want: &[&Ty], ads: &mut Adoptions| {
+        let from = ads.len();
         let mut ts = Vec::with_capacity(ls.len());
         for b in ls.iter() {
             let t = match b {
-                Branch::Lit(l) => {
-                    lit(l, &[p], &mut ads)?.unwrap_or_else(|| lit_ty(&l.value, l.neg()))
-                }
+                Branch::Lit(l) => lit(l, want, ads)?.unwrap_or_else(|| lit_ty(&l.value, l.neg())),
                 Branch::Op { e, value, lits, .. } => {
                     let mut each = Adoptions::new();
                     for l in lits.iter() {
-                        lit(l, &[p], &mut each)?;
+                        lit(l, want, &mut each)?;
                     }
                     let at = each.first().map(|(_, v)| lit_carrier(v));
                     match at.and_then(|c| folded(e, c)) {
@@ -5254,7 +5331,10 @@ fn adopted(a: &Arg, p: &Ty, rough: bool) -> Result<Option<(Ty, Adoptions)>, (Spa
             };
             ts.push(t);
         }
-        return Ok((!ads.is_empty()).then(|| (Ty::union_all(&ts), ads)));
+        Ok((ads.len() > from).then(|| Ty::union_all(&ts)))
+    };
+    if let Some(ls) = &a.branches {
+        return Ok(branched(ls, &[p], &mut ads)?.map(|t| (t, ads)));
     }
     let Some(parts) = &a.parts else {
         return Ok(None);
@@ -5293,6 +5373,11 @@ fn adopted(a: &Arg, p: &Ty, rough: bool) -> Result<Option<(Ty, Adoptions)>, (Spa
                 let t = lit(l, &ws, &mut ads)?.unwrap_or_else(|| c.clone());
                 out.push(t);
             }
+            Part::Branches(ls) => {
+                let ws: Vec<&Ty> = ws.collect();
+                let t = branched(ls, &ws, &mut ads)?.unwrap_or_else(|| c.clone());
+                out.push(t);
+            }
             Part::Tuple(inner) => {
                 let ws = shapes(ws, inner.len());
                 match only_tuple(c, inner.len()).filter(|_| !ws.is_empty()) {
@@ -5322,7 +5407,7 @@ fn shapes<'a>(ts: impl IntoIterator<Item = &'a Ty>, n: usize) -> Vec<&'a [Ty]> {
 /// A tuple [`adopted`] has open: its parts as written, the argument's components, the
 /// expected shapes there, and the component types so far.
 struct OpenTuple<'a> {
-    parts: &'a [Part],
+    parts: &'a [Part<'a>],
     comps: &'a [Ty],
     want: Vec<&'a [Ty]>,
     out: Vec<Ty>,

@@ -1036,7 +1036,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.ret = Ret::Arg(Arg {
                     at: Some(e.span),
                     expr: Some(e),
-                    parts: parts(e, self.t.text),
+                    parts: parts(e, self.t.text, &self.kept_ops),
                     branches: branch_lits(e, self.t.text, &self.kept_ops),
                     ..Arg::of(t)
                 });
@@ -2447,7 +2447,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Whether the branch `b` of an `if` of literals joins the class `k`, as `what` at `span`
     /// requires: a literal as a lone literal does ([`Ck::joining`]), and an operation on
     /// literals alone by its class, which merges with `k` as the operation alone would.
-    fn branch_joins(&mut self, k: usize, b: &Branch, what: &str, span: Span) -> bool {
+    pub(super) fn branch_joins(&mut self, k: usize, b: &Branch, what: &str, span: Span) -> bool {
         match b {
             Branch::Lit(l) => self.join(k, &self.joining(l), false),
             Branch::Op { class, .. } => self.merge(k, *class, what, span),
@@ -3944,7 +3944,7 @@ fn exported(e: &Expr) -> &Expr {
 // cannot fix a literal's carrier, since a type `2 | 1` holds the values, not the literals
 // that wrote them. Tests: `l01_26a_generic_literals::lit_branches` and
 // `l01_26a_generic_literals::lit_branch_ops`.
-fn branch_lits<'e>(
+pub(super) fn branch_lits<'e>(
     e: &'e Expr,
     src: Option<&str>,
     kept: &HashMap<Span, usize>,
@@ -6555,7 +6555,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         sig: &Sig,
         x: &Ty,
         y: &Ty,
-        written: [Option<Rc<[Part]>>; 2],
+        written: [Option<Rc<[Part<'a>]>>; 2],
         span: Span,
     ) -> Ty {
         // Called through a function value, a message names the word as well as the value.
@@ -6676,9 +6676,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                     }
                 }
-                let arg = |t: &Ty, w: &Option<Part>, fixed: Option<Lit>| match w {
+                // An `if` of literals written as a component, `if c { 2 + 1 } else { 1 }`,
+                // keeps its branches, each of which adopts as a lone literal would.
+                let arg = |t: &Ty, w: &Option<Part<'a>>, fixed: Option<Lit>| match w {
                     Some(Part::Lit(l)) => Arg {
                         lit: Some(fixed.unwrap_or_else(|| l.clone())),
+                        ..Arg::of(t.clone())
+                    },
+                    Some(Part::Branches(bs)) => Arg {
+                        branches: Some(bs.clone()),
                         ..Arg::of(t.clone())
                     },
                     _ => Arg::of(t.clone()),
@@ -6774,7 +6780,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let (ws, wt) = (written(0, &s), written(1, &t));
                     for i in 0..n {
                         let join = |rows: &[&[Ty]]| Ty::union_all(rows.iter().map(|r| &r[i]));
-                        let part = |w: &Option<Rc<[Part]>>| match w.as_ref().map(|ps| &ps[i]) {
+                        let part = |w: &Option<Rc<[Part<'a>]>>| match w.as_ref().map(|ps| &ps[i]) {
                             Some(Part::Other) | None => None,
                             Some(p) => Some(p.clone()),
                         };
@@ -8059,7 +8065,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let p = &arrow.params[i];
             let generic = match p.as_var().is_some() {
-                true => self.generic_parts(a),
+                true => match self.generic_parts(a, what, span) {
+                    Ok(t) => t,
+                    Err(()) => return fail(self),
+                },
                 false => None,
             };
             let a = &match generic {
@@ -8304,7 +8313,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     ) {
         enum Src<'p, 'e> {
             Lit(&'p Lit),
-            Parts(&'p [Part], Option<&'e Expr>),
+            Parts(&'p [Part<'e>], Option<&'e Expr>),
             Other(Option<&'e Expr>),
         }
         // The component `i` of the tuple display `e`, where it is one.
@@ -8314,11 +8323,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => None,
             }
         }
-        fn of<'p, 'e>(part: &'p Part, e: Option<&'e Expr>) -> Src<'p, 'e> {
+        fn of<'p, 'e>(part: &'p Part<'e>, e: Option<&'e Expr>) -> Src<'p, 'e> {
             match part {
                 Part::Lit(l) => Src::Lit(l),
                 Part::Tuple(ps) => Src::Parts(ps, e),
-                Part::Other => Src::Other(e),
+                Part::Branches(_) | Part::Other => Src::Other(e),
             }
         }
         let mut sets = VarSets::default();
@@ -8387,7 +8396,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                         match part {
                                             Part::Tuple(qs) => inner.push((qs, item(e, j))),
                                             Part::Other => in_payloads(item(e, j), &mut payloads),
-                                            Part::Lit(_) => {}
+                                            Part::Lit(_) | Part::Branches(_) => {}
                                         }
                                     }
                                 }
