@@ -3194,9 +3194,9 @@ impl Scope {
         }
     }
 
-    /// Tells the caches of the last reduction, projection and enumeration that the fresh name
-    /// `x` came into scope or left it, the names having been `before`. A fresh name is
-    /// mentioned by no conjunct and no written constraint, and [`Scope::bind`] reduced its
+    /// Tells the caches of the last reduction, projection, enumeration and order of leaves
+    /// ([`Order`]) that the fresh name `x` came into scope or left it, the names having been
+    /// `before`. A fresh name is mentioned by no conjunct and no written constraint, and [`Scope::bind`] reduced its
     /// product to its fixed point, so a reduction would only have synchronized its bounds: the
     /// caches take it as reduced, and the next reduction costs the names that changed since,
     /// not every name bound since the last reduction of this scope. A walk reduces the scope
@@ -3238,6 +3238,12 @@ impl Scope {
         }
         if let Some((names, _, _)) = &mut self.seen.enumeration {
             rebase(names);
+        }
+        // The order of an eager scope's leaves ([`Order::sync`]) is such a cache too; `x`, in
+        // no conjunct, is no star's leaf, so the order has nothing to place for it. A lazy
+        // scope keeps no order, and its empty one would cost every name to rebase.
+        if !self.lazy {
+            rebase(&mut self.seen.order.names);
         }
         self.sync_bounds([x]);
     }
