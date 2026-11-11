@@ -342,6 +342,16 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   9 | #use ( rule : M . mono , args : [ M . f ( a ) , M . f ( b ) ] ) ,
  10 | ] , claims : [ M . f ( a ) <= M . f ( b ) , M . f ( M . f ( a ) ) <= M . f ( M . f ( b ) ) ] ) )
  11 | }
+== DESIGN.md [sec:corner_cases] 1 L10
+  1 | total ( «positional» xs : [ int ] ) -> int {
+  2 | s = xs . sum ;
+  3 | t = xs . map ( x -> x * 2₍10₎ ) . sum ;
+  4 | «return» s + t ;
+  7 | }
+== DESIGN.md [sec:robustness] 1 L21
+  1 | main ( prices : Utf8String ->? rat «with» peers ( [ str["a"] , str["b"] ] , assign : #roundRobin ) , orders : Lines ) -> ( stdout : Lines ) {
+  2 | stdout <- orders . map ( sku -> str[${prices [ sku ] «else» 0r}] ) ;
+  3 | }
 == DESIGN.md [sec:ffi] 1 L7
   1 | @foreign «struct» SockAddr { family : int «with» bits ( 16₍10₎ ) , data : [ u8 ] «with» length ( 14₍10₎ ) }
   2 | @foreign «struct» AddrInfo {

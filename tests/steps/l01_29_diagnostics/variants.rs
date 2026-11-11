@@ -23,6 +23,10 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
     let none = |line: usize| format!("{line}: the line is marked ✗ and has no diagnostic");
     let cases = [
         (
+            "block-binding-never-read",
+            format!("2: {}", zed_tests::not_yet!("the declared result type `-> int`")),
+        ),
+        (
             "constructor-called-by-position",
             "6: the mark names the row \"Positional constructor call or pattern\", and the \
              diagnostic is in no row of the rejection table: `Point` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Point`, or correct the name if it is misspelled."

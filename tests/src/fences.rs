@@ -259,6 +259,11 @@ pub const CHANGES: &[Change] = &[
         line: "rows = exec(db, \"SELECT * WHERE name = \" ++ sanitize(userName));  // ✓ and the \
                sanitizer is auditable",
     },
+    // The ✗ line takes the place of the return that reads t.
+    Change::Omits {
+        fixture: "block-binding-never-read",
+        line: "  return s + t;",
+    },
 ];
 
 /// Where each of `variants` disagrees with the fence of `fences` whose commented ✗ line it

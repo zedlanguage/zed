@@ -357,7 +357,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
 == EXAMPLES.md [13. Loops and state] 4 L6
   2 | found = «loop» {
   3 | i' = i + 1₍10₎ «with» initial i = 0₍10₎ ;
-  4 | hit = «if» xs [ i ] == target { «break» i } «else» { i } ;
+  4 | _ = «if» xs [ i ] == target { «break» i } «else» { i } ;
   5 | «while» i < xs :: len ;
   6 | } ;
 == EXAMPLES.md [13. Loops and state] 5 L6

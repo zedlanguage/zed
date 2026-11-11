@@ -74,6 +74,9 @@ Cell read on a path back to its own cell
 Meaning function with a case `@decides` cannot reify
 Linear question outside the polynomial fragment of the linear-relation domain
 Statement that writes nothing, or drops a declared result
+Block binding that nothing reads
+Hole in the program
+Dependency reaching what its importer did not grant
 Two operations on one port that may not commute, with nothing ordering them
 Operator with no arrow at its operands' carrier
 Units that differ where an operation requires equal ones

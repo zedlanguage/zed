@@ -129,6 +129,10 @@ rows! {
     NonLinearQuestion =>
         "Linear question outside the polynomial fragment of the linear-relation domain",
     WritesNothing => "Statement that writes nothing, or drops a declared result",
+    // No diagnostic uses the next three rows yet: plan rows L2.12d, L15.8b and L21.0b emit them.
+    UnreadBinding => "Block binding that nothing reads",
+    ProgramHole => "Hole in the program",
+    UngrantedReach => "Dependency reaching what its importer did not grant",
     // No diagnostic uses this row yet: plan row L7.2 emits it.
     UncommutedPortOps => "Two operations on one port that may not commute, with nothing ordering them",
     NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",

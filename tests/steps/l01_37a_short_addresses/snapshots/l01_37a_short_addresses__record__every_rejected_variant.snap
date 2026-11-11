@@ -2,6 +2,19 @@
 source: tests/steps/l01_37a_short_addresses/record.rs
 expression: without_addresses(&out)
 ---
+block-binding-never-read
+  rejected: [
+    Diagnostic {
+        line: 2,
+        col: 29,
+        message: "the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+]
+  checks: [Outcome { line: 2, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 6, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+
 constructor-called-by-position
   rejected: [
     Diagnostic {

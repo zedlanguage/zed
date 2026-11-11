@@ -581,7 +581,7 @@ counted = loop t { x' = step(x) with initial x = seed; until t == 99; };   // t 
 // [d4*] sec:generations — break carries a value out of the frame
 found = loop {
   i' = i + 1 with initial i = 0;
-  hit = if xs[i] == target { break i } else { i };
+  _ = if xs[i] == target { break i } else { i };
   while i < xs::len;
 };
 ```
