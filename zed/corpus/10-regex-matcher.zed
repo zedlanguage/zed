@@ -8,10 +8,12 @@
 // 10-regex-matcher/regex.zed.
 import regex.{matches};
 
-hhmm = #seq(a: #alt(a: #seq(a: #range(lo: "0", hi: "1"), b: #range(lo: "0", hi: "9")),
-                    b: #seq(a: #lit(c: "2"), b: #range(lo: "0", hi: "3"))),
-            b: #seq(a: #lit(c: ":"),
-                    b: #seq(a: #range(lo: "0", hi: "5"), b: #range(lo: "0", hi: "9"))));
+hhmm = #seq(a: #alt(a: #seq(a: #range(lo: char32("0"), hi: char32("1")),
+                            b: #range(lo: char32("0"), hi: char32("9"))),
+                    b: #seq(a: #lit(c: char32("2")), b: #range(lo: char32("0"), hi: char32("3")))),
+            b: #seq(a: #lit(c: char32(":")),
+                    b: #seq(a: #range(lo: char32("0"), hi: char32("5")),
+                            b: #range(lo: char32("0"), hi: char32("9")))));
 
 isTime = mix(matches, hhmm);          // matches with its first parameter fixed to hhmm
 

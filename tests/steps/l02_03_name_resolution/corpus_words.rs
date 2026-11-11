@@ -2,7 +2,7 @@
 //! and `Stream` is L7's type of a port's values (DESIGN.md, "Defined words by layer"), so no
 //! corpus file reports one of them as not defined.
 
-use super::{STR_TYPES_PENDING, alone, describe, errors, later};
+use super::{alone, describe, errors, later, str_types_pending};
 use zedc::ast::unit;
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
@@ -42,8 +42,11 @@ fn mix_is_the_staging_word_of_l19() {
         ),
         "{errors:?}"
     );
+    // `char32` is pending STR-types (see `STR_TYPES_PENDING`); no other name is not defined.
     assert!(
-        !errors.iter().any(|e| e.contains("not defined")),
+        !errors
+            .iter()
+            .any(|e| e.contains("not defined") && !str_types_pending(e)),
         "{errors:?}"
     );
 }
@@ -126,7 +129,7 @@ fn no_corpus_file_uses_an_undefined_name() {
         resolved += 1;
         let r = resolve_in(&stmts, &Alone);
         for e in r.errors.iter().chain(&r.later) {
-            if e.message.starts_with(STR_TYPES_PENDING) {
+            if str_types_pending(&e.message) {
                 pending.push(name.clone());
             } else if !later(&e.message) && e.message.contains("is not defined") {
                 undefined.push(format!("{name}: {}", e.message));
@@ -134,14 +137,29 @@ fn no_corpus_file_uses_an_undefined_name() {
         }
     }
     assert_eq!(undefined, Vec::<String>::new());
-    // Each use of `Utf8String` in a resolved file, pending STR-types (see `STR_TYPES_PENDING`).
+    // Each use of `Utf8String` or `char32` in a resolved file, pending STR-types (see
+    // `STR_TYPES_PENDING`).
     assert_eq!(
         pending,
         [
             "08-utf8-percent.zed",
+            "08-utf8-percent.zed",
+            "08-utf8-percent.zed",
             "10-regex-matcher/regex.zed",
             "10-regex-matcher/regex.zed",
             "10-regex-matcher/regex.zed",
+            "10-regex-matcher.zed",
+            "10-regex-matcher.zed",
+            "10-regex-matcher.zed",
+            "10-regex-matcher.zed",
+            "10-regex-matcher.zed",
+            "10-regex-matcher.zed",
+            "10-regex-matcher.zed",
+            "10-regex-matcher.zed",
+            "10-regex-matcher.zed",
+            "10-regex-matcher.zed",
+            "10-regex-matcher.zed",
+            "10-regex-matcher.zed",
             "17-sensor-pipeline.zed",
             "19-bank-ledger.zed",
             "19-bank-ledger.zed",
@@ -153,7 +171,7 @@ fn no_corpus_file_uses_an_undefined_name() {
             "31-typechecker/ast.zed",
             "31-typechecker/ast.zed",
         ],
-        "uses of `Utf8String` pending STR-types; when it lands, this list is empty and goes"
+        "uses of `Utf8String` and `char32` pending STR-types; when it lands, this list is empty and goes"
     );
     assert_eq!(
         (resolved, later_layer, files.len()),

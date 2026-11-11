@@ -32,15 +32,34 @@ expression: without_addresses(&out)
 12:32: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 08-utf8-percent.zed (L6): does not load: 8:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 8:39: the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.
-12:36: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-28:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-30:10: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-33:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+11:24: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+23:31: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+23:37: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+25:36: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+41:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+43:10: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+43:25: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+44:13: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+44:43: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+44:79: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+46:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 09-canonical-equal.zed (L3): does not load: 7:23: the prelude word `split` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 10:15: the prelude word `map` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 10-regex-matcher.zed (L19): does not load: 9:1: the unit `regex` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
 9:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
-16:10: the prelude word `mix` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+11:43: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+11:60: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+12:43: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+12:60: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+13:40: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+13:68: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+13:85: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+14:32: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+15:43: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+15:60: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+16:43: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+16:60: `char32` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `char32`, or correct the name if it is misspelled.
+18:10: the prelude word `mix` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 11-csv-split.zed (L5): does not load: 9:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 20:11: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 21:11: an array display is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.

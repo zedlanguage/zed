@@ -1,7 +1,7 @@
 //! The binders of L2's declarations: struct names and fields, type names and parameters,
 //! methods and their receiver `this`, and the names `match` arms and patterns bind.
 
-use super::{STR_TYPES_PENDING, alone, describe, errors};
+use super::{alone, describe, errors, str_types_pending};
 
 #[test]
 fn a_struct_name_is_a_type_and_its_fields_are_binders_no_scope_holds() {
@@ -111,9 +111,10 @@ fn a_name_pattern_that_names_a_type_is_a_type_test() {
     assert_eq!(describe(text, &r, "other", 1), ["pattern other"]);
 }
 
-/// The corpus's UTF-8 decoder writes each decoded code point with `scalar` (step L1.39c) in a
-/// `match` arm, which resolution now walks: every name in it resolves, to the arm's binder or
-/// to the prelude.
+/// The corpus's UTF-8 decoder reads a hexadecimal digit's number with `int` and writes each
+/// decoded code point with its own `codePointText`, which applies the checked cast `char32`, in
+/// `match` arms, which resolution now walks: every name in them resolves, to the arm's binder,
+/// to the program's definition or to the prelude.
 #[test]
 fn the_utf8_corpus_program_resolves_the_code_points_its_match_arms_write() {
     let path = concat!(
@@ -122,15 +123,19 @@ fn the_utf8_corpus_program_resolves_the_code_points_its_match_arms_write() {
     );
     let text = std::fs::read_to_string(path).unwrap();
     let r = alone(&text);
-    // The decoder's state holds a `Utf8String`, pending STR-types (see `STR_TYPES_PENDING`).
+    // The decoder's state holds a `Utf8String`, and `codePointText` and the test for `%` apply
+    // `char32`, all pending STR-types (see `STR_TYPES_PENDING`).
     let errors = errors(&text);
     assert!(
-        errors.len() == 1 && errors[0].starts_with(STR_TYPES_PENDING),
+        errors.len() == 3 && errors.iter().all(|e| str_types_pending(e)),
         "{errors:?}"
     );
-    assert_eq!(describe(&text, &r, "scalar", 0), ["prelude scalar"]);
+    assert_eq!(describe(&text, &r, "ch", 1), ["pattern ch"]);
+    assert_eq!(describe(&text, &r, "int", 0), ["prelude int"]);
     assert_eq!(describe(&text, &r, "b", 2), ["pattern #byte(b:)"]);
-    assert_eq!(describe(&text, &r, "scalar", 1), ["prelude scalar"]);
+    let def = "function codePointText(positional n) = match char32(n) { #invalid -> \"\", c -> \"${c}\" };";
+    assert_eq!(describe(&text, &r, "codePointText", 1), [def]);
+    assert_eq!(describe(&text, &r, "codePointText", 2), [def]);
 }
 
 /// A tuple-destructuring parameter binds its names in the lambda's body, as a `match` arm's

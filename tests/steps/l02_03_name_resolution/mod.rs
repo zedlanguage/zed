@@ -44,12 +44,23 @@ fn package(fs: &[(&str, &str)]) -> Package {
     load(&mut Db::new(), &files(fs), &["main"])
 }
 
-/// The error zedc gives for the corpus's string type, pending plan item STR-types. DESIGN.md
-/// (sec:order, "Defined words by layer") names the string types `U8String`, `Utf8String`,
-/// `Utf16String` and `Utf32String` and has no `String`; the corpus writes `Utf8String`, which
-/// zedc does not define until STR-types lands. Then each test that expects this error fails,
-/// and the expectation goes.
-const STR_TYPES_PENDING: &str = "the type `Utf8String` is not defined";
+/// The errors zedc gives for the corpus's string and character types, pending plan item
+/// STR-types. DESIGN.md (sec:order, "Defined words by layer") names the string types
+/// `U8String`, `Utf8String`, `Utf16String` and `Utf32String` and has no `String`, and gives a
+/// string's code points as `char32` values (`text::codepoints[i]`), a character written
+/// `char32("é")` or `char32(0xE9)`; the corpus writes `Utf8String` and `char32`, as a type and as
+/// the checked cast, which zedc does not define until STR-types lands. Then each test that
+/// expects one of these errors fails, and the expectation goes.
+const STR_TYPES_PENDING: &[&str] = &[
+    "the type `Utf8String` is not defined",
+    "the type `char32` is not defined",
+    "`char32` is not defined",
+];
+
+/// Whether `message` is one of the errors of `STR_TYPES_PENDING`.
+fn str_types_pending(message: &str) -> bool {
+    STR_TYPES_PENDING.iter().any(|p| message.starts_with(p))
+}
 
 /// Whether `message` is a form a later step compiles or links, which this step only reaches. A
 /// prelude word or type of a later layer is this step's own error, so it is kept.

@@ -1,7 +1,7 @@
 // unit regex (10-regex-matcher/regex.zed): regular expressions and a matcher
-// by Brzozowski derivatives. Characters are one-character Utf8String values,
-// compared in code-point order.
-type Re = #void | #eps | #lit(c: Utf8String) | #range(lo: Utf8String, hi: Utf8String)
+// by Brzozowski derivatives. Characters are char32 values, the code points of
+// the string matched, compared in code-point order.
+type Re = #void | #eps | #lit(c: char32) | #range(lo: char32, hi: char32)
         | #seq(a: Re, b: Re) | #alt(a: Re, b: Re) | #star(r: Re);
 
 nullable(positional re) = match re {
@@ -25,4 +25,4 @@ deriv(positional re, positional ch) = match re {
   #star(r:) -> #seq(a: deriv(r, ch), b: #star(r:)),
 };
 
-matches(positional re, positional s) = nullable(s.foldl(re, (r, c) -> deriv(r, "${c}")));
+matches(positional re, positional s) = nullable(s::codepoints.foldl(re, (r, c) -> deriv(r, c)));
