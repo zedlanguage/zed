@@ -1225,7 +1225,11 @@ fn rfx_probe() {
                 "rfx {which} n {n} {:?} units {} bytes {}",
                 v, w.units, w.bytes
             );
-            if which == "r6parity" || ["r7", "r8", "r9"].iter().any(|p| which.starts_with(p)) {
+            if which == "r6parity"
+                || ["r7", "r8", "r9", "r10"]
+                    .iter()
+                    .any(|p| which.starts_with(p))
+            {
                 eprintln!("escape cells {which} n {n} {:?}", t.escape_cell_counts());
                 Type::forget_emptiness();
             }
@@ -1370,6 +1374,24 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
     };
     let half = (n / 2).max(1);
     match which {
+        "r10mapkeys" => Type::morphism(
+            (0..n).fold(Type::empty(), |s, i| &s | &lit(i as i64)),
+            Type::int(),
+            Type::int(),
+        ),
+        "r10mapvalue" => Type::morphism(lit(0), Type::int(), rfx_case("r5remout", n, tag)),
+        "r10padded" => r10_padded_congruence(n, tag),
+        "r10sharedfront" => Type::tuple(vec![rfx_case("far", n, tag); n]),
+        "r10big" => r10_big_congruence_cx(n, true, tag),
+        "r10small" => r10_big_congruence_cx(n, false, tag),
+        "r10alternating" => {
+            let m = n.isqrt().max(4);
+            let a = (0..m)
+                .map(|i| (0..m).map(|q| i % 2 == 1 || q == m - 1).collect())
+                .collect::<Vec<Vec<bool>>>();
+            let b = vec![vec![true; m]; m];
+            r9_bmm(&a, &b, tag)
+        }
         "r9cosets" => r9_cosets(n, true, tag),
         "r9balanced" => r9_balanced(n, tag),
         "r9posswap" => r9_swapping_groups(n, false, tag),
@@ -7830,5 +7852,655 @@ fn r9_atom_chain_narrowing_agrees_with_finite_oracle() {
         assert_eq!(yes.verdict(), Verdict::Inhabited);
         assert!(empty.is_empty());
         assert!(!yes.is_empty());
+    });
+}
+
+fn r10_big_congruence_cx(n: usize, wide: bool, tag: &str) -> Type {
+    let lit = |i: i64| {
+        if wide && i == 2 {
+            Type::lit(&Value::int("9223372036854775808".parse().unwrap())).unwrap()
+        } else {
+            lit(i)
+        }
+    };
+    let outside = true;
+    let n = n.max(4);
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for e in 1..=n {
+        let h = &Type::int() - &lit((e % 3) as i64);
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if j == 1 {
+            &lit(2) | &lit(7)
+        } else {
+            &lit(((4 - j % 3) % 3) as i64) | &lit(7)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let mut u = (2..=n).step_by(3).fold(Type::empty(), |u, d| &u | &ts[d]);
+    if outside {
+        u = &u | &ts[3];
+    }
+    &ts[n + 1] - &u
+}
+
+#[test]
+fn r10_scalar_required_keys_within_allowed_keys() {
+    big(|| {
+        for value in [Type::int(), rfx_case("r5remout", 16, "_r10map")] {
+            let t = Type::morphism(lit(0), Type::int(), value.clone());
+            let good = if value == Type::int() {
+                Value::Int(0)
+            } else {
+                r6_colour_list(&[5, 1, 1])
+            };
+            // Runtime membership deliberately rejects bounded morphisms; check the
+            // returned value and the scalar domain certificate independently.
+            assert!(value.contains(&good));
+            assert!(Type::int().contains(&Value::Int(0)));
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        }
+        assert_eq!(
+            Type::morphism(lit(0), Type::int(), Type::empty()).verdict(),
+            Verdict::Empty
+        );
+        assert_eq!(
+            Type::morphism(lit(0), lit(1), Type::int()).verdict(),
+            Verdict::Empty
+        );
+        assert_eq!(
+            Type::morphism(Type::bool(), Type::bool(), Type::int()).verdict(),
+            Verdict::Inhabited
+        );
+    });
+}
+
+#[test]
+fn r10_boolean_tail_is_decided_and_scales() {
+    big(|| {
+        for case in ["chain", "r5remout"] {
+            let want = if case == "chain" {
+                Verdict::Empty
+            } else {
+                Verdict::Inhabited
+            };
+            let a = rfx_case(&format!("listtail:{case}"), 32, "_r10tail32");
+            let b = rfx_case(&format!("listtail:{case}"), 256, "_r10tail256");
+            scaling::check("a written Boolean list tail", 32, |n| {
+                Type::forget_emptiness();
+                assert_eq!((if n == 32 { &a } else { &b }).verdict(), want);
+            });
+        }
+    });
+}
+
+#[test]
+fn r10_big_integer_escape_is_a_renaming_and_scales() {
+    big(|| {
+        let a = r10_big_congruence_cx(32, true, "_r10big32");
+        let b = r10_big_congruence_cx(256, true, "_r10big256");
+        scaling::check("a wide integer in escape heads", 32, |n| {
+            Type::forget_emptiness();
+            assert_eq!(
+                (if n == 32 { &a } else { &b }).verdict(),
+                Verdict::Inhabited
+            );
+        });
+        for n in [16, 64, 256, 1024] {
+            let small = r10_big_congruence_cx(n, false, "_r10bigsmall");
+            let wide = r10_big_congruence_cx(n, true, "_r10bigwide");
+            assert_eq!(wide.escape_cell_counts(), small.escape_cell_counts());
+            assert_eq!(wide.verdict(), small.verdict());
+        }
+    });
+}
+/// H has simultaneous landings at K and J, H2 lands only at K. Their union
+/// covers K's incoming slice but must not be reused as coverage of J.
+#[test]
+fn r10_partial_multi_target_coverage_is_per_child() {
+    big(|| {
+        let l = list_named(Type::int(), "_r10targets");
+        let all = small(7);
+        for a in 1..=7 {
+            for b in 1..=7 {
+                for k in 1..=7 {
+                    let tail = |h: Type, t: Type| cons_of(h, t);
+                    let u = tail(small(a), tail(small(k), l.clone()));
+                    let v = tail(small(a), tail(all.clone(), l.clone()));
+                    let w = tail(small(b), tail(small(k), l.clone()));
+                    let negatives =
+                        &(&tail(Type::int(), u) | &tail(Type::int(), v)) | &tail(Type::int(), w);
+                    let positive = tail(
+                        lit(0),
+                        tail(all.clone(), tail(all.clone(), Type::atom("nil"))),
+                    );
+                    let t = &positive - &negatives;
+                    let mut inhabited = false;
+                    for x in 1..=3 {
+                        for y in 1..=3 {
+                            inhabited |= t.contains(&r6_colour_list(&[0, x, y]));
+                        }
+                    }
+                    let want = if inhabited {
+                        Verdict::Inhabited
+                    } else {
+                        Verdict::Empty
+                    };
+                    for got in [
+                        t.chain_verdict(),
+                        t.chain_verdict_expanded(),
+                        Some(t.verdict()),
+                    ] {
+                        if let Some(got @ (Verdict::Empty | Verdict::Inhabited)) = got {
+                            assert_eq!(got, want, "heads {a} {b} {k}");
+                        }
+                    }
+                }
+            }
+        }
+        // Falsifiable pair: changing the final positive head changes the answer.
+        for (last, want) in [(lit(2), Verdict::Inhabited), (lit(1), Verdict::Empty)] {
+            let k = cons_of(lit(1), l.clone());
+            let j = cons_of(all.clone(), l.clone());
+            let n = &(&cons_of(Type::int(), cons_of(small(3), k.clone()))
+                | &cons_of(Type::int(), cons_of(small(3), j)))
+                | &cons_of(Type::int(), cons_of(small(6), k));
+            let p = cons_of(
+                lit(0),
+                cons_of(all.clone(), cons_of(last, Type::atom("nil"))),
+            );
+            let t = &p - &n;
+            assert_eq!(t.verdict(), want);
+        }
+    });
+}
+
+#[test]
+fn r10_shared_product_list_is_swept_and_checked_once() {
+    big(|| {
+        let a = rfx_case("r10sharedfront", 16, "_r10shared16");
+        let b = rfx_case("r10sharedfront", 128, "_r10shared128");
+        scaling::check("one list type shared by every tuple component", 16, |n| {
+            Type::forget_emptiness();
+            assert_eq!(
+                (if n == 16 { &a } else { &b }).verdict(),
+                Verdict::Inhabited
+            );
+        });
+        let empty = rfx_case("chain", 3, "_r10sharedempty");
+        assert_eq!(Type::tuple(vec![empty; 16]).verdict(), Verdict::Empty);
+    });
+}
+
+#[test]
+fn r10_is_empty_on_a_nested_list_is_independent_of_a_prior_verdict() {
+    for case in ["chain", "chainfar", "r5remout", "u4holesout"] {
+        for wrap in ["listhead", "listtail", "atom"] {
+            let got = std::thread::Builder::new()
+                .stack_size(16 * 1024 * 1024)
+                .spawn(move || rfx_case(&format!("{wrap}:{case}"), 8, "_r10freshbool").is_empty())
+                .unwrap()
+                .join()
+                .unwrap();
+            assert_eq!(got, case == "chain", "fresh is_empty {wrap}:{case}");
+        }
+    }
+}
+
+/// The r7congruenceout language with n irrelevant excluded integers shared by all
+/// three head predicates. The positive word uses only 0,1,2,7, so those exclusions
+/// change no cell or verdict. Distinct written type/row DAG size is O(n).
+fn r10_padded_congruence(n: usize, tag: &str) -> Type {
+    let n = n.max(4);
+    let padding = (0..n).fold(Type::empty(), |a, k| &a | &lit(10000 + k as i64));
+    let heads: Vec<Type> = (0..3)
+        .map(|k| &Type::int() - &(&padding | &lit(k)))
+        .collect();
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for e in 1..=n {
+        defs.push(def(
+            &format!("F{e}{tag}"),
+            cons(Expr::Type(heads[e % 3].clone()), r(e - 1)),
+        ));
+    }
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if j == 1 {
+            &lit(2) | &lit(7)
+        } else {
+            &lit(((4 - j % 3) % 3) as i64) | &lit(7)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let u = (2..=n).step_by(3).fold(ts[3].clone(), |u, d| &u | &ts[d]);
+    &ts[n + 1] - &u
+}
+
+#[test]
+fn r10_irrelevant_shared_holes_preserve_the_finite_language() {
+    big(|| {
+        for n in 4..=6usize {
+            let a = r7_congruence(n, true, "_r10pad_a");
+            let b = r10_padded_congruence(n, "_r10pad_b");
+            let mut found = false;
+            for word in 0..4usize.pow(n as u32) {
+                let mut code = word;
+                let xs: Vec<i64> = (0..n)
+                    .map(|_| {
+                        let v = [0, 1, 2, 7][code % 4];
+                        code /= 4;
+                        v
+                    })
+                    .collect();
+                let v = r6_colour_list(&xs);
+                let want = a.contains(&v);
+                assert_eq!(b.contains(&v), want, "n={n} word={xs:?}");
+                found |= want;
+            }
+            assert!(found);
+            assert!(!b.contains(&r6_colour_list(&vec![7; n])));
+            assert_eq!(b.verdict(), Verdict::Inhabited);
+        }
+    });
+}
+
+#[test]
+#[ignore = "R10-C2: needs the positive-head projection in escape.rs (Codex R10), not yet ported"]
+fn r10_shared_irrelevant_holes_are_projected_once_and_scale() {
+    big(|| {
+        let a = r10_padded_congruence(32, "_r10pad32");
+        let b = r10_padded_congruence(256, "_r10pad256");
+        scaling::check("irrelevant shared holes in integer heads", 32, |n| {
+            Type::forget_emptiness();
+            assert_eq!(
+                (if n == 32 { &a } else { &b }).verdict(),
+                Verdict::Inhabited
+            );
+        });
+    });
+}
+
+#[test]
+fn r10_projection_uses_every_positive_head_and_keeps_finite_and_cofinite_meanings() {
+    big(|| {
+        let l = list_named(&lit(1) | &lit(3), "_r10alphascope");
+        let p = cons_of(lit(2), cons_of(lit(3), l.clone()));
+        let w = r6_colour_list(&[2, 3]);
+        for h in [
+            &lit(1) | &lit(10000),
+            &Type::int() - &(&lit(3) | &lit(10000)),
+        ] {
+            let t = &p - &cons_of(lit(2), cons_of(h, l.clone()));
+            assert!(t.contains(&w));
+            assert!(
+                t.escape_cell_counts().0 > 0,
+                "the direct escape parsed the global alphabet"
+            );
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        }
+        let empty = &p - &cons_of(lit(2), cons_of(&lit(3) | &lit(10000), l));
+        assert!(!empty.contains(&w));
+        assert_eq!(empty.verdict(), Verdict::Empty);
+    });
+}
+
+#[test]
+fn r10_scalar_domain_certificates_match_all_class_domains() {
+    big(|| {
+        let carriers = vec![
+            (
+                Type::int(),
+                vec![Value::Int(-1), Value::Int(0), Value::Int(1)],
+                true,
+            ),
+            (
+                Type::rat(),
+                (-1..=1)
+                    .map(|i: i64| Value::rat(zed_kernel::Rat::int(i.into())))
+                    .collect(),
+                true,
+            ),
+            (
+                Type::f64(),
+                vec![Value::float(-1.0), Value::float(0.0), Value::float(1.0)],
+                true,
+            ),
+            (
+                Type::string(),
+                vec![Value::str("a"), Value::str("b"), Value::str("c")],
+                true,
+            ),
+            (
+                Type::bool(),
+                vec![Value::Bool(false), Value::Bool(true)],
+                false,
+            ),
+        ];
+        let mut checked = 0;
+        let mut answers = [0usize; 2];
+        for (carrier, pool, fresh) in carriers {
+            let listed = 1usize << pool.len();
+            let full = (1usize << (pool.len() + usize::from(fresh))) - 1;
+            let make = |bits: usize, cof: bool| {
+                let s = pool
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| bits >> i & 1 != 0)
+                    .fold(Type::empty(), |s, (_, v)| &s | &Type::lit(v).unwrap());
+                if cof { &carrier - &s } else { s }
+            };
+            for r in 0..listed {
+                for u in 0..listed {
+                    for rc in [false, true] {
+                        for uc in [false, true] {
+                            for empty_value in [false, true] {
+                                // One exact class for each listed literal and one for all
+                                // remaining values of an infinite carrier. Enumerate every
+                                // possible domain in this quotient, independently of the kernel.
+                                let required = if rc { full ^ r } else { r };
+                                let allowed = if uc { full ^ u } else { u };
+                                let exists = (0..=full).any(|d| {
+                                    required & !d == 0
+                                        && d & !allowed == 0
+                                        && (d == 0 || !empty_value)
+                                });
+                                let t = Type::morphism(
+                                    make(r, rc),
+                                    make(u, uc),
+                                    if empty_value {
+                                        Type::empty()
+                                    } else {
+                                        Type::int()
+                                    },
+                                );
+                                Type::forget_emptiness();
+                                assert_eq!(
+                                    t.verdict(),
+                                    if exists {
+                                        Verdict::Inhabited
+                                    } else {
+                                        Verdict::Empty
+                                    },
+                                    "carrier {carrier}, masks {r}/{u}, complements {rc}/{uc}, empty value {empty_value}"
+                                );
+                                checked += 1;
+                                answers[usize::from(exists)] += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(answers[0] > 0 && answers[1] > 0);
+        eprintln!(
+            "R10 scalar domains: {checked} cases, Empty {}, Inhabited {}",
+            answers[0], answers[1]
+        );
+    });
+}
+
+/// Two selector positions encode an orthogonal red/blue pair using d negative
+/// rectangles. This specializes X32; it does not give a lower bound for the
+/// laminar escape-cell finder, since the selector atoms can cross.
+fn r10_ov_selector_type(a: &[Vec<bool>], b: &[Vec<bool>]) -> Type {
+    let n = a.len();
+    let d = a[0].len();
+    let m = b[0].len();
+    let dom = |size: usize| (0..size).fold(Type::empty(), |s, i| &s | &lit(i as i64));
+    let p = cons_of(dom(n), cons_of(dom(m), Type::atom("nil")));
+    let mut neg = Type::empty();
+    for (q, bq) in b.iter().enumerate().take(d) {
+        let ah = a
+            .iter()
+            .enumerate()
+            .filter(|(_, ai)| ai[q])
+            .fold(Type::empty(), |s, (i, _)| &s | &lit(i as i64));
+        let bh = bq
+            .iter()
+            .enumerate()
+            .filter(|(_, bit)| **bit)
+            .fold(Type::empty(), |s, (j, _)| &s | &lit(j as i64));
+        neg = &neg | &cons_of(ah, cons_of(bh, Type::atom("nil")));
+    }
+    &p - &neg
+}
+
+#[test]
+fn r10_ov_selector_reduction_matches_every_small_matrix_and_pair() {
+    big(|| {
+        let (n, d) = (3usize, 2usize);
+        let mut words = 0;
+        for am in 0..1usize << (n * d) {
+            for bm in 0..1usize << (n * d) {
+                let a: Vec<Vec<bool>> = (0..n)
+                    .map(|i| (0..d).map(|q| am >> (i * d + q) & 1 != 0).collect())
+                    .collect();
+                let b: Vec<Vec<bool>> = (0..d)
+                    .map(|q| (0..n).map(|j| bm >> (q * n + j) & 1 != 0).collect())
+                    .collect();
+                let t = r10_ov_selector_type(&a, &b);
+                for (i, ai) in a.iter().enumerate() {
+                    for (j, _) in b[0].iter().enumerate() {
+                        let orthogonal = !(0..d).any(|q| ai[q] && b[q][j]);
+                        assert_eq!(
+                            t.contains(&r6_colour_list(&[i as i64, j as i64])),
+                            orthogonal,
+                            "A mask {am}, B mask {bm}, pair {i}/{j}"
+                        );
+                        words += 1;
+                    }
+                }
+            }
+        }
+        let a = vec![vec![true; d]; n];
+        assert_eq!(
+            r10_ov_selector_type(&a, &vec![vec![true; n]; d]).verdict(),
+            Verdict::Empty
+        );
+        assert_eq!(
+            r10_ov_selector_type(&a, &vec![vec![false; n]; d]).verdict(),
+            Verdict::Inhabited
+        );
+        eprintln!("R10 OV: 4096 matrix pairs, {words} exact selector-word checks");
+    });
+}
+
+/// The naive compact rectangular version of the r9 shift encoding. Root heights
+/// collide when the vector count exceeds the dimension; it is used only to test
+/// that proposed reduction, never as a kernel algorithm.
+fn r10_rectangular_shift(a: &[Vec<bool>], b: &[Vec<bool>], tag: &str) -> Type {
+    let nr = a.len();
+    let dim = a[0].len();
+    let nc = b[0].len();
+    let ek = |k: usize| k * (dim + 1) + dim;
+    let top = ek(nc - 1) + 1 + (nr - 1) * dim;
+    let mut holes = vec![None; top + 1];
+    for k in 0..nc {
+        for (q, bq) in b.iter().enumerate() {
+            if bq[k] {
+                holes[ek(k) - q] = Some(100 + q as i64);
+            }
+        }
+    }
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for (e, hole) in holes.iter().enumerate().skip(1) {
+        let h = match hole {
+            Some(v) => &Type::int() - &lit(*v),
+            None => Type::int(),
+        };
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    let mut p = nil();
+    for j in (1..=top).rev() {
+        let h = if (2..2 + nr * dim).contains(&j) && a[(j - 2) / dim][(j - 2) % dim] {
+            &lit(7) | &lit(100 + ((j - 2) % dim) as i64)
+        } else {
+            lit(7)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let mut neg = Type::empty();
+    for i in 0..nr {
+        for k in 0..nc {
+            neg = &neg | &ts[ek(k) + 1 + i * dim];
+        }
+    }
+    &ts[top + 1] - &neg
+}
+
+#[test]
+fn r10_low_dimension_shift_collisions_mask_an_orthogonal_pair() {
+    big(|| {
+        let a = vec![
+            vec![true, false],
+            vec![true, true],
+            vec![true, true],
+            vec![false, true],
+        ];
+        let b = vec![vec![true, true, false, true], vec![true, true, true, true]];
+        let zeroes: Vec<_> = a
+            .iter()
+            .enumerate()
+            .flat_map(|(i, ai)| {
+                (0..4)
+                    .filter(|&k| !(0..2).any(|q| ai[q] && b[q][k]))
+                    .map(move |k| (i, k))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(zeroes, vec![(0, 2)]);
+        let height = |i: usize, k: usize| k * 3 + 3 + i * 2;
+        assert_eq!(height(0, 2), height(3, 0));
+        let t = r10_rectangular_shift(&a, &b, "_r10collision");
+        let mut xs = vec![7; 18];
+        for (i, ai) in a.iter().enumerate() {
+            for (q, &bit) in ai.iter().enumerate() {
+                if bit {
+                    xs[1 + i * 2 + q] = 100 + q as i64;
+                }
+            }
+        }
+        assert!(t.contains(&r6_colour_list(&xs)));
+        assert_eq!(t.verdict(), Verdict::Inhabited); // AB is nevertheless not all ones.
+        let none = r10_rectangular_shift(&a, &vec![vec![false; 4]; 2], "_r10collision_no");
+        assert!(!none.contains(&r6_colour_list(&xs)));
+        assert_eq!(none.verdict(), Verdict::Empty);
+    });
+}
+
+/// R10-C3: a nine-node list whose answer changed since 19bc4e25; cause still open.
+fn r10_precision_case(tag: &str, reverse: bool) -> Type {
+    let raw = [
+        (true, 63, 0),
+        (false, 2, 0),
+        (false, 59, 1),
+        (false, 40, 2),
+        (true, 61, 0),
+        (true, 61, 4),
+        (true, 25, 5),
+        (true, 61, 6),
+        (false, 47, 3),
+    ];
+    let ns: Vec<_> = raw
+        .iter()
+        .map(|&(stop, mask, next)| R3Node { stop, mask, next })
+        .collect();
+    assert!(r3_oracle(&ns, &[1, 2, 3, 7, 8], 63));
+    r3_build(&ns, &[1, 2, 3, 7, 8], 63, reverse, tag, 0)
+}
+
+#[test]
+#[ignore = "R10-C3: Inhabited on 19bc4e25; Fork on 27a5b72b4"]
+fn r10_answer_preservation_nine_node_list_regression() {
+    big(|| {
+        for reverse in [false, true] {
+            Type::forget_emptiness();
+            let t = r10_precision_case("r10precision", reverse);
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+            assert!(t.contains(&r6_colour_list(&[0, 2])));
+            assert!(!t.contains(&r6_colour_list(&[])));
+            assert!(!t.contains(&r6_colour_list(&[0])));
+        }
+        let inner = r10_precision_case("r10precisionwidth", false);
+        let a = Type::tuple(vec![inner.clone(); 8]);
+        let b = Type::tuple(vec![inner; 64]);
+        scaling::check(
+            "preserving a prefix witness in shared list fields",
+            8,
+            |n| {
+                Type::forget_emptiness();
+                assert_eq!((if n == 8 { &a } else { &b }).verdict(), Verdict::Inhabited);
+            },
+        );
+    });
+}
+
+/// R10-C4: many tags share one positive union of diagonal scalar tuples.
+fn r10_shared_payloads(n: usize, tag: &str) -> Type {
+    let payload = (0..n).fold(Type::empty(), |p, i| {
+        let h = lit(i as i64);
+        &p | &Type::tuple(vec![h.clone(), h])
+    });
+    (0..n).fold(Type::empty(), |t, i| {
+        &t | &Type::atom_with(&format!("r10tag{i}{tag}"), &payload)
+    })
+}
+
+#[test]
+#[ignore]
+fn r10_shared_payload_probe() {
+    let sizes = std::env::var("RFX_N").unwrap_or("16,64,256,1024".into());
+    big(move || {
+        for n in sizes.split(',').map(|s| s.parse::<usize>().unwrap()) {
+            Type::forget_emptiness();
+            let tag = format!("_shared{n}");
+            let t = r10_shared_payloads(n, &tag);
+            let mut v = None;
+            let mut meter = scaling::Meter::new();
+            let w = meter.work(|| v = Some(t.verdict()));
+            assert_eq!(v, Some(Verdict::Inhabited));
+            assert!(t.contains(&Value::atom_with(
+                format!("r10tag0{tag}"),
+                vec![Value::Int(0), Value::Int(0)]
+            )));
+            assert!(!t.contains(&Value::atom_with(
+                format!("r10tag0{tag}"),
+                vec![Value::Int(0), Value::Int(1)]
+            )));
+            eprintln!("R10PAYLOAD n {n} {v:?} units {} bytes {}", w.units, w.bytes);
+        }
+    });
+}
+
+#[test]
+#[ignore = "R10-C4: shared atom payload rows are read once per tag"]
+fn r10_shared_payload_rows_must_scale() {
+    big(|| {
+        let a = r10_shared_payloads(32, "_payload32");
+        let b = r10_shared_payloads(256, "_payload256");
+        scaling::check("tags sharing one tuple payload diagram", 32, |n| {
+            Type::forget_emptiness();
+            assert_eq!(
+                (if n == 32 { &a } else { &b }).verdict(),
+                Verdict::Inhabited
+            );
+        });
     });
 }

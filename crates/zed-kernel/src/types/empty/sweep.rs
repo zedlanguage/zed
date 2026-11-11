@@ -1629,11 +1629,21 @@ pub(super) fn front_sweep(t: &Type) -> Option<Verdict> {
         Some(items) => {
             let mut values = Vec::new();
             let mut all = true;
+            // Complexity tradeoff: sweeping each occurrence of a shared list type
+            // rebuilt n size-n lists for n identical fields, Theta(n²) work and
+            // space. Memoize each distinct component's result within this product:
+            // one sweep per distinct type plus O(fields) shared Value clones.
+            // Independent checking below still verifies the actual tuple.
+            let mut built: ByType<(Option<Verdict>, Option<Value>)> = ByType::default();
             for item in &items {
-                let mut value = None;
-                match list_sweep_value(item, &mut value) {
+                let (verdict, value) = built.entry(item.clone()).or_insert_with(|| {
+                    let mut value = None;
+                    let verdict = list_sweep_value(item, &mut value);
+                    (verdict, value)
+                });
+                match *verdict {
                     Some(Verdict::Empty) => return Some(Verdict::Empty),
-                    Some(Verdict::Inhabited) => values.push(value?),
+                    Some(Verdict::Inhabited) => values.push(value.as_ref()?.clone()),
                     _ => all = false,
                 }
             }
@@ -1711,11 +1721,22 @@ fn check_actual(t: &Type, value: &Value) -> bool {
     let Value::Tuple(xs) = value else {
         return false;
     };
+    // Complexity tradeoff: the independent checker formerly parsed the same list
+    // once per tuple position, Theta(fields * list_size). A shared sequence ID
+    // identifies the actual immutable Value, so each (type, shared value) pair
+    // needs one fresh check. No sweep result or membership assertion is trusted;
+    // unshared values are checked separately. O(distinct checks + fields) space/time
+    // in addition to the list checks, with expected O(1) visited lookups.
+    let mut checked = std::collections::HashSet::new();
     xs.len() == items.len()
-        && items
-            .iter()
-            .zip(xs.iter())
-            .all(|(t, v)| check_list_value(t, v))
+        && items.iter().zip(xs.iter()).all(|(t, v)| {
+            if let Some(id) = v.shared_parts()
+                && !checked.insert((t.clone(), id))
+            {
+                return true;
+            }
+            check_list_value(t, v)
+        })
 }
 
 fn check_list_value(t: &Type, value: &Value) -> bool {
@@ -2175,6 +2196,19 @@ fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
 #[cfg(test)]
 mod r4_checker_tests {
     use super::*;
+    #[test]
+    fn shared_value_checks_keep_the_type_in_the_key() {
+        let ints = Type::atom_with("cons", &Type::tuple(vec![Type::int(), Type::atom("nil")]));
+        let bools = Type::atom_with("cons", &Type::tuple(vec![Type::bool(), Type::atom("nil")]));
+        let v = Value::atom_with("cons", vec![Value::Int(7), Value::atom("nil")]);
+        let same_value = Value::tuple(vec![v.clone(), v.clone()]);
+        assert!(check_actual(
+            &Type::tuple(vec![ints.clone(), ints.clone()]),
+            &same_value
+        ));
+        assert!(!check_actual(&Type::tuple(vec![ints, bools]), &same_value));
+    }
+
     #[test]
     fn actual_products_and_lists_reject_bad_values() {
         let one = Type::atom_with("cons", &Type::tuple(vec![Type::int(), Type::atom("nil")]));
