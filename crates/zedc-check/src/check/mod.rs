@@ -844,6 +844,16 @@ struct Ck<'t, 'a> {
     /// reaches each of its literals ([`Ck::lit_op_meets`]). Which operations are such is read
     /// off the text alone, so an entry a repair's trial wrote is harmless.
     lit_ops: HashSet<Span>,
+    /// The operations of [`Ck::lit_ops`] whose value has no type in the program until it
+    /// meets a carrier: those holding a `/`, which has no arrow at `int`, or a decimal literal
+    /// with no suffix, which is never an `int`, as `1 / 2`, `(1 + 2) / (3 + 4)` and
+    /// `0.5 * 2`, and the operations in those, as `1 + 2` there ([`Ck::lit_open_within`]).
+    /// The type the walk found for one is the arrow kept after its rejection, an `int` the
+    /// operation has only where nothing at all gives it a carrier, or no value, and not the
+    /// type the program gives it there, so a step of a derivation names none for it
+    /// ([`Ck::derive_into`]). An operation that takes a carrier leaves the set
+    /// ([`Ck::lit_takes`]).
+    lit_open: HashSet<Span>,
     /// The errors that each operation of [`Ck::lit_ops`] at the top level wrote as it was
     /// walked, by its span, as a range of indices into the errors: a `/` of integer literals
     /// is rejected there, as `7 / 2`, since no arrow of `/` takes `int`, and so is a negative
@@ -1019,6 +1029,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             seen: HashMap::new(),
             eq_sides: HashMap::new(),
             lit_ops: HashSet::new(),
+            lit_open: HashSet::new(),
             lit_written: HashMap::new(),
             lit_order: Vec::new(),
             lit_dropped: BTreeMap::new(),
@@ -1544,7 +1555,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                         _ => "this expression".into(),
                     };
                     let verb = if parts.is_empty() { "is" } else { "gives" };
-                    next.push(note(span, format!("{what} {verb} {ty}")));
+                    // An operation on literals alone that met no carrier has no type in the
+                    // program yet ([`Ck::lit_open`]); the type found for it is not the
+                    // program's, so the step names none (DESIGN.md sec:diagnostics, "A `/`
+                    // of integer literals").
+                    let text = match (&e.kind, self.lit_open.contains(&span)) {
+                        (_, false) => format!("{what} {verb} {ty}"),
+                        (ExprKind::Binary("/", ..), true) => format!(
+                            "{what} is an operation on literals alone, so it is a literal too \
+                             and takes the carrier of what it meets; `/` has no arrow at `int`"
+                        ),
+                        (_, true) => format!(
+                            "{what} is an operation on literals alone, so it is a literal too \
+                             and takes the carrier of what it meets"
+                        ),
+                    };
+                    next.push(note(span, text));
                     for p in parts {
                         next.push(match literal(p, self.t.text) {
                             Some(l) => {

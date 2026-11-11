@@ -709,6 +709,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     && x.expr.is_some_and(|e| self.lit_ops.contains(&e.span))
                 {
                     self.lit_ops.insert(span);
+                    if x.expr.is_some_and(|e| self.lit_open.contains(&e.span)) {
+                        self.lit_open.insert(span);
+                    }
                 }
                 let sig = op_sig(op);
                 let t = self
@@ -2087,6 +2090,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         if (ox || bare(x)) && (oy || bare(y)) {
             if matches!(op, "+" | "-" | "*" | "/" | "^") {
                 self.lit_ops.insert(span);
+                // Its value has no type until it meets a carrier where it holds a `/` or a
+                // decimal ([`Ck::lit_open`]): one lookup per operand.
+                let open = |a: &Arg| {
+                    a.expr.is_some_and(|e| self.lit_open.contains(&e.span))
+                        || (a.lit.as_ref())
+                            .is_some_and(|l| l.bare && lit_carrier(&l.value) == Carrier::F64)
+                };
+                if op == "/" || open(x) || open(y) {
+                    self.lit_open.insert(span);
+                    for e in [x.expr, y.expr].into_iter().flatten() {
+                        self.lit_open_within(e);
+                    }
+                }
             }
             return;
         }
@@ -2109,8 +2125,33 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// Each operation in `e`, an operand of an operation on literals alone that has no type
+    /// until it meets a carrier, recorded as having none too ([`Ck::lit_open`]): in
+    /// `(1 + 2) / (3 + 4)`, `1 + 2` takes the carrier of what it meets, the `/`, and is not
+    /// an `int` there (DESIGN.md sec:diagnostics, "A `/` of integer literals").
+    ///
+    /// Complexity tradeoff: the naive way walks all of `e` at each operation around it, the
+    /// square of the depth over a nest of them. An operation recorded here has all the
+    /// operations in it recorded too, since each is recorded with its operands, so the walk
+    /// stops at one: each operation is walked once until it takes a carrier
+    /// ([`Ck::lit_takes`]), which removes all of it at once.
+    fn lit_open_within(&mut self, e: &Expr) {
+        let mut todo = vec![e];
+        while let Some(e) = todo.pop() {
+            if literal(e, None).is_some() || !self.lit_open.insert(e.span) {
+                continue;
+            }
+            match &e.kind {
+                ExprKind::Binary(_, a, b) => todo.extend([&**a, &**b]),
+                ExprKind::Unary("-", a) => todo.push(a),
+                _ => {}
+            }
+        }
+    }
+
     /// Each literal of `e`, an operation on bare literals alone ([`Ck::lit_ops`]), adopting
-    /// `c`, and the errors its operations wrote as they were walked dropped
+    /// `c`, each of its operations of type `c` where a derivation names it ([`Ck::seen`],
+    /// [`Ck::lit_open`]), and the errors its operations wrote as they were walked dropped
     /// ([`Ck::lit_wrote`]); `false`, with nothing changed, where `e` holds a `^` and `c` is
     /// `rat`, which no arrow of `^` takes, or where `e` holds a `/` or a `^` and its value at
     /// `c` is no value of `c` ([`folded`]), as `1 / 0` at `rat`: the rejection of the
@@ -2141,7 +2182,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         for e in nodes {
             if let Some(l) = literal(e, self.t.text) {
                 self.adopt_to(&l, c);
-            } else if live && let Some(r) = self.lit_written.remove(&e.span) {
+                continue;
+            }
+            // Each operation in it is of the carrier now, which a derivation names, and not
+            // the type the walk found before it met one.
+            self.lit_open.remove(&e.span);
+            if let Some((kept @ Some(_), _)) = self.seen.get_mut(&e.span) {
+                *kept = Some(Ty::carrier(c));
+            }
+            if live && let Some(r) = self.lit_written.remove(&e.span) {
                 self.lit_dropped.insert(r.start, r.end);
             }
         }

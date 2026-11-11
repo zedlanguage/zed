@@ -274,6 +274,45 @@ fn a_sum_of_many_divisions_of_literals_takes_its_carrier_in_linear_time() {
     });
 }
 
+/// `y = ((…((1 + 1) / 1 + 1) / 1 …) + 1) / 1 + 1.0f64`, `n` divisions of literals nested
+/// `2n` deep, each level on a line of its own, that meets an `f64`. Each `/` holds operations
+/// on literals alone that have no type until they meet a carrier, and records them as such
+/// (`Ck::lit_open_within`), stopping at the operation below it, recorded already; the sum
+/// takes the `f64` where it meets it, which removes them all at once (`Ck::lit_takes`).
+///
+/// Negative control (run once, not committed), at n = 500 and 4,000: walking all of each
+/// operand at each `/`, without stopping at an operation recorded already, which is
+/// quadratic, failed at 45.4 times the bytes, above the limit of 11.7.
+#[test]
+fn divisions_of_literals_nested_deep_record_their_operands_in_linear_time() {
+    let nest = |n: usize| {
+        format!(
+            "y = {}1{} + 1.0f64;\n",
+            "(".repeat(n),
+            "\n  + 1) / 1".repeat(n)
+        )
+    };
+    scaling::on_a_thread(1 << 29, || {
+        assert_eq!(type_errors(&nest(3)), Vec::<String>::new());
+        assert_eq!(
+            zed_tests::step_helpers::l01_16_elaboration::value(&nest(3), "y"),
+            "5.0"
+        );
+        let n = 500;
+        let units = scaling::inputs(n, |m| Resolved::new(&nest(m)));
+        for u in units.values() {
+            assert_eq!(u.type_errors(), Vec::<String>::new());
+        }
+        scaling::check(
+            "checking n nested divisions of literals that meet an f64",
+            n,
+            |m| {
+                std::hint::black_box(units[&m].type_errors());
+            },
+        );
+    });
+}
+
 /// `y = (1 + 1, 1 + 1, …) == (2.0f64, 2.0f64, …)`, two tuples of `n` components: each `1 + 1`
 /// takes the `f64` of the component it is compared with, one lookup of that component's type
 /// each (`Ck::lit_pairs`), and the left tuple's type is made again once, bottom up
