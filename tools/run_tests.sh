@@ -658,8 +658,13 @@ fi
 # At most `slots` pieces run at once on this machine, whichever checkout started them. A piece holds
 # a lock on one file of $slot_dir until it ends, so a killed run frees its slots, and its 60 s start
 # when it has one. Four suites at once took 2:13 with 8 slots and 2:05 without, and the longest
-# piece 28 s against 53 s.
-slots=8
+# piece 28 s against 53 s. The author raised the count from 8 to 12 on 2026-11-11 (BUILD-apply):
+# most of a group's wall time was spent waiting for a slot. Waiting pieces queue on a lock of
+# $slot_dir/queue (fd 5; fd 8 is the run lock, which pieces inherit and must keep), so only the
+# first in the queue polls the slots and they are taken first come, first served; a killed waiter
+# frees the queue as a killed piece frees its slot. Six pieces polling without it used 2.9-3.1 s of
+# processor time in 5 s.
+slots=12
 slot_dir=${XDG_RUNTIME_DIR:-/tmp}/zedtests-slots
 mkdir -p "$slot_dir"
 # glibc's memcpy and memset use rep movsb and rep stosb on a CPU with erms or fsrm, and the hardware
@@ -680,10 +685,15 @@ export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_thres
 cores=$(nproc)
 export root out slots slot_dir cores
 take_slot() {
+  exec 5>"$slot_dir/queue"
+  flock 5
   while :; do
-    for slot in $(seq "$slots"); do
+    for ((slot = 1; slot <= slots; slot++)); do
       exec 9>"$slot_dir/$slot"
-      flock -n 9 && return
+      flock -n 9 && {
+        exec 5>&-
+        return
+      }
     done
     sleep 0.1
   done
