@@ -1020,8 +1020,10 @@ fn r6_random_carrier_chains_against_masks() {
 
 /// Two escaping predicates per root do not imply 2-SAT when holes overlap.
 /// Selector positions choose a literal of each 3-clause. Each implication
-/// selector=j => literal_j holds has just two escaping predicates.
-pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce() {
+/// selector=j => literal_j holds has just two escaping predicates. Only the formulas `ids` (of
+/// 384) are checked; the generator runs over all of them, so a piece checks the same formulas
+/// whatever the split.
+pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce(ids: std::ops::Range<usize>) {
     big(|| {
         let mut rng = Rng::new(0x6a705a7);
         let domain = ONE | TWO | (1 << 8); // values 1,2,3
@@ -1031,6 +1033,9 @@ pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce() {
             let clauses: Vec<Vec<(usize, bool)>> = (0..m)
                 .map(|_| (0..3).map(|_| (rng.below(k), rng.below(2) == 0)).collect())
                 .collect();
+            if !ids.contains(&id) {
+                continue;
+            }
             let sat = (0..1usize << k).any(|a| {
                 clauses
                     .iter()
@@ -1090,7 +1095,10 @@ pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce() {
                 "two-predicate reduction",
             );
         }
-        eprintln!("R6 two-predicate selector reduction: 384 formulas checked");
+        eprintln!(
+            "R6 two-predicate selector reduction: {} formulas checked",
+            ids.len()
+        );
     });
 }
 

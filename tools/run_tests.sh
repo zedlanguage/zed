@@ -510,9 +510,12 @@ fi
 # l01_39 families holds four audit parts of 7 to 8 s each, the hop families of 13 s and a
 # scaling test of 6 s at load 22 to 24, about 70 s together; each test is a piece
 # (2026-11-11, TESTS-lhx-families).
+# l01_23 r6_reduction, one test of 384 formulas, took 38 to 77 s alone at load 27 to 41 and ran
+# past its limit of 90 s in a full run at load 48; it is four tests of 96 formulas, each a piece
+# (2026-11-11, REFUSAL-front-xr after batch merge 128).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
-  l01_23_subtyping l01_23_subtyping::scaling
+  l01_23_subtyping l01_23_subtyping::scaling l01_23_subtyping::r6_reduction
   l01_25_preimage_catalog l01_25_preimage_catalog::s22
   l01_25_preimage_catalog::exact_oracle
   l01_26_type_resolution l01_26_type_resolution::deep_ops

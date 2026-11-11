@@ -72,7 +72,6 @@ use std::cell::{RefCell, RefMut};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
-use std::hash::BuildHasherDefault;
 use std::ops::{ControlFlow, Range};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -84,18 +83,9 @@ use super::bes::{Answer, Bes, Decision, Kind, decide};
 use super::rec::unfold::eval;
 use super::rec::{self, Env, Judgment, Why};
 use super::{Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Type, Universes, Verdict};
-use crate::digest::Digest;
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
-
-/// The hasher of the maps and sets keyed by types: a type hashes as its digest, made once when it
-/// is built, so a lookup reads one node of the type, where a search of a `BTreeMap` compared the
-/// key with some `log n` others, each comparison reading another node (EMPTY-morphism-next).
-/// Equal digests are told apart by `Eq`, which compares contents.
-type Digests = BuildHasherDefault<Digest>;
-
-/// A map keyed by types, hashed by their digests.
-type ByType<V> = HashMap<Type, V, Digests>;
+use shared::{ByType, ChainHint, ChainPlan, Digests, Literal2, TwoSat, list_step, only_atoms};
 
 /// A set of types, hashed by their digests.
 type TypeSet = HashSet<Type, Digests>;
@@ -1041,32 +1031,6 @@ struct Cycle {
     item: Type,
     period: u64,
     at: u64,
-}
-
-/// What [`Searching::prefix_chains`] finds for a list type whose link payload is a period-1
-/// carrier cycle less prefix chains: either no list remains, or a witness list with item types
-/// `heads` (from front to back) ending in `stop` remains.
-#[derive(Clone)]
-enum ChainPlan {
-    Empty,
-    Inhabited {
-        stop: std::sync::Arc<str>,
-        link: std::sync::Arc<str>,
-        heads: Vec<Type>,
-        /// For refused rows of the link payload, an item of the witness each should miss
-        /// ([`ChainHint`]); [`Searching::check_chain_witness`] checks each one itself.
-        hints: Vec<(Row, ChainHint)>,
-    },
-}
-
-/// Where a witness list should leave one refused row, for [`Searching::check_chain_witness`]:
-/// `Miss(i)`, its item `i` (from 0) is not in the row's head at that place; `Len`, the row's
-/// tail holds no list of the witness's length. A hint that does not hold costs only the
-/// row's full walk.
-#[derive(Clone, Copy, Debug)]
-enum ChainHint {
-    Miss(usize),
-    Len,
 }
 
 /// One node in the DAG of finite prefix chains ending at the carrier cycle.
@@ -8263,19 +8227,6 @@ fn parities(
     Some(chosen)
 }
 
-/// A literal of a 2-CNF: variable `v` true is `2 * v`, false is `2 * v + 1`, so `l ^ 1` is the
-/// complement of `l`.
-type Literal2 = usize;
-
-/// A 2-CNF read from a tuple part (step T6-2sat): its variables, and its clauses, each one or
-/// two literals (a clause of one literal holds it twice).
-struct TwoSat {
-    vars: usize,
-    clauses: Vec<(Literal2, Literal2)>,
-    /// The variable of each meet under an `or`, by the key of its node ([`At::key`]).
-    meets: HashMap<(u64, bool, u8), Literal2>,
-}
-
 /// A node of a tuple part as [`read_two_sat`] meets it: a part, a diagram, or one arm of a
 /// diagram node, `atom & hi` when `true`, `!atom & lo` when `false`.
 #[derive(Clone, Copy)]
@@ -8465,13 +8416,8 @@ fn read_two_sat(
     Some(s)
 }
 
+// The methods of [`TwoSat`] that read [`Operand`] stay here with it; the rest are in `shared.rs`.
 impl TwoSat {
-    /// A variable of its own, as its literal `true`.
-    fn fresh(&mut self) -> Literal2 {
-        self.vars += 1;
-        2 * (self.vars - 1)
-    }
-
     /// Clauses no value holds: a fresh variable both true and false.
     fn contradiction(&mut self) {
         let g = self.fresh();
@@ -8493,83 +8439,6 @@ impl TwoSat {
         self.meets.insert(key, g);
         forces.extend(xs.map(|x| (g, x)));
         g
-    }
-
-    /// A value of each variable that holds every clause, or `None` when there is none: a
-    /// variable and its complement in one strongly connected component of the implication
-    /// graph (`!a -> b` and `!b -> a` for each clause `a | b`). The components are found by
-    /// Tarjan's algorithm on an explicit stack, each completed after every component it
-    /// reaches, so a literal is set true when its component is completed before its
-    /// complement's: then nothing true implies anything false. Time linear in the variables
-    /// and clauses.
-    fn solve(&self) -> Option<Vec<bool>> {
-        let n = 2 * self.vars;
-        // The edges out of each literal, as one list cut at `start`.
-        let mut start = vec![0usize; n + 1];
-        for &(a, b) in &self.clauses {
-            start[(a ^ 1) + 1] += 1;
-            start[(b ^ 1) + 1] += 1;
-        }
-        for i in 0..n {
-            start[i + 1] += start[i];
-        }
-        let mut next = start.clone();
-        let mut to = vec![0usize; start[n]];
-        for &(a, b) in &self.clauses {
-            for (from, x) in [(a ^ 1, b), (b ^ 1, a)] {
-                to[next[from]] = x;
-                next[from] += 1;
-            }
-        }
-        const NONE: usize = usize::MAX;
-        let (mut index, mut low, mut comp) = (vec![NONE; n], vec![0; n], vec![NONE; n]);
-        let (mut found, mut comps) = (0, 0);
-        let mut on: Vec<usize> = Vec::new();
-        // The walk: each literal entered and the position of its next edge.
-        let mut walk: Vec<(usize, usize)> = Vec::new();
-        for root in 0..n {
-            if index[root] != NONE {
-                continue;
-            }
-            index[root] = found;
-            low[root] = found;
-            found += 1;
-            on.push(root);
-            walk.push((root, start[root]));
-            while let Some(&(v, e)) = walk.last() {
-                if e < start[v + 1] {
-                    let w = to[e];
-                    let top = walk.len() - 1;
-                    walk[top].1 += 1;
-                    if index[w] == NONE {
-                        index[w] = found;
-                        low[w] = found;
-                        found += 1;
-                        on.push(w);
-                        walk.push((w, start[w]));
-                    } else if comp[w] == NONE {
-                        low[v] = low[v].min(index[w]);
-                    }
-                    continue;
-                }
-                walk.pop();
-                if let Some(&(u, _)) = walk.last() {
-                    low[u] = low[u].min(low[v]);
-                }
-                if low[v] == index[v] {
-                    while let Some(w) = on.pop() {
-                        comp[w] = comps;
-                        if w == v {
-                            break;
-                        }
-                    }
-                    comps += 1;
-                }
-            }
-        }
-        (0..self.vars)
-            .map(|v| (comp[2 * v] != comp[2 * v + 1]).then(|| comp[2 * v] < comp[2 * v + 1]))
-            .collect()
     }
 }
 
@@ -9536,59 +9405,6 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
     groups.into_values().collect()
 }
 
-/// Whether `p` has no value but atoms.
-fn only_atoms(p: &Parts) -> bool {
-    let lits = [&p.ints, &p.rats, &p.floats, &p.strings];
-    p.bools == 0
-        && lits.iter().all(|l| !l.cofinite && l.values.is_empty())
-        && p.morphisms.is_leaf() == Some(false)
-}
-
-/// The parts of one step of a list, as [`list_step`] gives them.
-type Step = (Option<std::sync::Arc<str>>, std::sync::Arc<str>, Type, Type);
-
-/// One step of a list: the stop atom of `t` if it has one, the link atom, its item, and the
-/// rest; none when `t` is not of that shape.
-fn list_step(t: &Type) -> Option<Step> {
-    let p = t.p();
-    if p.structs
-        || p.tuples.rest
-        || !p.tuples.lens.is_empty()
-        || !only_atoms(&p)
-        || p.atoms.cofinite
-    {
-        return None;
-    }
-    let (mut stop, mut link) = (None, None);
-    for (name, a) in &p.atoms.names {
-        match (a.bare, a.payload == Type::empty()) {
-            (true, true) if stop.is_none() => stop = Some(name.clone()),
-            (false, true) => {}
-            (false, false) if link.is_none() => link = Some((name.clone(), a.payload.clone())),
-            _ => return None,
-        }
-    }
-    let (name, payload) = link?;
-    let q = payload.p();
-    // Complexity tradeoff: the general payload search can require an exponential subset
-    // construction over recursive alternatives. A functional list step is read in
-    // O(atom names + pair BDD nodes), but only with at most one stop, one link and positional pairs
-    // alone. Mixed named/positional payloads or multiple names stay on the general path.
-    // Check the constant-time shape flags before walking the pair BDD (R7-C2/C3).
-    if q.structs || q.tuples.rest || q.tuples.lens.len() != 1 {
-        return None;
-    }
-    let f = q.tuples.lens.get(&2)?;
-    let atoms = f.distinct_atoms();
-    if atoms.len() != 1 || !f.eval(&|_| true) {
-        return None;
-    }
-    if f.eval(&|_| false) {
-        return None;
-    }
-    Some((stop, name, atoms[0][0].clone(), atoms[0][1].clone()))
-}
-
 /// Whether `k` is known empty for good without a search: the empty type, or a recursive type
 /// its group decided empty. A type the search reads is not taken, since its answer may rest on
 /// an assumption the search later drops.
@@ -10208,6 +10024,7 @@ fn system(env: &Arc<Env>) -> System {
 mod escape;
 mod names;
 mod refused;
+mod shared;
 mod sweep;
 
 #[cfg(test)]

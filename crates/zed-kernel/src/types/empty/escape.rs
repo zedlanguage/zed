@@ -82,8 +82,8 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use super::super::{Parts, Row, Type};
-use super::{ByType, ChainHint, ChainPlan, Digests, TwoSat, list_step};
+use super::super::{Lits, Parts, Row, Type};
+use super::shared::{ByType, ChainHint, ChainPlan, Digests, TwoSat, list_step};
 use crate::value::Value;
 
 /// A set of integers: `vals` when not `cof`, else the integers less `vals`.
@@ -197,7 +197,7 @@ fn only_ints(p: &Parts) -> bool {
     p.bools == 0
         && [&p.rats, &p.floats, &p.strings]
             .iter()
-            .all(|l| !l.cofinite && l.values.is_empty())
+            .all(|l: &&Lits| !l.cofinite && l.values.is_empty())
         && !p.structs
         && p.morphisms.is_leaf() == Some(false)
         && p.tuples.is_default()
@@ -279,7 +279,7 @@ impl Nodes {
             let p = cur.p();
             let lits_empty = [&p.ints, &p.rats, &p.floats, &p.strings]
                 .iter()
-                .all(|l| !l.cofinite && l.values.is_empty());
+                .all(|l: &&Lits| !l.cofinite && l.values.is_empty());
             if p.bools != 0
                 || !lits_empty
                 || p.structs
@@ -428,7 +428,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
     let p = t.p();
     let lits_empty = [&p.ints, &p.rats, &p.floats, &p.strings]
         .iter()
-        .all(|l| !l.cofinite && l.values.is_empty());
+        .all(|l: &&Lits| !l.cofinite && l.values.is_empty());
     if p.bools != 0
         || !lits_empty
         || p.structs
@@ -499,7 +499,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         }
     }
     let chain = chain.unwrap_or(pos[0].1);
-    let mut p1 = pos[0].0.clone();
+    let mut p1: Ints = pos[0].0.clone();
     for (h, _) in &pos[1..] {
         p1 = p1.meet(h);
     }
@@ -514,7 +514,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
             break;
         }
         // Not a stop: a cons node (the carrier and the end hold the empty list).
-        let mut h = nodes[cur].head.clone();
+        let mut h: Ints = nodes[cur].head.clone();
         if car_pos && let Some(c) = &h_car {
             h = h.meet(c);
         }
@@ -529,7 +529,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         e1 = pl[2..].iter().all(|x| x.subset(c));
         let mut v = cur;
         while let Some(nx) = nodes[v].next {
-            let mut h = nodes[v].head.clone();
+            let mut h: Ints = nodes[v].head.clone();
             if car_pos {
                 h = h.meet(c);
             }
@@ -784,7 +784,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
             }
         }
         let Some(m) = max_below[v] else { continue };
-        let hv = &nodes[v].head;
+        let hv: &Ints = &nodes[v].head;
         // A head of all integers holds every `p_j`: no place separates at `v`.
         if hv.cof && hv.vals.is_empty() {
             continue;

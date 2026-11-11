@@ -1008,6 +1008,7 @@ fn tied(bottom: &str, depth: usize) -> Type {
                 payload: t,
             },
         );
+        p.atoms.payloads = imbl::OrdSet::unit("a".into());
         t = Type(Arc::new(Node::Parts(p, super::super::Shown::default())));
     }
     t

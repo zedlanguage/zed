@@ -1145,12 +1145,17 @@ impl PartialOrd for Lits {
 }
 
 /// Per atom name, its part; a name not listed has every payload when `cofinite`, else none.
-/// The map is persistent, and `sum` is the wrapping sum of its entries' hashes.
+/// The map is persistent, and `sum` is the wrapping sum of its entries' hashes. `payloads` is
+/// the set of listed names whose payload lists something, kept by [`Atoms::set`] in O(log n),
+/// so that a sweep finds the one payload name, or that there is none, without reading the
+/// others: the sweeps ask it of every type they are given, and reading every name there made a
+/// chain of `n` failure atoms cost `n^2 log n`.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 struct Atoms {
     cofinite: bool,
     names: OrdMap<Arc<str>, AtomPart>,
     sum: u64,
+    payloads: OrdSet<Arc<str>>,
 }
 
 /// The atoms of one name in a type: the bare atom, and those whose payload is in `payload`, a
@@ -2281,6 +2286,7 @@ impl Atoms {
     fn set(&mut self, name: &Arc<str>, p: AtomPart) {
         if let Some(old) = self.names.remove(name) {
             self.sum = self.sum.wrapping_sub(Atoms::entry(name, &old));
+            self.payloads.remove(name);
         }
         let default = if self.cofinite {
             AtomPart::all()
@@ -2289,6 +2295,9 @@ impl Atoms {
         };
         if p != default {
             self.sum = self.sum.wrapping_add(Atoms::entry(name, &p));
+            if !p.payload.lists_nothing() {
+                self.payloads.insert(name.clone());
+            }
             self.names.insert(name.clone(), p);
         }
     }

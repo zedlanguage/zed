@@ -120,8 +120,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::super::bdd::Part;
-use super::super::{Lits, Parts, Row, Type, Verdict};
-use super::ByType;
+use super::super::{Lits, Parts, PartsRef, Row, Type, Verdict};
+use super::shared::ByType;
 use crate::value::Value;
 
 const NONE: usize = usize::MAX;
@@ -208,6 +208,13 @@ struct Sweep {
 
 /// The bare atoms of `p` and, when it has one, the clause of its one payload, by name `c`; `None`
 /// when `p` is outside the class.
+///
+/// Complexity tradeoff: reading every name to find the payload costs O(names log names) for
+/// each type asked, also for the many types outside the class, as a set of `n` failure atoms
+/// asked at each of `n` steps of a chain (`n^2 log n`, batch merge 128). Used: the payload name
+/// is read from the atoms' set of payload names (`Atoms::payloads`, O(log n)) and the clause is
+/// checked before the bare atoms are collected, so a type outside the class costs O(log n) here
+/// and one inside it O(names log names), a part of reading it.
 #[allow(clippy::type_complexity)]
 fn shape(
     p: &Parts,
@@ -218,21 +225,16 @@ fn shape(
         || !p.tuples.is_default()
         || p.structs
         || p.morphisms.is_leaf() != Some(false)
+        || p.atoms.payloads.len() > 1
     {
         return None;
     }
-    let (mut e, mut clause) = (BTreeSet::new(), None);
-    for (name, part) in &p.atoms.names {
-        if part.bare {
-            e.insert(name.clone());
-        }
-        if part.payload.lists_nothing() {
-            continue;
-        }
-        if clause.is_some() || c.get_or_insert_with(|| name.clone()) != name {
+    let mut clause = None;
+    if let Some(name) = p.atoms.payloads.get_min() {
+        if c.get_or_insert_with(|| name.clone()) != name {
             return None;
         }
-        let q = part.payload.p();
+        let q = p.atoms.names.get(name)?.payload.p();
         if q.has_scalars()
             || !q.atoms.is_default()
             || q.structs
@@ -244,7 +246,7 @@ fn shape(
         }
         let part: &Part<Row> = q.tuples.lens.get(&2)?;
         // A clause, or else a union of rows (marked `true`).
-        let (taken, refused, union) = match part.clause() {
+        let (taken, refused, union): (Vec<Row>, Vec<Row>, bool) = match part.clause() {
             Some((taken, refused)) => (taken, refused, false),
             None => (part.union_rows()?, Vec::new(), true),
         };
@@ -254,6 +256,10 @@ fn shape(
         }
         clause = Some(((taken, refused), union));
     }
+    let e = (p.atoms.names.iter())
+        .filter(|(_, part)| part.bare)
+        .map(|(name, _)| name.clone())
+        .collect();
     Some((e, clause))
 }
 
@@ -309,7 +315,7 @@ fn scalar_ok(p: &Parts) -> bool {
 fn lits_ok(p: &Parts) -> bool {
     [&p.rats, &p.floats, &p.strings]
         .iter()
-        .all(|l| !l.cofinite && l.values.is_empty())
+        .all(|l: &&Lits| !l.cofinite && l.values.is_empty())
         && p.ints.values.iter().all(|v| matches!(v, Value::Int(_)))
 }
 
@@ -347,8 +353,8 @@ fn int_candidates<'a>(ls: impl Iterator<Item = &'a Lits>) -> Vec<Value> {
 /// are told apart only when some type holds just one of them; otherwise `false` stands for
 /// both, so a component every type holds as all of `bool` adds one cell, not two (X20).
 fn component_candidates(cs: &[Type]) -> Vec<Value> {
-    let ps: Vec<_> = cs.iter().map(|c| c.p()).collect();
-    let mut out = Vec::new();
+    let ps: Vec<PartsRef<'_>> = cs.iter().map(|c| c.p()).collect();
+    let mut out: Vec<Value> = Vec::new();
     let split = ps.iter().any(|p| p.bools == 1 || p.bools == 2);
     for (bit, b) in [(1u8, false), (2u8, true)] {
         if ps.iter().any(|p| p.bools & bit != 0) && (split || out.is_empty()) {
@@ -1713,7 +1719,7 @@ fn check_actual(t: &Type, value: &Value) -> bool {
 }
 
 fn check_list_value(t: &Type, value: &Value) -> bool {
-    let mut sw = Sweep::default();
+    let mut sw: Sweep = Sweep::default();
     let Some((root_e, Some(((taken, refused), false)))) = shape(&t.p(), &mut sw.c) else {
         return false;
     };
@@ -1792,7 +1798,12 @@ fn list_sweep(t: &Type) -> Option<Verdict> {
 }
 
 fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
-    let mut sw = Sweep::default();
+    // A type with no payload name, as a set of failure atoms, has no clause: it is left before
+    // `shape` reads its names, which costs O(names log names) for every type asked.
+    if t.p().atoms.payloads.len() != 1 {
+        return None;
+    }
+    let mut sw: Sweep = Sweep::default();
     let (root_e, clause) = shape(&t.p(), &mut sw.c)?;
     let ((taken, refused), union) = clause?;
     if union || taken.is_empty() {
