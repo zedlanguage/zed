@@ -956,8 +956,8 @@ results = files.map(f -> read(f)).map(b -> parse(b));
 good = results.where(r -> r is Config);
 bad  = results.where(r -> r is not Config);     // each still knows which file, which wave
 
-amounts = files.map(f -> int(read(f)));        // File -> int | #ioError | #notFound | #invalid
-sumAll  = amounts >< (+);                      // int | E | #errs(E ->? E), E = #ioError | #notFound | #invalid:
+amounts = files.map(f -> int(read(f)));        // File -> int | #invalid | #ioError | #notFound
+sumAll  = amounts >< (+);                      // int | E | #errs(E ->? E), E = #invalid | #ioError | #notFound:
                                                //   the sum, or every distinct failure, merged; (+) never runs
                                                //   on a failure — the unlifted-carrier rule (sec:reduction)
 // All or nothing is the default, and the type says so: nothing is summarized behind
@@ -1007,7 +1007,7 @@ main(m: MainArgs) {
 orders: OrderId ->? { total: rat, note: Utf8String | #none }
   with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
 
-n = orders[id]?.note;              // Utf8String | #none | #notFound | #dbError — NULL, no row, no db
+n = orders[id]?.note;              // Utf8String | #dbError | #none | #notFound — NULL, no row, no db
 // note:  Utf8String                   // ✗ Stored collection whose type and schema disagree: the column is nullable, and #none is missing from the field type
 // total: f64                      // ✗ Stored collection whose type and schema disagree: NUMERIC is not a binary float
 
@@ -1054,7 +1054,7 @@ d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
 
 // 4 — "Inherently serial" text scan, parallelized because the state domain is finite.
 state[i] = csvStep(state[i-1], text::codepoints[i])  with state[-1] = #outsideQuotes;
-// state : #outsideQuotes | #inQuotes | #escape (finite) — so the compiler reifies
+// state : #escape | #inQuotes | #outsideQuotes (finite) — so the compiler reifies
 // csvStep into a transition table and runs a parallel prefix scan.
 
 // 5 — First prime above N: speculative parallel search with automatic cancellation.

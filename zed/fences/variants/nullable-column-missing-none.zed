@@ -36,7 +36,7 @@ main(m: MainArgs) {
 orders: OrderId ->? { total: rat, note: Utf8String }   // ✗ Stored collection whose type and schema disagree: the column is nullable, and #none is missing from the field type
   with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
 
-n = orders[id]?.note;              // Utf8String | #none | #notFound | #dbError — NULL, no row, no db
+n = orders[id]?.note;              // Utf8String | #dbError | #none | #notFound — NULL, no row, no db
 // note:  Utf8String                   // ✗ Stored collection whose type and schema disagree: the column is nullable, and #none is missing from the field type
 // total: f64                      // ✗ Stored collection whose type and schema disagree: NUMERIC is not a binary float
 

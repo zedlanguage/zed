@@ -18,7 +18,7 @@ d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
 
 // 4 — "Inherently serial" text scan, parallelized because the state domain is finite.
 state[i] = csvStep(state[i-1], text::codepoints[i])  with state[-1] = #outsideQuotes;
-// state : #outsideQuotes | #inQuotes | #escape (finite) — so the compiler reifies
+// state : #escape | #inQuotes | #outsideQuotes (finite) — so the compiler reifies
 // csvStep into a transition table and runs a parallel prefix scan.
 
 // 5 — First prime above N: speculative parallel search with automatic cancellation.
