@@ -1847,14 +1847,19 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CORPUS-08-10-spec | impl attempt 1 | 2026-11-11 12:11 | started; worktree /home/luke/Work/wt/corpus-08-10 on bb180e372, seeded |
-| DAGVIEW-counter-cost | impl attempt 1 | 2026-11-11 11:26 | instructions per call B/A (V8 single-threaded): spread 1.076, balanceCounts 1.088, layers-from-prev 1.052, decross 1.013, live spread 1.039, live balanceLayers  |
+| CORPUS-08-10-spec | impl attempt 1 | 2026-11-11 12:11 | ready on wt/corpus-08-10 at c38741aca; 97/97 corpus pieces pass; open question on char32 to Utf8String |
+| DAGVIEW-counter-cost | impl attempt 1 | 2026-11-11 11:26 | fix 2 (per-pass counts, counted Fenwick walk only with a Work) against 1173067d2, instr/rep: spread 1.0106, balance 1.0049, layersPrev 0.981, decross 1.0001, li |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
+| LIT-branch-carrier | impl attempt 1 | 2026-11-11 12:38 | baseline on 344e72cd6: 340 pieces, 0 failed / load5 39.26 |
 | LOAD-max-div-xr | coord attempt 5 | 2026-11-10 01:18 | start rounds 5-10 coordinator; committed Claude seat's unfinished round-4 tree as b07e4522 on wt/lmd-claude; load5 32.66 |
 | PERF-negated-chain-xr | impl attempt 2 | 2026-11-10 06:16 | started rounds 4-9: Claude round-3 tree committed 9a579263 (wt/pncx-claude), rebased onto origin/main 9bbeb1ff as 448bad52 on wt/perf-negated-chain; control tre |
+| Q-char32-text | writer attempt 1 | 2026-11-11 12:48 | started; worktree /home/luke/Work/wt/qc32-zed on wt/q-char32 from ac7d365 |
 | REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | rounds 7-8 started; committing review tree (Claude R5 + probe), bringing Claude R6 onto the branch, rebasing on origin/main 4777a33e / load 52.67 38.82 33.29 |
-| STAGE-cut-drops-stop | impl attempt 1 | 2026-11-11 12:33 | started: worktree wt/stage-cut-stop from e926ca2dd, seeded |
-| TESTS-L1.36-mul-edges-and-differential | impl attempt 1 | 2026-11-08 23:59 | baseline at d515b23fe: l01_36_cranelift + l01_36a_executables 85 pieces, 0 failed, load 22.4 |
+| STAGE-cut-drops-stop | impl attempt 1 | 2026-11-11 12:33 | baseline e926ca2dd: 127 pieces, 1 failed (m0_03_grammar_tools cite::this_repository_s_citations_are_defined: plan_dag cites sec:codecs, not in DESIGN; unrelated |
+| TESTS-l01_39-walk-chains | impl attempt 1 | 2026-11-08 23:59 | started; worktree wt/tests-walk-chains seeded / load 17.00 29.17 31.82 |
+| TESTS-L1.36-mul-edges-and-differential | impl attempt 1 | 2026-11-08 23:59 | ready: d4fb01552 on wt/tests-mul-edges (base d515b23fe); l01_36_cranelift + l01_36a_executables 89 pieces 215 passed 0 failed (baseline 85/210); mul_edges split |
+| TESTS-M0.10-law16-forms | impl attempt 1 | 2026-11-08 23:59 | ready: b78add518 on wt/tests-law16 (rebased clean on c52d78cf5); m0_10 91 -> 94 passed, 0 failed (load 35.7); fmt, clippy -p zed-tests clean |
+| TESTS-S22e-wide-random-remainders | impl attempt 1 | 2026-11-08 23:59 | baseline l01_25_preimage_catalog on 08871c294: pieces: 151, failed: 0, load: 23.35 to 24.75, cores: 32, load 21.81 31.80 32.75 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
