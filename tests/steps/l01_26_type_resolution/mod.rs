@@ -13,6 +13,7 @@ mod cycles;
 mod deep_ops;
 mod deep_scaling;
 mod deep_types;
+mod divisors;
 mod docs;
 mod fits;
 mod given;

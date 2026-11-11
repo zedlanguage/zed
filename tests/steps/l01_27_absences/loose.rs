@@ -36,6 +36,77 @@ fn the_pattern_form_handles_the_atom_it_names_and_keeps_the_rest() {
     );
 }
 
+/// A value that may be the number 3, the atom `#e` with the payload `code: 1`, or `#e` with
+/// no payload.
+const PICK: &str = "pick(positional c: bool, positional d: bool) = \
+                    if c { #e(code: 1) } else { if d { #e } else { 3 } };\n";
+
+#[test]
+fn a_pattern_with_a_payload_keeps_the_atom_in_the_type() {
+    // DESIGN.md step L1.27: "The pattern form `e else #a -> d` removes `#a` from the type when
+    // the pattern has no payload; a pattern with a payload keeps the atom in the type, since
+    // other payloads may remain."
+    assert_eq!(sig(PICK, "pick"), "(bool, bool) -> 3 | #e | #e(code: 1)");
+    let with = format!(
+        "{PICK}f(positional c: bool, positional d: bool) = pick(c, d) else #e(code:) -> 0;\n"
+    );
+    assert_eq!(sig(&with, "f"), "(bool, bool) -> 0 | 3 | #e | #e(code: 1)");
+    let without =
+        format!("{PICK}f(positional c: bool, positional d: bool) = pick(c, d) else #e -> 0;\n");
+    assert_eq!(sig(&without, "f"), "(bool, bool) -> 0 | 3");
+    // The payload pattern takes `#e(code: 1)` and passes the bare `#e` on, which is the
+    // payload that remains.
+    let run = format!("{with}a = f(true, false);\nb = f(false, true);\nc = f(false, false);\n");
+    assert_eq!(value(&run, "a"), "0");
+    assert_eq!(value(&run, "b"), "#e");
+    assert_eq!(value(&run, "c"), "3");
+    let run = format!("{without}b = f(false, true);\n");
+    assert_eq!(value(&run, "b"), "0");
+}
+
+#[test]
+fn a_payload_pattern_that_binds_its_field_keeps_the_atom_for_underscore() {
+    // `code` is bound from the payload; `#e` stays in the type even where the one payload the
+    // value can hold is handled, so `_` still sees a loose failure and rejects it.
+    let one = "pick(positional c: bool) = if c { #e(code: 1) } else { 3 };\n";
+    let bound = format!("{one}f(positional c: bool) = pick(c) else #e(code:) -> code;\n");
+    assert_eq!(sig(&bound, "f"), "(bool) -> 1 | 3 | #e(code: 1)");
+    assert_eq!(value(&format!("{bound}y = f(true);\n"), "y"), "1");
+    assert_eq!(
+        type_errors(&format!(
+            "{one}f(positional c: bool) = {{ _ = pick(c) else #e(code:) -> code; 1 }};\n"
+        )),
+        [
+            "`_` drops a loose failure this value may be, #e(code: 1): `_` drops only a failure \
+             the program names, as the default of an `else` names it, and this one would be \
+             dropped with nothing in the text saying so [_ = pick(c) else #e(code:) -> code;]"
+        ]
+    );
+    assert_eq!(
+        type_errors(&format!(
+            "{one}f(positional c: bool) = {{ _ = pick(c) else #e -> 0; 1 }};\n"
+        )),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+#[ignore = "open: an atom type with a payload in a parameter type, `#e(int)`, is refused by \
+            zedc at L1"]
+fn a_declared_payload_pattern_keeps_the_atom_in_the_type() {
+    // The program of the test audit of 2026-11-08, with a declared parameter. The printed
+    // types are read from the printer's form for an inferred payload, `#e(code: 1)`.
+    let t = "positional x: int | #e(code: int)";
+    assert_eq!(
+        sig(&format!("f({t}) = x else #e(code:) -> 0;\n"), "f"),
+        "(int | #e(code: int)) -> int | #e(code: int)"
+    );
+    assert_eq!(
+        sig(&format!("f({t}) = x else #e -> 0;\n"), "f"),
+        "(int | #e(code: int)) -> int"
+    );
+}
+
 #[test]
 fn the_three_absences_stay_three_facts() {
     // Through an operator each absence flows unchanged, and two at once merge into `#errs`.

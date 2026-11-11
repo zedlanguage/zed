@@ -284,6 +284,73 @@ fn a_literal_survives_an_if() {
 }
 
 #[test]
+fn literal_branches_take_int_where_the_result_is_used_at_int() {
+    // DESIGN.md step L1.26a: where both branches are literals "each keeps its own value and
+    // is fixed where the result is used". Used at a parameter of type `int`, both are `int`.
+    let src = "g(positional c: bool) = if c { 2 } else { 1 };\n\
+               h(positional z: int) = z;\n\
+               f(positional c: bool) = h(g(c));\n\
+               a = f(true);\nb = f(false);\nc = h(if true { 2 } else { 1 });\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(sig(src, "f"), "(bool) -> int");
+    assert_eq!(value(src, "a"), "2");
+    assert_eq!(value(src, "b"), "1");
+    assert_eq!(value(src, "c"), "2");
+}
+
+#[test]
+#[ignore = "open: zedc rejects literal branches `1 | 2` at a parameter of type `f64`, \
+            \"`h` does not take (1 | 2)\", where it accepts the literal `2` alone"]
+fn literal_branches_take_f64_where_the_result_is_used_at_f64() {
+    // DESIGN.md step L1.26a: "`z: f64 = if c { 2 } else { 1 }` and `z: f64 = g(c)` read both
+    // branches at `f64`". A declared binding is layer L10, so the result is used here at a
+    // parameter of type `f64`, which fixes the carrier the same way (sec:type_resolution rule
+    // 2, and step L1.26: "A literal at a declared type takes the one numeric carrier of the
+    // type it can take").
+    let src = "g(positional c: bool) = if c { 2 } else { 1 };\n\
+               h(positional z: f64) = z;\n\
+               f(positional c: bool) = h(g(c));\n\
+               a = f(true);\nb = f(false);\nc = h(if true { 2 } else { 1 });\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(sig(src, "f"), "(bool) -> f64");
+    assert_eq!(value(src, "a"), "2.0");
+    assert_eq!(value(src, "b"), "1.0");
+    assert_eq!(value(src, "c"), "2.0");
+}
+
+#[test]
+#[ignore = "open: a binding with a declared type is layer L10, and zedc refuses it at L1"]
+fn a_declared_binding_reads_literal_branches_at_its_carrier() {
+    // DESIGN.md step L1.26a, word for word: `z: f64 = if c { 2 } else { 1 }` reads both
+    // branches at `f64`.
+    let src = "g(positional c: bool) = { z: f64 = if c { 2 } else { 1 }; z };\ny = g(true);\n";
+    assert_eq!(sig(src, "g"), "(bool) -> f64");
+    assert_eq!(value(src, "y"), "2.0");
+}
+
+#[test]
+#[ignore = "open: zedc types `1 + 1` in a branch as an `int`, so the other branch `1.5` is \
+            read alone and rejected; DESIGN keeps an operation on literals alone as its value"]
+fn an_operation_on_literals_keeps_its_value_in_an_if() {
+    // DESIGN.md step L1.26a: "an operation on literals alone keeps its value in an `if`, so
+    // `if c { 1 + 1 } else { 1.5 }` is `2 | 1.5`".
+    let src = "g(positional c: bool) = if c { 1 + 1 } else { 1.5 };\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(sig(src, "g"), "(bool) -> 2 | 1.5");
+}
+
+#[test]
+fn a_literal_in_a_returned_tuple_is_an_int() {
+    // DESIGN.md step L1.26a: an integer literal is an `int` "as a component of a returned
+    // tuple, so `f(x) = (x, 1)` is `(x: _) -> (_, 1)`".
+    let src = "f(x) = (x, 1);\n";
+    assert_eq!(sig(src, "f"), "(x: _) -> (_, 1)");
+    let run = format!("{src}a = f(x: 2.5f64);\nb = f(x: \"s\");\n");
+    assert_eq!(value(&run, "a"), "(2.5, 1)");
+    assert_eq!(value(&run, "b"), "(\"s\", 1)");
+}
+
+#[test]
 fn a_decimal_literal_takes_a_float_format_or_rat_and_never_int() {
     // `twice(x: int) = x * 2.0;` alone in a file: the message of sec:diagnostics, whose
     // menu item MSG-literal-fixes writes as source lines with their values.
