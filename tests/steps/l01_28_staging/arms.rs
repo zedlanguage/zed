@@ -2,8 +2,8 @@
 //! function computes what the function does on every value: on the values its static calls
 //! pass, on the other values of the domain, on values outside it, and on a value the program
 //! reads from a port at run time. A binding whose evaluation stops is evaluated once, however
-//! many definitions read it, and a binding named only in a branch the build cuts is still
-//! evaluated. The Trick splits on tuple and finite literal set domains and never on a
+//! many definitions read it, and a binding or definition named only in a branch the build cuts
+//! is still evaluated. The Trick splits on tuple and finite literal set domains and never on a
 //! function domain.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -318,22 +318,127 @@ fn a_binding_named_only_in_a_cut_branch_is_still_evaluated() {
     assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
 }
 
-/// The same with `huge` a definition: `main` reads it, so it is demanded, and the build
-/// evaluates it, but the staged program drops it with the cut branch and writes `x` where
-/// the program stops (DESIGN step L1.28: the run reports the stop in the ordinary way).
-#[test]
-#[ignore = "STAGE-cut-drops-stop: a definition left to run whole that main reads only in a cut branch is dropped from the run, which then writes x where the program stops; open"]
-fn a_definition_named_only_in_a_cut_branch_is_still_evaluated() {
-    let src = format!(
-        "{}verbose = false;\nhuge = {};\nmain(m: MainArgs) {{\n  \
-         m.stdout <- if verbose {{ huge }} else {{ \"x\" }};\n}}\n",
+/// `src` with `huge`, a definition whose evaluation stops, and `verbose = false` before it.
+fn with_huge(src: &str) -> String {
+    format!(
+        "{}verbose = false;\nhuge = {};\n{src}",
         zed_tests::TWICE,
         zed_tests::too_long()
-    );
-    let (p, s, report) = staged(&src);
+    )
+}
+
+/// The same with `huge` a definition: `main` reads it, so it is demanded, and a run
+/// evaluates every definition `main` reaches, call by value, before `main` runs (DESIGN step
+/// M0.9), so the program stops. The build cuts the branch, and the staged `main` keeps a read
+/// of `huge`, so its run stops as the program's does (DESIGN step L1.28: the run reports the
+/// stop in the ordinary way; G7).
+#[test]
+fn a_definition_named_only_in_a_cut_branch_is_still_evaluated() {
+    let (p, s, report) = staged(&with_huge(
+        "main(m: MainArgs) {\n  m.stdout <- if verbose { huge } else { \"x\" };\n}\n",
+    ));
     assert_eq!(report.left.len(), 1, "{:?}", report.left);
+    let main = term(&s, "main");
+    assert!(main.contains("huge") && !main.contains("if"), "{main}");
     assert!(out(&p, "x\n").starts_with("error: `++` cannot join"));
     assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
+    // A remix (step L25.8) mixes `main`'s term as `mix` mixes the definition, read kept.
+    let written = p.unit().defs.iter().find(|d| d.name == "main").unwrap();
+    let (_, mut remix) = zedc::stage::Remix::new(p.unit());
+    assert_eq!(remix.mix(&written.term).to_string(), main);
+}
+
+/// The cut read is kept through a definition the build turns into a literal: `label` names
+/// `huge` only in its cut branch, and `main` reads `label`, so the program stops, and so does
+/// the staged one, whose `label` keeps the read.
+#[test]
+fn a_cut_read_is_kept_through_a_definition_built_to_a_literal() {
+    let (p, s, report) = staged(&with_huge(
+        "label = if verbose { huge } else { \"x\" };\n\
+         main(m: MainArgs) {\n  m.stdout <- label;\n}\n",
+    ));
+    assert_eq!(report.left.len(), 1, "{:?}", report.left);
+    assert!(term(&s, "label").contains("huge"), "{}", term(&s, "label"));
+    assert!(out(&p, "x\n").starts_with("error: `++` cannot join"));
+    assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
+}
+
+/// The cut read is kept in a function: `shout` names `huge` only in its cut branch, and
+/// `main` calls it, so the program stops, and so does the staged one, whose `shout` is still
+/// a function that reads `huge`.
+#[test]
+fn a_cut_read_is_kept_in_a_function() {
+    let (p, s, report) = staged(&with_huge(
+        "shout(positional a: String) = if verbose { huge } else { a ++ \"!\" };\n\
+         main(m: MainArgs) {\n  m.stdout <- shout(\"x\");\n}\n",
+    ));
+    assert_eq!(report.left.len(), 1, "{:?}", report.left);
+    let shout = term(&s, "shout");
+    assert!(shout.contains("huge") && !shout.contains("if"), "{shout}");
+    assert!(out(&p, "x\n").starts_with("error: `++` cannot join"));
+    assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
+}
+
+/// A cut branch that names only definitions whose evaluation ends with a value keeps no read:
+/// evaluating `rate` has no effect, so the staged `main` neither names it nor reads it.
+#[test]
+fn a_cut_read_of_a_definition_that_ends_is_not_kept() {
+    let (p, s, report) = staged(
+        "verbose = false;\nrate = 8;\n\
+         main(m: MainArgs) {\n  m.stdout <- if verbose { String(rate) } else { \"x\" };\n}\n",
+    );
+    assert!(report.left.is_empty(), "{:?}", report.left);
+    let main = term(&s, "main");
+    assert!(!main.contains("rate") && !main.contains("$0"), "{main}");
+    assert_eq!(out(&s, "x\n"), "x\n");
+    assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
+}
+
+/// A program of `n` definitions `s{i}` left to run, since their form does not show that they
+/// end, each named by `g{i}` only in a branch the build cuts, and `main` writing every `g{i}`.
+fn cut_reads(n: usize) -> String {
+    let mut s = String::from("w(positional f) = f(f);\n");
+    for i in 0..n {
+        s += &format!("s{i} = w(w);\ng{i} = if false {{ String(s{i}) }} else {{ \"{i}\" }};\n");
+    }
+    let all: Vec<String> = (0..n).map(|i| format!("g{i}")).collect();
+    s += &format!(
+        "main(m: MainArgs) {{\n  m.stdout <- {};\n}}\n",
+        all.join(" ++ ")
+    );
+    s
+}
+
+/// Keeping cut reads stays O(N log N) in the unit's size with many roots and many definitions
+/// left to run: every `g{i}` and `main` a root, `n` definitions left, each kept by one read
+/// (COMPLEXITY.md row of `keep_cut_reads`). Units are elaborated before timing.
+#[test]
+fn cut_reads_are_kept_in_time_that_scales() {
+    let n = 600;
+    let units = zed_tests::scaling::inputs(n, |k| {
+        let p = load(cut_reads(k).as_bytes()).unwrap();
+        let roots: Vec<String> = (0..k).map(|i| format!("g{i}")).collect();
+        (p.unit().clone(), roots)
+    });
+    let (u, roots) = &units[&n];
+    let mut all: Vec<&str> = roots.iter().map(String::as_str).collect();
+    all.push("main");
+    let (mixed, report) = zedc::stage::mix(u, &all);
+    assert_eq!(report.left.len(), n, "{:?}", report.left);
+    for i in [0, n - 1] {
+        let g = mixed
+            .defs
+            .iter()
+            .find(|d| d.name == format!("g{i}"))
+            .unwrap();
+        assert!(g.term.to_string().contains(&format!("s{i}")), "{}", g.term);
+    }
+    zed_tests::scaling::check("keeping the cut reads of n left definitions", n, |k| {
+        let (u, roots) = &units[&k];
+        let mut all: Vec<&str> = roots.iter().map(String::as_str).collect();
+        all.push("main");
+        std::hint::black_box(zedc::stage::mix(u, &all));
+    });
 }
 
 /// Routes: a tuple of a bool and a bare atom, a finite domain whose four values are listed no

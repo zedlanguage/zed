@@ -1327,11 +1327,19 @@ impl Remix {
 
     /// `t`, a changed term of a definition of the unit, mixed as [`mix`] mixes that
     /// definition: under the definitions of the unit, which names unique in the unit keep
-    /// apart from those `t` does not read. It costs the mixing of `t` alone.
+    /// apart from those `t` does not read, each read of a definition the mix cut kept as [`mix`]
+    /// keeps it. It costs the mixing of `t` alone and two reads of its free names.
     pub fn mix(&mut self, t: &Term) -> Term {
-        let out = inline(self.m.mix_top(Part::inline(t)));
+        let out = Shared::new(inline(self.m.mix_top(Part::inline(t))));
         self.m.report = Report::default();
-        out
+        let now = free(&out);
+        let cut: Vec<Arc<str>> = (free(t).into_iter())
+            .filter(|x| !now.contains(x) && self.m.runs.contains(x))
+            .collect();
+        match cut.is_empty() {
+            true => Shared::unwrap_or_clone(out),
+            false => Shared::unwrap_or_clone(with_reads(&out, &cut)),
+        }
     }
 }
 
@@ -1351,9 +1359,13 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
             demanded.extend(free(term));
         }
     }
+    // The names each demanded definition reads as written, kept for `keep_cut_reads`.
+    let mut read: HashMap<&str, BTreeSet<Arc<str>>> = HashMap::new();
     for d in unit.defs.iter().rev() {
         if demanded.contains(&d.kernel) {
-            demanded.extend(free(&d.term));
+            let names = free(&d.term);
+            demanded.extend(names.iter().cloned());
+            read.insert(&d.kernel, names);
         }
     }
     let mut m = Mixer::default();
@@ -1379,7 +1391,79 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
             first_order: d.first_order,
         });
     }
+    m.runs = keep_cut_reads(&mut out.defs, &read);
     (out, m)
+}
+
+/// The binder of a read [`keep_cut_reads`] adds: `$0`, a binder the compiler made, which the
+/// elaborator never makes (its first is `$1`) and nothing reads.
+const CUT_READ: &str = "$0";
+
+/// `defs`, the mixed definitions of a unit in its order, each still reading every definition
+/// it read as written whose run can stop or not end; gives the kernel names of those that run.
+///
+/// A run evaluates the definitions a term reaches, each a let around it, call by value (DESIGN
+/// step M0.9), so a definition `main` names only in a branch is evaluated, and when it stops
+/// the run stops (DESIGN step L1.28: "a binding named only in a branch cut later is still
+/// evaluated", "the run reports the stop in the ordinary way"). Mixing replaces an `if` whose
+/// condition is a literal by its arm and a build-stage definition by its value, so the mixed
+/// term may no longer name a definition the term as written named. Such a cut name is kept
+/// by a let of `$0` to it, around the term or, for a lambda, around its body, when the cut
+/// definition runs: its mixed term is not a literal, lambda, primitive or name, or it reads,
+/// mixed or as written, a definition that runs. Then a term's mixed cone holds every
+/// definition that runs in its cone as written, by induction in the unit's order, and a
+/// definition that does not run has no effect when evaluated, so it needs no read.
+// Complexity tradeoff: the naive form compares, for each root, its cone as written with its
+// mixed cone, O(roots × definitions) (every definition is a root in `Remix::new`). Used: each
+// definition's names as written (read once by `mix_keeping`) against its mixed names, one
+// `free` of its mixed term, O(s log s) for `s` distinct parts, and one hash lookup per name
+// for whether it runs, so O(N log N) over the unit, N its size. What it gives up: a read is
+// kept for a cut definition that runs but whose run ends with no effect (one left to run
+// because its form does not show that it ends); the run then evaluates it, as the program
+// as written does. `Remix::mix` keeps the cut reads of one term at the cost of two `free`s of
+// it, O(s log s) for its s distinct parts. Test:
+// `l01_28_staging::arms::cut_reads_are_kept_in_time_that_scales`.
+fn keep_cut_reads(defs: &mut [Def], read: &HashMap<&str, BTreeSet<Arc<str>>>) -> HashSet<Arc<str>> {
+    let mut runs: HashSet<Arc<str>> = HashSet::new();
+    for d in defs.iter_mut() {
+        let now = free(&d.term);
+        let was = &read[&*d.kernel];
+        let cut: Vec<Arc<str>> = (was.iter())
+            .filter(|x| !now.contains(*x) && runs.contains(*x))
+            .cloned()
+            .collect();
+        let value = matches!(
+            *d.term,
+            Term::Lit(_) | Term::Lam(..) | Term::PrimFn(_) | Term::Var(_)
+        );
+        if !value || now.iter().chain(was).any(|x| runs.contains(x)) {
+            runs.insert(d.kernel.clone());
+        }
+        if !cut.is_empty() {
+            d.term = with_reads(&d.term, &cut);
+        }
+    }
+    runs
+}
+
+/// `t` with a let of [`CUT_READ`] to each of `names` around it, or around its body when it is
+/// a lambda none of whose parameters is one of `names`, so that a function stays a function.
+fn with_reads(t: &Shared, names: &[Arc<str>]) -> Shared {
+    let wrap = |body: Shared| {
+        names.iter().rev().fold(body, |body, x| {
+            Shared::new(Term::Let(
+                CUT_READ.into(),
+                Shared::new(Term::Var(x.clone())),
+                body,
+            ))
+        })
+    };
+    match &**t {
+        Term::Lam(ps, body) if !ps.iter().any(|p| names.contains(p)) => {
+            Shared::new(Term::Lam(ps.clone(), wrap(body.clone())))
+        }
+        _ => wrap(t.clone()),
+    }
 }
 
 /// The domain of a parameter.
@@ -2146,6 +2230,9 @@ struct Mixer {
     /// What each part held inline in a node being mixed reads, and how many positions its
     /// inline parts take, in preorder ([`Mixer::cluster`]).
     arena: Vec<(Summary, usize)>,
+    /// The definitions of the unit whose run can stop or not end, by kernel name, as
+    /// [`keep_cut_reads`] found them, so that [`Remix::mix`] keeps a cut read as `mix` does.
+    runs: HashSet<Arc<str>>,
 }
 
 impl Mixer {

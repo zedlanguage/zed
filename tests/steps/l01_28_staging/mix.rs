@@ -102,12 +102,30 @@ fn a_term_whose_form_does_not_show_it_ends_is_left_to_run() {
     // take, and the residual program keeps it as written.
     let src = "w(positional f) = f(f);\nspin = w(w);\n\
                main(m: MainArgs) {\n  m.stdout <- if false { String(spin) } else { \"x\" };\n}\n";
-    let (_, s, report) = staged(src);
+    let (p, s, report) = staged(src);
     assert!(report.built.is_empty(), "{:?}", report.built);
     assert_eq!(report.left.len(), 1, "{:?}", report.left);
     assert_eq!(report.left[0].0.to_string(), "w(w)");
     assert_eq!(report.left[0].1, "its form does not show that it ends");
     assert_eq!(term(&s, "spin"), "w(w)");
+    // A run evaluates `spin`, which `main` reaches, before `main` runs (DESIGN step M0.9, call
+    // by value), so the program never ends; the staged `main` keeps the read of `spin` the
+    // build cut, so it never ends either (G7). Each is run with a limit on its steps and runs
+    // out of them.
+    assert!(term(&s, "main").contains("spin"), "{}", term(&s, "main"));
+    for (what, p) in [("as written", p), ("staged", s)] {
+        super::scaling::deep(move || {
+            let fuel = |t: &zed_kernel::Term, ev: &mut zed_kernel::Evaluator| {
+                let fresh = zed_kernel::Evaluator::new(zed_kernel::World::new());
+                *ev = std::mem::replace(ev, fresh).with_fuel(20_000);
+                zedc::run::direct(t, ev)
+            };
+            let none = |_: &str| -> std::sync::Arc<dyn zed_kernel::Lookup> { unreachable!() };
+            let r = p.run_through(&Default::default(), &[], none, &fuel);
+            let e = r.err().unwrap_or_else(|| panic!("{what}: the run ended"));
+            assert!(e.contains("steps") || e.contains("fuel"), "{what}: {e}");
+        });
+    }
 }
 
 #[test]
