@@ -24,7 +24,7 @@ freezes this list against the compiler's design and inserts a step for each gap 
 `cargo run -q -p zed-tools --bin audit -- ../../../zed ../corpus/31-typechecker.zed --checklist ZED0.md`
 (run by hand, since CI does not read the spec repository, which must be beside this one;
 last run at spec commit 7674aaf, exit status 0, 115 grammar alternatives and 14 words
-needed, none missing, and 129 entries listed, none not needed). An alternative is needed when program 31's units stop parsing, or parse to a
+needed, none missing, 129 entries listed, none not needed, and none in the row of another layer). An alternative is needed when program 31's units stop parsing, or parse to a
 different tree, without it, so the list is exact for the grammar of DESIGN.md sec:grammar.
 `Rule#i` is alternative `i` (from 0) of the rule, in the grammar's order. The words are
 those `layer -v` reports. The indices follow the grammar: after a grammar change, rerun
@@ -33,11 +33,13 @@ the audit and update the list.
 The audit reads only the table of Part A, and Part A lists exactly what the audit finds: the
 audit names each needed entry Part A lacks, and each entry Part A lists that program 31 does
 not need (a rule or alternative the grammar no longer has, a word the table of defined words
-no longer lists, or an alternative or word that exists but program 31 does not use), and exits
-1 if either list is not empty. No entry is listed for any other reason; a need of the compiler
+no longer lists, or an alternative or word that exists but program 31 does not use), and each
+place that lists a needed entry in the row of a layer other than the entry's own, by its line,
+and exits 1 if any of these lists is not empty. No entry is listed for any other reason; a need of the compiler
 that program 31 does not show belongs in Part B. Every line of Part A that holds a bar `|` is read
 as part of the table; a row the audit cannot read (a first cell that is not one layer `L<k>`, a
-number of cells other than three, an entry not in backticks) makes it exit 1 and name the line.
+number of cells other than three, an entry not in backticks) makes it exit 1 and name the line
+with every reason it cannot be read.
 
 Step S.1 reruns this audit over the current grammar. Negative controls: with the entry for
 alternative 0 of Loop deleted from this file, the audit exits 1 and names it as missing; with
@@ -46,7 +48,9 @@ and names `Prefix#2` as missing and `Prefix#1` as not needed; with `Port#0` (a r
 longer has), `Result#0` (an alternative program 31 does not use) and the word `String` (no longer
 in the table) added, it exits 1 and names all three as not needed; with the row L4 written
 `L4–L5` and the cell of grammar alternatives of row L5 left out, it exits 1 and names both
-lines by their numbers; a synthetic program
+lines by their numbers; with `Unit#0` moved from row L1 to row L2, it exits 1 and names it, the line of
+row L2, and layer L1; with the line `` L9 | `Unit #0` x | `len | `` added, it names that line with
+all four reasons it cannot be read; a synthetic program
 that uses a word of a layer after row S (L25 or above) audits to that word, above the bootstrap subset.
 
 ## Part A: what program 31 needs

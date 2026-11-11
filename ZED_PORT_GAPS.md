@@ -3503,3 +3503,7 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | An `enum` that holds a pair in place and any other number of words in a `Box<[Word]>`, read through `impl Deref<Target = [Word]>` and made by two `impl From` | `Parts`, `Obj::Tuple`, `Heap::fresh`, `hooks::node` | None (`Deref`, `From`: named functions) | A tuple field whose layout the compiler chooses; reads by a named function `parts` |
 | `Box<Value>` and `Box<[Word]>` in `Obj`, to keep the largest variant at 40 bytes | `Obj::Data`, `Obj::Atom`, `Obj::Clo` | None | Vanish: a value's layout is the compiler's |
 | One buffer of words shared by the levels of an explicit stack, each level holding where its words start and truncating it when its cell is made | `Heap::fresh` (`Making::start`) | Mutation | A fold whose state is the buffer, or each level's words as a list built by its own loop |
+
+## Entries from AUDIT-layer-row (`crates/zed-tools/src/audit.rs`)
+
+- No new gap. `reasons` and `rows` join a list by a slice pattern `[rest @ .., last]`, a row of the appendix (slice patterns: test the length, then index). `Listed` fills a `BTreeMap<&str, Vec<Place>>` by `entry().or_default().push`, as `check::ty::met` does (Mutation: a table from entry to a list, built by a fold). `Sorted::add` is a method on `&mut self` taking `impl FnOnce() -> String`, so the text of why an entry is needed is built only when it is printed, as `Builder::range_end` does (Mutation: the sorted lists are a state receiver; the function argument is a lambda the port calls in the same place).

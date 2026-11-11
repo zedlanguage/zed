@@ -137,8 +137,10 @@ fn audit_scales_with_the_length_of_a_program() {
 }
 
 /// The audit's comparison of a checklist with what a program needs, at `n` needed alternatives
-/// and `n` needed words, all listed, and `n` of each listed that are not needed (rules the
-/// grammar does not have, words the table does not list), so both directions are measured.
+/// and `n` needed words, all listed, `n` of each listed that are not needed (rules the grammar
+/// does not have, words the table does not list), so both directions are measured, and `n`
+/// needed words of L1 listed both in the row L1 and in the row L2, so every listed place of an
+/// entry is checked against its layer.
 #[test]
 fn the_checklist_comparison_scales_with_its_entries() {
     let dir = spec_dir("scale_checklist", &design(""), "");
@@ -148,12 +150,16 @@ fn the_checklist_comparison_scales_with_its_entries() {
         let needs = audit::Needs {
             program: "p.zed".into(),
             alts: (0..m).map(|i| (1, format!("R{i}"), 0)).collect(),
-            words: (0..m).map(|i| (format!("w{i}"), 1)).collect(),
+            words: (0..m)
+                .flat_map(|i| [(format!("w{i}"), 1), (format!("v{i}"), 1)])
+                .collect(),
         };
         let alts: String = (0..m).map(|i| format!(" `R{i}#0` `S{i}#0`")).collect();
-        let words: String = (0..m).map(|i| format!(" `w{i}` `x{i}`")).collect();
+        let words: String = (0..m).map(|i| format!(" `w{i}` `x{i}` `v{i}`")).collect();
+        let wrong: String = (0..m).map(|i| format!(" `v{i}`")).collect();
         let list = format!(
-            "## Part A\n\n| Layer | Alternatives | Words |\n|---|---|---|\n| L1 |{alts} |{words} |\n"
+            "## Part A\n\n| Layer | Alternatives | Words |\n|---|---|---|\n| L1 |{alts} |{words} |\n\
+             | L2 | — |{wrong} |\n"
         );
         (needs, list)
     });
@@ -163,6 +169,46 @@ fn the_checklist_comparison_scales_with_its_entries() {
         let outcome = audit::compare(&spec, &table, needs, "ZED0.md", list, &mut out);
         assert_eq!(outcome, Ok(false));
         assert!(out.contains(&format!(", {} not needed `", 2 * m)), "{out}");
+        assert!(
+            out.contains(&format!(
+                "checklist: {} needed entries listed, {m} in the row of another layer `",
+                3 * m
+            )),
+            "{out}"
+        );
+    });
+}
+
+/// The audit's reading of Part A at `n` lines it cannot read, each for three reasons, and one
+/// line it cannot read for `n` reasons, so every reason of every line is collected.
+#[test]
+fn the_checklist_reading_scales_with_its_unreadable_lines() {
+    let dir = spec_dir("scale_checklist_unread", &design(""), "");
+    let spec = Spec::open(&dir.root()).expect("the spec reads");
+    let table = layer::WordTable::read(&spec.design).expect("the table reads");
+    let needs = audit::Needs {
+        program: "p.zed".into(),
+        ..Default::default()
+    };
+    let sized = inputs(2000, |m| {
+        let bad: String = (0..m)
+            .map(|i| format!("| L{i}–L{} | R{i}#0 | `w{i} |\n", i + 1))
+            .collect();
+        let long: String = (0..m).map(|i| format!(" x{i} `R{i}#0`")).collect();
+        format!(
+            "## Part A\n\n| Layer | Alternatives | Words |\n|---|---|---|\n{bad}| L1 |{long} | — |\n"
+        )
+    });
+    check("checklist reading, by unreadable lines", 2000, |m| {
+        let list = &sized[&m];
+        let mut out = String::new();
+        let outcome = audit::compare(&spec, &table, &needs, "ZED0.md", list, &mut out);
+        assert_eq!(outcome, Ok(false));
+        assert!(
+            out.contains(&format!("checklist: {} lines of Part A", m + 1)),
+            "{out}"
+        );
+        assert!(out.contains(&format!(", for {m} reasons: ")), "{out}");
     });
 }
 

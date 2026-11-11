@@ -459,7 +459,7 @@ fn audit_fails_on_a_row_of_part_a_it_cannot_read_and_names_its_line() {
         "its column of grammar alternatives has `Unit#0` outside backticks",
         "it has 2 cells, but a row of Part A has 3",
         "its column of defined words has a backtick with no closing backtick",
-        "it does not start and end with a bar `|`",
+        "it does not start with a bar `|`",
     ];
     for (k, (row, what)) in bad.iter().zip(expect).enumerate() {
         let line = format!("  line {} of ZED0.md cannot be read: {what}", first + k);
@@ -477,6 +477,131 @@ fn audit_fails_on_a_row_of_part_a_it_cannot_read_and_names_its_line() {
             && out.contains("  line 3 of NOHEAD.md cannot be read: it is the first row of the table, which is the header"),
         "{out}"
     );
+}
+
+#[test]
+fn audit_names_every_reason_a_line_of_part_a_cannot_be_read() {
+    let dir = spec_dir("audit_bad_reasons", &design(""), "");
+    let program = dir.write("p.zed", LENGTHS);
+    let (alts, words) = audit_needs(&dir.root(), &program);
+    let good = checklist(&alts, &words);
+    let (head, tail) = good.split_once("\n## Part B").expect("a Part B");
+    let first = head.lines().count() + 1;
+    let bad = [
+        // A layer that is a range, an entry outside backticks and a backtick left open.
+        "| L1–L6 | Unit#0 | `len |",
+        // No bar at either end, an entry with a space in it, and text outside backticks.
+        "L7 | `Unit #0` x `Unit#0` | —",
+    ];
+    let text = format!("{head}{}\n\n## Part B{tail}", bad.join("\n"));
+    let list = dir.write("ZED0.md", &text);
+    let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
+    assert_eq!(outcome, Ok(false), "{out}");
+    assert!(
+        out.contains("checklist: 2 lines of Part A of ZED0.md cannot be read"),
+        "{out}"
+    );
+    let expect = [
+        format!(
+            "  line {first} of ZED0.md cannot be read, for 3 reasons: its first cell is `L1–L6`, \
+             but a row starts with one layer, written L and a number, such as L3; its column of \
+             grammar alternatives has `Unit#0` outside backticks; and its column of defined \
+             words has a backtick with no closing backtick. The line is:\n    {}\n",
+            bad[0]
+        ),
+        format!(
+            "  line {} of ZED0.md cannot be read, for 4 reasons: it does not start with a bar \
+             `|`, as a row of a table does; it does not end with a bar `|`, as a row of a table \
+             does; its column of grammar alternatives has `Unit #0` in backticks, but an entry in \
+             backticks is one name with no spaces; and its column of grammar alternatives has \
+             `x` outside backticks. The line is:\n    {}\n",
+            first + 1,
+            bad[1]
+        ),
+    ];
+    for line in expect {
+        assert!(out.contains(&line), "{line}\n---\n{out}");
+    }
+}
+
+#[test]
+fn audit_fails_on_an_entry_in_the_row_of_another_layer_and_names_its_line() {
+    let dir = spec_dir("audit_wrong_row", &design(""), "");
+    let program = dir.write("p.zed", LENGTHS);
+    let (mut alts, mut words) = audit_needs(&dir.root(), &program);
+    assert!(
+        alts.len() >= 2 && words == [(1, "len".to_string())],
+        "{alts:?}"
+    );
+    let list = dir.write("ZED0.md", &checklist(&alts, &words));
+    let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
+    assert_eq!(outcome, Ok(true), "{out}");
+    let n = alts.len() + words.len();
+    assert!(
+        out.contains(&format!(
+            "checklist: {n} needed entries listed, 0 in the row of another layer\n"
+        )),
+        "{out}"
+    );
+
+    // An alternative moved to a row of its own, the word moved to the row of a higher layer,
+    // and an alternative listed a second time, in the row of another layer.
+    let (moved, twice) = (alts[0].clone(), alts[1].clone());
+    alts[0].0 = moved.0 + 7;
+    words[0].0 = 2;
+    alts.push((twice.0 + 8, twice.1.clone()));
+    let text = checklist(&alts, &words);
+    let line_of = |k: u32| {
+        1 + text
+            .lines()
+            .position(|l| l.starts_with(&format!("| L{k} |")))
+            .expect("a row of the layer")
+    };
+    let list = dir.write("ZED0.md", &text);
+    let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
+    assert_eq!(outcome, Ok(false), "{out}");
+    let spec = Spec::open(&dir.root()).expect("the spec reads");
+    let g = &spec.syntactic;
+    let (rule, i) = moved.1.split_once('#').unwrap();
+    assert_eq!(
+        g.rules[g.rule(rule).unwrap()].alts[i.parse::<usize>().unwrap()].layer,
+        moved.0
+    );
+    let (rule2, i2) = twice.1.split_once('#').unwrap();
+    for line in [
+        ", 0 missing\n".to_string(),
+        ", 0 not needed\n".to_string(),
+        format!("checklist: {n} needed entries listed, 3 in the row of another layer `"),
+        format!(
+            "  `{}`, on line {} of ZED0.md, is in the row L{} of Part A, but p.zed needs \
+             alternative {i} of rule {rule}, `",
+            moved.1,
+            line_of(moved.0 + 7),
+            moved.0 + 7
+        ),
+        format!("`, which is at L{}.\n", moved.0),
+        format!(
+            "  `len`, on line {} of ZED0.md, is in the row L2 of Part A, but p.zed uses the word \
+             `len`, which is at L1.\n",
+            line_of(2)
+        ),
+        format!(
+            "  `{}`, on line {} of ZED0.md, is in the row L{} of Part A, but p.zed needs \
+             alternative {i2} of rule {rule2}, `",
+            twice.1,
+            line_of(twice.0 + 8),
+            twice.0 + 8
+        ),
+        format!(
+            "`, which is at L{0}, and line {1} lists it in the row L{0} already.\n",
+            twice.0,
+            line_of(twice.0)
+        ),
+        "Move each entry that is in the row of another layer to the row of its own layer"
+            .to_string(),
+    ] {
+        assert!(out.contains(&line), "no text {line:?} in\n{out}");
+    }
 }
 
 #[test]
