@@ -103,6 +103,8 @@ pub mod extend;
 mod forced;
 mod formula;
 mod modular;
+mod one_row;
+mod row_domains;
 mod values;
 
 use forced::{Facts, Forced};
@@ -972,7 +974,11 @@ fn reduced(facts: &Facts) -> Option<Formula> {
 /// Whether `f` holds somewhere, and where. A formula whose forced equations fix its atoms one
 /// after another, as the preimage of a chain of `if` at a point gives, is answered by
 /// propagation alone in time linear in its size (module `forced`, PRES-small-cost), with every
-/// atom of the formula in its point; any other goes to the solver. The solver's point may leave
+/// atom of the formula in its point; any other goes to the solver. A box and one row (module
+/// `one_row`), and one equation over finite unions of ranges that its residue or its ends settle
+/// (module `row_domains`), with no point is answered without the solver; with a point, the
+/// solver's point is given, and where the solver refuses, the point those modules build, so this
+/// answers wherever [`decide`] does. The solver's point may leave
 /// atoms of `f` out, and each atom left out is zero there, as [`Formula::holds`] reads it: an
 /// atom of a disjunction that `absorb` removed where zero lies between its bounds (`repair`), an
 /// atom of a disjunct the search did not take, and an atom of a disjunct it took because its rows
@@ -989,18 +995,33 @@ pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
         Forced::Empty => Ok(None),
         Forced::Point(m) => Ok(Some(m)),
         Forced::Holds => unreachable!("a point is asked for"),
-        Forced::Undecided(facts) => match reduced(&facts) {
-            None => or_old(|| satisfiable_named(f)),
-            // Complexity tradeoff: as at `decide`, a refusal with the facts asks again as
-            // written.
-            Some(g) => match or_old(|| satisfiable_named(&g)) {
-                Ok(m) => Ok(m.map(|mut m| {
-                    facts.fill(&mut m);
-                    m
-                })),
-                Err(_) => or_old(|| satisfiable_named(f)),
-            },
-        },
+        Forced::Undecided(facts) => {
+            let solver = || match reduced(&facts) {
+                None => or_old(|| satisfiable_named(f)),
+                // Complexity tradeoff: as at `decide`, a refusal with the facts asks again as
+                // written.
+                Some(g) => match or_old(|| satisfiable_named(&g)) {
+                    Ok(m) => Ok(m.map(|mut m| {
+                        facts.fill(&mut m);
+                        m
+                    })),
+                    Err(_) => or_old(|| satisfiable_named(f)),
+                },
+            };
+            // A box and one row, or one equation its residue or its ends settle, answers
+            // where the solver refuses; a point the solver gives is kept.
+            if let Some(b) = one_row::OneRow::of(f) {
+                if !b.exists() {
+                    return Ok(None);
+                }
+                return solver().or_else(|e| b.point().map(Some).ok_or(e));
+            }
+            match row_domains::settle(f) {
+                Some(row_domains::Settled::Empty) => Ok(None),
+                Some(row_domains::Settled::Point(m)) => solver().or(Ok(Some(m))),
+                None => solver(),
+            }
+        }
     }
 }
 
@@ -1063,9 +1084,10 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// Whether `f` holds somewhere. A conjunction is decided without building a point; a point is
 /// built only to search the disjunctions that propagation leaves.
 /// A formula that propagation over its forced parts decides (module `forced`), or the rounds at
-/// its bounds show true at a point, is answered without the solver; any other goes to the solver
-/// with each atom propagation fixed replaced by its value, and as written if the solver refuses
-/// that.
+/// its bounds show true at a point, is answered without the solver, and so is a box and one row
+/// (module `one_row`), and one equation over finite unions of ranges that its residue or its
+/// ends settle (module `row_domains`); any other goes to the solver with each atom propagation
+/// fixed replaced by its value, and as written if the solver refuses that.
 pub fn decide(f: &Formula) -> Result<bool, Refusal> {
     // The formula with each shared part taken out of the disjunctions that hold it in every
     // disjunct ([`factored`]) holds at the same points, so its answer is the answer; the
@@ -1084,21 +1106,30 @@ fn decide_written(f: &Formula) -> Result<bool, Refusal> {
     match forced::forced(f, false) {
         Forced::Empty => Ok(false),
         Forced::Point(_) | Forced::Holds => Ok(true),
-        Forced::Undecided(facts) => match reduced(&facts) {
-            None => or_old(|| decide_named(f)),
-            // Complexity tradeoff: a formula the solver refuses with the facts is asked again
-            // as written, so it costs up to twice what it cost before, and no answer given as
-            // written becomes a refusal; a refusal then names the rows as written. Naive
-            // version: the formula as written alone, which leaves the solver to find again
-            // what propagation proved; used: the facts first, at most two asks of one size.
-            // Measured over the undecided formulas of the forced_against_solver census, the
-            // solver's work with the facts, a second ask included, is 0.64 of that as written
-            // on chains of definitions, 0.76 on bounded inputs, 0.93 on ladders; one formula
-            // in 50 of the chains is refused with the facts, where the replaced rows told two
-            // factors of a product apart. Leaving such factors as written gave no refusals but
-            // 0.83, since fewer formulas kept any fact. COMPLEXITY.md row PRES-small-point.
-            Some(g) => or_old(|| decide_named(&g)).or_else(|_| or_old(|| decide_named(f))),
-        },
+        Forced::Undecided(facts) => {
+            if let Some(b) = one_row::OneRow::of(f) {
+                return Ok(b.exists());
+            }
+            if let Some(s) = row_domains::settle(f) {
+                return Ok(matches!(s, row_domains::Settled::Point(_)));
+            }
+            match reduced(&facts) {
+                None => or_old(|| decide_named(f)),
+                // Complexity tradeoff: a formula the solver refuses with the facts is asked
+                // again as written, so it costs up to twice what it cost before, and no answer
+                // given as written becomes a refusal; a refusal then names the rows as written.
+                // Naive version: the formula as written alone, which leaves the solver to find
+                // again what propagation proved; used: the facts first, at most two asks of one
+                // size. Measured over the undecided formulas of the forced_against_solver
+                // census, the solver's work with the facts, a second ask included, is 0.64 of
+                // that as written on chains of definitions, 0.76 on bounded inputs, 0.93 on
+                // ladders; one formula in 50 of the chains is refused with the facts, where the
+                // replaced rows told two factors of a product apart. Leaving such factors as
+                // written gave no refusals but 0.83, since fewer formulas kept any fact.
+                // COMPLEXITY.md row PRES-small-point.
+                Some(g) => or_old(|| decide_named(&g)).or_else(|_| or_old(|| decide_named(f))),
+            }
+        }
     }
 }
 
@@ -6207,6 +6238,11 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
 /// the same under every naming of the variables and every order of the constraints.
 fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<Model>, Refusal> {
     let cons: Vec<&Con> = cons.iter().map(|c| c.borrow()).collect();
+    // A box and one row has a point or not by its two sums (module `one_row`); a point itself is
+    // still the solver's, which the search over disjunctions reads.
+    if !want && let Some(b) = one_row::OneRow::of_cons(&cons) {
+        return Ok(b.exists().then(Model::new));
+    }
     let atoms: Vec<Atom> = cons
         .iter()
         .flat_map(|c| c.lin.terms.keys().cloned())
@@ -9324,6 +9360,23 @@ pub type Each = (Vec<Result<IntervalSet, Refusal>>, Vec<Refusal>);
 // `l01_39_reduced_product::pendants::refused_parts_projected_exactly_by_pendants_fourth_quarter_rest`.
 // COMPLEXITY.md row PROJECT-each-canon.
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    // A box and one row, or one equation that its residue or its ends settle, is projected
+    // exactly without the solver (modules `one_row` and `row_domains`).
+    if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
+        if let Some(b) = one_row::OneRow::of(f) {
+            return Ok((syms.iter().map(|a| Ok(b.project(a))).collect(), Vec::new()));
+        }
+        if let Some(s) = row_domains::settle(f) {
+            let at = |a: &Atom| match &s {
+                row_domains::Settled::Empty => IntervalSet::empty(),
+                row_domains::Settled::Point(m) => match m.get(a) {
+                    Some(v) => IntervalSet::range(End::Fin(Num::from(v)), End::Fin(Num::from(v))),
+                    None => IntervalSet::range(End::NegInf, End::PosInf),
+                },
+            };
+            return Ok((syms.iter().map(|a| Ok(at(a))).collect(), Vec::new()));
+        }
+    }
     // The formula with each shared part taken out of the disjunctions that hold it in every
     // disjunct ([`factored`]) is asked first, and the formula as written where that leaves
     // anything refused, so no refusal or cause appears that the formula as written does not

@@ -33,6 +33,7 @@ mod names;
 mod near;
 mod nest_empty;
 mod omega;
+mod one_row;
 mod one_scope;
 mod oracle;
 mod pncx_probe;
