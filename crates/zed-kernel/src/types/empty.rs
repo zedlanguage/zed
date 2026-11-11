@@ -512,25 +512,31 @@ impl Type {
         // member of another group, in the order met.
         let read = |roots: &[Type]| -> Vec<Type> {
             let mut groups: HashSet<u64> = roots.iter().filter_map(Type::group).collect();
-            // `inside` is keyed by the addresses of `roots`, borrowed for the walk, and `seen`
-            // holds each node it is keyed by; neither is iterated (the groups found are in the
-            // order met), so neither the reuse of an address nor the order of addresses reaches
-            // an answer.
-            let inside: HashSet<usize> = roots.iter().map(Type::node_addr).collect();
-            // Each node met, held for the walk, so that its address names no other node meanwhile.
-            let mut seen: HashMap<usize, Type> =
-                roots.iter().map(|t| (t.node_addr(), t.clone())).collect();
+            // `inside` and `seen` are keyed by node numbers, which are never reused, so they
+            // hold no node; neither is iterated (the groups found are in the order met).
+            let inside: HashSet<u64> = roots.iter().map(Type::node_id).collect();
+            let mut seen: HashSet<u64, Digests> = roots.iter().map(Type::node_id).collect();
+            // Complexity tradeoff (COMPLEXITY.md K101): the naive read scans the diagram of
+            // each type it meets afresh, so a diagram shared by n types is read n times,
+            // O(n^2) on cycle_dup's family of n meets each written in two orders. Here the
+            // diagram nodes, set nodes and types already read are kept in sets for the whole
+            // read (`rows`, `morphisms`, `seen`), O(V + E) expected time in the nodes and
+            // edges reached and O(V) space. Given up: the sets live for one read, so two
+            // reads (two calls of `Type::verdict`) still read a shared diagram once each. No
+            // dependency is lost, since a node is skipped only when it was read before.
+            // Tests: cycle_dup::shared_parts_are_read_once_when_deciding_their_groups and the
+            // tests that a batch and a single query agree.
+            let (mut rows, mut morphisms) = (HashSet::new(), HashSet::new());
             let mut found = Vec::new();
             let mut stack: Vec<Type> = roots.to_vec();
-            let visit = |t: &Type, seen: &mut HashMap<usize, Type>, stack: &mut Vec<Type>| {
-                if let Entry::Vacant(v) = seen.entry(t.node_addr()) {
-                    v.insert(t.clone());
+            let visit = |t: &Type, seen: &mut HashSet<u64, Digests>, stack: &mut Vec<Type>| {
+                if seen.insert(t.node_id()) {
                     stack.push(t.clone());
                 }
             };
             while let Some(t) = stack.pop() {
                 if let Some(g) = t.group().filter(|_| t.is_member())
-                    && !inside.contains(&t.node_addr())
+                    && !inside.contains(&t.node_id())
                 {
                     if groups.insert(g) {
                         found.push(t);
@@ -541,11 +547,13 @@ impl Type {
                 for a in p.atoms.names.values() {
                     visit(&a.payload, &mut seen, &mut stack);
                 }
-                p.tuples.atoms(&mut |row| {
-                    row.iter().for_each(|x| visit(x, &mut seen, &mut stack));
-                    true
-                });
-                p.morphisms.atoms(&mut |m| {
+                for part in p.tuples.lens.values() {
+                    part.atoms_unseen(&mut rows, &mut |row| {
+                        row.iter().for_each(|x| visit(x, &mut seen, &mut stack));
+                        true
+                    });
+                }
+                p.morphisms.atoms_unseen(&mut morphisms, &mut |m| {
                     for x in [&m.guarantee, &m.permission, &m.value] {
                         visit(x, &mut seen, &mut stack);
                     }
@@ -951,11 +959,9 @@ struct Search {
     /// What is known of each list type met, by the rule on pure cycles.
     cycles: ByType<Option<Cycle>>,
     /// The meet, difference or union of each pair of nodes the search built
-    /// ([`Searching::cut`]), built once, by the nodes' addresses; the operands are kept with it,
-    /// so no address is reused. Read only by `entry`, never iterated. A type node has no id to
-    /// key by: one drawn per node would add a field and a counter to every type made, for
-    /// the hits of this memo alone (PTR-keys-rest).
-    cuts: HashMap<(usize, usize, Cut), (Type, Type, Type), Digests>,
+    /// ([`Searching::cut`]), built once, by the nodes' local numbers ([`Type::node_id`]), which
+    /// are never reused; the operands are kept with it. Read only by `entry`, never iterated.
+    cuts: HashMap<(u64, u64, Cut), (Type, Type, Type), Digests>,
     /// With a list, every closure whose keys are permitted as written is taken to have a value
     /// at once, and its value type is put on the list, to be shown to have a value after the
     /// search ([`optimistic_values`]).
@@ -1787,9 +1793,7 @@ impl Search {
         let (mut seen, mut stack) = (BTreeSet::from([v]), vec![v]);
         while let Some(x) = stack.pop() {
             for &(y, _) in &self.reads[x] {
-                if self.deciding.contains(&y)
-                    || self.again.contains(&y)
-                    || self.round.contains(&y)
+                if self.deciding.contains(&y) || self.again.contains(&y) || self.round.contains(&y)
                 {
                     return;
                 }
@@ -2217,9 +2221,7 @@ impl<'m> Searching<'m> {
                 .any(|&(x, r, _)| r == Refusal::Fork && Some(x) == c)
         }) || c.is_some_and(|c| {
             let start = s.reads[c].partition_point(|&(_, e)| e < ep);
-            s.reads[c][start..]
-                .iter()
-                .any(|&(u, _)| s.rests_on_fork(u))
+            s.reads[c][start..].iter().any(|&(u, _)| s.rests_on_fork(u))
         }) || sub
             .and_then(|t| s.ids.get(t))
             .is_some_and(|&i| s.rests_on_fork(i));
@@ -2467,7 +2469,7 @@ impl<'m> Searching<'m> {
     /// given up is the hits on equal operands built apart. COMPLEXITY.md K51. Naive version:
     /// no memo, or a scan of the search's types at each call, which failed `nested_tuples_scale`
     /// at 34.0 times from depth 400 to 3200 (limit 24); used: one build per pair of operand
-    /// nodes, a hash lookup by address per call.
+    /// nodes, a hash lookup by local node number per call.
     async fn settles(&'m self, x: &Type, y: &Type, both: bool) -> bool {
         if let Some(b) = x.scalar_cell(y, both) {
             return b;
@@ -2482,7 +2484,7 @@ impl<'m> Searching<'m> {
     /// up by its contents (EMPTY-morphism-next). The tradeoff of keying by node is that of
     /// `settles`.
     fn cut(&self, x: &Type, y: &Type, op: Cut) -> Type {
-        let key = (x.node_addr(), y.node_addr(), op);
+        let key = (x.node_id(), y.node_id(), op);
         (self.s().cuts.entry(key))
             .or_insert_with(|| (x.clone(), y.clone(), op.of(x, y)))
             .2
@@ -3021,9 +3023,7 @@ impl<'m> Searching<'m> {
                     }
                 }
             }
-            if !narrowed
-                && let Some((j, c, cell, missed, fork)) = forked_cut
-            {
+            if !narrowed && let Some((j, c, cell, missed, fork)) = forked_cut {
                 self.restore_fork(fork);
                 let t = &g.r[j] - &c;
                 g.shrink(j, t);

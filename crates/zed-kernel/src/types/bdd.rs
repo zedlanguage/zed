@@ -1700,11 +1700,30 @@ impl<A: Literal> Part<A> {
     /// set of ids seen, so a diagram under two expressions is visited once.
     pub(super) fn atoms<'a>(&'a self, f: &mut impl FnMut(&'a A) -> bool) -> bool {
         let mut seen = HashSet::new();
+        self.walk_atoms(&mut seen, f, false)
+    }
+
+    /// The atoms on nodes not yet walked by this traversal. A false callback ends the
+    /// whole traversal; a caller reusing `seen` must not resume after such an early end.
+    pub(super) fn atoms_unseen<'a>(
+        &'a self,
+        seen: &mut HashSet<u64>,
+        f: &mut impl FnMut(&'a A) -> bool,
+    ) -> bool {
+        self.walk_atoms(seen, f, true)
+    }
+
+    fn walk_atoms<'a>(
+        &'a self,
+        seen: &mut HashSet<u64>,
+        f: &mut impl FnMut(&'a A) -> bool,
+        shared_sets: bool,
+    ) -> bool {
         let mut stack = vec![self];
         while let Some(p) = stack.pop() {
             match p {
                 Part::Bdd(b) => {
-                    if !b.atoms_unseen(&mut seen, f) {
+                    if !b.atoms_unseen(seen, f, shared_sets) {
                         return false;
                     }
                 }
@@ -2944,6 +2963,7 @@ mod list {
             &'a self,
             seen: &mut std::collections::HashSet<u64>,
             f: &mut impl FnMut(&'a A) -> bool,
+            shared_sets: bool,
         ) -> bool {
             let Bdd::List(c, _) = self else { return true };
             let mut stack: Vec<&'a Cell<A>> = Vec::new();
@@ -2954,8 +2974,26 @@ mod list {
                     at = c.left.as_deref().filter(|l| seen.insert(l.id));
                 }
                 let Some(c) = stack.pop() else { return true };
-                if !set::iter(Some(&c.block)).all(|(a, _)| f(a)) {
-                    return false;
+                if !shared_sets {
+                    if !set::iter(Some(&c.block)).all(|(a, _)| f(a)) {
+                        return false;
+                    }
+                } else {
+                    // Blocks can share set subtrees even when their list cells differ. Walk
+                    // each set node once as well; its id comes from the same counter as cells.
+                    let mut literals = Vec::new();
+                    let mut next = Some(&*c.block).filter(|s| seen.insert(s.id));
+                    loop {
+                        while let Some(s) = next {
+                            literals.push(s);
+                            next = s.left.as_deref().filter(|s| seen.insert(s.id));
+                        }
+                        let Some(s) = literals.pop() else { break };
+                        if !f(&s.key.0) {
+                            return false;
+                        }
+                        next = s.right.as_deref().filter(|s| seen.insert(s.id));
+                    }
                 }
                 at = c.right.as_deref().filter(|r| seen.insert(r.id));
             }

@@ -170,7 +170,7 @@ impl Drop for Node {
                     Part::leaf(false),
                 ))));
             }
-            if let Some(r) = shown.0.take() {
+            if let Some(r) = shown.text.take() {
                 free(Freed::Rope(r));
             }
         }
@@ -203,9 +203,26 @@ fn hold() {
     deep::hold(&FREED);
 }
 
-/// A type's text as a rope, made when first printed. It takes no part in comparing types.
-#[derive(Default)]
-struct Shown(OnceLock<Rope>);
+/// A number for local graph walks, never a type's digest, order or printed name.
+fn next_type_node() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A type's text and local graph number. Neither takes part in comparing types.
+struct Shown {
+    text: OnceLock<Rope>,
+    id: u64,
+}
+
+impl Default for Shown {
+    fn default() -> Self {
+        Self {
+            text: OnceLock::new(),
+            id: next_type_node(),
+        }
+    }
+}
 
 impl PartialEq for Shown {
     fn eq(&self, _: &Shown) -> bool {
@@ -218,6 +235,7 @@ impl Eq for Shown {}
 /// A recursive type, or a part of a recursive definition's body kept unevaluated: its parts are
 /// `make()`, computed on first use. Two nodes are one type when their keys are equal.
 struct Rec {
+    id: u64,
     /// What the node stands for, by its group's definitions and arguments: its digest and order.
     key: rec::Key,
     /// The name, made when first printed: a name spells out its part of the definition, so
@@ -1216,9 +1234,19 @@ impl Type {
     /// while a handle on the node is held. A set or map keyed by it must hold a handle on each
     /// node it is keyed by, or borrow one, for as long as it lives, and must not be iterated
     /// where the order would reach an answer, since addresses differ from run to run. The
-    /// users (`first_member`, `decide_groups_read`, `Searching::cut`, `Env::member`) do both.
+    /// users (`first_member`, `Env::member`) do both; `decide_groups_read` and
+    /// `Searching::cut` key by [`Type::node_id`] instead.
     pub(crate) fn node_addr(&self) -> usize {
         Arc::as_ptr(&self.0) as usize
+    }
+
+    /// The number of this allocation, shared by its handles and never reused. It is used
+    /// only for local lookups; allocation order does not enter comparison or hashing of types.
+    pub(crate) fn node_id(&self) -> u64 {
+        match &*self.0 {
+            Node::Parts(_, shown) => shown.id,
+            Node::Rec(r) => r.id,
+        }
     }
 
     /// The node named `naming()` whose parts are `make()`'s, each computed when first needed.
@@ -1229,6 +1257,7 @@ impl Type {
         make: impl Fn() -> Type + Send + Sync + 'static,
     ) -> Type {
         Type(Arc::new(Node::Rec(Rec {
+            id: next_type_node(),
             key,
             name: OnceLock::new(),
             naming: Box::new(naming),
@@ -2609,7 +2638,7 @@ impl Type {
     /// Where the text is kept once made: a recursive node's name, or the text of its parts.
     fn text(&self) -> &OnceLock<Rope> {
         match &*self.0 {
-            Node::Parts(_, shown) => &shown.0,
+            Node::Parts(_, shown) => &shown.text,
             Node::Rec(r) => &r.name,
         }
     }

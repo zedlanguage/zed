@@ -875,3 +875,39 @@ fn a_group_checked_alone_or_in_a_batch_gives_the_same_answers() {
         }
     }
 }
+
+/// Deciding the groups of [`meets_in_orders`] at `n` and `8n` arms, every meet written twice:
+/// the walk that finds the groups a type depends on reads each part of the diagrams the members
+/// share once for the whole query, not once per member that holds it (item
+/// GROUP-search-canon-key). With a fresh scan per member the larger run took 35.2 times the
+/// work of the smaller, against a limit of 11.7. The groups are built before the work is
+/// counted.
+#[test]
+fn shared_parts_are_read_once_when_deciding_their_groups() {
+    let n = 512;
+    let inputs = scaling::inputs(n, |m| {
+        let defs = (["WalkNode", "WalkTree", "WalkThunk"]
+            .into_iter()
+            .zip(meets_in_orders(m, true)))
+        .map(|(name, body)| Def {
+            name: name.into(),
+            params: vec![],
+            body,
+        })
+        .collect();
+        Group::new(defs)
+            .unwrap_or_else(|e| panic!("{}", e.message))
+            .instance(vec![])
+    });
+    scaling::check_order(
+        "shared parts in the walk of group dependencies",
+        n,
+        1,
+        |m| {
+            Type::forget_emptiness();
+            for t in &inputs[&m] {
+                assert_eq!(t.verdict(), Verdict::Inhabited);
+            }
+        },
+    );
+}
