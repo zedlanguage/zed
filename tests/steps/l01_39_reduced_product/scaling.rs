@@ -1112,6 +1112,213 @@ fn changes_of_one_block_hold_bounded_memory() {
     });
 }
 
+/// `a || b`.
+fn or(a: Term, b: Term) -> Term {
+    prim(Prim::Or, a, b)
+}
+
+/// `k` disjunctions on `n`, `m` and `v_i` (`d(v_i)`), each `v_i` in 0..=10 and `n`, `m` in
+/// -10^6..=10^6, then `k` tests `t(j)` that move no interval, each tightening the one
+/// constraint on a term of `n` and `m`.
+fn tightenings_beside_disjunctions(
+    k: usize,
+    d: impl Fn(&str) -> Term,
+    t: impl Fn(i64) -> Term,
+) -> (Scope, Vec<(Term, bool)>) {
+    const W: i64 = 1_000_000;
+    let p = Premises::new();
+    let vs: Vec<String> = (0..k).map(|i| format!("v{i}")).collect();
+    let mut all: Vec<Arc<str>> = vs.iter().map(|v| Arc::from(v.as_str())).collect();
+    all.extend([Arc::from("n"), Arc::from("m")]);
+    let within = |s: Scope, x: &str, lo: i64, hi: i64| {
+        s.assume(&prim(Prim::Ge, var(x), int(lo)), true, &p).assume(
+            &prim(Prim::Le, var(x), int(hi)),
+            true,
+            &p,
+        )
+    };
+    let mut s = within(within(ints(&all), "n", -W, W), "m", -W, W);
+    for v in &vs {
+        s = within(s, v, 0, 10).assume(&d(v), true, &p);
+    }
+    let tests = (1..=k as i64).map(|j| (t(W - 10 - j), false)).collect();
+    (s, tests)
+}
+
+/// `v_i <= n - 5 || v_i <= m - 5` for each `i`, then `k` tests `n + m <= c` that move no
+/// interval. Each disjunction holds `n` and `m`, both of the group of `n + m <= c`, so each
+/// test makes all `k` parts due (item LAZY-hub-coarse): O(k) projections per test, O(k^2)
+/// in all, 60.8 times the bytes at 8k (12 and 96; 10.2 times with main's rule, which makes
+/// none of them due and so missed `n + m <= c` where it bounds a part's points). Main makes
+/// the parts on a changed term due in the same way
+/// (`tightenings_of_a_term_compared_by_many_disjunctions_scale`).
+#[test]
+#[ignore = "LAZY-hub-coarse: 60.8 times the bytes at 12 and 96, k parts due at each of k tightenings; open"]
+fn tightenings_of_a_sum_beside_many_disjunctions_on_both_names_scale() {
+    let n = 12;
+    let family = |k| {
+        tightenings_beside_disjunctions(
+            k,
+            |v| {
+                or(
+                    prim(Prim::Ge, prim(Prim::Sub, var("n"), var(v)), int(5)),
+                    prim(Prim::Ge, prim(Prim::Sub, var("m"), var(v)), int(5)),
+                )
+            },
+            |c| prim(Prim::Le, prim(Prim::Add, var("n"), var("m")), int(c)),
+        )
+    };
+    let inputs = scaling::inputs(n, family);
+    scaling::check(
+        "k tightenings of n + m beside k disjunctions on n and m",
+        n,
+        |k| {
+            let (s, tests) = &inputs[&k];
+            change_one_block(s, tests);
+        },
+    );
+}
+
+/// `n - m >= 5 || v_i - n >= 5` for each `i`, then `k` tests `n - m <= c` that move no
+/// interval: each test changes the constraint on the term `n - m` that every disjunction
+/// compares, so main's rule makes all `k` parts due, O(k^2) projections in all, 60.5 times
+/// the bytes at 8k (12 and 96), as for a group of linked constraints
+/// (`tightenings_of_a_sum_beside_many_disjunctions_on_both_names_scale`).
+#[test]
+#[ignore = "LAZY-hub-coarse: 60.5 times the bytes at 12 and 96 on main's rule, k parts on a term due at each of k tightenings; open"]
+fn tightenings_of_a_term_compared_by_many_disjunctions_scale() {
+    let n = 12;
+    let family = |k| {
+        tightenings_beside_disjunctions(
+            k,
+            |v| {
+                or(
+                    prim(Prim::Ge, prim(Prim::Sub, var("n"), var("m")), int(5)),
+                    prim(Prim::Ge, prim(Prim::Sub, var(v), var("n")), int(5)),
+                )
+            },
+            |c| {
+                prim(
+                    Prim::Le,
+                    prim(Prim::Sub, var("n"), var("m")),
+                    int(c + 1_000_000),
+                )
+            },
+        )
+    };
+    let inputs = scaling::inputs(n, family);
+    scaling::check(
+        "k tightenings of n - m beside k disjunctions on it",
+        n,
+        |k| {
+            let (s, tests) = &inputs[&k];
+            change_one_block(s, tests);
+        },
+    );
+}
+
+/// `k` disjunctions `v_i - w >= 5 || w - v_(i+1) >= 5`, a chain through the shared name `w`,
+/// and `v0 - z >= 5 || z - v0 >= 5`, which makes the chain and `w + z` one block; each `v_i`
+/// in 0..=10 and `w`, `z` in -10^6..=10^6; then `k` tests `w + z <= c` that move no
+/// interval. The group of `w + z <= c` holds `w` and `z` and each disjunction one of them,
+/// so no part is due by the group (item LAZY-hub-coarse), found by reading the one part of
+/// `z` and not the k parts of `w` (`Block::reframe` in `product.rs`). The scope is the one
+/// made again from no projection. At 12 and 96 it takes 10.6 times the work, with main's rule
+/// as with the fix; at 40 and 320 main already takes 18.0 times the work, in
+/// `Scope::project_part` under `Scope::project_block` at each test (gdb samples), so the
+/// family cannot show the cost of reading the parts: reading the parts of `w` and `z` both
+/// gave the same counts at 40 and 320 (negative control, run once, not committed).
+/// COMPLEXITY.md C52.
+#[test]
+fn tightenings_beside_a_chain_of_disjunctions_scale() {
+    const W: i64 = 1_000_000;
+    let n = 12;
+    let family = |k: usize| {
+        let p = Premises::new();
+        let vs: Vec<String> = (0..=k).map(|i| format!("v{i}")).collect();
+        let mut all: Vec<Arc<str>> = vs.iter().map(|v| Arc::from(v.as_str())).collect();
+        all.extend([Arc::from("w"), Arc::from("z")]);
+        let within = |s: Scope, x: &str, lo: i64, hi: i64| {
+            s.assume(&prim(Prim::Ge, var(x), int(lo)), true, &p).assume(
+                &prim(Prim::Le, var(x), int(hi)),
+                true,
+                &p,
+            )
+        };
+        let mut s = within(within(ints(&all), "w", -W, W), "z", -W, W);
+        for v in &vs {
+            s = within(s, v, 0, 10);
+        }
+        let apart = |a: &str, b: &str, c: &str, d: &str| {
+            or(
+                prim(Prim::Ge, prim(Prim::Sub, var(a), var(b)), int(5)),
+                prim(Prim::Ge, prim(Prim::Sub, var(c), var(d)), int(5)),
+            )
+        };
+        for i in 0..k {
+            s = s.assume(&apart(&vs[i], "w", "w", &vs[i + 1]), true, &p);
+        }
+        s = s.assume(&apart("v0", "z", "z", "v0"), true, &p);
+        let tests: Vec<(Term, bool)> = (1..=k as i64)
+            .map(|j| {
+                let sum = prim(Prim::Add, var("w"), var("z"));
+                (prim(Prim::Le, sum, int(W - 10 - j)), false)
+            })
+            .collect();
+        (s, tests)
+    };
+    let inputs = scaling::inputs(n, family);
+    for k in [n, scaling::FACTOR * n] {
+        let (s, tests) = &inputs[&k];
+        let end = change_one_block(s, tests);
+        assert!(!end.bottom, "k = {k}: the scope became empty");
+        let mut again = end.clone();
+        again.forget_projections();
+        again.reduce();
+        for h in ["w", "z", "v0"] {
+            assert_eq!(end.get(h), again.get(h), "k = {k}: {h}");
+        }
+    }
+    scaling::check("k tightenings beside a chain of k disjunctions", n, |k| {
+        let (s, tests) = &inputs[&k];
+        change_one_block(s, tests);
+    });
+}
+
+/// `v_i - n >= 5 || n - v_i >= 5` for each even `i` and the same on `m` for each odd `i`,
+/// then `k` tests `n + m <= c` that move no interval. The group of `n + m <= c` holds `n` and
+/// `m`, each of k/2 parts, and no part holds both, so no part is due by the group (item
+/// LAZY-hub-coarse); the parts of one of the two are read to find that out
+/// (`Block::reframe` in `product.rs`), O(k) reads per test, O(k^2 log k) in all, beside the
+/// projections each test costs. COMPLEXITY.md C52.
+#[test]
+fn tightenings_of_a_sum_beside_disjunctions_on_each_name_scale() {
+    let n = 12;
+    let family = |k| {
+        tightenings_beside_disjunctions(
+            k,
+            |v| {
+                let i: usize = v[1..].parse().unwrap();
+                let x = if i.is_multiple_of(2) { "n" } else { "m" };
+                or(
+                    prim(Prim::Ge, prim(Prim::Sub, var(v), var(x)), int(5)),
+                    prim(Prim::Ge, prim(Prim::Sub, var(x), var(v)), int(5)),
+                )
+            },
+            |c| prim(Prim::Le, prim(Prim::Add, var("n"), var("m")), int(c)),
+        )
+    };
+    let inputs = scaling::inputs(n, family);
+    scaling::check(
+        "k tightenings of n + m beside k disjunctions each on n or m",
+        n,
+        |k| {
+            let (s, tests) = &inputs[&k];
+            change_one_block(s, tests);
+        },
+    );
+}
+
 /// `let z = x1 + … + xk in if x1 >= 0 { let w1 = z + 1 in if x2 >= 0 { let w2 = z + 2 in … } }`,
 /// ending in `if wk >= 0 { 1 } else { 2 }`: each binding reads the summary of `z`, over `k`
 /// inputs, one more of them narrowed since the last read.

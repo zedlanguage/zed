@@ -12,6 +12,7 @@ use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::instances::Rng;
 use zedc::store::cell::Premises;
 use zedc::store::conjuncts::names as mentioned;
+use zedc::store::interval::IntervalSet;
 use zedc::store::product::Scope;
 
 use super::ints;
@@ -919,9 +920,9 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
         /// The join of the eager arms, checked against the enumeration of the hubs and the
         /// lazy join: empty exactly when no point is left; each leaf's least value that of the
         /// enumeration; each hub holding every value a point gives it; and each name no
-        /// coarser than in the lazy join, so a hub is exact wherever the lazy join's is. A hub
-        /// is not compared with the enumeration's least and greatest values: at seeds 781, 1515
-        /// and 1820 the lazy join's is coarser than them.
+        /// coarser than in the lazy join, so a hub is exact wherever the lazy join's is. Each
+        /// hub, eager and lazy, has the enumeration's least and greatest values as its ends
+        /// (item LAZY-hub-coarse); a hole between them may be lost.
         fn eager_join(&self, trace: &str) -> Scope {
             let p = Premises::new();
             let (ey, en) = self.arms(&self.scope(false, &p), &p);
@@ -946,12 +947,26 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
                 .chain(self.points(&self.no))
                 .collect();
             for (h, at) in [("n", 0), ("m", 1)] {
-                let ints = joined.get(&Arc::from(h)).ints().clone();
-                for p in &points {
-                    let v = if at == 0 { p.0 } else { p.1 };
+                let values: BTreeSet<i64> = points
+                    .iter()
+                    .map(|p| if at == 0 { p.0 } else { p.1 })
+                    .collect();
+                let (lo, hi) = (values.first(), values.last());
+                let ends = IntervalSet::of(*lo.expect("a point"), *hi.expect("a point"));
+                let h: Arc<str> = Arc::from(h);
+                for (how, ints) in [
+                    ("eagerly", joined.get(&h).ints().clone()),
+                    ("lazily", lazy.settled(&h).ints().clone()),
+                ] {
+                    for &v in &values {
+                        assert!(
+                            ints.contains(v),
+                            "{h} is {ints}, holds no {v}, {how} after {trace}"
+                        );
+                    }
                     assert!(
-                        ints.contains(v),
-                        "{h} is {ints}, holds no {v}, eagerly after {trace}"
+                        ints.hull() == ends,
+                        "{h} is {ints}, the enumeration's ends are {ends}, {how} after {trace}"
                     );
                 }
             }
@@ -1052,6 +1067,29 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
         }
     }
 
+    /// Seeds reported with a lazy join's hub coarser than the enumeration (item
+    /// LAZY-hub-coarse). At 781, 1515 and 1820 the ends were past the enumeration's: a test
+    /// on `n + m` or `m - n` after `d1` made no part of `d1` due, since it is on neither of
+    /// `d1`'s terms, so `d1`'s part kept the projection made without it. With that rule the
+    /// eager join, checked first, had `n` in `[-10..=3]` at 781 (ends `[-10..=0]`), `m` in
+    /// `[-5..=10]` at 1515 (ends `[1..=10]`) and `n` in `[-10..=10]` at 1820 (ends
+    /// `[-10..=4]`). A part is now projected again when a group of linked constraints that
+    /// holds two of its variables changes ([`Scope::lazy`]). At 397 and 550 the ends were
+    /// already exact; a hole between them is lost (`n` is `[-10..=4]` at 397, the enumeration
+    /// `[-10..=-9] ∪ [-5..=4]`), which is left open.
+    #[test]
+    fn the_lazy_join_has_the_enumeration_s_ends_at_these_seeds() {
+        for seed in [397, 550, 781, 1_515, 1_820] {
+            let case = Case::of(seed);
+            let trace = case.trace(seed);
+            if case.keeps() {
+                case.run(&trace);
+            } else {
+                case.eager_join(&trace);
+            }
+        }
+    }
+
     /// Random cases of both kinds. Each case's eager join is checked against the enumeration;
     /// a case where neither arm narrows a hub (`Case::keeps`) is also checked by
     /// `Case::run`.
@@ -1129,5 +1167,49 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
     #[test]
     fn seeds_1100_to_1199() {
         part(1_100..1_200);
+    }
+}
+
+/// The program of seed 1820 made small (item LAZY-hub-coarse): within `-10 <= n, m <= 10`,
+/// `m >= 10 || n <= -9` and `n + m <= 14` leave `n` at most `4` (`m == 10` gives `n <= 4`,
+/// `n <= -9` gives less). The bound `n + m <= 14` is on neither term of the disjunction, and
+/// was assumed after it, so the disjunction's part was not projected again and `n` kept
+/// `10`; with the other order, or both tests at once, it was `4`. Each order, eager and lazy,
+/// now gives `n` in `[-10..=4]` and `m` in `[-10..=10]`.
+#[test]
+fn a_bound_on_two_names_of_a_disjunction_assumed_after_it_bounds_its_points() {
+    let ge = |a: Term, k: i64| prim(Prim::Ge, a, int(k));
+    let le = |a: Term, k: i64| prim(Prim::Le, a, int(k));
+    let sum = || prim(Prim::Add, var("n"), var("m"));
+    let dif = || prim(Prim::Sub, var("m"), var("n"));
+    let either = || or(ge(var("m"), 10), le(var("n"), -9));
+    let orders: [(&str, Vec<Term>); 4] = [
+        ("after", vec![either(), le(sum(), 14)]),
+        (
+            "after another bound",
+            vec![either(), ge(dif(), -14), le(sum(), 14)],
+        ),
+        ("before", vec![le(sum(), 14), either()]),
+        ("at once", vec![and(either(), le(sum(), 14))]),
+    ];
+    let p = Premises::new();
+    for (how, tests) in orders {
+        for lazy in [false, true] {
+            let s = ints(&names(&["n", "m"]));
+            let s = if lazy { s.lazy() } else { s };
+            let s = ["n", "m"]
+                .into_iter()
+                .flat_map(|h| [ge(var(h), -10), le(var(h), 10)])
+                .chain(tests.iter().cloned())
+                .fold(s, |s, t| s.assume(&t, true, &p));
+            for (h, lo, hi) in [("n", -10, 4), ("m", -10, 10)] {
+                let ints = s.settled(&Arc::from(h)).ints().clone();
+                assert_eq!(
+                    ints,
+                    IntervalSet::of(lo, hi),
+                    "{h} with the bound {how}, lazy {lazy}"
+                );
+            }
+        }
     }
 }

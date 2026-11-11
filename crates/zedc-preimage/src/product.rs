@@ -67,7 +67,7 @@ use zedc_lattice::lattice::{Congruence, FiniteSet, Lattice};
 use zedc_lattice::revision::{self, Op, reduce_congruence};
 use zedc_presburger::conjuncts::{self, BlockId, Conjuncts, Edge, Uses};
 use zedc_presburger::hull::Hull;
-use zedc_presburger::presburger::{self, Atom, Con, Formula, Lin, Rel};
+use zedc_presburger::presburger::{self, Atom, Con, Factor, Formula, Lin, Rel};
 use zedc_stage::defs::written_name;
 use zedc_stage::stage;
 
@@ -1776,9 +1776,14 @@ pub type PartKey = (Arc<Formula>, Option<Arc<str>>);
 /// compares, as `x - y` in `x - y >= 5 || y - x >= 5` (the box of its terms), or, for the part
 /// of the constraints alone, their conjunction. A part is projected again when an equality,
 /// or a constraint on one of its terms, joins or leaves them, as `-2 <= x - y <= 2` after the
-/// disjunction above, which leaves no value. A constraint on other terms alone does not make
-/// a conjunct's part due, so that a new constraint costs the parts on its term and not the
-/// block's (the walk `v_i + w <= 0 || v_(i+1) - w >= 1` through the shared name `w`). The
+/// disjunction above, which leaves no value. The constraints also hold each group of linked
+/// constraints (`linked`) that holds two variables of the conjunct or more: `n + m <= 14`
+/// bounds the points of `m >= 10 || n <= -9` though it is on neither of its terms (item
+/// LAZY-hub-coarse, where `n` kept `10` for `4`). A group that holds one variable of the
+/// conjunct reaches it only through that variable's interval, which the constraints' own part
+/// gives, so a constraint on other names alone does not make a conjunct's part due, and a new
+/// constraint costs the parts that hold two variables of its group and not the block's (the walk
+/// `v_i + w <= 0 || v_(i+1) - w >= 1` through the shared name `w`). The
 /// constraints are shared, as the key is ([`PartKey`]).
 // Complexity tradeoff: as for [`PartKey`], O(1) for each copy of an entry instead of O(t) for
 // the t terms of the constraints together. COMPLEXITY.md C41.
@@ -1810,6 +1815,98 @@ fn unsigned(c: &Con) -> BTreeMap<Atom, Int> {
     }
 }
 
+/// The variables the atoms of `atoms` are made of: each name and auxiliary variable, alone or
+/// as a factor of a product.
+fn factors_of<'a>(atoms: impl IntoIterator<Item = &'a Atom>) -> BTreeSet<Factor> {
+    let mut out = BTreeSet::new();
+    for a in atoms {
+        match a {
+            Atom::Sym(n) => {
+                out.insert(Factor::Sym(n.clone()));
+            }
+            Atom::Aux(i) => {
+                out.insert(Factor::Aux(*i));
+            }
+            Atom::Product(x, y) => {
+                out.insert(x.clone());
+                out.insert(y.clone());
+            }
+        }
+    }
+    out
+}
+
+/// The variables of `g` ([`factors_of`]).
+fn factors(g: &Formula) -> BTreeSet<Factor> {
+    factors_of(&g.atoms())
+}
+
+/// The constraints among `cons` in groups linked through shared variables (connected
+/// components), each group with its variables and constraints, and the group of each
+/// variable ([`Split::with`]).
+// Complexity tradeoff: union-find by size with path halving over the v variables of the c
+// constraints, O((c + v) log v) with the maps, as the rest of `Split::new`.
+#[allow(clippy::type_complexity)]
+fn linked(cons: &[&Arc<Formula>]) -> (Vec<(BTreeSet<Factor>, Vec<Con>)>, BTreeMap<Factor, usize>) {
+    let mut at: BTreeMap<Factor, usize> = BTreeMap::new();
+    let mut parent: Vec<usize> = Vec::new();
+    let mut size: Vec<usize> = Vec::new();
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let mut seen: Vec<(&Con, usize)> = Vec::new();
+    for g in cons {
+        let Formula::Con(c) = &***g else {
+            continue;
+        };
+        let mut first: Option<usize> = None;
+        for x in factors_of(c.lin.terms.keys()) {
+            let next = parent.len();
+            let i = *at.entry(x).or_insert(next);
+            if i == next {
+                parent.push(i);
+                size.push(1);
+            }
+            match first {
+                None => first = Some(i),
+                Some(f) => {
+                    let (a, b) = (root(&mut parent, f), root(&mut parent, i));
+                    if a != b {
+                        let (big, small) = if size[a] >= size[b] { (a, b) } else { (b, a) };
+                        parent[small] = big;
+                        size[big] += size[small];
+                    }
+                }
+            }
+        }
+        if let Some(f) = first {
+            seen.push((c, f));
+        }
+    }
+    let mut index: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut groups: Vec<(BTreeSet<Factor>, Vec<Con>)> = Vec::new();
+    let mut group: BTreeMap<Factor, usize> = BTreeMap::new();
+    for (x, i) in at {
+        let r = root(&mut parent, i);
+        let next = groups.len();
+        let k = *index.entry(r).or_insert(next);
+        if k == next {
+            groups.push((BTreeSet::new(), Vec::new()));
+        }
+        groups[k].0.insert(x.clone());
+        group.insert(x, k);
+    }
+    for (c, f) in seen {
+        let r = root(&mut parent, f);
+        groups[index[&r]].1.push(c.clone());
+    }
+    (groups, group)
+}
+
 /// What [`split`] makes each part of a set of conjuncts with: their constraints and the leaf.
 /// A block keeps it ([`Block`]), so that a conjunct new to the block gets the part [`split`]
 /// would give it without the others being split again.
@@ -1818,6 +1915,10 @@ struct Split {
     eqs: Arc<[Con]>,
     /// The constraints on each term, either sign, which only the other conjuncts read.
     on: BTreeMap<BTreeMap<Atom, Int>, Vec<Con>>,
+    /// The constraints linked through shared variables ([`factors`]): each group's variables
+    /// and constraints, and the group of each variable ([`Split::with`]).
+    groups: Vec<(BTreeSet<Factor>, Vec<Con>)>,
+    group: BTreeMap<Factor, usize>,
     // Complexity tradeoff: built once per split, O(t) in the t terms of the constraints; the
     // part's key and what it is projected with take a reference to it, O(1), where they took
     // a deep copy each, O(t). COMPLEXITY.md C41.
@@ -1847,9 +1948,12 @@ impl Split {
                 on.entry(unsigned(c)).or_default().push(c.clone());
             }
         }
+        let (groups, group) = linked(cons);
         Split {
             eqs: eqs.into(),
             on,
+            groups,
+            group,
             base: Arc::new(Formula::and(cons.iter().map(|&g| (**g).clone()).collect())),
             least: cons.iter().min().map(|&c| c.clone()),
             leaf: leaf.cloned(),
@@ -1866,15 +1970,40 @@ impl Split {
         )
     }
 
-    /// What the part of `g` is projected with ([`Split::part`]).
+    /// What the part of `g` is projected with ([`Split::part`]): the constraints on the terms
+    /// `g` compares, and each group of linked constraints that holds two variables of `g` or
+    /// more ([`Split::groups`]). A group that holds two of `g`'s variables relates them, as
+    /// `n + m <= 14` relates `n` and `m` in `m >= 10 || n <= -9`, and so can narrow `g`'s
+    /// projection while it moves no interval (`n` in -10..=4, where the box of `n + m` alone
+    /// leaves -10..=10); a group that holds one of them reaches `g` only through that
+    /// variable's interval, which the constraints' own part keeps, and a group that holds none
+    /// does not reach it. Item LAZY-hub-coarse.
+    // Complexity tradeoff: naive version, every constraint of the block in `with`, so that each
+    // constraint added or gone made every part due, O(k) projections for k parts, O(k^2) for k
+    // tests on a term no part compares (the walk through a shared name). Used: the groups that
+    // hold two of `g`'s variables, found from the group of each, O(v log v) for v variables;
+    // the constraints copied are at most those `g` is projected with anyway (`Split::formula`).
+    // COMPLEXITY.md C52.
     fn with(&self, g: &Formula) -> PartWith {
+        let mut held: BTreeMap<usize, usize> = BTreeMap::new();
+        for x in factors(g) {
+            if let Some(&i) = self.group.get(&x) {
+                *held.entry(i).or_insert(0) += 1;
+            }
+        }
         let mut boxed: Vec<Con> = terms(g)
             .iter()
             .filter_map(|t| self.on.get(t))
             .flatten()
+            .chain(
+                held.iter()
+                    .filter(|&(_, &k)| k >= 2)
+                    .flat_map(|(&i, _)| &self.groups[i].1),
+            )
             .cloned()
             .collect();
         boxed.sort_unstable();
+        boxed.dedup();
         let boxed = Formula::and(boxed.into_iter().map(Formula::Con).collect());
         (self.eqs.clone(), Some(Arc::new(boxed)))
     }
@@ -1972,6 +2101,13 @@ struct Block {
     // before, so the order of the map is unchanged. COMPLEXITY.md C44.
     terms: imbl::OrdMap<Arc<BTreeMap<Atom, Int>>, imbl::OrdSet<PartAt>>,
     mentions: imbl::OrdMap<Arc<str>, usize>,
+    /// The parts of the conjuncts that hold each variable ([`factors`]), so that a constraint
+    /// added or gone finds the parts whose group it changes ([`Block::reframe`]).
+    // Complexity tradeoff: naive version, each part kept under each pair of its s variables,
+    // O(s^2 log k) to add, which a disjunction over the 2d names of a chain of accounts pays
+    // at every level (36.4 times the bytes at 8 times the depth). Used: each part under each
+    // of its variables, O(s log k). COMPLEXITY.md C52.
+    vars: imbl::OrdMap<Factor, imbl::OrdSet<PartAt>>,
     /// The parts whose records were taken away or changed since the block was kept
     /// ([`Seen::drop_part`]), due at its next projection.
     forgot: imbl::OrdSet<PartAt>,
@@ -2037,6 +2173,7 @@ impl Block {
             split: Arc::new(split),
             terms: imbl::OrdMap::new(),
             mentions: imbl::OrdMap::new(),
+            vars: imbl::OrdMap::new(),
             forgot: imbl::OrdSet::new(),
             members,
             member_names,
@@ -2146,6 +2283,9 @@ impl Block {
             for n in syms(g) {
                 *self.mentions.entry(n).or_insert(0) += 1;
             }
+            for x in factors(g) {
+                self.vars.entry(x).or_default().insert(at.clone());
+            }
         }
         self.added.push(key.clone());
         let part = Part {
@@ -2189,11 +2329,21 @@ impl Block {
                 }
             }
         }
+        for x in factors(g) {
+            if let Some(ps) = self.vars.get_mut(&x) {
+                ps.remove(at);
+                if ps.is_empty() {
+                    self.vars.remove(&x);
+                }
+            }
+        }
     }
 
     /// Brings the constraints' context up to date after the constraints on the terms `changed`
     /// were added or are gone ([`Block::cons`]), and adds to `due` each part whose
-    /// [`PartWith`] that changes: the constraints' own part and the parts on those terms. The
+    /// [`PartWith`] that changes: the constraints' own part, the parts on those terms, and the
+    /// parts that hold two variables or more of a group of linked constraints ([`linked`]) that
+    /// one of those constraints is in, before or after, found through [`Block::vars`]. The
     /// other parts are projected with what they were ([`PartWith`]) and mention the names
     /// they did, unless the equalities changed, or the constraints gain or lose a name some
     /// conjunct with a part does not mention: then `false`, and the block is to be made anew.
@@ -2223,14 +2373,58 @@ impl Block {
         if let Some((key, _, _)) = self.split.constraints() {
             self.remove_part(&(true, key.0));
         }
+        // The groups each changed constraint was in and is in ([`Split::with`]).
+        let mut groups: BTreeSet<(bool, usize)> = BTreeSet::new();
+        for t in changed {
+            let Some(x) = factors_of(t.keys()).into_iter().next() else {
+                continue;
+            };
+            groups.extend(self.split.group.get(&x).map(|&i| (false, i)));
+            groups.extend(split.group.get(&x).map(|&i| (true, i)));
+        }
+        let vars: BTreeSet<BTreeSet<Factor>> = groups
+            .into_iter()
+            .map(|(now, i)| {
+                let s = if now { &split } else { &*self.split };
+                s.groups[i].0.clone()
+            })
+            .collect();
         self.split = Arc::new(split);
         due.extend(self.add_constraints());
-        let on: BTreeSet<PartAt> = changed
+        let mut on: BTreeSet<PartAt> = changed
             .iter()
             .filter_map(|t| self.terms.get(t))
             .flatten()
             .cloned()
             .collect();
+        // The parts that hold two variables of a changed group or more ([`Block::vars`]). Such
+        // a part holds a variable of the group other than the one with the most parts, so the
+        // parts of the others are read and counted, and a part counted once is due if it also
+        // holds that one.
+        // Complexity tradeoff: naive version, every part of each variable of the group read,
+        // which is O(k) per test for k disjunctions that share one variable with the group
+        // (`n` of `n + m <= c` under `n - v_i >= 5 || n + v_i <= -5`), or a lookup of each pair
+        // of the group's v variables, O(v^2 log k) per test, with an index of O(s^2) pairs for
+        // a part of s variables. Used: the parts of every variable of the group but the one
+        // with the most, O((p + v) log k) for the p parts read, with a lookup in the parts of
+        // that one for each part read once. Two variables of the group that each have k parts
+        // the other lacks still cost O(k) per test (open). COMPLEXITY.md C52.
+        for v in vars.iter().filter(|v| v.len() >= 2) {
+            let count = |x: &Factor| self.vars.get(x).map_or(0, imbl::OrdSet::len);
+            let most = v.iter().max_by_key(|x| count(x));
+            let mut read: BTreeMap<&PartAt, usize> = BTreeMap::new();
+            for x in v.iter().filter(|&x| Some(x) != most) {
+                for at in self.vars.get(x).into_iter().flatten() {
+                    *read.entry(at).or_insert(0) += 1;
+                }
+            }
+            let of_most = most.and_then(|x| self.vars.get(x));
+            for (at, k) in read {
+                if k >= 2 || of_most.is_some_and(|ps| ps.contains(at)) {
+                    on.insert(at.clone());
+                }
+            }
+        }
         for at in on {
             let Some(part) = self.parts.get_mut(&at) else {
                 continue;
