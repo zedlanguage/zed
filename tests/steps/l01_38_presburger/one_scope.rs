@@ -3205,3 +3205,409 @@ fn the_questions_of_a_chain_of_remainders_scale() {
         kept_residue_chain,
     );
 }
+
+fn r6_local_source(family: &str, m: usize) -> String {
+    let mut src = String::new();
+    if family == "leaves" {
+        let mut params = Vec::new();
+        let mut conj = Vec::new();
+        for i in 0..m {
+            src += &format!("a{i}(x: int) = x div 3 + {i};\n");
+            src += &format!("b{i}(x: int) = a{i}(x: x) div 2 + 1;\n");
+            params.push(format!("x{i}: int"));
+            conj.push(format!("b{i}(x: x{i}) > 0"));
+        }
+        src += &format!("t({}) = {};\n", params.join(", "), conj.join(" && "));
+    } else {
+        src += "b0(x: int) = x;\n";
+        src += "b(x: int) = max(b0(x: x) div 2, x - 9);\n";
+        src += "p0(x: int) = b(x: x) + 1;\nq0(x: int) = b(x: x) - 1;\n";
+        for i in 1..m {
+            src += &format!("p{i}(x: int) = p{}(x: x) div 2 + 1;\n", i - 1);
+            src += &format!("q{i}(x: int) = q{}(x: x) div 2 - 1;\n", i - 1);
+            src += &format!("t{i}(x: int) = p{i}(x: x) + q{i}(x: x) > 0;\n");
+        }
+    }
+    src
+}
+
+#[test]
+fn independent_question_frontiers_scale() {
+    questions_scale_unit("independent question frontiers", 100, |n| {
+        r6_local_source("leaves", n)
+    });
+}
+
+#[test]
+fn questions_over_two_branches_of_one_prefix_scale() {
+    questions_scale_unit("two branches of one common prefix", 20, |n| {
+        r6_local_source("prefix", n)
+    });
+}
+
+#[test]
+fn division_by_minimum_i64_has_a_euclidean_remainder() {
+    use zedc::store::presburger::extend::Extending;
+    let src = "f(x: int) = x mod (0 - 9223372036854775808);\n\
+        g(x: int) = x div (0 - 9223372036854775808);\n\
+        t0(x: int) = x == 0 && f(x: x) == 0;\n\
+        t1(x: int) = x == 1 && f(x: x) == 1;\n\
+        t2(x: int) = x == 0 - 1 && f(x: x) == 9223372036854775807;\n\
+        t3(x: int) = x == 1 && g(x: x) == 0;\n\
+        t4(x: int) = x == 0 - 1 && g(x: x) == 1;\n";
+    let unit = elab(src).unwrap();
+    let ls = lets(&unit);
+    let mut scoped = Scoped::new(&ls);
+    let mut ext = Extending::new();
+    let mut checked = 0;
+    for (name, ps, body) in functions(&unit) {
+        if !name.starts_with('t') {
+            continue;
+        }
+        let r = scoped.relation(body, ps, ps, true).unwrap();
+        let got = ext.defined_with(&r, &|n| scoped.def(n), &|f| scoped.interface(f));
+        assert_eq!(got.holds, Ok(true), "{name}");
+        checked += 1;
+    }
+    assert_eq!(checked, 5);
+}
+
+#[test]
+fn periodic_joint_questions_keep_the_input_remainder_in_any_query_order() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use zedc::store::presburger::extend::Extending;
+    for m in [7i64, 1000, 1_000_000_007] {
+        for skip in [false, true] {
+            let mut src = "h0(x: int) = x;\n".to_string();
+            let mut expected = BTreeMap::new();
+            for i in 1..=8 {
+                let h = format!("h{}(x: x)", i - 1);
+                let step = if skip {
+                    format!("if {h} mod {m} == 0 {{ {h} + 1 }} else {{ {h} + 2 }}")
+                } else {
+                    format!("{h} mod {m} + {h}")
+                };
+                src += &format!("h{i}(x: int) = {step};\n");
+                for (j, r, c) in [(0, 0i64, 0i64), (1, 3, 9)] {
+                    let name = format!("t{i}c{j}");
+                    src += &format!("{name}(x: int) = x mod {m} == {r} && h{i}(x: x) == {c};\n");
+                    // Exhaust EVERY integer preimage of c, by the inverse branches of
+                    // the native recurrence. This is a complete oracle, not an x window.
+                    let mut pre = BTreeSet::from([c]);
+                    for _ in 0..i {
+                        let mut next = BTreeSet::new();
+                        for y in pre {
+                            if skip {
+                                if (y - 1).rem_euclid(m) == 0 {
+                                    next.insert(y - 1);
+                                }
+                                if (y - 2).rem_euclid(m) != 0 {
+                                    next.insert(y - 2);
+                                }
+                            } else {
+                                let q = y.div_euclid(m);
+                                for quotient in [q - 1, q] {
+                                    let twice = y - m * quotient;
+                                    if twice >= 0 && twice <= 2 * (m - 1) && twice % 2 == 0 {
+                                        next.insert(m * quotient + twice / 2);
+                                    }
+                                }
+                            }
+                        }
+                        pre = next;
+                    }
+                    expected.insert(name, pre.iter().any(|x| x.rem_euclid(m) == r));
+                }
+            }
+            let unit = elab(&src).unwrap();
+            let ls = lets(&unit);
+            let functions: Vec<_> = functions(&unit)
+                .into_iter()
+                .filter(|(name, _, _)| name.starts_with('t'))
+                .collect();
+            for mode in 0..3 {
+                let mut scoped = Scoped::new(&ls);
+                let mut ext = Extending::new();
+                let order: Vec<_> = if mode == 1 {
+                    (0..functions.len()).rev().collect()
+                } else {
+                    (0..functions.len()).collect()
+                };
+                for i in order {
+                    if mode == 2 {
+                        scoped = Scoped::new(&ls);
+                        ext = Extending::new();
+                    }
+                    let (name, ps, body) = functions[i];
+                    let q = scoped.relation(body, ps, ps, true).unwrap();
+                    let a = ext.defined_with(&q, &|n| scoped.def(n), &|f| scoped.interface(f));
+                    assert_eq!(
+                        a.holds,
+                        Ok(expected[name]),
+                        "{name}, M={m}, skip={skip}, mode={mode}"
+                    );
+                    assert_eq!(a.fails, Ok(true));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn monotone_clamp_equalities_match_inverse_cuts_in_any_query_order() {
+    use std::collections::BTreeMap;
+    use zedc::store::presburger::extend::Extending;
+    let literal = |c: i128| {
+        if c < 0 {
+            format!("(0 - {})", -c)
+        } else {
+            c.to_string()
+        }
+    };
+    for (a, b, offset) in [(5i128, 7i128, -9i128), (1, 3, 4), (7, 11, 0)] {
+        let mut src = "h0(x: int) = x;\n".to_string();
+        let mut expected = BTreeMap::new();
+        for k in 1..=8 {
+            let h = format!("h{}(x: x)", k - 1);
+            src += &format!(
+                "h{k}(x: int) = max({h} div 2, x div {a} + x div {b} + {});\n",
+                literal(offset)
+            );
+            let value = |x: i128| {
+                let bound = x.div_euclid(a) + x.div_euclid(b) + offset;
+                let mut h = x;
+                for _ in 0..k {
+                    h = h.div_euclid(2).max(bound);
+                }
+                h
+            };
+            let cut = |c: i128| {
+                let mut lo = -1;
+                let mut hi = 1;
+                while value(lo) >= c {
+                    lo *= 2;
+                }
+                while value(hi) < c {
+                    hi *= 2;
+                }
+                while hi - lo > 1 {
+                    let mid = (hi + lo).div_euclid(2);
+                    if value(mid) >= c {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+                hi
+            };
+            for (j, c) in [-12i128, -9, -1, 0, 1, 9, 12].into_iter().enumerate() {
+                let name = format!("t{k}c{j}");
+                src += &format!("{name}(x: int) = h{k}(x: x) == {};\n", literal(c));
+                expected.insert(name, cut(c) < cut(c + 1));
+            }
+            let name = format!("t{k}joint");
+            src += &format!(
+                "{name}(x: int) = x == 0 && h{k}(x: x) == {};\n",
+                literal(value(0))
+            );
+            expected.insert(name, true);
+        }
+        let unit = elab(&src).unwrap();
+        let ls = lets(&unit);
+        let functions: Vec<_> = functions(&unit)
+            .into_iter()
+            .filter(|(n, _, _)| n.starts_with('t'))
+            .collect();
+        for mode in 0..3 {
+            let mut scoped = Scoped::new(&ls);
+            let mut ext = Extending::new();
+            let order: Vec<_> = if mode == 1 {
+                (0..functions.len()).rev().collect()
+            } else {
+                (0..functions.len()).collect()
+            };
+            for i in order {
+                if mode == 2 {
+                    scoped = Scoped::new(&ls);
+                    ext = Extending::new();
+                }
+                let (name, ps, body) = functions[i];
+                let q = scoped.relation(body, ps, ps, true).unwrap();
+                let answer = ext.defined_with(&q, &|n| scoped.def(n), &|f| scoped.interface(f));
+                assert_eq!(
+                    answer.holds,
+                    Ok(expected[name]),
+                    "{name} a={a} b={b} C={offset} mode={mode}"
+                );
+                assert_eq!(answer.fails, Ok(true));
+            }
+        }
+    }
+}
+
+fn r6_periodic_value_questions(n: usize, step: &str, test: &str) -> String {
+    let mut src = "h0(x: int) = x;\n".to_string();
+    for i in 1..=n {
+        let previous = format!("h{}(x: x)", i - 1);
+        src += &format!("h{i}(x: int) = {};\n", step.replace('H', &previous));
+        let current = format!("h{i}(x: x)");
+        src += &format!(
+            "t{i}(x: int) = {};\n",
+            test.replace('H', &current).replace('P', &previous)
+        );
+    }
+    src
+}
+
+#[test]
+fn scalar_images_of_periodic_chains_scale() {
+    questions_scale_unit("scalar image of guarded increments", 10, |n| {
+        r6_periodic_value_questions(n, "if H mod 1000 == 0 { H + 1 } else { H + 2 }", "H == 9")
+    });
+    questions_scale_unit("scalar lattice image of a remainder sum", 10, |n| {
+        r6_periodic_value_questions(n, "H mod 1000 + H", "H == 0")
+    });
+}
+
+#[test]
+fn period_orbits_with_a_kept_input_remainder_scale() {
+    questions_scale_unit("guarded increment orbit with kept input residue", 10, |n| {
+        r6_periodic_value_questions(
+            n,
+            "if H mod 1000 == 0 { H + 1 } else { H + 2 }",
+            "x mod 1000 == 3 && H == 9",
+        )
+    });
+    questions_scale_unit("remainder-sum orbit with kept input residue", 10, |n| {
+        r6_periodic_value_questions(n, "H mod 1000 + H", "x mod 1000 == 3 && H == 9")
+    });
+    questions_scale_unit(
+        "guarded increment orbit with previous link residue",
+        10,
+        |n| {
+            r6_periodic_value_questions(
+                n,
+                "if H mod 1000 == 0 { H + 1 } else { H + 2 }",
+                "P mod 1000 == 3 && H == 5",
+            )
+        },
+    );
+    questions_scale_unit("remainder-sum orbit with previous link residue", 10, |n| {
+        r6_periodic_value_questions(n, "H mod 1000 + H", "P mod 1000 == 3 && H == 6")
+    });
+}
+
+#[test]
+fn periodic_adjacent_questions_keep_the_previous_link_remainder_in_any_order() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use zedc::store::presburger::extend::Extending;
+    for m in [7i64, 1000, 1_000_000_007] {
+        for skip in [false, true] {
+            let step = |h: i64| {
+                if skip {
+                    h + if h.rem_euclid(m) == 0 { 1 } else { 2 }
+                } else {
+                    h + h.rem_euclid(m)
+                }
+            };
+            let mut src = "h0(x: int) = x;\n".to_string();
+            let mut expected = BTreeMap::new();
+            for k in 1..=8 {
+                let h = format!("h{}(x: x)", k - 1);
+                let update = if skip {
+                    format!("if {h} mod {m} == 0 {{ {h} + 1 }} else {{ {h} + 2 }}")
+                } else {
+                    format!("{h} mod {m} + {h}")
+                };
+                src += &format!("h{k}(x: int) = {update};\n");
+                for (j, c, r) in [(0, 0i64, 0i64), (1, 5, 3), (2, 6, 3), (3, 9, 3)] {
+                    let name = format!("t{k}c{j}");
+                    src += &format!("{name}(x: int) = {h} mod {m} == {r} && h{k}(x: x) == {c};\n");
+                    let mut pre = BTreeSet::from([c]);
+                    for i in 0..k {
+                        let mut next = BTreeSet::new();
+                        for y in pre {
+                            if skip {
+                                if (y - 1).rem_euclid(m) == 0 {
+                                    next.insert(y - 1);
+                                }
+                                if (y - 2).rem_euclid(m) != 0 {
+                                    next.insert(y - 2);
+                                }
+                            } else {
+                                let q = y.div_euclid(m);
+                                for quotient in [q - 1, q] {
+                                    let twice = y - m * quotient;
+                                    if twice >= 0 && twice <= 2 * (m - 1) && twice % 2 == 0 {
+                                        next.insert(m * quotient + twice / 2);
+                                    }
+                                }
+                            }
+                        }
+                        if i == 0 {
+                            next.retain(|h| h.rem_euclid(m) == r);
+                        }
+                        pre = next;
+                    }
+                    expected.insert(name, !pre.is_empty());
+                }
+                let name = format!("t{k}future");
+                src += &format!("{name}(x: int) = {h} == 9 && h{k}(x: x) mod {m} == 3;\n");
+                let mut pre = BTreeSet::from([9i64]);
+                for _ in 0..k - 1 {
+                    let mut next = BTreeSet::new();
+                    for y in pre {
+                        if skip {
+                            if (y - 1).rem_euclid(m) == 0 {
+                                next.insert(y - 1);
+                            }
+                            if (y - 2).rem_euclid(m) != 0 {
+                                next.insert(y - 2);
+                            }
+                        } else {
+                            let q = y.div_euclid(m);
+                            for quotient in [q - 1, q] {
+                                let twice = y - m * quotient;
+                                if twice >= 0 && twice <= 2 * (m - 1) && twice % 2 == 0 {
+                                    next.insert(m * quotient + twice / 2);
+                                }
+                            }
+                        }
+                    }
+                    pre = next;
+                }
+                expected.insert(name, !pre.is_empty() && step(9).rem_euclid(m) == 3);
+            }
+            let unit = elab(&src).unwrap();
+            let ls = lets(&unit);
+            let functions: Vec<_> = functions(&unit)
+                .into_iter()
+                .filter(|(name, _, _)| name.starts_with('t'))
+                .collect();
+            for mode in 0..3 {
+                let mut scoped = Scoped::new(&ls);
+                let mut ext = Extending::new();
+                let order: Vec<_> = if mode == 1 {
+                    (0..functions.len()).rev().collect()
+                } else {
+                    (0..functions.len()).collect()
+                };
+                for i in order {
+                    if mode == 2 {
+                        scoped = Scoped::new(&ls);
+                        ext = Extending::new();
+                    }
+                    let (name, ps, body) = functions[i];
+                    let q = scoped.relation(body, ps, ps, true).unwrap();
+                    let answer = ext.defined_with(&q, &|n| scoped.def(n), &|f| scoped.interface(f));
+                    assert_eq!(
+                        answer.holds,
+                        Ok(expected[name]),
+                        "{name} M={m} skip={skip} mode={mode}"
+                    );
+                    assert_eq!(answer.fails, Ok(true));
+                }
+            }
+        }
+    }
+}

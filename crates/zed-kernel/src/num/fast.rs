@@ -1363,6 +1363,11 @@ fn half_leaf(a: &BigInt, b: &BigInt, k: u64) -> (u64, Mat) {
     (j, Mat([m00, m01, m10, m11].map(BigInt::from)))
 }
 
+#[cfg(test)]
+thread_local! {
+    static STEIN_ACCEPTED_SHIFT: std::cell::Cell<u32> = const {std::cell::Cell::new(0)};
+    static STEIN_REJECTED_SHIFT: std::cell::Cell<u32> = const {std::cell::Cell::new(0)};
+}
 /// 2-adic Lehmer binary gcd on the positive odd parts `a >> za` and `b >> zb`: each outer pass
 /// advances up to 30 halving steps in 128-bit registers from the low 128 bits (`[[m00, m01],
 /// [m10, m11]]` with `|m_ij| < 2^62`, determinant `+-2^(2j)`) and applies the resulting signed
@@ -1507,6 +1512,8 @@ fn stein_odd(a: &BigUint, za: u64, b: &BigUint, zb: u64) -> BigUint {
         while y != 0 {
             let tz = y.trailing_zeros();
             if j + tz > 30 {
+                #[cfg(test)]
+                STEIN_REJECTED_SHIFT.with(|v| v.set(v.get().max(j + tz)));
                 break;
             }
             let y1 = y >> tz;
@@ -1531,6 +1538,8 @@ fn stein_odd(a: &BigUint, za: u64, b: &BigUint, zb: u64) -> BigUint {
                 (m01 << tz) + q * m11,
             );
             j += tz;
+            #[cfg(test)]
+            STEIN_ACCEPTED_SHIFT.with(|v| v.set(v.get().max(j)));
         }
         if j == 0 {
             sub_shr_odd(&mut u, &v);
@@ -2762,5 +2771,25 @@ mod tests {
             }
         }
         eprintln!("R5 gcd independent comparisons={checked}");
+    }
+    #[test]
+    fn binary_leaf_exercises_both_sides_of_the_register_shift_bound() {
+        use num_integer::Integer;
+        let x = (BigUint::one() << 256usize) + 1u32;
+        for shift in [30usize, 31] {
+            STEIN_ACCEPTED_SHIFT.with(|v| v.set(0));
+            STEIN_REJECTED_SHIFT.with(|v| v.set(0));
+            let y = &x + (BigUint::one() << shift);
+            assert_eq!(stein_odd(&x, 0, &y, 0), x.gcd(&y));
+            let accepted = STEIN_ACCEPTED_SHIFT.with(|v| v.get());
+            let rejected = STEIN_REJECTED_SHIFT.with(|v| v.get());
+            assert!(accepted <= 30);
+            if shift == 30 {
+                assert_eq!(accepted, 30);
+            } else {
+                assert!(rejected >= 31);
+            }
+            eprintln!("gcd boundary shift={shift}, accepted={accepted}, rejected={rejected}");
+        }
     }
 }

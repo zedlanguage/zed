@@ -44,8 +44,10 @@ use super::{
 use zedc_int::int::Int;
 
 mod holes;
+mod images;
 mod residues;
 use holes::{Holes, hole_of};
+use images::ScalarImages;
 use residues::{Reading, unit_classes};
 
 /// Whether a formula holds somewhere and whether its negation does, each with the refusal that
@@ -126,15 +128,18 @@ pub struct Extending {
 /// The definitions a definition reaches, projected exactly ([`Summary`]): by the definition (the
 /// formula `def` gives, held as a key, so that the quotient and the remainder it defines share
 /// it) and the atoms kept beside its own variables, `None` where none is made; and the
-/// symbols, cone and non-leaf cone of each definition ([`Summaries::syms`]).
+/// free input atoms (including opaque products), cone and non-leaf cone of each definition
+/// ([`Summaries::syms`]).
 #[derive(Default)]
 struct Summaries {
+    images: ScalarImages,
     rays: Rays,
     by: HashMap<Key, Option<Summary>>,
     syms: HashMap<Id, Arc<imbl::OrdSet<Atom>>>,
     cone: HashMap<Id, Arc<imbl::OrdSet<Id>>>,
     branch_cone: HashMap<Id, Arc<imbl::OrdSet<Id>>>,
     branch_roots: HashMap<Id, Arc<imbl::OrdSet<Id>>>,
+    functional_leaves: HashMap<Id, Arc<imbl::OrdSet<Id>>>,
     cyclic: HashSet<Id>,
 }
 
@@ -2420,6 +2425,9 @@ fn decide_defined(
     f: Formula,
     def: &dyn Fn(u32) -> Formula,
 ) -> Result<bool, Refusal> {
+    if let Some(answer) = sums.images.answer(&f, def) {
+        return Ok(answer);
+    }
     if sums.rays.holds(&f, def) {
         return Ok(true);
     }
@@ -2470,7 +2478,7 @@ impl Rays {
             _ => return false,
         };
         if row.lin.terms.len() != 1 {
-            return false;
+            return self.same_sign_sum(row, def);
         }
         let (a, k) = row.lin.terms.first_key_value().expect("one term");
         if k.is_zero() {
@@ -2517,6 +2525,69 @@ impl Rays {
         }
         self.ensure_total(root, def);
         self.total.get(&id) == Some(&true)
+    }
+
+    // Complexity tradeoff: a question adding two branches over one prefix forced a
+    // whole depth-i decision at every i (I37), even when their sum is cofinal. For a
+    // same-sign sum, combine qualitative bounds along the SAME common-symbol ray:
+    // every term must have the needed bound and one must diverge. Then prove every
+    // reached definition total, on demand and once. O(T) bound probes per query plus
+    // cached DAG/local-proof work; no growing coefficient composition. Mixed-sign
+    // sums and products decline before allocating, keeping the old relational path.
+    fn same_sign_sum(&mut self, row: &Con, def: &dyn Fn(u32) -> Formula) -> bool {
+        let Some((_, first)) = row.lin.terms.first_key_value() else {
+            return false;
+        };
+        if row.lin.terms.iter().any(|(a, k)| {
+            !matches!(a, Atom::Aux(_)) || k.is_zero() || k.is_positive() != first.is_positive()
+        }) {
+            return false;
+        }
+        let mut roots = Vec::new();
+        let mut seen = HashSet::new();
+        for a in row.lin.terms.keys() {
+            let Atom::Aux(n) = a else { unreachable!() };
+            let root = def(*n);
+            if free(&root) {
+                return false;
+            }
+            let id = Id::any(&root);
+            if self.rejected_shape.contains(&(id, a.clone())) {
+                return false;
+            }
+            if !self.by.contains_key(&id) && !Self::consistent_slopes(&root, a) {
+                self.rejected_shape.insert((id, a.clone()));
+                return false;
+            }
+            if seen.insert(id) {
+                self.ensure(root.clone(), def);
+                roots.push((id, root));
+            }
+        }
+        let side = |lower: bool| {
+            (0..2).any(|direction| {
+                let mut divergent = false;
+                for a in row.lin.terms.keys() {
+                    let Some(b) = self.bound(a, direction, def) else {
+                        return false;
+                    };
+                    let Some(d) = (if lower { b.lower } else { b.upper }) else {
+                        return false;
+                    };
+                    divergent |= d;
+                }
+                divergent
+            })
+        };
+        if !side(true) || !side(false) {
+            return false;
+        }
+        for (_, root) in &roots {
+            self.ensure_total(root.clone(), def);
+        }
+        roots
+            .iter()
+            .all(|(id, _)| self.total.get(id) == Some(&true))
     }
 
     // Complexity tradeoff: building a sign map and a visited DAG walk just to reject
@@ -3420,7 +3491,10 @@ impl Summaries {
             let mut nodes: HashMap<Id, Vec<usize>> = HashMap::new();
             let mut syms: HashMap<Atom, Vec<usize>> = HashMap::new();
             for (i, d) in frontier.iter().enumerate() {
-                for id in self.branch_roots[&d.id].iter() {
+                for id in self.branch_roots[&d.id]
+                    .iter()
+                    .chain(self.functional_leaves[&d.id].iter())
+                {
                     nodes.entry(*id).or_default().push(i);
                 }
                 for a in self.syms[&d.id].iter() {
@@ -3428,43 +3502,46 @@ impl Summaries {
                 }
             }
             let defined: HashSet<u32> = beside.iter().flat_map(|d| d.own.iter().copied()).collect();
-            let owners = |a: &Atom| -> Vec<usize> {
+            // Complexity tradeoff: symbol lookup nominated all F frontiers for each
+            // of F distinct functional leaves over x (I45), and missed constant leaves
+            // altogether (I43). Index exact functional-leaf identities with branch roots.
+            // Route non-leaves by branch roots and functional leaves by their own anchor,
+            // confirming membership in the cone. Borrow symbol-owner lists instead of
+            // cloning them for every product. Work is indexed/candidate incidences plus
+            // set/map probes; arbitrary DAG metadata retains its unshared-content cost.
+            let owners = |a: &Atom| -> std::borrow::Cow<'_, [usize]> {
+                use std::borrow::Cow;
                 match a {
-                    Atom::Aux(n) if defined.contains(n) || own.contains(a) => Vec::new(),
+                    Atom::Aux(n) if defined.contains(n) || own.contains(a) => Cow::Borrowed(&[]),
                     Atom::Aux(n) => {
                         let f = def(*n);
                         if free(&f) {
-                            return syms.get(a).cloned().unwrap_or_default();
+                            return Cow::Borrowed(syms.get(a).map_or(&[], Vec::as_slice));
                         }
                         let id = Id::any(&f);
                         let mut candidates = BTreeSet::new();
                         if let Some(roots) = self.branch_roots.get(&id) {
-                            if roots.is_empty() {
-                                // Functional leaves have no branch root. Their symbols find
-                                // possible owners; cone membership confirms each candidate.
-                                if let Some(ss) = self.syms.get(&id) {
-                                    for a in ss.iter() {
-                                        if let Some(ids) = syms.get(a) {
-                                            candidates.extend(ids);
-                                        }
-                                    }
-                                }
+                            let anchors = if roots.is_empty() {
+                                &self.functional_leaves[&id]
                             } else {
-                                for root in roots.iter() {
-                                    if let Some(ids) = nodes.get(root) {
-                                        candidates.extend(ids);
-                                    }
+                                roots
+                            };
+                            for root in anchors.iter() {
+                                if let Some(ids) = nodes.get(root) {
+                                    candidates.extend(ids);
                                 }
                             }
                         }
-                        candidates
-                            .into_iter()
-                            .filter(|&&i| self.cone[&frontier[i].id].contains(&id))
-                            .copied()
-                            .collect()
+                        Cow::Owned(
+                            candidates
+                                .into_iter()
+                                .filter(|&&i| self.cone[&frontier[i].id].contains(&id))
+                                .copied()
+                                .collect(),
+                        )
                     }
-                    Atom::Sym(_) => syms.get(a).cloned().unwrap_or_default(),
-                    Atom::Product(..) => Vec::new(),
+                    Atom::Sym(_) => Cow::Borrowed(syms.get(a).map_or(&[], Vec::as_slice)),
+                    Atom::Product(..) => Cow::Borrowed(&[]),
                 }
             };
             let mut buckets = vec![BTreeSet::new(); frontier.len()];
@@ -3478,24 +3555,27 @@ impl Summaries {
                     Atom::Product(f, g) => {
                         let left = owners(&f.atom());
                         let right = owners(&g.atom());
-                        let mut both = Vec::new();
-                        let (mut i, mut j) = (0, 0);
-                        while i < left.len() && j < right.len() {
-                            match left[i].cmp(&right[j]) {
-                                std::cmp::Ordering::Less => i += 1,
-                                std::cmp::Ordering::Greater => j += 1,
-                                std::cmp::Ordering::Equal => {
-                                    both.push(left[i]);
-                                    i += 1;
-                                    j += 1;
-                                }
-                            }
-                        }
-                        both
+                        // Complexity tradeoff: a two-pointer intersection scans a
+                        // shared symbol's F owners for each of P products with one
+                        // private factor, O(P*F) for P kept outputs (I45). Iterate the
+                        // smaller owner list and binary-search the other, O(min(A,B)
+                        // log(max(A,B)+1)), without copying a shared symbol-owner list.
+                        let (small, large) = if left.len() <= right.len() {
+                            (&left, &right)
+                        } else {
+                            (&right, &left)
+                        };
+                        std::borrow::Cow::Owned(
+                            small
+                                .iter()
+                                .copied()
+                                .filter(|i| large.binary_search(i).is_ok())
+                                .collect::<Vec<_>>(),
+                        )
                     }
                     _ => owners(a),
                 };
-                for i in ids {
+                for &i in ids.iter() {
                     buckets[i].insert(a.clone());
                 }
             }
@@ -3515,6 +3595,16 @@ impl Summaries {
                 Some(bs) => self.key(h, &bs[i], own, &[], &[], def),
                 None => self.key(h, reads, own, &full_keep, &beside, def),
             };
+            #[cfg(test)]
+            if bucketed.is_some() && KEY_AUDIT.with(|v| v.get()) {
+                let reference = self.key(h, reads, own, &full_keep, &beside, def).ok();
+                assert_eq!(
+                    key.as_ref().ok(),
+                    reference.as_ref(),
+                    "bucket key differs from original key"
+                );
+                KEY_AUDITS.with(|v| v.set(v.get() + 1));
+            }
             let k = match key {
                 Ok(k) => k,
                 Err(n) => return Local::Need(n),
@@ -3594,8 +3684,9 @@ impl Summaries {
         Ok((h.id, out.into_iter().collect()))
     }
 
-    /// Finds the symbols, cone and non-leaf cone of the definition `h`: those it reads and those
-    /// of the definitions it reaches, each definition's found once and remembered, after its
+    /// Finds free inputs (symbols, free auxiliaries and opaque products with their free
+    /// factors), the cone and non-leaf cone of `h`: those it reads and those of the
+    /// definitions it reaches, each definition's found once and remembered, after its
     /// distinct inputs': an explicit stack, since the chain is as deep as the program. Each
     /// definition on the stack holds its distinct inputs (`seen_in`, LOAD-max-div-xr I24), read
     /// once, and the place of the next one to visit, so that every input is visited before the
@@ -3677,13 +3768,17 @@ impl Summaries {
                 .filter_map(|d| self.syms.get(&Id::any(d)))
                 .collect();
             sets.sort_by_key(|s| std::cmp::Reverse(s.len()));
+            // Complexity tradeoff: checking every frontier pair for every opaque product
+            // costs O(F^2 P). Carry products in the existing persistent input sets so the
+            // shared-input index routes them with symbols, O(t) candidates for t atom
+            // occurrences plus shared_set_union's bound. Dropping P lost correlation even
+            // when its factors were present (I48); reads already expands those factors.
             let mine: Vec<Atom> = top
                 .atoms
                 .iter()
                 .filter(|a| match a {
-                    Atom::Sym(_) => true,
+                    Atom::Sym(_) | Atom::Product(..) => true,
                     Atom::Aux(n) => free(&def(*n)),
-                    Atom::Product(..) => false,
                 })
                 .cloned()
                 .collect();
@@ -3730,6 +3825,8 @@ impl Summaries {
             };
             if is_func_sym_leaf(&d) {
                 self.branch_roots.insert(id, Arc::new(imbl::OrdSet::new()));
+                self.functional_leaves
+                    .insert(id, Arc::new(imbl::OrdSet::unit(id)));
                 continue;
             }
             let mut seen = HashSet::new();
@@ -3756,6 +3853,18 @@ impl Summaries {
                     roots = Arc::new(imbl::OrdSet::unit(id));
                 }
                 self.branch_roots.insert(id, roots);
+                // Complexity tradeoff: checking every functional leaf through its symbols against every
+                // frontier would restore O(F*A) key probes. Propagate persistent sets of
+                // functional-leaf identities with the root traversal and index their owner
+                // incidences once. Cost is directed-union work plus indexed incidences;
+                // empty sets share one input. This reproduces key even for zero-symbol
+                // functional interfaces, without a size cutoff (I43/I45).
+                let constants = inputs
+                    .iter()
+                    .map(|g| &self.functional_leaves[&Id::any(g)])
+                    .collect();
+                self.functional_leaves
+                    .insert(id, shared_set_union(constants, std::iter::empty()));
             }
         }
     }
@@ -4184,6 +4293,8 @@ thread_local! {
     /// Rows read to make the rests of the forms of a piece in [`merge_pieces`] (tests of its
     /// cost only).
     static FRONTIER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static KEY_AUDIT: std::cell::Cell<bool> = const {std::cell::Cell::new(false)};
+    static KEY_AUDITS: std::cell::Cell<usize> = const {std::cell::Cell::new(0)};
     static FOLD_ROW_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static REST_ROW_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -4801,6 +4912,150 @@ fn normalize_own_leaf(
     Some(out)
 }
 
+// Complexity tradeoff: recomputing the other t-1 contributions for each of t
+// bounded atoms cost O(t²) arithmetic operations without producing t² outputs.
+// Maintain lower/upper row totals and update the changed atom's contribution in
+// place: O(t log t) tree probes and O(t) arithmetic operations, O(t) stored contributions (replacing the old cloned atom list).
+// This reproduces the old in-place atom order exactly, including bounds tightened
+// earlier in the same row; it is not a simultaneous/weaker propagation sweep.
+fn tighten_bounded_row(row: &Con, bounds: &mut BTreeMap<Atom, (Int, Int)>) -> bool {
+    let ceil_div = |x: &Int, g: &Int| -(&(-x).div_floor(g));
+    let contribution = |k: &Int, b: &(Int, Int)| {
+        if k.is_positive() {
+            (k * &b.0, k * &b.1)
+        } else {
+            (k * &b.1, k * &b.0)
+        }
+    };
+    let (mut total_lo, mut total_hi) = (row.lin.constant.clone(), row.lin.constant.clone());
+    let contributions: Vec<_> = row
+        .lin
+        .terms
+        .iter()
+        .map(|(a, k)| {
+            let (lo, hi) = contribution(k, &bounds[a]);
+            total_lo = &total_lo + &lo;
+            total_hi = &total_hi + &hi;
+            (a, k, lo, hi)
+        })
+        .collect();
+    for (a, ka, old_lo, old_hi) in contributions {
+        let rest_lo = &total_lo - &old_lo;
+        let rest_hi = &total_hi - &old_hi;
+        let g = ka.abs();
+        let entry = bounds.get_mut(a).expect("bounded leaf");
+        let old = entry.clone();
+        match (row.rel, ka.is_positive()) {
+            (Rel::Ge, true) => {
+                let lo = ceil_div(&(-&rest_hi), &g);
+                if lo > entry.0 {
+                    entry.0 = lo;
+                }
+            }
+            (Rel::Ge, false) => {
+                let hi = rest_hi.div_floor(&g);
+                if hi < entry.1 {
+                    entry.1 = hi;
+                }
+            }
+            (Rel::Eq, true) => {
+                let lo = ceil_div(&(-&rest_hi), &g);
+                let hi = (-&rest_lo).div_floor(&g);
+                if lo > entry.0 {
+                    entry.0 = lo;
+                }
+                if hi < entry.1 {
+                    entry.1 = hi;
+                }
+            }
+            (Rel::Eq, false) => {
+                let lo = ceil_div(&rest_lo, &g);
+                let hi = rest_hi.div_floor(&g);
+                if lo > entry.0 {
+                    entry.0 = lo;
+                }
+                if hi < entry.1 {
+                    entry.1 = hi;
+                }
+            }
+        }
+        if entry.0 > entry.1 {
+            return false;
+        }
+        if *entry != old {
+            let (lo, hi) = contribution(ka, entry);
+            total_lo = &(&total_lo - &old_lo) + &lo;
+            total_hi = &(&total_hi - &old_hi) + &hi;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+fn tighten_bounded_row_slow(row: &Con, rem_bounds: &mut BTreeMap<Atom, (Int, Int)>) -> bool {
+    let ceil_div = |x: &Int, g: &Int| -(&(-x).div_floor(g));
+    let atoms: Vec<(Atom, Int)> = (row.lin.terms.iter())
+        .map(|(a, k)| (a.clone(), k.clone()))
+        .collect();
+    for (a, ka) in &atoms {
+        let mut rest_lo = row.lin.constant.clone();
+        let mut rest_hi = row.lin.constant.clone();
+        for (b, kb) in &atoms {
+            if b == a {
+                continue;
+            }
+            let (lb, hb) = &rem_bounds[b];
+            if kb.is_positive() {
+                rest_lo = &rest_lo + &(kb * lb);
+                rest_hi = &rest_hi + &(kb * hb);
+            } else {
+                rest_lo = &rest_lo + &(kb * hb);
+                rest_hi = &rest_hi + &(kb * lb);
+            }
+        }
+        let g = ka.abs();
+        let entry = rem_bounds.get_mut(a).expect("bounded leaf");
+        match (row.rel, ka.is_positive()) {
+            (Rel::Ge, true) => {
+                let lo = ceil_div(&(-&rest_hi), &g);
+                if lo > entry.0 {
+                    entry.0 = lo;
+                }
+            }
+            (Rel::Ge, false) => {
+                let hi = rest_hi.div_floor(&g);
+                if hi < entry.1 {
+                    entry.1 = hi;
+                }
+            }
+            (Rel::Eq, true) => {
+                let lo = ceil_div(&(-&rest_hi), &g);
+                let hi = (-&rest_lo).div_floor(&g);
+                if lo > entry.0 {
+                    entry.0 = lo;
+                }
+                if hi < entry.1 {
+                    entry.1 = hi;
+                }
+            }
+            (Rel::Eq, false) => {
+                let lo = ceil_div(&rest_lo, &g);
+                let hi = rest_hi.div_floor(&g);
+                if lo > entry.0 {
+                    entry.0 = lo;
+                }
+                if hi < entry.1 {
+                    entry.1 = hi;
+                }
+            }
+        }
+        if entry.0 > entry.1 {
+            return false;
+        }
+    }
+    true
+}
+
 /// `rows` split on the integer values of the narrowest finitely bounded periodic quotient-offset
 /// form `Q = q + sum c_i * b_i` (`q` an uneliminated non-leaf variable, one or more `b_i`
 /// unbounded kept leaf variables), when projecting `rows` onto `{q}` and the kept leaf variables
@@ -4947,64 +5202,8 @@ fn quotient_offsets(
                         return Some(Vec::new());
                     }
                 }
-                let atoms: Vec<(Atom, Int)> = (r.lin.terms.iter())
-                    .map(|(a, k)| (a.clone(), k.clone()))
-                    .collect();
-                for (a, ka) in &atoms {
-                    let mut rest_lo = r.lin.constant.clone();
-                    let mut rest_hi = r.lin.constant.clone();
-                    for (b, kb) in &atoms {
-                        if b == a {
-                            continue;
-                        }
-                        let (lb, hb) = &rem_bounds[b];
-                        if kb.is_positive() {
-                            rest_lo = &rest_lo + &(kb * lb);
-                            rest_hi = &rest_hi + &(kb * hb);
-                        } else {
-                            rest_lo = &rest_lo + &(kb * hb);
-                            rest_hi = &rest_hi + &(kb * lb);
-                        }
-                    }
-                    let g = ka.abs();
-                    let entry = rem_bounds.get_mut(a).expect("bounded leaf");
-                    match (r.rel, ka.is_positive()) {
-                        (Rel::Ge, true) => {
-                            let lo = ceil_div(&(-&rest_hi), &g);
-                            if lo > entry.0 {
-                                entry.0 = lo;
-                            }
-                        }
-                        (Rel::Ge, false) => {
-                            let hi = rest_hi.div_floor(&g);
-                            if hi < entry.1 {
-                                entry.1 = hi;
-                            }
-                        }
-                        (Rel::Eq, true) => {
-                            let lo = ceil_div(&(-&rest_hi), &g);
-                            let hi = (-&rest_lo).div_floor(&g);
-                            if lo > entry.0 {
-                                entry.0 = lo;
-                            }
-                            if hi < entry.1 {
-                                entry.1 = hi;
-                            }
-                        }
-                        (Rel::Eq, false) => {
-                            let lo = ceil_div(&rest_lo, &g);
-                            let hi = rest_hi.div_floor(&g);
-                            if lo > entry.0 {
-                                entry.0 = lo;
-                            }
-                            if hi < entry.1 {
-                                entry.1 = hi;
-                            }
-                        }
-                    }
-                    if entry.0 > entry.1 {
-                        return Some(Vec::new());
-                    }
+                if !tighten_bounded_row(r, &mut rem_bounds) {
+                    return Some(Vec::new());
                 }
             }
         }
@@ -5177,19 +5376,18 @@ fn quotient_offsets(
 /// Join integer vertical rays at consecutive abscissas when their heights form a convex
 /// sequence. The secants of adjacent vertices recover exactly those heights on the integer
 /// interval; they do not assert an interpolation identity at noninteger abscissas.
-// Complexity tradeoff: pairwise cross-rest merging materializes every tangent's rest for
-// every growing intermediate piece, O(p^3) row visits on x=i, y>=2*i*x-i² (I27). Used:
-// recognize two-row vertical rays, sort and coalesce equal abscissas, check consecutive
-// spacing and nondecreasing secants, and emit all distinct secants once, O(p log p) integer
-// operations and O(p) output. Tradeoffs: this fast path handles convex integer sequences
-// over two atoms only; arbitrary cross-rest unions still use the exact general merger.
-fn convex_integer_rays(pieces: &BTreeSet<Vec<Con>>) -> Option<Vec<Con>> {
+// Complexity tradeoff: pairwise cross-rest merging copies a growing necessary rest,
+// O(p^3) row visits on tangent slices (I27); rejecting an entire curve after one
+// concave turn leaves that same cost on its convex prefix. Sort two-row integer
+// slices once, coalesce duplicate abscissas, and partition each orientation into
+// consecutive convex runs. Emit each run's secants once, O(p log p) integer
+// operations and O(p) rows total. Gaps stay gaps, upper rays are reflected, and
+// concave turns begin another run. Other shapes retain the exact general merger.
+fn integer_ray_runs(pieces: &BTreeSet<Vec<Con>>) -> Option<Vec<Vec<Con>>> {
     let mut axes: Option<(Atom, Atom)> = None;
-    let mut points: BTreeMap<Int, Int> = BTreeMap::new();
+    let mut orientations: BTreeMap<bool, BTreeMap<Int, Int>> = BTreeMap::new();
     for p in pieces {
-        let [r, s] = p.as_slice() else {
-            return None;
-        };
+        let [r, s] = p.as_slice() else { return None };
         let (eq, ge) = match (r.rel, s.rel) {
             (Rel::Eq, Rel::Ge) => (r, s),
             (Rel::Ge, Rel::Eq) => (s, r),
@@ -5202,11 +5400,10 @@ fn convex_integer_rays(pieces: &BTreeSet<Vec<Con>>) -> Option<Vec<Con>> {
         if !kx.is_unit() {
             return None;
         }
-        let x = (*x).clone();
         let xi = -&(&eq.lin.constant * kx);
-        let mut others = ge.lin.terms.iter().filter(|(a, _)| **a != x);
+        let mut others = ge.lin.terms.iter().filter(|(a, _)| *a != x);
         let (y, ky) = others.next()?;
-        if !ky.is_positive() || others.next().is_some() {
+        if ky.is_zero() || others.next().is_some() {
             return None;
         }
         let this = (x.clone(), y.clone());
@@ -5214,57 +5411,87 @@ fn convex_integer_rays(pieces: &BTreeSet<Vec<Con>>) -> Option<Vec<Con>> {
             return None;
         }
         axes = Some(this);
-        let at_x = &ge.lin.constant + &(ge.lin.terms.get(&x).unwrap_or(&Int::ZERO) * &xi);
-        let height = -&at_x.div_floor(ky);
-        points
+        let at_x = &ge.lin.constant + &(ge.lin.terms.get(x).unwrap_or(&Int::ZERO) * &xi);
+        let height = -&at_x.div_floor(&ky.abs());
+        orientations
+            .entry(ky.is_positive())
+            .or_default()
             .entry(xi)
             .and_modify(|h| *h = h.clone().min(height.clone()))
             .or_insert(height);
     }
     let (x, y) = axes?;
-    let ps: Vec<_> = points.into_iter().collect();
-    let (lo, _) = ps.first()?;
-    let (hi, _) = ps.last()?;
-    let mut rows = Vec::with_capacity(ps.len() + 2);
-    let mut old_slope: Option<Int> = None;
-    for two in ps.windows(2) {
-        let [(a, ha), (b, hb)] = two else {
-            unreachable!()
-        };
-        if b != &(a + &Int::ONE) {
-            return None;
-        }
-        let slope = hb - ha;
-        if old_slope.as_ref().is_some_and(|s| *s > slope) {
-            return None;
-        }
-        if old_slope.as_ref() != Some(&slope) {
-            let mut terms = BTreeMap::from([(y.clone(), Int::ONE)]);
-            if !slope.is_zero() {
-                terms.insert(x.clone(), -&slope);
+    let emit = |ps: &[(Int, Int)], lower: bool| -> Vec<Con> {
+        let mut rows = Vec::with_capacity(ps.len() + 2);
+        let mut old_slope: Option<Int> = None;
+        for two in ps.windows(2) {
+            let [(a, ha), (b, hb)] = two else {
+                unreachable!()
+            };
+            debug_assert_eq!(b, &(a + &Int::ONE));
+            let slope = hb - ha;
+            if old_slope.as_ref() != Some(&slope) {
+                let mut terms =
+                    BTreeMap::from([(y.clone(), Int::from(if lower { 1 } else { -1 }))]);
+                if !slope.is_zero() {
+                    terms.insert(x.clone(), -&slope);
+                }
+                rows.push(Con {
+                    lin: Lin {
+                        terms,
+                        constant: &(&slope * a) - ha,
+                    },
+                    rel: Rel::Ge,
+                });
+                old_slope = Some(slope);
             }
-            rows.push(Con {
-                lin: Lin {
-                    terms,
-                    constant: &(&slope * a) - ha,
-                },
-                rel: Rel::Ge,
-            });
-            old_slope = Some(slope);
         }
+        let (lo, _) = &ps[0];
+        let (hi, _) = &ps[ps.len() - 1];
+        if ps.len() == 1 {
+            rows.push(Con::ge(
+                &Lin::atom(y.clone()).times(if lower { 1 } else { -1 }),
+                &Lin::constant(ps[0].1.clone()),
+            ));
+        }
+        if lo == hi {
+            rows.push(Con::eq(&Lin::atom(x.clone()), &Lin::constant(lo.clone())));
+        } else {
+            rows.push(Con::ge(&Lin::atom(x.clone()), &Lin::constant(lo.clone())));
+            rows.push(Con::ge(&Lin::constant(hi.clone()), &Lin::atom(x.clone())));
+        }
+        rows.sort();
+        rows.dedup();
+        rows
+    };
+    let mut out = Vec::new();
+    for (lower, points) in orientations {
+        let ps: Vec<_> = points.into_iter().collect();
+        let mut start = 0;
+        let mut previous: Option<Int> = None;
+        for i in 1..ps.len() {
+            let slope = &ps[i].1 - &ps[i - 1].1;
+            if ps[i].0 != &ps[i - 1].0 + &Int::ONE || previous.as_ref().is_some_and(|s| *s > slope)
+            {
+                out.push(emit(&ps[start..i], lower));
+                start = i;
+                previous = None;
+            } else {
+                previous = Some(slope);
+            }
+        }
+        out.push(emit(&ps[start..], lower));
     }
-    if ps.len() == 1 {
-        rows.push(Con::ge(&Lin::atom(y), &Lin::constant(ps[0].1.clone())));
+    Some(out)
+}
+
+#[cfg(test)]
+fn convex_integer_rays(pieces: &BTreeSet<Vec<Con>>) -> Option<Vec<Con>> {
+    let mut runs = integer_ray_runs(pieces)?;
+    if runs.len() != 1 {
+        return None;
     }
-    if lo == hi {
-        rows.push(Con::eq(&Lin::atom(x), &Lin::constant(lo.clone())));
-    } else {
-        rows.push(Con::ge(&Lin::atom(x.clone()), &Lin::constant(lo.clone())));
-        rows.push(Con::ge(&Lin::constant(hi.clone()), &Lin::atom(x)));
-    }
-    rows.sort();
-    rows.dedup();
-    Some(rows)
+    runs.pop()
 }
 
 /// `pieces` with any two equal but for the bounds of one linear form, whose intervals of
@@ -5323,8 +5550,8 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
         return pieces.into_iter().collect();
     }
 
-    if let Some(joined) = convex_integer_rays(&pieces) {
-        return vec![joined];
+    if let Some(joined) = integer_ray_runs(&pieces) {
+        return joined;
     }
     type Terms = BTreeMap<Atom, Int>;
     type Group = (Vec<Con>, Terms);
@@ -7489,5 +7716,609 @@ mod tests {
                 assert_eq!(merge_pieces(before), expected);
             },
         );
+    }
+    #[test]
+    fn r6_buckets_keep_a_constant_leaf_read_beside_two_chains() {
+        let x = Lin::atom(Atom::Sym("x".into()));
+        let y = Lin::atom(Atom::Sym("y".into()));
+        let eq = |n, e: Lin| {
+            Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                &Lin::atom(a(n)),
+                &e,
+            ))]))
+        };
+        let defs = vec![
+            eq(0, Lin::constant(5)),
+            eq(1, x.plus(&Lin::atom(a(0)))),
+            eq(2, y),
+            eq(3, Lin::atom(a(2)).plus(&Lin::constant(1))),
+        ];
+        let def = |n: u32| defs[n as usize].clone();
+        let q = Formula::and(vec![
+            Formula::Con(con(&[(0, -1)], -1, Rel::Ge)),
+            Formula::Con(con(&[(1, 1)], -5, Rel::Eq)),
+            Formula::Con(con(&[(3, 1)], 0, Rel::Eq)),
+        ]);
+        assert_eq!(decide(&with(&reached(&q, &def), q.clone())), Ok(false));
+        assert_eq!(
+            decide_defined(&mut Summaries::default(), q, &def),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn bucket_keys_equal_original_keys_on_products_leaves_and_multiple_outputs() {
+        KEY_AUDIT.with(|v| v.set(true));
+        KEY_AUDITS.with(|v| v.set(0));
+        for reverse in [false, true] {
+            for constant in [false, true] {
+                let x = Lin::atom(Atom::Sym("x".into()));
+                let y = Lin::atom(Atom::Sym("y".into()));
+                let eq = |n, e: Lin| {
+                    Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                        &Lin::atom(a(n)),
+                        &e,
+                    ))]))
+                };
+                let pair = |q, r, input: Lin, m: i64| {
+                    let mut rows = vec![
+                        Formula::Con(Con::eq(
+                            &input,
+                            &Lin::atom(a(q)).times(m).plus(&Lin::atom(a(r))),
+                        )),
+                        Formula::Con(Con::ge(&Lin::atom(a(r)), &Lin::constant(0))),
+                        Formula::Con(Con::ge(&Lin::constant(m - 1), &Lin::atom(a(r)))),
+                    ];
+                    if reverse {
+                        rows.reverse();
+                    }
+                    Formula::And(Shared::new(rows))
+                };
+                let first = pair(1, 2, x.clone(), 3);
+                let second = pair(5, 6, Lin::atom(a(4)), 2);
+                let mut multi = vec![
+                    Formula::Con(Con::eq(&Lin::atom(a(8)), &Lin::atom(a(1)).plus(&x))),
+                    Formula::Con(Con::eq(
+                        &Lin::atom(a(9)),
+                        &Lin::atom(a(2)).plus(&Lin::constant(1)),
+                    )),
+                ];
+                if reverse {
+                    multi.reverse();
+                }
+                let multi = Formula::And(Shared::new(multi));
+                let defs = vec![
+                    eq(
+                        0,
+                        if constant {
+                            Lin::constant(5)
+                        } else {
+                            x.clone()
+                        },
+                    ),
+                    first.clone(),
+                    first,
+                    eq(3, Lin::atom(a(1)).plus(&Lin::atom(a(0)))),
+                    eq(4, y),
+                    second.clone(),
+                    second,
+                    eq(7, Lin::atom(a(5)).plus(&Lin::constant(1))),
+                    multi.clone(),
+                    multi,
+                ];
+                let def = |n: u32| defs[n as usize].clone();
+                let mut reads: BTreeSet<Atom> = [0, 1, 2, 3, 7, 8, 9].into_iter().map(a).collect();
+                reads.extend([
+                    Atom::Product(Factor::Aux(3), Factor::Aux(0)),
+                    Atom::Product(Factor::Aux(1), Factor::Aux(2)),
+                    Atom::Product(Factor::Aux(3), Factor::Aux(7)),
+                    Atom::Product(Factor::Sym("x".into()), Factor::Aux(3)),
+                ]);
+                let mut sums = Summaries::default();
+                loop {
+                    match sums.local(&reads, &BTreeSet::new(), None, &[], &def) {
+                        Local::Ready(_, _) => break,
+                        Local::Need(Need::Summaries(js)) => {
+                            for (k, _) in js {
+                                sums.by.insert(
+                                    k,
+                                    Some(Summary {
+                                        pieces: vec![Vec::new()],
+                                    }),
+                                );
+                            }
+                        }
+                        Local::Need(n) => sums.made(n, &def),
+                        Local::Unmade => panic!("key fixture should have a plan"),
+                    }
+                }
+            }
+        }
+        let checked = KEY_AUDITS.with(|v| v.get());
+        KEY_AUDIT.with(|v| v.set(false));
+        assert!(checked >= 24);
+        eprintln!("original/bucket key comparisons={checked}");
+    }
+
+    fn r6_almost_convex_rays(n: usize) -> BTreeSet<Vec<Con>> {
+        (0..n as i64)
+            .map(|i| {
+                let h = if i + 1 == n as i64 { 0 } else { i * i };
+                let mut tangent = con(&[(0, -2 * i), (1, 1)], 2 * i * i - h, Rel::Ge);
+                tangent.lin.terms.retain(|_, k| !k.is_zero());
+                vec![con(&[(0, 1)], -i, Rel::Eq), tangent]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn convex_runs_with_a_concave_last_slice_scale() {
+        let inputs = crate::scaling::inputs(16, r6_almost_convex_rays);
+        crate::scaling::check_order("convex runs with a concave last slice", 16, 1, |n| {
+            let out = merge_pieces(inputs[&n].clone());
+            let at = |x: i64, y: i64| {
+                out.iter().any(|rows| {
+                    rows.iter().all(|row| {
+                        let mut value = row.lin.constant.clone();
+                        for (a, k) in &row.lin.terms {
+                            let v = match a {
+                                Atom::Aux(0) => x,
+                                Atom::Aux(1) => y,
+                                _ => unreachable!(),
+                            };
+                            value = &value + &(k * &Int::from(v));
+                        }
+                        match row.rel {
+                            Rel::Eq => value.is_zero(),
+                            Rel::Ge => !value.is_negative(),
+                        }
+                    })
+                })
+            };
+            assert!(at(0, 0));
+            assert!(at(n as i64 - 1, 0));
+            assert!(!at(-1, 0));
+            assert!(!at(0, -1));
+            assert!(!at(n as i64 - 1, -1));
+        });
+    }
+
+    #[test]
+    fn integer_ray_runs_keep_concavities_gaps_and_both_orientations() {
+        let mut cases = 0;
+        for gap in [false, true] {
+            for upper in [false, true] {
+                for mixed in [false, true] {
+                    for seed in 0i64..20 {
+                        let mut ps = BTreeSet::new();
+                        for i in -4i64..=4 {
+                            if gap && i == 0 {
+                                continue;
+                            }
+                            let h = (i * i * (seed + 1) + 7 * i + seed).rem_euclid(13) - 6;
+                            let sign = if upper || (mixed && i % 2 == 0) {
+                                -1
+                            } else {
+                                1
+                            };
+                            ps.insert(vec![
+                                con(&[(0, 1)], -i, Rel::Eq),
+                                con(&[(1, sign)], -sign * h, Rel::Ge),
+                            ]);
+                        }
+                        let out = integer_ray_runs(&ps).unwrap();
+                        for x in -5i64..=5 {
+                            for y in -9i64..=9 {
+                                let holds = |rows: &Vec<Con>| {
+                                    rows.iter().all(|r| {
+                                        let z = &r.lin.constant
+                                            + &r.lin
+                                                .terms
+                                                .iter()
+                                                .map(|(a, k)| {
+                                                    k * &Int::from(if *a == Atom::Aux(0) {
+                                                        x
+                                                    } else {
+                                                        y
+                                                    })
+                                                })
+                                                .fold(Int::ZERO, |a, b| &a + &b);
+                                        if r.rel == Rel::Eq {
+                                            z.is_zero()
+                                        } else {
+                                            !z.is_negative()
+                                        }
+                                    })
+                                };
+                                assert_eq!(ps.iter().any(holds), out.iter().any(holds));
+                                cases += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("integer ray-run point checks={cases}");
+    }
+
+    #[test]
+    fn same_sign_ray_sums_keep_common_rays_totality_and_conditions() {
+        let x = Lin::atom(Atom::Sym("x".into()));
+        let eq = |n, e: Lin| {
+            Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                &Lin::atom(a(n)),
+                &e,
+            ))]))
+        };
+        let reflected = vec![eq(0, x.clone()), eq(1, x.times(-1))];
+        let def = |n: u32| reflected[n as usize].clone();
+        let sum = Formula::Con(con(&[(0, 1), (1, 1)], -1, Rel::Ge));
+        assert!(!Rays::default().holds(&sum, &def));
+        assert_eq!(
+            decide_defined(&mut Summaries::default(), sum, &def),
+            Ok(false)
+        );
+        let partial = Formula::And(Shared::new(vec![
+            Formula::Con(Con::eq(&Lin::atom(a(0)), &x)),
+            Formula::Con(Con::ge(&x, &Lin::constant(0))),
+        ]));
+        let defs = vec![partial, eq(1, x.plus(&Lin::constant(1)))];
+        let def = |n: u32| defs[n as usize].clone();
+        let sum = Formula::Con(con(&[(0, -1), (1, -1)], -1, Rel::Ge));
+        assert!(!Rays::default().holds(&sum, &def));
+        assert_eq!(
+            decide_defined(&mut Summaries::default(), sum, &def),
+            Ok(false)
+        );
+        let defs = vec![eq(0, x.clone()), eq(1, x.plus(&Lin::constant(1)))];
+        let def = |n: u32| defs[n as usize].clone();
+        let sum = Formula::Con(con(&[(0, 1), (1, 1)], -1000, Rel::Ge));
+        assert!(Rays::default().holds(&sum, &def));
+        let conditioned = Formula::and(vec![sum, Formula::Con(Con::eq(&x, &Lin::constant(0)))]);
+        assert_eq!(
+            decide_defined(&mut Summaries::default(), conditioned, &def),
+            Ok(false)
+        );
+        let product = Formula::Con(Con::ge(
+            &Lin::atom(Atom::Product(Factor::Aux(0), Factor::Sym("x".into())))
+                .plus(&Lin::atom(a(1))),
+            &Lin::constant(0),
+        ));
+        assert!(!Rays::default().holds(&product, &|_| panic!(
+            "a product must decline before reading definitions"
+        )));
+    }
+
+    #[test]
+    #[ignore]
+    fn independent_twin_unions_measurement() {
+        let mut meter = crate::scaling::Meter::new();
+        let sizes: Vec<usize> = std::env::var("LMD_SIZES")
+            .unwrap_or("100,800".into())
+            .split(',')
+            .map(|s| s.parse().unwrap())
+            .collect();
+        for n in sizes {
+            let mut defs = Vec::new();
+            for i in 0..n {
+                let first = defs.len() as u32;
+                for side in [0u32, 1] {
+                    let previous = if i == 0 {
+                        Lin::atom(Atom::Sym("base".into()))
+                    } else {
+                        Lin::atom(a(first - 3 + side))
+                    };
+                    let fresh = Lin::atom(Atom::Sym(format!("s{i:08}").into()));
+                    defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                        &Lin::atom(a(first + side)),
+                        &previous.plus(&fresh),
+                    ))])));
+                }
+                defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                    &Lin::atom(a(first + 2)),
+                    &Lin::atom(a(first)).plus(&Lin::atom(a(first + 1))),
+                ))])));
+            }
+            let def = |n: u32| defs[n as usize].clone();
+            let mut sums = Summaries::default();
+            let w = meter.work(|| {
+                for i in 0..n {
+                    sums.syms(defs[3 * i + 2].clone(), &def);
+                }
+            });
+            let id = Id::any(defs.last().unwrap());
+            assert_eq!(sums.syms[&id].len(), n + 1);
+            assert_eq!(sums.cone[&id].len(), 2 * n + 1);
+            eprintln!("twin unions n={n} instr={} bytes={}", w.units, w.bytes);
+        }
+    }
+    fn functional_leaf_key_fixture(width: usize) -> (Summaries, Vec<Formula>, BTreeSet<Atom>) {
+        let x = Atom::Sym("x".into());
+        let mut defs = Vec::new();
+        let mut rs = BTreeSet::from([x.clone()]);
+        for i in 0..width {
+            let q = defs.len() as u32;
+            let r = q + 1;
+            let h = q + 2;
+            let pair = Formula::And(Shared::new(vec![
+                Formula::Con(Con::eq(
+                    &Lin::atom(x.clone()),
+                    &Lin::atom(a(q))
+                        .times(Int::from(i + 2))
+                        .plus(&Lin::atom(a(r))),
+                )),
+                Formula::Con(Con::ge(&Lin::atom(a(r)), &Lin::constant(0))),
+                Formula::Con(Con::ge(&Lin::constant(i + 1), &Lin::atom(a(r)))),
+            ]));
+            defs.push(pair.clone());
+            defs.push(pair);
+            defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                &Lin::atom(a(h)),
+                &Lin::atom(a(q)).plus(&Lin::constant(1)),
+            ))])));
+            rs.extend([
+                a(q),
+                a(h),
+                Atom::Product(Factor::Sym("x".into()), Factor::Aux(q)),
+            ]);
+        }
+        let def = |n: u32| defs[n as usize].clone();
+        let mut sums = Summaries::default();
+        loop {
+            match sums.local(&rs, &BTreeSet::new(), None, &[], &def) {
+                Local::Ready(_, _) => break,
+                Local::Need(Need::Summaries(js)) => {
+                    for (k, _) in js {
+                        assert_eq!(k.1.len(), 4);
+                        sums.by.insert(
+                            k,
+                            Some(Summary {
+                                pieces: vec![Vec::new()],
+                            }),
+                        );
+                    }
+                }
+                Local::Need(n) => sums.made(n, &def),
+                Local::Unmade => panic!("functional leaf fixture needs a plan"),
+            }
+        }
+        (sums, defs, rs)
+    }
+
+    #[test]
+    fn functional_leaf_and_product_key_buckets_scale() {
+        let inputs = crate::scaling::inputs(100, functional_leaf_key_fixture);
+        crate::scaling::check_order("functional leaf and product key buckets", 100, 1, |n| {
+            let (sums, defs, rs) = &inputs[&n];
+            let def = |n: u32| defs[n as usize].clone();
+            assert!(matches!(
+                sums.local(rs, &BTreeSet::new(), None, &[], &def),
+                Local::Ready(_, _)
+            ));
+        });
+    }
+
+    #[test]
+    #[ignore]
+    fn functional_key_buckets_measurement() {
+        let mut meter = crate::scaling::Meter::new();
+        for n in [100usize, 800] {
+            let (sums, defs, rs) = functional_leaf_key_fixture(n);
+            let def = |n: u32| defs[n as usize].clone();
+            let w = meter.work(|| {
+                assert!(matches!(
+                    sums.local(&rs, &BTreeSet::new(), None, &[], &def),
+                    Local::Ready(_, _)
+                ))
+            });
+            eprintln!("functional keys n={n} instr={} bytes={}", w.units, w.bytes);
+        }
+    }
+
+    fn r6_bounded_row(n: usize) -> (Con, BTreeMap<Atom, (Int, Int)>) {
+        let terms = (0..n)
+            .map(|i| {
+                (
+                    Atom::Aux(i as u32),
+                    Int::from(if i % 2 == 0 { 1 } else { -1 }),
+                )
+            })
+            .collect();
+        let row = Con {
+            rel: Rel::Ge,
+            lin: Lin {
+                terms,
+                constant: Int::from(n as i64 * 100),
+            },
+        };
+        let bounds = (0..n)
+            .map(|i| (Atom::Aux(i as u32), (Int::from(-100), Int::from(100))))
+            .collect();
+        (row, bounds)
+    }
+    #[test]
+    fn bounded_row_totals_scale() {
+        let inputs = crate::scaling::inputs(100, r6_bounded_row);
+        crate::scaling::check_order("incremental totals of one bounded row", 100, 1, |n| {
+            let (row, mut bounds) = inputs[&n].clone();
+            assert!(tighten_bounded_row(&row, &mut bounds));
+        });
+    }
+    #[test]
+    fn bounded_row_totals_equal_the_old_in_place_sweep() {
+        let mut seed = 0x264815aceu64;
+        let mut rand = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 32) as i64
+        };
+        let mut checked = 0;
+        for n in 1..=8 {
+            for _ in 0..500 {
+                let mut bounds = BTreeMap::new();
+                let mut terms = BTreeMap::new();
+                for i in 0..n {
+                    let lo = rand() % 13 - 6;
+                    let hi = lo + rand() % 13;
+                    let a = Atom::Aux(i);
+                    bounds.insert(a.clone(), (Int::from(lo), Int::from(hi)));
+                    let k = rand() % 7 - 3;
+                    if k != 0 {
+                        terms.insert(a, Int::from(k));
+                    }
+                }
+                let row = Con {
+                    rel: if rand() % 2 == 0 { Rel::Ge } else { Rel::Eq },
+                    lin: Lin {
+                        terms,
+                        constant: Int::from(rand() % 21 - 10),
+                    },
+                };
+                let mut slow = bounds.clone();
+                let a = tighten_bounded_row(&row, &mut bounds);
+                let b = tighten_bounded_row_slow(&row, &mut slow);
+                assert_eq!((a, bounds), (b, slow));
+                checked += 1;
+            }
+        }
+        eprintln!("in-place bounded-row comparisons={checked}");
+    }
+    #[test]
+    #[ignore]
+    fn bounded_row_totals_measurement() {
+        let mut meter = crate::scaling::Meter::new();
+        for n in [100, 800] {
+            let (row, bounds) = r6_bounded_row(n);
+            for old in [true, false] {
+                let mut b = bounds.clone();
+                let counted = meter.work(|| {
+                    assert!(if old {
+                        tighten_bounded_row_slow(&row, &mut b)
+                    } else {
+                        tighten_bounded_row(&row, &mut b)
+                    });
+                });
+                eprintln!(
+                    "bounded-row n={n} old={old} instr={} bytes={}",
+                    counted.units, counted.bytes
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_free_fourth_variable_can_escape_the_peers_twenty_point_box() {
+        let rows = vec![
+            con(&[(0, 1)], 3, Rel::Ge),
+            con(&[(0, -1)], 3, Rel::Ge),
+            con(&[(1, 1)], 3, Rel::Ge),
+            con(&[(1, -1)], 3, Rel::Ge),
+            con(&[(0, 2), (1, 2), (2, -1)], 3, Rel::Ge),
+            con(&[(0, -2), (1, -2), (2, 1)], -3, Rel::Ge),
+            con(&[(0, 1)], -3, Rel::Ge),
+            con(&[(1, 1)], -3, Rel::Ge),
+            con(&[(3, 1), (2, -2), (0, -2), (1, -2)], -4, Rel::Ge),
+        ];
+        let at = |point: [i64; 4]| {
+            rows.iter().all(|row| {
+                let mut value = row.lin.constant.clone();
+                for (a, k) in &row.lin.terms {
+                    let Atom::Aux(n) = a else { unreachable!() };
+                    value = &value + &(k * &Int::from(point[*n as usize]));
+                }
+                !value.is_negative()
+            })
+        };
+        // The written rows force x=y=3 and q=15, leaving q2 >= 46.
+        assert!((-20..=20).all(|q2| !at([3, 3, 15, q2])));
+        assert!(at([3, 3, 15, 46]));
+        assert_eq!(decide_cons(rows), Ok(true));
+        eprintln!("peer finite box misses a witness: x=3 y=3 q=15 q2=46; all q2 in [-20,20] fail");
+    }
+
+    #[test]
+    fn two_chains_over_product_only_leaves_keep_the_shared_opaque_product() {
+        for second in ["x", "y"] {
+            let product = Lin::atom(Atom::Product(
+                Factor::Sym("x".into()),
+                Factor::Sym(second.into()),
+            ));
+            let eq = |n, e: &Lin| {
+                Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                    &Lin::atom(a(n)),
+                    e,
+                ))]))
+            };
+            let mut defs = Vec::new();
+            for start in [0u32, 4] {
+                defs.push(eq(
+                    start,
+                    &product.plus(&Lin::constant(if start == 0 { 0 } else { 1 })),
+                ));
+                for i in start + 1..start + 4 {
+                    defs.push(eq(i, &Lin::atom(a(i - 1)).plus(&Lin::constant(1))));
+                }
+            }
+            let def = |n: u32| defs[n as usize].clone();
+            for left in [Lin::atom(a(3)), product.clone()] {
+                let right = if left == product {
+                    Lin::atom(a(3))
+                } else {
+                    Lin::atom(a(7))
+                };
+                let plain = Formula::Con(Con::eq(&left, &right));
+                for query in [
+                    plain.clone(),
+                    Formula::and(vec![
+                        plain,
+                        Formula::Con(Con::eq(
+                            &Lin::atom(Atom::Sym("x".into())),
+                            &Lin::constant(2),
+                        )),
+                    ]),
+                ] {
+                    assert_eq!(
+                        decide(&with(&reached(&query, &def), query.clone())),
+                        Ok(false)
+                    );
+                    assert_eq!(
+                        decide_defined(&mut Summaries::default(), query.clone(), &def),
+                        Ok(false),
+                        "factor={second}, query={query:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn product_only_input_metadata_keeps_every_factor_and_product_in_linear_work() {
+        let inputs = crate::scaling::inputs(100, |n| {
+            let mut defs = Vec::new();
+            for i in 0..=n as u32 {
+                let value = if i == 0 {
+                    Lin::atom(Atom::Sym("x".into()))
+                } else {
+                    Lin::atom(a(i - 1)).plus(&Lin::atom(Atom::Product(
+                        Factor::Sym("x".into()),
+                        Factor::Sym(format!("z{i}").into()),
+                    )))
+                };
+                defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                    &Lin::atom(a(i)),
+                    &value,
+                ))])));
+            }
+            defs
+        });
+        crate::scaling::check_order("metadata of fresh product inputs", 100, 1, |n| {
+            let defs = &inputs[&n];
+            let def = |j: u32| defs[j as usize].clone();
+            let root = defs[n].clone();
+            let id = Id::any(&root);
+            let mut sums = Summaries::default();
+            sums.syms(root, &def);
+            assert_eq!(sums.syms[&id].len(), 2 * n + 1);
+            assert_eq!(sums.cone[&id].len(), n + 1);
+        });
     }
 }

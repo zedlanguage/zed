@@ -2442,10 +2442,14 @@ impl Tr {
             Lin::atom(presburger::Atom::Aux(n)),
             Lin::atom(presburger::Atom::Aux(n + 1)),
         );
+        // Complexity tradeoff: machine signed abs is O(1) but overflows at i128::MIN.
+        // Form the bound in Int; the input divisor is still at most 128 bits, so this
+        // costs O(1) bounded-width arithmetic and retains its full 128-bit magnitude.
+        let remainder_hi = &Int::from(c).abs() - &Int::ONE;
         let def = Formula::and(vec![
             Formula::Con(Con::eq(a, &q.times(c).plus(&r))),
             Formula::Con(Con::ge(&r, &Lin::constant(0))),
-            Formula::Con(Con::ge(&Lin::constant(c.abs() - 1), &r)),
+            Formula::Con(Con::ge(&Lin::constant(remainder_hi), &r)),
         ]);
         let shown = |op| What::ByConstant(op, a.clone(), c);
         self.defs.push((n, shown("div"), def));
@@ -15091,6 +15095,46 @@ mod tests {
             );
             assert_eq!(checked[1], 0, "{checked:?}");
             assert!(SUMMARIES.get()[0] > 0, "{:?}", SUMMARIES.get());
+        }
+    }
+}
+
+#[cfg(test)]
+mod r6_numeric_tests {
+    use super::*;
+
+    #[test]
+    fn minimum_i128_divisor_keeps_the_full_remainder_interval() {
+        let x = presburger::Atom::Sym("x".into());
+        let mut tr = Tr::new(false);
+        let n = tr.pair_by_constant(&Lin::atom(x.clone()), i128::MIN);
+        let def = tr.defs[n as usize].2.clone();
+        let samples = [
+            (0i128, 0i128, 0i128),
+            (1, 0, 1),
+            (-1, 1, i128::MAX),
+            (i128::MIN, 1, 0),
+        ];
+        for (v, q, r) in samples {
+            let at = |qv: i128, rv: i128| {
+                Formula::and(vec![
+                    def.clone(),
+                    Formula::Con(Con::eq(&Lin::atom(x.clone()), &Lin::constant(v))),
+                    Formula::Con(Con::eq(
+                        &Lin::atom(presburger::Atom::Aux(n)),
+                        &Lin::constant(qv),
+                    )),
+                    Formula::Con(Con::eq(
+                        &Lin::atom(presburger::Atom::Aux(n + 1)),
+                        &Lin::constant(rv),
+                    )),
+                ])
+            };
+            assert_eq!(presburger::decide(&at(q, r)), Ok(true));
+            assert_eq!(
+                presburger::decide(&at(q, if r == 0 { 1 } else { 0 })),
+                Ok(false)
+            );
         }
     }
 }
