@@ -4995,7 +4995,8 @@ impl<'m, 's> Comparing<'m, 's> {
             if self.cx.borrow().decided(held) && b.is_empty() {
                 continue;
             }
-            match (&tk, a.kernel()) {
+            // The rest left in the set keeps the shape's payloads, as in `Self::meet_rest`.
+            match (&tk, a.0.exact.clone().or_else(|| a.kernel())) {
                 (Some(tk), Some(k)) if !(&k & &w).is_empty() => rest.push(&k - tk),
                 _ => kept.push(a),
             }
@@ -5881,11 +5882,16 @@ impl Ty {
 
     /// A kind-wide part, `(..)` or `{..}`, it holds at any depth outside functions, in its
     /// tuples and its atoms' payloads: every tuple or struct, those that hold a function among
-    /// them. Read at its outer level, since each row and shape keeps the one it holds.
+    /// them. Read at its outer level, since each row and shape keeps the one it holds; the
+    /// set's own tuples are walked ([`KType::function_part`]), since a meet or difference
+    /// with a kind-wide part leaves there the part of a written shape it holds, whose values
+    /// hold only what the shape holds (FIX-held-wide-partial-tuples).
     pub fn held_wide(&self) -> Option<KType> {
         let own = &self.set & &wide();
-        if !own.is_empty() {
-            return Some(own);
+        if !own.is_empty()
+            && let Some(w) = own.function_part()
+        {
+            return Some(w);
         }
         (self.tuples.iter().find_map(|r| r.0.wide.clone()))
             .or_else(|| self.payload_shapes().find_map(|s| s.wide.clone()))
@@ -6050,14 +6056,16 @@ impl Ty {
         out.family = &self.family & &out.set;
         // A kind-wide part of one side keeps the other's shapes it holds whole; of a shape it
         // holds in part, the part goes to the set, where the kernel holds it exactly. A shape
-        // with no kernel type is kept, which may be more than the meet.
+        // with no kernel type is kept, which may be more than the meet. The shape's kernel type
+        // is the one with its atoms' payloads read, where it has one, so that the part in the
+        // set holds `#a(1)` and not `#a(..)`, which may hold a function (`Self::held_wide`).
         for (a, b) in [(self, t), (t, self)] {
             let w = &b.set & &wide();
             if w.is_empty() {
                 continue;
             }
             for cs in &a.tuples {
-                match cs.kernel() {
+                match cs.0.exact.clone().or_else(|| cs.kernel()) {
                     Some(k) if k.subtype(&w) => met.push(cs.clone()),
                     Some(k) => out.set = &out.set | &(&k & &w),
                     None => met.push(cs.clone()),

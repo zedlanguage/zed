@@ -275,3 +275,75 @@ fn equal_types_built_apart_hash_alike() {
         h.hash_one((b.digest(), 3u32))
     );
 }
+
+#[test]
+fn a_function_part_is_found_at_any_depth() {
+    let (int, a) = (Type::int(), Type::atom("a"));
+    let tuples = Type::universe(Universe::Tuple);
+    let structs = Type::universe(Universe::Struct);
+    let fns = Type::universe(Universe::Morphism);
+    let pair = |x: &Type, y: &Type| Type::tuple(vec![x.clone(), y.clone()]);
+    let shape = pair(&(&int | &a), &(&int | &a));
+    // Scalars, atoms, every atom and a written shape hold no function; nor does a written
+    // shape met with, or less, a kind-wide part.
+    for t in [
+        int.clone(),
+        Type::universe(Universe::Scalar),
+        shape.clone(),
+        &shape & &(&tuples - &pair(&a, &a)),
+        &shape - &pair(&a, &a),
+        pair(&int, &shape),
+        Type::empty(),
+    ] {
+        assert_eq!(t.function_part(), None, "{}", t.surface());
+    }
+    // A kind-wide part at the outer level or in a component, a tuple of a length outside the
+    // shapes listed, a struct, a morphism, and an atom's payload that holds every tuple.
+    let open = &tuples - &shape;
+    for (t, part) in [
+        (tuples.clone(), tuples.clone()),
+        (&int | &tuples, tuples.clone()),
+        (pair(&int, &(&a | &tuples)), tuples.clone()),
+        (
+            (&shape - &pair(&int, &int)) | pair(&a, &pair(&int, &tuples)),
+            tuples.clone(),
+        ),
+        (open.clone(), open.clone()),
+        (pair(&int, &structs), structs.clone()),
+        (pair(&int, &fns), fns.clone()),
+        (Type::atom_with("b", &pair(&int, &tuples)), tuples.clone()),
+    ] {
+        assert_eq!(t.function_part(), Some(part), "{}", t.surface());
+    }
+    // The tradeoff of `Type::function_part`: a tuple type subtracted is walked as one kept
+    // is, so this pair of `int`s is read as holding a function.
+    let less = &pair(&int, &int) - &pair(&tuples, &int);
+    assert_eq!(less.function_part(), Some(tuples));
+}
+
+#[test]
+fn a_function_part_is_found_in_a_recursive_type_once_per_node() {
+    use rec::{Def, Expr, Group};
+    // `name = () | (head, name)`: a list whose items are `head`, walked through its cycle once.
+    let list = |name: &str, head: Type| {
+        let body = Expr::Union(vec![
+            Expr::Tuple(vec![]),
+            Expr::Tuple(vec![Expr::Type(head), Expr::Ref(0, vec![])]),
+        ]);
+        let def = Def {
+            name: name.to_string(),
+            params: vec![],
+            body,
+        };
+        let g = Group::new(vec![def]).expect("a recursive group");
+        g.instance(vec![]).remove(0)
+    };
+    let (int, a) = (Type::int(), Type::atom("a"));
+    let tuples = Type::universe(Universe::Tuple);
+    let data = list("FunctionPartData", &int | &a);
+    assert_eq!(data.function_part(), None);
+    let less = &data - &Type::tuple(vec![a.clone(), Type::tuple(Vec::new())]);
+    assert_eq!(less.function_part(), None);
+    let wide = list("FunctionPartWide", &a | &tuples);
+    assert_eq!(wide.function_part(), Some(tuples));
+}

@@ -5952,15 +5952,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         } else if let Some(w) = t.held_wide() {
             // `(..)` and `{..}` hold every tuple and struct, those that hold a function too: a
             // block that ends `return h, 1` gives one.
+            // The value's type is written, and the part, when that is not all of it, as for
+            // `(int, (..))`, whose part `(..)` is not the type of the value.
             let notes = data_repairs(span);
+            let value = self.shown(t).to_string();
+            let part = Ty::set(w).to_string();
+            let holds = match value == part {
+                true => String::new(),
+                false => format!(" holds `{part}`, which"),
+            };
             self.error_with(
                 span,
                 format!(
-                    "{what} takes data, and this value, of `{}`, may hold a function: data is a \
-                     value that holds no function at any depth, and `{}` holds every value of \
-                     its shape, functions too",
-                    Ty::set(w.clone()),
-                    Ty::set(w)
+                    "{what} takes data, and this value, of `{value}`, may hold a function: data \
+                     is a value that holds no function at any depth, and `{value}`{holds} holds \
+                     every value of its shape, functions too"
                 ),
                 notes,
             );

@@ -476,7 +476,7 @@ fn a_use_that_takes_data_refuses_every_tuple() {
     assert_eq!(
         errors("f(x: (int, (..))) = x == x;\n"),
         [
-            "`==` takes data, and this value, of `(..)`, may hold a function: data is a value that holds no function at any depth, and `(..)` holds every value of its shape, functions too [x == x]"
+            "`==` takes data, and this value, of `(int, (..))`, may hold a function: data is a value that holds no function at any depth, and `(int, (..))` holds `(..)`, which holds every value of its shape, functions too [x == x]"
         ]
     );
     // A tuple whose shape is written holds what its components hold.
@@ -484,7 +484,6 @@ fn a_use_that_takes_data_refuses_every_tuple() {
 }
 
 #[test]
-#[ignore = "FIX-held-wide-partial-tuples: a kind-wide part met with a written tuple shape is refused as data; open"]
 fn a_kind_wide_part_met_with_a_written_shape_holds_what_the_shape_holds() {
     // `(..)` less a tuple, met with a written pair of scalars, holds only pairs of scalars:
     // data, which `String` and `==` take. The checker keeps the part of the pair the
@@ -504,9 +503,102 @@ fn a_kind_wide_part_met_with_a_written_shape_holds_what_the_shape_holds() {
             side("#a"),
             side("#b")
         ),
+        // `==` takes data as `String` does.
+        "f(p: ((..) \\ (#a, #a)) & (int | #a, int | #a)) = p == p;\n".to_string(),
+        // A shape nested in the shape is kept as written, at each depth.
+        "f(p: ((..) \\ (#a, (#a, #a))) & (int | #a, (int | #a, int | #a))) = String(p);\n"
+            .to_string(),
+        // A component that holds every atom holds data.
+        "f(p: ((..) \\ (#b, #b)) & (#_ | int, int | #b)) = String(p);\n".to_string(),
+        // Narrowing by `is` meets the shape with the kind-wide part; by `is not` takes it away.
+        "f(p: (int | #b, int | #b)) = if p is (..) \\ (#b, #b) { String(p) } else { \"\" };\n"
+            .to_string(),
+        "f(p: (int | #b, int | #b) | (..)) = if p is not (..) \\ (#b, #b) { String(p) } else { \"\" };\n"
+            .to_string(),
+        // A component atom with a payload keeps its payload in the part kept beside the
+        // kind-wide part: `#a(1)` holds data, where `#a` with any payload may hold a function.
+        // By `is` the shape is met with the kind-wide part; by `is not` the rest of the shape
+        // is left beside it.
+        "g(c: bool) = (if c { #a(1) } else { #b }, #b);\nf(c: bool) = {\n    p = g(c: c);\n    if p is (..) \\ (#b, #b) { String(p) } else { \"\" }\n};\n"
+            .to_string(),
+        "g(c: bool) = (if c { #a(1) } else { #b }, #b);\nf(c: bool) = {\n    p = g(c: c);\n    if p is not (..) \\ (#b, #b) { String(p) } else { \"\" }\n};\n"
+            .to_string(),
+        "g(c: bool) = (if c { #a(1) } else { #b }, #b);\nf(c: bool) = {\n    p = g(c: c);\n    if p is not (..) \\ (#_, #b) { String(p) } else { \"\" }\n};\n"
+            .to_string(),
+        "g(c: bool) = (if c { #a(1) } else { #b }, #b);\nf(c: bool) = {\n    p = g(c: c);\n    if p is not (..) \\ (#_, #b) { \"\" } else { String(p) }\n};\n"
+            .to_string(),
     ] {
         assert_eq!(errors(&text), Vec::<String>::new(), "{text}");
     }
+}
+
+#[test]
+fn a_kind_wide_part_met_with_a_shape_that_holds_one_may_hold_a_function() {
+    // The shape's own component `(..)`, at the outer level or nested, holds every tuple,
+    // functions among them, and the meet keeps it. The message writes the value's type and
+    // the part of it that may hold a function.
+    let errors = zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    for (text, value) in [
+        (
+            "f(p: ((..) \\ (#a, #a)) & ((..) | #a, int | #a)) = String(p);\n",
+            "(#a | (..), int | #a) \\ (#a, #a)",
+        ),
+        (
+            "f(p: ((..) \\ (#a, #a)) & ((int, (..)) | #a, int | #a)) = String(p);\n",
+            "(#a | (int, (..)), int | #a) \\ (#a, #a)",
+        ),
+    ] {
+        let want = format!(
+            "`String` takes data, and this value, of `{value}`, may hold a function: data is a value that holds no function at any depth, and `{value}` holds `(..)`, which holds every value of its shape, functions too [String(p)]"
+        );
+        assert_eq!(errors(text), [want], "{text}");
+    }
+    // The tradeoff of `Type::function_part` (COMPLEXITY.md K103): a subtracted tuple type is
+    // walked as a kept one is, so this type, which holds only `(int, #a)`, is refused for the
+    // `(..)` of the pair it subtracts. Open: a walk of the tuple types each path keeps.
+    let text = "f(p: ((..) \\ (int | (..), int)) & (int, int | #a)) = String(p);\n";
+    let value = "(int, int | #a) \\ (int | (..), int)";
+    let want = format!(
+        "`String` takes data, and this value, of `{value}`, may hold a function: data is a value that holds no function at any depth, and `{value}` holds `(..)`, which holds every value of its shape, functions too [String(p)]"
+    );
+    assert_eq!(errors(text), [want], "{text}");
+}
+
+#[test]
+fn the_function_part_of_a_kind_wide_part_is_found_in_linear_time() {
+    // `Ty::held_wide` walks the tuple types its set keeps (COMPLEXITY.md K103), each node
+    // once: n tuple types `(int, (i, #a))` less `(i, (i, #a))`, which hold data, and the same
+    // with `(..)` in place of `#a` in the last, which holds a function; and a pair nested n
+    // deep whose two components are one node, which has 2^n paths and n nodes.
+    let int = Type::int;
+    let lit = |i: usize| Type::lit(&zed_kernel::value::Value::Int(i as i64)).expect("an int");
+    let rows = |n: usize, last: Type| {
+        let row = |i: usize, c: Type| Type::tuple(vec![int(), Type::tuple(vec![lit(i), c])]);
+        let mut ts: Vec<Type> = (0..n)
+            .map(|i| {
+                &row(i, Type::atom("a"))
+                    - &Type::tuple(vec![lit(i), Type::tuple(vec![lit(i), Type::atom("a")])])
+            })
+            .collect();
+        ts.push(row(n, last));
+        Ty::set(Type::union_all(ts))
+    };
+    let tuples = Type::universe(Universe::Tuple);
+    scaling::check("the function part of n tuple types", 256, |n| {
+        assert_eq!(rows(n, Type::atom("a")).held_wide(), None);
+        assert_eq!(rows(n, tuples.clone()).held_wide(), Some(tuples.clone()));
+    });
+    let shared = |n: usize, last: Type| {
+        let t = (0..n).fold(last, |t, _| Type::tuple(vec![t.clone(), t]));
+        Ty::set(t)
+    };
+    scaling::check("the function part of a pair nested n deep", 256, |n| {
+        assert_eq!(shared(n, int()).held_wide(), None);
+        assert_eq!(
+            shared(n, &int() | &tuples).held_wide(),
+            Some(tuples.clone())
+        );
+    });
 }
 
 /// The atom `#name` with the payloads `shapes`, each of components only.
