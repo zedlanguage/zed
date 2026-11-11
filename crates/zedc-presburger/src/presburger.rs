@@ -2663,12 +2663,20 @@ fn by_color<'a>(p: &'a Parts, color: &HashMap<Atom, usize>) -> Option<Vec<&'a Co
 /// a disjunction. Where the [`pick`] after the probe fails, or the probe refuses, after the
 /// probe has found a point, that point is the answer (the first one found), not the refusal,
 /// so that [`satisfiable`] answers wherever [`decide`] does ([`has_point`]).
+///
+/// Where that refuses with no point, the probe [`has_point`] makes first ([`probe_to`] with
+/// `stop`) is made, and its first point, or its proof that there is none, is the answer, so
+/// that [`satisfiable`] answers wherever [`decide`] does (PRES-stop-prefix).
+// Complexity tradeoff (PRES-stop-prefix): a formula whose probe refuses with no point is
+// probed a second time, as [`has_point`] probes it first, so it costs up to that probe more;
+// a formula answered by the first probe costs what it cost before, but for one copy of the
+// parts (`O(n)`). Naive version: the refusal, where [`decide`]'s probe finds a point.
 fn found(p: Parts) -> Result<Option<Model>, Refusal> {
     if let Ok(m) = pick(&p, true) {
         return Ok(Some(m));
     }
     let mut points = Vec::new();
-    let refused = match probe_to(p, &mut points, false) {
+    let refused = match probe_to(p.clone(), &mut points, false) {
         Ok(None) => return Ok(None),
         Ok(Some(p)) => match pick(&p, true) {
             Ok(m) => return Ok(Some(m)),
@@ -2676,10 +2684,18 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
         },
         Err(why) => why,
     };
-    points
-        .into_iter()
-        .next()
-        .map_or(Err(refused), |m| Ok(Some(m)))
+    if let Some(m) = points.into_iter().next() {
+        return Ok(Some(m));
+    }
+    let mut first = Vec::new();
+    match probe_to(p, &mut first, true) {
+        Ok(None) => Ok(None),
+        Ok(Some(q)) => match first.pop() {
+            Some(m) => Ok(Some(m)),
+            None => pick(&q, true).map(Some).map_err(|_| refused),
+        },
+        Err(_) => Err(refused),
+    }
 }
 
 /// Whether the propagated parts `p` have a point: [`found`], but the probe stops at the first
@@ -2690,10 +2706,13 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 /// `O(h^2)`, to answer a question its first point answers (S22-shapes-linear: shape 0 of
 /// `counted_shapes(spread_remainder_chain(k))` over `x` with `64 k` holes).
 ///
-/// The answer is `found(p)?.is_some()`: the probe is the same up to its first point, a probe
-/// that finds none runs to the end as before, and [`found`] answers with that point where its
-/// own search after it refuses. Before the probe, parts whose disjunctions are each split by
-/// the bounds of one atom are decided exactly by cells of that atom ([`by_cells`]).
+/// The answer is meant to be `found(p)?.is_some()`. Before PRES-stop-prefix the comment here
+/// said the probe is the same as [`found`]'s up to its first point; it is not ([`probe_to`]
+/// with `stop` skips the batched searches), and on 12 random formulas this refused where
+/// [`found`] found a point (I18). Now a refusal here falls back to [`found`]'s path, and a
+/// refusal of [`found`]'s probe with no point falls back to this one, so the two answer on
+/// the same formulas, with the same answer. Before the probe, parts whose disjunctions are each
+/// split by the bounds of one atom are decided exactly by cells of that atom ([`by_cells`]).
 // Complexity tradeoff: naive version, `found` probing every disjunct to the end, O(h²) here
 // (21.5 s at k = 32). Used: the probe stops at its first point, linear in the pieces (6.75
 // times the instructions in the scaling test below). Tradeoffs: a probe that finds no point
@@ -2701,6 +2720,18 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 // `l01_25_preimage_catalog::s22::the_box_of_a_chain_over_many_holes_is_tested_in_linear_work`
 // and `l01_38_presburger::model::satisfiable_agrees_with_decide_on_disjunctions_of_unit_rows`;
 // COMPLEXITY.md row S22-shapes-linear.
+//
+// Where the probe that stops refuses, [`found`]'s probe is made, stopped at its first point
+// ([`probe_prefix`]), so that [`decide`] answers wherever [`satisfiable`] does: the two
+// probes take different paths to their first point (the batched searches of
+// [`search_by_halves`] come first in [`found`]'s and are skipped here), and on 12 of 3,000
+// random formulas (`random2` cases 78, 91, 399, ...) only [`found`]'s found one.
+// Complexity tradeoff (PRES-stop-prefix): naive version, the refusal. Used: a formula the
+// probe that stops refuses costs up to [`found`]'s probe more, stopped at its first point; one
+// it answers costs what it cost before, but for one copy of the parts (`O(n)`). Not used:
+// [`found`]'s probe first (one probe, the same answers as [`satisfiable`]), whose batched
+// searches cost 95.7 times the bytes at 8n on `s22::chain_cross_above_its_width_scales`
+// (limit 16.2) and 68.0 times on `chain_cross_dead_scales` (limit 17.6).
 fn has_point(p: Parts) -> Result<bool, Refusal> {
     if pick(&p, true).is_ok() {
         return Ok(true);
@@ -2709,10 +2740,21 @@ fn has_point(p: Parts) -> Result<bool, Refusal> {
         return answer;
     }
     let mut points = Vec::new();
-    match probe_to(p, &mut points, true)? {
-        None => Ok(false),
-        Some(_) if !points.is_empty() => Ok(true),
-        Some(p) => pick(&p, true).map(|_| true),
+    let refused = match probe_to(p.clone(), &mut points, true) {
+        Ok(None) => return Ok(false),
+        Ok(Some(_)) if !points.is_empty() => return Ok(true),
+        Ok(Some(q)) => match pick(&q, true) {
+            Ok(_) => return Ok(true),
+            Err(why) => why,
+        },
+        Err(why) => why,
+    };
+    let mut points = Vec::new();
+    match probe_prefix(p, &mut points) {
+        Ok(None) => Ok(false),
+        Ok(Some(_)) if !points.is_empty() => Ok(true),
+        Ok(Some(q)) => pick(&q, true).map(|_| true).map_err(|_| refused),
+        Err(_) => Err(refused),
     }
 }
 
@@ -3999,7 +4041,7 @@ fn by_halves<E>(
 /// Each disjunct in `kept` is kept untested, as if a point held it: neither removed nor
 /// searched for ([`probe_kept`]).
 fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
-    probe_kept(p, &mut Vec::new(), false, kept)
+    probe_kept(p, &mut Vec::new(), false, true, kept)
 }
 
 /// The parts of [`project_parts`] with two disjunctions or more, with each disjunct that has no
@@ -4188,10 +4230,22 @@ fn tree_domains(
 /// also when it refuses, and, when `stop` is set, stops at the first point and returns the
 /// parts with the disjunction then tested whole, which have the points of `p`. Each point
 /// holds a disjunct of the disjunction under test and every other part ([`point_with`]), so
-/// it is a point of `p`. Until that point it does what [`probe`] does, so without one it
-/// gives what [`probe`] gives.
+/// it is a point of `p`. Without `stop` it does what [`probe`] does. With `stop` it skips the
+/// removals and the batched searches ([`search_by_halves`]) that [`probe`] makes first and
+/// tests one disjunct at a time from the start, so it can refuse where [`probe`] finds a point
+/// (I18); [`probe_prefix`] is the stopped probe that follows [`probe`]'s path.
 fn probe_to(p: Parts, points: &mut Vec<Model>, stop: bool) -> Result<Option<Parts>, Refusal> {
-    probe_kept(p, points, stop, &HashSet::new())
+    probe_kept(p, points, stop, !stop, &HashSet::new())
+}
+
+/// [`probe_to`] without `stop`, the probe [`found`] makes, but stopped at its first point: the
+/// same removals and batched searches ([`search_by_halves`], stopped at its first point too)
+/// and then the same tests one disjunct at a time, so that up to its first point it is that
+/// probe, and it ends where that probe finds its first point, or as that probe ends when it
+/// finds none. So `Ok(None)` and a refusal with no point are exactly where [`found`]'s probe
+/// gives them, and a point exactly where that probe finds one (PRES-stop-prefix).
+fn probe_prefix(p: Parts, points: &mut Vec<Model>) -> Result<Option<Parts>, Refusal> {
+    probe_kept(p, points, true, true, &HashSet::new())
 }
 
 /// [`probe_to`], with each disjunct in `kept` kept untested, as if a point held it: neither
@@ -4202,6 +4256,7 @@ fn probe_kept(
     mut p: Parts,
     points: &mut Vec<Model>,
     stop: bool,
+    batched: bool,
     kept: &HashSet<u64>,
 ) -> Result<Option<Parts>, Refusal> {
     // The bounds on single atoms that the formula implies, found by [`learn`]. The formula
@@ -4233,7 +4288,9 @@ fn probe_kept(
         // For each disjunct, whether the search with it forced found no point ([`search_by_halves`]).
         let mut single_failed: Vec<Vec<bool>> =
             p.ors.iter().map(|o| vec![false; o.len()]).collect();
-        let (order, links) = if stop {
+        // The points this round has found so far; with `stop`, the first one ends the probe.
+        let before = points.len();
+        let (order, links) = if !batched {
             (order, links)
         } else {
             // The tests that ask no search remove their disjuncts first, so that the
@@ -4261,7 +4318,10 @@ fn probe_kept(
                 p.ors[i] = keep;
                 held[i] = keep_held;
             }
-            single_failed = search_by_halves(&p, &mut held, points, &implied);
+            single_failed = search_by_halves(&p, &mut held, points, &implied, stop);
+            if stop && points.len() > before {
+                return Ok(Some(p));
+            }
             private_links(&p)
         };
         for i in order {
@@ -4994,12 +5054,24 @@ fn point_with(
 /// `l01_38_presburger::disj_groups`, `l01_39_reduced_product::named_test` and
 /// `l01_39_reduced_product::deep_condition`, and `ladder::a_chain_of_guarded_remainders_scales`
 /// (COMPLEXITY.md PROJECT-canon-precision).
+// Complexity tradeoff (PRES-stop-prefix): with `stop`, the searches end at the first point,
+// which is all [`has_point`] asks when it falls back to [`probe_prefix`], so that probe costs
+// no more than the one [`found`] makes up to the same point. Naive version: [`probe_to`] with `stop` skipped these searches
+// and the removals before them, so its first point came from one forward search per disjunct
+// in order, a different path from [`found`]'s: cheaper where an early disjunct has a point,
+// but it refused where these searches find one (12 of 3,000 random formulas, where
+// [`satisfiable`] answered and [`decide`] refused). Used: the same removals and searches as
+// without `stop`, at most the searches [`found`] makes, stopped at the first point; a search
+// that finds no point costs what it costs without `stop`.
 fn search_by_halves(
     p: &Parts,
     held: &mut [Vec<bool>],
     points: &mut Vec<Model>,
     implied: &Near,
+    stop: bool,
 ) -> Vec<Vec<bool>> {
+    // Whether a search has found a point, which with `stop` ends the searches.
+    let hit = Cell::new(false);
     let mut cons = p.cons.clone();
     implied
         .one
@@ -5064,6 +5136,9 @@ fn search_by_halves(
     // Without a point when the sets are left out, there is none with them.
     let mut search =
         |held: &mut [Vec<bool>], forced: &[Vec<usize>], waiting: &mut [Vec<usize>]| -> bool {
+            if stop && hit.get() {
+                return true;
+            }
             let note =
                 (forced.iter().zip(waiting.iter())).any(|(f, w)| !f.is_empty() && !w.is_empty());
             let Some((m, took, near)) = ask(held, forced, true, note) else {
@@ -5090,6 +5165,7 @@ fn search_by_halves(
                 hold_waiting(p, forced, waiting, held, &m, (&base, near), &set_atoms);
             }
             points.push(m);
+            hit.set(true);
             true
         };
     let mut failed: Vec<Vec<bool>> = p.ors.iter().map(|o| vec![false; o.len()]).collect();
@@ -5097,7 +5173,7 @@ fn search_by_halves(
     let mut left: Vec<(usize, usize)> = (p.ors.iter().enumerate())
         .flat_map(|(i, o)| (0..o.len()).map(move |at| (i, at)))
         .collect();
-    while !left.is_empty() {
+    while !left.is_empty() && !(stop && hit.get()) {
         // One round: each disjunct no point holds is forced, but one whose bound of one atom
         // the bounds of one atom of those forced before it in the round exclude, which waits
         // for the next round: `y == 0` and `y == 10` of one disjunction are never forced

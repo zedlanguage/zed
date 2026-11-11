@@ -15,6 +15,7 @@ mod carrier;
 mod cells;
 mod checker;
 mod controls;
+mod decide_sat;
 mod deep;
 mod disj_groups;
 mod entailment;
