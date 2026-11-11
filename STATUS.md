@@ -1826,7 +1826,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LOAD-max-div-xr | impl attempt 2 | 2026-11-10 01:18 | rounds 4-6 started; review branch rebased onto 4777a33e (8cff3eae), build restacked; load 41.16 45.72 47.90 |
 | NARROW-join-atoms | impl attempt 1 | 2026-11-10 18:29 | started; worktree from origin/main 28b156e3 / 33.89 |
 | PERF-negated-chain-xr | impl attempt 1 | 2026-11-10 06:16 | started: reading code, setting up cross-review (Opus 5.5 medium, gpt-6.1-sol medium, gemini-4-argon high) |
-| PERF-project-each-superlinear | impl attempt 1 | 2026-11-10 18:04 | started; worktree from 28b156e3 seeded / 33.60 |
 | PRES-disj-cost-xr | impl attempt r4 | 2026-11-09 19:19 | rounds 4-6 started; round-3 orchestrator work committed ba4fb9af on wt/pres-disj-cost-xr; rebasing on origin/main 4777a33e; load 41.08 34.16 31.53 |
 | REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | rounds 7-8 started; committing review tree (Claude R5 + probe), bringing Claude R6 onto the branch, rebasing on origin/main 4777a33e / load 52.67 38.82 33.29 |
 
