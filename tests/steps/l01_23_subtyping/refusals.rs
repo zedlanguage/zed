@@ -6470,3 +6470,362 @@ fn r8_stage_boundary_scale() {
         128,
     );
 }
+
+#[test]
+fn r8_varywidth_scales_within_input_size() {
+    // Watch item `r5varywidth`: input has Theta(w^2) nodes (`w` boolean columns x `w` clauses),
+    // so `w` to `4w` increases input size `N = w^2` by `16x` (`O(N log N)` bound <= `16 * 3 = 48x`).
+    big(|| {
+        Type::forget_emptiness();
+        let small = r5_varying_width(16);
+        let large = r5_varying_width(64);
+        let mut m = scaling::Meter::new();
+        let mut v1 = None;
+        let mut v2 = None;
+        let w1 = m.work(|| {
+            Type::forget_emptiness();
+            v1 = Some(small.verdict());
+        });
+        let w2 = m.work(|| {
+            Type::forget_emptiness();
+            v2 = Some(large.verdict());
+        });
+        assert_eq!(v1, Some(Verdict::Inhabited));
+        assert_eq!(v2, Some(Verdict::Inhabited));
+        assert!(
+            w2.units <= w1.units.saturating_mul(48),
+            "r5varywidth w=16 ({}) to w=64 ({}) exceeded O(w^2 log w) bound",
+            w1.units,
+            w2.units
+        );
+    });
+}
+
+#[test]
+fn r8_x39_deep_type_drop_does_not_overflow_stack() {
+    // Negative control on __COMMIT__ and main `f5ecad1d`: a 2 MiB thread that calls
+    // `Type::forget_emptiness()` before building a deep nested `cons(int, ...)` chain (25,000
+    // links = 50,000 nested `Node::Parts` / `BTreeMap<usize, Part<Row>>` levels, matching `P` in
+    // `r6two` at `n = 4096`) initializes `VERDICTS` before `types::FREED`, and an external
+    // thread-local initialized first outlives `types::FREED`; both overflow a 2 MiB stack
+    // (`SIGSEGV`, `rc = 139`) at thread exit without `hold()` and `ENDING`.
+    let run_forget_first = std::thread::Builder::new()
+        .name("r8-x39-forget".into())
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            Type::forget_emptiness();
+            let mut chain = Type::atom("nil");
+            for _ in 0..25_000 {
+                chain = cons_of(Type::int(), chain);
+            }
+            assert_eq!(chain.verdict(), Verdict::Inhabited);
+        })
+        .unwrap();
+    run_forget_first.join().unwrap();
+
+    let run_external_tls = std::thread::Builder::new()
+        .name("r8-x39-ext-tls".into())
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            thread_local! {
+                static EXT: std::cell::RefCell<Option<Type>> = const { std::cell::RefCell::new(None) };
+            }
+            EXT.with(|slot| *slot.borrow_mut() = None);
+            let mut chain = Type::atom("nil");
+            for _ in 0..25_000 {
+                chain = cons_of(Type::int(), chain);
+            }
+            EXT.with(|slot| *slot.borrow_mut() = Some(chain));
+        })
+        .unwrap();
+    run_external_tls.join().unwrap();
+}
+
+#[test]
+fn r8_nested_prefix_chains_do_not_coarsen() {
+    big(|| {
+        let l_inhab = r5_remainder_boundary(32, true, "_r8_nest_in");
+        let l_empty = r5_sat_type(2, &vec![vec![]; 16], "_r8_nest_em");
+        let cases = [
+            (
+                "tuple_inhab",
+                Type::tuple(vec![l_inhab.clone(), Type::int()]),
+                Verdict::Inhabited,
+                false,
+            ),
+            (
+                "tuple_empty",
+                Type::tuple(vec![l_empty.clone(), Type::int()]),
+                Verdict::Empty,
+                true,
+            ),
+            (
+                "record_inhab",
+                Type::exact(Type::atom("x"), l_inhab.clone()),
+                Verdict::Inhabited,
+                false,
+            ),
+            (
+                "record_empty",
+                Type::exact(Type::atom("x"), l_empty.clone()),
+                Verdict::Empty,
+                true,
+            ),
+            // Not asserted: `#wrap((l_inhab,))` is Refused(Fork) on this tree; Gemini R8 decides
+            // it Inhabited and reports cb709f13 refused it too (X42, open).
+            (
+                "atom_empty",
+                Type::atom_with("wrap", &Type::tuple(vec![l_empty])),
+                Verdict::Empty,
+                true,
+            ),
+        ];
+        for (label, t, want_v, want_empty) in cases {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), want_v, "nested verdict: {label}");
+            Type::forget_emptiness();
+            assert_eq!(t.is_empty(), want_empty, "nested is_empty: {label}");
+        }
+    });
+}
+
+#[test]
+fn r8_batch_and_single_file_checking_agree() {
+    big(|| {
+        let make_types = |tag: &str| -> Vec<Type> {
+            let l_in = r5_remainder_boundary(16, true, &format!("_r8b_in{tag}"));
+            let l_em = r5_sat_type(2, &vec![vec![]; 8], &format!("_r8b_em{tag}"));
+            vec![
+                r8_stage_boundary(24, false, &format!("_r8b_sin{tag}")),
+                r8_stage_boundary(24, true, &format!("_r8b_sout{tag}")),
+                r7_congruence(24, true, &format!("_r8b_cout{tag}")),
+                r7_aperiodic(127, &format!("_r8b_ap127{tag}")),
+                r7_aperiodic(129, &format!("_r8b_ap129{tag}")),
+                Type::tuple(vec![l_in.clone(), Type::int()]),
+                Type::tuple(vec![l_em.clone(), Type::int()]),
+                Type::exact(Type::atom("x"), l_in),
+                Type::exact(Type::atom("x"), l_em),
+            ]
+        };
+        let ts_batch = make_types("_batch");
+        Type::forget_emptiness();
+        let batch: Vec<(Verdict, bool)> = ts_batch
+            .iter()
+            .map(|t| (t.verdict(), t.is_empty()))
+            .collect();
+        Type::forget_emptiness();
+        let mut rev: Vec<(Verdict, bool)> = ts_batch
+            .iter()
+            .rev()
+            .map(|t| (t.verdict(), t.is_empty()))
+            .collect();
+        rev.reverse();
+        let alone: Vec<(Verdict, bool)> = (0..batch.len())
+            .map(|i| {
+                std::thread::Builder::new()
+                    .stack_size(16 * 1024 * 1024)
+                    .spawn(move || {
+                        let ts = make_types("_alone");
+                        let v = ts[i].verdict();
+                        Type::forget_emptiness();
+                        let e = ts[i].is_empty();
+                        (v, e)
+                    })
+                    .unwrap()
+                    .join()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(alone, batch, "alone vs forward batch");
+        assert_eq!(alone, rev, "alone vs reversed batch");
+
+        let units = [
+            "f(x: #a .. #a | #b -> int) = 0;\nmain() = 0;\n",
+            "f(x: (int, #a .. #a | #b -> int)) = 0;\nmain() = 0;\n",
+            "f(x: #a | #b .. #a -> int) = 0;\nmain() = 0;\n",
+            "f(x: (int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int) = 0;\nmain() = 0;\n",
+        ];
+        let u_alone: Vec<Option<String>> = units
+            .iter()
+            .map(|&s| {
+                std::thread::spawn(move || zedc::run::load(s.as_bytes()).err())
+                    .join()
+                    .unwrap()
+            })
+            .collect();
+        let u_batch: Vec<Option<String>> = units
+            .iter()
+            .map(|s| zedc::run::load(s.as_bytes()).err())
+            .collect();
+        let mut u_rev: Vec<Option<String>> = units
+            .iter()
+            .rev()
+            .map(|s| zedc::run::load(s.as_bytes()).err())
+            .collect();
+        u_rev.reverse();
+        assert_eq!(u_alone, u_batch, "zedc single-file vs forward batch");
+        assert_eq!(u_alone, u_rev, "zedc single-file vs reversed batch");
+        assert!(u_alone[0].is_none() && u_alone[1].is_none());
+        assert!(u_alone[2].is_some() && u_alone[3].is_some());
+    });
+}
+
+#[test]
+fn r8_escape_laminar_boundary_declines_crossing_atoms() {
+    big(|| {
+        let l = list_named(Type::int(), "_r8_lam");
+        let p = cons_of(
+            &(&lit(0) | &lit(1)) | &lit(2),
+            cons_of(lit(7), Type::atom("nil")),
+        );
+        let f01 = cons_of(&Type::int() - &(&lit(0) | &lit(1)), l.clone());
+        let f12 = cons_of(&Type::int() - &(&lit(1) | &lit(2)), l.clone());
+        let f02 = cons_of(&Type::int() - &(&lit(0) | &lit(2)), l.clone());
+        let f1 = cons_of(&Type::int() - &lit(1), l);
+
+        // Inside laminar boundary: `{1}` is nested inside `{0, 1}`.
+        let laminar = &p - &(&f01 | &f1);
+        Type::forget_emptiness();
+        assert_eq!(laminar.chain_verdict(), Some(Verdict::Inhabited));
+        assert_eq!(laminar.verdict(), Verdict::Inhabited);
+
+        // Outside laminar boundary: `{0, 1}` and `{1, 2}` cross (`in_place_tree` declines to `None`),
+        // and the base search still decides both inhabited (`[1, 7]`) and empty (`+ {0, 2}`).
+        let cross_inhab = &p - &(&f01 | &f12);
+        Type::forget_emptiness();
+        assert_eq!(cross_inhab.chain_verdict(), None);
+        assert_eq!(cross_inhab.verdict(), Verdict::Inhabited);
+
+        let cross_empty = &p - &(&(&f01 | &f12) | &f02);
+        Type::forget_emptiness();
+        assert_eq!(cross_empty.chain_verdict(), None);
+        assert_eq!(cross_empty.verdict(), Verdict::Empty);
+    });
+}
+
+#[test]
+fn r8_light_edges_and_wide_rows_agree_with_the_witness() {
+    big(|| {
+        // Aperiodic positive list `P` of length `l0 = 40` (`p_pl = 39`) with heavy spine `F_1..F_36`,
+        // four interior light branches hanging off `F_4, F_9, F_14, F_19` (heights up to 24, giving
+        // `R_P >= 12` residue classes so Stage B runs), and an optional `wide` root (`>= 5` atoms).
+        let build_case = |spine6_separates: bool, include_wide: bool, tag: &str| -> Type {
+            let l0 = 40usize;
+            let ch_val = |j: usize| -> i64 { ((j.count_ones() as usize + j % 3) % 4) as i64 };
+            let mut defs = vec![def(
+                &format!("L{tag}"),
+                Expr::Union(vec![nil(), cons(int(), r(0))]),
+            )];
+            // Heavy spine `F_1 .. F_36` (`defs` indices `1 ..= 36`, heights `1 ..= 36`).
+            // `F_10 .. F_36` exclude `{0, 1, 2, 3}` (`27` cons nodes * `14` residue buckets >
+            // `2 * (|cons| + l0 + |S|)`, forcing Stage B), while `F_1 .. F_9` (`e != 6`) are `int`
+            // so light branch `B_9` (attached at `F_9`, tip height 12) can separate ONLY on spine
+            // node `F_6` (`j = 12 - 6 + 2 = 8`) across the light edge `B_9 -> F_9`.
+            for e in 1..=36usize {
+                let h = if e == 6 && spine6_separates {
+                    &Type::int() - &lit(5)
+                } else if e >= 10 {
+                    &Type::int() - &(&(&lit(0) | &lit(1)) | &(&lit(2) | &lit(3)))
+                } else {
+                    Type::int()
+                };
+                defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+            }
+            // Light branches:
+            // - `B_9`: 3 links (`ht = 10, 11, 12`) onto `F_9`, all heads `int` -> separates ONLY at `F_6`!
+            let mut prev = 9usize;
+            for k in 1..=3usize {
+                let idx = defs.len();
+                defs.push(def(&format!("B9_{k}{tag}"), cons(int(), r(prev))));
+                prev = idx;
+            }
+            let b9_tip = prev; // ht = 12
+            // - Three more light branches onto `F_12`, `F_15`, `F_18` of lengths 2, 3, 4 (distinct heights
+            //   `14, 18, 22`, plus spine roots at `25..=34` giving 14 distinct residue classes!).
+            let mut tips = vec![b9_tip];
+            for (attach, len, bname) in [(12usize, 2usize, "B12"), (15, 3, "B15"), (18, 4, "B18")] {
+                let mut cur = attach;
+                for k in 1..=len {
+                    let idx = defs.len();
+                    let h = if k == len {
+                        &Type::int() - &lit(5)
+                    } else {
+                        Type::int()
+                    };
+                    defs.push(def(
+                        &format!("{bname}_{k}{tag}"),
+                        cons(Expr::Type(h), r(cur)),
+                    ));
+                    cur = idx;
+                }
+                tips.push(cur);
+            }
+            // Optional wide branch onto `F_20` with 6 consecutive `int \ {5}` heads (`d >= 6` -> `Wide`).
+            if include_wide {
+                let mut cur = 20usize;
+                for k in 1..=6usize {
+                    let idx = defs.len();
+                    defs.push(def(
+                        &format!("BW_{k}{tag}"),
+                        cons(Expr::Type(&Type::int() - &lit(5)), r(cur)),
+                    ));
+                    cur = idx;
+                }
+                tips.push(cur);
+            }
+            for ht_r in 25..=34usize {
+                tips.push(ht_r);
+            }
+            let mut p = nil();
+            for j in (1..=l0).rev() {
+                let h = if j == 1 {
+                    lit(9)
+                } else {
+                    &lit(ch_val(j)) | &lit(5)
+                };
+                p = cons(Expr::Type(h), p);
+            }
+            defs.push(def(&format!("P{tag}"), p));
+            let p_idx = defs.len() - 1;
+            let ts = u4_inst(defs);
+            let neg = tips.into_iter().fold(Type::empty(), |u, idx| {
+                &u | &cons_of(Type::int(), ts[idx].clone())
+            });
+            &ts[p_idx] - &neg
+        };
+
+        let t_inhab_wide = build_case(true, true, "_r8sb_iw");
+        Type::forget_emptiness();
+        let c_iw = t_inhab_wide.escape_cell_counts();
+        assert!(c_iw.0 > 0, "inhab+wide cells: {c_iw:?}");
+        Type::forget_emptiness();
+        assert_eq!(t_inhab_wide.chain_verdict(), Some(Verdict::Inhabited));
+        Type::forget_emptiness();
+        assert_eq!(t_inhab_wide.verdict(), Verdict::Inhabited);
+
+        let t_empty_light = build_case(false, false, "_r8sb_el");
+        Type::forget_emptiness();
+        let c_el = t_empty_light.escape_cell_counts();
+        assert!(c_el.0 > 0, "empty+light cells: {c_el:?}");
+        Type::forget_emptiness();
+        assert_eq!(t_empty_light.chain_verdict(), Some(Verdict::Empty));
+        Type::forget_emptiness();
+        assert_eq!(t_empty_light.verdict(), Verdict::Empty);
+
+        // Witness: the list of length 40 with 9 at place 1, 5 at places 2 and 8, and `ch_val(j)`
+        // at every other place j is in `t_inhab_wide` and not in `t_empty_light`.
+        let ch_val = |j: usize| -> i64 { ((j.count_ones() as usize + j % 3) % 4) as i64 };
+        let w_bad_for_el = (1..=40usize).rev().fold(Value::atom("nil"), |tail, j| {
+            let v = if j == 1 {
+                9
+            } else if j == 2 || j == 8 {
+                5
+            } else {
+                ch_val(j)
+            };
+            Value::atom_with("cons", vec![Value::Int(v), tail])
+        });
+        assert!(t_inhab_wide.contains(&w_bad_for_el));
+        assert!(!t_empty_light.contains(&w_bad_for_el));
+    });
+}
