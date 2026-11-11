@@ -109,3 +109,30 @@ fn a_message_with_many_definitions_scales() {
         assert_eq!(out.matches("    type T").count(), n);
     });
 }
+
+/// `n` names, each defined as a `/` of literals that meets no carrier and read once by a `*`
+/// that does not take it: `2n` rejections, each read stepping through its name with one lookup
+/// of the name's definition (`Ck::defined_open`).
+fn read_divisions(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("q{i} = 1 / 2;\nz{i} = q{i} * \"a\";\n"))
+        .collect()
+}
+
+#[test]
+fn deriving_reads_of_many_divisions_of_literals_scales() {
+    scaling::check_order(
+        "the derivations of n reads of names defined as divisions of literals",
+        200,
+        1,
+        |n| {
+            let out = rejected(&read_divisions(n));
+            assert_eq!(
+                out.matches("is read here; it is defined as an operation on literals alone")
+                    .count(),
+                n,
+                "{out}"
+            );
+        },
+    );
+}

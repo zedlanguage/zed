@@ -132,3 +132,60 @@ fn an_operation_on_literals_that_the_program_gives_a_type_keeps_it() {
         "{out}"
     );
 }
+
+/// The step of a read of `name`, defined as an operation on literals alone that met no carrier.
+fn read_open(name: &str) -> String {
+    format!(
+        "`{name}` is read here; it is defined as an operation on literals alone, so it takes the \
+         carrier of what it meets"
+    )
+}
+
+#[test]
+fn a_name_defined_as_an_operation_on_literals_that_met_no_carrier_is_read_with_no_type() {
+    // The spec's `q`, read once more: `q` was rejected, and the type the checker kept for it,
+    // `Never`, is not one the program gives it, so no step names it.
+    let out = rejected("q = (1 + 2) / (3 + 4);\nz = q * \"a\";\n");
+    let (d, plus) = (open_div(), open("+"));
+    let second = out.split_once("\n2:5: ").expect("a second rejection").1;
+    assert_eq!(
+        steps(second)[..4],
+        [
+            &*read_open("q"),
+            "`q` is defined as this expression",
+            &d,
+            &plus,
+        ],
+        "{out}"
+    );
+    assert!(
+        !second.contains("`q` is Never") && !second.contains("expression, Never"),
+        "{out}"
+    );
+    // `q = 1 / 2` the same: the `f64` the checker kept for the `/` is not the program's.
+    let out = rejected("q = 1 / 2;\nz = q * \"a\";\n");
+    let second = out.split_once("\n2:5: ").expect("a second rejection").1;
+    assert_eq!(
+        steps(second)[..3],
+        [&*read_open("q"), "`q` is defined as this expression", &d],
+        "{out}"
+    );
+    assert!(
+        !second.contains("`q` is f64") && !second.contains("expression, f64"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_name_defined_as_an_operation_on_literals_of_a_type_is_read_with_its_type() {
+    let out = rejected("q = 1 + 2;\nz = q * \"a\";\n");
+    assert_eq!(
+        steps(&out)[..3],
+        [
+            "`q` is int here",
+            "`q` is defined as this expression, int",
+            "this `+` gives int",
+        ],
+        "{out}"
+    );
+}

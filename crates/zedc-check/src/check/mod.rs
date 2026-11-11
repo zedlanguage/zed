@@ -1505,7 +1505,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             let id = match src {
                 Src::Name(id) => {
                     let name = &self.t.res.binders[*id].name;
-                    next.push(note(span, format!("`{name}` is {ty} here")));
+                    next.push(note(
+                        span,
+                        match self.defined_open(*id) {
+                            false => format!("`{name}` is {ty} here"),
+                            true => format!(
+                                "`{name}` is read here; it is defined as an operation on \
+                                 literals alone, so it takes the carrier of what it meets"
+                            ),
+                        },
+                    ));
                     *id
                 }
                 Src::Call(id, _) => {
@@ -1589,7 +1598,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 next.push(note(b.span, format!("`{}` is bound here", b.name)));
             }
             while let Some(origin) = o {
-                next.push(note(origin.span, self.said(id, &origin.why)));
+                let said = match (&origin.why, origin.from) {
+                    (Why::Defined(_), Some(f)) if self.lit_open.contains(&f) => {
+                        let b = &self.t.res.binders[id].name;
+                        format!("`{b}` is defined as this expression")
+                    }
+                    _ => self.said(id, &origin.why),
+                };
+                next.push(note(origin.span, said));
                 let mut why_none = Vec::new();
                 self.emptied_of(id, &origin.why, &mut why_none);
                 next.extend(why_none.into_iter().map(Work::Show));
@@ -1600,6 +1616,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             stack.extend(next.into_iter().rev());
         }
+    }
+
+    /// Whether binder `id` is defined, as its one origin, by an operation on literals alone
+    /// that met no carrier ([`Ck::lit_open`]): the type found for it is then not the
+    /// program's, and a step that reads `id` names none (DESIGN.md sec:diagnostics, "A `/` of
+    /// integer literals"). One lookup.
+    fn defined_open(&self, id: usize) -> bool {
+        self.whence.get(&id).is_some_and(|o| {
+            o.then.is_none()
+                && matches!(o.why, Why::Defined(_))
+                && o.from.is_some_and(|f| self.lit_open.contains(&f))
+        })
     }
 
     /// The type of the tuple `e` as last found: its components' types, a tuple written as a

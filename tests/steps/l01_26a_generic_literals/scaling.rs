@@ -345,3 +345,73 @@ fn a_comparison_of_tuples_of_many_operations_scales() {
         );
     });
 }
+
+/// `n` calls of `f(x: f64)`, each given a `/` of literals on a line of its own: each argument
+/// takes the parameter's `f64` by one lookup of the parameter's carrier and one walk of the
+/// argument (`Ck::lit_args_take`, DESIGN.md sec:domains: "A use fixes a literal's carrier [...]
+/// at a declared type, that type's").
+///
+/// Negative control (run once, not committed), at n = 500 and 4,000: copying every operation
+/// on literals alone recorded so far at each call, which is quadratic, failed at 13.9 times the
+/// bytes, above the limit of 11.7, and so did the six other tests of literals here.
+#[test]
+fn many_calls_given_divisions_of_literals_take_their_carriers_in_linear_time() {
+    let calls = |n: usize| {
+        let ys: String = (0..n)
+            .map(|i| format!("y{i} = f(x: ({i} + 1) / 2);\n"))
+            .collect();
+        format!("f(x: f64) = x;\n{ys}")
+    };
+    scaling::on_a_thread(1 << 29, || {
+        assert_eq!(
+            zed_tests::step_helpers::l01_16_elaboration::value(&calls(3), "y2"),
+            "1.5"
+        );
+        let n = 500;
+        let units = scaling::inputs(n, |m| Resolved::new(&calls(m)));
+        for u in units.values() {
+            assert_eq!(u.type_errors(), Vec::<String>::new());
+        }
+        scaling::check_order(
+            "checking n calls given a division of literals at an f64 parameter",
+            n,
+            1,
+            |m| {
+                std::hint::black_box(units[&m].type_errors());
+            },
+        );
+    });
+}
+
+/// `y = f(x: ((…((1 + 1) / 1 + 1) / 1 …) + 1) / 1)` at `f(x: f64)`, `n` divisions of literals
+/// nested `2n` deep, each level on a line of its own: the argument takes the parameter's `f64`
+/// in one walk (`Ck::lit_takes`), which removes every operation in it from those with no type.
+#[test]
+fn an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time() {
+    let nest = |n: usize| {
+        format!(
+            "f(x: f64) = x;\ny = f(x: {}1{});\n",
+            "(".repeat(n),
+            "\n  + 1) / 1".repeat(n)
+        )
+    };
+    scaling::on_a_thread(1 << 29, || {
+        assert_eq!(
+            zed_tests::step_helpers::l01_16_elaboration::value(&nest(3), "y"),
+            "4.0"
+        );
+        let n = 500;
+        let units = scaling::inputs(n, |m| Resolved::new(&nest(m)));
+        for u in units.values() {
+            assert_eq!(u.type_errors(), Vec::<String>::new());
+        }
+        scaling::check_order(
+            "checking an argument of n nested divisions of literals at an f64 parameter",
+            n,
+            1,
+            |m| {
+                std::hint::black_box(units[&m].type_errors());
+            },
+        );
+    });
+}

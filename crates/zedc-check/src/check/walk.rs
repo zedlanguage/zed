@@ -2197,6 +2197,42 @@ impl<'t, 'a> Ck<'t, 'a> {
         true
     }
 
+    /// At the top level, each argument of `args` that is an operation on bare literals alone
+    /// ([`Ck::lit_ops`]), at a parameter that every arrow of `sig` declares of one numeric
+    /// carrier other than `int`, takes that carrier, as a literal does at a declared type
+    /// (DESIGN.md sec:domains: a use fixes a literal's carrier "at a declared type, that
+    /// type's", and "an operation on literals alone ... is a literal too, and takes the
+    /// carrier of what it meets"): with `f(x: f64)`, in `f(x: 1 / 2)` the `/` is an `f64`
+    /// and `x` is `0.5`, and the rejection the `/` wrote as it was walked is dropped. An
+    /// operator's arrows differ in their carriers, so this leaves its operands to
+    /// [`Ck::lit_op_meets`]; a generic parameter gives no carrier, so `inc(x: 1 / 2)` is
+    /// rejected still. Where the operation's value at the carrier is no value of it
+    /// ([`Ck::lit_takes`]), its rejection stands.
+    ///
+    /// It costs one lookup per argument and one read of each arrow's parameter there, and
+    /// [`Ck::lit_takes`] walks an operation once: after it the argument is of a carrier.
+    fn lit_args_take(&mut self, sig: &Sig, args: &mut [Option<Arg<'a>>]) {
+        for (i, a) in args.iter_mut().enumerate() {
+            let Some(a) = a else {
+                continue;
+            };
+            let Some(e) = a.expr.filter(|e| self.lit_ops.contains(&e.span)) else {
+                continue;
+            };
+            let mut at = (sig.arrows.iter())
+                .map(|arrow| arrow.params.get(i).and_then(|p| p.numeric_carrier()));
+            let Some(Some(c)) = at.next() else {
+                continue;
+            };
+            if c == Carrier::Int || !at.all(|d| d == Some(c)) {
+                continue;
+            }
+            if self.lit_takes(e, c) {
+                a.ty = Ty::carrier(c);
+            }
+        }
+    }
+
     /// The errors after the first `from` that the operation at `span` wrote, recorded where it
     /// is an operation on literals alone at the top level ([`Ck::lit_written`]) and the check
     /// is not a repair's trial nor a run again of a function's body, whose errors are dropped
@@ -6816,6 +6852,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         // read on every path. Test:
         // `l01_26_type_resolution::never::a_call_with_an_argument_of_no_value_has_its_substituted_result`.
         // COMPLEXITY.md row C36.
+        if self.level == 0 {
+            self.lit_args_take(sig, &mut args);
+        }
         let unneeded: Vec<bool> = (args.iter().enumerate())
             .map(|(i, a)| {
                 a.as_ref()

@@ -7,6 +7,7 @@
 //! The carriers here are `int`, `f64` and `rat`: `bf16`, `f16` and `f32` join the bounds of
 //! these signatures with item FLOAT-f32.
 
+mod call_arguments;
 mod design_menus;
 mod fixes;
 mod lazy_carrier;
