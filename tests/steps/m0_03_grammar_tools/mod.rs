@@ -204,6 +204,39 @@ fn layer_does_not_count_a_word_the_program_binds_itself() {
 }
 
 #[test]
+fn layer_reads_the_field_names_of_a_type_as_names_the_program_binds() {
+    // `sorted` is an L3 word of the table. Named in a type, as the field of an atom, a record
+    // or a one-field type, as a named parameter of a function type, or as a type variable of a
+    // `for` bound, and named as the acknowledgment of a push, it is the program's own name, as
+    // a struct field is, so none of these programs uses the word.
+    let dir = spec_dir("type_fields", &design(""), "");
+    let programs = [
+        "type T = #a(sorted: int);\nf(x: T) -> T = x;\n",
+        "f(x: {sorted: int, b: int}) -> int = x.b;\n",
+        "f(x: (sorted: int)) -> int = 1;\n",
+        "f(g: (sorted: int) -> int) -> int = g(1);\n",
+        "f(g: (sorted: int, b: int) -> int) -> int = g(1, 2);\n",
+        "f(x: sorted) -> sorted for sorted in int | bool = x;\n",
+        "main(m: MainArgs) { sorted = m.stdout <- [\"a\"]; }\n",
+    ];
+    for (i, text) in programs.iter().enumerate() {
+        let program = dir.write(&format!("p{i}.zed"), &format!("// layer L1\n{text}"));
+        let (outcome, out) = tool(layer::run, &[&dir.root(), "-v", &program]);
+        assert!(
+            outcome.is_ok() && !out.contains("PARSE FAIL"),
+            "{text}\n{out}"
+        );
+        assert!(!out.contains("sorted"), "{text}\n{out}");
+    }
+    // A use of the word in an expression still counts.
+    let uses = "// layer L2\ntype T = #a(n: int);\nf(x: [int]) -> [int] = sorted(x);\n";
+    let program = dir.write("uses.zed", uses);
+    let (outcome, out) = tool(layer::run, &[&dir.root(), &program]);
+    assert_eq!(outcome, Ok(false), "{out}");
+    assert!(out.contains("L3 (sorted)"), "{out}");
+}
+
+#[test]
 fn audit_names_what_a_program_needs_and_fails_when_the_checklist_lacks_it() {
     let dir = spec_dir("audit", &design(""), "");
     let program = dir.write("p.zed", &format!("// layer L3\n{DOUBLE}\n"));

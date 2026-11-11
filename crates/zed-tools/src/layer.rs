@@ -19,7 +19,10 @@
 //! program binds anywhere, in any unit, shadows the table word. Binding positions: function,
 //! method, parameter, lambda parameter, binding target, indexed-definition name and index key,
 //! boundary item, signature, struct, field, type, type parameter, interface, law, import names,
-//! pattern names, `for` binders, loop labels, record-display labels and grammar field labels.
+//! pattern names, `for` binders, loop labels, record-display labels and grammar field labels;
+//! in a type, the field names of an atom, record or one-field type and the named parameters of a
+//! function type (`#a(n: int)`, `{n: int}`, `(n: int)`, `(n: int) -> int`) and the type
+//! variables of a `for` bound; and the name of a push's acknowledgment (`a = p <- e`).
 //! Port names, the fields after the first name of a push target (`m.stdout`), are the
 //! environment's, not the program's, and the `log` port counts as the
 //! table's L7 word. Labels that are neither uses nor bindings: named arguments and
@@ -266,6 +269,12 @@ fn is_binder(rule: &str) -> bool {
             | "GItem"
             | "IsPat"
             | "NamePat"
+            | "TypeParam"
+            | "ArrowParams"
+            | "RecordType"
+            | "FieldType"
+            | "TypeBounds"
+            | "AckPush"
     )
 }
 
