@@ -105,19 +105,69 @@ pub struct Bare {
     /// For an indexed definition of the variable over one key `i in lo..`, the key of the entry
     /// below the domain: `lo - 1`, worked out when `lo` is an integer literal.
     pub below: Option<String>,
+    /// When the item follows code that takes no boundary clause (a push, a guard, a `return`, an
+    /// expression), that code and the repairs; `None` on a binding or an indexed definition.
+    pub misplaced: Option<Misplaced>,
+}
+
+/// A boundary item that follows code taking no boundary clause, as `p <- t with x = 0;`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Misplaced {
+    /// The code before `with`, as written.
+    pub before: String,
+    /// Whether that code is a push.
+    pub push: bool,
+    /// The repairs, each one checked to parse, in the order the menu lists them.
+    pub repairs: Vec<Repair>,
+}
+
+/// One repair of a [`Misplaced`] item: the text that replaces the code at `span`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Repair {
+    /// The code replaced.
+    pub span: Span,
+    /// The code that replaces it.
+    pub text: String,
+    /// What the repair does.
+    pub fix: Fix,
+}
+
+/// What a [`Repair`] does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Fix {
+    /// The generation push `x' <- e` written as the binding `x' = e`, which takes the clause.
+    Binding,
+    /// The item, with `initial`, moved to the first binding of the block that defines the
+    /// variable.
+    Moved {
+        /// The statement the item stood on, without it.
+        here: String,
+    },
+    /// The item deleted.
+    Deleted,
 }
 
 impl Bare {
     /// What the error says.
     pub fn message(&self) -> String {
         let Bare { name, value, .. } = self;
-        format!(
+        let mut m = format!(
             "`with {name} = {value}` gives `{name}` no sentinel value: a boundary item is \
              written `initial {name} = {value}`, which gives the sentinel value, or with an \
              index, as `{name}[k] = {value}`. Without `initial`, `with {name} = {value}` reads \
              as though `{name}` took the value `{value}` anew on every step, while a boundary \
              item gives `{name}` one value, below its first step or index, once."
-        )
+        );
+        if let Some(Misplaced { before, push, .. }) = &self.misplaced {
+            let what = if *push { "a push, which" } else { "code that" };
+            m.push_str(&format!(
+                " The item also follows `{before}`, {what} takes no boundary clause: a boundary \
+                 clause follows only the value of a binding, as `{name}' = … with initial \
+                 {name} = {value};`, or of an indexed definition, as `{name}[i in 0..<n] = … \
+                 with initial {name} = {value};`."
+            ));
+        }
+        m
     }
 }
 
@@ -242,8 +292,18 @@ fn parse_one<'t>(
         let mut expected: Vec<String> = p.expected().iter().map(shown).collect();
         expected.sort();
         let dots = dots_in_list(&toks, p.far);
-        let bare = bare_item(g, ring, start, &toks, p.far)
-            .map(|n| Box::new(bare(text, tokens, &toks, n, end)));
+        let bare = bare_item(g, ring, start, &toks, p.far).map(|(n, clause)| {
+            let reaches =
+                |fixed: &[(Kind, &str)], edit: usize| reaches(g, ring, start, fixed, edit);
+            Box::new(bare(
+                text,
+                tokens,
+                &toks,
+                n,
+                end,
+                (!clause).then_some(&reaches),
+            ))
+        });
         return Err(Error {
             span: span(dots.unwrap_or(p.far)),
             expected,
@@ -301,17 +361,20 @@ fn shown(e: &Expected<'_>) -> String {
 
 /// The index of the name of a boundary item written with neither `initial` nor an index, as
 /// `with x = 0` or `, x = 0` in a boundary clause, at whose `=` a parse of `toks` as rule
-/// `start` failed (token `far`). Such an item is one exactly when the parse gets past that `=`
-/// once `initial` is written before the name, so a failure at an `=` after `with x` that is no
-/// boundary item, as in a push `p <- e with x = 0`, gives no item. The second parse runs only
-/// when the first has failed, at the cost of one parse.
+/// `start` failed (token `far`), and whether a boundary clause may stand there: whether the
+/// parse gets past that `=` once `initial` is written before the name. After `with`, the
+/// shape `with x =` is a boundary item wherever it stands, since no other rule reads a name
+/// and `=` after `with` (a facet is `with f(…)`, an update `with { … }`); so `p <- e with x = 0`
+/// gives an item that may not stand there. After `,`, only a boundary clause that the parse
+/// has entered makes the item one. The second parse runs only when the first has failed, at
+/// the cost of one parse.
 fn bare_item(
     g: &Grammar,
     ring: u32,
     start: usize,
     toks: &[(Kind, &str)],
     far: usize,
-) -> Option<usize> {
+) -> Option<(usize, bool)> {
     let n = far.checked_sub(1).filter(|&n| n > 0)?;
     let shaped = toks.get(far).is_some_and(|t| t.1 == "=")
         && toks[n].0 == Kind::Ident
@@ -323,14 +386,25 @@ fn bare_item(
     fixed.extend_from_slice(&toks[..n]);
     fixed.push((Kind::Ident, "initial"));
     fixed.extend_from_slice(&toks[n..]);
-    let mut p = Parser::new(g, ring, fixed.as_slice());
+    // The `=` is at `far + 1` in `fixed`.
+    let clause = reaches(g, ring, start, &fixed, far + 1);
+    (clause || toks[n - 1].1 == "with").then_some((n, clause))
+}
+
+/// Whether a parse of `toks` as rule `start` gets past token `edit`: succeeds, or fails only
+/// after it.
+fn reaches(g: &Grammar, ring: u32, start: usize, toks: &[(Kind, &str)], edit: usize) -> bool {
+    let mut p = Parser::new(g, ring, toks);
     let reached = match p.rule_node(start, 0, false) {
+        Some((e, _)) if e + 1 >= toks.len() => return true,
         Some((e, _)) => e.max(p.far),
         None => p.far,
     };
-    // The `=` is at `far + 1` in `fixed`.
-    (reached > far + 1).then_some(n)
+    reached > edit
 }
+
+/// Checks that a rewritten token sequence parses past its last edit, for [`bare`].
+type Reaches<'a> = &'a dyn Fn(&[(Kind, &str)], usize) -> bool;
 
 /// How the bracket depth changes at a token: up at an opening bracket, down at a closing one.
 fn depth(t: &str) -> i32 {
@@ -345,8 +419,16 @@ fn depth(t: &str) -> i32 {
 /// the span of the end of the tokens. The value runs from the `=` to the next `,` or `;` at its
 /// own bracket depth; the statement from the token after the `;` or unmatched opening bracket
 /// before the item to the `;` after it. Each scan stops at the statement's ends, so the cost is
-/// the statement's length.
-fn bare(text: &str, tokens: &[Token], toks: &[(Kind, &str)], n: usize, end: Span) -> Bare {
+/// the statement's length. When `misplaced` is given, the item stands where no boundary clause
+/// can, and [`misplaced_item`] finds its repairs.
+fn bare(
+    text: &str,
+    tokens: &[Token],
+    toks: &[(Kind, &str)],
+    n: usize,
+    end: Span,
+    misplaced: Option<Reaches<'_>>,
+) -> Bare {
     let span = |i: usize| tokens.get(i).map_or(end, |t| t.span);
     let mut d = 0;
     let mut last = n + 2;
@@ -384,6 +466,16 @@ fn bare(text: &str, tokens: &[Token], toks: &[(Kind, &str)], n: usize, end: Span
         d -= depth(t);
         first -= 1;
     }
+    let misplaced = misplaced.map(|reaches| {
+        let at = Stmt {
+            n,
+            first,
+            close,
+            stop,
+            last,
+        };
+        misplaced_item(text, tokens, toks, end, at, &value, reaches)
+    });
     Bare {
         name: toks[n].1.to_string(),
         value,
@@ -396,7 +488,215 @@ fn bare(text: &str, tokens: &[Token], toks: &[(Kind, &str)], n: usize, end: Span
             end: span(close).end,
         },
         below: below(&toks[first..n], toks[n].1),
+        misplaced,
     }
+}
+
+/// Where [`bare`] found the item: its name (token `n`), its statement's first token, its last
+/// (the `;` where there is one), the `;` or unmatched closing bracket that ends it (`stop`),
+/// and the token after the item's value (`last`).
+struct Stmt {
+    n: usize,
+    first: usize,
+    close: usize,
+    stop: usize,
+    last: usize,
+}
+
+/// The [`Misplaced`] part of the item `at`, with the text `value`. Each repair is the token
+/// sequence rewritten and parsed once more, and is offered only when that parse gets past the
+/// rewritten statement: so the menu never offers code that does not parse, such as `with
+/// initial x = 0` on a push. A repair that gives the variable its sentinel value is offered
+/// only when no other statement of the block gives one, since a second would be refused. Three
+/// repairs are tried, a constant number of parses, and [`defining`] scans the enclosing block
+/// once: linear in the unit, on the error path only.
+fn misplaced_item(
+    text: &str,
+    tokens: &[Token],
+    toks: &[(Kind, &str)],
+    end: Span,
+    at: Stmt,
+    value: &str,
+    reaches: Reaches<'_>,
+) -> Misplaced {
+    let span = |i: usize| tokens.get(i).map_or(end, |t| t.span);
+    let Stmt {
+        n,
+        first,
+        close,
+        stop,
+        last,
+    } = at;
+    let name = toks[n].1;
+    let w = n - 1;
+    // The clause runs from `with` to the end of the item's value, or of the items after it.
+    let cut = if toks.get(last).is_some_and(|t| t.1 == ",") {
+        stop
+    } else {
+        last
+    };
+    let mut d = 0;
+    let mut push = false;
+    for t in &toks[first..w] {
+        push |= d == 0 && t.1 == "<-";
+        d += depth(t.1);
+    }
+    let head = &text[span(first).start..span(w - 1).end];
+    let tail = if cut <= close && close < tokens.len() {
+        &text[span(cut).start..span(close).end]
+    } else {
+        ""
+    };
+    let here = format!("{head}{tail}");
+    let stmt = Span {
+        start: span(first).start,
+        end: span(close).end,
+    };
+    let semi = close < tokens.len() && toks[close].1 == ";";
+    let mut repairs = Vec::new();
+    let (defined, given) = defining(toks, first, stop, name);
+    // `x' <- e with x = v;` as the binding `x' = e with initial x = v;`.
+    let primed = toks[first].0 == Kind::Ident && toks[first].1.ends_with('\'');
+    if semi && primed && !given && toks[first + 1].1 == "<-" {
+        let mut fixed = toks.to_vec();
+        fixed[first + 1] = toks[n + 1];
+        fixed.insert(n, (Kind::Ident, "initial"));
+        if reaches(&fixed, close + 1) {
+            repairs.push(Repair {
+                span: stmt,
+                text: format!(
+                    "{}={}initial {}",
+                    &text[span(first).start..span(first + 1).start],
+                    &text[span(first + 1).end..span(n).start],
+                    &text[span(n).start..span(close).end],
+                ),
+                fix: Fix::Binding,
+            });
+        }
+    }
+    // The item moved to the first binding of the enclosing block that defines the variable,
+    // when it is the only item of its clause: the other items would be lost.
+    let alone = cut == last;
+    if let Some((s, e)) = defined.filter(|_| alone && !given) {
+        let item = [toks[w], (Kind::Ident, "initial")]
+            .into_iter()
+            .chain(toks[n..last].iter().copied());
+        let mut fixed: Vec<(Kind, &str)> = Vec::with_capacity(toks.len() + 1);
+        let edit = if e < w {
+            fixed.extend_from_slice(&toks[..e]);
+            fixed.extend(item);
+            fixed.extend_from_slice(&toks[e..w]);
+            let edit = fixed.len();
+            fixed.extend_from_slice(&toks[cut..]);
+            edit
+        } else {
+            fixed.extend_from_slice(&toks[..w]);
+            fixed.extend_from_slice(&toks[cut..e]);
+            fixed.extend(item);
+            let edit = fixed.len();
+            fixed.extend_from_slice(&toks[e..]);
+            edit
+        };
+        if reaches(&fixed, edit) {
+            repairs.push(Repair {
+                span: Span {
+                    start: span(s).start,
+                    end: span(e).end,
+                },
+                text: format!(
+                    "{} with initial {name} = {value};",
+                    &text[span(s).start..span(e - 1).end]
+                ),
+                fix: Fix::Moved { here: here.clone() },
+            });
+        }
+    }
+    // The item deleted: the repair underlines the clause.
+    let mut fixed = toks[..w].to_vec();
+    fixed.extend_from_slice(&toks[cut..]);
+    if reaches(&fixed, w) {
+        repairs.push(Repair {
+            span: Span {
+                start: span(w).start,
+                end: span(cut - 1).end,
+            },
+            text: here,
+            fix: Fix::Deleted,
+        });
+    }
+    Misplaced {
+        before: head.to_string(),
+        push,
+        repairs,
+    }
+}
+
+/// The first and last tokens (its `;`) of the first statement, other than the one at `first`,
+/// in the block around it, that defines `name` as a binding with no `with` clause:
+/// `name' = …;` or `mutable name = …;`, either after `local`; and whether a statement of the
+/// block other than the one at `first` gives `name` its sentinel value, `with … initial name =`.
+/// The block runs from the opening brace before token `first` (or the start of the unit) to the
+/// closing one after token `stop`; inside parentheses or brackets there is no such statement.
+/// One scan of the block.
+fn defining(
+    toks: &[(Kind, &str)],
+    first: usize,
+    stop: usize,
+    name: &str,
+) -> (Option<(usize, usize)>, bool) {
+    let mut open = first;
+    let mut d = 0;
+    while open > 0 {
+        let t = toks[open - 1].1;
+        if d - depth(t) < 0 {
+            break;
+        }
+        d -= depth(t);
+        open -= 1;
+    }
+    if open > 0 && toks[open - 1].1 != "{" {
+        return (None, false);
+    }
+    let mut shut = stop;
+    let mut d = 0;
+    while shut < toks.len() && toks[shut].0 != Kind::End && d + depth(toks[shut].1) >= 0 {
+        d += depth(toks[shut].1);
+        shut += 1;
+    }
+    let primed = format!("{name}'");
+    let (mut defined, mut given) = (None, false);
+    let mut s = open;
+    while s < shut {
+        let mut e = s;
+        let mut d = 0;
+        let mut with = false;
+        while e < shut && !(d == 0 && toks[e].1 == ";") {
+            let t = toks[e].1;
+            given |= s != first
+                && with
+                && d == 0
+                && t == "initial"
+                && toks.get(e + 1).is_some_and(|u| u.1 == name)
+                && toks.get(e + 2).is_some_and(|u| u.1 == "=");
+            with |= d == 0 && t == "with";
+            d += depth(t);
+            e += 1;
+        }
+        if e == shut {
+            break;
+        }
+        let mut k = s + usize::from(toks[s].1 == "local");
+        let mutable = toks[k].1 == "mutable";
+        k += usize::from(mutable);
+        let target = if mutable { name } else { primed.as_str() };
+        let defines =
+            k < e && toks[k].0 == Kind::Ident && toks[k].1 == target && toks[k + 1].1 == "=";
+        if defined.is_none() && s != first && defines && !with {
+            defined = Some((s, e));
+        }
+        s = e + 1;
+    }
+    (defined, given)
 }
 
 /// The key of the entry below the domain of the indexed definition `stmt` of `name`, the

@@ -770,6 +770,40 @@ impl From<crate::parse::Error> for Error {
             };
         };
         let (name, value) = (&b.name, &b.value);
+        if let Some(m) = &b.misplaced {
+            use crate::parse::Fix;
+            let mut notes = vec![Note {
+                span: b.stmt,
+                text: "the code the item follows, which takes no boundary clause".into(),
+            }];
+            notes.extend(m.repairs.iter().map(|r| Note {
+                span: r.span,
+                text: match &r.fix {
+                    Fix::Binding => format!(
+                        "repair: `{}`, the same next value written as a binding, which takes \
+                         a boundary clause",
+                        r.text
+                    ),
+                    Fix::Moved { here } => format!(
+                        "repair: `{}`, the sentinel value given on the binding that defines \
+                         `{name}`, and the item deleted where it stood: `{here}`",
+                        r.text
+                    ),
+                    Fix::Deleted => format!(
+                        "repair: `{}`, the `with` clause deleted, where `{name}` takes its \
+                         sentinel value from another statement",
+                        r.text
+                    ),
+                },
+            }));
+            return Error {
+                menu: String::new(),
+                span: b.item,
+                message,
+                notes,
+                row: Some(zedc_base::rejection::Row::BareBoundary),
+            };
+        }
         let mut notes = vec![
             Note {
                 span: b.stmt,

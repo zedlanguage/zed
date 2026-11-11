@@ -242,3 +242,340 @@ fn finding_a_bare_item_scales() {
         assert!(e.bare.is_some());
     });
 }
+
+/// The message for the bare item `name = value` written after `before`, which takes no boundary
+/// clause: a push when `push` is set.
+fn misplaced_message(name: &str, value: &str, before: &str, push: bool) -> String {
+    let what = if push { "a push, which" } else { "code that" };
+    format!(
+        "`with {name} = {value}` gives `{name}` no sentinel value: a boundary item is written \
+         `initial {name} = {value}`, which gives the sentinel value, or with an index, as \
+         `{name}[k] = {value}`. Without `initial`, `with {name} = {value}` reads as though \
+         `{name}` took the value `{value}` anew on every step, while a boundary item gives \
+         `{name}` one value, below its first step or index, once. The item also follows \
+         `{before}`, {what} takes no boundary clause: a boundary clause follows only the value \
+         of a binding, as `{name}' = … with initial {name} = {value};`, or of an indexed \
+         definition, as `{name}[i in 0..<n] = … with initial {name} = {value};`."
+    )
+}
+
+/// Checks that `src`, which holds the bare item `name = value` after `before`, is refused with
+/// row BareBoundary at the item, the whole message, and the notes `expected`; and that each
+/// unit in `repaired`, the unit with one repair of the menu applied, parses and is not refused
+/// for a boundary item when its statements are built (a keyed push is parsed but not yet built)
+fn check_misplaced(
+    src: &str,
+    (name, value): (&str, &str),
+    (before, push): (&str, bool),
+    expected: &[&str],
+    repaired: &[&str],
+) {
+    let e = refusal(src);
+    assert_eq!(e.row, Some(Row::BareBoundary), "{src}: {e:?}");
+    assert_eq!(
+        &src[e.span.start..e.span.end],
+        format!("{name} = {value}"),
+        "{src}"
+    );
+    assert_eq!(
+        e.message,
+        misplaced_message(name, value, before, push),
+        "{src}"
+    );
+    assert_eq!(notes(src, &e), expected, "{src}");
+    assert_eq!(
+        repaired.len() + 1,
+        expected.len(),
+        "{src}: one unit per repair"
+    );
+    for text in repaired {
+        let tokens = lex(text).unwrap();
+        let tree = parse(text, &tokens, "Unit", TOP).unwrap_or_else(|e| panic!("{text}: {e:?}"));
+        if let Err(e) = unit(text, &tokens, &tree) {
+            assert!(e.row.is_none(), "{text}: {e:?}");
+        }
+    }
+}
+
+/// The note on the code a bare item follows.
+const FOLLOWS: &str = "the code the item follows, which takes no boundary clause";
+
+/// The note on the repair that deletes the `with` clause, leaving `here`.
+fn deleted(here: &str, name: &str, clause: &str) -> String {
+    format!(
+        "repair: `{here}`, the `with` clause deleted, where `{name}` takes its sentinel value \
+         from another statement [{clause}]"
+    )
+}
+
+/// A bare item after a generation push `x' <- e`: the menu offers the same next value written
+/// as a binding, which takes the clause, and the clause deleted. Before this item the parser
+/// reported only "expected '('" at the item.
+#[test]
+fn a_bare_item_after_a_generation_push_is_refused_with_a_menu() {
+    check_misplaced(
+        "f(n) = loop t { while t < n; x' <- x + 1 with x = 0; };",
+        ("x", "0"),
+        ("x' <- x + 1", true),
+        &[
+            &format!("{FOLLOWS} [x' <- x + 1 with x = 0;]"),
+            "repair: `x' = x + 1 with initial x = 0;`, the same next value written as a binding, \
+             which takes a boundary clause [x' <- x + 1 with x = 0;]",
+            &deleted("x' <- x + 1;", "x", "with x = 0"),
+        ],
+        &[
+            "f(n) = loop t { while t < n; x' = x + 1 with initial x = 0; };",
+            "f(n) = loop t { while t < n; x' <- x + 1; };",
+        ],
+    );
+}
+
+/// A bare item after each other push form: whole, keyed, with an acknowledgment, and on a
+/// field.
+#[test]
+fn a_bare_item_after_a_push_is_refused_with_a_menu() {
+    let ok = "x' = x + 1 with initial x = 0;";
+    check_misplaced(
+        &format!("f(n) = loop t {{ while t < n; p <- t with x = 0; {ok} }};"),
+        ("x", "0"),
+        ("p <- t", true),
+        &[
+            &format!("{FOLLOWS} [p <- t with x = 0;]"),
+            &deleted("p <- t;", "x", "with x = 0"),
+        ],
+        &[&format!("f(n) = loop t {{ while t < n; p <- t; {ok} }};")],
+    );
+    check_misplaced(
+        &format!("f(n) = loop t {{ while t < n; p[t] <- t with x = 0; {ok} }};"),
+        ("x", "0"),
+        ("p[t] <- t", true),
+        &[
+            &format!("{FOLLOWS} [p[t] <- t with x = 0;]"),
+            &deleted("p[t] <- t;", "x", "with x = 0"),
+        ],
+        &[&format!(
+            "f(n) = loop t {{ while t < n; p[t] <- t; {ok} }};"
+        )],
+    );
+    check_misplaced(
+        &format!("f(n) = loop t {{ while t < n; a = p <- t with x = 0; {ok} }};"),
+        ("x", "0"),
+        ("a = p <- t", true),
+        &[
+            &format!("{FOLLOWS} [a = p <- t with x = 0;]"),
+            &deleted("a = p <- t;", "x", "with x = 0"),
+        ],
+        &[&format!(
+            "f(n) = loop t {{ while t < n; a = p <- t; {ok} }};"
+        )],
+    );
+    check_misplaced(
+        "main(m: MainArgs) -> int { m.stdout <- \"a\" with x = 0; 0 }",
+        ("x", "0"),
+        ("m.stdout <- \"a\"", true),
+        &[
+            &format!("{FOLLOWS} [m.stdout <- \"a\" with x = 0;]"),
+            &deleted("m.stdout <- \"a\";", "x", "with x = 0"),
+        ],
+        &["main(m: MainArgs) -> int { m.stdout <- \"a\"; 0 }"],
+    );
+}
+
+/// A bare item after a statement or expression that is not a binding: `return`, `while`,
+/// `until`, an expression statement, a definition's body, and a string hole.
+#[test]
+fn a_bare_item_after_code_that_is_not_a_binding_is_refused_with_a_menu() {
+    let ok = "x' = x + 1 with initial x = 0;";
+    let cases = [
+        (
+            "f(n) = { return n with x = 0; };".to_string(),
+            "return n",
+            "return n with x = 0;",
+            "return n;",
+            "f(n) = { return n; };".to_string(),
+        ),
+        (
+            format!("f(n) = loop t {{ while t < n with x = 0; {ok} }};"),
+            "while t < n",
+            "while t < n with x = 0;",
+            "while t < n;",
+            format!("f(n) = loop t {{ while t < n; {ok} }};"),
+        ),
+        (
+            format!("f(n) = loop t {{ until t > n with x = 0; {ok} }};"),
+            "until t > n",
+            "until t > n with x = 0;",
+            "until t > n;",
+            format!("f(n) = loop t {{ until t > n; {ok} }};"),
+        ),
+        (
+            format!("f(n) = loop t {{ while t < n; g(x) with x = 0; {ok} }};"),
+            "g(x)",
+            "g(x) with x = 0;",
+            "g(x);",
+            format!("f(n) = loop t {{ while t < n; g(x); {ok} }};"),
+        ),
+        (
+            "f(n) = n with x = 0;".to_string(),
+            "f(n) = n",
+            "f(n) = n with x = 0;",
+            "f(n) = n;",
+            "f(n) = n;".to_string(),
+        ),
+        (
+            "f(n) = \"${n with x = 0}\";".to_string(),
+            "n",
+            "n with x = 0",
+            "n",
+            "f(n) = \"${n}\";".to_string(),
+        ),
+    ];
+    for (src, before, stmt, here, fixed) in cases {
+        check_misplaced(
+            &src,
+            ("x", "0"),
+            (before, false),
+            &[
+                &format!("{FOLLOWS} [{stmt}]"),
+                &deleted(here, "x", "with x = 0"),
+            ],
+            &[&fixed],
+        );
+    }
+}
+
+/// When a binding in the same block defines the variable with no `with` clause, before or
+/// after the item, the menu also offers to move the item there, as `with initial`.
+#[test]
+fn a_bare_item_may_move_to_the_binding_that_defines_the_variable() {
+    check_misplaced(
+        "f(n) = loop t { while t < n with x = 0; x' = x + 1; };",
+        ("x", "0"),
+        ("while t < n", false),
+        &[
+            &format!("{FOLLOWS} [while t < n with x = 0;]"),
+            "repair: `x' = x + 1 with initial x = 0;`, the sentinel value given on the binding \
+             that defines `x`, and the item deleted where it stood: `while t < n;` [x' = x + 1;]",
+            &deleted("while t < n;", "x", "with x = 0"),
+        ],
+        &[
+            "f(n) = loop t { while t < n; x' = x + 1 with initial x = 0; };",
+            "f(n) = loop t { while t < n; x' = x + 1; };",
+        ],
+    );
+    check_misplaced(
+        "f(n) = loop t { x' = x + 1; p <- x with x = 0; until x > n; };",
+        ("x", "0"),
+        ("p <- x", true),
+        &[
+            &format!("{FOLLOWS} [p <- x with x = 0;]"),
+            "repair: `x' = x + 1 with initial x = 0;`, the sentinel value given on the binding \
+             that defines `x`, and the item deleted where it stood: `p <- x;` [x' = x + 1;]",
+            &deleted("p <- x;", "x", "with x = 0"),
+        ],
+        &[
+            "f(n) = loop t { x' = x + 1 with initial x = 0; p <- x; until x > n; };",
+            "f(n) = loop t { x' = x + 1; p <- x; until x > n; };",
+        ],
+    );
+    check_misplaced(
+        "f(n) = loop { until c > n with c = z; local mutable c = g(c); };",
+        ("c", "z"),
+        ("until c > n", false),
+        &[
+            &format!("{FOLLOWS} [until c > n with c = z;]"),
+            "repair: `local mutable c = g(c) with initial c = z;`, the sentinel value given on \
+             the binding that defines `c`, and the item deleted where it stood: `until c > n;` \
+             [local mutable c = g(c);]",
+            &deleted("until c > n;", "c", "with c = z"),
+        ],
+        &[
+            "f(n) = loop { until c > n; local mutable c = g(c) with initial c = z; };",
+            "f(n) = loop { until c > n; local mutable c = g(c); };",
+        ],
+    );
+    // A generation push and a later binding of the same variable: all three repairs.
+    check_misplaced(
+        "f(n) = loop t { while t < n; x' <- x + 1 with x = 0; x' = 2; };",
+        ("x", "0"),
+        ("x' <- x + 1", true),
+        &[
+            &format!("{FOLLOWS} [x' <- x + 1 with x = 0;]"),
+            "repair: `x' = x + 1 with initial x = 0;`, the same next value written as a binding, \
+             which takes a boundary clause [x' <- x + 1 with x = 0;]",
+            "repair: `x' = 2 with initial x = 0;`, the sentinel value given on the binding that \
+             defines `x`, and the item deleted where it stood: `x' <- x + 1;` [x' = 2;]",
+            &deleted("x' <- x + 1;", "x", "with x = 0"),
+        ],
+        &[
+            "f(n) = loop t { while t < n; x' = x + 1 with initial x = 0; x' = 2; };",
+            "f(n) = loop t { while t < n; x' <- x + 1; x' = 2 with initial x = 0; };",
+            "f(n) = loop t { while t < n; x' <- x + 1; x' = 2; };",
+        ],
+    );
+}
+
+/// With a second item after the bare one, the item is not moved, since the other item would be
+/// lost; the deleting repair deletes the whole clause.
+#[test]
+fn a_bare_item_with_others_after_it_is_not_moved() {
+    check_misplaced(
+        "f(n) = loop t { while t < n; y' <- y + x with x = 0, y = 1; x' = x + 1; };",
+        ("x", "0"),
+        ("y' <- y + x", true),
+        &[
+            &format!("{FOLLOWS} [y' <- y + x with x = 0, y = 1;]"),
+            &deleted("y' <- y + x;", "x", "with x = 0, y = 1"),
+        ],
+        &["f(n) = loop t { while t < n; y' <- y + x; x' = x + 1; };"],
+    );
+}
+
+/// A bare item after a push is found by at most four parses of the unit, on the error path
+/// only, and one scan of the enclosing block for a binding of the variable: linear in the
+/// unit's size.
+#[test]
+fn finding_a_bare_item_after_a_push_scales() {
+    let units = scaling::inputs(500, |n| {
+        let text = items(n, "p <- t with y = 1; y' = y + 1;");
+        let tokens = lex(&text).unwrap();
+        (text, tokens)
+    });
+    scaling::check("a bare item after a push after n items", 500, |n| {
+        let (text, tokens) = &units[&n];
+        let e = parse(text, tokens, "Unit", TOP).unwrap_err();
+        let bare = e.bare.as_ref().unwrap();
+        assert_eq!(bare.misplaced.as_ref().unwrap().repairs.len(), 2);
+    });
+}
+
+/// When another statement of the block already gives the variable its sentinel value, the menu
+/// offers only to delete the item: writing the push as a binding with `with initial`, or moving
+/// the item, would give a second sentinel value, which is refused.
+#[test]
+fn a_bare_item_is_only_deleted_when_the_sentinel_value_is_given_elsewhere() {
+    check_misplaced(
+        "f(n) = loop t { while t < n; x' <- x + 1 with x = 0; y' = x with initial x = 0; };",
+        ("x", "0"),
+        ("x' <- x + 1", true),
+        &[
+            &format!("{FOLLOWS} [x' <- x + 1 with x = 0;]"),
+            &deleted("x' <- x + 1;", "x", "with x = 0"),
+        ],
+        &["f(n) = loop t { while t < n; x' <- x + 1; y' = x with initial x = 0; };"],
+    );
+    check_misplaced(
+        "f(n) = loop t { while t < n with x = 0; x' = x + 1; y' = y + x with initial y = 0, \
+         initial x = 0; };",
+        ("x", "0"),
+        ("while t < n", false),
+        &[
+            &format!("{FOLLOWS} [while t < n with x = 0;]"),
+            &deleted("while t < n;", "x", "with x = 0"),
+        ],
+        &[
+            "f(n) = loop t { while t < n; x' = x + 1; y' = y + x with initial y = 0, initial x = \
+           0; };",
+        ],
+    );
+}
