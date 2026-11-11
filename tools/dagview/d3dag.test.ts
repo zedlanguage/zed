@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { graph, layerSeparation, layeringSimplex } from "d3-dag";
 import { balanceCounts, balanceLayers, compactLayers, fromPrevious, layers, lowerSources, rowLimit, splitRows, spreadSources } from "./d3dag.ts";
+import type { Work } from "./d3dag.ts";
 import type { Graph } from "./layout.ts";
 import { planLike } from "./synthetic.ts";
 
@@ -296,34 +297,39 @@ test("fromPrevious gives null when no node has an earlier layer", () => {
   assert.equal(fromPrevious([undefined, undefined], [[], [0]], [[1], []]), null);
 });
 
-// The least time of five runs of f on inputs made before timing: with three,
-// one slow run of the 32000-node layers (364 ms against 110 to 220 ms) failed
-// the scaling test below while five test files ran beside it at load 42.
-function best(make: () => () => void): number {
-  let t = Infinity;
-  for (let k = 0; k < 5; k++) {
-    const run = make();
-    const t0 = performance.now();
-    run();
-    t = Math.min(t, performance.now() - t0);
-  }
-  return t;
+// The steps (Work in d3dag.ts) and the time of one run of run on inputs made
+// before it, after a run of warm on its own inputs, so that the time is not
+// that of the first, unoptimized run. The scaling tests below compare the steps: a ratio of times at
+// 8n and n, even the least of five runs, measured cache and CPU contention
+// under parallel load (batch 133, 2026-11-11: balanceCounts 27.5 to 31.4 and
+// layers 31.9 against a limit of 25.5 to 31 at load 31 to 42, where a plain
+// O(n + m) pass reached 13 to 28); the steps do not depend on the load. The
+// time is only logged.
+function measured(warm: () => void, run: (work: Work) => void): { steps: number; ms: number } {
+  warm();
+  const work = { steps: 0 };
+  const t0 = performance.now();
+  run(work);
+  return { steps: work.steps, ms: performance.now() - t0 };
 }
 
 // A pass of balanceCounts costs O((n + m) log L) and the passes stay few (3
 // to 13 measured), so 8 times the graph should take about 8 log(8n) / log n
-// times as long. The limit is twice that, and more when the 1-minute load
-// average is above the 32 cores.
+// times the steps. The limit is twice that.
 function scalingLimit(n: number): number {
-  const load = Number(readFileSync("/proc/loadavg", "utf8").split(" ")[0]);
-  return 2 * 8 * (Math.log2(8 * n) / Math.log2(n)) * Math.max(1, load / 32);
+  return 2 * 8 * (Math.log2(8 * n) / Math.log2(n));
 }
+
+// The ratio of steps at 8n to n, and the log line of a pair of measurements.
+const ratio = (r: { steps: number }[]) => r[1].steps / r[0].steps;
+const show = (r: { steps: number; ms: number }[]) => `${r[0].steps} and ${r[1].steps} steps (ratio ${ratio(r).toFixed(2)}), ${r[0].ms.toFixed(1)} and ${r[1].ms.toFixed(1)} ms (ratio ${(r[1].ms / r[0].ms).toFixed(1)})`;
 
 // A spine of n / 2 nodes, one per layer, and n / 2 nodes each with the
 // spine's first node as parent and its last as child, all starting in the
 // spine's middle layer: every one of them has the whole spine as slack. A
 // version that scans each node's slack layer by layer, O(n L) per pass, took
-// 87 times as long at 8n here (run once as a control, not kept).
+// 87 times as long at 8n here (run once as a control, not kept); see the
+// scaling test below for its steps.
 function wideSlack(n: number) {
   const L = n / 2;
   const y = Int32Array.from({ length: n }, (_, i) => (i < L ? i : L / 2));
@@ -347,13 +353,12 @@ test("count balancing and layering from an earlier layering scale as n log n: pl
     g.nodes.forEach((v, i) => { byId[v.id] = y0[i]; });
     return { d, y0, byId, wide: wideSlack(k) };
   });
-  const balance = graphs.map(({ d, y0 }) => best(() => { const y = Int32Array.from(y0); return () => balanceCounts(y, d.parents, d.children); }));
-  const again = graphs.map(({ d, byId }) => best(() => () => layers(d.dag, d.nodes, d.parents, d.children, byId)));
-  const wide = graphs.map(({ wide: w }) => best(() => { const y = Int32Array.from(w.y); return () => balanceCounts(y, w.parents, w.children); }));
+  const balance = graphs.map(({ d, y0 }) => { const y = Int32Array.from(y0); return measured(() => balanceCounts(Int32Array.from(y0), d.parents, d.children), (w) => balanceCounts(y, d.parents, d.children, undefined, w)); });
+  const again = graphs.map(({ d, byId }) => measured(() => layers(d.dag, d.nodes, d.parents, d.children, byId), (w) => layers(d.dag, d.nodes, d.parents, d.children, byId, undefined, w)));
+  const wide = graphs.map(({ wide: g }) => { const y = Int32Array.from(g.y); return measured(() => balanceCounts(Int32Array.from(g.y), g.parents, g.children), (w) => balanceCounts(y, g.parents, g.children, undefined, w)); });
   const limit = scalingLimit(n);
-  const show = (t: number[]) => `${t[0].toFixed(1)} and ${t[1].toFixed(1)} ms (ratio ${(t[1] / t[0]).toFixed(1)})`;
-  console.log(`balanceCounts ${show(balance)}; layers from earlier layers ${show(again)}; whole-spine slack ${show(wide)}; limit ${limit.toFixed(1)}`);
-  for (const [what, t] of [["balanceCounts", balance], ["layers", again], ["whole-spine slack", wide]] as const) assert.ok(t[1] / t[0] < limit, `${what}: ratio ${(t[1] / t[0]).toFixed(1)}`);
+  console.log(`balanceCounts ${show(balance)}; layers from earlier layers ${show(again)}; whole-spine slack ${show(wide)}; step limit ${limit.toFixed(1)}`);
+  for (const [what, r] of [["balanceCounts", balance], ["layers", again], ["whole-spine slack", wide]] as const) assert.ok(ratio(r) < limit, `${what}: ${show(r)}`);
 });
 
 // A spine of k / 4 nodes, one per layer, and k sources q_j in layer 1, each
@@ -370,18 +375,18 @@ function crowdedSources(k: number) {
 
 test("spreadSources on k sources crowded into one row spreads them to rows of at most K, each still directly above its child, and scales as n log n: k = 4000 and 32000", () => {
   const K = 16;
-  const t = [4000, 32000].map((k) => best(() => {
+  const r = [4000, 32000].map((k) => {
     const g = crowdedSources(k);
-    return () => {
-      spreadSources(g.y, g.parents, g.children, K);
-      edgesDown(g.y, g.children);
-      assert.deepEqual(sourceGaps(g.y, g.parents, g.children), []);
-      assert.ok(Math.max(...counts(g.y)) <= K);
-    };
-  }));
+    const h = crowdedSources(k);
+    const m = measured(() => spreadSources(h.y, h.parents, h.children, K), (w) => spreadSources(g.y, g.parents, g.children, K, undefined, undefined, w));
+    edgesDown(g.y, g.children);
+    assert.deepEqual(sourceGaps(g.y, g.parents, g.children), []);
+    assert.ok(Math.max(...counts(g.y)) <= K);
+    return m;
+  });
   const limit = scalingLimit(4000);
-  console.log(`spreadSources on crowded sources: ${t[0].toFixed(1)} and ${t[1].toFixed(1)} ms (ratio ${(t[1] / t[0]).toFixed(1)}); limit ${limit.toFixed(1)}`);
-  assert.ok(t[1] / t[0] < limit, `ratio ${(t[1] / t[0]).toFixed(1)}`);
+  console.log(`spreadSources on crowded sources: ${show(r)}; step limit ${limit.toFixed(1)}`);
+  assert.ok(ratio(r) < limit, show(r));
 });
 
 // The sources (no parents, some children) whose highest child is not exactly
