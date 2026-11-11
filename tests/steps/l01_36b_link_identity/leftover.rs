@@ -6,7 +6,9 @@
 //! name, so one stopped between writing and removing it made every later build fail.
 
 use std::fs::File;
+use std::io::{BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 
 use zed_native::link::{recorded, sweep};
 use zed_tests::scaling::{self, FACTOR};
@@ -51,6 +53,44 @@ fn held(at: &Path) -> File {
     f
 }
 
+/// A process of its own that holds the directory `at` locked, as a running build in another
+/// process holds its working directory, until it is dropped. Its lock is not this process's:
+/// a lock this process held would last past its own release while any child forked in another
+/// test thread before the release has not yet reached exec, since the child holds a copy of
+/// every open file until then, and the lock belongs to the open file, not to the descriptor.
+/// `flock -F` takes the lock and replaces itself by `sh`, which says so and replaces itself by
+/// `cat`, which holds it until it is killed.
+struct Elsewhere(Child);
+
+impl Elsewhere {
+    fn new(at: &Path) -> Elsewhere {
+        let mut child = Command::new("flock")
+            .arg("-F")
+            .arg(at)
+            .args(["sh", "-c", "echo held && exec cat"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| panic!("flock -F {}: {e}", at.display()));
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let holder = Elsewhere(child);
+        assert_eq!(line, "held\n", "flock -F {}", at.display());
+        holder
+    }
+}
+
+impl Drop for Elsewhere {
+    /// Ends the process; once `wait` returns, the kernel has closed its files and its lock is
+    /// released.
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// A file at the name earlier builds gave the object file stops no build, and is not
 /// touched: it may be the user's, or an older zedc's that is still linking.
 #[test]
@@ -87,7 +127,7 @@ fn a_build_removes_what_stopped_builds_left_and_keeps_a_running_ones() {
     }
     let stopped = [left(&out, 1, 0), left(&out, std::process::id(), 0)];
     let running = left(&out, 2, 0);
-    let lock = held(&running);
+    let lock = Elsewhere::new(&running);
     let other = left(&d.join("menu"), 1, 0);
     assert_eq!(link(&src, &out, &toolchain()), Link::Ran);
     assert_eq!(says(&out), "sweep the floor\n");
