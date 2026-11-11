@@ -5969,9 +5969,10 @@ pub mod rec {
             let (a, b) = (&self.env.group().0, &other.env.group().0);
             match (self.at, other.at) {
                 (At::Member(i), At::Member(j)) => a.defs[i].name.cmp(&b.defs[j].name),
-                (At::Part(n), At::Part(m)) if !(Arc::ptr_eq(a, b) && n == m) => {
-                    spelled(a.part(n), &a.defs, b.part(m), &b.defs)
-                }
+                (At::Part(n), At::Part(m)) if !(Arc::ptr_eq(a, b) && n == m) => spelled(
+                    (a.part(n), &a.defs, a.spells()),
+                    (b.part(m), &b.defs, b.spells()),
+                ),
                 _ => std::cmp::Ordering::Equal,
             }
         }
@@ -6087,6 +6088,11 @@ pub mod rec {
         fn part(&self, n: u32) -> &Node {
             let canon = self.canon.get().expect("a key's group has its form");
             canon.node[n as usize].as_deref().expect("a part is read")
+        }
+
+        /// The spelling hashes of the nodes, by number ([`Canon::spell`]), so the form is made.
+        fn spells(&self) -> &[u64] {
+            &self.canon.get().expect("a key's group has its form").spell
         }
     }
 
@@ -6220,9 +6226,19 @@ pub mod rec {
             color[a] = next;
         }
         next += usize::from(v > 0);
-        let widest = places.iter().map(|p| p.1 + 1).max().unwrap_or(0);
-        for (e, &(_, k, _)) in places.iter().enumerate() {
-            color[v + e] = next + k;
+        // An operand of a meet is at no position: `A & B` and `B & A` are one type, so their
+        // nodes are of one class (item GROUP-search-canon-key). Every color below `next + widest`
+        // then has a place, as `Refine` needs.
+        let position = |&(u, k, _): &(usize, usize, usize)| {
+            if matches!(of[u].e, Shape::And(_)) {
+                0
+            } else {
+                k
+            }
+        };
+        let widest = places.iter().map(|p| position(p) + 1).max().unwrap_or(0);
+        for (e, p) in places.iter().enumerate() {
+            color[v + e] = next + position(p);
         }
         next += widest;
         // The vertices counted when the class of a vertex refines: a child's places, a place's node.
@@ -6241,8 +6257,14 @@ pub mod rec {
             cursor[c] += 1;
             adj[cursor[v + e]] = u;
         }
+        // The most arcs a vertex has into one class: a node's places are all of one color when
+        // it is a meet, so a node counts up to its number of children.
+        let mut into = vec![0; size];
+        for &w in &adj {
+            into[w] += 1;
+        }
         let degree = (0..size)
-            .map(|x| start[x + 1] - start[x])
+            .map(|x| (start[x + 1] - start[x]).max(into[x]))
             .max()
             .unwrap_or(0);
         let mut refine = crate::refine::Refine::new(color, next, degree);
@@ -6265,7 +6287,12 @@ pub mod rec {
         for (u, n) in of.iter().enumerate() {
             let rep = &mut reps[class_of(u) as usize];
             if rep.is_none() {
-                let kids = n.e.kids().map(|c| class_of(target(c))).collect();
+                let mut kids: Vec<u32> = n.e.kids().map(|c| class_of(target(c))).collect();
+                if matches!(n.e, Shape::And(_)) {
+                    // The operands' classes in their order, not the node's, so the form does
+                    // not depend on which node of the class comes first.
+                    kids.sort_unstable();
+                }
                 *rep = Some(((*n).clone(), kids));
             }
         }
@@ -6291,6 +6318,13 @@ pub mod rec {
         for n in node.iter().flatten() {
             spell[n.at as usize] = match &n.e {
                 Shape::Ref(j, _) => mix(2, bytes(defs[*j].name.as_bytes())),
+                // The operands of a meet in the order of their spellings, so that `A & B` and
+                // `B & A` spell alike and are one part (item GROUP-search-canon-key).
+                e @ Shape::And(_) => {
+                    let mut kids: Vec<u64> = e.kids().map(|c| spell[c.at as usize]).collect();
+                    kids.sort_unstable();
+                    kids.into_iter().fold(e.tag(), mix)
+                }
                 e => e.kids().fold(e.tag(), |h, c| mix(h, spell[c.at as usize])),
             };
         }
@@ -6307,22 +6341,41 @@ pub mod rec {
     /// The order of two nodes of one class by their spelling ([`Canon::spell`]), `defs` naming the
     /// definitions each one's occurrences name: by head, an occurrence by the name it is written
     /// with, then the children in place order, in a loop. The types they hold are not read: two
-    /// nodes of one class hold equal ones. Time linear in the nodes.
-    fn spelled(x: &Node, xs: &[Def], y: &Node, ys: &[Def]) -> std::cmp::Ordering {
+    /// nodes of one class hold equal ones. The operands of a meet are paired in the order of their
+    /// spelling hashes (`xh`, `yh`, by node number), as [`canon`] hashes them, so that the order
+    /// they are written in does not count; operands whose hashes tie keep their written order,
+    /// which decides only where two spellings collide in hash. Time linear in the nodes, besides a
+    /// sort of each meet's operands.
+    fn spelled<'a>(
+        (x, xs, xh): (&'a Node, &'a [Def], &[u64]),
+        (y, ys, yh): (&'a Node, &'a [Def], &[u64]),
+    ) -> std::cmp::Ordering {
         fn head<'a>(n: &'a Node, defs: &'a [Def]) -> (u8, usize, &'a str) {
             match &n.e {
                 Shape::Ref(i, _) => (2, 0, defs[*i].name.as_str()),
                 e => e.head(),
             }
         }
-        let mut stack: Vec<(&Node, &Node)> = vec![(x, y)];
+        let mut stack: Vec<(&'a Node, &'a Node)> = vec![(x, y)];
         while let Some((x, y)) = stack.pop() {
             let c = (head(x, xs).cmp(&head(y, ys)))
                 .then_with(|| x.e.kids().count().cmp(&y.e.kids().count()));
             if c.is_ne() {
                 return c;
             }
-            if !matches!(x.e, Shape::Ref(..)) {
+            if matches!(x.e, Shape::And(_)) {
+                let by_hash = |n: &'a Node, h: &[u64]| {
+                    let mut kids: Vec<&'a Node> = n.e.kids().map(|c| &**c).collect();
+                    kids.sort_by_key(|c| h[c.at as usize]);
+                    kids
+                };
+                stack.extend(
+                    by_hash(x, xh)
+                        .into_iter()
+                        .rev()
+                        .zip(by_hash(y, yh).into_iter().rev()),
+                );
+            } else if !matches!(x.e, Shape::Ref(..)) {
                 // The counts are equal, so the pairs from the ends are the pairs in reverse.
                 stack.extend(
                     x.e.kids()
