@@ -2734,4 +2734,33 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn r5_binary_leaf_random_and_adversarial_pairs() {
+        use num_integer::Integer;
+        let mut checked = 0;
+        for words in [3, 4, 5, 16, 31, 64, 127, 256, 511] {
+            for seed in 1..=20 {
+                let x = random(seed, words) | BigUint::one();
+                let y = random(seed + 999, words) | BigUint::one();
+                for (a, b) in [
+                    (x.clone(), y),
+                    (x.clone(), x.clone()),
+                    (x.clone(), &x + 2u32),
+                    (x.clone(), &x - 2u32),
+                    (x.clone(), &x + (BigUint::one() << 20u32)),
+                    (x.clone(), &x + (BigUint::one() << 30u32)),
+                    (x.clone(), &x + (BigUint::one() << 31u32)),
+                    (x.clone(), &x << 129u32),
+                    (&x * 35u32, (&x + 2u32) * 35u32),
+                    ((BigUint::one() << (64 * words)) - 1u32, x.clone()),
+                ] {
+                    let want = a.gcd(&b);
+                    assert_eq!(gcd(&a, &b), want, "words={words}, seed={seed}");
+                    assert_eq!(gcd(&b, &a), want, "reversed words={words}, seed={seed}");
+                    checked += 2;
+                }
+            }
+        }
+        eprintln!("R5 gcd independent comparisons={checked}");
+    }
 }

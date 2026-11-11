@@ -182,7 +182,7 @@ pub type Model = BTreeMap<Atom, Int>;
 /// equal when they name the same part, and a part that two parents hold is found by either.
 /// Ids are never reused, so a key needs not hold its part, and no result may depend on their
 /// values: they are only compared and hashed, and no map keyed by them is iterated.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Id(u64);
 
 impl Id {
