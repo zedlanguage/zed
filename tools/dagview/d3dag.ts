@@ -509,8 +509,13 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
   let top = Infinity, bottom = -Infinity;
   for (const v of y) { top = Math.min(top, v); bottom = Math.max(bottom, v); }
   const L = bottom - top + 1;
-  const c = new Counts(L);
+  const c = countsFor(L, work);
   for (let i = 0; i < n; i++) if (!isSource(i, parents, children)) c.add(y[i] - top, 1);
+  // A pass reads every node and the edges of every node other than a
+  // source: perPass steps, the same in each pass, so the loop below counts
+  // nothing per node (see Work).
+  let perPass = 4 * n;
+  if (work) for (let i = 0; i < n; i++) if (!isSource(i, parents, children)) perPass += parents[i].length + children[i].length;
   let passes = 0, steps = 2 * n;
   for (let moved = true; moved;) {
     moved = false;
@@ -522,11 +527,9 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
     for (let k = 1; k <= n + 1; k++) start[k] += start[k - 1];
     const order = new Int32Array(n);
     for (let i = 0; i < n; i++) order[start[n - c.at(y[i] - top)]++] = i;
-    steps += 3 * n;
+    steps += perPass;
     for (const i of order) {
-      steps++;
       if (isSource(i, parents, children)) continue;
-      steps += parents[i].length + children[i].length;
       const a = y[i] - top;
       let lo = 0, hi = L - 1;
       for (const q of parents[i]) lo = Math.max(lo, isSource(q, parents, children) ? 1 : y[q] - top + 1);
@@ -549,7 +552,7 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
       moved = true;
     }
   }
-  if (work) work.steps += steps + c.steps;
+  if (work) work.steps += steps;
   return passes;
 }
 
@@ -615,9 +618,13 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
   let top = Infinity, bottom = -Infinity;
   for (const v of y) { top = Math.min(top, v); bottom = Math.max(bottom, v); }
   const L = bottom - top + 1;
-  const c = new Counts(L);
+  const c = countsFor(L, work);
   for (let i = 0; i < n; i++) c.add(y[i] - top, 1);
   const high = highest(y, parents, children, work);
+  // A pass reads every node, its parents twice and its children: perPass
+  // steps, the same in each pass, so the loop below counts nothing per node.
+  let perPass = 4 * n;
+  if (work) for (let i = 0; i < n; i++) perPass += 2 * parents[i].length + children[i].length;
   let passes = 0, steps = 2 * n;
   for (let moved = true; moved;) {
     moved = false;
@@ -629,9 +636,8 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
     for (let k = 1; k <= n + 1; k++) start[k] += start[k - 1];
     const order = new Int32Array(n);
     for (let i = 0; i < n; i++) order[start[n - c.at(y[i] - top)]++] = i;
-    steps += 3 * n;
+    steps += perPass;
     for (const i of order) {
-      steps += 1 + 2 * parents[i].length + children[i].length;
       if (isSource(i, parents, children) || parents[i].some((q) => isSource(q, parents, children) && y[q] === y[i] - 1 && high[q] === 1)) continue;
       const a = y[i] - top;
       let lo = 0, hi = L - 1;
@@ -673,7 +679,7 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
       moved = true;
     }
   }
-  if (work) work.steps += steps + c.steps;
+  if (work) work.steps += steps;
   return passes;
 }
 
@@ -733,7 +739,7 @@ export function spreadSources(y: Int32Array, parents: number[][], children: numb
   const c = new Int32Array(L);
   for (let i = 0; i < n; i++) c[y[i] - top]++;
   const pair = (l: number) => (l ? Math.max(c[l - 1], c[l]) : 0x3fffffff);
-  const p = new Counts(L);
+  const p = countsFor(L, work);
   for (let l = 0; l < L; l++) p.add(l, pair(l));
   const fix = (l: number) => { if (l >= 0 && l < L) p.add(l, pair(l) - p.at(l)); };
   const over = (v: number) => (v > K ? (v - K) * (v - K) : 0);
@@ -744,14 +750,18 @@ export function spreadSources(y: Int32Array, parents: number[][], children: numb
   for (let moved = true; moved;) {
     moved = false;
     passes++;
+    // Each node is read once a pass.
+    steps += n;
     for (let i = 0; i < n; i++) {
-      steps++;
       if (!parents[i].length) continue;
       const a = y[i] - top;
       if (c[a - 1] <= K) continue;
       // The sources that have i as their only highest child move with it.
       for (const q of carried) isCarried[q] = 0;
-      steps += carried.length + children[i].length + parents[i].length;
+      // The step counts of a crowded node are added only when counting: as
+      // plain adds they cost 0.9 percent more instructions in this function
+      // (DAGVIEW-counter-cost, 2026-11-11).
+      if (work) steps += carried.length + children[i].length + parents[i].length;
       carried.length = 0;
       let lo = 1, hi = L - 1, s = 0;
       for (const k of children[i]) { hi = Math.min(hi, y[k] - top - 1); s--; }
@@ -759,7 +769,7 @@ export function spreadSources(y: Int32Array, parents: number[][], children: numb
         if (parents[q].length || y[q] !== y[i] - 1 || high[q] !== 1) { lo = Math.max(lo, y[q] - top + 1); s++; continue; }
         carried.push(q);
         isCarried[q] = 1;
-        steps += children[q].length;
+        if (work) steps += children[q].length;
         for (const k of children[q]) if (k !== i) { hi = Math.min(hi, y[k] - top - 1); s--; }
       }
       const w = carried.length;
@@ -768,7 +778,6 @@ export function spreadSources(y: Int32Array, parents: number[][], children: numb
       // a move to b; true if it lowers Q, or keeps Q and lowers F.
       const lowers = (b: number) => {
         if (b < 0) return false;
-        steps += 4;
         rows.length = 0; delta.length = 0;
         const touch = (l: number, d: number) => { const k = rows.indexOf(l); if (k >= 0) delta[k] += d; else { rows.push(l); delta.push(d); } };
         touch(a, -1); touch(a - 1, -w); touch(b, 1); touch(b - 1, w);
@@ -788,11 +797,16 @@ export function spreadSources(y: Int32Array, parents: number[][], children: numb
       const down = a < hi ? p.first(a + 1, hi, T) : -1;
       const [near, far] = up < 0 || (down >= 0 && down - a < a - up) ? [down, up] : [up, down];
       let b = -1;
-      for (const t of [a - 1 >= lo ? a - 1 : -1, near, far]) if (lowers(t)) { b = t; break; }
+      // Each candidate tried (t >= 0) is 4 steps, counted here so that no
+      // closure writes steps, which would keep it in memory, not a register.
+      for (const t of [a - 1 >= lo ? a - 1 : -1, near, far]) {
+        if (work && t >= 0) steps += 4;
+        if (lowers(t)) { b = t; break; }
+      }
       if (b < 0) continue;
       for (let k = 0; k < rows.length; k++) c[rows[k]] += delta[k];
       y[i] = b + top;
-      steps += carried.length + parents[i].length;
+      if (work) steps += carried.length + parents[i].length;
       for (const q of carried) y[q] = b + top - 1;
       for (const q of parents[i]) {
         if (parents[q].length || isCarried[q]) continue;
@@ -804,7 +818,7 @@ export function spreadSources(y: Int32Array, parents: number[][], children: numb
       moved = true;
     }
   }
-  if (work) work.steps += steps + p.steps;
+  if (work) work.steps += steps;
   return passes;
 }
 
@@ -825,30 +839,27 @@ export function rowLimit(y: Int32Array, work?: Work): number {
   return Math.max(1, Math.floor(1.5 * median));
 }
 
-// Node counts per layer in a segment tree of minimums. steps counts the tree
-// nodes visited (see Work), for the scaling tests.
+// Node counts per layer in a segment tree of minimums. It counts no steps;
+// countsFor gives a CountedCounts when the caller passed a Work.
 class Counts {
-  private size = 1;
+  protected size = 1;
   private t: Int32Array;
-  steps = 0;
   constructor(L: number) {
     while (this.size < L) this.size *= 2;
     this.t = new Int32Array(2 * this.size).fill(0x7fffffff);
     for (let l = 0; l < L; l++) this.t[this.size + l] = 0;
     for (let k = this.size - 1; k > 0; k--) this.t[k] = Math.min(this.t[2 * k], this.t[2 * k + 1]);
-    this.steps = 2 * this.size;
   }
   at(l: number): number { return this.t[this.size + l]; }
   add(l: number, d: number): void {
     let k = this.size + l;
     this.t[k] += d;
-    for (k >>= 1; k; k >>= 1) { this.t[k] = Math.min(this.t[2 * k], this.t[2 * k + 1]); this.steps++; }
+    for (k >>= 1; k; k >>= 1) this.t[k] = Math.min(this.t[2 * k], this.t[2 * k + 1]);
   }
   // The least count in layers lo..hi.
   min(lo: number, hi: number): number {
     let r = 0x7fffffff;
     for (let a = lo + this.size, b = hi + this.size + 1; a < b; a >>= 1, b >>= 1) {
-      this.steps++;
       if (a & 1) r = Math.min(r, this.t[a++]);
       if (b & 1) r = Math.min(r, this.t[--b]);
     }
@@ -886,7 +897,6 @@ class Counts {
   }
   // The first (last) layer in lo..hi with at most m nodes, or -1.
   first(lo: number, hi: number, m: number, k = 1, l = 0, r = this.size - 1): number {
-    this.steps++;
     if (r < lo || l > hi || this.t[k] > m) return -1;
     if (l === r) return l;
     const mid = (l + r) >> 1;
@@ -894,7 +904,6 @@ class Counts {
     return left >= 0 ? left : this.first(lo, hi, m, 2 * k + 1, mid + 1, r);
   }
   last(lo: number, hi: number, m: number, k = 1, l = 0, r = this.size - 1): number {
-    this.steps++;
     if (r < lo || l > hi || this.t[k] > m) return -1;
     if (l === r) return l;
     const mid = (l + r) >> 1;
@@ -902,6 +911,43 @@ class Counts {
     return right >= 0 ? right : this.last(lo, hi, m, 2 * k, l, mid);
   }
 }
+
+// Counts that adds to work.steps the tree nodes it visits (see Work), for the
+// scaling tests. The layout passes no Work and uses Counts, which keeps
+// nothing: counting in Counts itself cost 5 to 9 percent more instructions
+// in spreadSources, balanceCounts and layers (DAGVIEW-counter-cost,
+// 2026-11-11). first and last recurse through this.first and this.last, so
+// each node they visit is counted. add and min count by the bounds of Counts'
+// own loops (add the depth of the tree, min the same walk up from lo and hi),
+// so a change to either loop in Counts must change its count here too.
+class CountedCounts extends Counts {
+  private readonly work: Work;
+  private readonly depth: number;
+  constructor(L: number, work: Work) {
+    super(L);
+    this.work = work;
+    this.depth = Math.log2(this.size);
+    work.steps += 2 * this.size;
+  }
+  add(l: number, d: number): void {
+    super.add(l, d);
+    this.work.steps += this.depth;
+  }
+  min(lo: number, hi: number): number {
+    for (let a = lo + this.size, b = hi + this.size + 1; a < b; a = (a + (a & 1)) >> 1, b = (b - (b & 1)) >> 1) this.work.steps++;
+    return super.min(lo, hi);
+  }
+  first(lo: number, hi: number, m: number, k = 1, l = 0, r = this.size - 1): number {
+    this.work.steps++;
+    return super.first(lo, hi, m, k, l, r);
+  }
+  last(lo: number, hi: number, m: number, k = 1, l = 0, r = this.size - 1): number {
+    this.work.steps++;
+    return super.last(lo, hi, m, k, l, r);
+  }
+}
+
+const countsFor = (L: number, work?: Work): Counts => (work ? new CountedCounts(L, work) : new Counts(L));
 
 // Drops empty layers and puts the top layer at 0, keeping the order of the
 // layers; returns the number of layers. An edge that went down still goes down.
@@ -1096,7 +1142,7 @@ export function decrossSeeded(index: Map<any, number>, x: Float64Array, y: Int32
     let steps = 0, N = 0;
     for (const row of layers) {
       const k = new Map(row.map((s) => [s, at(s)]));
-      row.sort((p, q) => (steps++, k.get(p)! - k.get(q)!));
+      row.sort(work ? (p, q) => (work.steps++, k.get(p)! - k.get(q)!) : (p, q) => k.get(p)! - k.get(q)!);
       N += row.length;
     }
     let best = crossings(layers, work), kept = layers.map((l) => l.slice());
@@ -1211,7 +1257,7 @@ function sweeper(layers: any[][], base?: (top: any[], bottom: any[], down: boole
       const [us, cs] = lists[ids[i]];
       const o = off[i];
       if (us.length === 1) { P[o] = pos[us[0]]; C[o] = cs[0]; continue; }
-      const order = Array.from(us, (_, q) => q).sort((p, q) => (steps++, pos[us[p]] - pos[us[q]]));
+      const order = Array.from(us, (_, q) => q).sort(work ? (p, q) => (work.steps++, pos[us[p]] - pos[us[q]]) : (p, q) => pos[us[p]] - pos[us[q]]);
       order.forEach((q, r) => { P[o + r] = pos[us[q]]; C[o + r] = cs[q]; });
     }
     const known = new Map<number, number>();
@@ -1220,15 +1266,18 @@ function sweeper(layers: any[][], base?: (top: any[], bottom: any[], down: boole
       const had = known.get(key);
       if (had !== undefined) return had;
       const a0 = off[iu], a1 = off[iu + 1], b0 = off[iv], b1 = off[iv + 1];
-      let total = 0, below = 0, j = b0, all = 0;
-      steps += a1 - a0 + 2 * (b1 - b0);
+      let total = 0, below = 0, j = b0, all = 0, read = 0;
       for (let q = b0; q < b1; q++) all += C[q];
       for (let i = a0; i < a1; i++) {
         while (j < b1 && P[j] < P[i]) below += C[j++];
-        let same = 0;
-        for (let q = j; q < b1 && P[q] === P[i]; q++) { same += C[q]; steps++; }
+        let same = 0, q = j;
+        for (; q < b1 && P[q] === P[i]; q++) same += C[q];
+        read += q - j;
         total += C[i] * (below - (all - below - same));
       }
+      // Counted into work, not steps: a closure that writes steps keeps it out
+      // of a register for the whole step.
+      if (work) work.steps += a1 - a0 + 2 * (b1 - b0) + read;
       known.set(key, total);
       return total;
     };
@@ -1274,18 +1323,28 @@ export function crossings(layers: any[][], work?: Work): number {
     for (const s of layers[k]) {
       const out: [number, number][] = [];
       for (const [c, n] of s.childCounts()) out.push([below.get(c)!, n]);
-      out.sort((a, b) => (steps++, a[0] - b[0]));
-      steps += 1 + out.length;
+      out.sort(work ? (a, b) => (work.steps++, a[0] - b[0]) : (a, b) => a[0] - b[0]);
       // Edges of earlier upper nodes ending right of c cross this one; edges
       // of the same node do not, so they are added after all are counted.
       for (const [c, n] of out) {
         let atMost = 0;
-        for (let i = c + 1; i > 0; i -= i & -i) { atMost += tree[i]; steps++; }
+        for (let i = c + 1; i > 0; i -= i & -i) atMost += tree[i];
         total += n * (seen - atMost);
       }
       for (const [c, n] of out) {
-        for (let i = c + 1; i <= w; i += i & -i) { tree[i] += n; steps++; }
+        for (let i = c + 1; i <= w; i += i & -i) tree[i] += n;
         seen += n;
+      }
+      // The Fenwick tree nodes the two loops above visit, walked again only
+      // when counting: a count inside them cost 1.3 percent more
+      // instructions in decrossSeeded (DAGVIEW-counter-cost, 2026-11-11). A
+      // change to either loop must change its walk here too.
+      if (work) {
+        steps += 1 + out.length;
+        for (const [c] of out) {
+          for (let i = c + 1; i > 0; i -= i & -i) steps++;
+          for (let i = c + 1; i <= w; i += i & -i) steps++;
+        }
       }
     }
   }
