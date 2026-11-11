@@ -2308,6 +2308,12 @@ impl Bound {
                 std::collections::hash_map::Entry::Occupied(o) => {
                     let e = &divs[*o.get()];
                     for (x, y) in [(&d.q, &e.q), (&d.r, &e.r)] {
+                        // A quotient or remainder the two divisions already share needs no
+                        // equality: the map below would keep only `x: -1` and set it to zero
+                        // (test `a_shared_remainder_stays_free_when_divisions_merge`).
+                        if x == y {
+                            continue;
+                        }
                         let tie = Lin {
                             terms: BTreeMap::from([(x.clone(), Int::ONE), (y.clone(), -&Int::ONE)]),
                             constant: Int::ZERO,
@@ -5887,6 +5893,32 @@ mod tests {
 
     fn a(n: u32) -> Atom {
         Atom::Aux(n)
+    }
+
+    /// `x == 4q + r` and `y == 4q' + r` with `x == y` and `0 <= r <= 3`: the two divisions
+    /// share their remainder, which stays free when their quotients are bound together, so
+    /// `x == y == 6` (`r == 2`) is still a point.
+    #[test]
+    fn a_shared_remainder_stays_free_when_divisions_merge() {
+        let f = Formula::and(
+            [
+                con(&[(0, 1), (1, -4), (2, -1)], 0, Rel::Eq),
+                con(&[(3, 1), (4, -4), (2, -1)], 0, Rel::Eq),
+                con(&[(0, 1), (3, -1)], 0, Rel::Eq),
+                con(&[(2, 1)], 0, Rel::Ge),
+                con(&[(2, -1)], 3, Rel::Ge),
+            ]
+            .into_iter()
+            .map(Formula::Con)
+            .collect(),
+        );
+        let g = with_bindings_in_place(&f).expect("x == y binds");
+        let m: Model = [(0, 6), (1, 1), (2, 2), (3, 6), (4, 1)]
+            .into_iter()
+            .map(|(n, v)| (a(n), Int::from(v)))
+            .collect();
+        assert!(f.holds(&m));
+        assert!(g.holds(&m), "the shared remainder was set to zero: {g:?}");
     }
 
     /// `k1 * a1 + k2 * a2 + ... + c` related to 0 by `rel`.

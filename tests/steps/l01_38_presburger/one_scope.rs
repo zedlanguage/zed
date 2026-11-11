@@ -748,7 +748,7 @@ fn enumerated(w: &Relation) -> (bool, bool) {
     };
     let defined = w.defined();
     let (mut holds, mut fails) = (false, false);
-    for v in lo..=hi + 1 {
+    for v in lo..=hi.max(lo) + 1 {
         let fixed = Formula::Con(Con::eq(&Lin::atom(x.clone()), &Lin::constant(v)));
         let m = satisfiable(&Formula::and(vec![defined.clone(), fixed.clone()]))
             .unwrap_or_else(|e| panic!("{w}: definitions refused at {v}: {e:?}"))
@@ -3610,4 +3610,545 @@ fn periodic_adjacent_questions_keep_the_previous_link_remainder_in_any_order() {
             }
         }
     }
+}
+
+#[test]
+fn every_question_of_a_random_chain_with_negations_matches_enumeration() {
+    // PNCX-modular: every question of the ten random negated chains of seed 0x5eed1 (including
+    // chain 8) is decided in both orders of the definitions, with faces, without faces, and
+    // decided whole, with zero refusals, and each answer matches point-by-point enumeration.
+    use zedc::store::presburger::extend::Extending;
+    use zedc::store::presburger::{Formula, decide};
+    let mut rng = zed_tests::instances::Rng::new(0x5eed1);
+    let mut total_decided = 0;
+    for chain_idx in 0..10 {
+        let src = random_negated_chain(&mut rng);
+        let unit = elab(&src).unwrap_or_else(|e| panic!("chain {chain_idx}: {e:?}"));
+        let cones = Cones::new(&unit);
+        let lets = lets(&unit);
+        let fs = functions(&unit);
+        let whole = |r: &Relation, f: Formula| decide(&Formula::and(vec![r.defined(), f]));
+        let want_by_fn: Vec<(bool, bool)> = {
+            let mut scoped = Scoped::new(&lets);
+            (0..fs.len())
+                .map(|i| {
+                    let (name, ps, body) = fs[i];
+                    let r = scoped.relation(body, ps, ps, true).expect(name);
+                    let w = scoped.written(&r);
+                    if name == "p0" {
+                        (true, true)
+                    } else {
+                        enumerated(&w)
+                    }
+                })
+                .collect()
+        };
+        for order in [
+            (0..fs.len()).collect::<Vec<_>>(),
+            (0..fs.len()).rev().collect(),
+        ] {
+            let mut scoped = Scoped::new(&lets);
+            let (mut faced, mut plain) = (Extending::new(), Extending::new());
+            for i in order {
+                let (name, ps, body) = fs[i];
+                let expected = closed(&cones, ps, body).expect(name);
+                let r = scoped.relation(body, ps, ps, true).expect(name);
+                let a = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+                let b = plain.defined(&r, &|n| scoped.def(n));
+                let (want_holds, want_fails) = want_by_fn[i];
+                assert_eq!(a.holds, Ok(want_holds), "chain {chain_idx} `{name}` holds (faced)");
+                assert_eq!(b.holds, Ok(want_holds), "chain {chain_idx} `{name}` holds (plain)");
+                assert_eq!(
+                    whole(&expected, expected.body.clone()),
+                    Ok(want_holds),
+                    "chain {chain_idx} `{name}` holds (whole)"
+                );
+                assert_eq!(a.fails, Ok(want_fails), "chain {chain_idx} `{name}` fails (faced)");
+                assert_eq!(b.fails, Ok(want_fails), "chain {chain_idx} `{name}` fails (plain)");
+                assert_eq!(
+                    whole(&expected, Formula::negate(expected.body.clone())),
+                    Ok(want_fails),
+                    "chain {chain_idx} `{name}` fails (whole)"
+                );
+                total_decided += 2;
+            }
+        }
+    }
+    assert_eq!(total_decided, 344);
+}
+
+#[test]
+fn one_variable_modular_formulas_match_enumeration() {
+    // PNCX-modular: 5,000 random one-variable modular formulas with unit equalities (`x@k =
+    // ±x@{k-1} + c`), Euclidean divisions (`x + c == m * q + r && 0 <= r < m`), primes, prime
+    // powers and composite moduli, negative, zero-crossing and large positive intervals, short,
+    // long and semi-bounded intervals, negated conjunctions and disjunctive clauses: `decide`
+    // and `satisfiable` agree with point-by-point enumeration, and every witness satisfies `f`,
+    // wherever they answer.
+    use zedc::store::int::Int;
+    use zedc::store::presburger::{
+        Atom, Con, Formula, Lin, Model, decide, satisfiable, with_modular_empty_checked,
+    };
+    let moduli: [i64; 20] = [
+        2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 25, 27, 30,
+    ];
+    let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
+    let (mut sat_count, mut unsat_count, mut refused) = (0usize, 0usize, 0usize);
+    let (mut empty_agreed, mut empty_refused, mut empty_unchecked) = (0usize, 0usize, 0usize);
+
+    for case_idx in 0..5000 {
+        let x0 = Atom::Sym(Arc::from("x"));
+        let mut parts: Vec<Formula> = Vec::new();
+        // Build 0..=3 shifted/reflected unit-equality copies of `x`: `x_k = s_k * x_0 + off_k`.
+        let num_copies = rng.below(4);
+        let mut copies: Vec<(Atom, i64, i64)> = vec![(x0.clone(), 1, 0)];
+        for k in 1..=num_copies {
+            let prev_idx = rng.below(copies.len());
+            let (prev_atom, prev_s, prev_off) = copies[prev_idx].clone();
+            let step_s = if rng.below(5) == 0 { -1i64 } else { 1i64 };
+            let step_d = rng.int(-8, 8);
+            let cur_atom = Atom::Sym(Arc::from(format!("x@{k}")));
+            // cur_atom - step_s * prev_atom - step_d == 0
+            let lin = Lin::atom(cur_atom.clone())
+                .plus(&Lin::atom(prev_atom).times(-step_s))
+                .plus(&Lin::constant(-step_d));
+            parts.push(Formula::Con(Con::eq(&lin, &Lin::constant(0))));
+            copies.push((cur_atom, step_s * prev_s, step_s * prev_off + step_d));
+        }
+
+        // Choose interval regime: negative, around 0, large positive, short, or semi-bounded.
+        let (lo, hi, is_bounded) = match case_idx % 5 {
+            0 => {
+                let l = rng.int(-220, -160);
+                let h = l + rng.int(0, 75);
+                (l, h, true)
+            }
+            1 => {
+                let l = rng.int(-40, 10);
+                let h = l + rng.int(-2, 65);
+                (l, h, true)
+            }
+            2 => {
+                let l = rng.int(10_000, 10_030);
+                let h = l + rng.int(0, 80);
+                (l, h, true)
+            }
+            3 => {
+                let l = rng.int(-15, 25);
+                let h = l + rng.int(-1, 5);
+                (l, h, true)
+            }
+            _ => {
+                let l = rng.int(-20, 20);
+                (l, l + 120, false)
+            }
+        };
+
+        parts.push(Formula::Con(Con::ge(
+            &Lin::atom(x0.clone()).plus(&Lin::constant(-lo)),
+            &Lin::constant(0),
+        )));
+        if is_bounded {
+            parts.push(Formula::Con(Con::ge(
+                &Lin::constant(hi).minus(&Lin::atom(x0.clone())),
+                &Lin::constant(0),
+            )));
+        }
+
+        // Define 2..=5 Euclidean divisions on random copies of `x`.
+        let num_divs = 2 + rng.below(4);
+        let mut divs: Vec<(Atom, Atom, i64, i64, i64)> = Vec::new();
+        for d_idx in 0..num_divs {
+            let (ref copy_atom, copy_s, copy_off) = copies[rng.below(copies.len())];
+            let m = moduli[rng.below(moduli.len())];
+            let shift = rng.int(-5, 5);
+            let q_atom = Atom::Aux((d_idx * 2) as u32);
+            let r_atom = Atom::Aux((d_idx * 2 + 1) as u32);
+            // copy_atom + shift - m * q_atom - r_atom == 0 && 0 <= r_atom <= m - 1
+            let eq_lin = Lin::atom(copy_atom.clone())
+                .plus(&Lin::constant(shift))
+                .plus(&Lin::atom(q_atom.clone()).times(-m))
+                .plus(&Lin::atom(r_atom.clone()).times(-1));
+            parts.push(Formula::Con(Con::eq(&eq_lin, &Lin::constant(0))));
+            parts.push(Formula::Con(Con::ge(&Lin::atom(r_atom.clone()), &Lin::constant(0))));
+            parts.push(Formula::Con(Con::ge(
+                &Lin::constant(m - 1).minus(&Lin::atom(r_atom.clone())),
+                &Lin::constant(0),
+            )));
+            divs.push((q_atom, r_atom, m, copy_s, copy_off + shift));
+        }
+
+        // Build 2..=5 modular/bound clauses (unit congruences, negated guard+congruence, holes,
+        // and single-modulus or multi-bound disjunctions).
+        let num_clauses = 2 + rng.below(4);
+        for _ in 0..num_clauses {
+            let (_, ref r_atom, m, _, _) = divs[rng.below(divs.len())];
+            let r_val = rng.int(0, m - 1);
+            let b_val = rng.int(lo - 5, hi + 5);
+            let cl = match rng.below(6) {
+                0 => {
+                    // x mod m != r_val
+                    Formula::negate(Formula::Con(Con::eq(
+                        &Lin::atom(r_atom.clone()),
+                        &Lin::constant(r_val),
+                    )))
+                }
+                1 => {
+                    // !(r == r_val && x >= b_val)
+                    let is_r = Formula::Con(Con::eq(
+                        &Lin::atom(r_atom.clone()),
+                        &Lin::constant(r_val),
+                    ));
+                    let ge_b = Formula::Con(Con::ge(
+                        &Lin::atom(x0.clone()).plus(&Lin::constant(-b_val)),
+                        &Lin::constant(0),
+                    ));
+                    Formula::negate(Formula::and(vec![is_r, ge_b]))
+                }
+                2 => {
+                    // r == r1 || r == r2 || x <= b_val
+                    let r2 = rng.int(0, m - 1);
+                    Formula::or(vec![
+                        Formula::Con(Con::eq(&Lin::atom(r_atom.clone()), &Lin::constant(r_val))),
+                        Formula::Con(Con::eq(&Lin::atom(r_atom.clone()), &Lin::constant(r2))),
+                        Formula::Con(Con::ge(
+                            &Lin::constant(b_val).minus(&Lin::atom(x0.clone())),
+                            &Lin::constant(0),
+                        )),
+                    ])
+                }
+                3 => {
+                    // Hole: x < b_val || x > b_val + gap
+                    let gap = rng.int(0, 12);
+                    Formula::or(vec![
+                        Formula::Con(Con::ge(
+                            &Lin::constant(b_val - 1).minus(&Lin::atom(x0.clone())),
+                            &Lin::constant(0),
+                        )),
+                        Formula::Con(Con::ge(
+                            &Lin::atom(x0.clone()).plus(&Lin::constant(-(b_val + gap + 1))),
+                            &Lin::constant(0),
+                        )),
+                    ])
+                }
+                4 => {
+                    // Remainder interval: r < r_val + 1
+                    Formula::Con(Con::ge(
+                        &Lin::constant(r_val).minus(&Lin::atom(r_atom.clone())),
+                        &Lin::constant(0),
+                    ))
+                }
+                _ => {
+                    // Disjunction of two negated residues across two divisions (share = 1/(m1*m2) < 1)
+                    let (_, ref r2_atom, m2, _, _) = divs[rng.below(divs.len())];
+                    let r2_val = rng.int(0, m2 - 1);
+                    Formula::or(vec![
+                        Formula::negate(Formula::Con(Con::eq(
+                            &Lin::atom(r_atom.clone()),
+                            &Lin::constant(r_val),
+                        ))),
+                        Formula::negate(Formula::Con(Con::eq(
+                            &Lin::atom(r2_atom.clone()),
+                            &Lin::constant(r2_val),
+                        ))),
+                    ])
+                }
+            };
+            parts.push(cl);
+        }
+
+        let f = Formula::and(parts);
+        // Each answer of the one-variable path that a formula asked has no point is asked again
+        // of the general path, which must not find one (R3-CLAUDE-6). One the general path
+        // refuses is checked by the enumeration below where `x` is bounded, and by nothing
+        // where it is not (`empty_unchecked`).
+        let (answers, check) = with_modular_empty_checked(|| (decide(&f), satisfiable(&f)));
+        assert!(check.wrong.is_empty(), "case {case_idx}: the general path finds a point of {f}");
+        empty_agreed += check.agreed;
+        empty_refused += check.refused.len();
+        if !is_bounded {
+            empty_unchecked += check.refused.len();
+        }
+        let (Ok(dec), Ok(sat)) = answers else {
+            refused += 1;
+            continue;
+        };
+        assert_eq!(dec, sat.is_some(), "case {case_idx}: decide vs satisfiable");
+        if let Some(ref model) = sat {
+            assert!(
+                f.holds(model),
+                "case {case_idx}: returned model {model:?} does not satisfy {f}"
+            );
+            sat_count += 1;
+        } else {
+            unsat_count += 1;
+        }
+
+        if is_bounded {
+            let brute = (lo..=hi).any(|xv| {
+                let mut m = Model::new();
+                m.insert(x0.clone(), Int::from(xv));
+                for (a, s, off) in &copies[1..] {
+                    m.insert(a.clone(), Int::from(s * xv + off));
+                }
+                for (qa, ra, mod_m, cs, coff) in &divs {
+                    let u = cs * xv + coff;
+                    m.insert(qa.clone(), Int::from(u.div_euclid(*mod_m)));
+                    m.insert(ra.clone(), Int::from(u.rem_euclid(*mod_m)));
+                }
+                f.holds(&m)
+            });
+            assert_eq!(dec, brute, "case {case_idx}: solver={dec} vs brute={brute}\n{f}");
+        }
+    }
+    assert!(sat_count >= 1000 && unsat_count >= 500, "sat={sat_count}, unsat={unsat_count}");
+    // A formula the one-variable path does not decide goes to the general path, which may refuse
+    // it. 69 cases are refused, each refused by the general path alone too (704 refusals there,
+    // measured on d5714627 with the one-variable path off).
+    assert!(refused <= 69, "refused={refused}");
+    // Measured: 616 empty answers agreed, 182 refused by the general path, of which those with
+    // `x` unbounded above are checked by nothing here.
+    println!(
+        "empty answers: {empty_agreed} agreed, {empty_refused} refused by the general path, \
+         {empty_unchecked} of them with x unbounded"
+    );
+    assert!(empty_agreed >= 500, "empty answers agreed={empty_agreed}");
+}
+
+/// `q(x)` as the conjunction, for each pair `(a, b)` and each `r` of `rs`, of `x mod a == r ||
+/// x mod b == r`, with `lo < x < hi` where a bound is given.
+fn pair_clauses(pairs: &[((i64, i64), &[i64])], bound: Option<(i64, i64)>) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for &((a, b), rs) in pairs {
+        for r in rs {
+            parts.push(format!("(x mod {a} == {r} || x mod {b} == {r})"));
+        }
+    }
+    if let Some((lo, hi)) = bound {
+        parts.push(format!("x > {} && x < {hi}", lit(lo)));
+    }
+    format!("q(x: int) = {};", parts.join(" && "))
+}
+
+/// Whether `pair_clauses(pairs, bound)` holds somewhere, by enumeration: over the bound where
+/// there is one, and otherwise over one period of each pair, which is exact because the moduli
+/// of different pairs are coprime (checked).
+fn pair_clauses_hold(pairs: &[((i64, i64), &[i64])], bound: Option<(i64, i64)>) -> bool {
+    let at = |x: i64, ((a, b), rs): ((i64, i64), &[i64])| {
+        rs.iter().all(|&r| x.rem_euclid(a) == r || x.rem_euclid(b) == r)
+    };
+    if let Some((lo, hi)) = bound {
+        return (lo + 1..hi).any(|x| pairs.iter().all(|&p| at(x, p)));
+    }
+    let gcd = |mut a: i64, mut b: i64| {
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a
+    };
+    for (i, &((a, b), _)) in pairs.iter().enumerate() {
+        for &((c, d), _) in &pairs[i + 1..] {
+            assert!([gcd(a, c), gcd(a, d), gcd(b, c), gcd(b, d)] == [1; 4]);
+        }
+    }
+    pairs.iter().all(|&p| (0..p.0.0 * p.0.1).any(|x| at(x, p)))
+}
+
+#[test]
+fn easy_clause_systems_over_several_moduli_keep_their_answers() {
+    // PNCX-modular, R2: systems of two-modulus clauses such as `(x mod 5 == 0 || x mod 7 == 0) &&
+    // (x mod 5 == 1 || x mod 7 == 1)` over several pairs of moduli, which the solver's general
+    // path answers in milliseconds and the first version of the one-variable path refused: each
+    // is answered, in both readings of the definition, as enumeration answers it. A pair with
+    // three such clauses (`r` in 0, 1, 2) holds nowhere, since each modulus meets one of them.
+    use zedc::store::presburger::extend::Extending;
+    let easy: &[i64] = &[0, 1];
+    let three: &[i64] = &[0, 1, 2];
+    let p57 = ((5, 7), easy);
+    let p1113 = ((11, 13), easy);
+    let p34 = ((3, 4), easy);
+    let p1719 = ((17, 19), easy);
+    // The least `x > 0` where `p57` and `p1113` both hold.
+    let least = (1..).find(|&x| pair_clauses_hold(&[p57, p1113], Some((x - 1, x + 1)))).unwrap();
+    // The third field: whether the solver answers `holds`. The two cases with `false` hold
+    // nowhere in a range shorter than the period of their moduli; the general path refuses them,
+    // as it did before the one-variable path (measured on d5714627).
+    let cases: Vec<(Vec<((i64, i64), &[i64])>, Option<(i64, i64)>, bool)> = vec![
+        (vec![p57, p1113], None, true),
+        (vec![p57, p1113], Some((0, 100_000)), true),
+        (vec![p34, p57, p1113], None, true),
+        (vec![p34, p57, p1113, p1719], None, true),
+        (vec![p34, p57, p1113, p1719], Some((0, 100_000)), false),
+        (vec![p57, p1113], Some((0, least)), false),
+        (vec![p57, p1113], Some((0, least + 1)), true),
+        (vec![p57, ((11, 13), three)], None, true),
+        (vec![p34, ((5, 7), three), p1113], None, true),
+        (vec![p34, p57, p1113, ((17, 19), three)], Some((0, 100_000)), true),
+    ];
+    let mut seen = [0usize; 2];
+    for (pairs, bound, answered) in cases {
+        let src = pair_clauses(&pairs, bound);
+        let want = pair_clauses_hold(&pairs, bound);
+        seen[usize::from(want)] += 1;
+        let unit = elab(&src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let lets = lets(&unit);
+        let fs = functions(&unit);
+        let (name, ps, body) = fs[0];
+        let mut scoped = Scoped::new(&lets);
+        let r = scoped.relation(body, ps, ps, true).expect(name);
+        let (mut faced, mut plain) = (Extending::new(), Extending::new());
+        let a = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+        let b = plain.defined(&r, &|n| scoped.def(n));
+        for (h, how) in [(&a.holds, "faced"), (&b.holds, "plain")] {
+            match answered {
+                true => assert_eq!(*h, Ok(want), "holds ({how})\n{src}"),
+                false => assert!(h.is_err() && !want, "holds ({how}): {h:?}\n{src}"),
+            }
+        }
+        assert_eq!(a.fails, Ok(true), "fails (faced)\n{src}");
+        assert_eq!(b.fails, Ok(true), "fails (plain)\n{src}");
+    }
+    assert!(seen[0] >= 4 && seen[1] >= 5, "{seen:?}");
+}
+
+#[test]
+fn a_residue_set_over_two_moduli_that_share_a_factor_keeps_its_residues() {
+    // PNCX-modular, R2: with `x mod 4` fixed to 2, `x mod 12 in {2, 10}` leaves `x mod 3` in
+    // {1, 2}; the one-variable path moved the residues the wrong way (to {0, 1}) and answered
+    // that `x mod 14 in {9, 10, 11} && x mod 12 in {2, 10}` never holds in [10025, 10047],
+    // where 10034 is a solution. For each shift `c`, `holds` is the answer of enumeration.
+    use zedc::store::presburger::extend::Extending;
+    for c in 0..12i64 {
+        let src = format!(
+            "q(x: int) = x >= 10025 && x <= 10047 && (x + 5) mod 14 <= 2 \
+             && ((x - {c}) mod 12 == 0 || (x - {c}) mod 12 == 8);"
+        );
+        let want = (10025..=10047i64)
+            .any(|x| (x + 5).rem_euclid(14) <= 2 && [0, 8].contains(&(x - c).rem_euclid(12)));
+        let unit = elab(&src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let lets = lets(&unit);
+        let fs = functions(&unit);
+        let (name, ps, body) = fs[0];
+        let mut scoped = Scoped::new(&lets);
+        let r = scoped.relation(body, ps, ps, true).expect(name);
+        let (mut faced, mut plain) = (Extending::new(), Extending::new());
+        let a = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+        let b = plain.defined(&r, &|n| scoped.def(n));
+        assert_eq!(a.holds, Ok(want), "holds (faced)\n{src}");
+        assert_eq!(b.holds, Ok(want), "holds (plain)\n{src}");
+    }
+}
+
+fn negated_modular_chain(n: usize) -> String {
+    let mut src = String::from(
+        "q(x: int) = !(x mod 3 == 2 && x > 11) && (x mod 4 == 1 || x > (0 - 5)) \
+         && x > 0 && x < 1000000;\n\
+         p0(x: int) = x > (0 - 4);\n\
+         p1(x: int) = q(x: x) && p0(x: x + 3) && x < 1200;\n\
+         p2(x: int) = q(x: x) && p1(x: x + (0 - 1)) && x < 2200 && !(x mod 5 == 0 || x mod 2 == 1);\n\
+         p3(x: int) = q(x: x) && p2(x: x + 0) && x < 3200 && !(x mod 5 == 2 && x > 49);\n\
+         p4(x: int) = q(x: x) && p3(x: x + 6) && x < 4200 && (x > 15 || x < 18);\n\
+         p5(x: int) = q(x: x) && p4(x: x + 0) && x < 5200 && !(x mod 3 == 2 && x > 25);\n",
+    );
+    for i in 6..n {
+        let shift = match i % 4 {
+            2 => "(0 - 2)",
+            3 => "3",
+            0 => "(0 - 1)",
+            _ => "60",
+        };
+        let extra = if i == 6 {
+            " && (x mod 2 == 2 || x mod 5 != 0)"
+        } else {
+            ""
+        };
+        src.push_str(&format!(
+            "p{i}(x: int) = q(x: x) && p{}(x: x + {shift}) && x < {}{extra};\n",
+            i - 1,
+            200 + 1000 * i
+        ));
+    }
+    src
+}
+
+#[test]
+fn the_questions_of_a_negated_modular_chain_scale() {
+    // PNCX-modular: a chain of functions over `q(x) = !(x mod 3 == 2 && x > 11) && (x mod 4 == 1
+    // || x > -5) && 0 < x < 1000000` with negated and disjunctive residues over moduli 3, 4, 5
+    // and 7 at each link. On main (cbfd0720), links from 6 on took 0.2 to 0.8 s each and were
+    // refused with Shadows. Now decided in O(n log n) with no refusals, 40 to 320 links.
+    questions_scale_unit(
+        "a chain of negated and disjunctive residues over several moduli",
+        40,
+        negated_modular_chain,
+    );
+}
+
+/// `q(x)` as the conjunction of `!(x mod p == r && x > b)` for `n` distinct bounds `b`, over
+/// moduli 5, 7, 11 and 13: each question that does not hold is the disjunction of `n`
+/// conjunctions of a residue and a bound.
+fn negated_residues_over_distinct_bounds(n: usize) -> String {
+    let lits: Vec<String> = (0..n)
+        .map(|i| format!("!(x mod {} == {} && x > {})", [5, 7, 11, 13][i % 4], i % 3, 100 * (i + 1)))
+        .collect();
+    format!("q(x: int) = {} && x > 0 && x < 100000000;\n", lits.join(" && "))
+}
+
+/// `q(x)` as the conjunction of `x mod p != 1` over the first `n` odd primes `p`, with
+/// `0 < x < 10^9`.
+fn residues_over_distinct_primes(n: usize) -> String {
+    let mut ps: Vec<i64> = Vec::new();
+    let mut k = 3i64;
+    while ps.len() < n {
+        if ps.iter().all(|p| k % p != 0) {
+            ps.push(k);
+        }
+        k += 2;
+    }
+    let lits: Vec<String> = ps.iter().map(|p| format!("x mod {p} != 1")).collect();
+    format!("q(x: int) = {} && x > 0 && x < 1000000000;\n", lits.join(" && "))
+}
+
+#[test]
+fn the_coprime_base_of_distinct_primes_scales() {
+    // PNCX-modular, R3 (R3-CLAUDE-3): the coprime base of `n` distinct primes is found by one
+    // product tree, in which each prime is coprime to the product of the others, and the point
+    // is combined by one remainder tree. The pairwise base, and the pairwise combination by the
+    // Euclidean algorithm, cost order `n^2`; at 512 and 4096 this test fails with either (15.5
+    // and 20.4 times the work or bytes, against 11.7), at 64 and 512 with neither.
+    questions_scale_unit("residues over distinct primes", 512, residues_over_distinct_primes);
+}
+
+/// `q(x)` as the conjunction, for `i < n`, of `x mod 31 == i mod 31 || x mod 37 == (i / 31) mod
+/// 37 || x > 100 (i + 1)`, and of three clauses over 11 and 13 that hold nowhere at or below
+/// `100 (n + 1)`, with `0 < x < 10^8`: each of the `n + 1` segments between bounds has its own
+/// clauses, and the walk reaches every one.
+fn clauses_over_many_segments(n: usize) -> String {
+    let mut lits: Vec<String> = (0..n)
+        .map(|i| format!("(x mod 31 == {} || x mod 37 == {} || x > {})", i % 31, (i / 31) % 37, 100 * (i + 1)))
+        .collect();
+    for r in 0..3 {
+        lits.push(format!("(x mod 11 == {r} || x mod 13 == {r} || x > {})", 100 * (n + 1)));
+    }
+    format!("q(x: int) = {} && x > 0 && x < 100000000;\n", lits.join(" && "))
+}
+
+#[test]
+fn the_questions_of_clauses_over_many_segments_scale() {
+    // PNCX-modular, R3 (R3-CLAUDE-2): the segments between the bounds of `n` clauses are walked
+    // as a segment tree, each clause stored at O(log n) nodes, so the walk costs order
+    // `n log n`; solving each segment with all the clauses active in it cost order `n^2`.
+    questions_scale_unit("clauses over many segments", 64, clauses_over_many_segments);
+}
+
+#[test]
+fn the_questions_of_negated_residues_over_distinct_bounds_scale() {
+    // PNCX-modular, R2: the one-variable path multiplied a disjunction of conjunctions out into
+    // clauses, 2^n of them for the `n` parts of the negated body (0.3 s at 16 parts); such a
+    // disjunction is now left to the general path, and each question costs order `n`.
+    questions_scale_unit(
+        "negated residues over distinct bounds",
+        16,
+        negated_residues_over_distinct_bounds,
+    );
 }

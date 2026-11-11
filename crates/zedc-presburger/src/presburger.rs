@@ -102,6 +102,7 @@ mod deep;
 pub mod extend;
 mod forced;
 mod formula;
+mod modular;
 mod values;
 
 use forced::{Facts, Forced};
@@ -976,6 +977,9 @@ pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
 
 /// [`satisfiable`] on one path ([`or_old`]).
 fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
+    if let Some(found) = modular_answer(f, true) {
+        return Ok(found);
+    }
     match Renamed::of(f) {
         Naming::Kept => satisfiable_inner(f),
         Naming::Renamed(r) => {
@@ -1071,6 +1075,9 @@ fn decide_written(f: &Formula) -> Result<bool, Refusal> {
 
 /// [`decide`] on one path ([`or_old`]).
 fn decide_named(f: &Formula) -> Result<bool, Refusal> {
+    if let Some(found) = modular_answer(f, false) {
+        return Ok(found.is_some());
+    }
     match Renamed::of(f) {
         Naming::Kept => unit_rows_have_a_point(f).map_or_else(|| decide_inner(f), Ok),
         Naming::Renamed(r) => decide_inner(&r.f).map_err(|e| r.back_refusal(e)),
@@ -1662,6 +1669,73 @@ fn old_path() -> bool {
 thread_local! {
     static OLD_PATH: Cell<bool> = const { Cell::new(false) };
     static REVERSED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// `run` with no check of the empty answers, inside a run under [`with_modular_empty_checked`].
+pub fn without_modular_empty_check<T>(run: impl FnOnce() -> T) -> T {
+    let was = MODULAR_CHECK.with(|c| c.take());
+    let out = run();
+    MODULAR_CHECK.with(|c| c.replace(was));
+    out
+}
+
+/// [`modular::solve_modular`]'s answer to `f`, or `None` when it gives none or is switched off
+/// ([`with_modular_empty_checked`]). In a run under [`with_modular_empty_checked`], each answer
+/// that `f` has no point is asked again of the path without the modular solver, and the two
+/// answers are recorded.
+fn modular_answer(f: &Formula, want_model: bool) -> Option<Option<Model>> {
+    if MODULAR_CHECK.with(|c| c.borrow().as_ref().is_some_and(|c| c.off)) {
+        return None;
+    }
+    let found = modular::solve_modular(f, want_model)?;
+    if found.is_none() && MODULAR_CHECK.with(|c| c.borrow().is_some()) {
+        MODULAR_CHECK.with(|c| c.borrow_mut().as_mut().map(|c| c.off = true));
+        let main = decide_named(f);
+        MODULAR_CHECK.with(|c| {
+            let mut c = c.borrow_mut();
+            let c = c.as_mut().expect("the check is on");
+            c.off = false;
+            match main {
+                Ok(false) => c.agreed += 1,
+                Ok(true) => c.wrong.push(f.to_string()),
+                Err(_) => c.refused.push(f.clone()),
+            }
+        });
+    }
+    Some(found)
+}
+
+/// The record of a run under [`with_modular_empty_checked`]: of the answers of
+/// [`modular::solve_modular`] that a formula has no point, the number the path without it also
+/// gave (`agreed`), the formulas that path found a point of (`wrong`), and those it refused
+/// (`refused`), which a caller can check by other means.
+#[derive(Debug, Default)]
+pub struct EmptyCheck {
+    /// The number of such answers the path without the modular solver also gave.
+    pub agreed: usize,
+    /// The formulas, as written, that the path without the modular solver found a point of.
+    pub wrong: Vec<String>,
+    /// The formulas the path without the modular solver refused.
+    pub refused: Vec<Formula>,
+    off: bool,
+}
+
+thread_local! {
+    static MODULAR_CHECK: std::cell::RefCell<Option<EmptyCheck>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// `run` with each answer of the modular solver that a formula has no point checked against the
+/// path without it (item PNCX-modular, R3-CLAUDE-6), for tests: the modular solver does not
+/// check those answers itself, as it checks each point it finds with [`Formula::holds`].
+// Complexity tradeoff: a run under the check asks the path without the modular solver once per
+// such answer, which may cost what the modular solver saves or be refused; outside the check
+// nothing is asked twice.
+pub fn with_modular_empty_checked<T>(run: impl FnOnce() -> T) -> (T, EmptyCheck) {
+    let was = MODULAR_CHECK.with(|c| c.replace(Some(EmptyCheck::default())));
+    let out = run();
+    let check = MODULAR_CHECK.with(|c| c.replace(was)).expect("the check is on");
+    (out, check)
 }
 
 /// `f` run with the disjunctions of every `project_parts` call, and the disjuncts of each,

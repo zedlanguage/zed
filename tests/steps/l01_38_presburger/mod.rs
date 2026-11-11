@@ -35,6 +35,7 @@ mod nest_empty;
 mod omega;
 mod one_scope;
 mod oracle;
+mod pncx_probe;
 mod preimage;
 mod probe;
 mod product_parity;
