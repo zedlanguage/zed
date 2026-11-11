@@ -9,6 +9,7 @@
 
 mod design_menus;
 mod fixes;
+mod lazy_carrier;
 mod scaling;
 mod spelling;
 mod tuples;
