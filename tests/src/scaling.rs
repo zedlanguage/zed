@@ -504,13 +504,30 @@ pub fn check_instructions_only(what: &str, n: usize, power: u32, run: impl Fn(us
 }
 
 /// [`check_order`] by the given meter and measures, for work of order `n^power log^logs n`.
+/// The body is [`check_by_dyn`], which is not generic: a generic body is compiled again for
+/// each test's closure, and in a test binary those copies share one large codegen unit that is
+/// optimized again after any edit that moves a line of the test file (BUILD-study: 11 to 16 s
+/// of LLVM per such edit of l01_26, about 4 s with one copy). The call through `&dyn` costs
+/// one indirect call per run, which no measured ratio can see.
 fn check_by(
     meter: &mut Meter,
     measures: Measures,
     what: &str,
     n: usize,
-    (power, logs): (u32, u32),
+    order: (u32, u32),
     run: impl Fn(usize) + Sync,
+) {
+    check_by_dyn(meter, measures, what, n, order, &run)
+}
+
+/// [`check_by`], compiled once.
+fn check_by_dyn(
+    meter: &mut Meter,
+    measures: Measures,
+    what: &str,
+    n: usize,
+    (power, logs): (u32, u32),
+    run: &(dyn Fn(usize) + Sync),
 ) {
     let limit = limit_logs(n, FACTOR * n, power, logs);
     let order = match logs {
@@ -523,14 +540,14 @@ fn check_by(
     );
     let what = format!("{what}: sizes {n} and {}", FACTOR * n);
     let (small, large) = (|| run(n), || run(FACTOR * n));
-    compare_by(
+    compare_by_dyn(
         meter,
         measures,
         Some((n, power, logs)),
         (&what, &why),
         limit,
-        small,
-        large,
+        &small,
+        &large,
     );
 }
 
@@ -570,15 +587,29 @@ pub fn compare(
 /// warm-up also builds what the process keeps once for all threads, such as the grammar, which
 /// raises its count a little and so loosens this ratio a little at a small `n`. The bytes of the
 /// first runs are held on every meter, their work only on a count of instructions, since one run
-/// cannot give processor time's three measurements.
+/// cannot give processor time's three measurements. The body is [`compare_by_dyn`], compiled
+/// once for the reason [`check_by`] gives.
 fn compare_by(
+    meter: &mut Meter,
+    measures: Measures,
+    order: Option<(usize, u32, u32)>,
+    texts: (&str, &str),
+    limit: f64,
+    small: impl Fn() + Sync,
+    large: impl Fn() + Sync,
+) {
+    compare_by_dyn(meter, measures, order, texts, limit, &small, &large)
+}
+
+/// [`compare_by`], compiled once.
+fn compare_by_dyn(
     meter: &mut Meter,
     measures: Measures,
     order: Option<(usize, u32, u32)>,
     (what, why): (&str, &str),
     limit: f64,
-    small: impl Fn() + Sync,
-    large: impl Fn() + Sync,
+    small: &(dyn Fn() + Sync),
+    large: &(dyn Fn() + Sync),
 ) {
     let warm_bytes = Cell::new(0);
     let mut warm = Some(meter.work(|| warm_bytes.set(alone(&small))));
