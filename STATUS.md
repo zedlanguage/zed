@@ -1858,16 +1858,19 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| A92-spec | running | 2026-11-11 14:34 |  |
+| FIX-fmt-parse-notes | impl attempt 1 | 2026-11-11 14:07 | baseline on f43282d26: 33 pieces, 0 failed (14 groups: zedc, zed_native, zedc_syntax, l06_01, l01_29, l01_13, l01_08, l01_09, l01_19a, l02_08, l01_30, l01_21, l |
 | FIX-held-wide-partial-tuples | impl attempt 1 | 2026-11-11 13:54 | baseline on 8a2a8c6d3 (l01_22/l01_23/l01_38/l01_26/l01_29): 509 pieces, 0 failed, load 28-42 |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
 | LIT-branch-op-value | impl attempt 1 | 2026-11-11 13:14 | started: worktree wt/lit-branch-op-value on 8a2a8c6d3, spec copy of zed 86f31d5 in lbo-scratch/spec |
 | LIT-tuple-rest | impl attempt 1 | 2026-11-10 12:02 | rebased on 7e1830269; baseline l01_16-18, l01_22, l01_26-29, l01_26a, zedc_check: 168 pieces 0 failed, load 31-47 |
 | LOAD-max-div-xr | coord attempt 5 | 2026-11-10 01:18 | start rounds 5-10 coordinator; committed Claude seat's unfinished round-4 tree as b07e4522 on wt/lmd-claude; load5 32.66 |
-| MSG-neg-zero-rat | impl attempt 1 | 2026-11-11 13:14 | started on e443ee0a4, worktree wt/neg-zero-rat, spec copy nzr-scratch/nzr-spec at 86f31d5 |
+| MSG-neg-zero-rat | impl attempt 1 | 2026-11-11 13:14 | ready: b50c3f844 on wt/neg-zero-rat; 136 pieces 0 failed, 989 passed (base 983 + 6 new); not pushed |
+| PA-let-unsummarized-narrow | impl attempt 1 | 2026-11-11 14:13 | started; worktree wt/pa-let from f43282d26 + cherry-pick bf54b7c20 |
 | PERF-negated-chain-xr | impl attempt 2 | 2026-11-10 06:16 | started rounds 4-9: Claude round-3 tree committed 9a579263 (wt/pncx-claude), rebased onto origin/main 9bbeb1ff as 448bad52 on wt/perf-negated-chain; control tre |
 | REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | rounds 7-8 started; committing review tree (Claude R5 + probe), bringing Claude R6 onto the branch, rebasing on origin/main 4777a33e / load 52.67 38.82 33.29 |
-| TESTS-walk-chains-strict-depth | impl attempt 1 | 2026-11-11 13:15 | baseline l01_39_reduced_product on 8a2a8c6d3: 177 pieces 0 failed, load 24.4-31.7; chain pieces 11.9-18.5 s |
-| WITH-initial-push-msg | impl attempt 1 | 2026-11-09 19:57 | controls c1-c5 red as expected (c5 quadratic 57.4x vs fixed 7.97x, limit 11.74); fmt + clippy next |
+| TESTS-walk-chains-strict-depth | impl attempt 1 | 2026-11-11 13:15 | returned ready: wt/walk-strict-depth bf54b7c20, not pushed / 37.57 41.38 37.09 |
+| WITH-initial-push-msg | impl attempt 1 | 2026-11-09 19:57 | ready: wt/with-push-msg b7568119f; 4 groups 22 pieces 0 failed (baseline 22/0), l06_01_parser 34->41; controls c1-c6 red; not pushed |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
