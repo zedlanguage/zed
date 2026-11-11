@@ -136,3 +136,31 @@ fn deriving_reads_of_many_divisions_of_literals_scales() {
         },
     );
 }
+
+/// A chain of `n` names from `-0r` to a divisor, with `0r` written first: one message whose
+/// derivation steps through every name, each step finding the literal at the chain's end
+/// (item MSG-neg-zero-chain).
+fn zero_chain(n: usize) -> String {
+    let mut src = String::from("a = 0r;\nz0 = -0r;\n");
+    for i in 1..n {
+        src += &format!("z{i} = z{};\n", i - 1);
+    }
+    src + &format!("f(x: rat) = x / z{};\n", n - 1)
+}
+
+#[test]
+fn a_chain_of_names_to_a_negated_zero_prints_in_linear_time() {
+    // Each step of the derivation follows the chain to its literal; a walk from each step
+    // to the end, with no memo shared by the steps, is O(n²) (COMPLEXITY.md F165).
+    let srcs = scaling::inputs(1000, zero_chain);
+    scaling::check(
+        "the message of a division by the last of a chain of n names from -0r",
+        1000,
+        |n| {
+            let out = rejected(&srcs[&n]);
+            assert_eq!(out.matches(" is -0r here").count(), n);
+            assert_eq!(out.matches("defined as this expression, -0r").count(), n);
+            assert!(!out.contains(" 0r here"));
+        },
+    );
+}

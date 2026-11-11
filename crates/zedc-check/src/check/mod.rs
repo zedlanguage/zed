@@ -1160,19 +1160,56 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The text whose literals a message about the expression at `span` prints as they are
-    /// written there ([`Self::near`]): the expression, or, where it is a name defined as an
-    /// expression, as `z` with `z = -0r`, that expression.
-    // Complexity tradeoff: one step, two hash lookups, O(1). A name defined as another name is
-    // not followed further: following the whole chain at each step of a derivation that walks
-    // the chain would cost O(n²) for a chain of n names; such a name prints its values as the
-    // first literal of that value in the text ([`Self::spelling`]).
-    fn written_at(&self, span: Span) -> Span {
-        match self.seen.get(&span) {
-            Some((_, Src::Name(id))) => match self.whence.get(id) {
-                Some(o) if matches!(o.why, Why::Defined(_)) => o.span,
-                _ => span,
+    /// written there ([`Self::near`]): the expression, or, where it is a name, the expression
+    /// that writes its value ([`Self::value_at`]), followed through each name to one that is
+    /// no such name: `-0r` for `z` in `y = -0r; z = y;`. `memo` keeps the end found for each
+    /// name passed, for the other calls of one message.
+    // Complexity tradeoff (COMPLEXITY.md F165): the naive walk, from `span` to the end of its
+    // chain at every call, costs O(n) per step of a derivation that steps through a chain of n
+    // names, O(n²) for the message; a first version took one step only, O(1), and printed a
+    // name defined as a name as the first literal of its value anywhere in the text. Used: the
+    // walk records the end for every name it passes, so the calls of one message pass each name
+    // once, O(n) for the message, two hash lookups and two inserts per name. A visited set of
+    // the names on the walk stops it on a chain that comes back to a name it passed; zedc
+    // refuses such definitions as recursion before it checks them, so none reaches here. The
+    // memo lives for one message only: a name's origin can change as the check goes on (a test
+    // narrows it), and an end kept across messages would make what one prints depend on which
+    // was printed first.
+    fn written_at(&self, span: Span, memo: &mut HashMap<Span, Span>) -> Span {
+        let mut passed = HashSet::new();
+        let mut at = span;
+        let end = loop {
+            if let Some(&end) = memo.get(&at) {
+                break end;
+            }
+            let next = match self.seen.get(&at) {
+                Some((_, Src::Name(id))) => (self.whence.get(id)).and_then(|o| self.value_at(o)),
+                _ => None,
+            };
+            match next {
+                Some(next) if passed.insert(at) => at = next,
+                _ => break at,
+            }
+        };
+        memo.extend(passed.into_iter().map(|s| (s, end)));
+        end
+    }
+
+    /// The expression that writes the value of a binder whose type comes from `o`: the
+    /// expression it is defined as, or, for a component of a tuple written out, as `q` in
+    /// `p, q = (0r, -0r)`, that component's item; `None` for any other origin, and for a
+    /// component of a tuple that is not written out there.
+    fn value_at(&self, o: &Origin<'a>) -> Option<Span> {
+        match o.why {
+            Why::Defined(_) => Some(o.span),
+            Why::Component(i, _) => match self.seen.get(&o.span) {
+                Some((_, Src::Other(e))) => match &e.kind {
+                    ExprKind::Tuple(items) => items.get(i).map(|x| x.span),
+                    _ => None,
+                },
+                _ => None,
             },
-            _ => span,
+            _ => None,
         }
     }
 
@@ -1555,6 +1592,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // for one copy of each note.
         let mut shown: HashSet<Note> = out.iter().cloned().collect();
         let mut visited = HashSet::new();
+        // The end of each chain of names the steps have followed ([`Ck::written_at`]).
+        let mut written = HashMap::new();
         let mut stack: Vec<Work> = spans.iter().rev().map(|&s| Work::Derive(s)).collect();
         let note = |span: Span, text: String| Work::Show(Note { span, text });
         while let Some(w) = stack.pop() {
@@ -1576,7 +1615,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             built(1);
             // A step prints a literal value as the program writes it in the expression the
             // step is about, `-0r` for `x / -0r` and `0r` for its `0r` ([`Ck::spelling`]).
-            let at = Some(self.written_at(span));
+            let at = Some(self.written_at(span, &mut written));
             let ty = match (kept, src) {
                 (Some(t), _) => self.near(at, |ck| ck.show(t)),
                 (None, Src::Other(e)) => match self.tuple_seen(e) {
@@ -1688,7 +1727,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let b = &self.t.res.binders[id].name;
                         format!("`{b}` is defined as this expression")
                     }
-                    _ => self.near(Some(origin.span), |ck| ck.said(id, &origin.why)),
+                    // Its value printed as the expression that writes it does, followed
+                    // through any names: `-0r` for `z = y` with `y = -0r`.
+                    _ => {
+                        let at = (self.value_at(origin)).map(|s| self.written_at(s, &mut written));
+                        self.near(at.or(Some(origin.span)), |ck| ck.said(id, &origin.why))
+                    }
                 };
                 next.push(note(origin.span, said));
                 let mut why_none = Vec::new();

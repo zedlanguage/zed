@@ -8811,7 +8811,10 @@ impl<'a> Ck<'_, 'a> {
             if value.subtype(&zeros) {
                 // Its zero printed as the divisor writes it, `-0r` in `x / (if c { -0r } else
                 // { 0r })`, which writes it first.
-                let text = self.near(Some(self.written_at(b.span)), |ck| ck.text(&y.ty));
+                // The chain of names is walked once per such division, O(its length), which is
+                // also the length of the derivation the message prints.
+                let at = self.written_at(b.span, &mut HashMap::new());
+                let text = self.near(Some(at), |ck| ck.text(&y.ty));
                 return Some(Zero::Type(text));
             }
             // The narrowing of the tests reads values as ints, so it is read only for an int
