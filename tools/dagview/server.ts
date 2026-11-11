@@ -162,10 +162,10 @@ for (const dir of [repo, spec]) {
 const savedLayouts = join(work, "dagview-layouts.json");
 // Each layout run is logged, so the log shows how often and for which graph one runs.
 const layouts = new Layouts(
-  async (g) => {
+  async (g, prev) => {
     const t0 = Date.now();
     console.log(`${new Date(t0).toISOString()} layout started: ${g.nodes.length} nodes, ${g.edges.length} edges`);
-    const l = await layoutInWorker(g);
+    const l = await layoutInWorker(g, prev);
     console.log(`${new Date().toISOString()} layout finished in ${Date.now() - t0} ms: ${l.key}`);
     return l;
   },

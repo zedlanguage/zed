@@ -19,12 +19,16 @@ export interface Layout {
   // When the server finished it, in ms since 1970; absent in layouts saved
   // before this was kept.
   at?: number;
+  // Each node's layer, top = 0, before splitRows (d3dag.ts), from which the
+  // next layout of a changed graph starts; absent in layouts saved before it
+  // was kept.
+  layers?: Record<string, number>;
 }
 
 // Names the layout method in each key, so a layout saved by an older method is
 // not taken for a layout of the same graph by this one. Change it whenever the
 // layout changes.
-const METHOD = "d3-dag 1.2.2 balanced layers 2026-11-10";
+const METHOD = "d3-dag 1.2.2 count-balanced layers, sources above their children, rows over 1.5 x median split, from the earlier layers 2026-11-11";
 
 // What a layout depends on: the node ids, each node's size and the edges.
 // Nodes are sorted by id and edges by their two ids, so the order the plan
@@ -51,9 +55,11 @@ export function graphKey(g: Graph): string {
 // Runs one layout in a fresh worker, so a slow layout never holds up a poll.
 // The 64 MB stack was set for ELK, which overflowed the default one; it is
 // kept, as d3-dag has not been run on the plan without it.
-export function layoutInWorker(g: Graph): Promise<Layout> {
+// prev, an earlier layout, gives the layers to start from if this method made it.
+export function layoutInWorker(g: Graph, prev?: Layout): Promise<Layout> {
+  const layers = prev?.key.startsWith(`${METHOD} `) ? prev.layers : undefined;
   return new Promise((resolve, reject) => {
-    const w = new Worker(new URL("./layout-worker.ts", import.meta.url), { workerData: g, resourceLimits: { stackSizeMb: 64 } });
+    const w = new Worker(new URL("./layout-worker.ts", import.meta.url), { workerData: { g, layers }, resourceLimits: { stackSizeMb: 64 } });
     w.once("message", (l: Layout) => resolve(l));
     w.once("error", reject);
     w.once("exit", (code) => code !== 0 && reject(new Error(`layout worker exited with ${code}`)));
@@ -76,11 +82,11 @@ export class Layouts {
   private asked = new Map<string, string>();
   private running: { mode: string; key: string; at: number } | null = null;
 
-  private compute: (g: Graph) => Promise<Layout>;
+  private compute: (g: Graph, prev?: Layout) => Promise<Layout>;
   private save: (done: Record<string, Layout>) => void;
 
   constructor(
-    compute: (g: Graph) => Promise<Layout>,
+    compute: (g: Graph, prev?: Layout) => Promise<Layout>,
     saved: Record<string, Layout> = {},
     save: (done: Record<string, Layout>) => void = () => {},
   ) {
@@ -126,7 +132,7 @@ export class Layouts {
     this.want.delete(mode);
     this.running = { mode, key, at: Date.now() };
     try {
-      const l = await this.compute(graph);
+      const l = await this.compute(graph, this.done.get(mode));
       this.done.set(mode, { ...l, key, at: Date.now() });
       this.save(Object.fromEntries(this.done));
     } catch (err) {

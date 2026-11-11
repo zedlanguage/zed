@@ -5,5 +5,5 @@ import { d3dagLayout } from "./d3dag.ts";
 import { graphKey } from "./layout.ts";
 import type { Graph } from "./layout.ts";
 
-const g = workerData as Graph;
-parentPort!.postMessage({ key: graphKey(g), ...d3dagLayout(g) });
+const { g, layers } = workerData as { g: Graph; layers?: Record<string, number> };
+parentPort!.postMessage({ key: graphKey(g), ...d3dagLayout(g, undefined, layers) });
