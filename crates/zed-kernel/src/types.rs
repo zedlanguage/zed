@@ -6288,6 +6288,8 @@ pub mod rec {
         }
         // The most arcs a vertex has into one class: a node's places are all of one color when
         // it is a meet, so a node counts up to its number of children.
+        // Complexity tradeoff: one pass over the arcs, O(V + E), so that `Refine`'s degree bound
+        // holds where a meet's arcs all go into one color; no naive version is cheaper.
         let mut into = vec![0; size];
         for &w in &adj {
             into[w] += 1;
@@ -6320,6 +6322,9 @@ pub mod rec {
                 if matches!(n.e, Shape::And(_)) {
                     // The operands' classes in their order, not the node's, so the form does
                     // not depend on which node of the class comes first.
+                    // Complexity tradeoff (COMPLEXITY.md K102): the naive form keeps the
+                    // written order, O(k) for a meet of k operands, but then `A & B` and
+                    // `B & A` are two forms; sorting costs O(k log k) per meet, once per form.
                     kids.sort_unstable();
                 }
                 *rep = Some(((*n).clone(), kids));
@@ -6351,6 +6356,8 @@ pub mod rec {
                 // `B & A` spell alike and are one part (item GROUP-search-canon-key).
                 e @ Shape::And(_) => {
                     let mut kids: Vec<u64> = e.kids().map(|c| spell[c.at as usize]).collect();
+                    // Complexity tradeoff (COMPLEXITY.md K102): hashing in the written order is
+                    // O(k) for k operands but depends on that order; the sort is O(k log k).
                     kids.sort_unstable();
                     kids.into_iter().fold(e.tag(), mix)
                 }
@@ -6393,6 +6400,10 @@ pub mod rec {
                 return c;
             }
             if matches!(x.e, Shape::And(_)) {
+                // Complexity tradeoff (COMPLEXITY.md K102): pairing in place order is O(k), but
+                // depends on the written order; the sort by hash costs O(k log k) per meet
+                // pair, so the walk stays O(N log N) in the nodes, and a hash tie falls back
+                // to the written order, which then decides only between colliding spellings.
                 let by_hash = |n: &'a Node, h: &[u64]| {
                     let mut kids: Vec<&'a Node> = n.e.kids().map(|c| &**c).collect();
                     kids.sort_by_key(|c| h[c.at as usize]);

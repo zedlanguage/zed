@@ -99,6 +99,9 @@ type ByType<V> = HashMap<Type, V, Digests>;
 
 /// A set of types, hashed by their digests.
 type TypeSet = HashSet<Type, Digests>;
+/// The reads and blame a proof resting on a fork added for the type being decided, taken out
+/// by [`Searching::take_fork`] and put back by [`Searching::restore_fork`].
+type ForkSave = (Vec<usize>, Vec<(usize, Refusal)>);
 
 thread_local! {
     static MEMO: RefCell<ByType<bool>> = const { RefCell::new(ByType::with_hasher(Digests::new())) };
@@ -516,7 +519,7 @@ impl Type {
             // hold no node; neither is iterated (the groups found are in the order met).
             let inside: HashSet<u64> = roots.iter().map(Type::node_id).collect();
             let mut seen: HashSet<u64, Digests> = roots.iter().map(Type::node_id).collect();
-            // Complexity tradeoff (COMPLEXITY.md K101): the naive read scans the diagram of
+            // Complexity tradeoff (COMPLEXITY.md K102): the naive read scans the diagram of
             // each type it meets afresh, so a diagram shared by n types is read n times,
             // O(n^2) on cycle_dup's family of n meets each written in two orders. Here the
             // diagram nodes, set nodes and types already read are kept in sets for the whole
@@ -1368,7 +1371,7 @@ struct Region {
     /// For each component, whether it changed since it was last tested.
     changed: Vec<bool>,
     log: Vec<Change>,
-    forked_holds: Vec<(usize, usize, (Vec<usize>, Vec<(usize, Refusal)>))>,
+    forked_holds: Vec<(usize, usize, ForkSave)>,
 }
 
 enum Change {
@@ -1594,8 +1597,9 @@ impl Search {
         }
         // Value types still empty with every morphism value read as inhabited are empty:
         // read them so, and start again.
+        let rest = self.fork_resting();
         let fresh: Vec<usize> = (self.value_reads.iter().copied())
-            .filter(|&v| self.answer[v] && !self.dead.contains(&v) && !self.rests_on_fork(v))
+            .filter(|&v| self.answer[v] && !self.dead.contains(&v) && !rest[v])
             .collect();
         if !fresh.is_empty() || std::mem::take(&mut self.settled) {
             self.dead.extend(fresh);
@@ -1664,6 +1668,9 @@ impl Search {
 
     /// Drops types numbered from `mark` on, added while `open_forks` was turned on inside a
     /// decision search, so its table holds only answers decided under `refuse_forks`.
+    // Complexity tradeoff (COMPLEXITY.md K102): the naive undo scans every reader set for the
+    // types dropped, O(T log T); [`Self::add_reader`] logs each older type that gained a newer
+    // reader, so the undo splits only those sets, and each split is O(log T) plus what it drops.
     fn pop_open_forks(
         &mut self,
         (mark, blame_len, dead_len, settled): (usize, usize, usize, bool),
@@ -1753,13 +1760,15 @@ impl Search {
         ControlFlow::Continue(i)
     }
 
-    /// Whether the search or the decision of `t` rests on a fork.
-    fn rests_on_fork(&self, t: usize) -> bool {
+    /// Whether the search or the decision of one of `ts` rests on a fork.
+    // Complexity tradeoff (COMPLEXITY.md K102): the naive test walks the reads from each type
+    // of `ts` alone and collects the forked types for each, O(|ts| (B log B + T + R)) for B
+    // blamed, T types and R reads; one walk from all of `ts` with one visited set is
+    // O(B log B + T + R). Given up: the walk is redone per call, so a caller that calls once
+    // per value type pays that per call; `end_phase` marks every type once instead.
+    fn rests_on_fork(&self, ts: impl IntoIterator<Item = usize>) -> bool {
         if self.refused == Some(Refusal::Fork) {
             return true;
-        }
-        if !self.answer[t] {
-            return false;
         }
         let Some(blame) = self.blame.as_deref() else {
             return false;
@@ -1771,7 +1780,8 @@ impl Search {
         if forked.is_empty() {
             return false;
         }
-        let (mut seen, mut stack) = (BTreeSet::from([t]), vec![t]);
+        let mut stack: Vec<usize> = ts.into_iter().filter(|&t| self.answer[t]).collect();
+        let mut seen: HashSet<usize> = stack.iter().copied().collect();
         while let Some(x) = stack.pop() {
             if forked.contains(&x) {
                 return true;
@@ -1785,6 +1795,47 @@ impl Search {
         false
     }
 
+    /// For each type, whether its search or decision rests on a fork ([`Self::rests_on_fork`]):
+    /// a type with answer `true` that reads, through types with answer `true`, a forked type
+    /// with answer `true`. One walk back over the reads from the forked types, O(B + T + R).
+    fn fork_resting(&self) -> Vec<bool> {
+        let n = self.types.len();
+        if self.refused == Some(Refusal::Fork) {
+            return vec![true; n];
+        }
+        let mut rest = vec![false; n];
+        let Some(blame) = self.blame.as_deref() else {
+            return rest;
+        };
+        let mut stack: Vec<usize> = Vec::new();
+        for &(x, r, _) in blame {
+            if r == Refusal::Fork && self.answer[x] && !rest[x] {
+                rest[x] = true;
+                stack.push(x);
+            }
+        }
+        if stack.is_empty() {
+            return rest;
+        }
+        let mut read_by: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (x, reads) in self.reads.iter().enumerate() {
+            if self.answer[x] {
+                for &(y, _) in reads {
+                    read_by[y].push(x);
+                }
+            }
+        }
+        while let Some(y) = stack.pop() {
+            for &x in &read_by[y] {
+                if !rest[x] {
+                    rest[x] = true;
+                    stack.push(x);
+                }
+            }
+        }
+        rest
+    }
+
     /// Takes as dead the empty types `v` rests on, unless one rests on a type still being
     /// decided: an empty type read is what a proof rests on, and an inhabited one is not. Every
     /// type waiting to be decided again was decided first ([`Searching::no_value`]), so each
@@ -1792,7 +1843,7 @@ impl Search {
     /// type already dead changes nothing, so the phase that settles it again does not start
     /// another: each new phase takes at least one more type as dead, which bounds their number.
     fn settle(&mut self, v: usize) {
-        if self.dead.contains(&v) || self.rests_on_fork(v) {
+        if self.dead.contains(&v) || self.rests_on_fork([v]) {
             return;
         }
         let (mut seen, mut stack) = (BTreeSet::from([v]), vec![v]);
@@ -2203,6 +2254,12 @@ impl<'m> Searching<'m> {
         })
     }
 
+    /// The current type and a new epoch, which tags the reads and blame added from here on, so
+    /// [`Searching::take_fork`] can find them.
+    // Complexity tradeoff (COMPLEXITY.md K102): the naive rollback copies the reads and blame
+    // at each snapshot, O(R + B) a snapshot; an epoch costs O(1), and since the epochs in each
+    // list rise, a rollback finds its start by binary search, O(log R + log B), and moves only
+    // what was added after it. Given up: an epoch number per read and per blame entry.
     fn fork_snapshot(&self) -> Option<(Option<usize>, usize)> {
         let mut guard = self.s();
         let s = &mut *guard;
@@ -2215,7 +2272,7 @@ impl<'m> Searching<'m> {
         &self,
         snap: Option<(Option<usize>, usize)>,
         sub: Option<&Type>,
-    ) -> Option<(Vec<usize>, Vec<(usize, Refusal)>)> {
+    ) -> Option<ForkSave> {
         let (c, ep) = snap?;
         let mut guard = self.s();
         let s = &mut *guard;
@@ -2224,20 +2281,30 @@ impl<'m> Searching<'m> {
             b[start..]
                 .iter()
                 .any(|&(x, r, _)| r == Refusal::Fork && Some(x) == c)
-        }) || c.is_some_and(|c| {
-            let start = s.reads[c].partition_point(|&(_, e)| e < ep);
-            s.reads[c][start..].iter().any(|&(u, _)| s.rests_on_fork(u))
-        }) || sub
-            .and_then(|t| s.ids.get(t))
-            .is_some_and(|&i| s.rests_on_fork(i));
+        }) || {
+            let read: &[(usize, usize)] = c.map_or(&[], |c| {
+                let start = s.reads[c].partition_point(|&(_, e)| e < ep);
+                &s.reads[c][start..]
+            });
+            let sub = sub.and_then(|t| s.ids.get(t)).copied();
+            let from: Vec<usize> = read.iter().map(|&(u, _)| u).chain(sub).collect();
+            !from.is_empty() && s.rests_on_fork(from)
+        };
         if !on_fork {
             return None;
         }
         let saved_reads = if let Some(c) = c {
             let start = s.reads[c].partition_point(|&(_, e)| e < ep);
             let dropped: Vec<usize> = s.reads[c].drain(start..).map(|(u, _)| u).collect();
+            // Complexity tradeoff (COMPLEXITY.md K102): the naive test scans the reads kept for
+            // each read dropped, O(D K); a set of the kept reads makes it O(D + K) expected.
+            let kept: HashSet<usize> = if dropped.is_empty() {
+                HashSet::new()
+            } else {
+                s.reads[c].iter().map(|&(v, _)| v).collect()
+            };
             for &u in &dropped {
-                if !s.reads[c].iter().any(|&(v, _)| v == u) {
+                if !kept.contains(&u) {
                     s.readers[u].remove(&c);
                 }
             }
@@ -2268,7 +2335,7 @@ impl<'m> Searching<'m> {
     /// Whether `t` is empty, and in a search with `blame` the reads and blame added for the
     /// current type when `t`'s emptiness rests on a fork, rolled back so a fork-free proof can
     /// take precedence and restored ([`Searching::restore_fork`]) only when none does.
-    async fn empty_fork(&'m self, t: &Type) -> (bool, Option<(Vec<usize>, Vec<(usize, Refusal)>)>) {
+    async fn empty_fork(&'m self, t: &Type) -> (bool, Option<ForkSave>) {
         let snap = self.fork_snapshot();
         if !self.empty(t).await {
             return (false, None);
@@ -2276,7 +2343,7 @@ impl<'m> Searching<'m> {
         (true, self.take_fork(snap, Some(t)))
     }
 
-    fn restore_fork(&self, (reads, blame): (Vec<usize>, Vec<(usize, Refusal)>)) {
+    fn restore_fork(&self, (reads, blame): ForkSave) {
         let mut guard = self.s();
         let s = &mut *guard;
         s.epoch += 1;
@@ -4150,6 +4217,9 @@ impl<'m> Searching<'m> {
                 // A fork can remain open without leaving a kept emptiness snapshot.
                 // Count it before starting another candidate search: one scan of the cells.
                 // Abandoning a witness attempt supplies no emptiness proof.
+                // Complexity tradeoff (COMPLEXITY.md K102): the scan is O(m k) for m components
+                // and k open tuple types, the size of the region read just before it; keeping
+                // a count of open forks up to date through every narrowing would save no order.
                 let open_fork = (0..b.r.len()).any(|j| b.forks(&open, j));
                 if self.s().kept_forks > forks || open_fork {
                     if past {
@@ -6204,6 +6274,13 @@ type Class = (Type, BTreeSet<usize>);
 /// Whether `f` holds no tuple on `g` because on some component where every tuple type of `open`
 /// is open, their cells fall into two or more disjoint classes ([`overlaps`]) and `f` simplifies
 /// to `false` both outside all classes and within each class alone.
+// Complexity tradeoff (COMPLEXITY.md K102): the naive test restricts `f` to each of the g
+// classes alone, g restrictions of the whole of `f` per component; halving the classes
+// restricts the half left over each step, so a restriction at depth d reads what is left of
+// `f` after d halvings, and a half that is already `false` is not split further. Both are
+// O(g) restrictions of up to |f| nodes in the worst case, O(g |f|) time per component and
+// O(m g |f|) over m components, with the classes from `overlaps` (K36). It runs only for a
+// search with `blame`, before the Fork refusal it may replace. Given up: no better bound.
 fn empty_by_classes(g: &Region, f: &Part<Row>, open: &[usize]) -> bool {
     if f.eval3(&|_| Some(false)) != Some(false) {
         return false;
