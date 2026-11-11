@@ -533,3 +533,13 @@ Expr ::: match v { (a,) -> a } ::: (match v { ((( a , )) -> a) })
 Expr ::: match v { (a) -> a } ::: ERROR
 Type ::: rat[num 1..=8, den 1..=4] ::: (rat ([ (num (1 ..= 8)) , (den (1 ..= 4)) ]))
 Type ::: rat[den 1..] ::: (rat ([ (den (1 ..)) ]))
+Expr ::: sales[sku: "A12"] ::: (sales ([ (sku : "A12") ]))
+Expr ::: sales[sku: "A12", region: "west"] ::: (sales ([ (sku : "A12") , (region : "west") ]))
+Expr ::: m[a: b,] ::: (m ([ (a : b) , ]))
+Expr@7 ::: m[a: b] ::: ERROR
+Expr@8 ::: m[a: b] ::: (m ([ (a : b) ]))
+Expr ::: m into (region -> (week: day div 7) -> v) ::: (m (into ( (region -> (( (week : (day div 7)) )) -> v) )))
+Expr ::: m into (k >< (+) -> (sold: q)) ::: (m (into ( ((k >< (( + ))) -> (( (sold : q) ))) )))
+Expr ::: (s, p) into (sku -> (line: (q, price))) ::: ((( s , p )) (into ( (sku -> (( (line : (( q , price ))) ))) )))
+Expr@7 ::: m into (k -> (w: d)) ::: ERROR
+Expr ::: m into (week: d div 7 -> v) ::: (m (into ( ((week : (d div 7)) -> v) )))

@@ -323,6 +323,14 @@ const SITES: &[(&str, Site)] = &[
         Site::Later("f(positional x: [f64; int: 3]) = x;\n"),
     ),
     (
+        "Key",
+        Site::Later("f(positional m) = m as (k -> v) into ((int: k) -> v);\n"),
+    ),
+    (
+        "SliceKey",
+        Site::NotBinder("a level name the value's type already has, a use"),
+    ),
+    (
         "GItem",
         Site::NotBinder("a grammar field, which no scope binds"),
     ),

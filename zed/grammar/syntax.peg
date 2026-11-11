@@ -155,7 +155,9 @@ Suffix        = ~CallSuffix                                                     
               | ~SpreadSuffix                                                      L6
               | ~ReadSuffix                                                        L3
 CallSuffix    = '(' nest(Args?) ')'                                                L1
-IndexSuffix   = '[' nest(Expr) ']'                                                 L1
+IndexSuffix   = '[' nest(SliceKey % ',' ','?) ']'                                  L8
+              | '[' nest(Expr) ']'                                                 L1
+SliceKey      = Name ':' Expr                                                      L8
 MemberSuffix  = '.' Name                                                           L1
 SafeSuffix    = '?.' Name                                                          L1
 SpreadSuffix  = '*.' Name                                                          L6
@@ -249,7 +251,8 @@ JoinExpr      = And ('||' And)+                                                 
               | Equality ('&&' Equality)+                                          L8
               | Relation '==' Relation                                             L8
               | '(' nest(JoinExpr) ')'                                             L8
-Key           = WILD | Additive                                                    L8
+Key           = Name ':' Additive                                                  L8
+              | WILD | Additive                                                    L8
 KeyOp         = '(' | '[' | '.' | '?.' | '*.' | '::' | '^' | '*' | '/' | 'div' | 'mod' | '+' | '-' | '++'   L8
 
 Type          = Arrow TypeFacet* TypeWhere? TypeBounds?                            L1

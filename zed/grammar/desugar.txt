@@ -79,7 +79,8 @@ Power         : the primitive pow, right-associative
 Postfix       : the suffixes applied left to right to ⟦Primary⟧
 Suffix        : the suffix of its alternative, over its receiver x
 CallSuffix    : the application with its arguments in parameter order, defaults filled and `...` a λ over the parameters left out
-IndexSuffix   : get on a family, a miss being the level's atom (#outOfBounds at a level whose keys are one integer interval, every one present, else #notFound), application on a function, tupleGet on a tuple, a miss being #outOfBounds
+IndexSuffix   : `m[n: k]`, a named slice (sec:level_names): `get` at the level named `n` under every keypath above it, a miss being that level's atom; several names read from the outermost level in; otherwise get on a family, a miss being the level's atom (#outOfBounds at a level whose keys are one integer interval, every one present, else #notFound), application on a function, tupleGet on a tuple, a miss being #outOfBounds
+SliceKey      : a level name and the key read at that level
 MemberSuffix  : get(x, #n) where x's type guarantees the field n, else the application n(x, …)
 SafeSuffix    : match ⟦x⟧ { a -> a for each atom member a, v -> ⟦v.n⟧ }
 SpreadSuffix  : the method call that writes the receiver's next generation
@@ -131,7 +132,7 @@ JoinTerm      : a join region (sec:joins): `&&` inner, `||` outer, `&& ?` left, 
 AndJoin       : `a && b`, `a && ?b`, `a && !b`: inner, left, difference; a chain keeps the keys of joining from the left, so `a && !b && !c` keeps those of (a && !b) && !c, and gives one flat value with a slot per operand (sec:joins)
 KeyTerm       : a key, or a parenthesized join term
 JoinExpr      : a lookahead only; no term; a group it matches in key position, with no postfix or arithmetic operator after it, is rejected
-Key           : a key expression over the source's level names; `_` the leaf value
+Key           : a key expression over the source's level names; `_` the leaf value; `name: e` the key or leaf `e`, its level named `name` (sec:level_names)
 KeyOp         : a lookahead only; no term
 Type          : the set-theoretic type its arrow denotes (sec:type_language), with the facets attached, the `where` refinement applied and the type variables bounded
 TypeFacet     : a facet attached to the type (sec:facets)

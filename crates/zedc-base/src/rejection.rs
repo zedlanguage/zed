@@ -158,6 +158,11 @@ rows! {
     LevelDomainsDiffer => "Levels of one name with different domains",
     OutsideRefinement => "Argument outside its parameter's refinement",
     AtomCannotPassOut => "Loose atom inside an argument at a position from which it cannot pass out of the call",
+    // No diagnostic uses the next four rows yet: plan rows L7.1b, L8.2c and L20.3c emit them.
+    LevelNamesMisfit => "Level names that do not fit the type",
+    LevelNameClash => "Two levels of one map with one name at the instantiation of a generic type",
+    UnknownSliceName => "Named slice of a name the value's type does not have, or of one level twice",
+    UnnamedCodecLevel => "Codec of a map type with an unnamed level",
 }
 
 impl Row {

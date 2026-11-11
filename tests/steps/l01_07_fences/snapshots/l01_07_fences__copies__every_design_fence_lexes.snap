@@ -151,6 +151,42 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | back = ( files ( ) :: bytes [ str["samples.bin"] ] «else» [ ] ) . via ( records ( Sample ) ) ;
   4 | m . stdout <- str[${back :: len} " samples read"] ;
   5 | }
+== DESIGN.md [sec:level_names] 1 L3
+  2 | «type» Sales0 = Utf8String ->? [ Utf8String ->? int ] ;
+== DESIGN.md [sec:level_names] 2 L10
+  1 | «type» Sales = Utf8String ->? [ Utf8String ->? int ] «with» names ( str["region"] , str["day"] , str["sku"] , str["quantitySold"] ) ;
+  2 | sales : Sales = { str["east"] -> [ { str["B7"] -> 5₍10₎ } ] , str["west"] -> [ { str["A12"] -> 3₍10₎ , str["B7"] -> 1₍10₎ } , { str["A12"] -> 2₍10₎ } ] } ;
+== DESIGN.md [sec:level_names] 3 L10
+  1 | lookupOr ( «positional» m : K ->? V «with» names ( str["key"] , str["value"] ) , «positional» k : K , «positional» d : V ) -> V = m [ k ] «else» d ;
+  3 | stock : Utf8String ->? int «with» names ( str["sku"] , str["count"] ) = { str["A12"] -> 3₍10₎ } ;
+  4 | n = lookupOr ( stock , str["B7"] , 0₍10₎ ) ;
+  6 | daily : Utf8String ->? ( ( day : int ) ->? int ) «with» names ( str["store"] , str["_"] , str["sold"] ) = { str["s1"] -> { 1₍10₎ -> 4₍10₎ } } ;
+  7 | s = lookupOr ( daily , str["s1"] , { 0₍10₎ -> 0₍10₎ } ) ;
+== DESIGN.md [sec:level_names] 4 L10
+  1 | relabel ( «positional» m : K ->? V ) -> K ->? V «with» names ( str["key"] , str["value"] ) = m ;
+  3 | daily : Utf8String ->? ( ( day : int ) ->? int ) «with» names ( str["store"] , str["_"] , str["sold"] ) = { str["s1"] -> { 1₍10₎ -> 4₍10₎ , 2₍10₎ -> 6₍10₎ } , str["s2"] -> { 1₍10₎ -> 5₍10₎ } } ;
+  4 | r = relabel ( daily ) ;
+  6 | d1 = r [ day : 1₍10₎ ] ;
+  7 | byDay = r «into» ( day -> key -> sold ) ;
+  8 | whole = r «into» ( key -> value ) ;
+  9 | targets : ( day : int ) ->? int «with» names ( str["day"] , str["target"] ) = { 1₍10₎ -> 5₍10₎ , 2₍10₎ -> 5₍10₎ } ;
+ 10 | vs = ( r , targets ) «into» ( key -> day -> ( pair : ( sold , target ) ) ) ;
+== DESIGN.md [sec:level_names] 5 L10
+  1 | totals = sales «into» ( region -> day -> sku >< ( + ) -> quantitySold ) ;
+  3 | labels : Utf8String ->? [ Utf8String ] «with» names ( str["sku"] , str["pos"] , str["label"] ) = { str["A12"] -> [ str["red"] , str["small"] ] } ;
+  4 | joined = labels «into» ( sku -> pos >< ( ++ ) -> label ) ;
+== DESIGN.md [sec:level_names] 6 L8
+  1 | floof ( «positional» a : int , «positional» b : int ) -> int = a + b ;
+  2 | f = sales «into» ( region -> day -> sku >< floof -> quantitySold ) ;
+== DESIGN.md [sec:level_names] 7 L8
+  1 | g = sales «into» ( region -> day -> sku >< ( ( a , b ) -> a + b ) -> quantitySold ) ;
+  3 | «import» tools . stats ;
+  4 | h = sales «into» ( region -> day -> sku >< stats . floof -> quantitySold ) ;
+== DESIGN.md [sec:level_names] 8 L10
+  1 | prices : ( sku : Utf8String ) ->? f64 «with» names ( str["sku"] , str["price"] ) = { str["A12"] -> 2.5f , str["B7"] -> 4.0f } ;
+  2 | lines = ( sales , prices ) «into» ( region -> day -> sku -> ( line : ( quantitySold , price ) ) ) ;
+== DESIGN.md [sec:level_names] 9 L8
+  1 | a12 = sales [ sku : str["A12"] ] ;
 == DESIGN.md [sec:constraints] 1 L10
   1 | «type» Small = ( x : int where x * x < 100₍10₎ ) ;
   2 | «type» Even = ( n : int where n «mod» 2₍10₎ == 0₍10₎ ) ;

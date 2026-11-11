@@ -17,7 +17,8 @@
 //! QUESTIONS.md. The fixes of `twice` also differ in their wording and in which are offered
 //! (DESIGN offers `twice(x: f64)`, `twice(x: rat)` and `twice(x)`). The example at a declared
 //! type, `x: f64 = 9007199254740993;`, is not compared at all: zedc does not compile a
-//! top-level binding with a declared type yet.
+//! top-level binding with a declared type yet. Nor are the five messages of sec:level_names
+//! (layers L7 and L8): zedc does not compile a `names` facet or a named slice yet.
 
 use super::rejected;
 
@@ -126,7 +127,7 @@ fn menu(text: &str) -> Vec<(&str, &str)> {
 
 /// The program of each DESIGN.md example with a menu, found by the source line its steps
 /// show, whether zedc compiles it yet, and whether its menu is compared ([`menu`]).
-const PROGRAMS: [(&str, &str, bool, bool); 4] = [
+const PROGRAMS: [(&str, &str, bool, bool); 9] = [
     (
         "twice(x: int) = x * 2.0;",
         "twice(x: int) = x * 2.0;\n",
@@ -148,6 +149,41 @@ const PROGRAMS: [(&str, &str, bool, bool); 4] = [
     (
         "x: f64 = 9007199254740993;",
         "x: f64 = 9007199254740993;\n",
+        false,
+        false,
+    ),
+    // The level names of sec:level_names (plan rows L7.1b and L8.2c), at layers L7 and L8.
+    (
+        "type Sales = Utf8String ->? [Utf8String ->? int] with names(\"region\", \"sku\", \"quantitySold\");",
+        "type Sales = Utf8String ->? [Utf8String ->? int] with names(\"region\", \"sku\", \"quantitySold\");\n",
+        false,
+        false,
+    ),
+    (
+        "type Sales = Utf8String ->? [Utf8String ->? int] with names(\"region\", \"day\", \"sku\", \"quantity sold\");",
+        "type Sales = Utf8String ->? [Utf8String ->? int] with names(\"region\", \"day\", \"sku\", \"quantity sold\");\n",
+        false,
+        false,
+    ),
+    (
+        "type Counts = (region: Utf8String) ->? int with names(\"area\", \"count\");",
+        "type Counts = (region: Utf8String) ->? int with names(\"area\", \"count\");\n",
+        false,
+        false,
+    ),
+    (
+        "c = lookupOr(catalog, \"top\", { 0 -> 0 });",
+        "lookupOr(positional m: K ->? V with names(\"key\", \"value\"), positional k: K, positional d: V) -> V = m[k] else d;\n\
+         catalog: Utf8String ->? ((key: int) ->? int) with names(\"shelf\", \"_\", \"count\") = { \"top\" -> { 7 -> 2 } };\n\
+         c = lookupOr(catalog, \"top\", { 0 -> 0 });\n",
+        false,
+        false,
+    ),
+    (
+        "x = sales[day: \"Monday\"];",
+        "type Sales = Utf8String ->? [Utf8String ->? int] with names(\"region\", \"day\", \"sku\", \"quantitySold\");\n\
+         sales: Sales = { \"east\" -> [{ \"B7\" -> 5 }], \"west\" -> [{ \"A12\" -> 3, \"B7\" -> 1 }, { \"A12\" -> 2 }] };\n\
+         x = sales[day: \"Monday\"];\n",
         false,
         false,
     ),
