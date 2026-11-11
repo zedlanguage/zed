@@ -1604,6 +1604,85 @@ pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
     x.magnitude() << z
 }
 
+/// `a^-1 mod m` for `m` above zero, or `None` when `a` and `m` have a common factor. The odd
+/// part `o` of `m` by [`inverse_mod_odd`], the power `2^e` by [`inverse_mod_pow2`], joined by
+/// the Chinese remainder theorem: `x = x1 + o ((x2 - x1) o^-1 mod 2^e)`, below `o 2^e = m`.
+/// O(M(n) log n).
+pub(crate) fn inverse_mod(a: &BigUint, m: &BigUint) -> Option<BigUint> {
+    let e = m.trailing_zeros()?;
+    let o = m >> e;
+    let x1 = match o.is_one() {
+        true => BigUint::zero(),
+        false => inverse_mod_odd(&rem(a, &o), &o)?,
+    };
+    if e == 0 {
+        return Some(x1);
+    }
+    if !a.bit(0) {
+        return None;
+    }
+    let mask = (BigUint::one() << e) - 1u32;
+    let x2 = inverse_mod_pow2(a, e);
+    let d = (x2 + &mask + 1u32 - (&x1 & &mask)) & &mask;
+    let t = mul(&d, &inverse_mod_pow2(&o, e)) & &mask;
+    Some(x1 + mul(&o, &t))
+}
+
+/// `a^-1 mod b` for `b` odd and above 1 and `a` below `b`, or `None` when they have a common
+/// factor. The binary gcd of `(b, y0)`, `y0` being `a` or `a - b`, whichever is even, is run
+/// as in [`gcd`] but down to `y = 0`, with no leaf of [`GCD_LEAF`] (the leaf of [`half`] is
+/// [`half_leaf`]), and the second column `(c0, c1)` of the product `T` of its steps is kept:
+/// each pair it reaches is `T (b, y0) / 2^e`, so modulo `b` it is `(c0, c1) y0 / 2^e`. At the
+/// end `x = ±g`; with `g = 1`, `x c0 2^-e` is the inverse of `y0`, which is `a` modulo `b`.
+/// `2^-e mod b` is `(1 + b s) / 2^e` with `s = -b^-1 mod 2^e`. O(M(n) log n), as [`gcd`].
+fn inverse_mod_odd(a: &BigUint, b: &BigUint) -> Option<BigUint> {
+    let bi = BigInt::from(b.clone());
+    let mut x = bi.clone();
+    let mut y = BigInt::from(a.clone());
+    if a.bit(0) {
+        y -= &bi;
+    }
+    let (mut c0, mut c1) = (BigInt::zero(), BigInt::one());
+    let mut e = 0u64;
+    while !y.is_zero() {
+        let n = x.bits().max(y.bits());
+        let (j, r) = half(&x, &y, n / 2);
+        if j > 0 {
+            (x, y) = r.apply(&x, &y, j);
+            let [m00, m01, m10, m11] = &r.0;
+            (c0, c1) = (
+                mul_int(m00, &c0) + mul_int(m01, &c1),
+                mul_int(m10, &c0) + mul_int(m11, &c1),
+            );
+            e += 2 * j;
+        }
+        drop(r);
+        if let Some(v) = nu(&y) {
+            let (q, a1, b1) = step(&x, &y, v);
+            (x, y) = (a1, b1);
+            (c0, c1) = (&c1 << v, (&c0 << v) + mul_int(&q, &c1));
+            e += 2 * v;
+        }
+    }
+    if !x.magnitude().is_one() {
+        return None;
+    }
+    let num = c0 * x;
+    let r = rem(num.magnitude(), b);
+    let r = match num.is_negative() && !r.is_zero() {
+        true => b - r,
+        false => r,
+    };
+    let two_inv = match e {
+        0 => BigUint::one(),
+        _ => {
+            let s = (BigUint::one() << e) - inverse_mod_pow2(b, e);
+            (BigUint::one() + mul(b, &s)) >> e
+        }
+    };
+    Some(rem(&mul(&r, &two_inv), b))
+}
+
 // ------------------------------------------------------------------------------------------
 // Decimal printing
 
@@ -2657,6 +2736,62 @@ mod tests {
         }
         assert!(gcd(&f, &g).is_one());
         assert_eq!(gcd(&(&f * 6u32), &(&g * 4u32)), BigUint::from(2u32));
+    }
+
+    #[test]
+    fn inverses_agree_with_their_definition() {
+        // `a x == 1 mod m` when `gcd(a, m) == 1`, and `None` otherwise; moduli odd, even and
+        // powers of two, across the leaf width under test (`GCD_LEAF`).
+        let check = |a: &BigUint, m: &BigUint, what: &str| match inverse_mod(a, m) {
+            Some(x) => {
+                assert!(&x < m, "{what}: below the modulus");
+                assert!((a * &x % m).is_one() || m.is_one(), "{what}: an inverse");
+            }
+            None => assert!(!a.gcd(m).is_one(), "{what}: None only for a common factor"),
+        };
+        let sizes = [1, 2, 16, 17, 40, 100, 300];
+        for &la in &sizes {
+            for &lb in &sizes {
+                for (x, y) in forms(la, 41 + la as u64)
+                    .iter()
+                    .zip(forms(lb, 43 + lb as u64).iter())
+                {
+                    check(x, y, &format!("{la} mod {lb} words"));
+                    check(
+                        x,
+                        &(y | BigUint::one()),
+                        &format!("{la} mod {lb} words, odd"),
+                    );
+                    check(
+                        &(x | BigUint::one()),
+                        &(y << 5u32),
+                        &format!("{la} mod {lb}, even"),
+                    );
+                    let g = random(47, 1 + lb / 3) | BigUint::one();
+                    check(
+                        &(x * &g),
+                        &(y * &g),
+                        &format!("{la} and {lb}, common factor"),
+                    );
+                }
+            }
+        }
+        let m = BigUint::one() << 700u32;
+        check(&random(53, 20), &m, "a power of two");
+        check(
+            &(random(53, 20) | BigUint::one()),
+            &m,
+            "a power of two, odd",
+        );
+        check(&BigUint::from(5u32), &BigUint::one(), "modulo 1");
+        // Fibonacci neighbours: the longest Euclidean remainder sequence.
+        let (mut f, mut g) = (BigUint::one(), BigUint::one());
+        for _ in 0..20_000 {
+            (f, g) = (g.clone(), f + g);
+        }
+        check(&f, &g, "Fibonacci neighbours");
+        check(&g, &f, "Fibonacci neighbours, swapped");
+        check(&(&f << 3u32), &g, "Fibonacci, times 8");
     }
 
     #[test]

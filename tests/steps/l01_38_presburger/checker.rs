@@ -919,3 +919,44 @@ fn a_refused_question_over_one_variable_names_its_moduli() {
     );
     assert!(!printed.contains("as many variables left"), "{printed}");
 }
+#[test]
+fn written_wide_divisors_keep_the_question() {
+    let rows = "ok(x, y, z, w) = 4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y - z + 31 >= 0";
+    for divisor in [
+        "170141183460469231731687303715884105729",
+        "340282366920938463463374607431768211457",
+    ] {
+        let src = program(
+            &format!("{rows} && x mod {divisor} == 1;"),
+            "x: a, y: a, z: a, w: a",
+        );
+        let got = rejection("growth-written-wide-divisor", &src);
+        assert!(got.contains(divisor), "{got}");
+    }
+}
+
+#[test]
+#[ignore = "I4.5: record the CLI behavior of kept powers without claiming they are handled"]
+fn pncx_kept_number_cli() {
+    let rows = "ok(x, y, z, w) = 4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y - z + 31 >= 0";
+    let mut rejected = true;
+    for extra in [
+        "x < 2^200",
+        "x < 2^100000",
+        "x mod 2^200 == 1",
+        "x mod 170141183460469231731687303715884105728 == 1",
+        "x mod (2^128 + 1) == 1",
+    ] {
+        let src = program(&format!("{rows} && {extra};"), "x: a, y: a, z: a, w: a");
+        let o = run("kept-number-cli", &src, "3\n", &[]);
+        println!(
+            "KEPT_CLI {extra}: status={} stdout={:?} stderr={:?}",
+            o.status, o.stdout, o.stderr
+        );
+        rejected &= o.status == 1 && o.stdout.is_empty();
+    }
+    assert!(
+        rejected,
+        "I4.5 remains: at least one question was silently dropped"
+    );
+}

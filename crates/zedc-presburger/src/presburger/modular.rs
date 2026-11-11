@@ -683,7 +683,9 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                 continue;
             }
             if c.rel == Rel::Eq && lin.terms.len() == 1 {
-                let (a, k) = lin.terms.iter().next().expect("one term");
+                let Some((a, k)) = lin.terms.iter().next() else {
+                    return None;
+                };
                 let d = k.abs();
                 if !lin.constant.mod_floor(&d).is_zero() {
                     return Some(None);
@@ -703,8 +705,12 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                 }
             } else if c.rel == Rel::Eq && lin.terms.len() == 2 {
                 let mut it = lin.terms.iter();
-                let (a, ka) = it.next().expect("first");
-                let (b, kb) = it.next().expect("second");
+                let Some((a, ka)) = it.next() else {
+                    return None;
+                };
+                let Some((b, kb)) = it.next() else {
+                    return None;
+                };
                 if ka.is_unit() && kb.is_unit() {
                     // ka * a + kb * b + constant == 0  =>  a = (-ka*kb) * b + (-ka * constant)
                     let sa: i8 = if ka.is_positive() { 1 } else { -1 };
@@ -748,7 +754,9 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     for c in &top_cons {
         let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &empty_rems);
         if lin.terms.len() == 1 {
-            let (a, k) = lin.terms.iter().next().expect("one");
+            let Some((a, k)) = lin.terms.iter().next() else {
+                return None;
+            };
             let d = k.abs();
             let entry = root_bounds.entry(a.clone()).or_insert((None, None));
             match c.rel {
@@ -848,8 +856,12 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         }
         if lin.terms.len() == 2 {
             let mut it = lin.terms.iter();
-            let (a1, k1) = it.next().expect("1");
-            let (a2, k2) = it.next().expect("2");
+            let Some((a1, k1)) = it.next() else {
+                return None;
+            };
+            let Some((a2, k2)) = it.next() else {
+                return None;
+            };
             let (x_cand, q_coef) = match (k1.is_unit(), k2.is_unit()) {
                 (true, false) => (a1, k2),
                 (false, true) => (a2, k1),
@@ -897,11 +909,9 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         if !c_x.is_unit() {
             return None;
         }
-        let (q_root, c_q) = lin
-            .terms
-            .iter()
-            .find(|(a, _)| *a != &x_root)
-            .expect("other term");
+        let Some((q_root, c_q)) = lin.terms.iter().find(|(a, _)| *a != &x_root) else {
+            return None;
+        };
         let m = c_q.abs();
         if m < Int::from(2) {
             return None;
@@ -991,7 +1001,9 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     for c in &all_cons {
         let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &rem_defs);
         if lin.terms.len() == 1 {
-            let a = lin.terms.keys().next().expect("one");
+            let Some(a) = lin.terms.keys().next() else {
+                return None;
+            };
             if *a != x_root && !global_quots.contains_key(a) {
                 return None;
             }
@@ -1022,7 +1034,7 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         false,
         |g, negated| negated != matches!(g, Formula::Not(_)),
         |g, negated, parts: Vec<Result<FoldNode, ()>>| match g {
-            Formula::Not(_) => parts.into_iter().next().expect("one child"),
+            Formula::Not(_) => parts.into_iter().next().unwrap_or(Err(())),
             Formula::Con(c) => fold_leaf(
                 c,
                 negated,
@@ -1084,7 +1096,9 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                 return Some(None);
             }
         } else if cl.bounds.is_empty() && cl.mods.len() == 1 {
-            let (m, s) = cl.mods.into_iter().next().expect("one");
+            let Some((m, s)) = cl.mods.into_iter().next() else {
+                return None;
+            };
             unit_inputs.entry(m).or_default().push(s);
         } else {
             raw_clauses.push(cl);
@@ -1108,7 +1122,9 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         let bounds = intersect_domains(bounds);
         if bounds.is_empty() {
             if mods.len() == 1 {
-                let (m, s) = mods.into_iter().next().expect("one");
+                let Some((m, s)) = mods.into_iter().next() else {
+                    return None;
+                };
                 unit_inputs.entry(m).or_default().push(s);
             } else {
                 mixed_clauses.push(FlatClause {
@@ -1146,7 +1162,24 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         return Some(None);
     }
 
-    let walked = walk_segments(&regimes, &global_bounds, &unit_mods, &mixed_clauses);
+    // The coordinates for a regime with no bound (`solve_regime`, I5.3): `x = c + s * t` where
+    // `t` is the alias `s * x_root + d` of least `d` among those of sign `s`, so `c = -s * d`.
+    // The aliases of `x_root` are the same atoms under every name, and so are these two.
+    let mut least: [Option<Int>; 2] = [None, None];
+    for a in &all_atoms {
+        let (root, s, d) = uf.get(a);
+        let slot = &mut least[usize::from(s < 0)];
+        if root == x_root && slot.as_ref().is_none_or(|l| d < *l) {
+            *slot = Some(d);
+        }
+    }
+    let [plus, minus] = least;
+    let free: Vec<(i8, Int)> = plus
+        .map(|d| (1, -&d))
+        .into_iter()
+        .chain(minus.map(|d| (-1, d)))
+        .collect();
+    let walked = walk_segments(&regimes, &global_bounds, &free, &unit_mods, &mixed_clauses);
     let undecided = match walked {
         RegimeOut::Found(x_val) => {
             // Complexity tradeoff: constructing every quotient in a Model can
@@ -1228,6 +1261,7 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
 fn walk_segments(
     segs: &[Span],
     global_bounds: &Domain,
+    free: &[(i8, Int)],
     unit_mods: &BTreeMap<Int, ResidueSet>,
     clauses: &[FlatClause],
 ) -> RegimeOut {
@@ -1249,8 +1283,29 @@ fn walk_segments(
             Some(h) => segs.partition_point(|(sl, _)| sl.as_ref().is_none_or(|v| v <= h)),
         }
     };
-    // The tree: node `k` covers `[lo, hi)`, children `2k + 1` and `2k + 2`.
-    let mut lists: Vec<Vec<usize>> = vec![Vec::new(); 4 * r];
+    // The tree: node `k` covers `[nodes[k].0, nodes[k].1)`; its children are `nodes[k].2 ..
+    // nodes[k].3`. A node of even length is cut in two halves and one of odd length `2h + 1` in
+    // `h`, 1 and `h` segments, so that the tree read from the other end is the same tree: a
+    // renaming that reverses the sign of the line reverses the segments (I5.3).
+    let mut nodes: Vec<(usize, usize, usize, usize)> = vec![(0, r, 0, 0)];
+    let mut k = 0;
+    while k < nodes.len() {
+        let (lo, hi, _, _) = nodes[k];
+        let (n, first) = (hi - lo, nodes.len());
+        let h = n / 2;
+        if n > 1 && n % 2 == 0 {
+            nodes.extend([(lo, lo + h, 0, 0), (lo + h, hi, 0, 0)]);
+        } else if n > 1 {
+            nodes.extend([
+                (lo, lo + h, 0, 0),
+                (lo + h, lo + h + 1, 0, 0),
+                (lo + h + 1, hi, 0, 0),
+            ]);
+        }
+        (nodes[k].2, nodes[k].3) = (first, nodes.len());
+        k += 1;
+    }
+    let mut lists: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
     for (ci, cl) in clauses.iter().enumerate() {
         let mut start = 0;
         let mut runs: Vec<(usize, usize)> = Vec::new();
@@ -1267,8 +1322,9 @@ fn walk_segments(
             runs.push((start, r));
         }
         for (a, b) in runs {
-            let mut stack = vec![(0usize, 0usize, r)];
-            while let Some((k, lo, hi)) = stack.pop() {
+            let mut stack = vec![0usize];
+            while let Some(k) = stack.pop() {
+                let (lo, hi, c0, c1) = nodes[k];
                 if b <= lo || hi <= a {
                     continue;
                 }
@@ -1276,9 +1332,7 @@ fn walk_segments(
                     lists[k].push(ci);
                     continue;
                 }
-                let mid = (lo + hi) / 2;
-                stack.push((2 * k + 1, lo, mid));
-                stack.push((2 * k + 2, mid, hi));
+                stack.extend(c0..c1);
             }
         }
     }
@@ -1299,20 +1353,21 @@ fn walk_segments(
     };
 
     enum Step {
-        Enter(usize, usize, usize),
+        Enter(usize),
         Exit,
     }
     let mut path: Vec<usize> = Vec::new();
-    let mut todo = vec![Step::Enter(0, 0, r)];
+    let mut todo = vec![Step::Enter(0)];
     let mut undecided = false;
     while let Some(step) = todo.pop() {
-        let (k, lo, hi) = match step {
+        let k = match step {
             Step::Exit => {
                 path.pop();
                 continue;
             }
-            Step::Enter(k, lo, hi) => (k, lo, hi),
+            Step::Enter(k) => k,
         };
+        let (lo, hi, c0, c1) = nodes[k];
         path.push(k);
         // The clauses on the path, as the regime loop built them for one segment.
         let mut units = unit_mods.clone();
@@ -1322,7 +1377,9 @@ fn walk_segments(
             for &ci in &lists[n] {
                 let cl = &clauses[ci];
                 if cl.mods.len() == 1 {
-                    let (m, s) = cl.mods.iter().next().expect("one");
+                    let Some((m, s)) = cl.mods.iter().next() else {
+                        return RegimeOut::Undecided;
+                    };
                     let e = units
                         .entry(m.clone())
                         .or_insert_with(|| vec![(Int::ZERO, m - &Int::ONE)]);
@@ -1336,10 +1393,10 @@ fn walk_segments(
                 }
             }
         }
-        let out = if empty {
-            RegimeOut::Empty
+        let (out, other) = if empty {
+            (RegimeOut::Empty, None)
         } else {
-            solve_regime(&segs[lo].0, &segs[hi - 1].1, units, multi)
+            solve_regime(&segs[lo].0, &segs[hi - 1].1, free, units, multi)
         };
         let leaf = hi - lo == 1;
         match out {
@@ -1349,6 +1406,11 @@ fn walk_segments(
             }
             // A point of a leaf satisfies all that applies on its segment.
             RegimeOut::Found(x) if leaf || holds_everywhere(&x) => return RegimeOut::Found(x),
+            // The point of the other writing, where the regime reads the same from both ends
+            // (`solve_regime`): which of the two comes first depends on the names.
+            RegimeOut::Found(_) if other.as_ref().is_some_and(&holds_everywhere) => {
+                return other.map_or(RegimeOut::Undecided, RegimeOut::Found);
+            }
             RegimeOut::Undecided if leaf => {
                 undecided = true;
                 path.pop();
@@ -1358,10 +1420,8 @@ fn walk_segments(
             // undecided: its children are solved.
             _ => {}
         }
-        let mid = (lo + hi) / 2;
         todo.push(Step::Exit);
-        todo.push(Step::Enter(2 * k + 2, mid, hi));
-        todo.push(Step::Enter(2 * k + 1, lo, mid));
+        todo.extend((c0..c1).rev().map(Step::Enter));
     }
     if undecided {
         RegimeOut::Undecided
@@ -1396,7 +1456,9 @@ fn fold_leaf(
     }
 
     if lin.terms.len() == 1 {
-        let (a, k) = lin.terms.iter().next().expect("one");
+        let Some((a, k)) = lin.terms.iter().next() else {
+            return Err(());
+        };
         if a == x_root {
             let dom = bound_domain_1d(k, &lin.constant, c.rel, negated);
             return Ok(FoldNode::from_clause(FlatClause {
@@ -1433,7 +1495,9 @@ fn fold_leaf(
         if !c_x.is_unit() {
             return Err(());
         }
-        let (q_root, c_q) = lin.terms.iter().find(|(a, _)| *a != x_root).expect("other");
+        let Some((q_root, c_q)) = lin.terms.iter().find(|(a, _)| *a != x_root) else {
+            return Err(());
+        };
         let m = c_q.abs();
         if m < Int::from(2) {
             return Err(());
@@ -1684,7 +1748,9 @@ fn fold_and(
         if cl.mods.is_empty() {
             bound_inputs.push(cl.bounds);
         } else if cl.bounds.is_empty() && cl.mods.len() == 1 {
-            let (m, s) = cl.mods.into_iter().next().expect("one");
+            let Some((m, s)) = cl.mods.into_iter().next() else {
+                return Err(());
+            };
             pure_mods.entry(m).or_default().push(s);
         } else {
             other_clauses.push(cl);
@@ -1777,7 +1843,9 @@ fn fold_or(nodes: Vec<FoldNode>) -> Result<FoldNode, ()> {
             continue;
         }
         if node.clauses.len() == 1 {
-            let c = node.clauses.into_iter().next().expect("one");
+            let Some(c) = node.clauses.into_iter().next() else {
+                return Err(());
+            };
             if c.is_true() {
                 return true_node(local_quots);
             }
@@ -1914,19 +1982,33 @@ type RegimeTask = (
 /// another (R5-CLAUDE-1; cases 974, 3205 and 4949 of
 /// `one_scope::one_variable_answers_do_not_depend_on_names`). In `t` a shift of `x` changes
 /// nothing, and a sign reversal swaps the two writings; with both bounds the smaller writing is
-/// used, so both names give the same one. With no bound the regime is solved in `x`.
+/// used, so both names give the same one. With one bound there is one writing, the same under
+/// every name. With no bound the regime is written in the coordinate of one of `free`, the
+/// writings `x = c + s * t` that make `t` the least alias of `x` of each sign (built by
+/// `solve_modular_whole`), and the smaller is used (I5.3): a renaming moves the root within the
+/// aliases of `x` but leaves the aliases themselves, so it leaves `free` the same set of
+/// coordinates.
+///
+/// The second value is the point the other writing gives, where two writings are equal: the
+/// regime then reads the same from both ends, and which of its two mirror points is returned
+/// depends on the names. `walk_segments` tries both where it checks a point against the whole
+/// formula.
 // Complexity tradeoff: naive version, the regime solved in `x`, whose answers depended on the
 // names. Used: each residue interval is rewritten once or twice, at most two pieces each, and
 // the two writings compared, O(r) integer operations for `r` intervals in all, against the
 // solve that follows. What is given up: nothing that was answered under every name; a regime
-// answered under one name only is now answered or refused under all. Test:
-// `one_scope::one_variable_answers_do_not_depend_on_names`.
+// answered under one name only is now answered or refused under all. A regime with no bound is
+// still solved in a coordinate that moves when `x` itself is shifted in the formula (the
+// numbers change, not the names), so such a shift can change a refusal into an answer. Tests:
+// `one_scope::one_variable_answers_do_not_depend_on_names`,
+// `one_scope::one_variable_answers_with_one_bound_or_none_do_not_depend_on_names`.
 fn solve_regime(
     lo: &Option<Int>,
     hi: &Option<Int>,
+    free: &[(i8, Int)],
     unit_mods: BTreeMap<Int, ResidueSet>,
     clauses: Vec<BTreeMap<Int, ResidueSet>>,
-) -> RegimeOut {
+) -> (RegimeOut, Option<Int>) {
     // `x = c + s * t`.
     let rewrite = |s: i8, c: &Int| -> (BTreeMap<Int, ResidueSet>, Vec<BTreeMap<Int, ResidueSet>>) {
         let set = |m: &Int, r: &ResidueSet| -> ResidueSet {
@@ -1947,19 +2029,40 @@ fn solve_regime(
         cls.sort();
         (units, cls)
     };
-    let width = lo.as_ref().zip(hi.as_ref()).map(|(l, h)| h - l);
-    let from_lo = lo.as_ref().map(|l| (rewrite(1, l), l.clone(), 1i8));
-    let from_hi = hi.as_ref().map(|h| (rewrite(-1, h), h.clone(), -1i8));
-    let chosen = match (from_lo, from_hi) {
-        (Some(a), Some(b)) => Some(if b.0 < a.0 { b } else { a }),
-        (a, b) => a.or(b),
+    let mut writings: Vec<(i8, Int)> = Vec::with_capacity(2);
+    if let Some(l) = lo {
+        writings.push((1, l.clone()));
+    }
+    if let Some(h) = hi {
+        writings.push((-1, h.clone()));
+    }
+    if writings.is_empty() {
+        writings.extend(free.iter().cloned());
+    }
+    let mut written: Vec<_> = writings
+        .into_iter()
+        .map(|(s, c)| (rewrite(s, &c), c, s))
+        .collect();
+    // Stable: on a tie the first writing (from `lo`, or the one of positive sign) is used, as
+    // before.
+    written.sort_by(|a, b| a.0.cmp(&b.0));
+    let other = (written.len() > 1 && written[0].0 == written[1].0)
+        .then(|| (written[1].1.clone(), written[1].2));
+    let Some(((units, cls), c, s)) = written.into_iter().next() else {
+        return (solve_regime_in(lo, hi, unit_mods, clauses), None);
     };
-    let Some(((units, cls), c, s)) = chosen else {
-        return solve_regime_in(lo, hi, unit_mods, clauses);
+    let at = |c: &Int, s: i8, t: &Int| if s > 0 { c + t } else { c - t };
+    let (t_lo, t_hi) = match (lo, hi) {
+        (None, None) => (None, None),
+        (Some(l), Some(h)) => (Some(Int::ZERO), Some(h - l)),
+        _ => (Some(Int::ZERO), None),
     };
-    match solve_regime_in(&Some(Int::ZERO), &width, units, cls) {
-        RegimeOut::Found(t) => RegimeOut::Found(if s > 0 { &c + &t } else { &c - &t }),
-        out => out,
+    match solve_regime_in(&t_lo, &t_hi, units, cls) {
+        RegimeOut::Found(t) => {
+            let alt = other.map(|(c2, s2)| at(&c2, s2, &t));
+            (RegimeOut::Found(at(&c, s, &t)), alt)
+        }
+        out => (out, None),
     }
 }
 
@@ -2169,7 +2272,9 @@ fn solve_regime_step(
         };
         for cl in cnf {
             if cl.len() == 1 {
-                let (i, s_i) = cl.into_iter().next().expect("one");
+                let Some((i, s_i)) = cl.into_iter().next() else {
+                    return RegimeOut::Undecided;
+                };
                 allowed[i] = res_intersect(&allowed[i], &s_i);
                 if allowed[i].is_empty() {
                     return RegimeOut::Empty;
@@ -2233,7 +2338,9 @@ fn solve_regime_step(
         }
         for c in dist {
             if c.len() == 1 {
-                let (i, s_i) = c.into_iter().next().expect("one");
+                let Some((i, s_i)) = c.into_iter().next() else {
+                    return RegimeOut::Undecided;
+                };
                 allowed[i] = res_intersect(&allowed[i], &s_i);
                 if allowed[i].is_empty() {
                     return RegimeOut::Empty;
@@ -2321,7 +2428,7 @@ fn single_residue_mod_q(info: &BaseInfo, allowed_i: &[(Int, Int)], q: &Int) -> O
     }
     let q_z = q.div_floor(&info.stride);
     let first = &allowed_i[0].0;
-    let last = &allowed_i.last().expect("non-empty").1;
+    let last = &allowed_i.last()?.1;
     if last == first {
         let r = info.r_from_z(first);
         return Some(r.mod_floor(q));
@@ -2570,7 +2677,9 @@ fn solve_short_x_interval(
                 continue;
             }
             if cl.mods.len() == 1 {
-                let (m, s) = cl.mods.iter().next().expect("one");
+                let Some((m, s)) = cl.mods.iter().next() else {
+                    return RegimeOut::Undecided;
+                };
                 let e = r_units
                     .entry(m.clone())
                     .or_insert_with(|| vec![(Int::ZERO, m - &Int::ONE)]);
@@ -2634,10 +2743,10 @@ fn holds_modular_point(
 /// adjacent pairs of the level below. O(M(N) log k) for `k` leaves of `N` bits in all.
 fn product_tree(leaves: Vec<Int>) -> Vec<Vec<Int>> {
     let mut tree: Vec<Vec<Int>> = vec![leaves];
-    while tree.last().expect("nonempty").len() > 1 {
-        let next: Vec<Int> = tree
-            .last()
-            .expect("nonempty")
+    while let Some(top) = tree.last()
+        && top.len() > 1
+    {
+        let next: Vec<Int> = top
             .chunks(2)
             .map(|c| {
                 if c.len() == 2 {
@@ -2656,7 +2765,7 @@ fn product_tree(leaves: Vec<Int>) -> Vec<Vec<Int>> {
 /// `P mod v^2` from each node `v` to its children (`v^2` divides the parent's square), and
 /// `(P mod m^2) / m` is `(P / m) mod m`. O(M(N) log k).
 fn cofactors_mod_leaves(tree: &[Vec<Int>]) -> Vec<Int> {
-    let mut rems: Vec<Int> = tree.last().expect("nonempty").clone();
+    let mut rems: Vec<Int> = tree.last().cloned().unwrap_or_default();
     for level in (0..tree.len() - 1).rev() {
         rems = tree[level]
             .iter()
@@ -2699,7 +2808,7 @@ fn coprime_factorization(moduli: &BTreeSet<Int>) -> ModBase {
     let cof = cofactors_mod_leaves(&product_tree(ms.clone()));
     let mut rest: Vec<Int> = Vec::new();
     for (m, c) in ms.iter().zip(&cof) {
-        if m.gcd(c) == Int::ONE {
+        if wide_gcd(m, c) == Int::ONE {
             out.insert(m.clone(), vec![(m.clone(), m.clone())]);
         } else {
             rest.push(m.clone());
@@ -2710,12 +2819,12 @@ fn coprime_factorization(moduli: &BTreeSet<Int>) -> ModBase {
         let mut rem = m.clone();
         let mut facs = Vec::new();
         for b in &bases {
-            if rem.mod_floor(b).is_zero() {
+            if wide_remainder(&rem, b).is_zero() {
                 let mut q = b.clone();
-                rem = rem.div_floor(b);
-                while rem.mod_floor(b).is_zero() {
+                rem = exact_quotient(&rem, b);
+                while wide_remainder(&rem, b).is_zero() {
                     q = &q * b;
-                    rem = rem.div_floor(b);
+                    rem = exact_quotient(&rem, b);
                 }
                 facs.push((b.clone(), q));
             }
@@ -2741,10 +2850,10 @@ fn coprime_base(moduli: Vec<Int>) -> Vec<Int> {
                 x = Int::ONE;
                 break;
             }
-            let g = b.gcd(&x);
+            let g = wide_gcd(b, &x);
             if g > Int::ONE {
-                let b_rem = b.div_floor(&g);
-                let x_rem = x.div_floor(&g);
+                let b_rem = exact_quotient(b, &g);
+                let x_rem = exact_quotient(&x, &g);
                 basis.swap_remove(i);
                 queue.push_back(g);
                 if b_rem > Int::ONE {
@@ -2917,12 +3026,161 @@ fn solve_coprime_system(
     // component also keeps that path; no existing answer is given up.
     // Test: pncx_independent_components_scale; negative control: omit this
     // sufficient witness, exposing Stage C's repeated component scans.
+    // Complexity tradeoff: Stage C replays all bases and clauses, quadratic
+    // on connected triangles (I4.20). Recognize matching exclusions on
+    // three-element domains, transport their value labels, and remove
+    // vertices of degree below three. Reverse greedy coloring costs
+    // O(v + e) after O(e log e) grouping, plus balanced CRT bit cost.
+    // Nonmatching, inconsistent or non-2-degenerate graphs give no verdict;
+    // this is a sufficient witness, with no search or size budget.
+    // Tests: pncx_connected_colors_scale, pncx_coloring_relabelings.
     if lo.is_none() && hi.is_none() && allow_split {
+        if let Some(point) = graph_coloring_witness(bases_info, &allowed, &clauses) {
+            return RegimeOut::Found(point);
+        }
+
         if let Some(point) = independent_component_witness(bases_info, &allowed, &clauses) {
             return RegimeOut::Found(point);
         }
     }
     solve_coprime_connected(lo, hi, bases_info, allowed, clauses, allow_split)
+}
+
+/// A sufficient coloring witness, invariant under independent relabeling of each
+/// three-element residue domain. Each edge must exclude a perfect matching of
+/// its endpoints' values; transporting those matchings must be consistent.
+fn graph_coloring_witness(
+    info: &[BaseInfo],
+    allowed: &[ResidueSet],
+    clauses: &[BTreeMap<usize, ResidueSet>],
+) -> Option<Int> {
+    if info.len() != allowed.len() || clauses.is_empty() {
+        return None;
+    }
+    let mut domains = Vec::with_capacity(allowed.len());
+    for s in allowed {
+        if res_count(s) != Int::from(3) {
+            return None;
+        }
+        let mut values = Vec::with_capacity(3);
+        for (a, b) in s {
+            let mut v = a.clone();
+            while v <= *b {
+                values.push(v.clone());
+                v = &v + &Int::ONE;
+            }
+        }
+        domains.push(values);
+    }
+    let mut edges: BTreeMap<(usize, usize), BTreeSet<(usize, usize)>> = BTreeMap::new();
+    for cl in clauses {
+        if cl.len() != 2 {
+            return None;
+        }
+        let mut ends = Vec::with_capacity(2);
+        for (&i, s) in cl {
+            let missing = res_diff(allowed.get(i)?, s, &info.get(i)?.z_max_q);
+            let [(a, b)] = missing.as_slice() else {
+                return None;
+            };
+            if a != b {
+                return None;
+            }
+            ends.push((i, domains.get(i)?.iter().position(|v| v == a)?));
+        }
+        edges
+            .entry((ends[0].0, ends[1].0))
+            .or_default()
+            .insert((ends[0].1, ends[1].1));
+    }
+    let n = info.len();
+    let mut adjacent: Vec<Vec<(usize, [usize; 3])>> = vec![Vec::new(); n];
+    for ((a, b), pairs) in edges {
+        if pairs.len() != 3 {
+            return None;
+        }
+        let mut left = [false; 3];
+        let mut right = [false; 3];
+        let mut perm = [0; 3];
+        let mut inverse = [0; 3];
+        for (i, j) in pairs {
+            if left[i] || right[j] {
+                return None;
+            }
+            left[i] = true;
+            right[j] = true;
+            perm[i] = j;
+            inverse[j] = i;
+        }
+        adjacent[a].push((b, perm));
+        adjacent[b].push((a, inverse));
+    }
+    let mut labels: Vec<Option<[usize; 3]>> = vec![None; n];
+    for start in 0..n {
+        if labels[start].is_some() {
+            continue;
+        }
+        labels[start] = Some([0, 1, 2]);
+        let mut todo = vec![start];
+        while let Some(a) = todo.pop() {
+            let from = labels[a]?;
+            for &(b, perm) in &adjacent[a] {
+                let mut to = [0; 3];
+                for i in 0..3 {
+                    to[perm[i]] = from[i];
+                }
+                match labels[b] {
+                    Some(old) if old != to => return None,
+                    Some(_) => {}
+                    None => {
+                        labels[b] = Some(to);
+                        todo.push(b);
+                    }
+                }
+            }
+        }
+    }
+    let mut degrees: Vec<_> = adjacent.iter().map(Vec::len).collect();
+    let mut queue: VecDeque<_> = (0..n).filter(|&i| degrees[i] < 3).collect();
+    let mut removed = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    while let Some(a) = queue.pop_front() {
+        if removed[a] {
+            continue;
+        }
+        removed[a] = true;
+        order.push(a);
+        for &(b, _) in &adjacent[a] {
+            if !removed[b] {
+                degrees[b] -= 1;
+                if degrees[b] == 2 {
+                    queue.push_back(b);
+                }
+            }
+        }
+    }
+    if order.len() != n {
+        return None;
+    }
+    let mut colors = vec![None; n];
+    for a in order.into_iter().rev() {
+        let mut used = [false; 3];
+        for &(b, _) in &adjacent[a] {
+            if let Some(c) = colors[b] {
+                used[c] = true;
+            }
+        }
+        colors[a] = (0..3).find(|&c| !used[c]);
+        colors[a]?;
+    }
+    let mut choices = Vec::with_capacity(n);
+    for i in 0..n {
+        let labels = labels[i]?;
+        let local = labels.iter().position(|&c| Some(c) == colors[i])?;
+        let r = &info[i].u + &(&info[i].stride * &domains[i][local]);
+        choices.push((r, info[i].max_q.clone()));
+    }
+    combine_crt_tree(choices).map(|(x, _)| x)
 }
 
 fn independent_component_witness(
@@ -3066,7 +3324,9 @@ fn solve_coprime_connected(
                     return RegimeOut::Empty;
                 }
                 if cl.len() == 1 {
-                    let (i, s_i) = cl.into_iter().next().expect("one");
+                    let Some((i, s_i)) = cl.into_iter().next() else {
+                        return RegimeOut::Undecided;
+                    };
                     let new_a = res_intersect(&allowed[i], &s_i);
                     if new_a.is_empty() {
                         return RegimeOut::Empty;
@@ -3086,7 +3346,7 @@ fn solve_coprime_connected(
         }
 
         // Combine all fixed bases `fixed_base[i] == Some(z_i)` and any lower-power strides
-        // `(bases_info[i].u, bases_info[i].stride)` via CRT (`bezout` balanced tree).
+        // `(bases_info[i].u, bases_info[i].stride)` via CRT ([`combine_crt_tree`]).
         let mut crt_pairs: Vec<(Int, Int)> = Vec::new();
         for i in 0..t {
             if let Some(z) = &fixed_base[i] {
@@ -3131,9 +3391,8 @@ fn solve_coprime_connected(
                 let comp = res_complement(&allowed[i], z_q);
                 let r0_z = (&r0 - &bases_info[i].u).div_floor(&bases_info[i].stride);
                 let m0_z = m0.div_floor(&bases_info[i].stride);
-                let (g, inv_m0, _) = bezout(&m0_z, z_q);
-                if g == Int::ONE {
-                    let u_inv = (-&(&r0_z * &inv_m0)).mod_floor(z_q);
+                if let Some(inv_m0) = inverse_mod(&m0_z, z_q) {
+                    let u_inv = wide_remainder(&-&(&r0_z * &inv_m0), z_q);
                     if let Some(ry_forb) = map_affine_mod(&comp, &inv_m0, &u_inv, z_q) {
                         for (ry_a, ry_b) in ry_forb {
                             for (hl, hh) in concrete_intervals_in_span(ly, hy, z_q, &ry_a, &ry_b) {
@@ -3156,7 +3415,9 @@ fn solve_coprime_connected(
                 if clauses.is_empty()
                     && (0..t).all(|i| fixed_base[i].is_some() || satisfied_bases[i])
                 {
-                    let first_y = y_dom.pieces[0].0.as_ref().expect("finite ly");
+                    let Some(first_y) = y_dom.pieces[0].0.as_ref() else {
+                        return RegimeOut::Undecided;
+                    };
                     return RegimeOut::Found(&r0 + &(&m0 * first_y));
                 }
             }
@@ -3262,14 +3523,12 @@ fn merge_pair_clauses(
     let mut by_first: BTreeMap<(usize, usize, ResidueSet), ResidueSet> = BTreeMap::new();
     let mut others = Vec::new();
     for cl in clauses {
-        if cl.len() == 2 {
-            let mut it = cl.into_iter();
-            let (i1, s1) = it.next().expect("1");
-            let (i2, s2) = it.next().expect("2");
+        let mut it = cl.iter();
+        if let (2, Some((&i1, s1)), Some((&i2, s2))) = (cl.len(), it.next(), it.next()) {
             let e = by_first
-                .entry((i1, i2, s1))
+                .entry((i1, i2, s1.clone()))
                 .or_insert_with(|| allowed[i2].clone());
-            *e = res_intersect(e, &s2);
+            *e = res_intersect(e, s2);
         } else {
             others.push(cl);
         }
@@ -3374,7 +3633,9 @@ fn find_point_by_conditional_expectations(
         // Combine all chosen residues via CRT:
         let mut pairs = vec![(r0.clone(), m0.clone())];
         for &i in order {
-            let z_i = chosen[i].as_ref().expect("chosen");
+            let Some(z_i) = chosen[i].as_ref() else {
+                return None;
+            };
             pairs.push((bases_info[i].r_from_z(z_i), bases_info[i].max_q.clone()));
         }
         if let Some((r_full, m_full)) = combine_crt_tree(pairs)
@@ -3396,7 +3657,9 @@ fn find_point_by_conditional_expectations(
                 if m_cur > span_width {
                     break;
                 }
-                let z_i = chosen[i].as_ref().expect("chosen");
+                let Some(z_i) = chosen[i].as_ref() else {
+                    return None;
+                };
                 let r_i = bases_info[i].r_from_z(z_i);
                 let Some((rn, mn)) = combine_crt_pair(&r_cur, &m_cur, &r_i, &bases_info[i].max_q)
                 else {
@@ -3441,11 +3704,10 @@ fn find_point_in_y_span(
         }
         let r_cur_z = (r_cur - &info_k.u).div_floor(&info_k.stride);
         let m_cur_z = m_cur.div_floor(&info_k.stride);
-        let (g, inv_m, _) = bezout(&m_cur_z, z_q);
-        if g != Int::ONE {
+        let Some(inv_m) = inverse_mod(&m_cur_z, z_q) else {
             continue;
-        }
-        let u_inv = (-&(&r_cur_z * &inv_m)).mod_floor(z_q);
+        };
+        let u_inv = wide_remainder(&-&(&r_cur_z * &inv_m), z_q);
         let comp = res_complement(&allowed[k], z_q);
         if let Some(ry_forb) = map_affine_mod(&comp, &inv_m, &u_inv, z_q) {
             for (ry_a, ry_b) in ry_forb {
@@ -3517,15 +3779,16 @@ fn elementary_intervals(
 }
 
 fn combine_crt_pair(r1: &Int, m1: &Int, r2: &Int, m2: &Int) -> Option<(Int, Int)> {
-    let (g, u, _) = bezout(m1, m2);
+    let g = wide_gcd(m1, m2);
     let diff = r2 - r1;
-    if !diff.mod_floor(&g).is_zero() {
+    if !wide_remainder(&diff, &g).is_zero() {
         return None;
     }
-    let m2_g = m2.div_floor(&g);
+    let m2_g = exact_quotient(m2, &g);
+    let u = inverse_mod(&exact_quotient(m1, &g), &m2_g)?;
     let lcm = m1 * &m2_g;
-    let step = (&diff.div_floor(&g) * &u).mod_floor(&m2_g);
-    let r = (r1 + &(m1 * &step)).mod_floor(&lcm);
+    let step = wide_remainder(&(&exact_quotient(&diff, &g) * &u), &m2_g);
+    let r = wide_remainder(&(r1 + &(m1 * &step)), &lcm);
     Some((r, lcm))
 }
 
@@ -3534,12 +3797,12 @@ fn combine_crt_pair(r1: &Int, m1: &Int, r2: &Int, m2: &Int) -> Option<(Int, Int)
 /// (always so for the bases of `solve_regime_step`), by the product and remainder trees:
 /// `x = sum_i c_i M / m_i mod M` with `c_i = r_i (M / m_i)^-1 mod m_i`, the sum built up the
 /// product tree as `v = v_left P_right + v_right P_left`, O(M(N) log k) for `k` moduli of `N`
-/// bits, plus one inverse modulo each `m_i`.
+/// bits, plus one inverse modulo each `m_i` ([`inverse_mod`], O(M(n) log n) for `n` bits).
 ///
-/// Complexity tradeoff: when one modulus is not coprime to the product of the others, the pairs
-/// are combined two at a time up a tree, each by the Euclidean `bezout` on the merged moduli,
-/// O(N^2) bit operations at the top. What is given up: time only, on moduli that share
-/// factors; the answer is the same. Test: `one_scope::the_coprime_base_of_distinct_primes_scales`.
+/// When one modulus is not coprime to the product of the others, the pairs are combined two
+/// at a time up a tree, each by a gcd, exact quotients and an inverse on the merged moduli
+/// ([`combine_crt_pair`]), O(M(N) log N) at each level of the tree. Tests:
+/// `one_scope::the_coprime_base_of_distinct_primes_scales`, `pncx_fibonacci_crt_scale`.
 fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
     if pairs.is_empty() {
         return Some((Int::ZERO, Int::ONE));
@@ -3552,13 +3815,12 @@ fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
     let cof = cofactors_mod_leaves(&tree);
     let mut vals: Option<Vec<Int>> = Some(Vec::with_capacity(pairs.len()));
     for ((r, m), e) in pairs.iter().zip(&cof) {
-        let (g, inv, _) = bezout(e, m);
-        if g != Int::ONE {
+        let Some(inv) = inverse_mod(e, m) else {
             vals = None;
             break;
-        }
+        };
         if let Some(v) = vals.as_mut() {
-            v.push((&r.mod_floor(m) * &inv).mod_floor(m));
+            v.push(wide_remainder(&(&wide_remainder(r, m) * &inv), m));
         }
     }
     if let Some(mut vals) = vals {
@@ -3576,7 +3838,7 @@ fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
                 })
                 .collect();
         }
-        let big_m = tree.last().expect("nonempty")[0].clone();
+        let big_m = tree.last()?.first()?.clone();
         return Some((vals[0].mod_floor(&big_m), big_m));
     }
     while pairs.len() > 1 {
@@ -4078,6 +4340,9 @@ fn wide_remainder(a: &Int, m: &Int) -> Int {
     if !a.is_negative() && a < m {
         return a.clone();
     }
+    if let (Some(_), Some(_)) = (a.to_i128(), m.to_i128()) {
+        return a.mod_floor(m);
+    }
     // Complexity tradeoff: quadratic long division in Int::mod_floor is
     // replaced by the kernel's subquadratic remainder, O(M(B)), without an
     // unused quotient. The operands are written integers; a failed conversion
@@ -4097,6 +4362,70 @@ fn wide_remainder(a: &Int, m: &Int) -> Int {
             }
         }
         _ => a.mod_floor(m),
+    }
+}
+
+/// `a^-1 mod m` for `m` above zero, in `[0, m)`, or `None` when `gcd(a, m) != 1`.
+///
+/// Complexity tradeoff: the Euclidean `bezout` is O(n^2) on `n`-bit moduli, two Fibonacci
+/// neighbours being its slowest case (`pncx_fibonacci_crt_scale`, 77.9 times the work for 8
+/// times the width, R6-CLAUDE-7); the kernel's binary half gcd with its steps kept
+/// (`zed_kernel::num::inverse_mod_uint`) is O(M(n) log n). A value that cannot be built keeps
+/// the Euclidean `bezout`, as do values that fit in 128 bits, which keep the arithmetic they
+/// had; the inverse is the same.
+fn inverse_mod(a: &Int, m: &Int) -> Option<Int> {
+    if let (Some(_), Some(_)) = (a.to_i128(), m.to_i128()) {
+        let (g, u, _) = bezout(&a.mod_floor(m), m);
+        return (g == Int::ONE).then(|| u.mod_floor(m));
+    }
+    let a = wide_remainder(a, m);
+    let an = zedc_int::int::Num::from(&a);
+    let mn = zedc_int::int::Num::from(m);
+    match (an.built(), mn.built()) {
+        (Ok(ab), Ok(mb)) => zed_kernel::num::inverse_mod_uint(ab.magnitude(), mb.magnitude())
+            .map(|x| Int::from(num_bigint::BigInt::from(x))),
+        _ => {
+            let (g, u, _) = bezout(&a, m);
+            (g == Int::ONE).then(|| u.mod_floor(m))
+        }
+    }
+}
+
+/// The greatest common divisor of `a` and `b`, never negative, by the kernel's half gcd
+/// (`zed_kernel::num::gcd_uint`), O(M(n) log n), where `Int::gcd` on wide values is the
+/// binary gcd of num-integer, O(n^2).
+fn wide_gcd(a: &Int, b: &Int) -> Int {
+    if let (Some(_), Some(_)) = (a.to_i128(), b.to_i128()) {
+        return a.gcd(b);
+    }
+    let an = zedc_int::int::Num::from(a);
+    let bn = zedc_int::int::Num::from(b);
+    match (an.built(), bn.built()) {
+        (Ok(ab), Ok(bb)) => Int::from(num_bigint::BigInt::from(zed_kernel::num::gcd_uint(
+            ab.magnitude(),
+            bb.magnitude(),
+        ))),
+        _ => a.gcd(b),
+    }
+}
+
+/// `a / d` for `d` above zero dividing `a`, by the kernel's division
+/// (`zed_kernel::num::div_rem_uint`), O(M(n)), where `Int::div_floor` on wide values is long
+/// division, O(n^2).
+fn exact_quotient(a: &Int, d: &Int) -> Int {
+    if let (Some(_), Some(_)) = (a.to_i128(), d.to_i128()) {
+        return a.div_floor(d);
+    }
+    let an = zedc_int::int::Num::from(a);
+    let dn = zedc_int::int::Num::from(d);
+    match (an.built(), dn.built()) {
+        (Ok(ab), Ok(db)) => {
+            let q = Int::from(num_bigint::BigInt::from(
+                zed_kernel::num::div_rem_uint(ab.magnitude(), db.magnitude()).0,
+            ));
+            if a.is_negative() { -&q } else { q }
+        }
+        _ => a.div_floor(d),
     }
 }
 
@@ -4663,6 +4992,157 @@ mod r4_tests {
             }
         }
         (info, allowed, clauses)
+    }
+
+    fn connected_color_system(
+        n: usize,
+    ) -> (
+        Vec<BaseInfo>,
+        Vec<ResidueSet>,
+        Vec<BTreeMap<usize, ResidueSet>>,
+    ) {
+        let (info, allowed, mut clauses) = color_system(n);
+        for b in (3..3 * n).step_by(3) {
+            for c in 0..3 {
+                clauses.push(BTreeMap::from([
+                    (
+                        b - 1,
+                        res_diff(
+                            &allowed[b - 1],
+                            &[(Int::from(c), Int::from(c))],
+                            &info[b - 1].max_q,
+                        ),
+                    ),
+                    (
+                        b,
+                        res_diff(&allowed[b], &[(Int::from(c), Int::from(c))], &info[b].max_q),
+                    ),
+                ]));
+            }
+        }
+        (info, allowed, clauses)
+    }
+
+    #[test]
+    fn pncx_connected_colors_scale() {
+        let inputs = scaling::inputs(32, connected_color_system);
+        scaling::check_order("color connected triangles by removal order", 32, 1, |n| {
+            let (info, allowed, clauses) = &inputs[&n];
+            assert!(graph_coloring_witness(info, allowed, clauses).is_some());
+        });
+    }
+
+    #[test]
+    fn pncx_coloring_small_graphs_match_enumeration() {
+        let (mut info, mut allowed, _) = color_system(2);
+        info.truncate(5);
+        allowed.truncate(5);
+        let edges: Vec<_> = (0..5)
+            .flat_map(|a| (a + 1..5).map(move |b| (a, b)))
+            .collect();
+        let mut found = 0;
+        for mask in 0..(1usize << edges.len()) {
+            let selected: Vec<_> = edges
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask & (1 << i) != 0)
+                .map(|(_, &e)| e)
+                .collect();
+            let clauses: Vec<_> = selected
+                .iter()
+                .flat_map(|&(a, b)| (0..3).map(move |c| (a, b, c)))
+                .map(|(a, b, c)| {
+                    BTreeMap::from([
+                        (
+                            a,
+                            res_diff(&allowed[a], &[(Int::from(c), Int::from(c))], &info[a].max_q),
+                        ),
+                        (
+                            b,
+                            res_diff(&allowed[b], &[(Int::from(c), Int::from(c))], &info[b].max_q),
+                        ),
+                    ])
+                })
+                .collect();
+            let brute = (0..243usize).any(|mut code| {
+                let mut colors = [0; 5];
+                for color in &mut colors {
+                    *color = code % 3;
+                    code /= 3;
+                }
+                selected.iter().all(|&(a, b)| colors[a] != colors[b])
+            });
+            if let Some(point) = graph_coloring_witness(&info, &allowed, &clauses) {
+                found += 1;
+                assert!(brute, "mask={mask}");
+                assert!(
+                    holds_coprime_point(&point, &info, &allowed, &clauses),
+                    "mask={mask}"
+                );
+            }
+        }
+        assert!(found > 500);
+        println!("COLOR_ORACLE graphs=1024 found={found}");
+    }
+
+    #[test]
+    fn pncx_coloring_relabelings() {
+        let (info, allowed, clauses) = connected_color_system(4);
+        for sign in [-1, 1] {
+            for shift in [-19, -1, 0, 7, 20] {
+                let relabeled = allowed
+                    .iter()
+                    .zip(&info)
+                    .map(|(s, b)| {
+                        s.iter()
+                            .flat_map(|(a, z)| {
+                                shift_residue_interval(a, z, sign, &Int::from(shift), &b.max_q)
+                            })
+                            .collect()
+                    })
+                    .zip(&info)
+                    .map(|(s, b)| res_normalize(s, &b.max_q))
+                    .collect::<Vec<_>>();
+                let transformed = clauses
+                    .iter()
+                    .map(|cl| {
+                        cl.iter()
+                            .map(|(&i, s)| {
+                                let values = s
+                                    .iter()
+                                    .flat_map(|(a, z)| {
+                                        shift_residue_interval(
+                                            a,
+                                            z,
+                                            sign,
+                                            &Int::from(shift),
+                                            &info[i].max_q,
+                                        )
+                                    })
+                                    .collect();
+                                (i, res_normalize(values, &info[i].max_q))
+                            })
+                            .collect()
+                    })
+                    .collect::<Vec<_>>();
+                let point = graph_coloring_witness(&info, &relabeled, &transformed)
+                    .expect("same coloring problem");
+                assert!(holds_coprime_point(&point, &info, &relabeled, &transformed));
+            }
+        }
+        // One extra forbidden pair spoils the matching; the recognizer must not claim this witness.
+        let mut other = clauses.clone();
+        other.push(BTreeMap::from([
+            (
+                0,
+                res_diff(&allowed[0], &[(Int::ZERO, Int::ZERO)], &info[0].max_q),
+            ),
+            (
+                1,
+                res_diff(&allowed[1], &[(Int::ONE, Int::ONE)], &info[1].max_q),
+            ),
+        ]));
+        assert!(graph_coloring_witness(&info, &allowed, &other).is_none());
     }
 
     #[test]

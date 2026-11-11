@@ -960,10 +960,7 @@ fn pncx_gained_color_systems_match_enumeration() {
         });
         assert!(brute, "gained system {index}");
         each_permutation(4, |perm| {
-            let mut got = decide(&disjunctive_formula(&sys, perm));
-            if checked == 0 && std::env::var_os("PNCX_GAIN_NEGCTL").is_some() {
-                got = Ok(false);
-            }
+            let got = decide(&disjunctive_formula(&sys, perm));
             assert_eq!(got, Ok(brute), "system {index}, naming {perm:?}");
             checked += 1;
         });

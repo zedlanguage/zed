@@ -914,6 +914,29 @@ pub fn linear_questions(
                         });
                     }
                 }
+            } else if scoped.unbuilt() {
+                // A constant written as a power (`2 ^ 200`) is built to be read, and the system
+                // refused the memory for it (`preimage::Scoped::unbuilt`): the question is
+                // refused with a message rather than dropped (I4.5, I5.6).
+                let condition = one_line(&text[f.body.span.start..f.body.span.end]);
+                let params = (f.params.iter())
+                    .map(|p| format!("`{}`", p.name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push(ast::Error {
+                    row: Some(crate::rejection::Row::NonLinearQuestion),
+                    menu: String::new(),
+                    span: s.span,
+                    message: format!(
+                        "zedc could not decide whether the condition of `{}`, written \
+                         `{condition}`, can be true or false for whole-number values of \
+                         {params}, which it works out for every test function: the condition \
+                         holds a number written as a power, and the system refused the memory \
+                         to write it out in digits.",
+                        f.name
+                    ),
+                    notes: Vec::new(),
+                });
             }
         });
     }

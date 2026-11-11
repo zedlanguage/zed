@@ -1885,6 +1885,7 @@ impl<'t> Scoped<'t> {
     /// to its term, read in the scope of the names bound before it.
     pub fn new(lets: &'t Term) -> Self {
         let mut tx = Tx::new();
+        tx.asking = true;
         tx.start(&Domains::new(), Marks::default());
         let mut t = tx.terms.add(lets);
         let mut scope = ROOT;
@@ -1950,6 +1951,7 @@ impl<'t> Scoped<'t> {
     ) -> Option<Formula> {
         debug_assert_eq!(params.len(), inputs.len(), "one input for each parameter");
         let tx = &mut self.tx;
+        tx.unbuilt = false;
         // The function's lambda, when the scope binds it with these parameters.
         let lam = (self.lams.get(&(body as *const Term)).copied()).filter(|&(l, _)| {
             let Node::Lam(ps, _) = tx.node(l) else {
@@ -2040,6 +2042,13 @@ impl<'t> Scoped<'t> {
             .map(|(a, x)| (a, Lin::atom(presburger::Atom::Sym(x.clone()))))
             .collect();
         body
+    }
+
+    /// Whether the last [`Scoped::relation`] met a constant written as a power that could not be
+    /// built in the memory the system gave ([`Walk::built`]), so that a relation of `None` is a
+    /// refused question, not a body outside the domain. O(1).
+    pub fn unbuilt(&self) -> bool {
+        self.tx.unbuilt
     }
 
     /// The atoms a caller reads of `f`, a part of a relation [`Scoped::relation`] gave, when a
@@ -4232,6 +4241,11 @@ struct Tx<'t> {
     /// Within [`split_classes`], each set met with an input's domain ([`Tx::meet_domain`]), so
     /// that the classes whose runs meet one set with the domain share the result.
     split_meets: RefCell<Option<DomainMeets>>,
+    /// Whether a constant the body being read holds could not be built ([`Walk::built`]).
+    unbuilt: bool,
+    /// Whether this transfer reads the questions of a scope ([`Scoped`]), where a constant
+    /// written as a power is built ([`Walk::built`]); a preimage keeps it unbuilt.
+    asking: bool,
 }
 
 /// The meets of sets with the inputs' domains, by the domain's address, which the entry keeps
@@ -4322,6 +4336,8 @@ impl<'t> Tx<'t> {
             lets: Lets::new(),
             classes: HashMap::new(),
             split_meets: RefCell::new(None),
+            unbuilt: false,
+            asking: false,
         }
     }
 
@@ -5498,6 +5514,29 @@ impl<'m, 't> Walk<'m, 't> {
         f(&mut self.tx.borrow_mut())
     }
 
+    /// The integer `k`, built, in a scope's question ([`Tx::asking`]), when the kernel keeps it
+    /// as an unbuilt power (`2 ^ 200`), so that a condition written with one is asked like one
+    /// written out in digits (I4.5, I5.6): read as no number, it dropped the question with no
+    /// message. When the system refuses the memory for it
+    /// ([`zed_kernel::num::Rat::to_integer`]) it is `None`, and the relation records that
+    /// ([`Scoped::unbuilt`]), so that the question is refused with a message. A preimage
+    /// reads it as kept, unbuilt, as before. Complexity tradeoff: O(the bits of `k`), not of
+    /// its written size: `2 ^ 100000` costs 100000 bits, and `3 ^ 2^32` 6.8·10^9. A complete
+    /// solution would hold a kept power in the solver unbuilt and compare it with the
+    /// formula's other constants by bit length first.
+    fn built(&self, k: &zed_kernel::num::Rat) -> Option<Int> {
+        if !self.with(|tx| tx.asking) {
+            return Num::from(k).to_int();
+        }
+        match k.to_integer() {
+            Ok(n) => Some(Int::from(n)),
+            Err(_) => {
+                self.with(|tx| tx.unbuilt = true);
+                None
+            }
+        }
+    }
+
     fn node(&self, t: Tid) -> Node<'t> {
         self.with(|tx| tx.node(t))
     }
@@ -5998,12 +6037,11 @@ impl<'m, 't> Walk<'m, 't> {
 
     /// The constant integer `t`, of any size, when it is written out: a coefficient of a summary
     /// ([`Pa`]) is unbounded, so a constant past the 64-bit range is summarized like any other.
-    /// A power the kernel keeps unbuilt (`3 ^ 2^32`) is not written out here, which would cost
-    /// time and memory in its digits; the transfer before reads it as kept.
+    /// A power the kernel keeps unbuilt (`2 ^ 200`) is built ([`Walk::built`]).
     async fn constant_coef(&'m self, t: Tid, env: Eid) -> Option<Int> {
         match self.constant(t, env).await? {
             Value::Int(n) => Some(n.into()),
-            Value::Big(k) => Num::from(&*k).to_int(),
+            Value::Big(k) => self.built(&k),
             _ => None,
         }
     }
@@ -6868,7 +6906,7 @@ impl<'m, 't> Walk<'m, 't> {
         {
             return match v {
                 Value::Int(c) => Some(Pa::Const(c.into())),
-                Value::Big(k) => Num::from(&*k).to_int().map(Pa::Const),
+                Value::Big(k) => self.built(&k).map(Pa::Const),
                 _ => None,
             };
         }
@@ -7819,7 +7857,7 @@ impl<'m, 't> Walk<'m, 't> {
             // it (I4.1): read as no linear form, it dropped the question with no message.
             return match v {
                 Value::Int(n) => Some(Lin::constant(n)),
-                Value::Big(k) => Num::from(&*k).to_int().map(Lin::constant),
+                Value::Big(k) => self.built(&k).map(Lin::constant),
                 _ => None,
             };
         }

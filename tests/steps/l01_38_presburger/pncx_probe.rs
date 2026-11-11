@@ -710,7 +710,7 @@ fn pncx_six_axis() {
             satisfiable(&f)
         });
     });
-    if let Some(Ok(Some(model))) = &ans {
+    if !only_decide && let Some(Ok(Some(model))) = &ans {
         assert!(f.holds(model));
     }
     println!(
@@ -839,6 +839,55 @@ fn pncx_easy_pairs_scale() {
     });
 }
 
+fn pncx_sat_residue(primes: &[i64], cl: &[(usize, bool); 3]) -> (i64, i64) {
+    let m: i64 = cl.iter().map(|(j, _)| primes[*j]).product();
+    // The falsifying value of each literal: 0 for a positive literal, 1 for a negative one.
+    // Complexity tradeoff: enumerating 0..m to build a CRT residue costs
+    // O(m), exponential in the written modulus bits, before the timed call.
+    // Three Euclidean inverses construct the same residue in O(log m)
+    // word operations. Nothing is given up. Test: pncx_sat_crt_construction_scale.
+    let mut c = 0i128;
+    for &(j, pos) in cl {
+        let p = i128::from(primes[j]);
+        let part = i128::from(m) / p;
+        let (mut r, mut next) = (p, part.rem_euclid(p));
+        let (mut u, mut nu) = (0i128, 1i128);
+        while next != 0 {
+            let q = r / next;
+            (r, next) = (next, r - q * next);
+            (u, nu) = (nu, u - q * nu);
+        }
+        c = (c + part * u.rem_euclid(p) * i128::from(!pos)).rem_euclid(i128::from(m));
+    }
+    let c = i64::try_from(c).unwrap();
+    assert!(
+        cl.iter()
+            .all(|(j, pos)| c % primes[*j] == if *pos { 0 } else { 1 })
+    );
+    (m, c)
+}
+
+#[test]
+fn pncx_sat_crt_construction_scale() {
+    let inputs = zed_tests::scaling::inputs(8, |n| {
+        let mut ps = Vec::new();
+        let mut p = 2i64;
+        while ps.len() < n {
+            if (2..).take_while(|d| d * d <= p).all(|d| p % d != 0) {
+                ps.push(p);
+            }
+            p += 1;
+        }
+        let cl = [(n - 3, true), (n - 2, false), (n - 1, true)];
+        (ps, cl)
+    });
+    zed_tests::scaling::check_order("construct SAT image residues by CRT", 8, 1, |n| {
+        let (ps, cl) = &inputs[&n];
+        let residues: Vec<_> = (0..n).map(|_| pncx_sat_residue(ps, cl)).collect();
+        std::hint::black_box(residues);
+    });
+}
+
 /// 3-SAT as one-variable residue constraints (the reduction of Garey and Johnson AN2): variable
 /// `j` is `x mod p_j` in `{0, 1}` for the `j`-th prime `p_j`; a clause excludes the one residue
 /// modulo the product of its three primes at which all three literals are false. `x` is bounded
@@ -907,14 +956,7 @@ fn pncx_sat_reduction() {
     }
     let mut excluded = Vec::new();
     for cl in &clauses {
-        let m: i64 = cl.iter().map(|(j, _)| primes[*j]).product();
-        // The falsifying value of each literal: 0 for a positive literal, 1 for a negative one.
-        let c = (0..m)
-            .find(|c| {
-                cl.iter()
-                    .all(|(j, pos)| c % primes[*j] == if *pos { 0 } else { 1 })
-            })
-            .unwrap();
+        let (m, c) = pncx_sat_residue(&primes, cl);
         let r = residue(&mut fs, m);
         fs.push(Formula::negate(Formula::Con(Con::eq(
             &r,
@@ -933,6 +975,7 @@ fn pncx_sat_reduction() {
     )));
     let f = Formula::and(fs);
     let t = std::time::Instant::now();
+    println!("PNCXSAT_READY v={nv} c={nc}");
     let got = decide(&f);
     let dt = t.elapsed().as_secs_f64();
     let small_p: Option<i64> = (nv <= 7).then(|| primes.iter().product());
@@ -997,9 +1040,18 @@ fn pncx_divisor_past_i128_is_read() {
 fn pncx_crt_bits(n: usize) -> zedc::store::presburger::Formula {
     use zedc::store::int::Int;
     use zedc::store::presburger::{Atom, Con, Formula, Lin};
-    let (mut a, mut b) = (Int::ONE, Int::ONE);
-    for _ in 0..n {
-        (a, b) = (b.clone(), &a + &b);
+    // `(F(k), F(k + 1))` by doubling: `F(2k) = F(k) (2 F(k + 1) - F(k))`,
+    // `F(2k + 1) = F(k)^2 + F(k + 1)^2`; `a = F(n + 1)`, `b = F(n + 2)`.
+    let (mut a, mut b) = (Int::ZERO, Int::ONE);
+    let k = n + 1;
+    for i in (0..usize::BITS - k.leading_zeros()).rev() {
+        let two_b = &b + &b;
+        let c = &a * &(&two_b - &a);
+        let d = &(&a * &a) + &(&b * &b);
+        (a, b) = match (k >> i) & 1 {
+            1 => (d.clone(), &c + &d),
+            _ => (c, d),
+        };
     }
     let x = Lin::atom(Atom::Sym("x".into()));
     let mut fs = vec![Formula::Con(Con::ge(&x, &Lin::constant(0)))];
@@ -1043,6 +1095,87 @@ fn pncx_crt_bit_axis() {
             w.units,
             w.bytes,
             t.elapsed().as_secs_f64()
+        );
+    }
+}
+
+/// The kernel's inverse and gcd alone on the moduli of [`pncx_crt_bits`], for `PNCX_SIZES`: the
+/// part of `pncx_crt_bit_axis`'s work they take.
+#[test]
+#[ignore]
+fn pncx_fibonacci_parts() {
+    use zedc::store::int::Num;
+    let sizes = std::env::var("PNCX_SIZES").unwrap();
+    let mut meter = zed_tests::scaling::Meter::new();
+    for n in sizes.split(',').map(|n| n.parse::<usize>().unwrap()) {
+        let f = pncx_crt_bits(n);
+        let ms: Vec<num_bigint::BigUint> = f
+            .cons()
+            .iter()
+            .flat_map(|c| c.lin.terms.values())
+            .map(|k| Num::from(k).built().expect("written").magnitude().clone())
+            .filter(|m| m.bits() > 64)
+            .collect();
+        let (a, b) = (&ms[0], &ms[1]);
+        let mut inv = None;
+        let wi = meter.work(|| inv = zed_kernel::num::inverse_mod_uint(a, b));
+        assert!((a * inv.expect("coprime") % b) == num_bigint::BigUint::from(1u32));
+        let mut g = None;
+        let wg = meter.work(|| g = Some(zed_kernel::num::gcd_uint(a, b)));
+        assert!(g.expect("run") == num_bigint::BigUint::from(1u32));
+        let mut p = None;
+        let wp = meter.work(|| p = Some(zed_kernel::num::rem_uint(&(a * b), b)));
+        let _ = std::hint::black_box(p);
+        println!(
+            "FIBPARTS {n} bits {} inverse {} {} gcd {} {} product+rem {} {}",
+            b.bits(),
+            wi.units,
+            wi.bytes,
+            wg.units,
+            wg.bytes,
+            wp.units,
+            wp.bytes
+        );
+    }
+}
+
+/// Two consecutive Fibonacci moduli, the slowest case of the Euclidean extended gcd: the whole
+/// question costs at most 10 times the kernel's gcd of the same two moduli, at F(80001) (55,540
+/// bits) and F(750001) (520,682 bits). Measured 5.8 and 6.5 times with the half gcd; 190 times
+/// at F(80001) with the Euclidean `bezout` (R6-CLAUDE-7). `check_log_squared` cannot hold it:
+/// the kernel's gcd alone on these numbers grows 17.5 times in instructions and 13.9 times in
+/// bytes from F(750001) to F(6000001), above the 11.7 that rule allows. Ignored for its time,
+/// about 3 seconds.
+#[test]
+fn pncx_fibonacci_crt_scale() {
+    use zedc::store::int::Num;
+    use zedc::store::presburger::satisfiable;
+    let mut meter = zed_tests::scaling::Meter::new();
+    for n in [80_000, 750_000] {
+        let f = pncx_crt_bits(n);
+        let ms: Vec<num_bigint::BigUint> = f
+            .cons()
+            .iter()
+            .flat_map(|c| c.lin.terms.values())
+            .map(|k| Num::from(k).built().expect("written").magnitude().clone())
+            .filter(|m| m.bits() > 64)
+            .collect();
+        let mut ans = None;
+        let question = meter.work(|| ans = Some(satisfiable(&f)));
+        let model = ans.expect("run").expect("answer").expect("a point");
+        assert!(f.holds(&model));
+        let mut g = None;
+        let gcd = meter.work(|| g = Some(zed_kernel::num::gcd_uint(&ms[0], &ms[1])));
+        assert!(g.expect("run") == num_bigint::BigUint::from(1u32));
+        let ratio = question.units as f64 / gcd.units as f64;
+        println!(
+            "FIBCRT {n} question {} gcd {} ratio {ratio:.2}",
+            question.units, gcd.units
+        );
+        assert!(
+            ratio <= 10.0,
+            "F({}): the question is {ratio:.2} gcds",
+            n + 1
         );
     }
 }
@@ -1359,4 +1492,122 @@ fn pncx_t8_enum_suite() {
         "T8_ENUM_SUITE total=3600 checked={total_checked} sat={total_sat} unsat={total_unsat} refused={total_refused}"
     );
     assert!(total_checked >= 3500);
+}
+
+#[test]
+fn pncx_renamed_parameters_and_case56_match() {
+    let names = ["A", "a", "b", "w", "x", "y", "z", "zz"];
+    let condition = "x >= (0 - 8) && x <= 26 && (x + 1) mod 10 <= 1 && (x - 5) mod 4 <= 1 && ((x - 5) mod 4 == 2 || (x - 5) mod 4 == 1 || x <= 12) && ((x + 1) mod 10 != 5 || x mod 8 != 7)";
+    let mut sources = Vec::new();
+    for x in names {
+        let condition = condition.replace('x', x);
+        sources.push(format!("f{}({x}: int) = {condition};", sources.len()));
+        for alias in names {
+            if alias == x {
+                continue;
+            }
+            sources.push(format!(
+                "f{}({x}: int, {alias}: int) = {alias} == {x} - 8 && {condition};",
+                sources.len()
+            ));
+        }
+    }
+    let ask = |src: &str, reverse: bool| {
+        let unit = elab(src).unwrap();
+        let scope = lets(&unit);
+        let mut scoped = Scoped::new(&scope);
+        let (mut faced, mut plain) = (Extending::new(), Extending::new());
+        let mut indices: Vec<_> = (0..unit.defs.len()).collect();
+        if reverse {
+            indices.reverse();
+        }
+        let mut out = std::collections::BTreeMap::new();
+        for i in indices {
+            let d = &unit.defs[i];
+            let Term::Lam(ps, body) = &*d.term else {
+                continue;
+            };
+            let r = scoped
+                .relation(body, ps, ps, true)
+                .expect("the numeric question is translated");
+            let a = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+            let b = plain.defined(&r, &|n| scoped.def(n));
+            let written = scoped.written(&r);
+            use zedc::store::presburger::{Formula, decide, satisfiable};
+            let holds = Formula::and(vec![written.defined(), written.body.clone()]);
+            let fails = Formula::and(vec![written.defined(), Formula::negate(written.body)]);
+            out.insert(
+                d.name.clone(),
+                (
+                    a.holds.ok(),
+                    a.fails.ok(),
+                    b.holds.ok(),
+                    b.fails.ok(),
+                    decide(&holds).ok(),
+                    decide(&fails).ok(),
+                    satisfiable(&holds).ok().map(|m| m.is_some()),
+                    satisfiable(&fails).ok().map(|m| m.is_some()),
+                ),
+            );
+        }
+        out
+    };
+    let batch = sources.join("\n");
+    let first = ask(&batch, false);
+    assert_eq!(first, ask(&batch, true));
+    let mut by_arity = std::collections::BTreeMap::new();
+    for src in &sources {
+        let single = ask(src, false);
+        for (name, answer) in single {
+            assert_eq!(first[&name], answer, "batch/single {src}");
+            let alias = src.contains(" - 8 &&");
+            if let Some(old) = by_arity.insert(alias, answer) {
+                assert_eq!(old, answer, "renamed {src}");
+            }
+            if alias {
+                assert_eq!(
+                    answer,
+                    (
+                        Some(true),
+                        Some(true),
+                        Some(true),
+                        Some(true),
+                        Some(true),
+                        Some(true),
+                        Some(true),
+                        Some(true)
+                    ),
+                    "{src}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn pncx_wide_divisor_translation_scale() {
+    use zedc::store::int::Int;
+    let inputs = zed_tests::scaling::inputs(128, |n| {
+        let mut m = Int::ONE;
+        for _ in 0..n {
+            m = &m + &m;
+        }
+        let src = format!("f(x: int) = x mod {} == 1;", &m + &Int::ONE);
+        let unit = elab(&src).unwrap();
+        let scope = lets(&unit);
+        (unit, scope)
+    });
+    zed_tests::scaling::check_order("translate written wide divisors", 128, 1, |n| {
+        let (unit, scope) = &inputs[&n];
+        let mut scoped = Scoped::new(scope);
+        let Term::Lam(ps, body) = &*unit.defs[0].term else {
+            panic!("one function")
+        };
+        let r = scoped
+            .relation(body, ps, ps, true)
+            .expect("wide divisor retains its question");
+        let got = Extending::new().defined(&r, &|i| scoped.def(i));
+        assert_eq!(got.holds, Ok(true));
+        assert_eq!(got.fails, Ok(true));
+    });
 }

@@ -1043,6 +1043,14 @@ pub fn rem_uint(a: &BigUint, b: &BigUint) -> BigUint {
     fast::rem(a, b)
 }
 
+/// `a^-1 mod m` for `m` above zero, below `m`, or `None` when `a` and `m` have a common
+/// factor, for integers held outside a [`Rat`]: the binary half gcd with its steps kept
+/// (`num::fast::inverse_mod`), O(M(n) log n), where the extended Euclidean algorithm is
+/// O(n^2).
+pub fn inverse_mod_uint(a: &BigUint, m: &BigUint) -> Option<BigUint> {
+    fast::inverse_mod(a, m)
+}
+
 /// The greatest common divisor of `a` and `b`, for integers held outside a [`Rat`].
 pub fn gcd_uint(a: &BigUint, b: &BigUint) -> BigUint {
     let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
