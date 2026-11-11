@@ -7090,21 +7090,25 @@ fn balanced(p: Prim, mut level: Vec<Term>) -> Term {
 }
 
 /// The join of `cases`, each reduced, in pairs, so that no case is copied through more than
-/// `log k` joins of `k` cases. A join that is joined again is reduced first; the last is left
-/// as it is.
+/// `log k` joins of `k` cases. No join is reduced: each case is reduced already, and every
+/// caller reduces the scope the narrowing gives ([`Scope::assume`], [`Scope::assume_case`],
+/// and each case of [`Scope::cases`]); [`Scope::narrow_linear`] puts the test's relation in
+/// place of the join's first.
+///
+/// Complexity tradeoff: the naive method reduced each join that is joined again. A join at
+/// level `j` holds the disjunction of `2^j` cases, and reducing it projects every side again,
+/// each projection asking `O(log k)` questions of the hull's bisection, so that the joins cost
+/// `Θ(k log² k)` projections of sides for `k` cases (bytes 14.3 times from 32 to 256 live
+/// sides `n + m >= -i`, above the limit of 14.1). Here the joins are only joined, `O(k log k)`
+/// for the copies of the cases' conjuncts, and the one reduction is the caller's. Given up:
+/// nothing; over the groups that narrow by disjunctions, every answer is the same with and
+/// without the reductions of the joins (NARROW-many-relational-sides).
 fn join_cases(mut cases: Vec<Scope>) -> Scope {
     while cases.len() > 1 {
-        let last = cases.len() == 2;
         let mut it = std::mem::take(&mut cases).into_iter();
         while let Some(l) = it.next() {
             cases.push(match it.next() {
-                Some(r) => {
-                    let mut j = l.join(&r);
-                    if !last {
-                        j.reduce_case();
-                    }
-                    j
-                }
+                Some(r) => l.join(&r),
                 None => l,
             });
         }
