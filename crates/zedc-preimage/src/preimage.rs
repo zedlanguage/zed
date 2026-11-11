@@ -6958,9 +6958,21 @@ impl<'m, 't> Walk<'m, 't> {
         })
     }
 
+    /// `min(pa, c)`, or `max(pa, c)` where not `min`, over the domain of `pa`'s input
+    /// ([`Pa::clamp`]).
+    fn clamped(&'m self, pa: &Pa, min: bool, c: i64) -> Option<Pa> {
+        match pa.var() {
+            None => pa.clamp(min, c, &IntervalSet::empty()),
+            Some(v) => self.with(|tx| pa.clamp(min, c, tx.cx.get(v)?)),
+        }
+    }
+
     /// `-u`, `u + c`, `c + u`, `u - c`, `c - u` and `c * u` for a summarized `u` and a
-    /// constant `c`, and `u + v` and `u - v` for two summaries of one input ([`Pa::plus`]); the
-    /// arity was checked by the caller.
+    /// constant `c`, `u + v` and `u - v` for two summaries of one input ([`Pa::plus`]),
+    /// `min` and `max` of a summary and a constant or of two summaries of one input, and
+    /// `abs(u)`; the arity was checked by the caller. `div` and `mod` by a constant get no
+    /// summary: `u div c` is a step function, with one affine piece per `c` values of `u`, so
+    /// its summary would grow with the width of the domain.
     async fn pa_prim(&'m self, t: Tid, p: Prim, args: Span, env: Eid) -> Option<Pa> {
         let a = self.arg(args, 0);
         match p {
@@ -7005,16 +7017,55 @@ impl<'m, 't> Walk<'m, 't> {
             }
             Prim::Min | Prim::Max => {
                 let b = self.arg(args, 1);
+                let min = p == Prim::Min;
                 let (c, u) = match self.constant_int(a, env).await {
                     Some(c) => (c, b),
-                    None => (self.constant_int(b, env).await?, a),
+                    None => match self.constant_int(b, env).await {
+                        Some(c) => (c, a),
+                        None => {
+                            let pa = self.pa(a, env).await?;
+                            let pb = self.pa(b, env).await?;
+                            // Two lines of one input: `u` where `v - u` has the sign that
+                            // makes it the one chosen, else `v`, with exact bounds.
+                            if let (
+                                Pa::Linear { var, a: ua, b: ub },
+                                Pa::Linear {
+                                    var: w,
+                                    a: va,
+                                    b: vb,
+                                },
+                            ) = (&pa, &pb)
+                                && var == w
+                            {
+                                let d = (va - ua, vb - ub);
+                                let (u, v) = ((ua.clone(), ub.clone()), (va.clone(), vb.clone()));
+                                let (neg, pos) = if min { (v, u) } else { (u, v) };
+                                return self.with(|tx| {
+                                    Pa::by_sign(var, (&d.0, &d.1), tx.cx.get(var)?, neg, pos)
+                                });
+                            }
+                            // Two summaries of one input: `min(u, v) = u + min(v - u, 0)`.
+                            let d = pb.plus(&pa, -1)?;
+                            return self.clamped(&d, min, 0)?.plus(&pa, 1);
+                        }
+                    },
                 };
                 let pa = self.pa(u, env).await?;
-                let min = p == Prim::Min;
-                match pa.var() {
-                    None => pa.clamp(min, c, &IntervalSet::empty()),
-                    Some(v) => self.with(|tx| pa.clamp(min, c, tx.cx.get(v)?)),
+                self.clamped(&pa, min, c)
+            }
+            Prim::Abs => {
+                // `abs(u) = max(u, -u) = u + max(-2 * u, 0)`: a choice on `u >= 0`. Of a line,
+                // `-u` where `u` is negative and `u` elsewhere, with exact bounds ([`Pa::by_sign`]).
+                let pa = self.pa(a, env).await?;
+                match &pa {
+                    Pa::Const(c) => return Some(Pa::Const(c.abs())),
+                    Pa::Linear { var, a, b } => {
+                        let (neg, pos) = ((-a, -b), (a.clone(), b.clone()));
+                        return self.with(|tx| Pa::by_sign(var, (a, b), tx.cx.get(var)?, neg, pos));
+                    }
+                    Pa::Piecewise { .. } => {}
                 }
+                self.clamped(&pa.affine(-2, 0), false, 0)?.plus(&pa, 1)
             }
             _ => None,
         }
@@ -9186,6 +9237,51 @@ impl Pa {
         let root = clamp_treap(&self.to_treap(dom)?, min, &c);
         Some(Pa::Piecewise { var, root })
     }
+
+    /// Over the hull of `dom`, the domain of `var`: the line `neg` where the line `d` is
+    /// negative and the line `pos` where it is not, each piece made from its own line
+    /// ([`make_node`]), so the bounds every node keeps are exact. `abs(u)` and `min` and `max`
+    /// of two lines take this form; made as a clamp plus a line ([`Pa::plus`]) their bounds
+    /// are those of [`Tag::vals`], infinite where the line and a piece slope in opposite
+    /// directions over an unbounded piece, so a test of `abs(x) + y` read no bound on `y`.
+    /// `None` when an end lies outside [`in_range`].
+    fn by_sign(
+        var: &Arc<str>,
+        d: (&Int, &Int),
+        dom: &IntervalSet,
+        neg: (Int, Int),
+        pos: (Int, Int),
+    ) -> Option<Pa> {
+        let (a, b) = d;
+        let hull = dom.hull();
+        let below = |c: Int| hull.meet(&IntervalSet::range(NegInf, Fin(Num::from(&c))));
+        let from = |c: Int| hull.meet(&IntervalSet::range(Fin(Num::from(&c)), PosInf));
+        // `a * x + b >= 0` holds for `x >= -floor(b / a)` when `a > 0`, and for
+        // `x <= floor(b / -a)` when `a < 0`; the part below comes first.
+        let ((lo_set, lo), (hi_set, hi)) = if a.is_zero() {
+            let all = if b.is_negative() { neg } else { pos };
+            ((hull, all), (IntervalSet::empty(), (Int::ZERO, Int::ZERO)))
+        } else if a.is_positive() {
+            let cut = -&b.div_floor(a);
+            ((below(&cut - &Int::ONE), neg), (from(cut), pos))
+        } else {
+            let cut = b.div_floor(&-a);
+            ((below(cut.clone()), pos), (from(&cut + &Int::ONE), neg))
+        };
+        let part = |set: &IntervalSet, (a, b): (Int, Int)| {
+            Pa::Linear {
+                var: var.clone(),
+                a,
+                b,
+            }
+            .to_treap(set)
+        };
+        let root = join_treap(part(&lo_set, lo)?, part(&hi_set, hi)?);
+        Some(Pa::Piecewise {
+            var: var.clone(),
+            root,
+        })
+    }
 }
 
 /// The names bound by `let`s around a term that the transfer reads through their summaries,
@@ -10009,7 +10105,8 @@ impl LetPa {
 /// Work counted on a thread (feature `counts`), measures the load does not change: the nodes
 /// `LetPa::sum` enters (PA-let-narrow), its own and those it reads but not those below a node
 /// already formed, the bounds of terms of sums taken (PA-let-multi), and the inputs given a
-/// test's transfer (PA-letpre-linear). A test holds each
+/// test's transfer (PA-letpre-linear), and the bindings read through their terms
+/// (PA-let-unsummarized-narrow). A test holds each
 /// count of a block of bindings to linear growth.
 #[cfg(feature = "counts")]
 pub mod counts {
@@ -10020,6 +10117,7 @@ pub mod counts {
         pub(crate) static TERM_BOUNDS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static IMAGE_SETS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static INPUTS: Cell<u64> = const { Cell::new(0) };
+        pub(crate) static TERM_READS: Cell<u64> = const { Cell::new(0) };
     }
 
     /// The nodes `LetPa::sum` has entered on this thread since it started.
@@ -10047,6 +10145,13 @@ pub mod counts {
     /// is given that input, not the names in scope.
     pub fn inputs() -> u64 {
         INPUTS.get()
+    }
+
+    /// The bindings with no summary read backward through their terms after a test narrowed
+    /// them (`Scope::through_terms`, item PA-let-unsummarized-narrow) on this thread since it
+    /// started: each once a test, and only those whose integers the test changed.
+    pub fn term_reads() -> u64 {
+        TERM_READS.get()
     }
 }
 
@@ -14415,6 +14520,126 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The summary of `abs(u)` and of `min` and `max` of two terms of one input ([`Walk::pa`])
+    /// is the interpreter's value at every point of the input's domain, on random terms of `x`
+    /// built from those, `+`, `-`, a product with a constant and integer literals; every such
+    /// term has a summary.
+    #[test]
+    fn abs_and_two_term_min_and_max_have_the_value_at_every_point() {
+        fn term(rng: &mut Rng, d: u32) -> Term {
+            let lit = |v: i64| Term::Lit(Value::Int(v));
+            if d == 0 || rng.below(4) == 0 {
+                return match rng.below(3) {
+                    0 => lit(rng.below(13) as i64 - 6),
+                    _ => Term::Var("x".into()),
+                };
+            }
+            let p = |p: Prim, args: Vec<Term>| Term::Prim(p, args);
+            match rng.below(6) {
+                0 => p(Prim::Abs, vec![term(rng, d - 1)]),
+                1 => p(Prim::Min, vec![term(rng, d - 1), term(rng, d - 1)]),
+                2 => p(Prim::Max, vec![term(rng, d - 1), term(rng, d - 1)]),
+                3 => p(Prim::Add, vec![term(rng, d - 1), term(rng, d - 1)]),
+                4 => p(Prim::Sub, vec![term(rng, d - 1), term(rng, d - 1)]),
+                _ => p(
+                    Prim::Mul,
+                    vec![lit(rng.below(7) as i64 - 3), term(rng, d - 1)],
+                ),
+            }
+        }
+        let mut rng = Rng(0x6a09_e667_f3bc_c908);
+        let x: Arc<str> = "x".into();
+        let mut pieces = 0;
+        for round in 0..1500 {
+            let t = term(&mut rng, 4);
+            let lo = rng.below(41) as i64 - 30;
+            let hi = lo + rng.below(30) as i64;
+            let inputs = Domains::from([(x.clone(), IntervalSet::of(lo, hi))]);
+            let mut tx = Tx::new();
+            let root = tx.terms.add(&t);
+            let marks = tx.landmarks(&inputs, &Demand::Bool(true));
+            tx.start(&inputs, marks);
+            let Some(pa) = tx.pa(root, ROOT) else {
+                panic!("round {round}: {t} over {lo}..={hi} has no summary");
+            };
+            if let Pa::Piecewise { root, .. } = &pa {
+                pieces += treap_pieces(root).len();
+            }
+            for v in lo..=hi {
+                let at = match &pa {
+                    Pa::Piecewise { root, .. } => point(root, v),
+                    Pa::Linear { a, b, .. } => (&(a * &Int::from(v)) + b).to_i128(),
+                    Pa::Const(c) => c.to_i128(),
+                };
+                let run = Term::Let(
+                    x.clone(),
+                    Shared::new(Term::Lit(Value::Int(v))),
+                    Shared::new(t.clone()),
+                );
+                let want = match eval(&run) {
+                    Ok(Value::Int(n)) => Some(i128::from(n)),
+                    other => panic!("round {round}: {t} at x = {v}: {other:?}"),
+                };
+                assert_eq!(at, want, "round {round}: {t} at x = {v}");
+                // The bounds the root keeps hold the value.
+                if let (Pa::Piecewise { root: Some(r), .. }, Some(w)) = (&pa, want) {
+                    let w = Val::Fin(Int::from(w));
+                    assert!(
+                        r.vals.0 <= w && w <= r.vals.1,
+                        "round {round}: {t}: {:?}",
+                        r.vals
+                    );
+                }
+            }
+        }
+        // Many of the summaries have pieces: the check reads the choices.
+        assert!(pieces > 1000, "{pieces} pieces");
+    }
+
+    /// `abs` of a line and `min` and `max` of two lines keep exact bounds at the root
+    /// ([`Pa::by_sign`]), over a bounded domain and over all integers, where the line added to
+    /// a clamp ([`Pa::plus`]) kept an infinite bound.
+    #[test]
+    fn abs_min_and_max_of_lines_keep_exact_bounds() {
+        let x = || Term::Var("x".into());
+        let lit = |v: i64| Term::Lit(Value::Int(v));
+        let p = |p: Prim, args: Vec<Term>| Term::Prim(p, args);
+        let lin = |a: i64, b: i64| p(Prim::Add, vec![p(Prim::Mul, vec![lit(a), x()]), lit(b)]);
+        let bounds = |t: &Term, dom: IntervalSet| {
+            let inputs = Domains::from([(Arc::<str>::from("x"), dom)]);
+            let mut tx = Tx::new();
+            let root = tx.terms.add(t);
+            let marks = tx.landmarks(&inputs, &Demand::Bool(true));
+            tx.start(&inputs, marks);
+            match tx.pa(root, ROOT) {
+                Some(Pa::Piecewise { root: Some(r), .. }) => r.vals.clone(),
+                _ => panic!("{t} has no summary with pieces"),
+            }
+        };
+        let fin = |v: i128| Val::Fin(Int::from(v));
+        let top = IntervalSet::top();
+        assert_eq!(
+            bounds(&p(Prim::Abs, vec![x()]), top.clone()),
+            (fin(0), Val::Pos)
+        );
+        assert_eq!(
+            bounds(&p(Prim::Abs, vec![lin(2, -3)]), IntervalSet::of(-4, 6)),
+            (fin(1), fin(11))
+        );
+        assert_eq!(
+            bounds(&p(Prim::Abs, vec![lin(-3, 7)]), IntervalSet::of(-2, 5)),
+            (fin(1), fin(13))
+        );
+        let two = |q: Prim, dom: IntervalSet| bounds(&p(q, vec![lin(1, 1), lin(-1, 10)]), dom);
+        assert_eq!(two(Prim::Min, top.clone()), (Val::Neg, fin(5)));
+        assert_eq!(two(Prim::Max, top.clone()), (fin(6), Val::Pos));
+        assert_eq!(two(Prim::Min, IntervalSet::of(0, 20)), (fin(-10), fin(5)));
+        assert_eq!(two(Prim::Max, IntervalSet::of(0, 20)), (fin(6), fin(21)));
+        // Parallel lines: one is chosen over the whole domain.
+        let par = p(Prim::Max, vec![lin(2, 1), lin(2, -4)]);
+        assert_eq!(bounds(&par, IntervalSet::of(-3, 3)), (fin(-5), fin(7)));
     }
 
     /// A random summary with pieces from -40 on, gaps between some, and lines added to and

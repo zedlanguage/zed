@@ -578,6 +578,9 @@ struct Binding {
     function: Option<Shared>,
     /// The summary of the integer the name is bound to, over its inputs ([`View::summary`]).
     summary: Lazy,
+    /// The term of the integer the name is bound to, read when a test narrows the name and
+    /// it has no summary that holds ([`Scope::through_terms`]).
+    term: Option<Shared>,
 }
 
 /// The summary a binding keeps ([`Scope::summarize`]), made the first time it is read
@@ -3365,9 +3368,11 @@ impl Scope {
             Some(_) => Lazy::made(summary),
         };
         let order = self.clock;
+        let lambda = matches!(**e, Term::Lam(..));
         let binding = Binding {
-            function: matches!(**e, Term::Lam(..)).then(|| e.clone()),
+            function: lambda.then(|| e.clone()),
             summary,
+            term: (!lambda && self.summarizes(&p)).then(|| e.clone()),
         };
         self.clock += 1;
         if !self.bottom && !p.is_empty() && !self.names.contains_key(x) {
@@ -4609,7 +4614,9 @@ impl Scope {
             p.ty.meet(&lit, prem);
             p.cell.finite.meet(&FiniteSet::of([v]), prem);
         }
-        // An equality with a literal, and the congruence of `x mod c == r`.
+        // An equality with a literal, and the congruence of `x mod c == r`. The names whose
+        // integers an equality narrows are read through their terms with the others below.
+        let mut changed = Vec::new();
         if let Term::Prim(op @ (Prim::Eq | Prim::Ne), a) = &t
             && a.len() == 2
         {
@@ -4617,8 +4624,10 @@ impl Scope {
             for (l, r) in [(&a[0], &a[1]), (&a[1], &a[0])] {
                 match (l, r) {
                     (Term::Var(x), Term::Lit(v)) if equal || !convex => {
-                        if let Some(p) = self.names.get_mut(x) {
-                            equality(p, v, equal, prem);
+                        if let Some(p) = self.names.get_mut(x)
+                            && equality(p, v, equal, prem)
+                        {
+                            changed.push(x.clone());
                         }
                     }
                     (Term::Prim(Prim::Mod, m), Term::Lit(r)) if equal => {
@@ -4726,20 +4735,139 @@ impl Scope {
             // copied for one unchanged (COMPLEXITY.md C51). Test:
             // `l01_39_reduced_product::nests::excluded_sides_cost_the_names_they_change`.
             for (n, d) in pre.domains.iter().chain(&through) {
-                if let Some(p) = self.names.get(n) {
-                    let mut p = p.clone();
-                    let met = if convex {
-                        p.meet_ints(d.hull(), prem)
-                    } else {
-                        p.meet_ints(d.clone(), prem)
-                    };
-                    if met {
-                        self.names.insert(n.clone(), p);
-                    }
+                if self.meet_name(n, d, convex, prem) {
+                    changed.push(n.clone());
                 }
             }
         }
+        self.through_terms(changed, convex, prem);
         (exact, inputs, free)
+    }
+
+    /// Meets the integers of `n`, when in scope, with `d`, or its hull with `convex`; the
+    /// product is put back only when the meet changed it ([`Scope::atom_names`]). Gives whether
+    /// it did.
+    fn meet_name(&mut self, n: &Arc<str>, d: &IntervalSet, convex: bool, prem: &Premises) -> bool {
+        let Some(p) = self.names.get(n) else {
+            return false;
+        };
+        let mut p = p.clone();
+        let met = if convex {
+            p.meet_ints(d.hull(), prem)
+        } else {
+            p.meet_ints(d.clone(), prem)
+        };
+        if met {
+            self.names.insert(n.clone(), p);
+        }
+        met
+    }
+
+    /// Whether `n`, in scope, has no value: its type has none, or it is read through its term
+    /// ([`Binding::term`], given only to bindings whose type holds integers alone) and has no
+    /// integers. A meet of the integers changes the type only at the next reduction.
+    fn no_value(&self, n: &Arc<str>) -> bool {
+        let p = &self.names[n];
+        p.is_empty()
+            || (p.ints().is_empty() && self.bindings.get(n).is_some_and(|b| b.term.is_some()))
+    }
+
+    /// Narrows the inputs of the integer bindings among `changed`, names a test has just
+    /// narrowed, that have no summary that holds ([`View::summary`]), by reading each one's
+    /// term backward from its integers ([`let_narrowing`] of the demand of those integers), as
+    /// a test reads a function it calls through its term ([`Scope::close`]): with `z = abs(x)`,
+    /// `z > 5` narrows `x` to `..=-6, 6..`. The inputs a term narrows that are such bindings
+    /// in turn are read the same way. A name is read only when every name its term reads was
+    /// bound before it, so that each is still the binding the term read.
+    ///
+    /// A term reads only names bound before its own, so the bindings are read latest first
+    /// from a heap by the order of their binding, a topological order of the bindings, and
+    /// each is read at most once a test, after every binding that could narrow it. A name left
+    /// with no value ends the reads: no state reaches the scope, which its reduction then
+    /// finds, and reading on would empty every link before it, O(n) for each such arm.
+    // Complexity tradeoff: naive version, each test closed over every binding it reaches, as
+    // `Scope::close` does for functions, and the closed test read whole: O(size of the chain)
+    // a test whatever it narrows, so k tests at each of n links of a chain cost Θ(k n²). Used:
+    // only the bindings whose integers this test changed are read, each once (a visited set
+    // and the heap's topological order), each costing its own term, O(m (s + log n)) a test
+    // for m bindings changed, of terms of size s. Tradeoffs: a binding whose integers this
+    // test leaves as they were is not read, since the test that last narrowed it read it
+    // then; a test that narrows every link of a chain still costs every link, as the scope
+    // then differs from the one before in all of them, so n such tests cost Θ(n²) reads, the
+    // size of the narrowings they give. Tests
+    // `l01_39_reduced_product::let_terms::reading_chains_of_terms_scales` (4n reads) and
+    // `a_test_that_narrows_every_link_reads_every_link_once` (n(n+1) reads); COMPLEXITY.md
+    // row PA-let-unsummarized-narrow.
+    fn through_terms(&mut self, changed: Vec<Arc<str>>, convex: bool, prem: &Premises) {
+        if changed.iter().any(|n| self.no_value(n)) {
+            return;
+        }
+        let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
+        let mut todo: BinaryHeap<(u64, Arc<str>)> = BinaryHeap::new();
+        let push = |n: Arc<str>,
+                    s: &Scope,
+                    seen: &mut BTreeSet<Arc<str>>,
+                    todo: &mut BinaryHeap<(u64, Arc<str>)>| {
+            if let Some(&o) = s.orders.get(&n)
+                && s.bindings.get(&n).is_some_and(|b| b.term.is_some())
+                && seen.insert(n.clone())
+            {
+                todo.push((o, n));
+            }
+        };
+        for n in changed {
+            push(n, self, &mut seen, &mut todo);
+        }
+        let int = Type::int();
+        while let Some((order, z)) = todo.pop() {
+            if self.bottom {
+                return;
+            }
+            let Some(e) = self.bindings.get(&z).and_then(|b| b.term.clone()) else {
+                continue;
+            };
+            if self.view().summary(&z).is_some() {
+                continue;
+            }
+            let later = |m: &Arc<str>| self.orders.get(m).is_some_and(|c| *c >= order);
+            if stage::free(&e).iter().any(later) {
+                continue;
+            }
+            let closed = self.close(&e);
+            let e = closed.as_ref().map_or(&*e, |c| c);
+            let statics = self.statics_of(stage::free(e).iter().filter(|n| {
+                !self
+                    .names
+                    .get(*n)
+                    .is_some_and(|p| p.ty.element.subtype(&int))
+            }));
+            let t = substitute(e, &statics);
+            let (over, lets, _) = self.inputs_and_lets(&stage::free(&t), true);
+            if over.is_empty() && lets.is_empty() {
+                continue;
+            }
+            let reads: Vec<_> = lets.values().filter_map(|l| l.read.clone()).collect();
+            let demand = Demand::Ints(self.get(&z).ints().clone());
+            #[cfg(feature = "counts")]
+            super::preimage::counts::TERM_READS.set(super::preimage::counts::TERM_READS.get() + 1);
+            let narrowed = match let_narrowing(&t, &over, lets, &demand) {
+                Some(narrowed) => narrowed,
+                None => {
+                    let vars = reads.iter().flat_map(|r| r.vars().iter());
+                    (over.keys().chain(vars))
+                        .map(|n| (n.clone(), IntervalSet::empty()))
+                        .collect()
+                }
+            };
+            for (n, d) in &narrowed {
+                if self.meet_name(n, d, convex, prem) {
+                    if self.no_value(n) {
+                        return;
+                    }
+                    push(n.clone(), self, &mut seen, &mut todo);
+                }
+            }
+        }
     }
 
     /// Passes information between the domains of every product, the relation and the written
@@ -7927,30 +8055,34 @@ fn int_lit(v: &Value) -> Option<Num> {
 }
 
 /// The product of a literal equality's outcome on `p`: the literal itself, or every value but
-/// it, excluded by complement in the type, the interval and the finite set.
-fn equality(p: &mut Product, v: &Value, equal: bool, prem: &Premises) {
+/// it, excluded by complement in the type, the interval and the finite set. Gives whether the
+/// interval changed.
+fn equality(p: &mut Product, v: &Value, equal: bool, prem: &Premises) -> bool {
     if equal {
         let lit = Product::literal(v);
         p.ty.meet(&lit.ty.element, prem);
         p.cell.finite.meet(&lit.cell.finite.element, prem);
+        let mut met = false;
         if let Some(n) = int_lit(v) {
-            p.meet_ints(IntervalSet::point(n.clone()), prem);
+            met = p.meet_ints(IntervalSet::point(n.clone()), prem);
             p.cell.congruence.meet(&Congruence::single(n), prem);
         }
-        return;
+        return met;
     }
     if let Some(lit) = Type::lit(v) {
         p.ty.meet(&!&lit, prem);
     }
+    let mut met = false;
     if let Value::Int(n) = v {
         let x = IntervalSet::single(*n).complement_in(p.ints());
-        p.meet_ints(x, prem);
+        met = p.meet_ints(x, prem);
     }
     if let FiniteSet::Set(vs) = &p.cell.finite.element {
         let mut vs = vs.clone();
         vs.remove(v);
         p.cell.finite.meet(&FiniteSet::Set(vs), prem);
     }
+    met
 }
 
 /// `t` with each of `env`'s names bound to its value.

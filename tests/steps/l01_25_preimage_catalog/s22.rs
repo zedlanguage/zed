@@ -1638,6 +1638,12 @@ fn random_terms(
         //
         // The counts above are of all 18 runs, one test before S22-exact-mislabel: 6800 cases,
         // 5 narrower, 24 made exact and 1 unlisted, now split over the three tests below.
+        //
+        // Since PA-let-unsummarized-narrow, which summarizes `abs` and the `min` or `max` of two
+        // terms, 4 more boxes are made exact, 2 in each of the last two tests (11, was 9; 9, was
+        // 7); the narrower and unlisted counts are unchanged and the interpreter refutes none.
+        // With those two summaries turned off and the rest of the change kept, the old counts
+        // return.
         diffs.unlisted(unlisted).none_but(least, narrower, 0, exact);
     });
 }
@@ -1649,12 +1655,12 @@ fn random_terms_keep_their_preimages_0() {
 
 #[test]
 fn random_terms_keep_their_preimages_1() {
-    random_terms(5..8, (1900, 0, 9, 0));
+    random_terms(5..8, (1900, 0, 11, 0));
 }
 
 #[test]
 fn random_terms_keep_their_preimages_2() {
-    random_terms(8..18, (2100, 3, 7, 1));
+    random_terms(8..18, (2100, 3, 9, 1));
 }
 
 /// Guards, domains, offsets and demands at the two ends of `i64`, values that leave `i64`

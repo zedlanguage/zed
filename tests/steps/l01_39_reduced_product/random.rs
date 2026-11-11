@@ -323,7 +323,7 @@ fn a_name_of_one_integer_value_is_read_through_its_interval() {
 type Env = Vec<(Arc<str>, Term)>;
 
 /// Whether arm `i` holds the inputs of a run, by the domains the fix prints.
-type Holds<'a> = dyn Fn(usize, &BTreeMap<Arc<str>, Value>) -> bool + 'a;
+pub(super) type Holds<'a> = dyn Fn(usize, &BTreeMap<Arc<str>, Value>) -> bool + 'a;
 
 /// The value of `t` with the bindings `env`; `None` when the run fails.
 fn value_in(t: &Term, env: &Env) -> Option<Value> {
@@ -349,14 +349,14 @@ fn has_arms(t: &Term) -> bool {
 /// branch, its false arm, the arms of its second branch; a `let` the arms of its value, then of
 /// its body; the walk enters no test), and each arm the run reaches must hold the run's values
 /// there. An arm found unreachable holds no value, so no run may reach it.
-struct Trace<'a> {
+pub(super) struct Trace<'a> {
     arms: &'a [Arm],
     /// Whether the arm with this index holds the values; `Scope::contains` but for the
     /// negative control.
     holds: &'a Holds<'a>,
     next: usize,
     /// The (arm, values) pairs checked.
-    checked: usize,
+    pub(super) checked: usize,
     /// Per arm and integer name, the least and greatest value of a run that reached it.
     seen: BTreeMap<(usize, Arc<str>), (i64, i64)>,
 }
@@ -470,7 +470,7 @@ fn grid(inputs: &[Arc<str>], arms: &[Arm]) -> Vec<Vec<i64>> {
 
 /// Runs `body` at every point of the grid of `inputs` against `arms`, with `holds` as the arm's
 /// test of the values: the trace, or the first run that reaches an arm not holding it.
-fn trace<'a>(
+pub(super) fn trace<'a>(
     body: &Term,
     inputs: &[Arc<str>],
     arms: &'a [Arm],
@@ -830,12 +830,15 @@ fn chains_reach_only_arms_that_hold_them(
 /// part 1, over all the chains, some arms of `e > c` cut (over 100) and some narrowed through
 /// the chain (over 150). A depth draws the same terms for bindings and for calls, from one seed.
 ///
-/// Every link really uses the one before ([`chain`]), and a test of a bound name narrows the
-/// inputs only through a summary of its value, which `abs`, `div`, `mod`, a `min` or `max` of two
-/// terms and a value over both inputs do not have, where a call is read through its term: over
-/// the same 600 chains, bindings cut 85 to 110 arms and narrow 86 to 379, calls cut 113 to 151
-/// and narrow 463 to 691. Bindings are drawn 1,200 times, calls 600, so that both pass the same
-/// counts (bindings over 1,200 chains: cut 164 to 214, narrowed 159 to 734). The two halves of
+/// Every link really uses the one before ([`chain`]). A test of a bound name narrows the inputs
+/// through a summary of its value (`abs` and a `min` or `max` of two terms of one input have
+/// one), and a bound name with none, such as a `div`, a `mod` or a value over both inputs, is
+/// read through its term as a call is (item PA-let-unsummarized-narrow). Over the same 600
+/// chains, at depths 1, 2 and 3, bindings cut 110, 134 and 136 arms and narrow 641, 471 and
+/// 329; calls cut 113, 148 and 151 and narrow 691, 546 and 463. Before that item bindings cut
+/// 85 to 110 and narrowed 86 to 379. Bindings are drawn 1,200 times, calls 600 (bindings over
+/// 1,200 chains: cut 211, 277 and 290, narrowed 1,257, 884 and 667; before, cut 164 to 214,
+/// narrowed 159 to 734). The two halves of
 /// the traced chains are two pieces, 377,634 to 1,125,863 checks and 10 to 35 s each at load
 /// 34 with the twelve running together (item TESTS-walk-chains-strict-depth; item
 /// TESTS-l01_39-walk-chains made these tests, from chains of item PA-walk-multi).

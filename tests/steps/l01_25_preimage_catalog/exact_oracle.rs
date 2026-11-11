@@ -313,6 +313,12 @@ fn exact(seeds: std::ops::Range<u64>) -> Vec<Run> {
 // gains 1; in more_exact_2, `x` in [1, 12] loses 2 and its count is unchanged, since the exact
 // search before listed an exact box there too (it no longer runs on that case). The
 // interpreter refutes none of the three.
+//
+// Since PA-let-unsummarized-narrow, which summarizes `abs` and the `min` or `max` of two
+// terms, four counts rose and no other: s22_random_terms_3 4433 -> 4435, more_mixed_2
+// 36046 -> 36052, more_deep_1 35186 -> 35195 and more_deep_2 35170 -> 35178, 25 exact
+// marks in all, with no disagreement with the interpreter. With those two summaries turned
+// off and the rest of the change kept, the four old counts return.
 
 #[test]
 fn s22_random_terms_match_the_interpreter_1() {
@@ -326,7 +332,7 @@ fn s22_random_terms_match_the_interpreter_2() {
 
 #[test]
 fn s22_random_terms_match_the_interpreter_3() {
-    check_runs(&RUNS[6..18], 4433);
+    check_runs(&RUNS[6..18], 4435);
 }
 
 #[test]
@@ -336,17 +342,17 @@ fn more_mixed_terms_match_the_interpreter_1() {
 
 #[test]
 fn more_mixed_terms_match_the_interpreter_2() {
-    check_runs(&mixed(10_010..10_020), 36046);
+    check_runs(&mixed(10_010..10_020), 36052);
 }
 
 #[test]
 fn more_deep_terms_match_the_interpreter_1() {
-    check_runs(&deep(2_000..2_100), 35186);
+    check_runs(&deep(2_000..2_100), 35195);
 }
 
 #[test]
 fn more_deep_terms_match_the_interpreter_2() {
-    check_runs(&deep(2_100..2_200), 35170);
+    check_runs(&deep(2_100..2_200), 35178);
 }
 
 // The seeds 3000 to 3039 of `@exact` terms ran as one test of 56.5 s at load 41 (68.8 s at

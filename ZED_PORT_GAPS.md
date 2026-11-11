@@ -3516,3 +3516,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A memo `HashMap<(usize, bool, Ty), Rc<[&Expr]>>` on the checker, filled at the first call of each key and shared by `Rc` | `Ck::call_tails` (`Ck::tail_calls`) | Mutation (gap 11); `Rc` | a persistent map from key to the list of literals, threaded through the walk of the bindings; the list is shared as any value is |
 | The callers of each function gathered by `entry().or_default().push` into a `HashMap<usize, Vec<usize>>`, then a mark carried back along them by a worklist over a `HashSet<usize>` | `Ck::tail_reach` | Mutation (gap 11) | a fold that builds the map from function to callers, then a fixed point over the set of marked functions; computed once and kept, as an `Option` field is here |
 | A `HashSet<Span>` of the literal sites already rejected, so a literal reached through two calls is one message | `Ck::unfixed_tails` | Mutation (gap 11) | a set threaded through the fold over the literals |
+
+## Entries from PA-let-unsummarized-narrow (`crates/zedc-preimage/src/product.rs`, `preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `BinaryHeap` of (binding order, name) and a `BTreeSet` of names seen, both mutated in a loop that pops the latest binding and pushes the names its term narrowed, with an early `return` when a name has no value | `Scope::through_terms` | Mutation, early exit | A fold over a persistent priority queue (or a set ordered by binding order, taking its greatest) whose state is the queue, the set seen and the scope, ending when the queue is empty or a name is empty |
+| A counter in a `thread_local!` `Cell<u64>` behind `#[cfg(feature = "counts")]`, as the other counts | `counts::TERM_READS`, `counts::term_reads` | Global state, conditional compilation | As the other counts: a count returned beside the scope, read by the test |

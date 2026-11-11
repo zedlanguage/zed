@@ -20,6 +20,7 @@ mod holes;
 mod hull;
 mod if_shortcut;
 mod lazy;
+mod let_terms;
 mod linked;
 mod named_test;
 mod nests;
