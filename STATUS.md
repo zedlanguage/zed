@@ -1842,11 +1842,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| AUDIT-layer-row | impl attempt 1 | 2026-11-11 12:01 | negative controls (not committed, reverted): linear search of listed words 59.3x work at 8x size, string fold of reasons 64.1x bytes; real version 8.4x and 8.2x |
+| CORPUS-31-string | impl attempt 1 | 2026-11-11 11:21 | ready: commit 7d2802c77 on wt/corpus-31-string; tests match baseline (3 pre-existing failures) / 35.18 |
+| DAGVIEW-counter-cost | impl attempt 1 | 2026-11-11 11:26 | wall-time ABBA done: B/A 0.93-1.08, A/A spread 0.52-1.84 at load 25-52, nothing visible; balanceCounts instructions (V8 single-threaded) +8.7% (A/A 0.01%); runn |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
 | HAS-point-probe | running | 2026-11-10 22:35 |  |
 | LOAD-max-div-xr | coord attempt 5 | 2026-11-10 01:18 | start rounds 5-10 coordinator; committed Claude seat's unfinished round-4 tree as b07e4522 on wt/lmd-claude; load5 32.66 |
 | PERF-negated-chain-xr | impl attempt 2 | 2026-11-10 06:16 | started rounds 4-9: Claude round-3 tree committed 9a579263 (wt/pncx-claude), rebased onto origin/main 9bbeb1ff as 448bad52 on wt/perf-negated-chain; control tre |
 | REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | rounds 7-8 started; committing review tree (Claude R5 + probe), bringing Claude R6 onto the branch, rebasing on origin/main 4777a33e / load 52.67 38.82 33.29 |
+| RT-cells-chunked | impl attempt 1 | 2026-11-11 11:38 | probe (instructions a level at 800k, median of 5; A/A over 5 processes identical to 0.01%): Vec fresh 1161.7 release 2037.7 dec 975.8 alloc 313.5 matches 377.1  |
+| TESTS-L1.26-refined-divisor | impl attempt 1 | 2026-11-08 23:59 | started; worktree wt/tests-refined-divisor from 43f5fa348, seeded |
+| TESTS-L1.28-trick-general-arm | impl attempt 1 | 2026-11-08 23:59 | started; worktree /home/luke/Work/wt/tests-trick-arm at 43f5fa348 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
