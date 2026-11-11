@@ -2052,80 +2052,95 @@ fn decide_inner(f: &Formula) -> Result<bool, Refusal> {
 /// A point is kept only once `f` is shown to hold at it, with the atoms that [`absorb`]
 /// projected away given values ([`repair`]); a point of the parts at which `f` does not hold
 /// so still answers `true` (S22-shapes-linear and PREIMAGE-slow-rounds, one first-point path).
-fn decide_kept(f: &Formula, mut kept: Option<&mut Vec<Model>>) -> Result<bool, Refusal> {
-    let (p, gone) = absorbed(f, &[]);
-    let implied = if old_path() {
-        Vec::new()
-    } else {
-        disjunction_hulls(&p.ors, &mut DeepHulls::default())
-    };
-    let point_of_f = |mut m: Model| {
-        repair(&mut m, &gone);
-        f.holds(&m).then_some(m)
-    };
-    let mut ask = |mut p: Parts, rows: Vec<Con>| -> Result<bool, Refusal> {
-        p.cons.extend(rows);
-        // Complexity tradeoff: [`settle`] alone removes, in each round, the disjuncts the base
-        // refutes as it stands, so a run of removals that goes against the order of the
-        // disjunctions, each leaving a disjunction one disjunct that joins the base and refutes
-        // the next, moves one disjunction per round: `n` rounds of `n` tests, O(n²), on a
-        // nested chain of absolute values whose twins were merged (`p(n-1) + t(n-1) >= 4`:
-        // 4.2 s at 64 levels on main). Used: the removals the bounds of single atoms show are
-        // made first, in one O(n log n) pass ([`drop_by_bounds`]); the disjuncts it removes
-        // have no point, so the answer is unchanged, and settle then has no run left to follow.
-        // Given up: a run whose removals the bounds do not show still moves one disjunction
-        // per round. A complete solution re-tests, when a disjunct joins the base, only the
-        // disjunctions that share an atom with it. Tests:
-        // `l01_38_presburger::probe::twin_chains_of_absolute_values_scale`, COMPLEXITY.md row
-        // C47 (PROJECT-abs-chain-quadratic).
-        if drop_by_bounds(&mut p, &|_| false).is_none() {
-            return Ok(false);
-        }
-        let p = match settle(p, true)? {
-            None => return Ok(false),
-            Some(p) if p.ors.is_empty() => return Ok(true),
-            Some(p) => p,
+fn decide_kept(f: &Formula, kept: Option<&mut Vec<Model>>) -> Result<bool, Refusal> {
+    decide_kept_status(f, kept).0
+}
+
+fn decide_kept_status(
+    f: &Formula,
+    mut kept: Option<&mut Vec<Model>>,
+) -> (Result<bool, Refusal>, bool) {
+    let mut immune = false;
+    let answer = (|| {
+        let (p, gone) = absorbed(f, &[]);
+        let implied = if old_path() {
+            Vec::new()
+        } else {
+            disjunction_hulls(&p.ors, &mut DeepHulls::default())
         };
-        let Some(kept) = kept.as_deref_mut() else {
-            return has_point(p);
+        let point_of_f = |mut m: Model| {
+            repair(&mut m, &gone);
+            f.holds(&m).then_some(m)
         };
-        if let Ok(m) = pick(&p, true) {
-            kept.extend(point_of_f(m));
-            return Ok(true);
-        }
-        let mut first = Vec::new();
-        let q = match probe_to(p, &mut first, true) {
-            Ok(None) => return Ok(false),
-            Ok(Some(q)) => q,
-            Err(why) => {
-                if let Some(m) = first.pop() {
-                    kept.extend(point_of_f(m));
-                    return Ok(true);
+        let mut ask = |mut p: Parts, rows: Vec<Con>| -> Result<bool, Refusal> {
+            immune = false;
+            p.cons.extend(rows);
+            // Complexity tradeoff: [`settle`] alone removes, in each round, the disjuncts the base
+            // refutes as it stands, so a run of removals that goes against the order of the
+            // disjunctions, each leaving a disjunction one disjunct that joins the base and refutes
+            // the next, moves one disjunction per round: `n` rounds of `n` tests, O(n²), on a
+            // nested chain of absolute values whose twins were merged (`p(n-1) + t(n-1) >= 4`:
+            // 4.2 s at 64 levels on main). Used: the removals the bounds of single atoms show are
+            // made first, in one O(n log n) pass ([`drop_by_bounds`]); the disjuncts it removes
+            // have no point, so the answer is unchanged, and settle then has no run left to follow.
+            // Given up: a run whose removals the bounds do not show still moves one disjunction
+            // per round. A complete solution re-tests, when a disjunct joins the base, only the
+            // disjunctions that share an atom with it. Tests:
+            // `l01_38_presburger::probe::twin_chains_of_absolute_values_scale`, COMPLEXITY.md row
+            // C47 (PROJECT-abs-chain-quadratic).
+            if drop_by_bounds(&mut p, &|_| false).is_none() {
+                return Ok(false);
+            }
+            let p = match settle(p, true)? {
+                None => return Ok(false),
+                Some(p) if p.ors.is_empty() => return Ok(true),
+                Some(p) => p,
+            };
+            let Some(kept) = kept.as_deref_mut() else {
+                return has_point(p);
+            };
+            if let Ok(m) = pick(&p, true) {
+                kept.extend(point_of_f(m));
+                return Ok(true);
+            }
+            let mut first = Vec::new();
+            let (probed, status) =
+                probe_kept_status(p, &mut first, true, false, true, &HashSet::new(), true);
+            immune = status;
+            let q = match probed {
+                Ok(None) => return Ok(false),
+                Ok(Some(q)) => q,
+                Err(why) => {
+                    if let Some(m) = first.pop() {
+                        kept.extend(point_of_f(m));
+                        return Ok(true);
+                    }
+                    return Err(why);
                 }
-                return Err(why);
+            };
+            match first.pop() {
+                // The probe ran to its end, as [`found`]'s does.
+                None => pick(&q, true).map(|m| {
+                    kept.extend(point_of_f(m));
+                    true
+                }),
+                // A point of the parts, so `f` has one ([`has_point`]); it is kept only where `f`
+                // holds at it once the atoms [`absorb`] projected away are given values.
+                Some(m) => {
+                    kept.extend(point_of_f(m));
+                    Ok(true)
+                }
             }
         };
-        match first.pop() {
-            // The probe ran to its end, as [`found`]'s does.
-            None => pick(&q, true).map(|m| {
-                kept.extend(point_of_f(m));
-                true
-            }),
-            // A point of the parts, so `f` has one ([`has_point`]); it is kept only where `f`
-            // holds at it once the atoms [`absorb`] projected away are given values.
-            Some(m) => {
-                kept.extend(point_of_f(m));
-                Ok(true)
-            }
+        if implied.is_empty() {
+            return ask(p, implied);
         }
-    };
-    if implied.is_empty() {
-        return ask(p, implied);
-    }
-    match ask(p, implied) {
-        Err(_) => ask(absorbed(f, &[]).0, Vec::new()),
-        r => r,
-    }
+        match ask(p, implied) {
+            Err(_) => ask(absorbed(f, &[]).0, Vec::new()),
+            r => r,
+        }
+    })();
+    (answer, immune)
 }
 
 /// The new name of `a` under the renaming `to` of [`Renamed`]; an atom not in it keeps its own,
@@ -4441,255 +4456,286 @@ fn batched_prefix(p: Parts, points: &mut Vec<Model>) -> Result<Option<Parts>, Re
 /// atoms' values [`forest_domains`] finds exactly, whose hulls no disjunct left without a
 /// point widens.
 fn probe_kept(
-    mut p: Parts,
+    p: Parts,
     points: &mut Vec<Model>,
     stop: bool,
     batched: bool,
     tests: bool,
     kept: &HashSet<u64>,
 ) -> Result<Option<Parts>, Refusal> {
-    // The bounds on single atoms that the formula implies, found by [`learn`]. The formula
-    // only gains constraints or stays equal from round to round, so they hold to the end.
-    let mut implied = Near::default();
-    loop {
-        // The disjuncts the bounds of single atoms leave without a point are removed first,
-        // all in one pass ([`drop_by_bounds`]), not each by a propagation of its own below.
-        let mut changed = match drop_by_bounds(&mut p, &|d| kept.contains(&d.id())) {
-            None => return Ok(None),
-            Some(c) => c,
-        };
-        // For each disjunct of each disjunction, whether a point found so far holds it or it
-        // is kept untested.
-        let mut held: Vec<Vec<bool>> = p
-            .ors
-            .iter()
-            .map(|o| {
-                o.iter()
-                    .map(|d| kept.contains(&d.id()) || points.iter().any(|m| d.holds(m)))
-                    .collect()
-            })
-            .collect();
-        let (order, links) = private_links(&p);
-        // The bounds of single atoms that the top-level constraints write, read by
-        // [`refuted_by_links`].
-        let mut base = Near::default();
-        take(&p.cons, &mut Linked::default(), &mut base);
-        // For each disjunct, whether the search with it forced found no point ([`search_by_halves`]).
-        let mut single_failed: Vec<Vec<bool>> =
-            p.ors.iter().map(|o| vec![false; o.len()]).collect();
-        // The points this round has found so far; with `stop`, the first one ends the probe.
-        let before = points.len();
-        let (order, links) = if !batched {
-            (order, links)
-        } else {
-            // The tests that ask no search remove their disjuncts first, so that the
-            // batched searches below do not force a disjunct with no point.
-            for &i in &order {
-                let ds = std::mem::take(&mut p.ors[i]);
-                let hs = std::mem::take(&mut held[i]);
-                let n = ds.len();
-                let mut keep = Vec::with_capacity(n);
-                let mut keep_held = Vec::with_capacity(n);
-                for (at, (d, h)) in ds.into_iter().zip(hs).enumerate() {
-                    if !h
-                        && (implied.refutes(&d.cons)
-                            || refuted_by_links(&p, &links[i][at], &base, &d))
-                    {
-                        continue;
-                    }
-                    keep.push(d);
-                    keep_held.push(h);
-                }
-                changed |= keep.len() < n;
-                if keep.is_empty() {
-                    return Ok(None);
-                }
-                p.ors[i] = keep;
-                held[i] = keep_held;
-            }
-            private_links(&p)
-        };
-        let slack_idx = slack::SlackIndex::of(&p.cons, &implied, &p.ors);
-        let (stopped_early, all_probes_checked) = match &slack_idx {
-            Some(si) => slack::find_probe_points(si, &p, &order, &mut held, &implied, stop, points),
-            None => (false, false),
-        };
-        if stopped_early {
-            return Ok(Some(p));
-        }
-        let (order, links) = if !batched {
-            if all_probes_checked {
-                for (sf, hs) in single_failed.iter_mut().zip(&held) {
-                    for (f, &h) in sf.iter_mut().zip(hs) {
-                        if !h {
-                            *f = true;
-                        }
-                    }
-                }
-            }
-            (order, links)
-        } else {
-            let sbh_failed =
-                search_by_halves(&p, &mut held, points, &implied, stop, !all_probes_checked);
-            if (stop && points.len() > before) || !tests {
-                return Ok(Some(p));
-            }
-            if all_probes_checked {
-                for (sf, hs) in single_failed.iter_mut().zip(&held) {
-                    for (f, &h) in sf.iter_mut().zip(hs) {
-                        if !h {
-                            *f = true;
-                        }
-                    }
-                }
+    probe_kept_status(p, points, stop, batched, tests, kept, false).0
+}
+
+fn probe_kept_status(
+    mut p: Parts,
+    points: &mut Vec<Model>,
+    stop: bool,
+    batched: bool,
+    tests: bool,
+    kept: &HashSet<u64>,
+    report_immunity: bool,
+) -> (Result<Option<Parts>, Refusal>, bool) {
+    let mut immune = false;
+    let answer = (|| {
+        // The bounds on single atoms that the formula implies, found by [`learn`]. The formula
+        // only gains constraints or stays equal from round to round, so they hold to the end.
+        let mut implied = Near::default();
+        loop {
+            // The disjuncts the bounds of single atoms leave without a point are removed first,
+            // all in one pass ([`drop_by_bounds`]), not each by a propagation of its own below.
+            let mut changed = match drop_by_bounds(&mut p, &|d| kept.contains(&d.id())) {
+                None => return Ok(None),
+                Some(c) => c,
+            };
+            // For each disjunct of each disjunction, whether a point found so far holds it or it
+            // is kept untested.
+            let mut held: Vec<Vec<bool>> = p
+                .ors
+                .iter()
+                .map(|o| {
+                    o.iter()
+                        .map(|d| kept.contains(&d.id()) || points.iter().any(|m| d.holds(m)))
+                        .collect()
+                })
+                .collect();
+            let (order, links) = private_links(&p);
+            // The bounds of single atoms that the top-level constraints write, read by
+            // [`refuted_by_links`].
+            let mut base = Near::default();
+            take(&p.cons, &mut Linked::default(), &mut base);
+            // For each disjunct, whether the search with it forced found no point ([`search_by_halves`]).
+            let mut single_failed: Vec<Vec<bool>> =
+                p.ors.iter().map(|o| vec![false; o.len()]).collect();
+            // The points this round has found so far; with `stop`, the first one ends the probe.
+            let before = points.len();
+            let (order, links) = if !batched {
+                (order, links)
             } else {
-                single_failed = sbh_failed;
-            }
-            private_links(&p)
-        };
-        for i in order {
-            let ds = std::mem::take(&mut p.ors[i]);
-            let flags = std::mem::take(&mut held[i]);
-            // The points found while this disjunction is tested, which its flags do not count.
-            let since = points.len();
-            let n = ds.len();
-            let mut live = Vec::with_capacity(n);
-            let mut live_held = Vec::with_capacity(n);
-            for (at, (d, h)) in ds.iter().zip(flags).enumerate() {
-                let d = d.clone();
-                if h || points[since..].iter().any(|m| d.holds(m)) {
-                    live.push(d);
-                    live_held.push(true);
-                    continue;
-                }
-                if implied.refutes(&d.cons) {
-                    continue;
-                }
-                if refuted_by_links(&p, &links[i][at], &base, &d) {
-                    continue;
-                }
-                let slack_status = slack_idx.as_ref().map(|si| si.classify(&d));
-                if slack_status == Some(slack::SlackStatus::Refuted) {
-                    let rest: Vec<Rc<Parts>> = live.iter().chain(&ds[at + 1..]).cloned().collect();
-                    learn(&p, rest, &d, &mut implied);
-                    continue;
-                }
-                if slack_status == Some(slack::SlackStatus::Immune) && all_probes_checked {
-                    live.push(d);
-                    live_held.push(false);
-                    continue;
-                }
-                // A disjunct whose forced search already failed in [`search_by_halves`] is not searched
-                // forward again; the propagation and the backward search below still test it.
-                let mut point = if single_failed[i][at] {
-                    None
-                } else {
-                    point_with(&p, &held, &d, &implied, false)
-                };
-                if point.is_none() {
-                    if slack_status != Some(slack::SlackStatus::Immune) {
-                        // Complexity tradeoff: a disjunct that no point holds, no implied bound and
-                        // no linked test ([`refuted_by_links`]) removes is still tested by one
-                        // propagation of all the parts, so `r` such
-                        // disjuncts cost `r` propagations of the whole formula, and failed-literal
-                        // probing is polynomial, not `O(n log n)`, when `r` grows with `n` and the
-                        // disjuncts share no bound of one atom that [`learn`] finds. Why: `settle`
-                        // does not report which disjuncts its proof covers, and an undoable
-                        // (trail-based) propagation does not help, since on a chain each refutation's
-                        // own propagation runs through the whole chain. Each refuted disjunct also
-                        // costs [`learn`]: for each bound of one atom it writes, an exponential and a
-                        // binary search over the `m` bounds the other disjuncts write on that atom, up
-                        // to about `2 log2 m + 1` tests, each one [`bounds_refute`] (one propagation
-                        // of bounds, `O(n log n)`) and, when that does not refute, one `settle`. The
-                        // search usually ends on a bound that has a point, and that test always costs
-                        // a `settle`. So when no learned bound removes a later disjunct, `r` refuted
-                        // disjuncts cost up to `O(r log m)` settles, not `r` (verifier's counters:
-                        // `guards_beyond_the_inputs_scale` 5 calls of `learn` and 16 settles in them,
-                        // cross 2 and 2). Trigger: disjuncts without a point whose proofs
-                        // differ by more than a bound of one atom. Tests:
-                        // `l01_25_preimage_catalog::s22::chains_on_two_inputs_keep_their_boxes`
-                        // reaches it (cross at `k = 51`); `chain_cross_above_its_width_scales` (cross
-                        // at 12 and 96, COMPLEXITY.md S22: 40.0 times the bytes with one propagation
-                        // per disjunct, 10.1 times now) and
-                        // `l01_38_presburger::probe::guards_beyond_the_inputs_scale` measure it. A
-                        // complete solution is a `settle` that returns, with each refutation, the
-                        // constraints its proof used (a conflict explanation), so that one propagation
-                        // removes every disjunct those constraints exclude. The linked test is that
-                        // explanation for the case where it is one disjunction reached through a
-                        // private atom; it costs at most one more `settle` of a part of the formula
-                        // before the one of the whole, so the worst case stays `O(n)` per disjunct.
-                        // Tests: `l01_38_presburger::ladder::a_chain_of_guarded_remainders_scales`
-                        // (COMPLEXITY.md PRES-guarded-chain). When `SlackIndex` certifies
-                        // `SlackStatus::Immune`, fixing `d` leaves every other variable's projected
-                        // interval unchanged so `settle` removes zero disjuncts and is skipped in
-                        // `O(1)`.
-                        let mut q = Parts {
-                            cons: p.cons.clone(),
-                            ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
-                            atoms: OnceCell::new(),
-                            hull: OnceCell::new(),
-                            failed: Cell::new(0),
-                            id: Cell::new(0),
-                        };
-                        q.put(&d);
-                        if matches!(settle(q, false), Ok(None)) {
-                            // The disjunction without `d`, which the formula is equal to without it.
-                            let rest: Vec<Rc<Parts>> =
-                                live.iter().chain(&ds[at + 1..]).cloned().collect();
-                            learn(&p, rest, &d, &mut implied);
+                // The tests that ask no search remove their disjuncts first, so that the
+                // batched searches below do not force a disjunct with no point.
+                for &i in &order {
+                    let ds = std::mem::take(&mut p.ors[i]);
+                    let hs = std::mem::take(&mut held[i]);
+                    let n = ds.len();
+                    let mut keep = Vec::with_capacity(n);
+                    let mut keep_held = Vec::with_capacity(n);
+                    for (at, (d, h)) in ds.into_iter().zip(hs).enumerate() {
+                        if !h
+                            && (implied.refutes(&d.cons)
+                                || refuted_by_links(&p, &links[i][at], &base, &d))
+                        {
                             continue;
                         }
+                        keep.push(d);
+                        keep_held.push(h);
                     }
-                    // A disjunct the propagation leaves is searched again with the
-                    // disjunctions read in the other order: [`pick`] reads the last first, and
-                    // on a chain of definitions written first to last (each stage of
-                    // `n1 = if n0 < 2 {..} else {..}`, `n2 = ..`) a stage chosen first fixes
-                    // a value that a stage read later defines otherwise, so the search is
-                    // refused on every disjunct and each of them costs a propagation of the
-                    // whole formula. Read from the first, each stage is chosen after the stages
-                    // that define its inputs, and the point found holds many disjuncts, which
-                    // are then kept unasked. Only a disjunct the propagation leaves pays the
-                    // second search, so none is added for a disjunct removed (item
-                    // PREIMAGE-slow-rounds). The disjuncts removed are those without a point,
-                    // as before; a point only spares a question.
-                    if !all_probes_checked {
-                        point = point_with(&p, &held, &d, &implied, true);
+                    changed |= keep.len() < n;
+                    if keep.is_empty() {
+                        return Ok(None);
+                    }
+                    p.ors[i] = keep;
+                    held[i] = keep_held;
+                }
+                private_links(&p)
+            };
+            let slack_idx = slack::SlackIndex::of(&p.cons, &implied, &p.ors);
+            let (stopped_early, all_probes_checked) = match &slack_idx {
+                Some(si) => {
+                    slack::find_probe_points(si, &p, &order, &mut held, &implied, stop, points)
+                }
+                None => (false, false),
+            };
+            if stopped_early {
+                return Ok(Some(p));
+            }
+            let (order, links) = if !batched {
+                if all_probes_checked {
+                    for (sf, hs) in single_failed.iter_mut().zip(&held) {
+                        for (f, &h) in sf.iter_mut().zip(hs) {
+                            if !h {
+                                *f = true;
+                            }
+                        }
                     }
                 }
-                let Some(m) = point else {
-                    live.push(d);
-                    live_held.push(false);
-                    continue;
-                };
-                if stop {
-                    points.push(m);
-                    p.ors[i] = ds;
+                (order, links)
+            } else {
+                let sbh_failed =
+                    search_by_halves(&p, &mut held, points, &implied, stop, !all_probes_checked);
+                if (stop && points.len() > before) || !tests {
                     return Ok(Some(p));
                 }
-                for (o, hs) in p.ors.iter().zip(held.iter_mut()) {
-                    for (e, h) in o.iter().zip(hs.iter_mut()) {
-                        *h = *h || e.holds(&m);
+                if all_probes_checked {
+                    for (sf, hs) in single_failed.iter_mut().zip(&held) {
+                        for (f, &h) in sf.iter_mut().zip(hs) {
+                            if !h {
+                                *f = true;
+                            }
+                        }
                     }
+                } else {
+                    single_failed = sbh_failed;
                 }
-                points.push(m);
-                live.push(d);
-                live_held.push(true);
+                private_links(&p)
+            };
+            for i in order {
+                let ds = std::mem::take(&mut p.ors[i]);
+                let flags = std::mem::take(&mut held[i]);
+                // The points found while this disjunction is tested, which its flags do not count.
+                let since = points.len();
+                let n = ds.len();
+                let mut live = Vec::with_capacity(n);
+                let mut live_held = Vec::with_capacity(n);
+                for (at, (d, h)) in ds.iter().zip(flags).enumerate() {
+                    let d = d.clone();
+                    if h || points[since..].iter().any(|m| d.holds(m)) {
+                        live.push(d);
+                        live_held.push(true);
+                        continue;
+                    }
+                    if implied.refutes(&d.cons) {
+                        continue;
+                    }
+                    if refuted_by_links(&p, &links[i][at], &base, &d) {
+                        continue;
+                    }
+                    let slack_status = slack_idx.as_ref().map(|si| si.classify(&d));
+                    if slack_status == Some(slack::SlackStatus::Refuted) {
+                        let rest: Vec<Rc<Parts>> =
+                            live.iter().chain(&ds[at + 1..]).cloned().collect();
+                        learn(&p, rest, &d, &mut implied);
+                        continue;
+                    }
+                    if slack_status == Some(slack::SlackStatus::Immune) && all_probes_checked {
+                        live.push(d);
+                        live_held.push(false);
+                        continue;
+                    }
+                    // A disjunct whose forced search already failed in [`search_by_halves`] is not searched
+                    // forward again; the propagation and the backward search below still test it.
+                    let mut point = if single_failed[i][at] {
+                        None
+                    } else {
+                        point_with(&p, &held, &d, &implied, false)
+                    };
+                    if point.is_none() {
+                        if slack_status != Some(slack::SlackStatus::Immune) {
+                            // Complexity tradeoff: a disjunct that no point holds, no implied bound and
+                            // no linked test ([`refuted_by_links`]) removes is still tested by one
+                            // propagation of all the parts, so `r` such
+                            // disjuncts cost `r` propagations of the whole formula, and failed-literal
+                            // probing is polynomial, not `O(n log n)`, when `r` grows with `n` and the
+                            // disjuncts share no bound of one atom that [`learn`] finds. Why: `settle`
+                            // does not report which disjuncts its proof covers, and an undoable
+                            // (trail-based) propagation does not help, since on a chain each refutation's
+                            // own propagation runs through the whole chain. Each refuted disjunct also
+                            // costs [`learn`]: for each bound of one atom it writes, an exponential and a
+                            // binary search over the `m` bounds the other disjuncts write on that atom, up
+                            // to about `2 log2 m + 1` tests, each one [`bounds_refute`] (one propagation
+                            // of bounds, `O(n log n)`) and, when that does not refute, one `settle`. The
+                            // search usually ends on a bound that has a point, and that test always costs
+                            // a `settle`. So when no learned bound removes a later disjunct, `r` refuted
+                            // disjuncts cost up to `O(r log m)` settles, not `r` (verifier's counters:
+                            // `guards_beyond_the_inputs_scale` 5 calls of `learn` and 16 settles in them,
+                            // cross 2 and 2). Trigger: disjuncts without a point whose proofs
+                            // differ by more than a bound of one atom. Tests:
+                            // `l01_25_preimage_catalog::s22::chains_on_two_inputs_keep_their_boxes`
+                            // reaches it (cross at `k = 51`); `chain_cross_above_its_width_scales` (cross
+                            // at 12 and 96, COMPLEXITY.md S22: 40.0 times the bytes with one propagation
+                            // per disjunct, 10.1 times now) and
+                            // `l01_38_presburger::probe::guards_beyond_the_inputs_scale` measure it. A
+                            // complete solution is a `settle` that returns, with each refutation, the
+                            // constraints its proof used (a conflict explanation), so that one propagation
+                            // removes every disjunct those constraints exclude. The linked test is that
+                            // explanation for the case where it is one disjunction reached through a
+                            // private atom; it costs at most one more `settle` of a part of the formula
+                            // before the one of the whole, so the worst case stays `O(n)` per disjunct.
+                            // Tests: `l01_38_presburger::ladder::a_chain_of_guarded_remainders_scales`
+                            // (COMPLEXITY.md PRES-guarded-chain). When `SlackIndex` certifies
+                            // `SlackStatus::Immune`, fixing `d` leaves every other variable's projected
+                            // interval unchanged so `settle` removes zero disjuncts and is skipped in
+                            // `O(1)`.
+                            let mut q = Parts {
+                                cons: p.cons.clone(),
+                                ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
+                                atoms: OnceCell::new(),
+                                hull: OnceCell::new(),
+                                failed: Cell::new(0),
+                                id: Cell::new(0),
+                            };
+                            q.put(&d);
+                            if matches!(settle(q, false), Ok(None)) {
+                                // The disjunction without `d`, which the formula is equal to without it.
+                                let rest: Vec<Rc<Parts>> =
+                                    live.iter().chain(&ds[at + 1..]).cloned().collect();
+                                learn(&p, rest, &d, &mut implied);
+                                continue;
+                            }
+                        }
+                        // A disjunct the propagation leaves is searched again with the
+                        // disjunctions read in the other order: [`pick`] reads the last first, and
+                        // on a chain of definitions written first to last (each stage of
+                        // `n1 = if n0 < 2 {..} else {..}`, `n2 = ..`) a stage chosen first fixes
+                        // a value that a stage read later defines otherwise, so the search is
+                        // refused on every disjunct and each of them costs a propagation of the
+                        // whole formula. Read from the first, each stage is chosen after the stages
+                        // that define its inputs, and the point found holds many disjuncts, which
+                        // are then kept unasked. Only a disjunct the propagation leaves pays the
+                        // second search, so none is added for a disjunct removed (item
+                        // PREIMAGE-slow-rounds). The disjuncts removed are those without a point,
+                        // as before; a point only spares a question.
+                        if !all_probes_checked {
+                            point = point_with(&p, &held, &d, &implied, true);
+                        }
+                    }
+                    let Some(m) = point else {
+                        live.push(d);
+                        live_held.push(false);
+                        continue;
+                    };
+                    if stop {
+                        points.push(m);
+                        p.ors[i] = ds;
+                        return Ok(Some(p));
+                    }
+                    for (o, hs) in p.ors.iter().zip(held.iter_mut()) {
+                        for (e, h) in o.iter().zip(hs.iter_mut()) {
+                            *h = *h || e.holds(&m);
+                        }
+                    }
+                    points.push(m);
+                    live.push(d);
+                    live_held.push(true);
+                }
+                changed |= live.len() < n;
+                if live.is_empty() {
+                    return Ok(None);
+                }
+                p.ors[i] = live;
+                held[i] = live_held;
             }
-            changed |= live.len() < n;
-            if live.is_empty() {
-                return Ok(None);
+            if !changed {
+                // I22: return the same summary that justified skipping settle above. No
+                // thread-local result channel connects this probe to a later hull question.
+                immune = report_immunity
+                    && !HULL_BISECT.with(Cell::get)
+                    && !HULL_NO_IMMUNITY.with(Cell::get)
+                    && slack_idx.as_ref().is_some_and(|si| {
+                        p.ors.iter().zip(&held).all(|(ds, hs)| {
+                            ds.iter()
+                                .zip(hs)
+                                .all(|(d, h)| *h || si.classify(d) == slack::SlackStatus::Immune)
+                        })
+                    });
+                return Ok(Some(p));
             }
-            p.ors[i] = live;
-            held[i] = live_held;
+            match settle(p, false)? {
+                None => return Ok(None),
+                Some(q) => p = q,
+            }
         }
-        if !changed {
-            return Ok(Some(p));
-        }
-        match settle(p, false)? {
-            None => return Ok(None),
-            Some(q) => p = q,
-        }
-    }
+    })();
+    (answer, immune)
 }
 
 /// After [`probe`] has found that the disjunct `d` of its parts `p` has no point, tests each
@@ -6410,6 +6456,77 @@ fn repair(m: &mut Model, gone: &[(Atom, Vec<Con>)]) {
     }
 }
 
+/// Negative control for the unary-drain queue; retained for differential tests.
+fn drain_unary_rescan(ors: &mut Vec<Vec<Rc<Parts>>>, base: &mut Linked, near: &mut Near) -> bool {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut rem = Vec::with_capacity(ors.len());
+        for mut ds in mem::take(ors) {
+            match ds.len() {
+                0 => return false,
+                1 if ds[0].cons.iter().all(|c| c.lin.terms.len() <= 1) => {
+                    let d = ds.pop().expect("one");
+                    take(&d.cons, base, near);
+                    rem.extend(d.ors.iter().cloned());
+                    changed = true;
+                }
+                _ => rem.push(ds),
+            }
+        }
+        *ors = rem;
+    }
+    true
+}
+
+// Complexity tradeoff: repeatedly scanning every retained disjunction while unary
+// singleton nests drain costs O(R*L) for R survivors beside L nested singleton levels (I23).
+// A breadth-first arena visits each expanded disjunction once; a final ordered walk emits
+// survivors. O(N) queue/arena work and storage, plus the unchanged indexed `take` work.
+// Breadth-first absorption and the final survivor order are exactly the old round order.
+fn drain_unary(ors: &mut Vec<Vec<Rc<Parts>>>, base: &mut Linked, near: &mut Near) -> bool {
+    struct Node {
+        ds: Option<Vec<Rc<Parts>>>,
+        children: std::ops::Range<usize>,
+    }
+    let roots = ors.len();
+    let mut arena: Vec<Node> = mem::take(ors)
+        .into_iter()
+        .map(|ds| Node {
+            ds: Some(ds),
+            children: 0..0,
+        })
+        .collect();
+    let mut at = 0;
+    while at < arena.len() {
+        let ds = arena[at].ds.as_mut().expect("unvisited");
+        if ds.is_empty() {
+            return false;
+        }
+        if ds.len() == 1 && ds[0].cons.iter().all(|c| c.lin.terms.len() <= 1) {
+            let d = ds.pop().expect("one");
+            take(&d.cons, base, near);
+            arena[at].ds = None;
+            let start = arena.len();
+            arena.extend(d.ors.iter().cloned().map(|ds| Node {
+                ds: Some(ds),
+                children: 0..0,
+            }));
+            arena[at].children = start..arena.len();
+        }
+        at += 1;
+    }
+    let mut stack: Vec<usize> = (0..roots).rev().collect();
+    while let Some(i) = stack.pop() {
+        if let Some(ds) = arena[i].ds.take() {
+            ors.push(ds);
+        } else {
+            stack.extend(arena[i].children.clone().rev());
+        }
+    }
+    true
+}
+
 /// The parts' base and disjunctions once no disjunct can be removed, or `None` when they have
 /// no point. A disjunct is removed when its top-level constraints meet the base nowhere; a
 /// disjunction left with one disjunct adds it to the base. Each round but the last removes a
@@ -6470,23 +6587,13 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
         // semantics because unary bounds never widen row arity or introduce eliminations. Test:
         // `l01_38_presburger::slack_scale::ss_decide_scales`.
         if !slack::no_slack() {
-            let mut unit_drained = true;
-            while unit_drained {
-                unit_drained = false;
-                let mut rem = Vec::with_capacity(p.ors.len());
-                for mut ds in std::mem::take(&mut p.ors) {
-                    match ds.len() {
-                        0 => return Ok(None),
-                        1 if ds[0].cons.iter().all(|c| c.lin.terms.len() <= 1) => {
-                            let d = ds.pop().expect("one");
-                            take(&d.cons, &mut base, &mut near);
-                            rem.extend(d.ors.iter().cloned());
-                            unit_drained = true;
-                        }
-                        _ => rem.push(ds),
-                    }
-                }
-                p.ors = rem;
+            let drained = if UNIT_RESCAN.with(Cell::get) {
+                drain_unary_rescan(&mut p.ors, &mut base, &mut near)
+            } else {
+                drain_unary(&mut p.ors, &mut base, &mut near)
+            };
+            if !drained {
+                return Ok(None);
             }
         }
         // A point of the base serves only to keep, unasked, the disjuncts that meet the base,
@@ -10441,6 +10548,14 @@ thread_local! {
     /// Whether [`factored`] takes no part out, so that [`project_each`] and [`decide`] ask
     /// every formula as it is written: for the tests that compare the two (ST-formula-sibling).
     pub static UNFACTORED: Cell<bool> = const { Cell::new(false) };
+    /// Test control: retain full global-order scans in the two I23 row paths.
+    pub static ROW_ORDER_SCAN: Cell<bool> = const { Cell::new(false) };
+    /// Test control: retain the repeated survivor scans of the I23 unary drain.
+    pub static UNIT_RESCAN: Cell<bool> = const { Cell::new(false) };
+    /// Test control: retain hull bisection without the I22 endpoint shortcuts.
+    pub static HULL_BISECT: Cell<bool> = const { Cell::new(false) };
+    /// Test control: use gap jumps but ignore the returned endpoint-immunity certificate.
+    pub static HULL_NO_IMMUNITY: Cell<bool> = const { Cell::new(false) };
     /// Whether the summaries of module `slack` (wide-row slack, laminar subtraction, the
     /// greedy subset-sum walk, the forced search of one disjunction) are left unused, so that
     /// every question takes the path it takes without them: for the tests that compare the
@@ -11945,16 +12060,34 @@ fn project_parts(
         // 1063, 2992; I21). Test:
         // `l01_38_presburger::disj_groups::a_hull_question_refused_with_the_removals_by_bounds_is_asked_without_them`.
         let ask: Ask = if sets {
-            |f, _| without_bounds(|| decide(f), || decide(f))
+            |f, _| {
+                let answer = without_bounds(|| decide(f), || decide(f));
+                let immune = answer.is_err()
+                    && !HULL_BISECT.with(Cell::get)
+                    && !HULL_NO_IMMUNITY.with(Cell::get)
+                    && hull_immunity(f);
+                (answer, immune)
+            }
         } else {
             |f, kept| {
-                let mut more = Vec::new();
-                let r = without_bounds(
-                    || decide_kept(f, Some(kept)),
-                    || decide_kept(f, Some(&mut more)),
-                );
-                kept.append(&mut more);
-                r
+                let first = decide_kept_status(f, Some(kept));
+                if first.0.is_err() && !BOUNDLESS.with(Cell::get) {
+                    let mut more = Vec::new();
+                    let second = BOUNDLESS.with(|mode| {
+                        let was = mode.replace(true);
+                        let r = decide_kept_status(f, Some(&mut more));
+                        mode.set(was);
+                        r
+                    });
+                    kept.append(&mut more);
+                    if second.0.is_ok() {
+                        second
+                    } else {
+                        (first.0, first.1 && second.1)
+                    }
+                } else {
+                    first
+                }
             }
         };
         tighten_each(f, syms, &ks, &open, &mut out, &implied, ask);
@@ -12107,7 +12240,32 @@ fn summarize(cons: &[Con], seen: &[Option<Vec<Projected>>], syms: &[Atom]) -> Fo
 
 /// A question of [`tighten_each`]: whether a formula has a point, [`decide_kept`] adding to
 /// the list a point of the formula it finds, or [`decide`], which adds none.
-type Ask = fn(&Formula, &mut Vec<Model>) -> Result<bool, Refusal>;
+type Ask = fn(&Formula, &mut Vec<Model>) -> (Result<bool, Refusal>, bool);
+
+/// The tied residual's immunity certificate, returned to the hull caller.
+// Complexity tradeoff: naive bisection asks O(log W) whole decision questions after an
+// immune refusal. The untied path returns its certificate from the actual probe; the
+// tied path replays its canonical settle once and scans the residual, one extra tied
+// settle plus O(n log n) summary work instead of O(log W) full questions. Keeping an
+// endpoint is sound; preservation of heuristic tightening is tested separately (I9).
+fn hull_immunity(f: &Formula) -> bool {
+    let Naming::Tied(_, color) = Renamed::of(f) else {
+        return false;
+    };
+    let Ok(Settled::Left(p)) = settle_tied(f, &color, false) else {
+        return false;
+    };
+    let mut cons = p.cons.clone();
+    cons.extend(disjunction_hulls(&p.ors, &mut DeepHulls::default()));
+    let Some(si) = slack::SlackIndex::of(&cons, &Near::default(), &p.ors) else {
+        return false;
+    };
+    !p.ors.is_empty()
+        && p.ors
+            .iter()
+            .flatten()
+            .all(|d| si.classify(d) == slack::SlackStatus::Immune)
+}
 
 /// Each hull of `out` at the places `ks` (the projection of `f` onto the symbol of `syms` at
 /// its place) with each finite bound raised or lowered by bisection to the nearest value at
@@ -12456,7 +12614,7 @@ impl Hull {
         if self.seed() {
             return Ok(true);
         }
-        let r = (self.ask)(&self.f, &mut self.found);
+        let r = (self.ask)(&self.f, &mut self.found).0;
         self.read_found();
         self.has = matches!(r, Ok(true));
         r
@@ -12490,8 +12648,12 @@ impl Hull {
     /// point of that formula is one of `f`, so `true` shows that `f` has a point (`has`), even
     /// where `ask` gives none ([`decide`] with `sets`) and where `ask` refuses `f` itself.
     fn asked(&mut self, i: usize, below: bool, v: &Int) -> Result<bool, Refusal> {
+        self.asked_status(i, below, v).0
+    }
+
+    fn asked_status(&mut self, i: usize, below: bool, v: &Int) -> (Result<bool, Refusal>, bool) {
         let con = self.side(i, below, v);
-        let r = (self.ask)(
+        let (r, immune) = (self.ask)(
             &Formula::and(vec![self.f.clone(), Formula::Con(con)]),
             &mut self.found,
         );
@@ -12510,7 +12672,7 @@ impl Hull {
             Err(_) => {}
         }
         self.read_found();
-        r
+        (r, immune)
     }
 
     /// Whether the answers of [`Hull::asked`] show that `f` has no point: for some symbol, `f`
@@ -12612,88 +12774,103 @@ impl Hull {
         // a point, so the steps end, after about `log2 w` questions with `w` the distance from
         // the end to the nearest value of the symbol at a point.
         if (lo.is_none() || hi.is_none()) && self.seen[i].is_none() && !self.has {
-            match (self.ask)(&self.f, &mut self.found) {
+            match (self.ask)(&self.f, &mut self.found).0 {
                 Ok(true) => self.has = true,
                 Ok(false) => return IntervalSet::empty(),
                 Err(_) => return set,
             }
             self.read_found();
         }
+        // Complexity tradeoff: bisection asks O(log W) whole decision questions even
+        // across a two-point domain's empty gap. Endpoint refutation jumps to the other
+        // point in O(1) questions. Immune endpoint refusals use returned status only.
+        let two_point = !HULL_BISECT.with(Cell::get) && {
+            let mut ps = set.pieces();
+            matches!((ps.next(), ps.next(), ps.next()),
+                (Some((End::Fin(l0), End::Fin(h0))), Some((End::Fin(l1), End::Fin(h1))), None)
+                    if l0 == h0 && l1 == h1)
+        };
         // The least `v` from `lo` with no proof that `f` has no point where the symbol is at
         // most `v`, and the greatest down to it with none where it is at least `v`.
         let new_lo = match lo {
             None => None,
-            Some(lo)
-                if self.at_end(i, true, &lo) || matches!(self.asked(i, true, &lo), Ok(true)) =>
-            {
-                Some(lo)
-            }
-            Some(lo) => {
-                let top = hi
-                    .clone()
-                    .or_else(|| self.seen[i].as_ref().map(|s| s.0.clone()));
-                let (mut a, mut b) = match top {
-                    Some(top) => (lo, top),
-                    None => {
-                        let (mut a, mut step) = (lo, one.clone());
-                        loop {
-                            let v = &a + &step;
-                            if !self.none(i, true, &v) {
-                                break (a, v);
+            Some(lo) if self.at_end(i, true, &lo) => Some(lo),
+            Some(lo) => match self.asked_status(i, true, &lo) {
+                (Ok(true), _) | (Err(_), true) => Some(lo),
+                (Ok(false), _) if two_point => {
+                    let p1 = hi.clone().expect("two points have finite ends");
+                    if self.none(i, false, &p1) {
+                        return IntervalSet::empty();
+                    }
+                    Some(p1)
+                }
+                _ => {
+                    let top = hi
+                        .clone()
+                        .or_else(|| self.seen[i].as_ref().map(|s| s.0.clone()));
+                    let (mut a, mut b) = match top {
+                        Some(top) => (lo, top),
+                        None => {
+                            let (mut a, mut step) = (lo, one.clone());
+                            loop {
+                                let v = &a + &step;
+                                if !self.none(i, true, &v) {
+                                    break (a, v);
+                                }
+                                a = &v + &one;
+                                step = &step * &two;
                             }
-                            a = &v + &one;
-                            step = &step * &two;
+                        }
+                    };
+                    while a < b {
+                        let mid = &a + &(&b - &a).div_floor(&two);
+                        if self.none(i, true, &mid) {
+                            a = &mid + &one
+                        } else {
+                            b = mid
                         }
                     }
-                };
-                while a < b {
-                    let mid = &a + &(&b - &a).div_floor(&two);
-                    if self.none(i, true, &mid) {
-                        a = &mid + &one
-                    } else {
-                        b = mid
+                    if self.none(i, true, &a) {
+                        return IntervalSet::empty();
                     }
+                    Some(a)
                 }
-                if self.none(i, true, &a) {
-                    return IntervalSet::empty();
-                }
-                Some(a)
-            }
+            },
         };
         let new_hi = match hi {
             None => None,
-            Some(hi)
-                if self.at_end(i, false, &hi) || matches!(self.asked(i, false, &hi), Ok(true)) =>
-            {
-                Some(hi)
-            }
-            Some(hi) => {
-                let bottom =
-                    (new_lo.clone()).or_else(|| self.seen[i].as_ref().map(|s| s.1.clone()));
-                let (mut a, mut b) = match bottom {
-                    Some(bottom) => (bottom, hi),
-                    None => {
-                        let (mut b, mut step) = (hi, one.clone());
-                        loop {
-                            let v = &b - &step;
-                            if !self.none(i, false, &v) {
-                                break (v, b);
+            Some(hi) if self.at_end(i, false, &hi) => Some(hi),
+            Some(hi) => match self.asked_status(i, false, &hi) {
+                (Ok(true), _) | (Err(_), true) => Some(hi),
+                (Ok(false), _) if two_point => new_lo.clone(),
+                _ => {
+                    let bottom =
+                        (new_lo.clone()).or_else(|| self.seen[i].as_ref().map(|s| s.1.clone()));
+                    let (mut a, mut b) = match bottom {
+                        Some(bottom) => (bottom, hi),
+                        None => {
+                            let (mut b, mut step) = (hi, one.clone());
+                            loop {
+                                let v = &b - &step;
+                                if !self.none(i, false, &v) {
+                                    break (v, b);
+                                }
+                                b = &v - &one;
+                                step = &step * &two;
                             }
-                            b = &v - &one;
-                            step = &step * &two;
+                        }
+                    };
+                    while a < b {
+                        let mid = &b - &(&b - &a).div_floor(&two);
+                        if self.none(i, false, &mid) {
+                            b = &mid - &one
+                        } else {
+                            a = mid
                         }
                     }
-                };
-                while a < b {
-                    let mid = &b - &(&b - &a).div_floor(&two);
-                    if self.none(i, false, &mid) {
-                        b = &mid - &one
-                    } else {
-                        a = mid
-                    }
+                    Some(a)
                 }
-                Some(a)
-            }
+            },
         };
         if self.shown_empty() {
             return IntervalSet::empty();
@@ -12720,7 +12897,16 @@ impl Hull {
             let k = self.ks[i].0;
             if let Ok(s) = &out[k] {
                 let s = s.clone();
-                out[k] = Ok(self.tighten(i, s, open.get(&k).unwrap_or(&no)));
+                let narrowed = self.tighten(i, s, open.get(&k).unwrap_or(&no));
+                // An empty projection proves the entire group's relation empty, including
+                // when two endpoint refutations jump a gap and do not make adjacent cuts.
+                // Complexity tradeoff: one O(1) emptiness check shares that proof with every
+                // output instead of repeating all later hull questions, O(q*T_ask).
+                let empty = narrowed.is_empty();
+                out[k] = Ok(narrowed);
+                if empty {
+                    return true;
+                }
             }
         }
         self.shown_empty()
@@ -17852,5 +18038,85 @@ mod formula_hashes {
         assert_eq!(o.sig(), or(apart([0, 1])).sig());
         assert_ne!(a, o);
         assert_eq!(top, top_apart);
+    }
+}
+
+#[cfg(test)]
+mod r6_unary_queue_tests {
+    use super::*;
+    use crate::scaling;
+    use std::hint::black_box;
+
+    fn fixture(n: usize) -> Vec<Vec<Rc<Parts>>> {
+        let leaf = |i: usize| {
+            let mut p = Parts::default();
+            p.cons = vec![Con::ge(
+                &Lin::atom(Atom::Sym(format!("a{i}").into())),
+                &Lin::constant(i as i64),
+            )];
+            Rc::new(p)
+        };
+        let mut nested = leaf(2 * n);
+        for i in (n..2 * n).rev() {
+            let mut p = Parts::default();
+            p.cons = leaf(i).cons.clone();
+            p.ors = vec![vec![nested]];
+            nested = Rc::new(p);
+        }
+        let mut roots: Vec<_> = (0..n).map(|i| vec![leaf(i), leaf(i + 3 * n)]).collect();
+        roots.insert(n / 2, vec![nested]);
+        roots
+    }
+
+    #[test]
+    fn unary_queue_keeps_round_and_survivor_order() {
+        for n in [1, 8, 64] {
+            let mut a = fixture(n);
+            let mut b = a.clone();
+            let (mut ba, mut bb) = (Linked::default(), Linked::default());
+            let (mut na, mut nb) = (Near::default(), Near::default());
+            assert_eq!(
+                drain_unary(&mut a, &mut ba, &mut na),
+                drain_unary_rescan(&mut b, &mut bb, &mut nb)
+            );
+            assert_eq!(ba.cons, bb.cons);
+            assert_eq!(a.len(), b.len());
+            for (x, y) in a.iter().zip(&b) {
+                assert_eq!(x.len(), y.len());
+                for (u, v) in x.iter().zip(y) {
+                    assert!(Rc::ptr_eq(u, v));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unary_queue_scales() {
+        let red = std::env::var_os("PDCX_RED").is_some();
+        let mut counts = Vec::new();
+        for n in [64, 512, 4096] {
+            let mut p = fixture(n);
+            let mut base = Linked::default();
+            let mut near = Near::default();
+            UNIT_RESCAN.with(|c| c.set(red));
+            let mut meter = scaling::Meter::new();
+            let w = meter.work(|| {
+                let ok = if UNIT_RESCAN.with(Cell::get) {
+                    drain_unary_rescan(&mut p, &mut base, &mut near)
+                } else {
+                    drain_unary(&mut p, &mut base, &mut near)
+                };
+                assert!(black_box(ok));
+            });
+            UNIT_RESCAN.with(|c| c.set(false));
+            println!("R6DRAIN n={n} red={red} work={}", w.units);
+            counts.push(w.units as f64);
+        }
+        for (i, n) in [64, 512].into_iter().enumerate() {
+            let ratio = counts[i + 1] / counts[i];
+            let limit = scaling::limit(n, 8 * n, 1);
+            println!("R6DRAIN ratio={ratio} limit={limit}");
+            assert!(ratio <= limit, "unary drain: {ratio} > {limit}");
+        }
     }
 }

@@ -566,3 +566,33 @@ fn small_subset_sums_are_found_with_the_slack_probes() {
     let w: Vec<i64> = (0..7).map(|i| 799 + 3 * i).collect();
     assert_eq!(decide(&choice_sum(&w, 2412)), Ok(true));
 }
+
+/// I22: neither size has repeated weights. The old survivor's endpoint query was followed
+/// by logarithmically many whole-formula questions even though its probe was immune.
+#[test]
+fn untied_projection_uses_the_endpoint_report() {
+    let k = 64;
+    let small = subset_sum_dp(&weights_untied(k));
+    let large = subset_sum_dp(&weights_untied(8 * k));
+    let y0 = [sym("y0")];
+    let red = std::env::var_os("PDCX_RED").is_some();
+    scaling::check_order("I22 untied endpoint reports", k, 1, |m| {
+        zedc::store::presburger::HULL_BISECT.with(|c| c.set(red));
+        let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
+        assert!(got.0[0].as_ref().expect("set").contains(3000));
+        zedc::store::presburger::HULL_BISECT.with(|c| c.set(false));
+    });
+}
+
+/// I22's large tied path is checked independently of the first collision at k=497.
+#[test]
+fn tied_projection_endpoint_reports_scale_past_512() {
+    let k = 512;
+    let small = subset_sum_dp(&weights(k));
+    let large = subset_sum_dp(&weights(8 * k));
+    let y0 = [sym("y0")];
+    scaling::check_order("I22 tied endpoint reports", k, 1, |m| {
+        let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
+        assert_eq!(got.0[0], Ok(pt_set(&[1000])));
+    });
+}

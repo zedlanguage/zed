@@ -1522,6 +1522,29 @@ struct DisjInfo {
     weight: Int,
 }
 
+// Complexity tradeoff: filtering all K globally ordered atoms separately for R rows costs
+// O(R*K) lookups, even for R disjoint constant-width rows (I23). Index the global ranks
+// once in O(K), then sort only each row's m disjunct indices, O(m log m). Total O(K+M log M)
+// work and O(K+M) storage for M disjuncts; the exact ordered subsequence is unchanged.
+fn row_order(disjs: &[DisjInfo], ord_atoms: &[Atom], ranks: &HashMap<&Atom, usize>) -> Vec<usize> {
+    if super::ROW_ORDER_SCAN.with(Cell::get) {
+        let locs: HashMap<&Atom, usize> = disjs
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (&d.atom, i))
+            .collect();
+        return ord_atoms
+            .iter()
+            .filter_map(|a| locs.get(a).copied())
+            .collect();
+    }
+    let mut out: Vec<usize> = (0..disjs.len())
+        .filter(|&i| ranks.contains_key(&disjs[i].atom))
+        .collect();
+    out.sort_unstable_by_key(|&i| ranks[&disjs[i].atom]);
+    out
+}
+
 struct RowPlan {
     disjs: Vec<DisjInfo>,
     solve_ord: Vec<usize>,
@@ -2254,6 +2277,7 @@ pub(super) fn find_probe_points(
         }
     }
     let (ord_atoms, col_map) = colors(&solve_cons);
+    let ranks: HashMap<&Atom, usize> = ord_atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
 
     let mut plans: Vec<RowPlan> = Vec::with_capacity(num_rows);
     for (r_idx, disjs) in row_disjs.into_iter().enumerate() {
@@ -2270,17 +2294,7 @@ pub(super) fn find_probe_points(
             return (false, false);
         }
         if seen_cols.len() == disjs.len() {
-            let pos_map: HashMap<&Atom, usize> = disjs
-                .iter()
-                .enumerate()
-                .map(|(loc, d)| (&d.atom, loc))
-                .collect();
-            let mut solve_ord = Vec::with_capacity(disjs.len());
-            for a in &ord_atoms {
-                if let Some(&loc) = pos_map.get(a) {
-                    solve_ord.push(loc);
-                }
-            }
+            let solve_ord = row_order(&disjs, &ord_atoms, &ranks);
             let Some(plan) = sweep_row(disjs, solve_ord, row_targets[r_idx].clone()) else {
                 return (false, false);
             };
@@ -2864,6 +2878,7 @@ pub(super) fn try_pick_disjoint_wide<'a>(
         }
     }
     let (ord_atoms, col_map) = colors(&red_cons);
+    let ranks: HashMap<&Atom, usize> = ord_atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
 
     let mut states: Vec<PickRowState> = Vec::with_capacity(num_rows);
     let mut infeasible_base = false;
@@ -2893,17 +2908,7 @@ pub(super) fn try_pick_disjoint_wide<'a>(
         });
 
         if all_bounded && seen_cols.len() == k_r {
-            let pos_map: HashMap<&Atom, usize> = disjs
-                .iter()
-                .enumerate()
-                .map(|(loc, d)| (&d.atom, loc))
-                .collect();
-            let mut solve_ord = Vec::with_capacity(k_r);
-            for a in &ord_atoms {
-                if let Some(&loc) = pos_map.get(a) {
-                    solve_ord.push(loc);
-                }
-            }
+            let solve_ord = row_order(&disjs, &ord_atoms, &ranks);
             if solve_ord.len() != k_r {
                 return None;
             }
@@ -3385,5 +3390,67 @@ impl WidePointRepairer {
         }
 
         Some(Ok(()))
+    }
+}
+
+#[cfg(test)]
+mod r6_row_order_tests {
+    use super::*;
+    use crate::scaling;
+    use std::hint::black_box;
+
+    #[test]
+    fn disjoint_row_orders_scale_and_match() {
+        let red = std::env::var_os("PDCX_RED").is_some();
+        let mut counts = Vec::new();
+        for n in [64, 512, 4096] {
+            let atoms: Vec<Atom> = (0..4 * n)
+                .map(|i| Atom::Sym(format!("a{i}").into()))
+                .collect();
+            let rank: HashMap<&Atom, usize> =
+                atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
+            let rows: Vec<Vec<DisjInfo>> = (0..n)
+                .map(|r| {
+                    (0..4)
+                        .rev()
+                        .map(|j| DisjInfo {
+                            disj_idx: 4 * r + j,
+                            atom: atoms[4 * r + j].clone(),
+                            low_arm: 0,
+                            high_arm: 1,
+                            low_val: Int::ZERO,
+                            high_val: Int::ONE,
+                            weight: Int::ONE,
+                        })
+                        .collect()
+                })
+                .collect();
+            if n == 64 {
+                for row in &rows {
+                    super::super::ROW_ORDER_SCAN.with(|c| c.set(false));
+                    let fast = row_order(row, &atoms, &rank);
+                    super::super::ROW_ORDER_SCAN.with(|c| c.set(true));
+                    let slow = row_order(row, &atoms, &rank);
+                    assert_eq!(fast, slow);
+                    assert_eq!(fast, vec![3, 2, 1, 0]);
+                }
+            }
+            super::super::ROW_ORDER_SCAN.with(|c| c.set(red));
+            let mut meter = scaling::Meter::new();
+            let w = meter.work(|| {
+                for row in &rows {
+                    black_box(row_order(row, &atoms, &rank));
+                }
+            });
+            super::super::ROW_ORDER_SCAN.with(|c| c.set(false));
+            println!("R6ORDER n={n} red={red} work={}", w.units);
+            counts.push(w.units as f64);
+        }
+        for (i, n) in [64, 512].into_iter().enumerate() {
+            let ratio = counts[i + 1] / counts[i];
+            let limit = scaling::limit(n, 8 * n, 1);
+            println!("R6ORDER ratio={ratio} limit={limit}");
+            assert!(ratio <= limit, "row orders: {ratio} > {limit}");
+        }
     }
 }
