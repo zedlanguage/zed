@@ -19,6 +19,7 @@ mod group_oracle;
 mod group_refusal;
 mod judgments;
 mod listing;
+mod meet_join_oracle;
 mod one_pass;
 mod oracle;
 mod rec;

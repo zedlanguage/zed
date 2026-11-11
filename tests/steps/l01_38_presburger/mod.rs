@@ -37,6 +37,7 @@ mod oracle;
 mod preimage;
 mod probe;
 mod product_parity;
+mod projection_oracle;
 mod q1_local;
 pub(crate) mod random;
 mod repair;

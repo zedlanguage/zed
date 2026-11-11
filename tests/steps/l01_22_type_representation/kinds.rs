@@ -483,6 +483,32 @@ fn a_use_that_takes_data_refuses_every_tuple() {
     assert_eq!(errors("f(x: (int, int)) = x == x;\n"), Vec::<String>::new());
 }
 
+#[test]
+#[ignore = "FIX-held-wide-partial-tuples: a kind-wide part met with a written tuple shape is refused as data; open"]
+fn a_kind_wide_part_met_with_a_written_shape_holds_what_the_shape_holds() {
+    // `(..)` less a tuple, met with a written pair of scalars, holds only pairs of scalars:
+    // data, which `String` and `==` take. The checker keeps the part of the pair the
+    // difference holds as a kernel tuple type beside the kind-wide part, and reads every
+    // tuple type there as `(..)`. The second type is the smallest found whose meet reaches
+    // the boxes of a meet of unions with an unbounded column in the smaller operand
+    // (`types::join_of`, TESTS-coverage-projection-paths): it holds `(#a, #b)` and `(#b, #a)`
+    // and nothing else, which a search of the pairs of 0, 1, 7, `#a` and `#b` confirms in the
+    // kernel test `l01_23_subtyping::meet_join_oracle`.
+    let errors = zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let s = "int | #a | #b";
+    let side = |a: &str| format!("((..) \\ ({a}, {a})) & ({s}, {s}) & (({s}, {a}) | ({a}, {s}))");
+    for text in [
+        "f(p: ((..) \\ (#a, #a)) & (int | #a, int | #a)) = String(p);\n".to_string(),
+        format!(
+            "f(p: ({}) & ({})) = if p == (#a, #b) {{ 1 }} else {{ 0 }};\n",
+            side("#a"),
+            side("#b")
+        ),
+    ] {
+        assert_eq!(errors(&text), Vec::<String>::new(), "{text}");
+    }
+}
+
 /// The atom `#name` with the payloads `shapes`, each of components only.
 fn with_payloads(name: &str, shapes: Vec<Vec<Ty>>) -> Ty {
     let mut t = Ty::set(Type::atom_with(name, &Type::top()));
