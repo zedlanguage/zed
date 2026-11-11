@@ -121,3 +121,16 @@ fn copying_comparing_writing_and_checking_scale_with_depth() {
         }
     });
 }
+
+/// Round 8 (X39): a deep type kept only by the thread's emptiness tables is freed when the
+/// thread ends. `forget_emptiness` uses those tables before the thread makes any type, so they
+/// were dropped after the queue that frees types in a loop, and the type was freed by
+/// recursion: `r6two` at `n` 4096 overflowed a 256 MiB stack so.
+#[test]
+fn a_deep_type_kept_by_the_verdicts_is_freed_when_its_thread_ends() {
+    scaling::on_a_thread(1 << 20, || {
+        Type::forget_emptiness();
+        let t = (0..100_000).fold(Type::int(), |t, _| Type::tuple(vec![t, Type::int()]));
+        assert_eq!(t.verdict(), zed_kernel::types::Verdict::Inhabited);
+    });
+}

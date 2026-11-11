@@ -2122,6 +2122,40 @@ impl Search {
     }
 }
 
+/// `roots`, and the types written in them outside a list: the components of their tuple rows
+/// and the values of their morphisms, where the part is a union of literals, and the same of
+/// those types in turn. The search asks each of these of the root's tuple or record part as it
+/// is written (`Searching::parts`), so a list type in a root's field gets the prefix chains and
+/// the escape solve as a root does.
+// Complexity tradeoff: a walk of the roots' nodes with each node read once (`seen`), not
+// entering an atom's payload or a recursive node, so O(the nodes written above the roots'
+// lists). Why: with the chains on the query's own types only (`prefix_chains`), a list type in
+// a tuple or record field was left to the search: Refused or 100-1700 times the work on the
+// probe cases put in a field (R8, Q5). Run on every list type the search meets instead, the
+// chains cost `r6twowide` and `r6threeun` 45-65% more than main.
+fn fields(roots: &[Type]) -> Vec<Type> {
+    let (mut seen, mut out) = (HashSet::new(), Vec::new());
+    let mut stack: Vec<Type> = roots.iter().rev().cloned().collect();
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t.node_addr()) {
+            continue;
+        }
+        out.push(t.clone());
+        let Node::Parts(p, _) = &*t.0 else {
+            continue;
+        };
+        for b in p.tuples.lens.values() {
+            for row in b.union_rows().unwrap_or_default() {
+                stack.extend(row.iter().cloned());
+            }
+        }
+        for m in p.morphisms.union_rows().unwrap_or_default() {
+            stack.push(m.value.clone());
+        }
+    }
+    out
+}
+
 impl<'m> Searching<'m> {
     /// The search's state, for one statement or a scope with no `await` in it.
     fn s(&self) -> RefMut<'m, Search> {
@@ -2140,7 +2174,9 @@ impl<'m> Searching<'m> {
         // list to walk, and a row tested against every row would cost their square.
         let mut answers: Vec<Option<bool>> = vec![None; roots.len()];
         let mut seeded = false;
-        self.s().roots.extend(roots.iter().map(|r| (r.clone(), ())));
+        self.s()
+            .roots
+            .extend(fields(roots).into_iter().map(|r| (r, ())));
         for (a, root) in answers.iter_mut().zip(roots) {
             if root.p().atoms.names.is_empty() {
                 continue;
@@ -3763,9 +3799,11 @@ impl<'m> Searching<'m> {
         // only. Why: run on every list type the search meets, they decided or found witnesses
         // for parts the search would have decided its own way, and changed the search's
         // course: 40-60% more work on `r6twowide` and `r6threeun`, which are outside their
-        // class, than base 4777a33e, which has neither (R7, Q4). Tradeoff: a list type in their
-        // class met only inside another type (a tuple's component, a group member) is left to
-        // the search; on the suite and the probe cases no verdict changed.
+        // class, than base 4777a33e, which has neither (R7, Q4). The roots include the types
+        // written in a root's tuple and record fields (`fields`): left to the search, a list in
+        // a field was refused where the list alone is decided (R8, Q5). Tradeoff: a list type
+        // in their class met only as a type the search builds (a narrowed component, a group
+        // member) is left to the search.
         if !self.s().roots.contains_key(t) {
             return None;
         }
@@ -5151,6 +5189,7 @@ impl<'m> Searching<'m> {
     // and on non-uniform chains (`clstaggerholes`), memoize `pass_memo[(node, item)]` along the
     // chain and jump `O(n)` links in `O(log n)` via binary-lifting pointers `up: [usize; 18]`.
     // Total work across all rows is `O(n log n)`.
+    #[allow(clippy::type_complexity)]
     async fn check_chain_witness(
         &'m self,
         t: &Type,

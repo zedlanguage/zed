@@ -167,6 +167,7 @@ struct Class {
 type Classes = Rc<ClassSet>;
 
 #[derive(Default)]
+#[allow(clippy::type_complexity)]
 struct Sweep {
     c: Option<Arc<str>>,
     links: Vec<Link>,
@@ -207,6 +208,7 @@ struct Sweep {
 
 /// The bare atoms of `p` and, when it has one, the clause of its one payload, by name `c`; `None`
 /// when `p` is outside the class.
+#[allow(clippy::type_complexity)]
 fn shape(
     p: &Parts,
     c: &mut Option<Arc<str>>,
@@ -272,7 +274,7 @@ fn period<T: Eq>(s: &[T]) -> usize {
         f[i] = k;
     }
     let p = n - f[n - 1];
-    if n % p == 0 { p } else { n }
+    if n.is_multiple_of(p) { p } else { n }
 }
 
 /// The start of the least rotation of `s`, by the two-index method: O(|s|).
@@ -591,10 +593,10 @@ impl Sweep {
             }
         }
         let rep: Vec<usize> = (0..n).map(|x| first[name[x]]).collect();
-        for x in 0..n {
-            let t = self.links[x].tail;
-            self.links[x].tail = if t == NONE { NONE } else { rep[t] };
-            self.links[x].cyclic = cyclic[x];
+        for (link, &cyc) in self.links.iter_mut().zip(&cyclic) {
+            let t = link.tail;
+            link.tail = if t == NONE { NONE } else { rep[t] };
+            link.cyclic = cyc;
         }
         rep
     }
@@ -930,7 +932,7 @@ impl Sweep {
             }
             let mut values = vec![Value::Int(0)];
             for c in &cs[1..] {
-                let v = component_candidates(&[c.clone()])
+                let v = component_candidates(std::slice::from_ref(c))
                     .into_iter()
                     .find(|v| c.contains(v))?;
                 values.push(v);
@@ -1853,11 +1855,11 @@ fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
     }
     sw.rep = rep;
     sw.runs()?;
-    if let Some((items, last)) = sw.short_escape(&roots) {
-        if sw.check(&plain, &plain_roots, &items, &last) {
-            *actual = Some(build_list(sw.c.as_ref()?, items, &last));
-            return Some(Verdict::Inhabited);
-        }
+    if let Some((items, last)) = sw.short_escape(&roots)
+        && sw.check(&plain, &plain_roots, &items, &last)
+    {
+        *actual = Some(build_list(sw.c.as_ref()?, items, &last));
+        return Some(Verdict::Inhabited);
     }
     if !sw.bounded(&roots.iter().map(|r| r.0).collect::<Vec<_>>()) {
         return None;

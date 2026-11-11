@@ -80,7 +80,7 @@
 // that find no cell after the congruence filter are not bounded in general. Trigger:
 // `find_prefix_chains` returns `None` on a type of this class.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::super::{Parts, Row, Type};
 use super::{ByType, ChainHint, ChainPlan, Digests, TwoSat, list_step};
@@ -582,42 +582,50 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         roots.push(r);
     }
 
-    // Complexity tradeoff: the naive cell enumerator reads every row/place alignment,
-    // including Theta(n^2) impossible alignments on r6parity. All live root heights are
-    // congruent modulo their difference gcd. At node height h, only positive places j
-    // congruent to base + 2 - h can occur. Index finite positive values by this residue;
-    // for a cofinite node head, absent excluded values prove every such cell empty.
-    // Building the sparse index costs O(positive value incidences log n), querying it
-    // O(node exclusion incidences log n), with linear storage. Cofinite positive places
-    // conservatively disable filtering for their residue. This removes no possible atom,
-    // and changes no accepted shape or verdict. The remaining enumerator still has W.
-    let base_height = roots
+    // Complexity tradeoff: the naive filter uses all root heights at every node, so
+    // one shallow outlier destroys a useful congruence on the entire spine (X38).
+    // At height h only roots of height >= h can reach the node. Their suffix gcd
+    // gives a necessary residue for every reachable place. On removing a height
+    // the nonzero gcd can only grow by an integer factor; there are O(log top)
+    // distinct moduli (plus the singleton case). Hash indices of positive places and value
+    // incidences for those moduli cost O(P log top) expected time and space, versus
+    // O(P log P) time and O(P) space for the old single BTreeSet index. This is a necessary
+    // filter, not an Empty proof; the per-value filter below narrows the cells further.
+    let mut heights: Vec<usize> = roots
         .iter()
-        .find(|r| r.kill.is_none())
+        .filter(|r| r.kill.is_none())
         .map(|r| nodes[r.s].ht)
-        .unwrap_or(0);
-    let mut period = 0usize;
-    for r in roots.iter().filter(|r| r.kill.is_none()) {
-        let mut b = nodes[r.s].ht.abs_diff(base_height);
+        .collect();
+    heights.sort_unstable();
+    heights.dedup();
+    let gcd = |mut a: usize, mut b: usize| {
         while b != 0 {
-            (period, b) = (b, period % b);
+            (a, b) = (b, a % b);
         }
+        a
+    };
+    let exact_period = l0 + nodes.iter().map(|n| n.ht).max().unwrap_or(0) + 2;
+    let mut suffix = vec![0; heights.len()];
+    for i in (0..heights.len().saturating_sub(1)).rev() {
+        suffix[i] = gcd(suffix[i + 1], heights[i + 1] - heights[i]);
     }
-    // With a single distinct root height every reached place is exact; this modulus
-    // exceeds the entire height/place range and therefore introduces no wrap alias.
-    if period == 0 {
-        period = l0 + nodes.iter().map(|n| n.ht).max().unwrap_or(0) + 2;
-    }
-    let mut finite_residue = BTreeSet::new();
-    let mut cofinite_residue = BTreeSet::new();
-    for (j, x) in pl.iter().enumerate().skip(2) {
-        if x.cof {
-            cofinite_residue.insert(j % period);
-        } else {
-            for &value in &x.vals {
-                finite_residue.insert((j % period, value));
+    let mut residues = HashMap::new();
+    for &g in &suffix {
+        let period = if g == 0 { exact_period } else { g };
+        residues.entry(period).or_insert_with(|| {
+            let mut finite = HashSet::new();
+            let mut cofinite = HashSet::new();
+            for (j, x) in pl.iter().enumerate().skip(2) {
+                if x.cof {
+                    cofinite.insert(j % period);
+                } else {
+                    for &value in &x.vals {
+                        finite.insert((j % period, value));
+                    }
+                }
             }
-        }
+            (finite, cofinite)
+        });
     }
 
     // The rows still read. A row leaves once it is killed, once it has three atoms (its first
@@ -643,6 +651,9 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         pos_g: vec![0; nr],
         pos_h: vec![0; nr],
         rh: roots.iter().map(|r| nodes[r.s].ht).collect(),
+        c: Vec::new(),
+        cl: vec![0; nr],
+        pos_c: vec![usize::MAX; nr],
     };
     for (k, &(_, i)) in by_tin.iter().enumerate() {
         rows.pos_g[i] = k;
@@ -672,11 +683,77 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
     }
     let mut vals: Vec<i64> = fin_by_val.keys().copied().collect();
     vals.sort_unstable();
-    // The greatest tail height of the rows below each node.
+    // Complexity tradeoff: the reads above skip a node only by the residue of the root heights
+    // modulo their difference gcd, so one root in another residue (`r7congruenceout`) sets that
+    // gcd to 1 and every place that can separate is read, `Theta(n^2)` empty reads; and they read
+    // places below every root's height (`r7aperiodic`, `n^2 / 18`). Used: (1) the place window
+    // starts at the least height of the live rows below the node, not at 2; (2) a modulus `g` from
+    // the places themselves: the gcd of the differences between the places (j >= 2) of each value
+    // that a cofinite node head excludes. A value `x` excluded at a node of height `h` separates
+    // only places `j` congruent to `a_x` (its first place) modulo `g`, so only rows of tail height
+    // `h + a_x - 2` modulo `g` (exactly, when `g` is 0) can get a cell from it; a value with no
+    // row of that class still read (not retired) below the node is skipped. Counted over the rows
+    // unkilled at the start instead, one root of another class retired early kept its class
+    // alive and every place of the value was read (`r8heightout`, `n^2 / 6` empty reads). Cost:
+    // O(value incidences) gcd steps, the rows indexed by class once (a `Live` per class, a
+    // removal per retired row), two binary searches and a Fenwick count per (node, excluded
+    // value): O((rows + incidences) log n), linear storage. Sufficient, not complete: a value
+    // whose live rows of its class below a node miss its places is still read place by place;
+    // no bound on those reads is proved.
+    let mut excluded: BTreeSet<i64> = BTreeSet::new();
+    for v in nodes.iter().filter(|v| v.next.is_some() && v.head.cof) {
+        excluded.extend(v.head.vals.iter().filter(|x| fin_by_val.contains_key(x)));
+    }
+    let mut g = 0usize;
+    for x in &excluded {
+        let l = &fin_by_val[x];
+        for &j in &l[1..] {
+            let mut b = j - l[0];
+            while b != 0 {
+                (g, b) = (b, g % b);
+            }
+        }
+    }
+    let class = |height: usize| if g == 0 { height } else { height % g };
+    // The rows of each class in Euler order, with those still read (`rows.c`): a class whose rows
+    // below a node are all retired gives no cell there (`r8heightout`).
+    let mut class_ix: HashMap<usize, usize> = HashMap::new();
+    let mut of_class: Vec<Vec<usize>> = Vec::new();
+    for &(tn, i) in &by_tin {
+        if !rows.gone[i] {
+            let next = class_ix.len();
+            let c = *class_ix.entry(class(rows.rh[i])).or_insert(next);
+            if c == of_class.len() {
+                of_class.push(Vec::new());
+            }
+            rows.pos_c[i] = of_class[c].len();
+            rows.cl[i] = c;
+            of_class[c].push(tn);
+        }
+    }
+    rows.c = of_class.iter().map(|l| Live::new(l.len())).collect();
+    // The class of `height` and the positions of its rows with tails in the Euler interval
+    // [a, b], if it has rows.
+    let class_span = |height: usize, a: usize, b: usize| {
+        class_ix.get(&class(height)).map(|&c| {
+            let l = &of_class[c];
+            (
+                c,
+                l.partition_point(|&t| t < a),
+                l.partition_point(|&t| t <= b),
+            )
+        })
+    };
+    // The greatest tail height of the rows below each node, and the least of the unkilled ones.
     let mut max_below: Vec<Option<usize>> = vec![None; nodes.len()];
+    let mut min_below: Vec<Option<usize>> = vec![None; nodes.len()];
     for r in &roots {
         let m = &mut max_below[r.s];
         *m = Some(m.map_or(nodes[r.s].ht, |x: usize| x.max(nodes[r.s].ht)));
+        if r.kill.is_none() {
+            let m = &mut min_below[r.s];
+            *m = Some(m.map_or(nodes[r.s].ht, |x: usize| x.min(nodes[r.s].ht)));
+        }
     }
     let mut order: Vec<usize> = (0..nodes.len()).collect();
     order.sort_unstable_by_key(|&i| std::cmp::Reverse(anc.tin[i]));
@@ -684,6 +761,10 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         if let (Some(m), Some(nx)) = (max_below[v], nodes[v].next) {
             let pm = &mut max_below[nx];
             *pm = Some(pm.map_or(m, |x| x.max(m)));
+        }
+        if let (Some(m), Some(nx)) = (min_below[v], nodes[v].next) {
+            let pm = &mut min_below[nx];
+            *pm = Some(pm.map_or(m, |x| x.min(m)));
         }
     }
     let mut cons: Vec<usize> = (0..nodes.len())
@@ -708,6 +789,17 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         if hv.cof && hv.vals.is_empty() {
             continue;
         }
+        let first = heights.partition_point(|&rh| rh < h);
+        if first == heights.len() {
+            continue;
+        }
+        let base_height = heights[first];
+        let period = if suffix[first] == 0 {
+            exact_period
+        } else {
+            suffix[first]
+        };
+        let (finite_residue, cofinite_residue) = &residues[&period];
         let residue = (base_height % period + period + 2 - h % period) % period;
         if hv.cof
             && !cofinite_residue.contains(&residue)
@@ -718,11 +810,33 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         {
             continue;
         }
-        let (lo, hi) = (2, l0.min(m + 2 - h));
+        // Places below `lo` meet `v` only from rows lower than every unkilled row below `v`.
+        let lo = min_below[v].map_or(2, |mn| (mn + 2 - h).max(2));
+        let hi = l0.min(m + 2 - h);
         if hi < lo {
             continue;
         }
         let (a, b) = (anc.tin[v], anc.tout[v]);
+        // The excluded values that may give a cell here: places in the window, and a live row of
+        // their class below `v`. The others give none.
+        let kept: Vec<i64> = if hv.cof {
+            hv.vals
+                .iter()
+                .copied()
+                .filter(|x| {
+                    fin_by_val.get(x).is_some_and(|l| {
+                        count(l, lo, hi) > 0
+                            && class_span(h + l[0] - 2, a, b)
+                                .is_some_and(|(c, ka, kb)| rows.c[c].count(ka, kb) > 0)
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if hv.cof && kept.is_empty() && count(&cof_places, lo, hi) == 0 {
+            continue;
+        }
         let (glo, ghi) = (
             by_tin.partition_point(|&(t, _)| t < a),
             by_tin.partition_point(|&(t, _)| t <= b),
@@ -734,8 +848,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         // The cost of listing the places that may separate at `v`: from the values a cofinite
         // head leaves out; for a finite head, from the values outside it, or every place.
         let (est, by_value) = if hv.cof {
-            let e = hv
-                .vals
+            let e = kept
                 .iter()
                 .map(|x| fin_by_val.get(x).map_or(0, |l| count(l, lo, hi)))
                 .sum::<usize>();
@@ -763,7 +876,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         }
         let mut js: Vec<usize> = Vec::new();
         if hv.cof {
-            for x in &hv.vals {
+            for x in &kept {
                 if let Some(l) = fin_by_val.get(x) {
                     js.extend(range(l, lo, hi));
                 }
@@ -1001,7 +1114,7 @@ impl Live {
         let mut fen = vec![1; n + 1];
         fen[0] = 0;
         for i in 1..=n {
-            let p = i + (i & i.wrapping_neg());
+            let p = i + i.isolate_lowest_one();
             if p <= n {
                 fen[p] += fen[i];
             }
@@ -1016,7 +1129,7 @@ impl Live {
         let mut s = 0;
         while i > 0 {
             s += self.fen[i];
-            i -= i & i.wrapping_neg();
+            i -= i.isolate_lowest_one();
         }
         s
     }
@@ -1046,7 +1159,7 @@ impl Live {
         let mut k = i + 1;
         while k < self.fen.len() {
             self.fen[k] -= 1;
-            k += k & k.wrapping_neg();
+            k += k.isolate_lowest_one();
         }
     }
 }
@@ -1060,6 +1173,11 @@ struct Rows {
     pos_h: Vec<usize>,
     /// Each row's tail height.
     rh: Vec<usize>,
+    /// The rows unkilled at the start by class of tail height (`c`), each row's class (`cl`), and
+    /// its position there (`pos_c`, `usize::MAX` for a row killed at the start).
+    c: Vec<Live>,
+    cl: Vec<usize>,
+    pos_c: Vec<usize>,
 }
 
 impl Rows {
@@ -1068,6 +1186,9 @@ impl Rows {
             self.gone[i] = true;
             self.g.remove(self.pos_g[i]);
             self.h[self.rh[i]].remove(self.pos_h[i]);
+            if self.pos_c[i] != usize::MAX {
+                self.c[self.cl[i]].remove(self.pos_c[i]);
+            }
         }
     }
 }

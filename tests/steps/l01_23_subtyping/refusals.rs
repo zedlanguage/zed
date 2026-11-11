@@ -1214,7 +1214,7 @@ fn rfx_probe() {
                 "rfx {which} n {n} {:?} units {} bytes {}",
                 v, w.units, w.bytes
             );
-            if which == "r6parity" || which.starts_with("r7") {
+            if which == "r6parity" || (which.starts_with("r7") || which.starts_with("r8")) {
                 eprintln!("escape cells {which} n {n} {:?}", t.escape_cell_counts());
                 Type::forget_emptiness();
             }
@@ -1281,6 +1281,13 @@ fn rfx_family(
 /// `M`, the `M{k}` in a group of their own, a meet, a pair; and the lists by one place
 /// ([`by_one_place_from_the_front`]) and by the place from the end ([`by_place_from_the_end`]).
 fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
+    // The case as a field of a tuple or a record, which is not a root of the prefix chains.
+    if let Some(c) = which.strip_prefix("tup:") {
+        return Type::tuple(vec![Type::int(), rfx_case(c, n, tag)]);
+    }
+    if let Some(c) = which.strip_prefix("rec:") {
+        return Type::exact(lit(0), rfx_case(c, n, tag));
+    }
     let l = list_named(Type::int(), tag);
     let (int, one, b, yes) = (
         Type::int(),
@@ -1432,10 +1439,14 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
             &(&lit(0) | &lit(1)) | &(&lit(2) | &lit(7)),
         ),
         "r6parity" => r6_parity(n, tag),
+        "r8heightin" => r8_height_boundary(n, false, tag),
+        "r8heightout" => r8_height_boundary(n, true, tag),
         "r7congruencein" => r7_congruence(n, false, tag),
         "r7congruenceout" => r7_congruence(n, true, tag),
         "r7aperiodic" => r7_aperiodic(n, tag),
         "r7bmmout" => r7_bmm_out(n, tag),
+        "r8residues" => r8_residues(n, false, tag),
+        "r8residuesout" => r8_residues(n, true, tag),
         "r6repeat3" => r5_sat_type(3, &vec![vec![(1, true), (2, true), (3, true)]; n], tag),
         "r6distinct2" => r6_distinct_atoms(n, false, tag),
         "r6distinct3" => r6_distinct_atoms(n, true, tag),
@@ -2015,7 +2026,7 @@ fn rfx_stagger(n: usize, far: bool, tag: &str) -> Type {
     }));
     let ts = r3_instance(defs);
     let top = if far { n - 1 } else { n };
-    let r_indices = (1..=h).filter(|&k| d + k + 1 <= top).map(|k| 2 * n + h + k);
+    let r_indices = (1..=h).filter(|&k| d + k < top).map(|k| 2 * n + h + k);
     (1..=top)
         .chain([2 * n])
         .chain(r_indices)
@@ -2476,7 +2487,7 @@ fn lists_by_the_place_from_the_front_verdicts_are_independent_of_order() {
                         .filter(|&i| Some(i) != skip)
                         .chain([2 * n])
                         .collect();
-                    if d + 1 <= n && skip != Some(d + 1) {
+                    if d < n && skip != Some(d + 1) {
                         u_indices.push(2 * n + 1);
                     }
                     if d + 2 <= n && skip != Some(d + 2) {
@@ -3296,10 +3307,10 @@ fn r4_boundary(n: usize, holes: bool, tag: &str) -> Type {
         ));
     }
     let ts = r3_instance(defs);
-    let u = (1..=n)
+
+    (1..=n)
         .chain([2 * n])
-        .fold(Type::empty(), |u, i| r3_union(&u, &ts[i]));
-    u
+        .fold(Type::empty(), |u, i| r3_union(&u, &ts[i]))
 }
 
 #[test]
@@ -4009,7 +4020,7 @@ fn lists_by_the_place_from_the_front_verdicts_are_independent_of_order_gemini() 
                         .filter(|&i| Some(i) != skip)
                         .chain([2 * n])
                         .collect();
-                    if d + 1 <= n && skip != Some(d + 1) {
+                    if d < n && skip != Some(d + 1) {
                         u_indices.push(2 * n + 1);
                     }
                     if d + 2 <= n && skip != Some(d + 2) {
@@ -4299,7 +4310,7 @@ fn r5_sat_type(k: usize, cls: &[Vec<(usize, bool)>], tag: &str) -> Type {
             cons(Expr::Type(h[d].clone()), r(d - 1)),
         )
     }));
-    let clause_place = |p: usize| p > k && (p - k) % (k + 1) == 0;
+    let clause_place = |p: usize| p > k && (p - k).is_multiple_of(k + 1);
     let mut e = nil();
     for p in (1..=len).rev() {
         let head = if p <= k {
@@ -4392,8 +4403,8 @@ fn r5_sat_run(spec: Vec<usize>) {
                 let mut v = None;
                 let w = m.work(|| v = Some(t.verdict()));
                 let v = v.unwrap();
-                units += w.units as u64;
-                most = most.max(w.units as u64);
+                units += w.units;
+                most = most.max(w.units);
                 let wrong = matches!(
                     (&v, sat),
                     (Verdict::Empty, true) | (Verdict::Inhabited, false)
@@ -4870,7 +4881,7 @@ fn r6_sat_type(k: usize, cls: &[Vec<(usize, bool)>], tag: &str, filler: Type, ba
             cons(Expr::Type(h[d].clone()), r(d - 1)),
         )
     }));
-    let clause_place = |p: usize| p > k && (p - k) % (k + 1) == 0;
+    let clause_place = |p: usize| p > k && (p - k).is_multiple_of(k + 1);
     let mut e = nil();
     for p in (1..=len).rev() {
         let head = if p <= k {
@@ -5031,7 +5042,7 @@ fn r6_colour_comb(nv: usize, edges: &[(usize, usize)], tag: &str) -> (Type, usiz
     for p in (1..=len).rev() {
         let head = if p <= nv {
             three.clone()
-        } else if (p - nv) % (nv + 1) == 0 {
+        } else if (p - nv).is_multiple_of(nv + 1) {
             lit(0)
         } else {
             lit(7)
@@ -5117,7 +5128,13 @@ fn r6_colouring_check(nv: usize, shard: u32, nsh: u32, comb: bool) {
                         .map(|i| (code / 3u32.pow(i as u32) % 3) as i64 + 1)
                         .collect();
                     let proper = edges.iter().all(|&(u, v)| xs[u - 1] != xs[v - 1]);
-                    xs.extend((nv + 1..=len).map(|p| if (p - nv) % (nv + 1) == 0 { 0 } else { 7 }));
+                    xs.extend((nv + 1..=len).map(|p| {
+                        if (p - nv).is_multiple_of(nv + 1) {
+                            0
+                        } else {
+                            7
+                        }
+                    }));
                     assert_eq!(
                         t.contains(&r6_colour_list(&xs)),
                         proper,
@@ -6012,5 +6029,276 @@ fn r7_aperiodic_matches_its_closed_form() {
             assert_eq!(t.verdict(), want, "r7aperiodic at {n}");
         }
         assert!(empties > 0, "the closed form must include empty sizes");
+    });
+}
+
+/// X38: the suffix-height filter and the reachable-place lower bound must avoid
+/// impossible alignments. The committed global-gcd enumerator fails these bounds.
+#[test]
+fn r8_escape_alignment_reads_scale_with_the_input() {
+    big(|| {
+        for name in ["r6parity", "r7congruenceout", "r7aperiodic", "r7bmmout"] {
+            for n in [128, 1024] {
+                Type::forget_emptiness();
+                let t = rfx_case(name, n, &format!("_r8reads{name}{n}"));
+                let counts = t.escape_cell_counts();
+                eprintln!("r8 reads {name} {n} {counts:?}");
+                assert!(counts.1 <= 4 * n, "{name} {n}: {counts:?}");
+            }
+        }
+    });
+}
+
+#[test]
+fn r8_escape_and_width_instruction_scaling() {
+    cases_scale_from(
+        &[
+            ("r7congruenceout", Verdict::Inhabited),
+            ("r7aperiodic", Verdict::Inhabited),
+        ],
+        32,
+    );
+    big(|| {
+        // n counts the quadratic head representation. Width floor(sqrt(n))
+        // gives inputs of about n and 8n, with all construction outside timing.
+        let inputs = scaling::inputs(256, |n| {
+            rfx_case(
+                "r5varywidth",
+                (n as f64).sqrt() as usize,
+                &format!("_r8width{n}"),
+            )
+        });
+        scaling::check("r5varywidth by head representation size", 256, |n| {
+            Type::forget_emptiness();
+            assert_eq!(inputs[&n].verdict(), Verdict::Inhabited);
+        });
+    });
+}
+
+/// X39: initialize the emptiness tables before the first type, and leave a deep
+/// type in them until thread exit. No recursive group or escape solver is needed.
+#[test]
+fn r8_deep_type_cached_before_queue_initialization_drops_on_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(|| {
+            Type::forget_emptiness();
+            let mut t = Type::int();
+            for _ in 0..12000 {
+                t = Type::tuple(vec![t]);
+            }
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+            let body = (0..12000).fold(int(), |tail, _| Expr::Tuple(vec![tail]));
+            let group = Group::new(vec![def("R8DeepCachedGroup", body)]).unwrap();
+            let member = group.instance(vec![]).remove(0);
+            assert_eq!(member.verdict(), Verdict::Inhabited);
+            eprintln!("r8 deep cached verdict complete");
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// Preserve cb709f13 answers when list queries are nested in products and atom payloads.
+/// The baseline already refuses the empty chain inside an atom payload; record that too.
+#[test]
+fn r8_roots_only_preserves_nested_list_answers() {
+    big(|| {
+        for name in [
+            "chain",
+            "chainfar",
+            "r6parity",
+            "r7congruenceout",
+            "r7aperiodic",
+        ] {
+            for n in [16, 64, 128] {
+                Type::forget_emptiness();
+                let t = rfx_case(name, n, &format!("_r8nest{name}{n}"));
+                let direct = t.verdict();
+                let tuple = Type::tuple(vec![Type::int(), t.clone()]);
+                let atom = Type::atom_with("r8box", &Type::tuple(vec![t.clone()]));
+                Type::forget_emptiness();
+                let tv = tuple.verdict();
+                Type::forget_emptiness();
+                let av = atom.verdict();
+                eprintln!("r8nested {name} {n} direct {direct:?} tuple {tv:?} atom {av:?}");
+                assert_eq!(tv, direct, "tuple {name} {n}");
+                let before = if name == "chain" {
+                    Verdict::Refused(Refusal::Fork)
+                } else {
+                    direct
+                };
+                assert_eq!(av, before, "payload {name} {n}: cb709f13 preservation");
+            }
+        }
+    });
+}
+
+/// X38 boundary: move the outlier from the shallow end to the tallest height.
+fn r8_height_boundary(n: usize, outside: bool, tag: &str) -> Type {
+    let n = n.max(4);
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for e in 1..=n {
+        let h = &Type::int() - &lit((e % 3) as i64);
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if j == 1 {
+            &lit(2) | &lit(7)
+        } else {
+            &lit(((4 - j % 3) % 3) as i64) | &lit(7)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let mut u = (2..=n).step_by(3).fold(Type::empty(), |u, d| &u | &ts[d]);
+    if outside {
+        u = &u | &ts[3 * (n / 3)];
+    }
+    &ts[n + 1] - &u
+}
+
+#[test]
+fn r8_height_boundary_keeps_the_checked_witness() {
+    big(|| {
+        for n in [16, 64, 256] {
+            for outside in [false, true] {
+                Type::forget_emptiness();
+                let t = r8_height_boundary(n, outside, &format!("_r8hb{n}{outside}"));
+                let good = (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+                    let h = if j == 1 { 2 } else { ((4 - j % 3) % 3) as i64 };
+                    Value::atom_with("cons", vec![Value::Int(h), tail])
+                });
+                let bad = (1..=n).rev().fold(Value::atom("nil"), |tail, _| {
+                    Value::atom_with("cons", vec![Value::Int(7), tail])
+                });
+                assert!(t.contains(&good));
+                assert!(!t.contains(&bad));
+                Type::forget_emptiness();
+                assert_eq!(t.verdict(), Verdict::Inhabited);
+            }
+        }
+    });
+}
+
+/// Round 8 boundary of the escape's skips. `F_e = cons(int \ {0}, F_(e-1))` for `e` 0 or 1
+/// modulo 4, `cons(int \ {2}, ..)` for 2, `cons(int, ..)` for 3; `P` with `{0, 2, 7}` first and
+/// `{0, 7}` at places 0 and 1 modulo 4, `{7}` elsewhere; roots `F_d` for `d` 2 modulo 4. No place
+/// after the first separates for a root: the cells land at `j + h` 3 modulo 4. Inside, the
+/// root heights are one residue modulo 4 and the root-height skip reads no empty cell. `outside`
+/// adds the root `F_5` (escaped at place 5 by 0): the root-height gcd is 1, and the places of 0
+/// (residues 0 and 1 of 4) have difference gcd 1, so neither skip applies. Inhabited both ways.
+fn r8_residues(n: usize, outside: bool, tag: &str) -> Type {
+    let n = n.max(8);
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for e in 1..=n {
+        let h = match e % 4 {
+            0 | 1 => &Type::int() - &lit(0),
+            2 => &Type::int() - &lit(2),
+            _ => Type::int(),
+        };
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if j == 1 {
+            &(&lit(0) | &lit(2)) | &lit(7)
+        } else if j % 4 <= 1 {
+            &lit(0) | &lit(7)
+        } else {
+            lit(7)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let mut u = (2..=n).step_by(4).fold(Type::empty(), |u, d| &u | &ts[d]);
+    if outside {
+        u = &u | &ts[5];
+    }
+    &ts[n + 1] - &u
+}
+
+/// Round 8 (X38): the escape's empty-cell reads stay linear on the stray-root congruence and
+/// the aperiodic families, where the root-height skip does not apply, and on the two round-8
+/// boundaries. On 91182428 the first two were 608 and 210 at `n` 64 and quadratic above it;
+/// with the per-value residue filter alone, `r8residuesout` was 65,535 at 1024 (the suffix gcd
+/// of the root heights lowers it to `n / 2`), and with both filters `r8heightout` was 174,249 at
+/// 1024 (counting only the rows of a value's class not yet retired lowers it to 0).
+/// `r8residues` is the inside of the boundary: no empty read.
+#[test]
+fn r8_escape_empty_reads_are_linear() {
+    big(|| {
+        for n in [64, 512] {
+            for case in [
+                "r7congruenceout",
+                "r7aperiodic",
+                "r8heightout",
+                "r8residuesout",
+            ] {
+                let t = rfx_case(case, n, &format!("_r8e_{case}_{n}"));
+                let (reads, empty) = t.escape_cell_counts();
+                assert!(empty <= n, "{case} at {n}: {empty} empty of {reads} reads");
+                assert_eq!(t.verdict(), Verdict::Inhabited, "{case} at {n}");
+            }
+            let t = rfx_case("r8residues", n, &format!("_r8e_in_{n}"));
+            assert_eq!(t.escape_cell_counts().1, 0, "r8residues at {n}");
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        }
+    });
+}
+
+#[test]
+fn r8_residue_boundary_scales() {
+    cases_scale_from(
+        &[
+            ("r7aperiodic", Verdict::Inhabited),
+            ("r8residues", Verdict::Inhabited),
+            ("r8residuesout", Verdict::Inhabited),
+        ],
+        // 64 and 512: `r7aperiodic` is Empty at 128 (its closed form).
+        64,
+    );
+}
+
+/// A list type in a tuple or record field gets the verdict of the list alone, at near the list's
+/// work (R8, Q5). The prefix chains and the escape solve ran on the query's own types only, so a
+/// list in a field was left to the search, which refused `chain`, `r5remin` and `r6twoun` there,
+/// at 12 to 530 times the work of the list alone.
+#[test]
+fn r8_a_list_in_a_field_is_decided_as_the_list_alone() {
+    big(|| {
+        let n = 64;
+        let tag = format!("_r8field{n}");
+        for case in ["chain", "r5remin", "r6twoun"] {
+            for wrap in ["tup:", "rec:"] {
+                Type::forget_emptiness();
+                let bare = rfx_case(case, n, &tag);
+                let mut v = None;
+                let b = scaling::Meter::new().work(|| v = Some(bare.verdict()));
+                Type::forget_emptiness();
+                let t = rfx_case(&format!("{wrap}{case}"), n, &tag);
+                let mut w = None;
+                let f = scaling::Meter::new().work(|| w = Some(t.verdict()));
+                assert_eq!(
+                    w, v,
+                    "{wrap}{case} at {n}: the field's verdict is the list's"
+                );
+                assert!(
+                    f.units <= 2 * b.units,
+                    "{wrap}{case} at {n}: {} units in a field, {} alone",
+                    f.units,
+                    b.units
+                );
+            }
+        }
     });
 }

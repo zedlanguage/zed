@@ -56,14 +56,11 @@ impl Drop for Unit {
 
 /// The number of this thread's unit under way.
 pub(super) fn unit() -> u64 {
-    // Thread-locals first used after this call are dropped before the queues that free types.
-    super::hold();
     UNIT.with_borrow(|u| u.number)
 }
 
 /// The number of this thread ([`Unit::thread`]).
 pub(super) fn thread() -> u64 {
-    super::hold();
     UNIT.with_borrow(|u| u.thread)
 }
 

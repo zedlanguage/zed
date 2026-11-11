@@ -197,12 +197,6 @@ fn free(part: Freed) {
     deep::free_in(&FREED, part);
 }
 
-/// Keeps [`FREED`] until after the thread-locals first used after this call, such as the tables
-/// of diagram nodes, which hold types.
-fn hold() {
-    deep::hold(&FREED);
-}
-
 /// A number for local graph walks, never a type's digest, order or printed name.
 fn next_type_node() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -629,7 +623,6 @@ thread_local! {
 
 impl Literal for Row {
     fn table<R>(f: impl FnOnce(&mut Tables<Self>) -> R) -> R {
-        hold();
         TUPLES.with(|t| f(&mut t.borrow_mut()))
     }
     fn untable(f: impl FnOnce(&mut Tables<Self>)) {
@@ -648,7 +641,6 @@ impl Literal for Row {
 
 impl Literal for Morphism {
     fn table<R>(f: impl FnOnce(&mut Tables<Self>) -> R) -> R {
-        hold();
         MORPHISMS.with(|t| f(&mut t.borrow_mut()))
     }
     fn untable(f: impl FnOnce(&mut Tables<Self>)) {
@@ -1216,7 +1208,6 @@ impl Parts {
 
 impl Type {
     fn new(mut p: Parts) -> Type {
-        hold();
         p.digest = p.hash();
         Type(Arc::new(Node::Parts(p, Shown::default())))
     }
@@ -5809,13 +5800,6 @@ pub mod rec {
 
     fn free(part: Freed) {
         deep::free_in(&FREED, part);
-    }
-
-    /// Keeps the queues that free types and instances until after the thread-locals first used
-    /// after this call, such as a thread's unit (`unfold::Unit`), which holds instances.
-    fn hold() {
-        super::hold();
-        deep::hold(&FREED);
     }
 
     /// An expression's parts are freed in a loop, not by recursion.

@@ -1240,7 +1240,7 @@ fn r6_greedy_guard_admits_a_partially_compatible_unused_slot() {
 fn r7_random_optional_spine_choices_against_masks() {
     let tally = big(|| {
         let mut tally = Tally::default();
-        let mut rng = Rng::new(0x7_0b7_1031);
+        let mut rng = Rng::new(0x70b7_1031);
         // Cofinite heads for the positive chain, so that it can follow a negative chain past
         // that chain's arrival at `L` or leave it; any head for the negatives.
         let cofinite = [
@@ -2035,9 +2035,8 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
                 }
                 // Spine roots of different lengths (when d > 0 is the lowest chosen root, arriving at
                 // F1 is an optional spine choice as in X31).
-                for d in 0..=sp_len {
+                for (d, &(_, h, nx)) in nodes.iter().enumerate().take(sp_len + 1) {
                     if (d > 0 && rng.below(2) == 0) || d == sp_len || rng.below(5) == 0 {
-                        let (_, h, nx) = nodes[d];
                         neg.push((h, nx));
                     }
                 }
