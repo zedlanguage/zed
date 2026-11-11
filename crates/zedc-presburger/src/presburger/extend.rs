@@ -3092,15 +3092,21 @@ type Terms = BTreeMap<Atom, Int>;
 type LineGroup = (Atom, Terms, bool);
 
 /// The lines `e * y >= m * f + b` of `rows` by `(y, f, lower)`, the explicit 1-form bounds
-/// `[lo, hi]` on each primitive form `f`, and whether those bounds are consistent.
+/// `[lo, hi]` on each primitive form `f`, and whether those bounds are consistent. The groups
+/// are ordered by key, so that [`lean`], which rewrites rows group by group, reads them in one
+/// order on every run.
+// Complexity tradeoff: naive version, the groups in a hash map, O(t) a row, whose order of
+// iteration changes from run to run, so the rows `lean` keeps, and the summary's key and cost,
+// could too (LOAD-max-div-xr I23). Used: an ordered map, O(t log g) a row for g groups, O(r t
+// log r) in all. Tradeoffs: a log factor on the grouping.
 fn group_lines(
     rows: &[Con],
 ) -> (
-    HashMap<LineGroup, Vec<(Int, Int, usize)>>,
+    BTreeMap<LineGroup, Vec<(Int, Int, usize)>>,
     HashMap<Terms, (Option<Int>, Option<Int>)>,
     bool,
 ) {
-    let mut groups: HashMap<LineGroup, Vec<(Int, Int, usize)>> = HashMap::new();
+    let mut groups: BTreeMap<LineGroup, Vec<(Int, Int, usize)>> = BTreeMap::new();
     let mut bounds: HashMap<Terms, (Option<Int>, Option<Int>)> = HashMap::new();
     let mut ok = true;
     let tighten = |b: &mut (Option<Int>, Option<Int>), lo: Option<Int>, hi: Option<Int>| {
@@ -3237,7 +3243,7 @@ fn hull_of(
 /// `max(H div 2, x mod 5 + x div 7 - 9)` after k halvings) leave k = 1 and 7, and only k = 1
 /// once `q3 + q4 <= 9` is in `rows`.
 // Complexity tradeoff: naive version, each row tried against the others by [`decide`] as
-// [`lean`] does, one decision for each row, and refused here. Used: the rows grouped by hash,
+// [`lean`] does, one decision for each row, and refused here. Used: the rows grouped by key,
 // each group sorted by slope and swept once keeping the upper hull over the interval `[lo, hi]`
 // of 1-form bounds on `f`, O(r log r) for r rows of t terms each, O(r t) for
 // the forms. Tradeoffs: a row implied by rows of other groups, or by several forms together, is
@@ -4697,5 +4703,44 @@ mod tests {
             )),
             Ok(false)
         );
+    }
+
+    #[test]
+    fn lean_keeps_the_same_rows_on_every_run() {
+        // Several groups of lines `y >= m * (u + v) + b` of two-atom forms, which `lean` caps
+        // group by group, each cap rewriting a row that the later groups' decisions read
+        // (LOAD-max-div-xr I23: the groups came from a hash map, whose order changes between
+        // maps). Each system is leaned 4 times, each run with new maps, and must give the
+        // same rows. Atoms 0 and 1 are the `y`s, 2 to 5 the form atoms. Not red on the hash map:
+        // each rewrite is implied by the rows, and these decisions are not refused, so the order
+        // did not change the rows here; the ordered map makes the order fixed by construction.
+        let mut seed = 4242u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 33) as i64
+        };
+        let mut capped = 0;
+        for _ in 0..30 {
+            let mut rows = Vec::new();
+            for n in 2..6 {
+                rows.push(con(&[(n, 1)], next() % 4 + 1, Rel::Ge));
+                rows.push(con(&[(n, -1)], next() % 9 + 1, Rel::Ge));
+            }
+            for y in 0..2u32 {
+                for (u, v) in [(2u32, 3u32), (4, 5), (2, 4)] {
+                    for _ in 0..3 {
+                        let m = next() % 6 + 1;
+                        rows.push(con(&[(y, 1), (u, -m), (v, -m)], next() % 20 - 10, Rel::Ge));
+                    }
+                }
+                rows.push(con(&[(y, -1), (2, 1), (5, 1)], next() % 30, Rel::Ge));
+            }
+            let first = lean(rows.clone());
+            capped += usize::from(first.iter().any(|r| !rows.contains(r)));
+            for _ in 0..3 {
+                assert_eq!(lean(rows.clone()), first, "{rows:?}");
+            }
+        }
+        assert!(capped > 0, "no system had a capped ray");
     }
 }

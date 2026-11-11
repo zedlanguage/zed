@@ -171,7 +171,15 @@ impl Int {
                 };
                 i128::try_from(g).map_or_else(|_| BigInt::from(g).into(), Int::from)
             }
-            _ => self.big().gcd(&other.big()).into(),
+            // Complexity tradeoff: num-bigint's `gcd` is Stein's algorithm over the whole
+            // width, O(n^2) in the wider operand's bits even when the other is one word;
+            // `gcd_uint` takes out the powers of 2 by shifts, reduces the wider operand modulo
+            // the narrower by one division, O(M(n)), and runs the half gcd at the narrower
+            // width, O(M(n) log n). The answer is the same. Trigger: the solver's rational
+            // cross products past i128 (LOAD-max-div-xr I25, 37% of cycles at 160 links of
+            // the mixed family before). Test:
+            // `int::tests::the_big_gcd_agrees_with_num_bigint`.
+            _ => BigInt::from(gcd_uint(self.big().magnitude(), other.big().magnitude())).into(),
         }
     }
 
@@ -3174,6 +3182,30 @@ mod tests {
         let min = Int::from(i128::MIN);
         assert_eq!(min.gcd(&min), -&min);
         assert_eq!(Int::ZERO.gcd(&Int::from(-5)), Int::from(5));
+    }
+
+    /// `Int::gcd` past i128 agrees with num-bigint's for every sign, for operands of one word
+    /// against many, with shared powers of 2 and odd factors, and with zero.
+    #[test]
+    fn the_big_gcd_agrees_with_num_bigint() {
+        let big: BigInt = BigInt::from(3u8).pow(200) * BigInt::from(2u8).pow(70) * 1_000_003;
+        let other: BigInt = BigInt::from(3u8).pow(150) * BigInt::from(2u8).pow(90) * 999_983;
+        let cases: Vec<(BigInt, BigInt)> = vec![
+            (big.clone(), other.clone()),
+            (big.clone(), BigInt::from(6)),
+            (BigInt::from(1u8) << 300, BigInt::from(3u8) << 200),
+            (big.clone(), BigInt::ZERO),
+            (big.clone(), big.clone()),
+            (big.clone(), BigInt::from(i128::MAX) * 7),
+        ];
+        for (a, b) in cases {
+            for (sa, sb) in [(1i8, 1i8), (-1, 1), (1, -1), (-1, -1)] {
+                let (x, y): (BigInt, BigInt) = (&a * sa, &b * sb);
+                let want = Int::from(Integer::gcd(&x, &y));
+                assert_eq!(Int::from(x.clone()).gcd(&Int::from(y.clone())), want);
+                assert_eq!(Int::from(y).gcd(&Int::from(x)), want);
+            }
+        }
     }
 
     /// The 64-bit, 128-bit and big paths of `div_floor` and `mod_floor` give the floor quotient
