@@ -334,6 +334,35 @@ impl Refusal {
     }
 }
 
+impl Refusal {
+    /// This refusal's reason as a program with the variables `names` reads it, where `moduli`
+    /// are the divisors of the remainders and quotients its conditions take. With one
+    /// variable, the variables the shadows reason counts are the checker's own, one for each
+    /// remainder and quotient, and the reason names the moduli they come from (I4.11); every
+    /// other reason is [`Refusal`]'s own. O(the moduli's text).
+    pub fn said(&self, names: &[&str], moduli: &[&str]) -> String {
+        match (self, names, moduli.split_last()) {
+            (Refusal::Shadows, [x], Some((last, rest))) => {
+                let by = if rest.is_empty() {
+                    last.to_string()
+                } else {
+                    format!("{} and {last}", rest.join(", "))
+                };
+                format!(
+                    "{REMOVING}. The program has one variable, `{x}`, and the conditions read it \
+                     through its remainders and quotients by {by}; the checker gives each \
+                     remainder and quotient a variable of its own. Where the values a variable \
+                     can take have gaps, it splits the conditions into cases, one for each gap. \
+                     Here the only values could lie in a case that would have to be split again \
+                     with as many of the checker's variables left as before, so the splitting \
+                     need not end. {STOPPED}"
+                )
+            }
+            _ => self.to_string(),
+        }
+    }
+}
+
 /// A refusal's reason and the sentence that closes it ([`Refusal::closed_by`]).
 struct Closed<'a> {
     why: &'a Refusal,
@@ -1734,7 +1763,9 @@ thread_local! {
 pub fn with_modular_empty_checked<T>(run: impl FnOnce() -> T) -> (T, EmptyCheck) {
     let was = MODULAR_CHECK.with(|c| c.replace(Some(EmptyCheck::default())));
     let out = run();
-    let check = MODULAR_CHECK.with(|c| c.replace(was)).expect("the check is on");
+    let check = MODULAR_CHECK
+        .with(|c| c.replace(was))
+        .expect("the check is on");
     (out, check)
 }
 

@@ -158,33 +158,21 @@ impl Domain {
         Domain { pieces: out }
     }
 
-    /// The intersection of all of `domains` (all of the line when there are none), as the
-    /// complement of the union of their complements.
-    // Complexity tradeoff: naive method, intersecting the domains one after another, O(k P) for
-    // k domains of P pieces in all, since the running intersection can keep up to P pieces
-    // (R3-CODEX-9, I3.12). Used: one sort of all the complements' pieces, O(P log P) comparisons.
-    // Nothing is given up. Test: `one_scope::clauses_sharing_one_residue_condition_scale`.
-    fn intersect_all(domains: Vec<Domain>) -> Self {
-        Self::from_pieces(domains.iter().flat_map(|d| d.complement().pieces).collect()).complement()
-    }
-
     fn contains_span(&self, lo: &Option<Int>, hi: &Option<Int>) -> bool {
-        for (l, h) in &self.pieces {
-            let le_lo = match (l, lo) {
-                (None, _) => true,
-                (Some(_), None) => false,
-                (Some(a), Some(b)) => a <= b,
-            };
-            let ge_hi = match (h, hi) {
-                (None, _) => true,
-                (Some(_), None) => false,
-                (Some(a), Some(b)) => a >= b,
-            };
-            if le_lo && ge_hi {
-                return true;
-            }
+        // Complexity tradeoff: scanning s disjoint intervals for each point
+        // costs O(s) per lookup. Their sorted starts locate the only possible
+        // containing interval in O(log s) comparisons. Nothing is given up for
+        // the nonempty spans callers pass. Tests: pncx_domain_membership_scale
+        // (the scan fails) and pncx_domain_membership_matches_scan.
+        let end = self.pieces.partition_point(|(l, _)| !cmp_lo(l, lo).is_gt());
+        let Some((_, h)) = end.checked_sub(1).and_then(|i| self.pieces.get(i)) else {
+            return false;
+        };
+        match (h, hi) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(a), Some(b)) => a >= b,
         }
-        false
     }
 }
 
@@ -600,80 +588,17 @@ fn rewrite_lin_full(
 /// formula after eliminating constant equalities, unit equalities, and Euclidean division
 /// remainders. Returns `None` if `f` lies outside this scope (e.g., has products, zero moduli, or
 /// two independent non-quotient variables).
-///
-/// A conjunction `C && (D1 || ... || Dk)` with one disjunction that has a conjunction among its
-/// parts, which [`solve_modular_whole`] leaves to the general path (`fold_or`), is decided as
-/// `C && D1`, then `C && D2`, and so on, up to the first that has a point; `None` when one of them
-/// is outside the scope, so the general path answers `f` whole as before.
-// Complexity tradeoff: naive version, the general path on `f`, whose cost grew faster than
-// linear on the `fails` questions of conjunctions of pairs (the negation of `n` clauses, a
-// disjunction of `n` conjunctions): 274M to 10,994M instructions from n = 64 to 1024, 2.20 to
-// 2.95 per doubling (I3.2). Used: one solve of `C && Di` per part up to the first with a point,
-// each in the size of `C` and `Di`, so O(k |C|) when every part is empty (`k` parts) and the
-// cost of the first parts tried when one has a point. One level only: a part that holds such a
-// disjunction again is not split, so the solves are at most `k`. What is given up: nothing is
-// refused that was answered; a formula with an empty answer on every part costs `k` solves of
-// `C`. Test: `one_scope::the_fails_questions_of_pairs_scale`.
+// Complexity tradeoff: a conjunction `C && (D1 || ... || Dk)` is not split into `k` solves of
+// `C && Di` (R5-CLAUDE-5): that split cost O(k |C|) when no part had a point, which made
+// `l01_39_reduced_product::named_test::arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth`
+// take 17.1 times the work for 8 times the depth (limit 14.2). It was added for the `fails`
+// questions of pairs (I3.2), which the zero witness and the batched remainder check now answer
+// near-linearly (`one_scope::the_fails_questions_of_pairs_scale`,
+// `pncx_probe::pncx_pairs_scale`, `pncx_probe::pncx_disj_scale` pass without it). What is
+// given up: such a formula goes to the general path whole; no answer of the 5,000-formula
+// enumeration test changed (sat 4277, empty 712, refused 11 with and without the split).
 pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
-    if let Some(found) = solve_modular_whole(f, want_model) {
-        return Some(found);
-    }
-    // Only when no model is wanted: with a model wanted, the first part with a point would choose
-    // the model, so the model would depend on the order of the parts (R4-CLAUDE-8; the tests
-    // `omega::the_answer_does_not_depend_on_the_order_of_the_disjuncts*` failed); the general
-    // path answers such a question as before.
-    if want_model {
-        return None;
-    }
-    let (rest, parts) = one_disjunction_of_conjunctions(f)?;
-    for d in parts {
-        let mut g = rest.clone();
-        g.push(d);
-        if let Some(model) = solve_modular_whole(&Formula::and(g), want_model)? {
-            return Some(Some(model));
-        }
-    }
-    Some(None)
-}
-
-/// The top-level conjuncts of `f` other than its one disjunction that has a conjunction among its
-/// parts, and that disjunction's parts (a negated conjunction read as the disjunction of the
-/// negated parts); `None` when `f` has no such disjunction or more than one.
-fn one_disjunction_of_conjunctions(f: &Formula) -> Option<(Vec<Formula>, Vec<Formula>)> {
-    let is_conjunction = |g: &Formula| match g {
-        Formula::And(gs) => gs.len() > 1,
-        Formula::Not(h) => matches!(&**h, Formula::Or(gs) if gs.len() > 1),
-        Formula::Con(_) | Formula::Or(_) => false,
-    };
-    let mut rest: Vec<Formula> = Vec::new();
-    let mut parts: Option<Vec<Formula>> = None;
-    let mut seen: HashSet<Id> = HashSet::new();
-    let mut stack = vec![f];
-    while let Some(g) = stack.pop() {
-        let ds: Vec<Formula> = match g {
-            Formula::And(gs) => {
-                if seen.insert(Id::any(g)) {
-                    stack.extend(gs.iter().rev());
-                }
-                continue;
-            }
-            Formula::Or(ds) => ds.to_vec(),
-            Formula::Not(h) => match &**h {
-                Formula::And(gs) => gs.iter().map(|p| Formula::negate(p.clone())).collect(),
-                Formula::Con(_) | Formula::Or(_) | Formula::Not(_) => Vec::new(),
-            },
-            Formula::Con(_) => Vec::new(),
-        };
-        if ds.iter().any(is_conjunction) {
-            if parts.is_some() {
-                return None;
-            }
-            parts = Some(ds);
-        } else {
-            rest.push(g.clone());
-        }
-    }
-    Some((rest, parts?))
+    solve_modular_whole(f, want_model)
 }
 
 fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
@@ -691,7 +616,11 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             }
             Formula::Con(c) => top_cons.push(c),
             Formula::Or(ds) if ds.is_empty() => return Some(None),
-            Formula::Or(_) | Formula::Not(_) => top_clauses.push(g),
+            Formula::Or(_) | Formula::Not(_) => {
+                if seen_top.insert(Id::any(g)) {
+                    top_clauses.push(g);
+                }
+            }
         }
     }
 
@@ -715,6 +644,21 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     }
     if !has_modulus {
         return None;
+    }
+
+    // A zero assignment is a direct witness, including for the negation of a
+    // modular conjunction whose quotient definitions all hold at zero. Checking
+    // it before extracting local quotients avoids sending that easy disjunction
+    // to general elimination. One visited DAG walk, O(n) arithmetic operations;
+    // no search and no conclusion if it fails. Tests: pncx_disj_scale and
+    // pncx_pairs_scale; their negative control omits this witness.
+    let zero = Model::new();
+    if f.holds(&zero) {
+        return Some(Some(if want_model {
+            all_atoms.into_iter().map(|a| (a, Int::ZERO)).collect()
+        } else {
+            zero
+        }));
     }
 
     // Step 1: Constant equalities propagation (`k * a + c == 0`) and Unit equalities (`a = ±b + d`).
@@ -1055,8 +999,26 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     }
 
     // Step 6: Fold the formula DAG bottom-up with polarity `negated: bool`.
+    // Complexity tradeoff: folding kept conjunction prefixes copies each
+    // prefix's clause vector into its parent, O(n^2) payload bytes for n
+    // clauses even though the traversal visits each node once. The already
+    // collected top-level conjuncts form one flat conjunction in O(n) space;
+    // each payload is then combined once at this level. Nothing is given up:
+    // conjunction is associative and repeated shared conjuncts are idempotent.
+    // Nested conjunctions below alternatives keep the original fold. Test:
+    // pncx_kept_prefix_scale; the original fold fails at 28.2x bytes.
+    let flat_top = matches!(f, Formula::And(_)).then(|| {
+        Formula::And(crate::presburger::Shared::new(
+            top_cons
+                .iter()
+                .map(|c| Formula::Con((*c).clone()))
+                .chain(top_clauses.iter().map(|g| (*g).clone()))
+                .collect(),
+        ))
+    });
+    let fold_input = flat_top.as_ref().unwrap_or(f);
     let mut local_windows: HashMap<Atom, Vec<LocalWindow>> = HashMap::new();
-    let folded: Result<FoldNode, ()> = f.fold(
+    let folded: Result<FoldNode, ()> = fold_input.fold(
         false,
         |g, negated| negated != matches!(g, Formula::Not(_)),
         |g, negated, parts: Vec<Result<FoldNode, ()>>| match g {
@@ -1094,17 +1056,17 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     // Step 7: Add top-level narrowed windows of `global_quots` (`w < m - 1`) as unit congruences,
     // and separate `root_node.clauses` into global bounds, global unit congruences, and clauses.
     let mut global_bounds = Domain::all();
-    let mut unit_mods: BTreeMap<Int, ResidueSet> = BTreeMap::new();
+    // Complexity tradeoff: accumulated restrictions can rebuild O(s^2) pieces.
+    // As in fold_and, collect restrictions before intersecting them, so
+    // several windows or collapsed clause groups cannot rebuild one growing
+    // residue list quadratically. The balanced merge costs O(s log s) in the
+    // input intervals; nothing is given up. pncx_pure_residues_scale
+    // exercises the same operation.
+    let mut unit_inputs: BTreeMap<Int, Vec<ResidueSet>> = BTreeMap::new();
     for gq in global_quots.values() {
         if gq.w < &gq.m - &Int::ONE {
             let s = shift_residue_interval(&Int::ZERO, &gq.w, gq.s_x, &gq.c_lo, &gq.m);
-            let e = unit_mods
-                .entry(gq.m.clone())
-                .or_insert_with(|| vec![(Int::ZERO, &gq.m - &Int::ONE)]);
-            *e = res_intersect(e, &s);
-            if e.is_empty() {
-                return Some(None);
-            }
+            unit_inputs.entry(gq.m.clone()).or_default().push(s);
         }
     }
 
@@ -1123,43 +1085,31 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             }
         } else if cl.bounds.is_empty() && cl.mods.len() == 1 {
             let (m, s) = cl.mods.into_iter().next().expect("one");
-            let e = unit_mods
-                .entry(m.clone())
-                .or_insert_with(|| vec![(Int::ZERO, &m - &Int::ONE)]);
-            *e = res_intersect(e, &s);
-            if e.is_empty() {
-                return Some(None);
-            }
+            unit_inputs.entry(m).or_default().push(s);
         } else {
             raw_clauses.push(cl);
         }
     }
 
     // Step 8: Merge clauses sharing the same modular part `D` via `(D || B1) && (D || B2) <=> D || (B1 && B2)`.
+    // Complexity tradeoff: repeated intersection scans an accumulated domain
+    // O(c^2) times in the worst case. Group the uncut domains, then intersect
+    // in a balanced tree, O(s log c) interval operations for s input intervals.
+    // Restricting every clause to global_bounds would also multiply their
+    // sizes; leave that restriction to the segment walk. Nothing is given up.
+    // Tests: pncx_bound_merge_scale, pncx_bound_merge_enumeration.
     let mut by_mods: BTreeMap<BTreeMap<Int, ResidueSet>, Vec<Domain>> = BTreeMap::new();
-    for mut cl in raw_clauses {
-        // Restrict `cl.bounds` to `global_bounds`; if it covers all of `global_bounds`, `cl` is true.
-        let b_in_global = cl.bounds.intersect(&global_bounds);
-        if b_in_global == global_bounds {
-            continue;
-        }
-        cl.bounds = b_in_global;
+    for cl in raw_clauses {
         by_mods.entry(cl.mods).or_default().push(cl.bounds);
     }
 
     let mut mixed_clauses: Vec<FlatClause> = Vec::new();
     for (mods, bounds) in by_mods {
-        let bounds = Domain::intersect_all(bounds);
+        let bounds = intersect_domains(bounds);
         if bounds.is_empty() {
             if mods.len() == 1 {
                 let (m, s) = mods.into_iter().next().expect("one");
-                let e = unit_mods
-                    .entry(m.clone())
-                    .or_insert_with(|| vec![(Int::ZERO, &m - &Int::ONE)]);
-                *e = res_intersect(e, &s);
-                if e.is_empty() {
-                    return Some(None);
-                }
+                unit_inputs.entry(m).or_default().push(s);
             } else {
                 mixed_clauses.push(FlatClause {
                     bounds: Domain::empty(),
@@ -1171,7 +1121,23 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         }
     }
 
+    let mut unit_mods = BTreeMap::new();
+    for (m, sets) in unit_inputs {
+        let residues = intersect_residue_sets(sets);
+        if residues.is_empty() {
+            return Some(None);
+        }
+        unit_mods.insert(m, residues);
+    }
+
+    // Complexity tradeoff: enumerating all triples costs O(c^3). The sufficient
+    // three-clause implication uses O(c log c) grouping and constant work per
+    // clause; it can miss implications but never removes a solution. Tested by
+    // one_scope::one_variable_modular_formulas_match_enumeration and pncx_random.
     global_bounds = global_bounds.intersect(&forced_pair_bounds(&mixed_clauses));
+    if global_bounds.is_empty() {
+        return Some(None);
+    }
 
     // Step 9: Partition `global_bounds` at all bound endpoints of `mixed_clauses` into
     // bound-homogeneous regimes `[lo_r, hi_r]`.
@@ -1183,8 +1149,13 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     let walked = walk_segments(&regimes, &global_bounds, &unit_mods, &mixed_clauses);
     let undecided = match walked {
         RegimeOut::Found(x_val) => {
+            // Complexity tradeoff: constructing every quotient in a Model can
+            // write quadratic output bits. For a Boolean answer evaluate only
+            // the referenced atoms in a visited DAG fold, with linear temporary
+            // space. Repeated atoms still pay their arithmetic cost. Tests:
+            // one_variable_modular_formulas_match_enumeration, pncx_random.
             if !want_model {
-                let values = PointValues {
+                let witness = ScalarWitness {
                     x_root: &x_root,
                     x_val: &x_val,
                     fixed: &fixed,
@@ -1193,7 +1164,7 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                     global_quots: &global_quots,
                     local_windows: &local_windows,
                 };
-                return values.holds(f).then(|| Some(Model::new()));
+                return witness.holds(f).then(|| Some(Model::new()));
             }
             let model = build_model(
                 &x_root,
@@ -1691,9 +1662,13 @@ fn fold_and(
     // Simplify clauses: if any clause is falsum, collapse to `[falsum]`.
     // Also merge pure bound clauses in the conjunction so `And` inside `Or` (like `d || (r && !d)`)
     // stays compact.
-    let mut pure_bounds = Domain::all();
-    let mut has_pure_bounds = false;
-    let mut pure_mods: BTreeMap<Int, ResidueSet> = BTreeMap::new();
+    // Complexity tradeoff: intersecting one growing interval list per clause
+    // can copy O(s^2) pieces for s separate holes. Group bounds and residues
+    // and intersect balanced halves, O(s log s) interval operations. Nothing
+    // is given up. Tests: pncx_pure_bounds_scale and pncx_pure_residues_scale;
+    // both fail with the accumulated-list implementation.
+    let mut bound_inputs = Vec::new();
+    let mut pure_mods: BTreeMap<Int, Vec<ResidueSet>> = BTreeMap::new();
     let mut other_clauses = Vec::new();
     for cl in clauses {
         if cl.is_true() {
@@ -1707,41 +1682,39 @@ fn fold_and(
             });
         }
         if cl.mods.is_empty() {
-            pure_bounds = pure_bounds.intersect(&cl.bounds);
-            has_pure_bounds = true;
-            if pure_bounds.is_empty() {
-                return Ok(FoldNode {
-                    clauses: vec![FlatClause::falsum()],
-                    half_wins: Vec::new(),
-                    local_quots,
-                });
-            }
+            bound_inputs.push(cl.bounds);
         } else if cl.bounds.is_empty() && cl.mods.len() == 1 {
             let (m, s) = cl.mods.into_iter().next().expect("one");
-            let e = pure_mods
-                .entry(m.clone())
-                .or_insert_with(|| vec![(Int::ZERO, &m - &Int::ONE)]);
-            *e = res_intersect(e, &s);
-            if e.is_empty() {
-                return Ok(FoldNode {
-                    clauses: vec![FlatClause::falsum()],
-                    half_wins: Vec::new(),
-                    local_quots,
-                });
-            }
+            pure_mods.entry(m).or_default().push(s);
         } else {
             other_clauses.push(cl);
         }
     }
 
+    let pure_bounds = intersect_domains(bound_inputs);
+    if pure_bounds.is_empty() {
+        return Ok(FoldNode {
+            clauses: vec![FlatClause::falsum()],
+            half_wins: Vec::new(),
+            local_quots,
+        });
+    }
     let mut out_clauses = Vec::with_capacity(other_clauses.len() + pure_mods.len() + 1);
-    if has_pure_bounds && !pure_bounds.is_all() {
+    if !pure_bounds.is_all() {
         out_clauses.push(FlatClause {
             bounds: pure_bounds,
             mods: BTreeMap::new(),
         });
     }
-    for (m, s) in pure_mods {
+    for (m, sets) in pure_mods {
+        let s = intersect_residue_sets(sets);
+        if s.is_empty() {
+            return Ok(FoldNode {
+                clauses: vec![FlatClause::falsum()],
+                half_wins: Vec::new(),
+                local_quots,
+            });
+        }
         if !res_is_full(&s, &m) {
             let mut mods = BTreeMap::new();
             mods.insert(m, s);
@@ -1875,9 +1848,19 @@ fn partition_into_regimes(global_bounds: &Domain, clauses: &[FlatClause]) -> Vec
     cuts.dedup();
 
     let mut out = Vec::new();
+    // Complexity tradeoff: scanning every cut for every disjoint global span
+    // costs O(g c). Binary searches select only the cuts inside each span,
+    // O(g log c + c) comparisons in total; disjoint spans cannot share a cut.
+    // Nothing is given up. Test: r4_tests::pncx_bound_partition_scale.
     for (g_lo, g_hi) in &global_bounds.pieces {
         let mut cur_lo = g_lo.clone();
-        for c in &cuts {
+        let start = g_lo
+            .as_ref()
+            .map_or(0, |l| cuts.partition_point(|c| c <= l));
+        let end = g_hi
+            .as_ref()
+            .map_or(cuts.len(), |h| cuts.partition_point(|c| c <= h));
+        for c in &cuts[start..end] {
             let after_start = match &cur_lo {
                 None => true,
                 Some(l) => *c > *l,
@@ -1921,7 +1904,67 @@ type RegimeTask = (
 /// makes smaller segments; they go on an explicit stack, not into recursive calls, since the
 /// nesting can be as deep as the number of distinct moduli. The stack is taken from the top in
 /// the order the segments lie on the line, as the recursion did.
+///
+/// The regime is first written in the coordinate `t = x - lo` or `t = hi - x`, so that `t >= 0`
+/// and the residue sets are read from a bound: the line `x` is the coordinate of the root of
+/// the affine union-find, which the names choose, and another name shifts it or reverses its
+/// sign (I4.15). The steps below choose by the residue sets as they lie on `[0, m)` (which run
+/// is split off first, whether a set is a single run, which residues `map_affine_mod` maps), so
+/// in the coordinate `x` the same formula was answered under one name and refused under
+/// another (R5-CLAUDE-1; cases 974, 3205 and 4949 of
+/// `one_scope::one_variable_answers_do_not_depend_on_names`). In `t` a shift of `x` changes
+/// nothing, and a sign reversal swaps the two writings; with both bounds the smaller writing is
+/// used, so both names give the same one. With no bound the regime is solved in `x`.
+// Complexity tradeoff: naive version, the regime solved in `x`, whose answers depended on the
+// names. Used: each residue interval is rewritten once or twice, at most two pieces each, and
+// the two writings compared, O(r) integer operations for `r` intervals in all, against the
+// solve that follows. What is given up: nothing that was answered under every name; a regime
+// answered under one name only is now answered or refused under all. Test:
+// `one_scope::one_variable_answers_do_not_depend_on_names`.
 fn solve_regime(
+    lo: &Option<Int>,
+    hi: &Option<Int>,
+    unit_mods: BTreeMap<Int, ResidueSet>,
+    clauses: Vec<BTreeMap<Int, ResidueSet>>,
+) -> RegimeOut {
+    // `x = c + s * t`.
+    let rewrite = |s: i8, c: &Int| -> (BTreeMap<Int, ResidueSet>, Vec<BTreeMap<Int, ResidueSet>>) {
+        let set = |m: &Int, r: &ResidueSet| -> ResidueSet {
+            let mut raw = Vec::with_capacity(2 * r.len());
+            for (a, b) in r {
+                raw.extend(shift_residue_interval(a, b, s, c, m));
+            }
+            res_normalize(raw, m)
+        };
+        let units = unit_mods
+            .iter()
+            .map(|(m, r)| (m.clone(), set(m, r)))
+            .collect();
+        let mut cls: Vec<BTreeMap<Int, ResidueSet>> = clauses
+            .iter()
+            .map(|cl| cl.iter().map(|(m, r)| (m.clone(), set(m, r))).collect())
+            .collect();
+        cls.sort();
+        (units, cls)
+    };
+    let width = lo.as_ref().zip(hi.as_ref()).map(|(l, h)| h - l);
+    let from_lo = lo.as_ref().map(|l| (rewrite(1, l), l.clone(), 1i8));
+    let from_hi = hi.as_ref().map(|h| (rewrite(-1, h), h.clone(), -1i8));
+    let chosen = match (from_lo, from_hi) {
+        (Some(a), Some(b)) => Some(if b.0 < a.0 { b } else { a }),
+        (a, b) => a.or(b),
+    };
+    let Some(((units, cls), c, s)) = chosen else {
+        return solve_regime_in(lo, hi, unit_mods, clauses);
+    };
+    match solve_regime_in(&Some(Int::ZERO), &width, units, cls) {
+        RegimeOut::Found(t) => RegimeOut::Found(if s > 0 { &c + &t } else { &c - &t }),
+        out => out,
+    }
+}
+
+/// [`solve_regime`] in the coordinate it was given.
+fn solve_regime_in(
     lo: &Option<Int>,
     hi: &Option<Int>,
     unit_mods: BTreeMap<Int, ResidueSet>,
@@ -1966,18 +2009,28 @@ fn solve_regime_step(
         }
     }
 
-    // A point that satisfies every condition needs no base and no CRT: x = 1 lies in no
-    // residue class `0 mod m` and satisfies every set of nonzero residues, which is the common
-    // shape of clauses over overlapping composite moduli (Codex's R3-CODEX-8). A sufficient
-    // check, O(n): when it fails the steps below run as before.
-    // Complexity tradeoff: O(n) on every regime step; without it the CRT preparation runs on
-    // formulas this point satisfies (Codex's round-3 shared axis, R3-CODEX-8). The point it
-    // returns can make main's later questions cost more (R4-CLAUDE-7, seed 65).
-    if lo.as_ref().is_none_or(|l| *l <= Int::ONE)
-        && hi.as_ref().is_none_or(|h| *h >= Int::ONE)
-        && holds_modular_point(&Int::ONE, &unit_mods, &clauses)
-    {
-        return RegimeOut::Found(Int::ONE);
+    // No witness here may use a fixed point of the line such as x = 1: the line is the
+    // coordinate of the root of the affine union-find, which the names choose, so a fixed point
+    // means a different value of the program's variables under another name (I4.15). The
+    // witnesses below are placed by the bounds, which move with the coordinate: shifting x by d
+    // shifts them by d, and reversing its sign swaps the lower and the upper one.
+    //
+    // Complexity tradeoff: repeated advancement to the next permitted integer
+    // can enumerate a period exponential in its written bits. Compute only the
+    // necessary lower bound from each written constraint, O(n log n) interval
+    // comparisons, and check that one point; likewise the necessary upper bound from `hi`.
+    // Failure gives no verdict and the
+    // existing exact steps continue. Tests: pncx_lower_witness_scale and the
+    // bounded enumeration tests; `names::answers_do_not_depend_on_the_names_of_aliases`.
+    if let Some(l) = lo {
+        if let Some(x) = lower_witness(l, hi, &unit_mods, &clauses) {
+            return RegimeOut::Found(x);
+        }
+    }
+    if let Some(h) = hi {
+        if let Some(x) = upper_witness(lo, h, &unit_mods, &clauses) {
+            return RegimeOut::Found(x);
+        }
     }
 
     if let Some(x) = separate_pair_witness(lo, hi, &unit_mods, &clauses) {
@@ -2850,6 +2903,110 @@ fn solve_coprime_system(
     lo: &Option<Int>,
     hi: &Option<Int>,
     bases_info: &[BaseInfo],
+    allowed: Vec<ResidueSet>,
+    clauses: Vec<BTreeMap<usize, ResidueSet>>,
+    allow_split: bool,
+) -> RegimeOut {
+    // Complexity tradeoff: splitting each base while replaying unrelated
+    // clauses costs O(t L) for t bases and L literals, before arithmetic.
+    // The clause incidence graph separates independent residue choices in
+    // O(t + L) operations. Solve each component once and combine its points
+    // by a balanced CRT tree. This costs the sum of the component solves
+    // plus CRT, rather than replaying other components. A bounded interval
+    // couples the choices, so it keeps the original path. An undecided
+    // component also keeps that path; no existing answer is given up.
+    // Test: pncx_independent_components_scale; negative control: omit this
+    // sufficient witness, exposing Stage C's repeated component scans.
+    if lo.is_none() && hi.is_none() && allow_split {
+        if let Some(point) = independent_component_witness(bases_info, &allowed, &clauses) {
+            return RegimeOut::Found(point);
+        }
+    }
+    solve_coprime_connected(lo, hi, bases_info, allowed, clauses, allow_split)
+}
+
+fn independent_component_witness(
+    info: &[BaseInfo],
+    allowed: &[ResidueSet],
+    clauses: &[BTreeMap<usize, ResidueSet>],
+) -> Option<Int> {
+    let mut neighbors = vec![Vec::new(); info.len()];
+    for cl in clauses {
+        let mut keys = cl.keys();
+        let &first = keys.next()?;
+        for &other in keys {
+            neighbors[first].push(other);
+            neighbors[other].push(first);
+        }
+    }
+    let mut component = vec![None; info.len()];
+    let mut groups = Vec::new();
+    for root in 0..info.len() {
+        if component[root].is_some() {
+            continue;
+        }
+        let id = groups.len();
+        component[root] = Some(id);
+        let mut pending = vec![root];
+        let mut group = Vec::new();
+        while let Some(v) = pending.pop() {
+            group.push(v);
+            for &other in &neighbors[v] {
+                if component[other].is_none() {
+                    component[other] = Some(id);
+                    pending.push(other);
+                }
+            }
+        }
+        groups.push(group);
+    }
+    if groups.len() <= 1 {
+        return None;
+    }
+    let mut grouped_clauses = vec![Vec::new(); groups.len()];
+    for cl in clauses {
+        let &first = cl.keys().next()?;
+        grouped_clauses[component[first]?].push(cl);
+    }
+    let mut local_index = vec![0; info.len()];
+    let mut choices = Vec::with_capacity(info.len());
+    for (group, cs) in groups.into_iter().zip(grouped_clauses) {
+        for (i, &v) in group.iter().enumerate() {
+            local_index[v] = i;
+        }
+        let local_info: Vec<_> = group.iter().map(|&v| info[v].clone()).collect();
+        let local_allowed = group.iter().map(|&v| allowed[v].clone()).collect();
+        let local_clauses = cs
+            .into_iter()
+            .map(|cl| {
+                cl.iter()
+                    .map(|(&v, set)| (local_index[v], set.clone()))
+                    .collect()
+            })
+            .collect();
+        // This call does not decompose again. Stage C's calls have
+        // allow_split=false, so the added wrapper cannot grow call depth.
+        let RegimeOut::Found(point) = solve_coprime_connected(
+            &None,
+            &None,
+            &local_info,
+            local_allowed,
+            local_clauses,
+            true,
+        ) else {
+            return None;
+        };
+        for base in local_info {
+            choices.push((point.mod_floor(&base.max_q), base.max_q));
+        }
+    }
+    combine_crt_tree(choices).map(|(point, _)| point)
+}
+
+fn solve_coprime_connected(
+    lo: &Option<Int>,
+    hi: &Option<Int>,
+    bases_info: &[BaseInfo],
     mut allowed: Vec<ResidueSet>,
     mut clauses: Vec<BTreeMap<usize, ResidueSet>>,
     allow_split: bool,
@@ -3586,143 +3743,6 @@ fn build_model(
 
     model
 }
-
-/// The values `build_model` gives the atoms at `x = x_val`, read one atom at a time where a
-/// constraint needs it, so a question that wants no model builds none (R2-CODEX-6, I3.6; the
-/// reading is Codex's round-3 `ScalarWitness`). Each read follows `build_model`'s order: a
-/// three-term remainder, then a local quotient, a global quotient, a fixed value and `x` itself;
-/// any other atom through its unit class.
-///
-/// Complexity tradeoff: naive version, `build_model` then `f.holds`, computes every atom's value;
-/// this computes only the atoms the constraints name, each once per use. A quotient of an N-bit
-/// point still costs O(N) words, so n constraints cost O(n N) (R4-CLAUDE-6).
-struct PointValues<'a> {
-    x_root: &'a Atom,
-    x_val: &'a Int,
-    fixed: &'a HashMap<Atom, Int>,
-    uf: &'a UnitUf,
-    rem_defs: &'a HashMap<Atom, FullRemDef>,
-    global_quots: &'a HashMap<Atom, GlobalQuot>,
-    local_windows: &'a HashMap<Atom, Vec<LocalWindow>>,
-}
-
-impl PointValues<'_> {
-    /// The value of an atom that `build_model` sets before the three-term remainders.
-    fn quotient(&self, a: &Atom) -> Option<Int> {
-        if let Some(wins) = self.local_windows.get(a) {
-            for lw in wins {
-                let sx = if lw.s_x > 0 {
-                    self.x_val.clone()
-                } else {
-                    -self.x_val
-                };
-                let u = &sx + &lw.c_lo;
-                if u.mod_floor(&lw.m) <= lw.w {
-                    let q = u.div_floor(&lw.m);
-                    return Some(if lw.sigma_q > 0 { q } else { -&q });
-                }
-            }
-            return Some(Int::ZERO);
-        }
-        if let Some(gq) = self.global_quots.get(a) {
-            let sx = if gq.s_x > 0 {
-                self.x_val.clone()
-            } else {
-                -self.x_val
-            };
-            let q = (&sx + &gq.c_lo).div_floor(&gq.m);
-            return Some(if gq.sigma_q > 0 { q } else { -&q });
-        }
-        if let Some(v) = self.fixed.get(a) {
-            return Some(v.clone());
-        }
-        (a == self.x_root).then(|| self.x_val.clone())
-    }
-
-    /// The value of an atom that `build_model` sets directly, or None.
-    fn direct(&self, a: &Atom) -> Option<Int> {
-        if let Some(rem) = self.rem_defs.get(a) {
-            let q = self.quotient(&rem.q_root).unwrap_or(Int::ZERO);
-            let sum = &(&(&rem.c_x * self.x_val) + &(&rem.c_q * &q)) + &rem.k;
-            return Some(if rem.c_r > 0 { -&sum } else { sum });
-        }
-        self.quotient(a)
-    }
-
-    fn atom(&self, a: &Atom) -> Int {
-        if let Some(v) = self.direct(a) {
-            return v;
-        }
-        let (root, s, d) = self.uf.get(a);
-        let v = self.direct(&root).unwrap_or(Int::ZERO);
-        if s > 0 { &v + &d } else { &d - &v }
-    }
-
-    fn con_holds(&self, c: &Con) -> bool {
-        let v = c
-            .lin
-            .terms
-            .iter()
-            .fold(c.lin.constant.clone(), |v, (a, k)| {
-                &v + &(k * &self.atom(a))
-            });
-        match c.rel {
-            Rel::Eq => v.is_zero(),
-            Rel::Ge => !v.is_negative(),
-        }
-    }
-
-    /// Whether `f` holds at these values: the walk of `Formula::holds`, on an explicit stack,
-    /// each shared part read once (by its id).
-    fn holds(&self, f: &Formula) -> bool {
-        if let Formula::Con(c) = f {
-            return self.con_holds(c);
-        }
-        let mut seen: HashMap<Id, bool> = HashMap::new();
-        let mut stack = vec![(f, f.kids().iter(), None)];
-        let mut value: Option<bool> = None;
-        while let Some((node, left, _)) = stack.last_mut() {
-            if let Some(v) = value.take() {
-                let decided = match node {
-                    Formula::And(_) => !v,
-                    Formula::Or(_) => v,
-                    Formula::Not(_) | Formula::Con(_) => true,
-                };
-                if decided {
-                    let v = if matches!(node, Formula::Not(_)) {
-                        !v
-                    } else {
-                        v
-                    };
-                    if let Some((_, _, Some(id))) = stack.pop() {
-                        seen.insert(id, v);
-                    }
-                    value = Some(v);
-                    continue;
-                }
-            }
-            match left.next() {
-                Some(Formula::Con(c)) => value = Some(self.con_holds(c)),
-                Some(g) => match Id::of(g) {
-                    Some(id) => match seen.get(&id) {
-                        Some(&v) => value = Some(v),
-                        None => stack.push((g, g.kids().iter(), Some(id))),
-                    },
-                    None => stack.push((g, g.kids().iter(), None)),
-                },
-                None => {
-                    let v = matches!(node, Formula::And(_));
-                    if let Some((_, _, Some(id))) = stack.pop() {
-                        seen.insert(id, v);
-                    }
-                    value = Some(v);
-                }
-            }
-        }
-        value.unwrap_or(false)
-    }
-}
-
 /// The bounds that triples of clauses force (Codex's R3-CODEX-6, proved there): three clauses
 /// `x mod a == a_j || x mod b == b_j || x in D`, with one interval `D`, the three `a_j` distinct
 /// and the three `b_j` distinct, force `x` into `D`, since outside `D` the one value of `x mod a`
@@ -3790,15 +3810,1195 @@ fn separate_pair_witness(
         groups.entry((a, b)).or_default().push(cl);
     }
     let mut used = BTreeSet::new();
-    let mut choices = Vec::with_capacity(2 * groups.len());
+    let mut pairs = Vec::with_capacity(groups.len());
     for ((a, b), cs) in groups {
         if cs.len() != 2 || !used.insert(a) || !used.insert(b) {
             return None;
         }
-        choices.push((cs[0][a].first()?.0.clone(), a.clone()));
-        choices.push((cs[1][b].first()?.0.clone(), b.clone()));
+        pairs.push((a, &cs[0][a], b, &cs[1][b]));
     }
-    let (r, m) = combine_crt_tree(choices)?;
-    let x = pick_in_span(lo, hi, &r, &m)?;
-    holds_modular_point(&x, unit_mods, clauses).then_some(x)
+    // The residue chosen on each divisor is the first permitted one at or above `lo`, or the
+    // last at or below `hi`, never the first in the coordinate's own order: that order follows
+    // the root the names choose (I4.15). With no bound every choice gives a point.
+    let anchored = |pick: &dyn Fn(&Int, &ResidueSet) -> Option<Int>| -> Option<Int> {
+        let mut choices = Vec::with_capacity(2 * pairs.len());
+        for (a, sa, b, sb) in &pairs {
+            choices.push((pick(a, sa)?.mod_floor(a), (*a).clone()));
+            choices.push((pick(b, sb)?.mod_floor(b), (*b).clone()));
+        }
+        let (r, m) = combine_crt_tree(choices)?;
+        let x = pick_in_span(lo, hi, &r, &m)?;
+        holds_modular_point(&x, unit_mods, clauses).then_some(x)
+    };
+    match (lo, hi) {
+        (None, None) => anchored(&|_, s| s.first().map(|(r, _)| r.clone())),
+        _ => lo
+            .as_ref()
+            .and_then(|l| anchored(&|m, s| first_residue_at(l, m, s)))
+            .or_else(|| {
+                hi.as_ref()
+                    .and_then(|h| anchored(&|m, s| last_residue_at(h, m, s)))
+            }),
+    }
+}
+struct ScalarWitness<'a> {
+    x_root: &'a Atom,
+    x_val: &'a Int,
+    fixed: &'a HashMap<Atom, Int>,
+    uf: &'a UnitUf,
+    rem_defs: &'a HashMap<Atom, FullRemDef>,
+    global_quots: &'a HashMap<Atom, GlobalQuot>,
+    local_windows: &'a HashMap<Atom, Vec<LocalWindow>>,
+}
+
+impl ScalarWitness<'_> {
+    fn quotient(&self, a: &Atom) -> Int {
+        if let Some(wins) = self.local_windows.get(a) {
+            for lw in wins {
+                let sx = if lw.s_x > 0 {
+                    self.x_val.clone()
+                } else {
+                    -self.x_val
+                };
+                let u = &sx + &lw.c_lo;
+                if u.mod_floor(&lw.m) <= lw.w {
+                    let q = u.div_floor(&lw.m);
+                    return if lw.sigma_q > 0 { q } else { -&q };
+                }
+            }
+            return Int::ZERO;
+        }
+        if let Some(gq) = self.global_quots.get(a) {
+            let sx = if gq.s_x > 0 {
+                self.x_val.clone()
+            } else {
+                -self.x_val
+            };
+            let q = (&sx + &gq.c_lo).div_floor(&gq.m);
+            return if gq.sigma_q > 0 { q } else { -&q };
+        }
+        if let Some(v) = self.fixed.get(a) {
+            return v.clone();
+        }
+        if a == self.x_root {
+            return self.x_val.clone();
+        }
+        Int::ZERO
+    }
+
+    fn root(&self, a: &Atom) -> Int {
+        if let Some(rem) = self.rem_defs.get(a) {
+            let q = self.quotient(&rem.q_root);
+            let sum = &(&(&rem.c_x * self.x_val) + &(&rem.c_q * &q)) + &rem.k;
+            return if rem.c_r > 0 { -&sum } else { sum };
+        }
+        self.quotient(a)
+    }
+
+    fn atom(&self, a: &Atom) -> Int {
+        if self.rem_defs.contains_key(a)
+            || self.local_windows.contains_key(a)
+            || self.global_quots.contains_key(a)
+            || self.fixed.contains_key(a)
+            || a == self.x_root
+        {
+            return self.root(a);
+        }
+        let (root, s, d) = self.uf.get(a);
+        let v = self.root(&root);
+        if s > 0 { &v + &d } else { &d - &v }
+    }
+
+    fn holds(&self, f: &Formula) -> bool {
+        // Complexity tradeoff: reconstructing k quotients of a B-bit point
+        // writes O(k B) temporary bits even for a Boolean answer. Batch the
+        // remainders in a product/remainder tree, then cancel quotient terms
+        // algebraically when their coefficients are multiples of the divisor.
+        // The tree costs O(M(B + S) log k) bit operations for S modulus bits;
+        // unmatched constraints retain direct evaluation, with no verdict lost.
+        // Tests: pncx_pairs_scale and the enumeration suites. Negative control:
+        // evaluating every constraint directly fails the large pairs scale.
+        let specs = self.quotient_specs();
+        f.fold(
+            (),
+            |_, ()| (),
+            |g, (), values: Vec<bool>| match g {
+                Formula::Con(c) => {
+                    if let Some(specs) = &specs {
+                        if let Some(v) = self.reduced_value(c, specs) {
+                            return match c.rel {
+                                Rel::Eq => v.is_zero(),
+                                Rel::Ge => !v.is_negative(),
+                            };
+                        }
+                    }
+                    let v = c
+                        .lin
+                        .terms
+                        .iter()
+                        .fold(c.lin.constant.clone(), |v, (a, k)| {
+                            &v + &(k * &self.atom(a))
+                        });
+                    match c.rel {
+                        Rel::Eq => v.is_zero(),
+                        Rel::Ge => !v.is_negative(),
+                    }
+                }
+                Formula::And(_) => values.into_iter().all(|v| v),
+                Formula::Or(_) => values.into_iter().any(|v| v),
+                Formula::Not(_) => !values[0],
+            },
+        )
+    }
+
+    fn quotient_specs(&self) -> Option<HashMap<Atom, Option<QuotientValue>>> {
+        // Fixed values and extracted quotient/remainder roots must have the
+        // same precedence as atom(). Otherwise use its direct evaluation.
+        for a in self
+            .rem_defs
+            .keys()
+            .chain(self.global_quots.keys())
+            .chain(self.local_windows.keys())
+        {
+            if self.fixed.contains_key(a) || self.uf.get(a).0 != *a {
+                return None;
+            }
+        }
+        let moduli: Vec<_> = self
+            .global_quots
+            .values()
+            .map(|q| q.m.clone())
+            .chain(self.local_windows.values().flatten().map(|q| q.m.clone()))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let rems = batch_remainders(self.x_val, &moduli);
+        let remainder = |m: &Int| moduli.binary_search(m).ok().and_then(|i| rems.get(i));
+        let mut specs = HashMap::new();
+        for (a, q) in self.global_quots {
+            let xm = remainder(&q.m)?;
+            let sx = if q.s_x > 0 { xm.clone() } else { -xm };
+            let r = (&sx + &q.c_lo).mod_floor(&q.m);
+            specs.insert(
+                a.clone(),
+                Some(QuotientValue {
+                    sx: q.s_x,
+                    c: q.c_lo.clone(),
+                    sigma: q.sigma_q,
+                    m: q.m.clone(),
+                    r,
+                }),
+            );
+        }
+        for (a, wins) in self.local_windows {
+            let mut chosen = None;
+            for q in wins {
+                let xm = remainder(&q.m)?;
+                let sx = if q.s_x > 0 { xm.clone() } else { -xm };
+                let r = (&sx + &q.c_lo).mod_floor(&q.m);
+                if r <= q.w {
+                    chosen = Some(QuotientValue {
+                        sx: q.s_x,
+                        c: q.c_lo.clone(),
+                        sigma: q.sigma_q,
+                        m: q.m.clone(),
+                        r,
+                    });
+                    break;
+                }
+            }
+            specs.insert(a.clone(), chosen);
+        }
+        Some(specs)
+    }
+
+    fn reduced_value(&self, c: &Con, specs: &HashMap<Atom, Option<QuotientValue>>) -> Option<Int> {
+        let lin = rewrite_lin_full(&c.lin, self.fixed, self.uf, self.rem_defs);
+        let mut value = lin.constant;
+        let mut cx = Int::ZERO;
+        for (a, k) in lin.terms {
+            if &a == self.x_root {
+                cx = &cx + &k;
+                continue;
+            }
+            let Some(q) = specs.get(&a)? else {
+                continue;
+            };
+            let divisor = if q.sigma > 0 { q.m.clone() } else { -&q.m };
+            if !k.mod_floor(&divisor).is_zero() {
+                return None;
+            }
+            let t = k.div_floor(&divisor);
+            cx = if q.sx > 0 { &cx + &t } else { &cx - &t };
+            value = &value + &(&t * &(&q.c - &q.r));
+        }
+        if !cx.is_zero() {
+            value = &value + &(&cx * self.x_val);
+        }
+        Some(value)
+    }
+}
+
+struct QuotientValue {
+    sx: i8,
+    c: Int,
+    sigma: i8,
+    m: Int,
+    r: Int,
+}
+
+fn batch_remainders(x: &Int, moduli: &[Int]) -> Vec<Int> {
+    if moduli.is_empty() {
+        return Vec::new();
+    }
+    // When the point's magnitude is below every divisor, the remainder is
+    // already known. This is an algebraic case, independent of bit width.
+    if moduli.iter().min().is_some_and(|m| x.abs() < *m) {
+        return moduli
+            .iter()
+            .map(|m| if x.is_negative() { m + x } else { x.clone() })
+            .collect();
+    }
+    let tree = product_tree(moduli.to_vec());
+    let Some(root) = tree.last().and_then(|level| level.first()) else {
+        return Vec::new();
+    };
+    let mut rems = vec![wide_remainder(x, root)];
+    for level in tree[..tree.len() - 1].iter().rev() {
+        rems = level
+            .iter()
+            .enumerate()
+            .map(|(i, m)| wide_remainder(&rems[i / 2], m))
+            .collect();
+    }
+    rems
+}
+
+fn wide_remainder(a: &Int, m: &Int) -> Int {
+    if !a.is_negative() && a < m {
+        return a.clone();
+    }
+    // Complexity tradeoff: quadratic long division in Int::mod_floor is
+    // replaced by the kernel's subquadratic remainder, O(M(B)), without an
+    // unused quotient. The operands are written integers; a failed conversion
+    // retains the original exact operation. Test: pncx_batch_remainders_match.
+    let an = zedc_int::int::Num::from(a);
+    let mn = zedc_int::int::Num::from(m);
+    match (an.built(), mn.built()) {
+        (Ok(ab), Ok(mb)) => {
+            let r = Int::from(num_bigint::BigInt::from(zed_kernel::num::rem_uint(
+                ab.magnitude(),
+                mb.magnitude(),
+            )));
+            if a.is_negative() && !r.is_zero() {
+                m - &r
+            } else {
+                r
+            }
+        }
+        _ => a.mod_floor(m),
+    }
+}
+
+/// Intersect a collection without repeatedly scanning an accumulated result.
+fn intersect_domains(mut domains: Vec<Domain>) -> Domain {
+    while domains.len() > 1 {
+        let mut next = Vec::with_capacity(domains.len().div_ceil(2));
+        let mut it = domains.into_iter();
+        while let Some(a) = it.next() {
+            next.push(match it.next() {
+                Some(b) => a.intersect(&b),
+                None => a,
+            });
+        }
+        domains = next;
+    }
+    domains.pop().unwrap_or_else(Domain::all)
+}
+
+/// Intersect a nonempty collection of normalized residue sets by balanced halves.
+fn intersect_residue_sets(mut sets: Vec<ResidueSet>) -> ResidueSet {
+    while sets.len() > 1 {
+        let mut next = Vec::with_capacity(sets.len().div_ceil(2));
+        let mut it = sets.into_iter();
+        while let Some(a) = it.next() {
+            next.push(match it.next() {
+                Some(b) => res_intersect(&a, &b),
+                None => a,
+            });
+        }
+        sets = next;
+    }
+    sets.pop().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod r4_tests {
+    use super::*;
+    use crate::scaling;
+
+    #[test]
+    fn pncx_affine_alias_names_match() {
+        let mut answers = Vec::new();
+        for (name, sign) in [
+            ("a", 1),
+            ("z", 1),
+            ("b", -1),
+            ("y", -1),
+            ("w", 1),
+            ("xa", -1),
+        ] {
+            let xa = Atom::Sym("x".into());
+            let alias = Atom::Sym(name.into());
+            let x = Lin::atom(xa.clone());
+            let mut parts = vec![
+                Formula::Con(Con::eq(
+                    &Lin::atom(alias.clone()),
+                    &if sign > 0 {
+                        x.minus(&Lin::constant(8))
+                    } else {
+                        Lin::constant(8).minus(&x)
+                    },
+                )),
+                Formula::Con(Con::ge(&x, &Lin::constant(-8))),
+                Formula::Con(Con::ge(&Lin::constant(26), &x)),
+            ];
+            let mut point = Model::from([(xa, Int::from(9)), (alias, Int::from(sign))]);
+            let mut rs = Vec::new();
+            for (i, (m, off, width)) in [(10i64, 1i64, 1i64), (4, -5, 1), (8, 0, 7)]
+                .into_iter()
+                .enumerate()
+            {
+                let qa = Atom::Aux(2 * i as u32);
+                let ra = Atom::Aux(2 * i as u32 + 1);
+                let q = Lin::atom(qa.clone());
+                let r = Lin::atom(ra.clone());
+                parts.push(Formula::Con(Con::eq(
+                    &x.plus(&Lin::constant(off)),
+                    &q.times(m).plus(&r),
+                )));
+                parts.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+                parts.push(Formula::Con(Con::ge(&Lin::constant(width), &r)));
+                point.insert(qa, Int::from((9 + off).div_euclid(m)));
+                point.insert(ra, Int::from((9 + off).rem_euclid(m)));
+                rs.push(r);
+            }
+            let eq = |i: usize, v: i64| Formula::Con(Con::eq(&rs[i], &Lin::constant(v)));
+            parts.push(Formula::or(vec![
+                eq(1, 2),
+                eq(1, 1),
+                Formula::Con(Con::ge(&Lin::constant(12), &x)),
+            ]));
+            parts.push(Formula::or(vec![
+                Formula::negate(eq(0, 5)),
+                Formula::negate(eq(2, 7)),
+            ]));
+            let f = Formula::and(parts);
+            assert!(f.holds(&point));
+            let answer = (
+                crate::presburger::decide(&f),
+                crate::presburger::satisfiable(&f).map(|m| m.is_some()),
+            );
+            println!("AFFINE_RENAME {name} {sign} answer={answer:?}");
+            answers.push(answer);
+        }
+        assert!(answers.iter().all(|a| *a == answers[0]), "{answers:?}");
+    }
+
+    fn prefix_formula(n: usize) -> Formula {
+        let x = Lin::atom(Atom::Sym("x".into()));
+        let mut defs = vec![Formula::Con(Con::ge(&x, &Lin::constant(1)))];
+        let mut rs = Vec::new();
+        for (i, m) in [3i64, 5].into_iter().enumerate() {
+            let q = Lin::atom(Atom::Aux(2 * i as u32));
+            let r = Lin::atom(Atom::Aux(2 * i as u32 + 1));
+            defs.push(Formula::Con(Con::eq(&x, &q.times(m).plus(&r))));
+            defs.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+            defs.push(Formula::Con(Con::ge(&Lin::constant(m - 1), &r)));
+            rs.push(r);
+        }
+        let mut prefix = Formula::top();
+        for i in 0..n {
+            let clause = Formula::or(vec![
+                Formula::Con(Con::eq(&rs[0], &Lin::constant(0))),
+                Formula::Con(Con::eq(&rs[1], &Lin::constant(0))),
+                Formula::Con(Con::ge(&x, &Lin::constant(i as i64 + 2))),
+            ]);
+            prefix = Formula::And(crate::presburger::Shared::new(vec![prefix, clause]));
+        }
+        defs.push(prefix);
+        Formula::And(crate::presburger::Shared::new(defs))
+    }
+
+    fn pure_constraints(n: usize, modular: bool) -> Formula {
+        let x = Lin::atom(Atom::Sym("x".into()));
+        let q = Lin::atom(Atom::Aux(0));
+        let r = Lin::atom(Atom::Aux(1));
+        let m = if modular { 2 * n as i64 + 1 } else { 3 };
+        let mut parts = vec![Formula::Con(Con::ge(&x, &Lin::constant(1)))];
+        if modular {
+            parts.push(Formula::Con(Con::eq(&x, &q.times(m).plus(&r))));
+            parts.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+            parts.push(Formula::Con(Con::ge(&Lin::constant(m - 1), &r)));
+        } else {
+            parts.push(Formula::Con(Con::eq(
+                &x.minus(&q.times(m)),
+                &Lin::constant(1),
+            )));
+        }
+        for i in 0..n {
+            parts.push(Formula::negate(Formula::Con(Con::eq(
+                if modular { &r } else { &x },
+                &Lin::constant(if modular {
+                    2 * i as i64 + 1
+                } else {
+                    3 * i as i64 + 1
+                }),
+            ))));
+        }
+        Formula::and(parts)
+    }
+
+    #[test]
+    fn pncx_pure_bounds_scale() {
+        let inputs = scaling::inputs(64, |n| pure_constraints(n, false));
+        scaling::check_order("pure bounds with separate holes", 64, 1, |n| {
+            assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
+        });
+    }
+
+    #[test]
+    fn pncx_pure_residues_scale() {
+        let inputs = scaling::inputs(64, |n| pure_constraints(n, true));
+        scaling::check_order("pure residue constraints with separate holes", 64, 1, |n| {
+            assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
+        });
+    }
+
+    #[test]
+    fn pncx_domain_membership_scale() {
+        let inputs = scaling::inputs(64, |n| {
+            Domain::from_pieces(
+                (0..n)
+                    .map(|i| (Some(Int::from(3 * i as i64)), Some(Int::from(3 * i as i64))))
+                    .collect(),
+            )
+        });
+        scaling::check_instructions_only("membership in disjoint bound intervals", 64, 1, |n| {
+            for i in 0..n {
+                let yes = Some(Int::from(3 * i as i64));
+                let no = Some(Int::from(3 * i as i64 + 1));
+                assert!(inputs[&n].contains_span(&yes, &yes));
+                assert!(!inputs[&n].contains_span(&no, &no));
+            }
+        });
+    }
+
+    #[test]
+    fn pncx_domain_membership_matches_scan() {
+        let domain = Domain::from_pieces(vec![
+            (None, Some(Int::from(-3))),
+            (Some(Int::from(1)), Some(Int::from(4))),
+            (Some(Int::from(8)), None),
+        ]);
+        let ends: Vec<_> = std::iter::once(None)
+            .chain((-10..=10).map(|v| Some(Int::from(v))))
+            .collect();
+        for lo in &ends {
+            for hi in &ends {
+                if matches!((lo, hi), (Some(a), Some(b)) if a > b) {
+                    continue;
+                }
+                let expected = domain.pieces.iter().any(|(l, h)| {
+                    l.as_ref()
+                        .is_none_or(|l| lo.as_ref().is_some_and(|v| l <= v))
+                        && h.as_ref()
+                            .is_none_or(|h| hi.as_ref().is_some_and(|v| h >= v))
+                });
+                assert_eq!(domain.contains_span(lo, hi), expected);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn pncx_shared_formula_axis() {
+        let mut meter = scaling::Meter::new();
+        for n in std::env::var("PNCX_SIZES")
+            .unwrap()
+            .split(',')
+            .map(|s| s.parse::<usize>().unwrap())
+        {
+            let x = Lin::atom(Atom::Sym("x".into()));
+            let mut parts = Vec::new();
+            for (i, m) in shared_moduli(n).into_iter().enumerate() {
+                let q = Lin::atom(Atom::Aux(i as u32));
+                parts.push(Formula::Con(Con::eq(
+                    &x.minus(&q.times(m)),
+                    &Lin::constant(2 * i as i64),
+                )));
+            }
+            let f = Formula::and(parts);
+            let mut answer = None;
+            let work = meter.work(|| answer = solve_modular(&f, false));
+            assert!(matches!(answer, Some(Some(_))));
+            println!("SHAREDFORM n={n} instr={} bytes={}", work.units, work.bytes);
+        }
+    }
+
+    #[test]
+    fn pncx_kept_prefix_scale() {
+        let inputs = scaling::inputs(64, prefix_formula);
+        scaling::check_order("kept conjunction prefixes", 64, 1, |n| {
+            assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
+        });
+    }
+
+    #[test]
+    #[ignore]
+    fn pncx_kept_prefix_axis() {
+        let mut meter = scaling::Meter::new();
+        for n in std::env::var("PNCX_SIZES")
+            .unwrap()
+            .split(',')
+            .map(|s| s.parse::<usize>().unwrap())
+        {
+            let f = prefix_formula(n);
+            let work = meter.work(|| assert!(matches!(solve_modular(&f, false), Some(Some(_)))));
+            println!("PREFIX n={n} instr={} bytes={}", work.units, work.bytes);
+        }
+    }
+
+    #[test]
+    fn pncx_case4609_keeps_its_answer() {
+        let x = Lin::atom(Atom::Sym("x".into()));
+        let mut parts = vec![Formula::Con(Con::ge(&x, &Lin::constant(18)))];
+        let mut rs = Vec::new();
+        let mut point = Model::from([(Atom::Sym("x".into()), Int::from(25))]);
+        for (i, (m, off)) in [(30i64, 0i64), (5, -1), (27, 2), (25, -3), (15, 5)]
+            .into_iter()
+            .enumerate()
+        {
+            let qa = Atom::Aux(2 * i as u32);
+            let ra = Atom::Aux(2 * i as u32 + 1);
+            let q = Lin::atom(qa.clone());
+            let r = Lin::atom(ra.clone());
+            parts.push(Formula::Con(Con::eq(
+                &x.plus(&Lin::constant(off)),
+                &q.times(m).plus(&r),
+            )));
+            parts.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+            parts.push(Formula::Con(Con::ge(&Lin::constant(m - 1), &r)));
+            point.insert(qa, Int::from((25 + off).div_euclid(m)));
+            point.insert(ra, Int::from((25 + off).rem_euclid(m)));
+            rs.push(r);
+        }
+        let eq = |i: usize, c: i64| Formula::Con(Con::eq(&rs[i], &Lin::constant(c)));
+        parts.push(Formula::or(vec![
+            eq(4, 0),
+            eq(4, 7),
+            Formula::Con(Con::ge(&Lin::constant(16), &x)),
+        ]));
+        parts.push(Formula::negate(eq(3, 20)));
+        parts.push(Formula::or(vec![
+            Formula::negate(eq(3, 14)),
+            Formula::negate(eq(2, 12)),
+        ]));
+        parts.push(Formula::negate(Formula::and(vec![
+            eq(2, 1),
+            Formula::Con(Con::ge(&x, &Lin::constant(13))),
+        ])));
+        parts.push(Formula::negate(eq(4, 11)));
+        let f = Formula::and(parts);
+        assert!(f.holds(&point));
+        assert_eq!(crate::presburger::decide(&f), Ok(true));
+        let model = crate::presburger::satisfiable(&f)
+            .expect("answered")
+            .expect("point");
+        assert!(f.holds(&model));
+    }
+
+    #[test]
+    fn pncx_batch_remainders_match() {
+        let mut x = Int::ONE;
+        for i in 0..512 {
+            x = &(&x * &Int::from(2)) + &Int::from(i % 7);
+            let mut ms: Vec<_> = (2..30).map(Int::from).collect();
+            ms.push(&x + &Int::ONE);
+            for point in [x.clone(), -&x] {
+                let want: Vec<_> = ms.iter().map(|m| point.mod_floor(m)).collect();
+                assert_eq!(batch_remainders(&point, &ms), want);
+            }
+        }
+    }
+
+    #[test]
+    fn pncx_scalar_validation_matches_full_models() {
+        let x = Atom::Sym("x".into());
+        let q = Atom::Aux(0);
+        let r = Atom::Aux(1);
+        let mut uf = UnitUf::new();
+        for a in [&x, &q, &r] {
+            uf.ensure(a);
+        }
+        let atoms = BTreeSet::from([x.clone(), q.clone(), r.clone()]);
+        let fixed = HashMap::new();
+        let local = HashMap::new();
+        let mut point = Int::ONE;
+        for i in 0..512 {
+            point = &(&point * &Int::from(2)) + &Int::from(i % 11);
+            let m = Int::from(2 + i % 29);
+            let rem = HashMap::from([(
+                r.clone(),
+                FullRemDef {
+                    c_r: -1,
+                    x_root: x.clone(),
+                    c_x: Int::ONE,
+                    q_root: q.clone(),
+                    c_q: -&m,
+                    k: Int::ZERO,
+                },
+            )]);
+            let global = HashMap::from([(
+                q.clone(),
+                GlobalQuot {
+                    s_x: 1,
+                    c_lo: Int::ZERO,
+                    sigma_q: 1,
+                    m: m.clone(),
+                    w: &m - &Int::ONE,
+                },
+            )]);
+            for xv in [point.clone(), -&point] {
+                let w = ScalarWitness {
+                    x_root: &x,
+                    x_val: &xv,
+                    fixed: &fixed,
+                    uf: &uf,
+                    rem_defs: &rem,
+                    global_quots: &global,
+                    local_windows: &local,
+                };
+                let model = build_model(&x, &xv, &atoms, &fixed, &uf, &rem, &global, &local);
+                for kq in [-1, 1, 2] {
+                    let lin = Lin::atom(x.clone())
+                        .minus(&Lin::atom(q.clone()).times(&m * &Int::from(kq)))
+                        .minus(&Lin::atom(r.clone()));
+                    for rel in [Rel::Eq, Rel::Ge] {
+                        let f = Formula::Con(Con {
+                            lin: lin.clone(),
+                            rel,
+                        });
+                        assert_eq!(w.holds(&f), f.holds(&model));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pncx_affine_images_match_enumeration() {
+        for q in 2..40i64 {
+            for m in [1, q + 1, q - 1] {
+                for shift in -3..=3i64 {
+                    for (a, b) in [(0, 0), (0, q - 2), (q - 1, q - 1)] {
+                        let input = vec![(Int::from(a), Int::from(b))];
+                        let image =
+                            map_affine_mod(&input, &Int::from(m), &Int::from(shift), &Int::from(q))
+                                .expect("unit step");
+                        for r in 0..q {
+                            let expected = (a..=b).any(|y| (shift + m * y).rem_euclid(q) == r);
+                            assert_eq!(
+                                res_contains(&image, &Int::from(r)),
+                                expected,
+                                "q={q} m={m} shift={shift} [{a},{b}] r={r}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn pncx_pair_components() {
+        let sizes = std::env::var("PNCX_SIZES").unwrap();
+        let mut meter = scaling::Meter::new();
+        for n in sizes.split(',').map(|n| n.parse::<usize>().unwrap()) {
+            let choices: Vec<_> = shared_moduli(n)
+                .into_iter()
+                .enumerate()
+                .map(|(i, m)| (Int::from(i % 2), m.div_floor(&Int::from(2))))
+                .collect();
+            let units: BTreeMap<_, _> = choices
+                .iter()
+                .map(|(r, m)| (m.clone(), vec![(r.clone(), r.clone())]))
+                .collect();
+            let mut point = None;
+            let crt = meter.work(|| point = combine_crt_tree(choices.clone()));
+            let (x, _) = point.expect("coprime");
+            let verify = meter.work(|| assert!(holds_modular_point(&x, &units, &[])));
+            println!(
+                "PAIRCOMP n={n} crt={} crt_bytes={} verify={} verify_bytes={}",
+                crt.units, crt.bytes, verify.units, verify.bytes
+            );
+        }
+    }
+
+    // Disjoint triangles have an explicit three-coloring. Their domain
+    // restrictions defeat the separate-pair sufficient witness and expose
+    // replaying every unrelated component during Stage C (I3.3).
+    #[test]
+    #[ignore]
+    fn pncx_color_components() {
+        let sizes = std::env::var("PNCX_SIZES").unwrap();
+        let mut meter = scaling::Meter::new();
+        for n in sizes.split(',').map(|n| n.parse::<usize>().unwrap()) {
+            let (info, allowed, mut clauses) = color_system(n);
+            if std::env::var_os("PNCX_CONNECTED").is_some() {
+                for start in (3..3 * n).step_by(3) {
+                    for c in 0..3 {
+                        let color = Int::from(c);
+                        clauses.push(BTreeMap::from([
+                            (
+                                start - 1,
+                                res_diff(
+                                    &allowed[start - 1],
+                                    &[(color.clone(), color.clone())],
+                                    &info[start - 1].max_q,
+                                ),
+                            ),
+                            (
+                                start,
+                                res_diff(
+                                    &allowed[start],
+                                    &[(color.clone(), color)],
+                                    &info[start].max_q,
+                                ),
+                            ),
+                        ]));
+                    }
+                }
+            }
+            let choices = info
+                .iter()
+                .enumerate()
+                .map(|(i, b)| (Int::from(i % 3), b.max_q.clone()))
+                .collect();
+            let (witness, _) = combine_crt_tree(choices).expect("coprime primes");
+            assert!(clauses.iter().all(|cl| {
+                cl.iter()
+                    .any(|(i, s)| res_contains(s, &witness.mod_floor(&info[*i].max_q)))
+            }));
+            let mut answer = RegimeOut::Empty;
+            let work = meter.work(|| {
+                answer = solve_coprime_system(
+                    &None,
+                    &None,
+                    &info,
+                    allowed.clone(),
+                    clauses.clone(),
+                    true,
+                )
+            });
+            assert!(!matches!(answer, RegimeOut::Empty));
+            println!(
+                "COLORCOMP n={n} instr={} bytes={} answer={}",
+                work.units,
+                work.bytes,
+                match answer {
+                    RegimeOut::Found(_) => "found",
+                    RegimeOut::Undecided => "undecided",
+                    RegimeOut::Empty => "empty",
+                }
+            );
+        }
+    }
+
+    fn color_system(
+        n: usize,
+    ) -> (
+        Vec<BaseInfo>,
+        Vec<ResidueSet>,
+        Vec<BTreeMap<usize, ResidueSet>>,
+    ) {
+        let info: Vec<_> = shared_moduli(3 * n)
+            .into_iter()
+            .map(|m| {
+                let p = m.div_floor(&Int::from(2));
+                BaseInfo {
+                    max_q: p.clone(),
+                    u: Int::ZERO,
+                    stride: Int::ONE,
+                    z_max_q: p,
+                }
+            })
+            .collect();
+        let allowed = vec![vec![(Int::ZERO, Int::from(2))]; info.len()];
+        let mut clauses = Vec::new();
+        for start in (0..3 * n).step_by(3) {
+            for (a, b) in [
+                (start, start + 1),
+                (start + 1, start + 2),
+                (start, start + 2),
+            ] {
+                for c in 0..3 {
+                    let color = Int::from(c);
+                    clauses.push(BTreeMap::from([
+                        (
+                            a,
+                            res_diff(
+                                &allowed[a],
+                                &[(color.clone(), color.clone())],
+                                &info[a].max_q,
+                            ),
+                        ),
+                        (
+                            b,
+                            res_diff(&allowed[b], &[(color.clone(), color)], &info[b].max_q),
+                        ),
+                    ]));
+                }
+            }
+        }
+        (info, allowed, clauses)
+    }
+
+    #[test]
+    #[ignore]
+    fn pncx_color_formula_axis() {
+        let connected = std::env::var_os("PNCX_CONNECTED").is_some();
+        let mut meter = scaling::Meter::new();
+        for n in std::env::var("PNCX_SIZES")
+            .unwrap()
+            .split(',')
+            .map(|v| v.parse::<usize>().unwrap())
+        {
+            let (info, _, _) = color_system(n);
+            let xa = Atom::Sym("x".into());
+            let x = Lin::atom(xa.clone());
+            let mut parts = Vec::new();
+            let mut remainders = Vec::new();
+            let choices = info
+                .iter()
+                .enumerate()
+                .map(|(i, b)| (Int::from(i % 3), b.max_q.clone()))
+                .collect();
+            let (witness, _) = combine_crt_tree(choices).expect("coprime primes");
+            let mut model = Model::from([(xa, witness.clone())]);
+            for (i, base) in info.iter().enumerate() {
+                let qa = Atom::Aux(2 * i as u32);
+                let ra = Atom::Aux(2 * i as u32 + 1);
+                let q = Lin::atom(qa.clone());
+                let r = Lin::atom(ra.clone());
+                parts.push(Formula::Con(Con::eq(
+                    &x,
+                    &q.times(base.max_q.clone()).plus(&r),
+                )));
+                parts.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+                parts.push(Formula::Con(Con::ge(&Lin::constant(2), &r)));
+                model.insert(qa, witness.div_floor(&base.max_q));
+                model.insert(ra, witness.mod_floor(&base.max_q));
+                remainders.push(r);
+            }
+            let mut edges = Vec::new();
+            for start in (0..3 * n).step_by(3) {
+                edges.extend([
+                    (start, start + 1),
+                    (start + 1, start + 2),
+                    (start, start + 2),
+                ]);
+                if connected && start > 0 {
+                    edges.push((start - 1, start));
+                }
+            }
+            for (a, b) in edges {
+                for color in 0..3 {
+                    parts.push(Formula::or(vec![
+                        Formula::negate(Formula::Con(Con::eq(
+                            &remainders[a],
+                            &Lin::constant(color),
+                        ))),
+                        Formula::negate(Formula::Con(Con::eq(
+                            &remainders[b],
+                            &Lin::constant(color),
+                        ))),
+                    ]));
+                }
+            }
+            let f = Formula::and(parts);
+            assert!(f.holds(&model));
+            let mut answer = None;
+            let work = meter.work(|| answer = solve_modular(&f, false));
+            assert!(!matches!(answer, Some(None)), "known coloring");
+            println!(
+                "FULLCOLOR n={n} connected={connected} instr={} bytes={} answer={}",
+                work.units,
+                work.bytes,
+                if answer.is_some() {
+                    "found"
+                } else {
+                    "undecided"
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn pncx_independent_components_scale() {
+        let inputs = scaling::inputs(32, color_system);
+        scaling::check_order("independent residue components", 32, 1, |n| {
+            let (info, allowed, clauses) = &inputs[&n];
+            // Keep the measured assertion weak so the old path's slower
+            // Undecided result is caught by the cost check itself.
+            assert!(!matches!(
+                solve_coprime_system(&None, &None, info, allowed.clone(), clauses.clone(), true),
+                RegimeOut::Empty
+            ));
+        });
+    }
+
+    #[test]
+    fn pncx_independent_components_keep_their_witnesses() {
+        for n in 1..20 {
+            let (info, allowed, clauses) = color_system(n);
+            let RegimeOut::Found(point) =
+                solve_coprime_system(&None, &None, &info, allowed.clone(), clauses.clone(), true)
+            else {
+                panic!("coloring missed");
+            };
+            assert!(holds_coprime_point(&point, &info, &allowed, &clauses));
+        }
+    }
+
+    fn shared_moduli(n: usize) -> BTreeSet<Int> {
+        let mut ms = BTreeSet::new();
+        let mut p = 3i64;
+        while ms.len() < n {
+            if (3..)
+                .step_by(2)
+                .take_while(|d| d * d <= p)
+                .all(|d| p % d != 0)
+            {
+                ms.insert(Int::from(2 * p));
+            }
+            p += 2;
+        }
+        ms
+    }
+
+    #[test]
+    #[ignore = "I3.4: the baseline shared-factor path is still quadratic"]
+    fn pncx_common_factor_scale() {
+        let inputs = scaling::inputs(512, shared_moduli);
+        scaling::check_order("common factor with coprime cofactors", 512, 1, |n| {
+            std::hint::black_box(coprime_factorization(&inputs[&n]));
+        });
+    }
+
+    #[test]
+    fn pncx_common_factors_reconstruct_inputs() {
+        for n in 1..50 {
+            let ms = shared_moduli(n);
+            let facs = coprime_factorization(&ms);
+            let bases: BTreeSet<_> = facs.values().flatten().map(|(b, _)| b).collect();
+            for a in &bases {
+                for b in bases.iter().filter(|b| *b < a) {
+                    assert_eq!(a.gcd(b), Int::ONE);
+                }
+            }
+            for m in &ms {
+                assert_eq!(facs[m].iter().fold(Int::ONE, |v, (_, q)| &v * q), *m);
+            }
+        }
+    }
+
+    fn holes(n: usize) -> Vec<Domain> {
+        (0..n)
+            .map(|i| Domain::single(Int::from(3 * i as i64)).complement())
+            .collect()
+    }
+
+    #[test]
+    fn pncx_lower_witness_enumeration() {
+        for m in 2..50i64 {
+            for lo in -50..50i64 {
+                let s = vec![(Int::from(1), Int::from(m - 1))];
+                let first = first_residue_at(&Int::from(lo), &Int::from(m), &s);
+                let want = (lo..lo + m).find(|x| x.rem_euclid(m) != 0).map(Int::from);
+                assert_eq!(first, want);
+            }
+        }
+    }
+
+    #[test]
+    fn pncx_lower_witness_scale() {
+        let inputs = scaling::inputs(64, |n| {
+            (2..n + 2)
+                .map(|m| (Int::from(m), vec![(Int::ONE, Int::from(m - 1))]))
+                .collect::<BTreeMap<_, _>>()
+        });
+        // This routine allocates no bytes on word-sized inputs.
+        scaling::check_instructions_only("one candidate from residue lower bounds", 64, 1, |n| {
+            std::hint::black_box(lower_witness(&Int::from(1000003), &None, &inputs[&n], &[]));
+        });
+    }
+
+    #[test]
+    fn pncx_bound_merge_enumeration() {
+        for n in 0..40 {
+            let ds = holes(n);
+            let want = ds.iter().fold(Domain::all(), |a, b| a.intersect(b));
+            let got = intersect_domains(ds);
+            assert_eq!(got, want);
+            for x in -2..3 * n as i64 + 2 {
+                let point = Some(Int::from(x));
+                assert_eq!(
+                    got.contains_span(&point, &point),
+                    x < 0 || x % 3 != 0 || x >= 3 * n as i64
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pncx_bound_merge_scale() {
+        let inputs = scaling::inputs(64, holes);
+        scaling::check_order("balanced bound intersection", 64, 1, |n| {
+            std::hint::black_box(intersect_domains(inputs[&n].clone()));
+        });
+    }
+
+    #[test]
+    fn pncx_bound_merge_formula_scale() {
+        fn formula(n: usize) -> Formula {
+            let x = Lin::atom(Atom::Sym("x".into()));
+            let mut fs = vec![Formula::Con(Con::ge(&x, &Lin::constant(1)))];
+            let mut residues = Vec::new();
+            for (i, m) in [3, 5].into_iter().enumerate() {
+                let q = Lin::atom(Atom::Aux(2 * i as u32));
+                let r = Lin::atom(Atom::Aux(2 * i as u32 + 1));
+                fs.push(Formula::Con(Con::eq(&x, &q.times(m).plus(&r))));
+                fs.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+                fs.push(Formula::Con(Con::ge(&Lin::constant(m - 1), &r)));
+                residues.push(Formula::Con(Con::eq(&r, &Lin::constant(0))));
+            }
+            for i in 0..n {
+                let mut cl = residues.clone();
+                cl.push(Formula::negate(Formula::Con(Con::eq(
+                    &x,
+                    &Lin::constant(3 * i + 1),
+                ))));
+                fs.push(Formula::or(cl));
+            }
+            Formula::and(fs)
+        }
+        let inputs = scaling::inputs(64, formula);
+        scaling::check_order("bound merging in a modular formula", 64, 1, |n| {
+            assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
+        });
+    }
+
+    #[test]
+    fn pncx_bound_partition_scale() {
+        fn input(n: usize) -> (Domain, Vec<FlatClause>) {
+            let global = Domain::from_pieces(
+                (0..n)
+                    .map(|i| {
+                        let x = Int::from(10 * i as i64);
+                        (Some(x.clone()), Some(&x + &Int::from(4)))
+                    })
+                    .collect(),
+            );
+            let clauses = (0..n)
+                .map(|i| FlatClause {
+                    bounds: Domain::ge(Int::from(10 * i as i64 + 2)),
+                    mods: BTreeMap::new(),
+                })
+                .collect();
+            (global, clauses)
+        }
+        let inputs = scaling::inputs(64, input);
+        scaling::check_order("partition disjoint global bounds", 64, 1, |n| {
+            let (global, clauses) = &inputs[&n];
+            let out = partition_into_regimes(global, clauses);
+            assert_eq!(out.len(), 2 * n);
+            std::hint::black_box(out);
+        });
+    }
+}
+
+/// The first point at least `lo` permitted by a single residue condition.
+fn first_residue_at(lo: &Int, m: &Int, s: &[(Int, Int)]) -> Option<Int> {
+    let r = lo.mod_floor(m);
+    let i = s.partition_point(|(_, b)| b < &r);
+    if let Some((a, _)) = s.get(i) {
+        Some(if &r >= a { lo.clone() } else { lo + &(a - &r) })
+    } else {
+        s.first().map(|(a, _)| lo + &(&(m - &r) + a))
+    }
+}
+
+/// The maximum of the individual lower bounds is necessary, not sufficient.
+/// Accept it only after checking every constraint on that point.
+fn lower_witness(
+    lo: &Int,
+    hi: &Option<Int>,
+    units: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+) -> Option<Int> {
+    let mut x = lo.clone();
+    for (m, s) in units {
+        x = x.max(first_residue_at(lo, m, s)?);
+    }
+    for cl in clauses {
+        let first = cl
+            .iter()
+            .filter_map(|(m, s)| first_residue_at(lo, m, s))
+            .min()?;
+        x = x.max(first);
+    }
+    if hi.as_ref().is_some_and(|h| &x > h) {
+        return None;
+    }
+    holds_modular_point(&x, units, clauses).then_some(x)
+}
+
+/// The last point at most `hi` permitted by a single residue condition.
+fn last_residue_at(hi: &Int, m: &Int, s: &[(Int, Int)]) -> Option<Int> {
+    let r = hi.mod_floor(m);
+    let i = s.partition_point(|(a, _)| a <= &r);
+    if let Some(i) = i.checked_sub(1) {
+        let (_, b) = &s[i];
+        Some(if &r <= b { hi.clone() } else { hi - &(&r - b) })
+    } else {
+        s.last().map(|(_, b)| hi - &(&(&r + m) - b))
+    }
+}
+
+/// The mirror of [`lower_witness`]: the minimum of the individual upper bounds below `hi`,
+/// accepted only after checking every constraint on that point. With it the witnesses tried do
+/// not change when the coordinate's sign does (I4.15).
+fn upper_witness(
+    lo: &Option<Int>,
+    hi: &Int,
+    units: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+) -> Option<Int> {
+    let mut x = hi.clone();
+    for (m, s) in units {
+        x = x.min(last_residue_at(hi, m, s)?);
+    }
+    for cl in clauses {
+        let last = cl
+            .iter()
+            .filter_map(|(m, s)| last_residue_at(hi, m, s))
+            .max()?;
+        x = x.min(last);
+    }
+    if lo.as_ref().is_some_and(|l| &x < l) {
+        return None;
+    }
+    holds_modular_point(&x, units, clauses).then_some(x)
 }

@@ -3693,6 +3693,196 @@ fn every_question_of_a_random_chain_with_negations_matches_enumeration() {
     assert_eq!(total_decided, 344);
 }
 
+/// One formula of `one_variable_modular_formulas_match_enumeration`: the formula, the copies
+/// `x_k = s_k * x + off_k` of `x`, the divisions `(q, r, m, s, off)` of `s * x + off` by `m`,
+/// and the interval of `x` (bounded above when the flag is set).
+type ModularCase = (
+    zedc::store::presburger::Formula,
+    zedc::store::presburger::Atom,
+    Vec<(zedc::store::presburger::Atom, i64, i64)>,
+    Vec<(
+        zedc::store::presburger::Atom,
+        zedc::store::presburger::Atom,
+        i64,
+        i64,
+        i64,
+    )>,
+    i64,
+    i64,
+    bool,
+);
+
+/// The formula of case `case_idx` of `one_variable_modular_formulas_match_enumeration`, drawn
+/// from `rng`.
+fn modular_case(rng: &mut zed_tests::instances::Rng, case_idx: usize) -> ModularCase {
+    use zedc::store::presburger::{Atom, Con, Formula, Lin};
+    let moduli: [i64; 20] = [
+        2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 25, 27, 30,
+    ];
+    let x0 = Atom::Sym(Arc::from("x"));
+    let mut parts: Vec<Formula> = Vec::new();
+    // Build 0..=3 shifted/reflected unit-equality copies of `x`: `x_k = s_k * x_0 + off_k`.
+    let num_copies = rng.below(4);
+    let mut copies: Vec<(Atom, i64, i64)> = vec![(x0.clone(), 1, 0)];
+    for k in 1..=num_copies {
+        let prev_idx = rng.below(copies.len());
+        let (prev_atom, prev_s, prev_off) = copies[prev_idx].clone();
+        let step_s = if rng.below(5) == 0 { -1i64 } else { 1i64 };
+        let step_d = rng.int(-8, 8);
+        let cur_atom = Atom::Sym(Arc::from(format!("x@{k}")));
+        // cur_atom - step_s * prev_atom - step_d == 0
+        let lin = Lin::atom(cur_atom.clone())
+            .plus(&Lin::atom(prev_atom).times(-step_s))
+            .plus(&Lin::constant(-step_d));
+        parts.push(Formula::Con(Con::eq(&lin, &Lin::constant(0))));
+        copies.push((cur_atom, step_s * prev_s, step_s * prev_off + step_d));
+    }
+
+    // Choose interval regime: negative, around 0, large positive, short, or semi-bounded.
+    let (lo, hi, is_bounded) = match case_idx % 5 {
+        0 => {
+            let l = rng.int(-220, -160);
+            let h = l + rng.int(0, 75);
+            (l, h, true)
+        }
+        1 => {
+            let l = rng.int(-40, 10);
+            let h = l + rng.int(-2, 65);
+            (l, h, true)
+        }
+        2 => {
+            let l = rng.int(10_000, 10_030);
+            let h = l + rng.int(0, 80);
+            (l, h, true)
+        }
+        3 => {
+            let l = rng.int(-15, 25);
+            let h = l + rng.int(-1, 5);
+            (l, h, true)
+        }
+        _ => {
+            let l = rng.int(-20, 20);
+            (l, l + 120, false)
+        }
+    };
+
+    parts.push(Formula::Con(Con::ge(
+        &Lin::atom(x0.clone()).plus(&Lin::constant(-lo)),
+        &Lin::constant(0),
+    )));
+    if is_bounded {
+        parts.push(Formula::Con(Con::ge(
+            &Lin::constant(hi).minus(&Lin::atom(x0.clone())),
+            &Lin::constant(0),
+        )));
+    }
+
+    // Define 2..=5 Euclidean divisions on random copies of `x`.
+    let num_divs = 2 + rng.below(4);
+    let mut divs: Vec<(Atom, Atom, i64, i64, i64)> = Vec::new();
+    for d_idx in 0..num_divs {
+        let (ref copy_atom, copy_s, copy_off) = copies[rng.below(copies.len())];
+        let m = moduli[rng.below(moduli.len())];
+        let shift = rng.int(-5, 5);
+        let q_atom = Atom::Aux((d_idx * 2) as u32);
+        let r_atom = Atom::Aux((d_idx * 2 + 1) as u32);
+        // copy_atom + shift - m * q_atom - r_atom == 0 && 0 <= r_atom <= m - 1
+        let eq_lin = Lin::atom(copy_atom.clone())
+            .plus(&Lin::constant(shift))
+            .plus(&Lin::atom(q_atom.clone()).times(-m))
+            .plus(&Lin::atom(r_atom.clone()).times(-1));
+        parts.push(Formula::Con(Con::eq(&eq_lin, &Lin::constant(0))));
+        parts.push(Formula::Con(Con::ge(
+            &Lin::atom(r_atom.clone()),
+            &Lin::constant(0),
+        )));
+        parts.push(Formula::Con(Con::ge(
+            &Lin::constant(m - 1).minus(&Lin::atom(r_atom.clone())),
+            &Lin::constant(0),
+        )));
+        divs.push((q_atom, r_atom, m, copy_s, copy_off + shift));
+    }
+
+    // Build 2..=5 modular/bound clauses (unit congruences, negated guard+congruence, holes,
+    // and single-modulus or multi-bound disjunctions).
+    let num_clauses = 2 + rng.below(4);
+    for _ in 0..num_clauses {
+        let (_, ref r_atom, m, _, _) = divs[rng.below(divs.len())];
+        let r_val = rng.int(0, m - 1);
+        let b_val = rng.int(lo - 5, hi + 5);
+        let cl = match rng.below(6) {
+            0 => {
+                // x mod m != r_val
+                Formula::negate(Formula::Con(Con::eq(
+                    &Lin::atom(r_atom.clone()),
+                    &Lin::constant(r_val),
+                )))
+            }
+            1 => {
+                // !(r == r_val && x >= b_val)
+                let is_r = Formula::Con(Con::eq(&Lin::atom(r_atom.clone()), &Lin::constant(r_val)));
+                let ge_b = Formula::Con(Con::ge(
+                    &Lin::atom(x0.clone()).plus(&Lin::constant(-b_val)),
+                    &Lin::constant(0),
+                ));
+                Formula::negate(Formula::and(vec![is_r, ge_b]))
+            }
+            2 => {
+                // r == r1 || r == r2 || x <= b_val
+                let r2 = rng.int(0, m - 1);
+                Formula::or(vec![
+                    Formula::Con(Con::eq(&Lin::atom(r_atom.clone()), &Lin::constant(r_val))),
+                    Formula::Con(Con::eq(&Lin::atom(r_atom.clone()), &Lin::constant(r2))),
+                    Formula::Con(Con::ge(
+                        &Lin::constant(b_val).minus(&Lin::atom(x0.clone())),
+                        &Lin::constant(0),
+                    )),
+                ])
+            }
+            3 => {
+                // Hole: x < b_val || x > b_val + gap
+                let gap = rng.int(0, 12);
+                Formula::or(vec![
+                    Formula::Con(Con::ge(
+                        &Lin::constant(b_val - 1).minus(&Lin::atom(x0.clone())),
+                        &Lin::constant(0),
+                    )),
+                    Formula::Con(Con::ge(
+                        &Lin::atom(x0.clone()).plus(&Lin::constant(-(b_val + gap + 1))),
+                        &Lin::constant(0),
+                    )),
+                ])
+            }
+            4 => {
+                // Remainder interval: r < r_val + 1
+                Formula::Con(Con::ge(
+                    &Lin::constant(r_val).minus(&Lin::atom(r_atom.clone())),
+                    &Lin::constant(0),
+                ))
+            }
+            _ => {
+                // Disjunction of two negated residues across two divisions (share = 1/(m1*m2) < 1)
+                let (_, ref r2_atom, m2, _, _) = divs[rng.below(divs.len())];
+                let r2_val = rng.int(0, m2 - 1);
+                Formula::or(vec![
+                    Formula::negate(Formula::Con(Con::eq(
+                        &Lin::atom(r_atom.clone()),
+                        &Lin::constant(r_val),
+                    ))),
+                    Formula::negate(Formula::Con(Con::eq(
+                        &Lin::atom(r2_atom.clone()),
+                        &Lin::constant(r2_val),
+                    ))),
+                ])
+            }
+        };
+        parts.push(cl);
+    }
+
+    let f = Formula::and(parts);
+    (f, x0, copies, divs, lo, hi, is_bounded)
+}
+
 #[test]
 fn one_variable_modular_formulas_match_enumeration() {
     // PNCX-modular: 5,000 random one-variable modular formulas with unit equalities (`x@k =
@@ -3702,179 +3892,13 @@ fn one_variable_modular_formulas_match_enumeration() {
     // and `satisfiable` agree with point-by-point enumeration, and every witness satisfies `f`,
     // wherever they answer.
     use zedc::store::int::Int;
-    use zedc::store::presburger::{
-        Atom, Con, Formula, Lin, Model, decide, satisfiable, with_modular_empty_checked,
-    };
-    let moduli: [i64; 20] = [
-        2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 25, 27, 30,
-    ];
+    use zedc::store::presburger::{Model, decide, satisfiable, with_modular_empty_checked};
     let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
     let (mut sat_count, mut unsat_count, mut refused) = (0usize, 0usize, 0usize);
     let (mut empty_agreed, mut empty_refused, mut empty_unchecked) = (0usize, 0usize, 0usize);
 
     for case_idx in 0..5000 {
-        let x0 = Atom::Sym(Arc::from("x"));
-        let mut parts: Vec<Formula> = Vec::new();
-        // Build 0..=3 shifted/reflected unit-equality copies of `x`: `x_k = s_k * x_0 + off_k`.
-        let num_copies = rng.below(4);
-        let mut copies: Vec<(Atom, i64, i64)> = vec![(x0.clone(), 1, 0)];
-        for k in 1..=num_copies {
-            let prev_idx = rng.below(copies.len());
-            let (prev_atom, prev_s, prev_off) = copies[prev_idx].clone();
-            let step_s = if rng.below(5) == 0 { -1i64 } else { 1i64 };
-            let step_d = rng.int(-8, 8);
-            let cur_atom = Atom::Sym(Arc::from(format!("x@{k}")));
-            // cur_atom - step_s * prev_atom - step_d == 0
-            let lin = Lin::atom(cur_atom.clone())
-                .plus(&Lin::atom(prev_atom).times(-step_s))
-                .plus(&Lin::constant(-step_d));
-            parts.push(Formula::Con(Con::eq(&lin, &Lin::constant(0))));
-            copies.push((cur_atom, step_s * prev_s, step_s * prev_off + step_d));
-        }
-
-        // Choose interval regime: negative, around 0, large positive, short, or semi-bounded.
-        let (lo, hi, is_bounded) = match case_idx % 5 {
-            0 => {
-                let l = rng.int(-220, -160);
-                let h = l + rng.int(0, 75);
-                (l, h, true)
-            }
-            1 => {
-                let l = rng.int(-40, 10);
-                let h = l + rng.int(-2, 65);
-                (l, h, true)
-            }
-            2 => {
-                let l = rng.int(10_000, 10_030);
-                let h = l + rng.int(0, 80);
-                (l, h, true)
-            }
-            3 => {
-                let l = rng.int(-15, 25);
-                let h = l + rng.int(-1, 5);
-                (l, h, true)
-            }
-            _ => {
-                let l = rng.int(-20, 20);
-                (l, l + 120, false)
-            }
-        };
-
-        parts.push(Formula::Con(Con::ge(
-            &Lin::atom(x0.clone()).plus(&Lin::constant(-lo)),
-            &Lin::constant(0),
-        )));
-        if is_bounded {
-            parts.push(Formula::Con(Con::ge(
-                &Lin::constant(hi).minus(&Lin::atom(x0.clone())),
-                &Lin::constant(0),
-            )));
-        }
-
-        // Define 2..=5 Euclidean divisions on random copies of `x`.
-        let num_divs = 2 + rng.below(4);
-        let mut divs: Vec<(Atom, Atom, i64, i64, i64)> = Vec::new();
-        for d_idx in 0..num_divs {
-            let (ref copy_atom, copy_s, copy_off) = copies[rng.below(copies.len())];
-            let m = moduli[rng.below(moduli.len())];
-            let shift = rng.int(-5, 5);
-            let q_atom = Atom::Aux((d_idx * 2) as u32);
-            let r_atom = Atom::Aux((d_idx * 2 + 1) as u32);
-            // copy_atom + shift - m * q_atom - r_atom == 0 && 0 <= r_atom <= m - 1
-            let eq_lin = Lin::atom(copy_atom.clone())
-                .plus(&Lin::constant(shift))
-                .plus(&Lin::atom(q_atom.clone()).times(-m))
-                .plus(&Lin::atom(r_atom.clone()).times(-1));
-            parts.push(Formula::Con(Con::eq(&eq_lin, &Lin::constant(0))));
-            parts.push(Formula::Con(Con::ge(
-                &Lin::atom(r_atom.clone()),
-                &Lin::constant(0),
-            )));
-            parts.push(Formula::Con(Con::ge(
-                &Lin::constant(m - 1).minus(&Lin::atom(r_atom.clone())),
-                &Lin::constant(0),
-            )));
-            divs.push((q_atom, r_atom, m, copy_s, copy_off + shift));
-        }
-
-        // Build 2..=5 modular/bound clauses (unit congruences, negated guard+congruence, holes,
-        // and single-modulus or multi-bound disjunctions).
-        let num_clauses = 2 + rng.below(4);
-        for _ in 0..num_clauses {
-            let (_, ref r_atom, m, _, _) = divs[rng.below(divs.len())];
-            let r_val = rng.int(0, m - 1);
-            let b_val = rng.int(lo - 5, hi + 5);
-            let cl = match rng.below(6) {
-                0 => {
-                    // x mod m != r_val
-                    Formula::negate(Formula::Con(Con::eq(
-                        &Lin::atom(r_atom.clone()),
-                        &Lin::constant(r_val),
-                    )))
-                }
-                1 => {
-                    // !(r == r_val && x >= b_val)
-                    let is_r =
-                        Formula::Con(Con::eq(&Lin::atom(r_atom.clone()), &Lin::constant(r_val)));
-                    let ge_b = Formula::Con(Con::ge(
-                        &Lin::atom(x0.clone()).plus(&Lin::constant(-b_val)),
-                        &Lin::constant(0),
-                    ));
-                    Formula::negate(Formula::and(vec![is_r, ge_b]))
-                }
-                2 => {
-                    // r == r1 || r == r2 || x <= b_val
-                    let r2 = rng.int(0, m - 1);
-                    Formula::or(vec![
-                        Formula::Con(Con::eq(&Lin::atom(r_atom.clone()), &Lin::constant(r_val))),
-                        Formula::Con(Con::eq(&Lin::atom(r_atom.clone()), &Lin::constant(r2))),
-                        Formula::Con(Con::ge(
-                            &Lin::constant(b_val).minus(&Lin::atom(x0.clone())),
-                            &Lin::constant(0),
-                        )),
-                    ])
-                }
-                3 => {
-                    // Hole: x < b_val || x > b_val + gap
-                    let gap = rng.int(0, 12);
-                    Formula::or(vec![
-                        Formula::Con(Con::ge(
-                            &Lin::constant(b_val - 1).minus(&Lin::atom(x0.clone())),
-                            &Lin::constant(0),
-                        )),
-                        Formula::Con(Con::ge(
-                            &Lin::atom(x0.clone()).plus(&Lin::constant(-(b_val + gap + 1))),
-                            &Lin::constant(0),
-                        )),
-                    ])
-                }
-                4 => {
-                    // Remainder interval: r < r_val + 1
-                    Formula::Con(Con::ge(
-                        &Lin::constant(r_val).minus(&Lin::atom(r_atom.clone())),
-                        &Lin::constant(0),
-                    ))
-                }
-                _ => {
-                    // Disjunction of two negated residues across two divisions (share = 1/(m1*m2) < 1)
-                    let (_, ref r2_atom, m2, _, _) = divs[rng.below(divs.len())];
-                    let r2_val = rng.int(0, m2 - 1);
-                    Formula::or(vec![
-                        Formula::negate(Formula::Con(Con::eq(
-                            &Lin::atom(r_atom.clone()),
-                            &Lin::constant(r_val),
-                        ))),
-                        Formula::negate(Formula::Con(Con::eq(
-                            &Lin::atom(r2_atom.clone()),
-                            &Lin::constant(r2_val),
-                        ))),
-                    ])
-                }
-            };
-            parts.push(cl);
-        }
-
-        let f = Formula::and(parts);
+        let (f, x0, copies, divs, lo, hi, is_bounded) = modular_case(&mut rng, case_idx);
         // Each answer of the one-variable path that a formula asked has no point is asked again
         // of the general path, which must not find one (R3-CLAUDE-6). One the general path
         // refuses is checked by the enumeration below where `x` is bounded, and by nothing
@@ -3928,6 +3952,7 @@ fn one_variable_modular_formulas_match_enumeration() {
         sat_count >= 1000 && unsat_count >= 500,
         "sat={sat_count}, unsat={unsat_count}"
     );
+    println!("one-variable cases: satisfiable={sat_count} empty={unsat_count} refused={refused}");
     // A formula the one-variable path does not decide goes to the general path, which may refuse
     // it. 64 cases are refused, each refused by the general path alone too (704 refusals there,
     // measured on d5714627 with the one-variable path off). Case 4609 is one: `decide` refuses
@@ -3941,6 +3966,100 @@ fn one_variable_modular_formulas_match_enumeration() {
          {empty_unchecked} of them with x unbounded"
     );
     assert!(empty_agreed >= 500, "empty answers agreed={empty_agreed}");
+}
+
+/// `f` with each variable `x@k` (`x` for `k = 0`) named `name(k)` and each quotient or remainder
+/// `Aux(i)` numbered `aux(i)`.
+fn renamed(
+    f: &zedc::store::presburger::Formula,
+    name: &dyn Fn(usize) -> String,
+    aux: &dyn Fn(u32) -> u32,
+) -> zedc::store::presburger::Formula {
+    use zedc::store::presburger::{Atom, Con, Formula, Lin};
+    f.map_cons(&|c: &Con| {
+        let mut lin = Lin::constant(c.lin.constant.clone());
+        for (a, k) in &c.lin.terms {
+            let b = match a {
+                Atom::Sym(s) => {
+                    let k = s.strip_prefix("x@").map_or(0, |n| n.parse().unwrap());
+                    Atom::Sym(Arc::from(name(k)))
+                }
+                Atom::Aux(i) => Atom::Aux(aux(*i)),
+                other => other.clone(),
+            };
+            lin = lin.plus(&Lin::atom(b).times(k.clone()));
+        }
+        Formula::Con(Con {
+            lin,
+            rel: c.rel.clone(),
+        })
+    })
+}
+
+#[test]
+fn one_variable_answers_do_not_depend_on_names() {
+    // I4.15: the one-variable path worked in the coordinate of the root of its affine
+    // union-find, the lexically least name, and tried the point 1 there, so renaming an alias
+    // changed a refusal into an answer. Each formula of the enumeration test is asked again
+    // with its variables renamed so that every order of the names among themselves occurs
+    // (names before and after `x`, `x` itself renamed), and with its quotients and remainders
+    // numbered in reverse; `decide` and `satisfiable` give the same answer, refusal included,
+    // and `satisfiable` asked first gives the same answers too. `PNCX_CASES=a..b` runs part.
+    use zedc::store::presburger::{decide, satisfiable};
+    let (from, to) = std::env::var("PNCX_CASES").map_or((0, 5000), |s| {
+        let (a, b) = s.split_once("..").unwrap();
+        (a.parse().unwrap(), b.parse().unwrap())
+    });
+    let namings: [(&str, &dyn Fn(usize) -> String, &dyn Fn(u32) -> u32); 4] = [
+        ("aliases after", &|k| format!("x{k}"), &|i| i),
+        (
+            "aliases before",
+            &|k| format!("{}", ["z", "a", "b", "c"][k]),
+            &|i| i,
+        ),
+        (
+            "interleaved",
+            &|k| format!("{}", ["m", "z", "a", "n"][k]),
+            &|i| 99 - i,
+        ),
+        ("reversed", &|k| format!("v{}", 9 - k), &|i| 99 - i),
+    ];
+    let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
+    let (mut differ, mut answered) = (Vec::new(), 0usize);
+    for case_idx in 0..to {
+        let (f, ..) = modular_case(&mut rng, case_idx);
+        if case_idx < from {
+            continue;
+        }
+        let answer = |g: &zedc::store::presburger::Formula, sat_first: bool| {
+            let (d, s) = if sat_first {
+                let s = satisfiable(g);
+                (decide(g), s)
+            } else {
+                let d = decide(g);
+                (d, satisfiable(g))
+            };
+            (d.ok(), s.ok().map(|m| m.is_some()))
+        };
+        let base = answer(&f, false);
+        answered += usize::from(base.0.is_some());
+        for (label, name, aux) in &namings {
+            let g = renamed(&f, name, aux);
+            for sat_first in [false, true] {
+                let got = answer(&g, sat_first);
+                if got != base {
+                    differ.push(format!(
+                        "case {case_idx} {label} sat_first={sat_first}: {got:?} against {base:?}\n  {g}"
+                    ));
+                }
+            }
+        }
+    }
+    println!(
+        "renamed cases {from}..{to}: {answered} answered, {} differ",
+        differ.len()
+    );
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
 
 /// `q(x)` as the conjunction, for each pair `(a, b)` and each `r` of `rs`, of `x mod a == r ||

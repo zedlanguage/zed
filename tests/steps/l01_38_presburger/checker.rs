@@ -877,3 +877,45 @@ fn a_question_refused_through_a_call_by_a_map_of_its_parameters_names_its_parame
     }
     assert!(refused > 0, "no question refused");
 }
+
+#[test]
+fn a_large_literal_keeps_a_question_that_is_refused() {
+    for (name, literal) in [
+        ("growth-large63", "9223372036854775808"),
+        ("growth-large64", "18446744073709551616"),
+    ] {
+        let src = program(
+            &format!(
+                "ok(x, y, z, w) = 4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y - z + 31 >= 0 && x < {literal};"
+            ),
+            "x: a, y: a, z: a, w: a",
+        );
+        assert!(rejection(name, &src).contains("could not decide"));
+    }
+}
+
+#[test]
+fn a_refused_question_over_one_variable_names_its_moduli() {
+    // Enumeration case 371, refused (it holds at 19 and 20). The variables the shadows reason
+    // counts are the checker's, one for each remainder and quotient, and the reason says so
+    // and names the moduli (I4.11); `a_question_whose_point_lies_past_one_splinter_is_rejected`
+    // keeps the reason over four variables of the program.
+    let src = program(
+        "ok(x) = x >= 4 && x <= 31 && (x - 1) mod 9 <= 1 && (x - 4) mod 14 <= 4 && (x - 4) mod 27 != 23;",
+        "x: a",
+    );
+    let printed = rejection("shadows-one-variable", &src);
+    assert!(
+        printed.contains(
+            "The program has one variable, `x`, and the conditions read it through its \
+             remainders and quotients by 9, 14 and 27; the checker gives each remainder and \
+             quotient a variable of its own. Where the values a variable can take have gaps, it \
+             splits the conditions into cases, one for each gap. Here the only values could lie \
+             in a case that would have to be split again with as many of the checker's \
+             variables left as before, so the splitting need not end. The checker stopped \
+             there, with no values found and none ruled out.\n"
+        ),
+        "{printed}"
+    );
+    assert!(!printed.contains("as many variables left"), "{printed}");
+}

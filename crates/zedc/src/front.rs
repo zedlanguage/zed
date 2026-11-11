@@ -824,7 +824,20 @@ pub fn linear_questions(
                     .join(", ");
                 for (can, answer) in [("true", answers.holds), ("false", answers.fails)] {
                     if let Err(why) = answer {
-                        let constraints = scoped.written(&r).to_string();
+                        let relation = scoped.written(&r);
+                        let constraints = relation.to_string();
+                        // The moduli of the remainders and quotients the conditions take, each
+                        // once, in increasing order, for the reason (I4.11).
+                        // Complexity tradeoff: O(d log d) for the d definitions reached, on a
+                        // refusal only, against the O(the function's text) of the message.
+                        let mut moduli: Vec<&str> = (relation.defs.iter())
+                            .filter_map(|(_, what, _)| {
+                                what.rsplit_once(" mod ").or(what.rsplit_once(" div "))
+                            })
+                            .map(|(_, m)| m)
+                            .collect();
+                        moduli.sort_unstable_by_key(|m| (m.len(), *m));
+                        moduli.dedup();
                         // The menu rewrites the function as written, on one line: its
                         // parameters the question reads, in written order, and the conditions
                         // of its value, the body of an equation or the value a block ends
@@ -880,7 +893,7 @@ pub fn linear_questions(
                         });
                         // A cause that ends in a sentence of its own, such as a repair, keeps
                         // its full stop, and the message adds none.
-                        let why = why.to_string();
+                        let why = why.said(&names, &moduli);
                         let stop = if why.ends_with('.') { "" } else { "." };
                         out.push(ast::Error {
                             row: Some(crate::rejection::Row::NonLinearQuestion),

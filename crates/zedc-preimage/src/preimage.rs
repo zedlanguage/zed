@@ -2430,8 +2430,12 @@ impl Tr {
     /// `a == c·q + r` and `0 <= r <= |c| - 1` (Euclidean). One pair for each dividend and
     /// divisor, so that every `x mod m` and `x div m` of one input names the same quotient and
     /// remainder. O(log of the pairs) and the terms of `a`.
-    fn pair_by_constant(&mut self, a: &Lin, c: i128) -> u32 {
-        let key = (a.clone(), Lin::constant(c));
+    // Complexity tradeoff: the divisor is an `Int` of any size (R5-CLAUDE-4), so its written
+    // digits are the cost of each operation on it; the pair is found by the same key. Why: as
+    // an `i128`, a divisor from `2^127` up was read as no constant and the question was
+    // dropped with no message. Test: `l01_38_presburger::pncx_probe::pncx_divisor_past_i128_is_read`.
+    fn pair_by_constant(&mut self, a: &Lin, c: &Int) -> u32 {
+        let key = (a.clone(), Lin::constant(c.clone()));
         if let Some(&n) = self.pairs.get(&key) {
             return n;
         }
@@ -2442,16 +2446,12 @@ impl Tr {
             Lin::atom(presburger::Atom::Aux(n)),
             Lin::atom(presburger::Atom::Aux(n + 1)),
         );
-        // Complexity tradeoff: machine signed abs is O(1) but overflows at i128::MIN.
-        // Form the bound in Int; the input divisor is still at most 128 bits, so this
-        // costs O(1) bounded-width arithmetic and retains its full 128-bit magnitude.
-        let remainder_hi = &Int::from(c).abs() - &Int::ONE;
         let def = Formula::and(vec![
-            Formula::Con(Con::eq(a, &q.times(c).plus(&r))),
+            Formula::Con(Con::eq(a, &q.times(c.clone()).plus(&r))),
             Formula::Con(Con::ge(&r, &Lin::constant(0))),
-            Formula::Con(Con::ge(&Lin::constant(remainder_hi), &r)),
+            Formula::Con(Con::ge(&Lin::constant(&c.abs() - &Int::from(1)), &r)),
         ]);
-        let shown = |op| What::ByConstant(op, a.clone(), c);
+        let shown = |op| What::ByConstant(op, a.clone(), c.clone());
         self.defs.push((n, shown("div"), def));
         self.defs.push((n + 1, shown("mod"), Formula::top()));
         n
@@ -2470,7 +2470,7 @@ impl Tr {
         &mut self,
         l: &Lin,
         to: &HashMap<Arc<str>, Lin>,
-        pairs: Option<&HashMap<u32, (Lin, i128)>>,
+        pairs: Option<&HashMap<u32, (Lin, Int)>>,
         done: &mut HashMap<u32, u32>,
     ) -> Option<Lin> {
         use presburger::Atom;
@@ -2487,11 +2487,11 @@ impl Tr {
                     // The quotient, and whether `n` is its remainder, with its dividend.
                     let (q, rem, a, c) = match pairs {
                         Some(pairs) => match pairs.get(n) {
-                            Some((a, c)) => (*n, 0, a.clone(), *c),
+                            Some((a, c)) => (*n, 0, a.clone(), c.clone()),
                             None => {
                                 let q = n.checked_sub(1)?;
                                 let (a, c) = pairs.get(&q)?;
-                                (q, 1, a.clone(), *c)
+                                (q, 1, a.clone(), c.clone())
                             }
                         },
                         None => {
@@ -2507,14 +2507,14 @@ impl Tr {
                             if *m != *n {
                                 return None;
                             }
-                            (q, rem, a.clone(), *c)
+                            (q, rem, a.clone(), c.clone())
                         }
                     };
                     let p = match done.get(&q) {
                         Some(&p) => p,
                         None => {
                             let a = self.instance(&a, to, pairs, done)?;
-                            let p = self.pair_by_constant(&a, c);
+                            let p = self.pair_by_constant(&a, &c);
                             done.insert(q, p);
                             p
                         }
@@ -2599,7 +2599,7 @@ impl Tr {
 #[derive(Clone)]
 enum What {
     /// `a div c` or `a mod c`, the operator first, for a constant `c`.
-    ByConstant(&'static str, Lin, i128),
+    ByConstant(&'static str, Lin, Int),
     /// `a div n` or `a mod n`, the operator first, for a term `n`.
     ByTerm(&'static str, Lin, Lin),
     /// `if g then a else b`.
@@ -3480,7 +3480,7 @@ struct Projection {
     /// Each quotient the rows read, by its number (its remainder numbered after it): its
     /// dividend, over the symbols kept and the quotients and remainders numbered before it, and
     /// its divisor, a constant other than 0.
-    pairs: Arc<HashMap<u32, (Lin, i128)>>,
+    pairs: Arc<HashMap<u32, (Lin, Int)>>,
 }
 
 /// The relation `r` of a callee over the canonical atoms of the canonical key `key`
@@ -3690,9 +3690,9 @@ struct Normal<'a> {
     /// Each atom's written form, `None` where it is not written.
     memo: HashMap<presburger::Atom, Option<Lin>>,
     /// The representative of each dividend written and divisor: the first pair of them.
-    by_key: HashMap<(Lin, i128), u32>,
+    by_key: HashMap<(Lin, Int), u32>,
     /// Each representative's dividend, written, and divisor.
-    reps: HashMap<u32, (Lin, i128)>,
+    reps: HashMap<u32, (Lin, Int)>,
 }
 
 impl<'a> Normal<'a> {
@@ -3782,8 +3782,8 @@ impl<'a> Normal<'a> {
                     Some(Lin::atom(Atom::Aux(q + 1)))
                 }
                 What::ByConstant(_, d, c) => {
-                    let (d, c) = (self.over(&d.clone())?, *c);
-                    let r = *self.by_key.entry((d.clone(), c)).or_insert(*n);
+                    let (d, c) = (self.over(&d.clone())?, c.clone());
+                    let r = *self.by_key.entry((d.clone(), c.clone())).or_insert(*n);
                     self.reps.entry(r).or_insert((d, c));
                     Some(Lin::atom(Atom::Aux(r)))
                 }
@@ -3859,7 +3859,7 @@ impl<'a> Normal<'a> {
     }
 
     /// The representatives, as a [`Projection`] holds them.
-    fn pairs(&self) -> Arc<HashMap<u32, (Lin, i128)>> {
+    fn pairs(&self) -> Arc<HashMap<u32, (Lin, Int)>> {
         Arc::new(self.reps.clone())
     }
 }
@@ -7918,12 +7918,10 @@ impl<'m, 't> Walk<'m, 't> {
                             let n = arg(1).await?;
                             return self.tr(|tr| tr.div_mod_by_term(p, &a, &n));
                         }
-                        let c = k?
-                            .to_i128()
-                            .filter(|c| *c != 0 && c.checked_abs().is_some())?;
+                        let c = k.filter(|c| !c.is_zero())?;
                         let a = arg(0).await?;
                         self.tr(|tr| {
-                            let n = tr.pair_by_constant(&a, c);
+                            let n = tr.pair_by_constant(&a, &c);
                             let n = if p == IntDiv { n } else { n + 1 };
                             Some(Lin::atom(presburger::Atom::Aux(n)))
                         })

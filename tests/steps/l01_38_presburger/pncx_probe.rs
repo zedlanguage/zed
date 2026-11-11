@@ -216,7 +216,10 @@ fn pncx_random() {
     let ((), c) = zedc::store::presburger::with_modular_empty_checked(|| {
         for seed in a..b {
             let mut rng = zed_tests::instances::Rng::new(seed);
-            let src = chain(&mut rng);
+            let src = std::env::var("PNC_SRC").map_or_else(
+                |_| chain(&mut rng),
+                |path| std::fs::read_to_string(path).expect("probe source"),
+            );
             if std::env::var_os("PNCX_SHOW").is_some() {
                 println!("PNCXSRC {seed}\n{src}\nPNCXEND");
             }
@@ -329,6 +332,23 @@ fn pow2(n: usize, d: i8) -> String {
 fn axis_src(axis: &str, n: usize) -> String {
     let ps = primes(2 * n + 8);
     match axis {
+        // Every integer in [0,n) has one impossible active clause. All
+        // unrelated unit domains hold throughout that interval. This forces
+        // a separate contradiction at each leaf of the regime walk (I3.3).
+        "regimes-empty" => {
+            let ps: Vec<_> = primes(3 * n + 8)
+                .into_iter()
+                .filter(|p| *p > n as i64 + 2)
+                .take(n)
+                .collect();
+            assert_eq!(ps.len(), n);
+            let mut lits = Vec::new();
+            for (i, p) in ps.into_iter().enumerate() {
+                lits.push(format!("x mod {p} < {}", p - 1));
+                lits.push(format!("(x mod {p} == {} || x < {i} || x > {i})", p - 1));
+            }
+            format!("q(x: int) = {} && x >= 0 && x < {n};\n", lits.join(" && "))
+        }
         // Links of the negated modular chain of one_scope.
         "links" => {
             let mut src = String::from(
@@ -690,6 +710,9 @@ fn pncx_six_axis() {
             satisfiable(&f)
         });
     });
+    if let Some(Ok(Some(model))) = &ans {
+        assert!(f.holds(model));
+    }
     println!(
         "AXIS {axis} n={n} work={} bytes={} unit={} answer={:?}",
         w.units,
@@ -924,4 +947,416 @@ fn pncx_sat_reduction() {
     println!(
         "PNCXSAT v={nv} c={nc} seed={seed} easy={easy} decide={shown} truth={truth:?} {dt:.4}s"
     );
+}
+
+#[test]
+fn pncx_large_literals_keep_the_question() {
+    for literal in [
+        "9223372036854775807",
+        "9223372036854775808",
+        "18446744073709551616",
+    ] {
+        let src = format!("q(x: int) = x < {literal};");
+        let unit = elab(&src).unwrap();
+        let scope = lets(&unit);
+        let mut scoped = Scoped::new(&scope);
+        let d = &unit.defs[0];
+        let Term::Lam(ps, body) = &*d.term else {
+            panic!("lambda");
+        };
+        assert!(
+            scoped.relation(body, ps, ps, true).is_some(),
+            "{literal}: question dropped"
+        );
+    }
+}
+
+// A divisor written in decimal past `i128` keeps the question (R5-CLAUDE-4): read as an
+// `i128`, `2^127` and up were read as no constant and the question was dropped.
+#[test]
+fn pncx_divisor_past_i128_is_read() {
+    let two = num_bigint::BigInt::from(2);
+    for bits in [64u32, 126, 127, 128, 200, 10_000] {
+        let d = two.pow(bits).to_string();
+        let src = format!("q(x: int) = x mod {d} == 1 && x div {d} == 0;");
+        let unit = elab(&src).unwrap();
+        let scope = lets(&unit);
+        let mut scoped = Scoped::new(&scope);
+        let Term::Lam(ps, body) = &*unit.defs[0].term else {
+            panic!("lambda");
+        };
+        assert!(
+            scoped.relation(body, ps, ps, true).is_some(),
+            "2^{bits}: question dropped"
+        );
+    }
+}
+
+// Consecutive Fibonacci moduli force Euclid's long quotient sequence. Both
+// residue requirements are needed; x = 0 or 1 cannot witness the formula.
+fn pncx_crt_bits(n: usize) -> zedc::store::presburger::Formula {
+    use zedc::store::int::Int;
+    use zedc::store::presburger::{Atom, Con, Formula, Lin};
+    let (mut a, mut b) = (Int::ONE, Int::ONE);
+    for _ in 0..n {
+        (a, b) = (b.clone(), &a + &b);
+    }
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let mut fs = vec![Formula::Con(Con::ge(&x, &Lin::constant(0)))];
+    for (i, (m, d)) in [(a, 1), (b, 2)].into_iter().enumerate() {
+        let q = Lin::atom(Atom::Aux(i as u32));
+        fs.push(Formula::Con(Con::eq(
+            &x.minus(&q.times(m.clone())),
+            &Lin::constant(&m - &Int::from(d)),
+        )));
+    }
+    Formula::and(fs)
+}
+
+#[test]
+#[ignore]
+fn pncx_crt_bit_axis() {
+    use zedc::store::presburger::satisfiable;
+    let sizes = std::env::var("PNCX_SIZES").unwrap();
+    let mut meter = zed_tests::scaling::Meter::new();
+    for n in sizes.split(',').map(|n| n.parse::<usize>().unwrap()) {
+        let f = pncx_crt_bits(n);
+        let modulus_bits = f
+            .cons()
+            .iter()
+            .flat_map(|c| c.lin.terms.values())
+            .map(|k| {
+                zedc::store::int::Num::from(k)
+                    .built()
+                    .expect("written integer")
+                    .bits()
+            })
+            .max()
+            .unwrap_or(0);
+        let mut result = None;
+        let t = Instant::now();
+        let w = meter.work(|| result = Some(satisfiable(&f)));
+        let model = result.unwrap().expect("answer").expect("point");
+        assert!(f.holds(&model));
+        println!(
+            "CRTBITS {n} modulus_bits {modulus_bits} instr {} bytes {} wall {:.6}",
+            w.units,
+            w.bytes,
+            t.elapsed().as_secs_f64()
+        );
+    }
+}
+
+#[test]
+#[ignore]
+fn pncx_profile() {
+    let axis = std::env::var("PNCX_AXIS").unwrap();
+    let n: usize = std::env::var("PNCX_N").unwrap().parse().unwrap();
+    let src = axis_src(&axis, n);
+    let stmts = zed_tests::deep::statements(&src);
+    let tokens = zedc::lex::lex_fence(&src).unwrap();
+    let unit = elab(&src).unwrap();
+    println!("PROFILE input built");
+    for _ in 0..8 {
+        std::hint::black_box(zedc::front::linear_questions(&src, &tokens, &stmts, &unit));
+    }
+}
+
+fn pncx_front_scale(axis: &str) {
+    let inputs = zed_tests::scaling::inputs(512, |n| {
+        let src = axis_src(axis, n);
+        let stmts = zed_tests::deep::statements(&src);
+        let tokens = zedc::lex::lex_fence(&src).unwrap();
+        let unit = elab(&src).unwrap();
+        (src, stmts, tokens, unit)
+    });
+    zed_tests::scaling::check_order(axis, 512, 1, |n| {
+        let (src, stmts, tokens, unit) = &inputs[&n];
+        assert!(zedc::front::linear_questions(src, tokens, stmts, unit).is_empty());
+    });
+}
+
+#[test]
+fn pncx_disj_scale() {
+    pncx_front_scale("disj");
+}
+
+#[test]
+fn pncx_pairs_scale() {
+    pncx_front_scale("pairs");
+}
+#[test]
+#[ignore]
+fn pncx_t8_enum_suite() {
+    use std::sync::Arc;
+    use zedc::store::int::Int;
+    use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, decide, satisfiable};
+    let negctl = std::env::var_os("PNCX_ENUM_NEGCTL").is_some();
+    let mut rng = zed_tests::instances::Rng::new(0x3141_5926);
+    let mut total_checked = 0usize;
+    let mut total_sat = 0usize;
+    let mut total_unsat = 0usize;
+    let mut total_refused = 0usize;
+
+    // Family 1 (1,200 formulas): generalized `sign12` / prime-power / composite shifted remainder
+    // systems (`(x + s1) mod m1 <= w1 && ((x - c) mod m2 == r1 || (x - c) mod m2 == r2)`):
+    let m_pool = [
+        4i64, 6, 8, 9, 10, 12, 14, 15, 16, 18, 20, 21, 24, 25, 27, 28, 30, 36,
+    ];
+    for idx in 0..1200usize {
+        let m1 = m_pool[rng.below(m_pool.len())];
+        let m2 = m_pool[rng.below(m_pool.len())];
+        let s1 = rng.int(-15, 15);
+        let c2 = rng.int(-15, 15);
+        let w1 = rng.int(0, (m1 - 1).min(5));
+        let r2a = rng.int(0, m2 - 1);
+        let r2b = rng.int(0, m2 - 1);
+        let base_lo = match idx % 4 {
+            0 => 10_020 + rng.int(0, 20),
+            1 => -500 + rng.int(0, 40),
+            2 => -15 + rng.int(0, 30),
+            _ => rng.int(0, 200),
+        };
+        let hi = base_lo + rng.int(0, 90);
+        let x0 = Atom::Sym(Arc::from("x"));
+        let x = Lin::atom(x0.clone());
+        let q0 = Atom::Aux(0);
+        let r0 = Atom::Aux(1);
+        let q1 = Atom::Aux(2);
+        let r1 = Atom::Aux(3);
+        let fs = vec![
+            Formula::Con(Con::ge(&x, &Lin::constant(base_lo))),
+            Formula::Con(Con::ge(&Lin::constant(hi), &x)),
+            Formula::Con(Con::eq(
+                &x.plus(&Lin::constant(s1))
+                    .minus(&Lin::atom(q0.clone()).times(m1))
+                    .minus(&Lin::atom(r0.clone())),
+                &Lin::constant(0),
+            )),
+            Formula::Con(Con::ge(&Lin::atom(r0.clone()), &Lin::constant(0))),
+            Formula::Con(Con::ge(&Lin::constant(m1 - 1), &Lin::atom(r0.clone()))),
+            Formula::Con(Con::ge(&Lin::constant(w1), &Lin::atom(r0.clone()))),
+            Formula::Con(Con::eq(
+                &x.plus(&Lin::constant(-c2))
+                    .minus(&Lin::atom(q1.clone()).times(m2))
+                    .minus(&Lin::atom(r1.clone())),
+                &Lin::constant(0),
+            )),
+            Formula::Con(Con::ge(&Lin::atom(r1.clone()), &Lin::constant(0))),
+            Formula::Con(Con::ge(&Lin::constant(m2 - 1), &Lin::atom(r1.clone()))),
+            Formula::or(vec![
+                Formula::Con(Con::eq(&Lin::atom(r1.clone()), &Lin::constant(r2a))),
+                Formula::Con(Con::eq(&Lin::atom(r1.clone()), &Lin::constant(r2b))),
+            ]),
+        ];
+        let f = Formula::and(fs);
+        let brute = (base_lo..=hi).any(|xv| {
+            (xv + s1).rem_euclid(m1) <= w1
+                && ((xv - c2).rem_euclid(m2) == r2a || (xv - c2).rem_euclid(m2) == r2b)
+        });
+        let (Ok(mut dec), Ok(sat)) = (decide(&f), satisfiable(&f)) else {
+            total_refused += 1;
+            continue;
+        };
+        if negctl && idx == 17 {
+            dec = !dec;
+        }
+        assert_eq!(
+            dec, brute,
+            "sign12-family idx={idx}: dec={dec} brute={brute}\n{f}"
+        );
+        assert_eq!(sat.is_some(), brute, "sign12-family sat idx={idx}");
+        if let Some(ref m) = sat {
+            assert!(f.holds(m), "sign12-family model invalid idx={idx}");
+            total_sat += 1;
+        } else {
+            total_unsat += 1;
+        }
+        total_checked += 1;
+    }
+
+    // Family 2 (1,200 formulas): `R2_CLAUDE` regimes3 + prime-power p-adic hierarchies (`2,4,8,16`, `3,9,27`, `5,25`):
+    let pp_pool = [2i64, 4, 8, 16, 3, 9, 27, 5, 25, 6, 12, 18];
+    for idx in 0..1200usize {
+        let lo = rng.int(-80, 120);
+        let hi = lo + rng.int(0, 140);
+        let x0 = Atom::Sym(Arc::from("x"));
+        let x = Lin::atom(x0.clone());
+        let mut fs = vec![
+            Formula::Con(Con::ge(&x, &Lin::constant(lo))),
+            Formula::Con(Con::ge(&Lin::constant(hi), &x)),
+        ];
+        let k_divs = 3 + rng.below(3);
+        let mut divs = Vec::new();
+        for d in 0..k_divs {
+            let m = pp_pool[rng.below(pp_pool.len())];
+            let sh = rng.int(-6, 6);
+            let qa = Atom::Aux((2 * d) as u32);
+            let ra = Atom::Aux((2 * d + 1) as u32);
+            fs.push(Formula::Con(Con::eq(
+                &x.plus(&Lin::constant(sh))
+                    .minus(&Lin::atom(qa.clone()).times(m))
+                    .minus(&Lin::atom(ra.clone())),
+                &Lin::constant(0),
+            )));
+            fs.push(Formula::Con(Con::ge(
+                &Lin::atom(ra.clone()),
+                &Lin::constant(0),
+            )));
+            fs.push(Formula::Con(Con::ge(
+                &Lin::constant(m - 1),
+                &Lin::atom(ra.clone()),
+            )));
+            divs.push((qa, ra, m, sh));
+        }
+        let n_cls = 2 + rng.below(5);
+        for _ in 0..n_cls {
+            let (_, ref ra1, m1, _) = divs[rng.below(divs.len())];
+            let (_, ref ra2, m2, _) = divs[rng.below(divs.len())];
+            let cut = lo + rng.int(-5, 145);
+            let r1 = rng.int(0, m1 - 1);
+            let r2 = rng.int(0, m2 - 1);
+            let l1 = if rng.below(2) == 0 {
+                Formula::Con(Con::eq(&Lin::atom(ra1.clone()), &Lin::constant(r1)))
+            } else {
+                Formula::negate(Formula::Con(Con::eq(
+                    &Lin::atom(ra1.clone()),
+                    &Lin::constant(r1),
+                )))
+            };
+            let l2 = if rng.below(2) == 0 {
+                Formula::Con(Con::eq(&Lin::atom(ra2.clone()), &Lin::constant(r2)))
+            } else {
+                Formula::negate(Formula::Con(Con::eq(
+                    &Lin::atom(ra2.clone()),
+                    &Lin::constant(r2),
+                )))
+            };
+            let l3 = if rng.below(2) == 0 {
+                Formula::Con(Con::ge(&x, &Lin::constant(cut)))
+            } else {
+                Formula::Con(Con::ge(&Lin::constant(cut), &x))
+            };
+            fs.push(Formula::or(vec![l1, l2, l3]));
+        }
+        let f = Formula::and(fs);
+        let brute = (lo..=hi).any(|xv| {
+            let mut m = Model::from([(x0.clone(), Int::from(xv))]);
+            for (qa, ra, mod_m, sh) in &divs {
+                m.insert(qa.clone(), Int::from((xv + *sh).div_euclid(*mod_m)));
+                m.insert(ra.clone(), Int::from((xv + *sh).rem_euclid(*mod_m)));
+            }
+            f.holds(&m)
+        });
+        let (Ok(dec), Ok(sat)) = (decide(&f), satisfiable(&f)) else {
+            total_refused += 1;
+            continue;
+        };
+        assert_eq!(
+            dec, brute,
+            "padic-regimes3 idx={idx}: dec={dec} brute={brute}\n{f}"
+        );
+        assert_eq!(sat.is_some(), brute, "padic-regimes3 sat idx={idx}");
+        if let Some(ref m) = sat {
+            assert!(f.holds(m), "padic-regimes3 model invalid idx={idx}");
+            total_sat += 1;
+        } else {
+            total_unsat += 1;
+        }
+        total_checked += 1;
+    }
+
+    // Family 3 (1,200 formulas): `R2_CODEX` multi-pair + large-offset/quotient systems:
+    let pair_mods = [3i64, 4, 5, 7, 8, 9, 11, 13, 16, 17, 19, 25];
+    for idx in 0..1200usize {
+        let base_off: i64 = if idx % 2 == 0 {
+            1_000_000_000 + rng.int(0, 500)
+        } else {
+            -1_000_000_000 + rng.int(0, 500)
+        };
+        let lo = base_off;
+        let hi = base_off + rng.int(0, 160);
+        let x0 = Atom::Sym(Arc::from("x"));
+        let x = Lin::atom(x0.clone());
+        let mut fs = vec![
+            Formula::Con(Con::ge(&x, &Lin::constant(lo))),
+            Formula::Con(Con::ge(&Lin::constant(hi), &x)),
+        ];
+        let pairs = 2 + rng.below(2);
+        let mut divs = Vec::new();
+        for i in 0..2 * pairs {
+            let m = pair_mods[rng.below(pair_mods.len())];
+            let qa = Atom::Aux((2 * i) as u32);
+            let ra = Atom::Aux((2 * i + 1) as u32);
+            fs.push(Formula::Con(Con::eq(
+                &x.minus(&Lin::atom(qa.clone()).times(m))
+                    .minus(&Lin::atom(ra.clone())),
+                &Lin::constant(0),
+            )));
+            fs.push(Formula::Con(Con::ge(
+                &Lin::atom(ra.clone()),
+                &Lin::constant(0),
+            )));
+            fs.push(Formula::Con(Con::ge(
+                &Lin::constant(m - 1),
+                &Lin::atom(ra.clone()),
+            )));
+            divs.push((qa, ra, m));
+        }
+        for p in 0..pairs {
+            for _ in 0..2 {
+                let (_, ref ra, ma) = divs[2 * p];
+                let (_, ref rb, mb) = divs[2 * p + 1];
+                let va = rng.int(0, ma - 1);
+                let vb = rng.int(0, mb - 1);
+                let la = if rng.below(3) == 0 {
+                    Formula::negate(Formula::Con(Con::eq(
+                        &Lin::atom(ra.clone()),
+                        &Lin::constant(va),
+                    )))
+                } else {
+                    Formula::Con(Con::eq(&Lin::atom(ra.clone()), &Lin::constant(va)))
+                };
+                let lb = if rng.below(3) == 0 {
+                    Formula::negate(Formula::Con(Con::eq(
+                        &Lin::atom(rb.clone()),
+                        &Lin::constant(vb),
+                    )))
+                } else {
+                    Formula::Con(Con::eq(&Lin::atom(rb.clone()), &Lin::constant(vb)))
+                };
+                fs.push(Formula::or(vec![la, lb]));
+            }
+        }
+        let f = Formula::and(fs);
+        let brute = (lo..=hi).any(|xv| {
+            let mut m = Model::from([(x0.clone(), Int::from(xv))]);
+            for (qa, ra, mod_m) in &divs {
+                m.insert(qa.clone(), Int::from(xv.div_euclid(*mod_m)));
+                m.insert(ra.clone(), Int::from(xv.rem_euclid(*mod_m)));
+            }
+            f.holds(&m)
+        });
+        let (Ok(dec), Ok(sat)) = (decide(&f), satisfiable(&f)) else {
+            total_refused += 1;
+            continue;
+        };
+        assert_eq!(
+            dec, brute,
+            "codex-pairs idx={idx}: dec={dec} brute={brute}\n{f}"
+        );
+        assert_eq!(sat.is_some(), brute, "codex-pairs sat idx={idx}");
+        if let Some(ref m) = sat {
+            assert!(f.holds(m), "codex-pairs model invalid idx={idx}");
+            total_sat += 1;
+        } else {
+            total_unsat += 1;
+        }
+        total_checked += 1;
+    }
+
+    println!(
+        "T8_ENUM_SUITE total=3600 checked={total_checked} sat={total_sat} unsat={total_unsat} refused={total_refused}"
+    );
+    assert!(total_checked >= 3500);
 }

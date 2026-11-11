@@ -924,6 +924,54 @@ fn disjunctions_whose_atoms_share_a_color() {
     assert_eq!(differ, Vec::new());
 }
 
+#[test]
+#[ignore]
+fn pncx_gained_color_systems_match_enumeration() {
+    // The 21 systems accounting for all 504 gains of this family in R4's
+    // answer log, seed 0x5eed, 24 namings each. Every system is inside [-2,2]^4
+    // by regular_with_disjunctions. Evaluate its written rows directly, using
+    // native integers whose magnitudes here are bounded by the small generator.
+    let gained = [
+        165, 175, 178, 239, 242, 254, 269, 281, 284, 301, 304, 439, 444, 455, 567, 614, 621, 887,
+        909, 929, 951,
+    ];
+    let mut rng = Rng::new(0x5eed);
+    let mut checked = 0;
+    for index in 0..1000 {
+        let sys = regular_with_disjunctions(&mut rng, 4);
+        if !gained.contains(&index) {
+            continue;
+        }
+        let brute = (0..625).any(|mut code| {
+            let mut point = [0i64; 4];
+            for x in &mut point {
+                *x = code % 5 - 2;
+                code /= 5;
+            }
+            let holds = |row: &Row| {
+                let value = row.k + row.c.iter().zip(point).map(|(c, x)| c * x).sum::<i64>();
+                if row.eq { value == 0 } else { value >= 0 }
+            };
+            sys.0.iter().all(&holds)
+                && sys
+                    .1
+                    .iter()
+                    .all(|ds| ds.iter().any(|d| d.iter().all(&holds)))
+        });
+        assert!(brute, "gained system {index}");
+        each_permutation(4, |perm| {
+            let mut got = decide(&disjunctive_formula(&sys, perm));
+            if checked == 0 && std::env::var_os("PNCX_GAIN_NEGCTL").is_some() {
+                got = Ok(false);
+            }
+            assert_eq!(got, Ok(brute), "system {index}, naming {perm:?}");
+            checked += 1;
+        });
+    }
+    assert_eq!(checked, 504);
+    println!("COLOR_GAIN_BRUTE systems=21 namings={checked} mismatches=0");
+}
+
 /// `0 <= x, y <= 9` and `x <= lo || y <= lo`, with the bounds `x, y >= at_least` when given:
 /// `x` and `y` occur alike, so no renaming tells them apart.
 fn either_low(lo: i64, at_least: Option<i64>) -> Formula {
