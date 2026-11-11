@@ -174,11 +174,17 @@ fn morphism_split() -> Type {
     &morphism(Type::int()) - &(&morphism(lit(1)) | &morphism(&Type::int() - &lit(1)))
 }
 
-/// The morphisms that must take 1 and may take any integer, into the integers. The identity
-/// on the integers is one, but a closure is shown only for a type whose keys are all
-/// permitted as written, and a family is not checked against a morphism type before L2.
+/// The morphisms that must take 1 and every list of 1s and may take any integer and any list of
+/// integers, into the integers. A closure is shown only for a type whose required keys lie
+/// within its permitted ones as written; the lists of 1s lie within the lists of integers only
+/// by a search, and a family is not checked against a morphism type before L2. (Before round 10
+/// this was `lit(1)` within `int`, now built: X45.)
 fn morphism_between() -> Type {
-    Type::morphism(lit(1), Type::int(), Type::int())
+    Type::morphism(
+        &lit(1) | &list_named(lit(1), "_mb_ones"),
+        &Type::int() | &list_named(Type::int(), "_mb_ints"),
+        Type::int(),
+    )
 }
 
 #[test]
@@ -594,10 +600,14 @@ fn morphism_split_by(n: usize) -> Type {
     &morphism(Type::int()) - &parts
 }
 
-/// [`morphism_between`] over 1 to `n`: morphisms that must take 1 to `n`.
+/// [`morphism_between`] over 1 to `n`: morphisms that must take 1 to `n` and the lists of them.
 fn morphism_between_by(n: usize) -> Type {
     let lits = (1..=n as i64).fold(Type::empty(), |t, i| &t | &lit(i));
-    Type::morphism(lits, Type::int(), Type::int())
+    Type::morphism(
+        &lits | &list_named(lits.clone(), "_mb_ones"),
+        &Type::int() | &list_named(Type::int(), "_mb_ints"),
+        Type::int(),
+    )
 }
 
 /// Runs `scaling::check` on the verdict of `make(n, tag)`, which must be refused for `cause`.
@@ -667,7 +677,8 @@ fn a_morphism_split_refusal_is_reached_in_the_size_of_the_union() {
 
 #[test]
 fn a_no_witness_refusal_is_reached_in_the_size_of_the_keys() {
-    // Θ(n) required keys. Measured on c881d28c: 87K instructions at n = 1, 302K at 32.
+    // Θ(n) required keys. Measured on c881d28c: 87K instructions at n = 1, 302K at 32. Round 10
+    // (the keys also hold a list type, X45): 2.21M at n = 8, 2.88M at 64.
     refusal_scales(
         "NoWitness, by n required keys",
         8,
@@ -1504,6 +1515,7 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
         "r8heightout" => r8_height_boundary(n, true, tag),
         "r7congruencein" => r7_congruence(n, false, tag),
         "r7congruenceout" => r7_congruence(n, true, tag),
+        "r10bigcongruenceout" => r10_big_congruence(n, tag),
         "r7aperiodic" => r7_aperiodic(n, tag),
         "r7bmmout" => r7_bmm_out(n, tag),
         "r8residues" => r8_residues(n, false, tag),
@@ -7229,7 +7241,9 @@ fn r9_wrapped_witnesses_are_checked_and_empty_fields_remain_empty() {
             ] {
                 let t = rfx_case(case, n, "_r9nest");
                 let want = t.verdict();
-                for wrap in ["tup", "rec", "atom", "atom2", "nested", "option", "map"] {
+                for wrap in [
+                    "tup", "rec", "atom", "atom2", "nested", "option", "map", "listhead",
+                ] {
                     Type::forget_emptiness();
                     let w = rfx_case(&format!("{wrap}:{case}"), n, "_r9nest");
                     let got = w.verdict();
@@ -7260,7 +7274,9 @@ fn r9_wrapped_witness_cost_scales() {
             "u4cofrontshared",
             "r5remout",
         ] {
-            for wrap in ["tup", "rec", "atom", "atom2", "nested", "option", "map"] {
+            for wrap in [
+                "tup", "rec", "atom", "atom2", "nested", "option", "map", "listhead",
+            ] {
                 let small = rfx_case(&format!("{wrap}:{case}"), 32, "_r9scale_small");
                 let large = rfx_case(&format!("{wrap}:{case}"), 256, "_r9scale_large");
                 scaling::check("a checked list witness inside a product", 32, |n| {
@@ -7524,7 +7540,7 @@ fn r9_coset_cover_agrees_with_enumeration() {
 #[test]
 fn r9_nested_queries_agree_alone_forward_and_reverse() {
     fn make() -> Vec<Type> {
-        ["tup", "rec", "atom", "nested", "option", "map"]
+        ["tup", "rec", "atom", "nested", "option", "map", "listhead"]
             .iter()
             .flat_map(|w| {
                 ["chain", "chainfar", "r5remout", "u4holesout"]
@@ -7560,12 +7576,11 @@ fn r9_nested_queries_agree_alone_forward_and_reverse() {
     });
 }
 
-/// X43 (open, round 9): a list of the front-sweep class as the head of another list of the same
-/// atom names (`listhead:`) is refused although the list alone is decided, and `is_empty` of
-/// `listhead:chain` at 8 is true after the other wrappers were asked and false in a fresh thread.
-/// Ignored until the fix; the three tests above leave `listhead` out until then.
+/// X43 (round 9; fixed in round 10): a list of the front-sweep class as the head of another list of
+/// the same atom names (`listhead:`) was refused although the list alone is decided, and
+/// `is_empty` of `listhead:chain` at 8 was true after the other wrappers were asked and false in
+/// a fresh thread. The item is now a root (`fields`) and is swept inside the outer fallback.
 #[test]
-#[ignore]
 fn r9_x43_a_list_as_the_head_of_a_list_is_decided_as_the_list_alone() {
     big(|| {
         for case in ["chain", "chainfar", "r5remout", "u4holesout"] {
@@ -7643,5 +7658,177 @@ fn r9_decidable_shared_dag_scales_and_rejects_bounded_leaves() {
         };
         assert!(in_payload(Type::bool()).decidable());
         assert!(!in_payload(bounded()).decidable());
+    });
+}
+
+/// X44 (R9-C5, fixed in round 10): a written Boolean list type as the tail of a list
+/// (`cons(int, L - U)`) is decided as the tail alone: `fields` admits a tail whose own pair
+/// part is not a union of literal rows (`boolean_tail`). Before, `listtail:chain` at n >= 3 and
+/// `listtail:r5remout` were Refused(Fork).
+#[test]
+fn r10_a_boolean_list_tail_is_decided_as_the_tail() {
+    big(|| {
+        for n in [4, 16, 32] {
+            for case in [
+                "chain",
+                "chainfar",
+                "r5remout",
+                "u4holesout",
+                "clstaggerholesout",
+            ] {
+                Type::forget_emptiness();
+                let want = rfx_case(case, n, "_r10tail").verdict();
+                Type::forget_emptiness();
+                let t = rfx_case(&format!("listtail:{case}"), n, "_r10tail");
+                assert_eq!(t.verdict(), want, "listtail:{case} at {n}");
+                assert_eq!(
+                    t.is_empty(),
+                    want == Verdict::Empty,
+                    "listtail:{case} at {n}"
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn r10_a_boolean_list_tail_scales() {
+    big(|| {
+        for case in ["clstaggerholesout", "r5remout", "chain"] {
+            let small = rfx_case(&format!("listtail:{case}"), 32, "_r10tail_small");
+            let large = rfx_case(&format!("listtail:{case}"), 256, "_r10tail_large");
+            let want = rfx_case(case, 32, "_r10tail_want").verdict();
+            scaling::check("a Boolean list type as a list's tail", 32, |n| {
+                Type::forget_emptiness();
+                let t = if n == 32 { &small } else { &large };
+                assert_eq!(t.verdict(), want);
+            });
+        }
+    });
+}
+
+/// X45 (Codex R9-C6, round 10): a map whose required keys lie strictly within its allowed ones is
+/// built when the difference of the two key types is the empty type as written; its Empty-value
+/// twins and a map whose required keys are not all allowed stay Empty.
+#[test]
+fn r10_required_keys_within_allowed_keys_are_built() {
+    big(|| {
+        let inhabited = [
+            Type::morphism(lit(0), Type::int(), Type::int()),
+            Type::morphism(lit(1), Type::int(), Type::int()),
+            Type::morphism(&lit(0) | &lit(3), Type::int(), Type::int()),
+            Type::morphism(lit(0), Type::int(), rfx_case("r5remout", 16, "_r10map")),
+        ];
+        for t in &inhabited {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited, "{t:?}");
+            assert!(!t.is_empty(), "{t:?}");
+        }
+        let empty = [
+            Type::morphism(lit(0), Type::int(), Type::empty()),
+            Type::morphism(lit(0), Type::int(), rfx_case("chain", 16, "_r10map")),
+            Type::morphism(Type::int(), lit(0), Type::int()),
+        ];
+        for t in &empty {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Empty, "{t:?}");
+            assert!(t.is_empty(), "{t:?}");
+        }
+    });
+}
+
+/// The `Value::Big` gap (round 10): `r7congruenceout` with the first place's 7 replaced by
+/// 2^63, a literal outside the 64-bit range, so `Ints::of` reads no 64-bit set for that place.
+fn r10_big_congruence(n: usize, tag: &str) -> Type {
+    let n = n.max(4);
+    let big = Type::lit(&Value::int("9223372036854775808".parse().unwrap())).unwrap();
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for e in 1..=n {
+        let h = &Type::int() - &lit((e % 3) as i64);
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if j == 1 {
+            &lit(2) | &big
+        } else {
+            &lit(((4 - j % 3) % 3) as i64) | &lit(7)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let u = (2..=n).step_by(3).fold(Type::empty(), |u, d| &u | &ts[d]);
+    &ts[n + 1] - &(&u | &ts[3])
+}
+
+/// The `Value::Big` gap (round 10): one literal outside the 64-bit range in a head no longer
+/// sends the list to the general search; the escape decides it, at the bare case's cost.
+#[test]
+fn r10_a_wide_head_literal_is_decided_by_the_escape() {
+    big(|| {
+        let big = Value::int("9223372036854775808".parse().unwrap());
+        for n in [16, 64] {
+            let t = r10_big_congruence(n, &format!("_r10big{n}"));
+            let word = |first: Value| {
+                (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+                    let h = if j == 1 {
+                        first.clone()
+                    } else {
+                        Value::Int(((4 - j % 3) % 3) as i64)
+                    };
+                    Value::atom_with("cons", vec![h, tail])
+                })
+            };
+            assert!(t.contains(&word(Value::Int(2))));
+            assert!(
+                !t.contains(&word(big.clone())),
+                "F2 must reject the wide head"
+            );
+            Type::forget_emptiness();
+            assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited), "escape at {n}");
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        }
+        let small = r10_big_congruence(32, "_r10big_small");
+        let large = r10_big_congruence(256, "_r10big_large");
+        scaling::check("a wide head literal", 32, |n| {
+            Type::forget_emptiness();
+            let t = if n == 32 { &small } else { &large };
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        });
+    });
+}
+
+/// Codex R9's oracle test (archive/r9/R9_CODEX.diff), taken as BRIEF10 asks: a chain in an
+/// atom payload agrees with enumeration of every 0/1 list up to length 4.
+#[test]
+fn r9_atom_chain_narrowing_agrees_with_finite_oracle() {
+    big(|| {
+        let empty = Type::atom_with(
+            "r8box",
+            &Type::tuple(vec![rfx_case("chain", 3, "_r9atomoracle")]),
+        );
+        let yes = Type::atom_with(
+            "r8box",
+            &Type::tuple(vec![rfx_case("chainfar", 3, "_r9atomoracle_far")]),
+        );
+        let mut found = false;
+        for length in 0..=4 {
+            for mask in 0..1usize << length {
+                let xs: Vec<i64> = (0..length).map(|i| ((mask >> i) & 1) as i64).collect();
+                let value = Value::atom_with("r8box", vec![r6_colour_list(&xs)]);
+                assert!(!empty.contains(&value));
+                found |= yes.contains(&value);
+            }
+        }
+        assert!(found, "escaping twin is the oracle control");
+        assert_eq!(empty.verdict(), Verdict::Empty);
+        assert_eq!(yes.verdict(), Verdict::Inhabited);
+        assert!(empty.is_empty());
+        assert!(!yes.is_empty());
     });
 }

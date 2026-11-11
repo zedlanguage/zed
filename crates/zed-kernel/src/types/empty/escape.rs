@@ -90,11 +90,12 @@ use crate::value::Value;
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Ints {
     cof: bool,
-    vals: BTreeSet<i64>,
+    vals: BTreeSet<Value>,
 }
 
 impl Ints {
-    /// The integer set of `t`, if `t` holds integers and nothing else, with 64-bit values.
+    /// The integer set of `t`, if `t` holds integers and nothing else. Wide integers
+    /// (`Value::Big`) are kept as values too: the escape only compares and hashes them (round 10).
     fn of(t: &Type) -> Option<Ints> {
         let p = t.p();
         if !only_ints(&p) {
@@ -103,8 +104,8 @@ impl Ints {
         let mut vals = BTreeSet::new();
         for v in p.ints.values.iter() {
             match v {
-                Value::Int(i) => {
-                    vals.insert(*i);
+                v @ (Value::Int(_) | Value::Big(_)) => {
+                    vals.insert(v.clone());
                 }
                 _ => return None,
             }
@@ -146,13 +147,13 @@ impl Ints {
                     .vals
                     .iter()
                     .filter(|x| o.cof != o.vals.contains(x))
-                    .copied()
+                    .cloned()
                     .collect(),
             },
             (true, false) => o.meet(self),
             (true, true) => Ints {
                 cof: true,
-                vals: self.vals.union(&o.vals).copied().collect(),
+                vals: self.vals.union(&o.vals).cloned().collect(),
             },
         }
     }
@@ -166,27 +167,28 @@ impl Ints {
                     .vals
                     .iter()
                     .filter(|x| o.cof == o.vals.contains(x))
-                    .copied()
+                    .cloned()
                     .collect(),
             },
             (true, false) => Ints {
                 cof: true,
-                vals: self.vals.union(&o.vals).copied().collect(),
+                vals: self.vals.union(&o.vals).cloned().collect(),
             },
             (true, true) => Ints {
                 cof: false,
-                vals: o.vals.difference(&self.vals).copied().collect(),
+                vals: o.vals.difference(&self.vals).cloned().collect(),
             },
         }
     }
 
     /// One value of a set that is not empty: its least value, or the least natural number
     /// not excluded.
-    fn pick(&self) -> i64 {
+    fn pick(&self) -> Value {
         if !self.cof {
-            return *self.vals.iter().next().expect("not empty");
+            return self.vals.iter().next().expect("not empty").clone();
         }
         (0..)
+            .map(Value::Int)
             .find(|x| !self.vals.contains(x))
             .expect("a cofinite set has a natural number")
     }
@@ -619,8 +621,8 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                 if x.cof {
                     cofinite.insert(j % period);
                 } else {
-                    for &value in &x.vals {
-                        finite.insert((j % period, value));
+                    for value in &x.vals {
+                        finite.insert((j % period, value.clone()));
                     }
                 }
             }
@@ -669,19 +671,19 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         }
     }
     // The places by value: each finite `p_j` under each of its values, and the cofinite ones.
-    let mut fin_by_val: HashMap<i64, Vec<usize>> = HashMap::new();
+    let mut fin_by_val: HashMap<Value, Vec<usize>> = HashMap::new();
     let (mut fin_places, mut cof_places) = (Vec::new(), Vec::new());
     for (j, x) in pl.iter().enumerate().skip(2) {
         if x.cof {
             cof_places.push(j);
         } else {
             fin_places.push(j);
-            for &v in &x.vals {
-                fin_by_val.entry(v).or_default().push(j);
+            for v in &x.vals {
+                fin_by_val.entry(v.clone()).or_default().push(j);
             }
         }
     }
-    let mut vals: Vec<i64> = fin_by_val.keys().copied().collect();
+    let mut vals: Vec<Value> = fin_by_val.keys().cloned().collect();
     vals.sort_unstable();
     // Complexity tradeoff: the reads above skip a node only by the residue of the root heights
     // modulo their difference gcd, so one root in another residue (`r7congruenceout`) sets that
@@ -700,9 +702,15 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
     // value): O((rows + incidences) log n), linear storage. Sufficient, not complete: a value
     // whose live rows of its class below a node miss its places is still read place by place;
     // no bound on those reads is proved.
-    let mut excluded: BTreeSet<i64> = BTreeSet::new();
+    let mut excluded: BTreeSet<Value> = BTreeSet::new();
     for v in nodes.iter().filter(|v| v.next.is_some() && v.head.cof) {
-        excluded.extend(v.head.vals.iter().filter(|x| fin_by_val.contains_key(x)));
+        excluded.extend(
+            v.head
+                .vals
+                .iter()
+                .filter(|x| fin_by_val.contains_key(*x))
+                .cloned(),
+        );
     }
     let mut g = 0usize;
     for x in &excluded {
@@ -806,7 +814,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
             && hv
                 .vals
                 .iter()
-                .all(|&x| !finite_residue.contains(&(residue, x)))
+                .all(|x| !finite_residue.contains(&(residue, x.clone())))
         {
             continue;
         }
@@ -819,10 +827,9 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         let (a, b) = (anc.tin[v], anc.tout[v]);
         // The excluded values that may give a cell here: places in the window, and a live row of
         // their class below `v`. The others give none.
-        let kept: Vec<i64> = if hv.cof {
+        let kept: Vec<Value> = if hv.cof {
             hv.vals
                 .iter()
-                .copied()
                 .filter(|x| {
                     fin_by_val.get(x).is_some_and(|l| {
                         count(l, lo, hi) > 0
@@ -830,6 +837,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                                 .is_some_and(|(c, ka, kb)| rows.c[c].count(ka, kb) > 0)
                     })
                 })
+                .cloned()
                 .collect()
         } else {
             Vec::new()
@@ -1027,7 +1035,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         let v = deepest
             .get(&j)
             .map_or_else(|| x.pick(), |&(_, i)| atom[i].1.pick());
-        heads.push(Type::lit(&Value::Int(v))?);
+        heads.push(Type::lit(&v)?);
     }
     for (r, c) in live.into_iter().zip(&clause) {
         let a = if model[z[c[0]] / 2] { c[0] } else { c[1] };
@@ -1055,23 +1063,23 @@ fn forest(list: &[usize], atom: &[(usize, Ints)], parent: &mut [Option<usize>]) 
         parent[w[1]] = Some(w[0]);
     }
     // The first cofinite atom (in the chain) that excludes each value.
-    let mut first_out: HashMap<i64, usize> = HashMap::new();
+    let mut first_out: HashMap<Value, usize> = HashMap::new();
     for (k, &i) in cof.iter().enumerate() {
-        for &x in &atom[i].1.vals {
-            first_out.entry(x).or_insert(k);
+        for x in &atom[i].1.vals {
+            first_out.entry(x.clone()).or_insert(k);
         }
     }
-    let deepest_cof = |x: i64| -> Option<usize> {
-        let k = first_out.get(&x).copied().unwrap_or(cof.len());
+    let deepest_cof = |x: &Value| -> Option<usize> {
+        let k = first_out.get(x).copied().unwrap_or(cof.len());
         (k > 0).then(|| cof[k - 1])
     };
     let mut fin: Vec<usize> = list.iter().copied().filter(|&i| !atom[i].1.cof).collect();
     fin.sort_unstable_by_key(|&i| (std::cmp::Reverse(atom[i].1.vals.len()), i));
-    let mut owner: HashMap<i64, usize> = HashMap::new();
+    let mut owner: HashMap<Value, usize> = HashMap::new();
     for i in fin {
         let mut up: Option<Option<usize>> = None;
-        for &x in &atom[i].1.vals {
-            let o = owner.get(&x).copied().or_else(|| deepest_cof(x));
+        for x in &atom[i].1.vals {
+            let o = owner.get(x).copied().or_else(|| deepest_cof(x));
             match up {
                 None => up = Some(o),
                 Some(u) if u == o => {}
@@ -1079,8 +1087,8 @@ fn forest(list: &[usize], atom: &[(usize, Ints)], parent: &mut [Option<usize>]) 
             }
         }
         parent[i] = up.flatten();
-        for &x in &atom[i].1.vals {
-            owner.insert(x, i);
+        for x in &atom[i].1.vals {
+            owner.insert(x.clone(), i);
         }
     }
     Some(())

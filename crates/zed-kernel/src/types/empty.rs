@@ -1016,6 +1016,10 @@ struct Search {
     /// the general fallback (`in_list_fallback`), so the lists in its payload are decided as
     /// roots.
     wraps: ByType<()>,
+    /// The list types among the roots written as the item of a list of the same atom names
+    /// ([`fields`], X43): decided as roots even inside the general fallback of the list they
+    /// are items of (`in_list_fallback`), which only skips the residual tails it builds.
+    items: ByType<()>,
     /// Nesting depth inside the general tuple/parts fallback for a list type outside
     /// [`Searching::prefix_chains`]; while non-zero, internal narrowed residual tail types go
     /// straight to the general decider without re-running `prefix_chains`.
@@ -2126,13 +2130,15 @@ impl Search {
 // only (`prefix_chains`), a list type in a tuple or record field was left to the search:
 // Refused or 100-1700 times the work on the probe cases put in a field (R8, Q5); in an atom's
 // payload, `#wrap((l,))` was refused (R9, X42). Run on every list type the search meets
-// instead, the chains cost `r6twowide` and `r6threeun` 45-65% more than main. Given up: a list
-// whose items are lists of the same atom names (a list of lists) leaves its items to the search.
+// instead, the chains cost `r6twowide` and `r6threeun` 45-65% more than main. A pair's first
+// component that is a list of the same atom names (a list's item, X43) is walked and kept in
+// `items`, still once per node, so the walk stays O(nodes); its tail (component 1) is not.
 ///
 /// Also the atom types among them that are not lists (`Search::wraps`): each payload of a
 /// literal union of tuple rows with no link of a list in it.
-fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>) {
-    let (mut seen, mut out, mut wraps) = (HashSet::new(), Vec::new(), Vec::new());
+fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
+    let (mut seen, mut out, mut wraps, mut items) =
+        (HashSet::new(), Vec::new(), Vec::new(), Vec::new());
     let mut stack: Vec<Type> = roots.iter().rev().cloned().collect();
     while let Some(t) = stack.pop() {
         if !seen.insert(t.node_addr()) {
@@ -2158,15 +2164,22 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>) {
             }
             let pp = a.payload.p();
             wrap &= !pp.tuples.rest && !pp.structs;
-            for b in pp.tuples.lens.values() {
+            for (len, b) in &pp.tuples.lens {
                 let Some(rows) = b.union_rows() else {
                     wrap = false;
                     continue;
                 };
                 for row in rows {
-                    for c in row.iter() {
+                    for (i, c) in row.iter().enumerate() {
                         if c.p().atoms.names.contains_key(name) {
                             wrap = false;
+                            // A pair's first component is a list's item, never its link
+                            // (`list_step` reads the link at component 1), so an item that is
+                            // itself a list of the same names is walked as a field (X43).
+                            if *len == 2 && (i == 0 || boolean_tail(c, name)) {
+                                items.push(c.clone());
+                                stack.push(c.clone());
+                            }
                         } else {
                             stack.push(c.clone());
                         }
@@ -2186,7 +2199,28 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>) {
             stack.push(m.value.clone());
         }
     }
-    (out, wraps)
+    (out, wraps, items)
+}
+
+/// Whether `c`, the tail of a pair under the atom `name`, is a Boolean list type: its own pair
+/// part under `name` is not a union of literal rows (a difference or a meet was written in it,
+/// X44). Such a tail is walked as a root; a tail written as a union of rows (the next link of a
+/// list) is not, so the walk does not make every tail of a written list a root.
+// Complexity tradeoff: O(1) BDD reads per tail met, and a tail admitted is not walked further
+// (its own pair part has no literal rows to enter), so the walk stays O(nodes). Tradeoff: a
+// Boolean list type reached after two or more literal links (`cons(int, cons(int, L - U))`) is
+// still left to the search.
+fn boolean_tail(c: &Type, name: &str) -> bool {
+    let p = c.p();
+    let Some(a) = p.atoms.names.get(name) else {
+        return false;
+    };
+    a.payload
+        .p()
+        .tuples
+        .lens
+        .get(&2)
+        .is_some_and(|b| b.union_rows().is_none())
 }
 
 impl<'m> Searching<'m> {
@@ -2207,11 +2241,12 @@ impl<'m> Searching<'m> {
         // list to walk, and a row tested against every row would cost their square.
         let mut answers: Vec<Option<bool>> = vec![None; roots.len()];
         let mut seeded = false;
-        let (written, wraps) = fields(roots);
+        let (written, wraps, items) = fields(roots);
         {
             let mut s = self.s();
             s.roots.extend(written.into_iter().map(|r| (r, ())));
             s.wraps.extend(wraps.into_iter().map(|r| (r, ())));
+            s.items.extend(items.into_iter().map(|r| (r, ())));
         }
         for (a, root) in answers.iter_mut().zip(roots) {
             if root.p().atoms.names.is_empty() {
@@ -2358,7 +2393,7 @@ impl<'m> Searching<'m> {
                         self.s().witnessed.insert(t);
                     }
                     r.is_none()
-                } else if self.s().in_list_fallback > 0 {
+                } else if self.in_fallback(&ty) {
                     self.parts(&ty.p()).await
                 } else {
                     match self.prefix_chains(&ty).await {
@@ -3833,6 +3868,14 @@ impl<'m> Searching<'m> {
         }
     }
 
+    /// Whether `t` is met inside the general fallback of a list (`in_list_fallback`) and is not
+    /// a list written as the item of a root list (`Search::items`): then neither the front sweep
+    /// nor the prefix chains run on it.
+    fn in_fallback(&self, t: &Type) -> bool {
+        let s = self.s();
+        s.in_list_fallback > 0 && !s.items.contains_key(t)
+    }
+
     /// The front sweep's answer ([`sweep::list_sweep_checked`]) for a list type that is one of
     /// the query's own types or a type in their tuple and record fields (`Search::roots`):
     /// `Some(None)` when it is empty, `Some(Some(r))` with `r` its checked value shown. Memoized
@@ -3844,10 +3887,7 @@ impl<'m> Searching<'m> {
     // R9, X41). Tradeoff: a list type in the sweep's class met only as a type the search builds
     // is left to the search.
     fn swept(&self, t: &Type) -> Option<Option<usize>> {
-        if self.s().in_list_fallback > 0
-            || t.p().atoms.names.is_empty()
-            || !self.s().roots.contains_key(t)
-        {
+        if self.in_fallback(t) || t.p().atoms.names.is_empty() || !self.s().roots.contains_key(t) {
             return None;
         }
         let known = self.s().swept.get(t).cloned();
@@ -6304,7 +6344,7 @@ impl<'m> Searching<'m> {
         }
         // A list of a carrier cycle less prefix chains: a witness list from the sweep,
         // verified independently by `check_chain_witness` before being returned.
-        if self.s().in_list_fallback == 0
+        if !self.in_fallback(t)
             && let Some(plan) = self.prefix_chains(t).await
         {
             match plan {
@@ -6458,9 +6498,16 @@ impl<'m> Searching<'m> {
                 if keys.iter().all(known_empty) && shared_known {
                     return Some(self.s().show(Rep::Closure(m.clone())));
                 }
+                // The promised keys lie within the permitted ones when their difference, built as
+                // a type with no search, is the empty type as written (X45: `{0}` within `int`).
+                // That reads no answer still being decided and runs no user code.
+                // Complexity tradeoff: one difference of the two key types, O(their size), per
+                // row; a difference that is empty only by a search (recursive keys) is not
+                // found here, and the closure is then left to `no_keys` as before.
                 let permitted = m.guarantee == m.permission
                     || m.guarantee == Type::empty()
-                    || m.permission == Type::top();
+                    || m.permission == Type::top()
+                    || &m.guarantee - &m.permission == Type::empty();
                 if !permitted {
                     if self.no_keys(keys).await {
                         let none = match shared_none {
