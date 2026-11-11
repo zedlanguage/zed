@@ -2210,3 +2210,297 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
         assert!(chain_empty > 50 && chain_inhab > 50);
     });
 }
+
+/// R9 Q4: random chain families built to exercise the run-length tokens of the prefix-chain
+/// search (runs of equal `(stop, head)` steps, negative rows entering a run at different depths,
+/// several rows sharing a key, stops inside runs), checked against an exact decider: a
+/// breadth-first search over the product of the rows' deterministic automata (no word-length
+/// bound), through `chain_verdict` and `verdict` in both definition orders.
+#[test]
+fn r9_run_tokens_against_product_automaton() {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    struct Pred {
+        cof: bool,
+        mask: u8, // literals 0..4; symbol 4 stands for every other integer
+    }
+    impl Pred {
+        fn holds(self, sym: u8) -> bool {
+            if sym >= 4 {
+                self.cof
+            } else {
+                ((self.mask >> sym) & 1 != 0) != self.cof
+            }
+        }
+        fn ty(self) -> Type {
+            let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
+            let s = (0..4u8)
+                .filter(|&b| (self.mask >> b) & 1 != 0)
+                .fold(Type::empty(), |u, b| &u | &lit(b as i64));
+            if self.cof { &Type::int() - &s } else { s }
+        }
+    }
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    enum Tail {
+        Car,
+        End,
+        Node(usize),
+    }
+    #[derive(Clone, Debug)]
+    struct Case {
+        car: Pred,
+        nodes: Vec<(bool, Pred, Tail)>,
+        pos: Vec<(Pred, Tail)>,
+        neg: Vec<(Pred, Tail)>,
+    }
+    // State of one row after a prefix: Start (nothing read), a tail, or dead (None).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    enum St {
+        Start,
+        At(Tail),
+    }
+    fn step(c: &Case, row: (Pred, Tail), s: Option<St>, x: u8) -> Option<St> {
+        match s? {
+            St::Start => row.0.holds(x).then_some(St::At(row.1)),
+            St::At(Tail::End) => None,
+            St::At(Tail::Car) => c.car.holds(x).then_some(St::At(Tail::Car)),
+            St::At(Tail::Node(i)) => c.nodes[i].1.holds(x).then_some(St::At(c.nodes[i].2)),
+        }
+    }
+    fn accepts(c: &Case, s: Option<St>) -> bool {
+        match s {
+            Some(St::At(Tail::Car | Tail::End)) => true,
+            Some(St::At(Tail::Node(i))) => c.nodes[i].0,
+            _ => false,
+        }
+    }
+    fn exact_inhabited(c: &Case) -> bool {
+        let rows: Vec<(Pred, Tail)> = c.pos.iter().chain(&c.neg).copied().collect();
+        let np = c.pos.len();
+        let start: Vec<Option<St>> = vec![Some(St::Start); rows.len()];
+        let mut seen: HashSet<Vec<Option<St>>> = HashSet::new();
+        let mut q = VecDeque::new();
+        seen.insert(start.clone());
+        q.push_back(start);
+        while let Some(s) = q.pop_front() {
+            let nonempty = s.iter().all(|x| *x != Some(St::Start));
+            if nonempty
+                && s[..np].iter().all(|&x| accepts(c, x))
+                && !s[np..].iter().any(|&x| accepts(c, x))
+            {
+                return true;
+            }
+            for x in 0..5u8 {
+                let t: Vec<Option<St>> = rows
+                    .iter()
+                    .zip(&s)
+                    .map(|(&r, &st)| step(c, r, st, x))
+                    .collect();
+                if t[..np].iter().all(|x| x.is_some()) && seen.insert(t.clone()) {
+                    q.push_back(t);
+                }
+            }
+        }
+        false
+    }
+    fn build(c: &Case, tag: &str, rev: bool) -> Type {
+        let nn = c.nodes.len();
+        let total = 1 + nn + c.pos.len() + c.neg.len();
+        let mi = |i: usize| if rev { total - 1 - i } else { i };
+        let tail = |t: Tail| match t {
+            Tail::Car => Expr::Ref(mi(0), vec![]),
+            Tail::End => Expr::Type(Type::atom("nil")),
+            Tail::Node(i) => Expr::Ref(mi(1 + i), vec![]),
+        };
+        let alts = |mut v: Vec<Expr>| {
+            if rev {
+                v.reverse();
+            }
+            Expr::Union(v)
+        };
+        let mut defs = vec![Def {
+            name: format!("L{tag}"),
+            params: vec![],
+            body: alts(vec![
+                Expr::Type(Type::atom("nil")),
+                Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(c.car.ty()), Expr::Ref(mi(0), vec![])],
+                ),
+            ]),
+        }];
+        for (i, &(stop, h, nx)) in c.nodes.iter().enumerate() {
+            let st = Expr::Atom("cons".into(), vec![Expr::Type(h.ty()), tail(nx)]);
+            defs.push(Def {
+                name: format!("V{i}{tag}"),
+                params: vec![],
+                body: if stop {
+                    alts(vec![Expr::Type(Type::atom("nil")), st])
+                } else {
+                    st
+                },
+            });
+        }
+        for (i, &(h, nx)) in c.pos.iter().chain(&c.neg).enumerate() {
+            defs.push(Def {
+                name: format!("R{i}{tag}"),
+                params: vec![],
+                body: Expr::Atom("cons".into(), vec![Expr::Type(h.ty()), tail(nx)]),
+            });
+        }
+        if rev {
+            defs.reverse();
+        }
+        let ts = Group::new(defs).unwrap().instance(vec![]);
+        let mut pi: Vec<usize> = (0..c.pos.len()).map(|i| mi(1 + nn + i)).collect();
+        let mut ni: Vec<usize> = (0..c.neg.len())
+            .map(|i| mi(1 + nn + c.pos.len() + i))
+            .collect();
+        if rev {
+            pi.reverse();
+            ni.reverse();
+        }
+        let p = pi[1..].iter().fold(ts[pi[0]].clone(), |a, &i| &a & &ts[i]);
+        let n = ni.iter().fold(Type::empty(), |a, &i| &a | &ts[i]);
+        &p - &n
+    }
+
+    let tally = big(|| {
+        let mut rng = Rng::new(0x9a11_70c3_2026);
+        let hole = |rng: &mut Rng| Pred {
+            cof: true,
+            mask: 1u8 << rng.below(4),
+        };
+        let pred = |rng: &mut Rng| match rng.below(6) {
+            0 | 1 => Pred { cof: true, mask: 0 },
+            2 | 3 => Pred {
+                cof: true,
+                mask: 1u8 << rng.below(4),
+            },
+            4 => Pred {
+                cof: true,
+                mask: (1u8 << rng.below(4)) | (1u8 << rng.below(4)),
+            },
+            _ => Pred {
+                cof: false,
+                mask: 1 + rng.below(15) as u8,
+            },
+        };
+        let (mut decided, mut empty, mut inhab, mut exact_empty) = (0usize, 0usize, 0usize, 0usize);
+        for id in 0..600 {
+            let car = if rng.below(3) == 0 {
+                hole(&mut rng)
+            } else {
+                Pred { cof: true, mask: 0 }
+            };
+            let mut nodes: Vec<(bool, Pred, Tail)> = Vec::new();
+            // Chains made of runs: a run is r equal `(stop, head)` steps.
+            let mut chains: Vec<Vec<usize>> = Vec::new();
+            for _ in 0..1 + rng.below(3) {
+                let mut cur = if rng.below(5) == 0 {
+                    Tail::End
+                } else {
+                    Tail::Car
+                };
+                let mut ids = Vec::new();
+                for _ in 0..1 + rng.below(3) {
+                    let h = pred(&mut rng);
+                    let stop = rng.below(5) == 0;
+                    for _ in 0..1 + rng.below(4) {
+                        nodes.push((stop, h, cur));
+                        cur = Tail::Node(nodes.len() - 1);
+                        ids.push(nodes.len() - 1);
+                    }
+                }
+                chains.push(ids);
+            }
+            let any_node = |rng: &mut Rng, chains: &Vec<Vec<usize>>| {
+                let ch = &chains[rng.below(chains.len())];
+                Tail::Node(ch[rng.below(ch.len())])
+            };
+            let mut pos = Vec::new();
+            let mut neg = Vec::new();
+            pos.push((
+                pred(&mut rng),
+                if rng.below(2) == 0 {
+                    Tail::Car
+                } else {
+                    any_node(&mut rng, &chains)
+                },
+            ));
+            if rng.below(2) == 0 {
+                pos.push((pred(&mut rng), any_node(&mut rng, &chains)));
+            }
+            // Negative rows entering the chains at different depths, often with a head equal
+            // to the head of the node they enter (so their tokens share that run's key).
+            for _ in 0..1 + rng.below(5) {
+                let t = any_node(&mut rng, &chains);
+                let h = match (rng.below(3), t) {
+                    (0, Tail::Node(i)) => nodes[i].1,
+                    _ => pred(&mut rng),
+                };
+                neg.push((h, t));
+            }
+            if rng.below(3) == 0 {
+                neg.push((pred(&mut rng), Tail::Car));
+            }
+            let case = Case {
+                car,
+                nodes,
+                pos,
+                neg,
+            };
+            let ex = exact_inhabited(&case);
+            exact_empty += usize::from(!ex);
+            let a = build(&case, &format!("_r9rt_{id}f"), false);
+            let b = build(&case, &format!("_r9rt_{id}r"), true);
+            Type::forget_emptiness();
+            let ca = a.chain_verdict();
+            Type::forget_emptiness();
+            let cb = b.chain_verdict();
+            assert_eq!(
+                ca, cb,
+                "case {id}: chain_verdict order mismatch on {case:?}"
+            );
+            match ca {
+                Some(Verdict::Empty) => {
+                    assert!(
+                        !ex,
+                        "case {id}: chain_verdict Empty, exact Inhabited on {case:?}"
+                    );
+                    decided += 1;
+                    empty += 1;
+                }
+                Some(Verdict::Inhabited) => {
+                    assert!(
+                        ex,
+                        "case {id}: chain_verdict Inhabited, exact Empty on {case:?}"
+                    );
+                    decided += 1;
+                    inhab += 1;
+                }
+                _ => {}
+            }
+            for t in [&a, &b] {
+                Type::forget_emptiness();
+                match t.verdict() {
+                    Verdict::Empty => {
+                        assert!(!ex, "case {id}: verdict Empty, exact Inhabited on {case:?}")
+                    }
+                    Verdict::Inhabited => {
+                        assert!(ex, "case {id}: verdict Inhabited, exact Empty on {case:?}")
+                    }
+                    Verdict::Refused(_) => {}
+                }
+            }
+        }
+        (decided, empty, inhab, exact_empty)
+    });
+    eprintln!(
+        "R9 run tokens: 600 cases, exact empty={}, chain decided={} (empty={}, inhab={})",
+        tally.3, tally.0, tally.1, tally.2
+    );
+    assert!(
+        tally.1 > 50,
+        "too few Empty cases decided by the chain search: {tally:?}"
+    );
+}

@@ -1797,6 +1797,21 @@ fn list_sweep(t: &Type) -> Option<Verdict> {
     Some(verdict)
 }
 
+/// [`list_sweep`] with its value: `Some(None)` when `t` is empty, `Some(Some(v))` when `t` holds
+/// `v`, checked against `t` by a fresh reader, and `None` outside the sweep's class or when the
+/// sweep refuses (the search then decides `t`).
+pub(super) fn list_sweep_checked(t: &Type) -> Option<Option<Value>> {
+    let mut actual = None;
+    match list_sweep_value(t, &mut actual)? {
+        Verdict::Empty => Some(None),
+        Verdict::Inhabited => {
+            let v = actual?;
+            check_actual(t, &v).then_some(Some(v))
+        }
+        Verdict::Refused(_) => None,
+    }
+}
+
 fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
     // A type with no payload name, as a set of failure atoms, has no clause: it is left before
     // `shape` reads its names, which costs O(names log names) for every type asked.

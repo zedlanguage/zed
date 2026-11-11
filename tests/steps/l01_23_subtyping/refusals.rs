@@ -1214,7 +1214,7 @@ fn rfx_probe() {
                 "rfx {which} n {n} {:?} units {} bytes {}",
                 v, w.units, w.bytes
             );
-            if which == "r6parity" || (which.starts_with("r7") || which.starts_with("r8")) {
+            if which == "r6parity" || ["r7", "r8", "r9"].iter().any(|p| which.starts_with(p)) {
                 eprintln!("escape cells {which} n {n} {:?}", t.escape_cell_counts());
                 Type::forget_emptiness();
             }
@@ -1287,6 +1287,20 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
     }
     if let Some(c) = which.strip_prefix("rec:") {
         return Type::exact(lit(0), rfx_case(c, n, tag));
+    }
+    // In a tagged atom's payload (X42), an option, a list of lists, a map from every integer.
+    if let Some(c) = which.strip_prefix("atom:") {
+        return Type::atom_with("wrap", &Type::tuple(vec![rfx_case(c, n, tag)]));
+    }
+    if let Some(c) = which.strip_prefix("opt:") {
+        let some = Type::atom_with("some", &Type::tuple(vec![rfx_case(c, n, tag)]));
+        return &Type::atom("none") | &some;
+    }
+    if let Some(c) = which.strip_prefix("lol:") {
+        return list_named(rfx_case(c, n, tag), &format!("{tag}_lol"));
+    }
+    if let Some(c) = which.strip_prefix("map:") {
+        return Type::exact(Type::int(), rfx_case(c, n, tag));
     }
     let l = list_named(Type::int(), tag);
     let (int, one, b, yes) = (
@@ -1449,6 +1463,19 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
         "r8residuesout" => r8_residues(n, true, tag),
         "r8stagein" => r8_stage_boundary(n, false, tag),
         "r8stageout" => r8_stage_boundary(n, true, tag),
+        "r9bmm" => {
+            let m = (n.isqrt()).max(2);
+            let (a, b) = r9_matrices(m, 4, 9);
+            r9_bmm(&a, &b, tag)
+        }
+        "r9bmmlate" => {
+            let (a, b) = r9_late_matrices(n.isqrt().max(4));
+            r9_bmm(&a, &b, tag)
+        }
+        "r9bmmone" => {
+            let (a, b) = r9_one_matrices(n.isqrt().max(4));
+            r9_bmm(&a, &b, tag)
+        }
         "r6repeat3" => r5_sat_type(3, &vec![vec![(1, true), (2, true), (3, true)]; n], tag),
         "r6distinct2" => r6_distinct_atoms(n, false, tag),
         "r6distinct3" => r6_distinct_atoms(n, true, tag),
@@ -6102,7 +6129,8 @@ fn r8_deep_type_cached_before_queue_initialization_drops_on_small_stack() {
 }
 
 /// Preserve cb709f13 answers when list queries are nested in products and atom payloads.
-/// The baseline already refuses the empty chain inside an atom payload; record that too.
+/// The baseline refused the empty chain inside an atom payload, which this test recorded; since
+/// R9 (X42) the payload gets the list's verdict there too.
 #[test]
 fn r8_roots_only_preserves_nested_list_answers() {
     big(|| {
@@ -6125,12 +6153,7 @@ fn r8_roots_only_preserves_nested_list_answers() {
                 let av = atom.verdict();
                 eprintln!("r8nested {name} {n} direct {direct:?} tuple {tv:?} atom {av:?}");
                 assert_eq!(tv, direct, "tuple {name} {n}");
-                let before = if name == "chain" {
-                    Verdict::Refused(Refusal::Fork)
-                } else {
-                    direct
-                };
-                assert_eq!(av, before, "payload {name} {n}: cb709f13 preservation");
+                assert_eq!(av, direct, "payload {name} {n}: the list's verdict");
             }
         }
     });
@@ -6300,6 +6323,89 @@ fn r8_a_list_in_a_field_is_decided_as_the_list_alone() {
                     f.units,
                     b.units
                 );
+            }
+        }
+    });
+}
+
+/// A list of the front sweep's class in a tuple or record field gets the verdict of the list
+/// alone at near the list's work (R9, X41). The front sweep ran on the query type alone, so the
+/// search built the field's value itself: `rec:clstaggerholesout` cost 547 times the list alone
+/// at 256, `tup:u4cofrontshared` 360 times, `tup:boundaryinside` 129 times. Sizes n and 8n, so a
+/// cost that grows faster in a field than alone fails at the larger one.
+#[test]
+fn r9_a_front_sweep_list_in_a_field_is_decided_as_the_list_alone() {
+    big(|| {
+        for n in [16, 128] {
+            let tag = format!("_r9field{n}");
+            for case in [
+                "clstaggerholesout",
+                "u4holesout",
+                "u4cofrontshared",
+                "boundaryinside",
+                "clcofrontsame",
+            ] {
+                for wrap in ["tup:", "rec:"] {
+                    Type::forget_emptiness();
+                    let bare = rfx_case(case, n, &tag);
+                    let mut v = None;
+                    let b = scaling::Meter::new().work(|| v = Some(bare.verdict()));
+                    Type::forget_emptiness();
+                    let t = rfx_case(&format!("{wrap}{case}"), n, &tag);
+                    let mut w = None;
+                    let f = scaling::Meter::new().work(|| w = Some(t.verdict()));
+                    assert_eq!(
+                        w, v,
+                        "{wrap}{case} at {n}: the field's verdict is the list's"
+                    );
+                    assert!(
+                        f.units <= 2 * b.units,
+                        "{wrap}{case} at {n}: {} units in a field, {} alone",
+                        f.units,
+                        b.units
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// A list in a tagged atom's payload, `#wrap((l,))`, alone or in a tuple or record field, gets
+/// the verdict of the list alone at near the list's work (R9, X42). The atom was taken for a
+/// list outside the prefix chains, so the list in its payload was left to the general search:
+/// `#wrap((l,))` with `l` of `r5remout` at 32 was Refused(Fork) at 34 times the list's work.
+#[test]
+fn r9_a_list_in_an_atom_payload_is_decided_as_the_list_alone() {
+    big(|| {
+        for n in [16, 128] {
+            let tag = format!("_r9atom{n}");
+            for case in [
+                "r5remout",
+                "chain",
+                "r6twoun",
+                "clstagger",
+                "clstaggerholesout",
+            ] {
+                for wrap in ["atom:", "tup:atom:", "rec:atom:", "atom:tup:"] {
+                    Type::forget_emptiness();
+                    let bare = rfx_case(case, n, &tag);
+                    let mut v = None;
+                    let b = scaling::Meter::new().work(|| v = Some(bare.verdict()));
+                    Type::forget_emptiness();
+                    let t = rfx_case(&format!("{wrap}{case}"), n, &tag);
+                    let mut w = None;
+                    let f = scaling::Meter::new().work(|| w = Some(t.verdict()));
+                    assert_eq!(
+                        w, v,
+                        "{wrap}{case} at {n}: the payload's verdict is the list's"
+                    );
+                    assert!(
+                        f.units <= 2 * b.units,
+                        "{wrap}{case} at {n}: {} units in a payload, {} alone",
+                        f.units,
+                        b.units
+                    );
+                }
             }
         }
     });
@@ -6827,5 +6933,214 @@ fn r8_light_edges_and_wide_rows_agree_with_the_witness() {
         });
         assert!(t_inhab_wide.contains(&w_bad_for_el));
         assert!(!t_empty_light.contains(&w_bad_for_el));
+    });
+}
+
+/// R9 X38: the shift encoding of Boolean matrix multiplication as an escape. For `m × m`
+/// Boolean matrices `a` and `b`, the positive list (as long as the tallest row, so every row
+/// holds its length) has one place per entry of `a` (place
+/// `2 + i·m + q` holds `{100 + q, 7}` when `a[i][q]`, else `{7}`), the text nodes `F_e` exclude
+/// `100 + q` at `e = E_k − q` when `b[q][k]` (`E_k = k(m + 1) + m`), and the refused row of the
+/// pair `(i, k)` is `F_d` with `d = E_k + 1 + i·m`. Place `2 + i'·m + q'` of that row meets
+/// `F_e` with `e = E_k − q' + (i − i')·m`, which excludes `100 + q'` only when it is
+/// `E_{k'} − q'` with `b[q'][k']`, that is `(k − k')(m + 1) = (i' − i)·m`, so `k = k'` and
+/// `i = i'` (`|k − k'| < m`). So the row of `(i, k)` has an atom exactly at the places
+/// `2 + i·m + q` with `a[i][q] ∧ b[q][k]`, never a kill (7 is never excluded), and all atoms
+/// at a place are the one value `100 + q`: the type is inhabited exactly when every entry of
+/// the Boolean product `ab` is 1. Input size about `4m²`; reading each row's first cell is
+/// computing `ab`.
+fn r9_bmm(a: &[Vec<bool>], b: &[Vec<bool>], tag: &str) -> Type {
+    let m = a.len();
+    let ek = |k: usize| k * (m + 1) + m;
+    let dmax = ek(m - 1) + 1 + (m - 1) * m;
+    let mut excl = vec![None; dmax + 1];
+    for k in 0..m {
+        for q in 0..m {
+            if b[q][k] {
+                excl[ek(k) - q] = Some(100 + q as i64);
+            }
+        }
+    }
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for (e, x) in excl.iter().enumerate().skip(1) {
+        let h = match x {
+            Some(c) => &Type::int() - &lit(*c),
+            None => Type::int(),
+        };
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    // The positive list is as long as the tallest row (a row `F_d` holds lengths `d` and up),
+    // with `{7}` past the entries of `a`.
+    let l0 = dmax;
+    let mut p = nil();
+    for j in (1..=l0).rev() {
+        let h = if (2..2 + m * m).contains(&j) && a[(j - 2) / m][(j - 2) % m] {
+            &lit(100 + ((j - 2) % m) as i64) | &lit(7)
+        } else {
+            lit(7)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let mut u = Type::empty();
+    for i in 0..m {
+        for k in 0..m {
+            u = &u | &ts[ek(k) + 1 + i * m];
+        }
+    }
+    &ts[dmax + 1] - &u
+}
+
+/// A splitmix64 step, for the deterministic random matrices of the R9 tests and probe.
+fn r9_mix(s: &mut u64) -> u64 {
+    *s = s.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *s;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// Two random `m × m` Boolean matrices with entries 1 at rate `num / 8`.
+fn r9_matrices(m: usize, num: u64, seed: u64) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
+    let mut s = seed;
+    let mut g = || {
+        (0..m)
+            .map(|_| (0..m).map(|_| r9_mix(&mut s) % 8 < num).collect())
+            .collect::<Vec<Vec<bool>>>()
+    };
+    let a = g();
+    let b = g();
+    (a, b)
+}
+
+/// The sparse adversary of `r9_bmm`: side `m = s²` (s = isqrt of the requested side), index `q = (x, y)
+/// = x·s + y`, `a[i][(x, y)] = [x = i mod s]` and `b[(x, y)][k] = [y = f(x, k)]` with `f` pseudo-random.
+/// Every entry of the product is 1 through exactly one `q` among the `s` places `a[i]` holds, so
+/// the type is inhabited and a method that reads row `(i, k)` place by place reads about `s / 2`
+/// empty cells per row: about `m^2.5 / 2` in all, `I^1.25` in the input size `I ≈ 4m²`.
+fn r9_one_matrices(side: usize) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
+    let s = side.isqrt();
+    let m = s * s;
+    let mut seed = 0x51ce_u64;
+    let f: Vec<Vec<usize>> = (0..s)
+        .map(|_| {
+            (0..m)
+                .map(|_| (r9_mix(&mut seed) % s as u64) as usize)
+                .collect()
+        })
+        .collect();
+    let a = (0..m)
+        .map(|i| (0..m).map(|q| q / s == i % s).collect())
+        .collect();
+    let b = (0..m)
+        .map(|q| (0..m).map(|k| q % s == f[q / s][k]).collect())
+        .collect();
+    (a, b)
+}
+
+/// An adversary of the committed cell finder for `r9_bmm`: `b` all ones, `a` all ones except row 0, which
+/// holds only `q = m − 1`. Rows `(i ≥ 1, k)` reach three cells at the first three values of `q` and
+/// retire, but row `(0, k)` keeps the class of column `k` live until its last value, so each of the
+/// other `m − 4` values of column `k` still lists about `m` places (or reads the live rows): about
+/// `m³` reads, `I^1.5` in the input size `I ≈ 4m²`. The product is all ones (inhabited).
+fn r9_late_matrices(m: usize) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
+    let a = (0..m)
+        .map(|i| (0..m).map(|q| i > 0 || q == m - 1).collect())
+        .collect();
+    (a, vec![vec![true; m]; m])
+}
+
+fn r9_product_all_ones(a: &[Vec<bool>], b: &[Vec<bool>]) -> bool {
+    let m = a.len();
+    (0..m).all(|i| (0..m).all(|k| (0..m).any(|q| a[i][q] && b[q][k])))
+}
+
+/// R9 X38: the shift encoding decides exactly as the Boolean product says, on random matrices
+/// of side 2 to 5 at three densities (both verdicts occur), with the closed-form witness
+/// checked by `contains` when inhabited. Negative control: the same matrices with the whole
+/// row 0 of `a` cleared make the row of `(0, k)` atom-free, so the answer must be `Empty`.
+#[test]
+fn r9_bmm_encoding_decides_as_the_boolean_product() {
+    big(|| {
+        let mut seen = (0, 0);
+        for m in 2usize..=5 {
+            for num in [3u64, 4, 6] {
+                for seed in 0..6u64 {
+                    let (a, mut b) = r9_matrices(m, num, seed * 31 + m as u64);
+                    if seed == 0 {
+                        // One planted all-ones product per size: column 0 of `a` and row 0 of
+                        // `b` all 1.
+                        b[0] = vec![true; m];
+                    }
+                    let mut a = a;
+                    if seed == 0 {
+                        for row in a.iter_mut() {
+                            row[0] = true;
+                        }
+                    }
+                    let tag = format!("_r9bmm_{m}_{num}_{seed}");
+                    Type::forget_emptiness();
+                    let t = r9_bmm(&a, &b, &tag);
+                    let want = if r9_product_all_ones(&a, &b) {
+                        seen.0 += 1;
+                        Verdict::Inhabited
+                    } else {
+                        seen.1 += 1;
+                        Verdict::Empty
+                    };
+                    assert_eq!(t.verdict(), want, "r9bmm m {m} num {num} seed {seed}");
+                    if want == Verdict::Inhabited {
+                        let l0 = (m - 1) * (m + 1) + m + 1 + (m - 1) * m;
+                        let w = (1..=l0).rev().fold(Value::atom("nil"), |tail, j| {
+                            let v = if (2..2 + m * m).contains(&j) && a[(j - 2) / m][(j - 2) % m] {
+                                100 + ((j - 2) % m) as i64
+                            } else {
+                                7
+                            };
+                            Value::atom_with("cons", vec![Value::Int(v), tail])
+                        });
+                        assert!(t.contains(&w), "r9bmm witness m {m} num {num} seed {seed}");
+                        let mut a0 = a.clone();
+                        a0[0] = vec![false; m];
+                        Type::forget_emptiness();
+                        let t0 = r9_bmm(&a0, &b, &format!("{tag}_z"));
+                        assert_eq!(t0.verdict(), Verdict::Empty, "r9bmm control m {m}");
+                    }
+                }
+            }
+        }
+        assert!(seen.0 >= 4 && seen.1 >= 4, "both verdicts occur: {seen:?}");
+    });
+}
+
+/// R9 X38: the sparse adversary has an all-ones product with one witness per entry, and the
+/// shift encoding decides it `Inhabited`. Negative control: clearing column 0 of `b` empties
+/// the row of `(i, 0)`, so the answer must be `Empty`.
+#[test]
+fn r9_sparse_bmm_adversary_has_one_atom_per_row() {
+    big(|| {
+        for side in [4usize, 9, 16] {
+            let (a, mut b) = r9_one_matrices(side);
+            let m = a.len();
+            for (i, ai) in a.iter().enumerate() {
+                for k in 0..m {
+                    let hits = ai.iter().zip(&b).filter(|&(&x, bq)| x && bq[k]).count();
+                    assert_eq!(hits, 1, "one witness for ({i}, {k}) at side {m}");
+                }
+            }
+            Type::forget_emptiness();
+            let t = r9_bmm(&a, &b, &format!("_r9one_{m}"));
+            assert_eq!(t.verdict(), Verdict::Inhabited, "r9bmmone side {m}");
+            for row in b.iter_mut() {
+                row[0] = false;
+            }
+            Type::forget_emptiness();
+            let t0 = r9_bmm(&a, &b, &format!("_r9one_{m}_z"));
+            assert_eq!(t0.verdict(), Verdict::Empty, "r9bmmone control side {m}");
+        }
     });
 }

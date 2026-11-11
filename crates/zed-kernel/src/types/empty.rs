@@ -632,6 +632,8 @@ impl Type {
             refuse_forks: true,
             ..Search::default()
         };
+        // The front sweep left `self` to the search above.
+        s.swept.insert(self.clone(), None);
         let b = s.solve(self);
         let decided = s.refused.is_none();
         if decided && b {
@@ -987,9 +989,16 @@ struct Search {
     cycles: ByType<Option<Cycle>>,
     /// What is known of each list type met, by the sweep over prefix chains.
     chains: ByType<Option<ChainPlan>>,
+    /// What is known of each root list type by the front sweep ([`Searching::swept`]): its
+    /// verdict, with the checked value when it is inhabited; `None` outside the sweep's class.
+    swept: ByType<Option<Option<Value>>>,
     /// The types the query asks about ([`Searching::solve`], [`Type::chain_verdict`]): the only
     /// ones [`Searching::prefix_chains`] decides.
     roots: ByType<()>,
+    /// The atom types among the roots that are not lists ([`fields`]): one is never a list in
+    /// the general fallback (`in_list_fallback`), so the lists in its payload are decided as
+    /// roots.
+    wraps: ByType<()>,
     /// Nesting depth inside the general tuple/parts fallback for a list type outside
     /// [`Searching::prefix_chains`]; while non-zero, internal narrowed residual tail types go
     /// straight to the general decider without re-running `prefix_chains`.
@@ -2086,19 +2095,25 @@ impl Search {
     }
 }
 
-/// `roots`, and the types written in them outside a list: the components of their tuple rows
-/// and the values of their morphisms, where the part is a union of literals, and the same of
-/// those types in turn. The search asks each of these of the root's tuple or record part as it
-/// is written (`Searching::parts`), so a list type in a root's field gets the prefix chains and
-/// the escape solve as a root does.
+/// `roots`, and the types written in them outside a list: the components of their tuple rows,
+/// the values of their morphisms, where the part is a union of literals, and the components of
+/// their atoms' payloads but a list's own tail, and the same of those types in turn. The search
+/// asks each of these of the root's tuple, record or atom part as it is written
+/// (`Searching::parts`), so a list type in a root's field gets the prefix chains, the escape
+/// solve and the front sweep as a root does.
 // Complexity tradeoff: a walk of the roots' nodes with each node read once (`seen`), not
-// entering an atom's payload or a recursive node, so O(the nodes written above the roots'
-// lists). Why: with the chains on the query's own types only (`prefix_chains`), a list type in
-// a tuple or record field was left to the search: Refused or 100-1700 times the work on the
-// probe cases put in a field (R8, Q5). Run on every list type the search meets instead, the
-// chains cost `r6twowide` and `r6threeun` 45-65% more than main.
-fn fields(roots: &[Type]) -> Vec<Type> {
-    let (mut seen, mut out) = (HashSet::new(), Vec::new());
+// entering a recursive node or a payload component with an atom of the payload's own name, so
+// O(the nodes written above the roots' lists). Why: with the chains on the query's own types
+// only (`prefix_chains`), a list type in a tuple or record field was left to the search:
+// Refused or 100-1700 times the work on the probe cases put in a field (R8, Q5); in an atom's
+// payload, `#wrap((l,))` was refused (R9, X42). Run on every list type the search meets
+// instead, the chains cost `r6twowide` and `r6threeun` 45-65% more than main. Given up: a list
+// whose items are lists of the same atom names (a list of lists) leaves its items to the search.
+///
+/// Also the atom types among them that are not lists (`Search::wraps`): each payload of a
+/// literal union of tuple rows with no link of a list in it.
+fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>) {
+    let (mut seen, mut out, mut wraps) = (HashSet::new(), Vec::new(), Vec::new());
     let mut stack: Vec<Type> = roots.iter().rev().cloned().collect();
     while let Some(t) = stack.pop() {
         if !seen.insert(t.node_addr()) {
@@ -2108,6 +2123,41 @@ fn fields(roots: &[Type]) -> Vec<Type> {
         let Node::Parts(p, _) = &*t.0 else {
             continue;
         };
+        // An atom's payload components, but not one with an atom of the same name: that is a
+        // link of a list through the atom (a cons cell's tail), whose walk would make every tail
+        // of the list a root.
+        // Only the names whose payload lists something (`Atoms::payloads`): reading every name
+        // here cost O(names) per type, n^2 on a chain of n failure atoms (l01_27_absences), and
+        // a name whose payload lists nothing adds no component and leaves `wrap` as it is.
+        let mut wrap = !p.atoms.names.is_empty();
+        for name in &p.atoms.payloads {
+            let Some(a) = p.atoms.names.get(name) else {
+                continue;
+            };
+            if a.bare {
+                continue;
+            }
+            let pp = a.payload.p();
+            wrap &= !pp.tuples.rest && !pp.structs;
+            for b in pp.tuples.lens.values() {
+                let Some(rows) = b.union_rows() else {
+                    wrap = false;
+                    continue;
+                };
+                for row in rows {
+                    for c in row.iter() {
+                        if c.p().atoms.names.contains_key(name) {
+                            wrap = false;
+                        } else {
+                            stack.push(c.clone());
+                        }
+                    }
+                }
+            }
+        }
+        if wrap {
+            wraps.push(t.clone());
+        }
         for b in p.tuples.lens.values() {
             for row in b.union_rows().unwrap_or_default() {
                 stack.extend(row.iter().cloned());
@@ -2117,7 +2167,7 @@ fn fields(roots: &[Type]) -> Vec<Type> {
             stack.push(m.value.clone());
         }
     }
-    out
+    (out, wraps)
 }
 
 impl<'m> Searching<'m> {
@@ -2138,9 +2188,12 @@ impl<'m> Searching<'m> {
         // list to walk, and a row tested against every row would cost their square.
         let mut answers: Vec<Option<bool>> = vec![None; roots.len()];
         let mut seeded = false;
-        self.s()
-            .roots
-            .extend(fields(roots).into_iter().map(|r| (r, ())));
+        let (written, wraps) = fields(roots);
+        {
+            let mut s = self.s();
+            s.roots.extend(written.into_iter().map(|r| (r, ())));
+            s.wraps.extend(wraps.into_iter().map(|r| (r, ())));
+        }
         for (a, root) in answers.iter_mut().zip(roots) {
             if root.p().atoms.names.is_empty() {
                 continue;
@@ -2281,7 +2334,12 @@ impl<'m> Searching<'m> {
                 false
             }
             None => {
-                if self.s().in_list_fallback > 0 {
+                if let Some(r) = self.swept(&ty) {
+                    if r.is_some() {
+                        self.s().witnessed.insert(t);
+                    }
+                    r.is_none()
+                } else if self.s().in_list_fallback > 0 {
                     self.parts(&ty.p()).await
                 } else {
                     match self.prefix_chains(&ty).await {
@@ -2292,7 +2350,8 @@ impl<'m> Searching<'m> {
                                 false
                             } else {
                                 self.s().chains.insert(ty.clone(), None);
-                                let is_atom_list = !ty.p().atoms.names.is_empty();
+                                let is_atom_list = !ty.p().atoms.names.is_empty()
+                                    && !self.s().wraps.contains_key(&ty);
                                 if is_atom_list {
                                     self.s().in_list_fallback += 1;
                                 }
@@ -2304,7 +2363,8 @@ impl<'m> Searching<'m> {
                             }
                         }
                         None => {
-                            let is_atom_list = !ty.p().atoms.names.is_empty();
+                            let is_atom_list =
+                                !ty.p().atoms.names.is_empty() && !self.s().wraps.contains_key(&ty);
                             if is_atom_list {
                                 self.s().in_list_fallback += 1;
                             }
@@ -3752,6 +3812,45 @@ impl<'m> Searching<'m> {
                 self.chain_rep(t, plan).await.map(|_| Verdict::Inhabited)
             }
         }
+    }
+
+    /// The front sweep's answer ([`sweep::list_sweep_checked`]) for a list type that is one of
+    /// the query's own types or a type in their tuple and record fields (`Search::roots`):
+    /// `Some(None)` when it is empty, `Some(Some(r))` with `r` its checked value shown. Memoized
+    /// per type in `Search::swept`.
+    // Complexity tradeoff: the front sweep runs on the roots only, as the prefix chains do
+    // (`prefix_chains`), and once per type. Why: `verdict_alone` ran it on the query type
+    // alone, so a list in a tuple or record field was left to the general search, which built
+    // its value at up to 553 times the work of the list alone (`rec:clstaggerholesout` at 256,
+    // R9, X41). Tradeoff: a list type in the sweep's class met only as a type the search builds
+    // is left to the search.
+    fn swept(&self, t: &Type) -> Option<Option<usize>> {
+        if self.s().in_list_fallback > 0
+            || t.p().atoms.names.is_empty()
+            || !self.s().roots.contains_key(t)
+        {
+            return None;
+        }
+        let known = self.s().swept.get(t).cloned();
+        let v = match known {
+            Some(v) => v,
+            None => {
+                let v = sweep::list_sweep_checked(t);
+                self.s().swept.insert(t.clone(), v.clone());
+                v
+            }
+        }?;
+        let Some(v) = v else {
+            return Some(None);
+        };
+        let mut s = self.s();
+        if let Some(Some(r)) = s.reps.get(t).copied() {
+            return Some(Some(r));
+        }
+        let r = s.show(Rep::Value(v));
+        s.members.insert((r, t.clone()), Some(true));
+        s.reps.insert(t.clone(), Some(r));
+        Some(Some(r))
     }
 
     /// Decides `t`, or builds a witness plan for it, when `t` is a list type made of a period-1
@@ -6152,6 +6251,10 @@ impl<'m> Searching<'m> {
         if let Some(m) = self.cycle_meet(t).await {
             return self.cycle_rep(&m).await;
         }
+        // A root list in the front sweep's class: its checked value, or none when it is empty.
+        if let Some(r) = self.swept(t) {
+            return r;
+        }
         // A list of a carrier cycle less prefix chains: a witness list from the sweep,
         // verified independently by `check_chain_witness` before being returned.
         if self.s().in_list_fallback == 0
@@ -6196,7 +6299,8 @@ impl<'m> Searching<'m> {
             let name = name.expect("a name is free");
             return Some(self.s().show(Rep::Value(Value::atom(&name))));
         }
-        let list_fallback = matches!(self.s().chains.get(t), Some(None));
+        let list_fallback =
+            matches!(self.s().chains.get(t), Some(None)) && !self.s().wraps.contains_key(t);
         for (name, a) in &p.atoms.names {
             if a.bare {
                 return Some(self.s().show(Rep::Value(Value::atom(name))));
