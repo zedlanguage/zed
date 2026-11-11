@@ -125,10 +125,12 @@ three ways, all confirmed:
   are deliberately different keys.
   T11-preimage removed this from `preimage.rs`: its memos are keyed by numbers a transfer gives
   its terms and scopes (see the T11-preimage entries below).
-  SUB-corpus-slow added one: `Search::cuts` (`zed-kernel/types/empty.rs`, `settles`) keys the
+  SUB-corpus-slow added one: `Search::cuts` (`zed-kernel/types/empty.rs`, `settles`) keyed the
   meet or difference of two types by their nodes' addresses (`Type::node_addr`), because a key
-  by contents compared equal types built apart in full and made a test quadratic. A port needs
-  the content digest with an equality that skips the full comparison, or interned types.
+  by contents compared equal types built apart in full and made a test quadratic.
+  GROUP-search-canon-key keys it by node numbers (`Type::node_id`, never reused) instead. A
+  port needs the content digest with an equality that skips the full comparison, or interned
+  types.
 - **Equality shortcuts.** `Arc::ptr_eq` or `Rc::ptr_eq`, 6 sites: `Text::eq`
   (`zed-kernel/text.rs:136`), `Type::cmp` (`zed-kernel/types.rs:45`), `Row::cmp`
   (`types.rs:253`), `Premises::extend` and `Premises::eq` (`zedc/store/cell.rs:90`, `:152`),
@@ -2783,7 +2785,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `HashMap`/`HashSet` keyed by `Type` with `BuildHasherDefault<Digest>`, in `Search` fields and in thread-locals built in a `const` block (`const { RefCell::new(..) }`) | `empty.rs` `ByType`, `TypeSet`, `MEMO`, `VERDICTS`, `DECIDING`, `SHARED`, `Search`; `types.rs` `Equal` in `order` | Interfaces (L10) and thread-locals, as in the `digest::Digest` entry of `list::Memo` | A family keyed by the type's digest in the per-thread store, the hash function given as a parameter |
-| A memo keyed by the operands' node addresses that holds the operands, so no address is reused while the entry lives, read only by `entry` and never iterated (a type node has no id; PTR-keys-rest) | `Searching::cut` (`cuts`), as `settles` before it | Identity (node addresses) | A key by node id in the per-thread store |
+| A memo keyed by the operands' node numbers (`Type::node_id`, drawn once per node and never reused; GROUP-search-canon-key, in place of the node addresses PTR-keys-rest kept); each entry still holds its operands; read only by `entry` and never iterated | `Searching::cut` (`cuts`), as `settles` before it | Identity (node numbers) | A key by node id in the per-thread store |
 
 ## Entries from CLASS-atoms (`crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs`, `walk.rs`)
 
@@ -3463,3 +3465,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A `Hole` trait whose value stands in for an item moved out of a slice held once (`impl Hole for Value` is `Bool(false)`), since a slice of `Arc<[T]>` cannot be left partly moved | `Take`, `Hole`, `impl Hole for Value` | Mutation (gap 11) | Removed with the module |
 | A cursor with a const generic `BACK: bool` for the two directions, and a stack of frames allocated only when it first descends | `Cursor`, `Frame`, `Front`, `Iter` | None | An iterator over a map in either order, from the prelude |
 | A difference and a paired walk that pass over a subtree two maps hold by pointer (`Arc::ptr_eq` of nodes), the paired walk only when told the comparison holds every entry equal to itself (`Zip::next(skip)`; not under `surface_eq` and `surface_cmp`, where a NaN is not equal to itself) | `Map::diff`, `Diff`, `Map::zip`, `Zip`, `value::advance`, `Family::shallow_diff` | Identity (gap 1) | A diff of two persistent maps that skips shared nodes, from the runtime or by the content digests of gap 1 |
+
+## Entries from GROUP-search-canon-key (`crates/zed-kernel/src/types.rs`, `types/bdd.rs`, `types/empty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A process-wide `AtomicU64` counter that gives each type node a number when it is made (`next_type_node`, `Shown::id`, `Rec::id`), read as `Type::node_id` and never part of a type's comparison, hash or printed form | `types.rs` `Shown`, `Rec`, `Type::node_id`; users `empty.rs` `decide_groups_read`, `Searching::cut` | Identity (gap 1), global mutable state | Interned types, or the content digest with an equality that skips the full comparison, as for `Search::cuts` above |
+| `HashSet<u64>` visited sets of node numbers shared across the walks of one read (`rows`, `morphisms`, `seen`, `inside`), and `Part::atoms_unseen` / `walk_atoms` with a `shared_sets` flag that skip cells and set nodes already seen (cell and set-node numbers both from `set::NEXT`) | `empty.rs` `decide_groups_read`; `bdd.rs` `Part::atoms_unseen`, `walk_atoms` | Mutation (gap 11), identity (gap 1) | A fold over the parts that threads the visited set as a value, keyed by node identity from the runtime |
+| A rollback by epochs: a counter `epoch` tagging each read and blame entry, `fork_snapshot` / `take_fork` / `restore_fork` cutting the lists at the first entry of an epoch by `partition_point`, and `push_open_forks` / `pop_open_forks` truncating the tables at a mark, with `add_reader` logging the older types that gained a newer reader | `empty.rs` `Search::epoch`, `Searching::fork_snapshot`, `take_fork`, `restore_fork`, `Search::push_open_forks`, `pop_open_forks`, `add_reader` | Mutation (gap 11) | Persistent tables: a snapshot is the table value itself, and a rollback is going back to it |
+| A meet's operands sorted by spelling hash before hashing and comparing, so `A & B` and `B & A` are one form; a hash tie keeps the written order | `types.rs` `rec::Canon` (`canon`, `spell`), `spelled` | None | The same sort, from the prelude |
