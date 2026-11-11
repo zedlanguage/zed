@@ -478,28 +478,66 @@ fn draw(f: &mut std::fmt::Formatter<'_>, margin: &str, l: &Layout) -> std::fmt::
     Ok(())
 }
 
+/// A unit's syntax: its tokens, its doc comments and its statements.
+pub(crate) type Syntax = (Vec<lex::Token>, Vec<lex::Doc>, Vec<Stmt>);
+
+/// The tokens of the unit `text`, whose lines are `lines`, its doc comments and its statements;
+/// or the diagnostics of the first of the phases of its syntax that rejects it: lexing, parsing
+/// (a boundary item with neither `initial` nor an index is placed with its statement and its
+/// repairs) or building the statements (every item's error). `compile` starts with it and
+/// `zedc fmt` reads only it, so `zedc run`, `zedc build`, `zedc test` and `zedc fmt` print a
+/// file's syntax error alike.
+pub(crate) fn syntax(text: &str, lines: &source::Lines) -> Result<Syntax, Vec<Diagnostic>> {
+    let rejected = |errors| placed(text, lines, &[], Severity::Rejection, errors);
+    let (tokens, docs) = work::stage(Stage::Lex, None, || lex::lex_with_docs(text))
+        .map_err(|e| rejected(vec![e.into()]))?;
+    let tree = work::stage(Stage::Parse, None, || parse(text, &tokens, "Unit", TOP))
+        .map_err(|e| rejected(vec![e.into()]))?;
+    let stmts = work::stage(Stage::Syntax, None, || {
+        ast::unit_all_errors(text, &tokens, &tree)
+    })
+    .map_err(rejected)?;
+    Ok((tokens, docs, stmts))
+}
+
+/// Why a file's unit was not read: what `zedc run`, `zedc build` and `zedc fmt` print for it,
+/// through [`Unloaded::report`].
+pub enum Unloaded {
+    /// The diagnostics of the phase that rejected it; for `zedc run` and `zedc build`, also
+    /// the refusal of a unit that is not a program's.
+    Rejected(Vec<Diagnostic>),
+    /// Why it was refused where no diagnostic is placed: its bytes are not a source.
+    Refused(String),
+}
+
+impl Unloaded {
+    /// What zedc prints for it: the refusal, or each diagnostic, its derivation and its menu of
+    /// fixes, then what `after` gives for it (the address line of `--addresses`), one after
+    /// the other on lines of their own; each after `file` and a colon when `file` is given.
+    pub fn report(
+        &self,
+        file: Option<&str>,
+        mut after: impl FnMut(&Diagnostic) -> String,
+    ) -> String {
+        let place = file.map_or_else(String::new, |f| format!("{f}:"));
+        match self {
+            Unloaded::Refused(why) => format!("{place}{why}"),
+            Unloaded::Rejected(ds) => {
+                let lines: Vec<String> = ds
+                    .iter()
+                    .map(|d| format!("{place}{d}{}", after(d)))
+                    .collect();
+                lines.join("\n")
+            }
+        }
+    }
+}
+
 /// The statements, elaboration and warnings of the unit `text`, the warnings moved out of the
 /// elaboration and placed in the source, or the diagnostics of the first phase that rejects it.
 pub(crate) fn compile(text: &str) -> Front {
     let lines = source::Lines::new(text.as_bytes());
-    let at = |span: lex::Span, message: String| {
-        let e = ast::Error {
-            menu: String::new(),
-            span,
-            message,
-            notes: Vec::new(),
-            row: None,
-        };
-        placed(text, &lines, &[], Severity::Rejection, vec![e])
-    };
-    let (tokens, docs) = work::stage(Stage::Lex, None, || lex::lex_with_docs(text))
-        .map_err(|e| at(e.span, e.to_string()))?;
-    let tree = work::stage(Stage::Parse, None, || parse(text, &tokens, "Unit", TOP))
-        .map_err(|e| placed(text, &lines, &[], Severity::Rejection, vec![e.into()]))?;
-    let stmts = work::stage(Stage::Syntax, None, || {
-        ast::unit_all_errors(text, &tokens, &tree)
-    })
-    .map_err(|es| placed(text, &lines, &[], Severity::Rejection, es))?;
+    let (tokens, docs, stmts) = syntax(text, &lines)?;
     let all = |errors: Vec<ast::Error>| placed(text, &lines, &stmts, Severity::Rejection, errors);
     let res = work::stage(Stage::Resolve, None, || {
         resolve::resolve_text(&stmts, Some(text))
@@ -992,8 +1030,8 @@ pub(crate) fn error(span: Span, message: String) -> Error {
 ///
 /// [`Query::Parse`]: crate::query::Query::Parse
 pub(crate) fn parse_unit(text: &str) -> Parsed {
-    let tokens = lex::lex(text).map_err(|e| vec![error(e.span, e.to_string())])?;
-    let tree = parse(text, &tokens, "Unit", TOP).map_err(|e| vec![ast::Error::from(e)])?;
+    let tokens = lex::lex(text).map_err(|e| vec![e.into()])?;
+    let tree = parse(text, &tokens, "Unit", TOP).map_err(|e| vec![e.into()])?;
     let stmts = ast::unit_all_errors(text, &tokens, &tree)?;
     // The imports are found by the resolver's own walk, which meets every import in every
     // scope; read alone, the unit resolves with no other unit, and only the imports are kept.

@@ -86,19 +86,22 @@ fn command(os: Vec<OsString>) -> u8 {
     match &args[..] {
         [] => println!("zedc {}", env!("CARGO_PKG_VERSION")),
         [cmd, file] if cmd == "fmt" => {
-            let out = std::fs::read(file)
-                .map_err(|e| {
-                    format!(
-                        " zedc could not read the file: {}. Check the path and that you may \
-                         read the file.",
-                        zedc::source::io_reason(&e)
-                    )
-                })
-                .and_then(|bytes| zedc::format::format_source(&bytes));
-            match out {
-                Ok(text) => print!("{text}"),
+            let bytes = match std::fs::read(file) {
+                Ok(bytes) => bytes,
                 Err(e) => {
-                    eprintln!("{file}:{e}");
+                    eprintln!(
+                        "{file}: zedc could not read the file: {}. Check the path and that you \
+                         may read the file.",
+                        zedc::source::io_reason(&e)
+                    );
+                    return 1;
+                }
+            };
+            // A rejection prints as `zedc run` prints it, each diagnostic after the file name.
+            match zedc::format::formatted(&bytes) {
+                Ok(text) => print!("{text}"),
+                Err(why) => {
+                    eprintln!("{}", why.report(Some(file), |_| String::new()));
                     return 1;
                 }
             }

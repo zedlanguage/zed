@@ -754,6 +754,19 @@ impl fmt::Write for Count {
     }
 }
 
+/// A lexical error as an error of the source, with no derivation.
+impl From<crate::lex::Error> for Error {
+    fn from(e: crate::lex::Error) -> Error {
+        Error {
+            menu: String::new(),
+            span: e.span,
+            message: e.to_string(),
+            notes: Vec::new(),
+            row: None,
+        }
+    }
+}
+
 /// A parse error as an error of the source: at a boundary item written with neither `initial`
 /// nor an index, the row "Boundary item with neither `initial` nor an index" with its
 /// statement and its repairs (DESIGN.md sec:diagnostics).

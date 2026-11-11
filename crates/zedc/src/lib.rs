@@ -16,7 +16,7 @@ pub use zedc_check::check;
 pub use zedc_elab::elab;
 pub use zedc_resolve::docs;
 pub use zedc_syntax::ast;
-pub use zedc_syntax::format;
+pub mod format;
 pub use zedc_zir::canon;
 pub mod front;
 pub use zedc_base::interp;

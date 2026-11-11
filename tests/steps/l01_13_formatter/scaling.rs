@@ -68,3 +68,38 @@ fn moved_comments_with_blank_lines_scale() {
         "a0 = sort(xs, desc x -> x, 0); // by\n// key\n\n// next\n"
     );
 }
+
+/// `n` statements, each a display that holds a set element and a map entry, which the syntax
+/// rejects with one step: the first entry.
+fn mixed(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("y{i} = {{{i}, 2 -> 3}};\n"))
+        .collect()
+}
+
+#[test]
+fn a_unit_with_many_syntax_errors_is_reported_in_time_linear_in_them() {
+    // `zedc fmt` prints every error of the syntax, each with its step and the source line it
+    // stands on, as `zedc run` does (FIX-fmt-parse-notes); each error is written once into the
+    // report, so n errors print O(n) characters.
+    let units: HashMap<usize, String> = [500, 4000].into_iter().map(|n| (n, mixed(n))).collect();
+    scaling::check_order("a unit's syntax errors, by count", 500, 1, |n| {
+        zedc::format::format_source(units[&n].as_bytes()).unwrap_err();
+    });
+    let out = zedc::format::format_source(mixed(2).as_bytes()).unwrap_err();
+    assert_eq!(
+        out,
+        "1:10: a map entry `k -> v` stands in a display whose first entry is a set element, and \
+         a display is a set or a map, not both. Write every entry as a set element, or write the \
+         entries in two displays.\n  \
+         [1] 1:7: the first entry, a set element\n      \
+         1 | y0 = {0, 2 -> 3};\n        \
+         |       ^\n\
+         2:10: a map entry `k -> v` stands in a display whose first entry is a set element, and \
+         a display is a set or a map, not both. Write every entry as a set element, or write the \
+         entries in two displays.\n  \
+         [1] 2:7: the first entry, a set element\n      \
+         2 | y1 = {1, 2 -> 3};\n        \
+         |       ^"
+    );
+}

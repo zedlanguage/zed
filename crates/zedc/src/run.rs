@@ -23,7 +23,7 @@ use zed_kernel::{Evaluator, Family, Lookup, Provenance, Shared, Term, Value, Wor
 use crate::address::ContentAddress;
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::Unit;
-use crate::front::{Diagnostic, compile};
+use crate::front::{Diagnostic, Unloaded, compile};
 use crate::lex::Span;
 use crate::source::io_reason;
 use crate::suppress::{InFile, Severity, Suppress};
@@ -286,24 +286,10 @@ pub struct Record {
     pub args: Vec<String>,
 }
 
-/// The program in `bytes`, or its errors, one per line as `line:col: why`.
+/// The program in `bytes`, or its errors, each as `line:col: why` with its derivation and its
+/// menu of fixes ([`Unloaded::report`]).
 pub fn load(bytes: &[u8]) -> Result<Program, String> {
-    loaded(bytes).map_err(|why| match why {
-        Unloaded::Rejected(ds) => {
-            let lines: Vec<String> = ds.iter().map(Diagnostic::to_string).collect();
-            lines.join("\n")
-        }
-        Unloaded::Refused(why) => why,
-    })
-}
-
-/// Why a program was not loaded.
-enum Unloaded {
-    /// The diagnostics of the phase that rejected it, or the refusal of [`program`]: it is not
-    /// a program's unit.
-    Rejected(Vec<Diagnostic>),
-    /// Why it was refused where no diagnostic is placed: its bytes are not a source.
-    Refused(String),
+    loaded(bytes).map_err(|why| why.report(None, |_| String::new()))
 }
 
 /// The program in `bytes`, or why it was not loaded.
@@ -1147,14 +1133,15 @@ pub fn load_file(
     }
     let program = match loaded(&bytes) {
         Ok(program) => program,
-        Err(Unloaded::Refused(why)) => return Err((1, format!("{file}:{why}"))),
-        Err(Unloaded::Rejected(ds)) => {
-            let mut lines: Vec<String> = ds
-                .iter()
-                .map(|d| format!("{file}:{d}{}", suppress.address_line(at.address(d))))
-                .collect();
-            lines.extend(suppress.refused(file, at, &ds));
-            return Err((1, lines.join("\n")));
+        Err(why) => {
+            let mut text = why.report(Some(file), |d| suppress.address_line(at.address(d)));
+            if let Unloaded::Rejected(ds) = &why {
+                for line in suppress.refused(file, at, ds) {
+                    text.push('\n');
+                    text.push_str(&line);
+                }
+            }
+            return Err((1, text));
         }
     };
     let written = write_warnings(stderr, file, at, program.warnings(), suppress).and_then(|()| {

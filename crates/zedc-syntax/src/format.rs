@@ -19,14 +19,11 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use crate::ast;
 use crate::ast::{
     Annot, Arm, BoundaryItem, Every, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param,
     Pattern, Stmt, StmtKind, Target, Type, TypeKind, TypeParam, Update,
 };
 use crate::lex::{self, Span, Token};
-use crate::parse::{TOP, parse};
-use zedc_base::source;
 
 /// The text of `unit`, parsed from `tokens` of `text`, in the formatter's layout, with the
 /// comments of `text` kept.
@@ -60,20 +57,6 @@ pub fn format_type(t: &Type) -> String {
         breaks: 0,
     };
     f.run(Job::Ty { t, min: 0 })
-}
-
-/// The source file `bytes` in the formatter's layout, or why it could not be read, at its
-/// line and column.
-pub fn format_source(bytes: &[u8]) -> Result<String, String> {
-    let text = source::load(bytes).map_err(|e| e.render(bytes))?;
-    let at = |offset: usize, why: String| {
-        let (line, col) = source::line_col(text.as_bytes(), offset);
-        format!("{line}:{col}: {why}")
-    };
-    let tokens = lex::lex(&text).map_err(|e| at(e.span.start, e.to_string()))?;
-    let tree = parse(&text, &tokens, "Unit", TOP).map_err(|e| at(e.span.start, e.to_string()))?;
-    let unit = ast::unit(&text, &tokens, &tree).map_err(|e| at(e.span.start, e.message))?;
-    Ok(format(&text, &tokens, &unit))
 }
 
 /// Precedence levels, from the loosest form of `Expr` to `Primary`, as sec:grammar orders

@@ -49,6 +49,10 @@ path = "../../tests/steps/l01_30_queries/binary.rs"
 name = "suppress_binary"
 path = "../../tests/steps/l01_29_diagnostics/suppress_binary.rs"
 
+[[test]]
+name = "commands_binary"
+path = "../../tests/steps/l01_29_diagnostics/commands_binary.rs"
+
 [dependencies]
 # The key of a link: the content hashes of its object file and runtime library (L1.36b).
 blake3 = "1"
