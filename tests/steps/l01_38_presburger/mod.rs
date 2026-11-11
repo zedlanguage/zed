@@ -12,6 +12,7 @@
 
 mod canonical;
 mod carrier;
+mod cells;
 mod checker;
 mod controls;
 mod deep;

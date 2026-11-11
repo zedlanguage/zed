@@ -2556,7 +2556,8 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 ///
 /// The answer is `found(p)?.is_some()`: the probe is the same up to its first point, a probe
 /// that finds none runs to the end as before, and [`found`] answers with that point where its
-/// own search after it refuses.
+/// own search after it refuses. Before the probe, parts whose disjunctions are each split by
+/// the bounds of one atom are decided exactly by cells of that atom ([`by_cells`]).
 // Complexity tradeoff: naive version, `found` probing every disjunct to the end, O(h²) here
 // (21.5 s at k = 32). Used: the probe stops at its first point, linear in the pieces (6.75
 // times the instructions in the scaling test below). Tradeoffs: a probe that finds no point
@@ -2568,12 +2569,165 @@ fn has_point(p: Parts) -> Result<bool, Refusal> {
     if pick(&p, true).is_ok() {
         return Ok(true);
     }
+    if let Some(answer) = by_cells(&p) {
+        return answer;
+    }
     let mut points = Vec::new();
     match probe_to(p, &mut points, true)? {
         None => Ok(false),
         Some(_) if !points.is_empty() => Ok(true),
         Some(p) => pick(&p, true).map(|_| true),
     }
+}
+
+/// Whether the parts `p` have a point, found by splitting the values of one atom `x` into
+/// cells, when every disjunct of every disjunction of `p` is a conjunction that bounds `x` by
+/// constraints of `x` alone, and the disjuncts of each disjunction bound it to disjoint
+/// intervals: guards `x <= g` and `x > g` on one input, as the definitions of an `if` chain
+/// over `x` give. The ends of those intervals cut the values of `x` into cells; in a cell each
+/// disjunction keeps at most the one disjunct whose interval holds the cell, so the parts in
+/// the cell are one conjunction, which [`solve`] decides exactly. The parts have a point
+/// exactly when one cell does, since the cells cover every value of `x` and the disjuncts
+/// whose interval misses a cell have no point there. `None` when `p` is not of that form, or
+/// when no cell has a point and the solver refused a cell, so that [`probe_to`] answers as
+/// before. Of several atoms that serve, the least is taken; the answer does not depend on it.
+// Complexity tradeoff: naive version, the probe ([`probe_to`]), which tests each disjunct by a
+// greedy search or a propagation of the whole formula and repeats while a round removes one,
+// O(n²) and more on a chain of `n` guarded definitions with no point (`t_j = if (i <= j mod 7
+// - 3) { t } else { 2 - t }`, `t_n == 0`: 54 G instructions at 80 levels, 418 G at 192, and as
+// erratic as 1.4 G at 112). Used: one solve of the parts' constraints and one disjunct of each
+// disjunction for each of `k` cells, O(k n log n) with the ends sorted and each cell's disjunct
+// found by binary search; `k` is at most the distinct ends within the bounds of `x` plus one
+// (8 cells here). Given up: with `k` near `n` (a guard `x <= j` at each level `j` on an `x`
+// without bounds) the cells cost O(n² log n); a complete solution would decide the cells in
+// order with an incremental solver, adding and retracting the one disjunct that changes at
+// each end. A disjunct with a disjunction inside, or a disjunction whose disjuncts overlap in
+// `x`, leaves the parts to the probe as before. Test:
+// `l01_38_presburger::cells::guarded_chains_with_no_point_scale`; COMPLEXITY.md row C50
+// (PERF-project-each-superlinear).
+fn by_cells(p: &Parts) -> Option<Result<bool, Refusal>> {
+    if p.ors.is_empty() || p.ors.iter().flatten().any(|d| !d.ors.is_empty()) {
+        return None;
+    }
+    // The atoms each disjunct bounds alone, met over every disjunct.
+    let alone = |d: &Parts| -> BTreeSet<Atom> {
+        (d.cons.iter())
+            .filter(|c| c.lin.terms.len() == 1)
+            .flat_map(|c| c.lin.terms.keys().cloned())
+            .collect()
+    };
+    let mut ds = p.ors.iter().flatten();
+    let mut atoms = alone(ds.next()?);
+    for d in ds {
+        let own = alone(d);
+        atoms.retain(|a| own.contains(a));
+        if atoms.is_empty() {
+            return None;
+        }
+    }
+    atoms.iter().find_map(|x| cells_of(p, x))
+}
+
+/// The interval of `x` that the constraints of `x` alone among `cons` leave, `None` when empty;
+/// an end `None` is unbounded.
+type Span = (Option<Int>, Option<Int>);
+
+/// [`by_cells`] splitting the values of `x`; `None` when two disjuncts of a disjunction overlap
+/// in `x`, or the cells leave the answer to the probe.
+fn cells_of(p: &Parts, x: &Atom) -> Option<Result<bool, Refusal>> {
+    let span = |cons: &[Con]| -> Option<Span> {
+        let mut b = AtomBounds::from([(x.clone(), (None, None))]);
+        let mut own =
+            (cons.iter()).filter(|c| c.lin.terms.len() == 1 && c.lin.terms.contains_key(x));
+        if !own.all(|c| narrow(c, &mut b)) {
+            return None;
+        }
+        let s = b.remove(x).expect("x has bounds");
+        s.0.as_ref()
+            .zip(s.1.as_ref())
+            .is_none_or(|(l, h)| l <= h)
+            .then_some(s)
+    };
+    let Some(whole) = span(&p.cons) else {
+        return Some(Ok(false));
+    };
+    // Each disjunction's disjuncts with a point, with their spans, in the order of their lower
+    // ends; disjoint, so each upper end is below the next lower end.
+    let mut ors: Vec<Vec<(Span, &Parts)>> = Vec::with_capacity(p.ors.len());
+    let mut ends: Vec<Int> = Vec::new();
+    for o in &p.ors {
+        let mut live: Vec<(Span, &Parts)> = (o.iter())
+            .filter_map(|d| span(&d.cons).map(|s| (s, &**d)))
+            .collect();
+        // `None`, no lower end, sorts first.
+        live.sort_by(|(a, _), (b, _)| a.0.cmp(&b.0));
+        let disjoint = live.windows(2).all(|w| match (&w[0].0.1, &w[1].0.0) {
+            (Some(h), Some(l)) => h < l,
+            _ => false,
+        });
+        if !disjoint {
+            return None;
+        }
+        for ((lo, hi), _) in &live {
+            ends.extend(lo.iter().cloned());
+            ends.extend(hi.iter().map(|h| h + &Int::ONE));
+        }
+        ors.push(live);
+    }
+    ends.sort_unstable();
+    ends.dedup();
+    // The cells: from no bound or an end to just below the next end, met with `whole`.
+    let starts = std::iter::once(None).chain(ends.iter().cloned().map(Some));
+    let stops = (ends.iter().map(|e| Some(e - &Int::ONE))).chain(std::iter::once(None));
+    let mut refused = false;
+    for (lo, hi) in starts.zip(stops) {
+        let lo = match (lo, &whole.0) {
+            (Some(l), Some(w)) => Some(l.max(w.clone())),
+            (l, w) => l.or_else(|| w.clone()),
+        };
+        let hi = match (hi, &whole.1) {
+            (Some(h), Some(w)) => Some(h.min(w.clone())),
+            (h, w) => h.or_else(|| w.clone()),
+        };
+        if lo.as_ref().zip(hi.as_ref()).is_some_and(|(l, h)| l > h) {
+            continue;
+        }
+        // A value of the cell, its lower end or, with none, its upper end; every disjunct
+        // holding it holds the whole cell, since no end falls inside the cell.
+        let at = lo.clone().or_else(|| hi.clone())?;
+        let mut cons: Vec<&Con> = p.cons.iter().collect();
+        let mut empty = false;
+        for live in &ors {
+            let k = live.partition_point(|((l, _), _)| l.as_ref().is_none_or(|l| *l <= at));
+            match k.checked_sub(1).map(|k| &live[k]) {
+                Some(((_, h), d)) if h.as_ref().is_none_or(|h| at <= *h) => cons.extend(&d.cons),
+                _ => {
+                    empty = true;
+                    break;
+                }
+            }
+        }
+        if empty {
+            continue;
+        }
+        let bound = |k: Int, c: Int| Con {
+            lin: Lin {
+                terms: BTreeMap::from([(x.clone(), k)]),
+                constant: c,
+            },
+            rel: Rel::Ge,
+        };
+        let ends: Vec<Con> = (lo.map(|l| bound(Int::ONE, -&l)).into_iter())
+            .chain(hi.map(|h| bound(-&Int::ONE, h)))
+            .collect();
+        cons.extend(&ends);
+        match solve(&cons, false) {
+            Ok(Some(_)) => return Some(Ok(true)),
+            Ok(None) => {}
+            Err(_) => refused = true,
+        }
+    }
+    (!refused).then_some(Ok(false))
 }
 
 /// `c` with each atom outside `free` replaced by its value in `model`.
