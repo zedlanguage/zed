@@ -2871,15 +2871,15 @@ fn other_families_agree_across_orders() {
     verdicts_agree_across_orders("cells", gen_cells, 0..200, (true, true));
 }
 
-/// Systems of the meets family, with the arms of their unions and the parts of their meets in
-/// their written order, agree in which members are inhabited in every order of their
-/// definitions tried. Whether a member is empty or refused may still depend on the order
-/// (GROUP-empty-order), and with the arms or the parts of meets in other orders whether it is
-/// inhabited too (GROUP-search-meet-values): the search does not build every value of a meet of
-/// two members, or of a tuple and `(top, top)`.
+/// Systems of the meets family, with their definitions, the arms of their unions and the parts
+/// of their meets in other orders, agree in which members are inhabited, empty or refused, up
+/// to the reason of a refusal (item GROUP-search-canon-key). Before it, 13 of these 800 systems
+/// differed between orders, and 172 of the 15,691 seeds of 0..16,000 that finished within 60 s
+/// in the sweep of the item; after it none of the 16,000 differs, and 26 differ only in the
+/// reason of a refusal.
 #[test]
-fn meets_agree_across_orders_in_which_members_are_inhabited() {
-    verdicts_agree_across_orders("meets", gen_meets, 0..800, (false, false));
+fn meets_agree_across_orders() {
+    verdicts_agree_across_orders("meets", gen_meets, 0..800, (true, true));
 }
 
 /// The pool's rounds keep the first 36 tuples of the product of the values found for each

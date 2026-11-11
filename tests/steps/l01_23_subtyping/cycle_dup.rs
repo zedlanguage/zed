@@ -911,3 +911,40 @@ fn shared_parts_are_read_once_when_deciding_their_groups() {
         },
     );
 }
+
+/// `Node` = `(int) -> Node` met with `n` morphism types `(int) -> (Node | #ck)` and with a union
+/// of `n` more, `(int) -> (Node | #b0) | … | (int) -> (Node | #bn)`, in the group of [`base`].
+/// It has a value: a function that returns its own kind. The search finds it, where it was
+/// refused for want of a witness before item GROUP-search-canon-key, in work of order
+/// `n log n`: from 64 to 512 arms the work grew 25.6 times before, against a limit of 13.2.
+fn morphisms_met_with_a_union(n: usize) -> Vec<Type> {
+    let arm = |name: String| f(or(vec![r(NODE), atom(&name)]));
+    let mut parts = vec![f(r(NODE))];
+    parts.extend((0..n).map(|k| arm(format!("c{k}"))));
+    parts.push(or((0..n).map(|k| arm(format!("b{k}"))).collect()));
+    group(base(Expr::And(parts)))
+}
+
+#[test]
+fn morphism_types_met_with_a_union_of_morphism_types_are_inhabited() {
+    for n in [1, 2, 5] {
+        Type::forget_emptiness();
+        assert_eq!(
+            morphisms_met_with_a_union(n)[NODE].verdict(),
+            Verdict::Inhabited,
+            "n = {n}"
+        );
+    }
+}
+
+/// [`morphisms_met_with_a_union`] at 64 and 512 arms, the groups built before the work is
+/// counted.
+#[test]
+fn morphism_types_met_with_a_union_of_morphism_types_scale() {
+    let n = 64;
+    let groups = scaling::inputs(n, morphisms_met_with_a_union);
+    scaling::check_order("n morphism types met with a union of n", n, 1, |m| {
+        Type::forget_emptiness();
+        assert_eq!(groups[&m][NODE].verdict(), Verdict::Inhabited);
+    });
+}
