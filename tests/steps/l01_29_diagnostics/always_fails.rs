@@ -98,3 +98,162 @@ fn each_offered_repair_applied_makes_the_program_check() {
         assert!(type_errors(src).is_empty(), "{src}\n{:?}", type_errors(src));
     }
 }
+
+/// Item MSG-neg-zero-rat: the divisor prints as `-0r`, the literal the program wrote, though
+/// rat zero has no sign (DESIGN.md step L1.26a: "A literal in a printed type prints as it was
+/// written, ... and so does a literal in a diagnostic").
+#[test]
+fn a_negated_zero_rat_divisor_prints_as_written() {
+    assert_eq!(
+        shown("f(x: rat) = x / -0r;\n"),
+        "\
+1:13: `/` here always fails with `#divByZero`: its divisor is the literal -0r, so no value that reaches it gives a rat
+  [1] 1:17: this divisor is always 0
+      1 | f(x: rat) = x / -0r;
+        |             ^^^^^^^ [4, 5, 6]
+        |                 ^^^ [1, 2]
+        |                  ^^ [3]
+  [2] 1:17: this `-` gives -0r
+  [3] 1:18: this expression is 0r
+  [4] 1:13: repair: divide by a value that can be other than 0, such as a parameter `d: rat`: `x / d`
+  [5] 1:13: repair: write `#divByZero` in place of this division, where the failure is meant
+  [6] 1:13: repair: write `#bug(\"…\")` in place of this division, where it is never meant to be reached
+"
+        .trim_end()
+    );
+}
+
+/// `-(0r)` prints as `-0r`, the sign and the literal the program wrote.
+#[test]
+fn a_negated_zero_rat_in_parentheses_prints_as_written() {
+    assert_eq!(
+        shown("f(x: rat) = x / -(0r);\n"),
+        "\
+1:13: `/` here always fails with `#divByZero`: its divisor is the literal -0r, so no value that reaches it gives a rat
+  [1] 1:17: this divisor is always 0
+      1 | f(x: rat) = x / -(0r);
+        |             ^^^^^^^^^ [4, 5, 6]
+        |                 ^^^^^ [1, 2]
+        |                  ^^^^ [3]
+  [2] 1:17: this `-` gives -0r
+  [3] 1:18: this expression is 0r
+  [4] 1:13: repair: divide by a value that can be other than 0, such as a parameter `d: rat`: `x / d`
+  [5] 1:13: repair: write `#divByZero` in place of this division, where the failure is meant
+  [6] 1:13: repair: write `#bug(\"…\")` in place of this division, where it is never meant to be reached
+"
+        .trim_end()
+    );
+}
+
+/// A name defined as `-0r` prints its type as `-0r` in the headline and at each step.
+#[test]
+fn a_constant_defined_as_a_negated_zero_rat_prints_as_written() {
+    assert_eq!(
+        shown("z = -0r;\nf(x: rat) = x / z;\n"),
+        "\
+2:13: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat
+  [1] 2:17: this divisor is always 0
+      2 | f(x: rat) = x / z;
+        |             ^^^^^ [6, 7, 8]
+        |                 ^ [1, 2]
+  [2] 2:17: `z` is -0r here
+  [3] 1:5: `z` is defined as this expression, -0r
+      1 | z = -0r;
+        |     ^^^ [3, 4]
+        |      ^^ [5]
+  [4] 1:5: this `-` gives -0r
+  [5] 1:6: this expression is 0r
+  [6] 2:13: repair: divide by a value that can be other than 0, such as a parameter `d: rat`: `x / d`
+  [7] 2:13: repair: write `#divByZero` in place of this division, where the failure is meant
+  [8] 2:13: repair: write `#bug(\"…\")` in place of this division, where it is never meant to be reached
+"
+        .trim_end()
+    );
+}
+
+/// A name defined as `0r` prints `0r`, though `-0r`, the same value, is written earlier in the
+/// text.
+#[test]
+fn a_constant_defined_as_zero_rat_prints_its_own_literal() {
+    assert_eq!(
+        shown("a = -0r;\nz = 0r;\nf(x: rat) = x / z;\n"),
+        "\
+3:13: `/` here always fails with `#divByZero`: its divisor has the type `0r`, whose only value is 0, so no value that reaches it gives a rat
+  [1] 3:17: this divisor is always 0
+      3 | f(x: rat) = x / z;
+        |             ^^^^^ [5, 6, 7]
+        |                 ^ [1, 2]
+  [2] 3:17: `z` is 0r here
+  [3] 2:5: `z` is defined as this expression, 0r
+      2 | z = 0r;
+        |     ^^
+  [4] 2:5: this expression is 0r
+  [5] 3:13: repair: divide by a value that can be other than 0, such as a parameter `d: rat`: `x / d`
+  [6] 3:13: repair: write `#divByZero` in place of this division, where the failure is meant
+  [7] 3:13: repair: write `#bug(\"…\")` in place of this division, where it is never meant to be reached
+"
+        .trim_end()
+    );
+}
+
+/// `-0r` and `0r` are one value, so the branch's type has one member. It prints as the first
+/// literal of that value written in the divisor, and each branch's step prints its own literal.
+#[test]
+fn a_branch_of_two_zero_rat_spellings_prints_the_first_written() {
+    assert_eq!(
+        shown("f(x: rat, c: bool) = x / (if c { -0r } else { 0r });\n"),
+        "\
+1:22: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat
+  [1]  1:26: this divisor is always 0
+       1 | f(x: rat, c: bool) = x / (if c { -0r } else { 0r });
+         |           ^^^^^^^ [4]    ^^^^^^^^^^^^^^^^^^^^^^^^^^ [1, 2]
+         |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [10, 11, 12]
+         |                              ^ [3]          ^^^^^^ [8]
+         |                                ^^^^^^^ [5]
+         |                                  ^^^ [6]      ^^ [9]
+         |                                   ^^ [7]
+  [2]  1:26: this `if` gives -0r
+  [3]  1:30: `c` is bool here
+  [4]  1:11: `c` is declared `bool`
+  [5]  1:32: this block gives -0r
+  [6]  1:34: this `-` gives -0r
+  [7]  1:35: this expression is 0r
+  [8]  1:45: this block gives 0r
+  [9]  1:47: this expression is 0r
+  [10] 1:22: repair: divide by a value that can be other than 0, such as a parameter `d: rat`: `x / d`
+  [11] 1:22: repair: write `#divByZero` in place of this division, where the failure is meant
+  [12] 1:22: repair: write `#bug(\"…\")` in place of this division, where it is never meant to be reached
+"
+        .trim_end()
+    );
+}
+
+/// The same branch with its literals swapped prints `0r`, the first one written in the divisor.
+#[test]
+fn a_branch_of_two_zero_rat_spellings_in_the_other_order() {
+    assert_eq!(
+        shown("f(x: rat, c: bool) = x / (if c { 0r } else { -0r });\n"),
+        "\
+1:22: `/` here always fails with `#divByZero`: its divisor has the type `0r`, whose only value is 0, so no value that reaches it gives a rat
+  [1]  1:26: this divisor is always 0
+       1 | f(x: rat, c: bool) = x / (if c { 0r } else { -0r });
+         |           ^^^^^^^ [4]    ^^^^^^^^^^^^^^^^^^^^^^^^^^ [1, 2]
+         |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [10, 11, 12]
+         |                              ^ [3]         ^^^^^^^ [7]
+         |                                ^^^^^^ [5]     ^^ [9]
+         |                                  ^^ [6]      ^^^ [8]
+  [2]  1:26: this `if` gives 0r
+  [3]  1:30: `c` is bool here
+  [4]  1:11: `c` is declared `bool`
+  [5]  1:32: this block gives 0r
+  [6]  1:34: this expression is 0r
+  [7]  1:44: this block gives -0r
+  [8]  1:46: this `-` gives -0r
+  [9]  1:47: this expression is 0r
+  [10] 1:22: repair: divide by a value that can be other than 0, such as a parameter `d: rat`: `x / d`
+  [11] 1:22: repair: write `#divByZero` in place of this division, where the failure is meant
+  [12] 1:22: repair: write `#bug(\"…\")` in place of this division, where it is never meant to be reached
+"
+        .trim_end()
+    );
+}

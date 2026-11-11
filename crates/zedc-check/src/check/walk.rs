@@ -1785,11 +1785,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// Records where the program writes the literal `l` ([`Ck::spells`]): a zero under `-`, as
+    /// `-0`, also with its `-`, since its value has no sign.
+    fn spells_lit(&mut self, l: &Lit) {
+        self.spells(&l.value, l.span);
+        if l.neg() && is_zero(&l.value) {
+            self.spells(&l.value, l.site);
+        }
+    }
+
     /// An argument: a numeric literal kept unadopted, a function in a slot of function type
     /// fitted to it, else the expression's type.
     fn arg(&mut self, m: &mut M<'a>, e: &'a Expr, want: Want) {
         if let Some(l) = literal(e, self.t.text) {
-            self.spells(&l.value, l.span);
+            self.spells_lit(&l);
             m.ret = Ret::Arg(Arg {
                 ty: lit_ty(&l.value, l.neg()),
                 lit: Some(l),
@@ -1818,7 +1827,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         if let (Some(l), Some(c)) = (literal(e, self.t.text), want.num) {
-            self.spells(&l.value, l.span);
+            self.spells_lit(&l);
             let from = self.errors.len();
             let t = self.adopt_to(&l, c);
             // A rejected literal is its own error: read at the carrier wanted, it causes no
@@ -1835,7 +1844,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn expr_of(&mut self, m: &mut M<'a>, e: &'a Expr) {
         match read_literal(e, self.t.text) {
             Ok(Some(l)) => {
-                self.spells(&l.value, l.span);
+                self.spells_lit(&l);
                 let t = match self.info.adopt.get(&l.span) {
                     Some(v) => lit_ty(v, l.neg()),
                     None => lit_ty(&l.value, l.neg()),
@@ -1908,6 +1917,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.ty(t);
             }
             ExprKind::Unary(op, a) => {
+                // `-0r` is the value `0r`; its `-` is kept for the messages that print it.
+                if *op == "-" && zero_rat(a) {
+                    self.spells(&Value::rat(Rat::int(0.into())), e.span);
+                }
                 m.k(Frame::Unary(op, e.span));
                 m.job(Job::Arg(a, Want::default()));
             }
@@ -8146,6 +8159,20 @@ fn is_zero(v: &Value) -> bool {
     }
 }
 
+/// Whether `e` is a `rat` literal of value zero, as `0r`, `0.00r` or `0e9r`: one whose digits
+/// before its exponent are all `0`.
+// Complexity tradeoff: one pass over the literal's text, O(its length), reading no digit into
+// a number; reading its value with `Rat::decimal`, as the walk does once, costs that again and
+// more for a large exponent.
+fn zero_rat(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Rat(d) => (d.split(['e', 'E']).next()).is_some_and(|m| {
+            m.bytes().all(|c| c == b'0' || c == b'.') && m.bytes().any(|c| c == b'0')
+        }),
+        _ => false,
+    }
+}
+
 /// The exact rational value of an int or rat `v`.
 fn as_rat(v: &Value) -> Option<Rat> {
     match v {
@@ -8171,10 +8198,11 @@ impl<'a> Ck<'_, 'a> {
         if op == "/" && (x.ty.meets(&f64) || y.ty.meets(&f64)) {
             return None;
         }
-        let rat_zero = |d: &str| Rat::decimal(d).ok().flatten().is_some_and(|r| r.is_zero());
-        if y.lit.as_ref().is_some_and(|l| is_zero(&l.value))
-            || matches!(&b.kind, ExprKind::Rat(d) if rat_zero(d))
-        {
+        let unsigned = match &b.kind {
+            ExprKind::Unary("-", a) => a,
+            _ => b,
+        };
+        if y.lit.as_ref().is_some_and(|l| is_zero(&l.value)) || zero_rat(unsigned) {
             return Some(Zero::Literal);
         }
         if self.known(b).value.as_ref().is_some_and(is_zero) {
@@ -8184,7 +8212,10 @@ impl<'a> Ck<'_, 'a> {
         if value.closed() && !value.lists_nothing() {
             let zeros = Ty::lit(&Value::Int(0)).union(&Ty::lit(&Value::rat(Rat::int(0.into()))));
             if value.subtype(&zeros) {
-                return Some(Zero::Type(self.text(&y.ty)));
+                // Its zero printed as the divisor writes it, `-0r` in `x / (if c { -0r } else
+                // { 0r })`, which writes it first.
+                let text = self.near(Some(self.written_at(b.span)), |ck| ck.text(&y.ty));
+                return Some(Zero::Type(text));
             }
             // The narrowing of the tests reads values as ints, so it is read only for an int
             // divisor.

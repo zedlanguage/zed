@@ -993,8 +993,8 @@ struct Ck<'t, 'a> {
     /// last such read ([`images::Read`]), from which the next is found.
     reads: HashMap<usize, images::Read<Rc<arms::Summarized>, zedc_preimage::product::Product>>,
     /// Each numeric literal the program writes: its value, without its `-`, and where each
-    /// literal of that value starts, to where it ends; a message prints the value as one of
-    /// them ([`Self::spelling`]).
+    /// literal of that value starts, to where it ends, a zero under `-` with its `-`
+    /// ([`Self::spells`]); a message prints the value as one of them ([`Self::spelling`]).
     // Complexity tradeoff: one entry per literal, found by the value's hash, O(the value's
     // size), then O(log n) in the n literals of that value to record one or to find the first
     // at or after a place; each spelling is a span into the text, so no literal is copied until
@@ -1085,7 +1085,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// Records that the program writes the literal value `v`, without its `-`, at `span`.
+    /// Records that the program writes the literal value `v`, without its `-`, at `span`; or,
+    /// for a zero under one `-`, as `-0r`, with its `-`, at the span of the `-` and the
+    /// literal: zero is its own negation, so the value alone does not keep the sign the
+    /// program writes ([`signed_number_at`]).
     fn spells(&mut self, v: &Value, span: Span) {
         match self.spelled.get_mut(v) {
             Some(at) => at.insert(span.start, span.end),
@@ -1100,6 +1103,23 @@ impl<'t, 'a> Ck<'t, 'a> {
         let out = f(self);
         self.near.set(was);
         out
+    }
+
+    /// The text whose literals a message about the expression at `span` prints as they are
+    /// written there ([`Self::near`]): the expression, or, where it is a name defined as an
+    /// expression, as `z` with `z = -0r`, that expression.
+    // Complexity tradeoff: one step, two hash lookups, O(1). A name defined as another name is
+    // not followed further: following the whole chain at each step of a derivation that walks
+    // the chain would cost O(n²) for a chain of n names; such a name prints its values as the
+    // first literal of that value in the text ([`Self::spelling`]).
+    fn written_at(&self, span: Span) -> Span {
+        match self.seen.get(&span) {
+            Some((_, Src::Name(id))) => match self.whence.get(id) {
+                Some(o) if matches!(o.why, Why::Defined(_)) => o.span,
+                _ => span,
+            },
+            _ => span,
+        }
     }
 
     /// The program's spelling of the literal value `v`: a literal with that value, or `-` and
@@ -1122,12 +1142,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             let first = |from: usize, to: usize| {
                 (at.range(from..to).next())
                     .filter(|&(_, &end)| end <= to)
-                    .and_then(|(&start, &end)| number_at(text, Span { start, end }))
+                    .and_then(|(&start, &end)| signed_number_at(text, Span { start, end }))
             };
             (self.near.get().and_then(|s| first(s.start, s.end))).or_else(|| first(0, usize::MAX))
         };
         if let Some(s) = find(v) {
-            return Some(Cow::Borrowed(s));
+            return Some(s);
         }
         let s = find(&neg_value(v, true))?;
         Some(Cow::Owned(format!("-{s}")))
@@ -1500,10 +1520,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             };
             built(1);
+            // A step prints a literal value as the program writes it in the expression the
+            // step is about, `-0r` for `x / -0r` and `0r` for its `0r` ([`Ck::spelling`]).
+            let at = Some(self.written_at(span));
             let ty = match (kept, src) {
-                (Some(t), _) => self.show(t),
+                (Some(t), _) => self.near(at, |ck| ck.show(t)),
                 (None, Src::Other(e)) => match self.tuple_seen(e) {
-                    Some(t) => self.show(&t),
+                    Some(t) => self.near(at, |ck| ck.show(&t)),
                     None => continue,
                 },
                 (None, _) => continue,
@@ -1611,7 +1634,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let b = &self.t.res.binders[id].name;
                         format!("`{b}` is defined as this expression")
                     }
-                    _ => self.said(id, &origin.why),
+                    _ => self.near(Some(origin.span), |ck| ck.said(id, &origin.why)),
                 };
                 next.push(note(origin.span, said));
                 let mut why_none = Vec::new();
@@ -4712,6 +4735,30 @@ fn number_at(src: &str, span: Span) -> Option<&str> {
         )
     })?;
     s.get(t.span.start..t.span.end)
+}
+
+/// The number `src` writes in `span`, as [`number_at`] reads it, and with its `-` where `span`
+/// holds one before the number: the span of a zero literal under one `-`, as `-0r`, `-(0r)` or
+/// `(-0)`, which [`Ck::spells`] records with its sign.
+// Complexity tradeoff: a span that starts with neither `-` nor `(` is its text, O(1); one that
+// does is lexed, O(the length of its span), as in [`number_at`].
+fn signed_number_at(src: &str, span: Span) -> Option<Cow<'_, str>> {
+    let s = src.get(span.start..span.end)?;
+    if !s.starts_with(['-', '(']) {
+        return Some(Cow::Borrowed(s));
+    }
+    let tokens = lex(s).ok()?;
+    let i = (tokens.iter()).position(|t| {
+        matches!(
+            t.tok,
+            Tok::Int { .. } | Tok::Float { .. } | Tok::Rat(_) | Tok::Keyword(_)
+        )
+    })?;
+    let number = s.get(tokens[i].span.start..tokens[i].span.end)?;
+    match tokens[..i].iter().any(|t| matches!(t.tok, Tok::Op("-"))) {
+        true => Some(Cow::Owned(format!("-{number}"))),
+        false => Some(Cow::Borrowed(number)),
+    }
 }
 
 /// `e` as a numeric literal, perhaps under one `-`; `None` also where the system refuses the
