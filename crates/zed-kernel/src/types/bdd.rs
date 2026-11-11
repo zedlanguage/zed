@@ -1817,7 +1817,11 @@ impl<A: Literal> Part<A> {
                     if !seen.insert(e.id) {
                         continue;
                     }
-                    match &e.form {
+                    // An exclusive or is an `Or`: decline before its halves are made.
+                    if e.is_or() {
+                        return None;
+                    }
+                    match e.form() {
                         Form::And(a, b) => {
                             stack.push(b);
                             stack.push(a);
