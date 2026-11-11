@@ -49,6 +49,6 @@ evalLine(positional l) = {
   run.s.vals.first else 0
 };
 
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- stdin.map(l -> "${l} = ${evalLine(l)}");
+main(m: MainArgs) {
+  m.stdout <- m.stdin.map(l -> "${l} = ${evalLine(l)}");
 }

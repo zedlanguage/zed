@@ -29,7 +29,7 @@ fn offered(cast: &str) -> String {
 
 /// `body` as the one function of a program.
 fn program(body: &str) -> String {
-    format!("{body}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- \"a\";\n}}\n")
+    format!("{body}\nmain(m: MainArgs) {{\n  m.stdout <- \"a\";\n}}\n")
 }
 
 #[test]

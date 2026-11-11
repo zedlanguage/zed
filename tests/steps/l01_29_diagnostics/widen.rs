@@ -25,7 +25,7 @@ fn messages(src: &str) -> Vec<String> {
 
 /// A `main` whose body binds `lines` and reports `out`.
 fn main_with(lines: &str, out: &str) -> String {
-    format!("main(stdin: Lines) -> (stdout: Lines) {{\n{lines}  stdout <- String({out});\n}}\n")
+    format!("main(m: MainArgs) {{\n{lines}  m.stdout <- String({out});\n}}\n")
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn a_value_already_past_the_word_warns_once() {
 #[test]
 fn an_if_gives_the_interval_of_its_branches() {
     let src = main_with(
-        "  n = if stdin[1] == \"x\" { 10 } else { 3037000500 };\n  sq = n * n;\n",
+        "  n = if m.stdin[1] == \"x\" { 10 } else { 3037000500 };\n  sq = n * n;\n",
         "sq",
     );
     assert_eq!(
@@ -204,15 +204,15 @@ fn an_if_gives_the_interval_of_its_branches() {
          |            ^ [9]
   [2]  3:8: `n` is int[10..=3037000500] here
   [3]  2:7: `n` is defined as this expression, int[10..=3037000500]
-       2 |   n = if stdin[1] == \"x\" { 10 } else { 3037000500 };
-         |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [3, 4]
-         |                          ^^^^^^ [5]    ^^^^^^^^^^ [8]
-         |                            ^^ [6]    ^^^^^^^^^^^^^^ [7]
+       2 |   n = if m.stdin[1] == \"x\" { 10 } else { 3037000500 };
+         |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [3, 4]
+         |                            ^^^^^^ [5]    ^^^^^^^^^^ [8]
+         |                              ^^ [6]    ^^^^^^^^^^^^^^ [7]
   [4]  2:7: this `if` gives int[10..=3037000500]
-  [5]  2:26: this block gives 10
-  [6]  2:28: this literal is 10
-  [7]  2:38: this block gives 3037000500
-  [8]  2:40: this literal is 3037000500
+  [5]  2:28: this block gives 10
+  [6]  2:30: this literal is 10
+  [7]  2:40: this block gives 3037000500
+  [8]  2:42: this literal is 3037000500
   [9]  3:12: `n` is int[10..=3037000500] here
   [10] 3:8: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 64"
     );
@@ -221,7 +221,7 @@ fn an_if_gives_the_interval_of_its_branches() {
 #[test]
 fn top_level_definitions_are_read_in_any_order() {
     let src = "area = side * side;\nside = 3037000500;\n\
-               main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- String(area);\n}\n";
+               main(m: MainArgs) {\n  m.stdout <- String(area);\n}\n";
     assert_eq!(
         messages(src),
         [
@@ -242,8 +242,8 @@ fn a_float_product_does_not_warn() {
 fn a_parameter_is_not_bounded_and_does_not_warn() {
     // Until step L1.40b the domains come from literals and bindings: a parameter is any
     // `int`, so its square is not reported, even at a call with a large argument.
-    let src = "sq(x: int) = x * x;\nmain(stdin: Lines) -> (stdout: Lines) {\n  \
-               stdout <- String(sq(x: 3037000500));\n}\n";
+    let src = "sq(x: int) = x * x;\nmain(m: MainArgs) {\n  \
+               m.stdout <- String(sq(x: 3037000500));\n}\n";
     assert_eq!(messages(src), Vec::<String>::new());
 }
 
@@ -253,12 +253,12 @@ fn a_difference_of_a_value_with_itself_is_read_as_a_range() {
     // int[-10..=10] here, and near the ends of the word that range leaves it, so the
     // warning is given although the value is 0.
     let small = main_with(
-        "  x = if stdin[1] == \"x\" { 0 } else { 10 };\n  y = x - x;\n",
+        "  x = if m.stdin[1] == \"x\" { 0 } else { 10 };\n  y = x - x;\n",
         "y",
     );
     assert_eq!(messages(&small), Vec::<String>::new());
     let large = main_with(
-        "  x = if stdin[1] == \"x\" { -9223372036854775807 } else { 9223372036854775807 };\n  \
+        "  x = if m.stdin[1] == \"x\" { -9223372036854775807 } else { 9223372036854775807 };\n  \
          y = x - x;\n",
         "y",
     );

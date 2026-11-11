@@ -28,8 +28,8 @@ double(positional x) = x * 2       // the `test` clause ends the declaration, so
 law doubleIsSum(x: int) = double(x) == x + x;   // a test over the whole domain: graded, never run (sec:verification)
 
 // ports are the only outside world
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- stdin.map(l -> l.upper else "");
+main(m: MainArgs) {
+  m.stdout <- m.stdin.map(l -> l.upper else "");
 }
 
 // a stored collection is a port too; its schema is a build input, matched statically

@@ -259,8 +259,8 @@ fn growth(ty: &str, one: &str) -> String {
         })
         .collect();
     format!(
-        "ok({}) = {};\nmain(stdin: Lines) -> (stdout: Lines) {{\n  r = if ok(x: {one}, y: {one}, \
-         z: {one}, w: {one}) {{ \"in\" }} else {{ \"out\" }};\n  stdout <- \"${{r}}\";\n}}\n",
+        "ok({}) = {};\nmain(m: MainArgs) {{\n  r = if ok(x: {one}, y: {one}, \
+         z: {one}, w: {one}) {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{r}}\";\n}}\n",
         ps.join(", "),
         body.join(" && ")
     )

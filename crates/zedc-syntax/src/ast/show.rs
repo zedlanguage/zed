@@ -330,8 +330,8 @@ fn params_spaced<'a>(params: &'a [Param], out: &mut Vec<Show<'a>>) {
 }
 
 /// `(= (a b) e)`, `(= (_) e)`, `(return a b)`, `(<- p e)`, a function
-/// `(def f (x (y: int)) (-> (stdout: Lines)) = e (test (a b) …))`, the `=` for an equation,
-/// a method `(method T.m (k) = e)`, or `(method T.m = e)` without parentheses, a struct
+/// `(def main ((m.stdin: Lines)) (-> (m.stdout: Lines)) = e (test (a b) …))`, the `=` for an
+/// equation, a method `(method T.m (k) = e)`, or `(method T.m = e)` without parentheses, a struct
 /// `(struct P (x: f64) (y: f64 = 0.0) (import a.B))`, a type `(type T (A) (| A #b))`, an import
 /// `(import a.b)`, `(import a.b as c)` or `(import a.b (x y) @hash(…))`, and an annotated
 /// declaration `(annotated @log (@cost n (k: 1)) (def …))`, a bare annotation without
@@ -485,7 +485,8 @@ fn annot<'a>(a: &'a Annot, out: &mut Vec<Show<'a>>) {
 
 /// The rest of a function after its parameters: its ports, body and tests, and the `)`.
 fn function<'a>(func: &'a Function, out: &mut Vec<Show<'a>>) {
-    if let Some(ports) = &func.ports {
+    // A `main` that pushes to no field shows no `(->)`.
+    if let Some(ports) = func.ports().filter(|p| !p.is_empty()) {
         out.push(Text(" (->"));
         for p in ports {
             out.extend([

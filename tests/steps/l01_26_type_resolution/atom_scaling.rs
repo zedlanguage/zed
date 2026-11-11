@@ -445,11 +445,11 @@ fn keys_handled(n: usize) -> String {
     let mut src: String = (0..n)
         .map(|i| format!("r{i}(args, k) {{ d = k else 0; return args[k] else \"\"; }}\n"))
         .collect();
-    src.push_str("main(args: CommandLine) -> (stdout: Lines) {\n");
+    src.push_str("main(m: MainArgs) {\n");
     for i in 0..n {
-        src.push_str(&format!("  a{i} = r{i}(args: args, k: {});\n", i + 1));
+        src.push_str(&format!("  a{i} = r{i}(args: m.args, k: {});\n", i + 1));
     }
-    src.push_str("  stdout <- a0;\n}\n");
+    src.push_str("  m.stdout <- a0;\n}\n");
     src
 }
 

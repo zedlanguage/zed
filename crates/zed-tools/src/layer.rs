@@ -20,7 +20,8 @@
 //! method, parameter, lambda parameter, binding target, indexed-definition name and index key,
 //! boundary item, signature, struct, field, type, type parameter, interface, law, import names,
 //! pattern names, `for` binders, loop labels, record-display labels and grammar field labels.
-//! Port names are the environment's, not the program's, and the `log` port counts as the
+//! Port names, the fields after the first name of a push target (`m.stdout`), are the
+//! environment's, not the program's, and the `log` port counts as the
 //! table's L7 word. Labels that are neither uses nor bindings: named arguments and
 //! `with { f = … }` field paths.
 //!
@@ -275,7 +276,7 @@ fn role(rule: &str, k: usize, first: bool, tree: &Tree, toks: &Tokens) -> Role {
         r if is_binder(r) => Role::Bind,
         "IndexedDef" if first => Role::Bind,
         "Method" if !first => Role::Bind,
-        "Port" => Role::Port,
+        "PushTarget" if !first => Role::Port,
         "NamedArg" | "Update" | "KeyPath" => Role::Label,
         "Refinement" if first => Role::Label,
         "ShapeDim" if toks.0[tree.node(k).end].text == ":" => Role::Label,

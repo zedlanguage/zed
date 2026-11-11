@@ -23,8 +23,8 @@ fn zedc(command: &str, name: &str, src: &str, stdin: &str) -> (u8, String, Strin
 const GREETER: &str = "\
 greeting(name) = \"Hello, ${name}!\";
 
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- greeting(name: \"world\");
+main(m: MainArgs) {
+  m.stdout <- greeting(name: \"world\");
 }
 ";
 

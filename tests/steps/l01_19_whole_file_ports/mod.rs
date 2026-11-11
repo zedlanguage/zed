@@ -4,6 +4,7 @@
 
 mod files;
 mod lines;
+mod main_args;
 mod replay;
 mod scaling;
 mod sharing;

@@ -2,7 +2,7 @@
 // Output fixed by DESIGN.md (at 843be85) line 3110: `text.split(" ").group(w -> w.lower).count`
 // is `Utf8String ->? int`; line 2944: `for k -> v in m` binds the key; line 1819: a family of
 // strings is written one line per entry in key order; line 1813: strings in natural order.
-main(stdin: Lines) -> (stdout: Lines) {
-  counts = (stdin[1] else "").split(" ").group(w -> w.lower).count;
-  stdout <- for w -> c in counts { "${w} ${c}" };
+main(m: MainArgs) {
+  counts = (m.stdin[1] else "").split(" ").group(w -> w.lower).count;
+  m.stdout <- for w -> c in counts { "${w} ${c}" };
 }

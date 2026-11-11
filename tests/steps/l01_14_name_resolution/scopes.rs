@@ -92,8 +92,8 @@ fn an_else_pattern_binds_its_fields_in_its_default() {
 
 #[test]
 fn a_push_names_an_output_port_of_its_function() {
-    let text = "main(stdin: Lines) -> (stdout: Lines) { stdout <- stdin; }";
-    assert_eq!(at(text, "stdout", 1), ["port stdout: Lines"]);
+    let text = "main(m: MainArgs) { m.stdout <- m.stdin; }";
+    assert_eq!(at(text, "m.stdout", 0), ["port m.stdout"]);
     assert_eq!(
         errors("main() { stdout <- \"hi\"; }"),
         [

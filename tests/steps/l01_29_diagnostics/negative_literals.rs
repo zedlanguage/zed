@@ -133,8 +133,8 @@ fn a_derivation_step_shows_the_negative_literal_as_written() {
 fn a_use_that_narrowed_a_class_names_the_negative_literal() {
     let out = rejected(
         "badge(positional x) = \"#\" ++ x * -2;
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- badge(3);
+main(m: MainArgs) {
+  m.stdout <- badge(3);
 }
 ",
     );

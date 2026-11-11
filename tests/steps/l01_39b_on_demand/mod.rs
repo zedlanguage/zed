@@ -31,7 +31,7 @@ fn clean(n: usize) -> String {
         src += &format!("g{i}(positional x: int) = {{\n  y = x * 2;\n  return g0(y);\n}};\n");
     }
     src + &format!(
-        "main(stdin: Lines) -> (stdout: Lines) {{\n  a = g{}(1);\n  stdout <- \"a\" ++ String(a);\n}}\n",
+        "main(m: MainArgs) {{\n  a = g{}(1);\n  m.stdout <- \"a\" ++ String(a);\n}}\n",
         n - 1
     )
 }
@@ -136,7 +136,7 @@ fn many_parameters(n: usize, m: usize) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     src + &format!(
-        "main(stdin: Lines) -> (stdout: Lines) {{\n  a = g0({args});\n  stdout <- \"a\" ++ String(a);\n}}\n"
+        "main(m: MainArgs) {{\n  a = g0({args});\n  m.stdout <- \"a\" ++ String(a);\n}}\n"
     )
 }
 

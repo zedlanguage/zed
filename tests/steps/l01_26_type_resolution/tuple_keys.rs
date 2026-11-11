@@ -10,10 +10,10 @@ use super::{Resolved, sig, type_errors};
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 
 /// A record read by a column number the user types.
-const COLUMN: &str = "main(stdin: Lines) -> (stdout: Lines) {\n  \
+const COLUMN: &str = "main(m: MainArgs) {\n  \
      person = (\"Ada\", 1815, \"London\");\n  \
-     column = int(stdin[1]) else 0;\n  \
-     stdout <- \"${person[column] else \"no such column\"}\";\n}\n";
+     column = int(m.stdin[1]) else 0;\n  \
+     m.stdout <- \"${person[column] else \"no such column\"}\";\n}\n";
 
 /// What the program `COLUMN` writes when the user types `line`, run in test directory `name`:
 /// the tests run at once, and each writes the program to its own directory.
@@ -90,9 +90,9 @@ fn the_failures_of_the_key_pass_through() {
 #[test]
 fn a_generic_function_indexes_the_tuple_it_is_called_with() {
     let src = "pick(t, i) = t[i];\n\
-               main(stdin: Lines) -> (stdout: Lines) {\n  \
-               i = int(stdin[1]) else 0;\n  \
-               stdout <- \"${pick(t: (\"a\", \"b\", \"c\"), i: i) else \"none\"}\";\n}\n";
+               main(m: MainArgs) {\n  \
+               i = int(m.stdin[1]) else 0;\n  \
+               m.stdout <- \"${pick(t: (\"a\", \"b\", \"c\"), i: i) else \"none\"}\";\n}\n";
     let at = |line: &str| run("tuple_keys_generic", src, &format!("{line}\n"), &[]).stdout;
     assert_eq!(
         (at("0"), at("2"), at("3"), at("-1")),
@@ -124,10 +124,10 @@ fn a_key_that_selects_no_component_is_rejected() {
 
 #[test]
 fn a_possibly_missing_component_is_disposed_of_before_a_port() {
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  \
+    let src = "main(m: MainArgs) {\n  \
                t = (10, 20, 30);\n  \
-               i = int(stdin[1]) else 0;\n  \
-               stdout <- \"${t[i]}\";\n}\n";
+               i = int(m.stdin[1]) else 0;\n  \
+               m.stdout <- \"${t[i]}\";\n}\n";
     let out = run("tuple_keys_undisposed", src, "1\n", &[]);
     assert_eq!(out.status, 1);
     assert!(

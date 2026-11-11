@@ -22,8 +22,8 @@ fields(positional l) = {
   for k in 0..<cuts::len - 1 { l.slice((cuts[k] else 0) + 1, cuts[k + 1] else 0) }
 };
 
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- stdin.map(l -> {
+main(m: MainArgs) {
+  m.stdout <- m.stdin.map(l -> {
     fs = fields(l);
     "${fs::len} ${fs.map(f -> "[${f}]").concat(" ")}"
   });

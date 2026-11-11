@@ -217,8 +217,8 @@ fn an_atom_with_a_payload_reads_back() {
     // What the checker prints for a lookup in a `Files` port, and for the lines of a `Lines`
     // port, reads back to the type printed.
     for src in [
-        "main(fs: Files) -> (stdout: Lines) {\n  stdout <- fs[\"a\"] else #notFound -> \"\";\n}\n",
-        "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin;\n}\n",
+        "main(m: MainArgs) {\n  fs = files();\n  m.stdout <- fs[\"a\"] else #notFound -> \"\";\n}\n",
+        "main(m: MainArgs) {\n  m.stdout <- m.stdin;\n}\n",
     ] {
         let (seen, out) = printed_by(src);
         assert!(out.contains(io), "{src}: {out}");

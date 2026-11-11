@@ -30,6 +30,12 @@ use super::state::{Bind, Elab};
 use zedc_check::check::ty::Sig;
 use zedc_syntax::ast::Param;
 
+/// The inputs a row of `main`'s table gives, by the position of each in a key that is a tuple:
+/// standard input, the arguments one per line, the environment as a function of the name, and
+/// the files as a function of the path (DESIGN.md sec:syntax_tour, `test`), each the field of
+/// `MainArgs` that gives it, or `files()`.
+pub const MAIN_KEY: [&str; 4] = ["stdin", "args", "env", "files()"];
+
 /// What a job gives back.
 enum Ret {
     /// Nothing yet.
@@ -500,7 +506,29 @@ impl<'a> Elab<'a> {
     fn test_case(&mut self, m: &mut M<'a>, mut tf: Box<TestsF<'a>>) {
         let f = tf.f;
         while let Some((input, _)) = f.tests.get(tf.i) {
+            // A row of `main` is keyed by the fields of `MainArgs`, not by the fields its body
+            // reads (DESIGN.md sec:syntax_tour, `test`): standard input as a String, or the
+            // tuple `(stdin, args, env, files)` of [`MAIN_KEY`], items left off its end empty.
             let args = match (&input.kind, f.params.len()) {
+                (ExprKind::Tuple(items), _) if f.main.is_some() => {
+                    if items.len() > MAIN_KEY.len() {
+                        tf.ok = false;
+                        self.error::<()>(
+                            input.span,
+                            format!(
+                                "a test key of `main` is the standard input of the run, as a \
+                                 String, or the tuple `(stdin, args, env, files)` of its inputs, \
+                                 with the items left off its end empty, and this key has {} \
+                                 items",
+                                items.len()
+                            ),
+                        );
+                        tf.i += 1;
+                        continue;
+                    }
+                    items.iter().collect()
+                }
+                _ if f.main.is_some() => vec![input],
                 (_, 1) => vec![input],
                 (ExprKind::Tuple(items), n) if items.len() == n => items.iter().collect(),
                 (_, n) => {

@@ -89,7 +89,7 @@ fn every_enabled_prediction_holds() {
             let (r, got) = program(&text, &input, engines);
             failed.extend(r.mismatches.into_iter().map(|m| format!("{at}: {m}")));
             let out = zed_kernel::Value::str(&String::from_utf8_lossy(&out));
-            let want = format!("port `stdout` writes {out}");
+            let want = format!("port `m.stdout` writes {out}");
             match (got, run::load(text.as_bytes())) {
                 (Some(got), _) if got == want => {}
                 (Some(got), _) => failed.push(format!("{at}: predicted {want}, and got {got}")),

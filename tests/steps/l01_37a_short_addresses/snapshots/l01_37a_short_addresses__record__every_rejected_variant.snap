@@ -244,7 +244,7 @@ taint-reaches-clean-sink
 taint-through-concatenation
   rejected: [
     Diagnostic {
-        line: 75,
+        line: 78,
         col: 55,
         message: "the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.",
         steps: [],
@@ -252,7 +252,7 @@ taint-through-concatenation
         row: None,
     },
 ]
-  checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 75, col: 55, failure: Some("the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.") }]
+  checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 78, col: 55, failure: Some("the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.") }]
 
 two-point-readings-added
   rejected: [
@@ -307,7 +307,7 @@ two-writers-of-one-generation
 unit-mismatch-force-energy
   rejected: [
     Diagnostic {
-        line: 76,
+        line: 79,
         col: 55,
         message: "the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.",
         steps: [],
@@ -315,7 +315,7 @@ unit-mismatch-force-energy
         row: None,
     },
 ]
-  checks: [Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 76, col: 55, failure: Some("the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.") }]
+  checks: [Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 79, col: 55, failure: Some("the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.") }]
 
 unit-mismatch-in-sum
   rejected: [

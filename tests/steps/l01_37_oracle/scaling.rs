@@ -30,7 +30,7 @@ fn unit_of(front: &Front) -> &Unit {
     u
 }
 
-const ECHO: &str = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin[1] else \"\";\n}\n";
+const ECHO: &str = "main(m: MainArgs) {\n  m.stdout <- m.stdin[1] else \"\";\n}\n";
 
 /// `n` lines of input.
 fn lines(n: usize) -> Vec<u8> {
@@ -85,7 +85,10 @@ fn the_inputs_are_compared_as_they_should_be() {
     );
     let ((r, want), _) = native(|engines| program(ECHO, &lines(2), engines));
     assert_eq!(r.mismatches, Vec::<String>::new());
-    assert_eq!(want.as_deref(), Some(r#"port `stdout` writes "line 0\n""#));
+    assert_eq!(
+        want.as_deref(),
+        Some(r#"port `m.stdout` writes "line 0\n""#)
+    );
     let mut at = Report::default();
     at.add("at", mismatched(2));
     assert_eq!(
@@ -144,7 +147,10 @@ fn a_wave_of_many_lines_scales() {
     check("a wave of n lines", 2000, |k| {
         let ((r, want), _) = native(|engines| program(ECHO, &input[&k], engines));
         assert_eq!(r.mismatches, Vec::<String>::new());
-        assert_eq!(want.as_deref(), Some(r#"port `stdout` writes "line 0\n""#));
+        assert_eq!(
+            want.as_deref(),
+            Some(r#"port `m.stdout` writes "line 0\n""#)
+        );
     });
 }
 

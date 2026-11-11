@@ -96,8 +96,8 @@ fn a_name_bound_in_an_arm_holds_what_the_test_shows_of_its_value() {
     ));
     // An input read from a line and tested in `main`.
     assert!(accepted(
-        "main(stdin: Lines) -> (stdout: Lines) {\n  n = int(stdin[1]) else 0;\n  \
-         stdout <- if n >= 0 { String(popCount(n)) } else { \"\" };\n}\n"
+        "main(m: MainArgs) {\n  n = int(m.stdin[1]) else 0;\n  \
+         m.stdout <- if n >= 0 { String(popCount(n)) } else { \"\" };\n}\n"
     ));
 }
 

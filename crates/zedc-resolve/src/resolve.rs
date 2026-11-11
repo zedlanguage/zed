@@ -53,7 +53,7 @@ pub enum Kind {
     Function,
     /// A parameter of a function or a lambda.
     Param,
-    /// An output port of a function's header, `-> (stdout: Lines)`.
+    /// An output port of `main`, a field of `MainArgs` its body pushes to, `m.stdout`.
     Port,
     /// A name a pattern binds: `#a(f:)`, `Point(x:)`, `n`, `n is int`.
     Pattern,
@@ -495,8 +495,16 @@ pub fn prelude_layer(name: &str) -> Option<u32> {
 
 /// Whether `name` is a prelude value word of any layer or a prelude type name.
 pub fn is_prelude_name(name: &str) -> bool {
-    prelude_layer(name).is_some() || TYPES.contains(&name) || later_type_layer(name).is_some()
+    prelude_layer(name).is_some()
+        || TYPES.contains(&name)
+        || later_type_layer(name).is_some()
+        || name == MAIN_ARGS
 }
+
+/// The prelude struct of `main`'s argument, `main(m: MainArgs)`. The parser reads it in `main`'s
+/// header and gives `main` the fields its body uses (MAIN-args), so the resolver meets the name
+/// only elsewhere, where this zedc does not take it ([`main_args_elsewhere`]).
+const MAIN_ARGS: &str = "MainArgs";
 
 /// The layer of the prelude type `name` of a later layer, if it is one.
 fn later_type_layer(name: &str) -> Option<u32> {
@@ -671,18 +679,6 @@ pub fn resolve_in_text(unit: &[Stmt], units: &dyn Units, text: Option<&str>) -> 
     }
 }
 
-/// The message for the output port `port` of the function `function`, declared with the type
-/// `ty`, which is not `Lines` (DESIGN.md step L1.19: every output port writes lines of text).
-pub fn output_port_message(port: &str, function: &str, ty: &Type) -> String {
-    let ty = zedc_syntax::format::format_type(ty);
-    format!(
-        "the output port `{port}` of `{function}` is declared as `{ty}`, and an output port \
-         writes lines of text, so its type must be `Lines`. Write `{port}: Lines`, and push to \
-         it a string, which writes one line, or a family of strings, which writes one line per \
-         entry, such as `{port} <- String(x);`."
-    )
-}
-
 /// The errors name resolution finds in the type `t`, read as a type the checker printed
 /// (OSP-diag, DESIGN.md "Printed types are syntax"): the walk a written type gets, the names in
 /// `leaves` standing for the leaves of layer L10 a printed type holds (`_`, `!_`, a literal),
@@ -764,6 +760,10 @@ struct Resolver<'u> {
     // so a use is compared with it in O(1), at no memory beyond the binder table and one entry
     // here per binder used too early.
     above: HashMap<usize, Span>,
+    /// The body of each `main` with its parameter written, `m` in `main(m: MainArgs)`, and that
+    /// name: a use of the name alone, not a read of a field, is not defined, and its message
+    /// says what `m` is ([`main_param_alone`]).
+    main_params: Vec<(Span, String)>,
     /// Each block, parameter list and field list of the unit below the top level that binds a
     /// name, in the order its binders were made: where a definition used above it may move.
     lists: Vec<List>,
@@ -1275,33 +1275,40 @@ impl Resolver<'_> {
         if name.ends_with('\'') {
             return self.primed(name, span);
         }
-        let message = match self.find(name) {
-            Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => return,
-            Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind == Kind::Unit => {
-                let unit = &self.out.imports[&ids[0]];
-                format!(
-                    "`{name}` names the unit `{unit}`, which is no value; a definition of the \
+        let message =
+            match self.find(name) {
+                Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => return,
+                Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind == Kind::Unit => {
+                    let unit = &self.out.imports[&ids[0]];
+                    format!(
+                        "`{name}` names the unit `{unit}`, which is no value; a definition of the \
                      unit is written `{name}.f`"
-                )
-            }
-            Some(Found::Bound(ids)) => {
-                self.order(name, span, &ids);
-                self.out.uses.insert(span, Ref::Bound(ids));
-                return;
-            }
-            Some(Found::Ambiguous(a, b)) => return self.ambiguous(name, span, a, b),
-            Some(Found::Unit(unit)) => return self.prelude_unit(name, span, unit),
-            Some(Found::Word(1)) => {
-                self.out.uses.insert(span, Ref::Prelude(name.into()));
-                return;
-            }
-            Some(Found::Word(_)) => not_yet(&format!("the prelude word `{name}`")),
-            // A prelude struct of a later layer is named as a value to build one.
-            None => match later_type_layer(name) {
-                Some(_) => not_yet(&format!("the prelude type `{name}`")),
-                None => undefined(name),
-            },
-        };
+                    )
+                }
+                Some(Found::Bound(ids)) => {
+                    self.order(name, span, &ids);
+                    self.out.uses.insert(span, Ref::Bound(ids));
+                    return;
+                }
+                Some(Found::Ambiguous(a, b)) => return self.ambiguous(name, span, a, b),
+                Some(Found::Unit(unit)) => return self.prelude_unit(name, span, unit),
+                Some(Found::Word(1)) => {
+                    self.out.uses.insert(span, Ref::Prelude(name.into()));
+                    return;
+                }
+                Some(Found::Word(_)) => not_yet(&format!("the prelude word `{name}`")),
+                // A prelude struct of a later layer is named as a value to build one.
+                None if name == MAIN_ARGS => main_args_elsewhere(),
+                None => match later_type_layer(name) {
+                    Some(_) => not_yet(&format!("the prelude type `{name}`")),
+                    None => match self.main_params.iter().find(|(body, m)| {
+                        m == name && body.start <= span.start && span.end <= body.end
+                    }) {
+                        Some(_) => main_param_alone(name),
+                        None => undefined(name),
+                    },
+                },
+            };
         self.errors.push(Error {
             row: None,
             menu: String::new(),
@@ -1733,23 +1740,10 @@ impl Resolver<'_> {
                 todo.push(Task::Expr(value));
             }
             StmtKind::Function(f) => {
-                let ports: &[Port] = f.ports.as_deref().unwrap_or_default();
-                // At L1 an output port is `Lines` (DESIGN.md step L1.19). The ports of a `main`
-                // among the unit's own statements are checked with its inputs when the unit is
-                // loaded as a program (`run::program`); a `main` nested in a block is checked here.
-                if !(top && f.name == "main") {
-                    for p in ports {
-                        if !matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
-                            self.errors.push(Error {
-                                row: None,
-                                menu: String::new(),
-                                span: p.span,
-                                message: output_port_message(&p.name, &f.name, &p.ty),
-                                notes: Vec::new(),
-                            });
-                        }
-                    }
+                if let Some((m, _, _)) = f.main.as_ref().and_then(|h| h.param.as_ref()) {
+                    self.main_params.push((f.body.span, m.clone()));
                 }
+                let ports: &[Port] = f.ports().unwrap_or_default();
                 todo.push(Task::Function {
                     params: &f.params,
                     ports,
@@ -1774,7 +1768,7 @@ impl Resolver<'_> {
             StmtKind::Method(m) => {
                 self.later(s.span, "a method");
                 let f = &m.function;
-                let ports: &[Port] = f.ports.as_deref().unwrap_or_default();
+                let ports: &[Port] = f.ports().unwrap_or_default();
                 todo.push(Task::Function {
                     params: &f.params,
                     ports,
@@ -2618,6 +2612,7 @@ impl Resolver<'_> {
                 }
                 undefined_type(n)
             }
+            None if n == MAIN_ARGS => main_args_elsewhere(),
             Some(Found::Word(_)) | None => match later_type_layer(n) {
                 Some(_) => not_yet(&format!("the prelude type `{n}`")),
                 None => undefined_type(n),
@@ -2878,6 +2873,26 @@ fn undefined(name: &str) -> String {
         "`{name}` is not defined: no definition, parameter or binding in scope has this name, and \
          the prelude has none. Define `{name}`, or correct the name if it is misspelled."
     )
+}
+
+/// The message for a use of `m`, the parameter of `main(m: MainArgs)`, other than a read of one
+/// of its fields: `m` holds ports, and a port is read or pushed to through its field.
+fn main_param_alone(m: &str) -> String {
+    format!(
+        "`{m}` is used here by itself, and `{m}` is the argument of `main`, of type `MainArgs`, \
+         which holds the program's inputs and outputs as its fields; this zedc reads and pushes \
+         to each field, not to `{m}` as a whole. Read `{m}.args`, `{m}.stdin` or `{m}.env`, or \
+         push to `{m}.stdout` or `{m}.stderr`, as `{m}.stdout <- lines;`."
+    )
+}
+
+/// The message for `MainArgs` written anywhere but as the type of `main`'s parameter.
+fn main_args_elsewhere() -> String {
+    "`MainArgs` is the type of `main`'s argument, written `main(m: MainArgs)`, and this zedc \
+     takes it there only: no other function takes it, and no value of it is built. Read the \
+     fields of `m` in `main`, and pass a function the values it needs, such as `m.args` or a \
+     line of `m.stdin`."
+        .into()
 }
 
 /// The message for the type `name`, which no type in scope and no prelude type has as its name.

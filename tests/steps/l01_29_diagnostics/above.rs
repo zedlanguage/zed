@@ -80,7 +80,7 @@ fn apply(src: &str, repair: &str) -> String {
 
 #[test]
 fn each_offered_repair_applied_makes_the_program_check() {
-    let main = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- String(total(n: 3));\n}\n";
+    let main = "main(m: MainArgs) {\n  m.stdout <- String(total(n: 3));\n}\n";
     let cases = [
         // A block binding used on the line above.
         "total(n: int) {\n  a = b + 1;\n  b = n * 2;\n  return a;\n}\n",
@@ -114,9 +114,7 @@ fn functions_that_call_each_other_are_moved_to_the_top_level() {
         "  odd(n) = if n == 0 { false } else { even(n - 1) };\n  \
          even(n) = if n == 0 { true } else { odd(n - 1) };\n",
     ] {
-        let src = format!(
-            "main(stdin: Lines) -> (stdout: Lines) {{\n{pair}  stdout <- String(even(4));\n}}\n"
-        );
+        let src = format!("main(m: MainArgs) {{\n{pair}  m.stdout <- String(even(4));\n}}\n");
         let out = rejected(&src);
         let repairs: Vec<&str> = steps(&out)
             .into_iter()
@@ -141,10 +139,10 @@ fn functions_that_call_each_other_are_moved_to_the_top_level() {
 #[test]
 fn a_function_that_reads_a_value_of_the_block_is_not_offered_the_top_level() {
     // `odd` reads `k`, which the block binds, so it cannot leave the block.
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  k = 0;\n  \
+    let src = "main(m: MainArgs) {\n  k = 0;\n  \
                odd = (n) -> if n == k { false } else { even(n - 1) };\n  \
                even = (n) -> if n == k { true } else { odd(n - 1) };\n  \
-               stdout <- String(even(4));\n}\n";
+               m.stdout <- String(even(4));\n}\n";
     let out = rejected(src);
     assert!(out.contains("above its definition"), "{out}");
     assert!(!out.contains("repair:"), "{out}");

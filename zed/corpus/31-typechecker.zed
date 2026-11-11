@@ -26,8 +26,8 @@ symbol(positional g) = g.foldl(#none, (acc, d) -> match acc {
 
 note(positional cond, positional msg) = if cond { [msg] } else { [] };
 
-main(stdin: Lines) -> (stdout: Lines) {
-  decls = for i -> l in stdin { parseDecl(i + 1, l) };
+main(m: MainArgs) {
+  decls = for i -> l in m.stdin { parseDecl(i + 1, l) };
   syms  = decls.group(d -> d.name).map(g -> symbol(g));
 
   ty = loop {
@@ -58,5 +58,5 @@ main(stdin: Lines) -> (stdout: Lines) {
   };
 
   typings = for n -> _ in syms { "${n} : ${tyName(ty[n])}" };
-  stdout <- typings.orderedValues ++ decls.flatMap(d -> diagsOf(d)).orderedValues;
+  m.stdout <- typings.orderedValues ++ decls.flatMap(d -> diagsOf(d)).orderedValues;
 }

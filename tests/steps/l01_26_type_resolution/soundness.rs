@@ -12,7 +12,7 @@ use zedc::run::load;
 fn run(src: &str, stdin: &str) -> String {
     let p = load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}: rejected: {e}"));
     let mut lines = BTreeMap::new();
-    lines.insert("stdin".to_string(), Arc::from(stdin.as_bytes()));
+    lines.insert("m.stdin".to_string(), Arc::from(stdin.as_bytes()));
     let files = |_: &str| -> Arc<dyn Lookup> { unreachable!("no `Files` port") };
     match p.run(&lines, files) {
         Ok(w) => w
@@ -26,7 +26,7 @@ fn run(src: &str, stdin: &str) -> String {
 
 /// Checks that the program with these definitions and this `stdout` expression is rejected.
 fn rejected(defs: &str, out: &str) {
-    let src = format!("{defs}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- {out};\n}}\n");
+    let src = format!("{defs}\nmain(m: MainArgs) {{\n  m.stdout <- {out};\n}}\n");
     if let Ok(p) = load(src.as_bytes()) {
         let _ = p;
         panic!(
@@ -38,7 +38,7 @@ fn rejected(defs: &str, out: &str) {
 
 /// The program with these definitions and this `stdout` expression, run on `stdin`.
 fn runs(defs: &str, out: &str, stdin: &str) -> String {
-    let src = format!("{defs}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- {out};\n}}\n");
+    let src = format!("{defs}\nmain(m: MainArgs) {{\n  m.stdout <- {out};\n}}\n");
     run(&src, stdin)
 }
 
@@ -107,14 +107,14 @@ fn a_comparison_of_two_kinds_is_rejected() {
 
 #[test]
 fn a_line_of_a_lines_port_is_a_string_or_an_error() {
-    rejected("", r#""${stdin[1] + 1}""#);
-    assert_eq!(runs("", r#""${len(stdin[1]) else 0}""#, "abc"), "3\n");
+    rejected("", r#""${m.stdin[1] + 1}""#);
+    assert_eq!(runs("", r#""${len(m.stdin[1]) else 0}""#, "abc"), "3\n");
 }
 
 #[test]
 fn an_int_power_needs_an_exponent_of_at_least_zero() {
     rejected("", r#""${2^-1}""#);
-    rejected("", r#""${(2^(int(stdin[1]) else 0)) div 1}""#);
+    rejected("", r#""${(2^(int(m.stdin[1]) else 0)) div 1}""#);
     assert_eq!(runs("", r#""${2^3}""#, ""), "8\n");
 }
 
@@ -179,7 +179,7 @@ fn the_results_of_two_uses_under_one_bound_take_one_carrier() {
 fn a_function_applied_to_itself_is_checked_once() {
     // `w(w)` meets the need of `w` again inside its own check, on the same type: it holds.
     let src = "w(positional f) = f(f);\nspin = w(w);\n\
-               main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n";
+               main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n";
     if let Err(e) = load(src.as_bytes()) {
         panic!("{src}: rejected: {e}");
     }
@@ -188,7 +188,7 @@ fn a_function_applied_to_itself_is_checked_once() {
 
 /// The program with these definitions and this body of `main`.
 fn program(defs: &str, body: &str) -> String {
-    format!("{defs}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  {body}\n}}\n")
+    format!("{defs}\nmain(m: MainArgs) {{\n  {body}\n}}\n")
 }
 
 /// Checks that the program `src` is rejected.
@@ -205,29 +205,32 @@ fn refused(src: &str) {
 fn a_section_or_a_curried_call_checks_what_it_leaves_out_when_it_is_called() {
     let add = "add(positional a, positional b) = a + b;";
     assert_eq!(
-        run(&program(add, r#"f = add[1]; stdout <- "${f(2)}";"#), ""),
+        run(&program(add, r#"f = add[1]; m.stdout <- "${f(2)}";"#), ""),
         "3\n"
     );
-    refused(&program(add, r#"f = add[1]; stdout <- "${f("x")}";"#));
+    refused(&program(add, r#"f = add[1]; m.stdout <- "${f("x")}";"#));
     let first = "first(positional t, positional u) = t[0];";
-    refused(&program(first, r#"f = first[5]; stdout <- "${f(1)}";"#));
+    refused(&program(first, r#"f = first[5]; m.stdout <- "${f(1)}";"#));
     let pick = "pick(positional t, positional i) = t[i];";
     // A tuple takes a computed key (DESIGN.md sec:types, the `m[k]` row), so `f(0)` reads
     // the first component; the key `5` selects none, which the call checks.
     assert_eq!(
         run(
-            &program(pick, r#"f = pick[(1, 2)]; stdout <- "${f(0)}";"#),
+            &program(pick, r#"f = pick[(1, 2)]; m.stdout <- "${f(0)}";"#),
             ""
         ),
         "1\n"
     );
-    refused(&program(pick, r#"f = pick[(1, 2)]; stdout <- "${f(5)}";"#));
+    refused(&program(
+        pick,
+        r#"f = pick[(1, 2)]; m.stdout <- "${f(5)}";"#,
+    ));
     let greet = r#"greet(positional name, punct = "!", lead = "hi") = "${lead}, ${name}${punct}";"#;
-    let body = r#"h = greet("Al", lead: "yo", ...); stdout <- h(punct: "?");"#;
+    let body = r#"h = greet("Al", lead: "yo", ...); m.stdout <- h(punct: "?");"#;
     assert_eq!(run(&program(greet, body), ""), "yo, Al?\n");
     refused(&program(
         greet,
-        r#"h = greet("Al", lead: "yo", ...); stdout <- h(punct: 5);"#,
+        r#"h = greet("Al", lead: "yo", ...); m.stdout <- h(punct: 5);"#,
     ));
 }
 
@@ -238,18 +241,18 @@ fn a_returned_function_carries_the_needs_of_its_parameters() {
                 twice(positional f) = compose(f, f);\n\
                 len2(positional s) = len(s);";
     assert_eq!(
-        run(&program(defs, r#"stdout <- "${twice(inc)(3)}";"#), ""),
+        run(&program(defs, r#"m.stdout <- "${twice(inc)(3)}";"#), ""),
         "5\n"
     );
-    refused(&program(defs, r#"stdout <- "${twice(inc)("a")}";"#));
-    refused(&program(defs, r#"stdout <- "${twice(len2)("abc")}";"#));
-    let bang = r#"h = twice(x -> x ++ "!"); stdout <- h("a");"#;
+    refused(&program(defs, r#"m.stdout <- "${twice(inc)("a")}";"#));
+    refused(&program(defs, r#"m.stdout <- "${twice(len2)("abc")}";"#));
+    let bang = r#"h = twice(x -> x ++ "!"); m.stdout <- h("a");"#;
     assert_eq!(run(&program(defs, bang), ""), "a!!\n");
-    let ok = r#"h = compose(x -> x * 2, x -> x + 1); stdout <- "${h(4)}";"#;
+    let ok = r#"h = compose(x -> x * 2, x -> x + 1); m.stdout <- "${h(4)}";"#;
     assert_eq!(run(&program(defs, ok), ""), "10\n");
     refused(&program(
         defs,
-        r#"h = compose(x -> x * 2, x -> x ++ "s"); stdout <- "${h("a")}";"#,
+        r#"h = compose(x -> x * 2, x -> x ++ "s"); m.stdout <- "${h("a")}";"#,
     ));
 }
 
@@ -257,43 +260,43 @@ fn a_returned_function_carries_the_needs_of_its_parameters() {
 fn a_name_an_else_pattern_binds_has_the_type_of_its_payload() {
     let parse =
         r#"parse(positional text) = if text == "" { #parseError(line: 1, col: 0) } else { 42 };"#;
-    let both = r#"both = parse("") else #parseError(line:, col:) -> line * 100 + col; stdout <- "${both}" else "?";"#;
+    let both = r#"both = parse("") else #parseError(line:, col:) -> line * 100 + col; m.stdout <- "${both}" else "?";"#;
     assert_eq!(run(&program(parse, both), ""), "100\n");
     let wrap = "wrap(positional v) = #w(v: v);";
-    let five = r#"r = wrap(5) else #w(v:) -> v + 1; stdout <- "${r}" else "?";"#;
+    let five = r#"r = wrap(5) else #w(v:) -> v + 1; m.stdout <- "${r}" else "?";"#;
     assert_eq!(run(&program(wrap, five), ""), "6\n");
     refused(&program(
         wrap,
-        r#"r = wrap("a") else #w(v:) -> v + 1; stdout <- "${r}";"#,
+        r#"r = wrap("a") else #w(v:) -> v + 1; m.stdout <- "${r}";"#,
     ));
     refused(&program(
         "",
-        r#"r = #e(x: "a") else #e(x:) -> x + 1; stdout <- "${r}";"#,
+        r#"r = #e(x: "a") else #e(x:) -> x + 1; m.stdout <- "${r}";"#,
     ));
     // Of two shapes, the name has the union of both.
     let pick = r#"pick(positional c: bool) = if c { #e(x: 1) } else { #e(x: "a") };"#;
     refused(&program(
         pick,
-        r#"r = pick(true) else #e(x:) -> x + 1; stdout <- "${r}";"#,
+        r#"r = pick(true) else #e(x:) -> x + 1; m.stdout <- "${r}";"#,
     ));
     let pick = "pick(positional c: bool) = if c { #e(x: 1) } else { #e(x: 2, y: 3) };";
-    let y = r#"r = pick(false) else #e(y:) -> y + 1; stdout <- "${r}" else "?";"#;
+    let y = r#"r = pick(false) else #e(y:) -> y + 1; m.stdout <- "${r}" else "?";"#;
     assert_eq!(run(&program(pick, y), ""), "4\n");
-    let nested = r#"r = #o(i: #e(x: 2)) else #o(i: #e(x:)) -> x * 3; stdout <- "${r}" else "?";"#;
+    let nested = r#"r = #o(i: #e(x: 2)) else #o(i: #e(x:)) -> x * 3; m.stdout <- "${r}" else "?";"#;
     assert_eq!(run(&program("", nested), ""), "6\n");
     let v = "v = #e(code: 5) else #e(code:) -> code;";
     assert_eq!(
-        run(&program(v, r#"stdout <- String(v + 1) else "z";"#), ""),
+        run(&program(v, r#"m.stdout <- String(v + 1) else "z";"#), ""),
         "6\n"
     );
     refused(&program(
         &format!("{FIRST}\n{v}"),
-        r#"stdout <- String(first(v)) else "z";"#,
+        r#"m.stdout <- String(first(v)) else "z";"#,
     ));
-    refused(&program(v, r#"stdout <- String(v ++ "a") else "z";"#));
+    refused(&program(v, r#"m.stdout <- String(v ++ "a") else "z";"#));
     refused(&program(
         &format!("{APP}\n{v}"),
-        r#"stdout <- String(app(v)) else "z";"#,
+        r#"m.stdout <- String(app(v)) else "z";"#,
     ));
 }
 
@@ -302,34 +305,34 @@ fn a_generic_else_pattern_binds_the_payload_each_call_passes() {
     let g = "g(positional e) = e else #e(code:) -> code;";
     assert_eq!(
         run(
-            &program(g, r#"stdout <- String(g(#e(code: 5)) + 1) else "z";"#),
+            &program(g, r#"m.stdout <- String(g(#e(code: 5)) + 1) else "z";"#),
             ""
         ),
         "6\n"
     );
     assert_eq!(
-        run(&program(g, r#"stdout <- String(g(3) + 1) else "z";"#), ""),
+        run(&program(g, r#"m.stdout <- String(g(3) + 1) else "z";"#), ""),
         "4\n"
     );
     refused(&program(
         g,
-        r#"stdout <- String(g(#e(code: "a")) + 1) else "z";"#,
+        r#"m.stdout <- String(g(#e(code: "a")) + 1) else "z";"#,
     ));
     refused(&program(
         &format!("{g}\n{FIRST}"),
-        r#"stdout <- String(first(g(#e(code: 5)))) else "z";"#,
+        r#"m.stdout <- String(first(g(#e(code: 5)))) else "z";"#,
     ));
     let h = "h(positional e) = e else #o(i: #e(x:)) -> x;";
     assert_eq!(
         run(
-            &program(h, r#"stdout <- String(h(#o(i: #e(x: 2))) * 3) else "z";"#),
+            &program(h, r#"m.stdout <- String(h(#o(i: #e(x: 2))) * 3) else "z";"#),
             ""
         ),
         "6\n"
     );
     refused(&program(
         h,
-        r#"stdout <- String(h(#o(i: #e(x: "s"))) * 3) else "z";"#,
+        r#"m.stdout <- String(h(#o(i: #e(x: "s"))) * 3) else "z";"#,
     ));
 }
 
@@ -338,12 +341,15 @@ fn a_self_application_takes_the_least_settled_result() {
     // Inside `w(w)` the inner use first gives nothing; the outer then gives 1, which settles.
     let settles = "w(positional f) = if true { 1 } else { f(f) + 1 };\nspin = w(w);";
     assert_eq!(
-        run(&program(settles, r#"stdout <- String(spin) else "z";"#), ""),
+        run(
+            &program(settles, r#"m.stdout <- String(spin) else "z";"#),
+            ""
+        ),
         "1\n"
     );
     // Here the inner use must give a string, and the outer gives 1 | String: not settled.
     let grows = "w(positional f) = if true { 1 } else { f(f) ++ \"a\" };\nspin = w(w);";
-    refused(&program(grows, r#"stdout <- "x";"#));
+    refused(&program(grows, r#"m.stdout <- "x";"#));
 }
 
 /// `f` takes a pair and gives its first component; `g` passes its argument on to `f`; `pick`
@@ -358,7 +364,7 @@ const PAIR: &str = "f(positional p) {\n  a, b = p;\n  return a;\n}\n\
 fn kind_refused(call: &str) -> String {
     let src = program(
         PAIR,
-        &format!(r#"stdout <- if {call} is int {{ "int" }} else {{ "other" }};"#),
+        &format!(r#"m.stdout <- if {call} is int {{ "int" }} else {{ "other" }};"#),
     );
     match load(src.as_bytes()) {
         Ok(_) => panic!(
@@ -390,9 +396,9 @@ fn a_destructured_parameter_takes_only_a_tuple_of_its_length() {
     assert!(e.contains("this value is 5, not a tuple of 2"), "{e}");
     assert!(e.contains("`g` needs this of its argument here"), "{e}");
     // A pair passes, of any component types, and gives its first component's type.
-    let is = r#"stdout <- if f((1, 2)) is int { "int" } else { "other" };"#;
+    let is = r#"m.stdout <- if f((1, 2)) is int { "int" } else { "other" };"#;
     assert_eq!(run(&program(PAIR, is), ""), "int\n");
-    let is = r#"stdout <- if g(("x", 2)) is int { "int" } else { "other" };"#;
+    let is = r#"m.stdout <- if g(("x", 2)) is int { "int" } else { "other" };"#;
     assert_eq!(run(&program(PAIR, is), ""), "other\n");
     assert_eq!(runs(PAIR, r#""${f((1, "x"))}""#, ""), "1\n");
 }

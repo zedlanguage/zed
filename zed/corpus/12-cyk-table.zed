@@ -24,8 +24,8 @@ table(positional s) = {
   cyk
 };
 
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- stdin.map(l -> {
+main(m: MainArgs) {
+  m.stdout <- m.stdin.map(l -> {
     cyk = table(l);
     whole = if l::len == 0 { false } else { (cyk[l::len][0] else noCell).s };
     count = (for w -> row in cyk { row.where(c -> c.s).count }).sum;

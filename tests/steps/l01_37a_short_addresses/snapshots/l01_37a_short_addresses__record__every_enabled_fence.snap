@@ -2,6 +2,10 @@
 source: tests/steps/l01_37a_short_addresses/record.rs
 expression: without_addresses(&out)
 ---
+DESIGN.md [sec:ports] 1
+  warnings: []
+  checks: [Outcome { line: 7, col: 3, failure: Some("this file declares 2 functions named `main`, at the places listed below, and a program starts at exactly one. Keep the `main` the program should start at, and rename or remove each of the others.\n  [1] 2:3: `main` is declared here\n      2 |   main(m: MainArgs) {\n        |   ^^^^^^^^^^^^^^^^^^^\n  [2] 7:3: `main` is declared here\n      7 |   main(m: MainArgs) -> int {\n        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^") }]
+
 EXAMPLES.md [2. Bindings and values] 2
   rejected: [
     Diagnostic {
@@ -38,6 +42,19 @@ EXAMPLES.md [2. Bindings and values] 2
     },
 ]
   checks: [Outcome { line: 4, col: 3, failure: None }]
+
+EXAMPLES.md [5. Conditionals] 1
+  rejected: [
+    Diagnostic {
+        line: 3,
+        col: 14,
+        message: "the declared result type `-> Utf8String` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+]
+  checks: [Outcome { line: 3, col: 14, failure: Some("the declared result type `-> Utf8String` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
 
 EXAMPLES.md [5. Conditionals] 2
   rejected: [
@@ -152,19 +169,10 @@ EXAMPLES.md [6. Functions] 3
   checks: [Outcome { line: 2, col: 8, failure: Some("`greet` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `greet`, or correct the name if it is misspelled.") }, Outcome { line: 3, col: 8, failure: Some("`add` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `add`, or correct the name if it is misspelled.") }, Outcome { line: 4, col: 14, failure: Some("`add` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `add`, or correct the name if it is misspelled.") }, Outcome { line: 5, col: 8, failure: Some("the mark names the row \"Missing argument\", and the diagnostic is in no row of the rejection table: `greet` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `greet`, or correct the name if it is misspelled.") }, Outcome { line: 6, col: 8, failure: Some("the mark names the row \"Argument in the wrong form\", and the diagnostic is in no row of the rejection table: `greet` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `greet`, or correct the name if it is misspelled.") }, Outcome { line: 7, col: 36, failure: Some("the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.") }, Outcome { line: 7, col: 51, failure: Some("the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.") }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 14, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
 
 EXAMPLES.md [18. Files, stores, and the world] 8
-  rejected: [
-    Diagnostic {
-        line: 2,
-        col: 59,
-        message: "the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.",
-        steps: [],
-        menu: "",
-        row: None,
-    },
-]
-  checks: [Outcome { line: 2, col: 59, failure: Some("the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.") }]
+  warnings: []
+  checks: []
 
-EXAMPLES.md [18. Files, stores, and the world] 9
+EXAMPLES.md [18. Files, stores, and the world] 11
   rejected: [
     Diagnostic {
         line: 2,

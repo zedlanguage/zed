@@ -64,12 +64,14 @@ fn every_row_passes_through_zir() {
         assert_eq!(got, want, "{}", path.display());
         rows += got.len();
     }
-    // The seven units of L1 hold 41 checks, which evaluate 58 closed terms; the 11 waves
-    // among them lower to port regions. L25.8's unit adds 7 checks and 7 closed terms, and
+    // The seven units of L1 hold 41 checks, which evaluate 64 closed terms; the 11 waves
+    // among them lower to port regions. Each of config.zed's three rows evaluates the `""` it
+    // gives standard input and the command line, which its `main` does not read (QUESTIONS
+    // Q51). L25.8's unit adds 7 checks and 7 closed terms, and
     // no wave; L1.40d's unit adds 19 checks and 19 closed terms, and no wave; L1.26's readings
     // unit 18 checks and 18 closed terms, and no wave; and L1.26a's unit 7 checks and 7 closed
     // terms, and no wave. The two rejection units add 4 marked lines, which run nothing. A
     // runner that skipped the map would pass the comparison above.
     assert_eq!(rows, 96);
-    assert_eq!((lowered.get(), ported.get()), (109, 11));
+    assert_eq!((lowered.get(), ported.get()), (115, 11));
 }

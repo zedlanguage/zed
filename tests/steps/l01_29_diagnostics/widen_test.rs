@@ -50,7 +50,7 @@ fn run(file: &str) -> (u8, String) {
 pub(super) fn checked_program(lines: &str) -> String {
     format!(
         "half(positional x) = x div 2 test {{ 10 -> 5, 7 -> 3 }}\n\
-         main(stdin: Lines) -> (stdout: Lines) {{\n{lines}  stdout <- String(0);\n}}\n"
+         main(m: MainArgs) {{\n{lines}  m.stdout <- String(0);\n}}\n"
     )
 }
 
@@ -235,8 +235,8 @@ fn area_program(push: &str) -> String {
 fn sized_area(side: u64, push: &str) -> String {
     format!(
         "half(positional x) = x div 2 test {{ 10 -> 5, 7 -> 3 }}\n\
-         main(stdin: Lines) -> (stdout: Lines) {{\n  side = {side};\n  \
-         area = side * side;\n  stdout <- {push};\n}}\n"
+         main(m: MainArgs) {{\n  side = {side};\n  \
+         area = side * side;\n  m.stdout <- {push};\n}}\n"
     )
 }
 
@@ -253,16 +253,16 @@ fn a_rejection_is_reported_alone_and_its_repair_reports_the_notice() {
     let why = zedc::run::load(src.as_bytes())
         .err()
         .expect("the concatenation is rejected");
-    assert!(why.starts_with("5:13: "), "{why}");
+    assert!(why.starts_with("5:15: "), "{why}");
     assert!(!why.contains("widens"), "{why}");
     let (status, out, err) = test(&[&file]);
     assert_eq!(status, 1, "{out}");
-    assert!(out.contains(&format!("{file}:5:13: ")), "{out}");
+    assert!(out.contains(&format!("{file}:5:15: ")), "{out}");
     assert!(!out.contains("widens"), "{out}");
     assert_eq!(err, "");
     let (status, err) = run(&file);
     assert_eq!(status, 1);
-    assert!(err.contains(&format!("{file}:5:13: ")), "{err}");
+    assert!(err.contains(&format!("{file}:5:15: ")), "{err}");
     assert!(!err.contains("widens"), "{err}");
 
     // Repaired, the unit is accepted and the notice is reported.
@@ -327,17 +327,16 @@ fn a_batch_of_rejected_and_repaired_units_scales() {
         let (status, out, err) = test(&args);
         assert_eq!(status, 1);
         assert_eq!(firsts(&err).len(), m / 2);
-        assert_eq!(out.matches(":5:13: ").count(), m / 2);
+        assert_eq!(out.matches(":5:15: ").count(), m / 2);
     });
 }
 
-/// A unit whose front end accepts it and whose `main` has a port that `zedc run` refuses is
-/// rejected: `zedc test` reports the rejection alone, as `zedc run` does, and no notice.
+/// A unit whose `main` has a parameter other than `m: MainArgs` is rejected: `zedc test` reports the rejection alone, as `zedc run` does, and no notice.
 #[test]
 fn a_unit_whose_main_ports_are_rejected_prints_no_warning() {
     let src = "half(positional x) = x div 2 test { 10 -> 5, 7 -> 3 }\n\
-               main(stdin: int) -> (stdout: Lines) {\n  side = 3037000500;\n  \
-               area = side * side;\n  stdout <- String(area);\n}\n";
+               main(stdin: int) {\n  side = 3037000500;\n  \
+               area = side * side;\n  m.stdout <- String(area);\n}\n";
     let file = unit("ports", "ports.zed", src);
     let why = zedc::run::load(src.as_bytes())
         .err()
@@ -348,7 +347,7 @@ fn a_unit_whose_main_ports_are_rejected_prints_no_warning() {
     assert!(
         out.contains(&format!(
             "{file}:2:6: {}",
-            zed_tests::input_port_message("stdin", "is declared as `int`")
+            zed_tests::main_param_message("stdin", "int")
         )),
         "{out}"
     );

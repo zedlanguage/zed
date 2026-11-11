@@ -58,6 +58,6 @@ fn every_row_passes_natively_with_the_machines_counts() {
         // readings unit and 7 in L1.26a's), and the 4 marked lines of the two rejection units.
         assert_eq!(rows, 96);
         let want = if fuse { 199 } else { 225 };
-        assert_eq!((runs.get(), cells.get(), writes.get()), (109, 195, want));
+        assert_eq!((runs.get(), cells.get(), writes.get()), (115, 195, want));
     }
 }

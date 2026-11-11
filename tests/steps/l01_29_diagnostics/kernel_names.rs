@@ -44,8 +44,8 @@ fn tie(names: [&str; 4]) -> String {
 /// A unit of `defs` whose `main` calls `ok` at `args`.
 fn calling(defs: &str, args: &str) -> String {
     format!(
-        "{defs}main(stdin: Lines) -> (stdout: Lines) {{\n  a = int(stdin[1] else \"0\") else 0;\n  \
-         r = if ok({args}) {{ \"in\" }} else {{ \"out\" }};\n  stdout <- \"${{r}}\";\n}}\n"
+        "{defs}main(m: MainArgs) {{\n  a = int(m.stdin[1] else \"0\") else 0;\n  \
+         r = if ok({args}) {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{r}}\";\n}}\n"
     )
 }
 
@@ -111,7 +111,7 @@ fn each_overload_asks_its_own_question() {
     // `ok` over four names is refused at its own line; the overload `ok(x)` after it, over a
     // decided question, asks its own and is not asked the other's.
     let src = format!(
-        "{}ok(x) = x > 2;\nmain(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- \"a\";\n}}\n",
+        "{}ok(x) = x > 2;\nmain(m: MainArgs) {{\n  m.stdout <- \"a\";\n}}\n",
         tie(["x", "y", "z", "w"])
     );
     let out = rejected(&src);

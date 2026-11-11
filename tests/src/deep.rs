@@ -120,7 +120,7 @@ pub struct Program {
 
 /// `main` printing `prefix` + `body` + `suffix`, inside a string hole.
 fn printing(top: &str, hole: String, prints: String, shape: &'static str) -> Program {
-    let text = format!("{top}main() -> (stdout: Lines) {{\n  stdout <- \"${{{hole}}}\";\n}}\n");
+    let text = format!("{top}main(m: MainArgs) {{\n  m.stdout <- \"${{{hole}}}\";\n}}\n");
     Program {
         shape,
         text,
@@ -146,7 +146,7 @@ pub fn programs(n: usize) -> Vec<Program> {
     let lams: String = (0..n).map(|i| format!("(x{i}) -> ")).collect::<String>() + "1";
     let done = |shape, body: String| Program {
         shape,
-        text: format!("main() -> (stdout: Lines) {{\n  t = {body};\n  stdout <- \"done\";\n}}\n"),
+        text: format!("main(m: MainArgs) {{\n  t = {body};\n  m.stdout <- \"done\";\n}}\n"),
         prints: "done".into(),
     };
     vec![

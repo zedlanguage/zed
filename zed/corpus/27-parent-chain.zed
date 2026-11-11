@@ -6,8 +6,8 @@
 // MISMATCH. Input lines: "child parent", where parent "-" marks a root.
 struct Link { child: String, parent: String }
 
-main(stdin: Lines) -> (stdout: Lines) {
-  links = stdin.map(l -> { w = l.split(" "); Link(child: w[0] else "", parent: w[1] else "-") });
+main(m: MainArgs) {
+  links = m.stdin.map(l -> { w = l.split(" "); Link(child: w[0] else "", parent: w[1] else "-") });
   par   = links.group(e -> e.child).map(g -> g.first.parent);
   up(positional v) = if (par[v] else "-") == "-" { v } else { par[v] else v };
   n = par::card;
@@ -21,7 +21,7 @@ main(stdin: Lines) -> (stdout: Lines) {
   rootIdx(positional v) = anc[n][v];
   depthIdx(positional v) = (0..<n).where(k -> anc[k][v] != anc[k + 1][v]).count;
 
-  stdout <- for v -> _ in par {
+  m.stdout <- for v -> _ in par {
     r = rootRec(v);
     d = depthRec(v);
     ok = r == rootLoop(v) && r == rootIdx(v) && d == depthIdx(v);

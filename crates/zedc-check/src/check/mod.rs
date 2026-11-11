@@ -882,6 +882,8 @@ struct Ck<'t, 'a> {
     alias: HashMap<usize, Span>,
     /// What the text of each expression shows of its `int` value, by its span.
     known: HashMap<Span, Known>,
+    /// The expressions whose value is the result of `main`, its exit status ([`Ck::main_tails`]).
+    main_tails: HashSet<Span>,
     /// The value of each binder `name = e`, read for what it shows of its `int` value only when
     /// a bit word or an exponent reads the name.
     facts: HashMap<usize, &'a Expr>,
@@ -1039,6 +1041,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             alias: HashMap::new(),
             known: HashMap::new(),
             facts: HashMap::new(),
+            main_tails: HashSet::new(),
             whence: HashMap::new(),
             narrowings: 0,
             narrowed_at: HashMap::new(),
@@ -2933,6 +2936,69 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .to_string(),
         ];
         self.error_offering(span, message, menu);
+    }
+
+    /// Checks that `main`, `f` with the signature `sig`, gives an exit status (DESIGN.md
+    /// sec:ports, step L1.19): an `int`, or nothing, when its body exports nothing, which exits
+    /// with 0. A failure that bubbles out of the body exits with 1 and is not part of the
+    /// status, so the result's loose atoms are left out. That each `int` it gives is in
+    /// `0..=255` is checked where the walk reads it ([`Ck::status_in_range`]).
+    pub(super) fn exit_status(&mut self, f: &Function, sig: &Sig) {
+        let nothing = Ty::tuple(Vec::new());
+        for a in &sig.arrows {
+            let r = a.result.without_loose();
+            let rest = r.without(&KType::int());
+            if rest.is_empty() || rest.subtype(&nothing) {
+                continue;
+            }
+            let span = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts.last().map_or(f.body.span, |s| s.span),
+                _ => f.body.span,
+            };
+            let code = self.t.text.map_or("the body", |t| &t[span.start..span.end]);
+            let message = format!(
+                "`main` gives `{code}`, which is {}, and the result of `main` is the program's \
+                 exit status, an `int` from 0 to 255",
+                self.show(&r)
+            );
+            let menu = [
+                "repair: give the status as an int, as `0` for success".to_string(),
+                "repair: write the text to the output, as `m.stdout <- text`, and give no result"
+                    .to_string(),
+            ];
+            self.error_offering(span, message, menu);
+            return;
+        }
+    }
+
+    /// Records the expressions whose value is the result of `main`, the body `body`: the
+    /// export of a block, and the branches of an `if`, a `match` and an `else`, each read for
+    /// the exit status where the walk reaches it ([`Ck::status_in_range`]). Each expression
+    /// is visited once, on an explicit stack, so the cost is linear in the body's branches.
+    pub(super) fn main_tails(&mut self, body: &Expr) {
+        let mut stack = vec![body];
+        while let Some(e) = stack.pop() {
+            match &e.kind {
+                ExprKind::Block(stmts) => {
+                    if let Some(Stmt {
+                        kind: StmtKind::Return(es),
+                        ..
+                    }) = stmts.last()
+                        && let [one] = es.as_slice()
+                    {
+                        stack.push(one);
+                    }
+                }
+                ExprKind::If {
+                    then, otherwise, ..
+                } => stack.extend([&**then, &**otherwise]),
+                ExprKind::Else { of, default, .. } => stack.extend([&**of, &**default]),
+                ExprKind::Match { arms, .. } => stack.extend(arms.iter().map(|a| &a.body)),
+                _ => {
+                    self.main_tails.insert(e.span);
+                }
+            }
+        }
     }
 
     /// Checks that a value of `t` may be pushed to a `Lines` port (L1.19): a `String` or a

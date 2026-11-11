@@ -18,9 +18,9 @@ grow(positional x) = (1, (1, (1, (1, (1, (1, (1, (1, (1, (1, (1, (1, (1, (1, (1,
 build(positional f, positional k, positional acc) =
   if k == 0 { acc } else { f(f, k - 1, grow(acc)) };
 
-main(stdin: Lines) -> (stdout: Lines) {
+main(m: MainArgs) {
   x = build(build, 1250, 0);
-  stdout <- if x == x { "same" } else { "different" };
+  m.stdout <- if x == x { "same" } else { "different" };
 }
 "#;
 

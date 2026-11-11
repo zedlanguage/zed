@@ -10,15 +10,15 @@ use super::{built, dir, executable};
 /// A program that reads the file each of its first `n` arguments names, and writes what each
 /// holds on one line, joined by `|`.
 fn reader(n: usize) -> String {
-    let mut src = "main(fs: Files, args: CommandLine) -> (stdout: Lines) {\n".to_string();
+    let mut src = "main(m: MainArgs) {\nfs = files();\n".to_string();
     for k in 1..=n {
         src += &format!(
-            "  r{k} = (fs[args[{k}] else \"\"] else #notFound -> \"missing\") \
+            "  r{k} = (fs[m.args[{k}] else \"\"] else #notFound -> \"missing\") \
              else #ioError -> \"unreadable\";\n"
         );
     }
     let holes: Vec<String> = (1..=n).map(|k| format!("${{r{k}}}")).collect();
-    src + &format!("  stdout <- \"{}\";\n}}\n", holes.join("|"))
+    src + &format!("  m.stdout <- \"{}\";\n}}\n", holes.join("|"))
 }
 
 #[test]

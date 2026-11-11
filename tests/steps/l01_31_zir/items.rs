@@ -406,6 +406,7 @@ fn the_text_and_binary_forms_read_the_same_generated_binders() {
 fn edges_read_back() {
     for e in [
         "state out",
+        "state m.stdout",
         "int",
         "int in [0..=9]",
         "int in [..=-1, 1..]",
@@ -418,5 +419,36 @@ fn edges_read_back() {
     ] {
         let ed = parse_edge(e).unwrap_or_else(|err| panic!("{e}: {err}"));
         assert_eq!(edge(&ed), e);
+    }
+}
+
+#[test]
+fn a_port_named_by_a_field_of_main_args_reads_back() {
+    // `main(m: MainArgs)` pushes to `m.stdout`: the name of the port is the push target,
+    // names joined by `.`, in a state edge and in a port operation alike.
+    let text = "zir 1\nr region port (state m.stdout)\n\
+                r.0 port read m.stdin (r^0) -> (String; state m.stdin)\n\
+                r.1 port push m.stdout (r^0, 1) -> (_; state m.stdout)\nr results ()\n";
+    let g = parse(text).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(parse(&zedc::zir::text::print(&g)), Ok(g));
+    for (bad, why) in [
+        (
+            "state m.",
+            "column 9: expected a name, found the end of the line",
+        ),
+        (
+            "state m. stdout",
+            "column 9: expected a name right after `.`, found a space",
+        ),
+        (
+            "state m.1x",
+            "column 9: `1x` is not a name: a name starts with a letter or `_`",
+        ),
+    ] {
+        assert_eq!(
+            parse_edge(bad).map(|e| edge(&e)),
+            Err(why.to_string()),
+            "{bad}"
+        );
     }
 }

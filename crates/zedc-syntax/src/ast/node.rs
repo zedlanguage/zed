@@ -469,8 +469,9 @@ pub struct Function {
     pub name: String,
     /// Its parameters.
     pub params: Vec<Param>,
-    /// Its output ports, `-> (stdout: Lines)`, if declared.
-    pub ports: Option<Vec<Port>>,
+    /// For `main`, its header as written and its output ports; its `params` are then the
+    /// fields of its argument the body reads. Boxed, so that a statement keeps its size.
+    pub main: Option<Box<MainHeader>>,
     /// Whether its body is an equation `= e`; otherwise it is a block, which may export
     /// nothing, as a `main` that only pushes does.
     pub equation: bool,
@@ -480,7 +481,27 @@ pub struct Function {
     pub tests: Vec<(Expr, Expr)>,
 }
 
-/// An output port of a function's header: `stdout: Lines`.
+/// The header of `main` as written, `main(m: MainArgs) -> int` (DESIGN.md sec:ports).
+#[derive(Debug)]
+pub struct MainHeader {
+    /// Its parameter, `m: MainArgs`, if written: its name, its text and its type if written.
+    pub param: Option<(String, Span, Option<Type>)>,
+    /// Its result type, `int`, if written.
+    pub result: Option<Type>,
+    /// Its output ports: the fields of its argument the body pushes to, `m.stdout` and
+    /// `m.stderr`, which the builder makes from the body.
+    pub ports: Vec<Port>,
+}
+
+impl Function {
+    /// The output ports of `main` ([`MainHeader::ports`]), or `None` for any other function.
+    pub fn ports(&self) -> Option<&[Port]> {
+        self.main.as_ref().map(|h| &h.ports[..])
+    }
+}
+
+/// An output port of `main`, a field of `MainArgs` its body pushes to: `m.stdout`, of type
+/// `Lines`.
 #[derive(Debug)]
 pub struct Port {
     /// Its name.

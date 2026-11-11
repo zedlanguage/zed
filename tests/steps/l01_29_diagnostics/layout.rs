@@ -68,10 +68,10 @@ fn a_diagnostic_without_steps_is_one_line() {
 #[test]
 fn the_underline_covers_a_multibyte_span_by_characters() {
     let out = super::rejected(
-        "main(stdin: Lines) -> (stdout: Lines) {
+        "main(m: MainArgs) {
   größe = 3;
   größe = 4;
-  stdout <- \"x\";
+  m.stdout <- \"x\";
 }
 ",
     );
@@ -446,8 +446,8 @@ fn powers_nested_on_one_line_are_drawn_by_their_ends_on_one_rule() {
 /// whose partial sums is a step.
 fn summed(n: usize) -> String {
     format!(
-        "main(stdin: Lines) -> (stdout: Lines) {{\n  n = int(stdin[1]) else 0;\n  total = {};\n  \
-         stdout <- \"total: \" ++ total;\n}}\n",
+        "main(m: MainArgs) {{\n  n = int(m.stdin[1]) else 0;\n  total = {};\n  \
+         m.stdout <- \"total: \" ++ total;\n}}\n",
         vec!["n"; n].join(" + ")
     )
 }

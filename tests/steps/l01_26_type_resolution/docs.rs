@@ -14,7 +14,7 @@ fn load_errors(src: &str) -> String {
 }
 
 const MAIN: &str =
-    "main() -> (stdout: Lines) {\n  stdout <- String(total(price: 3.0f64, qty: 2.0f64));\n}\n";
+    "main(m: MainArgs) {\n  m.stdout <- String(total(price: 3.0f64, qty: 2.0f64));\n}\n";
 
 #[test]
 fn a_doc_block_attaches_to_the_declaration_after_it() {
@@ -31,10 +31,10 @@ fn a_doc_block_attaches_to_the_declaration_after_it() {
 #[test]
 fn a_doc_block_inside_a_body_attaches_to_a_local_binding() {
     let src = "/// Writes the total.\n\
-               main() -> (stdout: Lines) {\n  \
+               main(m: MainArgs) {\n  \
                /// Two items at 3.0 each.\n  \
                t = 3.0f64 * 2.0f64;\n  \
-               stdout <- String(t);\n}\n";
+               m.stdout <- String(t);\n}\n";
     assert_eq!(load_errors(src), "");
 }
 
@@ -48,9 +48,9 @@ fn a_doc_block_before_no_declaration_is_reported() {
     );
     // Before a push, which declares nothing.
     let src = "total(price: f64, qty: f64) = price * qty;\n\
-               main() -> (stdout: Lines) {\n  \
+               main(m: MainArgs) {\n  \
                /// The receipt line.\n  \
-               stdout <- String(total(price: 3.0f64, qty: 2.0f64));\n}\n";
+               m.stdout <- String(total(price: 3.0f64, qty: 2.0f64));\n}\n";
     assert_eq!(
         load_errors(src),
         "3:3: this doc comment documents no declaration; a `///` block comes right before a \
@@ -118,7 +118,7 @@ fn checking_n_doc_blocks_with_links_scales() {
                 (i + 1) % n
             ));
         }
-        s.push_str("main() -> (stdout: Lines) {\n  stdout <- String(h0(x: 1));\n}\n");
+        s.push_str("main(m: MainArgs) {\n  m.stdout <- String(h0(x: 1));\n}\n");
         s
     };
     // Lexing, parsing and resolution run before timing, so only the doc check is measured.

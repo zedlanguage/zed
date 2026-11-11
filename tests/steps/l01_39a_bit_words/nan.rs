@@ -87,14 +87,14 @@ fn both_print(src: &Path, exe: &Path, words: &[OsString], want: &str) {
 /// after `else` is a value that makes no NaN, so a word the program fails to read shows as a
 /// wrong line.
 const ROUTES: &str = r#"
-main(args: CommandLine) -> (stdout: Lines) {
-  z = f64(args[1] else "") else 1.0;
-  one = f64(args[2] else "") else 0.0;
-  m = f64(args[3] else "") else 0.0;
-  r = f64(args[4] else "") else 0.0;
+main(m: MainArgs) {
+  z = f64(m.args[1] else "") else 1.0;
+  one = f64(m.args[2] else "") else 0.0;
+  m = f64(m.args[3] else "") else 0.0;
+  r = f64(m.args[4] else "") else 0.0;
   nan = z / z;
   inf = one / z;
-  stdout <- """
+  m.stdout <- """
     zero over zero ${f64Bits(z / z)}
     inf minus inf ${f64Bits(inf - inf)}
     zero times inf ${f64Bits(z * inf)}
@@ -177,8 +177,8 @@ fn every_nan_route_gives_the_canonical_nan_in_the_interpreter_and_the_executable
 /// The routes of [`ROUTES`] whose operands are literals, which the compiler may evaluate
 /// before the program runs.
 const FOLDED: &str = r#"
-main(args: CommandLine) -> (stdout: Lines) {
-  stdout <- """
+main(m: MainArgs) {
+  m.stdout <- """
     zero over zero ${f64Bits(0.0 / 0.0)}
     inf minus inf ${f64Bits(1.0 / 0.0 - 1.0 / 0.0)}
     negated ${f64Bits(-(0.0 / 0.0))}
@@ -221,10 +221,10 @@ fn nans_of_literal_operands_give_the_canonical_nan_in_the_interpreter_and_the_ex
 #[test]
 fn a_nan_operand_of_an_addition_does_not_carry_its_sign_into_the_executable() {
     let src_text = r#"
-main(args: CommandLine) -> (stdout: Lines) {
-  z = f64(args[1] else "") else 1.0;
-  one = f64(args[2] else "") else 0.0;
-  stdout <- "${f64Bits(z / z + one)} ${f64Bits(one + -(z / z))}";
+main(m: MainArgs) {
+  z = f64(m.args[1] else "") else 1.0;
+  one = f64(m.args[2] else "") else 0.0;
+  m.stdout <- "${f64Bits(z / z + one)} ${f64Bits(one + -(z / z))}";
 }
 "#;
     let d = dir("f64bits_nan_payload");

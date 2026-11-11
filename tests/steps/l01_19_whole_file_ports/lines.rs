@@ -18,7 +18,7 @@ fn a_family_of_lines_is_written_one_line_per_entry() {
     assert_eq!(cat(b""), "");
     // A line that is not UTF-8 is `#ioError`, so a program cannot push the family of its
     // input's lines as they are: the push would fail the wave (sec:failure).
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin;\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin;\n}\n";
     let out = run("cat", src, "first\n", &[]);
     assert_eq!(out.status, 1);
     assert!(
@@ -30,8 +30,8 @@ fn a_family_of_lines_is_written_one_line_per_entry() {
 
 #[test]
 fn lines_are_numbered_from_one_and_crlf_is_one_line_end() {
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  \
-               stdout <- \"${stdin[1] else \"\"}|${stdin[2] else \"\"}|${stdin[3] else \"none\"}\";\n}\n";
+    let src = "main(m: MainArgs) {\n  \
+               m.stdout <- \"${m.stdin[1] else \"\"}|${m.stdin[2] else \"\"}|${m.stdin[3] else \"none\"}\";\n}\n";
     let out = run("numbers", src, "name: Ada\r\nrole: admin\r\n", &[]);
     assert_eq!(out.stdout, "name: Ada|role: admin|none\n");
     assert_eq!(
@@ -57,9 +57,9 @@ fn a_line_that_is_not_utf8_is_an_io_error_at_its_key() {
 
 #[test]
 fn a_greeting_reads_one_line_and_writes_one() {
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  \
-               name = trim(stdin[1]) else \"stranger\";\n  \
-               stdout <- \"Hello, ${name}!\";\n}\n";
+    let src = "main(m: MainArgs) {\n  \
+               name = trim(m.stdin[1]) else \"stranger\";\n  \
+               m.stdout <- \"Hello, ${name}!\";\n}\n";
     assert_eq!(
         run("greet", src, "  Grace \n", &[]).stdout,
         "Hello, Grace!\n"
@@ -71,9 +71,9 @@ fn a_greeting_reads_one_line_and_writes_one() {
 fn a_computed_line_number_reads_that_line() {
     // The first line says which later line to print; a key that is not a literal reads the
     // family by value, as a literal one does.
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  \
-               pick = int(stdin[1]) else 0;\n  \
-               stdout <- stdin[pick + 1] else \"no such line\";\n}\n";
+    let src = "main(m: MainArgs) {\n  \
+               pick = int(m.stdin[1]) else 0;\n  \
+               m.stdout <- m.stdin[pick + 1] else \"no such line\";\n}\n";
     assert_eq!(
         run("pick", src, "2\nred\ngreen\nblue\n", &[]).stdout,
         "green\n"

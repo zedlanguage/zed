@@ -78,7 +78,6 @@ fn every_corpus_program_that_builds_formats_to_a_fixed_point() {
             "26-heat-stencil.zed",
             "27-parent-chain.zed",
             "28-precedence-climbing.zed",
-            "29-late-dedup.zed",
             "31-typechecker.zed",
         ]
     );

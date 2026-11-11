@@ -29,11 +29,11 @@ fn placing_a_diagnostic_on_every_line_scales() {
 
 /// A chain of `n` bindings, each reading the one before twice, ending in an error.
 fn doubled(n: usize) -> String {
-    let mut src = String::from("main(stdin: Lines) -> (stdout: Lines) {\n  a0 = 1;\n");
+    let mut src = String::from("main(m: MainArgs) {\n  a0 = 1;\n");
     for i in 1..n {
         src += &format!("  a{i} = a{p} + a{p};\n", p = i - 1);
     }
-    src + &format!("  stdout <- \"x\" ++ a{};\n}}\n", n - 1)
+    src + &format!("  m.stdout <- \"x\" ++ a{};\n}}\n", n - 1)
 }
 
 #[test]

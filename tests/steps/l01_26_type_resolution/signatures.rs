@@ -178,7 +178,8 @@ fn a_body_that_checks_at_no_type_is_reported() {
 fn a_parameter_compared_with_a_tuple_may_be_a_tuple() {
     // `<` orders tuples of one length as well as carriers, so `x` may be `(3, 4)`: its
     // class keeps the tuple arrow, which allows only other values, and bounds its variable.
-    let src = "lt(positional x) = x < (1, 2);\nmain() = lt((3, 4));\n";
+    let src =
+        "lt(positional x) = x < (1, 2);\nmain(m: MainArgs) { m.stdout <- String(lt((3, 4))); }\n";
     // No bounds clause can write a bound of other values, so the variable is printed `_`.
     let s = sig_of(src, "lt");
     assert_eq!(s.to_string(), "(_) -> bool");
@@ -190,7 +191,8 @@ fn a_parameter_compared_with_a_tuple_may_be_a_tuple() {
 fn a_generic_literal_compared_for_equality_does_not_bound_a_parameter() {
     // `==` takes any two values, so the generic literal follows the class and leaves it every
     // carrier: `eq1("a")` is false, not an error.
-    let src = "eq1(positional x) = x == 1;\nmain() = eq1(\"a\");\n";
+    let src =
+        "eq1(positional x) = x == 1;\nmain(m: MainArgs) { m.stdout <- String(eq1(\"a\")); }\n";
     let s = sig_of(src, "eq1");
     assert_eq!(s.to_string(), "(_) -> bool");
     assert!(s.bounds.is_empty());

@@ -15,9 +15,9 @@ fn a_replay_reads_the_record_not_the_world() {
     let (prices, rec) = (d.join("prices.txt"), d.join("wave.rec"));
     std::fs::write(&prices, "4\n").unwrap();
     let src = format!(
-        "main(stdin: Lines, fs: Files) -> (stdout: Lines) {{\n  \
-         unit = int(trim(fs[\"{}\"])) else 0;\n  qty = int(stdin[1]) else 0;\n  \
-         stdout <- \"total ${{unit * qty}}\";\n}}\n",
+        "main(m: MainArgs) {{\n  fs = files();\n  \
+         unit = int(trim(fs[\"{}\"])) else 0;\n  qty = int(m.stdin[1]) else 0;\n  \
+         m.stdout <- \"total ${{unit * qty}}\";\n}}\n",
         prices.display()
     );
     let rec_s = rec.to_str().unwrap();
@@ -35,7 +35,7 @@ fn a_replay_reads_the_record_not_the_world() {
 #[test]
 fn a_read_the_record_lacks_stops_the_replay() {
     let p =
-        load(b"main(fs: Files) -> (stdout: Lines) {\n  stdout <- fs[\"a.txt\"] else \"-\";\n}\n")
+        load(b"main(m: MainArgs) {\n  fs = files();\n  m.stdout <- fs[\"a.txt\"] else \"-\";\n}\n")
             .unwrap();
     let record = Record {
         program: Some(p.address().unwrap()),
@@ -45,7 +45,7 @@ fn a_read_the_record_lacks_stops_the_replay() {
     assert_eq!(
         e.as_deref(),
         Some(
-            "the port `fs` could not answer a read: the program reads \"a.txt\" here, and \
+            "the port `files()` could not answer a read: the program reads \"a.txt\" here, and \
              the record holds no read of it, so the replay cannot go on: a replay reads nothing \
              from outside, only what the record holds. The run that wrote the record did not \
              read \"a.txt\", so its inputs differed from these, or the record has been changed. \

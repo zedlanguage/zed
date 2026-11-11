@@ -96,30 +96,15 @@ pub fn is_not_yet(message: &str) -> bool {
         || message.contains("this version of zedc does not yet tie")
 }
 
-/// The message for the parameter `name` of `main` whose type `written` is no input port:
-/// `written` is ``is declared as `T` `` or `has no type`.
-pub fn input_port_message(name: &str, written: &str) -> String {
+/// The message for the parameter `name` of `main`, declared as `name: written`, a type that is
+/// not `MainArgs` and that no field of `MainArgs` replaces.
+pub fn main_param_message(name: &str, written: &str) -> String {
     format!(
-        "the parameter `{name}` of `main` {written}, and each parameter of `main` is an input \
-         port, which the program reads from outside when it runs, so its type must be one of \
-         these: `{name}: Lines` reads the lines of a file named on the command line as \
-         `{name}=path`, or of standard input for `stdin`; `{name}: Files` reads files by their \
-         paths as the program asks for them; `{name}: CommandLine` reads the words after `--` \
-         on the command line; `{name}: String ->? String` reads environment variables by name. \
-         Write the one that holds the input and compute the value from what it reads; or, to \
-         try `main` on given values, move its work into a function and test that function with \
-         `zedc test`."
-    )
-}
-
-/// The message for the output port `port` of `function`, declared as `ty`, which is not
-/// `Lines`.
-pub fn output_port_message(port: &str, function: &str, ty: &str) -> String {
-    format!(
-        "the output port `{port}` of `{function}` is declared as `{ty}`, and an output port \
-         writes lines of text, so its type must be `Lines`. Write `{port}: Lines`, and push to \
-         it a string, which writes one line, or a family of strings, which writes one line per \
-         entry, such as `{port} <- String(x);`."
+        "the parameter `{name}` of `main` is declared as `{name}: {written}`, and `main` takes \
+         one argument, of type `MainArgs`, which holds every input and output of the program. \
+         Declare `main(m: MainArgs)` and compute the `{written}` that `{name}` held in the body, \
+         from `m.args` (the words after `--`), `m.stdin` (standard input) or `m.env` (the \
+         environment); the program's output is pushed to `m.stdout`."
     )
 }
 

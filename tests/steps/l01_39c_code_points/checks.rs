@@ -38,11 +38,11 @@ fn the_bytes_are_not_a_number() {
 
 #[test]
 fn a_failure_must_be_handled_before_a_string_is_written() {
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- scalar(65);\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- scalar(65);\n}\n";
     let out = rejected(src);
     assert!(out.contains("String | #notScalar"), "{out}");
     assert!(accepted(
-        "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- scalar(65) else \"?\";\n}\n"
+        "main(m: MainArgs) {\n  m.stdout <- scalar(65) else \"?\";\n}\n"
     ));
 }
 

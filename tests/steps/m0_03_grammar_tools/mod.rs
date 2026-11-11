@@ -167,10 +167,7 @@ fn cases_passes_on_the_real_cases_and_fails_on_a_wrong_bracketing() {
 fn ring_gives_the_lowest_ring_of_each_file_and_fails_on_one_that_does_not_parse() {
     let dir = spec_dir("ring", &design(""), "");
     let good = dir.write("good.zed", DOUBLE);
-    let high = dir.write(
-        "high.zed",
-        "main() -> (stdout: Lines) { stdout <- [\"a\"]; }\n",
-    );
+    let high = dir.write("high.zed", "main(m: MainArgs) { m.stdout <- [\"a\"]; }\n");
     let (outcome, out) = tool(ring::run, &[&dir.root(), &good, &high]);
     assert_eq!(outcome, Ok(true), "{out}");
     assert!(out.starts_with(&format!("{good} L")), "{out}");
@@ -260,13 +257,14 @@ fn syntax_with_old_break() -> String {
 }
 
 /// The fuzz finds a sentence the old `break` derives with every lookahead satisfied but the
-/// parser rejects. Seed 15 at five sentences per ring was found by running seeds 1 to 20 (the
-/// only one of them that finds it at this size); if a grammar change moves it, run the seeds
-/// again. The same seed on the real grammar finds nothing, so the failure comes from the change.
+/// parser rejects. Seed 196 at five sentences per ring was found by running seeds 1 to 500 (the
+/// first of them that finds it at this size; 236, 329 and 443 do too); if a grammar change moves
+/// it, run the seeds again. The same seed on the real grammar finds nothing, so the failure comes
+/// from the change.
 #[test]
 fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
     const N: usize = 5;
-    const SEED: i64 = 15;
+    const SEED: i64 = 196;
     let real = spec_dir("fuzz_real", &design(""), "");
     let real = Spec::open(&real.root()).expect("the spec reads");
     let (outcome, out) = fuzz_of(&real, N, SEED);

@@ -15,8 +15,8 @@ use std::ffi::OsString;
 pub(crate) use zed_tests::step_helpers::l01_19a_command_line::{Outcome, program, run_words};
 
 /// A program that writes the variables `ZED_A` and `ZED_B`, `-` for one that is not set.
-pub(crate) const TWO: &str = "main(env: String ->? String) -> (stdout: Lines) {\n  \
-    stdout <- \"${env[\"ZED_A\"] else \"-\"}|${env[\"ZED_B\"] else \"-\"}\";\n}\n";
+pub(crate) const TWO: &str = "main(m: MainArgs) {\n  \
+    m.stdout <- \"${m.env[\"ZED_A\"] else \"-\"}|${m.env[\"ZED_B\"] else \"-\"}\";\n}\n";
 
 /// The variables `vars` as a process holds them.
 pub(crate) fn vars(vars: &[(&str, &[u8])]) -> Vec<(OsString, OsString)> {

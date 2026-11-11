@@ -6,22 +6,22 @@ use super::{rejected, steps};
 #[test]
 fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_port() {
     let out = rejected(
-        "main(stdin: Lines) -> (stdout: Lines) {
-  n = int(stdin[1]) else 0;
+        "main(m: MainArgs) {
+  n = int(m.stdin[1]) else 0;
   total = n * 2;
-  stdout <- \"total: \" ++ total;
+  m.stdout <- \"total: \" ++ total;
 }
 ",
     );
     assert_eq!(
         out,
-        r#"4:13: `++` does not take ("total: ", int): these are the types of its arguments here, and `++` has no arrow that takes them all
-  [1]  4:13: this expression is "total: "
-       4 |   stdout <- "total: " ++ total;
-         |             ^^^^^^^^^ [1]
-         |             ^^^^^^^^^^^^^^^^^^ [14]
-         |                          ^^^^^ [2, 15]
-  [2]  4:26: `total` is int here
+        r#"4:15: `++` does not take ("total: ", int): these are the types of its arguments here, and `++` has no arrow that takes them all
+  [1]  4:15: this expression is "total: "
+       4 |   m.stdout <- "total: " ++ total;
+         |               ^^^^^^^^^ [1]
+         |               ^^^^^^^^^^^^^^^^^^ [14]
+         |                            ^^^^^ [2, 15]
+  [2]  4:28: `total` is int here
   [3]  3:11: `total` is defined as this expression, int
        3 |   total = n * 2;
          |           ^ [5]
@@ -30,22 +30,22 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
   [4]  3:11: this `*` gives int
   [5]  3:11: `n` is int here
   [6]  2:7: `n` is defined as this expression, int
-       2 |   n = int(stdin[1]) else 0;
-         |       ^^^^^^^^^^^^^^^^^^^^ [6, 7]
-         |           ^^^^^ [10]     ^ [12]
-         |           ^^^^^^^^ [9]
-         |       ^-----------^ [8]
+       2 |   n = int(m.stdin[1]) else 0;
+         |       ^^^^^^^^^^^^^^^^^^^^^^ [6, 7]
+         |           ^^^^^^^ [10]     ^ [12]
+         |           ^^^^^^^^^^ [9]
+         |       ^-------------^ [8]
   [7]  2:7: this `else` gives int
   [8]  2:7: this call of `int` gives int | #invalid | #outOfBounds | #ioError(op: String, path: String, why: String)
   [9]  2:11: this expression gives String | #outOfBounds | #ioError(op: String, path: String, why: String)
-  [10] 2:11: `stdin` is (int) -> String | #notFound | #ioError(op: String, path: String, why: String) here
-  [11] 1:6: `stdin` is declared `Lines`
-       1 | main(stdin: Lines) -> (stdout: Lines) {
-         |      ^^^^^^^^^^^^
-  [12] 2:26: this literal, 0, is 0
+  [10] 2:11: `m.stdin` is (int) -> String | #notFound | #ioError(op: String, path: String, why: String) here
+  [11] 1:9: `m.stdin` is declared `Lines`
+       1 | main(m: MainArgs) {
+         |         ^^^^^^^^
+  [12] 2:28: this literal, 0, is 0
   [13] 3:15: this literal, 2, is 2
-  [14] 4:13: `++` takes (String, String) -> String
-  [15] 4:26: repair: write `String(total)`; the checker accepts that"#
+  [14] 4:15: `++` takes (String, String) -> String
+  [15] 4:28: repair: write `String(total)`; the checker accepts that"#
     );
 }
 
@@ -53,9 +53,9 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
 fn a_call_of_a_declared_function_shows_the_declaration_and_its_signature() {
     let out = rejected(
         "discount(price: int, tier) = if tier == #gold { price * 8 } else { price * 10 };
-main(stdin: Lines) -> (stdout: Lines) {
+main(m: MainArgs) {
   p = discount(price: \"12\", tier: #gold);
-  stdout <- String(p);
+  m.stdout <- String(p);
 }
 ",
     );
@@ -75,8 +75,8 @@ main(stdin: Lines) -> (stdout: Lines) {
 fn a_test_that_narrows_a_parameter_is_a_step_with_the_parameter_it_narrowed() {
     let out = rejected(
         "label(positional v) = if v is int { \"n\" ++ v } else { \"s\" };
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- label(3);
+main(m: MainArgs) {
+  m.stdout <- label(3);
 }
 ",
     );
@@ -95,10 +95,10 @@ main(stdin: Lines) -> (stdout: Lines) {
 #[test]
 fn a_rebinding_points_at_the_first_binding() {
     let out = rejected(
-        "main(stdin: Lines) -> (stdout: Lines) {
+        "main(m: MainArgs) {
   rate = 3;
   rate = 4;
-  stdout <- \"x\";
+  m.stdout <- \"x\";
 }
 ",
     );
@@ -119,8 +119,8 @@ fn a_rebinding_points_at_the_first_binding() {
 fn an_error_in_a_function_is_at_the_use_that_leaves_its_parameter_no_carrier() {
     let out = rejected(
         "badge(positional x) = \"#\" ++ x * 2;
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- badge(3);
+main(m: MainArgs) {
+  m.stdout <- badge(3);
 }
 ",
     );
@@ -145,8 +145,8 @@ fn an_error_over_several_parameters_is_one_error_with_the_use_that_joined_them()
     // The search this replaces tried 25 combinations of carriers and showed 12.
     let out = rejected(
         "area(positional w, positional h) = \"#\" ++ w * h;
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- area(2, 3);
+main(m: MainArgs) {
+  m.stdout <- area(2, 3);
 }
 ",
     );
@@ -170,8 +170,8 @@ main(stdin: Lines) -> (stdout: Lines) {
 fn a_function_whose_search_succeeded_shows_its_signature_not_the_abandoned_runs() {
     let out = rejected(
         "twice(positional x) = x * int(2);
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- \"a\" ++ twice(3);
+main(m: MainArgs) {
+  m.stdout <- \"a\" ++ twice(3);
 }
 ",
     );
@@ -190,11 +190,11 @@ main(stdin: Lines) -> (stdout: Lines) {
 
 #[test]
 fn a_long_chain_is_shown_whole_back_to_its_first_binding() {
-    let mut src = String::from("main(stdin: Lines) -> (stdout: Lines) {\n  a0 = 1;\n");
+    let mut src = String::from("main(m: MainArgs) {\n  a0 = 1;\n");
     for i in 1..25 {
         src += &format!("  a{i} = a{} + 1;\n", i - 1);
     }
-    src += "  stdout <- \"x\" ++ a24;\n}\n";
+    src += "  m.stdout <- \"x\" ++ a24;\n}\n";
     let out = rejected(&src);
     let s = steps(&out);
     assert!(!out.contains("goes back further"), "{out}");
@@ -213,11 +213,11 @@ fn a_long_chain_is_shown_whole_back_to_its_first_binding() {
 fn a_value_read_twice_is_derived_once() {
     // Each `a{i}` reads `a{i-1}` twice; without a visited set the derivation doubles at each
     // binding.
-    let mut src = String::from("main(stdin: Lines) -> (stdout: Lines) {\n  a0 = 1;\n");
+    let mut src = String::from("main(m: MainArgs) {\n  a0 = 1;\n");
     for i in 1..40 {
         src += &format!("  a{i} = a{p} + a{p};\n", p = i - 1);
     }
-    src += "  stdout <- \"x\" ++ a39;\n}\n";
+    src += "  m.stdout <- \"x\" ++ a39;\n}\n";
     let out = rejected(&src);
     let s = steps(&out);
     assert!(
@@ -236,8 +236,8 @@ fn a_body_reading_a_top_level_value_shows_that_value_s_whole_chain() {
         "base = 4;
 rate = base * 3;
 tag(positional x) = \"rate \" ++ rate;
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- tag(1);
+main(m: MainArgs) {
+  m.stdout <- tag(1);
 }
 ",
     );
@@ -290,8 +290,8 @@ fn a_rejected_nested_tuple_shows_each_tuple_and_its_type() {
 fn a_use_that_takes_other_values_is_listed_as_taking_every_value() {
     let out = rejected(
         "twice(positional p) = if p < (1, 2) { p * 2 } else { 0 };
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- \"x\";
+main(m: MainArgs) {
+  m.stdout <- \"x\";
 }
 ",
     );

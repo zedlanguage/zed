@@ -153,7 +153,7 @@ fn zedc_run_reports_a_misplaced_argument_once_with_the_declaration() {
     let program = |call: &str| {
         format!(
             "greet(name) = \"Hello, ${{name}}!\";\n\n\
-             main(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- {call};\n}}\n"
+             main(m: MainArgs) {{\n  m.stdout <- {call};\n}}\n"
         )
     };
     let ok = run("named_call_ok", &program("greet(name: \"Al\")"), "", &[]);
@@ -166,7 +166,7 @@ fn zedc_run_reports_a_misplaced_argument_once_with_the_declaration() {
     let bad = run("named_call_bad", &program("greet(\"Al\")"), "", &[]);
     assert_eq!(bad.status, 1);
     assert_eq!(bad.stdout, "");
-    let message = "4:19: this argument is passed by position, and the parameter it reaches, `name` of `greet`, is a named parameter, which a call passes only by name, as `name: …`\n";
+    let message = "4:21: this argument is passed by position, and the parameter it reaches, `name` of `greet`, is a named parameter, which a call passes only by name, as `name: …`\n";
     assert_eq!(bad.stderr.matches(message).count(), 1, "{}", bad.stderr);
     assert!(
         bad.stderr

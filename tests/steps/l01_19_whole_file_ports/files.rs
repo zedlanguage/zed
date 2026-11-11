@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use zed_kernel::{Lookup, Value};
 use zedc::run::load;
 
-use zed_tests::{input_port_message, output_port_message};
+use zed_tests::main_param_message;
 
 use super::{dir, run};
 
@@ -19,10 +19,10 @@ fn a_config_file_is_read_and_a_missing_one_falls_back() {
     let cfg = d.join("app.conf");
     std::fs::write(&cfg, "  verbose  \n").unwrap();
     let src = format!(
-        "main(fs: Files) -> (stdout: Lines) {{\n  \
+        "main(m: MainArgs) {{\n  fs = files();\n  \
          mode = trim(fs[\"{}\"]) else \"quiet\";\n  \
          extra = (fs[\"{}\"] else #notFound -> \"(no overrides)\") else \"(unreadable)\";\n  \
-         stdout <- \"mode=${{mode}} ${{extra}}\";\n}}\n",
+         m.stdout <- \"mode=${{mode}} ${{extra}}\";\n}}\n",
         cfg.display(),
         d.join("absent.conf").display()
     );
@@ -39,8 +39,8 @@ fn a_file_that_is_not_utf8_is_an_io_error() {
     let bin = d.join("blob.bin");
     std::fs::write(&bin, [0xffu8, 0x00, 0xfe]).unwrap();
     let src = format!(
-        "main(fs: Files) -> (stdout: Lines) {{\n  \
-         stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else \"missing\";\n}}\n",
+        "main(m: MainArgs) {{\n  fs = files();\n  \
+         m.stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else \"missing\";\n}}\n",
         bin.display()
     );
     assert_eq!(run("binary", &src, "", &[]).stdout, "unreadable\n");
@@ -75,9 +75,9 @@ impl Lookup for Counting {
 
 #[test]
 fn each_path_is_read_once_so_the_wave_sees_one_value() {
-    let src = "main(fs: Files) -> (stdout: Lines) {\n  \
+    let src = "main(m: MainArgs) {\n  fs = files();\n  \
                a = fs[\"notes.txt\"];\n  b = fs[\"notes.txt\"];\n  c = fs[\"todo.txt\"];\n  \
-               stdout <- \"${a == b} ${c else \"none\"}\";\n}\n";
+               m.stdout <- \"${a == b} ${c else \"none\"}\";\n}\n";
     let p = load(src.as_bytes()).unwrap();
     let port = Arc::new(Counting::default());
     let wave = p.run(&BTreeMap::new(), |_| port.clone()).unwrap();
@@ -87,7 +87,7 @@ fn each_path_is_read_once_so_the_wave_sees_one_value() {
         "notes.txt once, todo.txt once"
     );
     assert_eq!(wave.writes[0].1, b"true contents of \"todo.txt\"\n");
-    let paths: Vec<String> = wave.record.files["fs"]
+    let paths: Vec<String> = wave.record.files["files()"]
         .keys()
         .map(|k| k.to_string())
         .collect();
@@ -95,69 +95,75 @@ fn each_path_is_read_once_so_the_wave_sees_one_value() {
 }
 
 #[test]
-fn ports_are_lines_or_files_at_l1() {
-    let e = load(b"main(n: int) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n").err();
+fn main_takes_one_main_args() {
+    let e = load(b"main(n: int) {\n  m.stdout <- \"x\";\n}\n").err();
     assert_eq!(
         e.as_deref(),
-        Some(format!("1:6: {}", input_port_message("n", "is declared as `int`")).as_str())
+        Some(format!("1:6: {}", main_param_message("n", "int")).as_str())
     );
-    let e = load(b"main(fs: Files) -> (out: Files) {\n  out <- fs;\n}\n").err();
+    // The old header's output ports are a result type, and `main` gives an `int`.
+    let e = load(b"main(m: MainArgs) -> (out: Files) {\n  out <- \"x\";\n}\n").err();
     assert_eq!(
         e.as_deref(),
-        Some(format!("1:21: {}", output_port_message("out", "main", "Files")).as_str())
+        Some(
+            "1:22: `main` is declared to give `(out: Files)`, and `main` gives an `int`, the \
+             program's exit status, 0 for success; a body that exports nothing gives 0. Declare \
+             `-> int` and export the status, or leave the result out. To write lines, push them \
+             to `m.stdout`, as `m.stdout <- lines;`, with `main(m: MainArgs)`."
+        )
     );
-    // An output port of a type that is no port at all says it is an output port.
-    let e = load(b"main() -> (out: int) {\n  out <- \"x\";\n}\n").err();
-    assert_eq!(
-        e.as_deref(),
-        Some(format!("1:12: {}", output_port_message("out", "main", "int")).as_str())
-    );
+    // `main()` and `main(m)` need no type: only `MainArgs` fits.
+    assert!(load(b"main() {\n}\n").is_ok());
+    assert!(load(b"main(m) {\n  m.stdout <- \"x\";\n}\n").is_ok());
     let e = load(b"helper = 1;\n").err();
     assert_eq!(
         e.as_deref(),
         Some(
             "1:1: this file is run as a program, and a program starts at a function named \
              `main`, which this file does not declare. Declare one, such as\n    \
-             main(stdin: Lines) -> (stdout: Lines) {\n      \
-             stdout <- \"hello\";\n    \
+             main(m: MainArgs) {\n      \
+             m.stdout <- \"hello\";\n    \
              }\nor, if the file holds definitions to test and is not a program, run `zedc test` on \
              it instead of `zedc run`."
         )
     );
 }
 
-/// A function other than `main` may push to an output port, and at L1 that port is `Lines`
-/// too: any other type is rejected where the port is declared, whether or not the function
-/// is called.
+/// A function other than `main` takes a port as an argument (DESIGN.md step L1.19), so an
+/// output port declared in a helper's result, the old form, is a later form at L1, whether or
+/// not the function is called. A `main` nested in a block has the header rules of `main`, so its
+/// result type is rejected as the result of `main` is.
 #[test]
-fn a_helper_port_is_lines_at_l1() {
+fn a_helper_output_port_is_a_later_form_at_l1() {
+    let later = |at: &str, written: &str| {
+        format!(
+            "{at}: the declared result type `-> {written}` is part of the Zed language, and this \
+             version of zedc does not compile it yet. Write the program without it, with the \
+             forms this zedc compiles."
+        )
+    };
     let e = load(b"log(positional s) -> (out: Files) {\n  out <- s;\n}\nmain() = 0;\n").err();
-    assert_eq!(
-        e.as_deref(),
-        Some(format!("1:23: {}", output_port_message("out", "log", "Files")).as_str())
-    );
+    assert_eq!(e, Some(later("1:19", "(out: Files)")));
     let e = load(
-        b"say(positional s) -> (stdout: Lines, err: int) {\n  stdout <- s;\n}\n\
-          main() -> (stdout: Lines) {\n  a = say(\"one\");\n}\n",
+        b"say(positional s) -> (stdout: Lines) {\n  stdout <- s;\n}\n\
+          main(m: MainArgs) {\n  a = say(\"one\");\n}\n",
     )
     .err();
-    assert_eq!(
-        e.as_deref(),
-        Some(format!("1:38: {}", output_port_message("err", "say", "int")).as_str())
-    );
-    // Only the unit's own `main` is the program's; a `main` nested in a block is a helper.
+    assert_eq!(e, Some(later("1:19", "(stdout: Lines)")));
     let e = load(
         b"g() = {\n  main() -> (out: Files) { 0 }\n  1\n};\n\
-          main() -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n",
+          main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n",
     )
     .err();
     assert_eq!(
         e.as_deref(),
-        Some(format!("2:14: {}", output_port_message("out", "main", "Files")).as_str())
+        Some(
+            "2:13: `main` is declared to give `(out: Files)`, and `main` gives an `int`, the \
+             program's exit status, 0 for success; a body that exports nothing gives 0. Declare \
+             `-> int` and export the status, or leave the result out. To write lines, push them \
+             to `m.stdout`, as `m.stdout <- lines;`, with `main(m: MainArgs)`."
+        )
     );
-    let ok = b"say(positional s) -> (stdout: Lines) {\n  stdout <- s;\n}\n\
-               main() -> (stdout: Lines) {\n  a = say(\"one\");\n}\n";
-    assert!(load(ok).is_ok());
 }
 
 #[test]
@@ -165,8 +171,8 @@ fn a_failed_read_says_what_failed_where_and_why() {
     // A directory is no file: reading it fails with the operating system's reason.
     let d = dir("failed-read");
     let src = format!(
-        "main(fs: Files) -> (stdout: Lines) {{\n  \
-         stdout <- (fs[\"{}\"] else #ioError(op:, path:, why:) -> \"${{op}} ${{path}}: ${{why}}\") \
+        "main(m: MainArgs) {{\n  fs = files();\n  \
+         m.stdout <- (fs[\"{}\"] else #ioError(op:, path:, why:) -> \"${{op}} ${{path}}: ${{why}}\") \
          else \"missing\";\n}}\n",
         d.display()
     );
@@ -188,8 +194,8 @@ fn a_failed_read_says_what_failed_where_and_why() {
     );
     // A bare `#ioError` still matches it, by the atom alone.
     let src = format!(
-        "main(fs: Files) -> (stdout: Lines) {{\n  \
-         stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else \"missing\";\n}}\n",
+        "main(m: MainArgs) {{\n  fs = files();\n  \
+         m.stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else \"missing\";\n}}\n",
         d.display()
     );
     assert_eq!(run("failed-read", &src, "", &[]).stdout, "unreadable\n");
@@ -199,12 +205,12 @@ fn a_failed_read_says_what_failed_where_and_why() {
 fn a_bare_io_error_pattern_narrows_the_payload_away() {
     // After `else #ioError -> …` and `else #notFound -> …` only a `String` is left, so the
     // push type-checks.
-    let src = "main(fs: Files) -> (stdout: Lines) {\n  \
-               stdout <- (fs[\"app.conf\"] else #ioError -> \"unreadable\") \
+    let src = "main(m: MainArgs) {\n  fs = files();\n  \
+               m.stdout <- (fs[\"app.conf\"] else #ioError -> \"unreadable\") \
                else #notFound -> \"missing\";\n}\n";
     assert!(load(src.as_bytes()).is_ok());
-    let src = "main(fs: Files) -> (stdout: Lines) {\n  \
-               stdout <- fs[\"app.conf\"] else #notFound -> \"missing\";\n}\n";
+    let src = "main(m: MainArgs) {\n  fs = files();\n  \
+               m.stdout <- fs[\"app.conf\"] else #notFound -> \"missing\";\n}\n";
     let e = load(src.as_bytes()).err().unwrap();
     assert!(
         e.contains("#ioError(op: String, path: String, why: String)"),

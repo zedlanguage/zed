@@ -14,9 +14,9 @@ fn wrapped(src: &str, at: &str, word: &str) -> String {
 fn the_offered_repair_applied_makes_the_program_check() {
     let cases = [
         (
-            "main(stdin: Lines) -> (stdout: Lines) {
-  n = int(stdin[1]) else 0;
-  stdout <- \"count: \" ++ n * 2;
+            "main(m: MainArgs) {
+  n = int(m.stdin[1]) else 0;
+  m.stdout <- \"count: \" ++ n * 2;
 }
 ",
             "n * 2",
@@ -24,8 +24,8 @@ fn the_offered_repair_applied_makes_the_program_check() {
         ),
         (
             "price(positional cents: int) = cents * 100;
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- String(price(2.5));
+main(m: MainArgs) {
+  m.stdout <- String(price(2.5));
 }
 ",
             "2.5",
@@ -49,9 +49,9 @@ main(stdin: Lines) -> (stdout: Lines) {
 fn a_conversion_that_can_fail_is_not_offered_where_its_failure_is_not_taken() {
     // `int("12")` is `int | #invalid`, and `discount` takes no `#invalid`.
     let src = "discount(price: int, tier) = if tier == #gold { price * 8 } else { price * 10 };
-main(stdin: Lines) -> (stdout: Lines) {
+main(m: MainArgs) {
   p = discount(price: \"12\", tier: #gold);
-  stdout <- String(p);
+  m.stdout <- String(p);
 }
 ";
     assert!(!rejected(src).contains("repair:"));

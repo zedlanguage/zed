@@ -50,14 +50,17 @@ fn mix_is_the_staging_word_of_l19() {
 
 #[test]
 fn stream_is_the_prelude_type_of_l7() {
+    // The two stream programs of the corpus declare their stream port `sock` as a signature at
+    // the top of the unit (QUESTIONS Q51: no header declares a port), a form of a later layer
+    // that the builder refuses before names are resolved.
     for path in ["18-socket-wordfreq.zed", "29-late-dedup.zed"] {
-        assert_eq!(
-            errors(&corpus(path)),
-            [concat!(
-                zed_tests::not_yet!("the prelude type `Stream`"),
-                " [Stream]"
-            )],
-            "{path}"
+        let text = corpus(path);
+        let tokens = lex(&text).unwrap();
+        let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
+        let e = unit(&text, &tokens, &tree).expect_err(path);
+        assert!(
+            zed_tests::is_not_yet(&e.to_string()) && e.to_string().contains("Stream(String)"),
+            "{path}: {e}"
         );
     }
     assert_eq!(
@@ -130,7 +133,7 @@ fn no_corpus_file_uses_an_undefined_name() {
     assert_eq!(undefined, Vec::<String>::new());
     assert_eq!(
         (resolved, later_layer, files.len()),
-        (39, 10, 50),
+        (37, 12, 50),
         "files resolved, files holding a later layer's form, files"
     );
 }

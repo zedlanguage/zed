@@ -132,50 +132,24 @@ fn the_bound_walk_scales_linearly() {
     });
 }
 
-/// An output port's type is a written type too: the bound of a port of `main` is checked
-/// like a parameter's, and a port of another function, whose type at L1 must be `Lines`, is
-/// rejected for that before its bound is read.
+/// An old output port's type is a written type too, and the form is refused before its bound
+/// is read: on `main`, whose result is an `int`, and on another function, where a port in the
+/// result is a later form.
 #[test]
-fn a_port_whose_morphism_bound_fails_is_rejected() {
-    rejected_everywhere(
-        "main() -> (out: #a .. #b -> int) {\n  out <- \"x\";\n}\n",
-        &[format!("1:17: {BAD}")],
+fn an_old_output_port_is_refused_before_its_bound_is_read() {
+    assert_eq!(
+        through_load("main() -> (out: #a .. #b -> int) {\n  out <- \"x\";\n}\n"),
+        [
+            "1:11: `main` is declared to give `(out: #a .. #b -> int)`, and `main` gives an \
+             `int`, the program's exit status, 0 for success; a body that exports nothing gives \
+             0. Declare `-> int` and export the status, or leave the result out. To write lines, \
+             push them to `m.stdout`, as `m.stdout <- lines;`, with `main(m: MainArgs)`."
+        ]
     );
     assert_eq!(
         through_load("f() -> (out: #a .. #b -> int) { 0 }\nmain() = 0;\n"),
-        [
-            "1:9: the output port `out` of `f` is declared as `#a .. #b -> int`, and an output \
-          port writes lines of text, so its type must be `Lines`. Write `out: Lines`, and push to \
-          it a string, which writes one line, or a family of strings, which writes one line per \
-          entry, such as `out <- String(x);`."
-        ]
+        [zed_tests::not_yet(
+            "1:5: the declared result type `-> (out: #a .. #b -> int)`"
+        )]
     );
-}
-
-/// Reading the output ports, for their type at L1 and for their bounds, is linear in the
-/// ports: resolving and checking a program of `n` and of `8n` functions, each with two `Lines`
-/// ports, does work of order n. Resolution reads the type at L1 and the checker the bounds;
-/// both are timed, on statements parsed before the timing (COMPLEXITY.md F85).
-#[test]
-fn the_port_walk_scales_linearly() {
-    let program = |n: usize| {
-        let mut src = String::new();
-        for i in 0..n {
-            src.push_str(&format!(
-                "say{i}(positional s) -> (out{i}: Lines, log{i}: Lines) {{\n  out{i} <- s;\n}}\n"
-            ));
-        }
-        src.push_str("main() = 0;\n");
-        src
-    };
-    let units: std::collections::HashMap<usize, _> = [250, 2000]
-        .into_iter()
-        .map(|n| (n, zed_tests::deep::statements(&program(n))))
-        .collect();
-    zed_tests::scaling::check_order("port walk", 250, 1, |n| {
-        let stmts = &units[&n];
-        let res = resolve(stmts).unwrap_or_else(|e| panic!("{e:?}"));
-        let info = zedc::check::walk::check(stmts, &res);
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
 }

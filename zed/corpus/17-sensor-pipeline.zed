@@ -16,10 +16,10 @@ parse(positional l) = {
   Reading(t: int(w[0] else "") else -1, sensor: w[1] else "", v: int(w[2] else "") else -1)
 };
 
-main(stdin: Lines) -> (stdout: Lines) {
-  rs   = stdin.map(l -> parse(l)).where(r -> r.t >= 0 && r.v >= 0);
+main(m: MainArgs) {
+  rs   = m.stdin.map(l -> parse(l)).where(r -> r.t >= 0 && r.v >= 0);
   wins = rs.window(width: 10, time: r -> r.t);
-  stdout <- for w -> win in wins {
+  m.stdout <- for w -> win in wins {
     parts = for s -> g in win.group(r -> r.sensor) {
       vs = g.map(r -> r.v);
       "${s} n=${vs.count} sum=${vs.sum} max=${vs >< max else 0}"

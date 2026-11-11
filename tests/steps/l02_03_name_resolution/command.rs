@@ -33,7 +33,7 @@ fn a_unit_with_imports_reports_its_package_in_the_files_of_its_units() {
             ("zed.manifest", "// the root of the shop's package\n"),
             (
                 "app/main.zed",
-                "import pricing.{net, gross};\nmain() -> (stdout: Lines) {}\n",
+                "import pricing.{net, gross};\nmain(m: MainArgs) {}\n",
             ),
             ("pricing.zed", "net(g: f64) = g / 1.2;\n"),
         ],
@@ -65,7 +65,7 @@ fn a_unit_with_no_import_under_a_manifest_runs_as_a_single_file() {
             ("zed.manifest", "// no prelude\n"),
             (
                 "hello.zed",
-                "main() -> (stdout: Lines) {\n  stdout <- \"hello\";\n}\n",
+                "main(m: MainArgs) {\n  m.stdout <- \"hello\";\n}\n",
             ),
         ],
     );
@@ -87,10 +87,7 @@ fn a_file_whose_name_is_no_unit_path_is_reported() {
         "badname",
         &[
             ("zed.manifest", ""),
-            (
-                "my-app.zed",
-                "import pricing;\nmain() -> (stdout: Lines) {}\n",
-            ),
+            ("my-app.zed", "import pricing;\nmain(m: MainArgs) {}\n"),
         ],
     );
     let (status, err) = run(d.join("my-app.zed").to_str().unwrap());
@@ -108,10 +105,7 @@ fn a_cycle_is_reported_alike_by_each_of_its_units_run_alone_and_by_the_whole_pac
         "cycle",
         &[
             ("zed.manifest", "// the shop\n"),
-            (
-                "main.zed",
-                "import orders.{place};\nmain() -> (stdout: Lines) {}\n",
-            ),
+            ("main.zed", "import orders.{place};\nmain(m: MainArgs) {}\n"),
             (
                 "orders.zed",
                 "import stock.{reserve};\nplace(n) = reserve(n);\n",

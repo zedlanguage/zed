@@ -66,7 +66,10 @@ m = stats(xs).mean;                // sd's sub-graph never runs
 whoTeaches = teacherOf as (teacher -> course) into (course -> teacher -> _);   // teacherOf : Teacher -> Course; result Course ->? {Teacher}
 
 // 14 — A tiny service, split into client and server by the compiler.
-main(req: Stream(Query)) -> (resp: Stream(Answer)) {
+req: Stream(Query);
+resp: Stream(Answer);
+
+main() {
   resp <- req.map(q -> lookup(db, q) else #unknown);
 }
 // Deploy with a keypath cut: the boundary serializes via struct grammars — RPC without stubs.

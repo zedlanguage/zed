@@ -32,15 +32,15 @@ fn return_of_several_values_is_a_tuple_and_destructuring_reads_it() {
 
 #[test]
 fn a_block_without_an_export_is_the_empty_tuple() {
-    let src = "main() -> (stdout: Lines) {\n  stdout <- \"ready\";\n}\nrun = main();\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- \"ready\";\n}\nrun = main();\n";
     let u = elab(src).unwrap();
-    let mut ev = Evaluator::new(World::new().output("stdout"));
+    let mut ev = Evaluator::new(World::new().output("m.stdout"));
     let out = ev.run(&with_prelude(u.get("run").unwrap())).unwrap();
     assert_eq!(out.to_string(), "()");
-    assert_eq!(ev.world.log("stdout")[0].to_string(), "\"ready\"");
+    assert_eq!(ev.world.log("m.stdout")[0].to_string(), "\"ready\"");
     assert_eq!(
         term(src, "main"),
-        "() -> { $1 = port.push(stdout, \"ready\"); () }"
+        "() -> { $1 = port.push(m.stdout, \"ready\"); () }"
     );
 }
 

@@ -138,7 +138,7 @@ Inline sizes, `size_of` on x86-64 (the heap cell as the tests build it, with fea
 |---|---|
 | `ast::Expr` | 120 |
 | `ast::ExprKind` | 104 |
-| `ast::Stmt` | 272 |
+| `ast::Stmt` | 256 |
 | `ast::Type` | 72 |
 | `ast::Pattern` | 88 |
 | `kernel Term` | 88 |

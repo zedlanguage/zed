@@ -14,13 +14,13 @@ parse(positional l) = {
 
 opt(positional x) = match x { #notFound -> "-", n -> "${n}" };
 
-main(stdin: Lines) -> (stdout: Lines) {
-  rows   = stdin.map(l -> parse(l));
+main(m: MainArgs) {
+  rows   = m.stdin.map(l -> parse(l));
   orders = rows.where(r -> r.side == "O").group(r -> r.id).map(g -> g.map(r -> r.n).sum);
   pays   = rows.where(r -> r.side == "P").group(r -> r.id).map(g -> g.map(r -> r.n).sum);
   inner  = (orders, pays) into (i && j -> "inner ${i} ${orders[i]} ${pays[j]}");
   left   = (orders, pays) into (i && ?j -> "left ${i} ${orders[i]} ${opt(pays[j])}");
   right  = (orders, pays) into (j && ?i -> "right ${j} ${opt(orders[i])} ${pays[j]}");
   outer  = (orders, pays) into (i || j -> "outer ${i} ${opt(orders[i])} ${opt(pays[j])}");
-  stdout <- inner.orderedValues ++ left.orderedValues ++ right.orderedValues ++ outer.orderedValues;
+  m.stdout <- inner.orderedValues ++ left.orderedValues ++ right.orderedValues ++ outer.orderedValues;
 }

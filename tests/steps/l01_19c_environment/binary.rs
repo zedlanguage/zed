@@ -9,8 +9,8 @@ use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-const READ: &str = "main(env: String ->? String) -> (stdout: Lines) {\n  \
-    stdout <- env[\"ZED_ENV_TEST\"] else \"unset\";\n}\n";
+const READ: &str = "main(m: MainArgs) {\n  \
+    m.stdout <- m.env[\"ZED_ENV_TEST\"] else \"unset\";\n}\n";
 
 /// What `zedc run`, and an executable `zedc build` wrote, print when [`READ`] reads a value
 /// that is not UTF-8.

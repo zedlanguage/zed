@@ -144,7 +144,7 @@ fn a_build_refuses_a_library_of_another_build() {
     ] {
         let (exe, d, _, decoy) = with_a_newer_library(name, other);
         let src = d.join("quiet.zed");
-        std::fs::write(&src, "main() -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n").unwrap();
+        std::fs::write(&src, "main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n").unwrap();
         let out = d.join("quiet");
         let tools = Toolchain {
             linker: "cc".into(),

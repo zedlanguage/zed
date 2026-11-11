@@ -1,8 +1,12 @@
 // layer L13
 // 20, the error version: must be rejected at compile time (taint(#user)
-// flows through the interpolation into the taint(#clean) port). Expected
-// diagnostic: the sink demands taint(#clean), the value carries taint(#user),
-// and the menu offers sanitize.
-main(stdin: Lines with taint(#user)) -> (stdout: Lines with taint(#clean)) {
-  stdout <- stdin.map(l -> "<li>${l}</li>");
+// flows through the interpolation into the taint(#clean) result of `page`).
+// Expected diagnostic: the result demands taint(#clean), the value carries
+// taint(#user), and the menu offers sanitize.
+page(positional lines: Lines with taint(#user)) -> Lines with taint(#clean) {
+  lines.map(l -> "<li>${l}</li>")
+}
+
+main(m: MainArgs) {
+  m.stdout <- page(m.stdin);
 }

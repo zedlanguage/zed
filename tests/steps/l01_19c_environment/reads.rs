@@ -72,13 +72,13 @@ fn a_variable_the_program_does_not_read_may_hold_anything() {
 fn a_miss_left_undisposed_is_rejected_before_the_run() {
     // `env[name]` is `String | #notFound` (sec:type_language, `->?`), and a `Lines` port takes
     // no `#notFound`, so the program is rejected whether or not the variable is set.
-    let src = "main(env: String ->? String) -> (stdout: Lines) {\n  stdout <- env[\"ZED_A\"];\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.env[\"ZED_A\"];\n}\n";
     for given in [&[("ZED_A", &b"/h"[..])][..], &[]] {
         let out = run("undisposed", src, given);
         assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{}", out.stderr);
         assert!(
             out.stderr.contains(
-                "2:13: a `Lines` port takes a `String` or a family of strings, not \
+                "2:15: a `Lines` port takes a `String` or a family of strings, not \
                  String | #notFound"
             ) && out
                 .stderr
@@ -90,15 +90,22 @@ fn a_miss_left_undisposed_is_rejected_before_the_run() {
 }
 
 #[test]
-fn only_a_string_lookup_of_strings_is_the_environment() {
-    for ty in ["String ->? int", "int ->? String", "String -> String"] {
-        let src = format!("main(env: {ty}) -> (stdout: Lines) {{\n  stdout <- \"\";\n}}\n");
+fn the_environment_is_a_field_of_main_args() {
+    // A parameter of `main` other than `m: MainArgs` is refused, an old environment port among
+    // them, whatever its type.
+    for ty in [
+        "String ->? String",
+        "String ->? int",
+        "int ->? String",
+        "String -> String",
+    ] {
+        let src = format!("main(env: {ty}) {{\n}}\n");
         let out = run("other_lookup", &src, &[]);
         assert_eq!(out.status, 1, "{ty}");
         assert!(
             out.stderr.contains(&format!(
-                "1:6: the parameter `env` of `main` is declared as `{ty}`, and each parameter \
-                     of `main` is an input port"
+                "1:6: the parameter `env` of `main` is declared as `env: {ty}`, and `main` takes \
+                 one argument, of type `MainArgs`"
             )),
             "{ty}: {}",
             out.stderr
@@ -109,8 +116,8 @@ fn only_a_string_lookup_of_strings_is_the_environment() {
 #[test]
 fn a_main_row_gives_the_environment_as_a_function() {
     let src = format!(
-        "{TWO}test {{ (n -> if n == \"ZED_A\" {{ \"1\" }} else {{ #notFound }}) -> \"1|-\\n\", \
-         (n -> \"v\") -> \"v|v\\n\", (n -> #notFound) -> \"x\" }}\n"
+        "{TWO}test {{ (\"\", \"\", (n -> if n == \"ZED_A\" {{ \"1\" }} else {{ #notFound }})) -> \"1|-\\n\", \
+         (\"\", \"\", (n -> \"v\")) -> \"v|v\\n\", (\"\", \"\", (n -> #notFound)) -> \"x\" }}\n"
     );
     let got = checks(&src);
     assert_eq!(got.len(), 3, "{got:?}");
@@ -118,8 +125,5 @@ fn a_main_row_gives_the_environment_as_a_function() {
         got[0].ends_with(": ok") && got[1].ends_with(": ok"),
         "{got:?}"
     );
-    assert!(
-        got[2].ends_with("port `stdout` writes \"-|-\\n\""),
-        "{got:?}"
-    );
+    assert!(got[2].ends_with("`m.stdout` writes \"-|-\\n\""), "{got:?}");
 }

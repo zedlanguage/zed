@@ -3,25 +3,26 @@ source: tests/steps/l01_07_fences/copies.rs
 expression: "tokens_by_key(&fences::of(\"examples.md\"))"
 ---
 == EXAMPLES.md [1. Programs and ports] 1 L3
-  2 | main ( ) -> ( stdout : Lines ) {
-  3 | stdout <- [ str["Hello, world!"] ] ;
+  2 | main ( m : MainArgs ) {
+  3 | m . stdout <- [ str["Hello, world!"] ] ;
   4 | }
 == EXAMPLES.md [1. Programs and ports] 2 L3
-  2 | main ( stdin : Lines ) -> ( stdout : Lines ) {
-  3 | stdout <- stdin . map ( l -> l . upper ) ;
+  2 | main ( m : MainArgs ) {
+  3 | m . stdout <- m . stdin . map ( l -> l . upper ) ;
   4 | }
 == EXAMPLES.md [1. Programs and ports] 3 L8
-  2 | main ( fs : Files ) -> ( stdout : Lines ) {
-  3 | text = fs [ str["input.txt"] ] «else» str[] ;
-  4 | counts = text . split ( str[" "] ) . group ( w -> w . lower ) . count ;
-  5 | lines = counts «as» ( w -> n ) «into» ( «desc» n -> w -> str[${w} ": " ${n}] ) ;
-  6 | stdout <- lines . orderedValues ;
-  7 | }
+  2 | main ( m : MainArgs ) {
+  3 | fs = files ( ) ;
+  4 | text = fs [ str["input.txt"] ] «else» str[] ;
+  5 | counts = text . split ( str[" "] ) . group ( w -> w . lower ) . count ;
+  6 | lines = counts «as» ( w -> n ) «into» ( «desc» n -> w -> str[${w} ": " ${n}] ) ;
+  7 | m . stdout <- lines . orderedValues ;
+  8 | }
 == EXAMPLES.md [1. Programs and ports] 4 L8
-  2 | main ( stdin : Lines ) -> ( stdout : Lines ) {
-  3 | words = stdin . flatMap ( l -> l . split ( str[" "] ) ) ;
+  2 | main ( m : MainArgs ) {
+  3 | words = m . stdin . flatMap ( l -> l . split ( str[" "] ) ) ;
   4 | counts = words «as» ( l -> i -> w ) «into» ( w . lower -> ( l , i ) -> 1₍10₎ ) >< ( + ) ;
-  5 | stdout <- [ str[${counts :: card} " distinct words"] ] ;
+  5 | m . stdout <- [ str[${counts :: card} " distinct words"] ] ;
   6 | }
 == EXAMPLES.md [2. Bindings and values] 1 L10
   2 | x = 42₍10₎ ;
@@ -83,7 +84,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | trim = str["  x "] . trim ;
   5 | ls = text . lines ;
   6 | joined = ws . concat ( str[" "] ) ;
-== EXAMPLES.md [5. Conditionals] 1 L10
+== EXAMPLES.md [5. Conditionals] 1 L1
   2 | sign ( x ) = «if» x < 0₍10₎ { - 1₍10₎ } «else» «if» x == 0₍10₎ { 0₍10₎ } «else» { 1₍10₎ } ;
   3 | grade ( score ) -> Utf8String {
   4 | «if» score >= 90₍10₎ { str["A"] }
@@ -99,7 +100,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   3 | n' = «if» ( n «mod» 2₍10₎ ) == 0₍10₎ { n «div» 2₍10₎ } «else» { 3₍10₎ * n + 1₍10₎ } «with» initial n = 27₍10₎ ;
   4 | «until» n' == 1₍10₎ ;
   5 | } ;
-== EXAMPLES.md [6. Functions] 1 L10
+== EXAMPLES.md [6. Functions] 1 L7
   2 | double ( «positional» x ) = x * 2₍10₎ ;
   3 | double : ( int ) -> int ;
   4 | clamp ( «positional» v , «positional» lo , «positional» hi ) -> int { «if» v < lo { lo } «else» «if» v > hi { hi } «else» { v } }
@@ -288,7 +289,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   7 | Circle ( r : ) -> pi * r * r ,
   8 | Rect ( lo : , hi : ) -> ( hi . x - lo . x ) * ( hi . y - lo . y ) ,
   9 | } ;
-== EXAMPLES.md [11. Unions, atoms, match] 2 L10
+== EXAMPLES.md [11. Unions, atoms, match] 2 L2
   2 | «type» Expr = #num ( f64 ) | #add ( Expr , Expr ) | #mul ( Expr , Expr ) ;
   3 | eval ( «positional» e : Expr ) -> f64 {
   4 | «match» e {
@@ -325,7 +326,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   9 | amounts = files . map ( f -> int ( read ( f ) ) ) ;
  10 | sumKept = amounts . where ( a -> a «is» int ) >< ( + ) ;
  11 | sumZeroed = amounts . map ( a -> a «else» 0₍10₎ ) >< ( + ) ;
-== EXAMPLES.md [12. Absence and failure] 2 L10
+== EXAMPLES.md [12. Absence and failure] 2 L2
   2 | loadPort ( path ) -> int | #ioError | #notFound | #syntaxError ( pos : int ) {
   3 | text = read ( path ) ;
   4 | cfg = parse ( text ) ;
@@ -334,7 +335,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
 == EXAMPLES.md [12. Absence and failure] 3 L10
   2 | age = int ( input ) ?. refine ( a -> a >= 0₍10₎ ) ;
   3 | safe = age «else» 0₍10₎ ;
-== EXAMPLES.md [12. Absence and failure] 4 L10
+== EXAMPLES.md [12. Absence and failure] 4 L2
   2 | withdraw ( «positional» a : Account , «positional» amt : rat ) -> Account | #insufficient ( short : rat ) {
   3 | «if» amt > a . bal { #insufficient ( short : amt - a . bal ) } «else» { a «with» { bal = a . bal - amt } }
   4 | }
@@ -394,7 +395,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   3 | rnd [ i «in» 0₍10₎ .. ] = next ( rnd [ i - 1₍10₎ ] ) «with» rnd [ - 1₍10₎ ] = seed ;
   4 | dice = rnd . map ( r -> ( ( r «div» 2₍10₎ ^ 32₍10₎ ) «mod» 6₍10₎ ) + 1₍10₎ ) ;
   5 | tenRolls = «for» i «in» 0₍10₎ ..< 10₍10₎ { dice [ i ] } ;
-== EXAMPLES.md [15. Trees and graphs] 1 L10
+== EXAMPLES.md [15. Trees and graphs] 1 L3
   2 | «type» Tree = #leaf | Node ;
   3 | «struct» Node { l : Tree , v : int , r : Tree }
   5 | size ( «positional» t : Tree ) = «match» t { #leaf -> 0₍10₎ , Node ( l : , r : ) -> 1₍10₎ + size ( l ) + size ( r ) } ;
@@ -468,8 +469,9 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | «import» geometry . shapes . { Point , dist } ;
   5 | far = dist ( Point ( x : 0₍10₎ , y : 0₍10₎ ) , Point ( x : 3₍10₎ , y : 4₍10₎ ) ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 1 L3
-  2 | text = fs [ str["notes.txt"] ] «else» str[] ;
-  3 | texts = files . map ( f -> fs [ f ] ) ;
+  2 | fs = files ( ) ;
+  3 | text = fs [ str["notes.txt"] ] «else» str[] ;
+  4 | texts = files . map ( f -> fs [ f ] ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 2 L21
   2 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
   3 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
@@ -489,10 +491,31 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | @timeout ( 0.2r «with» units ( str["s"] ) ) cache : Utf8String ->? [ u8 ] «with» store ( kv ( endpoint ) ) ;
   3 | hit = cache [ key ] «else» fetch ( key ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 7 L7
-  3 | main ( args : CommandLine , clock : Stream ( Instant ) «with» period ( 0.01r ) ) -> ( stdout : Lines ) { … }
+  3 | main ( m : MainArgs ) -> int {
+  4 | ticks = clock ( period : 0.01r ) ;
+  5 | m . stdout <- ticks . take ( 3₍10₎ ) . map ( t -> str["tick"] ) ;
+  6 | «if» m . args :: len > 0₍10₎ { 0₍10₎ } «else» { 2₍10₎ }
+  7 | }
 == EXAMPLES.md [18. Files, stores, and the world] 8 L1
-  2 | main ( env : Utf8String ->? Utf8String ) -> ( stdout : Lines ) { … }
-== EXAMPLES.md [18. Files, stores, and the world] 9 L1
+  2 | main ( m : MainArgs ) {
+  3 | m . stdout <- m . env [ str["HOME"] ] «else» str["no HOME"] ;
+  4 | }
+== EXAMPLES.md [18. Files, stores, and the world] 9 L7
+  3 | main ( m : MainArgs ) -> int {
+  4 | p = spawn ( [ str["sort"] , str["-u"] ] ) ;
+  5 | p . stdin <- m . stdin . map ( l -> l «else» str[] ) ;
+  6 | m . stdout <- p . stdout . map ( l -> l «else» str[] ) ;
+  7 | «match» p . status { #ok -> 0₍10₎ , _ -> 1₍10₎ }
+  8 | }
+== EXAMPLES.md [18. Files, stores, and the world] 10 L7
+  3 | main ( m : MainArgs ) {
+  4 | runs = m . args . map ( f -> run ( [ str["gzip"] , str["--keep"] , str["--"] , f ] , unconsumedStderr : #suppress ) . status ) ;
+  5 | m . stdout <- runs . map ( s -> «match» s { #ok -> str["compressed"] , _ -> str["gzip failed"] } ) ;
+  6 | built = run ( [ str["make"] ] ) ;
+  7 | @after ( built ) installed = run ( [ str["make"] , str["install"] ] ) ;
+  8 | m . stdout <- «match» installed . status { #ok -> str["installed"] , _ -> str["install failed"] } ;
+  9 | }
+== EXAMPLES.md [18. Files, stores, and the world] 11 L1
   2 | page = http . get ( url ) ;
 == EXAMPLES.md [19. Streams] 1 L5
   2 | sessions = events . chunkBy ( e -> e . userId ) ;
@@ -500,13 +523,15 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | bigOnes = events . where ( e -> e . size > 1000000₍10₎ ) ;
 == EXAMPLES.md [19. Streams] 2 L5
   3 | merged = a . tag ( #a ) ++ b . tag ( #b ) ;
-== EXAMPLES.md [19. Streams] 3 L10
+== EXAMPLES.md [19. Streams] 3 L4
   2 | expand ( «positional» n : int ) -> [ int ] { «emit» n ; «emit» n * 10₍10₎ ; }
   3 | out = xs . flatMap ( expand ) ;
 == EXAMPLES.md [19. Streams] 4 L7
-  2 | main ( req : Stream ( Query ) ) -> ( resp : Stream ( Answer ) ) {
-  3 | resp <- req . map ( q -> lookup ( db , q ) «else» #unknown ) ;
-  4 | }
+  2 | req : Stream ( Query ) ;
+  3 | resp : Stream ( Answer ) ;
+  4 | main ( ) {
+  5 | resp <- req . map ( q -> lookup ( db , q ) «else» #unknown ) ;
+  6 | }
 == EXAMPLES.md [19. Streams] 5 L7
   3 | sessions = events . window ( gap : 3₍10₎ ) . map ( w -> w . count ) ;
   4 | input = mouse . tag ( #mouse ) . merge ( keys . tag ( #key ) ) ;
@@ -616,7 +641,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   3 | next ( «positional» l : Light ) = «match» l { #green -> #yellow , #yellow -> #red , #red -> #green } ;
   4 | lights = «loop» t { l' = next ( l ) «with» initial l = #red ; «until» t == 10₍10₎ ; } ;
   5 | trace = lights :: frames . map ( f -> f . l ) ;
-== EXAMPLES.md [24. Small programs] 3 L10
+== EXAMPLES.md [24. Small programs] 3 L6
   2 | alive ( «positional» cells , «positional» p ) -> bool {
   3 | x , y = p ;
   4 | ns = «for» d «in» [ ( - 1₍10₎ , - 1₍10₎ ) , ( - 1₍10₎ , 0₍10₎ ) , ( - 1₍10₎ , 1₍10₎ ) , ( 0₍10₎ , - 1₍10₎ ) , ( 0₍10₎ , 1₍10₎ ) , ( 1₍10₎ , - 1₍10₎ ) , ( 1₍10₎ , 0₍10₎ ) , ( 1₍10₎ , 1₍10₎ ) ] {
@@ -638,13 +663,14 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
 == EXAMPLES.md [24. Small programs] 5 L21
   2 | «struct» Todo { title : Utf8String , done : bool }
   3 | todos : TodoId ->? Todo «with» store ( kv ( endpoint ) ) ;
-  4 | main ( cmds : Stream ( Cmd ) ) -> ( out : Lines ) {
-  5 | run = «loop» t {
-  6 | todos' = todos . patch ( toEdits ( cmds [ t ] ) ) ;
-  7 | «while» t < maxCmds && t «in» cmds :: domain ;
-  8 | } ;
-  9 | out <- run :: frames . map ( f -> str[${f . todos :: card} " items"] ) ;
- 10 | }
+  4 | cmds : Stream ( Cmd ) ;
+  5 | main ( m : MainArgs ) {
+  6 | run = «loop» t {
+  7 | todos' = todos . patch ( toEdits ( cmds [ t ] ) ) ;
+  8 | «while» t < maxCmds && t «in» cmds :: domain ;
+  9 | } ;
+ 10 | m . stdout <- run :: frames . map ( f -> str[${f . todos :: card} " items"] ) ;
+ 11 | }
 == EXAMPLES.md [25. Algorithms] 1 L7
   2 | hist : int ->? int «with» reducer ( ( + ) ) ;
   3 | «for» s «in» words { hist [ s . len ] <- 1₍10₎ ; } ;
@@ -660,7 +686,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   3 | primes = ( 2₍10₎ ..= n ) . where ( isPrime ) ;
 == EXAMPLES.md [25. Algorithms] 4 L5
   2 | rle = xs . chunkBy ( x -> x ) . map ( c -> ( c . first , c . count ) ) ;
-== EXAMPLES.md [25. Algorithms] 5 L10
+== EXAMPLES.md [25. Algorithms] 5 L3
   2 | bsearch ( xs : [ int ] , t : int ) -> int | #none {
   3 | go ( «positional» lo , «positional» hi ) -> int | #none {
   4 | «if» lo > hi { #none }

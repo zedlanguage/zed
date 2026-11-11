@@ -39,10 +39,8 @@ fn a_long_lines_input_is_split_and_joined_in_linear_time() {
 #[test]
 fn a_wave_reading_the_last_of_many_lines_scales() {
     let waves = inputs(20_000, |n| {
-        let src = format!(
-            "main(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- stdin[{n}] else \"\";\n}}\n"
-        );
-        let input = BTreeMap::from([("stdin".to_string(), Arc::from(lines(n)))]);
+        let src = format!("main(m: MainArgs) {{\n  m.stdout <- m.stdin[{n}] else \"\";\n}}\n");
+        let input = BTreeMap::from([("m.stdin".to_string(), Arc::from(lines(n)))]);
         (load(src.as_bytes()).unwrap(), input)
     });
     check("a wave over n lines", 20_000, |n| {
@@ -65,7 +63,7 @@ fn a_record_of_many_reads_is_written_and_read_back_in_linear_time() {
             )
         });
         Record {
-            files: BTreeMap::from([("fs".to_string(), reads.collect())]),
+            files: BTreeMap::from([("files()".to_string(), reads.collect())]),
             ..Record::default()
         }
     });
@@ -74,7 +72,7 @@ fn a_record_of_many_reads_is_written_and_read_back_in_linear_time() {
         20_000,
         |n| {
             let back = Record::from_bytes(&records[&n].to_bytes()).unwrap();
-            assert_eq!(back.files["fs"].len(), n);
+            assert_eq!(back.files["files()"].len(), n);
         },
     );
 }
@@ -86,7 +84,7 @@ fn a_wave_reading_many_distinct_paths_scales() {
             .map(|i| format!("  a{i} = fs[\"p{i}\"];\n"))
             .collect();
         let src = format!(
-            "main(fs: Files) -> (stdout: Lines) {{\n{reads}  stdout <- a0 else \"\";\n}}\n"
+            "main(m: MainArgs) {{\n  fs = files();\n{reads}  m.stdout <- a0 else \"\";\n}}\n"
         );
         load(src.as_bytes()).unwrap()
     });
@@ -94,6 +92,6 @@ fn a_wave_reading_many_distinct_paths_scales() {
         let wave = programs[&n]
             .run(&BTreeMap::new(), |_| Arc::new(Echo))
             .unwrap();
-        assert_eq!(wave.record.files["fs"].len(), n);
+        assert_eq!(wave.record.files["files()"].len(), n);
     });
 }

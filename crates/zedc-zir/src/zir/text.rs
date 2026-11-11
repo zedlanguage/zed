@@ -656,6 +656,20 @@ pub(super) fn not_a_name(w: &str) -> Option<String> {
     Some(format!("`{w}` is not a name{why}"))
 }
 
+/// Why `w` is not a port's name, or `None` when it is one: names joined by `.`, the grammar's
+/// `PushTarget` (`m.stdout`, a field of `main`'s argument), or a name and `()`, the port a
+/// prelude constructor opens (`files()`). The binary form ([`super::binary`]) checks its port
+/// names with this function too.
+pub(super) fn not_a_port(w: &str) -> Option<String> {
+    let path = w.strip_suffix("()").unwrap_or(w);
+    let bad = path.split('.').find_map(not_a_name)?;
+    // A plain name is refused as any name is.
+    if path == w && !w.contains('.') {
+        return Some(bad);
+    }
+    Some(format!("`{w}` is not a port's name: {bad}"))
+}
+
 /// Why `w` is not a pattern binder, or `None` when it is one: a name, or a binder the compiler
 /// makes, which no written name can equal. Those are the elaborator's `$N` (elab.rs `temp`)
 /// and the canonical `\0N` (canon/binders.rs `level_name`), `N` a decimal number with no
@@ -752,6 +766,37 @@ impl<'a> P<'a> {
                 Err(e)
             }
         }
+    }
+
+    /// A port's name ([`not_a_port`]): names joined by `.`, as `m.stdout`, or a name and `()`,
+    /// as `files()`. An error points at the name it is about. The cost is linear in the name.
+    fn port_name(&mut self) -> Result<&'a str, String> {
+        self.ws();
+        let start = self.i;
+        loop {
+            let n = word_len(self.rest());
+            if n == 0 {
+                return Err(match self.rest().chars().next() {
+                    Some(c) if c.is_whitespace() && self.i > start => {
+                        "expected a name right after `.`, found a space".to_string()
+                    }
+                    _ => format!("expected a name, found {}", self.found()),
+                });
+            }
+            if let Some(e) = not_a_name(&self.rest()[..n]) {
+                return Err(e);
+            }
+            self.i += n;
+            if self.rest().starts_with("()") && !self.s[start..self.i].contains('.') {
+                self.i += 2;
+                break;
+            }
+            if !self.rest().starts_with('.') {
+                break;
+            }
+            self.i += 1;
+        }
+        Ok(&self.s[start..self.i])
     }
 
     /// A run of characters up to a space or a bracket.
@@ -913,8 +958,8 @@ impl<'a> P<'a> {
                 }
             }),
             "port" => match self.word()? {
-                "read" => Op::Read(self.name()?.into()),
-                "push" => Op::Push(self.name()?.into()),
+                "read" => Op::Read(self.port_name()?.into()),
+                "push" => Op::Push(self.port_name()?.into()),
                 w => return Err(format!("`port` is `read` or `push`, not `{w}`")),
             },
             "fam" => Op::Fam,
@@ -958,7 +1003,7 @@ impl<'a> P<'a> {
 
     fn edge(&mut self) -> Result<Edge, String> {
         if self.eat_word("state") {
-            return Ok(Edge::State(self.name()?.into()));
+            return Ok(Edge::State(self.port_name()?.into()));
         }
         let ty = self.ty()?;
         let mut domain = any_domain();

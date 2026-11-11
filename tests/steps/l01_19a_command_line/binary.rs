@@ -8,7 +8,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-const ECHO: &str = "main(args: CommandLine) -> (stdout: Lines) {\n  stdout <- args;\n}\n";
+const ECHO: &str = "main(m: MainArgs) {\n  m.stdout <- m.args;\n}\n";
 
 /// `zedc run <echo program> -- <args>`, the program written for test `name`.
 fn echo(name: &str, args: &[OsString]) -> Output {

@@ -454,8 +454,7 @@ mod tests {
 
     #[test]
     fn the_program_a_test_run_makes_shares_the_unit_of_the_front_end() {
-        let front =
-            Db::new().front("main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n");
+        let front = Db::new().front("main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n");
         let Ok((stmts, unit, _)) = &*front else {
             panic!("the unit is accepted")
         };

@@ -11,7 +11,7 @@ fn chain(n: usize) -> Program {
         src.push_str(&format!("step{i}(x: int) = step{}(x: x) + {i};\n", i - 1));
     }
     src.push_str(&format!(
-        "main(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- \"${{step{}(x: 1)}}\";\n}}\n",
+        "main(m: MainArgs) {{\n  m.stdout <- \"${{step{}(x: 1)}}\";\n}}\n",
         n - 1
     ));
     load(src.as_bytes()).unwrap()

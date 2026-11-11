@@ -28,7 +28,7 @@ fn built(text: &str) -> Result<(), Error> {
 /// A program that prints `e`.
 fn printing(e: &str) -> String {
     format!(
-        "main(stdin: Lines) -> (stdout: Lines) {{\n  offset = {e};\n  stdout <- \"offset: \" ++ String(offset);\n}}\n"
+        "main(m: MainArgs) {{\n  offset = {e};\n  m.stdout <- \"offset: \" ++ String(offset);\n}}\n"
     )
 }
 

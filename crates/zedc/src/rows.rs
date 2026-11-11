@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Lookup, Shared, Term, Value, World};
 
-use crate::elab::{Cones, Test};
+use crate::elab::{Cones, MAIN_KEY, Test};
 use crate::interp;
 use crate::run::{PortKind, Program, Through};
 
@@ -59,52 +59,58 @@ pub(crate) fn wave(
     t: &Test,
     map: &Through<'_>,
 ) -> Result<(), String> {
-    let mut lines = BTreeMap::new();
-    let mut files: BTreeMap<&str, Arc<dyn Lookup>> = BTreeMap::new();
-    // The arguments the first `CommandLine` port is given, and its name.
-    let mut args: Option<(&str, Vec<String>)> = None;
-    for ((name, kind), arg) in program.inputs().iter().zip(&t.args) {
-        match kind {
-            PortKind::Lines => match value(cones, swap, arg, map)? {
-                Value::Str(s) => {
-                    lines.insert(name.clone(), Arc::from(s.flat().as_bytes()));
-                }
+    // The name a field of `MainArgs` has in this program: `m.stdin`, or `stdin` in `main()`.
+    let named = |f: &str| match program.param() {
+        Some(p) if f != "files()" => format!("{p}.{f}"),
+        _ => f.to_string(),
+    };
+    // The key gives the inputs by field (`MAIN_KEY`), so a row means the same whichever fields
+    // the body reads, and each item is checked whether the body reads it or not; an input the
+    // key leaves out is empty.
+    let mut stdin: Arc<[u8]> = Arc::from(&b""[..]);
+    let mut args = Vec::new();
+    let mut lookups: HashMap<&str, Arc<dyn Lookup>> = HashMap::new();
+    for (f, arg) in MAIN_KEY.iter().zip(&t.args) {
+        match *f {
+            "stdin" => match value(cones, swap, arg, map)? {
+                Value::Str(s) => stdin = Arc::from(s.flat().as_bytes()),
                 v => {
                     return Err(format!(
-                        "the `Lines` port `{name}` is given as a String, not {v}"
+                        "the `Lines` port `{}` is given as a String, not {v}",
+                        named(f)
                     ));
                 }
             },
-            PortKind::Files | PortKind::Env => {
-                files.insert(
-                    name,
-                    Arc::new(Given(interp::prelude(cones.close_with(arg.clone(), swap)))),
-                );
+            "args" => match value(cones, swap, arg, map)? {
+                Value::Str(s) => args = given_args(&s.flat()),
+                v => {
+                    return Err(format!(
+                        "the `CommandLine` port `{}` is given as a String, one argument per \
+                         line, not {v}",
+                        named(f)
+                    ));
+                }
+            },
+            _ => {
+                let given = Given(interp::prelude(cones.close_with(arg.clone(), swap)));
+                lookups.insert(f, Arc::new(given));
             }
-            PortKind::CommandLine => match value(cones, swap, arg, map)? {
-                Value::Str(s) => {
-                    let given = given_args(&s.flat());
-                    match &args {
-                        Some((first, a)) if *a != given => {
-                            return Err(format!(
-                                "the `CommandLine` ports `{first}` and `{name}` are given \
-                                 different arguments; a run has one command line"
-                            ));
-                        }
-                        Some(_) => {}
-                        None => args = Some((name, given)),
-                    }
-                }
-                v => {
-                    return Err(format!(
-                        "the `CommandLine` port `{name}` is given as a String, one argument \
-                         per line, not {v}"
-                    ));
-                }
-            },
         }
     }
-    let args = args.map(|(_, a)| a).unwrap_or_default();
+    let mut lines = BTreeMap::new();
+    let mut files: BTreeMap<&str, Arc<dyn Lookup>> = BTreeMap::new();
+    for (name, kind) in program.inputs() {
+        match kind {
+            PortKind::Lines => {
+                lines.insert(name.clone(), Arc::clone(&stdin));
+            }
+            PortKind::Files | PortKind::Env => {
+                let given = lookups.get(field(name)).cloned();
+                files.insert(name, given.unwrap_or_else(|| Arc::new(NotFound)));
+            }
+            PortKind::CommandLine => {}
+        }
+    }
     let wave = match swap {
         None => program.run_through(&lines, &args, |name| files[name].clone(), map)?,
         Some(_) => {
@@ -114,34 +120,69 @@ pub(crate) fn wave(
             program.run_main_through(&main, &lines, &args, |name| files[name].clone(), map)?
         }
     };
-    let outputs = program.outputs();
-    let wants = match (outputs.len(), value(cones, swap, &t.want, map)?) {
-        (1, v) => vec![v],
-        (n, Value::Tuple(xs)) if xs.len() == n => xs.into_vec(),
-        (n, v) => {
+    // The value is standard output, or `(stdout, stderr)`, or `(stdout, stderr, status)`;
+    // what it leaves out is `""`, and the status 0.
+    let wants = match value(cones, swap, &t.want, map)? {
+        Value::Tuple(xs) if (2..=3).contains(&xs.len()) => xs.into_vec(),
+        v @ Value::Tuple(_) => {
             return Err(format!(
-                "the expected value is a String for each of the {n} output ports, not {v}"
+                "the expected value of a row of `main` is the standard output of the run, as a \
+                 String, or the tuple `(stdout, stderr)` or `(stdout, stderr, status)`, not {v}"
+            ));
+        }
+        v => vec![v],
+    };
+    // The first write to each port, by the field it is.
+    let mut written: HashMap<&str, &[u8]> = HashMap::new();
+    for (p, b) in &wave.writes {
+        written.entry(field(p)).or_insert(&b[..]);
+    }
+    for (f, want) in MAIN_OUTPUTS.iter().zip(&wants) {
+        let name = named(f);
+        let got = written.get(f).copied().unwrap_or_default();
+        let Value::Str(want) = want else {
+            return Err(format!(
+                "the expected value of `{name}` is a String, not {want}"
+            ));
+        };
+        if got != want.flat().as_bytes() {
+            let got = Value::str(&String::from_utf8_lossy(got));
+            return Err(format!("`{name}` writes {got}"));
+        }
+    }
+    let status = match wants.get(2) {
+        None => 0,
+        Some(Value::Int(n)) if (0..=255).contains(n) => *n,
+        Some(v) => {
+            return Err(format!(
+                "the expected status of a row of `main` is an int from 0 to 255, not {v}"
             ));
         }
     };
-    // The first write to each port.
-    let mut written: HashMap<&str, &[u8]> = HashMap::new();
-    for (p, b) in &wave.writes {
-        written.entry(&**p).or_insert(&b[..]);
-    }
-    for (name, want) in outputs.iter().zip(wants) {
-        let Value::Str(want) = want else {
-            return Err(format!(
-                "the expected value of port `{name}` is a String, not {want}"
-            ));
-        };
-        let got = written.get(&**name).copied().unwrap_or(&[]);
-        if got != want.flat().as_bytes() {
-            let got = Value::str(&String::from_utf8_lossy(got));
-            return Err(format!("port `{name}` writes {got}"));
-        }
+    if i64::from(wave.status) != status {
+        return Err(format!("the run exits with status {}", wave.status));
     }
     Ok(())
+}
+
+/// The output fields of `MainArgs` in the order a row's value gives them.
+const MAIN_OUTPUTS: [&str; 2] = ["stdout", "stderr"];
+
+/// The field of `MainArgs` the port `name` of `main` is, as `stdin` for `m.stdin`, or
+/// `files()`.
+fn field(name: &str) -> &str {
+    name.rsplit_once('.').map_or(name, |(_, f)| f)
+}
+
+/// The `Files` or environment port of an input a row's key leaves out: every read is
+/// `#notFound`.
+#[derive(Debug)]
+struct NotFound;
+
+impl Lookup for NotFound {
+    fn get(&self, _: &Value) -> Result<Value, String> {
+        Ok(Value::atom("notFound"))
+    }
 }
 
 /// The arguments a test gives a `CommandLine` port as the `String` `s`, one per line, the

@@ -68,6 +68,6 @@ fn a_type_name_resolves_to_the_prelude_and_a_unit_declares_none_at_l1() {
             "the type `Point` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [Point]"
         ]
     );
-    let text = "main(stdin: Lines) -> (stdout: Lines) { stdout <- stdin; }";
+    let text = "main(m: MainArgs) { m.stdout <- m.stdin; }";
     assert!(run(text).is_ok());
 }

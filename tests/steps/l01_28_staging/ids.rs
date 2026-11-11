@@ -167,8 +167,7 @@ fn units() -> Vec<(String, Vec<u8>)> {
     out.sort();
     // The files of later layers do not load yet; every program written below does.
     out.retain(|(_, src)| load(src).is_ok());
-    let mut chain =
-        String::from("main(stdin: Lines) -> (stdout: Lines) {\n  x0 = int(stdin[1]) else 0;\n");
+    let mut chain = String::from("main(m: MainArgs) {\n  x0 = int(m.stdin[1]) else 0;\n");
     for i in 1..=40 {
         chain += &format!(
             "  x{i} = if x{} >= {i} {{ x{} }} else {{ x{} + {i} * 2 }};\n",
@@ -177,24 +176,24 @@ fn units() -> Vec<(String, Vec<u8>)> {
             i - 1
         );
     }
-    chain += "  stdout <- String(x40);\n}\n";
+    chain += "  m.stdout <- String(x40);\n}\n";
     out.extend([
         (
             "a log filter".into(),
-            b"day = 60 * 60 * 24;\nweek = 7 * day;\nmain(stdin: Lines) -> (stdout: Lines) {\n  secs = int(stdin[1]) else 0;\n  stdout <- String(week - secs) ++ \" left of \" ++ String(week);\n}\n".to_vec(),
+            b"day = 60 * 60 * 24;\nweek = 7 * day;\nmain(m: MainArgs) {\n  secs = int(m.stdin[1]) else 0;\n  m.stdout <- String(week - secs) ++ \" left of \" ++ String(week);\n}\n".to_vec(),
         ),
         ("a chain of ifs".into(), chain.into_bytes()),
         (
             "a local function called at build".into(),
-            b"main(stdin: Lines) -> (stdout: Lines) {\n  add(a: int, b: int) = a + b;\n  k = add(a: add(a: 1, b: 2), b: 3);\n  stdout <- String(k);\n}\n".to_vec(),
+            b"main(m: MainArgs) {\n  add(a: int, b: int) = a + b;\n  k = add(a: add(a: 1, b: 2), b: 3);\n  m.stdout <- String(k);\n}\n".to_vec(),
         ),
         (
             "a call the build does not run".into(),
-            b"w(positional f) = f(f);\nspin = w(w);\nmain(stdin: Lines) -> (stdout: Lines) {\n  stdout <- if false { String(spin) } else { \"x\" };\n}\n".to_vec(),
+            b"w(positional f) = f(f);\nspin = w(w);\nmain(m: MainArgs) {\n  m.stdout <- if false { String(spin) } else { \"x\" };\n}\n".to_vec(),
         ),
         (
             "a definition nothing reads".into(),
-            b"whole(positional v: int) = v;\nbroken = 1 div whole(0);\nunused = broken + 1;\nmain(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"a\" ++ \"b\";\n}\n".to_vec(),
+            b"whole(positional v: int) = v;\nbroken = 1 div whole(0);\nunused = broken + 1;\nmain(m: MainArgs) {\n  m.stdout <- \"a\" ++ \"b\";\n}\n".to_vec(),
         ),
     ]);
     out

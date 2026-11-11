@@ -18,9 +18,11 @@ fn every_enabled_fence_agrees() {
     assert_eq!(runs, 2, "native runs, each leaving no cell live");
     assert_eq!(r.mismatches, Vec::<String>::new());
     assert_eq!(r.not_compared, Vec::<String>::new());
-    // The lambda fence's `five` and `seven` under each engine, and the table checks of the
-    // four fences: the three rejected ones compare nothing.
-    assert_eq!(r.compared, 6);
+    // The lambda fence's `five` and `seven` under each engine, and the table checks, under
+    // each engine, of the fences whose front passes: the lambda fence, and the two `main`s of
+    // sec:ports with `MainArgs` (DESIGN sec:ports 1, EXAMPLES section 18 fence 8); a fence the
+    // front rejects compares nothing.
+    assert_eq!(r.compared, 10);
 }
 
 #[test]
@@ -32,7 +34,10 @@ fn every_step_unit_agrees() {
             r.add(&p.display().to_string(), unit(&text, engines));
         }
     });
-    assert_eq!(runs, 220, "native runs, each leaving no cell live");
+    // A row of `main` gives its inputs by field of `MainArgs`, and each item of its key is
+    // evaluated whether the body reads that field or not: config.zed's three rows evaluate 2
+    // items more each than the fields its body reads, 6 runs under each engine.
+    assert_eq!(runs, 232, "native runs, each leaving no cell live");
     assert_eq!(r.mismatches, Vec::<String>::new());
     assert_eq!(r.not_compared, Vec::<String>::new());
     assert_eq!(r.compared, 22);
@@ -54,7 +59,7 @@ fn every_enabled_corpus_program_agrees_and_writes_its_output() {
             assert_eq!(r.mismatches, Vec::<String>::new(), "{}", path.display());
             assert_eq!(r.not_compared, Vec::<String>::new(), "{}", path.display());
             let out = zed_kernel::Value::str(&String::from_utf8_lossy(&out));
-            assert_eq!(want, Some(format!("port `stdout` writes {out}")));
+            assert_eq!(want, Some(format!("port `m.stdout` writes {out}")));
         }
     });
     assert_eq!(runs, 0, "native runs, each leaving no cell live");

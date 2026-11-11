@@ -1,9 +1,9 @@
 // layer L3
 // Output fixed by DESIGN.md (at 843be85) line 3099: `m = { "a" -> 1, "b" -> 2 }` is a display
 // with domain {"a","b"}; line 501: a lookup is `T | #notFound`; line 1997: `in` on a range.
-main(stdin: Lines) -> (stdout: Lines) {
+main(m: MainArgs) {
   m = { "a" -> 1, "b" -> 2 };
-  v = m[trim(stdin[1] else "")] else 0;
+  v = m[trim(m.stdin[1] else "")] else 0;
   w = m["c"] else -1;
-  stdout <- "${v} ${w} ${m::card} ${if v in 1..=2 { "yes" } else { "no" }}";
+  m.stdout <- "${v} ${w} ${m::card} ${if v in 1..=2 { "yes" } else { "no" }}";
 }

@@ -19,8 +19,8 @@ opt(positional x) = match x { #notFound -> "-", n -> "${n}" };
 
 ids(positional s) = (for k in s { "${k}" }).concat(" ");
 
-main(stdin: Lines) -> (stdout: Lines) {
-  rows   = stdin.map(l -> parse(l));
+main(m: MainArgs) {
+  rows   = m.stdin.map(l -> parse(l));
   orders = rows.where(r -> r.side == "O").group(r -> r.id).map(g -> g.map(r -> r.n).sum);
   pays   = rows.where(r -> r.side == "P").group(r -> r.id).map(g -> g.map(r -> r.n).sum);
   inner  = for k -> a in orders where k in pays::domain { "inner ${k} ${a} ${pays[k]}" };
@@ -31,7 +31,7 @@ main(stdin: Lines) -> (stdout: Lines) {
   onlyR  = pays::domain.diff(orders::domain);
   low    = for k -> a in orders where k < 10 { a };
   high   = for k -> a in orders where k >= 10 { a };
-  stdout <- inner.orderedValues ++ left.orderedValues ++ right.orderedValues ++ outer.orderedValues
+  m.stdout <- inner.orderedValues ++ left.orderedValues ++ right.orderedValues ++ outer.orderedValues
          ++ ["unpaid ${ids(onlyL)}", "unordered ${ids(onlyR)}", "symdiff ${ids(onlyL ++ onlyR)}",
              "rejoined ${if low ++ high == orders { "equal" } else { "different" }}"];
 }

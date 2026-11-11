@@ -7,7 +7,7 @@ double(positional x) = x * 2;
 clamp(positional v, positional lo, positional hi) {
   if v < lo { lo } else if v > hi { hi } else { v }
 }
-main(stdin: Lines) -> (stdout: Lines) {
-  n = int(trim(stdin[1] else "")) else 0;
-  stdout <- "${n.double.clamp(0, 8)} ${5.double.clamp(0, 8)} ${(0 - 3).double.clamp(0, 8)}";
+main(m: MainArgs) {
+  n = int(trim(m.stdin[1] else "")) else 0;
+  m.stdout <- "${n.double.clamp(0, 8)} ${5.double.clamp(0, 8)} ${(0 - 3).double.clamp(0, 8)}";
 }

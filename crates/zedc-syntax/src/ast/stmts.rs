@@ -9,10 +9,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::builder::{Builder, Built};
+use super::builder::{Builder, Built, MAIN_INPUTS, MAIN_OUTPUTS};
 use super::{
     Annot, BoundaryItem, Error, Expr, ExprKind, Field, Function, Import, ImportKind, IndexKey,
-    IndexedDef, Method, Note, Port, Stmt, StmtKind, Struct, TypeDecl,
+    IndexedDef, MainHeader, Method, Note, Param, Port, Stmt, StmtKind, Struct, Type, TypeDecl,
+    TypeKind, TypeParam,
 };
 use crate::lex::{Part, Span, Tok};
 use zedc_base::address::ContentAddress;
@@ -321,7 +322,7 @@ impl Builder<'_, '_> {
                 })
             }
             "WholePush" => StmtKind::Push {
-                port: self.word(self.tree.nodes[kids[0]].start).into(),
+                port: self.push_target(kids[0])?,
                 value: self.node(kids[1])?,
             },
             "Import" => StmtKind::Import(self.import(d)?),
@@ -440,25 +441,33 @@ impl Builder<'_, '_> {
     fn function(&mut self, n: usize, skip: usize) -> Result<Function, Error> {
         let kids = self.kids(n);
         let (&body, head) = kids.split_last().expect("Function ends in its body");
-        let (mut params, mut ports) = (Vec::new(), None);
+        let name: String = self.word(self.tree.nodes[kids[skip]].start).into();
+        let is_main = skip == 0 && name == "main";
+        let (mut params, mut result) = (Vec::new(), None);
         for &k in &head[skip + 1..] {
             match self.tree.name(k) {
                 "Params" => params = self.params(k, self.span(n))?,
-                "Ports" => {
-                    let mut list = Vec::new();
-                    for &p in self.kids(k) {
-                        let pk = self.kids(p);
-                        list.push(Port {
-                            name: self.word(self.tree.nodes[pk[0]].start).into(),
-                            ty: self.ty(pk[1])?,
-                            span: self.span(p),
-                        });
-                    }
-                    ports = Some(list);
+                // Any result type but `int` is rejected naming `int`, a form this zedc does not
+                // compile yet as well, as the old `-> (stdout: Lines)`, after the parameter,
+                // whose message says where each old input is read now ([`Self::main_header`]).
+                "Result" if is_main => {
+                    let t = self.kids(k)[0];
+                    result = Some(match self.ty(t) {
+                        Ok(r) if matches!(&r.kind, TypeKind::Name(n) if n == "int") => Ok(r),
+                        _ => Err(self.span(t)),
+                    });
                 }
+                "Result" => return Err(self.later_as(k, "the declared result type")),
                 _ => return Err(self.later(k)),
             }
         }
+        let (params, main) = match is_main {
+            true => {
+                let (params, header) = self.main_header(params, result, self.span(body))?;
+                (params, Some(Box::new(header)))
+            }
+            false => (params, None),
+        };
         let equation = self.word(self.tree.nodes[body].start) == "=";
         let (&first, trailers) = self.kids(body).split_first().expect("a Body has its body");
         let body = if equation {
@@ -477,13 +486,142 @@ impl Builder<'_, '_> {
             }
         }
         Ok(Function {
-            name: self.word(self.tree.nodes[kids[skip]].start).into(),
+            name,
             params,
-            ports,
+            main,
             equation,
             body,
             tests,
         })
+    }
+
+    /// The parameters and ports the rest of the compiler runs `main` with, from its written
+    /// header `main(m: MainArgs) -> int` (DESIGN.md sec:ports, step L1.19), whose body is the
+    /// text `body`: an input parameter for each field of `m` the body reads and for
+    /// `files()`, named as written (`m.stdin`), and an output port for each field it pushes
+    /// to (`m.stdout`), in the order of `MainArgs`; and the header as written. Or why the
+    /// header is not one `main` may have: a second parameter, a parameter of another type,
+    /// or a default value; then a result other than `int`, written at the span `result` holds
+    /// ([`main_result_error`]).
+    fn main_header(
+        &self,
+        params: Vec<Param>,
+        result: Option<Result<Type, Span>>,
+        body: Span,
+    ) -> Result<(Vec<Param>, MainHeader), Error> {
+        let error = |span: Span, message: String| Error {
+            row: None,
+            menu: String::new(),
+            span,
+            message,
+            notes: Vec::new(),
+        };
+        let mut params = params.into_iter();
+        let param = params.next();
+        if let Some(second) = params.next() {
+            let first = param.as_ref().expect("a first parameter");
+            return Err(error(
+                second.span,
+                format!(
+                    "`main` is declared with a second parameter `{}`, and `main` takes one \
+                     argument, of type `MainArgs`, which holds every input and output of the \
+                     program: `m.args` (the words after `--`), `m.stdin` (standard input), \
+                     `m.env` (the environment), `m.stdout` and `m.stderr`. Declare \
+                     `main(m: MainArgs)` and read what `{}` and `{}` read through it: \
+                     `m.args`, `m.stdin` or `m.env`; files are read with `files()`, and \
+                     the clock with `clock(period: …)`.",
+                    second.name, first.name, second.name
+                ),
+            ));
+        }
+        if let Some(p) = &param {
+            let main_args = match &p.ty {
+                None => true,
+                Some(t) => matches!(&t.kind, TypeKind::Name(n) if n == "MainArgs"),
+            };
+            if !main_args {
+                return Err(error(p.span, main_param_message(self.text, p)));
+            }
+            if let Some(d) = &p.default {
+                return Err(error(
+                    d.span,
+                    format!(
+                        "the parameter `{}` of `main` is given a default value, and `main` is \
+                         called once, when the program starts, with the program's inputs and \
+                         outputs: its argument is never left out. Remove `= {}`.",
+                        p.name,
+                        &self.text[d.span.start..d.span.end]
+                    ),
+                ));
+            }
+        }
+        let result = (result.transpose()).map_err(|span| main_result_error(self.text, span))?;
+        let main = self.mains.of(body).expect("a main's body is in the table");
+        let (inputs, outputs) = &*main.uses.borrow();
+        let m = param.as_ref().map(|p| p.name.as_str());
+        let named = |field: &str| match (field, m) {
+            ("files()", _) | (_, None) => field.to_string(),
+            (_, Some(m)) => format!("{m}.{field}"),
+        };
+        // `MainArgs` declares each field's type, so the type sits at the parameter's type as
+        // written (or at the parameter, when it has none), where a derivation shows it; in
+        // `main()`, with no parameter, at the empty span where the body first uses the field.
+        let declared = (param.as_ref()).map(|p| p.ty.as_ref().map_or(p.span, |t| t.span));
+        let at = |span: Span| {
+            declared.unwrap_or(Span {
+                start: span.start,
+                end: span.start,
+            })
+        };
+        let name = |n: &str, span: Span| Type {
+            kind: TypeKind::Name(n.into()),
+            span,
+        };
+        let mut synth = Vec::new();
+        for (field, used) in MAIN_INPUTS.iter().zip(inputs) {
+            let Some(span) = *used else { continue };
+            let ty = match *field {
+                "args" => name("CommandLine", at(span)),
+                "stdin" => name("Lines", at(span)),
+                "files()" => name("Files", at(span)),
+                _ => Type {
+                    kind: TypeKind::Arrow {
+                        params: vec![TypeParam {
+                            name: None,
+                            positional: false,
+                            ty: name("String", at(span)),
+                        }],
+                        partial: true,
+                        result: Box::new(name("String", at(span))),
+                    },
+                    span: at(span),
+                },
+            };
+            synth.push(Param {
+                name: named(field),
+                tuple: None,
+                positional: false,
+                ty: Some(ty),
+                default: None,
+                span,
+                name_at: span,
+            });
+        }
+        let mut ports = Vec::new();
+        for (field, used) in MAIN_OUTPUTS.iter().zip(outputs) {
+            let Some(span) = *used else { continue };
+            ports.push(Port {
+                name: named(field),
+                ty: name("Lines", at(span)),
+                span,
+            });
+        }
+        let header = MainHeader {
+            param: param.map(|p| (p.name, p.span, p.ty)),
+            result,
+            ports,
+        };
+        Ok((synth, header))
     }
 }
 
@@ -574,4 +712,56 @@ impl Builder<'_, '_> {
         let b = before.strip_suffix("with").unwrap_or(before).trim_end();
         format!("{b}{after}")
     }
+}
+
+/// The error for a result type other than `int` declared on `main`, written at `span`.
+fn main_result_error(text: &str, span: Span) -> Error {
+    let written = &text[span.start..span.end];
+    Error {
+        row: None,
+        menu: String::new(),
+        span,
+        notes: Vec::new(),
+        message: format!(
+            "`main` is declared to give `{written}`, and `main` gives an `int`, the program's \
+             exit status, 0 for success; a body that exports nothing gives 0. Declare `-> int` \
+             and export the status, or leave the result out. To write lines, push them to \
+             `m.stdout`, as `m.stdout <- lines;`, with `main(m: MainArgs)`."
+        ),
+    }
+}
+
+/// The message for the parameter `p` of `main` in `text`, whose type is not `MainArgs`: what
+/// `main` takes, and where each input an old header named a parameter for is read now.
+fn main_param_message(text: &str, p: &Param) -> String {
+    let name = &p.name;
+    let ty =
+        p.ty.as_ref()
+            .expect("a parameter with a type other than MainArgs");
+    let written = &text[ty.span.start..ty.span.end];
+    let read = match &ty.kind {
+        TypeKind::Name(n) if n == "Lines" => "`m.stdin`, the lines of standard input",
+        TypeKind::Name(n) if n == "CommandLine" => {
+            "`m.args`, the words after `--` on the command line"
+        }
+        TypeKind::Name(n) if n == "Files" => "`files()`, which reads files by path",
+        TypeKind::Arrow { partial: true, .. } => "`m.env`, the environment variables by name",
+        _ => {
+            return format!(
+                "the parameter `{name}` of `main` is declared as `{name}: {written}`, and `main` \
+                 takes one argument, of type `MainArgs`, which holds every input and output of \
+                 the program. Declare `main(m: MainArgs)` and compute the `{written}` that \
+                 `{name}` held in the body, from `m.args` (the words after `--`), `m.stdin` \
+                 (standard input) or `m.env` (the environment); the program's output is pushed \
+                 to `m.stdout`."
+            );
+        }
+    };
+    format!(
+        "the parameter `{name}` of `main` is declared as `{name}: {written}`, and `main` takes \
+         one argument, of type `MainArgs`, which holds every input and output of the program. \
+         Declare `main(m: MainArgs)` and read what `{name}` read from {read}, writing it in \
+         the body where `{name}` is written now; the program's output is pushed to \
+         `m.stdout`."
+    )
 }

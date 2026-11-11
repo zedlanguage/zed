@@ -32,7 +32,7 @@ fn fan(k: usize, main: impl Fn(usize) -> String) -> Vec<(String, String)> {
     let imports: String = (0..k).map(&main).collect();
     out.push((
         "main.zed".into(),
-        format!("{imports}main() -> (stdout: Lines) {{}}\n"),
+        format!("{imports}main(m: MainArgs) {{}}\n"),
     ));
     out
 }
@@ -98,7 +98,7 @@ fn many_units_importing_one_unit_are_pinned_in_linear_time() {
             let imports: String = (0..k).map(|i| format!("import w{i};\n")).collect();
             fs.push((
                 "main.zed".into(),
-                format!("{imports}main() -> (stdout: Lines) {{}}\n"),
+                format!("{imports}main(m: MainArgs) {{}}\n"),
             ));
             (k, memory(&fs))
         })

@@ -48,7 +48,9 @@ fn at(text: &str, name: &str, n: usize) -> Vec<String> {
     let (_, used) = r
         .uses
         .iter()
-        .find(|(s, _)| s.start == start)
+        // A type the builder writes for `main`'s header (QUESTIONS Q51) has an empty span at the
+        // first use of its field, and is skipped.
+        .find(|(s, _)| s.start == start && s.end > s.start)
         .unwrap_or_else(|| panic!("occurrence {n} of `{name}` is not a recorded use"));
     match used {
         Ref::Prelude(w) => vec![format!("prelude {w}")],

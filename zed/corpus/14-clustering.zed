@@ -21,13 +21,13 @@ merge(positional label, positional link) = match link {
   (_, a, b) -> label.map(l -> if l == b { a } else { l }),
 };
 
-main(stdin: Lines) -> (stdout: Lines) {
-  k   = int(stdin[0] else "") else 1;
-  pts = stdin.drop(1).map(l -> { w = l.split(" "); Pt(x: int(w[0] else "") else 0, y: int(w[1] else "") else 0) });
+main(m: MainArgs) {
+  k   = int(m.stdin[0] else "") else 1;
+  pts = m.stdin.drop(1).map(l -> { w = l.split(" "); Pt(x: int(w[0] else "") else 0, y: int(w[1] else "") else 0) });
   run = loop t {
     label' = merge(label, closest(pts, label)) with initial label = for i -> _ in pts { i };
     while t < pts::len - k;
   };
   clusters = run.label.group(l -> l);
-  stdout <- for c -> ms in clusters { "${c}: ${(for i -> _ in ms { "${i}" }).concat(" ")}" };
+  m.stdout <- for c -> ms in clusters { "${c}: ${(for i -> _ in ms { "${i}" }).concat(" ")}" };
 }

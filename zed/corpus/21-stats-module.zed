@@ -13,7 +13,7 @@ import stats.{stats};
 
 col(positional ls, positional k) = ls.map(l -> f64(l.split(" ")[k] else "") else 0.0);
 
-main(stdin: Lines) -> (stdout: Lines) {
-  s = stats(col(stdin, 0), col(stdin, 1));
-  stdout <- ["mean ${s.mean}", "sd ${s.sd}"];
+main(m: MainArgs) {
+  s = stats(col(m.stdin, 0), col(m.stdin, 1));
+  m.stdout <- ["mean ${s.mean}", "sd ${s.sd}"];
 }

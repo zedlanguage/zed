@@ -11,10 +11,10 @@ use super::{dir_program, run_words, zedc};
 /// joined by `|`.
 fn reader(n: usize) -> String {
     let holes: Vec<String> = (0..n)
-        .map(|k| format!("${{env[\"V{k}\"] else \"-\"}}"))
+        .map(|k| format!("${{m.env[\"V{k}\"] else \"-\"}}"))
         .collect();
     format!(
-        "main(env: String ->? String) -> (stdout: Lines) {{\n  stdout <- \"{}\";\n}}\n",
+        "main(m: MainArgs) {{\n  m.stdout <- \"{}\";\n}}\n",
         holes.join("|")
     )
 }

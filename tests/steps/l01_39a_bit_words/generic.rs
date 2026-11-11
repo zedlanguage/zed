@@ -29,7 +29,7 @@ use super::{accepted, rejected};
 
 /// A program that writes the text `expr` after the definitions `defs`.
 fn printing(defs: &str, expr: &str) -> String {
-    format!("{defs}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- {expr};\n}}\n")
+    format!("{defs}\nmain(m: MainArgs) {{\n  m.stdout <- {expr};\n}}\n")
 }
 
 /// What the program `src` prints, run in the test directory `name`.
@@ -138,10 +138,10 @@ fn f_of_3_gives_8_and_f_of_2_point_0_gives_4_point_0() {
 
 #[test]
 fn an_unknown_int_is_rejected_and_the_kernel_would_stop_on_it() {
-    let src = "f(positional n) = 2^n;\nmain(stdin: Lines) -> (stdout: Lines) {\n  stdout <- String(f(int(stdin[1]) else 0));\n}\n";
+    let src = "f(positional n) = 2^n;\nmain(m: MainArgs) {\n  m.stdout <- String(f(int(m.stdin[1]) else 0));\n}\n";
     let out = rejected(src);
     assert!(
-        out.starts_with("3:20: `f` takes `n` in int[0..], and this `n` is int"),
+        out.starts_with("3:22: `f` takes `n` in int[0..], and this `n` is int"),
         "{out}"
     );
     assert!(!out.contains("type error"), "{out}");
@@ -197,7 +197,7 @@ fn a_guarded_use_gives_0_directly_and_through_a_helper() {
     let src = printing(defs, "String(e(-1)) ++ \" \" ++ String(g(-1))");
     assert_eq!(prints("generic_guard", &src), "0 0");
     let src = format!(
-        "{defs}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- String(g(int(stdin[1]) else 0));\n}}\n"
+        "{defs}\nmain(m: MainArgs) {{\n  m.stdout <- String(g(int(m.stdin[1]) else 0));\n}}\n"
     );
     assert!(accepted(&src));
 }

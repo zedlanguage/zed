@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use crate::ast;
 use crate::ast::{
     Annot, Arm, BoundaryItem, Every, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param,
-    Pattern, Port, Stmt, StmtKind, Target, Type, TypeKind, TypeParam, Update,
+    Pattern, Stmt, StmtKind, Target, Type, TypeKind, TypeParam, Update,
 };
 use crate::lex::{self, Span, Token};
 use crate::parse::{TOP, parse};
@@ -350,8 +350,6 @@ enum Job<'a> {
     },
     /// Parameters, with `, ` between.
     Params { params: &'a [Param], ind: usize },
-    /// Output ports, with `, ` between.
-    Ports(&'a [Port]),
     /// The type `t` in a position that takes levels `min` and above.
     Ty { t: &'a Type, min: u8 },
     /// `types`, each at level `min`, with `sep` between.
@@ -727,16 +725,6 @@ impl<'a> Formatter<'a> {
                         let min = listed(p.default.is_none() && !rest.is_empty());
                         then![stack; put(": "), Job::Ty { t, min }];
                     }
-                }
-            }
-            Job::Ports(ports) => {
-                if let Some((p, rest)) = ports.split_first() {
-                    if !rest.is_empty() {
-                        then![stack; put(", "), Job::Ports(rest)];
-                    }
-                    self.put(format!("{}: ", p.name));
-                    let min = listed(!rest.is_empty());
-                    stack.push(Job::Ty { t: &p.ty, min });
                 }
             }
             Job::Ty { t, min } => {
@@ -1121,17 +1109,29 @@ impl<'a> Formatter<'a> {
             ind,
         };
         let mut jobs = Vec::new();
-        if called {
-            jobs.extend([
+        match &f.main {
+            // `main` is printed as written, `main(m: MainArgs) -> int`: its `params` are the
+            // fields its body reads (`MainHeader`).
+            Some(h) => {
+                if let Some((name, _, ty)) = &h.param {
+                    jobs.push(put(name.clone()));
+                    if let Some(t) = ty {
+                        jobs.extend([put(": "), Job::Ty { t, min: 0 }]);
+                    }
+                }
+                jobs.push(put(")"));
+                if let Some(t) = &h.result {
+                    jobs.extend([put(" -> "), Job::Ty { t, min: 0 }]);
+                }
+            }
+            None if called => jobs.extend([
                 Job::Params {
                     params: &f.params,
                     ind,
                 },
                 put(")"),
-            ]);
-        }
-        if let Some(ports) = &f.ports {
-            jobs.extend([put(" -> ("), Job::Ports(ports), put(")")]);
+            ]),
+            None => {}
         }
         if f.equation {
             jobs.extend([put(" = "), value(&f.body)]);

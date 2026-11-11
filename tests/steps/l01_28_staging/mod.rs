@@ -30,8 +30,13 @@ pub(crate) fn staged(src: &str) -> (Program, Program, Report) {
 
 /// What one wave of `p` writes to `stdout` on `stdin`, or its error.
 pub(crate) fn out(p: &Program, stdin: &str) -> String {
-    let mut lines = BTreeMap::new();
-    lines.insert("stdin".to_string(), Arc::from(stdin.as_bytes()));
+    // The `Lines` input is `m.stdin`, named by `main`'s parameter.
+    let lines: BTreeMap<String, Arc<[u8]>> = p
+        .inputs()
+        .iter()
+        .filter(|(_, kind)| matches!(kind, zedc::run::PortKind::Lines))
+        .map(|(name, _)| (name.clone(), Arc::from(stdin.as_bytes())))
+        .collect();
     let files = |_: &str| -> Arc<dyn Lookup> { unreachable!("no `Files` port") };
     match p.run(&lines, files) {
         Ok(w) => w

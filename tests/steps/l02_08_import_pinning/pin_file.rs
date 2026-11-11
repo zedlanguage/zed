@@ -10,7 +10,7 @@ fn with_pins(pins: &str) -> zedc::unit::Package {
     package(&[
         ("zed.manifest", "prelude = \"std\";\n"),
         (PIN_FILE, pins),
-        ("main.zed", "main() -> (stdout: Lines) {}\n"),
+        ("main.zed", "main(m: MainArgs) {}\n"),
         ("std.zed", "double(x: f64) = x * 2.0;\n"),
     ])
 }

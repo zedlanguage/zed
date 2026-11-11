@@ -669,6 +669,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Some((u, made)) => (Some(u), made),
                     None => (None, None),
                 };
+                if self.main_tails.contains(&e.span) {
+                    self.status_in_range(e, &t);
+                }
                 let tried = self.tried.remove(&e.span);
                 let outside = self.outside_of(e, &t, &src, tried);
                 for (map, set) in [
@@ -1050,6 +1053,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let StmtKind::Function(f) = &s.kind else {
                     unreachable!("a function")
                 };
+                if f.main.is_some() {
+                    self.exit_status(f, &sig);
+                }
                 let id = self.id(s.span, &f.name);
                 self.origin(id, s.span, Why::Declared(sig.clone()), None);
                 self.env.insert(id, Ty::func(sig.clone()));
@@ -1357,7 +1363,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(sig) = self.info.sigs.get(&id).cloned() else {
                 continue;
             };
-            if f.ports.is_some() {
+            if f.main.is_some() {
                 continue;
             }
             m.k(Frame::Tests(s));
@@ -1448,6 +1454,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.job(Job::Expr(value));
             }
             StmtKind::Function(f) => {
+                if f.main.is_some() {
+                    self.main_tails(&f.body);
+                }
                 m.k(Frame::Declared(s));
                 m.job(Job::Infer(f, s.span));
             }
@@ -1638,7 +1647,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return m.job(Job::Expr(d));
         }
         let f = s.f;
-        if let Some(ports) = &f.ports {
+        if let Some(ports) = f.ports() {
             for p in ports {
                 let id = self.id(p.span, &p.name);
                 if matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
@@ -1668,7 +1677,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                     (Ty::var(format!("${k}").into()), Why::Untyped(k))
                 }
             };
-            self.origin(*id, p.span, why, None);
+            // A field of `main`'s argument is declared by the parameter `m: MainArgs`, where
+            // its type sits (the builder's `main_header`); with no parameter, at its use.
+            let site = match (&f.main, &p.ty) {
+                (Some(_), Some(a)) if a.span.start < a.span.end => a.span,
+                _ => p.span,
+            };
+            self.origin(*id, site, why, None);
             let bound = match p.ty.is_none() && t.as_var().is_some() {
                 true => self.param_ty(*id, t.clone()),
                 false => t.clone(),
@@ -3548,6 +3563,80 @@ fn leaf(sum: &Summarized, v: &Arc<str>, q: &Product) -> images::Leaf {
 // and the ints the tests allow an operand. It is written here rather than beside `Arms`, so
 // that `arms.rs` imports none of the checker's own files (step S.1f).
 impl<'a> Ck<'_, 'a> {
+    /// Checks that `e`, of type `t`, an expression whose value is the result of `main`
+    /// ([`Ck::main_tails`]), gives an `int` in `0..=255`, the range of an exit status: by the
+    /// values its type lists, or by the ints its text and the tests around it show
+    /// ([`Ck::ints_here`]). Its other values are checked by [`Ck::exit_status`].
+    pub(super) fn status_in_range(&mut self, e: &'a Expr, t: &Ty) {
+        let ints = &t.without_loose().set & &KType::int();
+        if ints.is_empty() {
+            return;
+        }
+        let in_byte = |v: &Value| {
+            v.surface_cmp(&Value::Int(0))
+                .is_some_and(|o| o != std::cmp::Ordering::Less)
+                && v.surface_cmp(&Value::Int(255))
+                    .is_some_and(|o| o != std::cmp::Ordering::Greater)
+        };
+        if ints.ints_listed().is_some_and(|vs| vs.iter().all(in_byte)) {
+            return;
+        }
+        let (got, narrowed) = self.ints_here(e);
+        if got.is_subset(&IntervalSet::of(0, 255)) {
+            return;
+        }
+        let code = self
+            .t
+            .text
+            .map_or("this value", |s| &s[e.span.start..e.span.end]);
+        // Listed values none of which is in the range, as a literal `256`: the value is known
+        // to be outside, and the repair is another value.
+        if ints.ints_listed().is_some_and(|vs| !vs.iter().any(in_byte)) {
+            let message = format!(
+                "`main` gives `{code}`, which is {}, and the result of `main` is the program's \
+                 exit status, a number from 0 to 255",
+                self.show(&Ty::set(ints))
+            );
+            let menu = [
+                "repair: give a status from 0 to 255, as `0` for success or `1` for a \
+                         failure"
+                    .to_string(),
+            ];
+            self.error_offering(e.span, message, menu);
+            return;
+        }
+        let shown = match narrowed {
+            true => format!("int{got}"),
+            false => self.show(&Ty::set(ints)),
+        };
+        let message = format!(
+            "`main` gives `{code}`, which is {shown}, and the result of `main` is the program's \
+             exit status, a number from 0 to 255: this zedc does not show that `{code}` is in \
+             that range"
+        );
+        // A name or a literal is written as it is; anything else in parentheses, and bound to
+        // a name before a test that reads it more than once. The clamp is written as an `if`
+        // chain, since this zedc does not compile `.clamp` yet (DESIGN.md sec:ports offers
+        // `code.clamp(0, 255)`).
+        let simple = code.chars().all(|c| c.is_alphanumeric() || c == '_');
+        let (operand, bind, name) = match simple {
+            true => (code.to_string(), String::new(), code),
+            false => (format!("({code})"), format!("code = {code}; "), "code"),
+        };
+        let menu = [
+            format!(
+                "repair: clamp it into the range, as `{bind}if {name} < 0 {{ 0 }} else if {name} \
+                 > 255 {{ 255 }} else {{ {name} }}`"
+            ),
+            format!("repair: take it modulo 256, as `{operand} mod 256`"),
+            format!(
+                "repair: give a fixed status outside the range, as `{bind}if {name} >= 0 && \
+                 {name} <= 255 {{ {name} }} else {{ 1 }}`"
+            ),
+        ];
+        self.error_offering(e.span, message, menu);
+    }
+
     /// The ints `e` may be here: what its text shows ([`Ck::known`]) met with what the tests
     /// the walk is in show of it; and whether a test narrowed it.
     pub(super) fn ints_here(&mut self, e: &'a Expr) -> (IntervalSet, bool) {

@@ -85,8 +85,8 @@ fn a_built_executable_runs() {
     let src = d.join("hello.zed");
     std::fs::write(
         &src,
-        "main(args: CommandLine) -> (stdout: Lines) {\n  \
-         stdout <- \"Hello, ${args[1] else \"world\"}!\";\n}\n",
+        "main(m: MainArgs) {\n  \
+         m.stdout <- \"Hello, ${m.args[1] else \"world\"}!\";\n}\n",
     )
     .unwrap();
     let exe = d.join("hello");
@@ -105,7 +105,7 @@ fn a_built_executable_runs() {
 fn a_missing_tool_is_a_usage_error_naming_it() {
     let d = dir();
     let src = d.join("quiet.zed");
-    std::fs::write(&src, "main() -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n").unwrap();
+    std::fs::write(&src, "main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n").unwrap();
     let out = d.join("quiet");
     let missing = d.join("no-such-runtime.a");
     assert_eq!(
@@ -145,7 +145,7 @@ fn a_missing_tool_is_a_usage_error_naming_it() {
 fn a_runtime_library_of_another_build_is_a_usage_error() {
     let d = dir();
     let src = d.join("other.zed");
-    std::fs::write(&src, "main() -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n").unwrap();
+    std::fs::write(&src, "main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n").unwrap();
     let other = d.join("libzed_native-other.a");
     std::fs::write(&other, b"!<arch>\n").unwrap();
     let out = d.join("other");
@@ -200,7 +200,7 @@ fn a_stripped_zedc_builds() {
     let src = d.join("stripped.zed");
     std::fs::write(
         &src,
-        "main() -> (stdout: Lines) {\n  stdout <- \"stripped\";\n}\n",
+        "main(m: MainArgs) {\n  m.stdout <- \"stripped\";\n}\n",
     )
     .unwrap();
     let exe = d.join("stripped");
@@ -241,11 +241,7 @@ fn a_wrong_command_line_is_a_usage_error() {
 fn a_rejected_program_builds_nothing() {
     let d = dir();
     let src = d.join("rejected.zed");
-    std::fs::write(
-        &src,
-        "main() -> (stdout: Lines) {\n  stdout <- nothing;\n}\n",
-    )
-    .unwrap();
+    std::fs::write(&src, "main(m: MainArgs) {\n  m.stdout <- nothing;\n}\n").unwrap();
     let out = d.join("rejected");
     let (status, stderr) = failed(&zedc_build(&src, &out, &[]));
     assert_eq!(status, Some(1), "{stderr}");
@@ -261,11 +257,7 @@ fn a_rejected_program_builds_nothing() {
 fn a_build_killed_while_linking_blocks_no_later_build() {
     let d = dir();
     let src = d.join("killed.zed");
-    std::fs::write(
-        &src,
-        "main() -> (stdout: Lines) {\n  stdout <- \"again\";\n}\n",
-    )
-    .unwrap();
+    std::fs::write(&src, "main(m: MainArgs) {\n  m.stdout <- \"again\";\n}\n").unwrap();
     let (out, linking) = (d.join("killed"), d.join("killed.linking"));
     // An executable of the run before records the key, and the build would not link.
     for f in [&out, &linking] {
@@ -318,39 +310,4 @@ fn a_build_killed_while_linking_blocks_no_later_build() {
         (Some(0), "again\n".to_string())
     );
     assert_eq!(working(&d, "killed"), Vec::<String>::new());
-}
-
-/// A function that pushes to a port and is used as a value, here passed to another function
-/// that calls it, runs under `zedc run`; `zedc build` refuses it with status 1, naming the
-/// function, its port and the repairs, and writes nothing.
-#[test]
-fn a_pushing_function_used_as_a_value_is_refused_by_the_build() {
-    let d = dir();
-    let src = d.join("passed.zed");
-    std::fs::write(
-        &src,
-        "say(positional s) -> (stdout: Lines) {\n  stdout <- s;\n}\n\
-         apply(g, s) = g(s);\n\
-         main() -> (stdout: Lines) {\n  a = apply(g: say, s: \"one\");\n}\n",
-    )
-    .unwrap();
-    let out = d.join("passed");
-    // A file left by an earlier run would hide a build that wrote one.
-    let _ = std::fs::remove_file(&out);
-    let (status, stderr) = failed(&zedc_build(&src, &out, &[]));
-    assert_eq!(status, Some(1), "{stderr}");
-    assert_eq!(
-        stderr,
-        format!(
-            "{}: `zedc build` cannot compile this program: the function `say`, of 1 \
-             parameter, reads or pushes the port `stdout`, and the program uses `say` as a \
-             value (it passes, stores or returns it) instead of calling it. Built code carries \
-             the state of a port only through a call that names the function, so `say` can \
-             only be called by its name. Repairs: call `say` by its name where it is used; \
-             move the reads and pushes out of `say` and pass the values in or out; or run the \
-             program with `zedc run`, which has no such limit\n",
-            src.display()
-        )
-    );
-    assert!(!out.exists());
 }

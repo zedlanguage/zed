@@ -12,8 +12,8 @@ use std::process::{Command, Stdio};
 
 /// A program whose one warning is at `area`, 4:10.
 const AREA: &str = "half(positional x) = x div 2 test { 10 -> 5, 7 -> 3 }\n\
-                    main(stdin: Lines) -> (stdout: Lines) {\n  side = 3037000500;\n  \
-                    area = side * side;\n  stdout <- String(0);\n}\n";
+                    main(m: MainArgs) {\n  side = 3037000500;\n  \
+                    area = side * side;\n  m.stdout <- String(0);\n}\n";
 
 /// The directory `name` of this test under the test target's scratch directory, holding
 /// `src/area.zed` and, when `package`, a manifest; its files are overwritten by each run, never

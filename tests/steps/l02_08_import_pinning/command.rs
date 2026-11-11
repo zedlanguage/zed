@@ -48,7 +48,7 @@ fn a_run_writes_the_pins_and_a_second_run_writes_nothing() {
             ("zed.manifest", "// the shop\n"),
             (
                 "app/main.zed",
-                "import pricing.{net};\nmain() -> (stdout: Lines) {}\n",
+                "import pricing.{net};\nmain(m: MainArgs) {}\n",
             ),
             ("pricing.zed", "net(g: f64) = g / 1.2;\n"),
         ],
@@ -60,7 +60,7 @@ fn a_run_writes_the_pins_and_a_second_run_writes_nothing() {
     let h = super::pin_in(&pinned, 0);
     assert_eq!(
         pinned,
-        format!("import pricing.{{net}} @hash(\"{h}\");\nmain() -> (stdout: Lines) {{}}\n")
+        format!("import pricing.{{net}} @hash(\"{h}\");\nmain(m: MainArgs) {{}}\n")
     );
     // No prelude unit, so no pin file.
     assert!(!d.join("zed.pins").exists());
@@ -83,7 +83,7 @@ fn a_file_with_crlf_lines_keeps_them_around_its_pins() {
             ("zed.manifest", "// the shop\r\n"),
             (
                 "main.zed",
-                "// till\r\nimport pricing;\r\nimport pricing as p;\r\nmain() -> (stdout: Lines) {}\r\n",
+                "// till\r\nimport pricing;\r\nimport pricing as p;\r\nmain(m: MainArgs) {}\r\n",
             ),
             ("pricing.zed", "net(g: f64) = g / 1.2;\r\n"),
         ],
@@ -97,7 +97,7 @@ fn a_file_with_crlf_lines_keeps_them_around_its_pins() {
         pinned,
         format!(
             "// till\r\nimport pricing @hash(\"{h}\");\r\nimport pricing as p @hash(\"{h}\");\r\n\
-             main() -> (stdout: Lines) {{}}\r\n"
+             main(m: MainArgs) {{}}\r\n"
         )
     );
 }
@@ -108,10 +108,7 @@ fn a_stale_pin_stops_the_run_at_the_import_in_its_file() {
         "stale",
         &[
             ("zed.manifest", "// the shop\n"),
-            (
-                "main.zed",
-                "import pricing;\nmain() -> (stdout: Lines) {}\n",
-            ),
+            ("main.zed", "import pricing;\nmain(m: MainArgs) {}\n"),
             ("pricing.zed", "net(g: f64) = g / 1.2;\n"),
         ],
     );
@@ -139,7 +136,7 @@ fn the_prelude_pin_is_written_into_the_pin_file_at_the_root() {
         &[
             ("zed.manifest", "prelude = \"std\";\n"),
             ("std.zed", "double(x: f64) = x * 2.0;\n"),
-            ("app/main.zed", "main() -> (stdout: Lines) {}\n"),
+            ("app/main.zed", "main(m: MainArgs) {}\n"),
         ],
     );
     let pins = d.join("zed.pins");

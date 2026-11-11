@@ -11,8 +11,8 @@ parse(positional l) = {
   Ev(tick: int(w[0] else "") else 0, player: w[1] else "", dx: int(w[2] else "") else 0)
 };
 
-main(stdin: Lines) -> (stdout: Lines) {
-  evs = stdin.map(l -> parse(l));
+main(m: MainArgs) {
+  evs = m.stdin.map(l -> parse(l));
   moves: int ->? String ->? int with reducer((+));
   for e in evs { moves[e.tick][e.player] <- e.dx; };
   players = evs.group(e -> e.player);
@@ -22,5 +22,5 @@ main(stdin: Lines) -> (stdout: Lines) {
       with initial pos = for p -> _ in players { 5 };
     while t <= last;
   };
-  stdout <- for t -> f in game::frames { "${t} ${(for p -> x in f.pos { "${p}=${x}" }).concat(" ")}" };
+  m.stdout <- for t -> f in game::frames { "${t} ${(for p -> x in f.pos { "${p}=${x}" }).concat(" ")}" };
 }

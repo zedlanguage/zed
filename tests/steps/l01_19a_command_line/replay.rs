@@ -51,7 +51,7 @@ fn the_record_holds_the_arguments_only_of_a_program_that_reads_them() {
         .unwrap();
     assert_eq!(wave.record.args, args);
     assert_eq!(echo.replay(&wave.record).unwrap().writes, wave.writes);
-    let hello = load(b"main() -> (stdout: Lines) {\n  stdout <- \"hi\";\n}\n").unwrap();
+    let hello = load(b"main(m: MainArgs) {\n  m.stdout <- \"hi\";\n}\n").unwrap();
     let wave = hello
         .run_args(&Default::default(), &args, |_| unreachable!())
         .unwrap();
@@ -84,35 +84,18 @@ fn the_arguments_of_a_record_round_trip() {
 
 #[test]
 fn a_main_row_gives_the_arguments_one_per_line() {
-    let src = "main(args: CommandLine) -> (stdout: Lines) {\n  \
-               stdout <- \"${args[1] else \"-\"}+${args[2] else \"-\"}\";\n}\n\
-               test { \"a\\nb c\\n\" -> \"a+b c\\n\", \"only\" -> \"only+-\\n\", \"\" -> \"-+-\\n\", \
-               3 -> \"\" }\n";
+    let src = "main(m: MainArgs) {\n  \
+               m.stdout <- \"${m.args[1] else \"-\"}+${m.args[2] else \"-\"}\";\n}\n\
+               test { (\"\", \"a\\nb c\\n\") -> \"a+b c\\n\", (\"\", \"only\") -> \"only+-\\n\", \
+               \"\" -> \"-+-\\n\", (\"\", 3) -> \"\" }\n";
     assert_eq!(
         checks(src),
         [
             "4:8: ok",
-            "4:33: ok",
-            "4:55: ok",
-            "4:70: `3 -> \"\"` of `main`: the `CommandLine` port `args` is given as a String, \
+            "4:39: ok",
+            "4:67: ok",
+            "4:82: `(\"\", 3) -> \"\"` of `main`: the `CommandLine` port `m.args` is given as a String, \
              one argument per line, not 3",
         ]
     );
-}
-
-#[test]
-fn two_command_line_ports_see_one_command_line() {
-    let src = "main(a: CommandLine, b: CommandLine) -> (stdout: Lines) {\n  \
-               stdout <- (a[1] else \"-\") ++ (b[1] else \"-\");\n}\n\
-               test { (\"x\", \"x\") -> \"xx\\n\", (\"x\", \"y\") -> \"\" }\n";
-    assert_eq!(
-        checks(src),
-        [
-            "4:8: ok",
-            "4:30: `(\"x\", \"y\") -> \"\"` of `main`: the `CommandLine` ports `a` and `b` are \
-             given different arguments; a run has one command line",
-        ]
-    );
-    let out = super::run("two", src, &["--", "z"]);
-    assert_eq!(out.stdout, "zz\n");
 }

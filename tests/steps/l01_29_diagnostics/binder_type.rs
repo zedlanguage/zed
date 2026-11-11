@@ -129,21 +129,6 @@ fn a_function_named_for_a_cast_is_rejected() {
 }
 
 #[test]
-fn an_output_port_named_for_its_type_is_rejected_with_the_one_repair() {
-    let out = rejected("main() -> (Lines: Lines) {\n  Lines <- \"done\";\n}\n");
-    assert_eq!(
-        out,
-        "1:12: the output port `Lines` names the type `Lines`, which the prelude declares: a \
-binder may not name a type in scope
-  [1] 1:12: the output port `Lines`, which binds `Lines` in this scope
-      1 | main() -> (Lines: Lines) {
-        |            ^^^^^ [2]
-        |            ^^^^^^^^^^^^ [1]
-  [2] 1:12: repair: rename the binder"
-    );
-}
-
-#[test]
 fn a_field_an_else_pattern_binds_is_rejected() {
     names_type(
         "parsed(positional x) = x else #bad(String:) -> 0;\n",
@@ -184,7 +169,7 @@ fn binders_that_name_no_type_are_accepted() {
         "f(positional Int: int) = Int;\n",
         "f(positional y: int) = (s -> String(s))(y);\n",
         "f(positional x) = x else #bad(msg:) -> 0;\n",
-        "main() -> (stdout: Lines) {\n  stdout <- \"done\";\n}\n",
+        "main(m: MainArgs) {\n  m.stdout <- \"done\";\n}\n",
         "twice(positional h: (x: T) -> T for T in int | f64) = h(x: h(x: 1));\n",
     ] {
         assert_eq!(errors(text), [], "{text}");
@@ -232,21 +217,16 @@ const SITES: &[(&str, Site)] = &[
         "Param",
         Site::L1("scale(x: f64, f64: f64 = 2.0) = x * f64;\n", "f64"),
     ),
-    (
-        "Port",
-        Site::L1(
-            "main() -> (Lines: Lines) {\n  Lines <- \"done\";\n}\n",
-            "Lines",
-        ),
-    ),
     ("IndexedDef", Site::Later("int[i in s] = i;\n")),
     ("IndexKey", Site::Later("f[int in s] = 1;\n")),
     (
         "AckPush",
-        Site::Later("main() -> (out: Lines) {\n  int = out <- \"x\";\n}\n"),
+        Site::Later("main(m: MainArgs) {\n  int = m.stdout <- \"x\";\n}\n"),
     ),
-    ("KeyedPush", Site::NotBinder("a port's name, a use")),
-    ("WholePush", Site::NotBinder("a port's name, a use")),
+    (
+        "PushTarget",
+        Site::NotBinder("a port's name, a use, as `m.stdout`"),
+    ),
     ("TypedBinding", Site::Later("int: int = 1;\n")),
     (
         "Target",

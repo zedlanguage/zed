@@ -3,9 +3,9 @@
 fahrenheit(positional c) = c * 9 div 5 + 32
 test { 0 -> 32, 100 -> 212, -40 -> -40, 37 -> 98, -1 -> 30 }
 
-main(stdin: Lines) -> (stdout: Lines) {
-  line = trim(stdin[1] else "");
-  stdout <- "${fahrenheit(int(line))}F" else "not a whole number: ${line}";
+main(m: MainArgs) {
+  line = trim(m.stdin[1] else "");
+  m.stdout <- "${fahrenheit(int(line))}F" else "not a whole number: ${line}";
 }
 test {
   "21\n" -> "69F\n",

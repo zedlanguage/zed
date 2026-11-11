@@ -8,8 +8,8 @@
 // 07-json-parser/json.zed is named `json` and `import json.{Json};` resolves to it.
 import json.{Json};
 
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- stdin.map(l -> match Json.parse(l) {
+main(m: MainArgs) {
+  m.stdout <- m.stdin.map(l -> match Json.parse(l) {
     #syntaxError(pos:) -> "error at ${pos}",
     doc -> doc.serialize,
   });

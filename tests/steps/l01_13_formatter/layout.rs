@@ -44,8 +44,8 @@ fn a_block_of_one_export_stays_on_one_line() {
 #[test]
 fn main_pushes_to_its_ports() {
     check(
-        "main()->(stdout:Lines){name=\"Zed\";stdout<-\"hello, {name}\";}\n",
-        "main() -> (stdout: Lines) {\n  name = \"Zed\";\n  stdout <- \"hello, {name}\";\n}\n",
+        "main(m: MainArgs) {name=\"Zed\";m.stdout<-\"hello, {name}\";}\n",
+        "main(m: MainArgs) {\n  name = \"Zed\";\n  m.stdout <- \"hello, {name}\";\n}\n",
     );
 }
 
@@ -330,7 +330,8 @@ fn a_bounds_clause_before_a_comma_is_parenthesized() {
         assert_eq!(type_printed(text), shown, "{text}");
         assert_eq!(type_printed(shown), shown, "{shown}");
     }
-    // In source: a parameter, a struct field and a port.
+    // In source: a parameter and a struct field. (A port, the old third case, is gone: `main`
+    // pushes to the fields of `MainArgs`, and a declared result type of a helper is a later form.)
     check(
         "apply(f: T -> T for T in int, n: int) = f(n);\n",
         "apply(f: (T -> T for T in int), n: int) = f(n);\n",
@@ -338,10 +339,6 @@ fn a_bounds_clause_before_a_comma_is_parenthesized() {
     check(
         "struct Op { f: T -> T for T in int, n: int }\n",
         "struct Op { f: (T -> T for T in int), n: int }\n",
-    );
-    check(
-        "main() -> (log: T -> T for T in int, stdout: Lines) { }\n",
-        "main() -> (log: (T -> T for T in int), stdout: Lines) { }\n",
     );
 }
 

@@ -6,8 +6,8 @@
 // Input lines: two names separated by " | ".
 canon(positional s) = s.lower.split("-").concat("").split(" ").concat("");
 
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- stdin.map(l -> {
+main(m: MainArgs) {
+  m.stdout <- m.stdin.map(l -> {
     parts = l.split(" | ");
     a = parts[0] else "";
     b = parts[1] else "";

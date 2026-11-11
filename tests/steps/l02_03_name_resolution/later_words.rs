@@ -177,9 +177,12 @@ fn the_fixed_width_aliases_are_types_of_l7_and_byte_is_none() {
 
 /// The names of the table that the resolver does not hold, each with the reason: a name the
 /// program declares, a port a program names in `main`'s header, a compiler mode, which is no name
-/// in source, and a word of L1 that a later layer extends to more types.
+/// in source, a word of L1 that a later layer extends to more types, and `files`, whose call
+/// `files()` in the body of `main` the parser reads as a use of `main`'s file port, as it reads
+/// `m.stdout`, so the resolver never sees the name.
 const NOT_PRELUDE_NAMES: &[(&str, &str)] = &[
     ("L1", "main"),
+    ("L1", "files"),
     ("L7", "clock"),
     ("L7", "log"),
     ("L14", "abs"),
@@ -233,6 +236,16 @@ const PENDING: &[(&str, &str)] = &[
     ("char8", "STR-types"),
     ("char16", "STR-types"),
     ("char32", "STR-types"),
+    ("now", "DYN-port"),
+    ("clock", "DYN-port"),
+    ("randomBytes", "DYN-port"),
+    ("spawn", "DYN-port"),
+    ("run", "DYN-port"),
+    ("Process", "DYN-port"),
+    ("connect", "DYN-port"),
+    ("listen", "DYN-port"),
+    ("kill", "DYN-port"),
+    ("limits", "DYN-port"),
 ];
 
 /// A row of the table "Defined words by layer": its layer, and its annotations, facet words and

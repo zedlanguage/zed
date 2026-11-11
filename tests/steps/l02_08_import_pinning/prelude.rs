@@ -9,7 +9,7 @@ use super::{mistakes, package};
 const STD: &str = "double(x: f64) = x * 2.0;\nhalf(x: f64) = x / 2.0;\n";
 
 /// A unit that runs and reads nothing of the prelude.
-const MAIN: &str = "main() -> (stdout: Lines) {}\n";
+const MAIN: &str = "main(m: MainArgs) {}\n";
 
 /// The first line of every pin file zedc writes.
 const HEADER: &str = "// Pins written by zedc: each line is `<kind> <address> <key>`, and each \
@@ -39,7 +39,7 @@ fn the_build_writes_the_prelude_pin_into_the_pin_file() {
     assert_eq!(text, format!("{HEADER}prelude {h} std\n"));
     // The address is the one an import of the same unit is pinned to.
     let p = package(&[
-        ("main.zed", "import std;\nmain() -> (stdout: Lines) {}\n"),
+        ("main.zed", "import std;\nmain(m: MainArgs) {}\n"),
         ("std.zed", STD),
     ]);
     assert_eq!(super::pin_in(&p.pinned("main").unwrap(), 0), h);
@@ -104,7 +104,7 @@ fn a_new_prelude_path_replaces_the_old_pin_and_no_prelude_drops_it() {
     let p = package(&[
         ("zed.manifest", "// no prelude\n"),
         (PIN_FILE, &pins),
-        ("main.zed", "import std;\nmain() -> (stdout: Lines) {}\n"),
+        ("main.zed", "import std;\nmain(m: MainArgs) {}\n"),
         ("std.zed", STD),
     ]);
     assert_eq!(mistakes(&p), Vec::<String>::new());

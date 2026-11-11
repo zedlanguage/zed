@@ -120,8 +120,8 @@ fn a_rejection_under_zedc_test_prints_the_address_zedc_run_prints() {
     );
 }
 
-/// A unit whose front end accepts it and whose `main` has a port `zedc run` refuses.
-const PORT: &str = "helper(x) = x;\nmain(n: int) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n";
+/// A unit whose `main` has a parameter other than `m: MainArgs`.
+const PORT: &str = "helper(x) = x;\nmain(n: int) {\n  m.stdout <- \"x\";\n}\n";
 
 #[test]
 fn a_main_that_zedc_run_refuses_prints_its_place_and_address() {
@@ -133,7 +133,7 @@ fn a_main_that_zedc_run_refuses_prints_its_place_and_address() {
         err,
         format!(
             "{file}:2:6: {}\n  address: {a}\n",
-            zed_tests::input_port_message("n", "is declared as `int`")
+            zed_tests::main_param_message("n", "int")
         )
     );
     // `zedc test` prints it the same way, address and all.
@@ -174,8 +174,8 @@ fn a_unit_with_no_main_is_refused_at_its_start_with_an_address() {
         format!(
             "{file}:1:1: this file is run as a program, and a program starts at a function named \
              `main`, which this file does not declare. Declare one, such as\n    \
-             main(stdin: Lines) -> (stdout: Lines) {{\n      \
-             stdout <- \"hello\";\n    \
+             main(m: MainArgs) {{\n      \
+             m.stdout <- \"hello\";\n    \
              }}\nor, if the file holds definitions to test and is not a program, run `zedc test` \
              on it instead of `zedc run`.\n  \
              address: {a}\n"
@@ -195,7 +195,7 @@ fn shop(name: &str, main: &str) -> PathBuf {
     )
 }
 
-const SHOP_MAIN: &str = "import pricing.{net, gross};\nmain() -> (stdout: Lines) {}\n";
+const SHOP_MAIN: &str = "import pricing.{net, gross};\nmain(m: MainArgs) {}\n";
 
 #[test]
 fn a_problem_of_a_package_prints_its_address() {
@@ -244,10 +244,7 @@ fn a_unit_a_package_names_and_has_no_file_prints_an_address() {
         "missing",
         &[
             ("zed.manifest", "// the shop\n"),
-            (
-                "main.zed",
-                "import nowhere.{x};\nmain() -> (stdout: Lines) {}\n",
-            ),
+            ("main.zed", "import nowhere.{x};\nmain(m: MainArgs) {}\n"),
         ],
     );
     let main = d.join("main.zed");
@@ -290,7 +287,7 @@ fn addressing_the_problems_of_a_package_scales() {
                     format!("import base.{{{}}};\nhere{i} = {i};\n", names.join(", "))
                 }));
             }
-            main.push_str("main() -> (stdout: Lines) {}\n");
+            main.push_str("main(m: MainArgs) {}\n");
             files.push(("main.zed".into(), main));
             let files: Vec<(&str, &str)> = files
                 .iter()

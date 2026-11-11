@@ -40,9 +40,9 @@ const SHIPPING: &str = "\
 shipping(positional grams) = if grams > 20000 { 0 } else { if grams <= 1000 { 450 } else { 450 + (grams - 1) div 1000 * 120 } }
 test { 500 -> 450, 1000 -> 450, 1001 -> 570, 2500 -> 690, 20000 -> 2730, 20001 -> 0 }
 
-main(stdin: Lines) -> (stdout: Lines) {
-  grams = int(trim(stdin[1] else \"\"));
-  stdout <- \"${shipping(grams)} cents\" else \"not a weight in grams\";
+main(m: MainArgs) {
+  grams = int(trim(m.stdin[1] else \"\"));
+  m.stdout <- \"${shipping(grams)} cents\" else \"not a weight in grams\";
 }
 test {
   \"2500\\n\" -> \"690 cents\\n\",

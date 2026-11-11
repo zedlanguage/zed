@@ -17,6 +17,14 @@
 
 struct Export { name: String, address: Bytes }
 
+// The argument of a program's `main` (DESIGN.md sec:ports, QUESTIONS Q51, plan row
+// MAIN-args): the words after `--`, standard input, standard output, standard
+// error and the environment. Each field is a port, opened only when the program
+// reads it; `m.stdin` is read and `m.stdout` and `m.stderr` are pushed to. The
+// Rust-hosted compiler reads it in crates/zedc-syntax/src/ast/builder.rs
+// (`MAIN_INPUTS`, `MAIN_OUTPUTS`).
+struct MainArgs { args: CommandLine, stdin: Lines, stdout: Lines, stderr: Lines, env: Utf8String ->? Utf8String }
+
 unitAddress(positional exports, positional version) = {
   sorted = exports.sortBy(e -> (e.name, e.address));
   blake3(

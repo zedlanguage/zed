@@ -255,5 +255,5 @@ fn the_parts_of_a_message_are_read_as_written() {
 
 /// The program `body` with a `main`, so that it loads as a program.
 fn program(body: &str) -> String {
-    format!("{body}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- \"a\";\n}}\n")
+    format!("{body}\nmain(m: MainArgs) {{\n  m.stdout <- \"a\";\n}}\n")
 }

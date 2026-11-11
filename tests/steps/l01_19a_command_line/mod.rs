@@ -14,5 +14,4 @@ pub(crate) use zed_tests::step_helpers::l01_19a_command_line::{
 };
 
 /// A program that writes its arguments one per line.
-pub(crate) const ECHO: &str =
-    "main(args: CommandLine) -> (stdout: Lines) {\n  stdout <- args;\n}\n";
+pub(crate) const ECHO: &str = "main(m: MainArgs) {\n  m.stdout <- m.args;\n}\n";

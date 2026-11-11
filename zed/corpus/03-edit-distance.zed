@@ -22,8 +22,8 @@ bottomUp(positional a, positional b) = {
   d[a::len][b::len]
 };
 
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- for l in stdin {
+main(m: MainArgs) {
+  m.stdout <- for l in m.stdin {
     w = l.split(" ");
     a = w[0] else "";
     b = w[1] else "";

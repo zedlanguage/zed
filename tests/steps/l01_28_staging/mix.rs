@@ -7,9 +7,9 @@ use super::{out, staged, term};
 
 /// A log filter: the day length and the cutoff are computed at build, the rest per line.
 const UPTIME: &str = "day = 60 * 60 * 24;\nweek = 7 * day;\n\
-    main(stdin: Lines) -> (stdout: Lines) {\n  \
-    secs = int(stdin[1]) else 0;\n  \
-    stdout <- String(week - secs) ++ \" left of \" ++ String(week);\n}\n";
+    main(m: MainArgs) {\n  \
+    secs = int(m.stdin[1]) else 0;\n  \
+    m.stdout <- String(week - secs) ++ \" left of \" ++ String(week);\n}\n";
 
 #[test]
 fn constants_are_computed_at_build() {
@@ -50,8 +50,8 @@ fn a_definition_nothing_reads_is_never_evaluated() {
 
 #[test]
 fn a_failure_atom_is_a_value_the_build_computes() {
-    let src = "text(positional v: String) = v;\nratio = int(text(\"n/a\"));\nmain(stdin: Lines) -> (stdout: Lines) {\n  \
-               stdout <- String(ratio) else \"no ratio\";\n}\n";
+    let src = "text(positional v: String) = v;\nratio = int(text(\"n/a\"));\nmain(m: MainArgs) {\n  \
+               m.stdout <- String(ratio) else \"no ratio\";\n}\n";
     let (p, s, report) = staged(src);
     assert_eq!(report.built, ["ratio"]);
     assert_eq!(term(&s, "ratio"), "#invalid");
@@ -64,7 +64,7 @@ fn an_evaluation_error_is_left_to_run() {
     // A string too long for its length stops evaluation: the build leaves it, and the run
     // reports it in the ordinary way.
     let src = format!(
-        "{}huge = {};\nmain(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- huge;\n}}\n",
+        "{}huge = {};\nmain(m: MainArgs) {{\n  m.stdout <- huge;\n}}\n",
         zed_tests::TWICE,
         zed_tests::too_long()
     );
@@ -79,14 +79,14 @@ fn an_evaluation_error_is_left_to_run() {
 #[test]
 fn a_term_whose_form_shows_it_ends_is_built_with_no_fuel() {
     let src = "twice(positional n: int) = n + n;\nbig = twice(twice(twice(3)));\n\
-               main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- String(big);\n}\n";
+               main(m: MainArgs) {\n  m.stdout <- String(big);\n}\n";
     let (p, s, report) = staged(src);
     assert_eq!(report.built, ["big"]);
     assert_eq!(term(&s, "big"), "24");
     assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
     // A fold with an operator that ends, through a lambda bound by `let`, is built too.
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  add(a: int, b: int) = a + b;\n  \
-               k = add(a: add(a: 1, b: 2), b: 3);\n  stdout <- String(k);\n}\n";
+    let src = "main(m: MainArgs) {\n  add(a: int, b: int) = a + b;\n  \
+               k = add(a: add(a: 1, b: 2), b: 3);\n  m.stdout <- String(k);\n}\n";
     let (_, s, report) = staged(src);
     assert!(report.left.is_empty(), "{:?}", report.left);
     assert!(
@@ -101,7 +101,7 @@ fn a_term_whose_form_does_not_show_it_ends_is_left_to_run() {
     // `w(w)` calls through a parameter: the build does not run it, whatever fuel it would
     // take, and the residual program keeps it as written.
     let src = "w(positional f) = f(f);\nspin = w(w);\n\
-               main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- if false { String(spin) } else { \"x\" };\n}\n";
+               main(m: MainArgs) {\n  m.stdout <- if false { String(spin) } else { \"x\" };\n}\n";
     let (_, s, report) = staged(src);
     assert!(report.built.is_empty(), "{:?}", report.built);
     assert_eq!(report.left.len(), 1, "{:?}", report.left);
@@ -151,9 +151,9 @@ fn the_form_rule_reads_calls_and_family_operators() {
 
 #[test]
 fn a_dead_branch_is_cut_at_build() {
-    let src = "verbose = false;\nmain(stdin: Lines) -> (stdout: Lines) {\n  \
-               line = stdin[1] else \"\";\n  \
-               stdout <- if verbose { \"read: \" ++ line } else { line };\n}\n";
+    let src = "verbose = false;\nmain(m: MainArgs) {\n  \
+               line = m.stdin[1] else \"\";\n  \
+               m.stdout <- if verbose { \"read: \" ++ line } else { line };\n}\n";
     let (p, s, _) = staged(src);
     let main = term(&s, "main");
     assert!(!main.contains("read: "), "{main}");
@@ -164,9 +164,9 @@ fn a_dead_branch_is_cut_at_build() {
 fn a_local_definition_is_computed_where_it_is_read() {
     // `k` is build-stage, so its reads are computed and its definition dropped; `inc`, a
     // function nothing reads, is never evaluated; `n` reads the port and stays.
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  k = 6 * 7;\n  \
-               inc(y: int) = y + 1;\n  n = int(stdin[1]) else 0;\n  \
-               stdout <- String(n + k);\n}\n";
+    let src = "main(m: MainArgs) {\n  k = 6 * 7;\n  \
+               inc(y: int) = y + 1;\n  n = int(m.stdin[1]) else 0;\n  \
+               m.stdout <- String(n + k);\n}\n";
     let (p, s, report) = staged(src);
     let main = term(&s, "main");
     assert!(main.contains("42"), "{main}");
@@ -179,7 +179,7 @@ fn a_local_definition_is_computed_where_it_is_read() {
 #[test]
 fn a_write_of_a_constant_is_left_to_run() {
     // The text is build-stage; the write is an effect, so the build does not run it.
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"a\" ++ \"b\";\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- \"a\" ++ \"b\";\n}\n";
     let (p, s, report) = staged(src);
     assert_eq!(report.left, []);
     assert!(term(&s, "main").contains("\"ab\""), "{}", term(&s, "main"));
@@ -190,9 +190,9 @@ fn a_write_of_a_constant_is_left_to_run() {
 #[test]
 fn a_staged_program_keeps_the_warnings_of_its_source() {
     // The square of a machine-word integer may not fit in a machine word, so it is warned.
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  \
+    let src = "main(m: MainArgs) {\n  \
         area = 3037000500 * 3037000500;\n  \
-        stdout <- String(area);\n}\n";
+        m.stdout <- String(area);\n}\n";
     let (p, s, _) = staged(src);
     assert_eq!(p.warnings().len(), 1);
     assert_eq!(s.warnings(), p.warnings());
@@ -203,9 +203,9 @@ fn a_staged_program_keeps_the_warnings_of_its_source() {
 /// parameter of `twice`.
 #[test]
 fn an_unread_local_definition_is_reported_by_its_written_name() {
-    let src = "twice(positional inc: int) = inc * 2;\nmain(stdin: Lines) -> (stdout: Lines) {\n  \
-               inc(y: int) = y + 1;\n  n = int(stdin[1]) else 0;\n  \
-               stdout <- String(twice(n));\n}\n";
+    let src = "twice(positional inc: int) = inc * 2;\nmain(m: MainArgs) {\n  \
+               inc(y: int) = y + 1;\n  n = int(m.stdin[1]) else 0;\n  \
+               m.stdout <- String(twice(n));\n}\n";
     let (p, s, report) = staged(src);
     assert_eq!(report.unread, ["inc"], "{report:?}");
     assert_eq!(out(&s, "8\n"), "16\n");

@@ -56,7 +56,9 @@ fn every_corpus_program_parses_or_is_refused_by_layer() {
         [
             "14-clustering.zed",
             "16-game-tick.zed",
+            "18-socket-wordfreq.zed",
             "20-taint.zed",
+            "29-late-dedup.zed",
             "07-json-parser/json.zed",
             "30-client-server/api.zed",
             "variants/02-histogram-push.zed",
@@ -67,5 +69,5 @@ fn every_corpus_program_parses_or_is_refused_by_layer() {
         "the programs refused by layer"
     );
     // 31 programs, 8 units in folders and 5 variants.
-    assert_eq!((files.len(), parsed), (44, 35));
+    assert_eq!((files.len(), parsed), (44, 33));
 }

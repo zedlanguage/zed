@@ -13,8 +13,8 @@ use zed_tests::step_helpers::l01_25_preimage_catalog::int_defs;
 fn program(def: &str, args: &str) -> String {
     let def = int_defs(def);
     format!(
-        "{def}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  a = int(stdin[1] else \"0\") else 0;\n  \
-         r = if ok({args}) {{ \"in\" }} else {{ \"out\" }};\n  stdout <- \"${{r}}\";\n}}\n"
+        "{def}\nmain(m: MainArgs) {{\n  a = int(m.stdin[1] else \"0\") else 0;\n  \
+         r = if ok({args}) {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{r}}\";\n}}\n"
     )
 }
 
@@ -202,8 +202,8 @@ fn menu(v: &str, order: Option<(&str, &str)>, body: &str, split: [&str; 2]) -> S
 fn program_testing(defs: &str, test: &str) -> String {
     let defs = int_defs(defs);
     format!(
-        "{defs}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  a = int(stdin[1] else \"0\") else 0;\n  \
-         r = if {test} {{ \"in\" }} else {{ \"out\" }};\n  stdout <- \"${{r}}\";\n}}\n"
+        "{defs}\nmain(m: MainArgs) {{\n  a = int(m.stdin[1] else \"0\") else 0;\n  \
+         r = if {test} {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{r}}\";\n}}\n"
     )
 }
 

@@ -39,13 +39,13 @@ use zed_kernel::num::TooLarge;
 
 pub use node::{
     Annot, Arm, BoundaryItem, Error, Every, Expr, ExprKind, Field, Function, Import, ImportKind,
-    IndexKey, IndexedDef, Method, Note, Param, Pattern, Port, RangeEnd, Stmt, StmtKind, StrPart,
-    Struct, Target, Type, TypeBound, TypeDecl, TypeKind, TypeParam, Update,
+    IndexKey, IndexedDef, MainHeader, Method, Note, Param, Pattern, Port, RangeEnd, Stmt, StmtKind,
+    StrPart, Struct, Target, Type, TypeBound, TypeDecl, TypeKind, TypeParam, Update,
 };
 
 use crate::lex::{Part, Span, Tok, Token};
 use crate::parse::{Tree, grammar};
-use builder::{Bare, Builder, Built, Level};
+use builder::{Bare, Builder, Built, Level, Mains};
 
 /// The expression of `tree`, parsed as `Expr` from `tokens` of `text`.
 pub fn build(text: &str, tokens: &[Token], tree: &Tree) -> Result<Expr, Error> {
@@ -151,15 +151,16 @@ fn with_holes<'t, R>(
         i += 1;
     }
     let bare = Bare::new();
+    let mains = Mains::new(text, tokens, tree);
     let mut done: Vec<Option<Result<Expr, Error>>> = Vec::new();
     done.resize_with(list.len(), || None);
     for (i, l) in list.iter().enumerate().skip(1).rev() {
-        let mut b = Builder::new(text, l, &mut done, &bare);
+        let mut b = Builder::new(text, l, &mut done, &bare, &mains);
         b.fill(l.tree.root);
         let e = b.node(l.tree.root);
         done[i] = Some(e);
     }
-    top(&mut Builder::new(text, &list[0], &mut done, &bare))
+    top(&mut Builder::new(text, &list[0], &mut done, &bare, &mains))
 }
 
 /// What the nodes of a rule build to.
@@ -462,6 +463,13 @@ impl<'a, 's> Builder<'a, 's> {
         let of = Box::new(of);
         let name = self.tree.name(s);
         let kind = match name {
+            "CallSuffix"
+                if node.kids.is_empty()
+                    && matches!(&of.kind, ExprKind::Name(n) if n == "files")
+                    && self.mains.at(span.start).is_some() =>
+            {
+                return Ok(self.main_use("files()", span));
+            }
             "CallSuffix" => {
                 let (positional, named, curry) = match node.kids[..] {
                     [] => (Vec::new(), Vec::new(), false),
@@ -476,6 +484,9 @@ impl<'a, 's> Builder<'a, 's> {
                 }
             }
             "IndexSuffix" => ExprKind::Index(of, Box::new(self.node(node.kids[0])?)),
+            "MemberSuffix" if self.main_param(&of).is_some() => {
+                return self.main_field(*of, self.word(node.end - 1), span);
+            }
             "MemberSuffix" | "SafeSuffix" => ExprKind::Member {
                 of,
                 name: self.word(node.end - 1).into(),

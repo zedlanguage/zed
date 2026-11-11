@@ -30,7 +30,8 @@ fn units() -> Vec<(String, Vec<u8>)> {
     out.sort();
     out.push((
         "concatenates a number".into(),
-        b"main(stdin: Lines) -> (stdout: Lines) {\n  n = int(stdin[1]) else 0;\n  stdout <- \"n: \" ++ n;\n}\n".to_vec(),
+        b"main(m: MainArgs) {\n  n = int(m.stdin[1]) else 0;\n  m.stdout <- \"n: \" ++ n;\n}\n"
+            .to_vec(),
     ));
     out.push((
         "a negative exponent".into(),
@@ -42,19 +43,20 @@ fn units() -> Vec<(String, Vec<u8>)> {
     ));
     out.push((
         "a generic literal at a union of two carriers it can adopt".into(),
-        b"f(positional x: f64 | rat) = x;\nmain() = f(1);\n".to_vec(),
+        b"f(positional x: f64 | rat) = x;\nr = f(1);\nmain() {\n}\n".to_vec(),
     ));
     out.push((
         "a plain literal at a union of two carriers".into(),
-        b"f(positional x: f64 | rat) = x;\nmain() = f(1);\n".to_vec(),
+        b"f(positional x: f64 | rat) = x;\nr = f(1);\nmain() {\n}\n".to_vec(),
     ));
     out.push((
         "generic literals in a tuple at a union of tuple shapes".into(),
-        b"tu(positional p: (f64, f64) | (String, f64)) = p;\nmain() = tu((1, 2));\n".to_vec(),
+        b"tu(positional p: (f64, f64) | (String, f64)) = p;\nr = tu((1, 2));\nmain() {\n}\n"
+            .to_vec(),
     ));
     out.push((
         "a generic literal compared with a union of two carriers it can adopt".into(),
-        b"f(positional x: f64 | rat) = x == 1;\nmain() = f(1.0);\n".to_vec(),
+        b"f(positional x: f64 | rat) = x == 1;\nr = f(1.0);\nmain() {\n}\n".to_vec(),
     ));
     out.push((
         "readings related to a hub, settled where read".into(),
@@ -62,7 +64,7 @@ fn units() -> Vec<(String, Vec<u8>)> {
     ));
     out.push((
         "literals in a tuple compared with a union of tuple shapes".into(),
-        b"isAt(positional p: (f64, f64) | (String, f64)) = p == (1, 2);\nmain() = isAt((1.0, 2.0));\n".to_vec(),
+        b"isAt(positional p: (f64, f64) | (String, f64)) = p == (1, 2);\nr = isAt((1.0, 2.0));\nmain() {\n}\n".to_vec(),
     ));
     out
 }
@@ -117,7 +119,7 @@ fn batch_and_single_file_checking_agree() {
     assert_eq!(
         batch[at].as_deref(),
         Some(
-            "2:12: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
+            "2:7: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
              chooses one\n  \
              T1 stands for a part written more than once:\n    \
              type T1 = rat | f64;\n  \
@@ -126,8 +128,8 @@ fn batch_and_single_file_checking_agree() {
              1 | f(positional x: f64 | rat) = x;\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  \
              fixes, each checked here:\n    \
-             main() = f(1r);        the literal is then exactly 1, a rat\n    \
-             main() = f(1.0f64);    the literal is then the f64 1.0"
+             r = f(1r);        the literal is then exactly 1, a rat\n    \
+             r = f(1.0f64);    the literal is then the f64 1.0"
         )
     );
     // So is one compared by `==` with a value of such a union.

@@ -234,7 +234,7 @@ fn printed_types_do_not_move_1() {
 fn generic_unit(i: usize) -> String {
     format!(
         "scale{i}(positional x) = x + x;\nlimit{i} = {i};\n\
-         main(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- String(scale{i}(\"{i}\"));\n}}\n"
+         main(m: MainArgs) {{\n  m.stdout <- String(scale{i}(\"{i}\"));\n}}\n"
     )
 }
 

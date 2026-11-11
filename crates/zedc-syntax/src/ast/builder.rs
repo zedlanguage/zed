@@ -37,6 +37,124 @@ pub(super) enum Built {
 // hash lookup, for one set of the source's names held while the builder runs.
 pub(super) type Bare<'a> = std::cell::OnceCell<std::collections::HashSet<&'a str>>;
 
+/// The fields of `MainArgs` that `main` reads (DESIGN.md sec:ports, step L1.19), in the
+/// struct's order, then the call `files()`: what a body built to [`Mains`] records it reads.
+pub const MAIN_INPUTS: [&str; 4] = ["args", "stdin", "env", "files()"];
+
+/// The fields of `MainArgs` that `main` pushes to, in the struct's order.
+pub const MAIN_OUTPUTS: [&str; 2] = ["stdout", "stderr"];
+
+/// The `main` functions of a text, each with the text of its body, the name of its parameter
+/// when it has one written, and the fields of `MainArgs` its body reads and pushes to. The
+/// builder rewrites a read `m.stdin` in such a body to the name `m.stdin`, a push `m.stdout <-
+/// e` to a push to the port `m.stdout`, and the call `files()` to the name `files()`, each a
+/// name no source spells, and makes the parameters and ports of the old header from what was
+/// read and pushed: the rest of the compiler runs `main` with a parameter for each input it
+/// reads and a port for each output it pushes to, and a field that is never read is never
+/// opened.
+/// A string hole is a tree of its own, built before the text around it, so the table is made
+/// from the text's tree before any builder runs, and found by the place a form starts.
+pub(super) struct Mains {
+    /// By the start of the body's text; bodies nest only when a `main` is declared inside
+    /// another's body.
+    list: Vec<MainBody>,
+    /// For each body of `list`, the body that holds it, by its place in `list`.
+    outer: Vec<Option<usize>>,
+}
+
+/// A `main`'s body in [`Mains`].
+pub(super) struct MainBody {
+    /// The text of the body.
+    pub(super) body: Span,
+    /// The name of its one parameter, `m` in `main(m: MainArgs)`, when it has one written.
+    pub(super) param: Option<String>,
+    /// Where each of [`MAIN_INPUTS`] is first read, and each of [`MAIN_OUTPUTS`] first pushed
+    /// to, in the body.
+    pub(super) uses: std::cell::RefCell<FieldUses>,
+}
+
+/// Where each input field of `main`'s argument is first read, and each output field first pushed
+/// to, in the order of [`MAIN_INPUTS`] and [`MAIN_OUTPUTS`].
+pub(super) type FieldUses = ([Option<Span>; 4], [Option<Span>; 2]);
+
+impl Mains {
+    /// The `main` functions of the text `tree` is the tree of, at any depth of blocks.
+    // Complexity tradeoff: one pass over the tree's nodes, O(n), and a sort of the k mains,
+    // O(k log k); finding each form's `main` then costs O(log k) ([`Mains::at`]) instead of a
+    // walk up the form's ancestors, O(depth) per form.
+    pub(super) fn new(text: &str, tokens: &[Token], tree: &Tree) -> Mains {
+        let word = |i: usize| {
+            let s = tokens[i].span;
+            &text[s.start..s.end]
+        };
+        let span = |n: usize| Span {
+            start: tokens[tree.nodes[n].start].span.start,
+            end: tokens[tree.nodes[n].end - 1].span.end,
+        };
+        let mut list = Vec::new();
+        for (n, node) in tree.nodes.iter().enumerate() {
+            if tree.name(n) != "Function" || word(node.start) != "main" {
+                continue;
+            }
+            let Some(&body) = node.kids.last() else {
+                continue;
+            };
+            let param = node
+                .kids
+                .iter()
+                .find(|&&k| tree.name(k) == "Params")
+                .and_then(|&ps| tree.nodes[ps].kids.first())
+                .filter(|&&p| tree.name(p) == "Param")
+                .map(|&p| word(tree.nodes[p].start).to_string());
+            list.push(MainBody {
+                body: span(body),
+                param,
+                uses: std::cell::RefCell::new(([None; 4], [None; 2])),
+            });
+        }
+        list.sort_by_key(|b| b.body.start);
+        // The body that holds each, by a stack of the bodies open at its start: bodies are
+        // nested or apart, so O(k) in all.
+        let mut outer = Vec::with_capacity(list.len());
+        let mut open: Vec<usize> = Vec::new();
+        for (i, b) in list.iter().enumerate() {
+            while open
+                .last()
+                .is_some_and(|&o| list[o].body.end <= b.body.start)
+            {
+                open.pop();
+            }
+            outer.push(open.last().copied());
+            open.push(i);
+        }
+        Mains { list, outer }
+    }
+
+    /// The innermost `main` whose body holds the text at `at`, if any.
+    // Complexity tradeoff: the last body that starts at or before `at`, O(log k), then the
+    // bodies that hold it, O(d) for d bodies nested there; a walk back over every earlier
+    // body was O(k) for a form that follows k bodies and lies in none of them.
+    pub(super) fn at(&self, at: usize) -> Option<&MainBody> {
+        let mut i = self
+            .list
+            .partition_point(|b| b.body.start <= at)
+            .checked_sub(1);
+        while let Some(j) = i {
+            if at < self.list[j].body.end {
+                return Some(&self.list[j]);
+            }
+            i = self.outer[j];
+        }
+        None
+    }
+
+    /// The `main` whose body is the text `body`.
+    pub(super) fn of(&self, body: Span) -> Option<&MainBody> {
+        let i = self.list.partition_point(|b| b.body.start < body.start);
+        self.list.get(i).filter(|b| b.body == body)
+    }
+}
+
 /// The builder of one tree, a text's or a string hole's: what each node built to, until its
 /// parent takes it.
 pub(super) struct Builder<'a, 's: 'a> {
@@ -59,16 +177,129 @@ pub(super) struct Builder<'a, 's: 'a> {
     pub(super) front: usize,
     /// The names written in the source other than after a `.`, listed on first use.
     pub(super) bare: &'a Bare<'s>,
+    /// The `main` functions of the text this tree is in.
+    pub(super) mains: &'a Mains,
     /// The parent of each node of the tree, listed on the first rejection that names one.
     pub(super) parents: std::cell::OnceCell<Vec<usize>>,
 }
 
 impl<'a, 's> Builder<'a, 's> {
+    /// The name `p` when `of` is the name of the parameter of the `main` whose body holds it,
+    /// `m` in `main(m: MainArgs)`.
+    pub(super) fn main_param(&self, of: &Expr) -> Option<&'a str> {
+        let ExprKind::Name(n) = &of.kind else {
+            return None;
+        };
+        let main = self.mains.at(of.span.start)?;
+        main.param.as_deref().filter(|p| p == n)
+    }
+
+    /// The read `of.field`, at `span`, of the parameter `of` of the `main` whose body holds it:
+    /// the name of the field's input, recorded as read ([`Mains`]); or why it cannot be read,
+    /// when the field is an output or `MainArgs` has no such field.
+    pub(super) fn main_field(&self, of: Expr, field: &str, span: Span) -> Result<Expr, Error> {
+        let m = self.main_param(&of).expect("a read of main's parameter");
+        let error = |message: String| Error {
+            row: None,
+            menu: String::new(),
+            span,
+            message,
+            notes: Vec::new(),
+        };
+        match field {
+            "args" | "stdin" | "env" => Ok(self.main_use(field, span)),
+            "stdout" | "stderr" => Err(error(format!(
+                "`{m}.{field}` is read here, and `{m}.{field}` is an output of the program: \
+                 `main` writes lines to it with a push, as `{m}.{field} <- lines;`, and never \
+                 reads it. To read the program's input, read `{m}.stdin` (its standard input), \
+                 `{m}.args` (the words after `--` on the command line) or `{m}.env` (its \
+                 environment variables); to use lines this program computes, read them from \
+                 the binding that holds them before it pushes them."
+            ))),
+            _ => Err(error(format!(
+                "`{m}.{field}` is read here, and `{m}` is the argument of `main`, of type \
+                 `MainArgs`, which has no field `{field}`. Its fields are `args` (the words \
+                 after `--` on the command line), `stdin` (the lines of standard input), \
+                 `stdout` and `stderr` (the lines the program writes) and `env` (the \
+                 environment variables, by name). Read one of `{m}.args`, `{m}.stdin` or \
+                 `{m}.env`; files are read with `files()`."
+            ))),
+        }
+    }
+
+    /// The name of the input `use_` of the `main` whose body holds `span` (one of
+    /// [`MAIN_INPUTS`]), recorded as read there: `m.stdin` for `stdin`, and `files()` for
+    /// `files()`.
+    pub(super) fn main_use(&self, use_: &str, span: Span) -> Expr {
+        let main = self.mains.at(span.start).expect("a use inside main's body");
+        let i = MAIN_INPUTS
+            .iter()
+            .position(|u| *u == use_)
+            .expect("an input");
+        first_use(&mut main.uses.borrow_mut().0[i], span);
+        let name = match (use_, &main.param) {
+            ("files()", _) | (_, None) => use_.to_string(),
+            (_, Some(m)) => format!("{m}.{use_}"),
+        };
+        Expr {
+            kind: ExprKind::Name(name),
+            span,
+        }
+    }
+
+    /// The port the push target node `t`, `PushTarget = Name ('.' Name)*`, names: the name
+    /// itself, or `m.stdout` and `m.stderr` for the parameter `m` of the `main` whose body
+    /// holds it, recorded as pushed to ([`Mains`]); or why the target cannot be pushed to.
+    pub(super) fn push_target(&self, t: usize) -> Result<String, Error> {
+        let node = &self.tree.nodes[t];
+        let names: Vec<&str> = (node.start..node.end)
+            .step_by(2)
+            .map(|i| self.word(i))
+            .collect();
+        let span = self.span(t);
+        let main = self.mains.at(span.start);
+        let m = main.and_then(|b| b.param.as_deref());
+        match names[..] {
+            [name] => Ok(name.into()),
+            [p, field] if Some(p) == m => {
+                let error = |message: String| Error {
+                    row: None,
+                    menu: String::new(),
+                    span,
+                    message,
+                    notes: Vec::new(),
+                };
+                match field {
+                    "stdout" | "stderr" => {
+                        let main = main.expect("m is main's parameter");
+                        let i = (field == "stderr") as usize;
+                        first_use(&mut main.uses.borrow_mut().1[i], span);
+                        Ok(format!("{p}.{field}"))
+                    }
+                    "stdin" | "args" | "env" => Err(error(format!(
+                        "`{p}.{field} <- …` pushes to `{p}.{field}`, and `{p}.{field}` is an \
+                         input of the program, which `main` reads and never writes. Push the \
+                         lines the program writes to `{p}.stdout` (its standard output) or \
+                         `{p}.stderr` (its standard error), as `{p}.stdout <- lines;`."
+                    ))),
+                    _ => Err(error(format!(
+                        "`{p}.{field} <- …` pushes to `{p}.{field}`, and `{p}` is the argument \
+                         of `main`, of type `MainArgs`, which has no field `{field}`. The \
+                         program writes lines with a push to `{p}.stdout` (its standard \
+                         output) or `{p}.stderr` (its standard error), as `{p}.stdout <- \
+                         lines;`."
+                    ))),
+                }
+            }
+            _ => Err(self.later_as(t, "a push to a field of a value")),
+        }
+    }
     pub(super) fn new(
         text: &'s str,
         level: &Level<'a>,
         done: &'a mut [Option<Result<Expr, Error>>],
         bare: &'a Bare<'s>,
+        mains: &'a Mains,
     ) -> Builder<'a, 's> {
         let mut holes = Vec::with_capacity(level.tokens.len());
         let mut count = 0;
@@ -92,6 +323,7 @@ impl<'a, 's> Builder<'a, 's> {
             place: Vec::new(),
             front: 0,
             bare,
+            mains,
             parents: std::cell::OnceCell::new(),
         }
     }
@@ -386,7 +618,7 @@ fn kind_of(rule: &str) -> &'static str {
         "ReduceTail" => "the reduction",
         "ReducePolicy" => "the reduction order",
         "TypeSuffix" => "the refinement",
-        "ResultType" => "the declared result type",
+        "Result" => "the declared result type",
         "Law" => "the law",
         "TypeFacet" => "the facet",
         "Interface" => "the interface",
@@ -405,4 +637,12 @@ fn kind_of(rule: &str) -> &'static str {
         "AnnotExpr" => "the annotated expression",
         _ => "the form",
     }
+}
+
+/// Records `span` as a use of a field of `main`'s argument, keeping the first in the text:
+/// the field's parameter or port is placed there, and a use before it would read as a use
+/// above its definition. The builder does not build the uses in text order, so the earliest
+/// is kept, not the first built.
+fn first_use(slot: &mut Option<Span>, span: Span) {
+    *slot = Some(slot.map_or(span, |s| s.min(span)));
 }

@@ -11,12 +11,12 @@ use super::{Link, dir, link, script, toolchain};
 
 /// A program of `n` lines of a price list, each a definition the output uses.
 fn price_list(n: usize) -> String {
-    let mut src = "main() -> (stdout: Lines) {\n".to_string();
+    let mut src = "main(m: MainArgs) {\n".to_string();
     for k in 1..=n {
         src += &format!("  p{k} = {k} * 3;\n");
     }
     let items: Vec<String> = (1..=n).map(|k| format!("${{p{k}}}")).collect();
-    src + &format!("  stdout <- \"{}\";\n}}\n", items.join(" "))
+    src + &format!("  m.stdout <- \"{}\";\n}}\n", items.join(" "))
 }
 
 /// The first word of each run of the driver logged in `log`, which a build makes empty.

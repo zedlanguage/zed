@@ -32,7 +32,7 @@ fn refused_import(name: &str, pricing: &[u8]) -> Vec<String> {
             ("zed.manifest", b"// the shop\n"),
             (
                 "app/main.zed",
-                b"import pricing.{net};\nmain() -> (stdout: Lines) {}\n",
+                b"import pricing.{net};\nmain(m: MainArgs) {}\n",
             ),
             ("pricing.zed", pricing),
         ],

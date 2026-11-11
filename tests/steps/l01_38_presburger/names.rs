@@ -765,9 +765,9 @@ fn cycle_unit(names: [&str; 4]) -> Vec<u8> {
     let [a, b, c, d] = names;
     format!(
         "ok({a}: int, {b}: int, {c}: int, {d}: int) = 3 * {b} - {a} >= 10 && 3 * {c} - {b} >= 10 && 3 * {d} - {c} >= 10 \
-         && 3 * {a} - {d} >= 10;\nmain(stdin: Lines) -> (stdout: Lines) {{\n  x = int(stdin[0] else \
+         && 3 * {a} - {d} >= 10;\nmain(m: MainArgs) {{\n  x = int(m.stdin[0] else \
          \"0\") else 0;\n  held = if ok({a}: x, {b}: x, {c}: x, {d}: x) {{ \"in\" }} else {{ \"out\" }};\n  \
-         stdout <- \"${{held}}\";\n}}\n"
+         m.stdout <- \"${{held}}\";\n}}\n"
     )
     .into_bytes()
 }

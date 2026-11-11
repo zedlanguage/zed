@@ -4,7 +4,7 @@ expression: without_addresses(&out)
 ---
 l01_21_test_runner/zed/config.zed
   warnings: []
-  checks: [Outcome { line: 8, col: 3, failure: None }, Outcome { line: 9, col: 3, failure: None }, Outcome { line: 10, col: 3, failure: None }]
+  checks: [Outcome { line: 9, col: 3, failure: None }, Outcome { line: 11, col: 3, failure: None }, Outcome { line: 12, col: 3, failure: None }]
 
 l01_21_test_runner/zed/fahrenheit.zed
   warnings: []

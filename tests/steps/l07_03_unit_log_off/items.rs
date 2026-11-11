@@ -18,9 +18,9 @@ fn shown(text: &str) -> String {
 #[test]
 fn the_unit_item_builds_apart_from_the_declarations() {
     assert_eq!(
-        shown("@log(#off);\n\nmain(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"hi\";\n}\n"),
+        shown("@log(#off);\n\nmain(m: MainArgs) {\n  m.stdout <- \"hi\";\n}\n"),
         "(unit (@log #off))\n\
-         (def main ((stdin: Lines)) (-> (stdout: Lines)) (block (<- stdout (str \"hi\"))))"
+         (def main () (-> (m.stdout: Lines)) (block (<- m.stdout (str \"hi\"))))"
     );
     // `@log(#off)` before a definition annotates that definition, not the unit.
     assert_eq!(

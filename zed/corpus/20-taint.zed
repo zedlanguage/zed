@@ -1,12 +1,19 @@
 // layer L13
 // 20 input-sanitization taint demo: lines from stdin carry taint(#user), and
-// the page written to stdout demands taint(#clean). Interpolation is `++`, so
-// taint flows through it; the commented line is the compile error (taint(#user)
-// reaches a taint(#clean) sink), and the line after it is the fix: `sanitize`
-// is the only edge that lowers the taint. variants/20-taint-error.zed is the
-// program with the error left in. This corpus assumes sanitize HTML-escapes
-// the five characters & < > " ' (the library fixes its text at step L13.2).
-main(stdin: Lines with taint(#user)) -> (stdout: Lines with taint(#clean)) {
-  // stdout <- stdin.map(l -> "<li>${l}</li>");             // ✗ taint(#user) reaches a taint(#clean) port
-  stdout <- stdin.map(l -> "<li>${sanitize(l)}</li>");       // ✓
+// the page written to stdout demands taint(#clean). The fields of `main`'s
+// argument carry no facets, so `page` states both: its parameter is the
+// tainted input and its declared result the clean sink. Interpolation is `++`,
+// so taint flows through it; the commented line is the compile error
+// (taint(#user) reaches a taint(#clean) result), and the line after it is the
+// fix: `sanitize` is the only edge that lowers the taint.
+// variants/20-taint-error.zed is the program with the error left in. This
+// corpus assumes sanitize HTML-escapes the five characters & < > " ' (the
+// library fixes its text at step L13.2).
+page(positional lines: Lines with taint(#user)) -> Lines with taint(#clean) {
+  // lines.map(l -> "<li>${l}</li>")             // ✗ taint(#user) reaches a taint(#clean) result
+  lines.map(l -> "<li>${sanitize(l)}</li>")       // ✓
+}
+
+main(m: MainArgs) {
+  m.stdout <- page(m.stdin);
 }

@@ -84,8 +84,8 @@ fn a_program_passes_a_generic_function_to_a_slot_of_two_arrows() {
         "both(f: ((x: int) -> int) & ((x: f64) -> f64)) =\n  \
            String(f(x: 2)) ++ \" \" ++ String(f(x: 2.5f64));\n\
          {INC}\
-         main(stdin: Lines) -> (stdout: Lines) {{\n  \
-           stdout <- both(f: inc) ++ \" \" ++ String(inc(x: 0.1r));\n\
+         main(m: MainArgs) {{\n  \
+           m.stdout <- both(f: inc) ++ \" \" ++ String(inc(x: 0.1r));\n\
          }}\n"
     );
     let out = run("l01_26a_two_arrows", &src, "", &[]);
@@ -162,8 +162,8 @@ fn a_program_runs_literal_arguments_branches_and_components() {
     // Run by `zedc run`: each function is called at int, f64 and rat.
     let src = format!(
         "{SCALE}{RELU_NEXT}\
-         main(stdin: Lines) -> (stdout: Lines) {{\n  \
-           stdout <- String(double(x: 21)) ++ \" \" ++ String(double(x: 1.25f64)) ++ \" \" ++ \
+         main(m: MainArgs) {{\n  \
+           m.stdout <- String(double(x: 21)) ++ \" \" ++ String(double(x: 1.25f64)) ++ \" \" ++ \
          String(tenth(x: 2.5f64)) ++ \" \" ++ String(relu(x: -2.5f64)) ++ \" \" ++ \
          String(relu(x: -1r)) ++ \" \" ++ String(next(x: 2.5f64));\n\
          }}\n"
@@ -337,16 +337,21 @@ fn the_lexer_reads_no_suffix_on_an_integer() {
     );
 }
 
-/// The step's unit given a `main`, rejected programs, and a generic function called at a
-/// parameter of declared type.
+/// The step's unit given a `main` that writes a value, rejected programs, and a generic
+/// function called at a parameter of declared type.
 fn units() -> Vec<String> {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let unit = dir.join("steps/l01_26a_generic_literals/zed/generic.zed");
     vec![
-        std::fs::read_to_string(unit).unwrap() + "main() = inc(mask);\n",
-        "f(positional x: f64 | rat) = x;\nmain() = f(1);\n".into(),
-        format!("{INC}g(positional y: f64) = inc(x: y) * 2;\nmain() = g(1.5);\n"),
-        format!("{SCALE}{RELU_NEXT}main() = double(x: relu(x: -1.5f64));\n"),
+        std::fs::read_to_string(unit).unwrap()
+            + "main(m: MainArgs) { m.stdout <- String(inc(mask)); }\n",
+        "f(positional x: f64 | rat) = x;\nmain(m: MainArgs) { m.stdout <- String(f(1)); }\n".into(),
+        format!(
+            "{INC}g(positional y: f64) = inc(x: y) * 2;\nmain(m: MainArgs) {{ m.stdout <- String(g(1.5)); }}\n"
+        ),
+        format!(
+            "{SCALE}{RELU_NEXT}main(m: MainArgs) {{ m.stdout <- String(double(x: relu(x: -1.5f64))); }}\n"
+        ),
         "main = 0.1;\n".into(),
     ]
 }
@@ -372,7 +377,7 @@ fn batch_and_single_file_checking_agree() {
     assert_eq!(
         first(1),
         Some(
-            "2:12: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
+            "2:42: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
              chooses one"
         )
     );

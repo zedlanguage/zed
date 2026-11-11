@@ -20,8 +20,8 @@ use zed_tests::step_helpers::l01_16_elaboration::elab;
 /// `main` with `n` local definitions in a chain from a port, each read by the next; `all`
 /// writes their sum, so the last term reads every one.
 fn chain(n: usize, all: bool) -> String {
-    let mut s = String::from("main(stdin: Lines) -> (stdout: Lines) {\n");
-    s += "  x0 = int(stdin[1]) else 0;\n";
+    let mut s = String::from("main(m: MainArgs) {\n");
+    s += "  x0 = int(m.stdin[1]) else 0;\n";
     for i in 1..=n {
         s += &format!("  x{i} = x{} + {i};\n", i - 1);
     }
@@ -32,7 +32,7 @@ fn chain(n: usize, all: bool) -> String {
             .join(" + "),
         false => format!("x{n}"),
     };
-    s += &format!("  stdout <- String({last});\n}}\n");
+    s += &format!("  m.stdout <- String({last});\n}}\n");
     s
 }
 
@@ -217,11 +217,11 @@ fn terms_100000_deep_are_staged_on_a_2_mib_stack() {
 
 /// `main` with `n` bindings, each the square of a machine-word integer, so each is warned.
 fn squares(n: usize) -> String {
-    let mut s = String::from("main(stdin: Lines) -> (stdout: Lines) {\n");
+    let mut s = String::from("main(m: MainArgs) {\n");
     for i in 0..n {
         s += &format!("  a{i} = {} * 3037000500;\n", 3037000500 + i);
     }
-    s += "  stdout <- String(0);\n}\n";
+    s += "  m.stdout <- String(0);\n}\n";
     s
 }
 

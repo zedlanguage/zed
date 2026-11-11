@@ -11,13 +11,13 @@ use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 
 /// A program that reads the line, the argument and the tuple component at the number on its
 /// first line, each read written with the handler of its atom.
-const READS: &str = "main(stdin: Lines, args: CommandLine) -> (stdout: Lines) {\n  \
+const READS: &str = "main(m: MainArgs) {\n  \
      t = (10, 20, 30);\n  \
-     i = int(stdin[1]) else 0;\n  \
-     line = stdin[i] else #outOfBounds -> \"no line\" else #ioError -> \"unreadable\";\n  \
-     arg = args[i] else #outOfBounds -> \"no argument\";\n  \
+     i = int(m.stdin[1]) else 0;\n  \
+     line = m.stdin[i] else #outOfBounds -> \"no line\" else #ioError -> \"unreadable\";\n  \
+     arg = m.args[i] else #outOfBounds -> \"no argument\";\n  \
      next = t[i] + 1 else #outOfBounds -> -1;\n  \
-     stdout <- \"${line} | ${arg} | ${next}\";\n}\n";
+     m.stdout <- \"${line} | ${arg} | ${next}\";\n}\n";
 
 /// What `READS` writes when its first line is `line`, with the arguments `a b`.
 fn reads(name: &str, line: &str) -> String {
@@ -67,8 +67,8 @@ fn a_handler_for_not_found_leaves_out_of_bounds_in_the_type() {
         ),
         "(t: (int, int, int), i: int) -> int | #outOfBounds"
     );
-    let src = "main(args: CommandLine) -> (stdout: Lines) {\n  \
-               stdout <- args[1] else #notFound -> \"none\";\n}\n";
+    let src = "main(m: MainArgs) {\n  \
+               m.stdout <- m.args[1] else #notFound -> \"none\";\n}\n";
     let out = run("oob_old_handler", src, "", &["--", "a"]);
     assert_eq!(out.status, 1);
     assert!(
@@ -90,11 +90,11 @@ fn a_map_parameter_and_a_generic_read_keep_not_found() {
     // written type, are read with `#notFound`, at run time too.
     let src = "get(m: int ->? String, k: int) = m(k);\n\
                pick(a, k) = a[k];\n\
-               main(stdin: Lines, args: CommandLine) -> (stdout: Lines) {\n  \
-               i = int(stdin[1]) else 0;\n  \
-               viaMap = get(m: args, k: i) else #notFound -> \"map miss\";\n  \
-               viaPick = pick(a: args, k: i) else #notFound -> \"generic miss\";\n  \
-               stdout <- \"${viaMap} | ${viaPick}\";\n}\n";
+               main(m: MainArgs) {\n  \
+               i = int(m.stdin[1]) else 0;\n  \
+               viaMap = get(m: m.args, k: i) else #notFound -> \"map miss\";\n  \
+               viaPick = pick(a: m.args, k: i) else #notFound -> \"generic miss\";\n  \
+               m.stdout <- \"${viaMap} | ${viaPick}\";\n}\n";
     let at = |line: &str| {
         let out = run("oob_map_kept", src, &format!("{line}\n"), &["--", "a"]);
         assert_eq!((out.status, out.stderr.as_str()), (0, ""), "{line}");
@@ -112,8 +112,8 @@ fn a_key_outside_every_key_is_rejected() {
             "(int, int, int) has no component 5: its components are at the positions 0 to 2, and this index is 5 [t[5]]"
         ]
     );
-    let src = "main(args: CommandLine) -> (stdout: Lines) {\n  \
-               stdout <- args[\"x\"] else \"none\";\n}\n";
+    let src = "main(m: MainArgs) {\n  \
+               m.stdout <- m.args[\"x\"] else \"none\";\n}\n";
     let out = run("oob_disjoint", src, "", &["--", "a"]);
     assert_eq!(out.status, 1);
     assert!(

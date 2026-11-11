@@ -34,6 +34,6 @@ decode(positional s) = {
   st.map(d -> d.out).concat("")
 };
 
-main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- stdin.map(l -> decode(l));
+main(m: MainArgs) {
+  m.stdout <- m.stdin.map(l -> decode(l));
 }

@@ -9,8 +9,8 @@
 // rank domain shows in the answers (zero weights make ties).
 struct Range { lo: int, hi: int }
 
-main(stdin: Lines) -> (stdout: Lines) {
-  w = (stdin[0] else "").split(" ").map(s -> int(s) else 0);
+main(m: MainArgs) {
+  w = (m.stdin[0] else "").split(" ").map(s -> int(s) else 0);
   n = w::len;
   cumul[i in 0..<n] = cumul[i - 1] + w[i] with cumul[-1] = 0;
   total = cumul[n - 1] else 0;
@@ -23,7 +23,7 @@ main(stdin: Lines) -> (stdout: Lines) {
     r' = half(q, r) with initial r = Range(lo: -1, hi: n);
     while r.hi - r.lo > 1;
   }.r.hi;
-  stdout <- stdin.drop(1).map(l -> {
+  m.stdout <- m.stdin.drop(1).map(l -> {
     q = int(l) else 0;
     if q >= total { "${q} none" } else { "${q} ${search(q)}" }
   });

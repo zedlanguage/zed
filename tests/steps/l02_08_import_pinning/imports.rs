@@ -14,7 +14,7 @@ const PRICING: &str = "net(g: f64) = g / 1.2;\ngross(n: f64) = n * 1.2;\n";
 
 /// The unit `main` that imports `pricing` by `import`, written as `stmt`.
 fn main_with(stmt: &str) -> String {
-    format!("{stmt}\nmain() -> (stdout: Lines) {{}}\n")
+    format!("{stmt}\nmain(m: MainArgs) {{}}\n")
 }
 
 /// The pin the build writes into `import pricing;` with `pricing` as `text`.
@@ -142,7 +142,7 @@ fn selective_aliased_and_nested_imports_are_pinned_where_each_is_written() {
     let main = "import pricing.{net};\n\
                 import pricing as p;\n\
                 total(g: f64) = {\n  import pricing.{gross};\n  gross(net(g)) + p.net(g)\n};\n\
-                main() -> (stdout: Lines) {}\n";
+                main(m: MainArgs) {}\n";
     let p = package(&[("main.zed", main), ("pricing.zed", PRICING)]);
     assert_eq!(mistakes(&p), Vec::<String>::new());
     let pinned = p.pinned("main").unwrap();
@@ -172,7 +172,7 @@ fn selective_aliased_and_nested_imports_are_pinned_where_each_is_written() {
 fn only_the_imports_with_no_pin_are_written() {
     let h = pin_of(PRICING);
     let main = format!(
-        "import pricing.{{net}} @hash(\"{h}\");\nimport pricing.{{gross}};\nmain() -> (stdout: Lines) {{}}\n"
+        "import pricing.{{net}} @hash(\"{h}\");\nimport pricing.{{gross}};\nmain(m: MainArgs) {{}}\n"
     );
     let p = package(&[("main.zed", &main), ("pricing.zed", PRICING)]);
     assert_eq!(mistakes(&p), Vec::<String>::new());
@@ -199,7 +199,7 @@ fn a_comment_before_the_semicolon_stays_after_the_pin() {
 
 #[test]
 fn the_formatter_leaves_a_pinned_unit_as_the_build_wrote_it() {
-    let main = "import pricing.{net, gross};\n\nmain() -> (stdout: Lines) { }\n";
+    let main = "import pricing.{net, gross};\n\nmain(m: MainArgs) { }\n";
     assert_eq!(format_source(main.as_bytes()).unwrap(), main);
     let pinned = package(&[("main.zed", main), ("pricing.zed", PRICING)])
         .pinned("main")
@@ -250,7 +250,7 @@ fn many_importers_of_one_unit_address_it_once() {
     let fs = files(&[
         (
             "main.zed",
-            "import a;\nimport b;\nimport pricing;\nmain() -> (stdout: Lines) {}\n",
+            "import a;\nimport b;\nimport pricing;\nmain(m: MainArgs) {}\n",
         ),
         ("a.zed", "import pricing.{net};\nx = net(1.0);\n"),
         ("b.zed", "import pricing.{gross};\ny = gross(1.0);\n"),
@@ -272,10 +272,7 @@ fn many_importers_of_one_unit_address_it_once() {
 #[test]
 fn the_pins_of_a_package_do_not_depend_on_its_roots() {
     let fs = files(&[
-        (
-            "main.zed",
-            "import pricing;\nmain() -> (stdout: Lines) {}\n",
-        ),
+        ("main.zed", "import pricing;\nmain(m: MainArgs) {}\n"),
         ("till.zed", "import pricing.{net};\nsale = net(10.0);\n"),
         ("pricing.zed", PRICING),
     ]);

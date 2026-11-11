@@ -95,7 +95,7 @@ fn a_shift_by_a_huge_count_keeps_the_power() {
 
 /// `program` with a `main` that reads none of its bindings.
 fn with_main(mut program: String) -> String {
-    program.push_str("main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"\";\n}\n");
+    program.push_str("main(m: MainArgs) {\n  m.stdout <- \"\";\n}\n");
     program
 }
 

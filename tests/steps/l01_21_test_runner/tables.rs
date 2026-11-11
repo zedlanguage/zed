@@ -43,53 +43,52 @@ fn a_row_that_stops_the_evaluator_fails() {
 
 #[test]
 fn a_main_row_compares_the_bytes_each_port_writes() {
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- upper(stdin[1] else \"\");\n}\n\
+    let src = "main(m: MainArgs) {\n  m.stdout <- upper(m.stdin[1] else \"\");\n}\n\
                test { \"abc\\n\" -> \"ABC\\n\", \"abc\" -> \"ABC\" }\n";
     assert_eq!(
         checks(src),
         [
             "4:8: ok",
-            "4:28: `\"abc\" -> \"ABC\"` of `main`: port `stdout` writes \"ABC\\n\"",
+            "4:28: `\"abc\" -> \"ABC\"` of `main`: `m.stdout` writes \"ABC\\n\"",
         ]
     );
 }
 
 #[test]
 fn a_port_not_pushed_writes_nothing() {
-    let src = "main(stdin: Lines) -> (stdout: Lines, stderr: Lines) {\n  \
-               stdout <- stdin[1] else \"\";\n}\n\
+    let src = "main(m: MainArgs) {\n  \
+               m.stdout <- m.stdin[1] else \"\";\n}\n\
                test { \"a\" -> (\"a\\n\", \"\"), \"a\" -> (\"a\\n\", \"warning\\n\") }\n";
     assert_eq!(
         checks(src),
         [
             "4:8: ok",
-            "4:28: `\"a\" -> (\"a\\n\", \"warning\\n\")` of `main`: port `stderr` writes \"\"",
+            "4:28: `\"a\" -> (\"a\\n\", \"warning\\n\")` of `main`: `m.stderr` writes \"\"",
         ]
     );
 }
 
 #[test]
 fn a_files_port_is_given_as_a_function_of_the_path() {
-    let src = "main(fs: Files) -> (stdout: Lines) {\n  \
-               stdout <- (fs[\"a.txt\"] else \"\") ++ (fs[\"b.txt\"] else \"\");\n}\n\
-               test { (p -> if p == \"a.txt\" { \"1\" } else { \"2\" }) -> \"12\\n\" }\n";
-    assert_eq!(checks(src), ["4:8: ok"]);
+    let src = "main(m: MainArgs) {\n  fs = files();\n  \
+               m.stdout <- (fs[\"a.txt\"] else \"\") ++ (fs[\"b.txt\"] else \"\");\n}\n\
+               test { (\"\", \"\", (n -> #notFound), (p -> if p == \"a.txt\" { \"1\" } else { \"2\" })) -> \"12\\n\" }\n";
+    assert_eq!(checks(src), ["5:8: ok"]);
 }
 
 #[test]
 fn a_row_of_the_wrong_shape_says_what_a_port_takes() {
-    let src = "main(stdin: Lines) -> (stdout: Lines, stderr: Lines) {\n  \
-               stdout <- \"x\";\n  stderr <- \"y\";\n}\n\
+    let src = "main(m: MainArgs) {\n  \
+               m.stdout <- \"x\";\n  m.stderr <- \"y\";\n}\n\
                test { 3 -> (\"x\\n\", \"y\\n\"), \"\" -> \"x\\n\", \"\" -> (\"x\\n\", 2) }\n";
     assert_eq!(
         checks(src),
         [
-            "5:8: `3 -> (\"x\\n\", \"y\\n\")` of `main`: the `Lines` port `stdin` is given as a \
+            "5:8: `3 -> (\"x\\n\", \"y\\n\")` of `main`: the `Lines` port `m.stdin` is given as a \
              String, not 3",
-            "5:29: `\"\" -> \"x\\n\"` of `main`: the expected value is a String for each of the \
-             2 output ports, not \"x\\n\"",
-            "5:42: `\"\" -> (\"x\\n\", 2)` of `main`: the expected value of port `stderr` is a \
-             String, not 2",
+            "5:29: ok",
+            "5:42: `\"\" -> (\"x\\n\", 2)` of `main`: the expected value of `m.stderr` is a String, \
+             not 2",
         ]
     );
 }
@@ -98,7 +97,7 @@ fn a_row_of_the_wrong_shape_says_what_a_port_takes() {
 fn a_wave_that_aborts_fails_its_row() {
     // A string too long for its length stops the wave.
     let src = format!(
-        "{}main(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- {};\n}}\n\
+        "{}main(m: MainArgs) {{\n  m.stdout <- {};\n}}\n\
          test {{ \"7\" -> \"7\\n\" }}\n",
         zed_tests::TWICE,
         zed_tests::too_long()
@@ -113,14 +112,53 @@ fn a_wave_that_aborts_fails_its_row() {
 }
 
 #[test]
-fn a_main_whose_ports_are_not_l1_reports_once_and_runs_no_row() {
-    let src = "main(n: int) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n\
+fn a_main_with_a_wrong_header_reports_once_and_runs_no_row() {
+    let src = "main(n: int) {\n  m.stdout <- \"x\";\n}\n\
                test { 1 -> \"x\\n\" }\n";
     assert_eq!(
         checks(src),
         [format!(
             "1:6: {}",
-            zed_tests::input_port_message("n", "is declared as `int`")
+            zed_tests::main_param_message("n", "int")
         )]
+    );
+}
+
+#[test]
+fn a_main_row_may_give_the_exit_status() {
+    // The third item of the value is the status the run exits with, from 0 to 255.
+    let src = "main(m: MainArgs) -> int {\n  m.stdout <- \"x\";\n  \
+               if (m.stdin[1] else \"\") == \"no\" { 3 } else { 0 }\n}\n\
+               test { \"no\" -> (\"x\\n\", \"\", 3), \"yes\" -> (\"x\\n\", \"\", 3), \
+               \"no\" -> (\"x\\n\", \"\", 256) }\n";
+    assert_eq!(
+        checks(src),
+        [
+            "5:8: ok",
+            "5:32: `\"yes\" -> (\"x\\n\", \"\", 3)` of `main`: the run exits with status 0",
+            "5:57: `\"no\" -> (\"x\\n\", \"\", 256)` of `main`: the expected status of a row of \
+             `main` is an int from 0 to 255, not 256",
+        ]
+    );
+}
+
+#[test]
+fn a_main_key_of_more_than_four_items_is_rejected() {
+    let src = "main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n\
+               test { (\"\", \"\", (n -> #notFound), (p -> #notFound), \"\") -> \"x\\n\" }\n";
+    let got = checks(src);
+    // The rejection rejects the unit, so the row is also reported as not run.
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert!(
+        got[1].ends_with("of `main`: not run, since the unit is rejected"),
+        "{got:?}"
+    );
+    assert!(
+        got[0].contains(
+            "a test key of `main` is the standard input of the run, as a String, or the tuple \
+             `(stdin, args, env, files)` of its inputs, with the items left off its end empty, \
+             and this key has 5 items"
+        ),
+        "{got:?}"
     );
 }

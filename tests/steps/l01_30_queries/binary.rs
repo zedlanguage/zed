@@ -125,11 +125,7 @@ fn a_reported_test_shows_the_second_copy_of_a_unit_as_cached() {
 fn a_reported_build_shows_lowering_code_generation_and_the_link() {
     let d = dir();
     let src = d.join("hello.zed");
-    std::fs::write(
-        &src,
-        "main(args: CommandLine) -> (stdout: Lines) {\n  stdout <- \"Hello!\";\n}\n",
-    )
-    .unwrap();
+    std::fs::write(&src, "main(m: MainArgs) {\n  m.stdout <- \"Hello!\";\n}\n").unwrap();
     let exe = d.join("hello");
     let out = zedc(&[
         Path::new("--report"),

@@ -71,7 +71,7 @@ pub(crate) fn link(src: &Path, out: &Path, tools: &Toolchain) -> Link {
 
 /// The program of a shop's sign: it writes `text` on one line.
 pub(crate) fn sign(text: &str) -> String {
-    format!("main() -> (stdout: Lines) {{\n  stdout <- \"{text}\";\n}}\n")
+    format!("main(m: MainArgs) {{\n  m.stdout <- \"{text}\";\n}}\n")
 }
 
 /// Writes the shell script `body` at `path`, runnable. `install` writes it in a process of its

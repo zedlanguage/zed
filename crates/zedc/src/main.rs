@@ -18,9 +18,9 @@ use zed_alloc_count as _;
 const USAGE: &str = "The commands of zedc are:
   zedc fmt <file>
       print the file in the standard layout
-  zedc run <file> [port=path …] [--record <out>] [--suppress <address> …] [--addresses] [-- arg …]
+  zedc run <file> [--record <out>] [--suppress <address> …] [--addresses] [-- arg …]
       run the program in the file
-  zedc replay <file> <record> [port=path …] [--suppress <address> …] [--addresses] [-- arg …]
+  zedc replay <file> <record> [--suppress <address> …] [--addresses] [-- arg …]
       run the program again on the inputs a record of an earlier run holds
   zedc build <file> -o <out> [--suppress <address> …] [--addresses]
       compile the program to an executable

@@ -19,10 +19,10 @@ valueOf(positional sheet, positional name) = match sheet[name] {
 
 show(positional sheet) = (for c -> _ in sheet { "${c}=${valueOf(sheet, c)}" }).concat(" ");
 
-main(stdin: Lines) -> (stdout: Lines) {
+main(m: MainArgs) {
   run = loop t {
-    sheet' = sheet.patch(edit(stdin[t])) with initial sheet = {};
-    while t in stdin::domain;
+    sheet' = sheet.patch(edit(m.stdin[t])) with initial sheet = {};
+    while t in m.stdin::domain;
   };
-  stdout <- run::frames.map(f -> show(f.sheet));
+  m.stdout <- run::frames.map(f -> show(f.sheet));
 }

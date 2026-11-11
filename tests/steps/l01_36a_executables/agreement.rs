@@ -98,13 +98,15 @@ fn every_enabled_corpus_program_agrees() {
 
 #[test]
 fn every_enabled_fence_program_agrees() {
-    // A fence with `main` is a program; the enabled fences at L1 are units with no ports.
+    // A fence with `main` is a program; of the enabled fences at L1, one is: the environment
+    // fence, which writes `m.env["HOME"]` to `m.stdout`. Both runs see the same environment.
     let programs: Vec<_> = zed_tests::fences::all()
         .into_iter()
         .filter(|f| f.layer <= ENABLED && !f.notation)
         .filter(|f| zedc::run::load(f.text.as_bytes()).is_ok())
         .collect();
-    assert_eq!(programs.len(), 0);
+    let keys: Vec<&str> = programs.iter().map(|f| f.key.as_str()).collect();
+    assert_eq!(keys, ["EXAMPLES.md [18. Files, stores, and the world] 8"]);
     let d = dir("fences");
     for (k, f) in programs.iter().enumerate() {
         let src = d.join(format!("fence{k}.zed"));
@@ -116,11 +118,11 @@ fn every_enabled_fence_program_agrees() {
 }
 
 /// Reads the files its three arguments name, and says which are missing or unreadable.
-const READER: &str = "main(fs: Files, args: CommandLine) -> (stdout: Lines) {\n  \
-    a = (fs[args[1] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
-    b = (fs[args[2] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
-    c = (fs[args[3] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
-    stdout <- \"${a}|${b}|${c}\";\n}\n";
+const READER: &str = "main(m: MainArgs) {\n  fs = files();\n  \
+    a = (fs[m.args[1] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
+    b = (fs[m.args[2] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
+    c = (fs[m.args[3] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
+    m.stdout <- \"${a}|${b}|${c}\";\n}\n";
 
 #[test]
 fn files_named_by_arguments_agree() {
@@ -171,33 +173,42 @@ fn files_named_by_arguments_agree() {
                     .into(),
             },
         ),
-        (
-            vec!["nope=x".into()],
-            Ran {
-                status: 2,
-                stdout: String::new(),
-                stderr: "`nope=x` names a file for the port `nope`, and `main` has no port \
-                         `nope`; its ports are `fs`, `args` and `stdout`. Write the name of one \
-                         of them before `=`, or remove `nope=x`.\n"
-                    .into(),
-            },
-        ),
     ];
     for (words, want) in &cases {
         let native = executable(&exe, words, b"");
         assert_eq!(&native, want, "{words:?}");
         assert_eq!(native, interpreter(&src, words, b""), "{words:?}");
     }
-    // A word the executable does not know is a usage error naming the executable.
+    // A word the executable does not know, and a port bound to a file, which no program has, are
+    // usage errors naming the executable.
+    let nope = executable(&exe, &["nope=x".into()], b"");
+    assert_eq!((nope.status, nope.stdout.as_str()), (2, ""));
+    assert_eq!(
+        nope.stderr,
+        format!(
+            "`nope=x` names the file `x` for a port `nope`, and a program's ports are not named \
+             on the command line: `main(m: MainArgs)` reads standard input from `m.stdin` and \
+             writes `m.stdout` and `m.stderr` to standard output and standard error, and a \
+             program opens a file by its path with `files()`. To read a file as standard input, \
+             write `< x`; to write standard output to a file, write `> x`; to give the path to \
+             the program, put it after `--`, where `m.args` reads it.\n\nusage: {} \
+             [--record <out>] [-- arg …]\n",
+            exe.display()
+        )
+    );
+    // `zedc run` says the same, and then lists its own forms.
+    let run = interpreter(&src, &["nope=x".into()], b"");
+    assert_eq!(run.status, 2);
+    let reason = |s: &str| s.split("\n\n").next().unwrap_or("").to_string();
+    assert_eq!(reason(&run.stderr), reason(&nope.stderr));
     let bad = executable(&exe, &["bad".into()], b"");
     assert_eq!(bad.status, 2);
     assert_eq!(
         bad.stderr,
         format!(
-            "`bad` is not understood here: before `--` come only `port=path`, which names the \
-             file a port reads or writes, and `--record <out>`, which writes a record of the \
-             run; after `--` come the program's own arguments. If `bad` is meant for the \
-             program, put it after `--`.\n\nusage: {} [port=path …] [--record <out>] [-- arg …]\n",
+            "`bad` is not understood here: before `--` comes only `--record <out>`, which \
+             writes a record of the run; after `--` come the program's own arguments. If \
+             `bad` is meant for the program, put it after `--`.\n\nusage: {} [--record <out>] [-- arg …]\n",
             exe.display()
         )
     );
@@ -205,12 +216,12 @@ fn files_named_by_arguments_agree() {
 
 /// Compares its first two arguments by `>` and `>=`, which legalization rewrites for this back
 /// end, the comparison not known before the run.
-const ORDER: &str = "main(args: CommandLine) -> (stdout: Lines) {\n  \
-    a = args[1] else \"\";\n  \
-    b = args[2] else \"\";\n  \
+const ORDER: &str = "main(m: MainArgs) {\n  \
+    a = m.args[1] else \"\";\n  \
+    b = m.args[2] else \"\";\n  \
     x = if a > b { \"after\" } else { \"not after\" };\n  \
     y = if a >= b { \"at or after\" } else { \"before\" };\n  \
-    stdout <- \"${x}|${y}\";\n}\n";
+    m.stdout <- \"${x}|${y}\";\n}\n";
 
 #[test]
 fn a_built_comparison_by_greater_than_agrees() {
@@ -273,10 +284,10 @@ fn a_tuple_indexed_by_a_computed_key_agrees() {
     let src = d.join("column.zed");
     std::fs::write(
         &src,
-        "main(stdin: Lines) -> (stdout: Lines) {\n  \
+        "main(m: MainArgs) {\n  \
          person = (\"Ada\", 1815, \"London\");\n  \
-         column = int(stdin[1]) else 0;\n  \
-         stdout <- \"${person[column] else \"no such column\"}\";\n}\n",
+         column = int(m.stdin[1]) else 0;\n  \
+         m.stdout <- \"${person[column] else \"no such column\"}\";\n}\n",
     )
     .unwrap();
     let exe = built_twice("column", &src);

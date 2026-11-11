@@ -425,8 +425,7 @@ mod tests {
 
     #[test]
     fn the_original_program_of_a_mutation_run_shares_the_unit_of_the_front_end() {
-        let front =
-            Db::new().front("main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n");
+        let front = Db::new().front("main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n");
         let Ok((stmts, unit, _)) = &*front else {
             panic!("the unit is accepted")
         };

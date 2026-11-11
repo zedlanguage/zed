@@ -29,7 +29,7 @@ fn x(expr: &str) -> String {
 fn program(src: &str) -> String {
     match src.contains("main(") {
         true => src.to_string(),
-        false => format!("{src}main(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- \"\";\n}}\n"),
+        false => format!("{src}main(m: MainArgs) {{\n  m.stdout <- \"\";\n}}\n"),
     }
 }
 

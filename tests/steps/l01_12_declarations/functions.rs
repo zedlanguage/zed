@@ -21,16 +21,16 @@ fn a_block_function_is_its_block() {
 }
 
 #[test]
-fn main_declares_its_ports_and_may_only_push() {
+fn main_takes_its_argument_and_pushes_to_its_fields() {
     check(&[
         (
-            "main(stdin: Lines) -> (stdout: Lines) { stdout <- stdin; }",
-            "(def main ((stdin: Lines)) (-> (stdout: Lines)) (block (<- stdout stdin)))",
+            "main(m: MainArgs) { m.stdout <- m.stdin; }",
+            "(def main ((m.stdin: Lines)) (-> (m.stdout: Lines)) (block (<- m.stdout m.stdin)))",
         ),
         (
-            "main(stdin: Lines) -> (out: Lines, err: Lines) { out <- stdin; err <- stdin; }",
-            "(def main ((stdin: Lines)) (-> (out: Lines) (err: Lines)) \
-             (block (<- out stdin) (<- err stdin)))",
+            "main(m: MainArgs) { m.stdout <- m.stdin; m.stderr <- m.stdin; }",
+            "(def main ((m.stdin: Lines)) (-> (m.stdout: Lines) (m.stderr: Lines)) \
+             (block (<- m.stdout m.stdin) (<- m.stderr m.stdin)))",
         ),
     ]);
 }

@@ -27,7 +27,7 @@ impl Lookup for Disk {
 fn trace(src: &str, stdin: &str, files: &[(&'static str, &'static str)]) -> zed_kernel::Provenance {
     let p = load(src.as_bytes()).unwrap();
     let mut lines = BTreeMap::new();
-    lines.insert("stdin".to_string(), Arc::from(stdin.as_bytes()));
+    lines.insert("m.stdin".to_string(), Arc::from(stdin.as_bytes()));
     let disk: Arc<dyn Lookup> = Arc::new(Disk(files.iter().copied().collect()));
     let (_, prov) = p.provenance(&lines, |_| disk.clone()).unwrap();
     assert!(prov.repeated().is_empty(), "{:?}", prov.repeated());
@@ -36,9 +36,9 @@ fn trace(src: &str, stdin: &str, files: &[(&'static str, &'static str)]) -> zed_
 
 #[test]
 fn a_failed_total_names_the_bad_quantity_and_the_missing_price_file() {
-    let src = "main(stdin: Lines, fs: Files) -> (stdout: Lines) {\n  \
-               qty = int(stdin[1]);\n  unit = int(fs[\"price.txt\"]);\n  \
-               total = qty * unit;\n  stdout <- String(total) else \"no total\";\n}\n";
+    let src = "main(m: MainArgs) {\n  fs = files();\n  \
+               qty = int(m.stdin[1]);\n  unit = int(fs[\"price.txt\"]);\n  \
+               total = qty * unit;\n  m.stdout <- String(total) else \"no total\";\n}\n";
     let p = trace(src, "three\n", &[]);
     let i = p
         .facts()
@@ -50,15 +50,15 @@ fn a_failed_total_names_the_bad_quantity_and_the_missing_price_file() {
         o,
         [
             ("fs(\"price.txt\")".into(), "#notFound".into()),
-            ("int(stdin[1])".into(), "#invalid".into()),
+            ("int(m.stdin[1])".into(), "#invalid".into()),
         ]
     );
 }
 
 #[test]
 fn every_keypath_of_a_wave_starts_with_its_stamp() {
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  \
-               stdout <- \"${int(stdin[1]) else 0}\";\n}\n";
+    let src = "main(m: MainArgs) {\n  \
+               m.stdout <- \"${int(m.stdin[1]) else 0}\";\n}\n";
     let p = trace(src, "4\n", &[]);
     assert!(
         p.facts()

@@ -46,7 +46,7 @@ fn the_record_holds_the_names_read_and_what_each_gave() {
     let wave = two
         .run_args(&Default::default(), &[], |_| Arc::clone(&env) as _)
         .unwrap();
-    let read = &wave.record.files["env"];
+    let read = &wave.record.files["m.env"];
     assert_eq!(
         read.iter().collect::<Vec<_>>(),
         [

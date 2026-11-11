@@ -63,6 +63,8 @@ pub struct Program {
     /// replay.
     address: std::sync::OnceLock<Result<ContentAddress, String>>,
     ports: Ports,
+    /// The name of `main`'s parameter, `m` in `main(m: MainArgs)`, if written.
+    param: Option<String>,
     /// The warnings, placed in the source: they do not stop the build.
     warnings: Arc<[Diagnostic]>,
 }
@@ -182,8 +184,9 @@ impl Ports {
                 PortKind::Lines => {
                     let Some(bytes) = lines.get(name) else {
                         return Err(format!(
-                            "the input port `{name}` was given nothing to read. Name a file for \
-                             it on the command line as `{name}=<path>`."
+                            "the input port `{name}` was given nothing to read: a run gives each \
+                             `Lines` input its bytes by the name of its port, and no bytes were \
+                             given for `{name}`."
                         ));
                     };
                     world = world.input(name, split_lines(name, bytes));
@@ -203,7 +206,7 @@ impl Ports {
         if trace {
             ev = ev.with_provenance(vec![Value::Int(0)]);
         }
-        run(&mut ev)?;
+        let status = exit_status(&run(&mut ev)?)?;
         let mut writes = Vec::new();
         for name in &self.outputs {
             match ev.world.log(name) {
@@ -211,8 +214,8 @@ impl Ports {
                 [v] => writes.push((name.clone(), join_lines(name, v)?)),
                 pushes => {
                     return Err(format!(
-                        "the output port `{name}` was pushed to {} times in this run, and a \
-                         port takes one push per run, which holds everything it writes. Gather \
+                        "`{name}` was pushed to {} times in this run, and it takes one push per \
+                         run, which holds everything it writes. Gather \
                          the lines into one family of strings and push it once, as `{name} <- \
                          lines;`, where `lines` holds one entry per line; a push in a branch \
                          that does not run does not count.",
@@ -222,8 +225,37 @@ impl Ports {
             }
         }
         record.files = std::mem::take(&mut ev.world.reads);
-        Ok((Wave { writes, record }, ev.provenance()))
+        Ok((
+            Wave {
+                writes,
+                record,
+                status,
+            },
+            ev.provenance(),
+        ))
     }
+}
+
+/// The exit status of a wave whose `main` gave `value` (DESIGN.md sec:ports, step L1.19): its
+/// `int` result, which the checker proves is in `0..=255`, or 0 when the body exports
+/// nothing.
+fn exit_status(value: &Value) -> Result<u8, String> {
+    match value {
+        Value::Int(n) => u8::try_from(*n).map_err(|_| status_range(&n.to_string())),
+        Value::Tuple(items) if items.is_empty() => Ok(0),
+        v => Err(status_range(&v.to_string())),
+    }
+}
+
+/// Why `main`'s result `n` is no exit status. The checker rejects a `main` whose result it
+/// does not prove to be in `0..=255`, so a run meets this only through a form that skips the
+/// check (a mutant's `main`, step L25.8).
+fn status_range(n: &str) -> String {
+    format!(
+        "`main` gave {n}, and the result of `main` is the program's exit status, a number from \
+         0 to 255. Give a status in that range: `code.clamp(0, 255)`, `code mod 256`, or `if \
+         code in 0..=255 {{ code }} else {{ 1 }}`."
+    )
 }
 
 /// The outcome of one wave: the writes, by port in header order, and the inputs it read.
@@ -232,6 +264,8 @@ pub struct Wave {
     pub writes: Vec<(String, Vec<u8>)>,
     /// What a replay needs.
     pub record: Record,
+    /// The exit status `main` gave: its `int` result, 0 when its body exports nothing.
+    pub status: u8,
 }
 
 /// The inputs a wave read: each `Lines` port's bytes, each `Files` and environment port's
@@ -310,32 +344,13 @@ pub(crate) fn write_warnings(
     Ok(())
 }
 
-/// The program `unit` is, with the ports its one `main` declares; or why it is refused, at the
-/// declaration it concerns (DIAG-addr-rest): a port of `main` at the port, a second `main` at
-/// that declaration with each `main` a step of the derivation, and no `main` at the start of
-/// the unit. The caller places the error, so it prints a place and an address as every
-/// rejection does.
-/// The message for the parameter `p` of `main`, whose type is no input port's: what each input
-/// port reads, and the declaration rewritten with each.
-fn input_port_message(p: &ast::Param) -> String {
-    let name = &p.name;
-    let written = match &p.ty {
-        Some(t) => format!("is declared as `{}`", crate::format::format_type(t)),
-        None => "has no type".to_string(),
-    };
-    format!(
-        "the parameter `{name}` of `main` {written}, and each parameter of `main` is an input \
-         port, which the program reads from outside when it runs, so its type must be one of \
-         these: `{name}: Lines` reads the lines of a file named on the command line as \
-         `{name}=path`, or of standard input for `stdin`; `{name}: Files` reads files by their \
-         paths as the program asks for them; `{name}: CommandLine` reads the words after `--` \
-         on the command line; `{name}: String ->? String` reads environment variables by name. \
-         Write the one that holds the input and compute the value from what it reads; or, to \
-         try `main` on given values, move its work into a function and test that function with \
-         `zedc test`."
-    )
-}
-
+/// The program `unit` is, with the ports its one `main` reads and writes; or why it is
+/// refused, at the declaration it concerns (DIAG-addr-rest): a second `main` at that
+/// declaration with each `main` a step of the derivation, and no `main` at the start of the
+/// unit. The caller places the error, so it prints a place and an address as every rejection
+/// does. The parser has already checked `main`'s header (`main(m: MainArgs) -> int`), and
+/// given `main` a parameter for each field of `MainArgs` it reads and a port for each it
+/// pushes to ([`ast::MainHeader`]), so each parameter here is an input port.
 pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::Error> {
     let mains: Vec<(&Stmt, &Function)> = stmts
         .iter()
@@ -348,7 +363,7 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
         let message = match mains.len() {
             0 => "this file is run as a program, and a program starts at a function named \
                   `main`, which this file does not declare. Declare one, such as\n    \
-                  main(stdin: Lines) -> (stdout: Lines) {\n      stdout <- \"hello\";\n    }\n\
+                  main(m: MainArgs) {\n      m.stdout <- \"hello\";\n    }\n\
                   or, if the file holds definitions to test and is not a program, run `zedc \
                   test` on it instead of `zedc run`."
                 .to_string(),
@@ -374,47 +389,34 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
                 .collect(),
         });
     };
-    let refused = |span: Span, message: String| ast::Error {
-        row: None,
-        menu: String::new(),
-        span,
-        message,
-        notes: Vec::new(),
-    };
-    let is_string = |t: &ast::Type| matches!(&t.kind, TypeKind::Name(n) if n == "String");
     let kind = |p: &ast::Param| match p.ty.as_ref().map(|t| &t.kind) {
-        Some(TypeKind::Name(n)) if n == "Lines" => Ok(PortKind::Lines),
-        Some(TypeKind::Name(n)) if n == "Files" => Ok(PortKind::Files),
-        Some(TypeKind::Name(n)) if n == "CommandLine" => Ok(PortKind::CommandLine),
-        Some(TypeKind::Arrow {
-            params,
-            partial: true,
-            result,
-        }) if is_string(result) && matches!(&params[..], [k] if is_string(&k.ty)) => {
-            Ok(PortKind::Env)
-        }
-        _ => Err(refused(p.span, input_port_message(p))),
+        Some(TypeKind::Name(n)) if n == "Lines" => PortKind::Lines,
+        Some(TypeKind::Name(n)) if n == "Files" => PortKind::Files,
+        Some(TypeKind::Name(n)) if n == "CommandLine" => PortKind::CommandLine,
+        Some(TypeKind::Arrow { partial: true, .. }) => PortKind::Env,
+        _ => unreachable!("the parser gives `main` only the parameters of `MainArgs`' inputs"),
     };
     let inputs = main
         .params
         .iter()
-        .map(|p| Ok((p.name.clone(), kind(p)?)))
-        .collect::<Result<_, ast::Error>>()?;
-    let mut outputs = Vec::new();
-    for p in main.ports.iter().flatten() {
-        if !matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
-            return Err(refused(
-                p.span,
-                crate::resolve::output_port_message(&p.name, "main", &p.ty),
-            ));
-        }
-        outputs.push(p.name.clone());
-    }
+        .map(|p| (p.name.clone(), kind(p)))
+        .collect();
+    let outputs = main
+        .ports()
+        .into_iter()
+        .flatten()
+        .map(|p| p.name.clone())
+        .collect();
     Ok(Program {
         unit,
         main: std::sync::OnceLock::new(),
         address: std::sync::OnceLock::new(),
         ports: Ports { inputs, outputs },
+        param: main
+            .main
+            .as_ref()
+            .and_then(|h| h.param.as_ref())
+            .map(|(name, ..)| name.clone()),
         warnings: Arc::from([]),
     })
 }
@@ -477,9 +479,15 @@ impl Program {
             main: std::sync::OnceLock::new(),
             address: std::sync::OnceLock::new(),
             ports: self.ports.clone(),
+            param: self.param.clone(),
             warnings: Arc::clone(&self.warnings),
         };
         (program, report)
+    }
+
+    /// The name of `main`'s parameter, `m` in `main(m: MainArgs)`, if written.
+    pub fn param(&self) -> Option<&str> {
+        self.param.as_deref()
     }
 
     /// The output ports, in header order.
@@ -942,15 +950,14 @@ impl Record {
     }
 }
 
-/// `zedc run <file> [port=path …] [--record <out>] [-- arg …]` and
-/// `zedc replay <file> <record> [port=path …] [-- arg …]`, with `args` the words after
-/// `zedc`. A `Lines` input reads the file bound to it, or standard input if it is `stdin`; a
-/// `CommandLine` input holds the words after `--`, which a replay ignores for the recorded
-/// ones; a `Lines` output writes the file bound to it, or standard output or error if it is
-/// `stdout` or `stderr`. Returns the exit status: 0, 1 when the program fails or a write
-/// fails, 2 for a usage error, among them a word that is not UTF-8 or a read of an
-/// environment variable whose value is not. An environment input holds this process's
-/// variables.
+/// `zedc run <file> [--record <out>] [-- arg …]` and
+/// `zedc replay <file> <record> [-- arg …]`, with `args` the words after
+/// `zedc`. `m.stdin` reads standard input, `m.args` holds the words after `--`, which a
+/// replay ignores for the recorded ones, `m.env` holds this process's variables, and
+/// `m.stdout` and `m.stderr` write standard output and standard error. Returns the exit
+/// status: `main`'s result, 0 when its body exports nothing, 1 when the program fails or a
+/// write fails, 2 for a usage error, among them a word that is not UTF-8 or a read of an
+/// environment variable whose value is not.
 pub fn command(
     args: &[impl AsRef<std::ffi::OsStr>],
     stdin: &mut dyn Read,
@@ -977,7 +984,7 @@ pub fn command_in(
         }
     };
     match command_inner(&words, &env, stdin, stdout, stderr) {
-        Ok(()) => 0,
+        Ok(status) => status,
         Err((status, why)) => {
             let _ = writeln!(stderr, "{why}");
             status
@@ -1009,7 +1016,7 @@ fn words(args: &[impl AsRef<std::ffi::OsStr>]) -> Result<Words<'_>, String> {
             w.to_str().ok_or_else(|| {
                 format!(
                     "word {} of the command line is not UTF-8, and the words before `--` \
-                         (files, ports and options) are read as UTF-8 text. Name each file by \
+                         (the program's file and options) are read as UTF-8 text. Name each file by \
                          a path written in UTF-8, or rename the file.",
                     i + 1
                 )
@@ -1040,15 +1047,15 @@ fn command_inner(
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> Result<(), (u8, String)> {
+) -> Result<u8, (u8, String)> {
     let usage = |why: String| {
         (
             2,
             format!(
                 "{why}\n\nThe forms are:\n  \
-                 zedc run <file> [port=path …] [--record <out>] [--suppress <address> …] \
+                 zedc run <file> [--record <out>] [--suppress <address> …] \
                  [--addresses] [-- arg …]\n  \
-                 zedc replay <file> <record> [port=path …] [--suppress <address> …] \
+                 zedc replay <file> <record> [--suppress <address> …] \
                  [--addresses] [-- arg …]"
             ),
         )
@@ -1072,7 +1079,6 @@ fn command_inner(
     let (mut suppress, rest) = Suppress::take(rest).map_err(|why| (2, why))?;
     let options = Options::parse(&rest, replay.is_none()).map_err(usage)?;
     let program = load_file(file, &mut suppress, stderr)?;
-    options.check(program.ports())?;
     let wave = match replay {
         Some(path) => {
             let bytes = std::fs::read(path).map_err(|e| (2, unreadable(path, &e)))?;
@@ -1151,10 +1157,8 @@ pub fn load_file(
     Ok(program)
 }
 
-/// The words of a command line after the program: each port bound to a path, and the file
-/// `--record` names.
+/// The words of a command line after the program: the file `--record` names.
 struct Options<'a> {
-    binds: BTreeMap<String, String>,
     record_to: Option<&'a str>,
 }
 
@@ -1166,33 +1170,31 @@ pub(crate) fn unreadable(path: &str, e: &std::io::Error) -> String {
     )
 }
 
-/// Why zedc could not write what the output port `port` holds: to the file `path` it is bound
-/// to, or, with no file, to the process's own stream, the reason being `why`.
-fn write_failed(port: &str, path: Option<&String>, why: &str) -> String {
-    match path {
-        Some(path) => format!(
-            "the program wrote to the output port `{port}`, and zedc could not write it to the \
-             file {path}: {why}. Name a file in a directory you may write to, as `{port}=<path>`."
-        ),
-        None => {
-            let stream = if port == "stdout" { "output" } else { "error" };
-            format!(
-                "the program wrote to the output port `{port}`, and zedc could not write it to \
-                 the standard {stream} of this process: {why}. Send the standard {stream} to a \
-                 place that accepts it, or name a file for it as `{port}=<path>`."
-            )
-        }
-    }
+/// The field of `main`'s argument the port `port` is: `stdin` for `m.stdin`.
+fn field(port: &str) -> &str {
+    port.rsplit_once('.').map_or(port, |(_, f)| f)
+}
+
+/// Why zedc could not write what the output port `port` holds to the process's own stream,
+/// standard output for `m.stdout` and standard error for `m.stderr`, the reason being `why`.
+fn write_failed(port: &str, why: &str) -> String {
+    let stream = if field(port) == "stdout" {
+        "output"
+    } else {
+        "error"
+    };
+    format!(
+        "the program wrote to `{port}`, and zedc could not write it to the standard {stream} \
+         of this process: {why}. Send the standard {stream} to a place that accepts it, such as \
+         a file, with `> out.txt` for standard output or `2> err.txt` for standard error."
+    )
 }
 
 impl<'a> Options<'a> {
     /// The options `rest` holds, `--record <out>` among them only when `record`; or why a word
     /// is neither.
     fn parse(mut rest: &[&'a str], record: bool) -> Result<Options<'a>, String> {
-        let mut options = Options {
-            binds: BTreeMap::new(),
-            record_to: None,
-        };
+        let mut options = Options { record_to: None };
         while let [word, more @ ..] = rest {
             rest = more;
             if *word == "--record" && record {
@@ -1206,129 +1208,62 @@ impl<'a> Options<'a> {
                 };
                 options.record_to = Some(out);
                 rest = more;
-            } else if let Some((port, path)) = word.split_once('=') {
-                options.binds.insert(port.to_string(), path.to_string());
             } else if *word == "--record" {
                 return Err(
                     "`--record` is not an option of `zedc replay`, which writes no \
                      record: a replay reads only the record it is given. Remove `--record`."
                         .into(),
                 );
+            } else if let Some((port, path)) = word.split_once('=') {
+                return Err(format!(
+                    "`{word}` names the file `{path}` for a port `{port}`, and a program's ports \
+                     are not named on the command line: `main(m: MainArgs)` reads standard \
+                     input from `m.stdin` and writes `m.stdout` and `m.stderr` to standard \
+                     output and standard error, and a program opens a file by its path with \
+                     `files()`. To read a file as standard input, write `< {path}`; to write \
+                     standard output to a file, write `> {path}`; to give the path to the \
+                     program, put it after `--`, where `m.args` reads it."
+                ));
             } else {
                 return Err(format!(
-                    "`{word}` is not understood here: before `--` come only `port=path`, which names \
-                     the file a port reads or writes, and `--record <out>`, which writes a record \
-                     of the run; after `--` come the program's own arguments. If `{word}` is \
-                     meant for the program, put it after `--`."
+                    "`{word}` is not understood here: before `--` comes only `--record <out>`, \
+                     which writes a record of the run; after `--` come the program's own \
+                     arguments. If `{word}` is meant for the program, put it after `--`."
                 ));
             }
         }
         Ok(options)
     }
 
-    /// Checks the bindings against `ports`: each names a port, binds no input that reads no
-    /// file, and leaves no output but `stdout` and `stderr` without a file.
-    fn check(&self, ports: &Ports) -> Result<(), (u8, String)> {
-        let binds = &self.binds;
-        let known =
-            |p: &String| ports.inputs.iter().any(|(n, _)| n == p) || ports.outputs.contains(p);
-        if let Some(p) = binds.keys().find(|p| !known(p)) {
-            let names: Vec<String> = (ports.inputs.iter().map(|(n, _)| n))
-                .chain(&ports.outputs)
-                .map(|n| format!("`{n}`"))
-                .collect();
-            let bind = format!("{p}={}", binds[p]);
-            let names = match names.split_last() {
-                None => "it has no ports".to_string(),
-                Some((one, [])) => format!("its one port is {one}"),
-                Some((last, rest)) => format!("its ports are {} and {last}", rest.join(", ")),
-            };
-            let repair = match ports.inputs.is_empty() && ports.outputs.is_empty() {
-                true => format!("Remove `{bind}`."),
-                false => format!("Write the name of one of them before `=`, or remove `{bind}`."),
-            };
-            return Err((
-                2,
-                format!(
-                    "`{bind}` names a file for the port `{p}`, and `main` has no port `{p}`; \
-                     {names}. {repair}"
-                ),
-            ));
-        }
-        // A `Files` or `CommandLine` input reads no file, so a binding of one would be ignored.
-        if let Some((p, _)) = ports
-            .inputs
-            .iter()
-            .find(|(n, k)| *k != PortKind::Lines && binds.contains_key(n))
-        {
-            return Err((
-                2,
-                format!(
-                    "`{p}={}` names a file for the input port `{p}`, and `{p}` reads no file \
-                     named on the command line: a `Files` port reads files by the paths the \
-                     program gives it, a `CommandLine` port reads the words after `--`, and an \
-                     environment port reads the environment. Remove `{p}={}`.",
-                    binds[p], binds[p]
-                ),
-            ));
-        }
-        for name in &ports.outputs {
-            if !binds.contains_key(name) && name != "stdout" && name != "stderr" {
-                return Err((
-                    2,
-                    format!(
-                        "the output port `{name}` of `main` needs a file to write to, and none \
-                         is named: only `stdout` and `stderr` write to the process's own \
-                         streams. Add `{name}=<path>` to the command line."
-                    ),
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    /// The bytes of each `Lines` input of `ports`: the file bound to it, or `stdin` for the
-    /// port `stdin`.
+    /// The bytes of each `Lines` input of `ports`, `m.stdin`, read from `stdin`.
     fn read_lines(&self, ports: &Ports, stdin: &mut dyn Read) -> Result<LineInputs, (u8, String)> {
         let mut lines = BTreeMap::new();
         for (name, kind) in &ports.inputs {
             if *kind != PortKind::Lines {
                 continue;
             }
-            let bytes = match self.binds.get(name) {
-                Some(path) => read_file(path).map_err(|e| (2, unreadable(path, &e)))?,
-                None if name == "stdin" => read_shared(stdin, 0).map_err(|e| {
-                    let why = io_reason(&e);
-                    let why = format!(
-                        "zedc could not read standard input, which the port `stdin` \
-                             reads: {why}. Give zedc a standard input it may read, or name a \
-                             file for the port as `stdin=<path>`."
-                    );
-                    (2, why)
-                })?,
-                None => {
-                    return Err((
-                        2,
-                        format!(
-                            "the input port `{name}` of `main` needs a file to read, and none is \
-                             named: only `stdin` reads the process's standard input. Add \
-                             `{name}=<path>` to the command line."
-                        ),
-                    ));
-                }
-            };
+            let bytes = read_shared(stdin, 0).map_err(|e| {
+                let why = io_reason(&e);
+                let why = format!(
+                    "zedc could not read standard input, which `{name}` reads: {why}. Give zedc \
+                     a standard input it may read, such as a file, with `< in.txt`."
+                );
+                (2, why)
+            })?;
             lines.insert(name.clone(), bytes);
         }
         Ok(lines)
     }
 
-    /// Writes the record, when `--record` names a file, and commits the wave's writes.
+    /// Writes the record, when `--record` names a file, and commits the wave's writes: `m.stdout`
+    /// to `stdout` and `m.stderr` to `stderr`. Gives the wave's exit status, or 1 and why
+    /// when a write fails.
     fn finish(
         &self,
         wave: &Wave,
         stdout: &mut dyn Write,
         stderr: &mut dyn Write,
-    ) -> Result<(), (u8, String)> {
+    ) -> Result<u8, (u8, String)> {
         if let Some(out) = self.record_to {
             std::fs::write(out, wave.record.to_bytes()).map_err(|e| {
                 let why = io_reason(&e);
@@ -1341,29 +1276,23 @@ impl<'a> Options<'a> {
         }
         let mut failed = None;
         commit(&wave.writes, |port, bytes| {
-            let written = match self.binds.get(port) {
-                Some(path) => {
-                    std::fs::write(path, bytes).map_err(|e| (path.clone(), io_reason(&e)))
-                }
-                None if port == "stdout" => stdout
-                    .write_all(bytes)
-                    .map_err(|e| ("stdout".into(), io_reason(&e))),
-                None => stderr
-                    .write_all(bytes)
-                    .map_err(|e| ("stderr".into(), io_reason(&e))),
+            let (stream, written) = match field(port) {
+                "stdout" => ("stdout", stdout.write_all(bytes)),
+                _ => ("stderr", stderr.write_all(bytes)),
             };
-            if let Err((_, why)) = &written {
-                failed = Some(write_failed(port, self.binds.get(port), why));
-            }
-            written
+            written.map_err(|e| {
+                let why = io_reason(&e);
+                failed = Some(write_failed(port, &why));
+                (stream.to_string(), why)
+            })
         });
-        failed.map_or(Ok(()), |why| Err((1, why)))
+        failed.map_or(Ok(wave.status), |why| Err((1, why)))
     }
 }
 
-/// The command line of an executable `zedc build` makes (step L1.36a), `name [port=path …]
-/// [--record <out>] [-- arg …]`, with `args` the words after `name`: the ports are bound and
-/// written as `zedc run` binds and writes them, and the wave is run by `run`, the
+/// The command line of an executable `zedc build` makes (step L1.36a), `name
+/// [--record <out>] [-- arg …]`, with `args` the words after `name`: the ports are read and
+/// written as `zedc run` reads and writes them, and the wave is run by `run`, the
 /// executable's own code, in an evaluator that holds the ports. The record `--record` writes
 /// names `address`, the content address of the program the executable was built from
 /// ([`Program::address`]), so `zedc replay` runs it against that program's source. Returns
@@ -1387,10 +1316,9 @@ pub fn executable(
         let options = Options::parse(&words.command, true).map_err(|why| {
             (
                 2,
-                format!("{why}\n\nusage: {name} [port=path …] [--record <out>] [-- arg …]"),
+                format!("{why}\n\nusage: {name} [--record <out>] [-- arg …]"),
             )
         })?;
-        options.check(ports)?;
         let lines = options.read_lines(ports, stdin)?;
         let env = Arc::new(Environment::new(std::env::vars_os()));
         let mut wave = ports
@@ -1400,7 +1328,7 @@ pub fn executable(
         options.finish(&wave, stdout, stderr)
     });
     match outcome {
-        Ok(()) => 0,
+        Ok(status) => status,
         Err((status, why)) => {
             let _ = writeln!(stderr, "{why}");
             status
@@ -1410,19 +1338,6 @@ pub fn executable(
 
 /// The bytes of each `Lines` input, by port name, as a wave is given them.
 type LineInputs = BTreeMap<String, Arc<[u8]>>;
-
-/// The bytes of the file at `path`, read into the block a wave shares: its length, taken
-/// before the read, is the size of the block, so a file that keeps its length is read with no
-/// copy (see [`read_shared`]).
-fn read_file(path: &str) -> std::io::Result<Arc<[u8]>> {
-    let mut file = std::fs::File::open(path)?;
-    // A length that does not fit `usize` is read as an unknown length: the read then fails as
-    // `std::fs::read` fails on it.
-    let size = file
-        .metadata()
-        .map_or(0, |m| usize::try_from(m.len()).unwrap_or(0));
-    read_shared(&mut file, size)
-}
 
 /// The bytes `source` gives until its end, as one shared block. `size` is the length expected
 /// (a file's length, or 0 when it is not known): a block of that size is allocated and read
@@ -1502,27 +1417,6 @@ mod tests {
     }
 
     #[test]
-    fn a_bound_file_is_read_into_its_block_with_no_copy() {
-        // The read holds the file's bytes once at its peak: one block of the file's length,
-        // where reading into a `Vec` and converting it to an `Arc<[u8]>` held them twice.
-        let n = 1 << 22;
-        let bytes: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
-        let dir = std::env::temp_dir().join("zed-zedc-run-tests");
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("bound.txt");
-        std::fs::write(&path, &bytes).unwrap();
-        let path_text = path.display().to_string();
-        let (read, live) = zed_alloc_count::live(|| super::read_file(&path_text).unwrap());
-        std::fs::remove_file(&path).unwrap();
-        assert_eq!(&read[..], &bytes[..]);
-        assert!(
-            live.peak < n as u64 + 4096,
-            "peak {} bytes for a file of {n}",
-            live.peak
-        );
-    }
-
-    #[test]
     fn a_failed_read_is_reported() {
         struct Fails;
         impl std::io::Read for Fails {
@@ -1538,21 +1432,19 @@ mod tests {
 
     #[test]
     fn a_program_shares_the_unit_of_the_front_end_it_was_made_from() {
-        let front =
-            Db::new().front("main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n");
+        let front = Db::new().front("main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n");
         let Ok((stmts, unit, _)) = &*front else {
             panic!("the unit is accepted")
         };
-        let p = program(stmts, Arc::clone(unit)).expect("`main`'s ports are `Lines`");
+        let p = program(stmts, Arc::clone(unit)).expect("one `main`");
         assert!(Arc::ptr_eq(&p.unit, unit));
-        // A refused program leaves the front end's unit for the tables, which still read it.
-        let front =
-            Db::new().front("main(count: int) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n");
+        // A refused program, one with no `main`, leaves the front end's unit for the tables, which still read it.
+        let front = Db::new().front("f(positional x: int) = x;\n");
         let Ok((stmts, unit, _)) = &*front else {
             panic!("the unit is accepted")
         };
         assert!(program(stmts, Arc::clone(unit)).is_err());
         assert_eq!(Arc::strong_count(unit), 1);
-        assert!(unit.defs.iter().any(|d| d.name == "main"));
+        assert!(unit.defs.iter().any(|d| d.name == "f"));
     }
 }

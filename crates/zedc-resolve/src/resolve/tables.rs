@@ -192,7 +192,12 @@ impl<'a> Tables<'a> {
                     self.funcs.insert(id, f);
                 }
                 collect_params(&f.params, todo);
-                todo.extend(f.ports.iter().flatten().map(|p| Collect::Type(&p.ty)));
+                todo.extend(
+                    f.ports()
+                        .into_iter()
+                        .flatten()
+                        .map(|p| Collect::Type(&p.ty)),
+                );
                 todo.push(Collect::Expr(&f.body));
                 for (a, b) in &f.tests {
                     todo.extend([Collect::Expr(a), Collect::Expr(b)]);

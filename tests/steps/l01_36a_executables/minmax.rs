@@ -12,11 +12,11 @@ use super::{built, dir, executable, interpreter};
 const MINMAX: &str = "\
 clamp(positional x, positional lo, positional hi) { max(lo, min(x, hi)) }
 
-main(args: CommandLine) -> (stdout: Lines) {
-  x = f64(args[1] else \"\") else 0.0;
-  y = f64(args[2] else \"\") else 0.0;
-  z = f64(args[3] else \"\") else 0.0;
-  stdout <- \"${min(x, y)} ${min(y, x)} ${max(x, y)} ${max(y, x)} ${clamp(x, y, z)}\";
+main(m: MainArgs) {
+  x = f64(m.args[1] else \"\") else 0.0;
+  y = f64(m.args[2] else \"\") else 0.0;
+  z = f64(m.args[3] else \"\") else 0.0;
+  m.stdout <- \"${min(x, y)} ${min(y, x)} ${max(x, y)} ${max(y, x)} ${clamp(x, y, z)}\";
 }
 ";
 

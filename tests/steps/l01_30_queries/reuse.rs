@@ -113,7 +113,7 @@ fn a_rejected_unit_is_kept_with_its_diagnostics() {
 fn a_wave_row_is_reused_until_main_or_what_it_reads_changes() {
     let src = "shout(positional s: String) = upper(s) ++ \"!\";\n\
                whisper(positional s: String) = lower(s);\n\
-               main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- shout(stdin[1] else \"\");\n}\n\
+               main(m: MainArgs) {\n  m.stdout <- shout(m.stdin[1] else \"\");\n}\n\
                test { \"hi\" -> \"HI!\\n\" }\n";
     let mut db = Db::new();
     assert_eq!(checks(&mut db, src), ["6:8: ok"]);
@@ -125,7 +125,7 @@ fn a_wave_row_is_reused_until_main_or_what_it_reads_changes() {
     let read = src.replace("\"!\"", "\"!!\"");
     assert_eq!(
         checks(&mut db, &read),
-        ["6:8: `\"hi\" -> \"HI!\\n\"` of `main`: port `stdout` writes \"HI!!\\n\""]
+        ["6:8: `\"hi\" -> \"HI!\\n\"` of `main`: `m.stdout` writes \"HI!!\\n\""]
     );
     assert_eq!(counts(&db), [3, 0, 2]);
 }

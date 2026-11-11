@@ -45,6 +45,36 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   2 | x [ i «in» warm ..< n ] = anneal ( x [ i - 1₍10₎ ] ) ;
 == DESIGN.md [sec:failure] 1 L10
   1 | ( «div» ) : ( ( int , int \ 0₍10₎ ) -> int ) & ( ( int , 0₍10₎ ) -> #divByZero )
+== DESIGN.md [sec:ports] 1 L1
+  2 | main ( m : MainArgs ) {
+  3 | m . stdout <- str["Hello, world!"] ;
+  4 | }
+  7 | main ( m : MainArgs ) -> int {
+  8 | m . stdout <- str["checked"] ;
+  9 | «if» ( m . args [ 1₍10₎ ] «else» str[] ) == str["fail"] { 1₍10₎ } «else» { 0₍10₎ }
+ 10 | }
+== DESIGN.md [sec:ports] 2 L7
+  2 | main ( m : MainArgs ) -> int {
+  3 | r = run ( [ str["git"] , str["status"] , str["--short"] ] ) ;
+  4 | «match» r {
+  5 | #ioError ( op : , path : , why : ) -> { m . stderr <- str["git did not start: " ${why}] ; 2₍10₎ } ,
+  6 | done -> «match» done . status {
+  7 | #ok -> { m . stdout <- done . stdout ; 0₍10₎ } ,
+  8 | #exit ( code : ) -> { m . stderr <- done . stderr ; code } ,
+  9 | _ -> 1₍10₎ ,
+ 10 | } ,
+ 11 | }
+ 12 | }
+ 16 | main ( m : MainArgs ) {
+ 17 | p = spawn ( [ str["sort"] , str["-u"] ] ) ;
+ 18 | p . stdin <- m . stdin . map ( l -> l «else» str[] ) ;
+ 19 | m . stdout <- p . stdout . map ( l -> l «else» str[] ) ;
+ 20 | }
+== DESIGN.md [sec:ports] 3 L7
+  2 | main ( m : MainArgs ) {
+  3 | runs = m . args . map ( f -> run ( [ str["gzip"] , str["--keep"] , str["--"] , f ] , unconsumedStderr : #suppress ) . status ) ;
+  4 | m . stdout <- runs . map ( s -> «match» s { #ok -> str["compressed"] , _ -> str["gzip failed"] } ) ;
+  5 | }
 == DESIGN.md [sec:constraints] 1 L10
   1 | «type» Small = ( x : int where x * x < 100₍10₎ ) ;
   2 | «type» Even = ( n : int where n «mod» 2₍10₎ == 0₍10₎ ) ;
@@ -342,16 +372,17 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   9 | #use ( rule : M . mono , args : [ M . f ( a ) , M . f ( b ) ] ) ,
  10 | ] , claims : [ M . f ( a ) <= M . f ( b ) , M . f ( M . f ( a ) ) <= M . f ( M . f ( b ) ) ] ) )
  11 | }
-== DESIGN.md [sec:corner_cases] 1 L10
+== DESIGN.md [sec:corner_cases] 1 L3
   1 | total ( «positional» xs : [ int ] ) -> int {
   2 | s = xs . sum ;
   3 | t = xs . map ( x -> x * 2₍10₎ ) . sum ;
   4 | «return» s + t ;
   7 | }
 == DESIGN.md [sec:robustness] 1 L21
-  1 | main ( prices : Utf8String ->? rat «with» peers ( [ str["a"] , str["b"] ] , assign : #roundRobin ) , orders : Lines ) -> ( stdout : Lines ) {
-  2 | stdout <- orders . map ( sku -> str[${prices [ sku ] «else» 0r}] ) ;
-  3 | }
+  1 | prices : Utf8String ->? rat «with» peers ( [ str["a"] , str["b"] ] , assign : #roundRobin ) ;
+  3 | main ( m : MainArgs ) {
+  4 | m . stdout <- m . stdin . map ( sku -> str[${prices [ sku ] «else» 0r}] ) ;
+  5 | }
 == DESIGN.md [sec:ffi] 1 L7
   1 | @foreign «struct» SockAddr { family : int «with» bits ( 16₍10₎ ) , data : [ u8 ] «with» length ( 14₍10₎ ) }
   2 | @foreign «struct» AddrInfo {
@@ -389,7 +420,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  32 | unit = Circle ( c : p ) ;
  33 | onAxis = Point ( x : 0₍10₎ , ... ) ;
  35 | «struct» Round { «import» Rect , r : f64 }
-== DESIGN.md [sec:tour_methods] 1 L10
+== DESIGN.md [sec:tour_methods] 1 L6
   1 | «struct» Counter { n : int , hi : int }
   3 | Counter . tick ( ) {
   4 | n' = n + 1₍10₎ ;
@@ -492,8 +523,8 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  25 | double ( «positional» x ) = x * 2₍10₎
  26 | «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
  27 | «law» doubleIsSum ( x : int ) = double ( x ) == x + x ;
- 30 | main ( stdin : Lines ) -> ( stdout : Lines ) {
- 31 | stdout <- stdin . map ( l -> l . upper «else» str[] ) ;
+ 30 | main ( m : MainArgs ) {
+ 31 | m . stdout <- m . stdin . map ( l -> l . upper «else» str[] ) ;
  32 | }
  35 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
  36 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
@@ -532,20 +563,22 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  61 | }
  62 | m = stats ( xs ) . mean ;
  66 | whoTeaches = teacherOf «as» ( teacher -> course ) «into» ( course -> teacher -> _ ) ;
- 69 | main ( req : Stream ( Query ) ) -> ( resp : Stream ( Answer ) ) {
- 70 | resp <- req . map ( q -> lookup ( db , q ) «else» #unknown ) ;
- 71 | }
- 75 | @exhaustive romanDigit ( n : int [ 1₍10₎ ..= 9₍10₎ ] ) -> Utf8String { … }
- 76 | «test» { 1₍10₎ -> str["I"] , 4₍10₎ -> str["IV"] , 9₍10₎ -> str["IX"] }
- 85 | out = files . map ( read ) . map ( parse ) . map ( transform ) ;
- 86 | bad = out . where ( r -> r «is» «not» Row ) ;
- 89 | pos [ i «in» 0₍10₎ ..< n ] = 2₍10₎ * pos [ i - 1₍10₎ ] - pos [ i - 2₍10₎ ] + accel ( pos [ i - 1₍10₎ ] ) * dt ^ 2₍10₎
- 90 | «with» pos [ - 1₍10₎ ] = p0 , pos [ - 2₍10₎ ] = p0 - v0 * dt ;
- 91 | last = pos [ n - 1₍10₎ ] «else» p0 ;
- 96 | report = logs . map ( rowCost ) . sum ;
-104 | cur [ i ] = max ( xs [ i ] , cur [ i - 1₍10₎ ] + xs [ i ] ) «with» cur [ - 1₍10₎ ] = 0₍10₎ ;
-105 | best = cur >< max «else» 0₍10₎ ;
-112 | «struct» User { id : int , name : Utf8String }
-113 | u : User | #parseError ( .. ) = Json . decode ( text ) ;
-121 | ok : User | #parseError ( .. ) = Json . decode ( str["{\"id\": 5, \"name\": \"John\"}"] ) ;
-122 | bad : User | #parseError ( .. ) = Json . decode ( str["{\"id\": \"5\", \"name\": \"John\"}"] ) ;
+ 69 | req : Stream ( Query ) ;
+ 70 | resp : Stream ( Answer ) ;
+ 72 | main ( ) {
+ 73 | resp <- req . map ( q -> lookup ( db , q ) «else» #unknown ) ;
+ 74 | }
+ 78 | @exhaustive romanDigit ( n : int [ 1₍10₎ ..= 9₍10₎ ] ) -> Utf8String { … }
+ 79 | «test» { 1₍10₎ -> str["I"] , 4₍10₎ -> str["IV"] , 9₍10₎ -> str["IX"] }
+ 88 | out = files . map ( read ) . map ( parse ) . map ( transform ) ;
+ 89 | bad = out . where ( r -> r «is» «not» Row ) ;
+ 92 | pos [ i «in» 0₍10₎ ..< n ] = 2₍10₎ * pos [ i - 1₍10₎ ] - pos [ i - 2₍10₎ ] + accel ( pos [ i - 1₍10₎ ] ) * dt ^ 2₍10₎
+ 93 | «with» pos [ - 1₍10₎ ] = p0 , pos [ - 2₍10₎ ] = p0 - v0 * dt ;
+ 94 | last = pos [ n - 1₍10₎ ] «else» p0 ;
+ 99 | report = logs . map ( rowCost ) . sum ;
+107 | cur [ i ] = max ( xs [ i ] , cur [ i - 1₍10₎ ] + xs [ i ] ) «with» cur [ - 1₍10₎ ] = 0₍10₎ ;
+108 | best = cur >< max «else» 0₍10₎ ;
+115 | «struct» User { id : int , name : Utf8String }
+116 | u : User | #parseError ( .. ) = Json . decode ( text ) ;
+124 | ok : User | #parseError ( .. ) = Json . decode ( str["{\"id\": 5, \"name\": \"John\"}"] ) ;
+125 | bad : User | #parseError ( .. ) = Json . decode ( str["{\"id\": \"5\", \"name\": \"John\"}"] ) ;
