@@ -382,3 +382,27 @@ fn a_forced_contradiction_has_the_same_empty_projection_after_renaming() {
         );
     }
 }
+
+/// `satisfiable` on a box and one row, and on subset sums with target 0, at `n = 64` and
+/// `8n = 512`; the point each gives is checked by `holds` outside the measured runs.
+#[test]
+fn satisfiable_on_a_box_and_one_row_scales() {
+    let k = 64;
+    let large = scaling::FACTOR * k;
+    for (name, small, large) in [
+        ("a box and one row", dense(k), dense(large)),
+        (
+            "subset sums to 0",
+            choice_sum(&weights(k), 0),
+            choice_sum(&weights(large), 0),
+        ),
+    ] {
+        for f in [&small, &large] {
+            let m = satisfiable(f).expect("an answer").expect("a point");
+            assert!(f.holds(&m), "{name}: {m:?}");
+        }
+        scaling::check_order(&format!("satisfiable: {name}"), k, 1, |m| {
+            drop(satisfiable(if m == k { &small } else { &large }));
+        });
+    }
+}

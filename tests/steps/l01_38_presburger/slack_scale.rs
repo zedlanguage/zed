@@ -3,8 +3,9 @@
 //!
 //! Every scaling check runs at `n = 64` and `8n = 512` (or `16` and `128` for the pre-density
 //! immune subset-sum gap) under `scaling::check_order(..., 1, ...)`, holding both instruction
-//! count and heap allocation within `1.1 * 8 * log(8n) / log(n)`. Negative controls:
-//! `PDCX_NO_SLACK=1`, `PDCX_NO_BATCH=1`, `PDCX_NO_FORCED_PROJ=1`, and `PDCX_NO_I18=1`.
+//! count and heap allocation within `1.1 * 8 * log(8n) / log(n)`. Negative controls: the
+//! thread-local switches `presburger::SLACKLESS` and `presburger::UNBATCHED`, set to `true`
+//! on the measuring thread, turn the summaries and the batched searches off.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -133,7 +134,9 @@ fn build_paired_chain(k: usize) -> Formula {
 }
 
 fn build_alternating(k: usize) -> Formula {
-    let w: Vec<i64> = (0..k).map(|i| if i % 2 == 0 { 1 } else { 100_000 }).collect();
+    let w: Vec<i64> = (0..k)
+        .map(|i| if i % 2 == 0 { 1 } else { 100_000 })
+        .collect();
     let t: i64 = (k as i64 / 2) * 100_000 + (k as i64 / 4).max(1);
     choice_sum(&w, t)
 }
@@ -428,10 +431,7 @@ fn paired_chain_project_scales() {
 fn alternating_weights_greedy_scales() {
     let k = 64;
     let y0 = [sym("y0")];
-    let (small, large) = (
-        build_alternating(k),
-        build_alternating(scaling::FACTOR * k),
-    );
+    let (small, large) = (build_alternating(k), build_alternating(scaling::FACTOR * k));
     for f in [&small, &large] {
         assert_eq!(decide(f), Ok(true));
         let (p, _) = project_each(f, &y0).expect("alternating project");
@@ -518,8 +518,11 @@ fn i18_decide_matches_satisfiable() {
                     .sum();
                 rng.next(hi.max(1) as u64 + 1)
             };
-            let terms: Vec<(&str, i64)> =
-                names.iter().zip(&cs).map(|(n, c)| (n.as_str(), *c)).collect();
+            let terms: Vec<(&str, i64)> = names
+                .iter()
+                .zip(&cs)
+                .map(|(n, c)| (n.as_str(), *c))
+                .collect();
             fs.push(if is_eq {
                 eq(&terms, -t)
             } else {
@@ -557,6 +560,17 @@ fn i18_decide_matches_satisfiable() {
         );
         let (p1, _) = project_each(&f, std::slice::from_ref(&y0)).expect(label);
         let (p2, _) = project_each(&rf, &[ry0]).expect(label);
-        assert_eq!(p1[0], p2[0], "{label}: project_each changed under reverse renaming");
+        assert_eq!(
+            p1[0], p2[0],
+            "{label}: project_each changed under reverse renaming"
+        );
     }
+}
+
+/// `points` case 31 of the random harness: weights 799..=817 by 3, target 2412 = 799 + 805 +
+/// 808. The slack probes alone miss this point; halving the probe rounds twice finds it.
+#[test]
+fn small_subset_sums_are_found_with_the_slack_probes() {
+    let w: Vec<i64> = (0..7).map(|i| 799 + 3 * i).collect();
+    assert_eq!(decide(&choice_sum(&w, 2412)), Ok(true));
 }

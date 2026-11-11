@@ -8,9 +8,7 @@
 //!   `k`-variable component for each of `2k` disjuncts, costing `O(k^2)` term copies;
 //! - [`super::probe_kept`] ran a full `settle` and `point_with` (`pick_by`) per unheld disjunct,
 //!   costing `O(k^2 log k)` when row slack left every disjunct individually feasible;
-//! - [`super::Hull::tighten`] ran `O(log W)` bisection queries on bounds whose endpoint refusal
-//!   came from slack-immune disjunctions (including on [`super::Naming::Tied`] at `k = 512`),
-//!   and [`super::settle_tied`] refused satisfiable tied subset-sum instances (`sat_half` and
+//! - [`super::settle_tied`] refused satisfiable tied subset-sum instances (`sat_half` and
 //!   `two_rows` at `k = 512`) even when canonical color-grouped subset sums hit the target.
 //!
 //! Here laminar unit-coefficient equations are first reduced to pairwise atom-disjoint rows by
@@ -71,7 +69,11 @@ pub(super) fn try_reduce_subset_wide_eqs_refs(cons: &[&Con]) -> Option<Vec<Con>>
     let mut max_len = 0usize;
     for &c in cons {
         let len = c.lin.terms.len();
-        if c.rel == Rel::Eq && len >= 2 && !has_product_con(c) && c.lin.terms.values().all(Int::is_unit) {
+        if c.rel == Rel::Eq
+            && len >= 2
+            && !has_product_con(c)
+            && c.lin.terms.values().all(Int::is_unit)
+        {
             total_wide += 1;
             min_len = min_len.min(len);
             max_len = max_len.max(len);
@@ -88,7 +90,10 @@ pub(super) fn try_reduce_subset_wide_eqs_refs(cons: &[&Con]) -> Option<Vec<Con>>
             && !has_product_con(c)
             && c.lin.terms.values().all(Int::is_unit)
         {
-            buckets.entry(c.lin.terms.len()).or_default().push(out.len());
+            buckets
+                .entry(c.lin.terms.len())
+                .or_default()
+                .push(out.len());
         }
         out.push(c.clone());
     }
@@ -191,7 +196,11 @@ pub(super) fn try_reduce_subset_wide_eqs(cons: &[Con]) -> Option<Vec<Con>> {
     let mut max_len = 0usize;
     for c in cons {
         let len = c.lin.terms.len();
-        if c.rel == Rel::Eq && len >= 2 && !has_product_con(c) && c.lin.terms.values().all(Int::is_unit) {
+        if c.rel == Rel::Eq
+            && len >= 2
+            && !has_product_con(c)
+            && c.lin.terms.values().all(Int::is_unit)
+        {
             total_wide += 1;
             min_len = min_len.min(len);
             max_len = max_len.max(len);
@@ -305,9 +314,7 @@ struct WideRow {
 impl WideRow {
     fn is_empty(&self) -> bool {
         (self.most.open == 0 && self.most.finite.is_negative())
-            || (self.con.rel == Rel::Eq
-                && self.least.open == 0
-                && self.least.finite.is_positive())
+            || (self.con.rel == Rel::Eq && self.least.open == 0 && self.least.finite.is_positive())
     }
 }
 
@@ -671,8 +678,7 @@ impl DisjointWide {
                             });
                         }
                         if let Some(l_e) = l_val {
-                            let neg_terms =
-                                kept_terms.into_iter().map(|(a, c)| (a, -&c)).collect();
+                            let neg_terms = kept_terms.into_iter().map(|(a, c)| (a, -&c)).collect();
                             out.push(Con {
                                 lin: Lin {
                                     terms: neg_terms,
@@ -1417,8 +1423,7 @@ impl FastGreedy {
         let next_add = acc_add + &node.add;
         let mid = (nl + nr) / 2;
         if ql <= mid
-            && let Some(hit) =
-                self.min_first_le(node.left, nl, mid, ql, qr, &next_add, rhs)
+            && let Some(hit) = self.min_first_le(node.left, nl, mid, ql, qr, &next_add, rhs)
         {
             return Some(hit);
         }
@@ -1442,8 +1447,7 @@ impl FastGreedy {
                 Int::ZERO
             };
             let rhs = &cur + &p_pos;
-            let j_heavy =
-                self.min_first_le(m_root, 0, self.n - 1, pos, end - 1, &Int::ZERO, &rhs);
+            let j_heavy = self.min_first_le(m_root, 0, self.n - 1, pos, end - 1, &Int::ZERO, &rhs);
             let limit = j_heavy.unwrap_or(end);
             if pos < limit
                 && let Some(j_fail) =
@@ -1483,7 +1487,9 @@ impl FastGreedy {
 #[derive(Clone)]
 enum HitKind {
     None,
-    Exact { split: usize },
+    Exact {
+        split: usize,
+    },
     FwdPick {
         split: usize,
         x_star: usize,
@@ -1567,7 +1573,11 @@ fn sweep_row(disjs: Vec<DisjInfo>, solve_ord: Vec<usize>, target: Int) -> Option
             } else {
                 disjs[loc].high_arm
             };
-            let val_i = if arm_role == 1 { &w_of[loc] } else { &Int::ZERO };
+            let val_i = if arm_role == 1 {
+                &w_of[loc]
+            } else {
+                &Int::ZERO
+            };
             let rem = &target - val_i;
             let max_rem = &total_w - &w_of[loc];
             if rem.is_negative() || rem > max_rem {
@@ -1971,11 +1981,7 @@ fn fill_row_model(plan: &RowPlan, loc: usize, arm_idx: usize, m: &mut Model) -> 
                 return false;
             }
         }
-        HitKind::UnboundedFast {
-            gmax,
-            rem,
-            at_gmax,
-        } => {
+        HitKind::UnboundedFast { gmax, rem, at_gmax } => {
             take_high[loc] = arm_idx == plan.disjs[loc].high_arm;
             if *at_gmax {
                 if *rem == plan.disjs[*gmax].weight {
@@ -2279,9 +2285,7 @@ pub(super) fn find_probe_points(
                 return (false, false);
             };
             plans.push(plan);
-        } else if seen_cols.len() == 1
-            && disjs.iter().all(|d| !explicit_unary.contains(&d.atom))
-        {
+        } else if seen_cols.len() == 1 && disjs.iter().all(|d| !explicit_unary.contains(&d.atom)) {
             plans.push(sweep_row_unbounded(disjs, row_targets[r_idx].clone()));
         } else {
             return (false, false);
@@ -2999,7 +3003,12 @@ pub(super) fn try_pick_disjoint_wide<'a>(
             PickRowState::FixedEmpty => unreachable!("active entry on FixedEmpty row"),
             PickRowState::Bounded(bpr) => {
                 let d = &bpr.disjs[loc];
-                (d.atom.clone(), d.high_arm, d.weight.clone(), bpr.cur_val(loc))
+                (
+                    d.atom.clone(),
+                    d.high_arm,
+                    d.weight.clone(),
+                    bpr.cur_val(loc),
+                )
             }
             PickRowState::Unbounded {
                 disjs,
@@ -3358,8 +3367,7 @@ impl WidePointRepairer {
                         pt.insert(b.clone(), new_b.clone());
                         self.row_slacks[r_idx].row_val = Int::ZERO;
                         self.refresh_atom(r_idx, &b, &new_b);
-                    } else if let Some((s_b, b)) =
-                        self.row_slacks[r_idx].down_slack.last().cloned()
+                    } else if let Some((s_b, b)) = self.row_slacks[r_idx].down_slack.last().cloned()
                     {
                         let take_amt = (&need).min(&s_b).clone();
                         let coef = self.dw.rows[r_idx].con.lin.terms[&b].clone();

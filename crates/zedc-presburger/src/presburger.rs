@@ -1020,12 +1020,13 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
             };
             // A box and one row has its point built in O(n log n) ([`one_row::OneRow::point`]),
             // which the solver need not be asked for.
-            // Complexity tradeoff: the solver's elimination of the row's n atoms copies the
-            // shrinking row at each step, O(n^2) term work (I19: 2,317M instructions on `dense`
-            // at k = 512 against 6.4M for `decide`). The point built here is another point than
-            // the solver's; both hold. One equation its residue or its ends settle still answers
-            // only where the solver refuses. Test:
-            // `l01_38_presburger::one_row::satisfiable_on_a_box_and_one_row_scales`.
+            // Complexity tradeoff: on 0d726475 the solver path cost O(n^2) here (I19: 42M and
+            // 2,318M instructions on `dense` at k = 64 and 512); the probes of
+            // [`slack`] bring it to 9.1M, 86M and 806M at k = 64, 512 and 4096, and this
+            // block to 1.0M, 9.3M and 86M, with no dependence on how the solver's search is
+            // tuned. The point built here is another point than the solver's; both hold. One
+            // equation its residue or its ends settle still answers only where the solver
+            // refuses. Test: `l01_38_presburger::one_row::satisfiable_on_a_box_and_one_row_scales`.
             if let Some(b) = one_row::OneRow::of(f) {
                 return Ok(b.point());
             }
@@ -1982,7 +1983,10 @@ fn equation(c: &Con, negated: bool, both: bool) -> Option<Formula> {
 /// The removals take out only disjuncts with no point, so either answer is exact, but the
 /// searches that follow take other paths, and on `random2` cases 98 and 1063 only the path
 /// without them answers the questions a hull needs (I21).
-fn without_bounds<T>(run: impl FnOnce() -> Result<T, Refusal>, again: impl FnOnce() -> Result<T, Refusal>) -> Result<T, Refusal> {
+fn without_bounds<T>(
+    run: impl FnOnce() -> Result<T, Refusal>,
+    again: impl FnOnce() -> Result<T, Refusal>,
+) -> Result<T, Refusal> {
     match run() {
         Err(e) if !BOUNDLESS.with(Cell::get) => {
             BOUNDLESS.with(|b| b.set(true));
@@ -2075,8 +2079,7 @@ fn decide_kept(f: &Formula, mut kept: Option<&mut Vec<Model>>) -> Result<bool, R
             Ok(None) => return Ok(false),
             Ok(Some(q)) => q,
             Err(why) => {
-                if let Some(m) = first.pop()
-                {
+                if let Some(m) = first.pop() {
                     kept.extend(point_of_f(m));
                     return Ok(true);
                 }
@@ -2759,20 +2762,21 @@ fn by_color<'a>(p: &'a Parts, color: &HashMap<Atom, usize>) -> Option<Vec<&'a Co
 /// a disjunction. Where the [`pick`] after the probe fails, or the probe refuses, after the
 /// probe has found a point, that point is the answer (the first one found), not the refusal,
 /// so that [`satisfiable`] answers wherever [`decide`] does ([`has_point`]).
-///
-/// Where that refuses with no point, the probe [`has_point`] makes first ([`probe_to`] with
-/// `stop`) is made, and its first point, or its proof that there is none, is the answer, so
-/// that [`satisfiable`] answers wherever [`decide`] does (PRES-stop-prefix).
-// Complexity tradeoff (PRES-stop-prefix): a formula whose probe refuses with no point is
-// probed a second time, as [`has_point`] probes it first, so it costs up to that probe more;
-// a formula answered by the first probe costs what it cost before, but for one copy of the
-// parts (`O(n)`). Naive version: the refusal, where [`decide`]'s probe finds a point.
+// Complexity tradeoff (Q3 of PRES-disj-cost-xr round 5): PRES-stop-prefix made a refusal
+// here with no point probe again as [`has_point`] probes first ([`probe_to`] with `stop`),
+// so a formula both probes refuse cost the sum of the two: 1.74 times the dearer of them, as
+// they cost before PRES-stop-prefix, on the 126 such formulas of `random2` (seed 777, 3,000
+// cases). That second probe answered none of the 3,000 that this one refused, and without it
+// [`decide`] and [`satisfiable`] still agree on all 3,000 (`PDCX_SAT=1`), so it is not made.
+// What is lost is the argument that the two answer on the same formulas: it now rests on
+// those measurements, not on the code. Test:
+// `l01_38_presburger::decide_sat::decide_answers_where_satisfiable_answers`.
 fn found(p: Parts) -> Result<Option<Model>, Refusal> {
     if let Ok(m) = pick(&p, true) {
         return Ok(Some(m));
     }
     let mut points = Vec::new();
-    let refused = match probe_to(p.clone(), &mut points, false) {
+    let refused = match probe_to(p, &mut points, false) {
         Ok(None) => return Ok(None),
         Ok(Some(p)) => match pick(&p, true) {
             Ok(m) => return Ok(Some(m)),
@@ -2780,18 +2784,10 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
         },
         Err(why) => why,
     };
-    if let Some(m) = points.into_iter().next() {
-        return Ok(Some(m));
-    }
-    let mut first = Vec::new();
-    match probe_to(p, &mut first, true) {
-        Ok(None) => Ok(None),
-        Ok(Some(q)) => match first.pop() {
-            Some(m) => Ok(Some(m)),
-            None => pick(&q, true).map(Some).map_err(|_| refused),
-        },
-        Err(_) => Err(refused),
-    }
+    points
+        .into_iter()
+        .next()
+        .map_or(Err(refused), |m| Ok(Some(m)))
 }
 
 /// Whether the propagated parts `p` have a point: [`found`], but the probe stops at the first
@@ -2805,10 +2801,12 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 /// The answer is meant to be `found(p)?.is_some()`. Before PRES-stop-prefix the comment here
 /// said the probe is the same as [`found`]'s up to its first point; it is not ([`probe_to`]
 /// with `stop` skips the batched searches), and on 12 random formulas this refused where
-/// [`found`] found a point (I18). Now a refusal here falls back to [`found`]'s path, and a
-/// refusal of [`found`]'s probe with no point falls back to this one, so the two answer on
-/// the same formulas, with the same answer. Before the probe, parts whose disjunctions are each
-/// split by the bounds of one atom are decided exactly by cells of that atom ([`by_cells`]).
+/// [`found`] found a point (I18). Now a refusal here with no point is followed by the batched
+/// searches that [`found`]'s probe makes first ([`batched_prefix`]), on the parts this probe
+/// returned, which have the points of `p`; the tests one disjunct at a time that follow them
+/// in [`found`]'s probe were made here already, and are not made again. Before the probe,
+/// parts whose disjunctions are each split by the bounds of one atom are decided exactly by
+/// cells of that atom ([`by_cells`]).
 // Complexity tradeoff: naive version, `found` probing every disjunct to the end, O(h²) here
 // (21.5 s at k = 32). Used: the probe stops at its first point, linear in the pieces (6.75
 // times the instructions in the scaling test below). Tradeoffs: a probe that finds no point
@@ -2817,17 +2815,22 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 // and `l01_38_presburger::model::satisfiable_agrees_with_decide_on_disjunctions_of_unit_rows`;
 // COMPLEXITY.md row S22-shapes-linear.
 //
-// Where the probe that stops refuses, [`found`]'s probe is made, stopped at its first point
-// ([`probe_prefix`]), so that [`decide`] answers wherever [`satisfiable`] does: the two
-// probes take different paths to their first point (the batched searches of
-// [`search_by_halves`] come first in [`found`]'s and are skipped here), and on 12 of 3,000
-// random formulas (`random2` cases 78, 91, 399, ...) only [`found`]'s found one.
-// Complexity tradeoff (PRES-stop-prefix): naive version, the refusal. Used: a formula the
-// probe that stops refuses costs up to [`found`]'s probe more, stopped at its first point; one
-// it answers costs what it cost before, but for one copy of the parts (`O(n)`). Not used:
+// Where the probe that stops refuses, the batched searches of [`found`]'s probe are made
+// ([`batched_prefix`]), so that [`decide`] answers where [`satisfiable`] does: the two probes
+// take different paths to their first point (the batched searches of [`search_by_halves`]
+// come first in [`found`]'s and are skipped here), and on 12 of 3,000 random formulas
+// (`random2` cases 91, 399, 590, ...) only [`found`]'s found one.
+// Complexity tradeoff (PRES-stop-prefix; Q3 of PRES-disj-cost-xr round 5): naive version, the
+// refusal. Used: a formula the probe that stops refuses costs the batched searches more; one
+// it answers costs what it cost before, but for one copy of the parts (`O(n)`). On the old
+// path ([`or_old`]) the batched searches are not made: the 12 formulas are answered on the
+// new path. Measured on the 126 formulas of `random2` that both probes refuse: 1.19 times
+// the dearer of [`decide`] and [`satisfiable`] as they cost before PRES-stop-prefix, against
+// 1.74 times with all of [`found`]'s probe made after this one, on both paths. Not used:
 // [`found`]'s probe first (one probe, the same answers as [`satisfiable`]), whose batched
 // searches cost 95.7 times the bytes at 8n on `s22::chain_cross_above_its_width_scales`
-// (limit 16.2) and 68.0 times on `chain_cross_dead_scales` (limit 17.6).
+// (limit 16.2) and 68.0 times on `chain_cross_dead_scales` (limit 17.6). Test:
+// `l01_38_presburger::decide_sat::decide_answers_where_satisfiable_answers`.
 fn has_point(p: Parts) -> Result<bool, Refusal> {
     if pick(&p, true).is_ok() {
         return Ok(true);
@@ -2836,17 +2839,20 @@ fn has_point(p: Parts) -> Result<bool, Refusal> {
         return answer;
     }
     let mut points = Vec::new();
-    let refused = match probe_to(p.clone(), &mut points, true) {
+    let (refused, p) = match probe_to(p.clone(), &mut points, true) {
         Ok(None) => return Ok(false),
         Ok(Some(_)) if !points.is_empty() => return Ok(true),
         Ok(Some(q)) => match pick(&q, true) {
             Ok(_) => return Ok(true),
-            Err(why) => why,
+            Err(why) => (why, q),
         },
-        Err(why) => why,
+        Err(why) => (why, p),
     };
+    if ONE_PROBE.with(Cell::get) || old_path() {
+        return Err(refused);
+    }
     let mut points = Vec::new();
-    match probe_prefix(p, &mut points) {
+    match batched_prefix(p, &mut points) {
         Ok(None) => Ok(false),
         Ok(Some(_)) if !points.is_empty() => Ok(true),
         Ok(Some(q)) => pick(&q, true).map(|_| true).map_err(|_| refused),
@@ -3207,9 +3213,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
     // exact active suffix maximum (`BTreeSet`) or Fenwick prefix split over `DisjointWide` unit rows in
     // `O(k log k)` total time; formulas outside that two-point disjoint-unit-row shape return `None`
     // and run `pick_by` unchanged. Test: `l01_38_presburger::slack_scale::sat_half_decide_scales`.
-    if !fast
-        && let Some(res) = slack::try_pick_disjoint_wide(p, deep)
-    {
+    if !fast && let Some(res) = slack::try_pick_disjoint_wide(p, deep) {
         return res;
     }
     // The disjuncts taken, each with its constraints among those taken, which the model is a
@@ -4197,7 +4201,7 @@ fn by_halves_general<E>(
 /// Each disjunct in `kept` is kept untested, as if a point held it: neither removed nor
 /// searched for ([`probe_kept`]).
 fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
-    probe_kept(p, &mut Vec::new(), false, true, kept)
+    probe_kept(p, &mut Vec::new(), false, true, true, kept)
 }
 
 /// The parts of [`project_parts`] with two disjunctions or more, with each disjunct that has no
@@ -4398,19 +4402,19 @@ fn tree_domains(
 /// it is a point of `p`. Without `stop` it does what [`probe`] does. With `stop` it skips the
 /// removals and the batched searches ([`search_by_halves`]) that [`probe`] makes first and
 /// tests one disjunct at a time from the start, so it can refuse where [`probe`] finds a point
-/// (I18); [`probe_prefix`] is the stopped probe that follows [`probe`]'s path.
+/// (I18); [`batched_prefix`] is the stopped start of [`probe`]'s path.
 fn probe_to(p: Parts, points: &mut Vec<Model>, stop: bool) -> Result<Option<Parts>, Refusal> {
-    probe_kept(p, points, stop, !stop, &HashSet::new())
+    probe_kept(p, points, stop, !stop, true, &HashSet::new())
 }
 
-/// [`probe_to`] without `stop`, the probe [`found`] makes, but stopped at its first point: the
-/// same removals and batched searches ([`search_by_halves`], stopped at its first point too)
-/// and then the same tests one disjunct at a time, so that up to its first point it is that
-/// probe, and it ends where that probe finds its first point, or as that probe ends when it
-/// finds none. So `Ok(None)` and a refusal with no point are exactly where [`found`]'s probe
-/// gives them, and a point exactly where that probe finds one (PRES-stop-prefix).
-fn probe_prefix(p: Parts, points: &mut Vec<Model>) -> Result<Option<Parts>, Refusal> {
-    probe_kept(p, points, true, true, &HashSet::new())
+/// The first round of [`probe_to`] without `stop`, the probe [`found`] makes, up to its tests
+/// one disjunct at a time, which are not made, and stopped at its first point: the same
+/// removals and batched searches ([`search_by_halves`], stopped at its first point too). So a
+/// point is one that probe finds there, and `Ok(None)` a disjunction it empties there. Where
+/// the parts `p` are what [`probe_to`] with `stop` returned without a point, those tests were
+/// made there ([`has_point`]).
+fn batched_prefix(p: Parts, points: &mut Vec<Model>) -> Result<Option<Parts>, Refusal> {
+    probe_kept(p, points, true, true, false, &HashSet::new())
 }
 
 /// [`probe_to`], with each disjunct in `kept` kept untested, as if a point held it: neither
@@ -4422,6 +4426,7 @@ fn probe_kept(
     points: &mut Vec<Model>,
     stop: bool,
     batched: bool,
+    tests: bool,
     kept: &HashSet<u64>,
 ) -> Result<Option<Parts>, Refusal> {
     // The bounds on single atoms that the formula implies, found by [`learn`]. The formula
@@ -4487,9 +4492,7 @@ fn probe_kept(
         };
         let slack_idx = slack::SlackIndex::of(&p.cons, &implied, &p.ors);
         let (stopped_early, all_probes_checked) = match &slack_idx {
-            Some(si) => {
-                slack::find_probe_points(si, &p, &order, &mut held, &implied, stop, points)
-            }
+            Some(si) => slack::find_probe_points(si, &p, &order, &mut held, &implied, stop, points),
             None => (false, false),
         };
         if stopped_early {
@@ -4509,7 +4512,7 @@ fn probe_kept(
         } else {
             let sbh_failed =
                 search_by_halves(&p, &mut held, points, &implied, stop, !all_probes_checked);
-            if stop && points.len() > before {
+            if (stop && points.len() > before) || !tests {
                 return Ok(Some(p));
             }
             if all_probes_checked {
@@ -4548,8 +4551,7 @@ fn probe_kept(
                 }
                 let slack_status = slack_idx.as_ref().map(|si| si.classify(&d));
                 if slack_status == Some(slack::SlackStatus::Refuted) {
-                    let rest: Vec<Rc<Parts>> =
-                        live.iter().chain(&ds[at + 1..]).cloned().collect();
+                    let rest: Vec<Rc<Parts>> = live.iter().chain(&ds[at + 1..]).cloned().collect();
                     learn(&p, rest, &d, &mut implied);
                     continue;
                 }
@@ -4719,9 +4721,11 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
         }
     }
     let is_eq = |x: &Atom| matches!(eq_atoms.get(x), Some((Some(l), Some(h))) if l == h);
-    let has_cands = d.cons.iter().filter_map(one_bound).any(|(x, lo, hi)| {
-        !is_eq(x) && matches!((lo, hi), (None, Some(_)) | (Some(_), None))
-    });
+    let has_cands = d
+        .cons
+        .iter()
+        .filter_map(one_bound)
+        .any(|(x, lo, hi)| !is_eq(x) && matches!((lo, hi), (None, Some(_)) | (Some(_), None)));
     if has_cands {
         let mut ors: Vec<Vec<Rc<Parts>>> =
             (p.ors.iter()).filter(|o| !o.is_empty()).cloned().collect();
@@ -5320,8 +5324,8 @@ fn point_with(
 /// `l01_39_reduced_product::deep_condition`, and `ladder::a_chain_of_guarded_remainders_scales`
 /// (COMPLEXITY.md PROJECT-canon-precision).
 // Complexity tradeoff (PRES-stop-prefix): with `stop`, the searches end at the first point,
-// which is all [`has_point`] asks when it falls back to [`probe_prefix`], so that probe costs
-// no more than the one [`found`] makes up to the same point. Naive version: [`probe_to`] with `stop` skipped these searches
+// which is all [`has_point`] asks when it falls back to [`batched_prefix`], so that probe
+// costs no more than the one [`found`] makes up to the same point. Naive version: [`probe_to`] with `stop` skipped these searches
 // and the removals before them, so its first point came from one forward search per disjunct
 // in order, a different path from [`found`]'s: cheaper where an early disjunct has a point,
 // but it refused where these searches find one (12 of 3,000 random formulas, where
@@ -5546,7 +5550,19 @@ fn hold_waiting(
 
 /// [`search_by_halves`]'s searches of one round: all the disjuncts of `round` forced, and on
 /// a failure each half in turn, down to one, which is then marked in `failed`. `waiting` is
-/// handed to each search.
+/// handed to each search. Without `split_halves` (every disjunct no point holds was already
+/// probed by [`slack::find_probe_points`]), the halves are split two levels deep and no
+/// further, and nothing is marked in `failed`.
+// Complexity tradeoff: halving down to one disjunct costs up to `2s` searches of the whole
+// formula for a round of `s` disjuncts with no point together, which on the subset sums that
+// the slack probes have already read is quadratic or worse: `ss` decide 79M, 288M, 1,081M,
+// 4,197M, 16,995M, 136,935M instructions at k = 8 to 256 (all refused). Not halving (b2c123a2)
+// costs one search a round, but loses 70 of the 92 `point_projection_random` answers that
+// the review tree gives (case 31 first). Used: two levels, at most 7 searches a round whatever
+// its size, which keeps all 92 (no level deeper finds one more on those 3,000 cases); `ss`
+// decide 48M, 97M, 190M, 388M, 807M, 3,084M at k = 8 to 256, 1.8 times the cost without the
+// halves at k = 64. Test:
+// `l01_38_presburger::slack_scale::small_subset_sums_are_found_with_the_slack_probes`.
 fn by_halves_of(
     round: Vec<(usize, usize)>,
     held: &mut [Vec<bool>],
@@ -5556,8 +5572,9 @@ fn by_halves_of(
     search: &mut impl FnMut(&mut [Vec<bool>], &[Vec<usize>], &mut [Vec<usize>]) -> bool,
 ) {
     let width = failed.len();
-    let mut stack = vec![round];
-    while let Some(s) = stack.pop() {
+    let deepest = if split_halves { usize::MAX } else { 2 };
+    let mut stack = vec![(round, 0usize)];
+    while let Some((s, depth)) = stack.pop() {
         let s: Vec<(usize, usize)> = s.into_iter().filter(|&(i, at)| !held[i][at]).collect();
         if s.is_empty() {
             continue;
@@ -5567,15 +5584,15 @@ fn by_halves_of(
         if search(held, &forced, waiting) {
             continue;
         }
-        if !split_halves {
+        if depth >= deepest {
             continue;
         }
         if let [(i, at)] = s[..] {
             failed[i][at] = true;
         } else {
             let mid = s.len() / 2;
-            stack.push(s[mid..].to_vec());
-            stack.push(s[..mid].to_vec());
+            stack.push((s[mid..].to_vec(), depth + 1));
+            stack.push((s[..mid].to_vec(), depth + 1));
         }
     }
 }
@@ -5848,7 +5865,12 @@ impl Parts {
     /// is entered at most once, so the cost is at most the size of the parts. A part found not
     /// to hold is marked with `stamp`, and a part so marked is not entered again: a caller
     /// passes a new stamp whenever `values` change.
-    pub(super) fn witness<'a>(&'a self, values: &Model, stamp: u64, out: &mut Vec<&'a Parts>) -> bool {
+    pub(super) fn witness<'a>(
+        &'a self,
+        values: &Model,
+        stamp: u64,
+        out: &mut Vec<&'a Parts>,
+    ) -> bool {
         let fails = |p: &Parts| {
             let no = p.failed.get() == stamp || {
                 TESTED.set(TESTED.get() + 1);
@@ -7227,23 +7249,6 @@ fn least(held: Option<Refusal>, r: Refusal) -> Refusal {
     }
 }
 
-/// The Omega test on `base` over `vars` variables of colors `keys`, with the splinters of its
-/// dark eliminations: by Pugh's lemma [Omega, sec. 2.3] the problem has an integer point
-/// exactly when its dark shadow has one or one of the splinters of a dark elimination has one.
-/// The splinters are searched only when the dark shadows have no point. Pugh's lemma holds for
-/// either side of an elimination (for the upper bounds, it is the lemma for `-x`), so the
-/// splinters taken are those of the side with fewer bounds, and of both sides when they have as
-/// many, since which side is the lower one can turn on the sign `quotient` gave a merged
-/// variable. A splinter whose own dark shadows have no point is split in turn
-/// ([`splinters`]) when each of its dark eliminations leaves fewer variables than the one it
-/// came from; otherwise it is refused with [`Refusal::Shadows`]. The splinters are searched a
-/// batch of dark eliminations at a time, in the order of the batches, and every splinter of a
-/// batch is searched, so the answer does not depend on the order of the variables within a
-/// batch: a point of a splinter is the answer; otherwise the first batch with a dark
-/// elimination none of whose sides has only empty splinters gives the least refusal met in
-/// that batch; otherwise the problem is empty. A refused dark shadow is the answer likewise:
-/// the splinters hold only the points it misses, so they could turn the refusal into a point
-/// but never into an empty answer.
 /// Exact `O(vars log vars)` solver for a bounded single-unit-equation component.
 ///
 /// Complexity tradeoff: naive `Omega::run` eliminates `m` unfixed bounded variables in one
@@ -7396,6 +7401,23 @@ fn try_search_bounded_unit_eq(
     Some(Ok(Some(vals)))
 }
 
+/// The Omega test on `base` over `vars` variables of colors `keys`, with the splinters of its
+/// dark eliminations: by Pugh's lemma [Omega, sec. 2.3] the problem has an integer point
+/// exactly when its dark shadow has one or one of the splinters of a dark elimination has one.
+/// The splinters are searched only when the dark shadows have no point. Pugh's lemma holds for
+/// either side of an elimination (for the upper bounds, it is the lemma for `-x`), so the
+/// splinters taken are those of the side with fewer bounds, and of both sides when they have as
+/// many, since which side is the lower one can turn on the sign `quotient` gave a merged
+/// variable. A splinter whose own dark shadows have no point is split in turn
+/// ([`splinters`]) when each of its dark eliminations leaves fewer variables than the one it
+/// came from; otherwise it is refused with [`Refusal::Shadows`]. The splinters are searched a
+/// batch of dark eliminations at a time, in the order of the batches, and every splinter of a
+/// batch is searched, so the answer does not depend on the order of the variables within a
+/// batch: a point of a splinter is the answer; otherwise the first batch with a dark
+/// elimination none of whose sides has only empty splinters gives the least refusal met in
+/// that batch; otherwise the problem is empty. A refused dark shadow is the answer likewise:
+/// the splinters hold only the points it misses, so they could turn the refusal into a point
+/// but never into an empty answer.
 fn search(
     vars: usize,
     base: &[(Row, Rel)],
@@ -9272,7 +9294,11 @@ impl Omega {
                             Norm::True => {}
                             Norm::Row(nr) => {
                                 let (j, ref c) = nr.a[0];
-                                let val = if c.is_positive() { -&nr.k } else { nr.k.clone() };
+                                let val = if c.is_positive() {
+                                    -&nr.k
+                                } else {
+                                    nr.k.clone()
+                                };
                                 if let Some(prev) = &fixed[j] {
                                     if *prev != val {
                                         sys.empty = true;
@@ -10404,6 +10430,9 @@ thread_local! {
     /// Whether the batched forms of the searches (one disjunction of one disjunct taken in
     /// every search, the bounded single-equation solver) are left unused, for the same tests.
     pub static UNBATCHED: Cell<bool> = const { Cell::new(false) };
+    /// Whether [`decide`] and [`satisfiable`] each make only their own probe, as before
+    /// PRES-stop-prefix: for the tests that measure what the other probe costs.
+    pub static ONE_PROBE: Cell<bool> = const { Cell::new(false) };
 }
 
 /// `f` with each shared part `u` that every disjunct of a disjunction holds as a conjunct
@@ -11431,8 +11460,7 @@ fn project_parts(
     // answer (`x[k+1] - x[k]` in {0, 10} gives `x[n]` n + 1 intervals); a component with a
     // cycle, two disjunctions on one edge, a disjunction over three classes or more, or a
     // row that is not a difference row keeps the naive way.
-    let (tree_doms, tree_handled, tree_empty) =
-        tree_domains(early, probed, &linked, &ors, &model);
+    let (tree_doms, tree_handled, tree_empty) = tree_domains(early, probed, &linked, &ors, &model);
     if tree_empty {
         return Ok(none());
     }

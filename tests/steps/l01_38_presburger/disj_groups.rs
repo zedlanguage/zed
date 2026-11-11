@@ -651,3 +651,83 @@ fn a_finite_end_is_tightened_where_the_solver_gives_no_point() {
     }
     assert_hull(&Formula::and(fs), None, Some(0));
 }
+
+/// `y == a || y == b`, or `y == a || b <= y <= c` with `c` given.
+fn two_values(y: &Lin, a: i128, b: i128, c: Option<i128>) -> Formula {
+    let second = match c {
+        None => eq(y.minus(&Lin::constant(b))),
+        Some(c) => Formula::and(vec![
+            ge(y.minus(&Lin::constant(b))),
+            ge(Lin::constant(c).minus(y)),
+        ]),
+    };
+    Formula::or(vec![eq(y.minus(&Lin::constant(a))), second])
+}
+
+/// Each `y[i]` takes one of two values (or a value and a short range), with one row
+/// `Σ c[i] y[i] == t`; the projections of every `y[i]`, asked at once.
+fn projected_two_values(
+    doms: &[(i128, i128, Option<i128>)],
+    cs: &[i128],
+    t: i128,
+) -> Vec<Option<(i64, i64)>> {
+    let ys: Vec<Lin> = (0..doms.len()).map(|i| named(&format!("y{i}"))).collect();
+    let mut fs: Vec<Formula> = ys
+        .iter()
+        .zip(doms)
+        .map(|(y, &(a, b, c))| two_values(y, a, b, c))
+        .collect();
+    let row = ys
+        .iter()
+        .zip(cs)
+        .fold(Lin::constant(-t), |s, (y, c)| s.plus(&y.times(*c)));
+    fs.push(eq(row));
+    let atoms: Vec<Atom> = (0..doms.len())
+        .map(|i| Atom::Sym(format!("y{i}").into()))
+        .collect();
+    let (each, _) = project_each(&Formula::and(fs), &atoms).expect("a projection");
+    each.into_iter()
+        .map(|s| {
+            let s = s.expect("a hull");
+            assert!(!s.contains(-1_000) && !s.contains(1_000), "{s:?}");
+            let vs: Vec<i64> = (-100..=100).filter(|v| s.contains(*v)).collect();
+            vs.first().map(|l| (*l, vs[vs.len() - 1]))
+        })
+        .collect()
+}
+
+/// Random case 1063 of the harness: the one point is `(3, 0, 0, 29, 17, 16)`. The question
+/// `y4 <= 16` is refused after the removals by bounds, and answered without them (item I21;
+/// `y4` was `16..=17` before).
+#[test]
+fn a_hull_question_refused_with_the_removals_by_bounds_is_asked_without_them() {
+    let doms = [
+        (3, 12, None),
+        (0, 17, None),
+        (0, 22, None),
+        (0, 29, None),
+        (0, 16, Some(18)),
+        (0, 16, None),
+    ];
+    let got = projected_two_values(&doms, &[-1, -1, 1, 2, 1, 1], 88);
+    let want = [3, 0, 0, 29, 17, 16].map(|v| Some((v, v)));
+    assert_eq!(got, want);
+}
+
+/// Random case 98 of the harness has no point, by parity of the row with the box. For
+/// `y3`, `y3 <= 29` and `y3 >= 30` are each shown to have no point while `y3 <= 30` is
+/// refused, so the hull of `y3` is empty, and so is every other hull (item I21).
+#[test]
+fn a_hull_whose_two_sides_are_shown_empty_is_empty() {
+    let doms = [
+        (3, 29, None),
+        (0, 30, None),
+        (0, 16, None),
+        (0, 30, None),
+        (0, 10, None),
+        (0, 29, None),
+        (0, 8, Some(9)),
+    ];
+    let got = projected_two_values(&doms, &[1, 1, 1, 1, 1, 1, 2], 119);
+    assert_eq!(got, vec![None; 7]);
+}
