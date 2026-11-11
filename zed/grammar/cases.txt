@@ -93,6 +93,11 @@ Item ::: p.stdin <- ["b", "a"]; ::: ((p . stdin) <- ([ "b" , "a" ]) ;)
 Item ::: @exact; ::: (@exact ;)
 Item ::: ack = out <- v; ::: (ack = out <- v ;)
 Item ::: ack = out[k] <- v; ::: (ack = out [ k ] <- v ;)
+Item ::: m.stdout::bytes <- b; ::: ((m . stdout :: bytes) <- b ;)
+Item ::: fs::bytes[path] <- b; ::: ((fs :: bytes) [ path ] <- b ;)
+Item ::: ack = fs::bytes[path] <- b; ::: (ack = (fs :: bytes) [ path ] <- b ;)
+Item ::: m.stdout::bytes::len <- b; ::: ERROR
+Item ::: fs::bytes.x <- b; ::: ERROR
 Item@6 ::: ack = out <- v; ::: ERROR
 Item ::: @log(#off); ::: ((@log ( #off )) ;)
 Item@7 ::: @log(#off); ::: ((@log ( #off )) ;)

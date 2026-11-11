@@ -84,7 +84,7 @@ Push          = ~AckPush                                                        
 AckPush       = Name '=' PushTarget ('[' Expr ']')* '<-' Expr ';'                  L7
 KeyedPush     = PushTarget ('[' Expr ']')+ '<-' Expr ';'                           L7
 WholePush     = PushTarget '<-' Expr ';'                                           L1
-PushTarget    = Name ('.' Name)*                                                   L1
+PushTarget    = Name ('.' Name)* ('::' Name)?                                      L1
 Binding       = ~TypedBinding                                                      L10
               | ~PlainBinding                                                      L1
 TypedBinding  = Name ':' Type '=' Expr Boundary? ';'                               L10
