@@ -1822,10 +1822,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| EOP-spec | running | 2026-11-11 01:01 |  |
+| GAP-spec-a | spec attempt 1 | 2026-11-11 01:17 | started: routing research-audit-a gaps; worktrees gap-spec-a, gap-spec-a-impl |
+| GAP-spec-b | spec attempt 1 | 2026-11-11 01:17 | started: route RESEARCH-audit-b gaps; worktrees wt/gap-spec-b and wt/gap-spec-b-impl |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
+| HAS-point-probe | running | 2026-11-10 22:35 |  |
 | LAZY-hub-coarse | impl attempt 1 | 2026-11-10 15:30 | blocked db342547: option C measured, same O(k^2) on the star (49,665 at k=128 vs main 897); needs cross-review; best method in C49 |
 | LOAD-max-div-xr | impl attempt 2 | 2026-11-10 01:18 | rounds 4-6 started; review branch rebased onto 4777a33e (8cff3eae), build restacked; load 41.16 45.72 47.90 |
 | PERF-negated-chain-xr | impl attempt 1 | 2026-11-10 06:16 | started: reading code, setting up cross-review (Opus 5.5 medium, gpt-6.1-sol medium, gemini-4-argon high) |
+| PRES-answers-drift | running | 2026-11-10 16:52 |  |
 | PRES-disj-cost-xr | impl attempt r4 | 2026-11-09 19:19 | rounds 4-6 started; round-3 orchestrator work committed ba4fb9af on wt/pres-disj-cost-xr; rebasing on origin/main 4777a33e; load 41.08 34.16 31.53 |
 | REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | rounds 7-8 started; committing review tree (Claude R5 + probe), bringing Claude R6 onto the branch, rebasing on origin/main 4777a33e / load 52.67 38.82 33.29 |
 
