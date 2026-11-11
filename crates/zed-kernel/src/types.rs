@@ -1588,22 +1588,37 @@ impl Type {
     /// Whether membership in `self` is decidable at run time: no part of it, nor of a tuple
     /// component or atom payload it holds, is a proper subset of the morphisms.
     pub fn decidable(&self) -> bool {
-        self.decidable_from(&mut BTreeSet::new())
-    }
-
-    /// `decidable`, with `seen` the recursive nodes already being checked.
-    fn decidable_from(&self, seen: &mut BTreeSet<Type>) -> bool {
-        if matches!(&*self.0, Node::Rec(_)) && !seen.insert(self.clone()) {
-            return true;
+        // Complexity tradeoff: the recursive descent this replaces kept only recursive nodes
+        // in its seen set, so a type shared by two components of a tuple was walked once per
+        // path: 2^d visits for `t(d) = (t(d-1), t(d-1))` with d + 1 distinct types (Codex R9,
+        // R9-C7), on O(d) native stack. Now a worklist visits each distinct type once: O(V + E)
+        // visits and O((V + E) log V) key comparisons for V types and E written edges, on the
+        // heap. It reads only the atom names whose payload lists something
+        // (`Atoms::payloads`), as a payload that lists nothing has no morphisms; reading every
+        // name made a chain of n failure atoms cost n^2 log n in the sweeps (batch merge 128).
+        // The answer is unchanged: false exactly when a reachable type has morphism bounds.
+        let mut seen = BTreeSet::new();
+        let mut pending = vec![self.clone()];
+        while let Some(t) = pending.pop() {
+            if !seen.insert(t.clone()) {
+                continue;
+            }
+            if t.has_morphism_bounds() {
+                return false;
+            }
+            let p = t.p();
+            pending.extend(
+                p.atoms
+                    .payloads
+                    .iter()
+                    .map(|n| p.atoms.names[n].payload.clone()),
+            );
+            p.tuples.atoms(&mut |row| {
+                pending.extend(row.iter().cloned());
+                true
+            });
         }
-        let p = self.p();
-        !self.has_morphism_bounds()
-            && p.atoms
-                .names
-                .values()
-                .all(|a| a.payload.decidable_from(seen))
-            && p.tuples
-                .atoms(&mut |t| t.iter().all(|t| t.decidable_from(seen)))
+        true
     }
 
     /// Whether every function is in `self`; for a decidable type, either every function is or

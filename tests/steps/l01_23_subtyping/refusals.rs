@@ -7609,3 +7609,39 @@ fn r9_tail_admission_probe() {
         }
     });
 }
+
+/// `t(d) = (t(d-1), t(d-1))`, one type shared by both components at every level.
+fn r9_shared_tuple_type(n: usize, leaf: Type) -> Type {
+    let mut t = leaf;
+    for _ in 0..n {
+        t = Type::tuple(vec![t.clone(), t]);
+    }
+    t
+}
+
+/// R9-C7 (Codex R9): `decidable` walked a type shared by two components once per path, 2^d
+/// visits at depth d. It visits each distinct type once, and still finds a bounded morphism
+/// under tuples, atom payloads and recursive groups.
+#[test]
+fn r9_decidable_shared_dag_scales_and_rejects_bounded_leaves() {
+    big(|| {
+        let small = r9_shared_tuple_type(16, Type::bool());
+        let large = r9_shared_tuple_type(128, Type::bool());
+        scaling::check("decidability of a shared tuple DAG", 16, |n| {
+            assert!((if n == 16 { &small } else { &large }).decidable());
+        });
+        let bounded = || Type::exact(lit(0), Type::int());
+        for n in [0, 1, 16, 128, 1024] {
+            assert!(r9_shared_tuple_type(n, Type::bool()).decidable());
+            assert!(!r9_shared_tuple_type(n, bounded()).decidable());
+        }
+        assert!(list_named(Type::bool(), "_r9decidable_cycle").decidable());
+        assert!(!list_named(bounded(), "_r9undecidable_cycle").decidable());
+        let in_payload = |leaf: Type| {
+            Type::atom_with("r9dec", &Type::tuple(vec![r9_shared_tuple_type(64, leaf)]))
+                | Type::atom("r9other")
+        };
+        assert!(in_payload(Type::bool()).decidable());
+        assert!(!in_payload(bounded()).decidable());
+    });
+}
