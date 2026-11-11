@@ -78,6 +78,7 @@ use ty::{
     SParam, Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, class_id, errs, fresh_name,
     mask_text,
 };
+use walk::read_call;
 
 /// How a function argument fits the function type its slot expects.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4376,11 +4377,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         sig: &Sig,
         args: &mut [Option<Arg>],
     ) -> Result<Option<Vec<usize>>, String> {
-        // Per arrow: its adoptions, and each argument a literal of which adopts, retyped.
-        type Best = (Adoptions, Vec<(usize, Ty)>);
+        // Per arrow: its adoptions, the calls of literal values it reads at a carrier, and
+        // each argument a literal of which adopts or a call that is read, retyped.
+        type Best = (Adoptions, Vec<(Span, Carrier)>, Vec<(usize, Ty)>);
         let mut best: Option<Best> = None;
         let mut kept = Vec::new();
         let mut adopt_error = None;
+        // A call of literal values that gives a value the carrier of an arrow the other
+        // arguments fit does not hold: the argument, the value and the carrier.
+        let mut unread = None;
         // Per literal argument without a suffix: the carriers of its parameter on the arrows
         // the other arguments fit, `None` once one of them is generic.
         let mut takes: BTreeMap<usize, Option<u8>> = BTreeMap::new();
@@ -4390,9 +4395,25 @@ impl<'t, 'a> Ck<'t, 'a> {
             // An arrow no other argument can fit is no candidate, and its literals are not
             // adopted: a decimal literal's adoption at `rat` reads its digits (COMPLEXITY.md
             // K41), as at the `rat` arrow of `n + 0.5` with `n` an int.
-            let mut ok = (args.iter().zip(&arrow.params)).all(|(a, p)| match a {
+            // A call of literal values alone, `g(c)` of type `1 | 2`, is read at the
+            // parameter's carrier, `f64` or `rat`, as at a declared parameter ([`read_call`];
+            // L1.26a: "each keeps its own value and is fixed where the result is used"): in
+            // `x * g(c)` with `x: f64` it is an `f64` at the `f64` arrow. Complexity
+            // tradeoff: each such argument is read once per arrow, O(A v log v) for A arrows
+            // and v values its type lists; A is at most five for an operator.
+            let mut reads = Vec::new();
+            let mut called = Vec::new();
+            let mut ok = (args.iter().zip(&arrow.params).enumerate()).all(|(i, (a, p))| match a {
+                // Read before the type meets `p`: `1 | 2.5` meets `f64` at its `2.5`, and its
+                // `1` is read.
                 Some(a) if a.lit.is_none() && a.parts.is_none() && a.branches.is_none() => {
-                    a.ty.is_empty() || a.ty.meets(p)
+                    match read_call(a, p) {
+                        Some(r) => {
+                            called.push((i, r));
+                            true
+                        }
+                        None => a.ty.is_empty() || a.ty.meets(p),
+                    }
                 }
                 _ => true,
             });
@@ -4400,11 +4421,25 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             }
             let mut error = None;
+            // The calls read, in the order of their arguments, met again in that order.
+            let mut called = called.into_iter().peekable();
             for (i, (a, p)) in args.iter().zip(&arrow.params).enumerate() {
                 let Some(a) = a else {
                     continue;
                 };
                 if a.lit.is_none() && a.parts.is_none() && a.branches.is_none() {
+                    match called.next_if(|(j, _)| *j == i).map(|(_, r)| r) {
+                        Some(Ok((t, c))) => {
+                            let e = a.expr.expect("a call read at a carrier");
+                            reads.push((e.span, c));
+                            retyped.push((i, t));
+                        }
+                        Some(Err((v, c))) => {
+                            unread.get_or_insert((i, v, c));
+                            ok = false;
+                        }
+                        None => {}
+                    }
                     continue;
                 }
                 if self.subtype(&a.ty, p) || p.dynamic {
@@ -4459,17 +4494,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .map(|m| m | mask_of(p));
                 }
             }
+            // A read counts as an adoption: `g(c) * g(c)` takes the `int` arrow, which
+            // reads nothing.
+            let count = need.len() + reads.len();
             match &best {
-                Some((n, _)) if n.len() < need.len() => {}
-                Some((n, _)) if *n == need => kept.push(k),
-                Some((n, _)) if n.len() == need.len() => {}
+                Some((n, r, _)) if n.len() + r.len() < count => {}
+                Some((n, r, _)) if *n == need && *r == reads => kept.push(k),
+                Some((n, r, _)) if n.len() + r.len() == count => {}
                 _ => {
-                    best = Some((need, retyped));
+                    best = Some((need, reads, retyped));
                     kept = vec![k];
                 }
             }
         }
-        let Some((need, retyped)) = best else {
+        let Some((need, reads, retyped)) = best else {
+            if let Some((i, v, c)) = unread {
+                let a = args[i].as_ref().expect("a call read at a carrier");
+                return Err(self.unread_call(what, args, a, &v, c, true));
+            }
             if let Some((s, m)) = adopt_error {
                 self.lit_refused.push((s, m));
                 return Ok(None);
@@ -4523,6 +4565,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         for (s, v) in need {
             self.put(Undo::Adopt(s, Some(v)));
+        }
+        for (s, c) in reads {
+            self.put(Undo::Fit(s, Some(Fit::Read(c))));
         }
         Ok(Some(kept))
     }

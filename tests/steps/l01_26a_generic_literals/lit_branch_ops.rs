@@ -19,6 +19,7 @@ use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, sig, type_errors};
 
 const H: &str = "h(positional z: f64) = z;\n";
+const G: &str = "g(positional c: bool) = if c { 2 } else { 1 };\n";
 
 #[test]
 fn an_operation_on_literals_in_an_if_keeps_its_value() {
@@ -271,6 +272,124 @@ fn a_name_and_a_call_of_a_parameter_are_not_read() {
     );
 }
 
+/// `f`, with `x` of type `t` and the body `body`, applied to `true` and to `false` with `x`
+/// given `x`, as `a` and `b`.
+fn at_x(t: &str, body: &str, x: &str) -> String {
+    format!(
+        "{G}f(positional c: bool, x: {t}) = {body};\na = f(true, x: {x});\nb = f(false, x: {x});\n"
+    )
+}
+
+#[test]
+fn a_call_of_literal_values_is_read_at_the_carrier_of_the_other_operand() {
+    // Item LIT-op-reads-call. Before it each of these was rejected, as `x * g(c)` was with
+    // "`*` does not take (f64, 1 | 2): these are the types of its arguments here, and `*` has
+    // no arrow that takes them all [x * g(c)]". L1.26a: "each keeps its own value and is fixed
+    // where the result is used".
+    let cases = [
+        ("f64", "x * g(c)", "0.5f64", "f64", "1.0", "0.5"),
+        ("f64", "g(c) * x", "0.5f64", "f64", "1.0", "0.5"),
+        ("rat", "x - g(c)", "0.5r", "rat", "-3r/2r", "-1r/2r"),
+        ("f64", "x / g(c)", "0.5f64", "f64", "0.25", "0.5"),
+        ("rat", "x / g(c)", "0.5r", "rat", "1r/4r", "1r/2r"),
+        ("f64", "x * g(c) + 1", "0.5f64", "f64", "2.0", "1.5"),
+        ("f64", "x < g(c)", "1.5f64", "bool", "true", "false"),
+        ("f64", "x == g(c)", "2.0f64", "bool", "true", "false"),
+        ("f64", "g(c) != x", "2.0f64", "bool", "false", "true"),
+        ("rat", "x == g(c)", "1r", "bool", "false", "true"),
+    ];
+    for (t, body, x, r, a, b) in cases {
+        let src = at_x(t, body, x);
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        assert_eq!(sig(&src, "f"), format!("(bool, x: {t}) -> {r}"), "{src}");
+        assert_eq!(value(&src, "a"), a, "{src}");
+        assert_eq!(value(&src, "b"), b, "{src}");
+    }
+    // At the top level.
+    let top = format!("{G}x = 0.5f64;\na = x * g(true);\n");
+    assert_eq!(type_errors(&top), Vec::<String>::new());
+    assert_eq!(value(&top, "a"), "1.0");
+    // An integer and a decimal, DESIGN's `1 | 2.5`: the `1` is read, the `2.5` is the `f64` it
+    // is. Before this item: "`*` does not take (f64, 1)".
+    let decimal = "g(positional c: bool) = if c { 2.5 } else { 1 };\n\
+                   f(positional c: bool, x: f64) = x * g(c);\n\
+                   a = f(true, x: 2.0f64);\nb = f(false, x: 2.0f64);\n";
+    assert_eq!(type_errors(decimal), Vec::<String>::new());
+    assert_eq!(value(decimal, "a"), "5.0");
+    assert_eq!(value(decimal, "b"), "2.0");
+    // Two levels of call, the values operations on literals.
+    let two = "g(positional c: bool) = if c { 2 + 1 } else { 1 };\n\
+               k(positional c: bool) = g(c);\n\
+               f(positional c: bool, x: f64) = x * k(c);\na = f(true, x: 0.5f64);\n";
+    assert_eq!(type_errors(two), Vec::<String>::new());
+    assert_eq!(sig(two, "k"), "(bool) -> 1 | 3");
+    assert_eq!(value(two, "a"), "1.5");
+    // Through a generic function, whose two parameters share one bounded variable.
+    let generic = format!(
+        "{G}mul(x, y) = x * y;\nf(positional c: bool, x: f64) = mul(x: x, y: g(c));\n\
+         a = f(true, x: 0.5f64);\n"
+    );
+    assert_eq!(type_errors(&generic), Vec::<String>::new());
+    assert_eq!(sig(&generic, "f"), "(bool, x: f64) -> f64");
+    assert_eq!(value(&generic, "a"), "1.0");
+}
+
+#[test]
+fn a_call_of_literal_values_beside_no_one_carrier_keeps_its_own() {
+    // Negative controls: beside another such call, or beside an `int`, the values are their
+    // own carrier, `int`.
+    let both = format!("{G}f(positional c: bool) = g(c) * g(c);\na = f(true);\n");
+    assert_eq!(type_errors(&both), Vec::<String>::new());
+    assert_eq!(sig(&both, "f"), "(bool) -> int");
+    assert_eq!(value(&both, "a"), "4");
+    let int = at_x("int", "x * g(c)", "3");
+    assert_eq!(type_errors(&int), Vec::<String>::new());
+    assert_eq!(sig(&int, "f"), "(bool, x: int) -> int");
+    assert_eq!(value(&int, "a"), "6");
+    let eq = at_x("int", "x == g(c)", "2");
+    assert_eq!(type_errors(&eq), Vec::<String>::new());
+    assert_eq!(value(&eq, "a"), "true");
+}
+
+#[test]
+fn a_call_of_a_value_the_other_operand_cannot_hold_is_rejected() {
+    // Negative controls: an integer `f64` does not hold exactly, and a decimal at `rat`, as at
+    // a parameter, each with the message's menu.
+    let big = "g(positional c: bool) = if c { 9007199254740993 } else { 1 };\n";
+    for (op, other) in [("*", "*"), ("==", "==")] {
+        let src = format!("{big}f(positional c: bool, x: f64) = x {op} g(c);\n");
+        assert_eq!(
+            type_errors(&src),
+            vec![format!(
+                "`{other}` does not take (f64, 1 | 9007199254740993): `g(c)` may give the \
+                 integer 9007199254740993, which `f64` does not hold exactly, so it cannot be \
+                 read as the `f64` of the other arguments of `{other}` here; an integer a call \
+                 gives is read at `f64` only where `f64` holds it exactly, as an integer literal \
+                 is. Make that value one `f64` holds exactly where it is written, or give the \
+                 other arguments of `{other}` a type that holds 9007199254740993, such as `int` \
+                 [x {op} g(c)]"
+            )]
+        );
+    }
+    let decimal = "g(positional c: bool) = if c { 2.5 } else { 1 };\n\
+                   f(positional c: bool, x: rat) = x * g(c);\n";
+    assert_eq!(
+        type_errors(decimal),
+        vec![
+            "`*` does not take (rat, 1 | 2.5): `g(c)` may give the decimal 2.5, which nothing \
+             fixes where it is written, so it is an `f64` there; an `f64` is not read as the \
+             `rat` of the other arguments of `*` here, since a call gives that `f64`, not the \
+             decimal written. Write that decimal with the suffix `r` where it is written, as \
+             2.5r, or give the other arguments of `*` the type `f64` [x * g(c)]"
+                .to_string()
+        ]
+    );
+    // The fix the message offers checks.
+    let fixed = decimal.replace("2.5 }", "2.5r }") + "a = f(true, x: 2r);\n";
+    assert_eq!(type_errors(&fixed), Vec::<String>::new());
+    assert_eq!(value(&fixed, "a"), "5r");
+}
+
 /// A call of a parameter of type `f64` on a nest of `n` `if`s, each branch its own operation
 /// on literals: `n + 1` operations, each fixed at `f64`.
 fn nest(n: usize) -> String {
@@ -290,6 +409,15 @@ fn through_a_call(n: usize) -> String {
     }
     body += &format!("{{ 2 * {n} + 1 }}");
     format!("g(positional c: int) = {body};\n{H}f(positional c: int) = h(g(c));\n")
+}
+
+/// A body of `n` products `x * g(c)`, each call read at the `f64` of `x`.
+fn products(n: usize) -> String {
+    let mut body = String::new();
+    for i in 0..n {
+        body += &format!("p{i} = x * g(c); ");
+    }
+    format!("{G}f(positional c: bool, x: f64) = {{ {body}x }};\n")
 }
 
 #[test]
@@ -320,6 +448,18 @@ fn scaling() {
             scaling::check("reading a call of n operation branches at `f64`", n, |m| {
                 units[&m].check();
             });
+            // Item LIT-op-reads-call: each operator application reads its call once per
+            // arrow, O(A v log v) for A arrows and v values, so n products cost O(n).
+            assert_eq!(type_errors(&products(3)), Vec::<String>::new());
+            let n = 1000;
+            let units = scaling::inputs(n, |m| Resolved::new(&products(m)));
+            scaling::check(
+                "reading the calls of n products `x * g(c)` at `f64`",
+                n,
+                |m| {
+                    units[&m].check();
+                },
+            );
         })
         .unwrap()
         .join()

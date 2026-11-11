@@ -2778,6 +2778,33 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if self.level == 0 {
                     self.lit_pairs(&mut x, &mut y);
                 }
+                // A call of literal values alone compared with a value of one carrier, `f64`
+                // or `rat`, is read at that carrier, as at an arithmetic operator: `x == g(c)`
+                // with `x: f64` and `g` of type `(bool) -> 1 | 2` compares two `f64`s
+                // ([`read_call`]; L1.26a). One read of the call's listed values.
+                for flip in [false, true] {
+                    let (a, other) = match flip {
+                        false => (&x, &y),
+                        true => (&y, &x),
+                    };
+                    match read_call(a, &other.ty) {
+                        Some(Ok((t, c))) => {
+                            let e = a.expr.expect("a call read at a carrier");
+                            self.put(Undo::Fit(e.span, Some(Fit::Read(c))));
+                            match flip {
+                                false => x.ty = t,
+                                true => y.ty = t,
+                            }
+                        }
+                        Some(Err((v, c))) => {
+                            let args = [Some(x.clone()), Some(y.clone())];
+                            let m = self.unread_call(&format!("`{op}`"), &args, a, &v, c, true);
+                            self.error(span, m);
+                            return Ty::carrier(Carrier::Bool);
+                        }
+                        None => {}
+                    }
+                }
                 let from = self.errors.len();
                 self.data(&x.ty, &format!("`{op}`"), span, x.at.unwrap_or(span));
                 self.data(&y.ty, &format!("`{op}`"), span, y.at.unwrap_or(span));
@@ -3974,11 +4001,10 @@ fn branch_lits<'e>(
 // copies the union so far at each, O(v²) element copies; `lit_branch_ops::scaling` does not
 // catch that form (8.1 times for 8 times the size), since checking the `g` that gives the
 // values costs far more per value (COMPLEXITY.md F164).
-fn read_call(a: &Arg, p: &Ty) -> Option<Result<(Ty, Carrier), (Value, Carrier)>> {
-    let e = a
-        .expr
-        .filter(|_| a.lit.is_none() && a.branches.is_none() && a.parts.is_none())?;
-    if !matches!(exported(e).kind, ExprKind::Call { .. }) || p.dynamic || !p.vars.is_empty() {
+pub(super) fn read_call(a: &Arg, p: &Ty) -> Option<Result<(Ty, Carrier), (Value, Carrier)>> {
+    // The cheap test first: every operator application with an argument of no literal asks
+    // ([`Ck::fewest`]), and few such arguments are calls.
+    if p.dynamic || !p.vars.is_empty() || lone_call(a).is_none() {
         return None;
     }
     let held = [Carrier::Int, Carrier::Rat, Carrier::F64]
@@ -3988,11 +4014,35 @@ fn read_call(a: &Arg, p: &Ty) -> Option<Result<(Ty, Carrier), (Value, Carrier)>>
         [c @ (Carrier::F64 | Carrier::Rat)] => c,
         _ => return None,
     };
+    let vs = call_values(a)?;
+    Some(read_at(&vs, c)?.map(|t| (t, c)).map_err(|v| (v, c)))
+}
+
+/// The call `a` is, where it is one and holds no literal ([`Arg::branches`], [`Arg::parts`]).
+fn lone_call<'e>(a: &Arg<'e>) -> Option<&'e Expr> {
+    let e = a
+        .expr
+        .filter(|_| a.lit.is_none() && a.branches.is_none() && a.parts.is_none())?;
+    matches!(exported(e).kind, ExprKind::Call { .. }).then_some(e)
+}
+
+/// The values `a` may give where it is a call whose type lists values alone, as `g(c)` of
+/// type `1 | 2`: the call [`read_call`] and [`Ck::apply_one`] may read at a carrier. `None`
+/// where `a` is no call, is a literal or holds one ([`Arg::branches`], [`Arg::parts`]), or
+/// its type is not a list of values.
+fn call_values(a: &Arg) -> Option<Vec<Value>> {
+    lone_call(a)?;
     let t = &a.ty;
     if !t.tuples.is_empty() || !t.fns.is_empty() || !t.vars.is_empty() || t.dynamic {
         return None;
     }
-    let vs = t.set.values_listed().filter(|vs| !vs.is_empty())?;
+    t.set.values_listed().filter(|vs| !vs.is_empty())
+}
+
+/// The values `vs` a call gives read at the carrier `c`, `f64` or `rat`, as [`read_call`]
+/// says: the type of the values read, `Err(v)` with the first value `v` not read at `c`, or
+/// `None` where a value is no number or every value is of `c` already.
+fn read_at(vs: &[Value], c: Carrier) -> Option<Result<Ty, Value>> {
     // Values of the carrier already, as `2.5` at `f64`, need no read.
     if vs.iter().all(|v| lit_carrier(v) == c) {
         return None;
@@ -4004,7 +4054,7 @@ fn read_call(a: &Arg, p: &Ty) -> Option<Result<(Ty, Carrier), (Value, Carrier)>>
     let mut ts = Vec::with_capacity(vs.len());
     // The first value not read: an integer with no exact value at `c`, or a decimal at `rat`.
     let mut unread = None;
-    for v in &vs {
+    for v in vs {
         let r = match v {
             _ if lit_carrier(v) == c => Some(v.clone()),
             Value::Int(_) | Value::Big(_) => {
@@ -4020,8 +4070,8 @@ fn read_call(a: &Arg, p: &Ty) -> Option<Result<(Ty, Carrier), (Value, Carrier)>>
         }
     }
     Some(match unread {
-        Some(v) => Err((v.clone(), c)),
-        None => Ok((Ty::union_all(&ts), c)),
+        Some(v) => Err(v.clone()),
+        None => Ok(Ty::union_all(&ts)),
     })
 }
 
@@ -7737,6 +7787,53 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The rejection of `what` applied to `args` where the argument `a`, a call of literal
+    /// values ([`call_values`]), may give the value `v` that is not read at the carrier `c`
+    /// ([`read_at`]): an integer `c` does not hold exactly, or a decimal at `rat`. The carrier
+    /// is that of `a`'s parameter, or, where `shared` holds, that of the other arguments at
+    /// the same type variable, as the other operand of `x * g(c)`.
+    pub(super) fn unread_call(
+        &self,
+        what: &str,
+        args: &[Option<Arg>],
+        a: &Arg,
+        v: &Value,
+        c: Carrier,
+        shared: bool,
+    ) -> String {
+        let c = c.name();
+        let call = match (a.expr, self.t.text) {
+            (Some(e), Some(t)) => &t[e.span.start..e.span.end],
+            _ => "the call",
+        };
+        let (takes, change) = match shared {
+            false => (
+                format!("that {what} takes here"),
+                format!("give this parameter of {what}"),
+            ),
+            true => (
+                format!("of the other arguments of {what} here"),
+                format!("give the other arguments of {what}"),
+            ),
+        };
+        let why = match v {
+            Value::Float(_) => format!(
+                ": `{call}` may give the decimal {v}, which nothing fixes where it is written, \
+                 so it is an `f64` there; an `f64` is not read as the `rat` {takes}, since a \
+                 call gives that `f64`, not the decimal written. Write that decimal with the \
+                 suffix `r` where it is written, as {v}r, or {change} the type `f64`"
+            ),
+            _ => format!(
+                ": `{call}` may give the integer {v}, which `{c}` does not hold exactly, so it \
+                 cannot be read as the `{c}` {takes}; an integer a call gives is read at `{c}` \
+                 only where `{c}` holds it exactly, as an integer literal is. Make that value \
+                 one `{c}` holds exactly where it is written, or {change} a type that holds \
+                 {v}, such as `int`"
+            ),
+        };
+        self.rejected_because(what, args, &why)
+    }
+
     /// Binds each variable of the parameter `p` that no other argument binds to `Never`, for an
     /// argument with no value: a union with the empty type, so the same in any order.
     fn bind_never(&self, p: &Ty, binds: &mut Binds) {
@@ -7790,6 +7887,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // once below, O(n) in the branches; the naive form reads the arguments' type
             // `2 | -3`, whose `int` meets the `rat` of `x` and rejects the call.
             let mut branched: Vec<&Arg> = Vec::new();
+            let mut called: Vec<(&Arg, Vec<Value>)> = Vec::new();
             for &i in &at {
                 grouped[i] = true;
                 let a = args[i].as_ref().expect("an argument");
@@ -7802,6 +7900,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     branched.push(a);
                     continue;
                 }
+                if let Some(vs) = call_values(a) {
+                    valued = true;
+                    called.push((a, vs));
+                    continue;
+                }
                 for p in a.ty.pieces() {
                     valued = true;
                     match (self.class_of(&p), p.carrier()) {
@@ -7809,6 +7912,35 @@ impl<'t, 'a> Ck<'t, 'a> {
                         _ if matches!(p, Piece::Var(_)) => {}
                         (None, Some(c)) => carriers |= c.bit(),
                         (None, None) => return fail(self),
+                    }
+                }
+            }
+            // A call of literal values alone, `x * g(c)` with `x: f64` and `g` of type `(bool)
+            // -> 1 | 2`, is read at the one carrier, `f64` or `rat`, of the other arguments, as
+            // at a parameter of that carrier ([`read_call`]; L1.26a: "each keeps its own value
+            // and is fixed where the result is used"). Elsewhere its values are their own
+            // carriers, as before: `g(c) * g(c)` is an `int`. Each call is read once, O(v log v)
+            // in the values its type lists ([`read_at`]).
+            let one = match Carrier::of_mask(carriers).collect::<Vec<_>>()[..] {
+                [c @ (Carrier::F64 | Carrier::Rat)] if classes.is_empty() => Some(c),
+                _ => None,
+            };
+            for (a, vs) in called {
+                match one.and_then(|c| Some((c, read_at(&vs, c)?))) {
+                    Some((c, Ok(_))) => {
+                        let e = a.expr.expect("a call read at a carrier");
+                        self.put(Undo::Fit(e.span, Some(Fit::Read(c))));
+                    }
+                    Some((c, Err(v))) => {
+                        return Err(self.unread_call(what, args, a, &v, c, true));
+                    }
+                    None => {
+                        for p in a.ty.pieces() {
+                            match p.carrier() {
+                                Some(c) => carriers |= c.bit(),
+                                None => return fail(self),
+                            }
+                        }
                     }
                 }
             }
@@ -7971,31 +8103,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         Cow::Owned(t)
                     }
                     Some(Err((v, c))) => {
-                        let c = c.name();
-                        let e = a.expr.expect("a call read at a carrier");
-                        let call = self
-                            .t
-                            .text
-                            .map_or("the call", |t| &t[e.span.start..e.span.end]);
-                        let why = match v {
-                            Value::Float(_) => format!(
-                                ": `{call}` may give the decimal {v}, which nothing fixes where \
-                                 it is written, so it is an `f64` there; an `f64` is not read \
-                                 as the `rat` that {what} takes here, since a call gives that \
-                                 `f64`, not the decimal written. Write that decimal \
-                                 with the suffix `r` where it is written, as {v}r, or give this \
-                                 parameter of {what} the type `f64`"
-                            ),
-                            _ => format!(
-                                ": `{call}` may give the integer {v}, which `{c}` does not hold \
-                                 exactly, so it cannot be read as the `{c}` that {what} takes \
-                                 here; an integer a call gives is read at `{c}` only where \
-                                 `{c}` holds it exactly, as an integer literal is. Make that \
-                                 value one `{c}` holds exactly where it is written, or give \
-                                 this parameter of {what} a type that holds {v}, such as `int`"
-                            ),
-                        };
-                        return Err(self.rejected_because(what, args, &why));
+                        return Err(self.unread_call(what, args, a, &v, c, false));
                     }
                     None => Cow::Borrowed(&a.ty),
                 },
