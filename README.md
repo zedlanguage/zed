@@ -608,18 +608,19 @@ The order of the lines doesn't matter, only what depends on what, so you can wri
 The example above reads values it was given. A complete program also needs input and output. This one reads a file, counts each word, and prints the counts, most common first.
 
 ```zed
-main(fs: Files) -> (stdout: Lines) {
+main(m: MainArgs) {
+  fs = files();
   text = fs["input.txt"] else "";
   counts = text.split(" ").group(w -> w.lower).count;
   lines = counts as (w -> n) into (desc n -> w -> "${w}: ${n}");
-  stdout <- lines.orderedValues;
+  m.stdout <- lines.orderedValues;
 }
 ```
 
 > [!NOTE]
-> **`main(input: T) -> (output: U) { ... }`** is a program's entry point. Its parameters and results are *ports*: declared channels to the outside world, such as files, sockets, clocks and databases. A port is the only way a program reaches the outside world.
+> **`main(m: MainArgs) -> int { ... }`** is a program's entry point. `m` holds the command-line arguments `m.args`, the standard streams `m.stdin`, `m.stdout` and `m.stderr`, and the environment variables `m.env`. The result is the program's exit status, and a body that gives no result, like this one, exits with 0, so the `-> int` can be left out. These are *ports*: channels to the outside world, such as files, sockets, clocks, other programs and databases. A port is the only way a program reaches the outside world.
 >
-> **`Files`** is a port that maps each path to the text of that file, so `fs["input.txt"]` reads one file, and **`Lines`** is a port that takes lines of text, so `stdout` prints them. **`"text"`** is a string literal, a `Utf8String`.
+> **`files()`** opens the file port, which maps each path to the text of that file, so `fs["input.txt"]` reads one file. A program opens a port like this wherever it needs one, and the port is closed after its last use. **`m.stdout`** takes lines of text and prints them. **`"text"`** is a string literal, a `Utf8String`.
 
 Reading a file can fail, and the `else` says what to do when it does: use the empty text. The next line counts the words.
 
@@ -1970,13 +1971,16 @@ A caller that reads `.mean` doesn't pay for `sd`, and you don't need two version
 
 Ports are declared channels to the outside world, and they are the only way a program reaches it.
 
-**Syntax:** `main(input: T) -> (output: U) { output <- value; }`
+**Syntax:** `port <- value;` writes to a port, and `port[key]` reads one.
 
 > [!NOTE]
 > **`Stream(T)`** is a port type: a sequence of values of type `T` that arrive over time.
 
 ```zed
-main(req: Stream(Query)) -> (resp: Stream(Answer)) {
+req: Stream(Query);
+resp: Stream(Answer);
+
+main() {
   resp <- req.map(q -> answer(q));
 }
 ```
@@ -1986,7 +1990,7 @@ input: req delivers q1, then q2
 resp carries answer(q1), then answer(q2)
 ```
 
-Ports are files, sockets, clocks, devices, databases and the like. They are declared in `main`'s header or as stored collections, which are maps declared `with store(...)`. Foreign calls and logging go through ports too. Everything else is a pure value, so Zed needs no effect system (type annotations that record side effects). It also means the compiler can reorder, parallelize or skip anything that isn't a port operation, since nothing else can be observed. Reading a port gives you a value, and `<-` pushes one out. So a server, a batch job and a pipeline are all the same kind of thing: a function from input ports to output ports.
+Ports are files, sockets, clocks, devices, databases and the like. `main` receives the command line, the standard streams and the environment; a program opens every other port with a call where it needs it, such as `files()`, `clock(period: d)` or `spawn(["sort"])`, which starts another program; and ports whose home the build names, such as `req` and `resp` above and stored collections, which are maps declared `with store(...)`, are declared at the top of a file. Each port is closed after its last use, and a program it started is stopped. Foreign calls and logging go through ports too. Everything else is a pure value, so Zed needs no effect system (type annotations that record side effects). It also means the compiler can reorder, parallelize or skip anything that isn't a port operation, since nothing else can be observed. Reading a port gives you a value, and `<-` pushes one out. So a server, a batch job and a pipeline are all the same kind of thing: a function from input ports to output ports.
 
 Runs repeat exactly, apart from a short list such as the order that messages arrive at a port and running out of a resource. Inputs and arrival order can be recorded, so you can replay a failing run in a test.
 

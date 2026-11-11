@@ -30,10 +30,7 @@ PosParam      : a positional parameter
 TupleParam    : `(a, b)` is a fresh parameter p with `let a = p[0]`, `let b = p[1]` in the body
 PositionalParam : a parameter passed by position, its default filled at saturated calls that omit it
 Param         : a named parameter, its default filled at saturated calls that omit it
-Result        : the output of a function
-Ports         : declares output ports, each written by push
-ResultType    : declares the result type
-Port          : an output port's name and type
+Result        : declares the result type; on `main` the type is `int`, the exit status (sec:ports)
 Body          : the λ body ⟦e⟧ or ⟦Block⟧; trailers add no term
 Trailer       : the trailer of its alternative
 TestTable     : a list of test cases
@@ -45,6 +42,7 @@ Push          : a push
 AckPush       : `a = p <- e` is the push `p <- e`, keyed as written, with `a` bound to its acknowledgment (*T-Port*), a failure in which bubbles out of the block only when nothing reads `a` (sec:ports)
 KeyedPush     : writes ⟦e⟧ at keypath ⟦k⟧ of a keyed accumulator, whose writes at one keypath are folded by its reducer
 WholePush     : push(p, ⟦e⟧)
+PushTarget    : the port pushed into: a name, or a field of a value that holds ports, `m.stdout` or `p.stdin` (sec:ports)
 Binding       : the binding of its alternative
 TypedBinding  : `x: T = e` is PlainBinding's `x = e`, also checking e against T
 PlainBinding  : `x = e;` is let x = ⟦e⟧ over the lines below it, in dependency order; `a, b = e` is let t = ⟦e⟧ with a = t[0], b = t[1], and `_` binds nothing; a boundary gives the entries before generation 0

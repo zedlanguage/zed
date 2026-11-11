@@ -66,11 +66,7 @@ PosParam      = ~TupleParam                                                     
 TupleParam    = '(' Target (',' Target)+ ','? ')' (':' Type)?                      L2
 PositionalParam = 'positional' Name (':' Type)? ('=' Expr)?                        L1
 Param         = Name (':' Type)? ('=' Expr)?                                       L1
-Result        = ~Ports                                                             L1
-              | ~ResultType                                                        L10
-Ports         = '->' '(' Port % ',' ','? ')' &('=' | '{')                          L1
-ResultType    = '->' Type                                                          L10
-Port          = Name ':' Type                                                      L1
+Result        = '->' Type                                                          L1
 Body          = '=' Expr (';' | Trailer+)                                          L1
               | Block Trailer*                                                     L1
 Trailer       = ~TestTable                                                         L1
@@ -85,9 +81,10 @@ IndexKey      = Name 'in' Expr                                                  
 Push          = ~AckPush                                                           L7
               | ~KeyedPush                                                         L7
               | ~WholePush                                                         L1
-AckPush       = Name '=' Name ('[' Expr ']')* '<-' Expr ';'                        L7
-KeyedPush     = Name ('[' Expr ']')+ '<-' Expr ';'                                 L7
-WholePush     = Name '<-' Expr ';'                                                 L1
+AckPush       = Name '=' PushTarget ('[' Expr ']')* '<-' Expr ';'                  L7
+KeyedPush     = PushTarget ('[' Expr ']')+ '<-' Expr ';'                           L7
+WholePush     = PushTarget '<-' Expr ';'                                           L1
+PushTarget    = Name ('.' Name)*                                                   L1
 Binding       = ~TypedBinding                                                      L10
               | ~PlainBinding                                                      L1
 TypedBinding  = Name ':' Type '=' Expr Boundary? ';'                               L10
