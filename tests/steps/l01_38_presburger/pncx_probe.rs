@@ -11,9 +11,14 @@ use zedc::store::preimage::Scoped;
 use zedc::store::presburger::extend::Extending;
 
 fn lets(unit: &Unit) -> Term {
-    prelude(unit.defs.iter().rev().fold(Term::Lit(Value::Bool(true)), |body, d| {
-        Term::Let(d.kernel.clone(), d.term.clone(), Shared::new(body))
-    }))
+    prelude(
+        unit.defs
+            .iter()
+            .rev()
+            .fold(Term::Lit(Value::Bool(true)), |body, d| {
+                Term::Let(d.kernel.clone(), d.term.clone(), Shared::new(body))
+            }),
+    )
 }
 
 fn run(src: &str, reps: usize) {
@@ -38,7 +43,9 @@ fn run(src: &str, reps: usize) {
             let (mut faced, mut plain) = (Extending::new(), Extending::new());
             for &i in order {
                 let (name, ps, body) = fs[i];
-                let Some(r) = scoped.relation(body, ps, ps, true) else { continue };
+                let Some(r) = scoped.relation(body, ps, ps, true) else {
+                    continue;
+                };
                 let t = Instant::now();
                 let a = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
                 let ta = t.elapsed();
@@ -112,7 +119,11 @@ fn case(rng: &mut zed_tests::instances::Rng) -> String {
         1 => format!("x mod {m} != {}", rng.int(0, m - 1)),
         2 => format!("x < {}", lit(rng.int(-40, 120))),
         3 => format!("x > {}", lit(rng.int(-40, 120))),
-        _ => format!("!(x mod {m} == {} && x > {})", rng.int(0, m - 1), lit(rng.int(-40, 120))),
+        _ => format!(
+            "!(x mod {m} == {} && x > {})",
+            rng.int(0, m - 1),
+            lit(rng.int(-40, 120))
+        ),
     }
 }
 
@@ -121,7 +132,14 @@ fn case(rng: &mut zed_tests::instances::Rng) -> String {
 fn chain(rng: &mut zed_tests::instances::Rng) -> String {
     let a = rng.int(-60, 60);
     let b = a + rng.int(-2, 160);
-    let q = format!("{} && ({} || {}) && ({} || {})", case(rng), case(rng), case(rng), case(rng), case(rng));
+    let q = format!(
+        "{} && ({} || {}) && ({} || {})",
+        case(rng),
+        case(rng),
+        case(rng),
+        case(rng),
+        case(rng)
+    );
     let mut src = format!(
         "q(x: int) = {q} && x > {} && x < {};\np0(x: int) = x > {};\n",
         lit(a),
@@ -161,7 +179,11 @@ fn enumerated(w: &zedc::store::presburger::Relation) -> Option<(bool, bool)> {
             continue;
         }
         let Formula::Con(c) = p else { continue };
-        let k = c.lin.terms.get(x).map(|k| i64::try_from(k.to_i128().unwrap()).unwrap());
+        let k = c
+            .lin
+            .terms
+            .get(x)
+            .map(|k| i64::try_from(k.to_i128().unwrap()).unwrap());
         let b = i64::try_from(c.lin.constant.to_i128().unwrap()).unwrap();
         match (c.rel, c.lin.terms.len(), k) {
             (Rel::Ge, 1, Some(1)) => lo = Some(lo.map_or(-b, |l| l.max(-b))),
@@ -192,75 +214,81 @@ fn pncx_random() {
     let (mut refused, mut answered, mut bad) = (0, 0, 0);
     let check = std::env::var_os("PNCX_CHECK").is_some();
     let ((), c) = zedc::store::presburger::with_modular_empty_checked(|| {
-    for seed in a..b {
-        let mut rng = zed_tests::instances::Rng::new(seed);
-        let src = chain(&mut rng);
-        if std::env::var_os("PNCX_SHOW").is_some() {
-            println!("PNCXSRC {seed}\n{src}\nPNCXEND");
-        }
-        let Ok(unit) = elab(&src) else { continue };
-        let lets = lets(&unit);
-        let fs: Vec<_> = unit
-            .defs
-            .iter()
-            .filter_map(|d| match &*d.term {
-                Term::Lam(ps, body) => Some((d.name.as_str(), ps.as_slice(), &**body)),
-                _ => None,
-            })
-            .collect();
-        for (o, order) in [(0..fs.len()).collect::<Vec<_>>(), (0..fs.len()).rev().collect()]
+        for seed in a..b {
+            let mut rng = zed_tests::instances::Rng::new(seed);
+            let src = chain(&mut rng);
+            if std::env::var_os("PNCX_SHOW").is_some() {
+                println!("PNCXSRC {seed}\n{src}\nPNCXEND");
+            }
+            let Ok(unit) = elab(&src) else { continue };
+            let lets = lets(&unit);
+            let fs: Vec<_> = unit
+                .defs
+                .iter()
+                .filter_map(|d| match &*d.term {
+                    Term::Lam(ps, body) => Some((d.name.as_str(), ps.as_slice(), &**body)),
+                    _ => None,
+                })
+                .collect();
+            for (o, order) in [
+                (0..fs.len()).collect::<Vec<_>>(),
+                (0..fs.len()).rev().collect(),
+            ]
             .into_iter()
             .enumerate()
-        {
-            let mut scoped = Scoped::new(&lets);
-            let (mut faced, mut plain) = (Extending::new(), Extending::new());
-            for i in order {
-                let (name, ps, body) = fs[i];
-                let Some(r) = scoped.relation(body, ps, ps, true) else { continue };
-                let t = Instant::now();
-                let mut ask = || {
-                    let x = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
-                    (x, plain.defined(&r, &|n| scoped.def(n)))
-                };
-                // Without PNCX_CHECK, the answers are asked outside the check.
-                let (x, y) = if check {
-                    ask()
-                } else {
-                    zedc::store::presburger::without_modular_empty_check(ask)
-                };
-                let dt = t.elapsed().as_secs_f64();
-                let w = scoped.written(&r);
-                let truth = enumerated(&w);
-                let show = |a: &Result<bool, _>| match a {
-                    Ok(v) => v.to_string(),
-                    Err(_) => "R".to_string(),
-                };
-                let tr = truth.map_or("?".to_string(), |(h, f)| format!("{h}/{f}"));
-                println!(
-                    "PNCXR {seed} {o} {name} holds {}/{} fails {}/{} truth {tr} {dt:.4}s",
-                    show(&x.holds),
-                    show(&y.holds),
-                    show(&x.fails),
-                    show(&y.fails)
-                );
-                for (got, want) in [
-                    (&x.holds, truth.map(|t| t.0)),
-                    (&y.holds, truth.map(|t| t.0)),
-                    (&x.fails, truth.map(|t| t.1)),
-                    (&y.fails, truth.map(|t| t.1)),
-                ] {
-                    match (got, want) {
-                        (Ok(g), Some(w)) if *g != w => {
-                            bad += 1;
-                            println!("MISMATCH {seed} {o} {name}\n{src}");
+            {
+                let mut scoped = Scoped::new(&lets);
+                let (mut faced, mut plain) = (Extending::new(), Extending::new());
+                for i in order {
+                    let (name, ps, body) = fs[i];
+                    let Some(r) = scoped.relation(body, ps, ps, true) else {
+                        continue;
+                    };
+                    let t = Instant::now();
+                    let mut ask = || {
+                        let x =
+                            faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+                        (x, plain.defined(&r, &|n| scoped.def(n)))
+                    };
+                    // Without PNCX_CHECK, the answers are asked outside the check.
+                    let (x, y) = if check {
+                        ask()
+                    } else {
+                        zedc::store::presburger::without_modular_empty_check(ask)
+                    };
+                    let dt = t.elapsed().as_secs_f64();
+                    let w = scoped.written(&r);
+                    let truth = enumerated(&w);
+                    let show = |a: &Result<bool, _>| match a {
+                        Ok(v) => v.to_string(),
+                        Err(_) => "R".to_string(),
+                    };
+                    let tr = truth.map_or("?".to_string(), |(h, f)| format!("{h}/{f}"));
+                    println!(
+                        "PNCXR {seed} {o} {name} holds {}/{} fails {}/{} truth {tr} {dt:.4}s",
+                        show(&x.holds),
+                        show(&y.holds),
+                        show(&x.fails),
+                        show(&y.fails)
+                    );
+                    for (got, want) in [
+                        (&x.holds, truth.map(|t| t.0)),
+                        (&y.holds, truth.map(|t| t.0)),
+                        (&x.fails, truth.map(|t| t.1)),
+                        (&y.fails, truth.map(|t| t.1)),
+                    ] {
+                        match (got, want) {
+                            (Ok(g), Some(w)) if *g != w => {
+                                bad += 1;
+                                println!("MISMATCH {seed} {o} {name}\n{src}");
+                            }
+                            (Ok(_), _) => answered += 1,
+                            (Err(_), _) => refused += 1,
                         }
-                        (Ok(_), _) => answered += 1,
-                        (Err(_), _) => refused += 1,
                     }
                 }
             }
         }
-    }
     });
     report(&c);
     println!("PNCXR total answered {answered} refused {refused} mismatches {bad}");
@@ -309,27 +337,43 @@ fn axis_src(axis: &str, n: usize) -> String {
             );
             for i in 1..n {
                 let shift = ["(0 - 1)", "60", "(0 - 2)", "3"][i % 4];
-                let extra = match i % 3 { 0 => " && !(x mod 5 == 2 && x > 49)", 1 => " && (x mod 7 != 3 || x < 20)", _ => "" };
-                src.push_str(&format!("p{i}(x: int) = q(x: x) && p{}(x: x + {shift}) && x < {}{extra};\n", i - 1, 2000 + 1000 * i));
+                let extra = match i % 3 {
+                    0 => " && !(x mod 5 == 2 && x > 49)",
+                    1 => " && (x mod 7 != 3 || x < 20)",
+                    _ => "",
+                };
+                src.push_str(&format!(
+                    "p{i}(x: int) = q(x: x) && p{}(x: x + {shift}) && x < {}{extra};\n",
+                    i - 1,
+                    2000 + 1000 * i
+                ));
             }
             src
         }
         // Distinct coprime moduli, one excluded residue each.
         "moduli" => {
             let lits: Vec<String> = ps[..n].iter().map(|p| format!("x mod {p} != 1")).collect();
-            format!("q(x: int) = {} && x > 0 && x < 1000000000;\n", lits.join(" && "))
+            format!(
+                "q(x: int) = {} && x > 0 && x < 1000000000;\n",
+                lits.join(" && ")
+            )
         }
         // Primes in one disjunction.
         "disj" => {
             let lits: Vec<String> = ps[..n].iter().map(|p| format!("x mod {p} == 0")).collect();
-            format!("q(x: int) = ({}) && x mod 2 == 1 && x > 0 && x < 1000000000;\n", lits.join(" || "))
+            format!(
+                "q(x: int) = ({}) && x mod 2 == 1 && x > 0 && x < 1000000000;\n",
+                lits.join(" || ")
+            )
         }
         // Easy pairs over distinct primes.
         "pairs" => {
             let lits: Vec<String> = (0..n)
                 .map(|i| {
                     let (a, b) = (ps[2 * i + 1], ps[2 * i + 2]);
-                    format!("(x mod {a} == 0 || x mod {b} == 0) && (x mod {a} == 1 || x mod {b} == 1)")
+                    format!(
+                        "(x mod {a} == 0 || x mod {b} == 0) && (x mod {a} == 1 || x mod {b} == 1)"
+                    )
                 })
                 .collect();
             format!("q(x: int) = {};\n", lits.join(" && "))
@@ -337,16 +381,36 @@ fn axis_src(axis: &str, n: usize) -> String {
         // Clauses with distinct bounds: n regimes.
         "regimes" => {
             let lits: Vec<String> = (0..n)
-                .map(|i| format!("!(x mod {} == {} && x > {})", ps[1 + i % 4], i % 3, 100 * (i + 1)))
+                .map(|i| {
+                    format!(
+                        "!(x mod {} == {} && x > {})",
+                        ps[1 + i % 4],
+                        i % 3,
+                        100 * (i + 1)
+                    )
+                })
                 .collect();
-            format!("q(x: int) = {} && x > 0 && x < 100000000;\n", lits.join(" && "))
+            format!(
+                "q(x: int) = {} && x > 0 && x < 100000000;\n",
+                lits.join(" && ")
+            )
         }
         // Two-modulus clauses with distinct bounds: n real regimes.
         "regimes2" => {
             let lits: Vec<String> = (0..n)
-                .map(|i| format!("(x mod 5 == {} || x mod 7 == {} || x < {})", i % 5, (i / 5) % 7, 100 * (i + 1)))
+                .map(|i| {
+                    format!(
+                        "(x mod 5 == {} || x mod 7 == {} || x < {})",
+                        i % 5,
+                        (i / 5) % 7,
+                        100 * (i + 1)
+                    )
+                })
                 .collect();
-            format!("q(x: int) = {} && x > 0 && x < 100000000;\n", lits.join(" && "))
+            format!(
+                "q(x: int) = {} && x > 0 && x < 100000000;\n",
+                lits.join(" && ")
+            )
         }
         // Nested cutting: level j excludes the residue w / 2^j modulo w / 2^(j-1) + 1, and three
         // clauses over 5 and 7 that hold nowhere.
@@ -360,14 +424,93 @@ fn axis_src(axis: &str, n: usize) -> String {
         }
         // Two-modulus clauses that hold only above their bounds, with three clauses over 11
         // and 13 that hold nowhere below the top bound: every regime is walked.
-        "regimes3" => {
+        // `regimes-offset` and `regimes-wide` are Codex's round-3 axes (PEER_R3_CODEX.diff):
+        // the three closing clauses have distinct bounds, and in `regimes-wide` the moduli grow
+        // with n.
+        "regimes3" | "regimes-offset" => {
             let mut lits: Vec<String> = (0..n)
-                .map(|i| format!("(x mod 31 == {} || x mod 37 == {} || x > {})", i % 31, (i / 31) % 37, 100 * (i + 1)))
+                .map(|i| {
+                    format!(
+                        "(x mod 31 == {} || x mod 37 == {} || x > {})",
+                        i % 31,
+                        (i / 31) % 37,
+                        100 * (i + 1)
+                    )
+                })
                 .collect();
             for r in 0..3 {
-                lits.push(format!("(x mod 11 == {r} || x mod 13 == {r} || x > {})", 100 * (n + 1)));
+                let off = if axis == "regimes-offset" { r } else { 0 };
+                lits.push(format!(
+                    "(x mod 11 == {r} || x mod 13 == {r} || x > {})",
+                    100 * (n + 1) + off
+                ));
             }
-            format!("q(x: int) = {} && x > 0 && x < 100000000;\n", lits.join(" && "))
+            format!(
+                "q(x: int) = {} && x > 0 && x < 100000000;\n",
+                lits.join(" && ")
+            )
+        }
+        "regimes-wide" => {
+            let m = (2 * n + 1).next_power_of_two();
+            let mut lits: Vec<String> = (0..n)
+                .map(|i| {
+                    format!(
+                        "(x mod {m} == {i} || x mod {} == {i} || x > {})",
+                        m + 1,
+                        100 * (i + 1)
+                    )
+                })
+                .collect();
+            for r in 0..3 {
+                lits.push(format!(
+                    "(x mod 11 == {r} || x mod 13 == {r} || x > {})",
+                    100 * (n + 1) + r
+                ));
+            }
+            format!(
+                "q(x: int) = {} && x > 0 && x < {};\n",
+                lits.join(" && "),
+                100 * (n + 2)
+            )
+        }
+        // The walk's bad case (T4): n contiguous segments of 50, each empty for its own reason
+        // (`x mod 4 == 1` and `x mod 6 == 2` on it), and n global residues `x mod p != 0`, so
+        // every node of the tree has a point under the global constraints and is descended.
+        "walkrn" => {
+            let mut lits: Vec<String> = (0..n)
+                .map(|j| {
+                    let (a, b) = (50 * j + 1, 50 * j + 50);
+                    format!("(x mod 4 == 1 || x < {a} || x > {b}) && (x mod 6 == 2 || x < {a} || x > {b})")
+                })
+                .collect();
+            lits.extend((0..n).map(|i| format!("x mod {} != 0", ps[2 + i])));
+            format!(
+                "q(x: int) = {} && x >= 1 && x <= {};\n",
+                lits.join(" && "),
+                50 * n
+            )
+        }
+        // As `walkrn`, with the n global constraints two-literal clauses with no bounds, which
+        // sit on the root of the walk's tree and so are in every node's solve.
+        "walkrn2" => {
+            let mut lits: Vec<String> = (0..n)
+                .map(|j| {
+                    let (a, b) = (50 * j + 1, 50 * j + 50);
+                    format!("(x mod 4 == 1 || x < {a} || x > {b}) && (x mod 6 == 2 || x < {a} || x > {b})")
+                })
+                .collect();
+            lits.extend((0..n).map(|i| {
+                format!(
+                    "(x mod {} == 1 || x mod {} == 1)",
+                    ps[2 + 2 * i],
+                    ps[3 + 2 * i]
+                )
+            }));
+            format!(
+                "q(x: int) = {} && x >= 1 && x <= {};\n",
+                lits.join(" && "),
+                50 * n
+            )
         }
         // Bits of the bounds (n bits), fixed formula.
         "boundbits" => {
@@ -437,15 +580,24 @@ fn pncx_formula(axis: &str, n: usize) -> zedc::store::presburger::Formula {
     let count = match axis {
         "bounds" | "bits" => 1,
         "pairs" => 2 * n,
+        "crtbits" => 8,
         _ => n,
     };
     let big = (0..n).fold(Int::ONE, |a, _| &a * &Int::from(2));
+    // `crtbits`: `m_i = 840 2^n (i + 1) + 1` for `i < 8`, pairwise coprime since a common
+    // factor of two of them divides `840 2^n (i - j)` and is coprime to `840 2^n`.
+    let wide = &big * &Int::from(840);
     let mut rs = Vec::new();
     for i in 0..count {
         let q = Lin::atom(Atom::Aux((2 * i) as u32));
         let r = Lin::atom(Atom::Aux((2 * i + 1) as u32));
         let m = if axis == "bits" {
             &big + &Int::ONE
+        } else if axis == "crtbits" {
+            &(&wide * &Int::from(i as i64 + 1)) + &Int::ONE
+        } else if axis == "crtshared" {
+            // `m_i = 2 p_{i+1}`: every pair shares the factor 2.
+            Int::from(2 * primes[i + 1])
         } else {
             Int::from(if axis == "links" { 5 } else { primes[i] })
         };
@@ -483,6 +635,25 @@ fn pncx_formula(axis: &str, n: usize) -> zedc::store::presburger::Formula {
                 ));
             }
         }
+    } else if axis == "crtshared" {
+        // Odd residues `2 i + 3`, consistent modulo 2, distinct otherwise.
+        for (i, r) in rs.iter().enumerate() {
+            fs.push(Formula::Con(Con::eq(
+                r,
+                &Lin::constant((2 * i as i64 + 3) % (2 * primes[i + 1])),
+            )));
+        }
+    } else if axis == "crt" || axis == "crtbits" {
+        // One residue fixed per modulus, `i + 2` (below each modulus): one CRT over all of
+        // them, and `x = 1` is not a point.
+        for (i, r) in rs.iter().enumerate() {
+            let c = if axis == "crt" {
+                (i as i64 + 2) % primes[i]
+            } else {
+                i as i64 + 2
+            };
+            fs.push(Formula::Con(Con::eq(r, &Lin::constant(c))));
+        }
     } else {
         for r in &rs {
             fs.push(Formula::negate(Formula::Con(Con::eq(r, &Lin::constant(0)))));
@@ -510,8 +681,14 @@ fn pncx_six_axis() {
     let f = pncx_formula(&axis, n);
     let mut meter = Meter::new();
     let mut ans = None;
+    // `PNCX_DECIDE` set: `decide`, which builds no model, in place of `satisfiable`.
+    let only_decide = std::env::var("PNCX_DECIDE").is_ok();
     let w = meter.work(|| {
-        ans = Some(satisfiable(&f));
+        ans = Some(if only_decide {
+            zedc::store::presburger::decide(&f).map(|b| b.then(zedc::store::presburger::Model::new))
+        } else {
+            satisfiable(&f)
+        });
     });
     println!(
         "AXIS {axis} n={n} work={} bytes={} unit={} answer={:?}",
@@ -546,80 +723,80 @@ fn pncx_pairs_enumeration() {
     let mut refused = 0;
     let mut checked = 0;
     let ((), c) = zedc::store::presburger::with_modular_empty_checked(|| {
-    for case in 0..b {
-        let mods = [3i64, 4, 5, 7, 11, 13, 16, 25];
-        let pairs = 2 + rng.below(3);
-        let ms: Vec<_> = (0..2 * pairs)
-            .map(|_| mods[rng.below(mods.len())])
-            .collect();
-        let lo = match case % 3 {
-            0 => -120,
-            1 => -20,
-            _ => 10000,
-        } + rng.int(0, 20);
-        let hi = lo + rng.int(0, 150);
-        let x = Lin::atom(Atom::Sym(Arc::from("x")));
-        let mut fs = vec![
-            Formula::Con(Con::ge(&x, &Lin::constant(lo))),
-            Formula::Con(Con::ge(&Lin::constant(hi), &x)),
-        ];
-        let mut rs = Vec::new();
-        for (i, &m) in ms.iter().enumerate() {
-            let q = Lin::atom(Atom::Aux((2 * i) as u32));
-            let r = Lin::atom(Atom::Aux((2 * i + 1) as u32));
-            fs.push(Formula::Con(Con::eq(
-                &x.minus(&q.times(m)).minus(&r),
-                &Lin::constant(0),
-            )));
-            fs.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
-            fs.push(Formula::Con(Con::ge(&Lin::constant(m - 1), &r)));
-            rs.push(r);
-        }
-        for j in 0..pairs {
-            for _ in 0..2 {
-                let mut ds = Vec::new();
-                for i in [2 * j, 2 * j + 1] {
-                    let v = rng.int(0, ms[i] - 1);
-                    let f = Formula::Con(Con::eq(&rs[i], &Lin::constant(v)));
-                    ds.push(if rng.below(4) == 0 {
-                        Formula::negate(f)
-                    } else {
-                        f
-                    });
-                }
-                fs.push(Formula::or(ds));
-            }
-        }
-        if case < a {
-            continue;
-        }
-        let f = Formula::and(fs);
-        let brute = (lo..=hi).any(|v| {
-            let mut model = Model::from([(Atom::Sym(Arc::from("x")), Int::from(v))]);
+        for case in 0..b {
+            let mods = [3i64, 4, 5, 7, 11, 13, 16, 25];
+            let pairs = 2 + rng.below(3);
+            let ms: Vec<_> = (0..2 * pairs)
+                .map(|_| mods[rng.below(mods.len())])
+                .collect();
+            let lo = match case % 3 {
+                0 => -120,
+                1 => -20,
+                _ => 10000,
+            } + rng.int(0, 20);
+            let hi = lo + rng.int(0, 150);
+            let x = Lin::atom(Atom::Sym(Arc::from("x")));
+            let mut fs = vec![
+                Formula::Con(Con::ge(&x, &Lin::constant(lo))),
+                Formula::Con(Con::ge(&Lin::constant(hi), &x)),
+            ];
+            let mut rs = Vec::new();
             for (i, &m) in ms.iter().enumerate() {
-                model.insert(Atom::Aux((2 * i) as u32), Int::from(v.div_euclid(m)));
-                model.insert(Atom::Aux((2 * i + 1) as u32), Int::from(v.rem_euclid(m)));
+                let q = Lin::atom(Atom::Aux((2 * i) as u32));
+                let r = Lin::atom(Atom::Aux((2 * i + 1) as u32));
+                fs.push(Formula::Con(Con::eq(
+                    &x.minus(&q.times(m)).minus(&r),
+                    &Lin::constant(0),
+                )));
+                fs.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+                fs.push(Formula::Con(Con::ge(&Lin::constant(m - 1), &r)));
+                rs.push(r);
             }
-            f.holds(&model)
-        });
-        let d = decide(&f);
-        let s = satisfiable(&f);
-        if let Ok(v) = &d {
-            assert_eq!(*v, brute, "case {case}: {f}");
-            checked += 1;
-        } else {
-            refused += 1;
-        }
-        if let Ok(m) = &s {
-            assert_eq!(m.is_some(), brute, "case {case}: {f}");
-            if let Some(m) = m {
-                assert!(f.holds(m));
+            for j in 0..pairs {
+                for _ in 0..2 {
+                    let mut ds = Vec::new();
+                    for i in [2 * j, 2 * j + 1] {
+                        let v = rng.int(0, ms[i] - 1);
+                        let f = Formula::Con(Con::eq(&rs[i], &Lin::constant(v)));
+                        ds.push(if rng.below(4) == 0 {
+                            Formula::negate(f)
+                        } else {
+                            f
+                        });
+                    }
+                    fs.push(Formula::or(ds));
+                }
             }
-            checked += 1;
-        } else {
-            refused += 1;
+            if case < a {
+                continue;
+            }
+            let f = Formula::and(fs);
+            let brute = (lo..=hi).any(|v| {
+                let mut model = Model::from([(Atom::Sym(Arc::from("x")), Int::from(v))]);
+                for (i, &m) in ms.iter().enumerate() {
+                    model.insert(Atom::Aux((2 * i) as u32), Int::from(v.div_euclid(m)));
+                    model.insert(Atom::Aux((2 * i + 1) as u32), Int::from(v.rem_euclid(m)));
+                }
+                f.holds(&model)
+            });
+            let d = decide(&f);
+            let s = satisfiable(&f);
+            if let Ok(v) = &d {
+                assert_eq!(*v, brute, "case {case}: {f}");
+                checked += 1;
+            } else {
+                refused += 1;
+            }
+            if let Ok(m) = &s {
+                assert_eq!(m.is_some(), brute, "case {case}: {f}");
+                if let Some(m) = m {
+                    assert!(f.holds(m));
+                }
+                checked += 1;
+            } else {
+                refused += 1;
+            }
         }
-    }
     });
     report(&c);
     println!(
@@ -637,4 +814,114 @@ fn pncx_easy_pairs_scale() {
         assert!(matches!(ans, Ok(Some(_))));
         let _ = std::hint::black_box(ans);
     });
+}
+
+/// 3-SAT as one-variable residue constraints (the reduction of Garey and Johnson AN2): variable
+/// `j` is `x mod p_j` in `{0, 1}` for the `j`-th prime `p_j`; a clause excludes the one residue
+/// modulo the product of its three primes at which all three literals are false. `x` is bounded
+/// to `0..P` for `P` the product of all the primes. `PNCX_SAT_RANDOM=v,c,seed` builds `c` random
+/// clauses over `v` variables; each line prints `decide` and, for at most 7 variables
+/// (`P <= 510510`), the truth by enumeration over `0..P`.
+#[test]
+#[ignore]
+fn pncx_sat_reduction() {
+    use std::sync::Arc;
+    use zedc::store::int::Int;
+    use zedc::store::presburger::{Atom, Con, Formula, Lin, decide};
+    let spec = std::env::var("PNCX_SAT_RANDOM").unwrap();
+    let v: Vec<u64> = spec.split(',').map(|s| s.parse().unwrap()).collect();
+    let (nv, nc, seed) = (v[0] as usize, v[1] as usize, v[2]);
+    let easy = std::env::var_os("PNCX_SAT_EASY").is_some();
+    let mut rng = zed_tests::instances::Rng::new(seed);
+    let mut primes = Vec::new();
+    let mut p = 2i64;
+    while primes.len() < nv {
+        if (2..).take_while(|d| d * d <= p).all(|d| p % d != 0) {
+            primes.push(p);
+        }
+        p += 1;
+    }
+    let plant: Vec<bool> = (0..nv).map(|_| rng.below(2) == 0).collect();
+    let mut clauses: Vec<[(usize, bool); 3]> = Vec::new();
+    while clauses.len() < nc {
+        let a = rng.below(nv);
+        let b = rng.below(nv);
+        let c = rng.below(nv);
+        if a == b || b == c || a == c {
+            continue;
+        }
+        // `PNCX_SAT_EASY`: the first literal of every clause agrees with the planted assignment
+        // `plant`, so `plant` satisfies every clause (an easy instance of the same shape, not
+        // satisfied by `x = 1` unless `plant` is all ones).
+        let mut cl = [
+            (a, rng.below(2) == 0),
+            (b, rng.below(2) == 0),
+            (c, rng.below(2) == 0),
+        ];
+        if easy {
+            cl[0].1 = plant[a];
+        }
+        clauses.push(cl);
+    }
+    let x = Lin::atom(Atom::Sym(Arc::from("x")));
+    let mut fs = Vec::new();
+    let mut aux = 0u32;
+    let mut residue = |fs: &mut Vec<Formula>, m: i64| {
+        let q = Lin::atom(Atom::Aux(aux));
+        let r = Lin::atom(Atom::Aux(aux + 1));
+        aux += 2;
+        fs.push(Formula::Con(Con::eq(
+            &x.minus(&q.times(Int::from(m))).minus(&r),
+            &Lin::constant(0),
+        )));
+        fs.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+        fs.push(Formula::Con(Con::ge(&Lin::constant(m - 1), &r)));
+        r
+    };
+    for &pj in &primes {
+        let r = residue(&mut fs, pj);
+        fs.push(Formula::Con(Con::ge(&Lin::constant(1), &r)));
+    }
+    let mut excluded = Vec::new();
+    for cl in &clauses {
+        let m: i64 = cl.iter().map(|(j, _)| primes[*j]).product();
+        // The falsifying value of each literal: 0 for a positive literal, 1 for a negative one.
+        let c = (0..m)
+            .find(|c| {
+                cl.iter()
+                    .all(|(j, pos)| c % primes[*j] == if *pos { 0 } else { 1 })
+            })
+            .unwrap();
+        let r = residue(&mut fs, m);
+        fs.push(Formula::negate(Formula::Con(Con::eq(
+            &r,
+            &Lin::constant(c),
+        ))));
+        excluded.push((m, c));
+    }
+    // The product of the primes overflows i64 past 15 primes, so the bound is an `Int`.
+    let big_p = primes
+        .iter()
+        .fold(Int::from(1i64), |acc, p| &acc * &Int::from(*p));
+    fs.push(Formula::Con(Con::ge(&x, &Lin::constant(0))));
+    fs.push(Formula::Con(Con::ge(
+        &Lin::constant(&big_p - &Int::from(1i64)),
+        &x,
+    )));
+    let f = Formula::and(fs);
+    let t = std::time::Instant::now();
+    let got = decide(&f);
+    let dt = t.elapsed().as_secs_f64();
+    let small_p: Option<i64> = (nv <= 7).then(|| primes.iter().product());
+    let truth = small_p.map(|big_p| {
+        (0..big_p)
+            .any(|x| primes.iter().all(|p| x % p <= 1) && excluded.iter().all(|(m, c)| x % m != *c))
+    });
+    let shown = match &got {
+        Ok(b) => b.to_string(),
+        Err(e) => format!("refused {e:?}").chars().take(120).collect(),
+    };
+    println!(
+        "PNCXSAT v={nv} c={nc} seed={seed} easy={easy} decide={shown} truth={truth:?} {dt:.4}s"
+    );
 }

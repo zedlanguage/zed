@@ -475,6 +475,35 @@ fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
 }
 
 #[test]
+fn a_bound_past_the_64_bit_range_keeps_the_question() {
+    // PNCX-modular, R4 (I4.1): the question above with `x < 2^63` (and `x < 2^64`) added is
+    // refused as it is with `x < 2^63 - 1`, its bound printed at its size; a literal past the
+    // 64-bit range read as no linear form dropped the question, and the program ran with no
+    // message.
+    // So is `x mod 2^63 == 1` (R4-CLAUDE-1), its divisor read as no constant.
+    let rows = "ok(x, y, z, w) = 4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - \
+                10 * y - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - \
+                5 * x + 12 * y - z + 31 >= 0";
+    for (extra, printed) in [
+        ("x < 9223372036854775807", "x <= 9223372036854775806\n"),
+        ("x < 9223372036854775808", "x <= 9223372036854775807\n"),
+        ("x < 18446744073709551616", "x <= 18446744073709551615\n"),
+        (
+            "x mod 9223372036854775807 == 1",
+            "x mod 9223372036854775807",
+        ),
+        (
+            "x mod 9223372036854775808 == 1",
+            "x mod 9223372036854775808",
+        ),
+    ] {
+        let src = program(&format!("{rows} && {extra};"), "x: a, y: a, z: a, w: a");
+        let refusal = rejection("growth-big-bound", &src);
+        assert!(refusal.contains(printed), "{extra}: {refusal}");
+    }
+}
+
+#[test]
 fn a_refused_question_names_the_parameters_as_written_when_other_functions_share_them() {
     // `other` and `first` bind `x` and `w` too, so elaboration renames `ok`'s parameters
     // `x@k` and `w@k`; the message names them `x` and `w`, as `ok` wrote them, in the order

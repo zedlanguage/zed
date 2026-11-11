@@ -158,6 +158,16 @@ impl Domain {
         Domain { pieces: out }
     }
 
+    /// The intersection of all of `domains` (all of the line when there are none), as the
+    /// complement of the union of their complements.
+    // Complexity tradeoff: naive method, intersecting the domains one after another, O(k P) for
+    // k domains of P pieces in all, since the running intersection can keep up to P pieces
+    // (R3-CODEX-9, I3.12). Used: one sort of all the complements' pieces, O(P log P) comparisons.
+    // Nothing is given up. Test: `one_scope::clauses_sharing_one_residue_condition_scale`.
+    fn intersect_all(domains: Vec<Domain>) -> Self {
+        Self::from_pieces(domains.iter().flat_map(|d| d.complement().pieces).collect()).complement()
+    }
+
     fn contains_span(&self, lo: &Option<Int>, hi: &Option<Int>) -> bool {
         for (l, h) in &self.pieces {
             let le_lo = match (l, lo) {
@@ -590,7 +600,83 @@ fn rewrite_lin_full(
 /// formula after eliminating constant equalities, unit equalities, and Euclidean division
 /// remainders. Returns `None` if `f` lies outside this scope (e.g., has products, zero moduli, or
 /// two independent non-quotient variables).
+///
+/// A conjunction `C && (D1 || ... || Dk)` with one disjunction that has a conjunction among its
+/// parts, which [`solve_modular_whole`] leaves to the general path (`fold_or`), is decided as
+/// `C && D1`, then `C && D2`, and so on, up to the first that has a point; `None` when one of them
+/// is outside the scope, so the general path answers `f` whole as before.
+// Complexity tradeoff: naive version, the general path on `f`, whose cost grew faster than
+// linear on the `fails` questions of conjunctions of pairs (the negation of `n` clauses, a
+// disjunction of `n` conjunctions): 274M to 10,994M instructions from n = 64 to 1024, 2.20 to
+// 2.95 per doubling (I3.2). Used: one solve of `C && Di` per part up to the first with a point,
+// each in the size of `C` and `Di`, so O(k |C|) when every part is empty (`k` parts) and the
+// cost of the first parts tried when one has a point. One level only: a part that holds such a
+// disjunction again is not split, so the solves are at most `k`. What is given up: nothing is
+// refused that was answered; a formula with an empty answer on every part costs `k` solves of
+// `C`. Test: `one_scope::the_fails_questions_of_pairs_scale`.
 pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
+    if let Some(found) = solve_modular_whole(f, want_model) {
+        return Some(found);
+    }
+    // Only when no model is wanted: with a model wanted, the first part with a point would choose
+    // the model, so the model would depend on the order of the parts (R4-CLAUDE-8; the tests
+    // `omega::the_answer_does_not_depend_on_the_order_of_the_disjuncts*` failed); the general
+    // path answers such a question as before.
+    if want_model {
+        return None;
+    }
+    let (rest, parts) = one_disjunction_of_conjunctions(f)?;
+    for d in parts {
+        let mut g = rest.clone();
+        g.push(d);
+        if let Some(model) = solve_modular_whole(&Formula::and(g), want_model)? {
+            return Some(Some(model));
+        }
+    }
+    Some(None)
+}
+
+/// The top-level conjuncts of `f` other than its one disjunction that has a conjunction among its
+/// parts, and that disjunction's parts (a negated conjunction read as the disjunction of the
+/// negated parts); `None` when `f` has no such disjunction or more than one.
+fn one_disjunction_of_conjunctions(f: &Formula) -> Option<(Vec<Formula>, Vec<Formula>)> {
+    let is_conjunction = |g: &Formula| match g {
+        Formula::And(gs) => gs.len() > 1,
+        Formula::Not(h) => matches!(&**h, Formula::Or(gs) if gs.len() > 1),
+        Formula::Con(_) | Formula::Or(_) => false,
+    };
+    let mut rest: Vec<Formula> = Vec::new();
+    let mut parts: Option<Vec<Formula>> = None;
+    let mut seen: HashSet<Id> = HashSet::new();
+    let mut stack = vec![f];
+    while let Some(g) = stack.pop() {
+        let ds: Vec<Formula> = match g {
+            Formula::And(gs) => {
+                if seen.insert(Id::any(g)) {
+                    stack.extend(gs.iter().rev());
+                }
+                continue;
+            }
+            Formula::Or(ds) => ds.to_vec(),
+            Formula::Not(h) => match &**h {
+                Formula::And(gs) => gs.iter().map(|p| Formula::negate(p.clone())).collect(),
+                Formula::Con(_) | Formula::Or(_) | Formula::Not(_) => Vec::new(),
+            },
+            Formula::Con(_) => Vec::new(),
+        };
+        if ds.iter().any(is_conjunction) {
+            if parts.is_some() {
+                return None;
+            }
+            parts = Some(ds);
+        } else {
+            rest.push(g.clone());
+        }
+    }
+    Some((rest, parts?))
+}
+
+fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     // Collect top-level conjunction and verify no Product atoms exist anywhere in `f`.
     let mut top_cons: Vec<&Con> = Vec::new();
     let mut top_clauses: Vec<&Formula> = Vec::new();
@@ -1050,7 +1136,7 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     }
 
     // Step 8: Merge clauses sharing the same modular part `D` via `(D || B1) && (D || B2) <=> D || (B1 && B2)`.
-    let mut by_mods: BTreeMap<BTreeMap<Int, ResidueSet>, Domain> = BTreeMap::new();
+    let mut by_mods: BTreeMap<BTreeMap<Int, ResidueSet>, Vec<Domain>> = BTreeMap::new();
     for mut cl in raw_clauses {
         // Restrict `cl.bounds` to `global_bounds`; if it covers all of `global_bounds`, `cl` is true.
         let b_in_global = cl.bounds.intersect(&global_bounds);
@@ -1058,14 +1144,12 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             continue;
         }
         cl.bounds = b_in_global;
-        let entry = by_mods
-            .entry(cl.mods)
-            .or_insert_with(|| global_bounds.clone());
-        *entry = entry.intersect(&cl.bounds);
+        by_mods.entry(cl.mods).or_default().push(cl.bounds);
     }
 
     let mut mixed_clauses: Vec<FlatClause> = Vec::new();
     for (mods, bounds) in by_mods {
+        let bounds = Domain::intersect_all(bounds);
         if bounds.is_empty() {
             if mods.len() == 1 {
                 let (m, s) = mods.into_iter().next().expect("one");
@@ -1087,6 +1171,8 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         }
     }
 
+    global_bounds = global_bounds.intersect(&forced_pair_bounds(&mixed_clauses));
+
     // Step 9: Partition `global_bounds` at all bound endpoints of `mixed_clauses` into
     // bound-homogeneous regimes `[lo_r, hi_r]`.
     let regimes = partition_into_regimes(&global_bounds, &mixed_clauses);
@@ -1097,6 +1183,18 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     let walked = walk_segments(&regimes, &global_bounds, &unit_mods, &mixed_clauses);
     let undecided = match walked {
         RegimeOut::Found(x_val) => {
+            if !want_model {
+                let values = PointValues {
+                    x_root: &x_root,
+                    x_val: &x_val,
+                    fixed: &fixed,
+                    uf: &uf,
+                    rem_defs: &rem_defs,
+                    global_quots: &global_quots,
+                    local_windows: &local_windows,
+                };
+                return values.holds(f).then(|| Some(Model::new()));
+            }
             let model = build_model(
                 &x_root,
                 &x_val,
@@ -1868,6 +1966,20 @@ fn solve_regime_step(
         }
     }
 
+    // A point that satisfies every condition needs no base and no CRT: x = 1 lies in no
+    // residue class `0 mod m` and satisfies every set of nonzero residues, which is the common
+    // shape of clauses over overlapping composite moduli (Codex's R3-CODEX-8). A sufficient
+    // check, O(n): when it fails the steps below run as before.
+    // Complexity tradeoff: O(n) on every regime step; without it the CRT preparation runs on
+    // formulas this point satisfies (Codex's round-3 shared axis, R3-CODEX-8). The point it
+    // returns can make main's later questions cost more (R4-CLAUDE-7, seed 65).
+    if lo.as_ref().is_none_or(|l| *l <= Int::ONE)
+        && hi.as_ref().is_none_or(|h| *h >= Int::ONE)
+        && holds_modular_point(&Int::ONE, &unit_mods, &clauses)
+    {
+        return RegimeOut::Found(Int::ONE);
+    }
+
     if let Some(x) = separate_pair_witness(lo, hi, &unit_mods, &clauses) {
         return RegimeOut::Found(x);
     }
@@ -2030,10 +2142,22 @@ fn solve_regime_step(
             if dist.len() > 1 && lit_cnf.len() > 1 {
                 return RegimeOut::Undecided;
             }
+            // Complexity tradeoff: the clause built so far is moved into its last product with
+            // the literal's clauses and cloned only for the others. A literal giving one clause
+            // (the usual case) so costs its own size, not the size of the clause built so far;
+            // cloning every time made a clause of n literals cost n^2 (the disj axis, 2.95x per
+            // doubling at 4096). Test: `one_scope::a_disjunction_of_many_moduli_scales`.
             let mut next_dist = Vec::with_capacity(dist.len() * lit_cnf.len());
-            for c1 in &dist {
-                for c2 in &lit_cnf {
-                    let mut merged = c1.clone();
+            for c1 in dist {
+                let mut c1 = Some(c1);
+                for (k, c2) in lit_cnf.iter().enumerate() {
+                    let Some(mut merged) = (if k + 1 == lit_cnf.len() {
+                        c1.take()
+                    } else {
+                        c1.clone()
+                    }) else {
+                        break;
+                    };
                     let mut taut = false;
                     for (&i, s2) in c2 {
                         let entry = merged.entry(i).or_default();
@@ -2462,7 +2586,13 @@ fn product_tree(leaves: Vec<Int>) -> Vec<Vec<Int>> {
             .last()
             .expect("nonempty")
             .chunks(2)
-            .map(|c| if c.len() == 2 { &c[0] * &c[1] } else { c[0].clone() })
+            .map(|c| {
+                if c.len() == 2 {
+                    &c[0] * &c[1]
+                } else {
+                    c[0].clone()
+                }
+            })
             .collect();
         tree.push(next);
     }
@@ -3455,6 +3585,184 @@ fn build_model(
     }
 
     model
+}
+
+/// The values `build_model` gives the atoms at `x = x_val`, read one atom at a time where a
+/// constraint needs it, so a question that wants no model builds none (R2-CODEX-6, I3.6; the
+/// reading is Codex's round-3 `ScalarWitness`). Each read follows `build_model`'s order: a
+/// three-term remainder, then a local quotient, a global quotient, a fixed value and `x` itself;
+/// any other atom through its unit class.
+///
+/// Complexity tradeoff: naive version, `build_model` then `f.holds`, computes every atom's value;
+/// this computes only the atoms the constraints name, each once per use. A quotient of an N-bit
+/// point still costs O(N) words, so n constraints cost O(n N) (R4-CLAUDE-6).
+struct PointValues<'a> {
+    x_root: &'a Atom,
+    x_val: &'a Int,
+    fixed: &'a HashMap<Atom, Int>,
+    uf: &'a UnitUf,
+    rem_defs: &'a HashMap<Atom, FullRemDef>,
+    global_quots: &'a HashMap<Atom, GlobalQuot>,
+    local_windows: &'a HashMap<Atom, Vec<LocalWindow>>,
+}
+
+impl PointValues<'_> {
+    /// The value of an atom that `build_model` sets before the three-term remainders.
+    fn quotient(&self, a: &Atom) -> Option<Int> {
+        if let Some(wins) = self.local_windows.get(a) {
+            for lw in wins {
+                let sx = if lw.s_x > 0 {
+                    self.x_val.clone()
+                } else {
+                    -self.x_val
+                };
+                let u = &sx + &lw.c_lo;
+                if u.mod_floor(&lw.m) <= lw.w {
+                    let q = u.div_floor(&lw.m);
+                    return Some(if lw.sigma_q > 0 { q } else { -&q });
+                }
+            }
+            return Some(Int::ZERO);
+        }
+        if let Some(gq) = self.global_quots.get(a) {
+            let sx = if gq.s_x > 0 {
+                self.x_val.clone()
+            } else {
+                -self.x_val
+            };
+            let q = (&sx + &gq.c_lo).div_floor(&gq.m);
+            return Some(if gq.sigma_q > 0 { q } else { -&q });
+        }
+        if let Some(v) = self.fixed.get(a) {
+            return Some(v.clone());
+        }
+        (a == self.x_root).then(|| self.x_val.clone())
+    }
+
+    /// The value of an atom that `build_model` sets directly, or None.
+    fn direct(&self, a: &Atom) -> Option<Int> {
+        if let Some(rem) = self.rem_defs.get(a) {
+            let q = self.quotient(&rem.q_root).unwrap_or(Int::ZERO);
+            let sum = &(&(&rem.c_x * self.x_val) + &(&rem.c_q * &q)) + &rem.k;
+            return Some(if rem.c_r > 0 { -&sum } else { sum });
+        }
+        self.quotient(a)
+    }
+
+    fn atom(&self, a: &Atom) -> Int {
+        if let Some(v) = self.direct(a) {
+            return v;
+        }
+        let (root, s, d) = self.uf.get(a);
+        let v = self.direct(&root).unwrap_or(Int::ZERO);
+        if s > 0 { &v + &d } else { &d - &v }
+    }
+
+    fn con_holds(&self, c: &Con) -> bool {
+        let v = c
+            .lin
+            .terms
+            .iter()
+            .fold(c.lin.constant.clone(), |v, (a, k)| {
+                &v + &(k * &self.atom(a))
+            });
+        match c.rel {
+            Rel::Eq => v.is_zero(),
+            Rel::Ge => !v.is_negative(),
+        }
+    }
+
+    /// Whether `f` holds at these values: the walk of `Formula::holds`, on an explicit stack,
+    /// each shared part read once (by its id).
+    fn holds(&self, f: &Formula) -> bool {
+        if let Formula::Con(c) = f {
+            return self.con_holds(c);
+        }
+        let mut seen: HashMap<Id, bool> = HashMap::new();
+        let mut stack = vec![(f, f.kids().iter(), None)];
+        let mut value: Option<bool> = None;
+        while let Some((node, left, _)) = stack.last_mut() {
+            if let Some(v) = value.take() {
+                let decided = match node {
+                    Formula::And(_) => !v,
+                    Formula::Or(_) => v,
+                    Formula::Not(_) | Formula::Con(_) => true,
+                };
+                if decided {
+                    let v = if matches!(node, Formula::Not(_)) {
+                        !v
+                    } else {
+                        v
+                    };
+                    if let Some((_, _, Some(id))) = stack.pop() {
+                        seen.insert(id, v);
+                    }
+                    value = Some(v);
+                    continue;
+                }
+            }
+            match left.next() {
+                Some(Formula::Con(c)) => value = Some(self.con_holds(c)),
+                Some(g) => match Id::of(g) {
+                    Some(id) => match seen.get(&id) {
+                        Some(&v) => value = Some(v),
+                        None => stack.push((g, g.kids().iter(), Some(id))),
+                    },
+                    None => stack.push((g, g.kids().iter(), None)),
+                },
+                None => {
+                    let v = matches!(node, Formula::And(_));
+                    if let Some((_, _, Some(id))) = stack.pop() {
+                        seen.insert(id, v);
+                    }
+                    value = Some(v);
+                }
+            }
+        }
+        value.unwrap_or(false)
+    }
+}
+
+/// The bounds that triples of clauses force (Codex's R3-CODEX-6, proved there): three clauses
+/// `x mod a == a_j || x mod b == b_j || x in D`, with one interval `D`, the three `a_j` distinct
+/// and the three `b_j` distinct, force `x` into `D`, since outside `D` the one value of `x mod a`
+/// and the one of `x mod b` satisfy at most two of them. Clauses are grouped by `(D, a, b)`; a
+/// group keeps the first pairs whose residues are new on both sides, and a third such pair
+/// forces `D`. Missing a triple (another choice of three) only misses a bound. O(c log c) map
+/// operations for c clauses.
+///
+/// Complexity tradeoff: without this bound the walk visits every regime below `D` on the
+/// regimes3 family (23x per 8x, Gemini's round-3 control); it finds only bounds forced by three
+/// two-modulus clauses, not every implied bound. Test: the regimes3 axis of `pncx_probe`.
+fn forced_pair_bounds(clauses: &[FlatClause]) -> Domain {
+    let mut groups: BTreeMap<(&Span, &Int, &Int), Vec<(&Int, &Int)>> = BTreeMap::new();
+    let (mut lo, mut hi) = (None, None);
+    for cl in clauses {
+        if cl.mods.len() != 2 {
+            continue;
+        }
+        let mut lits = cl.mods.iter();
+        let (Some((a, sa)), Some((b, sb)), [span]) =
+            (lits.next(), lits.next(), cl.bounds.pieces.as_slice())
+        else {
+            continue;
+        };
+        let ([(ra, ra_hi)], [(rb, rb_hi)]) = (sa.as_slice(), sb.as_slice()) else {
+            continue;
+        };
+        if ra != ra_hi || rb != rb_hi {
+            continue;
+        }
+        let chosen = groups.entry((span, a, b)).or_default();
+        if chosen.len() < 3 && chosen.iter().all(|(ca, cb)| *ca != ra && *cb != rb) {
+            chosen.push((ra, rb));
+            if chosen.len() == 3 {
+                lo = max_lo(lo, span.0.clone());
+                hi = min_hi(hi, span.1.clone());
+            }
+        }
+    }
+    Domain::from_pieces(vec![(lo, hi)])
 }
 
 /// Two clauses on each separate pair have a direct sufficient witness: meet the first

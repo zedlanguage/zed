@@ -7815,8 +7815,11 @@ impl<'m, 't> Walk<'m, 't> {
     async fn lin_at(&'m self, t: Tid, env: Eid) -> Option<Lin> {
         use Prim::*;
         if let Some(v) = self.constant(t, env).await {
+            // A constant past the 64-bit range is read at its size, as `constant_coef` reads
+            // it (I4.1): read as no linear form, it dropped the question with no message.
             return match v {
                 Value::Int(n) => Some(Lin::constant(n)),
+                Value::Big(k) => Num::from(&*k).to_int().map(Lin::constant),
                 _ => None,
             };
         }
@@ -7905,18 +7908,22 @@ impl<'m, 't> Walk<'m, 't> {
                         _ => None,
                     },
                     IntDiv | Mod => {
-                        let c = self.constant_int(self.arg(args, 1), env).await;
-                        if c.is_none() && products {
+                        // A divisor past the 64-bit range is read at its size (R4-CLAUDE-1): read
+                        // as no constant, it dropped the question with no message.
+                        let k = self.constant_coef(self.arg(args, 1), env).await;
+                        if k.is_none() && products {
                             // A divisor that is not a constant: its product with the quotient
                             // is an atom, which only rung 2's translation admits.
                             let a = arg(0).await?;
                             let n = arg(1).await?;
                             return self.tr(|tr| tr.div_mod_by_term(p, &a, &n));
                         }
-                        let c = c.filter(|c| *c != 0)?;
+                        let c = k?
+                            .to_i128()
+                            .filter(|c| *c != 0 && c.checked_abs().is_some())?;
                         let a = arg(0).await?;
                         self.tr(|tr| {
-                            let n = tr.pair_by_constant(&a, i128::from(c));
+                            let n = tr.pair_by_constant(&a, c);
                             let n = if p == IntDiv { n } else { n + 1 };
                             Some(Lin::atom(presburger::Atom::Aux(n)))
                         })
