@@ -218,12 +218,25 @@ fn a_decimal_a_called_function_returns_is_rejected() {
     );
     assert_eq!(type_errors(&src), [unfixed("2.5", f64, rat, Some("g"))]);
     fixes_check(&src, g, [f64, rat]);
-    // A body that is the decimal, one that returns it in a tuple, and one that calls a
-    // function that returns it: the message names the call the value is bound to.
+    // A body that is the decimal, one that returns it in a tuple, one that calls a function
+    // that returns it, and bodies that return it in a payload, which nothing fixes, as at
+    // `y = #bad(0.5)`: the message names the call the value is bound to.
     for (defs, call, name) in [
         ("f() = 0.5;\n", "y = f();", "f"),
         ("f(x: int) = (x, 0.5);\n", "y = f(x: 1);", "f"),
         ("f() = 0.5;\ng() = f();\n", "y = g();", "g"),
+        ("f() = #bad(0.5);\n", "y = f();", "f"),
+        ("f() = (1, #bad(0.5));\n", "y = f();", "f"),
+        (
+            "f(positional c: bool) = if c { #bad(0.5) } else { #ok };\n",
+            "y = f(true);",
+            "f",
+        ),
+        (
+            "f(x) = if x > 0 { #bad(x) } else { #bad(0.5) };\n",
+            "y = f(x: 1.0f64);",
+            "f",
+        ),
     ] {
         let src = format!("{defs}{call}\n");
         let line = defs.lines().next().unwrap();
@@ -237,6 +250,7 @@ fn a_decimal_a_called_function_returns_is_rejected() {
         fixes_check(&src, line, [&f64, &rat]);
     }
     assert_eq!(value("f() = 0.5r;\ny = f();\n", "y"), "1r/2r");
+    assert_eq!(value("f() = #bad(0.5r);\ny = f();\n", "y"), "#bad(1r/2r)");
 }
 
 #[test]
@@ -245,6 +259,8 @@ fn a_decimal_a_call_gives_a_carrier_stays_accepted() {
     // fixes; and it joins the class beside an atom the other branch may give.
     let cases = [
         ("f() = 0.5f64;\ny = f();\n", "0.5"),
+        ("f() = #bad(0.5f64);\ny = f();\n", "#bad(0.5)"),
+        ("f(x) = #bad(x);\ny = f(x: 1.0f64);\n", "#bad(1.0)"),
         (
             "g(x) = if x > 0 { x } else { 0.5 };\ny = g(x: 1.0f64);\n",
             "1.0",

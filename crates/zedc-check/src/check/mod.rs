@@ -6782,16 +6782,18 @@ enum Tail<'e> {
     None,
 }
 
-/// Whether `t` holds, at any depth of its tuples, some `f64` values but not every one: the
-/// type at a place holds a decimal literal that nothing gave a carrier only if it does
-/// ([`Ck::unfixed_tails`]). The walk keeps its own stack, and reads each shared row once.
+/// Whether `t` holds, at any depth of its tuples, some `f64` values but not every one, or
+/// the payload of an atom: the type at a place holds a decimal literal that nothing gave a
+/// carrier only if it does ([`Ck::unfixed_tails`]), since a literal in a payload is no
+/// operand and nothing gives it one. The walk keeps its own stack, and reads each shared
+/// row once.
 fn decimal_alone(t: &Ty) -> bool {
     let f = Ty::carrier(Carrier::F64);
     let mut seen: HashSet<*const Ty> = HashSet::new();
     let mut todo = vec![t];
     while let Some(t) = todo.pop() {
         let s = Ty::set(t.set.clone()).meet(&f);
-        if !s.is_empty() && !f.subtype(&s) {
+        if !t.payloads.is_empty() || (!s.is_empty() && !f.subtype(&s)) {
             return true;
         }
         for row in &t.tuples {
