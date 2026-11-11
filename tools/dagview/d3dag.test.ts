@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { graph, layerSeparation, layeringSimplex } from "d3-dag";
-import { balanceCounts, compactLayers, fromPrevious, layers, lowerSources, splitRows } from "./d3dag.ts";
+import { balanceCounts, balanceLayers, compactLayers, fromPrevious, layers, lowerSources, rowLimit, splitRows } from "./d3dag.ts";
 import type { Graph } from "./layout.ts";
 import { planLike } from "./synthetic.ts";
 
@@ -190,22 +190,31 @@ test("a row of exactly 1.5 times the median count is not split", () => {
   assert.ok(splitRows(z, z.map((_, i) => i)));
 });
 
-test("after balancing and splitting the plan no edge points up", () => {
+test("after balancing and splitting the plan no edge points up, and no row is over the split limit, so none is split", () => {
   const { dag, nodes, parents, children } = dagOf(plan);
-  const y = layers(dag, nodes, parents, children);
+  const { y } = layers(dag, nodes, parents, children);
+  edgesDown(y, children);
+  assert.ok(Math.max(...counts(y)) <= rowLimit(y), `widest ${Math.max(...counts(y))}, limit ${rowLimit(y)}`);
+  assert.equal(splitRows(y, nodes.map((_, i) => i)), null);
+});
+
+test("splitting keeps every edge pointing down", () => {
+  const { dag, nodes, parents, children } = dagOf(plan);
+  layeringSimplex()(dag as any, layerSeparation);
+  const y = Int32Array.from(nodes, (n: any) => n.y);
   const s = splitRows(y, nodes.map((_, i) => i))!;
-  assert.ok(s, "the plan has a row to split");
+  assert.ok(s, "the simplex layers of the plan have a row to split");
   edgesDown(s, children);
 });
 
-// The layers of g by id, from scratch or from prev.
-function layersOf(g: Graph, prev?: Record<string, number>) {
+// The layers of g by id and their row limit, from scratch or from prev and its row limit.
+function layersOf(g: Graph, prev?: Record<string, number>, prevK?: number) {
   const { dag, nodes, parents, children } = dagOf(g);
-  const y = layers(dag, nodes, parents, children, prev);
+  const { y, K } = layers(dag, nodes, parents, children, prev, prevK);
   edgesDown(y, children);
   const byId: Record<string, number> = {};
   g.nodes.forEach((n, i) => { byId[n.id] = y[i]; });
-  return { y, byId };
+  return { y, byId, K };
 }
 
 // An edge from a node to one in a higher layer that cannot reach it, so the
@@ -227,7 +236,7 @@ function upwardEdge(g: Graph, byId: Record<string, number>): [string, string] {
 test("from an earlier layering: an unchanged graph keeps its layers; one added edge, one added node, a removed node and a batch of changes give valid layers, the same each time", () => {
   for (const [name, g] of [["the plan", plan], ["a plan-shaped graph of 1000 nodes", planLike(1000, 2700)]] as const) {
     const base = layersOf(g);
-    assert.deepEqual(layersOf(g, base.byId).byId, base.byId);
+    assert.deepEqual(layersOf(g, base.byId, base.K).byId, base.byId);
     const ids = g.nodes.map((n) => n.id);
     const up = upwardEdge(g, base.byId);
     const cases: [string, Graph][] = [
@@ -241,9 +250,9 @@ test("from an earlier layering: an unchanged graph keeps its layers; one added e
     ];
     for (const [what, h] of cases) {
       const t0 = Date.now();
-      const inc = layersOf(h, base.byId);
+      const inc = layersOf(h, base.byId, base.K);
       const ms = Date.now() - t0;
-      assert.deepEqual(layersOf(h, base.byId).byId, inc.byId, `${what}: not the same twice`);
+      assert.deepEqual(layersOf(h, base.byId, base.K).byId, inc.byId, `${what}: not the same twice`);
       const t1 = Date.now();
       const full = layersOf(h);
       const fullMs = Date.now() - t1;
@@ -273,10 +282,12 @@ test("fromPrevious gives null when no node has an earlier layer", () => {
   assert.equal(fromPrevious([undefined, undefined], [[], [0]], [[1], []]), null);
 });
 
-// The least time of three runs of f on inputs made before timing.
+// The least time of five runs of f on inputs made before timing: with three,
+// one slow run of the 32000-node layers (364 ms against 110 to 220 ms) failed
+// the scaling test below while five test files ran beside it at load 42.
 function best(make: () => () => void): number {
   let t = Infinity;
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < 5; k++) {
     const run = make();
     const t0 = performance.now();
     run();
@@ -329,4 +340,192 @@ test("count balancing and layering from an earlier layering scale as n log n: pl
   const show = (t: number[]) => `${t[0].toFixed(1)} and ${t[1].toFixed(1)} ms (ratio ${(t[1] / t[0]).toFixed(1)})`;
   console.log(`balanceCounts ${show(balance)}; layers from earlier layers ${show(again)}; whole-spine slack ${show(wide)}; limit ${limit.toFixed(1)}`);
   for (const [what, t] of [["balanceCounts", balance], ["layers", again], ["whole-spine slack", wide]] as const) assert.ok(t[1] / t[0] < limit, `${what}: ratio ${(t[1] / t[0]).toFixed(1)}`);
+});
+
+// Sources (no parents, some children) left more than one layer above their
+// highest child although a layer between them has room (fewer than K nodes).
+function stranded(y: Int32Array, parents: number[][], children: number[][], K: number): number {
+  const c = new Map<number, number>();
+  for (const v of y) c.set(v, (c.get(v) ?? 0) + 1);
+  let total = 0;
+  for (let i = 0; i < y.length; i++) {
+    if (parents[i].length || !children[i].length) continue;
+    const top = Math.min(...children[i].map((k) => y[k]));
+    for (let r = y[i] + 1; r < top; r++) if ((c.get(r) ?? 0) <= K - 1) { total++; break; }
+  }
+  return total;
+}
+
+// parents and children of a graph given as edges between n numbered nodes.
+function adjacency(n: number, edges: [number, number][]) {
+  const parents: number[][] = Array.from({ length: n }, () => []), children: number[][] = Array.from({ length: n }, () => []);
+  for (const [a, b] of edges) { children[a].push(b); parents[b].push(a); }
+  return { parents, children };
+}
+
+// The staircase: a spine with node l in layer l (l = 0 to k + 2); mover j
+// (j = 1 to k) in layer j + 1, with parent spine j - 1 and child spine j + 2,
+// so its slack is layers j and j + 1; and l - 1 fillers in layer l (l = 2 to
+// k + 1), with parent spine l - 1 and child spine l + 1, which cannot move.
+// Layer l holds l + 1 nodes, layer 1 one. Mover j can move up only once mover
+// j - 1 has left layer j, and as the pass takes the most crowded layers first,
+// mover j comes before mover j - 1: one move per pass.
+function staircase(k: number) {
+  const edges: [number, number][] = [];
+  const y: number[] = [];
+  for (let l = 0; l <= k + 2; l++) { y.push(l); if (l) edges.push([l - 1, l]); }
+  for (let j = 1; j <= k; j++) { const v = y.length; y.push(j + 1); edges.push([j - 1, v], [v, j + 2]); }
+  for (let l = 2; l <= k + 1; l++) for (let f = 0; f < l - 1; f++) { const v = y.length; y.push(l); edges.push([l - 1, v], [v, l + 1]); }
+  return { y: Int32Array.from(y), ...adjacency(y.length, edges) };
+}
+
+const sumSq = (y: Int32Array) => counts(y).reduce((s, c) => s + c * c, 0);
+
+test("DAG-balance-bound: balanceCounts on the staircase makes one move per pass, k moves in k + 1 passes, each lowering the sum of squared counts by exactly 2, which meets the bound passes <= moves + 1 <= (sum of squares at the start) / 2 + 1", () => {
+  for (const k of [10, 40, 160]) {
+    const { y, parents, children } = staircase(k);
+    const s0 = sumSq(y);
+    let moves = 0;
+    const passes = balanceCounts(y, parents, children, () => { moves++; });
+    edgesDown(y, children);
+    const n = y.length;
+    console.log(`staircase k = ${k}: ${n} nodes, ${passes} passes, ${moves} moves, sum of squares ${s0} -> ${sumSq(y)}`);
+    assert.equal(moves, k);
+    assert.equal(passes, k + 1);
+    assert.equal(s0 - sumSq(y), 2 * k);
+    assert.ok(passes <= moves + 1 && moves <= s0 / 2);
+  }
+});
+
+// The chain for balanceLayers at row limit K: spine node l in layer l (l = 0
+// to k + 3); mover j (j = 1 to k) in layer j + 2, with parents spine j - 1 and
+// spine j and child spine j + 3, so its slack is layers j + 1 and j + 2 and
+// its edges pull it up; and K - 2 fixed fillers in each of layers 2 to k + 2.
+// Layer 2 holds K - 1 nodes and layers 3 to k + 2 hold K, so only mover 1 has
+// room above it, and each move makes room for the next mover. Mover k has the
+// lowest index, so in each pass the movers are taken from k down to 1.
+function chain(k: number, K: number) {
+  const edges: [number, number][] = [];
+  const y: number[] = [];
+  for (let l = 0; l <= k + 3; l++) { y.push(l); if (l) edges.push([l - 1, l]); }
+  const first = y.length;
+  for (let j = k; j >= 1; j--) { const v = y.length; y.push(j + 2); edges.push([j - 1, v], [j, v], [v, j + 3]); }
+  for (let l = 2; l <= k + 2; l++) for (let f = 0; f < K - 2; f++) { const v = y.length; y.push(l); edges.push([l - 1, v], [v, l + 1]); }
+  return { y: Int32Array.from(y), first, ...adjacency(y.length, edges) };
+}
+
+test("DAG-balance-bound: balanceLayers on the chain makes one move per pass, k moves in k + 1 passes, so the passes grow linearly with the graph, within the bound moves <= Q0 + (Q0 + 1) F_max", () => {
+  const K = 5;
+  for (const k of [10, 40, 160]) {
+    const { y, parents, children } = chain(k, K);
+    const n = y.length, m = children.reduce((s, c) => s + c.length, 0), L = counts(y).length;
+    let moves = 0;
+    const passes = balanceLayers(y, parents, children, K, () => { moves++; });
+    edgesDown(y, children);
+    const Q0 = 0, Fmax = (2 * K + 1) * m * (L - 1) + n * n;
+    console.log(`chain k = ${k}, K = ${K}: ${n} nodes, ${passes} passes, ${moves} moves; bound ${Q0 + (Q0 + 1) * Fmax} moves`);
+    assert.equal(moves, k);
+    assert.equal(passes, k + 1);
+    assert.ok(Math.max(...counts(y)) <= K);
+  }
+});
+
+test("DAG-balance-bound: a row over K at the start (Q0 > 0) is emptied to K and the moves stay within Q0 + (Q0 + 1) F_max", () => {
+  // Spine 0 -> 1 -> 2 -> 3 -> 4; 12 nodes with parent spine 0 and child spine
+  // 4 all in layer 2, so layer 2 holds 13 at K = 6.
+  const K = 6, edges: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 4]];
+  const y = [0, 1, 2, 3, 4];
+  for (let v = 5; v < 17; v++) { y.push(2); edges.push([0, v], [v, 4]); }
+  const { parents, children } = adjacency(y.length, edges);
+  const Y = Int32Array.from(y);
+  const over = counts(Y).reduce((s, c) => s + Math.max(0, c - K) ** 2, 0);
+  let moves = 0;
+  balanceLayers(Y, parents, children, K, () => { moves++; });
+  edgesDown(Y, children);
+  const n = Y.length, m = edges.length, L = 5, Fmax = (2 * K + 1) * m * (L - 1) + n * n;
+  assert.equal(over, 49);
+  assert.ok(Math.max(...counts(Y)) <= K, `counts ${counts(Y)}`);
+  assert.ok(moves <= over + (over + 1) * Fmax);
+});
+
+// Spine 0 -> 1 -> ... -> 6; three sources p (each with children spine 1 and
+// x) in layer 0; x with child spine 6 in layer 5; and `full` fixed fillers
+// in layer 1 (parent spine 0, child spine 2). x has three edges up and one
+// down, as S.3-cost-presburger has more parents than children.
+function pulledUp(full: number) {
+  const edges: [number, number][] = [];
+  const y: number[] = [];
+  for (let l = 0; l <= 6; l++) { y.push(l); if (l) edges.push([l - 1, l]); }
+  const x = 7;
+  y.push(5);
+  for (let p = 0; p < 3; p++) { const v = y.length; y.push(0); edges.push([v, 1], [v, x]); }
+  edges.push([x, 6]);
+  for (let f = 0; f < full; f++) { const v = y.length; y.push(1); edges.push([0, v], [v, 2]); }
+  return { y: Int32Array.from(y), x, edges };
+}
+
+// The same graph upside down: every edge reversed and layer l made 6 - l.
+const mirrored = (g: { y: Int32Array; edges: [number, number][] }) => ({ y: g.y.map((l) => 6 - l), edges: g.edges.map(([a, b]): [number, number] => [b, a]) });
+
+test("the spring rule: a node with more parents than children moves up to the row below its lowest parent; the mirror graph moves it down to the row above its highest child; a full row is not entered", () => {
+  const K = 4;
+  for (const [what, full, want] of [["room in row 1", 0, 1], ["row 1 full", K, 2]] as const) {
+    const g = pulledUp(full);
+    const { parents, children } = adjacency(g.y.length, g.edges);
+    const y = Int32Array.from(g.y);
+    const before = counts(y);
+    balanceLayers(y, parents, children, K, (_i, _a, b) => { assert.ok(counts(y)[b] <= K, `${what}: a move filled layer ${b} past ${K}`); });
+    edgesDown(y, children);
+    assert.equal(y[g.x], want, `${what}: up`);
+    const h = mirrored(g);
+    const r = adjacency(h.y.length, h.edges);
+    const z = Int32Array.from(h.y);
+    balanceLayers(z, r.parents, r.children, K);
+    edgesDown(z, r.children);
+    assert.equal(z[g.x], 6 - want, `${what}: down`);
+    for (const [l, c] of counts(y).entries()) assert.ok(c <= Math.max(K, before[l]), `${what}: layer ${l} holds ${c}`);
+  }
+});
+
+test("a source moves down to the row above its child when the rows between have room, and stays when every row between is full", () => {
+  // Spine 0 -> 1 -> 2 -> 3; source s in layer 0 with child spine 3; `fill`
+  // fixed fillers in each of layers 1 and 2.
+  const K = 3;
+  for (const [fill, want] of [[0, 2], [K - 1, 0]] as const) {
+    const edges: [number, number][] = [[0, 1], [1, 2], [2, 3], [4, 3]];
+    const y = [0, 1, 2, 3, 0];
+    for (const l of [1, 2]) for (let f = 0; f < fill; f++) { const v = y.length; y.push(l); edges.push([l - 1, v], [v, l + 1]); }
+    const { parents, children } = adjacency(y.length, edges);
+    const Y = Int32Array.from(y);
+    balanceLayers(Y, parents, children, K);
+    edgesDown(Y, children);
+    assert.equal(Y[4], want, `with ${fill} fillers per row`);
+    assert.equal(stranded(Y, parents, children, K), 0);
+  }
+});
+
+test("on the plan no source is stranded above a row with room (at the row limit K the layers were balanced at) after layers; after balanceCounts alone some are; no move of balanceLayers fills a row past K except the move out of a fuller row", () => {
+  const { dag, nodes, parents, children } = dagOf(plan);
+  layeringSimplex()(dag as any, layerSeparation);
+  const y = Int32Array.from(nodes, (n: any) => n.y);
+  lowerSources(y, parents, children);
+  balanceCounts(y, parents, children);
+  const K = rowLimit(y);
+  const before = stranded(y, parents, children, K);
+  let top = Infinity;
+  for (const v of y) top = Math.min(top, v);
+  const c = counts(y.map((v) => v - top));
+  let fallbacks = 0;
+  balanceLayers(y, parents, children, K, (_i, a, b) => {
+    a -= top; b -= top;
+    if (c[b] + 1 > K) { assert.ok(c[b] + 1 < c[a], `a move to layer ${b} of ${c[b]} from one of ${c[a]}`); fallbacks++; }
+    c[a]--; c[b]++;
+  });
+  const after = stranded(y, parents, children, K);
+  const full = layers(dag, nodes, parents, children);
+  const last = stranded(full.y, parents, children, full.K);
+  console.log(`plan: K = ${K}; stranded sources after balanceCounts ${before}, after balanceLayers ${after}, after layers ${last} (at its K = ${full.K}); ${fallbacks} moves out of rows over K into rows at K or more`);
+  assert.ok(before > 0, "control: balanceCounts alone leaves sources stranded");
+  assert.equal(after, 0);
+  assert.equal(last, 0);
 });

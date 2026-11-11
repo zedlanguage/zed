@@ -19,6 +19,16 @@
 // 4,092 x 12,058, 4,198 x 48,698 and 14,962 x 11,528; simplex layers alone: 4,576 x 12,058, 4,868 x 48,698 and 33,742 x 11,306. With d3-dag's
 // greedy coordinates and no narrowing the plan was 57,580 x 11,306; ELK gave
 // 4,795 x 12,058, 4,749 x 48,822 and 28,725 x 16,792.
+//
+// With edges shortened within rows of at most the split limit (balanceLayers
+// in d3dag.ts, 2026-11-11) the limits were raised: 4,230 x 12,058 (0.351),
+// 4,444 x 48,698 (0.0913) and the plan 8,862 x 11,824 (0.749). The plan is
+// wider because its rows now fill to the split limit and none is over it, so
+// none is split: 104 rows, 11,824 px high against 14,516. On the live plan of
+// 2026-11-11 (1,682 nodes) the width did not change: 7,550 px before and
+// after, 126 rows, as rows over the limit that no move can empty are split
+// as before. The spring weight does not change it: with W = 1, 4, 16 and
+// 2K + 1 in balanceLayers the plan was 8,844 to 8,888 px wide.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -29,9 +39,9 @@ import { planLike } from "./synthetic.ts";
 
 const plan = JSON.parse(readFileSync(new URL("./plan-graph-2026-11-10.json", import.meta.url), "utf8")) as Graph;
 const cases: [string, () => Graph, number][] = [
-  ["a plan-shaped graph of 1000 nodes and 2700 edges", () => planLike(1000, 2700), 0.35],
+  ["a plan-shaped graph of 1000 nodes and 2700 edges", () => planLike(1000, 2700), 0.37],
   ["a plan-shaped graph of 4000 nodes and 10800 edges", () => planLike(4000, 10800), 0.095],
-  ["the plan of 2026-11-10", () => plan, 0.46],
+  ["the plan of 2026-11-10", () => plan, 0.77],
 ];
 
 // The three run at once, each in its own worker, so the file takes as long as the largest.

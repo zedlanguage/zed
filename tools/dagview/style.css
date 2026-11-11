@@ -3,16 +3,16 @@
   --bg: #f6f6f3; --panel: #ffffff; --line: #d9d8d2; --text: #1d1f21; --dim: #666a70; --edge: #b4b6b8;
   --edge-met: #8fb79c; --lit: #2563c9;
   --done-bg: #d9efdf; --done-line: #2e8b57; --active-bg: #fff1cf; --active-line: #c98a00;
-  --wait-bg: #eeeeea; --wait-line: #c4c4bd; --ready-bg: #e6eefb; --ready-line: #2563c9;
-  --bad: #c0352b; --warn: #a66c00;
+  --wait-bg: #eeeeea; --wait-line: #c4c4bd; --ready-bg: #f1e6f8; --ready-line: #8e44ad;
+  --blocked-bg: #fdebe8; --bad: #c0352b; --warn: #a66c00;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #15171a; --panel: #1e2125; --line: #33373d; --text: #e7e8ea; --dim: #9aa0a8; --edge: #4b5057;
     --edge-met: #3e6b4e; --lit: #7fb0ff;
     --done-bg: #1c3a29; --done-line: #4fb97f; --active-bg: #40310f; --active-line: #e5ad2e;
-    --wait-bg: #24272b; --wait-line: #3d4147; --ready-bg: #1c2c47; --ready-line: #7fb0ff;
-    --bad: #f0786d; --warn: #e5ad2e;
+    --wait-bg: #24272b; --wait-line: #3d4147; --ready-bg: #33223f; --ready-line: #c49be0;
+    --blocked-bg: #43201d; --bad: #f0786d; --warn: #e5ad2e;
   }
 }
 * { box-sizing: border-box; }
@@ -49,8 +49,8 @@ button:hover { border-color: var(--lit); }
 .chip.active { background: var(--active-bg); border-color: var(--active-line); }
 .chip.ready { background: var(--ready-bg); border-color: var(--ready-line); }
 .chip.unstarted { background: var(--wait-bg); border-color: var(--wait-line); }
-.chip.waiting, .chip.blocked { background: var(--wait-bg); border-color: var(--wait-line); border-style: dotted; }
-.chip.blocked { border-color: var(--bad); }
+.chip.waiting { background: var(--wait-bg); border-color: var(--wait-line); border-style: dotted; }
+.chip.blocked { background: var(--blocked-bg); border: 2px solid var(--bad); }
 
 main {
   position: relative; overflow: hidden; cursor: grab; touch-action: none;
@@ -68,8 +68,10 @@ svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: no
   transition: left .4s, top .4s, width .4s, height .4s; cursor: pointer;
 }
 .node.unstarted { background: var(--wait-bg); border-color: var(--wait-line); }
-.node.waiting, .node.blocked { background: var(--wait-bg); border-color: var(--wait-line); border-style: dotted; }
-.node.blocked { border-color: var(--bad); }
+.node.waiting { background: var(--wait-bg); border-color: var(--wait-line); border-style: dotted; }
+/* Held by an open author question: a red fill as well as a red border, as at
+   the scale that fits the whole plan (about 0.07) a border is under a pixel. */
+.node.blocked { background: var(--blocked-bg); border: 3px solid var(--bad); }
 .node.ready { background: var(--ready-bg); border-color: var(--ready-line); }
 .node.done { background: var(--done-bg); border-color: var(--done-line); }
 .node.awaiting { border-style: dashed; }

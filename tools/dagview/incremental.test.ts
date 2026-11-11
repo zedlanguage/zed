@@ -111,3 +111,39 @@ describe("layout from an earlier layout", () => {
     }
   });
 });
+
+// Nodes of both layouts whose drawn row (top = 0) or place in it changed. The
+// place is the rank by x among the nodes in both layouts, so an added node
+// does not by itself shift the nodes to its right.
+function movedNodes(a: Layout, b: Layout): { moved: number; of: number } {
+  const both = Object.keys(a.boxes).filter((id) => Object.hasOwn(b.boxes, id));
+  const places = (l: Layout) => {
+    const ys = [...new Set(Object.values(l.boxes).map((q) => Math.round(q.y)))].sort((p, q) => p - q);
+    const row = new Map(ys.map((y, i) => [y, i]));
+    const rows = new Map<number, string[]>();
+    for (const id of both) {
+      const r = row.get(Math.round(l.boxes[id].y))!;
+      if (!rows.has(r)) rows.set(r, []);
+      rows.get(r)!.push(id);
+    }
+    const at = new Map<string, string>();
+    for (const [r, ids] of rows) ids.sort((p, q) => l.boxes[p].x - l.boxes[q].x).forEach((id, k) => at.set(id, `${r} ${k}`));
+    return at;
+  };
+  const p = places(a), q = places(b);
+  return { moved: both.filter((id) => p.get(id) !== q.get(id)).length, of: both.length };
+}
+
+describe("a relayout after a one-node change", () => {
+  test("moves few nodes from where the earlier layout drew them; a layout of the same graph from scratch (the negative control) moves many", { timeout: 60_000 }, async () => {
+    const base = await layoutInWorker(plan);
+    const ids = plan.nodes.map((n) => n.id);
+    const g: Graph = { nodes: [...plan.nodes, { id: "NEW", w: 210, h: 52 }], edges: [...plan.edges, [ids[17], "NEW"], ["NEW", ids[Math.floor(ids.length / 2)]]] };
+    const [again, fresh] = await Promise.all([layoutInWorker(g, base), layoutInWorker(g)]);
+    const load = readFileSync("/proc/loadavg", "utf8").split(" ")[0];
+    const r = movedNodes(base, again), f = movedNodes(base, fresh);
+    console.log(`one added node: from the earlier layout ${r.moved} of ${r.of} nodes moved, ${drawnStats(again).crossings} crossings; from scratch ${f.moved} moved, ${drawnStats(fresh).crossings} crossings; earlier ${drawnStats(base).crossings} crossings; load ${load}`);
+    assert.ok(f.moved > r.of / 2, `control: from scratch only ${f.moved} moved`);
+    assert.ok(r.moved < f.moved / 4, `${r.moved} moved from the earlier layout against ${f.moved} from scratch`);
+  });
+});

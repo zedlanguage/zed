@@ -282,10 +282,27 @@ export function buildNodes(inp: Inputs): ViewNode[] {
   return buildGraph(inp).nodes;
 }
 
+// The held items (parseQuestions) by plan row: an id the plan has, in any
+// case, is that row; a DESIGN sub-step the plan has no row for, a row id with
+// a lowercase letter added ("L10.3b"), is its row ("L10.3"). Any other id is
+// kept as written (an item the ledger alone names).
+export function heldRows(held: Map<string, string[]> | undefined, known: Map<string, string>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const [raw, qs] of held ?? []) {
+    const sub = /^(.*\d)[a-z]$/.exec(raw);
+    const id = known.get(raw.toLowerCase()) ?? (sub ? known.get(sub[1].toLowerCase()) : undefined) ?? raw;
+    const list = out.get(id) ?? [];
+    for (const q of qs) if (!list.includes(q)) list.push(q);
+    out.set(id, list);
+  }
+  return out;
+}
+
 export function buildGraph(inp: Inputs): BoardState {
   const known = new Map<string, string>();
   for (const r of inp.plan) known.set(r.id.toLowerCase(), r.id);
   const problems: string[] = [];
+  const held = heldRows(inp.held, known);
 
   // The label an item is named by when nothing else names it, for the problem that reports it.
   const labelOf = new Map<string, string>();
@@ -360,7 +377,7 @@ export function buildGraph(inp: Inputs): BoardState {
     else if (lines.some((l) => l.entry.role === "merge" && /\bon main\b|merged/.test(l.entry.text))) s = "done";
     else if (lines.length > 0) s = "active";
     // An unanswered author question holds an item that is not yet done or under way.
-    if ((s === "unstarted" || s === "waiting") && inp.held?.has(r.id)) s = "blocked";
+    if ((s === "unstarted" || s === "waiting") && held.has(r.id)) s = "blocked";
     states.set(r.id, s);
   }
 
@@ -476,7 +493,7 @@ export function buildGraph(inp: Inputs): BoardState {
       lastTests,
       subs: [...subs.values()],
       note,
-      questions: inp.held?.get(r.id) ?? [],
+      questions: held.get(r.id) ?? [],
     };
   });
   const droppedIds = [...new Set([...inp.plan.map((r) => r.id), ...ledger.keys(), ...Object.keys(inp.overrides)])].filter((id) => !outside(id) && dropped(id));

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { buildGraph, buildNodes, ledgerCommits, overrideWarnings, parseLedger, parseQuestions, parseLog, parsePlan, resolveId, shapeProblems, shortLabel } from "./state.ts";
 
@@ -473,4 +474,34 @@ test("a ledger line without an id is reported, not fatal", () => {
   const g = buildGraph(inputs("", '{"item":"A","state":"ready","time":"2026-11-02T10:00:00Z"}\n{"id":"A","state":"open"}\n'));
   assert.equal(by(g.nodes).get("A")!.state, "unstarted");
   assert.deepEqual(g.problems, ['LEDGER LINE WITH NO ID: {"item":"A","state":"ready","time":"2026-11-02T10:00:00Z"}']);
+});
+
+test("with a fixture QUESTIONS.md, every plan row an open question holds is blocked, a sub-step id (L10.3b) holds its row, and a row held only by an answered question or by nothing is not", () => {
+  const rows = `# Plan
+## Items by level
+
+| Level | Id | Title | Size | Hard | Needs | Paths |
+|---|---|---|---|---|---|---|
+| 0 | S.1d | Held by Q53 | S | no | none |  |
+| 0 | L10.3 | Its step L10.3b held by Q53 | S | no | none |  |
+| 0 | L33.2 | Held by Q51 | S | no | none |  |
+| 0 | L7.4 | Held by A85 | S | no | none |  |
+| 1 | L7.5 | Needs L7.4 | S | no | L7.4 |  |
+| 0 | L20.1 | Held only by answered A80 | S | no | none |  |
+| 0 | L21.1 | Held by nothing (A31) | S | no | none |  |
+`;
+  const md = readFileSync(new URL("./questions-fixture.md", import.meta.url), "utf8");
+  const inp = { ...inputs("", ""), plan: parsePlan(rows), held: parseQuestions(md) };
+  const nodes = by(buildNodes(inp));
+  const blocked = [...nodes.values()].filter((n) => n.state === "blocked").map((n) => n.id).sort();
+  assert.deepEqual(blocked, ["L10.3", "L33.2", "L7.4", "S.1d"]);
+  assert.deepEqual(nodes.get("L10.3")!.questions, ["Q53"]);
+  assert.deepEqual(nodes.get("L7.4")!.questions, ["A85"]);
+  for (const id of ["L20.1", "L21.1"]) {
+    assert.equal(nodes.get(id)!.state, "unstarted", id);
+    assert.equal(nodes.get(id)!.ready, true, id);
+  }
+  // L7.5 waits through its need, not on a question.
+  assert.equal(nodes.get("L7.5")!.state, "unstarted");
+  assert.equal(nodes.get("L7.5")!.ready, false);
 });

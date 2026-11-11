@@ -65,7 +65,7 @@ function button(label: string, help: string, act: () => void): HTMLButtonElement
 const legend = el("div", "legend");
 for (const [cls, label] of [
   ["done", "● completed"], ["done awaiting", "● completed, not pushed"], ["active", "◐ in progress"],
-  ["ready", "○ ready to start"], ["unstarted", "○ waiting"], ["waiting", "◌ deferred"], ["blocked", "◌ blocked"],
+  ["ready", "○ ready to start"], ["unstarted", "○ waiting"], ["waiting", "◌ deferred"], ["blocked", "◌ blocked on a question"],
 ]) legend.append(el("span", `chip ${cls}`, label));
 top.append(title, counts, search, tools, machine, legend);
 
@@ -360,9 +360,11 @@ function render(s: State): void {
   stat(counts, "completed", `${done} / ${total}`);
   stat(counts, "in progress", String(active.length));
   stat(counts, "ready", String(ready));
-  const held = s.nodes.filter((n) => n.state === "waiting" || n.state === "blocked").length;
-  stat(counts, "waiting", String(total - done - active.length - ready - held));
-  stat(counts, "deferred", String(held));
+  const deferred = s.nodes.filter((n) => n.state === "waiting").length;
+  const blocked = s.nodes.filter((n) => n.state === "blocked").length;
+  stat(counts, "waiting", String(total - done - active.length - ready - deferred - blocked));
+  stat(counts, "deferred", String(deferred));
+  stat(counts, "blocked", String(blocked), blocked > 0 ? "bad" : "");
   stat(counts, "not pushed", String(s.nodes.filter((n) => n.awaitingBatch).length));
   stat(counts, "retries", String(s.nodes.reduce((a, n) => a + n.retries, 0)));
   // An older server sends no warnings.
