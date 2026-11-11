@@ -1625,6 +1625,11 @@ impl Search {
     /// so a root is never given the cause met in the decision of a type it does not read.
     fn give_up(&mut self, r: Refusal) {
         self.give_ups += 1;
+        // A speculative value search keeps its uncertainty counter, but no permanent
+        // refusal cause: the surrounding proof did not rely on that search.
+        if self.open_forks && self.blame.is_some() {
+            return;
+        }
         let ep = self.epoch;
         match (&mut self.blame, self.current) {
             (Some(blame), Some(c)) if !self.open_forks => blame.push((c, r, ep)),
@@ -4142,7 +4147,11 @@ impl<'m> Searching<'m> {
                 // construction over the forked tuple types, exponential in them. Used: one
                 // candidate per tuple type once per path; the end family takes 1,578 `cuts` at
                 // `n` 64 against 63,634 without `past_fork` (K35 control, 50 times from 8 to 64).
-                if self.s().kept_forks > forks {
+                // A fork can remain open without leaving a kept emptiness snapshot.
+                // Count it before starting another candidate search: one scan of the cells.
+                // Abandoning a witness attempt supplies no emptiness proof.
+                let open_fork = (0..b.r.len()).any(|j| b.forks(&open, j));
+                if self.s().kept_forks > forks || open_fork {
                     if past {
                         continue;
                     }

@@ -2835,16 +2835,13 @@ fn verdicts_agree_across_orders(
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
 
-/// Systems of the meets family whose verdicts depend on the order of the parts of their meets
-/// while a meet is keyed by its spelling: seed 11 is refused for want of a witness in three of
-/// its four orders and inhabited in the fourth, as a meet written in two orders is two types,
-/// and a morphism type returning it two morphism types. Once a meet is one type in either
-/// order, each of these should be decided alike in every order tried, the arms and parts
-/// shuffled too. Red on main. Of the candidate keys of item GROUP-search-canon-key, one made
-/// these agree but not the whole sweep, and changed printing; the other leaves seed 8022
-/// refused in two of its orders.
+/// Systems of the meets family whose verdicts depended on the order of the parts of their meets
+/// while a meet was keyed by its spelling: seed 11 was refused for want of a witness in three of
+/// its four orders and inhabited in the fourth, as a meet written in two orders was two types,
+/// and a morphism type returning it two morphism types. With a meet one type in either order
+/// and the searches that a fork left open rolled back (item GROUP-search-canon-key), each is
+/// decided alike in every order tried, the arms and parts shuffled too.
 #[test]
-#[ignore = "GROUP-search-canon-key: blocked; verdicts still depend on meet order; open"]
 fn meets_whose_parts_differ_in_order_agree_across_orders() {
     for seed in [
         11, 213, 374, 399, 433, 441, 952, 1059, 1847, 2153, 2700, 3763, 3855, 4676, 5276, 5302,
