@@ -3718,6 +3718,22 @@ fn modular_case(rng: &mut zed_tests::instances::Rng, case_idx: usize) -> Modular
     modular_case_with(rng, case_idx, None)
 }
 
+/// As `modular_case_with`, with the bounds named by a mode: 0 none, 1 lower only, 2 upper
+/// only, 3 both.
+fn modular_case_mode(
+    rng: &mut zed_tests::instances::Rng,
+    case_idx: usize,
+    mode: Option<u8>,
+) -> ModularCase {
+    let sides = mode.map(|m| match m {
+        0 => (false, false),
+        1 => (true, false),
+        2 => (false, true),
+        _ => (true, true),
+    });
+    modular_case_with(rng, case_idx, sides)
+}
+
 /// As `modular_case`, but where `sides` is `Some((has_lo, has_hi))` the bound `x >= lo` is
 /// written only if `has_lo` and `x <= hi` only if `has_hi`; with neither, the clauses that
 /// compare `x` with a number are replaced by residue clauses, so that `x` has no bound at all
@@ -4045,8 +4061,8 @@ fn one_variable_answers_do_not_depend_on_names() {
     // I4.15: the one-variable path worked in the coordinate of the root of its affine
     // union-find, the lexically least name, and tried the point 1 there, so renaming an alias
     // changed a refusal into an answer. Each formula of the enumeration test is asked again
-    // with its variables renamed so that every order of the names among themselves occurs
-    // (names before and after `x`, `x` itself renamed), and with its quotients and remainders
+    // with its variables renamed in four patterns (aliases before and after `x`,
+    // with `x` itself renamed), and with its quotients and remainders
     // numbered in reverse; `decide` and `satisfiable` give the same answer, refusal included,
     // and `satisfiable` asked first gives the same answers too. `PNCX_CASES=a..b` runs part.
     use zedc::store::presburger::{decide, satisfiable};
@@ -4128,8 +4144,52 @@ fn moved(f: &zedc::store::presburger::Formula, s: i64, d: i64) -> zedc::store::p
     })
 }
 
+// I6.16: the whole test took more than 20 s at load 40, so it runs in eight pieces: quarters of
+// the cases with no bound (the slowest kind), halves of those with one bound. Each piece draws
+// every case before its own, so the pieces ask exactly the formulas of the whole.
 #[test]
-fn one_variable_answers_with_one_bound_or_none_do_not_depend_on_names() {
+fn one_variable_answers_with_no_bound_do_not_depend_on_names_first_quarter() {
+    one_bound_or_none_names(Some("none"), 0, 375);
+}
+
+#[test]
+fn one_variable_answers_with_no_bound_do_not_depend_on_names_second_quarter() {
+    one_bound_or_none_names(Some("none"), 375, 750);
+}
+
+#[test]
+fn one_variable_answers_with_no_bound_do_not_depend_on_names_third_quarter() {
+    one_bound_or_none_names(Some("none"), 750, 1125);
+}
+
+#[test]
+fn one_variable_answers_with_no_bound_do_not_depend_on_names_fourth_quarter() {
+    one_bound_or_none_names(Some("none"), 1125, 1500);
+}
+
+#[test]
+fn one_variable_answers_with_a_lower_bound_do_not_depend_on_names_first_half() {
+    one_bound_or_none_names(Some("lo"), 0, 750);
+}
+
+#[test]
+fn one_variable_answers_with_a_lower_bound_do_not_depend_on_names_second_half() {
+    one_bound_or_none_names(Some("lo"), 750, 1500);
+}
+
+#[test]
+fn one_variable_answers_with_an_upper_bound_do_not_depend_on_names_first_half() {
+    one_bound_or_none_names(Some("hi"), 0, 750);
+}
+
+#[test]
+fn one_variable_answers_with_an_upper_bound_do_not_depend_on_names_second_half() {
+    one_bound_or_none_names(Some("hi"), 750, 1500);
+}
+
+/// The cases `from..to` of the kind of bound `only` (`none`, `lo` or `hi`; all three when
+/// `None`) of the test below.
+fn one_bound_or_none_names(only: Option<&str>, from: usize, to: usize) {
     // I5.3: the canonical coordinate of round 5 is chosen only where a regime has two bounds; a
     // regime with one bound or none is solved in the coordinate of the root of the affine
     // union-find, which a renaming changes. Formulas of `modular_case` with no bound on `x`, with
@@ -4139,14 +4199,9 @@ fn one_variable_answers_with_one_bound_or_none_do_not_depend_on_names() {
     // by enumeration where the period `L` (the lcm of the moduli) is at most 30,000: over
     // `[0, L)` with no bound, and over the bound and one period past the last number a clause
     // compares `x` with otherwise, which is exact because past it every clause is periodic in
-    // `x` with period `L`. `PNCX_CASES=a..b` and `PNCX_SIDES=none|lo|hi` run part.
+    // `x` with period `L`.
     use zedc::store::int::Int;
     use zedc::store::presburger::{Model, decide, satisfiable};
-    let (from, to) = std::env::var("PNCX_CASES").map_or((0, 1500), |s| {
-        let (a, b) = s.split_once("..").unwrap();
-        (a.parse().unwrap(), b.parse().unwrap())
-    });
-    let only = std::env::var("PNCX_SIDES").ok();
     let namings: [(&str, &dyn Fn(usize) -> String, &dyn Fn(u32) -> u32); 4] = [
         ("aliases after", &|k| format!("x{k}"), &|i| i),
         (
@@ -4186,7 +4241,7 @@ fn one_variable_answers_with_one_bound_or_none_do_not_depend_on_names() {
         ("lo", (true, false)),
         ("hi", (false, true)),
     ] {
-        if only.as_deref().is_some_and(|o| o != label) {
+        if only.is_some_and(|o| o != label) {
             continue;
         }
         let mut rng = zed_tests::instances::Rng::new(0x15_3b0d);
@@ -4690,4 +4745,369 @@ fn the_questions_of_negated_residues_over_distinct_bounds_scale() {
         16,
         negated_residues_over_distinct_bounds,
     );
+}
+
+#[test]
+fn one_variable_boundary_modes_do_not_depend_on_names() {
+    // I4.15: the one-variable path worked in the coordinate of the root of its affine
+    // union-find, the lexically least name, and tried the point 1 there, so renaming an alias
+    // changed a refusal into an answer. Each formula of the enumeration test is asked again
+    // with its variables renamed in four patterns (aliases before and after `x`,
+    // with `x` itself renamed), and with its quotients and remainders
+    // numbered in reverse; `decide` and `satisfiable` give the same answer, refusal included,
+    // and `satisfiable` asked first gives the same answers too. `PNCX_CASES=a..b` runs part.
+    use zedc::store::presburger::{decide, satisfiable};
+    let (from, to) = std::env::var("PNCX_CASES").map_or((0, 1000), |s| {
+        let (a, b) = s.split_once("..").unwrap();
+        (a.parse().unwrap(), b.parse().unwrap())
+    });
+    let namings: [(&str, &dyn Fn(usize) -> String, &dyn Fn(u32) -> u32); 4] = [
+        ("aliases after", &|k| format!("x{k}"), &|i| i),
+        (
+            "aliases before",
+            &|k| format!("{}", ["z", "a", "b", "c"][k]),
+            &|i| i,
+        ),
+        (
+            "interleaved",
+            &|k| format!("{}", ["m", "z", "a", "n"][k]),
+            &|i| 99 - i,
+        ),
+        ("reversed", &|k| format!("v{}", 9 - k), &|i| 99 - i),
+    ];
+    let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
+    let (mut differ, mut answered) = (Vec::new(), 0usize);
+    for case_idx in 0..to {
+        let (f, ..) = modular_case_mode(&mut rng, case_idx, Some((case_idx % 4) as u8));
+        if case_idx < from {
+            continue;
+        }
+        let answer = |g: &zedc::store::presburger::Formula, sat_first: bool| {
+            let (d, s) = if sat_first {
+                let s = satisfiable(g);
+                (decide(g), s)
+            } else {
+                let d = decide(g);
+                (d, satisfiable(g))
+            };
+            (d.ok(), s.ok().map(|m| m.is_some()))
+        };
+        let base = answer(&f, false);
+        answered += usize::from(base.0.is_some());
+        for (label, name, aux) in &namings {
+            let g = renamed(&f, name, aux);
+            for sat_first in [false, true] {
+                let got = answer(&g, sat_first);
+                if got != base {
+                    differ.push(format!(
+                        "case {case_idx} {label} sat_first={sat_first}: {got:?} against {base:?}\n  {g}"
+                    ));
+                }
+            }
+        }
+    }
+    println!(
+        "renamed cases {from}..{to}: {answered} answered, {} differ",
+        differ.len()
+    );
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+#[test]
+#[ignore]
+fn pncx_refused_cases() {
+    use zedc::store::int::Int;
+    use zedc::store::presburger::{Model, decide, satisfiable};
+    let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
+    let (from, to) = std::env::var("PNCX_CASES").map_or((0, 5000), |s| {
+        let (a, b) = s.split_once("..").unwrap();
+        (a.parse().unwrap(), b.parse().unwrap())
+    });
+    for i in 0..to {
+        let (f, x, copies, divs, lo, hi, bounded) = modular_case(&mut rng, i);
+        if i < from {
+            continue;
+        }
+        eprintln!("CASE_BEGIN {i} decide");
+        let d = decide(&f);
+        eprintln!("CASE_BEGIN {i} satisfiable");
+        let s = satisfiable(&f);
+        if d.is_ok() && s.is_ok() {
+            continue;
+        }
+        let mut points = Vec::new();
+        for v in lo..=hi {
+            let mut m = Model::new();
+            m.insert(x.clone(), Int::from(v));
+            for (a, s, off) in &copies[1..] {
+                m.insert(a.clone(), Int::from(s * v + off));
+            }
+            for (q, r, modulus, s, off) in &divs {
+                let u = s * v + off;
+                m.insert(q.clone(), Int::from(u.div_euclid(*modulus)));
+                m.insert(r.clone(), Int::from(u.rem_euclid(*modulus)));
+            }
+            if f.holds(&m) {
+                points.push(v);
+            }
+        }
+        println!(
+            "REFUSED case={i} bounded={bounded} decide={d:?} satisfiable={:?} points={points:?}\n{f}",
+            s.as_ref().map(|m| m.is_some())
+        );
+    }
+}
+
+#[test]
+#[ignore]
+fn pncx_boundary_modes_match_complete_periods() {
+    use zedc::store::int::Int;
+    use zedc::store::presburger::{Model, decide, satisfiable};
+    let range = std::env::var("PNCX_CASES").unwrap_or_else(|_| "0..1000".into());
+    let (a, b) = range.split_once("..").expect("range");
+    let (a, b): (usize, usize) = (a.parse().unwrap(), b.parse().unwrap());
+    let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
+    let mut checked = 0;
+    for case in 0..b {
+        let mode = (case % 4) as u8;
+        let (f, x0, copies, divs, lo, hi, _) = modular_case_mode(&mut rng, case, Some(mode));
+        if case < a {
+            continue;
+        }
+        let mut period = 1i64;
+        for (_, _, m, _, _) in &divs {
+            let (mut p, mut q) = (period, *m);
+            while q != 0 {
+                (p, q) = (q, p % q);
+            }
+            period = period / p * m;
+        }
+        // Every written bound is between lo-5 and hi+18. Outside it the
+        // condition is periodic; one full period on each permitted infinite
+        // side suffices. This is an exhaustive test oracle, not solver work.
+        let (start, end) = match mode {
+            0 => (0, period - 1),
+            1 => (lo, hi + 18 + period),
+            2 => (lo - 6 - period, hi),
+            _ => (lo, hi),
+        };
+        let truth = (start..=end).any(|v| {
+            let mut model = Model::from([(x0.clone(), Int::from(v))]);
+            for (atom, s, off) in &copies {
+                model.insert(atom.clone(), Int::from(s * v + off));
+            }
+            for (q, r, m, s, off) in &divs {
+                let value = s * v + off;
+                model.insert(q.clone(), Int::from(value.div_euclid(*m)));
+                model.insert(r.clone(), Int::from(value.rem_euclid(*m)));
+            }
+            f.holds(&model)
+        });
+        let d = decide(&f);
+        let sat = satisfiable(&f);
+        if let Ok(value) = d {
+            assert_eq!(value, truth, "case {case}: {f}");
+            checked += 1;
+        }
+        if let Ok(model) = sat {
+            assert_eq!(model.is_some(), truth, "case {case}: {f}");
+            if let Some(model) = model {
+                assert!(f.holds(&model), "case {case}");
+            }
+            checked += 1;
+        }
+    }
+    println!("BOUNDARY_PERIODS cases={a}..{b} checked={checked} mismatches=0");
+}
+
+#[test]
+fn remainder_alias_names_keep_the_same_answers() {
+    use zedc::store::presburger::extend::Extending;
+    let core = "x >= (0 - 8) && x <= 26 && (x + 1) mod 10 <= 1 && (x - 5) mod 4 <= 1 && ((x - 5) mod 4 == 2 || (x - 5) mod 4 == 1 || x <= 12) && ((x + 1) mod 10 != 5 || x mod 8 != 7)";
+    let witnesses: Vec<_> = (-8i64..=26)
+        .filter(|&x| {
+            (x + 1).rem_euclid(10) <= 1
+                && (x - 5).rem_euclid(4) <= 1
+                && ((x - 5).rem_euclid(4) == 2 || (x - 5).rem_euclid(4) == 1 || x <= 12)
+                && ((x + 1).rem_euclid(10) != 5 || x.rem_euclid(8) != 7)
+        })
+        .collect();
+    assert_eq!(witnesses, vec![9, 10]);
+    let src =
+        format!("ra(x:int,a:int)=a==x mod 101 && {core};\nrz(x:int,z:int)=z==x mod 101 && {core};");
+    let unit = elab(&src).unwrap();
+    let scope = lets(&unit);
+    let fs = functions(&unit);
+    let mut failures = Vec::new();
+    for reverse in [false, true] {
+        let mut scoped = Scoped::new(&scope);
+        let (mut faced, mut plain) = (Extending::new(), Extending::new());
+        let mut order = vec![0, 1];
+        if reverse {
+            order.reverse();
+        }
+        for i in order {
+            let (name, ps, body) = fs[i];
+            let r = scoped
+                .relation(body, ps, ps, true)
+                .expect("linear question");
+            let a = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+            let b = plain.defined(&r, &|n| scoped.def(n));
+            let got = (a.holds.ok(), b.holds.ok(), a.fails.ok(), b.fails.ok());
+            if got != (Some(true), Some(true), Some(true), Some(true)) {
+                failures.push(format!("reverse={reverse} {name}: {got:?}"));
+            }
+            let w = scoped.written(&r);
+            let f = zedc::store::presburger::Formula::and(vec![w.defined(), w.body.clone()]);
+            for sat_first in [false, true] {
+                use zedc::store::presburger::{decide, satisfiable};
+                let (d, s) = if sat_first {
+                    let s = satisfiable(&f);
+                    (decide(&f), s)
+                } else {
+                    (decide(&f), satisfiable(&f))
+                };
+                if let Ok(Some(model)) = &s {
+                    assert!(f.holds(model));
+                }
+                let got = (d.ok(), s.ok().map(|m| m.is_some()));
+                if got != (Some(true), Some(true)) {
+                    failures.push(format!(
+                        "reverse={reverse} {name} sat_first={sat_first}: {got:?}"
+                    ));
+                }
+            }
+        }
+    }
+    // R6-CODEX-12: this ordinary test intentionally exposes the unresolved
+    // name choice during remainder extraction, before regime normalization.
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Case `case_idx` of the enumeration test with an alias `x@9 == r` of one of its remainders
+/// `r` and a clause on `x@9`, the shape `a == x mod m && C(x)` of I6.3. Where `tie`, `x` is
+/// also bounded to one period `lo..=lo + m - 1` of that division, so that `x` and `x@9` have
+/// the same span and neither name nor span can choose the remainder.
+fn remainder_alias_case(
+    rng: &mut zed_tests::instances::Rng,
+    case_idx: usize,
+    tie: bool,
+) -> zedc::store::presburger::Formula {
+    use zedc::store::presburger::{Atom, Con, Formula, Lin};
+    let (f, x0, _, divs, lo, ..) = modular_case(rng, case_idx);
+    let (_, ref r_atom, m, _, _) = divs[rng.below(divs.len())];
+    let a = Atom::Sym(Arc::from("x@9"));
+    let mut parts = vec![
+        f,
+        Formula::Con(Con::eq(
+            &Lin::atom(a.clone()).minus(&Lin::atom(r_atom.clone())),
+            &Lin::constant(0),
+        )),
+    ];
+    let v = rng.int(0, m - 1);
+    parts.push(match rng.below(3) {
+        0 => Formula::negate(Formula::Con(Con::eq(&Lin::atom(a), &Lin::constant(v)))),
+        1 => Formula::Con(Con::ge(
+            &Lin::constant(v).minus(&Lin::atom(a)),
+            &Lin::constant(0),
+        )),
+        _ => Formula::Con(Con::ge(
+            &Lin::atom(a).plus(&Lin::constant(-v)),
+            &Lin::constant(0),
+        )),
+    });
+    if tie {
+        parts.push(Formula::Con(Con::ge(
+            &Lin::atom(x0.clone()).plus(&Lin::constant(-lo)),
+            &Lin::constant(0),
+        )));
+        parts.push(Formula::Con(Con::ge(
+            &Lin::constant(lo + m - 1).minus(&Lin::atom(x0)),
+            &Lin::constant(0),
+        )));
+    }
+    Formula::and(parts)
+}
+
+#[test]
+fn remainder_alias_answers_do_not_depend_on_names() {
+    // I6.3: the remainder of `x = m q + r` was the greater `Atom` of the two unit terms, so
+    // `a == x mod m` and `z == x mod m` read different rows. Each case is asked with the alias
+    // named before and after `x` and the quotients numbered both ways; `decide` and
+    // `satisfiable` give the same answers, refusal included, in both call orders, and every
+    // point satisfies the formula. Half the cases bound `x` to one period (a tie of spans).
+    // Negative control: choosing the remainder by `Atom` order fails this test (R7_CLAUDE.md T2).
+    use zedc::store::presburger::{decide, satisfiable};
+    let (from, to) = std::env::var("PNCX_CASES").map_or((0, 1000), |s| {
+        let (a, b) = s.split_once("..").unwrap();
+        (a.parse().unwrap(), b.parse().unwrap())
+    });
+    let namings: [(&str, &dyn Fn(usize) -> String, &dyn Fn(u32) -> u32); 4] = [
+        (
+            "alias a",
+            &|k| if k == 9 { "a".into() } else { format!("m{k}") },
+            &|i| i,
+        ),
+        (
+            "alias zz",
+            &|k| if k == 9 { "zz".into() } else { format!("m{k}") },
+            &|i| i,
+        ),
+        (
+            "alias a, aux reversed",
+            &|k| if k == 9 { "a".into() } else { format!("m{k}") },
+            &|i| 99 - i,
+        ),
+        (
+            "alias zz, aux reversed",
+            &|k| if k == 9 { "zz".into() } else { format!("m{k}") },
+            &|i| 99 - i,
+        ),
+    ];
+    let mut rng = zed_tests::instances::Rng::new(0x0a11_a5e5);
+    let (mut differ, mut answered, mut ties) = (Vec::new(), 0usize, 0usize);
+    for case_idx in 0..to {
+        let tie = case_idx % 2 == 1;
+        let f = remainder_alias_case(&mut rng, case_idx, tie);
+        if case_idx < from {
+            continue;
+        }
+        let answer = |g: &zedc::store::presburger::Formula, sat_first: bool| {
+            let (d, s) = if sat_first {
+                let s = satisfiable(g);
+                (decide(g), s)
+            } else {
+                let d = decide(g);
+                (d, satisfiable(g))
+            };
+            if let Ok(Some(model)) = &s {
+                assert!(g.holds(model), "case {case_idx}: the point fails {g}");
+            }
+            (d.ok(), s.ok().map(|m| m.is_some()))
+        };
+        let mut base = None;
+        for (label, name, aux) in &namings {
+            let g = renamed(&f, name, aux);
+            for sat_first in [false, true] {
+                let got = answer(&g, sat_first);
+                match base {
+                    None => {
+                        base = Some(got);
+                        answered += usize::from(got.0.is_some());
+                        ties += usize::from(tie && got.0.is_some());
+                    }
+                    Some(b) if b != got => differ.push(format!(
+                        "case {case_idx} {label} sat_first={sat_first}: {got:?} against {b:?}\n  {g}"
+                    )),
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+    println!(
+        "remainder alias cases {from}..{to}: {answered} answered ({ties} with tied spans), {} differ",
+        differ.len()
+    );
+    assert!(answered > 0);
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
 }

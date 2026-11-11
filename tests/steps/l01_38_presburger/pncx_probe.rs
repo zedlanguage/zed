@@ -990,6 +990,26 @@ fn pncx_sat_reduction() {
     println!(
         "PNCXSAT v={nv} c={nc} seed={seed} easy={easy} decide={shown} truth={truth:?} {dt:.4}s"
     );
+    if let Err(why) = got {
+        let divisors: std::collections::BTreeSet<_> = primes
+            .iter()
+            .copied()
+            .chain(excluded.iter().map(|&(m, _)| m))
+            .collect();
+        let written: Vec<_> = divisors.iter().map(ToString::to_string).collect();
+        let names: Vec<_> = written.iter().map(String::as_str).collect();
+        println!("PNCXSAT_MESSAGE {}", why.said(&["x"], &names));
+    }
+    if let Ok(path) = std::env::var("PNCX_SAT_SOURCE") {
+        let mut conditions: Vec<_> = primes.iter().map(|p| format!("x mod {p} <= 1")).collect();
+        conditions.extend(excluded.iter().map(|(m, c)| format!("x mod {m} != {c}")));
+        conditions.extend(["x >= 0".into(), format!("x < {big_p}")]);
+        let source = format!(
+            "ok(x:int)={};\nmain(m:MainArgs) {{ a=int(m.stdin[1] else \"0\") else 0; r=if ok(x:a) {{ \"in\" }} else {{ \"out\" }}; m.stdout <- \"${{r}}\"; }}\n",
+            conditions.join(" && ")
+        );
+        std::fs::write(path, source).expect("probe source file");
+    }
 }
 
 #[test]

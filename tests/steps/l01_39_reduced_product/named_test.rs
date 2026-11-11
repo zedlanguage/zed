@@ -464,3 +464,28 @@ fn arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth
         approval_any_tier,
     );
 }
+
+#[test]
+#[ignore]
+fn pncx_tiers_axis() {
+    scaling::on_a_thread(1 << 29, || {
+        let mut meter = scaling::Meter::new();
+        for d in std::env::var("PNCX_SIZES")
+            .unwrap()
+            .split(',')
+            .map(|s| s.parse().unwrap())
+        {
+            let term = if_(approval_any_tier(d, d, true), lit(1), lit(2));
+            let scope = ints(&names());
+            let work = meter.work(|| {
+                std::hint::black_box(arms(&term, &scope));
+            });
+            println!(
+                "TIERS n={d} work={} bytes={} unit={}",
+                work.units,
+                work.bytes,
+                meter.unit()
+            );
+        }
+    });
+}

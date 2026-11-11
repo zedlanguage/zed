@@ -212,6 +212,98 @@ impl Int {
         }
     }
 
+    // Complexity tradeoff: Stein's gcd is quadratic in the written bits.
+    // The one-variable solver explicitly uses the kernel's binary half-GCD,
+    // O(M(B) log B), while other solver paths keep their measured arithmetic.
+    // No input or answer is given up. Tests: pncx_common_factor_scale,
+    // pncx_wide_arithmetic_random_oracle and pncx_fibonacci_scale (still failing
+    // the strict allocation ratio). Native representations keep direct gcd.
+    /// The nonnegative gcd using recursive half-GCD on wide operands.
+    pub fn gcd_recursive(&self, other: &Int) -> Int {
+        if matches!((&self.0, &other.0), (Repr::Small(_), Repr::Small(_))) {
+            self.gcd(other)
+        } else {
+            BigInt::from(zed_kernel::num::gcd_uint_recursive(
+                self.big().magnitude(),
+                other.big().magnitude(),
+            ))
+            .into()
+        }
+    }
+
+    // Complexity tradeoff: wide long division costs superlinear work in
+    // num-bigint. Use reciprocal division, O(M(B)), for explicit modular
+    // arithmetic; native representations keep their direct division.
+    // No values are given up. Test: pncx_wide_arithmetic_random_oracle.
+    /// Floor division by a nonzero divisor, with the kernel's wide arithmetic.
+    pub fn div_floor_wide(&self, m: &Int) -> Int {
+        match (&self.0, &m.0) {
+            // A machine divisor has a direct linear scan of the dividend;
+            // constructing a reciprocal would add work and allocations.
+            (_, Repr::Small(_)) => self.div_floor(m),
+            _ => self.big_div_floor(m),
+        }
+    }
+
+    /// Remainder for div_floor_wide, with the sign of the nonzero divisor.
+    pub fn mod_floor_wide(&self, m: &Int) -> Int {
+        match (&self.0, &m.0) {
+            (_, Repr::Small(_)) => self.mod_floor(m),
+            _ => self.big_mod_floor(m),
+        }
+    }
+
+    // Complexity tradeoff: num-bigint's arithmetic is quadratic for gcd and
+    // superlinear for wide division. Reuse kernel half-GCD and reciprocal
+    // division, O(M(n) log n) and O(M(n)), with exactly the same signs.
+    // Tests: pncx_fast_bezout_matches_euclid, pncx_fibonacci_scale,
+    // pncx_common_factor_scale and the integer arithmetic unit tests.
+    fn big_div_floor(&self, m: &Int) -> Int {
+        let (a, b) = (self.big(), m.big());
+        let (q, r) = div_rem_uint(a.magnitude(), b.magnitude());
+        if a.sign() == b.sign() {
+            BigInt::from(q).into()
+        } else {
+            (-BigInt::from(q) - BigInt::from(!r.is_zero())).into()
+        }
+    }
+
+    fn big_mod_floor(&self, m: &Int) -> Int {
+        let (a, b) = (self.big(), m.big());
+        let r = rem_uint(a.magnitude(), b.magnitude());
+        let r = if a.sign() != b.sign() && !r.is_zero() {
+            b.magnitude() - r
+        } else {
+            r
+        };
+        BigInt::from_biguint(b.sign(), r).into()
+    }
+
+    /// The extended gcd. Machine integers retain their direct arithmetic;
+    /// wider integers use the kernel's binary half-GCD.
+    pub fn extended_gcd(&self, b: &Int) -> Option<(Int, Int, Int)> {
+        if matches!((&self.0, &b.0), (Repr::Small(_), Repr::Small(_))) {
+            let (mut r, mut next) = (self.abs(), b.abs());
+            let (mut s, mut ns) = (Int::ONE, Int::ZERO);
+            let (mut t, mut nt) = (Int::ZERO, Int::ONE);
+            while !next.is_zero() {
+                let q = r.div_floor(&next);
+                (r, next) = (next.clone(), &r - &(&q * &next));
+                (s, ns) = (ns.clone(), &s - &(&q * &ns));
+                (t, nt) = (nt.clone(), &t - &(&q * &nt));
+            }
+            if self.is_negative() {
+                s = -&s;
+            }
+            if b.is_negative() {
+                t = -&t;
+            }
+            return Some((r, s, t));
+        }
+        zed_kernel::num::bezout_int(&self.big(), &b.big())
+            .map(|(g, s, t)| (g.into(), s.into(), t.into()))
+    }
+
     /// `self / m` rounded down, for `m` of either sign and not zero.
     pub fn div_floor(&self, m: &Int) -> Int {
         match (&self.0, &m.0) {

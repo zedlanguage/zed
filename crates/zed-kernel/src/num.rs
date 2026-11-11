@@ -1053,6 +1053,15 @@ pub fn inverse_mod_uint(a: &BigUint, m: &BigUint) -> Option<BigUint> {
 
 /// The greatest common divisor of `a` and `b`, for integers held outside a [`Rat`].
 pub fn gcd_uint(a: &BigUint, b: &BigUint) -> BigUint {
+    gcd_uint_using(a, b, fast::gcd)
+}
+
+/// Half-GCD at every width, for clients with their own machine-integer path.
+pub fn gcd_uint_recursive(a: &BigUint, b: &BigUint) -> BigUint {
+    gcd_uint_using(a, b, fast::gcd_recursive)
+}
+
+fn gcd_uint_using(a: &BigUint, b: &BigUint, core: fn(&BigUint, &BigUint) -> BigUint) -> BigUint {
     let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
         return a | b;
     };
@@ -1117,11 +1126,24 @@ pub fn gcd_uint(a: &BigUint, b: &BigUint) -> BigUint {
         return a.into_owned() << z;
     }
     let g = match a.bits().cmp(&b.bits()) {
-        Ordering::Greater => fast::gcd(&b, &fast::rem(&a, &b)),
-        Ordering::Less => fast::gcd(&a, &fast::rem(&b, &a)),
-        Ordering::Equal => fast::gcd(&a, &b),
+        Ordering::Greater => core(&b, &fast::rem(&a, &b)),
+        Ordering::Less => core(&a, &fast::rem(&b, &a)),
+        Ordering::Equal => core(&a, &b),
     };
     g << z
+}
+
+/// `(g, s, t)` with `s a + t b = g = gcd(a, b) >= 0`.
+// Complexity tradeoff: extended Euclid writes a quadratic total of remainders.
+// Binary half-GCD accumulates one coefficient column in O(M(n) log n),
+// then one exact division recovers the other coefficient. A failed arithmetic
+// check returns None. No input size changes the verdict. Tests in modular.rs:
+// pncx_fast_bezout_matches_euclid and pncx_fibonacci_scale.
+pub fn bezout_int(a: &BigInt, b: &BigInt) -> Option<(BigInt, BigInt, BigInt)> {
+    let (g, s, t) = fast::bezout(a.magnitude(), b.magnitude())?;
+    let s = if a.is_negative() { -s } else { s };
+    let t = if b.is_negative() { -t } else { t };
+    Some((BigInt::from(g), s, t))
 }
 
 /// The digits `read_decimal` hands to num-bigint whole. The value read does not depend on it.

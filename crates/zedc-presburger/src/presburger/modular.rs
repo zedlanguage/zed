@@ -7,11 +7,12 @@
 //! reduces to a boolean combination of interval bounds on `x` and residue constraints
 //! `x mod m in S`.
 
+mod brooks;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use zedc_int::int::Int;
 
-use super::bezout;
 use super::formula::{Atom, Con, Formula, Id, Lin, Model, Rel};
 
 /// A sorted list of disjoint, non-adjacent closed residue intervals `[lo, hi]` in `0..m`.
@@ -314,9 +315,9 @@ fn shift_residue_interval(a: &Int, b: &Int, s_x: i8, c_lo: &Int, m: &Int) -> Res
     // If s_x == 1: (x + c_lo) mod m in [a, b]  <=>  x mod m in [a - c_lo, b - c_lo] mod m.
     // If s_x == -1: (-x + c_lo) mod m in [a, b] <=>  x mod m in [c_lo - b, c_lo - a] mod m.
     let (start, end) = if s_x > 0 {
-        ((a - c_lo).mod_floor(m), (b - c_lo).mod_floor(m))
+        ((a - c_lo).mod_floor_wide(m), (b - c_lo).mod_floor_wide(m))
     } else {
-        ((c_lo - b).mod_floor(m), (c_lo - a).mod_floor(m))
+        ((c_lo - b).mod_floor_wide(m), (c_lo - a).mod_floor_wide(m))
     };
     if start <= end {
         vec![(start, end)]
@@ -493,6 +494,22 @@ impl UnitUf {
         }
     }
 
+    /// Points every atom straight at its root, so that each later [`UnitUf::get`] follows at
+    /// most one link.
+    // Complexity tradeoff: `get` takes `&self` and cannot compress, so after a chain of unions
+    // written in descending name order each `get` walked the whole chain, Omega(n^2) over the
+    // atoms (I6.11, `r6_tests::pncx_affine_alias_chain_scale`, 61.0 times the work for 8 times
+    // the aliases). Compressing every path once after the unions costs O(n log n) amortized
+    // (path compression with linking by name, Tarjan and van Leeuwen 1984), and the roots, signs
+    // and offsets are the same, so no answer depends on it. Nothing is given up.
+    fn flatten(&mut self) {
+        let mut atoms: Vec<Atom> = self.parent.keys().cloned().collect();
+        atoms.sort();
+        for a in &atoms {
+            self.find(a);
+        }
+    }
+
     fn get(&self, a: &Atom) -> (Atom, i8, Int) {
         let mut cur = a.clone();
         let mut s: i8 = 1;
@@ -529,10 +546,10 @@ impl UnitUf {
             } else {
                 // 2 * ra = rel_d
                 let two = Int::from(2);
-                if !rel_d.mod_floor(&two).is_zero() {
+                if !rel_d.mod_floor_wide(&two).is_zero() {
                     return Err(());
                 }
-                return Ok(Some((ra, rel_d.div_floor(&two))));
+                return Ok(Some((ra, rel_d.div_floor_wide(&two))));
             }
         }
         // Choose canonical root: prefer smaller Atom so order of equations doesn't matter.
@@ -598,10 +615,21 @@ fn rewrite_lin_full(
 // given up: such a formula goes to the general path whole; no answer of the 5,000-formula
 // enumeration test changed (sat 4277, empty 712, refused 11 with and without the split).
 pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
-    solve_modular_whole(f, want_model)
+    // A remainder row whose two unit terms tie (`solve_modular_whole`, step 3) is read one way
+    // first and, if that gives no answer, the other way: at most two runs, each exact.
+    let mut tied = false;
+    match solve_modular_whole(f, want_model, false, &mut tied) {
+        None if tied => solve_modular_whole(f, want_model, true, &mut tied),
+        found => found,
+    }
 }
 
-fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
+fn solve_modular_whole(
+    f: &Formula,
+    want_model: bool,
+    flip_ties: bool,
+    tied: &mut bool,
+) -> Option<Option<Model>> {
     // Collect top-level conjunction and verify no Product atoms exist anywhere in `f`.
     let mut top_cons: Vec<&Con> = Vec::new();
     let mut top_clauses: Vec<&Formula> = Vec::new();
@@ -668,84 +696,125 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         uf.ensure(a);
     }
 
-    loop {
-        let mut progress = false;
-        for c in &top_cons {
-            let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &HashMap::new());
-            if lin.terms.is_empty() {
-                let bad = match c.rel {
-                    Rel::Ge => lin.constant.is_negative(),
-                    Rel::Eq => !lin.constant.is_zero(),
-                };
-                if bad {
-                    return Some(None);
-                }
-                continue;
-            }
-            if c.rel == Rel::Eq && lin.terms.len() == 1 {
-                let Some((a, k)) = lin.terms.iter().next() else {
-                    return None;
-                };
-                let d = k.abs();
-                if !lin.constant.mod_floor(&d).is_zero() {
-                    return Some(None);
-                }
-                let val = if k.is_positive() {
-                    (-&lin.constant).div_floor(&d)
-                } else {
-                    lin.constant.div_floor(&d)
-                };
-                if let Some(old) = fixed.get(a) {
-                    if *old != val {
-                        return Some(None);
-                    }
-                } else {
-                    fixed.insert(a.clone(), val);
-                    progress = true;
-                }
-            } else if c.rel == Rel::Eq && lin.terms.len() == 2 {
-                let mut it = lin.terms.iter();
-                let Some((a, ka)) = it.next() else {
-                    return None;
-                };
-                let Some((b, kb)) = it.next() else {
-                    return None;
-                };
-                if ka.is_unit() && kb.is_unit() {
-                    // ka * a + kb * b + constant == 0  =>  a = (-ka*kb) * b + (-ka * constant)
-                    let sa: i8 = if ka.is_positive() { 1 } else { -1 };
-                    let sb: i8 = if kb.is_positive() { 1 } else { -1 };
-                    let s = -(sa * sb);
-                    let d = if sa > 0 {
-                        -&lin.constant
-                    } else {
-                        lin.constant.clone()
-                    };
-                    match uf.union(a, b, s, &d) {
-                        Err(()) => return Some(None),
-                        Ok(Some((root, val))) => {
-                            if let Some(old) = fixed.get(&root) {
-                                if *old != val {
-                                    return Some(None);
-                                }
-                            } else {
-                                fixed.insert(root, val);
-                                progress = true;
-                            }
-                        }
-                        Ok(None) => {
-                            if uf.find(a).0 != a.clone() || uf.find(b).0 != b.clone() {
-                                // Check if they were already in the same component before.
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if !progress {
-            break;
+    // Complexity tradeoff: repeating the pass over every row until a pass fixes nothing costs
+    // one pass per atom fixed in a chain (`2 a_i == 2 a_(i+1)` written so that each pass fixes
+    // one more), O(n^2) rows read (R7-CLAUDE-1, `r7_tests::pncx_fixed_chain_scale`), and a pass
+    // that only joined two classes stopped the loop, so a row read before the join was never
+    // read again and the result followed the order of the rows. A worklist reads each row once,
+    // and again only when its class is fixed (once per row) or joined with a smaller class
+    // whose rows it also lists (O(log n) times per row, the smaller list moving into the larger),
+    // O(n log n) row reads in all. Its result is the fixpoint of the same sound rules, the same
+    // for every order of the rows. Nothing is given up.
+    let mut class_rows: HashMap<Atom, Vec<usize>> = HashMap::new();
+    for (i, c) in top_cons.iter().enumerate() {
+        for a in c.lin.terms.keys() {
+            class_rows.entry(a.clone()).or_default().push(i);
         }
     }
+    let mut queued = vec![true; top_cons.len()];
+    let mut queue: VecDeque<usize> = (0..top_cons.len()).collect();
+    // Puts the rows of the class of `root` back in the queue.
+    fn requeue(rows: Option<&Vec<usize>>, queued: &mut [bool], queue: &mut VecDeque<usize>) {
+        for &i in rows.into_iter().flatten() {
+            if !queued[i] {
+                queued[i] = true;
+                queue.push_back(i);
+            }
+        }
+    }
+    while let Some(i) = queue.pop_front() {
+        queued[i] = false;
+        let c = &top_cons[i];
+        // Compress the paths of this row's atoms first, so that `rewrite_lin_full`'s `get`
+        // follows one link while unions are still being made (I6.11).
+        for a in c.lin.terms.keys() {
+            uf.find(a);
+        }
+        let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &HashMap::new());
+        if lin.terms.is_empty() {
+            let bad = match c.rel {
+                Rel::Ge => lin.constant.is_negative(),
+                Rel::Eq => !lin.constant.is_zero(),
+            };
+            if bad {
+                return Some(None);
+            }
+            continue;
+        }
+        if c.rel == Rel::Eq && lin.terms.len() == 1 {
+            let Some((a, k)) = lin.terms.iter().next() else {
+                return None;
+            };
+            let d = k.abs();
+            if !lin.constant.mod_floor_wide(&d).is_zero() {
+                return Some(None);
+            }
+            let val = if k.is_positive() {
+                (-&lin.constant).div_floor_wide(&d)
+            } else {
+                lin.constant.div_floor_wide(&d)
+            };
+            if let Some(old) = fixed.get(a) {
+                if *old != val {
+                    return Some(None);
+                }
+            } else {
+                fixed.insert(a.clone(), val);
+                requeue(class_rows.get(a), &mut queued, &mut queue);
+            }
+        } else if c.rel == Rel::Eq && lin.terms.len() == 2 {
+            let mut it = lin.terms.iter();
+            let Some((a, ka)) = it.next() else {
+                return None;
+            };
+            let Some((b, kb)) = it.next() else {
+                return None;
+            };
+            if ka.is_unit() && kb.is_unit() {
+                // ka * a + kb * b + constant == 0  =>  a = (-ka*kb) * b + (-ka * constant)
+                let sa: i8 = if ka.is_positive() { 1 } else { -1 };
+                let sb: i8 = if kb.is_positive() { 1 } else { -1 };
+                let s = -(sa * sb);
+                let d = if sa > 0 {
+                    -&lin.constant
+                } else {
+                    lin.constant.clone()
+                };
+                // `a` and `b` are roots of two classes, neither fixed (`rewrite_lin_full`).
+                let joined = uf.union(a, b, s, &d);
+                let root = uf.find(a).0;
+                let (small, large) = {
+                    let ra = class_rows.remove(a).unwrap_or_default();
+                    let rb = class_rows.remove(b).unwrap_or_default();
+                    if ra.len() < rb.len() {
+                        (ra, rb)
+                    } else {
+                        (rb, ra)
+                    }
+                };
+                requeue(Some(&small), &mut queued, &mut queue);
+                let mut large = large;
+                large.extend(small);
+                match joined {
+                    Err(()) => return Some(None),
+                    Ok(Some((fixed_root, val))) => {
+                        if let Some(old) = fixed.get(&fixed_root) {
+                            if *old != val {
+                                return Some(None);
+                            }
+                        } else {
+                            fixed.insert(fixed_root, val);
+                            requeue(Some(&large), &mut queued, &mut queue);
+                        }
+                    }
+                    Ok(None) => {}
+                }
+                class_rows.insert(root, large);
+            }
+        }
+    }
+
+    uf.flatten();
 
     // Step 2: Identify 1-term bounds on root atoms to help recognize 3-term division remainders
     // (`x_root + c - m * q_root - r_root == 0` with `0 <= r <= m - 1`).
@@ -761,11 +830,11 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             let entry = root_bounds.entry(a.clone()).or_insert((None, None));
             match c.rel {
                 Rel::Ge if k.is_positive() => {
-                    let lo = -&lin.constant.div_floor(&d);
+                    let lo = -&lin.constant.div_floor_wide(&d);
                     entry.0 = max_lo(entry.0.take(), Some(lo));
                 }
                 Rel::Ge => {
-                    let hi = lin.constant.div_floor(&d);
+                    let hi = lin.constant.div_floor_wide(&d);
                     entry.1 = min_hi(entry.1.take(), Some(hi));
                 }
                 Rel::Eq => {}
@@ -808,26 +877,42 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         }
         let (q_root, c_q) = non_unit[0];
         let m = c_q.abs();
-        // Check which of `units[0]` or `units[1]` is bounded to width < m (`r_root`).
-        let is_rem = |a: &Atom| -> bool {
-            if let Some((Some(lo), Some(hi))) = root_bounds.get(a) {
-                lo <= hi && &(hi - lo) < &m
+        // Check which of `units[0]` or `units[1]` is bounded to width < m (`r_root`): its key is
+        // whether its bounds span exactly one period, then the width of its bounds.
+        let rem_key = |a: &Atom| -> Option<(bool, Int)> {
+            if let Some((Some(lo), Some(hi))) = root_bounds.get(a)
+                && lo <= hi
+                && &(hi - lo) < &m
+            {
+                let width = hi - lo;
+                Some((&width + &Int::ONE == m, width))
             } else {
-                false
+                None
             }
         };
-        let ((r_root, c_r), (x_root, c_x)) = match (is_rem(units[0].0), is_rem(units[1].0)) {
-            (true, false) => (units[0], units[1]),
-            (false, true) => (units[1], units[0]),
-            (true, true) => {
-                // Prefer the one with larger unit-class size or smaller Atom as x_root.
-                if units[0].0 > units[1].0 {
-                    (units[0], units[1])
-                } else {
-                    (units[1], units[0])
+        let ((r_root, c_r), (x_root, c_x)) = match (rem_key(units[0].0), rem_key(units[1].0)) {
+            (Some(_), None) => (units[0], units[1]),
+            (None, Some(_)) => (units[1], units[0]),
+            // Both are bounded to less than a period, and either reading `x = m q + r` is exact.
+            // The remainder is chosen by the formula, never by a name (I6.3): the term whose
+            // bounds span exactly one period, else the wider. On a tie the term whose coefficient
+            // has the sign of `c_q` is taken first, the other in the second run of
+            // `solve_modular`; a renaming can change these signs (the root of a class whose
+            // aliases have sign -1), so a tie is name-independent only through the second run.
+            (Some(k0), Some(k1)) => match k0.cmp(&k1) {
+                std::cmp::Ordering::Greater => (units[0], units[1]),
+                std::cmp::Ordering::Less => (units[1], units[0]),
+                std::cmp::Ordering::Equal => {
+                    *tied = true;
+                    let first = (units[0].1.is_positive() == c_q.is_positive()) != flip_ties;
+                    if first {
+                        (units[0], units[1])
+                    } else {
+                        (units[1], units[0])
+                    }
                 }
-            }
-            (false, false) => continue,
+            },
+            (None, None) => continue,
         };
         if rem_defs.contains_key(r_root) || rem_defs.contains_key(x_root) {
             continue;
@@ -1342,13 +1427,13 @@ fn walk_segments(
         global_bounds.contains_span(&at, &at)
             && unit_mods
                 .iter()
-                .all(|(m, s)| res_contains(s, &x.mod_floor(m)))
+                .all(|(m, s)| res_contains(s, &x.mod_floor_wide(m)))
             && clauses.iter().all(|cl| {
                 (!cl.bounds.is_empty() && cl.bounds.contains_span(&at, &at))
                     || cl
                         .mods
                         .iter()
-                        .any(|(m, s)| res_contains(s, &x.mod_floor(m)))
+                        .any(|(m, s)| res_contains(s, &x.mod_floor_wide(m)))
             })
     };
 
@@ -1624,16 +1709,16 @@ fn fold_leaf(
 fn bound_domain_1d(k: &Int, c: &Int, rel: Rel, negated: bool) -> Domain {
     let d = k.abs();
     let base = match rel {
-        Rel::Ge if k.is_positive() => Domain::ge(-&c.div_floor(&d)),
-        Rel::Ge => Domain::le(c.div_floor(&d)),
+        Rel::Ge if k.is_positive() => Domain::ge(-&c.div_floor_wide(&d)),
+        Rel::Ge => Domain::le(c.div_floor_wide(&d)),
         Rel::Eq => {
-            if !c.mod_floor(&d).is_zero() {
+            if !c.mod_floor_wide(&d).is_zero() {
                 Domain::empty()
             } else {
                 let v = if k.is_positive() {
-                    (-c).div_floor(&d)
+                    (-c).div_floor_wide(&d)
                 } else {
-                    c.div_floor(&d)
+                    c.div_floor_wide(&d)
                 };
                 Domain::single(v)
             }
@@ -2001,7 +2086,7 @@ type RegimeTask = (
 // still solved in a coordinate that moves when `x` itself is shifted in the formula (the
 // numbers change, not the names), so such a shift can change a refusal into an answer. Tests:
 // `one_scope::one_variable_answers_do_not_depend_on_names`,
-// `one_scope::one_variable_answers_with_one_bound_or_none_do_not_depend_on_names`.
+// the eight `one_scope::one_variable_answers_with_*_do_not_depend_on_names_*` tests.
 fn solve_regime(
     lo: &Option<Int>,
     hi: &Option<Int>,
@@ -2170,7 +2255,9 @@ fn solve_regime_step(
     // (`literal_to_base_cnf`); with one base for the formula, 76 of the 5,000 formulas of
     // `one_scope::one_variable_modular_formulas_match_enumeration` were refused, against 69.
     // `max_q[i]` is the largest power `bases[i]^E` that divides one of the moduli.
-    let mod_base = coprime_factorization(&all_moduli);
+    let Some(mod_base) = coprime_factorization(&all_moduli) else {
+        return RegimeOut::Undecided;
+    };
     let mut used: BTreeSet<&Int> = BTreeSet::new();
     for fs in mod_base.values() {
         used.extend(fs.iter().map(|(b, _)| b));
@@ -2219,7 +2306,7 @@ fn solve_regime_step(
             // Single allowed residue `r` modulo composite `m`: exact CRT split!
             let r = &s[0].0;
             for (i, q) in facs {
-                let rq = r.mod_floor(q);
+                let rq = r.mod_floor_wide(q);
                 let e = base_powers[*i]
                     .entry(q.clone())
                     .or_insert_with(|| vec![(Int::ZERO, q - &Int::ONE)]);
@@ -2368,11 +2455,11 @@ impl BaseInfo {
     }
 
     fn z_from_x(&self, x: &Int) -> Option<Int> {
-        let r = x.mod_floor(&self.max_q);
-        if r.mod_floor(&self.stride) != self.u {
+        let r = x.mod_floor_wide(&self.max_q);
+        if r.mod_floor_wide(&self.stride) != self.u {
             return None;
         }
-        Some((&r - &self.u).div_floor(&self.stride))
+        Some((&r - &self.u).div_floor_wide(&self.stride))
     }
 }
 
@@ -2385,8 +2472,8 @@ fn project_stride(s: &[(Int, Int)], u: &Int, stride: &Int) -> ResidueSet {
     let step_m1 = stride - &Int::ONE;
     for (a, b) in s {
         let num_a = &(a - u) + &step_m1;
-        let za = num_a.div_floor(stride);
-        let zb = (b - u).div_floor(stride);
+        let za = num_a.div_floor_wide(stride);
+        let zb = (b - u).div_floor_wide(stride);
         if za <= zb {
             out.push((za, zb));
         }
@@ -2403,14 +2490,14 @@ fn project_and_intersect_base(
     allowed_i: &[(Int, Int)],
 ) -> Option<ResidueSet> {
     if *q <= info.stride {
-        let rem = info.u.mod_floor(q);
+        let rem = info.u.mod_floor_wide(q);
         return if res_contains(s_q, &rem) {
             Some(allowed_i.to_vec())
         } else {
             Some(Vec::new())
         };
     }
-    let q_z = q.div_floor(&info.stride);
+    let q_z = q.div_floor_wide(&info.stride);
     let proj = project_stride(s_q, &info.u, &info.stride);
     if proj.is_empty() {
         return Some(Vec::new());
@@ -2421,26 +2508,26 @@ fn project_and_intersect_base(
 /// Returns `Some(rq)` if `info` and `allowed_i` fix `x mod q` to a single residue `rq`.
 fn single_residue_mod_q(info: &BaseInfo, allowed_i: &[(Int, Int)], q: &Int) -> Option<Int> {
     if *q <= info.stride {
-        return Some(info.u.mod_floor(q));
+        return Some(info.u.mod_floor_wide(q));
     }
     if allowed_i.is_empty() {
         return None;
     }
-    let q_z = q.div_floor(&info.stride);
-    let first = &allowed_i[0].0;
+    let q_z = q.div_floor_wide(&info.stride);
+    let first = &allowed_i.first()?.0;
     let last = &allowed_i.last()?.1;
     if last == first {
         let r = info.r_from_z(first);
-        return Some(r.mod_floor(q));
+        return Some(r.mod_floor_wide(q));
     }
     // Also check if all intervals in `allowed_i` are singletons with the same residue mod `q_z`.
-    let z0 = first.mod_floor(&q_z);
+    let z0 = first.mod_floor_wide(&q_z);
     for (a, b) in allowed_i {
-        if a != b || a.mod_floor(&q_z) != z0 {
+        if a != b || a.mod_floor_wide(&q_z) != z0 {
             return None;
         }
     }
-    Some((&info.u + &(&info.stride * &z0)).mod_floor(q))
+    Some((&info.u + &(&info.stride * &z0)).mod_floor_wide(q))
 }
 
 /// Maps `y_set` in `[0, q_rem - 1]` under `y -> (u_fixed + m_fixed * y) mod q_rem`.
@@ -2456,8 +2543,8 @@ fn map_affine_mod(
     if res_is_full(y_set, q_rem) {
         return Some(vec![(Int::ZERO, q_rem - &Int::ONE)]);
     }
-    let step = m_fixed.mod_floor(q_rem);
-    let shift = u_fixed.mod_floor(q_rem);
+    let step = m_fixed.mod_floor_wide(q_rem);
+    let shift = u_fixed.mod_floor_wide(q_rem);
     if step == Int::ONE {
         // `shift_residue_interval(a, b, 1, c, m)` is `{y : (y + c) mod m in [a, b]}`, the
         // preimage; the image `[a + shift, b + shift]` is the preimage under `-shift`.
@@ -2482,7 +2569,7 @@ fn map_affine_mod(
         for (a, b) in y_set {
             let mut y = a.clone();
             while &y <= b {
-                let r = (&shift + &(&step * &y)).mod_floor(q_rem);
+                let r = (&shift + &(&step * &y)).mod_floor_wide(q_rem);
                 raw.push((r.clone(), r));
                 y = &y + &Int::ONE;
             }
@@ -2495,7 +2582,7 @@ fn map_affine_mod(
         for (a, b) in &comp {
             let mut y = a.clone();
             while &y <= b {
-                let r = (&shift + &(&step * &y)).mod_floor(q_rem);
+                let r = (&shift + &(&step * &y)).mod_floor_wide(q_rem);
                 raw.push((r.clone(), r));
                 y = &y + &Int::ONE;
             }
@@ -2523,7 +2610,7 @@ fn literal_to_base_cnf(
         let r = &s[0].0;
         let mut out = Vec::with_capacity(facs.len());
         for &(i, ref q) in facs {
-            let rq = r.mod_floor(q);
+            let rq = r.mod_floor_wide(q);
             let inter =
                 project_and_intersect_base(&[(rq.clone(), rq)], q, &bases_info[i], &allowed[i])?;
             out.push(BTreeMap::from([(i, inter)]));
@@ -2574,7 +2661,7 @@ fn literal_to_base_cnf(
             let mut cl_r: BTreeMap<usize, ResidueSet> = BTreeMap::new();
             let mut taut = false;
             for &(i, ref q) in &active_facs {
-                let rq = r.mod_floor(q);
+                let rq = r.mod_floor_wide(q);
                 let s_q = res_complement(&[(rq.clone(), rq)], q);
                 let inter = project_and_intersect_base(&s_q, q, &bases_info[i], &allowed[i])?;
                 let entry = cl_r.entry(i).or_default();
@@ -2703,10 +2790,10 @@ fn solve_short_x_interval(
 
 /// Concrete sub-intervals `[il, ih] subseteq [l, h]` where `x mod m in [ra, rb]`.
 fn concrete_intervals_in_span(l: &Int, h: &Int, m: &Int, ra: &Int, rb: &Int) -> Vec<(Int, Int)> {
-    let q_l = l.div_floor(m);
-    let r_l = l.mod_floor(m);
-    let q_h = h.div_floor(m);
-    let r_h = h.mod_floor(m);
+    let q_l = l.div_floor_wide(m);
+    let r_l = l.mod_floor_wide(m);
+    let q_h = h.div_floor_wide(m);
+    let r_h = h.mod_floor_wide(m);
     let mut out = Vec::new();
     let mut q = q_l.clone();
     while q <= q_h {
@@ -2727,12 +2814,15 @@ fn holds_modular_point(
     clauses: &[BTreeMap<Int, ResidueSet>],
 ) -> bool {
     for (m, s) in unit_mods {
-        if !res_contains(s, &x.mod_floor(m)) {
+        if !res_contains(s, &x.mod_floor_wide(m)) {
             return false;
         }
     }
     for cl in clauses {
-        if !cl.iter().any(|(m, s)| res_contains(s, &x.mod_floor(m))) {
+        if !cl
+            .iter()
+            .any(|(m, s)| res_contains(s, &x.mod_floor_wide(m)))
+        {
             return false;
         }
     }
@@ -2743,10 +2833,8 @@ fn holds_modular_point(
 /// adjacent pairs of the level below. O(M(N) log k) for `k` leaves of `N` bits in all.
 fn product_tree(leaves: Vec<Int>) -> Vec<Vec<Int>> {
     let mut tree: Vec<Vec<Int>> = vec![leaves];
-    while let Some(top) = tree.last()
-        && top.len() > 1
-    {
-        let next: Vec<Int> = top
+    while let Some(last) = tree.last().filter(|last| last.len() > 1) {
+        let next: Vec<Int> = last
             .chunks(2)
             .map(|c| {
                 if c.len() == 2 {
@@ -2765,17 +2853,20 @@ fn product_tree(leaves: Vec<Int>) -> Vec<Vec<Int>> {
 /// `P mod v^2` from each node `v` to its children (`v^2` divides the parent's square), and
 /// `(P mod m^2) / m` is `(P / m) mod m`. O(M(N) log k).
 fn cofactors_mod_leaves(tree: &[Vec<Int>]) -> Vec<Int> {
-    let mut rems: Vec<Int> = tree.last().cloned().unwrap_or_default();
-    for level in (0..tree.len() - 1).rev() {
-        rems = tree[level]
+    let Some((root, levels)) = tree.split_last() else {
+        return Vec::new();
+    };
+    let mut rems = root.clone();
+    for level in levels.iter().rev() {
+        rems = level
             .iter()
             .enumerate()
-            .map(|(j, v)| rems[j / 2].mod_floor(&(v * v)))
+            .map(|(j, v)| rems[j / 2].mod_floor_wide(&(v * v)))
             .collect();
     }
     rems.iter()
         .zip(&tree[0])
-        .map(|(r, m)| r.div_floor(m))
+        .map(|(r, m)| r.div_floor_wide(m))
         .collect()
 }
 
@@ -2787,14 +2878,14 @@ type ModBase = BTreeMap<Int, Vec<(Int, Int)>>;
 /// (`P mod m^2` for the product `P` of all moduli gives `gcd(m, P / m)`), in O(M(N) log k) for
 /// `k` moduli of `N` bits in all, where `M` is the cost of multiplying numbers of `N` bits.
 ///
-/// Complexity tradeoff: the moduli that share a factor with another one go to `coprime_base`,
-/// which is pairwise, O(r^2) GCDs and O(r b) divisions for `r` such moduli and `b` bases.
-/// Bernstein's algorithm ("Factoring into coprimes in essentially linear time", J. Algorithms
-/// 54 (2005)) gives the same base in O(N (log N)^O(1)) and is not implemented. What is given up:
-/// time only, when many moduli share factors (for example `2 p_i` for `k` primes `p_i`); the
-/// answers are the same. Moduli that are pairwise coprime, the common case, cost O(M(N) log k).
-/// Test: `one_scope::the_coprime_base_of_distinct_primes_scales`.
-fn coprime_factorization(moduli: &BTreeSet<Int>) -> ModBase {
+/// Complexity tradeoff: pairwise refinement and scanning each base per modulus cost
+/// O(k^2) arithmetic operations. Bernstein's Algorithms 11.3, 11.4, 13.2,
+/// 15.3, 16.2, 17.3, 18.1 and 21.2 use product trees and sparse factor
+/// propagation instead, essentially linear in the total bits with fast
+/// arithmetic (a polylogarithmic factor, not a proved O(n log n) bound).
+/// No modulus or answer is given up. Tests: pncx_common_factor_scale,
+/// pncx_common_factors_reconstruct_inputs and pncx_shared_formula_axis.
+fn coprime_factorization(moduli: &BTreeSet<Int>) -> Option<ModBase> {
     let ms: Vec<Int> = moduli.iter().filter(|m| **m > Int::ONE).cloned().collect();
     // A modulus 1 (if any) has no factors.
     let mut out: ModBase = moduli
@@ -2803,74 +2894,472 @@ fn coprime_factorization(moduli: &BTreeSet<Int>) -> ModBase {
         .map(|m| (m.clone(), Vec::new()))
         .collect();
     if ms.is_empty() {
-        return out;
+        return Some(out);
+    }
+    if let Some(complete) = common_factorization(&ms) {
+        out.extend(complete);
+        return Some(out);
     }
     let cof = cofactors_mod_leaves(&product_tree(ms.clone()));
+
     let mut rest: Vec<Int> = Vec::new();
     for (m, c) in ms.iter().zip(&cof) {
-        if wide_gcd(m, c) == Int::ONE {
+        if m.gcd_recursive(c) == Int::ONE {
             out.insert(m.clone(), vec![(m.clone(), m.clone())]);
         } else {
             rest.push(m.clone());
         }
     }
-    let bases = coprime_base(rest.clone());
-    for m in rest {
-        let mut rem = m.clone();
-        let mut facs = Vec::new();
-        for b in &bases {
-            if wide_remainder(&rem, b).is_zero() {
-                let mut q = b.clone();
-                rem = exact_quotient(&rem, b);
-                while wide_remainder(&rem, b).is_zero() {
-                    q = &q * b;
-                    rem = exact_quotient(&rem, b);
-                }
-                facs.push((b.clone(), q));
-            }
-        }
-        out.insert(m, facs);
+    let (bases, factors, _) = coprime_base_and_factors(rest)?;
+    for (m, fs) in factors {
+        out.insert(
+            m,
+            fs.into_iter().map(|(i, q)| (bases[i].clone(), q)).collect(),
+        );
     }
-    out
+    Some(out)
 }
 
-/// Computes a pairwise coprime base from `moduli` by repeated GCD refinement:
-/// whenever `g = gcd(a, b) > 1`, replace `(a, b)` with `(a/g, g, b/g)`.
-fn coprime_base(moduli: Vec<Int>) -> Vec<Int> {
-    let mut basis: Vec<Int> = Vec::new();
-    let mut queue: VecDeque<Int> = moduli.into_iter().filter(|m| *m > Int::ONE).collect();
-    while let Some(mut x) = queue.pop_front() {
-        if x <= Int::ONE {
-            continue;
-        }
-        let mut i = 0;
-        while i < basis.len() && x > Int::ONE {
-            let b = &basis[i];
-            if *b == x {
-                x = Int::ONE;
-                break;
-            }
-            let g = wide_gcd(b, &x);
-            if g > Int::ONE {
-                let b_rem = exact_quotient(b, &g);
-                let x_rem = exact_quotient(&x, &g);
-                basis.swap_remove(i);
-                queue.push_back(g);
-                if b_rem > Int::ONE {
-                    queue.push_back(b_rem);
-                }
-                x = x_rem;
-            } else {
-                i += 1;
-            }
-        }
-        if x > Int::ONE {
-            basis.push(x);
+/// A shared factor with independent cofactors needs no base refinement.
+// Complexity tradeoff: pairwise refinement is quadratic on g p_i. A running
+// gcd, followed by one product/remainder tree on the cofactors, recognizes
+// the complete factorization in O(M(B) log k). Failure gives no verdict and
+// Bernstein's general method continues. Test: pncx_common_factor_scale.
+fn common_factorization(ms: &[Int]) -> Option<ModBase> {
+    let mut g = ms.first()?.clone();
+    for m in &ms[1..] {
+        g = g.gcd_recursive(m);
+        if g == Int::ONE {
+            return None;
         }
     }
-    basis.sort();
-    basis.dedup();
-    basis
+    let qs: Vec<_> = ms.iter().map(|m| m.div_floor_wide(&g)).collect();
+    if qs.iter().any(|q| q.gcd_recursive(&g) != Int::ONE) {
+        return None;
+    }
+    let cof = cofactors_mod_leaves(&product_tree(qs.clone()));
+    if !qs
+        .iter()
+        .zip(&cof)
+        .all(|(q, c)| q.gcd_recursive(c) == Int::ONE)
+    {
+        return None;
+    }
+    Some(
+        ms.iter()
+            .cloned()
+            .zip(qs)
+            .map(|(m, q)| {
+                let mut fs = vec![(g.clone(), g.clone())];
+                if q > Int::ONE {
+                    fs.push((q.clone(), q));
+                }
+                fs.sort();
+                (m, fs)
+            })
+            .collect(),
+    )
+}
+
+fn gcd_ppi_ppo(a: &Int, c: &Int) -> (Int, Int, Int) {
+    let mut x = a.gcd_recursive(c);
+    let gout = x.clone();
+    let mut y = a.div_floor_wide(&x);
+    loop {
+        let g = x.gcd_recursive(&y);
+        if g == Int::ONE {
+            return (gout, x, y);
+        }
+        x = &x * &g;
+        y = y.div_floor_wide(&g);
+    }
+}
+
+fn ppi(a: &Int, c: &Int) -> Int {
+    gcd_ppi_ppo(a, c).1
+}
+
+/// Algorithm 11.4 of Bernstein (2005): returns `(gcd(a, b), ppg(a, b), pple(a, b))`.
+fn gcd_ppg_pple(a: &Int, b: &Int) -> (Int, Int, Int) {
+    let mut y = a.gcd_recursive(b);
+    let gout = y.clone();
+    let mut x = a.div_floor_wide(&y);
+    loop {
+        let g = x.gcd_recursive(&y);
+        if g == Int::ONE {
+            return (gout, x, y);
+        }
+        x = &x * &g;
+        y = y.div_floor_wide(&g);
+    }
+}
+
+fn two_power(mut a: Int, mut n: usize) -> Int {
+    while n > 0 {
+        a = &a * &a;
+        n -= 1;
+    }
+    a
+}
+
+/// Algorithm 13.2 of Bernstein (2005), iterative explicit stack: appends the natural coprime base
+/// of `{a, b}` to `out`.
+fn append_cb_pair(out: &mut Vec<Int>, a0: Int, b0: Int) {
+    enum Task {
+        Pair(Int, Int),
+    }
+    let mut stack = vec![Task::Pair(a0, b0)];
+    while let Some(Task::Pair(a_in, b)) = stack.pop() {
+        if a_in <= Int::ONE {
+            if b > Int::ONE {
+                out.push(b);
+            }
+            continue;
+        }
+        if b <= Int::ONE {
+            out.push(a_in);
+            continue;
+        }
+        if a_in == b {
+            out.push(a_in);
+            continue;
+        }
+        let (_, a, r) = gcd_ppi_ppo(&a_in, &b);
+        if r > Int::ONE {
+            out.push(r);
+        }
+        if a <= Int::ONE {
+            out.push(b);
+            continue;
+        }
+        let (mut g, mut h, mut c) = gcd_ppg_pple(&a, &b);
+        let c0 = c.clone();
+        let mut x = c0.clone();
+        let mut n: usize = 1;
+        let mut sub_calls: Vec<(Int, Int)> = Vec::new();
+        loop {
+            let g_sq = &g * &g;
+            let (ng, nh, nc) = gcd_ppg_pple(&h, &g_sq);
+            g = ng;
+            h = nh;
+            c = nc;
+            let d = c.gcd_recursive(&b);
+            x = &x * &d;
+            let y = two_power(d.clone(), n - 1);
+            sub_calls.push((c.div_floor_wide(&y), d));
+            if h == Int::ONE {
+                break;
+            }
+            n += 1;
+        }
+        // Push in reverse so execution order matches Bernstein's recursive order.
+        stack.push(Task::Pair(b.div_floor_wide(&x), c0));
+        for (sa, sb) in sub_calls.into_iter().rev() {
+            stack.push(Task::Pair(sa, sb));
+        }
+    }
+}
+
+/// Balanced binary product; multiplication costs are included in the bit cost.
+fn prod_slice(items: &[Int]) -> Int {
+    if items.is_empty() {
+        return Int::ONE;
+    }
+    let mut cur: Vec<Int> = items.to_vec();
+    while cur.len() > 1 {
+        let mut next = Vec::with_capacity(cur.len().div_ceil(2));
+        let mut it = cur.into_iter();
+        while let Some(a) = it.next() {
+            if let Some(b) = it.next() {
+                next.push(&a * &b);
+            } else {
+                next.push(a);
+            }
+        }
+        cur = next;
+    }
+    cur.pop().unwrap_or(Int::ONE)
+}
+
+/// Product tree in a flat arena. Construction, traversal and destruction all
+/// use explicit storage; no call stack grows with the number of inputs.
+struct ProdEntry {
+    prod: Int,
+    tag: Option<usize>,
+    children: Option<(usize, usize)>,
+}
+struct ProdNode {
+    prod: Int,
+    nodes: Vec<ProdEntry>,
+}
+
+fn build_prod_tree(items: &[(usize, Int)]) -> Option<ProdNode> {
+    if items.is_empty() {
+        return None;
+    }
+    let mut nodes: Vec<_> = items
+        .iter()
+        .map(|(tag, v)| ProdEntry {
+            prod: v.clone(),
+            tag: Some(*tag),
+            children: None,
+        })
+        .collect();
+    let mut level: Vec<usize> = (0..nodes.len()).collect();
+    while level.len() > 1 {
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
+        for pair in level.chunks(2) {
+            if pair.len() == 1 {
+                next.push(pair[0]);
+                continue;
+            }
+            let (l, r) = (pair[0], pair[1]);
+            let prod = &nodes[l].prod * &nodes[r].prod;
+            next.push(nodes.len());
+            nodes.push(ProdEntry {
+                prod,
+                tag: None,
+                children: Some((l, r)),
+            });
+        }
+        level = next;
+    }
+    Some(ProdNode {
+        prod: nodes[level[0]].prod.clone(),
+        nodes,
+    })
+}
+
+/// Sparse divisibility traversal: discard a subtree as soon as its product
+/// shares no prime factor with the remaining input. The output contains only
+/// the nontrivial factors of that input.
+// None only if `tree` is not as `build_prod_tree` makes it: no node, or a node with neither a
+// tag nor children. No stop is reachable (I6.12); the caller refuses.
+fn split_sparse(a: &Int, tree: &ProdNode, out: &mut Vec<(usize, Int)>) -> Option<()> {
+    if *a <= Int::ONE {
+        return Some(());
+    }
+    let mut stack = vec![(tree.nodes.len().checked_sub(1)?, a.clone())];
+    while let Some((i, cur)) = stack.pop() {
+        let node = &tree.nodes[i];
+        let b = ppi(&cur, &node.prod);
+        if b <= Int::ONE {
+            continue;
+        }
+        if let Some(tag) = node.tag {
+            out.push((tag, b));
+            continue;
+        }
+        // build_prod_tree creates either a tagged leaf or an internal node
+        // with both child indices; this branch has already excluded a leaf.
+        let (l, r) = node.children?;
+        stack.push((r, b.clone()));
+        stack.push((l, b));
+    }
+    Some(())
+}
+
+/// Algorithm 16.2 of Bernstein (2005) with sparse collision filtering: `cb(P union {b})`.
+fn cb_extend(p: Vec<Int>, b: Int) -> Option<Vec<Int>> {
+    if b <= Int::ONE {
+        return Some(p);
+    }
+    if p.is_empty() {
+        return Some(vec![b]);
+    }
+    let indexed: Vec<(usize, Int)> = p.iter().cloned().enumerate().collect();
+    // p.is_empty() returned above; indexed has exactly p.len() leaves.
+    let tree = build_prod_tree(&indexed)?;
+    let (g, a, r) = gcd_ppi_ppo(&b, &tree.prod);
+    if g == Int::ONE {
+        let mut out = p;
+        out.push(b);
+        return Some(out);
+    }
+    let mut hits: Vec<(usize, Int)> = Vec::new();
+    split_sparse(&a, &tree, &mut hits)?;
+    let mut s_by_idx: HashMap<usize, Int> = hits.into_iter().collect();
+
+    let mut result = Vec::with_capacity(p.len() + 2);
+    if r > Int::ONE {
+        result.push(r);
+    }
+    for (idx, p_i) in p.into_iter().enumerate() {
+        if let Some(s_i) = s_by_idx.remove(&idx) {
+            append_cb_pair(&mut result, p_i, s_i);
+        } else {
+            result.push(p_i);
+        }
+    }
+    Some(result)
+}
+
+/// Algorithm 17.3 of Bernstein (2005) enhanced with coprime fast-path and active-subset filtering:
+/// merges two coprime bases `p` and `q` into `cb(p union q)`.
+fn cb_merge(p: Vec<Int>, q: Vec<Int>) -> Option<Vec<Int>> {
+    if p.is_empty() {
+        return Some(q);
+    }
+    if q.is_empty() {
+        return Some(p);
+    }
+    let p_idx: Vec<(usize, Int)> = p.iter().cloned().enumerate().collect();
+    let q_idx: Vec<(usize, Int)> = q.iter().cloned().enumerate().collect();
+    // Both empty-input branches returned; each indexed list has its input's length.
+    let p_tree = build_prod_tree(&p_idx)?;
+    let q_tree = build_prod_tree(&q_idx)?;
+    let g = p_tree.prod.gcd_recursive(&q_tree.prod);
+    if g == Int::ONE {
+        let mut out = Vec::with_capacity(p.len() + q.len());
+        out.extend(p);
+        out.extend(q);
+        return Some(out);
+    }
+
+    // Separate `p` and `q` into untouched coprime elements and colliding elements.
+    let mut p_hits = Vec::new();
+    split_sparse(&g, &p_tree, &mut p_hits)?;
+    let p_hit_set: HashSet<usize> = p_hits.into_iter().map(|(i, _)| i).collect();
+
+    let mut q_hits = Vec::new();
+    split_sparse(&g, &q_tree, &mut q_hits)?;
+    let q_hit_set: HashSet<usize> = q_hits.into_iter().map(|(i, _)| i).collect();
+
+    let mut untouched = Vec::new();
+    let mut s_active = Vec::new();
+    for (i, v) in p.into_iter().enumerate() {
+        if p_hit_set.contains(&i) {
+            s_active.push(v);
+        } else {
+            untouched.push(v);
+        }
+    }
+    let mut q_active = Vec::new();
+    for (i, v) in q.into_iter().enumerate() {
+        if q_hit_set.contains(&i) {
+            q_active.push(v);
+        } else {
+            untouched.push(v);
+        }
+    }
+
+    if q_active.len() == 1 {
+        // The branch condition is q_active.len() == 1; no intervening mutation.
+        let mut merged = cb_extend(s_active, q_active.pop()?)?;
+        merged.extend(untouched);
+        return Some(merged);
+    }
+
+    let n = q_active.len();
+    let mut bits = 1usize;
+    // n is the length of an allocated Vec<Int>, whose elements occupy more
+    // than one byte, so its ceiling log2 is below usize::BITS.
+    while (1usize << bits) < n {
+        bits += 1;
+    }
+    for bit_i in 0..bits {
+        let mut r0 = Vec::new();
+        let mut r1 = Vec::new();
+        for (k, v) in q_active.iter().enumerate() {
+            if ((k >> bit_i) & 1) == 0 {
+                r0.push(v.clone());
+            } else {
+                r1.push(v.clone());
+            }
+        }
+        s_active = cb_extend(s_active, prod_slice(&r0))?;
+        s_active = cb_extend(s_active, prod_slice(&r1))?;
+    }
+    s_active.extend(untouched);
+    Some(s_active)
+}
+
+/// Algorithm 18.1 + 21.2 of Bernstein (2005): computes the sorted natural coprime base `bases` of
+/// `moduli`, the prime-power-like factor list `mod_factors[m] = [(base_idx, q_{m, idx})]` for each
+/// `m`, and `base_all_powers[base_idx]` (sorted powers dividing any `m`).
+// None only where a product tree is not as built (see `split_sparse`).
+fn coprime_base_and_factors(
+    mut moduli: Vec<Int>,
+) -> Option<(Vec<Int>, BTreeMap<Int, Vec<(usize, Int)>>, Vec<Vec<Int>>)> {
+    moduli.retain(|m| *m > Int::ONE);
+    moduli.sort();
+    moduli.dedup();
+    if moduli.is_empty() {
+        return Some((Vec::new(), BTreeMap::new(), Vec::new()));
+    }
+
+    // Bottom-up merge tree for Algorithm 18.1 (`cb`).
+    let mut level: Vec<Vec<Int>> = moduli.iter().cloned().map(|m| vec![m]).collect();
+    while level.len() > 1 {
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
+        let mut it = level.into_iter();
+        while let Some(p) = it.next() {
+            if let Some(q) = it.next() {
+                next.push(cb_merge(p, q)?);
+            } else {
+                next.push(p);
+            }
+        }
+        level = next;
+    }
+    let mut bases = level.pop().unwrap_or_default();
+    bases.retain(|b| *b > Int::ONE);
+    bases.sort();
+    bases.dedup();
+
+    let num_bases = bases.len();
+    let mut mod_factors: BTreeMap<Int, Vec<(usize, Int)>> = BTreeMap::new();
+    let mut base_powers_set: Vec<BTreeSet<Int>> = vec![BTreeSet::new(); num_bases];
+
+    // Simultaneous divide-and-conquer factorization (Algorithm 21.2).
+    let initial_p: Vec<(usize, Int)> = bases.iter().cloned().enumerate().collect();
+    let mut stack: Vec<(&[Int], Vec<(usize, Int)>)> = vec![(&moduli[..], initial_p)];
+
+    while let Some((s_slice, p_sub)) = stack.pop() {
+        if s_slice.is_empty() || p_sub.is_empty() {
+            continue;
+        }
+        if s_slice.len() == 1 {
+            let m = &s_slice[0];
+            // Empty p_sub was excluded at this frame's entry.
+            let p_tree = build_prod_tree(&p_sub)?;
+            let mut facs = Vec::new();
+            split_sparse(m, &p_tree, &mut facs)?;
+            facs.sort_by_key(|&(idx, _)| idx);
+            for &(idx, ref q) in &facs {
+                base_powers_set[idx].insert(q.clone());
+            }
+            mod_factors.insert(m.clone(), facs);
+            continue;
+        }
+        let p_tree = build_prod_tree(&p_sub)?;
+        let mid = s_slice.len() / 2;
+        for half in [&s_slice[mid..], &s_slice[..mid]] {
+            let y = prod_slice(half);
+            let z = ppi(&p_tree.prod, &y);
+            let mut hits = Vec::new();
+            split_sparse(&z, &p_tree, &mut hits)?;
+            hits.sort_by_key(|&(idx, _)| idx);
+            let q_sub: Vec<(usize, Int)> = hits
+                .into_iter()
+                .map(|(idx, _)| (idx, bases[idx].clone()))
+                .collect();
+            stack.push((half, q_sub));
+        }
+    }
+
+    let base_all_powers: Vec<Vec<Int>> = base_powers_set
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut set)| {
+            if set.is_empty() {
+                set.insert(bases[i].clone());
+            }
+            set.into_iter().collect()
+        })
+        .collect();
+
+    Some((bases, mod_factors, base_all_powers))
 }
 
 enum ConsolidateOut {
@@ -2895,22 +3384,22 @@ fn intersect_mod_divisor(
     }
     let mut out = Vec::new();
     for (lo, hi) in cur {
-        let ql = lo.div_floor(q_z);
-        let qh = hi.div_floor(q_z);
+        let ql = lo.div_floor_wide(q_z);
+        let qh = hi.div_floor_wide(q_z);
         if ql == qh {
-            let rl = lo.mod_floor(q_z);
-            let rh = hi.mod_floor(q_z);
+            let rl = lo.mod_floor_wide(q_z);
+            let rh = hi.mod_floor_wide(q_z);
             let base = &ql * q_z;
             for (sl, sh) in res_intersect(&[(rl, rh)], s_z) {
                 out.push((&base + &sl, &base + &sh));
             }
         } else if qh == &ql + &Int::ONE {
-            let rl = lo.mod_floor(q_z);
+            let rl = lo.mod_floor_wide(q_z);
             let base_l = &ql * q_z;
             for (sl, sh) in res_intersect(&[(rl, q_z - &Int::ONE)], s_z) {
                 out.push((&base_l + &sl, &base_l + &sh));
             }
-            let rh = hi.mod_floor(q_z);
+            let rh = hi.mod_floor_wide(q_z);
             let base_h = &qh * q_z;
             for (sl, sh) in res_intersect(&[(Int::ZERO, rh)], s_z) {
                 out.push((&base_h + &sl, &base_h + &sh));
@@ -2930,17 +3419,27 @@ fn consolidate_prime_powers(powers: &BTreeMap<Int, ResidueSet>, max_q: &Int) -> 
     let mut work: Vec<(Int, ResidueSet)> =
         powers.iter().map(|(q, s)| (q.clone(), s.clone())).collect();
 
-    // Pass 1: Propagate single-residue constraints downward from higher powers `q_hi` to lower
-    // powers `q_lo`.
-    for hi_idx in (0..work.len()).rev() {
-        if work[hi_idx].1.len() == 1 && work[hi_idx].1[0].0 == work[hi_idx].1[0].1 {
-            let r_hi = work[hi_idx].1[0].0.clone();
-            for lo_idx in 0..hi_idx {
-                let rq = r_hi.mod_floor(&work[lo_idx].0);
-                work[lo_idx].1 = res_intersect(&work[lo_idx].1, &[(rq.clone(), rq)]);
-                if work[lo_idx].1.is_empty() {
-                    return ConsolidateOut::Empty;
-                }
+    // Complexity tradeoff: repeatedly propagating each singleton into every
+    // lower power takes O(k^2) remainder operations. The highest singleton
+    // already fixes every lower power; if they agree with it, all lower
+    // singletons agree with each other. Reduce that residue once by a
+    // product/remainder tree, O(M(B) log k), then intersect each set once.
+    // No constraint or answer is given up. Tests: pncx_power_propagation_scale
+    // (parameterized by total input bits) and pncx_power_propagation_oracle.
+    if let Some(i) = work
+        .iter()
+        .rposition(|(_, s)| matches!(s.as_slice(), [(a, b)] if a == b))
+    {
+        let residue = work[i].1[0].0.clone();
+        let moduli: Vec<_> = work[..i].iter().map(|p| p.0.clone()).collect();
+        let remainders = batch_remainders(&residue, &moduli);
+        if remainders.len() != i {
+            return ConsolidateOut::Undecided;
+        }
+        for ((_, set), r) in work[..i].iter_mut().zip(remainders) {
+            *set = res_intersect(set, &[(r.clone(), r)]);
+            if set.is_empty() {
+                return ConsolidateOut::Empty;
             }
         }
     }
@@ -2958,12 +3457,12 @@ fn consolidate_prime_powers(powers: &BTreeMap<Int, ResidueSet>, max_q: &Int) -> 
             u = &u + &(&stride * &proj[0].0);
             stride = q;
         } else {
-            let q_z = q.div_floor(&stride);
+            let q_z = q.div_floor_wide(&stride);
             rem_powers.push((q_z, proj));
         }
     }
 
-    let z_max_q = max_q.div_floor(&stride);
+    let z_max_q = max_q.div_floor_wide(&stride);
     let info = BaseInfo {
         max_q: max_q.clone(),
         u,
@@ -3031,19 +3530,124 @@ fn solve_coprime_system(
     // three-element domains, transport their value labels, and remove
     // vertices of degree below three. Reverse greedy coloring costs
     // O(v + e) after O(e log e) grouping, plus balanced CRT bit cost.
-    // Nonmatching, inconsistent or non-2-degenerate graphs give no verdict;
+    // Nonmatching, inconsistent or unsettled cores give no verdict;
     // this is a sufficient witness, with no search or size budget.
     // Tests: pncx_connected_colors_scale, pncx_coloring_relabelings.
-    if lo.is_none() && hi.is_none() && allow_split {
-        if let Some(point) = graph_coloring_witness(bases_info, &allowed, &clauses) {
-            return RegimeOut::Found(point);
+    if allow_split {
+        if let Some(point) = score_witness(bases_info, &allowed, &clauses) {
+            let period = prod_slice(
+                &bases_info
+                    .iter()
+                    .map(|b| b.max_q.clone())
+                    .collect::<Vec<_>>(),
+            );
+            if let Some(point) = pick_in_span(lo, hi, &point, &period) {
+                return RegimeOut::Found(point);
+            }
         }
-
+        if let Some(point) = graph_coloring_witness(bases_info, &allowed, &clauses) {
+            // A bounded interval may include a representative of the coloring's
+            // period. Test that representative; missing it gives no verdict.
+            let period = prod_slice(
+                &bases_info
+                    .iter()
+                    .map(|b| b.max_q.clone())
+                    .collect::<Vec<_>>(),
+            );
+            if let Some(point) = pick_in_span(lo, hi, &point, &period) {
+                return RegimeOut::Found(point);
+            }
+        }
+    }
+    if lo.is_none() && hi.is_none() && allow_split {
         if let Some(point) = independent_component_witness(bases_info, &allowed, &clauses) {
             return RegimeOut::Found(point);
         }
     }
     solve_coprime_connected(lo, hi, bases_info, allowed, clauses, allow_split)
+}
+
+/// A sufficient point from uniquely most frequent permitted values. A clause
+/// must already be satisfied by such a value; choices on the other bases then
+/// cannot change that clause's truth.
+// Complexity tradeoff: enumerating every residue can be exponential in its
+// written bits. Sweep the written interval endpoints, O(S log S), to find a
+// unique maximizing value on each base. A tie gives no preferred value, so
+// this rule is invariant under local value permutations and affine renaming.
+// Failure to cover every clause gives no verdict. CRT retains its bit cost.
+// Tests: pncx_score_witness_oracle, pncx_score_witness_scale.
+fn score_witness(
+    info: &[BaseInfo],
+    allowed: &[ResidueSet],
+    clauses: &[BTreeMap<usize, ResidueSet>],
+) -> Option<Int> {
+    if info.len() != allowed.len() || clauses.is_empty() {
+        return None;
+    }
+    let mut events: Vec<BTreeMap<Int, (i128, i128)>> = vec![BTreeMap::new(); info.len()];
+    for (i, domain) in allowed.iter().enumerate() {
+        for (a, b) in domain {
+            events[i].entry(a.clone()).or_default().1 += 1;
+            events[i].entry(b + &Int::ONE).or_default().1 -= 1;
+        }
+    }
+    for cl in clauses {
+        for (&i, set) in cl {
+            let row = events.get_mut(i)?;
+            for (a, b) in set {
+                row.entry(a.clone()).or_default().0 += 1;
+                row.entry(b + &Int::ONE).or_default().0 -= 1;
+            }
+        }
+    }
+    let mut preferred = Vec::with_capacity(info.len());
+    for row in events {
+        let (mut score, mut inside) = (0i128, 0i128);
+        let mut best: Option<i128> = None;
+        let mut unique = None;
+        let mut iter = row.into_iter().peekable();
+        while let Some((at, (ds, di))) = iter.next() {
+            score += ds;
+            inside += di;
+            let Some((next, _)) = iter.peek() else {
+                break;
+            };
+            if inside == 0 {
+                continue;
+            }
+            match best {
+                None => {
+                    best = Some(score);
+                    unique = (next == &(&at + &Int::ONE)).then_some(at);
+                }
+                Some(old) if score > old => {
+                    best = Some(score);
+                    unique = (next == &(&at + &Int::ONE)).then_some(at);
+                }
+                Some(old) if score == old => unique = None,
+                Some(_) => {}
+            }
+        }
+        preferred.push(unique);
+    }
+    if !clauses.iter().all(|cl| {
+        cl.iter().any(|(&i, s)| {
+            preferred
+                .get(i)
+                .and_then(Option::as_ref)
+                .is_some_and(|v| res_contains(s, v))
+        })
+    }) {
+        return None;
+    }
+    let mut choices = Vec::with_capacity(info.len());
+    for (i, base) in info.iter().enumerate() {
+        let value = preferred[i]
+            .as_ref()
+            .or_else(|| allowed[i].first().map(|p| &p.0))?;
+        choices.push((base.r_from_z(value), base.max_q.clone()));
+    }
+    combine_crt_tree(choices).map(|p| p.0)
 }
 
 /// A sufficient coloring witness, invariant under independent relabeling of each
@@ -3159,10 +3763,60 @@ fn graph_coloring_witness(
             }
         }
     }
-    if order.len() != n {
-        return None;
-    }
     let mut colors = vec![None; n];
+    let mut local_index = vec![0; n];
+    // Complexity tradeoff: declining an odd three-core misses easy cubic
+    // graphs. First color bipartite cores; otherwise use the constructive
+    // Brooks coloring on a subcubic core, O((v+e) log v) graph operations.
+    // A universal vertex with a bipartite remainder also has a direct
+    // coloring. Other higher-degree cores give no verdict. Tests: pncx_brooks_subcubic_oracle,
+    // pncx_prism_core_scale and pncx_coloring_small_graphs_match_enumeration.
+    for start in 0..n {
+        if removed[start] || colors[start].is_some() {
+            continue;
+        }
+        colors[start] = Some(0usize);
+        let mut component = vec![start];
+        let mut todo = vec![start];
+        let mut bipartite = true;
+        while let Some(a) = todo.pop() {
+            let next = 1usize.checked_sub(colors[a]?)?;
+            for &(b, _) in &adjacent[a] {
+                if removed[b] {
+                    continue;
+                }
+                match colors[b] {
+                    Some(c) if c != next => bipartite = false,
+                    Some(_) => {}
+                    None => {
+                        colors[b] = Some(next);
+                        component.push(b);
+                        todo.push(b);
+                    }
+                }
+            }
+        }
+        if !bipartite {
+            component.sort_unstable();
+            for (i, &v) in component.iter().enumerate() {
+                local_index[v] = i;
+            }
+            let graph: Vec<Vec<usize>> = component
+                .iter()
+                .map(|&v| {
+                    adjacent[v]
+                        .iter()
+                        .filter(|(w, _)| !removed[*w])
+                        .map(|(w, _)| local_index[*w])
+                        .collect()
+                })
+                .collect();
+            let own = brooks::color(&graph).or_else(|| brooks::universal(&graph))?;
+            for (&v, c) in component.iter().zip(own) {
+                colors[v] = Some(c);
+            }
+        }
+    }
     for a in order.into_iter().rev() {
         let mut used = [false; 3];
         for &(b, _) in &adjacent[a] {
@@ -3255,7 +3909,7 @@ fn independent_component_witness(
             return None;
         };
         for base in local_info {
-            choices.push((point.mod_floor(&base.max_q), base.max_q));
+            choices.push((point.mod_floor_wide(&base.max_q), base.max_q));
         }
     }
     combine_crt_tree(choices).map(|(point, _)| point)
@@ -3415,7 +4069,7 @@ fn solve_coprime_connected(
                 if clauses.is_empty()
                     && (0..t).all(|i| fixed_base[i].is_some() || satisfied_bases[i])
                 {
-                    let Some(first_y) = y_dom.pieces[0].0.as_ref() else {
+                    let Some(first_y) = y_dom.pieces.first().and_then(|p| p.0.as_ref()) else {
                         return RegimeOut::Undecided;
                     };
                     return RegimeOut::Found(&r0 + &(&m0 * first_y));
@@ -3458,8 +4112,8 @@ fn solve_coprime_connected(
                 num = &num * &res_count(f_i);
                 den = &den * &a_counts[i];
             }
-            let g = num.gcd(&den);
-            let sh = (num.div_floor(&g), den.div_floor(&g));
+            let g = num.gcd_recursive(&den);
+            let sh = (num.div_floor_wide(&g), den.div_floor_wide(&g));
             total_share = rat_add(&total_share, &sh);
             shares.push(sh);
         }
@@ -3547,8 +4201,8 @@ fn merge_pair_clauses(
 fn rat_add(a: &(Int, Int), b: &(Int, Int)) -> (Int, Int) {
     let num = &(&a.0 * &b.1) + &(&b.0 * &a.1);
     let den = &a.1 * &b.1;
-    let g = num.gcd(&den);
-    (num.div_floor(&g), den.div_floor(&g))
+    let g = num.gcd_recursive(&den);
+    (num.div_floor_wide(&g), den.div_floor_wide(&g))
 }
 
 /// 1D Event-Point Method of Conditional Expectations to deterministically select a residue
@@ -3593,8 +4247,9 @@ fn find_point_by_conditional_expectations(
                             let f_cnt = res_count(f_i);
                             let num = &weights[b_idx].0 * &a_counts[i];
                             let den = &weights[b_idx].1 * &f_cnt;
-                            let g = num.gcd(&den);
-                            w_sum = rat_add(&w_sum, &(num.div_floor(&g), den.div_floor(&g)));
+                            let g = num.gcd_recursive(&den);
+                            w_sum =
+                                rat_add(&w_sum, &(num.div_floor_wide(&g), den.div_floor_wide(&g)));
                         }
                     } else {
                         w_sum = rat_add(&w_sum, &weights[b_idx]);
@@ -3619,8 +4274,8 @@ fn find_point_by_conditional_expectations(
                         let f_cnt = res_count(f_i);
                         let num = &weights[b_idx].0 * &a_counts[i];
                         let den = &weights[b_idx].1 * &f_cnt;
-                        let g = num.gcd(&den);
-                        weights[b_idx] = (num.div_floor(&g), den.div_floor(&g));
+                        let g = num.gcd_recursive(&den);
+                        weights[b_idx] = (num.div_floor_wide(&g), den.div_floor_wide(&g));
                         next_active.push(b_idx);
                     }
                 } else {
@@ -3633,9 +4288,7 @@ fn find_point_by_conditional_expectations(
         // Combine all chosen residues via CRT:
         let mut pairs = vec![(r0.clone(), m0.clone())];
         for &i in order {
-            let Some(z_i) = chosen[i].as_ref() else {
-                return None;
-            };
+            let z_i = chosen.get(i)?.as_ref()?;
             pairs.push((bases_info[i].r_from_z(z_i), bases_info[i].max_q.clone()));
         }
         if let Some((r_full, m_full)) = combine_crt_tree(pairs)
@@ -3657,9 +4310,7 @@ fn find_point_by_conditional_expectations(
                 if m_cur > span_width {
                     break;
                 }
-                let Some(z_i) = chosen[i].as_ref() else {
-                    return None;
-                };
+                let z_i = chosen.get(i)?.as_ref()?;
                 let r_i = bases_info[i].r_from_z(z_i);
                 let Some((rn, mn)) = combine_crt_pair(&r_cur, &m_cur, &r_i, &bases_info[i].max_q)
                 else {
@@ -3839,7 +4490,7 @@ fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
                 .collect();
         }
         let big_m = tree.last()?.first()?.clone();
-        return Some((vals[0].mod_floor(&big_m), big_m));
+        return Some((vals.first()?.mod_floor_wide(&big_m), big_m));
     }
     while pairs.len() > 1 {
         let mut next = Vec::with_capacity(pairs.len().div_ceil(2));
@@ -3857,8 +4508,8 @@ fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
 }
 
 fn y_span(lo: &Option<Int>, hi: &Option<Int>, r0: &Int, m0: &Int) -> Option<Span> {
-    let lo_y = lo.as_ref().map(|l| -(&(r0 - l).div_floor(m0)));
-    let hi_y = hi.as_ref().map(|h| (h - r0).div_floor(m0));
+    let lo_y = lo.as_ref().map(|l| -(&(r0 - l).div_floor_wide(m0)));
+    let hi_y = hi.as_ref().map(|h| (h - r0).div_floor_wide(m0));
     if let (Some(ly), Some(hy)) = (&lo_y, &hi_y)
         && ly > hy
     {
@@ -3871,16 +4522,16 @@ fn pick_in_span(lo: &Option<Int>, hi: &Option<Int>, r0: &Int, m0: &Int) -> Optio
     if let Some(l) = lo
         && *l > Int::ZERO
     {
-        let x = l + &(r0 - l).mod_floor(m0);
+        let x = l + &(r0 - l).mod_floor_wide(m0);
         return hi.as_ref().is_none_or(|h| x <= *h).then_some(x);
     }
     if let Some(h) = hi
         && *h < Int::ZERO
     {
-        let x = h - &(h - r0).mod_floor(m0);
+        let x = h - &(h - r0).mod_floor_wide(m0);
         return lo.as_ref().is_none_or(|l| x >= *l).then_some(x);
     }
-    let r_pos = r0.mod_floor(m0);
+    let r_pos = r0.mod_floor_wide(m0);
     if hi.as_ref().is_none_or(|h| r_pos <= *h) {
         return Some(r_pos);
     }
@@ -3960,7 +4611,7 @@ fn build_model(
     // Global quotients `q_root`:
     for (q_root, gq) in global_quots {
         let sx_val = if gq.s_x > 0 { x_val.clone() } else { -x_val };
-        let q_div = (&sx_val + &gq.c_lo).div_floor(&gq.m);
+        let q_div = (&sx_val + &gq.c_lo).div_floor_wide(&gq.m);
         let q_val = if gq.sigma_q > 0 { q_div } else { -&q_div };
         model.insert(q_root.clone(), q_val);
     }
@@ -3971,8 +4622,8 @@ fn build_model(
         for lw in wins {
             let sx_val = if lw.s_x > 0 { x_val.clone() } else { -x_val };
             let u = &sx_val + &lw.c_lo;
-            if u.mod_floor(&lw.m) <= lw.w {
-                let q_div = u.div_floor(&lw.m);
+            if u.mod_floor_wide(&lw.m) <= lw.w {
+                let q_div = u.div_floor_wide(&lw.m);
                 chosen_q = if lw.sigma_q > 0 { q_div } else { -&q_div };
                 break;
             }
@@ -4006,45 +4657,120 @@ fn build_model(
     model
 }
 /// The bounds that triples of clauses force (Codex's R3-CODEX-6, proved there): three clauses
-/// `x mod a == a_j || x mod b == b_j || x in D`, with one interval `D`, the three `a_j` distinct
+/// `x mod a == a_j || x mod b == b_j || x in D`, with one interval or empty `D`, the three `a_j` distinct
 /// and the three `b_j` distinct, force `x` into `D`, since outside `D` the one value of `x mod a`
 /// and the one of `x mod b` satisfy at most two of them. Clauses are grouped by `(D, a, b)`; a
-/// group keeps the first pairs whose residues are new on both sides, and a third such pair
-/// forces `D`. Missing a triple (another choice of three) only misses a bound. O(c log c) map
-/// operations for c clauses.
+/// group tests for a matching of three pairs, independently of the order in which
+/// the clauses were written. O(c log c) operations for c clauses.
 ///
 /// Complexity tradeoff: without this bound the walk visits every regime below `D` on the
 /// regimes3 family (23x per 8x, Gemini's round-3 control); it finds only bounds forced by three
 /// two-modulus clauses, not every implied bound. Test: the regimes3 axis of `pncx_probe`.
 fn forced_pair_bounds(clauses: &[FlatClause]) -> Domain {
-    let mut groups: BTreeMap<(&Span, &Int, &Int), Vec<(&Int, &Int)>> = BTreeMap::new();
-    let (mut lo, mut hi) = (None, None);
+    let mut groups: BTreeMap<(Option<&Span>, &Int, &Int), Vec<(&Int, &Int)>> = BTreeMap::new();
     for cl in clauses {
         if cl.mods.len() != 2 {
             continue;
         }
         let mut lits = cl.mods.iter();
-        let (Some((a, sa)), Some((b, sb)), [span]) =
-            (lits.next(), lits.next(), cl.bounds.pieces.as_slice())
-        else {
+        let (Some((a, sa)), Some((b, sb))) = (lits.next(), lits.next()) else {
             continue;
+        };
+        // Complexity tradeoff: the empty bound used to skip the same
+        // three-clause contradiction, leaving all later cuts to the walk.
+        // Include it in the existing O(c log c) grouping; a matching then
+        // proves there is no point. No additional refinement is needed.
+        // Tests: pncx_empty_pair_implication and pncx_bound_matching_scale.
+        let span = match cl.bounds.pieces.as_slice() {
+            [] => None,
+            [span] => Some(span),
+            _ => continue,
         };
         let ([(ra, ra_hi)], [(rb, rb_hi)]) = (sa.as_slice(), sb.as_slice()) else {
             continue;
         };
-        if ra != ra_hi || rb != rb_hi {
-            continue;
+        if ra == ra_hi && rb == rb_hi {
+            groups.entry((span, a, b)).or_default().push((ra, rb));
         }
-        let chosen = groups.entry((span, a, b)).or_default();
-        if chosen.len() < 3 && chosen.iter().all(|(ca, cb)| *ca != ra && *cb != rb) {
-            chosen.push((ra, rb));
-            if chosen.len() == 3 {
-                lo = max_lo(lo, span.0.clone());
-                hi = min_hi(hi, span.1.clone());
-            }
+    }
+    let (mut lo, mut hi) = (None, None);
+    for ((span, _, _), pairs) in groups {
+        if three_disjoint_pairs(&pairs) {
+            let Some(span) = span else {
+                return Domain::empty();
+            };
+            lo = max_lo(lo, span.0.clone());
+            hi = min_hi(hi, span.1.clone());
         }
     }
     Domain::from_pieces(vec![(lo, hi)])
+}
+
+/// Whether three edges have distinct endpoints on each side.
+// Complexity tradeoff: greedily keeping disjoint pairs can miss a triple
+// depending on input order, e.g. (0,0),(0,1),(1,0),(2,2). Testing every triple
+// costs O(c^3). Three augmenting-path passes find the required matching in
+// O(c) graph operations after O(c log c) indexing. Nothing previously forced
+// is lost. Three is the number in the implication, not an input-size limit.
+// Tests: pncx_bound_matching_is_order_independent, pncx_bound_matching_scale.
+fn three_disjoint_pairs(pairs: &[(&Int, &Int)]) -> bool {
+    let left: BTreeSet<_> = pairs.iter().map(|p| p.0).collect();
+    let right: BTreeSet<_> = pairs.iter().map(|p| p.1).collect();
+    let left: BTreeMap<_, _> = left.into_iter().enumerate().map(|(i, v)| (v, i)).collect();
+    let right: BTreeMap<_, _> = right.into_iter().enumerate().map(|(i, v)| (v, i)).collect();
+    let mut adjacent = vec![Vec::new(); left.len()];
+    for (a, b) in pairs {
+        let (Some(&a), Some(&b)) = (left.get(a), right.get(b)) else {
+            return false;
+        };
+        adjacent[a].push(b);
+    }
+    let (mut lm, mut rm): (Vec<Option<usize>>, Vec<Option<usize>>) =
+        (vec![None; left.len()], vec![None; right.len()]);
+    for _ in 0..3 {
+        let mut seen = vec![false; left.len()];
+        let mut parent = vec![None; right.len()];
+        let mut todo = VecDeque::new();
+        for a in 0..left.len() {
+            if lm[a].is_none() {
+                seen[a] = true;
+                todo.push_back(a);
+            }
+        }
+        let mut target = None;
+        'walk: while let Some(a) = todo.pop_front() {
+            for &b in &adjacent[a] {
+                if parent[b].is_some() {
+                    continue;
+                }
+                parent[b] = Some(a);
+                match rm[b] {
+                    None => {
+                        target = Some(b);
+                        break 'walk;
+                    }
+                    Some(a) if !seen[a] => {
+                        seen[a] = true;
+                        todo.push_back(a);
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        let Some(mut b) = target else {
+            return false;
+        };
+        while let Some(a) = parent[b] {
+            let old = lm[a];
+            lm[a] = Some(b);
+            rm[b] = Some(a);
+            match old {
+                Some(previous) => b = previous,
+                None => break,
+            }
+        }
+    }
+    true
 }
 
 /// Two clauses on each separate pair have a direct sufficient witness: meet the first
@@ -4085,8 +4811,8 @@ fn separate_pair_witness(
     let anchored = |pick: &dyn Fn(&Int, &ResidueSet) -> Option<Int>| -> Option<Int> {
         let mut choices = Vec::with_capacity(2 * pairs.len());
         for (a, sa, b, sb) in &pairs {
-            choices.push((pick(a, sa)?.mod_floor(a), (*a).clone()));
-            choices.push((pick(b, sb)?.mod_floor(b), (*b).clone()));
+            choices.push((pick(a, sa)?.mod_floor_wide(a), (*a).clone()));
+            choices.push((pick(b, sb)?.mod_floor_wide(b), (*b).clone()));
         }
         let (r, m) = combine_crt_tree(choices)?;
         let x = pick_in_span(lo, hi, &r, &m)?;
@@ -4123,8 +4849,8 @@ impl ScalarWitness<'_> {
                     -self.x_val
                 };
                 let u = &sx + &lw.c_lo;
-                if u.mod_floor(&lw.m) <= lw.w {
-                    let q = u.div_floor(&lw.m);
+                if u.mod_floor_wide(&lw.m) <= lw.w {
+                    let q = u.div_floor_wide(&lw.m);
                     return if lw.sigma_q > 0 { q } else { -&q };
                 }
             }
@@ -4136,7 +4862,7 @@ impl ScalarWitness<'_> {
             } else {
                 -self.x_val
             };
-            let q = (&sx + &gq.c_lo).div_floor(&gq.m);
+            let q = (&sx + &gq.c_lo).div_floor_wide(&gq.m);
             return if gq.sigma_q > 0 { q } else { -&q };
         }
         if let Some(v) = self.fixed.get(a) {
@@ -4240,7 +4966,7 @@ impl ScalarWitness<'_> {
         for (a, q) in self.global_quots {
             let xm = remainder(&q.m)?;
             let sx = if q.s_x > 0 { xm.clone() } else { -xm };
-            let r = (&sx + &q.c_lo).mod_floor(&q.m);
+            let r = (&sx + &q.c_lo).mod_floor_wide(&q.m);
             specs.insert(
                 a.clone(),
                 Some(QuotientValue {
@@ -4257,7 +4983,7 @@ impl ScalarWitness<'_> {
             for q in wins {
                 let xm = remainder(&q.m)?;
                 let sx = if q.s_x > 0 { xm.clone() } else { -xm };
-                let r = (&sx + &q.c_lo).mod_floor(&q.m);
+                let r = (&sx + &q.c_lo).mod_floor_wide(&q.m);
                 if r <= q.w {
                     chosen = Some(QuotientValue {
                         sx: q.s_x,
@@ -4287,10 +5013,10 @@ impl ScalarWitness<'_> {
                 continue;
             };
             let divisor = if q.sigma > 0 { q.m.clone() } else { -&q.m };
-            if !k.mod_floor(&divisor).is_zero() {
+            if !k.mod_floor_wide(&divisor).is_zero() {
                 return None;
             }
-            let t = k.div_floor(&divisor);
+            let t = k.div_floor_wide(&divisor);
             cx = if q.sx > 0 { &cx + &t } else { &cx - &t };
             value = &value + &(&t * &(&q.c - &q.r));
         }
@@ -4361,7 +5087,7 @@ fn wide_remainder(a: &Int, m: &Int) -> Int {
                 r
             }
         }
-        _ => a.mod_floor(m),
+        _ => a.mod_floor_wide(m),
     }
 }
 
@@ -4375,7 +5101,7 @@ fn wide_remainder(a: &Int, m: &Int) -> Int {
 /// had; the inverse is the same.
 fn inverse_mod(a: &Int, m: &Int) -> Option<Int> {
     if let (Some(_), Some(_)) = (a.to_i128(), m.to_i128()) {
-        let (g, u, _) = bezout(&a.mod_floor(m), m);
+        let (g, u, _) = a.mod_floor(m).extended_gcd(m)?;
         return (g == Int::ONE).then(|| u.mod_floor(m));
     }
     let a = wide_remainder(a, m);
@@ -4385,7 +5111,7 @@ fn inverse_mod(a: &Int, m: &Int) -> Option<Int> {
         (Ok(ab), Ok(mb)) => zed_kernel::num::inverse_mod_uint(ab.magnitude(), mb.magnitude())
             .map(|x| Int::from(num_bigint::BigInt::from(x))),
         _ => {
-            let (g, u, _) = bezout(&a, m);
+            let (g, u, _) = a.extended_gcd(m)?;
             (g == Int::ONE).then(|| u.mod_floor(m))
         }
     }
@@ -4755,7 +5481,7 @@ mod r4_tests {
             let mut ms: Vec<_> = (2..30).map(Int::from).collect();
             ms.push(&x + &Int::ONE);
             for point in [x.clone(), -&x] {
-                let want: Vec<_> = ms.iter().map(|m| point.mod_floor(m)).collect();
+                let want: Vec<_> = ms.iter().map(|m| point.mod_floor_wide(m)).collect();
                 assert_eq!(batch_remainders(&point, &ms), want);
             }
         }
@@ -4858,7 +5584,7 @@ mod r4_tests {
             let choices: Vec<_> = shared_moduli(n)
                 .into_iter()
                 .enumerate()
-                .map(|(i, m)| (Int::from(i % 2), m.div_floor(&Int::from(2))))
+                .map(|(i, m)| (Int::from(i % 2), m.div_floor_wide(&Int::from(2))))
                 .collect();
             let units: BTreeMap<_, _> = choices
                 .iter()
@@ -4918,7 +5644,7 @@ mod r4_tests {
             let (witness, _) = combine_crt_tree(choices).expect("coprime primes");
             assert!(clauses.iter().all(|cl| {
                 cl.iter()
-                    .any(|(i, s)| res_contains(s, &witness.mod_floor(&info[*i].max_q)))
+                    .any(|(i, s)| res_contains(s, &witness.mod_floor_wide(&info[*i].max_q)))
             }));
             let mut answer = RegimeOut::Empty;
             let work = meter.work(|| {
@@ -4955,7 +5681,7 @@ mod r4_tests {
         let info: Vec<_> = shared_moduli(3 * n)
             .into_iter()
             .map(|m| {
-                let p = m.div_floor(&Int::from(2));
+                let p = m.div_floor_wide(&Int::from(2));
                 BaseInfo {
                     max_q: p.clone(),
                     u: Int::ZERO,
@@ -5072,7 +5798,13 @@ mod r4_tests {
                 }
                 selected.iter().all(|&(a, b)| colors[a] != colors[b])
             });
-            if let Some(point) = graph_coloring_witness(&info, &allowed, &clauses) {
+            let candidate = graph_coloring_witness(&info, &allowed, &clauses);
+            assert_eq!(
+                candidate.is_some(),
+                brute && !selected.is_empty(),
+                "mask={mask}"
+            );
+            if let Some(point) = candidate {
                 found += 1;
                 assert!(brute, "mask={mask}");
                 assert!(
@@ -5149,6 +5881,7 @@ mod r4_tests {
     #[ignore]
     fn pncx_color_formula_axis() {
         let connected = std::env::var_os("PNCX_CONNECTED").is_some();
+        let square = std::env::var_os("PNCX_SQUARE").is_some();
         let mut meter = scaling::Meter::new();
         for n in std::env::var("PNCX_SIZES")
             .unwrap()
@@ -5178,19 +5911,30 @@ mod r4_tests {
                 )));
                 parts.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
                 parts.push(Formula::Con(Con::ge(&Lin::constant(2), &r)));
-                model.insert(qa, witness.div_floor(&base.max_q));
-                model.insert(ra, witness.mod_floor(&base.max_q));
+                model.insert(qa, witness.div_floor_wide(&base.max_q));
+                model.insert(ra, witness.mod_floor_wide(&base.max_q));
                 remainders.push(r);
             }
             let mut edges = Vec::new();
-            for start in (0..3 * n).step_by(3) {
-                edges.extend([
-                    (start, start + 1),
-                    (start + 1, start + 2),
-                    (start, start + 2),
-                ]);
-                if connected && start > 0 {
-                    edges.push((start - 1, start));
+            if square {
+                let mut unique = BTreeSet::new();
+                for a in 0..info.len() {
+                    for step in [1, 2] {
+                        let b = (a + step) % info.len();
+                        unique.insert((a.min(b), a.max(b)));
+                    }
+                }
+                edges.extend(unique);
+            } else {
+                for start in (0..3 * n).step_by(3) {
+                    edges.extend([
+                        (start, start + 1),
+                        (start + 1, start + 2),
+                        (start, start + 2),
+                    ]);
+                    if connected && start > 0 {
+                        edges.push((start - 1, start));
+                    }
                 }
             }
             for (a, b) in edges {
@@ -5269,7 +6013,8 @@ mod r4_tests {
     }
 
     #[test]
-    #[ignore = "I3.4: the baseline shared-factor path is still quadratic"]
+    #[ignore = "open: R7-CLAUDE-3, the remainder tree costs M(N) log k and products of 500 to 1,000 words grow about 4x per doubling (21.7x work per 8x moduli)"]
+    // I3.4/I5.11: the strict preparation bound fails; see R7_CLAUDE.md.
     fn pncx_common_factor_scale() {
         let inputs = scaling::inputs(512, shared_moduli);
         scaling::check_order("common factor with coprime cofactors", 512, 1, |n| {
@@ -5281,11 +6026,11 @@ mod r4_tests {
     fn pncx_common_factors_reconstruct_inputs() {
         for n in 1..50 {
             let ms = shared_moduli(n);
-            let facs = coprime_factorization(&ms);
+            let facs = coprime_factorization(&ms).unwrap();
             let bases: BTreeSet<_> = facs.values().flatten().map(|(b, _)| b).collect();
             for a in &bases {
                 for b in bases.iter().filter(|b| *b < a) {
-                    assert_eq!(a.gcd(b), Int::ONE);
+                    assert_eq!(a.gcd_recursive(b), Int::ONE);
                 }
             }
             for m in &ms {
@@ -5411,7 +6156,7 @@ mod r4_tests {
 
 /// The first point at least `lo` permitted by a single residue condition.
 fn first_residue_at(lo: &Int, m: &Int, s: &[(Int, Int)]) -> Option<Int> {
-    let r = lo.mod_floor(m);
+    let r = lo.mod_floor_wide(m);
     let i = s.partition_point(|(_, b)| b < &r);
     if let Some((a, _)) = s.get(i) {
         Some(if &r >= a { lo.clone() } else { lo + &(a - &r) })
@@ -5447,7 +6192,7 @@ fn lower_witness(
 
 /// The last point at most `hi` permitted by a single residue condition.
 fn last_residue_at(hi: &Int, m: &Int, s: &[(Int, Int)]) -> Option<Int> {
-    let r = hi.mod_floor(m);
+    let r = hi.mod_floor_wide(m);
     let i = s.partition_point(|(a, _)| a <= &r);
     if let Some(i) = i.checked_sub(1) {
         let (_, b) = &s[i];
@@ -5482,3 +6227,9 @@ fn upper_witness(
     }
     holds_modular_point(&x, units, clauses).then_some(x)
 }
+
+#[cfg(test)]
+mod r6_tests;
+
+#[cfg(test)]
+mod r7_tests;

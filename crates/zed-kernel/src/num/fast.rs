@@ -1563,6 +1563,17 @@ fn v128_from(v: &[u64]) -> u128 {
 /// parts then go through the binary gcd, half of what is left at a time by [`half`], whose
 /// steps keep the odd part of the gcd. O(M(n) log n).
 pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
+    gcd_using(a, b, true)
+}
+
+/// The same half-GCD without the historical wide Stein handoff. The solver
+/// already performs machine-sized gcds directly, so its big values take this
+/// path at every width. Test: pncx_fibonacci_scale and the gcd axis.
+pub(crate) fn gcd_recursive(a: &BigUint, b: &BigUint) -> BigUint {
+    gcd_using(a, b, false)
+}
+
+fn gcd_using(a: &BigUint, b: &BigUint, handoff: bool) -> BigUint {
     let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
         return a | b;
     };
@@ -1586,7 +1597,7 @@ pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
     // see `GCD_LEAF`. Test `a_gcd_of_wide_numbers_scales`.
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
-        if n <= GCD_LEAF {
+        if handoff && n <= GCD_LEAF {
             let (xm, ym) = (x.magnitude(), y.magnitude());
             let (zx, zy) = (xm.trailing_zeros().unwrap(), ym.trailing_zeros().unwrap());
             return (stein_odd(xm, zx, ym, zy) << zx.min(zy)) << z;
@@ -1681,6 +1692,101 @@ fn inverse_mod_odd(a: &BigUint, b: &BigUint) -> Option<BigUint> {
         }
     };
     Some(rem(&mul(&r, &two_inv), b))
+}
+
+/// Extended binary half-GCD on nonnegative inputs. The half-GCD's matrix
+/// acts on the pair over a power of two. Only its coefficient of the second
+/// input is accumulated; one exact division recovers the other coefficient.
+// Complexity tradeoff: extended Euclid uses O(n^2) bit operations, while
+// separately computing the gcd and an inverse repeats the half-GCD. This
+// computes both in one O(M(n) log n) pass. Failed arithmetic checks return
+// None. Tests: pncx_fast_bezout_matches_euclid, pncx_fibonacci_scale.
+pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigInt)> {
+    let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
+        return Some((
+            a | b,
+            BigInt::from(!a.is_zero()),
+            BigInt::from(!b.is_zero()),
+        ));
+    };
+    let common = za.min(zb);
+    let (a, b) = (a >> common, b >> common);
+    let swapped = !a.bit(0);
+    let (u, v) = if swapped { (&b, &a) } else { (&a, &b) };
+    let mut x = BigInt::from(u.clone());
+    let mut y = BigInt::from(v.clone());
+    if v.bit(0) {
+        y -= &x;
+    }
+    let (mut bx, mut by) = (BigInt::zero(), BigInt::one());
+    let mut halvings = 0u64;
+    while !y.is_zero() {
+        let n = x.bits().max(y.bits());
+        let (j, r) = half(&x, &y, (n / 2).max(1));
+        if j > 0 {
+            (x, y) = r.apply(&x, &y, j);
+            let [m00, m01, m10, m11] = &r.0;
+            (bx, by) = (
+                mul_int(m00, &bx) + mul_int(m01, &by),
+                mul_int(m10, &bx) + mul_int(m11, &by),
+            );
+            halvings = halvings.checked_add(j)?;
+        }
+        drop(r);
+        if let Some(j) = y.trailing_zeros() {
+            let (q, a1, b1) = step(&x, &y, j);
+            (bx, by) = (&by << j, (&bx << j) + mul_int(&q, &by));
+            (x, y) = (a1, b1);
+            halvings = halvings.checked_add(j)?;
+        }
+    }
+    let g = x.magnitude();
+    let modulus = div_rem(u, g).0;
+    let v_coefficient = if modulus.is_one() {
+        BigUint::zero()
+    } else {
+        let coefficient = if x.is_negative() { -bx } else { bx };
+        let c = rem(coefficient.magnitude(), &modulus);
+        let c = if coefficient.is_negative() && !c.is_zero() {
+            &modulus - c
+        } else {
+            c
+        };
+        let shift = halvings.checked_mul(2)?;
+        if shift == 0 {
+            c
+        } else {
+            // Divide c by 2^shift modulo odd modulus without another gcd:
+            // c + k modulus is divisible by 2^shift, with 0 <= k < 2^shift.
+            let mask = (BigUint::one() << shift) - 1u32;
+            let low = &c & &mask;
+            let negative = if low.is_zero() {
+                BigUint::zero()
+            } else {
+                (&mask + 1u32) - low
+            };
+            let inverse = inverse_mod_pow2(&modulus, shift);
+            let k = mul(&negative, &inverse) & &mask;
+            let value = (c + mul(&k, &modulus)) >> shift;
+            if value >= modulus {
+                return None;
+            }
+            value
+        }
+    };
+    let second = BigInt::from(v_coefficient);
+    let numerator = BigInt::from(g.clone()) - mul_int(&second, &BigInt::from(v.clone()));
+    let (quotient, remainder) = div_rem(numerator.magnitude(), u);
+    if !remainder.is_zero() {
+        return None;
+    }
+    let first = BigInt::from_biguint(numerator.sign(), quotient);
+    let (s, t) = if swapped {
+        (second, first)
+    } else {
+        (first, second)
+    };
+    Some((g << common, s, t))
 }
 
 // ------------------------------------------------------------------------------------------
