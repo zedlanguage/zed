@@ -126,6 +126,11 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   7 | onKey ( «positional» k , handler : ( key : Utf8String ) -> Utf8String ) = handler ( key : k ) ;
   8 | shout = onKey ( str["a"] , handler : key -> key ++ str["!"] ) ;
   9 | bad = onKey ( str["a"] , handler : s -> s ) ;
+ 10 | half ( x : int ) = x «div» 2₍10₎ ;
+ 11 | h1 = half ( 3₍10₎ ) ;
+ 12 | h2 = half ( x : 3₍10₎ ) ;
+ 13 | halfBy ( x : int , by : int = 2₍10₎ ) = x «div» by ;
+ 14 | h3 = halfBy ( 3₍10₎ ) ;
 == EXAMPLES.md [6. Functions] 4 L3
   2 | divmod ( «positional» a , «positional» b ) { «return» a «div» b , a «mod» b ; }
   3 | q , r = divmod ( 7₍10₎ , 2₍10₎ ) ;

@@ -127,7 +127,12 @@ port: int[1..=65535] = 8080;   // an integer from 1 through 65535, both included
 
 <!-- README.md:738 layer L1: ring L1, word L1 (Utf8String), label none; section [Functions] 1 -->
 ```zed
-double(positional x) = x * 2;
+double(x) = x * 2;
+
+// One parameter: called by position or by name.
+half(x: int) = x div 2;
+h = half(7);                     // 3
+hx = half(x: 7);                 // 3
 
 // A { } body gives its last expression, and if gives a value.
 limit(positional v, positional lo, positional hi) {
@@ -142,7 +147,7 @@ b = greet("Ann", punct: "?");    // "Hi, Ann?"
 hi = greet("Ann", ...);          // a function still waiting for punct
 ```
 
-<!-- README.md:778 layer L1: ring L1, word none, label none; section [Numbers] 1 -->
+<!-- README.md:783 layer L1: ring L1, word none, label none; section [Numbers] 1 -->
 ```zed
 big = 2^100;                // 2 to the power 100, the exact integer, with no overflow
 third = 1r / 3r;             // an exact rational
@@ -153,7 +158,7 @@ twice(x: f64) = x * 2.0;     // 2.0 takes the format of x, and x * 2 would work 
 // bad = q + 1.5;            // ✗ Numeric literal at a carrier that cannot take it: q is an int, and 1.5 is never an int
 ```
 
-<!-- README.md:807 layer L3: ring L3, word none, label none; section [Strings] 1 -->
+<!-- README.md:812 layer L3: ring L3, word none, label none; section [Strings] 1 -->
 ```zed
 name = "Zed";
 line = "total: ${2 + 3}";            // "total: 5"
@@ -161,7 +166,7 @@ title = "never" ++ "the" ++ "less";
 z = name::codepoints[0];             // the first code point, a char32
 ```
 
-<!-- README.md:829 layer L2: ring L2, word none, label none; section [Structs] 1 -->
+<!-- README.md:834 layer L2: ring L2, word none, label none; section [Structs] 1 -->
 ```zed
 struct Point { x: f64, y: f64 }
 struct Circle { center: Point, radius: f64 = 1 }
@@ -174,7 +179,7 @@ Point.norm = (x * x + y * y).sqrt;
 size = p.norm;
 ```
 
-<!-- README.md:859 layer L2: ring L2, word none, label none; section [Atoms, unions and match] 1 -->
+<!-- README.md:864 layer L2: ring L2, word none, label none; section [Atoms, unions and match] 1 -->
 ```zed
 // Point and Circle are the structs from Structs above.
 struct Rect { lo: Point, hi: Point }
@@ -194,7 +199,7 @@ next(positional l: Light) = match l {
 };
 ```
 
-<!-- README.md:896 layer L10: ring L10, word L5 (last), label none; section [Generics and interfaces] 1 -->
+<!-- README.md:901 layer L10: ring L10, word L5 (last), label none; section [Generics and interfaces] 1 -->
 ```zed
 type Stack(T) = [T];
 push(s: Stack(T), x: T) = s ++ [x];
@@ -204,14 +209,14 @@ interface Named { name: Utf8String }
 hello(positional n: Named) = "Hi, ${n.name}";
 ```
 
-<!-- README.md:924 layer L2: ring L2, word none, label none; section [Modules] 1 -->
+<!-- README.md:929 layer L2: ring L2, word none, label none; section [Modules] 1 -->
 ```zed
 import geometry.shapes.{Point, dist};
 
 far = dist(Point(x: 0, y: 0), Point(x: 3, y: 4));
 ```
 
-<!-- README.md:948 layer L7: ring L7, word L1 (Utf8String), label none; section [`else` and `?.`] 1 -->
+<!-- README.md:953 layer L7: ring L7, word L1 (Utf8String), label none; section [`else` and `?.`] 1 -->
 ```zed
 parse: (Utf8String) -> Config | #syntaxError(pos: int);
 
@@ -219,7 +224,7 @@ conf = parse(text) else defaultConfig;
 port = parse(text)?.server?.port else 8080;
 ```
 
-<!-- README.md:978 layer L3: ring L1, word L3 (where), label none; section [Failures in a pipeline] 1 -->
+<!-- README.md:983 layer L3: ring L1, word L3 (where), label none; section [Failures in a pipeline] 1 -->
 ```zed
 results = files.map(f -> read(f)).map(t -> parse(t));
 
@@ -227,19 +232,19 @@ good = results.where(r -> r is Config);
 bad = results.where(r -> r is not Config);
 ```
 
-<!-- README.md:1031 layer L3: ring L3, word L3 (map), label none; section [Failures in a pipeline] 2 -->
+<!-- README.md:1036 layer L3: ring L3, word L3 (map), label none; section [Failures in a pipeline] 2 -->
 ```zed
 amounts = files.map(f -> int(read(f)));         // int(s) converts text to an int, and can fail
 sumAll = amounts >< (+);                        // the sum, or all the failures: + never sees one
 ```
 
-<!-- README.md:1038 layer L3: ring L3, word L3 (where), label none; section [Failures in a pipeline] 3 -->
+<!-- README.md:1043 layer L3: ring L3, word L3 (where), label none; section [Failures in a pipeline] 3 -->
 ```zed
 sum1 = amounts.where(a -> a is int) >< (+);     // skip the failures
 sum2 = amounts.map(a -> a else 0) >< (+);       // count them as zero
 ```
 
-<!-- README.md:1066 layer L5: ring L5, word L5 (sort), label none; section [Everything is a map] 1 -->
+<!-- README.md:1071 layer L5: ring L5, word L5 (sort), label none; section [Everything is a map] 1 -->
 ```zed
 xs = [3, 1, 4, 1, 5];                  // int[0..<5] -> int: keys from 0 up to but not including 5
 ages = { "Ann" -> 36, "Bob" -> 41 };   // exact keys {"Ann", "Bob"}, int values
@@ -255,14 +260,14 @@ big = tens.where(x -> x > 20);         // the keys that pass keep their values: 
 sorted = tens.sort(desc x -> x);       // new keys 0 to 4; equal values stay in their old order
 ```
 
-<!-- README.md:1131 layer L4: ring L1, word L4 (group), label none; section [Grouping] 1 -->
+<!-- README.md:1136 layer L4: ring L1, word L4 (group), label none; section [Grouping] 1 -->
 ```zed
 // users : UserId -> User
 byCity = users.group(u -> u.city);      // City ->? (UserId -> User)
 // byId = users.rekey(u -> u.id);       // ✗ Collision: id is not known to be unique
 ```
 
-<!-- README.md:1167 layer L8: ring L8, word none, label none; section [Remapping] 1 -->
+<!-- README.md:1172 layer L8: ring L8, word none, label none; section [Remapping] 1 -->
 ```zed
 transposed = matrix as (r -> c -> v) into (c -> r -> v);
 ranking = scores as (name -> s) into (desc s -> name -> s);
@@ -271,7 +276,7 @@ ranking = scores as (name -> s) into (desc s -> name -> s);
 totals = sales as (region -> sku -> amount) into (region -> sku >< (+) -> amount);
 ```
 
-<!-- README.md:1262 layer L8: ring L8, word none, label none; section [Remapping] 2 -->
+<!-- README.md:1267 layer L8: ring L8, word none, label none; section [Remapping] 2 -->
 ```zed
 // revenue : region -> year -> sku -> amount
 bySku = revenue as (region -> year -> sku -> amount) into (sku -> region -> year -> amount);
@@ -281,14 +286,14 @@ years = revenue as (region -> year -> sku -> amount) into (region -> year -> _);
 // bad = revenue as (region -> year -> sku -> amount) into (sku -> year -> amount);   // ✗ Collision: two regions land on one keypath
 ```
 
-<!-- README.md:1362 layer L8: ring L8, word L3 (map), label none; section [Reducing] 1 -->
+<!-- README.md:1367 layer L8: ring L8, word L3 (map), label none; section [Reducing] 1 -->
 ```zed
 total = readings >< (+);
 longest = words.map(w -> w.len) >< max else 0;
 pivot = sales as (i -> s) into (s.region -> s.product -> i >< (+) -> s.amount);
 ```
 
-<!-- README.md:1444 layer L16: ring L3, word L16 (@commutative), label none; section [Reducing] 2 -->
+<!-- README.md:1449 layer L16: ring L3, word L16 (@commutative), label none; section [Reducing] 2 -->
 ```zed
 struct Moments { n: int, sum: rat }
 
@@ -300,7 +305,7 @@ combine(positional a: Moments, positional b: Moments) =
 m = values.map(x -> Moments(n: 1, sum: x)) >< combine else Moments(n: 0, sum: 0r);
 ```
 
-<!-- README.md:1492 layer L7: ring L7, word L7 (reducer), label none; section [Pushing into a map] 1 -->
+<!-- README.md:1497 layer L7: ring L7, word L7 (reducer), label none; section [Pushing into a map] 1 -->
 ```zed
 hist: int ->? int with reducer((+));
 for w in words { hist[w.len] <- 1; };
@@ -308,7 +313,7 @@ for w in words { hist[w.len] <- 1; };
 same = words.group(w -> w.len).count;   // the same table, written as a pull
 ```
 
-<!-- README.md:1560 layer L5: ring L5, word L5 (join), label none; section [Joins] 1 -->
+<!-- README.md:1565 layer L5: ring L5, word L5 (join), label none; section [Joins] 1 -->
 ```zed
 // Both inputs are uniquely keyed by OrderId; orderId is their join key.
 paid = orders.join(payments, on: #orderId, kind: #left);
@@ -320,12 +325,12 @@ shipped = for o in orders, s in shipments where o.orderId == s.orderId { (o, s) 
 pairs = for i in 0..<n, j in i+1..<n { (i, j) };
 ```
 
-<!-- README.md:1651 layer L5: ring L1, word L5 (first), label none; section [Chunks] 1 -->
+<!-- README.md:1656 layer L5: ring L1, word L5 (first), label none; section [Chunks] 1 -->
 ```zed
 sessions = clicks.chunkBy(c -> c.userId).map(s -> Session(start: s.first.time, count: s.count));
 ```
 
-<!-- README.md:1697 layer L14: ring L14, word L14 (matmul), label none; section [Vectors and matrices] 1 -->
+<!-- README.md:1702 layer L14: ring L14, word L14 (matmul), label none; section [Vectors and matrices] 1 -->
 ```zed
 scale(positional s: T, positional v: [T; n]) = s * v;     // result: [T; n]
 
@@ -335,7 +340,7 @@ c = a.matmul(b);                                          // [f64; 2, 2]
 // d = a.matmul(a);                                       // ✗ Levels of one name with different domains: 3 columns, 2 rows
 ```
 
-<!-- README.md:1736 layer L6: ring L6, word none, label none; section [Recurrences] 1 -->
+<!-- README.md:1741 layer L6: ring L6, word none, label none; section [Recurrences] 1 -->
 ```zed
 running[i] = running[i-1] + xs[i] with running[-1] = 0;
 
@@ -343,7 +348,7 @@ d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
   with d[-1][j in -1..<b::len] = j + 1, d[i in 0..][-1] = i + 1;
 ```
 
-<!-- README.md:1786 layer L6: ring L6, word none, label none; section [Recurrences] 2 -->
+<!-- README.md:1791 layer L6: ring L6, word none, label none; section [Recurrences] 2 -->
 ```zed
 cur[i] = max(xs[i], cur[i-1] + xs[i]) with cur[-1] = 0;
 best = cur >< max else 0;
@@ -351,7 +356,7 @@ best = cur >< max else 0;
 state[i] = csvStep(state[i-1], text::codepoints[i]) with state[-1] = #outsideQuotes;
 ```
 
-<!-- README.md:1846 layer L6: ring L6, word L6 (::frames), label none; section [Loops] 1 -->
+<!-- README.md:1851 layer L6: ring L6, word L6 (::frames), label none; section [Loops] 1 -->
 ```zed
 sim = loop t {
   while t < maxSteps;
@@ -365,7 +370,7 @@ history = sim::frames;
 steps = sim::len;
 ```
 
-<!-- README.md:1875 layer L6: ring L6, word L6 (::frames), label none; section [Loops] 2 -->
+<!-- README.md:1880 layer L6: ring L6, word L6 (::frames), label none; section [Loops] 2 -->
 ```zed
 run = loop t {
   while t < edits::len;
@@ -375,7 +380,7 @@ run = loop t {
 previous = run::frames[run::len - 2]?.doc else empty;
 ```
 
-<!-- README.md:1912 layer L2: ring L2, word none, label none; section [Methods and the next value] 1 -->
+<!-- README.md:1917 layer L2: ring L2, word none, label none; section [Methods and the next value] 1 -->
 ```zed
 struct Counter { n: int, peak: int }
 
@@ -389,7 +394,7 @@ start = Counter(n: 0, peak: 0);
 after, was = start.bump(2);
 ```
 
-<!-- README.md:1938 layer L5: ring L3, word L5 (first), label none; section [Only what's needed runs] 1 -->
+<!-- README.md:1943 layer L5: ring L3, word L5 (first), label none; section [Only what's needed runs] 1 -->
 ```zed
 stats(positional data: [f64]) {
   n = f64(data::len);
@@ -403,14 +408,14 @@ m = stats([1, 2, 3]).mean;         // sd is never computed
 firstPrime = (for i in 2.. { i }).where(isPrime).first;
 ```
 
-<!-- README.md:1973 layer L7: ring L2, word L7 (Stream), label none; section [Ports] 1 -->
+<!-- README.md:1978 layer L7: ring L2, word L7 (Stream), label none; section [Ports] 1 -->
 ```zed
 main(req: Stream(Query)) -> (resp: Stream(Answer)) {
   resp <- req.map(q -> answer(q));
 }
 ```
 
-<!-- README.md:1997 layer L21: ring L7, word L21 (store), label none; section [Timeouts and retries] 1 -->
+<!-- README.md:2002 layer L21: ring L7, word L21 (store), label none; section [Timeouts and retries] 1 -->
 ```zed
 cache: Utf8String ->? [u8]
   with store(kv(endpoint))
@@ -420,7 +425,7 @@ cache: Utf8String ->? [u8]
 hit = cache[key] else fetch(key);
 ```
 
-<!-- README.md:2027 layer L21: ring L7, word L21 (store), label none; section [Databases] 1 -->
+<!-- README.md:2032 layer L21: ring L7, word L21 (store), label none; section [Databases] 1 -->
 ```zed
 orders: OrderId ->? { total: rat, note: Utf8String | #none }
   with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
@@ -428,7 +433,7 @@ orders: OrderId ->? { total: rat, note: Utf8String | #none }
 n = orders[id]?.note;     // Utf8String | #none | #notFound | #dbError
 ```
 
-<!-- README.md:2064 layer L18: ring L2, word L18 (@memoized), label none; section [Incremental updates] 1 -->
+<!-- README.md:2069 layer L18: ring L2, word L18 (@memoized), label none; section [Incremental updates] 1 -->
 ```zed
 // sales is keyed by SaleId; each sale has a region and an amount.
 @memoized
@@ -437,7 +442,7 @@ report = sales
   .map(rows -> rows.map(s -> s.amount).sum);
 ```
 
-<!-- README.md:2117 layer L15: ring L10, word L15 (@ensure), label none; section [Ranges and refinements] 1 -->
+<!-- README.md:2122 layer L15: ring L10, word L15 (@ensure), label none; section [Ranges and refinements] 1 -->
 ```zed
 struct Span { lo: int, hi: int[lo..] }
 
@@ -450,7 +455,7 @@ a = odd(12);
 // b = odd(60);                            // ✗ Undischargeable `@ensure`: 60 > 49
 ```
 
-<!-- README.md:2147 layer L13: ring L7, word L13 (taint), label none; section [Units and taint] 1 -->
+<!-- README.md:2152 layer L13: ring L7, word L13 (taint), label none; section [Units and taint] 1 -->
 ```zed
 v = 3.0 with units("m/s");
 t = 2.0 with units("s");
@@ -464,7 +469,7 @@ comment = input with taint(#userInput);
 page = render("<p>" ++ escapeHtml(comment) ++ "</p>");
 ```
 
-<!-- README.md:2177 layer L18: ring L5, word L18 (@noalloc), label none; section [Cost] 1 -->
+<!-- README.md:2182 layer L18: ring L5, word L18 (@noalloc), label none; section [Cost] 1 -->
 ```zed
 @cost(xs::len)
 @fused
@@ -477,7 +482,7 @@ ranked(positional xs: [int]) = xs.sort(desc x -> x);
 lerp(positional a: f64, positional b: f64, positional t: f64) = a * (1 - t) + b * t;
 ```
 
-<!-- README.md:2212 layer L20: ring L10, word L20 (Json), label none; section [Partial evaluation] 1 -->
+<!-- README.md:2217 layer L20: ring L10, word L20 (Json), label none; section [Partial evaluation] 1 -->
 ```zed
 struct User { id: int, name: Utf8String }
 
@@ -488,7 +493,7 @@ bad: User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": \"fiv
 // the constant #parseError(pos: 7, msg: "expected int for field 'id', got string")
 ```
 
-<!-- README.md:2237 layer L11: ring L3, word L11 (::values), label none; section [Reflection] 1 -->
+<!-- README.md:2242 layer L11: ring L3, word L11 (::values), label none; section [Reflection] 1 -->
 ```zed
 type Size = #small | #medium | #large;
 
@@ -496,7 +501,7 @@ sizes = Size::values;       // {#large, #medium, #small}: atoms sort by name
 names = User::fields;       // the fields of the User struct above, by name and type
 ```
 
-<!-- README.md:2260 layer L20: ring L20, word L20 (serialize), label none; section [Grammars] 1 -->
+<!-- README.md:2265 layer L20: ring L20, word L20 (serialize), label none; section [Grammars] 1 -->
 ```zed
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }
 
@@ -504,7 +509,7 @@ v = Vec3.parse("(1.0, 2.0, 3.0)") else Vec3(x: 0, y: 0, z: 0);
 s = v.serialize;       // "(1.0,2.0,3.0)"
 ```
 
-<!-- README.md:2276 layer L20: ring L20, word L3 (map), label none; section [Grammars] 2 -->
+<!-- README.md:2281 layer L20: ring L20, word L3 (map), label none; section [Grammars] 2 -->
 ```zed
 struct Sum grammar { terms: Prod sep "+" }
 struct Prod grammar { factors: Factor sep "*" }
@@ -520,7 +525,7 @@ Number.eval = int(this) else 0;
 value = Sum.parse("2*(3+4)")?.eval;     // 14, or #syntaxError
 ```
 
-<!-- README.md:2301 layer L20: ring L20, word L7 (u8), label none; section [Grammars] 3 -->
+<!-- README.md:2306 layer L20: ring L20, word L7 (u8), label none; section [Grammars] 3 -->
 ```zed
 struct Chunk grammar {
   n: int with bits(32) with endian(#big)
@@ -530,19 +535,19 @@ struct Chunk grammar {
 }
 ```
 
-<!-- README.md:2324 layer L22: ring L3, word L22 (expand), label none; section [Symbolic math] 1 -->
+<!-- README.md:2329 layer L22: ring L3, word L22 (expand), label none; section [Symbolic math] 1 -->
 ```zed
 p = ((x: rat) -> (x + 1r)^2)::source;
 e = expand(p);          // x^2 + 2r * x + 1r
 d = derivative(p);      // 2r * x + 2r
 ```
 
-<!-- README.md:2348 layer L1: ring L1, word none, label none; section [Tests next to the code] 1 -->
+<!-- README.md:2353 layer L1: ring L1, word none, label none; section [Tests next to the code] 1 -->
 ```zed
 double(positional x) = x * 2 test { 0 -> 0, 2 -> 4, -3 -> -6 }
 ```
 
-<!-- README.md:2367 layer L15: ring L15, word L5 (sort), label none; section [Laws] 1 -->
+<!-- README.md:2372 layer L15: ring L15, word L5 (sort), label none; section [Laws] 1 -->
 ```zed
 // double is the function from Tests next to the code above.
 law doubleIsSum(x: int) = double(x) == x + x;
@@ -550,7 +555,7 @@ law addComm(a: int, b: int) = a + b == b + a;
 law sortTwice(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(asc x -> x);
 ```
 
-<!-- README.md:2398 layer L15: ring L15, word L4 (flatMap), label none; section [Model checking] 1 -->
+<!-- README.md:2403 layer L15: ring L15, word L4 (flatMap), label none; section [Model checking] 1 -->
 ```zed
 type Signal = #red | #green;
 struct Junction { ns: Signal, ew: Signal }
@@ -571,7 +576,7 @@ law neverBothGreen(ns: Signal, ew: Signal) =
   (Junction(ns: ns, ew: ew) in reachable.R).implies(ns == #red || ew == #red);
 ```
 
-<!-- README.md:2450 layer L7: ring L7, word L7 (@stateless), label none; section [Calling C, and being called from C] 1 -->
+<!-- README.md:2455 layer L7: ring L7, word L7 (@stateless), label none; section [Calling C, and being called from C] 1 -->
 ```zed
 @foreign("m", "cbrt") @stateless cbrt: (positional x: f64) -> f64;
 

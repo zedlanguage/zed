@@ -510,7 +510,7 @@ stock = loop t {
 A method is a function you call on a struct with a dot.
 
 > [!NOTE]
-> **`Name.method(...) { ... }`** defines a method of the struct `Name`. In the body, the struct's fields are in scope by name, and **`return e;`** ends the body with the result `e`. A parameter marked **`positional`** is passed by position, as in `s.sell(3)`. Other parameters are passed by name, as in `f(x: 1)`.
+> **`Name.method(...) { ... }`** defines a method of the struct `Name`. In the body, the struct's fields are in scope by name, and **`return e;`** ends the body with the result `e`. A parameter marked **`positional`** is passed by position, as in `s.sell(3)`. Other parameters are passed by name, as in `f(x: 1)`. A function with only one parameter needs no `positional`: `half(x: int)` is called `half(3)` or `half(x: 3)` (see [Functions](#functions)). `sell` has two parameters, since the struct before the dot is its first, so its `n` needs the word.
 >
 > A method can write a field with a `'`, such as `pens' = pens - n`, which gives the field's value in the struct's next version. The call returns that new struct along with its result and leaves the old one alone.
 
@@ -736,7 +736,12 @@ A function is a definition with parameters, and a call can name its arguments, c
 > The dot call from [Step 4](#step-4-sales-with-no-price) works with any function: `5.double` is `double(5)`.
 
 ```zed
-double(positional x) = x * 2;
+double(x) = x * 2;
+
+// One parameter: called by position or by name.
+half(x: int) = x div 2;
+h = half(7);                     // 3
+hx = half(x: 7);                 // 3
 
 // A { } body gives its last expression, and if gives a value.
 limit(positional v, positional lo, positional hi) {
@@ -758,7 +763,7 @@ hi(punct: ".") = "Hi, Ann."
 hi() = "Hi, Ann!"
 ```
 
-Parameters are passed by name unless you mark them `positional`, so a call site says what its arguments mean. Because any function can be called with a dot, pipelines read left to right, and adding a step to a pipeline doesn't mean extending a class. Parameter types can usually be left out, and the compiler infers them from how the body uses the parameter. `x * 2` takes any number type, because the literal `2` takes the type of `x`.
+Parameters are passed by name unless you mark them `positional`, so a call site says what its arguments mean, and two arguments of the same type can't be swapped by mistake. A function with only one parameter has nothing to swap, so `positional` is implied there: `half(7)` and `half(x: 7)` are the same call, and `double(x)` needs no `positional` for `5.double` or `double(5)`. Writing `positional` on the only parameter is allowed and changes nothing. A default counts as a parameter: if `half` became `half(x: int, by: int = 2)`, each call `half(7)` would become a compile error whose fix is `half(x: 7)`. Because any function can be called with a dot, pipelines read left to right, and adding a step to a pipeline doesn't mean extending a class. Parameter types can usually be left out, and the compiler infers them from how the body uses the parameter. `x * 2` takes any number type, because the literal `2` takes the type of `x`.
 
 ### Numbers
 
