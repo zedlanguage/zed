@@ -2,6 +2,7 @@
 # Runs every test in pieces, one test binary, step folder, module or slow test each, each under a
 # 60 s limit, and prints a line per piece as it ends. Usage, from a checkout's root:
 #   tools/run_tests.sh [--full] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [jobs]
+#   tools/run_tests.sh --short-clone-remove
 # Without --full this is the local suite, which needs only the Rust toolchain and runs in CI.
 # --full adds tests/full/, the battery that needs emulators, containers, databases and other
 # outside tools. It stops before any test if a tool is missing; nothing is skipped.
@@ -11,10 +12,11 @@
 # whose source lies in a step folder under another name (deep_types in l01_22_type_representation)
 # has that folder as a second group, so a selection of the step runs it too. A pattern that
 # matches no piece stops the run with an error. The short-addresses build is made only when a
-# short- piece is selected, in a clone of build/cargo that the run deletes at its end; such a
-# run must go through /home/luke/Work/wt/zrun. --doc adds the check that the documentation
-# builds, which is off by default; --no-doc is accepted and changes nothing. --list builds what
-# the selection needs, prints the names of the selected pieces and runs nothing.
+# short- piece is selected, in a clone of build/cargo kept in build/short-clone from run to run;
+# such a run must go through /home/luke/Work/wt/zrun, and --short-clone-remove deletes the clone
+# (through zrun too) and runs nothing. --doc adds the check that the documentation builds, which
+# is off by default; --no-doc is accepted and changes nothing. --list builds what the selection
+# needs, prints the names of the selected pieces and runs nothing.
 # A run without --only saves the table of all pieces in its log directory; --list --reuse-table
 # selects from that table without building or listing the binaries, for tests of the selection.
 # The table is as the run that wrote it left it: with --full or not, and stale once the test
@@ -33,7 +35,7 @@
 # Every piece runs in the systemd slice zedtests.slice, whose 112 GB limit holds across all
 # checkouts together. A load above the number of cores raises the limit of the pieces that start under it in proportion.
 args=$*
-features= full_suite= only= list= reuse= logs= doc= jobs=6
+features= full_suite= only= list= reuse= logs= doc= jobs=6 clone_remove=
 while [ $# -gt 0 ]; do
   case $1 in
     --full) full_suite=1 ;;
@@ -49,6 +51,7 @@ while [ $# -gt 0 ]; do
     --no-doc) ;;
     --list) list=1 doc= ;;
     --reuse-table) reuse=1 ;;
+    --short-clone-remove) clone_remove=1 ;;
     --logs)
       if [ $# -lt 2 ] || [ -z "$2" ]; then
         echo "--logs needs a directory"
@@ -59,7 +62,7 @@ while [ $# -gt 0 ]; do
       ;;
     [1-9]*) jobs=$1 ;;
     *)
-      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [jobs])"
+      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--short-clone-remove] [jobs])"
       exit 2
       ;;
   esac
@@ -98,6 +101,101 @@ if [ -n "$full_suite" ]; then
   fi
 fi
 root=$(pwd)
+# The short-addresses build (step L1.37a) keeps 8 bits of every content address and type digest,
+# so distinct values collide; its pieces check that every place that compares by address
+# confirms equal addresses by contents, and that verdicts and outputs match the full build.
+# It builds in a clone of the checkout's build: an overlay mounted at build/short-clone/cargo
+# whose one lower layer is build/cargo, read-only, and whose upper layer build/short-clone/upper
+# receives what the feature rebuilds (zed-kernel and every crate above it, 16 crates; the 92
+# crates from crates.io are reused). Mounting it takes 11 ms; a copy of build/cargo would be
+# 94 GB, or 3 GB without the incremental caches, which the feature's crates cannot use. The
+# target directory's path changes nothing cargo reuses: the whole workspace built in such a
+# clone compiled nothing. The upper layer is kept from run to run, so a run after a change
+# rebuilds only what the change touches; the clone is mounted for the run and unmounted when it
+# ends, by failure or interrupt too, and is deleted with the checkout, or by
+# `tools/run_tests.sh --short-clone-remove` in a checkout that is kept (author, 2026-11-10:
+# "delete your clone when you're done"). Measurements (BUILD-short-clone, -j 4) are in its
+# STATUS row: before, a target of its own, build/short, took 1.5 GB per checkout, 227 s cold and
+# 11 s after a one-line change to zedc; a clone deleted at the end of every run took 180 to
+# 237 s on every run.
+# The feature's crates are dylibs with no hash in their file names (debug/deps/libzedc.so and
+# the like), and their fingerprint directories have the same names in both builds, so the
+# clone's copies take the paths of the main build's files, in the upper layer only; a short test binary loads its own copies, the first rpath being $ORIGIN (zrun). Cargo
+# sees a change made since the clone's last build by comparing the times of the sources with
+# those of the clone's own fingerprints, as in any target directory. That fails only when a
+# source gets an older time than the build of it, which seed-build.sh --restack does on purpose
+# (it dates every file equal to the central build's commit to 2000): the clone could then call
+# fresh a crate built from other contents. So the clone records the build it was made from,
+# build/STACK and the inode and birth time of build/upper (a restack makes a new build/upper),
+# in build/short-clone/stamp, and a run that finds another one deletes the clone and makes it
+# again.
+# The clone is mounted in the zrun namespace, so the run must go through zrun, and build/cargo
+# must not change while it is mounted (no other zcargo build of this checkout at that time).
+# A run killed with SIGKILL leaves it mounted, and the next run unmounts it first. Two runs in
+# one checkout take build/short-clone.lock in turn, the second waiting until the first has
+# ended; checkouts do not share a clone, as each zrun namespace mounts its own checkout at the
+# fixed path.
+# The build the clone is made from: build/STACK and build/upper, or build/cargo in a checkout
+# without a STACK.
+short_clone_stamp() {
+  if [ -e "$root/build/STACK" ]; then
+    cat "$root/build/STACK"
+    stat -c 'upper %i %W' "$root/build/upper"
+  else
+    stat -c 'cargo %i %W' "$root/build/cargo"
+  fi
+}
+# Unmounts the clone, if it is mounted. The kernel leaves the overlay's inner work directory at
+# mode 000, which rm cannot enter; it is opened again, so that deleting the checkout succeeds.
+unmount_short_clone() {
+  [ -e /home/luke/Work/wt/.build-root/build/short-clone ] || return 0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    mountpoint -q /home/luke/Work/wt/.build-root/build/short-clone/cargo || break
+    umount /home/luke/Work/wt/.build-root/build/short-clone/cargo 2>/dev/null || sleep 1
+  done
+  if findmnt -rn -o TARGET | grep -qE '^/home/luke/Work/wt/\.build-root/build/short-clone(/|$)'; then
+    echo "The short-addresses clone /home/luke/Work/wt/.build-root/build/short-clone/cargo is" \
+      "still mounted (in use by a process of this checkout)."
+    return 1
+  fi
+  [ -L /home/luke/Work/wt/.build-root/build/short-clone/work/work ] ||
+    [ ! -d /home/luke/Work/wt/.build-root/build/short-clone/work/work ] ||
+    chmod u+rwx /home/luke/Work/wt/.build-root/build/short-clone/work/work
+}
+# Unmounts and deletes the clone, if there is one. Every path is written out: a delete names its
+# target in full (the author's rule), and the clone exists only at the fixed path of zrun.
+drop_short_clone() {
+  [ -e /home/luke/Work/wt/.build-root/build/short-clone ] || return 0
+  unmount_short_clone || return 1
+  if [ -L /home/luke/Work/wt/.build-root/build/short-clone ] ||
+    [ ! -d /home/luke/Work/wt/.build-root/build/short-clone ] ||
+    [ "$(realpath -e /home/luke/Work/wt/.build-root/build/short-clone)" != \
+      /home/luke/Work/wt/.build-root/build/short-clone ]; then
+    echo "The short-addresses clone /home/luke/Work/wt/.build-root/build/short-clone is not a" \
+      "directory; it is left in place."
+    return 1
+  fi
+  rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/short-clone
+}
+if [ -n "$clone_remove" ]; then
+  if [ "$root" != /home/luke/Work/wt/.build-root ]; then
+    echo "The short-addresses clone is mounted in the zrun namespace; run" \
+      "/home/luke/Work/wt/zrun tools/run_tests.sh --short-clone-remove from the checkout's root."
+    exit 1
+  fi
+  exec 6>>"$root/build/short-clone.lock"
+  if ! flock -n 6; then
+    echo "Waiting for the other run of this checkout that uses the short-addresses clone to end."
+    flock 6
+  fi
+  if [ ! -e /home/luke/Work/wt/.build-root/build/short-clone ]; then
+    echo "This checkout has no short-addresses clone."
+    exit 0
+  fi
+  drop_short_clone || exit 1
+  echo "The short-addresses clone of this checkout is deleted."
+  exit 0
+fi
 out=${logs:-build/test-logs}
 [[ $out == /* ]] || out=$root/$out
 mkdir -p "$out"
@@ -328,48 +426,6 @@ fi
 # Cargo prints a binary path relative to the checkout only when the target directory is inside it.
 bins=$(sed -n -e "s|^ *Executable .*(\(/.*\))$|\1|p" -e "s|^ *Executable .*(\([^/].*\))$|$root/\1|p" "$out/build.log")
 full=$(echo "$bins" | grep '/full-')
-# The short-addresses build (step L1.37a) keeps 8 bits of every content address and type digest,
-# so distinct values collide; its pieces check that every place that compares by address
-# confirms equal addresses by contents, and that verdicts and outputs match the full build.
-# It builds in a clone of the checkout's build that this run makes and deletes: an overlay mount
-# at build/short-clone/cargo whose one lower layer is build/cargo, read-only, with an empty upper
-# layer build/short-clone/upper that receives what the feature rebuilds (zed-kernel and every
-# crate above it, 16 crates; the 92 crates from crates.io are reused). Mounting it took 11 ms;
-# a copy of build/cargo would be 94 GB, or 3 GB without the incremental caches, which the
-# feature's crates cannot use. The target directory's path changes nothing cargo reuses: the
-# whole workspace built in such a clone compiled nothing. Until 2026-11-10 the build had a
-# target directory of its own, build/short, kept from run to run (BUILD-short-clone, -j 4, load
-# 27 to 61): build/short took 1.5 GB per checkout and 227 s (735 s of CPU) cold, then 11 s
-# after a one-line change to zedc; the clone takes 1.0 GB during the run and none after, and
-# 180 to 237 s (500 to 551 s of CPU) on every run, as the feature's crates build from nothing.
-# The clone is mounted in the zrun namespace, so the run must go through zrun, and build/cargo
-# must not change while it is mounted (no other zcargo build of this checkout at that time).
-# The clone is deleted when the run ends, by failure or interrupt too; a run killed with
-# SIGKILL leaves it to the next run, which deletes it first. Two runs in one checkout take
-# build/short-clone.lock in turn, the second waiting until the first has ended; checkouts do
-# not share it, as each zrun namespace mounts its own checkout at the fixed path.
-# Unmounts and deletes the clone, if there is one. Every path is written out: a delete names its
-# target in full (the author's rule), and the clone exists only at the fixed path of zrun.
-drop_short_clone() {
-  [ -e /home/luke/Work/wt/.build-root/build/short-clone ] || return 0
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    mountpoint -q /home/luke/Work/wt/.build-root/build/short-clone/cargo || break
-    umount /home/luke/Work/wt/.build-root/build/short-clone/cargo 2>/dev/null || sleep 1
-  done
-  if [ -L /home/luke/Work/wt/.build-root/build/short-clone ] ||
-    [ ! -d /home/luke/Work/wt/.build-root/build/short-clone ] ||
-    [ "$(realpath -e /home/luke/Work/wt/.build-root/build/short-clone)" != \
-      /home/luke/Work/wt/.build-root/build/short-clone ] ||
-    findmnt -rn -o TARGET | grep -qE '^/home/luke/Work/wt/\.build-root/build/short-clone(/|$)'; then
-    echo "The short-addresses clone /home/luke/Work/wt/.build-root/build/short-clone is still" \
-      "mounted, or is not a directory; it is left in place."
-    return 1
-  fi
-  # The kernel leaves the overlay's inner work directory at mode 000, which rm cannot enter.
-  [ ! -d /home/luke/Work/wt/.build-root/build/short-clone/work/work ] ||
-    chmod u+rwx /home/luke/Work/wt/.build-root/build/short-clone/work/work
-  rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/short-clone
-}
 short=
 if [ -n "$short_build" ]; then
   exec 6>>"$root/build/short-clone.lock"
@@ -377,12 +433,19 @@ if [ -n "$short_build" ]; then
     echo "Waiting for the other run of this checkout that uses the short-addresses clone to end."
     flock 6
   fi
-  drop_short_clone || exit 1
-  trap drop_short_clone EXIT
+  unmount_short_clone || exit 1
+  stamp=$(short_clone_stamp)
+  if [ -e /home/luke/Work/wt/.build-root/build/short-clone ] &&
+    [ "$(cat "$root/build/short-clone/stamp" 2>/dev/null)" != "$stamp" ]; then
+    echo "The short-addresses clone was made from another build of this checkout; it is made again."
+    drop_short_clone || exit 1
+  fi
+  trap unmount_short_clone EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
   mkdir -p "$root/build/short-clone/upper" "$root/build/short-clone/work" "$root/build/short-clone/cargo"
+  [ -e "$root/build/short-clone/stamp" ] || printf '%s\n' "$stamp" >"$root/build/short-clone/stamp"
   if ! mount -t overlay overlay -o "lowerdir=$root/build/cargo,upperdir=$root/build/short-clone/upper,workdir=$root/build/short-clone/work,userxattr" \
     "$root/build/short-clone/cargo"; then
     echo "The short-addresses clone of build/cargo could not be mounted."

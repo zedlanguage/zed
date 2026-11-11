@@ -2,8 +2,8 @@
 # Tests the piece selection of tools/run_tests.sh (--list, --only). Run from a checkout's root,
 # in a worktree through zrun (`/home/luke/Work/wt/zrun tools/test_run_tests.sh`), since it lists
 # the tests of the built binaries. It builds as run_tests.sh does, which does nothing on a built
-# tree except the short-addresses build: its first listing selects every piece, so it builds the
-# short-addresses clone from nothing (169 s at load 22 to 49, 2026-11-10). The expected pieces of a group are found by the binary each piece runs, not by its name.
+# tree; its first listing selects every piece, so in a checkout with no short-addresses clone
+# yet it builds that clone from nothing (85 to 120 s), and then 9 s (2026-11-10). The expected pieces of a group are found by the binary each piece runs, not by its name.
 # It lists the binaries once, in its own log directory, so a run_tests.sh in the same checkout
 # keeps its files, and checks each selection on the saved table (--reuse-table): a listing takes 7
 # to 13 s, and one per check ran past 60 s. One check compares a fresh listing with the table;
