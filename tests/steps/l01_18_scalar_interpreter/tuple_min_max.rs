@@ -80,8 +80,9 @@ fn tuples_min_and_max_cannot_order_are_refused() {
     );
     assert_eq!(
         errors("x = min((1, 2.0), (1, 3));\n"),
+        // As `min(2.0, 3)` is: nothing gives the decimal a carrier (DESIGN.md L1.26a).
         [
-            "`min` does not take (2.0, 3): these are the types of its arguments here, and `min` has no arrow that takes them all [min((1, 2.0), (1, 3))]"
+            "the literal `2.0` is a decimal, and nothing here gives it a carrier; a decimal literal takes the carrier of its use, never `int`, and Zed does not choose one for it\n  fixes, each checked here:\n    x = min((1, 2.0f64), (1, 3));    the literal is then the f64 2.0\n    x = min((1, 2.0r), (1, 3));      the literal is then exactly 2.0, a rat [2.0]"
         ]
     );
     assert_eq!(
@@ -242,7 +243,7 @@ fn checking_a_chain_of_n_tuple_mins_scales() {
 fn checking_min_of_two_tuples_of_n_components_scales() {
     let unit = |n: usize| {
         let parts = |last: usize| {
-            let mut v: Vec<String> = (0..n).map(|i| format!("{i}.0")).collect();
+            let mut v: Vec<String> = (0..n).map(|i| format!("{i}.0f64")).collect();
             v.push(last.to_string());
             v.join(", ")
         };

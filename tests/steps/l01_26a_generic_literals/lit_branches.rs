@@ -121,10 +121,20 @@ fn an_operation_on_literals_keeps_its_value_beside_a_carrier() {
 
 #[test]
 fn an_operation_on_literals_in_an_if_has_its_value_at_run_time() {
+    // Each result is compared where it is used, which fixes the `1.5`: bound alone, `b =
+    // g(false)` would be rejected at the `1.5`, which nothing fixes (DESIGN.md L1.26a, "`y =
+    // g(c)` is rejected at the `2.5`").
     let src = "g(positional c: bool) = if c { 1 + 1 } else { 1.5 };\n\
-               a = g(true);\nb = g(false);\n";
-    assert_eq!(value(src, "a"), "2");
-    assert_eq!(value(src, "b"), "1.5");
+               a = g(true) == 2;\nb = g(false) == 1.5f64;\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(value(src, "a"), "true");
+    assert_eq!(value(src, "b"), "true");
+    assert_eq!(
+        type_errors("g(positional c: bool) = if c { 1 + 1 } else { 1.5 };\nb = g(false);\n"),
+        [
+            "the literal `1.5` is a decimal, and nothing here gives it a carrier; a decimal literal takes the carrier of its use, never `int`, and Zed does not choose one for it; the value holds it through a call of `g`\n  fixes, each checked here:\n    g(positional c: bool) = if c { 1 + 1 } else { 1.5f64 };    the literal is then the f64 1.5\n    g(positional c: bool) = if c { 1 + 1 } else { 1.5r };      the literal is then exactly 1.5, a rat [1.5]"
+        ]
+    );
 }
 
 #[test]

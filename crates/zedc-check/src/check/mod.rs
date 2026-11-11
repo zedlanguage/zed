@@ -1007,6 +1007,16 @@ struct Ck<'t, 'a> {
     /// The literals the applications under way refused, each with its message, for
     /// [`Self::apply`] to report with the application's derivation and repairs.
     lit_refused: Vec<(Span, Msg)>,
+    /// The classes [`Self::generic_parts`] made outside every function, for [`Self::apply`] to
+    /// give their types once the application has met them ([`Self::resolve_top_parts`]).
+    top_parts: Vec<usize>,
+    /// The declared functions whose bodies can end in a decimal literal with no suffix
+    /// ([`Self::tail_reach`]), found when first asked.
+    tail_reach: Option<HashSet<usize>>,
+    /// The decimal literals with no suffix that a call outside every function ends in, by
+    /// the function called, whether the call is in a payload, and the type at the call
+    /// ([`Self::call_tails`]).
+    tail_calls: HashMap<(usize, bool, Ty), Rc<[&'a Expr]>>,
     /// The atoms the uses of each binder handle, `else` and `is` on its name or on a name
     /// bound to it: an undeclared parameter's type holds them.
     handled: Handled,
@@ -1114,6 +1124,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             defer: BTreeSet::new(),
             applied: None,
             lit_refused: Vec::new(),
+            top_parts: Vec::new(),
+            tail_reach: None,
+            tail_calls: HashMap::new(),
             handled: handled(t.res),
             widened: HashSet::new(),
             outside: HashMap::new(),
@@ -2567,11 +2580,32 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The class `t` is, beside atoms only: `T` in `T | #divByZero`, the type of `(1 + x) /
+    /// (x * y)`. It costs the number of `t`'s pieces.
+    fn class_beside_atoms(&self, t: &Ty) -> Option<usize> {
+        let mut found = None;
+        for p in t.pieces() {
+            if p.is_atoms() {
+                continue;
+            }
+            match (found, self.class_of(&p)) {
+                (None, Some(k)) => found = Some(k),
+                _ => return None,
+            }
+        }
+        found
+    }
+
     /// `t` shown with each class narrowed to some carriers shown as their union.
     fn show(&self, t: &Ty) -> String {
-        let t = &self.settled(t);
-        // A class of generic literals alone is shown as its literals, as written: `(1, 2, 3)`,
-        // not `(_, _, _)`.
+        let t = &self.as_literals(&self.settled(t));
+        show_with(t, &self.masks(t), &|v| self.spelling(v))
+    }
+
+    /// `t` with each class of generic literals alone, not yet resolved, replaced by its
+    /// literals, as written: `(1, 2, 3)`, not `(_, _, _)`, for the argument of
+    /// `g((1, 2, 3))` with `g(positional a) = min(a, (1, 2))` in a message.
+    fn as_literals(&self, t: &Ty) -> Ty {
         let lits: Binds = (t.var_facts().classes.into_iter())
             .filter_map(|v| {
                 let r = self.find(class_id(&v).filter(|&k| k < self.classes.len())?);
@@ -2583,8 +2617,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
             })
             .collect();
-        let t = &t.replace(&lits);
-        show_with(t, &self.masks(t), &|v| self.spelling(v))
+        t.replace(&lits)
     }
 
     /// The classes of `t` narrowed to some carriers, each with its carriers: what
@@ -2696,18 +2729,20 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The text of `t` in a message.
     fn text(&self, t: &Ty) -> String {
-        self.settled(t).text_spelled(false, &|v| self.spelling(v))
+        self.as_literals(&self.settled(t))
+            .text_spelled(false, &|v| self.spelling(v))
     }
 
     /// The text of `t` in a message as one operand of a union, `T | U`: a function in it is
     /// parenthesized.
     fn text_in_union(&self, t: &Ty) -> String {
-        self.settled(t).text_spelled(true, &|v| self.spelling(v))
+        self.as_literals(&self.settled(t))
+            .text_spelled(true, &|v| self.spelling(v))
     }
 
     /// [`Self::show`] as one operand of a union, `T | U`: a function in it is parenthesized.
     fn show_in_union(&self, t: &Ty) -> String {
-        let t = &self.settled(t);
+        let t = &self.as_literals(&self.settled(t));
         match self.masks(t) {
             masks if masks.is_empty() => t.text_spelled(true, &|v| self.spelling(v)),
             masks => show_with(t, &masks, &|v| self.spelling(v)),
@@ -4196,16 +4231,54 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// Gives each class [`Self::generic_parts`] made outside every function since `from`, of
+    /// the literals of a tuple argument, its type, now that the application has met it: a
+    /// class the application left one numeric carrier takes it, and its literals adopt it,
+    /// as `2` takes `rat` in `y = f(x: 1r, p: (2, 1))` with `f(x, p) = x + p[0]`; any other
+    /// keeps its literals' own types, `int` for `1` there, since nothing outside a function
+    /// chooses among carriers (DESIGN.md L1.26a), and a decimal literal so left is rejected
+    /// where the arguments are read ([`Self::unfixed_args`]). Each class is read once: the
+    /// cost is the number of its literals.
+    fn resolve_top_parts(&mut self, from: usize) {
+        for k in self.top_parts.split_off(from) {
+            let r = self.find(k);
+            if self.classes[r].resolved.is_some() {
+                continue;
+            }
+            let mask = self.classes[r].mask;
+            let lits: Vec<Lit> = (self.classes[r].lits.iter())
+                .map(|(l, _)| l.clone())
+                .collect();
+            let mut numeric = Carrier::of_mask(mask).filter(|c| c.numeric());
+            let one = match (numeric.next(), numeric.next()) {
+                (Some(c), None) if mask & OTHER == 0 => Some(c),
+                _ => None,
+            };
+            let mut ts = Vec::with_capacity(lits.len());
+            for l in &lits {
+                ts.push(match one {
+                    Some(c) => self.adopt_to(l, c),
+                    None => lit_ty(&l.value, l.neg()),
+                });
+            }
+            self.touch(r);
+            self.classes[r].resolved = Some(Ty::union_all(&ts));
+        }
+    }
+
     /// The type of the tuple argument `a` at a parameter that is a type variable, with each
-    /// literal without a suffix written as a component of it, at any depth, made a class of its own that
-    /// the literal joins, generic (L1.26a): the component joins the class of what it meets in
-    /// the function's body, and takes int where it meets no carrier. `None` outside a
-    /// function, and where no such literal is written.
+    /// literal without a suffix written as a component of it, at any depth, made a class of
+    /// its own that the literal joins, generic (L1.26a): the component joins the class of what
+    /// it meets in
+    /// the function's body, and takes int where it meets no carrier. Outside every function
+    /// the class is one of the application's, and takes its type when the application ends
+    /// ([`Self::resolve_top_parts`]): the `2` in `y = f(x: 1r, p: (2, 1))`, with
+    /// `f(x, p) = x + p[0]`, is a `rat`. `None` where no such literal is written.
     ///
     /// The tuples nest as deep as the text, so the walk keeps its own stack, as [`adopted`]
     /// does; it costs the size of the tuple's text.
     fn generic_parts(&mut self, a: &Arg) -> Option<Ty> {
-        let parts = (a.parts.as_deref()).filter(|_| self.level > 0 && self.replaying == 0)?;
+        let parts = (a.parts.as_deref()).filter(|_| self.replaying == 0)?;
         let comps = only_tuple(&a.ty, parts.len())?;
         let mut stack = vec![OpenTuple {
             parts,
@@ -4229,6 +4302,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             match &open.parts[i] {
                 Part::Lit(l) if l.bare => {
                     let k = self.generic_class(l);
+                    if self.level == 0 {
+                        self.top_parts.push(k);
+                    }
                     made = true;
                     let open = stack.last_mut().expect("an open tuple");
                     open.out.push(Ty::var(format!("${k}").into()));
@@ -4618,6 +4694,7 @@ enum Undo {
 struct Mark {
     log: usize,
     errors: usize,
+    top_parts: usize,
 }
 
 /// Sets `$map[$key]` to `$value`, removing it for `None`, and gives the value it replaces.
@@ -4686,6 +4763,7 @@ impl Ck<'_, '_> {
         Mark {
             log: self.log.len(),
             errors: self.errors.len(),
+            top_parts: self.top_parts.len(),
         }
     }
 
@@ -4696,6 +4774,7 @@ impl Ck<'_, '_> {
             self.set(w);
         }
         self.errors.truncate(m.errors);
+        self.top_parts.truncate(m.top_parts);
     }
 }
 
@@ -4890,6 +4969,42 @@ fn only_tuple(t: &Ty, n: usize) -> Option<&[Ty]> {
     match t.tuples.as_slice() {
         [cs] if one && cs.len() == n => Some(cs),
         _ => None,
+    }
+}
+
+/// `t`, the type of a tuple written with the parts `parts`, with each literal there that has
+/// adopted a carrier (`adopt`, by span) typed as the value it takes: `(0.5f64, 1)` once the
+/// `1` adopts `f64` is `(0.5f64, 1.0f64)`. A component that is not exactly one tuple of its
+/// parts' length is left as it is. The tuples nest as deep as the text, so the walk keeps its
+/// own stack: each open tuple's parts, its components and the types so far.
+fn with_adoptions(t: &Ty, parts: &[Part], adopt: &HashMap<Span, Value>) -> Ty {
+    let Some(cs) = only_tuple(t, parts.len()) else {
+        return t.clone();
+    };
+    let mut stack: Vec<(&[Part], &[Ty], Vec<Ty>)> = vec![(parts, cs, Vec::new())];
+    loop {
+        let (ps, cs, out) = stack.last_mut().expect("an open tuple");
+        let i = out.len();
+        if i == ps.len() {
+            let t = Ty::tuple(stack.pop().expect("an open tuple").2);
+            match stack.last_mut() {
+                None => return t,
+                Some(up) => up.2.push(t),
+            }
+            continue;
+        }
+        let c = &cs[i];
+        match &ps[i] {
+            Part::Lit(l) => out.push(match adopt.get(&l.span) {
+                Some(v) => lit_ty(v, l.neg()),
+                None => c.clone(),
+            }),
+            Part::Tuple(inner) => match only_tuple(c, inner.len()) {
+                Some(ics) => stack.push((inner, ics, Vec::new())),
+                None => out.push(c.clone()),
+            },
+            Part::Other => out.push(c.clone()),
+        }
     }
 }
 
@@ -5666,6 +5781,52 @@ impl Msg {
     }
 }
 
+/// The one message for the rejections `parts` of literals that nothing gives a carrier, two
+/// or more, each its place and its message, in the order of the text, all in `what`: the
+/// value of a binding, the arguments of a call or the holes of a string (step L1.26b). The
+/// head counts the parts; each part's own message is a step at its place; and each fix makes
+/// the fix of that rank of every part at once, `y = (0.5f64, 0.25f64);    y[0] is 0.5; y[1]
+/// is 0.25`, which checks since the parts are apart. A part with fewer fixes than another
+/// leaves the fixes it lacks out.
+///
+/// Complexity tradeoff: the naive way, one message for each part, quotes the line once per
+/// message and rewrites it once per fix, so `n` decimals on one line of length `O(n)` give
+/// `Θ(n²)` bytes. One message shows each line once for all its steps (the diagnostic's
+/// layout), and each fix rewrites the line once, so the bytes are linear in the parts and
+/// the line.
+fn grouped(what: &dyn fmt::Display, parts: Vec<(Span, Msg)>) -> (Msg, Vec<Note>) {
+    let n = parts.len();
+    let ranks = parts.iter().map(|(_, m)| m.fixes.len()).min().unwrap_or(0);
+    let mut fixes: Vec<Rewrite> = (0..ranks)
+        .map(|_| Rewrite {
+            edits: Vec::new(),
+            holds: String::new(),
+            alone: String::new(),
+        })
+        .collect();
+    let mut notes = Vec::with_capacity(n);
+    for (i, (at, m)) in parts.into_iter().enumerate() {
+        for (k, x) in m.fixes.into_iter().take(ranks).enumerate() {
+            let sep = if i == 0 { "" } else { "; " };
+            fixes[k].edits.extend(x.edits);
+            fixes[k].holds.push_str(sep);
+            fixes[k].holds.push_str(&x.holds);
+            let sep = if i == 0 { "" } else { "`, `" };
+            fixes[k].alone.push_str(sep);
+            fixes[k].alone.push_str(&x.alone);
+        }
+        notes.push(Note {
+            span: at,
+            text: m.text,
+        });
+    }
+    let text = format!(
+        "{n} parts of {what} are literals that nothing here gives a carrier, and Zed does not \
+         choose one for them; the steps below give each one"
+    );
+    (Msg { text, fixes }, notes)
+}
+
 /// The message `head` about the literal `l`, then `why`. `head` is given the words "the
 /// literal" and the literal as the program writes it, in memory the system gives first
 /// ([`quoting`]); when it refuses, the words "this literal" in their place.
@@ -6370,6 +6531,11 @@ struct VarSets {
     size: Vec<usize>,
     /// Whether each root's set is fixed.
     fixed: Vec<bool>,
+    /// The place that first fixed each root's set ([`VarSets::fix_by`]), `0` for a fix from
+    /// no one place.
+    by: Vec<usize>,
+    /// Whether two places fixed each root's set.
+    many: Vec<bool>,
 }
 
 impl VarSets {
@@ -6384,6 +6550,8 @@ impl VarSets {
         self.up.push(i);
         self.size.push(1);
         self.fixed.push(false);
+        self.by.push(0);
+        self.many.push(false);
         i
     }
 
@@ -6409,13 +6577,39 @@ impl VarSets {
         };
         self.up[small] = big;
         self.size[big] += self.size[small];
+        match (self.fixed[big], self.fixed[small]) {
+            (false, true) => {
+                self.by[big] = self.by[small];
+                self.many[big] = self.many[small];
+            }
+            (true, true) => {
+                self.many[big] |= self.many[small] || self.by[big] != self.by[small];
+            }
+            _ => {}
+        }
         self.fixed[big] |= self.fixed[small];
     }
 
-    /// The set of `i` marked fixed.
+    /// The set of `i` marked fixed, from no one place: for every literal.
     fn fix(&mut self, i: usize) {
+        self.fix_by(i, 0);
+    }
+
+    /// The set of `i` marked fixed from the place `by`: for the literals that reach it from
+    /// other places ([`VarSets::fixed_for`]); `0` is no one place, and fixes it for all.
+    fn fix_by(&mut self, i: usize, by: usize) {
         let r = self.find(i);
+        match self.fixed[r] {
+            false => self.by[r] = by,
+            true => self.many[r] |= self.by[r] != by || by == 0,
+        }
         self.fixed[r] = true;
+    }
+
+    /// Whether the set of the root `r` is fixed for a literal that reaches it from the place
+    /// `from`: by another place, or by none in particular.
+    fn fixed_for(&self, r: usize, from: usize) -> bool {
+        self.fixed[r] && (self.many[r] || self.by[r] != from)
     }
 
     /// The set of each variable of `t` marked fixed.
@@ -6567,6 +6761,46 @@ fn unfixed_parts(e: &Expr, n: &str, whole: bool, src: Option<&str>) -> Vec<(Span
         }
     }
     out
+}
+
+/// What a value ends in, one step down ([`Ck::tail_of`]).
+enum Tail<'e> {
+    /// A numeric literal.
+    Lit(Lit),
+    /// The branches of an `if`, or the one value of a block.
+    Branches(Vec<&'e Expr>),
+    /// The components of a tuple display, or the values of a block's `return` of several, with
+    /// whether it is a block.
+    Components(&'e [Expr], bool),
+    /// The components of a tuple display that is indexed.
+    Indexed(&'e [Expr]),
+    /// The payload of an atom: its items, then its fields' values.
+    Payload(Vec<&'e Expr>),
+    /// A call of the declared function of this binder.
+    Call(usize),
+    /// None of these.
+    None,
+}
+
+/// Whether `t` holds, at any depth of its tuples, some `f64` values but not every one: the
+/// type at a place holds a decimal literal that nothing gave a carrier only if it does
+/// ([`Ck::unfixed_tails`]). The walk keeps its own stack, and reads each shared row once.
+fn decimal_alone(t: &Ty) -> bool {
+    let f = Ty::carrier(Carrier::F64);
+    let mut seen: HashSet<*const Ty> = HashSet::new();
+    let mut todo = vec![t];
+    while let Some(t) = todo.pop() {
+        let s = Ty::set(t.set.clone()).meet(&f);
+        if !s.is_empty() && !f.subtype(&s) {
+            return true;
+        }
+        for row in &t.tuples {
+            if seen.insert(row.as_ptr()) {
+                todo.extend(row.iter());
+            }
+        }
+    }
+    false
 }
 
 /// One way to write a literal with a carrier: in a cast to `f64`, `f64(1)`; or with the
@@ -8602,7 +8836,11 @@ mod tests {
         assert_eq!(ck.info.passes[&call][&span(3)], c);
         assert!(!ck.info.passes.contains_key(&fresh));
         // Rolling back to before the first write leaves no entry at all.
-        ck.undo(&Mark { log: 0, errors: 0 });
+        ck.undo(&Mark {
+            log: 0,
+            errors: 0,
+            top_parts: 0,
+        });
         assert!(ck.info.passes.is_empty());
     }
 

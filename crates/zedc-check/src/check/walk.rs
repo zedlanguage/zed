@@ -1494,14 +1494,30 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Target::Name(n, _) => n.as_str(),
                 Target::Wild => "_",
             };
-            let found = match (&targets[..], &value.kind) {
+            let mut found = match (&targets[..], &value.kind) {
                 ([t], _) => unfixed_parts(value, name(t), true, self.t.text),
                 (ts, ExprKind::Tuple(items)) if items.len() == ts.len() => (ts.iter().zip(items))
                     .flat_map(|(t, x)| unfixed_parts(x, name(t), false, self.t.text))
                     .collect(),
                 _ => Vec::new(),
             };
-            self.rejects_unfixed(before, found);
+            // The literals the value ends in through a branch, a block, an index or a call,
+            // for every form of the targets; a literal in a called body may stand before the
+            // binding in the text, and the parts are put back in the order of the text.
+            let tails = self.unfixed_tails(value, &v);
+            if !tails.is_empty() {
+                found.extend(tails);
+                found.sort_by_key(|(p, _, _)| p.start);
+            }
+            let what = match &targets[..] {
+                [Target::Name(n, _)] => format!("the value of `{n}`"),
+                [_] => "the value".to_string(),
+                ts => format!(
+                    "the value bound to `{}`",
+                    ts.iter().map(name).collect::<Vec<_>>().join(", ")
+                ),
+            };
+            self.rejects_unfixed(before, found, &what);
         }
         match &targets[..] {
             [Target::Name(n, _)] => {
@@ -1603,7 +1619,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// product, the square of the width over a wide tuple with an error in each component.
     /// The parts lie apart in the order of the text, so each error looks up the last part
     /// that starts at or before it by binary search, `O(e log p)` for `e` errors and `p` parts.
-    fn rejects_unfixed(&mut self, before: usize, parts: Vec<(Span, Span, Msg)>) {
+    fn rejects_unfixed(&mut self, before: usize, parts: Vec<(Span, Span, Msg)>, what: &str) {
         if parts.is_empty() {
             return;
         }
@@ -1614,9 +1630,272 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let kept: Vec<Found> = found.into_iter().filter(|e| !inside(e)).collect();
         self.errors.extend(kept);
-        for (_, at, message) in parts {
+        let parts = parts.into_iter().map(|(_, at, m)| (at, m)).collect();
+        self.reject_unfixed(&what, parts);
+    }
+
+    /// Rejects the literals of `parts`, each its place and its message, in the order of the
+    /// text, all in `what` (row UnfixedDecimal): one part with its derivation, as
+    /// [`Self::reject`]; two or more in one message ([`grouped`]), each part's derivation
+    /// after its step, with no step written twice.
+    fn reject_unfixed(&mut self, what: &dyn fmt::Display, parts: Vec<(Span, Msg)>) {
+        let Some(&(at, _)) = parts.first() else {
+            return;
+        };
+        if parts.len() == 1 {
+            let (at, m) = parts.into_iter().next().expect("one part");
             let notes = self.derive(&[at]);
-            self.reject(Some(Row::UnfixedDecimal), at, message, notes);
+            return self.reject(Some(Row::UnfixedDecimal), at, m, notes);
+        }
+        let sites: Vec<Span> = parts.iter().map(|(s, _)| *s).collect();
+        let (m, steps) = grouped(what, parts);
+        // A part's derivation that only shows the part itself repeats its step, and is left
+        // out; the rest follow the part's step, each once.
+        let mut shown = HashSet::new();
+        let mut notes = Vec::with_capacity(steps.len());
+        for (site, step) in sites.into_iter().zip(steps) {
+            notes.push(step);
+            for n in self.derive(&[site]) {
+                if n.span != site && shown.insert(n.clone()) {
+                    notes.push(n);
+                }
+            }
+        }
+        self.reject(Some(Row::UnfixedDecimal), at, m, notes);
+    }
+
+    /// The decimal literals with no suffix that the value `x`, bound outside every function
+    /// and of type `t`, ends in where nothing gives them a carrier, other than those
+    /// [`unfixed_parts`] reads (DESIGN.md L1.26a: "`y = g(c)` is rejected at the `2.5`, which
+    /// nothing fixes"; L1.26b: "Where nothing fixes its carrier a decimal literal is
+    /// rejected"). A value ends in each branch of an `if`, the value of a block, each component
+    /// of a tuple display, each payload of an atom, each component of a tuple display that is
+    /// indexed, and what a declared function it calls returns, each read the same way in turn:
+    /// `0.5` in `y = if c { 0.5 } else { 1 }`, in `y = (0.5, 1)[0]`, and in `y = f()` with
+    /// `f() = 0.5`. Outside a function nothing gives such a literal a carrier, since it is no
+    /// operand. In a function's body it may join the class of a parameter, as `0.5` does in
+    /// `g(x) = if x > 0 { x } else { 0.5 }`, where the call's arguments fix it, `y = g(x:
+    /// 1.0f64)`: so a literal reached through a call is rejected only where the type at its
+    /// place holds its value alone, not every `f64`, or where it is in a payload. `x` itself,
+    /// and its tuple components and payloads that are reached through none of these, are
+    /// [`unfixed_parts`]'s. Each message names the literal with each carrier it fits, and the
+    /// call it came through. Each part is a literal's site, with its message.
+    ///
+    /// Complexity tradeoff: the naive way reads the body of a called function at every call,
+    /// a function called inside the functions it calls again and again, which grows with the
+    /// number of paths through the calls, exponential in their depth; and it reads the bodies
+    /// again for each binding that calls them, so `b` bindings each calling the last of a
+    /// chain of `m` functions cost `O(b m)`. Here a body is entered only where the type at the
+    /// call holds an `f64` value alone and the body can end in a decimal literal
+    /// ([`Self::tail_reach`]); the bodies a call outside every function reaches are read once
+    /// for each function, place (in a payload or not) and type at the call, each body once
+    /// ([`Self::call_tails`]), and a later call with the same three looks the literals up. A
+    /// binding costs the size of its own value, the literals its calls reach, and the hash of
+    /// the type at each call. Calls of one function at `k` types each read its bodies again:
+    /// `O(k s)` for bodies of size `s`, a literal reached at each type a rejection.
+    fn unfixed_tails(&mut self, x: &'a Expr, t: &Ty) -> Vec<(Span, Span, Msg)> {
+        let src = self.t.text;
+        let mut out = Vec::new();
+        // A literal reached through two calls is one rejection.
+        let mut sites: HashSet<Span> = HashSet::new();
+        for (e, call) in self.tails(x, t.clone(), false, false, None) {
+            let Some(l) = literal(e, src) else { continue };
+            if !sites.insert(l.site) {
+                continue;
+            }
+            let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
+                .into_iter()
+                .filter(|&c| fits(&l, c))
+                .collect();
+            let mut m = unfixed(&l, &cs, None);
+            if let Some(c) = call {
+                let callee = match &c.kind {
+                    ExprKind::Call { callee, .. } => callee.span,
+                    _ => c.span,
+                };
+                let name = src.map_or("", |s| &s[callee.start..callee.end]);
+                m.text
+                    .push_str(&format!("; the value holds it through a call of `{name}`"));
+            }
+            out.push((l.site, l.site, m));
+        }
+        out
+    }
+
+    /// The literals [`Self::unfixed_tails`] rejects in `x` of type `t`, each with the call
+    /// outside every function it is reached through, if any. `deep` and `payload` say whether
+    /// `x` is reached through a branch, a block, an index or a call, and whether it is in a
+    /// payload. `inside` is the declared function whose body `x` is, read for
+    /// [`Self::call_tails`]; there the calls are followed into their bodies, each body once.
+    /// Outside every function each call's literals are those of [`Self::call_tails`].
+    fn tails(
+        &mut self,
+        x: &'a Expr,
+        t: Ty,
+        deep: bool,
+        payload: bool,
+        inside: Option<usize>,
+    ) -> Vec<(&'a Expr, Option<&'a Expr>)> {
+        let src = self.t.text;
+        let in_call = inside.is_some();
+        let mut out = Vec::new();
+        let mut seen: HashSet<usize> = inside.into_iter().collect();
+        // Each place: its expression, whether it is reached through a branch, a block, an
+        // index or a call, whether it is in a payload, and the type at it.
+        let mut todo: Vec<(&'a Expr, bool, bool, Ty)> = vec![(x, deep, payload, t)];
+        while let Some((e, deep, payload, ty)) = todo.pop() {
+            match self.tail_of(e, src) {
+                Tail::Lit(l) => {
+                    let alone = || {
+                        let s = Ty::set(ty.set.clone());
+                        lit_ty(&l.value, l.neg()).subtype(&s)
+                            && !Ty::carrier(Carrier::F64).subtype(&s)
+                    };
+                    if deep
+                        && l.bare
+                        && lit_carrier(&l.value) == Carrier::F64
+                        && (payload || !in_call || alone())
+                    {
+                        out.push((e, None));
+                    }
+                }
+                Tail::Branches(es) => {
+                    todo.extend(es.into_iter().rev().map(|e| (e, true, payload, ty.clone())))
+                }
+                Tail::Components(items, by) => {
+                    let n = items.len();
+                    let deep = deep || by;
+                    for (i, it) in items.iter().enumerate().rev() {
+                        let c = (ty.tuples.iter())
+                            .filter(|r| r.len() == n)
+                            .fold(Ty::empty(), |a, r| a.union(&r[i]));
+                        todo.push((it, deep, payload, c));
+                    }
+                }
+                Tail::Indexed(items) => {
+                    todo.extend((items.iter().rev()).map(|it| (it, true, payload, Ty::empty())))
+                }
+                Tail::Payload(es) => {
+                    todo.extend(es.into_iter().rev().map(|e| (e, deep, true, Ty::empty())))
+                }
+                Tail::Call(id) => {
+                    if !decimal_alone(&ty) || !self.tail_reach(id) {
+                        continue;
+                    }
+                    if in_call {
+                        if seen.insert(id) {
+                            todo.push((&self.t.funcs[&id].body, true, payload, ty));
+                        }
+                    } else {
+                        let found = self.call_tails(id, payload, ty);
+                        out.extend(found.iter().map(|&l| (l, Some(e))));
+                    }
+                }
+                Tail::None => {}
+            }
+        }
+        out
+    }
+
+    /// The literals [`Self::unfixed_tails`] rejects in the body of the declared function `id`
+    /// called outside every function, in a payload or not, where the type at the call is `t`:
+    /// read once for each of the three ([`Self::tails`]), then looked up.
+    fn call_tails(&mut self, id: usize, payload: bool, t: Ty) -> Rc<[&'a Expr]> {
+        let key = (id, payload, t);
+        if let Some(found) = self.tail_calls.get(&key) {
+            return found.clone();
+        }
+        let body = &self.t.funcs[&id].body;
+        let found: Rc<[&'a Expr]> = (self.tails(body, key.2.clone(), true, payload, Some(id)))
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect();
+        self.tail_calls.insert(key, found.clone());
+        found
+    }
+
+    /// Whether the body of the declared function `id` can end in a decimal literal with no
+    /// suffix, directly or through the declared functions it ends in a call of, as
+    /// [`Self::unfixed_tails`] reads a value ([`Self::tail_of`]).
+    ///
+    /// Complexity tradeoff: the naive way reads the bodies at each question, the size of every
+    /// body reached each time. Here the first question reads each body once, marks those that
+    /// end in such a literal, and carries the mark to the functions that end in a call of a
+    /// marked one along the calls reversed, each function and call once; each later question
+    /// is a lookup: `O(s)` once for the size `s` of the bodies, then `O(1)`.
+    fn tail_reach(&mut self, id: usize) -> bool {
+        if self.tail_reach.is_none() {
+            let src = self.t.text;
+            let mut callers: HashMap<usize, Vec<usize>> = HashMap::new();
+            let mut marked: HashSet<usize> = HashSet::new();
+            for (&f, func) in &self.t.funcs {
+                let mut todo = vec![&func.body];
+                while let Some(e) = todo.pop() {
+                    match self.tail_of(e, src) {
+                        Tail::Lit(l) => {
+                            if l.bare && lit_carrier(&l.value) == Carrier::F64 {
+                                marked.insert(f);
+                            }
+                        }
+                        Tail::Branches(es) | Tail::Payload(es) => todo.extend(es),
+                        Tail::Components(items, _) | Tail::Indexed(items) => todo.extend(items),
+                        Tail::Call(g) => callers.entry(g).or_default().push(f),
+                        Tail::None => {}
+                    }
+                }
+            }
+            let mut todo: Vec<usize> = marked.iter().copied().collect();
+            while let Some(g) = todo.pop() {
+                for &f in callers.get(&g).into_iter().flatten() {
+                    if marked.insert(f) {
+                        todo.push(f);
+                    }
+                }
+            }
+            self.tail_reach = Some(marked);
+        }
+        self.tail_reach.as_ref().is_some_and(|m| m.contains(&id))
+    }
+
+    /// What `e` ends in, one step down, as [`Self::unfixed_tails`] reads a value: a literal;
+    /// the branches of an `if`; the value of a block, one or the components of several; the
+    /// components of a tuple display, of one indexed; the payload of an atom; a call of a
+    /// declared function; or none of these. It costs the number of the parts it names.
+    fn tail_of(&self, e: &'a Expr, src: Option<&str>) -> Tail<'a> {
+        if let Some(l) = literal(e, src) {
+            return Tail::Lit(l);
+        }
+        match &e.kind {
+            ExprKind::If {
+                then, otherwise, ..
+            } => Tail::Branches(vec![then, otherwise]),
+            ExprKind::Block(stmts) => match stmts.last().map(|s| &s.kind) {
+                Some(StmtKind::Return(es)) if es.len() == 1 => Tail::Branches(vec![&es[0]]),
+                Some(StmtKind::Return(es)) => Tail::Components(es, true),
+                _ => Tail::None,
+            },
+            ExprKind::Tuple(items) => Tail::Components(items, false),
+            ExprKind::Index(base, _) => match &base.kind {
+                ExprKind::Tuple(items) => Tail::Indexed(items),
+                _ => Tail::None,
+            },
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry: false,
+            } if matches!(callee.kind, ExprKind::Atom(_)) => Tail::Payload(
+                positional
+                    .iter()
+                    .chain(named.iter().map(|(_, v)| v))
+                    .collect(),
+            ),
+            ExprKind::Call {
+                callee,
+                curry: false,
+                ..
+            } => self.declared(callee).map_or(Tail::None, Tail::Call),
+            _ => Tail::None,
         }
     }
 
@@ -1631,7 +1910,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             let p = &s.f.params[s.given.len()];
             let d = p.default.as_ref().expect("a closed default");
             self.drop_met(before);
-            self.rejects_unfixed(before, unfixed_parts(d, &p.name, true, self.t.text));
+            let what = format!("the default of `{}`", p.name);
+            self.rejects_unfixed(before, unfixed_parts(d, &p.name, true, self.t.text), &what);
             let mut out = Ty::empty();
             for piece in t.pieces() {
                 out = out.union(&match piece.carrier() {
@@ -1990,6 +2270,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let Some(h) = s.hole.take() {
             let t = m.take_ty();
             self.data(&t, "interpolation", h.span, h.span);
+            // A hole gives no carrier to a literal its value ends in through a branch, a
+            // block, an index or a call either, `"${if c { 0.5 } else { 1 }}"`. In a
+            // function's body such a literal may join a parameter's class, which the call
+            // fixes, so only holes outside every function are read so.
+            if self.level == 0 {
+                let found = (self.unfixed_tails(h, &t).into_iter())
+                    .map(|(_, at, m)| (at, m))
+                    .collect();
+                self.reject_unfixed(&"the interpolation", found);
+            }
             s.holes.push(t);
         }
         while let Some(p) = s.parts.get(s.i) {
@@ -2076,7 +2366,8 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The type of an `if` whose branches `then` and `otherwise` have the types `a` and `b`:
     /// their union; but where one branch is a literal without a suffix, or of a class of generic literals
-    /// only, as `1 + 1` is inside a function, and the other's type is one class, the literal joins the class,
+    /// only, as `1 + 1` is inside a function, and the other's type is one class, beside atoms
+    /// or alone ([`Ck::class_beside_atoms`]), the literal joins the class,
     /// generic, or the classes merge, and the `if` has the class's type (L1.26a). An operation
     /// on integer literals alone whose other branch is of no class keeps its value instead.
     fn branches(&mut self, then: &Expr, a: &Ty, otherwise: &Expr, b: &Ty) -> Ty {
@@ -2092,7 +2383,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // class merges with it. So each kept operation's class is recorded ([`Ck::kept_ops`]),
         // and the entry of one not kept is removed, so that a stale entry is never read.
         let (ka, kb) = (self.kept(then, a), self.kept(otherwise, b));
-        let free = |ck: &Self, k: &Option<Ty>, t: &Ty| k.is_some() || ck.class_of_ty(t).is_none();
+        let free =
+            |ck: &Self, k: &Option<Ty>, t: &Ty| k.is_some() || ck.class_beside_atoms(t).is_none();
         let keep = (ka.is_some() || kb.is_some()) && free(self, &ka, a) && free(self, &kb, b);
         for (e, k, t) in [(then, &ka, a), (otherwise, &kb, b)] {
             let span = exported(e).span;
@@ -2104,8 +2396,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         if keep {
             return ka.as_ref().unwrap_or(a).union(kb.as_ref().unwrap_or(b));
         }
+        // The other branch may hold atoms beside its class, `T | #divByZero` for `(1 + x) /
+        // (x * y)`: the literal joins the class all the same ("as a branch of an `if` whose
+        // other branch is of a class"), and the atoms stay in the result.
         for (e, t, other) in [(then, a, b), (otherwise, b, a)] {
-            let Some(k) = self.class_of_ty(other) else {
+            let Some(k) = self.class_beside_atoms(other) else {
                 continue;
             };
             let joined = match self.class_of_ty(t) {
@@ -5157,7 +5452,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             } => {
                 let other = self.bound(other, binds);
                 let (x, y) = if *first { (&on, &other) } else { (&other, &on) };
-                self.min_max_tuples(what, &word_sig(word), x, y, span)
+                self.min_max_tuples(what, &word_sig(word), x, y, [None, None], span)
             }
         };
         self.replaying -= 1;
@@ -6204,20 +6499,36 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// shapes of one length on each side are joined position by position, so each level is read
     /// once rather than once per pair of shapes, and a pair of component types met again
     /// through shared rows is not read again: the check is linear in the types read.
-    fn min_max_tuples(&mut self, what: &str, sig: &Sig, x: &Ty, y: &Ty, span: Span) -> Ty {
+    fn min_max_tuples(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        x: &Ty,
+        y: &Ty,
+        written: [Option<Rc<[Part]>>; 2],
+        span: Span,
+    ) -> Ty {
         // Called through a function value, a message names the word as well as the value.
         let who = match sig.word.as_deref() {
             Some(w) if what != format!("`{w}`") => format!("{what}, which is `{w}`,"),
             _ => what.to_string(),
         };
-        let mut todo = vec![(x.clone(), y.clone())];
+        let written = written.map(|w| w.map(Part::Tuple));
+        let mut todo = vec![(x.clone(), y.clone(), written.clone())];
+        // The decimal literals with no suffix written as components that meet only such
+        // literals, with their messages.
+        let mut unfixed_found: Vec<(Span, Msg)> = Vec::new();
         let mut seen = HashSet::new();
         // What the application gives, where one operand is a class and nothing else and the
         // other is closed: what the class's use gives ([`Ck::order_given`]).
         let mut given = None;
-        while let Some(pair) = todo.pop() {
+        while let Some((a, b, at)) = todo.pop() {
+            let pair = (a, b);
             let outer = seen.is_empty();
-            if seen.contains(&pair) {
+            // A pair with literals written in it is checked each time, since each literal
+            // adopts a carrier of its own.
+            let lits = at.iter().any(Option::is_some);
+            if !lits && seen.contains(&pair) {
                 continue;
             }
             let (a, b) = &pair;
@@ -6288,10 +6599,45 @@ impl<'t, 'a> Ck<'t, 'a> {
                     )],
                 );
             } else if a.tuples.is_empty() && b.tuples.is_empty() {
+                // A literal written as a component stays one, and adopts the carrier of the
+                // component it is paired with, as it would as an argument alone: the `1` in
+                // `min((0.5f64, 1), (1, 2))` is an `f64`.
+                // Two literals with no suffix, one of them a decimal, give each other no
+                // carrier: each such decimal is rejected, all of them in one message at the
+                // end, and is read here as the `f64` of the first fix, so that nothing else
+                // is rejected for it.
+                let lits = at.each_ref().map(|w| match w {
+                    Some(Part::Lit(l)) if l.bare => Some(l),
+                    _ => None,
+                });
+                let mut fixed: [Option<Lit>; 2] = [None, None];
+                if let [Some(l), Some(m)] = lits {
+                    for (side, l) in [l, m].into_iter().enumerate() {
+                        if lit_carrier(&l.value) == Carrier::F64 {
+                            let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
+                                .into_iter()
+                                .filter(|&c| fits(l, c))
+                                .collect();
+                            unfixed_found.push((l.site, unfixed(l, &cs, None)));
+                            fixed[side] = Some(Lit {
+                                bare: false,
+                                ..l.clone()
+                            });
+                        }
+                    }
+                }
+                let arg = |t: &Ty, w: &Option<Part>, fixed: Option<Lit>| match w {
+                    Some(Part::Lit(l)) => Arg {
+                        lit: Some(fixed.unwrap_or_else(|| l.clone())),
+                        ..Arg::of(t.clone())
+                    },
+                    _ => Arg::of(t.clone()),
+                };
+                let [f0, f1] = fixed;
                 self.apply(
                     what,
                     sig,
-                    vec![Some(Arg::of(a.clone())), Some(Arg::of(b.clone()))],
+                    vec![Some(arg(a, &at[0], f0)), Some(arg(b, &at[1], f1))],
                     true,
                     span,
                 );
@@ -6328,7 +6674,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 for (n, rows) in by_len {
                     for i in 0..n {
-                        todo.push(pair(Ty::union_all(rows.iter().map(|r| &r[i]))));
+                        let (s, t) = pair(Ty::union_all(rows.iter().map(|r| &r[i])));
+                        todo.push((s, t, [None, None]));
                     }
                 }
             } else if a.tuples.is_empty()
@@ -6366,19 +6713,39 @@ impl<'t, 'a> Ck<'t, 'a> {
                         );
                         continue;
                     }
+                    // The parts written at each position, where a side is one tuple display
+                    // of this length.
+                    let written = |side: usize, rows: &[&[Ty]]| match &at[side] {
+                        Some(Part::Tuple(ps)) if rows.len() == 1 && ps.len() == n => {
+                            Some(ps.clone())
+                        }
+                        _ => None,
+                    };
+                    let (ws, wt) = (written(0, &s), written(1, &t));
                     for i in 0..n {
                         let join = |rows: &[&[Ty]]| Ty::union_all(rows.iter().map(|r| &r[i]));
-                        todo.push((join(&s), join(&t)));
+                        let part = |w: &Option<Rc<[Part]>>| match w.as_ref().map(|ps| &ps[i]) {
+                            Some(Part::Other) | None => None,
+                            Some(p) => Some(p.clone()),
+                        };
+                        todo.push((join(&s), join(&t), [part(&ws), part(&wt)]));
                     }
                 }
             }
             seen.insert(pair);
         }
+        unfixed_found.sort_by_key(|(s, _)| s.start);
+        self.reject_unfixed(&format_args!("the arguments of {what}"), unfixed_found);
         // With an operand of no value the word gives none.
         if x.is_empty() || y.is_empty() {
             return Ty::empty();
         }
-        given.unwrap_or_else(|| one_shape_per_length(&x.union(y)))
+        // A literal written in a tuple display has the type of the value it adopted.
+        let [x, y] = [(x, &written[0]), (y, &written[1])].map(|(t, w)| match w {
+            Some(Part::Tuple(ps)) => with_adoptions(t, ps, &self.info.adopt),
+            _ => t.clone(),
+        });
+        given.unwrap_or_else(|| one_shape_per_length(&x.union(&y)))
     }
 
     /// What `min` or `max`, named `what`, of signature `sig`, gives where one operand is the
@@ -6410,7 +6777,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 let old = old.clone();
                 let (x, y) = if *first { (&old, other) } else { (other, &old) };
-                self.min_max_tuples(what, sig, x, y, span);
+                self.min_max_tuples(what, sig, x, y, [None, None], span);
                 let other = other.clone();
                 return self.join_order(s, i, &kind, &other, span);
             }
@@ -7225,12 +7592,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             && (!x.ty.tuples.is_empty() || !y.ty.tuples.is_empty())
             && matches!(sig.word.as_deref(), Some("min" | "max"))
         {
-            let t = self.min_max_tuples(what, sig, &x.ty, &y.ty, span);
+            let written = [x.parts.clone(), y.parts.clone()];
+            let t = self.min_max_tuples(what, sig, &x.ty, &y.ty, written.clone(), span);
             return (out.union(&t), Vec::new());
         }
         let defer = std::mem::take(&mut self.defer);
         let passing = self.need_passed.len();
         let refusals = self.lit_refused.len();
+        let made = self.top_parts.len();
         let r = match (sig.arrows.len(), self.first_taking(sig, &args, pass)) {
             (1, _) => self.apply_one(what, sig, 0, &args, &unneeded, defer, span),
             (_, Some(k)) => self.apply_one(what, sig, k, &args, &unneeded, defer, span),
@@ -7239,6 +7608,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.applied = None;
                 r
             }
+        };
+        // The literals of tuple arguments outside every function take the carriers the
+        // application gave their classes, and the result names those types.
+        let r = match self.top_parts.len() > made {
+            true => {
+                self.resolve_top_parts(made);
+                r.map(|(t, kept)| (self.solved(&t), kept))
+            }
+            false => r,
         };
         // What a check of a need left when the application failed before taking it.
         self.need_passed.truncate(passing);
@@ -7756,39 +8134,65 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         out = out.union(&self.pass_needs(what, &arrow.params, args, passing, span)?);
         if self.level == 0 && self.replaying == 0 && !self.trying {
-            self.unfixed_args(sig, k, args, &grouped);
+            self.unfixed_args(what, sig, k, args, &grouped);
         }
         self.applied = Some((binds, left));
         Ok((out, vec![0]))
     }
 
-    /// Rejects each decimal literal with no suffix, alone or in a tuple display, in an
-    /// argument of the arrow `k` of `sig` where nothing gives it a carrier, outside a function
-    /// (row UnfixedDecimal; DESIGN.md step L1.26b: an unfixed decimal is rejected wherever it
-    /// stands): `0.5` in `y = id(x: 0.5)` and in `y = id(x: (0.5, 1))` with `id(x) = x`. The
-    /// literal stands at a variable of the arrow, which the arrow takes in any carrier; it is
-    /// fixed where another argument reaches that variable, or a variable a need of the
-    /// signature ties to it, other than through literals with no suffix: `x` gives `p[0]` its
-    /// carrier in `y = f(x: 1.0f64, p: (0.5, 1))` with `f(x, p) = x + p[0]`. A parameter of a
-    /// written type gives the literal its carrier ([`adopted`]), and the literals at a bounded
-    /// variable alone, `inc(x: 2.5)`, are taken where the arguments are grouped (`grouped`).
-    /// The fixes write the literal with each carrier the bounds of those variables take, and
-    /// name the value the literal then is, since the binder's would need a call of the
-    /// program's function.
+    /// Rejects each decimal literal with no suffix, alone, in a tuple display or in the
+    /// payload of an atom, in an argument of the arrow `k` of `sig`, called as `what`, where
+    /// nothing gives it a carrier, outside a function (row UnfixedDecimal; DESIGN.md step
+    /// L1.26b: an unfixed decimal is rejected wherever it stands): `0.5` in `y = id(x: 0.5)`,
+    /// in `y = id(x: (0.5, 1))` and in `y = id(x: #bad(0.5))` with `id(x) = x`. The literal
+    /// stands at a variable of the arrow, which the arrow takes in any carrier; it is fixed
+    /// where another argument reaches that variable, or a variable a need of the signature
+    /// ties to it, other than through literals with no suffix: `x` gives `p[0]` its carrier
+    /// in `y = f(x: 1.0f64, p: (0.5, 1))` with `f(x, p) = x + p[0]`. Another component of the
+    /// tuple display the literal stands in, where the display reaches the variable whole, fixes
+    /// nothing for it: in `id(x: (0.5f64, 0.5))` the components are apart, and the second is
+    /// rejected. A parameter of a written type gives the literal its carrier ([`adopted`]),
+    /// and the literals at a bounded variable alone, `inc(x: 2.5)`, are taken where the
+    /// arguments are grouped (`grouped`). Nothing gives a literal in the payload of an atom a
+    /// carrier, as at a binding ([`unfixed_parts`]). The fixes write the literal with each
+    /// carrier the bounds of those variables take, and name the value the literal then is,
+    /// since the binder's would need a call of the program's function; two or more are
+    /// rejected in one message ([`Self::reject_unfixed`]).
     ///
     /// Complexity tradeoff: the naive way asks, for each literal, whether any other argument
     /// reaches its variable through the needs, a walk of the arguments and the needs for each
     /// literal, `O(l (a + n))`. Here one walk of the arguments' parts and the needs' variables
     /// puts the variables in sets that a need ties together (union by size with path
-    /// halving), each set marked fixed once, then each literal looks up its set: `O(a + n + l)`
-    /// times the inverse Ackermann function, for `a` parts, `n` variables in needs and `l`
-    /// literals. The walks keep their own stacks, since tuple displays nest as deep as the
-    /// text.
-    fn unfixed_args(&mut self, sig: &Sig, k: usize, args: &[Option<Arg<'a>>], grouped: &[bool]) {
-        enum Src<'p> {
+    /// halving), each set marked fixed once with the place that fixed it first and whether
+    /// another place did too, then each literal looks up its set: `O(a + n + l)` times the
+    /// inverse Ackermann function, for `a` parts, `n` variables in needs and `l` literals.
+    /// The walks keep their own stacks, since tuple displays nest as deep as the text.
+    fn unfixed_args(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        k: usize,
+        args: &[Option<Arg<'a>>],
+        grouped: &[bool],
+    ) {
+        enum Src<'p, 'e> {
             Lit(&'p Lit),
-            Parts(&'p [Part]),
-            Other,
+            Parts(&'p [Part], Option<&'e Expr>),
+            Other(Option<&'e Expr>),
+        }
+        // The component `i` of the tuple display `e`, where it is one.
+        fn item(e: Option<&Expr>, i: usize) -> Option<&Expr> {
+            match e.map(|e| &e.kind) {
+                Some(ExprKind::Tuple(items)) => items.get(i),
+                _ => None,
+            }
+        }
+        fn of<'p, 'e>(part: &'p Part, e: Option<&'e Expr>) -> Src<'p, 'e> {
+            match part {
+                Part::Lit(l) => Src::Lit(l),
+                Part::Tuple(ps) => Src::Parts(ps, e),
+                Part::Other => Src::Other(e),
+            }
         }
         let mut sets = VarSets::default();
         for need in &sig.needs {
@@ -7803,7 +8207,26 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        let mut lits: Vec<(usize, &Lit)> = Vec::new();
+        // Each literal at a variable, with the place it reached the variable from: an
+        // argument, or a part of one at a component of a written type.
+        let mut lits: Vec<(usize, usize, &Lit)> = Vec::new();
+        // The literals in payloads of atoms, which nothing gives a carrier.
+        let mut payloads: Vec<Lit> = Vec::new();
+        let src_text = self.t.text;
+        let in_payloads = |e: Option<&Expr>, out: &mut Vec<Lit>| {
+            let Some(e) = e else {
+                return;
+            };
+            for (x, _) in value_parts(e).leaves {
+                if let Some(l) = literal(x, src_text).filter(|l| l.bare)
+                    && lit_carrier(&l.value) == Carrier::F64
+                    && x.span != e.span
+                {
+                    out.push(l);
+                }
+            }
+        };
+        let mut place = 0;
         let arrow = &sig.arrows[k];
         for (i, (a, p)) in args.iter().zip(&arrow.params).enumerate() {
             let Some(a) = a else {
@@ -7815,8 +8238,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let src = match (&a.lit, &a.parts) {
                 (Some(l), _) => Src::Lit(l),
-                (None, Some(ps)) => Src::Parts(ps),
-                (None, None) => Src::Other,
+                (None, Some(ps)) => Src::Parts(ps, a.expr),
+                (None, None) => Src::Other(a.expr),
             };
             let mut todo = vec![(src, p)];
             while let Some((src, w)) = todo.pop() {
@@ -7824,41 +8247,57 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // A written type: each component of a tuple display stands at its
                     // component, where the type has one shape of that length.
                     match src {
-                        Src::Parts(ps) => match shapes([w], ps.len())[..] {
-                            [cs] => todo.extend(ps.iter().zip(cs).map(|(part, c)| {
-                                let src = match part {
-                                    Part::Lit(l) => Src::Lit(l),
-                                    Part::Tuple(ps) => Src::Parts(ps),
-                                    Part::Other => Src::Other,
-                                };
-                                (src, c)
-                            })),
-                            _ => sets.fix_all(w),
+                        Src::Parts(ps, e) => match shapes([w], ps.len())[..] {
+                            [cs] => todo.extend(
+                                (ps.iter().zip(cs).enumerate())
+                                    .map(|(j, (part, c))| (of(part, item(e, j)), c)),
+                            ),
+                            _ => {
+                                sets.fix_all(w);
+                                let mut inner = vec![(ps, e)];
+                                while let Some((ps, e)) = inner.pop() {
+                                    for (j, part) in ps.iter().enumerate() {
+                                        match part {
+                                            Part::Tuple(qs) => inner.push((qs, item(e, j))),
+                                            Part::Other => in_payloads(item(e, j), &mut payloads),
+                                            Part::Lit(_) => {}
+                                        }
+                                    }
+                                }
+                            }
                         },
-                        _ => sets.fix_all(w),
+                        Src::Other(e) => {
+                            sets.fix_all(w);
+                            in_payloads(e, &mut payloads);
+                        }
+                        Src::Lit(_) => sets.fix_all(w),
                     }
                     continue;
                 };
-                // The whole argument, or part, flows into the variable `v`: each literal in it
-                // with no suffix stands there, and anything else fixes `v`.
+                // The whole argument, or part, flows into the variable `v` from one place:
+                // each literal in it with no suffix stands there, and anything else fixes
+                // `v` for the literals that reach it from other places.
+                place += 1;
                 let v = sets.id(v);
                 let mut inner: Vec<Src> = vec![src];
                 while let Some(src) = inner.pop() {
                     match src {
-                        Src::Lit(l) if !l.bare => sets.fix(v),
-                        Src::Lit(l) if lit_carrier(&l.value) == Carrier::F64 => lits.push((v, l)),
+                        Src::Lit(l) if !l.bare => sets.fix_by(v, place),
+                        Src::Lit(l) if lit_carrier(&l.value) == Carrier::F64 => {
+                            lits.push((v, place, l))
+                        }
                         Src::Lit(_) => {}
-                        Src::Parts(ps) => inner.extend(ps.iter().map(|part| match part {
-                            Part::Lit(l) => Src::Lit(l),
-                            Part::Tuple(ps) => Src::Parts(ps),
-                            Part::Other => Src::Other,
-                        })),
-                        Src::Other => sets.fix(v),
+                        Src::Parts(ps, e) => inner
+                            .extend((ps.iter().enumerate()).map(|(j, part)| of(part, item(e, j)))),
+                        Src::Other(e) => {
+                            sets.fix_by(v, place);
+                            in_payloads(e, &mut payloads);
+                        }
                     }
                 }
             }
         }
-        if lits.is_empty() {
+        if lits.is_empty() && payloads.is_empty() {
             return;
         }
         // The carriers each set's bounds take: every carrier where none is bounded.
@@ -7869,9 +8308,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 takes[r] &= m;
             }
         }
-        for (v, l) in lits {
+        let mut found: Vec<(Span, Msg)> = Vec::new();
+        for (v, from, l) in lits {
             let r = sets.find(v);
-            if sets.fixed[r] || self.is_class(&sets.names[v]) {
+            if sets.fixed_for(r, from) || self.is_class(&sets.names[v]) {
                 continue;
             }
             let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
@@ -7884,10 +8324,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             if cs.is_empty() {
                 continue;
             }
-            let notes = self.derive(&[l.site]);
-            let m = unfixed(l, &cs, None);
-            self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
+            found.push((l.site, unfixed(l, &cs, None)));
         }
+        for l in &payloads {
+            let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
+                .into_iter()
+                .filter(|&c| fits(l, c))
+                .collect();
+            found.push((l.site, unfixed(l, &cs, None)));
+        }
+        found.sort_by_key(|(s, _)| s.start);
+        self.reject_unfixed(&format_args!("the arguments of `{what}`"), found);
     }
 
     /// [`Self::apply`] of a signature of several arrows, each over one carrier or a tuple:

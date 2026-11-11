@@ -97,17 +97,25 @@ fn a_decimal_in_a_nested_tuple_names_each_position() {
 }
 
 #[test]
-fn each_decimal_of_a_tuple_is_rejected_on_its_own() {
+fn the_decimals_of_a_tuple_are_rejected_in_one_message() {
+    // Each decimal is named in a step of its own, and the fixes write them all.
     let src = "y = (0.5, 0.25, 0.75);\n";
-    assert_eq!(rejected_at(src), ["0.5", "0.25", "0.75"]);
-    let errors = type_errors(src);
-    for (e, (fix, holds)) in errors.iter().zip([
-        ("y = (0.5f64, 0.25, 0.75);", "y[0] is 0.5"),
-        ("y = (0.5, 0.25f64, 0.75);", "y[1] is 0.25"),
-        ("y = (0.5, 0.25, 0.75f64);", "y[2] is 0.75"),
-    ]) {
-        assert!(e.contains(&format!("\n    {fix}    {holds}\n")), "{e}");
+    assert_eq!(
+        type_errors(src),
+        [
+            "3 parts of the value of `y` are literals that nothing here gives a carrier, and Zed does not choose one for them; the steps below give each one\n  fixes, each checked here:\n    y = (0.5f64, 0.25f64, 0.75f64);    y[0] is 0.5; y[1] is 0.25; y[2] is 0.75\n    y = (0.5r, 0.25r, 0.75r);          y[0] is 1r/2r; y[1] is 1r/4r; y[2] is 3r/4r [0.5]"
+        ]
+    );
+    for fixed in [
+        "y = (0.5f64, 0.25f64, 0.75f64);\n",
+        "y = (0.5r, 0.25r, 0.75r);\n",
+    ] {
+        assert_eq!(type_errors(fixed), Vec::<String>::new(), "{fixed}");
     }
+    assert_eq!(
+        value("y = (0.5r, 0.25r, 0.75r);\n", "y"),
+        "(1r/2r, 1r/4r, 3r/4r)"
+    );
 }
 
 #[test]

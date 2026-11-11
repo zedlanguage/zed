@@ -15,6 +15,7 @@ mod lit_branch_ops;
 mod lit_branches;
 mod scaling;
 mod spelling;
+mod tuple_rest;
 mod tuples;
 mod written;
 

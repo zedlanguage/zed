@@ -3507,3 +3507,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 ## Entries from AUDIT-layer-row (`crates/zed-tools/src/audit.rs`)
 
 - No new gap. `reasons` and `rows` join a list by a slice pattern `[rest @ .., last]`, a row of the appendix (slice patterns: test the length, then index). `Listed` fills a `BTreeMap<&str, Vec<Place>>` by `entry().or_default().push`, as `check::ty::met` does (Mutation: a table from entry to a list, built by a fold). `Sorted::add` is a method on `&mut self` taking `impl FnOnce() -> String`, so the text of why an entry is needed is built only when it is printed, as `Builder::range_end` does (Mutation: the sorted lists are a state receiver; the function argument is a lambda the port calls in the same place).
+
+## Entries from LIT-tuple-rest (`crates/zedc-check/src/check/walk.rs`, `mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A walk of a value's tails on an explicit `Vec` stack of `(&Expr, bool, bool, Ty)` places, with a `HashSet<usize>` of the bodies entered | `Ck::tails` | Mutation (gap 11) | recursion on the expression that passes the two flags and the type down, the set of bodies entered threaded through as a persistent set |
+| A memo `HashMap<(usize, bool, Ty), Rc<[&Expr]>>` on the checker, filled at the first call of each key and shared by `Rc` | `Ck::call_tails` (`Ck::tail_calls`) | Mutation (gap 11); `Rc` | a persistent map from key to the list of literals, threaded through the walk of the bindings; the list is shared as any value is |
+| The callers of each function gathered by `entry().or_default().push` into a `HashMap<usize, Vec<usize>>`, then a mark carried back along them by a worklist over a `HashSet<usize>` | `Ck::tail_reach` | Mutation (gap 11) | a fold that builds the map from function to callers, then a fixed point over the set of marked functions; computed once and kept, as an `Option` field is here |
+| A `HashSet<Span>` of the literal sites already rejected, so a literal reached through two calls is one message | `Ck::unfixed_tails` | Mutation (gap 11) | a set threaded through the fold over the literals |
