@@ -1117,6 +1117,8 @@ struct Seen {
     /// Each class's bound on its leaf, as [`Scope::leaf_bound_stays`] last found it
     /// ([`LeafBound`]).
     bounds: imbl::OrdMap<conjuncts::Class, LeafBound>,
+    /// The leaves of the stars, ordered by their products ([`Order`]), in an eager scope.
+    order: Order,
 }
 
 impl Seen {
@@ -1182,6 +1184,209 @@ struct LeafBound {
     mentioned: imbl::OrdSet<Arc<str>>,
     base: Arc<Formula>,
     bound: IntervalSet,
+}
+
+/// The leaves of the stars of an eager scope ([`Conjuncts::star`]), each family's
+/// ([`conjuncts::family`]) ordered by the ends of its leaves' products, so that a move of a
+/// hub projects only the stars whose leaf the family's bound now cuts ([`Scope::moved_blocks`]).
+/// A star of one hub has no class in the relation; here its conjuncts with the leaf written
+/// [`conjuncts::LEAF`] are its class. A class's bound on its leaf is its family's moved by
+/// the class's constant ([`Order::place`]), so each leaf is keyed by the ends of its product
+/// less that shift, and the leaves a bound `[l, u]` of the family cuts are those of key below
+/// `l` at one end and above `u` at the other. A leaf whose star was not projected in this scope
+/// as it is now ([`Order::projected`]) is keyed by the two infinities, so every bound cuts it.
+/// Brought up to date from the relation and names it last saw by their differences
+/// ([`Order::sync`]); persistent, so a copy of the scope shares it.
+#[derive(Clone, Default)]
+struct Order {
+    relation: Option<Conjuncts>,
+    names: imbl::OrdMap<Arc<str>, Product>,
+    of: imbl::OrdMap<Arc<str>, Placed>,
+    low: imbl::OrdMap<conjuncts::Class, imbl::OrdSet<(End, Arc<str>)>>,
+    high: imbl::OrdMap<conjuncts::Class, imbl::OrdSet<(End, Arc<str>)>>,
+    /// The families with a leaf, at each of their hubs.
+    at: Uses<conjuncts::Class>,
+    /// The conjuncts of each leaf's star when an eager projection of it last ended without a
+    /// question refused: the star's projection onto its hubs then holds of their products, and
+    /// goes on holding as they narrow, so only a change of its leaf can change it
+    /// ([`Conjuncts::star`]).
+    projected: imbl::OrdMap<Arc<str>, imbl::OrdSet<Arc<Formula>>>,
+}
+
+/// A leaf's place in [`Order`]: its family and the ends of its product less the shift of its
+/// class's bound from the family's.
+#[derive(Clone)]
+struct Placed {
+    family: conjuncts::Class,
+    lo: End,
+    hi: End,
+}
+
+impl Order {
+    /// Places again each leaf whose star, class or product changed since the last call, in
+    /// O(c log n) for `c` changes, the persistent maps' differences skipping what they share.
+    fn sync(&mut self, relation: &Conjuncts, names: &imbl::OrdMap<Arc<str>, Product>) {
+        let mut touched: BTreeSet<Arc<str>> = BTreeSet::new();
+        match &self.relation {
+            None => touched.extend(relation.stars().keys().cloned()),
+            Some(old) => {
+                for d in old.stars().diff(relation.stars()) {
+                    let (DiffItem::Add(x, _)
+                    | DiffItem::Remove(x, _)
+                    | DiffItem::Update { new: (x, _), .. }) = d;
+                    touched.insert(x.clone());
+                }
+                for d in old.classes_of().diff(relation.classes_of()) {
+                    let (DiffItem::Add(x, _)
+                    | DiffItem::Remove(x, _)
+                    | DiffItem::Update { new: (x, _), .. }) = d;
+                    touched.insert(x.clone());
+                }
+                for d in old.set().diff(relation.set()) {
+                    let (imbl::ordset::DiffItem::Add(g) | imbl::ordset::DiffItem::Remove(g)) = d;
+                    touched.extend(conjuncts::names(g));
+                }
+            }
+        }
+        for d in self.names.diff(names) {
+            let (DiffItem::Add(x, _)
+            | DiffItem::Remove(x, _)
+            | DiffItem::Update { new: (x, _), .. }) = d;
+            touched.insert(x.clone());
+        }
+        for x in &touched {
+            self.place(relation, names, x);
+        }
+        self.relation = Some(relation.clone());
+        self.names = names.clone();
+    }
+
+    /// Notes that the star of `x` was projected, `refused` when a question was refused in
+    /// it, and places `x` again.
+    fn mark(
+        &mut self,
+        relation: &Conjuncts,
+        names: &imbl::OrdMap<Arc<str>, Product>,
+        x: &Arc<str>,
+        refused: bool,
+    ) {
+        match relation.star(x) {
+            Some(b) if !refused => {
+                let gs = relation.blocks().members(b).cloned().collect();
+                self.projected.insert(x.clone(), gs);
+            }
+            _ => _ = self.projected.remove(x),
+        }
+        self.place(relation, names, x);
+    }
+
+    /// Puts `x` in its family's order as the relation and names have it, or takes it out
+    /// when it is no leaf. In O(log n), and O(s log s) for a star of one hub of `s` conjuncts.
+    fn place(
+        &mut self,
+        relation: &Conjuncts,
+        names: &imbl::OrdMap<Arc<str>, Product>,
+        x: &Arc<str>,
+    ) {
+        self.unplace(x);
+        let Some(b) = relation.star(x) else {
+            self.projected.remove(x);
+            return;
+        };
+        let leaf = Atom::Sym(Arc::from(conjuncts::LEAF));
+        let class: conjuncts::Class = match relation.class_of(x) {
+            Some(c) => c.clone(),
+            None => {
+                let mut gs: Vec<Arc<Formula>> = relation
+                    .blocks()
+                    .members(b)
+                    .map(|g| Arc::new(g.map_cons(&|c| leaf_written(c, x, &leaf))))
+                    .collect();
+                gs.sort_unstable();
+                gs.into()
+            }
+        };
+        let family = conjuncts::family(&class);
+        // The class `a·#leaf + t + k >= 0` of its family `a·#leaf + t >= 0`, `a` one or minus
+        // one, bounds its leaf by the family's bound moved by `-a·k`.
+        let shift = match &*class {
+            [g] if family != class
+                && let Formula::Con(c) = &**g
+                && let Some(a) = c.lin.terms.get(&leaf) =>
+            {
+                -&(&Num::from(a) * &Num::from(&c.lin.constant))
+            }
+            _ => Num::ZERO,
+        };
+        let projected =
+            (self.projected.get(x)).is_some_and(|gs| relation.blocks().members(b).eq(gs.iter()));
+        let less = |e: &End| match e {
+            End::Fin(v) => End::Fin(v - &shift),
+            e => e.clone(),
+        };
+        // A name out of scope is the top, and an empty product is cut by every bound.
+        let (lo, hi) = match names.get(x).and_then(|p| p.ints().bounds()) {
+            Some((lo, hi)) if projected => (less(lo), less(hi)),
+            _ => (End::NegInf, End::PosInf),
+        };
+        if !self.low.contains_key(&family) {
+            for h in family_hubs(&family) {
+                self.at.add(&h, &family);
+            }
+        }
+        (self.low.entry(family.clone()).or_default()).insert((lo.clone(), x.clone()));
+        (self.high.entry(family.clone()).or_default()).insert((hi.clone(), x.clone()));
+        self.of.insert(x.clone(), Placed { family, lo, hi });
+    }
+
+    /// Takes `x` out of its family's order, in O(log n).
+    fn unplace(&mut self, x: &Arc<str>) {
+        let Some(p) = self.of.remove(x) else {
+            return;
+        };
+        let key = (p.lo, x.clone());
+        if let Some(s) = self.low.get_mut(&p.family) {
+            s.remove(&key);
+            if s.is_empty() {
+                self.low.remove(&p.family);
+                for h in family_hubs(&p.family) {
+                    self.at.remove(&h, &p.family);
+                }
+            }
+        }
+        let key = (p.hi, x.clone());
+        if let Some(s) = self.high.get_mut(&p.family) {
+            s.remove(&key);
+            if s.is_empty() {
+                self.high.remove(&p.family);
+            }
+        }
+    }
+}
+
+/// The names but the leaf that a class or family mentions: its hubs.
+fn family_hubs(f: &conjuncts::Class) -> BTreeSet<Arc<str>> {
+    f.iter()
+        .flat_map(|g| conjuncts::names(g))
+        .filter(|n| &**n != conjuncts::LEAF)
+        .collect()
+}
+
+/// Constraint `c` with the name `x` written `leaf`.
+fn leaf_written(c: &Con, x: &str, leaf: &Atom) -> Formula {
+    let terms = (c.lin.terms.iter())
+        .map(|(a, k)| match a {
+            Atom::Sym(n) if &**n == x => (leaf.clone(), k.clone()),
+            _ => (a.clone(), k.clone()),
+        })
+        .collect();
+    Formula::Con(Con {
+        lin: Lin {
+            terms,
+            constant: c.lin.constant.clone(),
+        },
+        rel: c.rel,
+    })
 }
 
 /// The names and conjuncts a projection found.
@@ -1348,11 +1553,17 @@ enum Fall {
 fn tree_edges(relation: &Conjuncts, t: BlockId, name: &str) -> Vec<(Arc<Formula>, bool, Edge)> {
     let blocks = relation.blocks();
     let mut out = Vec::new();
-    for g in relation.mentioning(name) {
-        if !blocks
-            .of(g)
-            .is_some_and(|b| !blocks.is_apart(b) && blocks.tree(b) == t)
-        {
+    // Complexity tradeoff: naive version, the conjuncts mentioning `name` are read and those
+    // of blocks apart from the forest skipped, O(d log n) for `d` conjuncts, so a hub of k
+    // stars, each a block apart, cost O(k log n) per projection by shortest paths at each test
+    // on it, O(k² log n) over k tests (13 to 30 s for 1024 tests in a row on the hubs of 5000
+    // stars, against 0.28 s used). Used: the forest's conjuncts at `name` alone
+    // (`Blocks::in_forest`), O(e log n) for its `e` conjuncts in the forest, kept at O(log n)
+    // per name each time a conjunct moves into or out of the forest. Test
+    // `l01_39_reduced_product::scaling::tests_on_the_hubs_of_many_stars_in_an_eager_scope_scale`;
+    // COMPLEXITY.md row C49.
+    for g in blocks.in_forest(name) {
+        if !blocks.of(g).is_some_and(|b| blocks.tree(b) == t) {
             continue;
         }
         let Some((e, back)) = conjuncts::edges(g) else {
@@ -2803,6 +3014,11 @@ impl Scope {
     pub fn eager_on(&mut self, term: &Term) {
         let names = stage::free(term);
         self.settle(&names);
+        // The stars a lazy scope left unprojected are not known: each is cut by every bound
+        // until it is projected ([`Order::projected`]).
+        if self.lazy {
+            self.seen.order = Order::default();
+        }
         self.lazy = false;
     }
 
@@ -3358,13 +3574,30 @@ impl Scope {
             .collect();
         differ.extend(moved.iter().cloned());
         let mut leaves = differ.clone();
-        for side in [&self.relation, &other.relation] {
+        let (mut a, mut b) = (self.clone(), other.clone());
+        // Of two eager sides, the stars at a hub moved whose leaf the bound of the star's
+        // family does not cut are at their projection on each side, which refreshing them
+        // leaves as it is ([`Scope::moved_blocks`]); the others are refreshed.
+        // Complexity tradeoff: naive version, every leaf hanging at each hub moved is
+        // refreshed (C45), O(k) for `k` stars per join and O(k²) over a nest of `k` `if`s on
+        // the hubs. Used: the leaves the family bounds cut ([`Scope::cut_leaves`]), O(F·p +
+        // (c + 1) log k) per hub for `F` families and `c` leaves cut. A join with a lazy side
+        // keeps the naive version, as lazy stars are not kept at their projection. COMPLEXITY.md
+        // row C49.
+        let eager = !self.lazy && !other.lazy;
+        for side in [&mut a, &mut b] {
+            if eager {
+                side.seen.order.sync(&side.relation, &side.names);
+            }
             for n in &moved {
-                leaves.extend(side.hanging(n).flat_map(|g| conjuncts::names(g)));
-                leaves.extend(side.around(n));
+                if eager {
+                    leaves.extend(side.cut_leaves(&side.relation, n));
+                } else {
+                    leaves.extend(side.relation.hanging(n).flat_map(|g| conjuncts::names(g)));
+                }
+                leaves.extend(side.relation.around(n));
             }
         }
-        let (mut a, mut b) = (self.clone(), other.clone());
         a.refresh(&leaves);
         b.refresh(&leaves);
         let joined = Scope::join_refreshed(&a, &b);
@@ -3564,6 +3797,25 @@ impl Scope {
                 }
                 DiffItem::Add(..) => {}
             }
+        }
+        // A star projected on both sides as it is now is projected in the join: its projection
+        // onto its hubs holds of each side's hubs, so of their hull ([`Order::projected`]).
+        let unmarked: Vec<Arc<str>> = if self.lazy || other.lazy {
+            Vec::new()
+        } else {
+            (self.seen.order.projected)
+                .diff(&other.seen.order.projected)
+                .filter_map(|d| match d {
+                    DiffItem::Remove(x, _) | DiffItem::Update { old: (x, _), .. } => {
+                        Some(x.clone())
+                    }
+                    DiffItem::Add(..) => None,
+                })
+                .collect()
+        };
+        for x in &unmarked {
+            seen.order.projected.remove(x);
+            seen.order.place(&relation, &names, x);
         }
         // This side's point, which goes with this side's last enumeration, kept below as the
         // join's: the constraints on a name the join changed are searched again, and the
@@ -4446,6 +4698,9 @@ impl Scope {
     // names `reduce_with` found, O(changes). Test:
     // `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`.
     fn due(&mut self, whole: bool, force: bool, moved: &[Arc<str>]) -> Option<Due> {
+        if !self.lazy {
+            self.seen.order.sync(&self.relation, &self.names);
+        }
         let Some((_, old)) = &self.seen.projection else {
             return Some(Due::All);
         };
@@ -4460,11 +4715,7 @@ impl Scope {
             any = true;
             seeds.names.insert(n.clone());
             seeds.changed.insert(n.clone());
-            out.extend(
-                self.relation
-                    .moved(n, self.lazy)
-                    .filter_map(|g| blocks.of(g)),
-            );
+            out.extend(self.moved_blocks(&self.relation, n));
             // A satellite moved changes the stars at the hubs it relates to, whose conjuncts do
             // not mention it ([`Conjuncts::around`]); a lazy scope finds their leaves stale.
             if !self.lazy {
@@ -4865,11 +5116,12 @@ impl Scope {
                 match self.by_holes(&relation, t, b, shortest) {
                     Ends::Done(Shortest::Moved(ns)) => {
                         solved.insert(t);
+                        if !self.lazy {
+                            self.seen.order.sync(&relation, &self.names);
+                        }
                         for n in &ns {
-                            for g in relation.moved(n, self.lazy) {
-                                if let Some(c) = blocks.of(g)
-                                    && blocks.tree(c) != t
-                                {
+                            for c in self.moved_blocks(&relation, n) {
+                                if blocks.tree(c) != t {
                                     cause.entry(c).or_default().insert(n.clone());
                                     if queued.insert(c) {
                                         work.push_back(c);
@@ -4912,11 +5164,12 @@ impl Scope {
                 };
                 match found {
                     Ok(Shortest::Moved(ns)) => {
+                        if !self.lazy {
+                            self.seen.order.sync(&relation, &self.names);
+                        }
                         for n in &ns {
-                            for g in relation.moved(n, self.lazy) {
-                                if let Some(c) = blocks.of(g)
-                                    && blocks.tree(c) != t
-                                {
+                            for c in self.moved_blocks(&relation, n) {
+                                if blocks.tree(c) != t {
                                     cause.entry(c).or_default().insert(n.clone());
                                     if queued.insert(c) {
                                         work.push_back(c);
@@ -4943,11 +5196,25 @@ impl Scope {
             // turned bottom shows no change in its map, so it is checked first. COMPLEXITY.md
             // row C26.
             let start = self.names.clone();
+            let refusals = self.refusals.clone();
             let (block, due) = self.block(&relation, b);
             self.project_block(block, due);
             if self.bottom {
                 self.relation = relation;
                 return;
+            }
+            // A star projected is noted, so that a later move of a hub that leaves its leaf
+            // within its family's bound passes it over ([`Scope::moved_blocks`]).
+            if !self.lazy {
+                let leaf = (blocks.members(b))
+                    .filter(|_| blocks.is_apart(b))
+                    .flat_map(|g| conjuncts::names(g))
+                    .find(|x| relation.star(x) == Some(b));
+                if let Some(x) = leaf {
+                    let refused = !self.refusals.ptr_eq(&refusals);
+                    self.seen.order.mark(&relation, &self.names, &x, refused);
+                }
+                self.seen.order.sync(&relation, &self.names);
             }
             let users = &self.seen.blocks[&b].users;
             let moved: Vec<Arc<str>> = start
@@ -4981,10 +5248,8 @@ impl Scope {
                 // passes nothing back and forth ([`Conjuncts::star`]): its move of the name
                 // that moved it is no echo.
                 echo |= from.contains(n) && !blocks.is_apart(b);
-                for g in relation.moved(n, self.lazy) {
-                    if let Some(c) = blocks.of(g)
-                        && c != b
-                    {
+                for c in self.moved_blocks(&relation, n) {
+                    if c != b {
                         cause.entry(c).or_default().insert(n.clone());
                         if queued.insert(c) {
                             work.push_back(c);
@@ -6020,6 +6285,110 @@ impl Scope {
             return None;
         }
         each.swap_remove(i).ok()
+    }
+
+    /// The blocks a move of `n` makes due ([`Conjuncts::moved`]), with the order of the leaves
+    /// brought up to date first ([`Order::sync`]). A lazy scope leaves the stars at `n` to be
+    /// settled when read ([`Conjuncts::moving`]). An eager one projects those whose leaf the
+    /// move can change: a star bounds its leaf on one side by a half-line, and when every
+    /// conjunct the stars of a family are projected with is a constraint or the negation of a
+    /// bound and every hub holds one interval, the projection onto a leaf of class `c` is the
+    /// leaf's product met with the family's bound `B` moved by the class's shift
+    /// ([`Scope::core_leaf_bound`], [`Order`]), so a leaf whose product lies in it keeps its
+    /// product. The star's projection onto its hubs reads only the leaf's product, and held of
+    /// the hubs when the star was last projected ([`Order::projected`]); a move narrows them,
+    /// and a join's hull of two sides that each hold it holds it. So such a star moves nothing
+    /// and is left out. Otherwise, or when `B` is not one interval, every star of the family.
+    ///
+    /// Complexity tradeoff: naive version, every star at `n` projected again, or brought up to
+    /// date to find nothing due ([`Scope::block`]), at each move of `n`: O(k) for `k` stars,
+    /// and O(k²) for `k` tests on `n`, as a nest of `k` `if`s on the hubs of `k` stars. Used:
+    /// the family's bound found once from the conjuncts the stars are projected with, and the
+    /// leaves it cuts read from the two ends of the family's order, O(F·p + (c + 1) log k)
+    /// for `F` families at `n`, `p` the cost of projecting a family's core onto its leaf, and
+    /// `c` stars cut; keeping the order costs O(log k) per leaf changed ([`Order::sync`]).
+    /// Tradeoffs: memory for two persistent ordered sets of the leaves of each family and the
+    /// conjuncts of each star projected; a family whose core holds a conjunct other than a
+    /// constraint or the negation of one ([`Scope::family_bound`]), or whose hubs have more
+    /// than one interval, projects all its stars, as before; the core is read whole at each
+    /// move, O(f) for `f` conjuncts among the hubs. Test:
+    /// `l01_39_reduced_product::scaling::tests_on_the_hubs_of_many_stars_in_an_eager_scope_scale`.
+    /// COMPLEXITY.md row C49.
+    fn moved_blocks(&self, relation: &Conjuncts, n: &str) -> Vec<BlockId> {
+        let blocks = relation.blocks();
+        let mut out: Vec<BlockId> = (relation.moving(n)).filter_map(|g| blocks.of(g)).collect();
+        if self.lazy {
+            return out;
+        }
+        out.extend((self.cut_leaves(relation, n).iter()).filter_map(|x| relation.star(x)));
+        out
+    }
+
+    /// The leaves of the stars at hub `n` of an eager scope whose projection can change them
+    /// ([`Scope::moved_blocks`]): those whose product the bound of their family cuts, and
+    /// every leaf of a family whose bound is not one interval found exactly. In
+    /// O(F·p + (c + 1) log k) for `F` families at `n`, `p` the cost of projecting a family's
+    /// core onto its leaf, and `c` leaves found, of `k`.
+    fn cut_leaves(&self, relation: &Conjuncts, n: &str) -> Vec<Arc<str>> {
+        let order = &self.seen.order;
+        let mut out = Vec::new();
+        for f in order.at.of(n) {
+            let (Some(low), Some(high)) = (order.low.get(f), order.high.get(f)) else {
+                continue;
+            };
+            let leaf = |(_, x): &(End, Arc<str>)| x.clone();
+            match self.family_bound(relation, f) {
+                Some((l, u)) => {
+                    out.extend(low.iter().take_while(|(k, _)| *k < l).map(leaf));
+                    out.extend((high.iter().rev()).take_while(|(k, _)| *k > u).map(leaf));
+                }
+                None => out.extend(low.iter().map(leaf)),
+            }
+        }
+        out
+    }
+
+    /// The bound family `f`'s conjuncts and those among its hubs ([`Conjuncts::core`]) give
+    /// its leaf, when it is one interval and the projection is exact
+    /// ([`Scope::core_leaf_bound`]): every conjunct a constraint or the negation of one.
+    /// `None` at the first conjunct that is neither, as for a disjunction among the hubs.
+    ///
+    /// Complexity tradeoff: naive version, any conjunct that does not mention the leaf
+    /// admitted, so a core of `d` disjunctions among the hubs cost `d` projections of a part
+    /// at each move or join, O(d²) for `d` tests that each add one (60.8 times the bytes at
+    /// 8k on `an_eager_scope_with_many_distinct_disjunctions_among_the_hubs_of_a_star_scales`).
+    /// Used: such a family keeps every leaf, each brought up to date as before by its block
+    /// ([`Scope::block`], [`Scope::refresh`]); the check stops at the first such conjunct.
+    /// COMPLEXITY.md row C49.
+    fn family_bound(&self, relation: &Conjuncts, f: &conjuncts::Class) -> Option<(End, End)> {
+        let exact = |g: &Arc<Formula>| match &**g {
+            Formula::Con(_) => true,
+            Formula::Not(n) => matches!(&**n, Formula::Con(c) if c.rel == Rel::Ge),
+            _ => false,
+        };
+        let hubs = family_hubs(f);
+        let mut core: BTreeSet<Arc<Formula>> = BTreeSet::new();
+        for g in f.iter() {
+            if !exact(g) {
+                return None;
+            }
+            core.insert(g.clone());
+        }
+        // A star of one hub is projected with its own conjuncts alone.
+        if hubs.len() > 1 {
+            for g in hubs
+                .iter()
+                .flat_map(|h| relation.free_set(h).into_iter().flatten())
+            {
+                if !exact(g) {
+                    return None;
+                }
+                core.insert(g.clone());
+            }
+        }
+        let core: Vec<Arc<Formula>> = core.into_iter().collect();
+        let (bound, _) = self.core_leaf_bound(&core)?;
+        bound.only().cloned()
     }
 
     /// Whether class `c`'s conjuncts give its leaf the same bound in the relation as in `old`,

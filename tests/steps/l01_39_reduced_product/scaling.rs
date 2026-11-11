@@ -739,6 +739,100 @@ fn tests_among_the_hubs_of_many_stars_narrow_an_eager_scope_in_linear_time() {
     );
 }
 
+/// An eager scope of `n`, `m` and `a0`..`a(k-1)` under `n >= -1 && m >= -1` and, for each
+/// `i`, `ai >= 5000` and the star `ai >= n && ai >= m`, or `ai >= n` alone with `one`: `k`
+/// stars of the hubs, each leaf `int[5000..]`, above every value the tests below give a hub.
+fn stars_above_the_hubs(k: usize, one: bool) -> Scope {
+    let mut all: Vec<std::sync::Arc<str>> = vec!["n".into(), "m".into()];
+    all.extend((0..k).map(|i| format!("a{i}").into()));
+    let p = Premises::new();
+    let bounds = prim(
+        Prim::And,
+        prim(Prim::Ge, var("n"), int(-1)),
+        prim(Prim::Ge, var("m"), int(-1)),
+    );
+    (0..k).fold(ints(&all).assume(&bounds, true, &p), |s, i| {
+        let a = format!("a{i}");
+        let s = s.assume(&prim(Prim::Ge, var(&a), int(5000)), true, &p);
+        let star = if one {
+            prim(Prim::Ge, var(&a), var("n"))
+        } else {
+            prim(
+                Prim::And,
+                prim(Prim::Ge, var(&a), var("n")),
+                prim(Prim::Ge, var(&a), var("m")),
+            )
+        };
+        s.assume(&star, true, &p)
+    })
+}
+
+/// `k` tests `n <= 1000 + k`, …, `n <= 1001` on `start` in turn, and the nest of `k` `if`s on
+/// them: down by each true arm, then each level's false arm joined on the way up.
+fn tests_on_a_hub(start: &Scope, k: usize) -> (Scope, Scope) {
+    let p = Premises::new();
+    let test = |i: usize| prim(Prim::Le, var("n"), int(1000 + (k - i) as i64));
+    let one_after_another = (0..k).fold(start.clone(), |s, i| s.assume(&test(i), true, &p));
+    let mut levels = vec![start.clone()];
+    for i in 0..k {
+        let next = levels[i].assume(&test(i), true, &p);
+        levels.push(next);
+    }
+    let mut nest = levels.pop().expect("the innermost level");
+    for i in (0..k).rev() {
+        nest = nest.join(&levels[i].assume(&test(i), false, &p));
+    }
+    (one_after_another, nest)
+}
+
+#[test]
+fn tests_on_the_hubs_of_many_stars_in_an_eager_scope_scale() {
+    // `k` tests on the hub `n` of `k` stars, one after another and as a nest of `if`s, in an
+    // eager scope. No test moves a leaf, since every leaf lies above every value the tests
+    // give `n`, but each projected every star at `n` again, or brought it up to date to find
+    // nothing due: O(k) per test and O(k²) in all (item EAGER-if-nest-quadratic). The
+    // family's bound on its leaf is now found once per move, and only the leaves it cuts are
+    // projected (`Scope::moved_blocks`) or refreshed by a join (`Scope::join`); the search by
+    // shortest paths reads a hub's conjuncts in the forest alone, not those of the stars
+    // apart from it (`Blocks::in_forest`). COMPLEXITY.md row C49.
+    let inputs = scaling::inputs(16, |k| {
+        (
+            stars_above_the_hubs(k, false),
+            stars_above_the_hubs(k, true),
+        )
+    });
+    for one in [false, true] {
+        let start = stars_above_the_hubs(16, one);
+        let (after, nest) = tests_on_a_hub(&start, 16);
+        assert_eq!(after.get("n").ints().to_string(), "[-1..=1001]");
+        assert_eq!(nest.get("n").ints().to_string(), "[-1..]");
+        for s in [&after, &nest] {
+            for i in 0..16 {
+                assert_eq!(s.get(&format!("a{i}")).ints().to_string(), "[5000..]");
+            }
+        }
+        // A test that moves the hub past the leaves still reaches each.
+        let up = prim(Prim::Ge, var("n"), int(6000));
+        let s = start.assume(&up, true, &Premises::new());
+        for i in 0..16 {
+            assert_eq!(
+                s.get(&format!("a{i}")).ints().to_string(),
+                "[6000..]",
+                "a{i}"
+            );
+        }
+    }
+    scaling::check(
+        "k tests on a hub of k stars of two hubs and of one, in turn and nested, eager",
+        16,
+        |k| {
+            let (two, one) = &inputs[&k];
+            tests_on_a_hub(two, k);
+            tests_on_a_hub(one, k);
+        },
+    );
+}
+
 /// The tests of [`a_lazy_scope_settles_the_hubs_of_a_class_of_stars_in_linear_time`] at size
 /// `k`: `n + m >= 1 || n - m >= 30`, then `k` stars `ai >= n + m - i`, then `k` tests
 /// `n >= m - (k - i)` among the hubs, each stronger than the last.

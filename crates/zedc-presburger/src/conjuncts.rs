@@ -1940,6 +1940,19 @@ pub struct Blocks {
     // conjunct changes block, the order those moves already cost, and one entry per name of
     // each conjunct.
     at: OrdMap<(Arc<str>, BlockId), OrdSet<Arc<Formula>>>,
+    /// The conjuncts of the forest's blocks, not those apart from it, that mention each name
+    /// as an atom of its own: the entries of `syms` whose block is in the forest.
+    // Complexity tradeoff: a name's conjuncts in its tree could be read from `syms`, skipping
+    // those of blocks apart, O(1) to keep but O(d log n) per read for a name of d conjuncts,
+    // so a hub of k stars, each a block apart, read once per projection by shortest paths
+    // costs O(k log n) a test and O(k² log n) over k tests (`Scope::bound_pass`). This index
+    // gives a name's conjuncts in the forest alone, at O(log n) per name of a conjunct each
+    // time it moves into or out of the forest, the order `at` already costs, and one entry
+    // per name of each conjunct of the forest. Test
+    // `l01_39_reduced_product::scaling::tests_on_the_hubs_of_many_stars_in_an_eager_scope_scale`;
+    // COMPLEXITY.md row C49.
+    forest: Uses<Arc<Formula>>,
+
     /// The conjuncts that mention each atom that is not a name.
     shared: OrdMap<Atom, OrdSet<Arc<Formula>>>,
     /// The blocks apart from the forest, each its own tree ([`Blocks::detach`]).
@@ -2002,6 +2015,12 @@ impl Blocks {
         self.of(g).is_some_and(|b| !self.is_apart(b))
     }
 
+    /// The conjuncts of the forest, not of a block apart from it, that mention `name` as an
+    /// atom of its own, in O(log n) and their number.
+    pub fn in_forest(&self, name: &str) -> impl Iterator<Item = &Arc<Formula>> {
+        self.forest.of(name)
+    }
+
     /// The tree of the forest that holds `name`, if a conjunct of the forest mentions it.
     pub fn tree_of_name(&self, name: &str) -> Option<BlockId> {
         self.name.get(name).map(|&id| self.find(id))
@@ -2050,6 +2069,7 @@ impl Blocks {
     /// tree links it, so it is its own tree. In O(log n) per conjunct.
     pub fn detach(&mut self, gs: impl IntoIterator<Item = Arc<Formula>>) -> BlockId {
         let b = self.fresh();
+        self.apart.insert(b);
         let mut ms = OrdSet::new();
         for g in gs {
             let was = self.put(&g, &g.atoms(), Some(b));
@@ -2057,21 +2077,22 @@ impl Blocks {
             ms.insert(g);
         }
         self.members.insert(b, ms);
-        self.apart.insert(b);
         b
     }
 
     /// Removes the block `b` made by [`Blocks::detach`].
     pub fn undetach(&mut self, b: BlockId) {
-        let removed = self.apart.remove(&b);
-        debug_assert!(removed.is_some(), "a block apart from the forest");
+        debug_assert!(self.apart.contains(&b), "a block apart from the forest");
         for g in self.members.remove(&b).into_iter().flatten() {
             self.put(&g, &g.atoms(), None);
         }
+        self.apart.remove(&b);
     }
 
     /// Puts `g`, of the atoms `atoms`, in block `to`, or in none, and gives the block it was
-    /// in; `of` and `at` change together. In O(log n) per name of `g`.
+    /// in; `of`, `at` and `forest` change together, a block apart from the forest being so
+    /// already when a conjunct is put in it and still when one is taken out. In O(log n) per
+    /// name of `g`.
     fn put(
         &mut self,
         g: &Arc<Formula>,
@@ -2085,10 +2106,17 @@ impl Blocks {
         if was == to {
             return was;
         }
+        let in_forest = |b: Option<BlockId>| b.is_some_and(|b| !self.apart.contains(&b));
+        let (was_in, to_in) = (in_forest(was), in_forest(to));
         for a in atoms {
             let Atom::Sym(x) = a else {
                 continue;
             };
+            if was_in && !to_in {
+                self.forest.remove(x, g);
+            } else if to_in && !was_in {
+                self.forest.add(x, g);
+            }
             if let Some(w) = was {
                 let key = (x.clone(), w);
                 if let Some(set) = self.at.get_mut(&key) {
@@ -2123,6 +2151,7 @@ impl Blocks {
         let mut others: BTreeMap<BlockId, usize> = BTreeMap::new();
         let mut gaps: BTreeMap<BlockId, usize> = BTreeMap::new();
         let mut at: BTreeMap<(Arc<str>, BlockId), BTreeSet<Arc<Formula>>> = BTreeMap::new();
+        let mut forest: BTreeMap<Arc<str>, BTreeSet<Arc<Formula>>> = BTreeMap::new();
         for (&b, ms) in &self.members {
             for h in ms {
                 if self.of.get(h) != Some(&b) {
@@ -2139,6 +2168,13 @@ impl Blocks {
                     return Err(format!("block {b} apart from the forest is in a tree"));
                 }
                 continue;
+            }
+            for h in ms {
+                for a in h.atoms() {
+                    if let Atom::Sym(x) = a {
+                        forest.entry(x).or_default().insert(h.clone());
+                    }
+                }
             }
             nodes.insert(b);
             let t = self.find(b);
@@ -2172,6 +2208,12 @@ impl Blocks {
             .map(|(k, s)| (k.clone(), s.iter().cloned().collect()));
         if !held.eq(at) {
             return Err("the conjuncts of the names by block are not those of the blocks".into());
+        }
+        let held = (self.forest.0.iter()).map(|(k, s)| (k.clone(), s.iter().cloned().collect()));
+        if !held.eq(forest) {
+            return Err(
+                "the conjuncts of the names in the forest are not those of its blocks".into(),
+            );
         }
         for (n, &id) in &self.name {
             if self.syms.count(n) == 0 {
