@@ -1447,6 +1447,8 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
         "r7bmmout" => r7_bmm_out(n, tag),
         "r8residues" => r8_residues(n, false, tag),
         "r8residuesout" => r8_residues(n, true, tag),
+        "r8stagein" => r8_stage_boundary(n, false, tag),
+        "r8stageout" => r8_stage_boundary(n, true, tag),
         "r6repeat3" => r5_sat_type(3, &vec![vec![(1, true), (2, true), (3, true)]; n], tag),
         "r6distinct2" => r6_distinct_atoms(n, false, tag),
         "r6distinct3" => r6_distinct_atoms(n, true, tag),
@@ -6301,4 +6303,170 @@ fn r8_a_list_in_a_field_is_decided_as_the_list_alone() {
             }
         }
     });
+}
+
+/// R8 Q2 boundary between Stage A (multi-residue congruence skip, `R_P <= ceil(log2(V + 2))`)
+/// and Stage B (HLD + Abrahamson sparse/CRT-NTT moment cell finder, `R_P > ceil(log2(V + 2))`):
+/// - `outside == false` (`r8stagein`): period `p = ilog2(n + 3)` positive tail with roots across
+///   all `p` residue classes (`gcd = 1`, `R_P = p <= ceil(log2(V + 2))`), where `n / p` roots have
+///   zero separating cells in `j >= 2` and escape at place 1 (`x_1 = 0`).
+/// - `outside == true` (`r8stageout`): `K = 3` aperiodic Thue-Morse-mod-3 comb (`c(odd) = 1`,
+///   `c(2k) = 2 * (popcount(k) mod 2)`) with `P_pl = Theta(n)` and `R_P = Theta(n)`, crossing out
+///   of Stage A into Stage B. Every high root `d in 2q+3..=3q` (`q = n / 4`) has 2 atoms (even
+///   `d - 2q`) or 1 atom (odd `d - 2q`) in `2q+1..=2q+3`, and one low root at `q` escapes at
+///   place 1 with 0 cells in `2..=q`, so `t` is `Inhabited` at every `n >= 16` with 0 empty reads.
+fn r8_stage_boundary(n: usize, outside: bool, tag: &str) -> Type {
+    let n = n.max(16);
+    if !outside {
+        let p_mod = (n + 3).ilog2() as usize;
+        let sentinel = (7 + p_mod) as i64;
+        let mut defs = vec![def(
+            &format!("L{tag}"),
+            Expr::Union(vec![nil(), cons(int(), r(0))]),
+        )];
+        for e in 1..=n {
+            let h = &Type::int() - &lit((e % p_mod) as i64);
+            defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+        }
+        for d in 1..=n {
+            let h0 = &Type::int() - &lit(0);
+            defs.push(def(&format!("G{d}{tag}"), cons(Expr::Type(h0), r(d - 1))));
+        }
+        let mut p = nil();
+        for j in (1..=n).rev() {
+            let h = if j == 1 {
+                &lit(0) | &lit(sentinel)
+            } else {
+                &lit(((2 * p_mod + 2 - j % p_mod) % p_mod) as i64) | &lit(sentinel)
+            };
+            p = cons(Expr::Type(h), p);
+        }
+        defs.push(def(&format!("P{tag}"), p));
+        let ts = u4_inst(defs);
+        let u = (1..=n).fold(Type::empty(), |u, d| &u | &ts[n + d]);
+        return &ts[2 * n + 1] - &u;
+    }
+    let q = n / 4;
+    let c = |m: usize| -> i64 {
+        if m % 2 == 1 {
+            1
+        } else {
+            2 * ((m / 2).count_ones() % 2) as i64
+        }
+    };
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for e in 1..=n {
+        let h = if e <= q {
+            &Type::int() - &lit(c(e))
+        } else {
+            Type::int()
+        };
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    defs.push(def(
+        &format!("Glow{tag}"),
+        cons(Expr::Type(&Type::int() - &lit(0)), r(q - 1)),
+    ));
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if j == 1 {
+            &lit(0) | &lit(7)
+        } else if j <= q {
+            &lit((c(q + 1 - j) + 1) % 3) | &lit(7)
+        } else if j == 2 * q + 1 {
+            &(&lit(0) | &lit(2)) | &lit(7)
+        } else if j == 2 * q + 2 || j == 2 * q + 3 {
+            &lit(1) | &lit(7)
+        } else {
+            lit(7)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let u = (2 * q + 3..=3 * q).fold(ts[n + 1].clone(), |u, d| &u | &ts[d]);
+    &ts[n + 2] - &u
+}
+
+/// Gemini R8: the closed-form witness of `r8stagein` and `r8stageout` and two negative controls
+/// each, checked by `contains`, and the verdict, at every n from 16 to 64. These cases make the
+/// committed escape read Θ(n²) empty cells (X38, open); the verdict and the work stay linear.
+#[test]
+fn r8_stage_boundary_keeps_the_checked_witness() {
+    big(|| {
+        for n in 16usize..=64 {
+            let p_mod = (n + 3).ilog2() as usize;
+            let sentinel = (7 + p_mod) as i64;
+            let tin = r8_stage_boundary(n, false, &format!("_r8in_{n}"));
+            let win_in = (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+                let v = if j == 1 {
+                    0
+                } else {
+                    ((2 * p_mod + 2 - j % p_mod) % p_mod) as i64
+                };
+                Value::atom_with("cons", vec![Value::Int(v), tail])
+            });
+            let bad_in = (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+                let v = if j == 1 {
+                    sentinel
+                } else {
+                    ((2 * p_mod + 2 - j % p_mod) % p_mod) as i64
+                };
+                Value::atom_with("cons", vec![Value::Int(v), tail])
+            });
+            assert!(tin.contains(&win_in), "r8stagein witness at {n}");
+            assert!(!tin.contains(&bad_in), "r8stagein negative control at {n}");
+
+            let q = n / 4;
+            let c = |m: usize| -> i64 {
+                if m % 2 == 1 {
+                    1
+                } else {
+                    2 * ((m / 2).count_ones() % 2) as i64
+                }
+            };
+            let tout = r8_stage_boundary(n, true, &format!("_r8out_{n}"));
+            let make_out = |x1: i64, x_even: i64| {
+                (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+                    let v = if j == 1 {
+                        x1
+                    } else if j <= q {
+                        (c(q + 1 - j) + 1) % 3
+                    } else if j == 2 * q + 1 {
+                        0
+                    } else if j == 2 * q + 2 || j == 2 * q + 3 {
+                        x_even
+                    } else {
+                        7
+                    };
+                    Value::atom_with("cons", vec![Value::Int(v), tail])
+                })
+            };
+            assert!(tout.contains(&make_out(0, 1)), "r8stageout witness at {n}");
+            assert!(
+                !tout.contains(&make_out(7, 1)),
+                "r8stageout low negative control at {n}"
+            );
+            assert!(
+                !tout.contains(&make_out(0, 7)),
+                "r8stageout high negative control at {n}"
+            );
+            Type::forget_emptiness();
+            assert_eq!(tout.verdict(), Verdict::Inhabited, "r8stageout at {n}");
+        }
+    });
+}
+
+#[test]
+fn r8_stage_boundary_scale() {
+    cases_scale_from(
+        &[
+            ("r8stagein", Verdict::Inhabited),
+            ("r8stageout", Verdict::Inhabited),
+        ],
+        128,
+    );
 }
