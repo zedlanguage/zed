@@ -596,3 +596,104 @@ fn tied_projection_endpoint_reports_scale_past_512() {
         assert_eq!(got.0[0], Ok(pt_set(&[1000])));
     });
 }
+
+/// `project_each` of `y0` on `ss` at `k = 64` costs at most 4 times `decide` on the same formula.
+/// The hull of `y0` is the two points {0, 1000}, and the question at each end is refused at full
+/// cost, so `Hull::tighten` must not halve the integers between them: halving asked about 11
+/// refused questions per end and cost 4,616M instructions against 440M with the returned endpoint
+/// report (round 6), with `decide` at about 348M. Negative control: `presburger::HULL_BISECT` set
+/// on this thread brings the halving back, and the same limit then fails. Counts of processor
+/// time vary too much with load for a limit of 4, so on a machine that cannot count instructions
+/// this measures nothing. (Claude round 6, carried onto the round-6 tree.)
+#[test]
+fn ss_project_each_costs_at_most_four_decides() {
+    use zed_tests::scaling::Meter;
+    use zedc::store::presburger::HULL_BISECT;
+    let mut meter = Meter::new();
+    if meter.unit() != "instructions" {
+        return;
+    }
+    let f = subset_sum_dp(&weights(64));
+    let y0 = [sym("y0")];
+    let least = |meter: &mut Meter, run: &dyn Fn()| {
+        (0..2)
+            .map(|_| meter.work(run).units)
+            .min()
+            .expect("two runs")
+    };
+    let d = least(&mut meter, &|| drop(std::hint::black_box(decide(&f))));
+    let reported = least(&mut meter, &|| {
+        drop(std::hint::black_box(project_each(&f, &y0)))
+    });
+    let (p, _) = project_each(&f, &y0).expect("ss 64 project");
+    HULL_BISECT.with(|c| c.set(true));
+    let halved = least(&mut meter, &|| {
+        drop(std::hint::black_box(project_each(&f, &y0)))
+    });
+    let (q, _) = project_each(&f, &y0).expect("ss 64 project, halving");
+    HULL_BISECT.with(|c| c.set(false));
+    // The endpoint report is never coarser than the halving on this formula.
+    assert!(
+        p[0].as_ref()
+            .ok()
+            .zip(q[0].as_ref().ok())
+            .is_some_and(|(p, q)| p.is_subset(q))
+    );
+    assert!(
+        reported <= 4 * d,
+        "project_each {reported} > 4 x decide {d} instructions"
+    );
+    assert!(
+        halved > 4 * d,
+        "negative control: halving cost {halved} <= 4 x decide {d} instructions"
+    );
+}
+
+/// `check_order` of `project_each` of `y0` on `sat_half` at 512 and 4,096: 1,249M and 10,796M
+/// instructions on the round-6 tree. (Claude round 6.)
+#[test]
+fn sat_half_project_each_scales_past_512() {
+    let k = 512;
+    let y0 = [sym("y0")];
+    let build = |n: usize| {
+        let w = weights(n);
+        let t: i64 = w.iter().step_by(2).sum();
+        choice_sum(&w, t)
+    };
+    let (s, l) = (build(k), build(scaling::FACTOR * k));
+    scaling::check_order("project_each: sat_half past 512", k, 1, |m| {
+        drop(project_each(if m == k { &s } else { &l }, &y0));
+    });
+}
+
+/// Negative control for the scaling checks above: `k/2` rows `y_{2r} + y_{2r+1} = w_{2r}` over
+/// two-point atoms with one inequality over every atom, whose `project_each` is not near
+/// linear (175M and 4,963M instructions at 64 and 512 in round 6, over 60 s at 4,096), fails
+/// the same limit on instructions (its bytes grow 13.9 times, too near the limit of 13.2 to
+/// test). If this test stops panicking, the family has become near linear, or the check has
+/// stopped measuring. (Claude round 6.)
+#[test]
+#[should_panic(expected = "times the work")]
+fn many_linked_rows_project_each_fails_the_order_check() {
+    let build = |k: usize| {
+        let w = weights(k);
+        let names: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
+        let mut fs: Vec<Formula> = names
+            .iter()
+            .zip(&w)
+            .map(|(n, &wi)| Formula::or(vec![eq(&[(n, 1)], 0), eq(&[(n, 1)], -wi)]))
+            .collect();
+        for r in 0..k / 2 {
+            fs.push(eq(&[(&names[2 * r], 1), (&names[2 * r + 1], 1)], -w[2 * r]));
+        }
+        let all: Vec<(&str, i64)> = names.iter().map(|n| (n.as_str(), -1)).collect();
+        fs.push(ge(&all, w.iter().sum::<i64>() - 1));
+        Formula::and(fs)
+    };
+    let k = 64;
+    let y0 = [sym("y0")];
+    let (s, l) = (build(k), build(scaling::FACTOR * k));
+    scaling::check_instructions_only("project_each: many linked rows", k, 1, |m| {
+        drop(project_each(if m == k { &s } else { &l }, &y0));
+    });
+}
