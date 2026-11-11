@@ -196,15 +196,12 @@ fn an_operation_on_many_literals_takes_its_carrier_in_linear_time() {
 /// integer literals takes no carrier from outside, so each fix writes the first literal of
 /// every one, `n` edits on one line, chosen in one walk of the value (`unreached`).
 ///
-/// Held back: the checker costs O(n²) here, and not in `unreached`. Each `/` of two literals
-/// is rejected as it is walked (`Ck::apply`), and `Ck::reject` writes the menu of each of
-/// those `n` rejections at once, each fix the whole line of length of order n
-/// (`Rewrite::line`), before the binding's one rejection drops them (`Ck::rejects_unfixed`).
-/// zedc took 0.40 s, 1.30 s and 19.3 s at n = 500, 1,000 and 4,000; at n = 500, 84% of the
-/// instructions were in those 500 calls of `reject`. The same code is on fb135254.
+/// Each `/` of two literals is also rejected as it is walked, and those `n` rejections are
+/// dropped for the binding's one (`Ck::rejects_unfixed`). Their menus are written only for the
+/// errors kept at the end (`Ck::reject`): written as each was found, each fix the whole line of
+/// length of order n, the check cost O(n²) (0.40 s, 1.30 s and 19.3 s at n = 500, 1,000 and
+/// 4,000; COMPLEXITY.md F150).
 #[test]
-#[ignore = "open: O(n²) writing the menus of rejections that are then dropped \
-            (LIT-menu-match-design follow-up)"]
 fn a_menu_that_writes_a_literal_in_each_of_many_divisions_scales() {
     let quotients = |n: usize| format!("y = {};\n", vec!["(1 / 1)"; n].join(" * "));
     scaling::on_a_thread(1 << 29, || {

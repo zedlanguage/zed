@@ -805,6 +805,9 @@ struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
     info: Info,
+    /// The errors found so far, in the order found, each with its fixes not yet written; they
+    /// are written into `info`'s errors when the check ends ([`Self::finish`]).
+    errors: Vec<Found>,
     /// Each write to `info`'s maps, and to a class while a repair is tried, with the value
     /// it replaced, so that a repair is undone by what it wrote.
     // Complexity tradeoff (COMPLEXITY.md F6): the naive way to try a repair is to clone
@@ -983,6 +986,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             t,
             env: HashMap::new(),
             info: Info::default(),
+            errors: Vec::new(),
             log: Vec::new(),
             seen: HashMap::new(),
             eq_sides: HashMap::new(),
@@ -1376,18 +1380,30 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// An error at `span`, in the row `row` of the rejection table if any, with the message
-    /// and fixes of `m` and the notes `notes`. Every error of the checker is pushed here: the
-    /// fixes are written as the menu ([`Msg::written`]), with each fix the corrected line of
-    /// this unit's text where the checker has it, and the menu stands after the notes
-    /// (DESIGN.md sec:diagnostics).
+    /// and fixes of `m` and the notes `notes`. Every error of the checker is pushed here. The
+    /// fixes are written as the menu ([`Msg::written`]) when the check ends, with each fix the
+    /// corrected line of this unit's text where the checker has it, and the menu stands after
+    /// the notes (DESIGN.md sec:diagnostics).
+    ///
+    /// Complexity tradeoff: writing the menu here, as each error is found, costs the length
+    /// of the lines its fixes touch for every error, kept or not: an error a later step drops
+    /// ([`Self::rejects_unfixed`], or the undo after a tried repair) has had its lines written
+    /// for nothing, and `y = (1 / 1) * … * (1 / 1)`, whose n `/` are each rejected as they are
+    /// walked and then dropped for the binding's one rejection, cost O(n²) (a line of length
+    /// of order n for each of n errors). Used: the error keeps its `Msg`, whose fixes are
+    /// the edits alone, and the lines are written once, for the errors left at the end
+    /// ([`Found::written`]), O(length of the lines) per error kept and O(1) per error
+    /// dropped. The message is the same: [`Msg::written`] reads only the `Msg` and the unit's
+    /// text, which does not change during the check. Memory: each error holds its edits
+    /// until the end in place of its written menu. Test:
+    /// `l01_26a_generic_literals::scaling::a_menu_that_writes_a_literal_in_each_of_many_divisions_scales`;
+    /// COMPLEXITY.md F150.
     fn reject(&mut self, row: Option<Row>, span: Span, m: Msg, notes: Vec<Note>) {
-        let (message, menu) = m.written(self.t.text);
-        self.info.errors.push(Error {
+        self.errors.push(Found {
             row,
             span,
-            message,
+            m,
             notes,
-            menu,
         });
     }
 
@@ -2642,7 +2658,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             .into_iter()
             .map(|(k, t)| (k, self.shown(&self.solved(&t))))
             .collect();
-        let mut errors = std::mem::take(&mut self.info.errors);
+        let text = self.t.text;
+        let mut errors: Vec<Error> = (std::mem::take(&mut self.errors).into_iter())
+            .map(|f| f.written(text))
+            .collect();
         for e in &mut errors {
             e.message = self.named(&e.message);
             for n in &mut e.notes {
@@ -2887,7 +2906,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// is inside a tuple. Each side borrows its component types, one per shape, so a tuple
     /// nested d deep at s shapes costs O(d·s) and not a copy of each level's type.
     fn equal(&mut self, x: &Arg, y: &Arg) {
-        let from = self.info.errors.len();
+        let from = self.errors.len();
         self.pair(side(x), side(y));
         if !self.trying {
             self.equal_repairs(from, x, y);
@@ -2904,8 +2923,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let (Some(lit), None, Some(at)) = (&l.lit, &v.lit, v.at) else {
             return;
         };
-        let Some(k) = (from..self.info.errors.len()).find(|&k| {
-            let e = &self.info.errors[k];
+        let Some(k) = (from..self.errors.len()).find(|&k| {
+            let e = &self.errors[k];
             e.span == lit.site && e.row == Some(Row::LiteralCarrier)
         }) else {
             return;
@@ -2935,7 +2954,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let saved = self.mark();
             self.trying = true;
             self.equal(l, &cast);
-            let ok = self.info.errors.len() == saved.errors;
+            let ok = self.errors.len() == saved.errors;
             self.trying = false;
             self.undo(&saved);
             if ok {
@@ -2946,7 +2965,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 notes.push(Note { span: at, text });
             }
         }
-        self.info.errors[k].notes = notes;
+        self.errors[k].notes = notes;
     }
 
     /// [`Ck::equal`] of the two sides `x` and `y`. Inside an `==` or `!=` ([`Ck::comparing`]),
@@ -3058,7 +3077,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         else {
             return;
         };
-        if self.info.errors.len() != from {
+        if self.errors.len() != from {
             return;
         }
         let tables = self.t;
@@ -3648,11 +3667,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// [`Self::also`] of the notes `notes` makes, in order: each error from the `from`th on
     /// gets those it lacks, in `O(m + k)` for its `m` notes and the `k` added.
     fn also_notes(&mut self, from: usize, notes: impl FnOnce(&Self) -> Vec<Note>) {
-        if self.trying || self.info.errors.len() <= from {
+        if self.trying || self.errors.len() <= from {
             return;
         }
         let notes = notes(self);
-        for e in &mut self.info.errors[from..] {
+        for e in &mut self.errors[from..] {
             let have: HashSet<&Note> = e.notes.iter().collect();
             let new: Vec<Note> = (notes.iter())
                 .filter(|n| !have.contains(n))
@@ -4443,7 +4462,7 @@ impl Ck<'_, '_> {
     fn mark(&self) -> Mark {
         Mark {
             log: self.log.len(),
-            errors: self.info.errors.len(),
+            errors: self.errors.len(),
         }
     }
 
@@ -4453,7 +4472,7 @@ impl Ck<'_, '_> {
             let w = self.log.pop().expect("longer than the mark");
             self.set(w);
         }
-        self.info.errors.truncate(m.errors);
+        self.errors.truncate(m.errors);
     }
 }
 
@@ -5198,6 +5217,30 @@ impl Rewrite {
         line.truncate(line.trim_end().len());
         line.drain(..line.len() - line.trim_start().len());
         Some(line)
+    }
+}
+
+/// An error as the checker finds it: its row of the rejection table if any, its span, its
+/// message and fixes not yet written ([`Ck::reject`]), and its notes.
+struct Found {
+    row: Option<Row>,
+    span: Span,
+    m: Msg,
+    notes: Vec<Note>,
+}
+
+impl Found {
+    /// The error with its message and menu written against `source`, the unit's text
+    /// ([`Msg::written`]).
+    fn written(self, source: Option<&str>) -> Error {
+        let (message, menu) = self.m.written(source);
+        Error {
+            row: self.row,
+            span: self.span,
+            message,
+            notes: self.notes,
+            menu,
+        }
     }
 }
 

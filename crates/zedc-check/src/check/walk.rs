@@ -82,8 +82,10 @@ pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
         demand,
         Span { start: 0, end: 0 },
     );
-    let messages = (ck.info.errors.into_iter())
-        .map(|mut e| {
+    let text = ck.t.text;
+    let messages = (ck.errors.into_iter())
+        .map(|f| {
+            let mut e = f.written(text);
             lay_out(&mut e.message, &mut e.notes, &mut e.menu);
             e.message + &e.menu
         })
@@ -1434,7 +1436,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 "name resolution rejects every mutable variable, indexed definition, while, until and expression statement before the checker reads the program"
             ),
             StmtKind::Bind { value, .. } => {
-                m.k(Frame::Bind(s, self.info.errors.len()));
+                m.k(Frame::Bind(s, self.errors.len()));
                 m.job(Job::Expr(value));
             }
             StmtKind::Function(f) => {
@@ -1575,13 +1577,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         if parts.is_empty() {
             return;
         }
-        let found = self.info.errors.split_off(before);
-        let inside = |e: &Error| {
+        let found = self.errors.split_off(before);
+        let inside = |e: &Found| {
             let k = parts.partition_point(|(p, _, _)| p.start <= e.span.start);
             (k.checked_sub(1)).is_some_and(|k| e.span.end <= parts[k].0.end)
         };
-        let kept: Vec<Error> = found.into_iter().filter(|e| !inside(e)).collect();
-        self.info.errors.extend(kept);
+        let kept: Vec<Found> = found.into_iter().filter(|e| !inside(e)).collect();
+        self.errors.extend(kept);
         for (_, at, message) in parts {
             let notes = self.derive(&[at]);
             self.reject(Some(Row::UnfixedDecimal), at, message, notes);
@@ -1621,7 +1623,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 s.given.push(None);
                 continue;
             }
-            s.closed = Some(self.info.errors.len());
+            s.closed = Some(self.errors.len());
             m.k(Frame::InferGiven(s));
             return m.job(Job::Expr(d));
         }
@@ -1779,11 +1781,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         if let (Some(l), Some(c)) = (literal(e), want.num) {
             self.spells(&l.value, l.span);
-            let from = self.info.errors.len();
+            let from = self.errors.len();
             let t = self.adopt_to(&l, c);
             // A rejected literal is its own error: read at the carrier wanted, it causes no
             // second one where its type is checked.
-            let t = match self.info.errors.len() > from {
+            let t = match self.errors.len() > from {
                 true => Ty::carrier(c),
                 false => t,
             };
@@ -2146,7 +2148,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         match op {
             "==" | "!=" => {
-                let from = self.info.errors.len();
+                let from = self.errors.len();
                 self.data(&x.ty, &format!("`{op}`"), span, x.at.unwrap_or(span));
                 self.data(&y.ty, &format!("`{op}`"), span, y.at.unwrap_or(span));
                 let op = if op == "==" { "==" } else { "!=" };
@@ -2251,7 +2253,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             && let Some(t) = self.env.get(&id)
             && let Some(sig) = only_fn(t)
         {
-            let from = self.info.errors.len();
+            let from = self.errors.len();
             m.k(Frame::CallAlso {
                 id,
                 from,
@@ -4081,7 +4083,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let saved = self.mark();
         self.trying = true;
         let (t, _) = self.apply(what, sig, with, false, span);
-        let ok = self.info.errors.len() == saved.errors;
+        let ok = self.errors.len() == saved.errors;
         self.trying = false;
         self.undo(&saved);
         self.applied = applied;
@@ -4512,7 +4514,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Checks the use `n` of a class on `t`, which flowed into the class at `span` or which
     /// the class takes: what the use gives flows into the class of its result.
     fn check_on(&mut self, n: &Need, t: &Ty, span: Span) {
-        let from = self.info.errors.len();
+        let from = self.errors.len();
         let start = self.need_passed.len();
         let got = self.meet(n, t, &mut Binds::new(), span);
         // A use checked on a value that flowed in has no call whose argument gave the atoms.
@@ -4681,7 +4683,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     continue;
                 }
             }
-            let from = self.info.errors.len();
+            let from = self.errors.len();
             let on = self.bound(&n.on, binds);
             let shape = self.bound(&on, &mut Binds::new());
             let got = match self.open.iter_mut().find(|o| o.span == n.span) {
@@ -4715,7 +4717,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => {
                     // `meet` gives `binds` back as they were, so the second run starts from
                     // the same ones.
-                    let errors = self.info.errors.len();
+                    let errors = self.errors.len();
                     self.open.push(Open {
                         span: n.span,
                         shape,
@@ -4726,7 +4728,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let mut got = self.meet(n, &on, binds, span);
                     let used = self.open.last().is_some_and(|o| o.used);
                     if used && !got.is_empty() {
-                        self.info.errors.truncate(errors);
+                        self.errors.truncate(errors);
                         self.need_passed.truncate(passing);
                         let o = self.open.last_mut().expect("the need just pushed");
                         o.result = got.clone();
@@ -4868,14 +4870,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             return false;
         }
         let q = q.replace(binds);
-        let from = self.info.errors.len();
+        let from = self.errors.len();
         let mut ok = true;
         for a in &q.arrows {
             let args = a.params.iter().map(|t| Some(Arg::of(t.clone()))).collect();
             let (r, _) = self.apply(what, s, args, false, span);
             ok &= self.subtype(&r, &a.result);
         }
-        ok || self.info.errors.len() > from
+        ok || self.errors.len() > from
     }
 
     /// The values of `t` flow into class `k`: a class merges with it, a carrier restricts it
@@ -6563,7 +6565,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.trying = true;
         self.rough = true;
         self.apply(what, sig, with, pass, span);
-        let ok = self.info.errors.len() == saved.errors;
+        let ok = self.errors.len() == saved.errors;
         self.rough = false;
         self.trying = false;
         self.undo(&saved);
