@@ -127,6 +127,9 @@ fn a_reported_build_shows_lowering_code_generation_and_the_link() {
     let src = d.join("hello.zed");
     std::fs::write(&src, "main(m: MainArgs) {\n  m.stdout <- \"Hello!\";\n}\n").unwrap();
     let exe = d.join("hello");
+    // An executable left here by an earlier run would be kept, and its link reported as
+    // cached rather than computed; an empty file in its place makes this run link again.
+    std::fs::write(&exe, b"").unwrap();
     let out = zedc(&[
         Path::new("--report"),
         Path::new("build"),
