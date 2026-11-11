@@ -1864,16 +1864,22 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FACET-ops-study | running | 2026-11-11 14:53 |  |
-| FIX-testcase-with-value | impl attempt 1 | 2026-11-11 14:07 | fix drafted; building baseline groups on 9afcbfe49 / load 42.48 35.78 34.77 |
+| DESIGN-consistency-audit | running | 2026-11-11 15:48 |  |
+| FIX-testcase-with-value | impl attempt 1 | 2026-11-11 14:07 | ready: wt/tc-with-value a1320e479; 7 groups 25 pieces 0 failed (baseline 25/0), l06_01_parser 41->54; controls red; not pushed / load 35.65 38.00 37.78 |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
-| LIT-tuple-rest | impl attempt 1 | 2026-11-10 12:02 | rebased on 7e1830269; baseline l01_16-18, l01_22, l01_26-29, l01_26a, zedc_check: 168 pieces 0 failed, load 31-47 |
+| LIT-generic-parts-type | impl attempt 1 | 2026-11-11 15:30 | started; worktree /home/luke/Work/wt/lit-parts-type from wt/lit-tuple-rest d42e82473 / load5 33.16 |
+| LIT-tuple-rest | impl attempt 1 | 2026-11-10 12:02 | ready: wt/lit-tuple-rest 7c02e8079 aae6d1a2c d42e82473; 168 pieces 0 failed, 1336/0/18 (base 1323/0/18); queued LIT-decimal-body note, LIT-hole-in-function, LIT |
 | LOAD-max-div-xr | coord attempt 5 | 2026-11-10 01:18 | start rounds 5-10 coordinator; committed Claude seat's unfinished round-4 tree as b07e4522 on wt/lmd-claude; load5 32.66 |
 | MSG-parse-token-names | impl attempt 1 | 2026-11-11 14:52 | ready: de9f3035f on wt/parse-names (rebased on b3ead5a25, COMPLEXITY conflict kept both rows); 25 pieces 0 failed 491 passed with --doc, load 59-62; control IDE |
-| PA-let-unsummarized-narrow | impl attempt 1 | 2026-11-11 14:13 | started; worktree wt/pa-let from f43282d26 + cherry-pick bf54b7c20 |
+| PA-let-unsummarized-narrow | impl attempt 1 | 2026-11-11 14:13 | ready: 62e5a4289 on wt/pa-let; baseline groups 695/0 -> 696/0 (1274 -> 1284 tests), l01_39a/b/c/f 51/0 both; 6 l01_25 exact counts re-pinned upward (from abs/mi |
 | PERF-negated-chain-xr | impl attempt 2 | 2026-11-10 06:16 | started rounds 4-9: Claude round-3 tree committed 9a579263 (wt/pncx-claude), rebased onto origin/main 9bbeb1ff as 448bad52 on wt/perf-negated-chain; control tre |
+| PLAN-audit | impl attempt 1 | 2026-11-11 15:48 | started on wt/plan-audit from aa15d3be7 |
+| QUESTIONS-audit | impl attempt 1 | 2026-11-11 15:47 | started; worktree /home/luke/Work/wt/questions-audit from 5e1645b / 32.43 |
 | REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | rounds 7-8 started; committing review tree (Claude R5 + probe), bringing Claude R6 onto the branch, rebasing on origin/main 4777a33e / load 52.67 38.82 33.29 |
-| TESTS-eliminated-last-row | impl attempt 1 | 2026-11-11 13:56 | baseline ^l01_38_presburger/^zedc_presburger/^zedc_preimage: pieces: 349, failed: 0, load: 23.72 to 37.32, cores: 32 / 25.49 29.37 34.01 |
+| TESTS-eliminated-last-row | impl attempt 1 | 2026-11-11 13:56 | ready: 4aa31a1be on wt/elim-last-row, test pins last eliminated row (x <= 9) in projected; control fails it; groups 689 -> 690 passed, 0 failed / load 42.17 38. |
+| TESTS-lhx-families | impl attempt 1 | 2026-11-11 15:43 | baseline on 7228f245c: pieces 234, failed 0, rc 0 (load 27.5 to 45.09) |
+| TESTS-pres-exp-families | running | 2026-11-11 15:28 |  |
+| UNDERSCORE-print | running | 2026-11-11 15:28 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
