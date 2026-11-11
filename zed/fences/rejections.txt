@@ -22,7 +22,12 @@ Operation that always fails
 Undischarged region assertion
 Read below the domain with no boundary entry
 Boundary item with neither `initial` nor an index
-Two `with initial` items for one variable
+A `with initial` item
+A boundary entry of a loop written without `initial`
+An `initial` statement outside a loop, or under `local`
+An `initial` statement for a name the loop does not update
+An `initial` value that reads a name of its own loop
+Two sentinel values for one variable
 Cross-unit overlapping incomparable arrows
 Ambiguous imported name
 Name used above its definition

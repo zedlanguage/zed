@@ -12,6 +12,7 @@ Annot         = ANNOT ('(' nest(Args?) ')')?                                    
 
 Decl          = ~Local                                                             L2
               | ~Mutable                                                           L6
+              | ~Initial                                                           L6
               | ~Import                                                            L2
               | ~Struct                                                            L2
               | ~TypeDecl                                                          L2
@@ -30,6 +31,10 @@ Decl          = ~Local                                                          
               | ~ExprStmt                                                          L6
 Local         = 'local' Decl                                                       L2
 Mutable       = 'mutable' Binding                                                  L6
+Initial       = 'initial' InitTarget '=' Expr ';'                                  L6
+InitTarget    = Name ':' Type                                                      L10
+              | Name ('[' IndexKey ']')+                                           L6
+              | Name % ','                                                         L6
 Return        = 'return' Expr % ',' ';'                                            L1
 Emit          = 'emit' Expr ';'                                                    L4
 While         = 'while' Expr ';'                                                   L6
@@ -87,12 +92,11 @@ WholePush     = PushTarget '<-' Expr ';'                                        
 PushTarget    = Name ('.' Name)* ('::' Name)?                                      L1
 Binding       = ~TypedBinding                                                      L10
               | ~PlainBinding                                                      L1
-TypedBinding  = Name ':' Type '=' Expr Boundary? ';'                               L10
-PlainBinding  = Target % ',' '=' Expr Boundary? ';'                                L1
+TypedBinding  = Name ':' Type '=' Expr ';'                                         L10
+PlainBinding  = Target % ',' '=' Expr ';'                                          L1
 Target        = Name | WILD                                                        L1
 Boundary      = 'with' BoundaryItem % ','                                          L6
-BoundaryItem  = 'initial' Name '=' Expr                                            L6
-              | Name ('[' IndexKey ']')+ '=' Expr                                  L6
+BoundaryItem  = Name ('[' IndexKey ']')+ '=' Expr                                  L6
 Signature     = Name ':' Type ';'                                                  L7
 
 Expr          = Lambda                                                             L1

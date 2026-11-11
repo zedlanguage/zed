@@ -78,8 +78,18 @@ Item ::: tree = exact + 1; ::: (tree = (exact + 1) ;)
 Expr ::: xs >< tree ::: (xs (>< tree))
 Expr ::: xs >< max tree else 0 ::: ((xs (>< max tree)) (else 0))
 Item ::: @fpwarn(lost: 20) f(x) = x; ::: ((@fpwarn ( (lost : 20) )) (f ( x ) (= x ;)))
-Item ::: x' = x + 1 with initial x = 0; ::: (x' = (x + 1) (with (initial x = 0)) ;)
-Item ::: x' = x + 1 with initial initial = 0, initial[0] = 1; ::: (x' = (x + 1) (with (initial initial = 0) , (initial [ 0 ] = 1)) ;)
+Item ::: initial x = 0; ::: (initial x = 0 ;)
+Item ::: initial x: f64 = 0.0; ::: (initial (x : f64) = 0.0 ;)
+Item ::: initial pos, vel = (p0, v0); ::: (initial (pos , vel) = (( p0 , v0 )) ;)
+Item ::: initial p[-2] = -1; ::: (initial (p [ (- 2) ]) = (- 1) ;)
+Item ::: initial x[i in -3..<0] = f(i); ::: (initial (x [ (i in ((- 3) (..< 0))) ]) = (f (( i ))) ;)
+Item ::: local initial x = 0; ::: (local (initial x = 0 ;))
+Item ::: run = loop t { while t < n; initial x = 0; p <- x; x' = x + 1; }; ::: (run = (loop t ({ (while (t < n) ;) (initial x = 0 ;) (p <- x ;) (x' = (x + 1) ;) })) ;)
+Item ::: x' = x + 1 with initial x = 0; ::: ERROR
+Item ::: x' = x + 1 with x[-2] = 0; ::: ERROR
+Item ::: initial = 0; ::: ERROR
+Item ::: initial[0] = 1; ::: ERROR
+Item ::: initial _ = 0; ::: ERROR
 Item ::: pos[i in 0..<n] = 2*pos[i-1] - pos[i-2] with pos[-1] = a, pos[-2] = b; ::: (pos [ (i in (0 (..< n))) ] = ((2 * (pos ([ (i - 1) ]))) - (pos ([ (i - 2) ]))) (with (pos [ (- 1) ] = a) , (pos [ (- 2) ] = b)) ;)
 Item ::: p[k] <- v; ::: (p [ k ] <- v ;)
 Item ::: run = loop t { x' = x; until true; }; ::: (run = (loop t ({ (x' = x ;) (until true ;) })) ;)

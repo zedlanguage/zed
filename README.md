@@ -453,15 +453,17 @@ A loop describes one step, and the loop as a whole is a value.
 ```zed
 trend = loop t {
   while t < east::len;
-  prev' = east[t] with initial prev = 0;
-  change' = east[t] - prev with initial change = 0;
+  initial prev = 0;
+  initial change = 0;
+  prev' = east[t];
+  change' = east[t] - prev;
 };
 ```
 
 > [!NOTE]
 > **`loop t { ... }`** repeats its body, with `t` as the step counter, counting from 0. **`while c;`** is tested before each step and ends the loop when `c` is false, and **`until c;`** is tested after each step and ends it when `c` is true. **`x::len`** is the number of entries in `x`. The loop is a value: `trend.prev` is the final `prev`, and `trend::len` is the number of steps.
 >
-> **`x' = e`** gives `x`'s value in the next step. In the step, `x` is the value from the previous step. **`with initial x = start`** gives `x`'s *sentinel value*: its value before the first step, which the first step reads as `x`. It is given once, not again on each step, and each variable gets one `with initial`, on any line of the loop that uses it.
+> **`x' = e`** gives `x`'s value in the next step. In the step, `x` is the value from the previous step. **`initial x = start;`** gives `x`'s *sentinel value*: its value before the first step, which the first step reads as `x`. It is given once, not again on each step. Each variable gets one `initial` statement, which may stand anywhere in the loop's body.
 
 **`trend`, one row per step**
 
@@ -1844,7 +1846,7 @@ One core computes the table for `a"` and another the table for `b"` without know
 
 A loop describes one step, and the loop as a whole is a value holding the final state and the history.
 
-**Syntax:** `loop { x' = f(x) with initial x = start; until done; }`, `loop t { while c; ... }`, `run.x`, `run::frames`
+**Syntax:** `loop { initial x = start; x' = f(x); until done; }`, `loop t { while c; ... }`, `run.x`, `run::frames`
 
 > [!NOTE]
 > **`loop { ... }`**, without a name after `loop`, is a loop with no step counter. **`run::frames`** is every step of the loop `run`, as a map from step number to that step's values. **`x.patch(edit)`** applies an edit to a map or document and gives the new version.
@@ -1852,8 +1854,10 @@ A loop describes one step, and the loop as a whole is a value holding the final 
 ```zed
 sim = loop t {
   while t < maxSteps;
-  pos' = pos + vel * dt with initial pos = p0;
-  vel' = vel + accel(pos) * dt with initial vel = v0;
+  initial pos = p0;
+  initial vel = v0;
+  pos' = pos + vel * dt;
+  vel' = vel + accel(pos) * dt;
   until pos'.x > bound;
 };
 
@@ -1881,7 +1885,8 @@ The line `while t < maxSteps` is there because `history` reads `sim::frames`: a 
 ```zed
 run = loop t {
   while t < edits::len;
-  doc' = doc.patch(edits[t]) with initial doc = empty;
+  initial doc = empty;
+  doc' = doc.patch(edits[t]);
 };
 
 previous = run::frames[run::len - 2]?.doc else empty;
@@ -2416,8 +2421,8 @@ advance(positional j: Junction, positional c: Cmd) = match c {
 };
 
 reachable = loop {
-  R' = R.union(R.flatMap(j -> [advance(j, #goNs), advance(j, #goEw), advance(j, #stop)]).image)
-    with initial R = { Junction(ns: #red, ew: #red) };
+  initial R = { Junction(ns: #red, ew: #red) };
+  R' = R.union(R.flatMap(j -> [advance(j, #goNs), advance(j, #goEw), advance(j, #stop)]).image);
 };
 
 law neverBothGreen(ns: Signal, ew: Signal) =
