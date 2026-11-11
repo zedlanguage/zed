@@ -1855,11 +1855,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
 | LIT-branch-carrier | impl attempt 1 | 2026-11-11 12:38 | baseline on 344e72cd6: 340 pieces, 0 failed / load5 39.26 |
 | LOAD-max-div-xr | coord attempt 5 | 2026-11-10 01:18 | start rounds 5-10 coordinator; committed Claude seat's unfinished round-4 tree as b07e4522 on wt/lmd-claude; load5 32.66 |
+| NAMES-levels-spec | spec attempt 1 | 2026-11-11 13:13 | started; making worktrees names-spec (zed) and names-spec-impl (zed-impl) |
 | PERF-negated-chain-xr | impl attempt 2 | 2026-11-10 06:16 | started rounds 4-9: Claude round-3 tree committed 9a579263 (wt/pncx-claude), rebased onto origin/main 9bbeb1ff as 448bad52 on wt/perf-negated-chain; control tre |
-| Q-char32-text | writer attempt 1 | 2026-11-11 12:48 | started; worktree /home/luke/Work/wt/qc32-zed on wt/q-char32 from ac7d365 |
 | REFUSAL-front-xr | impl attempt 2 | 2026-11-09 20:30 | rounds 7-8 started; committing review tree (Claude R5 + probe), bringing Claude R6 onto the branch, rebasing on origin/main 4777a33e / load 52.67 38.82 33.29 |
-| TESTS-l01_39-walk-chains | impl attempt 1 | 2026-11-08 23:59 | started; worktree wt/tests-walk-chains seeded / load 17.00 29.17 31.82 |
-| TESTS-S22e-wide-random-remainders | impl attempt 1 | 2026-11-08 23:59 | baseline l01_25_preimage_catalog on 08871c294: pieces: 151, failed: 0, load: 23.35 to 24.75, cores: 32, load 21.81 31.80 32.75 |
+| TESTS-coverage-projection-paths | impl attempt 1 | 2026-11-08 23:59 | started: worktree wt/tests-cpp at 0daabc071, spec copy ac7d365 in tcp-scratch/zedspec |
+| TESTS-l01_39-walk-chains | impl attempt 1 | 2026-11-08 23:59 | ready ae86cc8a1: l01_39 177 pieces 0 failed (baseline c52d78cf5 171/0), 6 chain pieces 10.6-16.5 s at load 21-22 (21.2 s max at load 65); negative controls: let |
+| TESTS-messages-never-produced | impl attempt 1 | 2026-11-08 23:59 | started; worktree tests-mnp at 0daabc071 seeded |
+| TESTS-S22e-wide-random-remainders | impl attempt 1 | 2026-11-08 23:59 | wide remainder test written (moduli 2..16, periods 1..12, 5 shapes, 900 cases, box+exact+relation vs interpreter at every point): 14 pieces pass, 8-18 s each at |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
