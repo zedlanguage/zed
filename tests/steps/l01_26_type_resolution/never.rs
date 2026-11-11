@@ -506,9 +506,9 @@ fn a_call_that_does_not_read_an_argument_of_no_value_keeps_its_value() {
 }
 
 /// The rejection of the call that passes `"s"` through `k` to `take` shows where `k` is declared
-/// with the type the checker found, saying that none was written and that `y` and the result
-/// have the same type at each call: `(_, _) -> _` alone says nothing of how `"s"` got through
-/// (MSG-declared-inferred-sig).
+/// with the type the checker found, saying that none was written: `(_, T) -> T` shows that `y`
+/// and the result have the same type at each call, which `(_, _) -> _` did not
+/// (MSG-declared-inferred-sig, UNDERSCORE-print).
 #[test]
 fn the_rejection_of_a_value_passed_on_past_an_argument_of_no_value_shows_where_it_goes() {
     let text = "k(positional x, positional y) = y;\ntake(positional x: int) = x;\n\
@@ -519,8 +519,7 @@ fn the_rejection_of_a_value_passed_on_past_an_argument_of_no_value_shows_where_i
     assert!(
         notes.contains(
             &"`k` is declared here with no type written for `x`, `y` or its result; the type the \
-              checker found for `k` is `(_, _) -> _`, in which, at each call, `y` and the result \
-              have the same type"
+              checker found for `k` is `(_, T) -> T`"
         ),
         "{notes:?}"
     );

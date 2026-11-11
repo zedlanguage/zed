@@ -1,5 +1,6 @@
 //! The checker marks the parts a message's types share with the Unicode noncharacters U+FDD5 to
-//! U+FDD8 until it names them (step MSG-type-defs-layout). User text with those characters must
+//! U+FDD8 until it names them (step MSG-type-defs-layout), and the variables of a type it names
+//! in a message with U+FDD9 to U+FDDE (UNDERSCORE-print). User text with those characters must
 //! never be read as a mark: a string writes them escaped, as `\u{fdd5}`, which reads back, and
 //! a name or an atom cannot hold them.
 
@@ -12,7 +13,7 @@ fn passing(arg: &str) -> String {
 
 #[test]
 fn a_string_with_the_marks_is_written_escaped_beside_the_definitions() {
-    for code in 0xFDD5..=0xFDD8u32 {
+    for code in 0xFDD5..=0xFDDEu32 {
         let c = char::from_u32(code).unwrap();
         let esc = format!("\\u{{{code:x}}}");
         // The character itself, a reference's whole form around it, and its escape in the source.
@@ -53,7 +54,7 @@ fn a_string_with_the_marks_is_written_escaped_beside_the_definitions() {
 
 #[test]
 fn a_name_or_an_atom_cannot_hold_the_marks() {
-    for code in 0xFDD5..=0xFDD8u32 {
+    for code in 0xFDD5..=0xFDDEu32 {
         let c = char::from_u32(code).unwrap();
         for src in [
             passing(&format!("#a{c}")),

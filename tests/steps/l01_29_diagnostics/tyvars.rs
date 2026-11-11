@@ -1,7 +1,8 @@
-//! A printed signature writes a type variable only with its bound of carriers (DESIGN.md L1.26,
-//! sec:diagnostics "Printed types are syntax"): a parameter whose uses allow values other than
-//! carriers, and the result of a use the call binds, are printed `_`, the type of every value,
-//! so the text a message shows can be written back as a parameter's type (PRINT-tyvars).
+//! A printed signature writes a type variable with its bound of carriers (DESIGN.md L1.26,
+//! sec:diagnostics "Printed types are syntax"), and an unbounded one, as a parameter whose uses
+//! allow values other than carriers or the result of a use the call binds, by a name where it
+//! stands in two places or more and as `_`, the type of every value, where it stands once
+//! (PRINT-tyvars, UNDERSCORE-print). The text a message shows reads back as the same type.
 
 use std::sync::Arc;
 
@@ -24,19 +25,39 @@ fn declared(text: &str) -> String {
 
 /// That `text` is type syntax: the parser and the resolver read it with nothing undefined
 /// (`parse_type`), and as a parameter's written type the whole compiler refuses nothing in it
-/// but `_` (InferType), whose layer L10 is not yet built.
+/// but `_` (InferType) and a literal type, leaves of layer L10, which is not yet built, and the
+/// names no `for` of the text bounds: a capitalized name a signature writes twice is a type
+/// variable (sec:type_resolution, rule 4), which the resolver of this layer does not read yet
+/// and reports as undefined.
 pub(super) fn writes_back(text: &str) {
     parse_type(text).unwrap_or_else(|why| panic!("{why}"));
     let src = format!("u(positional v: {text}) = 1;\nm(positional n: int) = u();\n");
     let out = rejected(&src);
     let errors: Vec<&str> = out
         .lines()
+        // An error opens at its line and column; the steps under it are indented.
+        .filter(|l| !l.starts_with(' '))
         .filter(|l| l.split(": ").next().is_some_and(|p| p.contains(':')))
         .collect();
+    let literal =
+        |l: &str| l.contains(": the literal type `") && l.ends_with(zed_tests::not_yet!(""));
+    let free = |l: &str| {
+        l.split_once("the type `")
+            .and_then(|(_, rest)| rest.split_once("` is not defined"))
+            .is_some_and(|(name, _)| {
+                name.starts_with(|c: char| c.is_ascii_uppercase())
+                    && text
+                        .split(|c: char| !c.is_alphanumeric())
+                        .filter(|w| *w == name)
+                        .count()
+                        >= 2
+                    && !text.contains(&format!("for {name} in"))
+            })
+    };
     let only_the_layer = !errors.is_empty()
-        && errors
-            .iter()
-            .all(|l| l.ends_with(zed_tests::not_yet!("the wildcard type `_`")));
+        && errors.iter().all(|l| {
+            l.ends_with(zed_tests::not_yet!("the wildcard type `_`")) || literal(l) || free(l)
+        });
     assert!(
         out.starts_with("2:24: this call of `u` gives no value to its parameter `v`")
             || only_the_layer,
@@ -76,18 +97,20 @@ fn a_variable_only_in_the_result_is_printed_as_every_value() {
 }
 
 #[test]
-fn several_variables_each_print_as_every_value_and_the_bounded_one_by_name() {
-    // `x * y` bounds one variable by the numeric carriers; `z` is any value.
+fn several_variables_each_print_by_name_where_they_stand_twice_and_the_bounded_one_in_its_clause() {
+    // `x * y` bounds one variable by the numeric carriers; `z` is any value, and stands in a
+    // parameter and in the result, so it takes the next name.
     let src = "f(positional x, positional y, positional z) = (x * y, z);\n";
     let s = sig(src, "f");
     assert_eq!(
         s.to_string(),
-        "(T, T, _) -> (T, _) for T in int | f64 | rat"
+        "(T, T, U) -> (T, U) for T in int | f64 | rat"
     );
     writes_back(&s.to_string());
-    // Two variables any value fits stay two in the signature, though both print `_`.
+    // Two variables any value fits stay two in the signature, each named, as each stands in a
+    // parameter and in the result.
     let s = sig("pair(a, b) = (a, b);\n", "pair");
-    assert_eq!(s.to_string(), "(a: _, b: _) -> (_, _)");
+    assert_eq!(s.to_string(), "(a: T, b: U) -> (T, U)");
     assert_ne!(s.arrows[0].params[0], s.arrows[0].params[1]);
     assert_eq!(
         s.arrows[0].result,
@@ -95,9 +118,10 @@ fn several_variables_each_print_as_every_value_and_the_bounded_one_by_name() {
         "the result is the pair of the parameters' variables"
     );
     writes_back(&s.to_string());
-    // A union with a variable prints the variable once as `_`, beside the rest.
+    // A union with a variable prints it by name beside the rest: `0 | _` would be `_`, and
+    // lose the `0`. The `T` of the result is `r` without the atoms `else` removes.
     let s = sig("g(r) = r else 0;\n", "g");
-    assert_eq!(s.to_string(), "(r: _) -> 0 | _");
+    assert_eq!(s.to_string(), "(r: T) -> 0 | T");
     writes_back(&s.to_string());
 }
 
@@ -156,7 +180,8 @@ fn a_signature_that_bounds_a_name_already_bounded_around_it_takes_a_fresh_name()
         "(((V, U) -> (V, U) for V in int, U in rat), T) -> T for T in int | rat"
     );
     writes_back(&text);
-    // An inner signature's own variable that no carriers bound is `_`, not the outer `T`.
+    // An inner signature's own variable that no carriers bound, standing twice, is named apart
+    // from the outer `T`.
     let mut inner = (*parse_type("(int) -> int").unwrap().fns[0]).clone();
     inner.arrows[0] = Arrow {
         params: vec![Ty::var("T".into())],
@@ -166,7 +191,7 @@ fn a_signature_that_bounds_a_name_already_bounded_around_it_takes_a_fresh_name()
     let mut s = shadowing("(int) -> int");
     s.arrows[0].params[0] = Ty::func(Arc::new(inner));
     let text = s.to_string();
-    assert_eq!(text, "((_) -> _, T) -> T for T in int | rat");
+    assert_eq!(text, "((U) -> U, T) -> T for T in int | rat");
     writes_back(&text);
 }
 
@@ -200,12 +225,26 @@ fn printing_signatures_of_many_variables_scales() {
     let n = 300;
     let wide = [n, 8 * n].map(|m| (m, sig(&many(m), "f")));
     let input = |size: usize| &wide.iter().find(|(m, _)| *m == size).expect("built").1;
+    // The variables of the second half each stand in a parameter and in the result, so each
+    // takes a name of its own after the bounded `T`.
+    assert_eq!(
+        sig(&many(4), "f").to_string(),
+        "(T, T, U, V) -> (T, U, V) for T in int | f64 | rat"
+    );
+    let names = |text: &str| -> usize {
+        let words: std::collections::HashSet<&str> = text
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.starts_with(|c: char| c.is_ascii_uppercase()))
+            .collect();
+        words.len()
+    };
     let text = input(n).to_string();
-    assert_eq!(text.matches('_').count(), 2 * (n - n / 2));
+    assert!(!text.contains('_'), "{text}");
+    assert_eq!(names(&text), 1 + (n - n / 2));
     assert!(text.ends_with(" for T in int | f64 | rat"), "{text}");
     scaling::check("printing a signature of n type variables", n, |size| {
         let text = input(size).to_string();
-        assert_eq!(text.matches('_').count(), 2 * (size - size / 2));
+        assert_eq!(names(&text), 1 + (size - size / 2));
     });
     let deep = [n, 8 * n].map(|m| (m, nested(m)));
     let input = |size: usize| &deep.iter().find(|(m, _)| *m == size).expect("built").1;
@@ -223,4 +262,121 @@ fn printing_signatures_of_many_variables_scales() {
             assert_eq!(text.matches(" for ").count(), size);
         },
     );
+}
+
+// UNDERSCORE-print (DESIGN.md sec:diagnostics, "The type of a declaration in a message"): a
+// variable of the checker that stands in two places or more of one printed type is written by a
+// capitalized name, given in the order the variables first stand in the text and skipping the
+// names in scope; one that stands once is `_`.
+
+#[test]
+fn a_variable_that_stands_twice_is_named() {
+    let s = sig("id(x) = x;\n", "id");
+    assert_eq!(s.to_string(), "(x: T) -> T");
+    assert_eq!(s.arrows[0].params[0], s.arrows[0].result);
+    writes_back(&s.to_string());
+}
+
+#[test]
+fn two_variables_take_names_in_the_order_they_first_stand() {
+    // `a` stands first, in the first parameter, so it is `T`, though the result gives `b` first.
+    let s = sig("swap(positional a, positional b) = (b, a);\n", "swap");
+    assert_eq!(s.to_string(), "(T, U) -> (U, T)");
+    writes_back(&s.to_string());
+}
+
+#[test]
+fn a_variable_that_stands_once_is_every_value() {
+    // `x` stands once, `y` twice: only `y` takes a name, and it takes the first.
+    let s = sig("k(positional x, positional y) = y;\n", "k");
+    assert_eq!(s.to_string(), "(_, T) -> T");
+    assert_ne!(s.arrows[0].params[0], s.arrows[0].params[1]);
+    writes_back(&s.to_string());
+}
+
+#[test]
+fn every_value_in_a_union_absorbs_the_other_members() {
+    // The result of `f(0)` is a variable that stands once, so it prints `_`, and `int | _` is
+    // `_`: every value holds `int`.
+    let src = "g(positional c, positional f) = if c { int(1) } else { f(0) };\n";
+    let s = sig(src, "g");
+    assert_eq!(s.arrows[0].result.vars.len(), 1);
+    assert_eq!(s.to_string(), "(bool, _) -> _");
+    writes_back(&s.to_string());
+    // Written, `int | f64 | _` is read as a union with a variable that stands once.
+    let t = parse_type("(int | f64 | _) -> int").unwrap();
+    assert_eq!(t.to_string(), "(_) -> int");
+    // A variable that stands twice is no `_`, and absorbs nothing.
+    let t = parse_type("(T, int | f64 | T) -> T").unwrap();
+    assert_eq!(t.to_string(), "(T, int | f64 | T) -> T");
+}
+
+#[test]
+fn the_names_skip_a_name_the_program_binds() {
+    // The file binds `T`, a value, so in a message the variable that stands twice takes `U`.
+    let src = "T = 5;\nh(positional a, positional b) = (b, b);\n";
+    let shown = declared(&format!("{src}m(positional n: int) = h(n);\n"));
+    assert_eq!(shown, "(_, U) -> (U, U)");
+    // With no `T` bound, the first name is `T`.
+    let shown = declared("h(positional a, positional b) = (b, b);\nm(positional n: int) = h(n);\n");
+    assert_eq!(shown, "(_, T) -> (T, T)");
+    // A lambda's parameter named `T` is bound by the file too.
+    let shown = declared("g(positional a) = (T) -> (b) -> (c) -> a;\nm = g + 1;\n");
+    assert_eq!(shown, "(U) -> (_) -> (_) -> (_) -> U");
+    // A signature printed outside a message has no program around it, so its names start at
+    // `T` whatever the file binds.
+    assert_eq!(sig(src, "h").to_string(), "(_, T) -> (T, T)");
+}
+
+#[test]
+fn a_printed_type_with_names_reads_back_as_itself() {
+    // Each text reads back as a type that prints as the same text: the names are variables of
+    // the signature, and stand in the same places.
+    for src in [
+        "id(x) = x;\n",
+        "swap(positional a, positional b) = (b, a);\n",
+        "g(r) = r else 0;\n",
+        "pick(positional c, positional a, positional b) = if c { a } else { b };\n",
+        "f(positional x, positional y, positional z) = (x * y, z);\n",
+        "g(positional a) = (b) -> (c) -> (a, b, c);\n",
+    ] {
+        let name = &src[..src.find('(').expect("a declaration")];
+        let printed = sig(src, name).to_string();
+        let t = parse_type(&printed).unwrap_or_else(|e| panic!("{printed}: {e}"));
+        assert_eq!(t.fns.len(), 1, "{printed}");
+        assert_eq!(t.to_string(), printed, "{src}");
+        // The read type has as many variables of its own as the text has names.
+        let read = &t.fns[0];
+        assert!(!read.own.is_empty(), "{printed}");
+    }
+}
+
+/// `f(positional x0, …) = (x0, …);`: `n` variables, each standing in a parameter and in the
+/// result.
+fn each_twice(n: usize) -> String {
+    let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    let ps: Vec<String> = xs.iter().map(|x| format!("positional {x}")).collect();
+    format!("f({}) = ({});\n", ps.join(", "), xs.join(", "))
+}
+
+#[test]
+fn naming_many_variables_that_each_stand_twice_scales() {
+    // Counting the places of each variable, then naming each in one pass with a hash lookup
+    // per mark, is linear in the text here: these types hold no union (COMPLEXITY.md F169).
+    assert_eq!(
+        sig(&each_twice(5), "f").to_string(),
+        "(T, U, V, W, T5) -> (T, U, V, W, T5)"
+    );
+    let n = 1000;
+    let built = [n, scaling::FACTOR * n].map(|m| (m, sig(&each_twice(m), "f")));
+    let input = |size: usize| &built.iter().find(|(m, _)| *m == size).expect("built").1;
+    scaling::check("naming n variables that each stand twice", n, |size| {
+        let text = input(size).to_string();
+        assert!(!text.contains('_'));
+        assert!(
+            text.ends_with(&format!("T{size})")),
+            "{}",
+            &text[text.len() - 20..]
+        );
+    });
 }

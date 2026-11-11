@@ -113,8 +113,8 @@ fn tuple(n: usize) -> String {
 fn a_signature_of_many_type_variables_scales() {
     // Naming the variables looked for each among those named before (COMPLEXITY.md F28).
     let s = sig_of(&tuple(2), "f");
-    assert_eq!(s.to_string(), "(_, _) -> (_, _)");
-    assert_eq!(s.own.len(), 2, "two variables, though both print `_`");
+    assert_eq!(s.to_string(), "(T, U) -> (T, U)");
+    assert_eq!(s.own.len(), 2, "two variables, each named");
     let units = resolved(1000, tuple);
     scaling::check("a signature of n type variables", 1000, |n| {
         let info = units[&n].check();
@@ -209,7 +209,7 @@ fn curried_lambdas_using_every_parameter_check_in_linear_time() {
     // signatures inside (`VarFacts::held`), so merging them costs O(log n) per variable.
     assert_eq!(
         sig(&curried(3), "g"),
-        "(_) -> (_) -> (_) -> (_) -> (_, _, _, _)"
+        "(T) -> (U) -> (V) -> (W) -> (T, U, V, W)"
     );
     let n = 100;
     let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
@@ -317,20 +317,23 @@ fn an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales() {
 #[test]
 fn nested_lambdas_name_their_variables_as_before() {
     // The names a lambda takes skip those of the lambdas inside it, found from their facts.
-    // Only a variable bounded by carriers is printed by name; the others are `_` (DESIGN.md
-    // sec:diagnostics, PRINT-tyvars).
+    // A variable bounded by carriers is printed by name; of the others, one that stands in two
+    // places or more takes the next free name, and one that stands once is `_` (DESIGN.md
+    // sec:diagnostics, PRINT-tyvars, UNDERSCORE-print). The file binds `T` in the third row;
+    // a message skips it and prints `U` (l01_29 `tyvars`), but a signature printed alone has no
+    // program around it, so its names start at `T`.
     for (text, want) in [
         (
             "g(positional a) = (b) -> (c) -> (a, b, c);\n",
-            "(_) -> (_) -> (_) -> (_, _, _)",
+            "(T) -> (U) -> (V) -> (T, U, V)",
         ),
         (
             "g(positional a) = (b) -> (c) -> (d) -> (e) -> (f) -> (h) -> (a, b, c, d, e, f, h);\n",
-            "(_) -> (_) -> (_) -> (_) -> (_) -> (_) -> (_) -> (_, _, _, _, _, _, _)",
+            "(T) -> (U) -> (V) -> (W) -> (T5) -> (T6) -> (T7) -> (T, U, V, W, T5, T6, T7)",
         ),
         (
             "g(positional a) = (T) -> (b) -> (c) -> a;\n",
-            "(_) -> (_) -> (_) -> (_) -> _",
+            "(T) -> (_) -> (_) -> (_) -> T",
         ),
         (
             "g(positional f) = (x) -> (y) -> f(x, y) + x;\n",
@@ -338,17 +341,17 @@ fn nested_lambdas_name_their_variables_as_before() {
         ),
         (
             "g(positional a, positional b) = ((c) -> (d) -> (c, d), a + b);\n",
-            "(V, V) -> ((_) -> (_) -> (_, _), V) for V in int | f64 | rat",
+            "(V, V) -> ((T) -> (U) -> (T, U), V) for V in int | f64 | rat",
         ),
         // The results of `h(x)` and `f(x)` are classes of `g`'s level that first appear
         // inside the lambdas, and are named in the order they appear there.
         (
             "g(positional f, positional h) = (x) -> (y) -> (h(y, x), f(x), y);\n",
-            "(_, _) -> (_) -> (_) -> (_, _, _)",
+            "(_, _) -> (_) -> (T) -> (_, _, T)",
         ),
         (
             "g(positional f) = ((x) -> f(x), (y) -> (f(y), y));\n",
-            "(_) -> ((_) -> _, (_) -> (_, _))",
+            "(_) -> ((_) -> _, (T) -> (_, T))",
         ),
     ] {
         assert_eq!(sig(text, "g"), want, "{text}");
@@ -946,7 +949,7 @@ fn rows_shared_on_many_paths_are_replaced_once() {
     );
     assert_eq!(
         sig(&shared_rows(2, false), "f"),
-        "(_, _, _) -> ((_, (_, _)), ((_, (_, _)), _))"
+        "(T, U, V) -> ((T, (T, U)), ((T, (T, U)), V))"
     );
 }
 

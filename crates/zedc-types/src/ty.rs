@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use zed_kernel::digest::Digest;
 use zed_kernel::frames::{Deep, Stack};
 pub use zed_kernel::types::names::{Names, ProgramNames, fresh_name};
-use zed_kernel::types::{Refusal, Spell, TextPlace, Type as KType, Verdict};
+use zed_kernel::types::{Refusal, Spell, TextPlace, Type as KType, Verdict, defs};
 use zed_kernel::{Items, Universe, Value};
 
 use zedc_syntax::lex::Span;
@@ -7183,7 +7183,8 @@ fn text_at(t: &Ty, q: &Sig, cx: &Cx) -> String {
     let mut scope = Scope::default();
     for (v, name) in own.chain(rigid) {
         scope.printed.insert(name.clone());
-        scope.names.entry(v).or_default().push(Some(name));
+        scope.bound.insert(name.clone());
+        scope.names.entry(v).or_default().push(VarSlot::Name(name));
     }
     let mut out = String::new();
     t.write(&mut out, &mut scope);
@@ -8329,9 +8330,11 @@ impl fmt::Display for Ty {
 }
 
 /// The type variables the signatures around a place being printed bind: each by its name in
-/// the type, with the name it is printed with, or none when it is printed `_`. A variable no
-/// signature around it bounds by carriers is printed `_`, the type of every value, since type
-/// syntax writes a type variable only with its bound (DESIGN.md L1.26, sec:diagnostics).
+/// the type, with the way it is printed. A variable bounded by carriers is printed by its name,
+/// with its bounds clause. Any other variable a signature binds is fixed to one type at each
+/// call, and is printed by a name of its own where it stands in two places or more of the
+/// printed type and `_` where it stands in one ([`write_parts`]; DESIGN.md sec:diagnostics,
+/// "Types in a message"). A variable no signature around it binds is printed `_`.
 // Complexity tradeoff (COMPLEXITY.md F68): naive, each fresh name tried from `T` again at
 // each rename, O(renames²) tries; used, a map from each variable to its stack of printed
 // names, a set of the names in use and one counter that only grows, O(size of the type) plus O(renames) fresh names.
@@ -8339,30 +8342,68 @@ impl fmt::Display for Ty {
 #[derive(Default)]
 struct Scope {
     /// Each variable's printed names, innermost signature last.
-    names: HashMap<Arc<str>, Vec<Option<Arc<str>>>>,
+    names: HashMap<Arc<str>, Vec<VarSlot>>,
     /// The printed names in scope, so a signature inside another that bounds a name already
     /// printed takes a fresh one: a bounds clause inside another's may not bound its name again.
     printed: HashSet<Arc<str>>,
     /// The index in `T`, `U`, … of the next fresh name to try. It only grows, so each name is
     /// tried once however many signatures take a fresh one.
     fresh: usize,
+    /// Every name a bounds clause of the text writes, which a name given to an unbounded
+    /// variable skips.
+    bound: HashSet<Arc<str>>,
+    /// The unbounded variables opened so far, each by its number in order of opening: the
+    /// parent of each in a union-find forest whose trees are the variables printed as one.
+    /// Each tree's root is its smallest number, so the roots do not depend on the order of
+    /// the joins.
+    same: Vec<usize>,
+}
+
+/// How a variable a signature binds is printed ([`Scope`]).
+#[derive(Clone)]
+enum VarSlot {
+    /// By this name, with the bounds clause of its signature.
+    Name(Arc<str>),
+    /// By a name only where it stands in two places or more: the variable's number in
+    /// [`Scope::same`].
+    Free(usize),
 }
 
 impl Scope {
-    /// How the variable `v` is printed here: its printed name, or `None` for `_`.
-    fn name(&self, v: &Arc<str>) -> Option<&Arc<str>> {
-        self.names.get(v)?.last()?.as_ref()
+    /// How the variable `v` is printed here, or `None` if no signature around binds it.
+    fn slot(&self, v: &Arc<str>) -> Option<&VarSlot> {
+        self.names.get(v)?.last()
+    }
+
+    /// A new unbounded variable, alone in its tree.
+    fn free(&mut self) -> VarSlot {
+        let k = self.same.len();
+        self.same.push(k);
+        VarSlot::Free(k)
+    }
+
+    /// The root of the tree of the unbounded variable `k`, halving the path to it.
+    fn root(&mut self, mut k: usize) -> usize {
+        while self.same[k] != k {
+            self.same[k] = self.same[self.same[k]];
+            k = self.same[k];
+        }
+        k
     }
 
     /// Opens the variables `sig` binds, giving each bounded one a printed name, and returns
     /// them with their masks, in the order of `sig.bounds`. A name not printed around the
     /// signature is kept; otherwise the next of `T`, `U`, … not yet tried that is neither
     /// printed around it nor a name of its own nor one the program binds ([`fresh_name`]).
+    /// What a failed test leaves of an unbounded variable (`r else 0`, [`Narrow`]) is printed
+    /// as that variable: it holds no value the variable does not, so `g(r) = r else 0` is
+    /// `(r: T) -> 0 | T`.
     fn open(&mut self, sig: &Sig) -> Vec<(Arc<str>, u8)> {
         let mut out = Vec::new();
         for (v, &m) in &sig.bounds {
             if m & OTHER != 0 {
-                self.names.entry(v.clone()).or_default().push(None);
+                let slot = self.free();
+                self.names.entry(v.clone()).or_default().push(slot);
                 continue;
             }
             let name = if self.printed.contains(v) {
@@ -8373,14 +8414,29 @@ impl Scope {
                 v.clone()
             };
             self.printed.insert(name.clone());
+            self.bound.insert(name.clone());
             self.names
                 .entry(v.clone())
                 .or_default()
-                .push(Some(name.clone()));
+                .push(VarSlot::Name(name.clone()));
             out.push((name, m));
         }
         for v in sig.own.iter().filter(|v| !sig.bounds.contains_key(*v)) {
-            self.names.entry(v.clone()).or_default().push(None);
+            let slot = self.free();
+            self.names.entry(v.clone()).or_default().push(slot);
+        }
+        for need in &sig.needs {
+            let (NeedKind::Narrow(_), Some(left)) = (&need.kind, &need.result) else {
+                continue;
+            };
+            let free = |t: &Ty| match t.as_var().and_then(|v| self.slot(v)) {
+                Some(&VarSlot::Free(k)) => Some(k),
+                _ => None,
+            };
+            if let (Some(a), Some(b)) = (free(&need.on), free(left)) {
+                let (a, b) = (self.root(a), self.root(b));
+                self.same[a.max(b)] = a.min(b);
+            }
         }
         out
     }
@@ -8390,7 +8446,7 @@ impl Scope {
         let own = sig.own.iter().filter(|v| !sig.bounds.contains_key(*v));
         for v in sig.bounds.keys().chain(own) {
             let names = self.names.get_mut(v).expect("opened");
-            if let Some(Some(name)) = names.pop() {
+            if let Some(VarSlot::Name(name)) = names.pop() {
                 self.printed.remove(&name);
             }
         }
@@ -8537,21 +8593,69 @@ impl Ty {
         parts.push(Print::Vars(self, first));
     }
 
-    /// Writes the end of its text to `out`: the variables `scope` names, then `_` for the
-    /// others and the unknown, or `Never` if `first` says nothing is written yet and nothing is
-    /// to be.
-    fn write_vars(&self, mut first: bool, out: &mut String, scope: &Scope) {
-        let mut free = false;
+    /// Writes the end of its text to `out`, which closes it as the type `walk` last entered:
+    /// the variables printed by name, in code-point order, then `_` for the variables printed
+    /// so and the unknown, or `Never` if `first` says nothing is written yet and nothing is to
+    /// be. On the first pass of `walk` each unbounded variable is recorded and printed `_`; on
+    /// the second, one that stands in two places or more is written as a mark that
+    /// [`defs::name_vars`] names.
+    fn write_vars(&self, mut first: bool, out: &mut String, scope: &Scope, walk: &mut Walk) {
+        let node = walk
+            .open
+            .pop()
+            .expect("a type's end closes the type walk entered");
+        let mut names: Vec<&Arc<str>> = Vec::new();
+        let mut marks = Vec::new();
+        let mut blank = self.dynamic;
+        let at = walk.occ.len();
         for v in &self.vars {
-            match scope.name(v) {
-                Some(name) => {
+            match (scope.slot(v), &walk.plan) {
+                (Some(VarSlot::Name(name)), _) => names.push(name),
+                (Some(&VarSlot::Free(k)), None) => walk.occ.push(k),
+                (Some(&VarSlot::Free(k)), Some(plan)) => match plan.count[plan.root[k]] >= 2 {
+                    true => marks.push(plan.root[k]),
+                    false => blank = true,
+                },
+                (None, _) => blank = true,
+            }
+        }
+        if walk.plan.is_none() {
+            walk.nodes[node] = PrintNode {
+                end: walk.nodes.len(),
+                inst_end: scope.same.len(),
+                others: !first || !names.is_empty(),
+                blank,
+                occ: at..walk.occ.len(),
+            };
+            blank |= walk.occ.len() > at;
+        }
+        names.sort_unstable();
+        match marks.is_empty() {
+            true => {
+                for name in names {
                     separate(out, &mut first, " | ");
                     out.push_str(name);
                 }
-                None => free = true,
+            }
+            false => {
+                separate(out, &mut first, " | ");
+                marks.sort_unstable();
+                marks.dedup();
+                out.push(defs::UNION);
+                for name in names {
+                    out.push_str(name);
+                    out.push(defs::NEXT);
+                }
+                for r in marks {
+                    out.push(defs::VAR);
+                    out.push_str(&r.to_string());
+                    out.push(defs::NEXT);
+                }
+                out.pop();
+                out.push(defs::UNION_END);
             }
         }
-        if self.dynamic || free {
+        if blank {
             separate(out, &mut first, " | ");
             out.push('_');
         }
@@ -8561,7 +8665,167 @@ impl Ty {
     }
 }
 
+/// A type in the text being written, as the first pass of a [`Walk`] finds it.
+#[derive(Clone, Default)]
+struct PrintNode {
+    /// The number of the first type after it and the types inside it.
+    end: usize,
+    /// The number of unbounded variables opened once it is written ([`Scope::same`]).
+    inst_end: usize,
+    /// Whether its union holds a member that is not `_`: a set, a tuple, a function or a
+    /// variable bounded by carriers.
+    others: bool,
+    /// Whether its union holds `_` whatever the names: the unknown, or a variable no
+    /// signature around it binds.
+    blank: bool,
+    /// Its unbounded variables, in [`Walk::occ`].
+    occ: std::ops::Range<usize>,
+}
+
+/// The walks of one text by [`write_parts`]. The first writes it as if every unbounded
+/// variable stood once, numbering the types it holds in the order it enters them and
+/// recording where each unbounded variable stands. If one stands in two places or more, or a
+/// union holds `_` beside other members, which then prints `_` alone, a [`Plan`] is made and
+/// the text is written again by it; else the first text stands.
+#[derive(Default)]
+struct Walk {
+    plan: Option<Plan>,
+    nodes: Vec<PrintNode>,
+    /// The types entered and not yet closed, innermost last.
+    open: Vec<usize>,
+    /// The unbounded variables of each type, by its [`PrintNode::occ`]: numbers of [`Scope::same`]
+    /// on the first pass, the roots of their trees once the plan is made.
+    occ: Vec<usize>,
+    /// The number of the next type the second pass enters.
+    next: usize,
+}
+
+/// What the second walk of a text writes ([`Walk`]).
+struct Plan {
+    /// For each type, whether its union is written `_` alone, with nothing inside it.
+    absorbed: Vec<bool>,
+    /// For each unbounded variable, the root of its tree.
+    root: Vec<usize>,
+    /// For each root, the number of types whose union it stands in, outside the unions
+    /// written `_`.
+    count: Vec<usize>,
+}
+
+impl Walk {
+    /// Enters a type at `out`: whether its parts are to be written. On the second pass a type
+    /// whose union is written `_` is written so here, and the walk steps over the types and
+    /// variables inside it.
+    fn enter(&mut self, out: &mut String, scope: &mut Scope) -> bool {
+        let Some(plan) = &self.plan else {
+            self.open.push(self.nodes.len());
+            self.nodes.push(PrintNode::default());
+            return true;
+        };
+        let k = self.next;
+        if plan.absorbed[k] {
+            let node = &self.nodes[k];
+            out.push('_');
+            self.next = node.end;
+            let opened = scope.same.len();
+            scope.same.extend(opened..node.inst_end);
+            return false;
+        }
+        self.next += 1;
+        self.open.push(k);
+        true
+    }
+
+    /// The plan of the second pass, after the first, or `None` if the first text stands.
+    ///
+    /// A union that holds `_` beside other members is written `_` alone, since `_` holds every
+    /// value (DESIGN.md sec:diagnostics, "Types in a message"), and so are the types inside
+    /// it. A variable that stood in two places then may stand in one, which makes it `_`, so
+    /// the unions are written `_` from a work list: each type is taken out once, by the
+    /// outermost union that takes it, and each variable's count reaches one at most once,
+    /// when the unions it is left in are looked at again.
+    // Complexity tradeoff: naive, a variable's places counted again after each union written
+    // `_`, and the variables named by scanning the text once per name, O(n²) in the size n of
+    // the type; used, one count per variable, lowered as the types inside a union written `_`
+    // are taken out, each type and each place once, a union-find over the variables that are
+    // printed as one, the places of each union sorted once to count a variable once in it, and a
+    // hash map from each variable to its name ([`defs::name_vars`]), so the two walks and the
+    // naming are O(n log n) (COMPLEXITY.md F169). Memory: one node per type of
+    // the text and one entry per place of a variable.
+    fn plan(&mut self, scope: &mut Scope) -> Option<Plan> {
+        let root: Vec<usize> = (0..scope.same.len()).map(|k| scope.root(k)).collect();
+        // Each variable counts once in a union: `x` and what `x else 0` leaves of it are one.
+        let mut occ = Vec::with_capacity(self.occ.len());
+        for node in &mut self.nodes {
+            let start = occ.len();
+            occ.extend(self.occ[node.occ.clone()].iter().map(|&k| root[k]));
+            occ[start..].sort_unstable();
+            let mut kept = start;
+            for i in start..occ.len() {
+                if i == start || occ[i] != occ[kept - 1] {
+                    occ[kept] = occ[i];
+                    kept += 1;
+                }
+            }
+            occ.truncate(kept);
+            node.occ = start..kept;
+        }
+        self.occ = occ;
+        let mut count = vec![0; root.len()];
+        let mut places: Vec<Vec<usize>> = vec![Vec::new(); root.len()];
+        for (k, node) in self.nodes.iter().enumerate() {
+            for &r in &self.occ[node.occ.clone()] {
+                count[r] += 1;
+                places[r].push(k);
+            }
+        }
+        let absorbs = |node: &PrintNode, count: &[usize]| {
+            let vars = &self.occ[node.occ.clone()];
+            (node.blank || vars.iter().any(|&r| count[r] == 1))
+                && (node.others || vars.iter().any(|&r| count[r] >= 2))
+        };
+        let mut work: Vec<usize> = (0..self.nodes.len())
+            .filter(|&k| absorbs(&self.nodes[k], &count))
+            .collect();
+        if work.is_empty() && count.iter().all(|&c| c < 2) {
+            return None;
+        }
+        let mut gone = vec![false; self.nodes.len()];
+        let mut absorbed = vec![false; self.nodes.len()];
+        while let Some(k) = work.pop() {
+            if gone[k] || !absorbs(&self.nodes[k], &count) {
+                continue;
+            }
+            absorbed[k] = true;
+            let mut m = k;
+            while m < self.nodes[k].end {
+                // A type already taken out is the outermost of a union written `_` before,
+                // so the types inside it are taken out too.
+                if gone[m] {
+                    m = self.nodes[m].end;
+                    continue;
+                }
+                gone[m] = true;
+                for &r in &self.occ[self.nodes[m].occ.clone()] {
+                    count[r] -= 1;
+                    if count[r] == 1 {
+                        work.extend(places[r].iter().filter(|&&j| !gone[j]));
+                    }
+                }
+                m += 1;
+            }
+        }
+        // A union written `_` inside another is marked too, but the second pass never enters
+        // it: it steps over the outer one whole.
+        Some(Plan {
+            absorbed,
+            root,
+            count,
+        })
+    }
+}
+
 /// A part of the text of a type still to be written, on the stack [`write_parts`] keeps.
+#[derive(Clone)]
 enum Print<'a> {
     Text(&'a str),
     Ty(&'a Ty, PrintAt),
@@ -8657,6 +8921,11 @@ impl<'a> Morphism<'a> {
 /// pop in order. The time is that of the text; a signature opens its variables when it is
 /// reached and closes them after its arrows, so `scope` is as a recursive walk would have it.
 ///
+/// An unbounded variable is written `_` where it stands once in the text and by a name where it
+/// stands in two places or more, and a union that holds `_` is `_` ([`Walk`]): when the first
+/// walk finds either, the text is written again with the names, and they are given last
+/// ([`defs::name_vars`]).
+///
 /// The kernel sets in the text are written last, all together by name
 /// ([`KType::surfaces_by_name`]), each where it stands: a part used more than once among them
 /// gets a definition `type Tk = …;`, declared on a line of its own before the whole text
@@ -8668,17 +8937,80 @@ fn write_parts<'a>(
     spell: Option<Spell<'_>>,
 ) {
     let base = out.len();
+    let (fresh, opened) = (scope.fresh, scope.same.len());
+    let mut walk = Walk::default();
+    let mut kernel = walk_parts(start.clone(), out, scope, &mut walk);
+    let mut marked = false;
+    if let Some(plan) = walk.plan(scope) {
+        out.truncate(base);
+        scope.fresh = fresh;
+        scope.same.truncate(opened);
+        marked = plan.count.iter().any(|&c| c >= 2);
+        if marked {
+            out.push(defs::VARS);
+        }
+        walk.plan = Some(plan);
+        kernel = walk_parts(start, out, scope, &mut walk);
+        if marked {
+            out.push(defs::VARS_END);
+        }
+    }
+    let mut def_names = HashSet::new();
+    if !kernel.sets.is_empty() {
+        let texts = match spell {
+            Some(spell) => KType::surfaces_spelled(&kernel.sets, spell),
+            None => KType::surfaces_by_name(&kernel.sets),
+        };
+        let rest = out.split_off(base);
+        for (name, body) in &texts.defs {
+            zed_kernel::types::defs::declare(out, name, body).expect("a String takes any text");
+            def_names.insert(name.clone());
+        }
+        let mut from = 0;
+        for (at, text) in kernel.at.iter().zip(&texts.roots) {
+            let at = at - base;
+            out.push_str(&rest[from..at]);
+            out.push_str(text);
+            from = at;
+        }
+        out.push_str(&rest[from..]);
+    }
+    // Inside a message the marks stay, and the message names them with its own words
+    // (`defs::lift`), so that a variable is never named as another type of the message is.
+    if marked && !defs::active() {
+        defs::name_vars(out, base, &|w| {
+            scope.bound.contains(w) || def_names.contains(w)
+        });
+    }
+}
+
+/// One walk of [`write_parts`] from `start`, which writes the text to `out` with its kernel
+/// sets left out, and gives them with their places.
+fn walk_parts<'a>(
+    start: Print<'a>,
+    out: &mut String,
+    scope: &mut Scope,
+    walk: &mut Walk,
+) -> Kernel {
     let mut kernel = Kernel::default();
     let mut stack = vec![start];
     while let Some(part) = stack.pop() {
         let from = stack.len();
         match part {
             Print::Text(text) => out.push_str(text),
-            Print::Ty(t, at) => t.parts(out.len(), &mut kernel, &mut stack, false, at),
-            Print::Found(t) => t.parts(out.len(), &mut kernel, &mut stack, true, PrintAt::Result),
+            Print::Ty(t, at) => {
+                if walk.enter(out, scope) {
+                    t.parts(out.len(), &mut kernel, &mut stack, false, at);
+                }
+            }
+            Print::Found(t) => {
+                if walk.enter(out, scope) {
+                    t.parts(out.len(), &mut kernel, &mut stack, true, PrintAt::Result);
+                }
+            }
             Print::Sig(s, at) => s.parts(scope, &mut stack, at),
             Print::Family(s, at) => s.family_parts(scope, &mut stack, at),
-            Print::Vars(t, first) => t.write_vars(first, out, scope),
+            Print::Vars(t, first) => t.write_vars(first, out, scope, walk),
             Print::Bounds(s, bounds) => {
                 for (i, (v, m)) in bounds.iter().enumerate() {
                     out.push_str(if i == 0 { " for " } else { ", " });
@@ -8691,25 +9023,7 @@ fn write_parts<'a>(
         }
         stack[from..].reverse();
     }
-    if kernel.sets.is_empty() {
-        return;
-    }
-    let texts = match spell {
-        Some(spell) => KType::surfaces_spelled(&kernel.sets, spell),
-        None => KType::surfaces_by_name(&kernel.sets),
-    };
-    let rest = out.split_off(base);
-    for (name, body) in &texts.defs {
-        zed_kernel::types::defs::declare(out, name, body).expect("a String takes any text");
-    }
-    let mut from = 0;
-    for (at, text) in kernel.at.iter().zip(&texts.roots) {
-        let at = at - base;
-        out.push_str(&rest[from..at]);
-        out.push_str(text);
-        from = at;
-    }
-    out.push_str(&rest[from..]);
+    kernel
 }
 
 /// The kernel sets of a text still to be written ([`write_parts`]): where each stands in the

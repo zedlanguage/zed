@@ -12,6 +12,10 @@
 //! `Value::Str`), and the source lines quoted under a message are drawn after [`lift`]; test
 //! l01_29 `markers`. A text with no part used twice holds none, and is the text it was before
 //! the step.
+//!
+//! [`lift`] also names the type variables a message's types write by name (UNDERSCORE-print),
+//! which a printed type marks with the noncharacters U+FDD9 to U+FDDE ([`VARS`]), so that no name
+//! it takes is a word the message writes elsewhere ([`name_vars`]).
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -25,6 +29,94 @@ const REF: char = '\u{FDD5}';
 const END: char = '\u{FDD6}';
 /// A definition whose place is not known yet, written while the printer places the others.
 pub(super) const WAIT: &str = "\u{FDD7}";
+
+/// Opens one printed type whose unbounded variables are still to be named (DESIGN
+/// sec:diagnostics, "Types in a message"): the names restart in each, so two types printed
+/// apart name their variables apart, and equal types are equal texts. Unicode noncharacters,
+/// as the references are.
+pub const VARS: char = '\u{FDD9}';
+/// Closes what [`VARS`] opens.
+pub const VARS_END: char = '\u{FDDA}';
+/// Opens the members of a union written by name in such a type, separated by [`NEXT`]: each
+/// a name, or [`VAR`] and the number of a variable within its type.
+pub const UNION: char = '\u{FDDB}';
+/// Closes what [`UNION`] opens.
+pub const UNION_END: char = '\u{FDDC}';
+/// Starts a variable of a union of [`UNION`].
+pub const VAR: char = '\u{FDDD}';
+/// Separates the members of a union of [`UNION`].
+pub const NEXT: char = '\u{FDDE}';
+
+/// Names the variables marked in `out` from `from` on ([`VARS`]): in each marked type, each the
+/// next of `T`, `U`, `V`, `W`, `T5`, … that the program does not bind and `taken` does not hold
+/// ([`fresh_name`]), in the order the variables are first met reading the type, and writes each
+/// union's members by name in code-point order. A printer names its text at once outside a
+/// message; inside one, [`lift`] names them, and `taken` is every word of the message.
+///
+/// Complexity tradeoff: linear in the text, with a hash lookup per mark, plus a sort of each
+/// union's k members, O(k log k). Naming each variable
+/// where it is first written, and looking back over the text for a name in use, would be
+/// quadratic in a type with many variables (COMPLEXITY.md F169).
+pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
+    if !out[from..].contains(VARS) {
+        return;
+    }
+    let text = out.split_off(from);
+    let mut named: HashMap<&str, String> = HashMap::new();
+    let mut n = 0;
+    let mut members: Vec<String> = Vec::new();
+    let mut rest = text.as_str();
+    while let Some(i) = rest.find([VARS, VARS_END, UNION]) {
+        out.push_str(&rest[..i]);
+        let c = rest[i..].chars().next().expect("a mark was found");
+        let tail = &rest[i + c.len_utf8()..];
+        rest = match c {
+            VARS | VARS_END => {
+                named.clear();
+                n = 0;
+                tail
+            }
+            _ => {
+                let end = tail.find(UNION_END).expect("a union of marks is closed");
+                members.clear();
+                for m in tail[..end].split(NEXT) {
+                    members.push(match m.strip_prefix(VAR) {
+                        Some(k) => named
+                            .entry(k)
+                            .or_insert_with(|| fresh_name(Names::Variables, &mut n, taken))
+                            .clone(),
+                        None => m.to_string(),
+                    });
+                }
+                members.sort_unstable();
+                for (j, m) in members.iter().enumerate() {
+                    if j > 0 {
+                        out.push_str(" | ");
+                    }
+                    out.push_str(m);
+                }
+                &tail[end + UNION_END.len_utf8()..]
+            }
+        };
+    }
+    out.push_str(rest);
+}
+
+/// Names the variables marked in `texts` ([`name_vars`]), skipping every word they write.
+fn name_all_vars(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) {
+    if !texts.iter().any(|t| t.contains(VARS)) {
+        return;
+    }
+    let words: HashSet<String> = texts
+        .iter()
+        .flat_map(|t| t.split(|c: char| !(c.is_alphanumeric() || c == '_')))
+        .filter(|w| !w.is_empty())
+        .map(String::from)
+        .collect();
+    for text in texts.iter_mut() {
+        name_vars(text, 0, &|w| words.contains(w) || taken(w));
+    }
+}
 
 /// The definitions printed while [`collect`] is on: each body, in which references stand for
 /// the definitions it uses, and the place of each body known in full.
@@ -59,7 +151,7 @@ pub fn collect() -> Collecting {
 }
 
 /// Whether printed types put their definitions in the table.
-pub(super) fn active() -> bool {
+pub fn active() -> bool {
     TABLE.with_borrow(Option::is_some)
 }
 
@@ -124,11 +216,13 @@ fn rename(text: &str, names: &HashMap<usize, String>) -> String {
 /// its uses but where definitions refer to each other in a cycle. Numbers are given in that
 /// order, which is found from the texts alone, so equal texts get equal names. A name is
 /// skipped if the program binds it, `taken` says so or a text holds it as a word, so a
-/// variable `T5` the message writes leaves `T5` to it ([`fresh_name`]). `texts` with no
-/// reference are left as they are, and give no definition.
+/// variable `T5` the message writes leaves `T5` to it ([`fresh_name`]). First the unbounded
+/// variables the texts mark are named, skipping every word of the texts ([`name_vars`]). `texts`
+/// with no mark or reference are left as they are, and give no definition.
 ///
 /// Time linear in the texts and the bodies reached, with a hash lookup per reference.
 pub fn lift(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) -> Vec<(String, String)> {
+    name_all_vars(texts, taken);
     if !texts.iter().any(|t| t.contains(REF)) {
         return Vec::new();
     }
@@ -206,7 +300,7 @@ impl fmt::Display for Declaration<'_> {
 /// `text` alone, finished: each of its definitions declared on a line of its own
 /// ([`declare`]), then the text, as a type printed outside a message is.
 pub fn plain(text: &str) -> String {
-    if !text.contains(REF) {
+    if !text.contains([REF, VARS]) {
         return text.into();
     }
     let mut root = text.to_string();

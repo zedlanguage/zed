@@ -56,13 +56,14 @@ fn comparison_checks_at_every_ordered_carrier() {
 
 #[test]
 fn a_parameter_any_value_fits_gets_a_type_variable() {
-    // A variable no carriers bound is printed `_` (DESIGN.md L1.26), and is still the
+    // A variable no carriers bound is printed `_` where it stands once, and by a name where it
+    // stands in two places or more (DESIGN.md L1.26, sec:diagnostics); it is still the
     // signature's own: two such parameters are two variables.
     let s = sig_of("label(n) = \"n = ${n}\";\n", "label");
     assert_eq!(s.to_string(), "(n: _) -> String");
     assert_eq!(s.own.len(), 1);
     let s = sig_of("pair(a, b) = (a, b);\n", "pair");
-    assert_eq!(s.to_string(), "(a: _, b: _) -> (_, _)");
+    assert_eq!(s.to_string(), "(a: T, b: U) -> (T, U)");
     let [a, b] = &s.arrows[0].params[..] else {
         panic!("two parameters")
     };
@@ -73,8 +74,8 @@ fn a_parameter_any_value_fits_gets_a_type_variable() {
         [Row::new(vec![a.clone(), b.clone()])]
     );
     let s = sig_of("g(r) = r else 0;\n", "g");
-    assert_eq!(s.to_string(), "(r: _) -> 0 | _");
-    // The `_` of the result is what `else` leaves of `r`: its own variable, which a call
+    assert_eq!(s.to_string(), "(r: T) -> 0 | T");
+    // The `T` of the result is what `else` leaves of `r`: its own variable, which a call
     // gives as the argument without its atoms (CHECK-else-notfound).
     assert_ne!(s.arrows[0].result.vars, s.arrows[0].params[0].vars);
     // Only the condition is fixed; the branches stay generic, each its own variable.
@@ -82,7 +83,7 @@ fn a_parameter_any_value_fits_gets_a_type_variable() {
         "pick(positional c, positional a, positional b) = if c { a } else { b };\n",
         "pick",
     );
-    assert_eq!(s.to_string(), "(bool, _, _) -> _");
+    assert_eq!(s.to_string(), "(bool, T, U) -> T | U");
     let ps = &s.arrows[0].params;
     assert_ne!(ps[1], ps[2]);
     let both: std::collections::BTreeSet<_> = ps[1].vars.union(&ps[2].vars).cloned().collect();

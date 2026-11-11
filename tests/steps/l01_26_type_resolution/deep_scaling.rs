@@ -113,7 +113,7 @@ fn nested_around(n: usize) -> String {
 
 #[test]
 fn a_variable_nested_in_tuples_checks_in_linear_time() {
-    assert_eq!(sig(&nested_around(2), "f"), "(_) -> ((_, 1), 1)");
+    assert_eq!(sig(&nested_around(2), "f"), "(T) -> ((T, 1), 1)");
     zed_tests::deep::on_small_stack(|| {
         let units = resolved(500, nested_around);
         scaling::check_order("a variable nested in n tuples", 500, 1, |n| {

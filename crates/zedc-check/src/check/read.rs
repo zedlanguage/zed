@@ -15,7 +15,7 @@ use zed_kernel::num::{TooLarge, bytes_of};
 use zed_kernel::{Rat, Value};
 
 use super::ty::{Binds, NodeId, Row, Shape, Sig, Ty};
-use super::{carrier_mask, denoted_with};
+use super::{carrier_mask, denoted_free};
 use zedc_syntax::ast::{self, Type, TypeKind};
 use zedc_syntax::lex::{self, Part, Tok};
 use zedc_syntax::parse::{self, TOP};
@@ -115,7 +115,28 @@ fn read_part(text: &str, head: &str, named: &mut Binds, seen: &mut Seen) -> Resu
             }
         }
     }
-    let ty = denoted_with(&t, binds);
+    // A capitalized name written twice or more that neither a definition nor a clause binds is a
+    // variable of the outermost signature around it (sec:type_resolution, rule 4), as the
+    // printer writes a variable that stands in two places or more (UNDERSCORE-print); a name
+    // written once stays undefined, as in a written signature. One pass over the tokens with a
+    // hash count, O(n).
+    let clauses: HashSet<&str> = bounded.iter().copied().collect();
+    let mut times: HashMap<&str, usize> = HashMap::new();
+    for t in &tokens {
+        if let Tok::Name(n) = &t.tok
+            && n.starts_with(|c: char| c.is_ascii_uppercase())
+            && !binds.contains_key(n.as_str())
+            && !clauses.contains(n.as_str())
+        {
+            *times.entry(n.as_str()).or_default() += 1;
+        }
+    }
+    let free: HashSet<Arc<str>> = (times.into_iter())
+        .filter(|&(_, k)| k >= 2)
+        .map(|(n, _)| n.into())
+        .collect();
+    found.extend(free.iter().cloned());
+    let ty = denoted_free(&t, binds, &free);
     // Each variable the part bounds must be on a signature its type reaches, at any depth,
     // the definitions it names included. Only a part with a `for` clause is walked: with no
     // bound there is nothing to find.

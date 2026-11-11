@@ -1865,10 +1865,9 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The step that says the function `id`, of signature `sig`, is declared here (DESIGN.md
     /// sec:diagnostics). It names the parameters written with no type and says that the type it
-    /// shows is the one the checker found, not one written, and which of its places that type
-    /// writes `_` have the same type at each call ([`shared_places`]): `` `k` is declared here
-    /// with no type written for `x`, `y` or its result; the type the checker found for `k` is
-    /// `(_, _) -> _`, in which, at each call, `y` and the result have the same type ``.
+    /// shows is the one the checker found, not one written: `` `k` is declared here with no
+    /// type written for `x`, `y` or its result; the type the checker found for `k` is
+    /// `(_, T) -> T` ``, where `T` shows the places that have the same type at each call.
     /// A declaration writes no result type at this layer (the syntax tree has none), so the
     /// result is always among the types not written, and the step never shows a type as
     /// written.
@@ -1880,18 +1879,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         unwritten.push("its result".into());
         let sig = sig.solved_with(&|v| self.stale(v));
-        let shared = shared_places(&sig);
         let name = &f.name;
-        let mut text = format!(
+        format!(
             "`{name}` is declared here with no type written for {}; the type the checker found \
              for `{name}` is `{sig}`",
             or_list(&unwritten)
-        );
-        if !shared.is_empty() {
-            text.push_str(", in which, at each call, ");
-            text.push_str(&and_list(&shared));
-        }
-        text
+        )
     }
 
     /// [`emptied`] of each parameter type written on the function `id`, in order.
@@ -8227,8 +8220,18 @@ pub fn denoted(t: &Type) -> Ty {
 /// The type a type expression denotes, each name `leaves` binds standing for its type before
 /// any other reading of the name (OSP-diag: the leaves of layer L10 a printed type holds).
 pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
+    denoted_free(t, leaves, &HashSet::new())
+}
+
+/// [`denoted_with`], each name of `free` that no clause around it bounds and no binding of
+/// `leaves` reads being a variable of the outermost function type around it, the signature's
+/// own (DESIGN.md sec:type_resolution, rule 4: free names in a signature are the scheme's
+/// variables). A printed type writes such a name for a variable that stands in two places or
+/// more (UNDERSCORE-print), which only `parse_type` reads back.
+pub fn denoted_free(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> Ty {
     Denote {
         leaves,
+        free,
         bound: HashMap::new(),
         open: Vec::new(),
         empty: None,
@@ -8253,6 +8256,7 @@ pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
 fn emptied(t: &Type, out: &mut Vec<Note>) {
     let mut d = Denote {
         leaves: &Binds::new(),
+        free: &HashSet::new(),
         bound: HashMap::new(),
         open: Vec::new(),
         empty: Some(HashSet::new()),
@@ -8437,47 +8441,6 @@ fn explain_empty(t: &Type, found: impl Fn(&Type) -> bool, out: &mut Vec<Note>) {
     }
 }
 
-/// For each own variable of the one arrow of `sig` that its text writes `_`, and that stands in
-/// two of its places or more, a clause that names those places, in the order the variables are
-/// first met: `` `y` and the result have the same type ``. A place is a parameter, by its name,
-/// or the result, each whole or `part of` it. A type syntax that writes one variable at two
-/// places names it, and a name no bounds clause binds is a later layer's form (step L2.12), so
-/// the step says in words what `_` leaves out. With several arrows a place would also need its
-/// arrow, so no clause is given. Each place's variables are found once ([`Ty::vars_in`]), so the
-/// time is linear in the size of `sig`.
-fn shared_places(sig: &Sig) -> Vec<String> {
-    let [arrow] = &sig.arrows[..] else {
-        return Vec::new();
-    };
-    let written_every =
-        |v: &Arc<str>| sig.own.contains(v) && sig.bounds.get(v).is_none_or(|m| m & OTHER != 0);
-    let mut places: HashMap<Arc<str>, Vec<String>> = HashMap::new();
-    let mut order = Vec::new();
-    let named = (arrow.params.iter()).zip(sig.params.iter().map(|p| format!("`{}`", p.name)));
-    for (t, what) in named.chain([(&arrow.result, "the result".to_string())]) {
-        let mut vars = Vars::default();
-        t.vars_in(&mut vars);
-        for v in vars.order.into_iter().filter(written_every) {
-            let place = match t.as_var() == Some(&v) {
-                true => what.clone(),
-                false => format!("part of {what}"),
-            };
-            match places.entry(v) {
-                Entry::Occupied(mut e) => e.get_mut().push(place),
-                Entry::Vacant(e) => {
-                    order.push(e.key().clone());
-                    e.insert(vec![place]);
-                }
-            }
-        }
-    }
-    (order.iter())
-        .map(|v| &places[v])
-        .filter(|p| p.len() >= 2)
-        .map(|p| format!("{} have the same type", and_list(p)))
-        .collect()
-}
-
 /// `items` joined as a list of choices in a sentence: `a`, `a or b`, `a, b or c`.
 fn or_list(items: &[String]) -> String {
     match items {
@@ -8502,6 +8465,9 @@ fn and_list(items: &[String]) -> String {
 /// linear in the size of the type, however deeply clauses nest.
 struct Denote<'a> {
     leaves: &'a Binds,
+    /// The names read as variables of the outermost function type around them where no clause
+    /// bounds them ([`denoted_free`]).
+    free: &'a HashSet<Arc<str>>,
     /// Each variable a clause around the place bounds: its mask and the number of function
     /// types open at the clause, which is the index in `open` of its signature.
     bound: HashMap<&'a str, (u8, usize)>,
@@ -8519,6 +8485,8 @@ struct Reading {
     bounds: BTreeMap<Arc<str>, u8>,
     /// Those of them a parameter holds, at any depth ([`Sig::held`]).
     held: BTreeSet<Arc<str>>,
+    /// The free names of [`Denote::free`] it is the home of, with no bound.
+    free: BTreeSet<Arc<str>>,
     /// Whether the place is in its parameters.
     params: bool,
 }
@@ -8616,13 +8584,17 @@ impl<'a> Denote<'a> {
                 v => {
                     // A use outside every function type of its clause, as in `int \ T`, bounds
                     // nothing; resolve rejects it.
-                    if let Some(&(mask, at)) = self.bound.get(v)
-                        && let Some(home) = self.open.get_mut(at)
-                    {
-                        home.bounds.insert(v.into(), mask);
-                        if home.params {
-                            home.held.insert(v.into());
+                    if let Some(&(mask, at)) = self.bound.get(v) {
+                        if let Some(home) = self.open.get_mut(at) {
+                            home.bounds.insert(v.into(), mask);
+                            if home.params {
+                                home.held.insert(v.into());
+                            }
                         }
+                    } else if self.free.contains(v)
+                        && let Some(home) = self.open.first_mut()
+                    {
+                        home.free.insert(v.into());
                     }
                     Ty::var(v.into())
                 }
@@ -8839,6 +8811,7 @@ impl<'a> Denote<'a> {
         let mut sig = Sig::one(names, first.params, first.result);
         sig.arrows.extend(arrows);
         sig.own.extend(open.bounds.keys().cloned());
+        sig.own.extend(open.free);
         sig.bounds = open.bounds;
         sig.held = open.held;
         Ty::func(Arc::new(sig))

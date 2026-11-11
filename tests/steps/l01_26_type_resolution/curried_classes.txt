@@ -158,15 +158,15 @@ err this argument is passed by position, and the parameter it reaches, `x` of `p
   note repair: declare `x` `positional` in `p`
 === "p(x) = (y) -> (z) -> (x div 1, y, z);\nq = p(1)(\"s\")(true);\nr = p(1)(2)(3) + 1;\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
-sig p = (x: int) -> (_) -> (_) -> (int, _, _)
+sig p = (x: int) -> (T) -> (U) -> (int, T, U)
 top q = Never
 top r = Never
 err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1]
-  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: int) -> (_) -> (_) -> (int, _, _)`
+  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: int) -> (T) -> (U) -> (int, T, U)`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
 err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …` [1]
-  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: int) -> (_) -> (_) -> (int, _, _)`
+  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: int) -> (T) -> (U) -> (int, T, U)`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
 === "o(x) = (y) -> (z) -> x div 1;\nq = o(1)(2)(3) == 2;\nw = (o(1), 0);\n"

@@ -802,9 +802,11 @@ fn a_lambda_whose_uses_the_bound_does_not_allow_is_an_error() {
             "the lambda is `(a: T, b: T) -> T for T in int | f64 | rat`, \
              not `(a: T, b: U) -> T for T in int | f64, U in int`: it is passed where a function of that type is expected, and its own type does not fit that one [(a, b) -> a + b]",
         ),
+        // `b` and the result have one type at each call, a variable; it is named `U`, since
+        // the message writes `T` for the type `mix` declares.
         (
             "y = mix(g: (a, b) -> b);\n",
-            "the lambda is `(a: _, b: _) -> _`, not `(a: T, b: int) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one \
+            "the lambda is `(a: _, b: U) -> U`, not `(a: T, b: int) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one \
              [(a, b) -> b]",
         ),
         // The inner `p_wide` gives an f64, so `x` is an f64, and `p_wide` passes an int too.

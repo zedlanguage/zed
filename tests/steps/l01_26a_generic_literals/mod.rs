@@ -349,9 +349,9 @@ fn an_operation_on_literals_keeps_its_value_in_an_if() {
 #[test]
 fn a_literal_in_a_returned_tuple_is_an_int() {
     // DESIGN.md step L1.26a: an integer literal is an `int` "as a component of a returned
-    // tuple, so `f(x) = (x, 1)` is `(x: _) -> (_, 1)`".
+    // tuple, so `f(x) = (x, 1)` is `(x: T) -> (T, 1)`".
     let src = "f(x) = (x, 1);\n";
-    assert_eq!(sig(src, "f"), "(x: _) -> (_, 1)");
+    assert_eq!(sig(src, "f"), "(x: T) -> (T, 1)");
     let run = format!("{src}a = f(x: 2.5f64);\nb = f(x: \"s\");\n");
     assert_eq!(value(&run, "a"), "(2.5, 1)");
     assert_eq!(value(&run, "b"), "(\"s\", 1)");
