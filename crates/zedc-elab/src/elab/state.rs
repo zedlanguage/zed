@@ -33,6 +33,9 @@ pub(super) struct Elab<'a> {
     pub(super) passing: HashMap<Span, Arc<str>>,
     /// The calls being guarded.
     pub(super) guarding: HashSet<Span>,
+    /// The calls being read at a carrier ([`zedc_check::check::Fit::Read`]), each while it is
+    /// elaborated.
+    pub(super) reading: HashSet<Span>,
     fresh: usize,
     pub(super) tests: Vec<Test>,
     pub(super) errors: Vec<Error>,
@@ -73,6 +76,7 @@ impl<'a> Elab<'a> {
             info,
             passing: HashMap::new(),
             guarding: HashSet::new(),
+            reading: HashSet::new(),
             fresh: 0,
             tests: Vec::new(),
             errors: Vec::new(),

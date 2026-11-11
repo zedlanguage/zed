@@ -11,6 +11,7 @@ mod call_arguments;
 mod design_menus;
 mod fixes;
 mod lazy_carrier;
+mod lit_branch_ops;
 mod lit_branches;
 mod scaling;
 mod spelling;
@@ -302,10 +303,9 @@ fn literal_branches_take_int_where_the_result_is_used_at_int() {
 }
 
 #[test]
-#[ignore = "open: through a call, `h(g(c))`, the result `2 | 1` of `g` is a value, not a \
-            literal, and nothing fixes it at `f64` without converting it; the `if` written \
-            in the argument is tested in lit_branches (LIT-branch-carrier)"]
 fn literal_branches_take_f64_where_the_result_is_used_at_f64() {
+    // Through a call, `h(g(c))`: the result of `g` lists literal values alone, so it is read
+    // at the carrier of the parameter (item LIT-branch-op-value, tested in lit_branch_ops).
     // DESIGN.md step L1.26a: "`z: f64 = if c { 2 } else { 1 }` and `z: f64 = g(c)` read both
     // branches at `f64`". A declared binding is layer L10, so the result is used here at a
     // parameter of type `f64`, which fixes the carrier the same way (sec:type_resolution rule
@@ -338,6 +338,9 @@ fn an_operation_on_literals_keeps_its_value_in_an_if() {
     // `if c { 1 + 1 } else { 1.5 }` is `2 | 1.5`".
     let src = "g(positional c: bool) = if c { 1 + 1 } else { 1.5 };\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
+    // The order zedc prints today, `int` values before `f64` ones. The author's answer B to
+    // A92 (2026-11-11) puts numeric literals ascending, `1.5 | 2`; ledger item LIT-print-order
+    // changes the printer and this pin with it.
     assert_eq!(sig(src, "g"), "(bool) -> 2 | 1.5");
 }
 

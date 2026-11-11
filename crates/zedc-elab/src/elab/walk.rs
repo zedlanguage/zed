@@ -140,6 +140,8 @@ struct SeqF<'a> {
 enum Frame<'a> {
     Seq(Box<SeqF<'a>>),
     Unary(Prim),
+    /// A call read at a carrier ([`Fit::Read`]), by its span, once elaborated: the cast to it.
+    Read(Span, Prim),
     /// A generic literal of [`check::Info::witness`], by its span, once elaborated: it takes
     /// the carrier of the value of the parameter of that binder.
     Witness(Span, usize),
@@ -596,9 +598,25 @@ impl<'a> Elab<'a> {
             self.passes(m, e, at);
             return;
         }
-        if let Some(fit) = info.fits.get(&e.span) {
-            self.fit(m, e, fit);
-            return;
+        match info.fits.get(&e.span) {
+            // A call of literal values read at a carrier: the call, then its value cast,
+            // which the checker proved exact for each value the call gives.
+            Some(Fit::Read(c)) => {
+                if self.reading.insert(e.span) {
+                    let p = match c {
+                        check::ty::Carrier::Rat => Prim::CastRat,
+                        _ => Prim::CastF64,
+                    };
+                    m.k(Frame::Read(e.span, p));
+                    m.stack.push(Job::Expr(e));
+                    return;
+                }
+            }
+            Some(fit) => {
+                self.fit(m, e, fit);
+                return;
+            }
+            None => {}
         }
         if let Some(s) = lit_span(e)
             && let Some(&id) = info.witness.get(&s)
@@ -1427,6 +1445,11 @@ impl<'a> Elab<'a> {
                 }
             }
             Frame::Unary(p) => {
+                let t = m.t().map(|a| Term::Prim(p, vec![a]));
+                m.give(t);
+            }
+            Frame::Read(s, p) => {
+                self.reading.remove(&s);
                 let t = m.t().map(|a| Term::Prim(p, vec![a]));
                 m.give(t);
             }

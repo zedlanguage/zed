@@ -97,6 +97,12 @@ pub enum Fit {
         /// The type's parameter for each of the function's.
         from: Vec<usize>,
     },
+    /// A call whose type lists numeric literal values alone, as `g(c)` with `g(positional c:
+    /// bool) = if c { 2 } else { 1 }`, at a parameter of the one numeric carrier recorded:
+    /// each value is read at that carrier, and every one of them is exactly a value of it
+    /// (L1.26a: "`z: f64 = g(c)` read both branches at `f64`"). Elaboration casts the call's
+    /// value to the carrier, which the check proved exact for each value the call can give.
+    Read(Carrier),
 }
 
 /// Why a call's arguments do not fill its function's parameters. The checker and
@@ -490,9 +496,37 @@ struct Arg<'a> {
     expr: Option<&'a Expr>,
     parts: Option<Rc<[Part]>>,
     /// The literals the argument's value comes from, when it is an `if` whose every branch,
-    /// at any depth of `if`, is a numeric literal, as `if c { 2 } else { 1 }`: each is fixed
-    /// where the argument is used as it would be alone (L1.26a).
-    branches: Option<Rc<[Lit]>>,
+    /// at any depth of `if`, is a numeric literal or an operation on literals alone that
+    /// keeps its value there, as `if c { 2 } else { 1 }` or `if c { 2 + 1 } else { 1 }`:
+    /// each is fixed where the argument is used as it would be alone (L1.26a).
+    branches: Option<Rc<[Branch<'a>]>>,
+}
+
+/// A branch of an `if` of [`Arg::branches`].
+#[derive(Clone)]
+enum Branch<'a> {
+    Lit(Lit),
+    /// An operation on integer literals alone with no `/`, as `2 + 1`, which keeps its value
+    /// in the `if` ([`Ck::kept`]): the operation, its value as an `int`, its literals, and the
+    /// class of literals it makes, which nothing else joins. Where the `if` meets a class,
+    /// the class merges with it, as the operation alone would; at a declared carrier the
+    /// operation takes that carrier, as it would alone.
+    Op {
+        e: &'a Expr,
+        value: Value,
+        lits: Rc<[Lit]>,
+        class: usize,
+    },
+}
+
+impl Branch<'_> {
+    /// The value the branch has where nothing fixes its carrier.
+    fn value(&self) -> &Value {
+        match self {
+            Branch::Lit(l) => &l.value,
+            Branch::Op { value, .. } => value,
+        }
+    }
 }
 
 impl<'a> Arg<'a> {
@@ -859,6 +893,12 @@ struct Ck<'t, 'a> {
     /// ([`Ck::derive_into`]). An operation that takes a carrier leaves the set
     /// ([`Ck::lit_takes`]).
     lit_open: HashSet<Span>,
+    /// Each operation on integer literals alone that is a branch of an `if` and keeps its
+    /// value there ([`Ck::kept`]), by its span: the class of literals it makes. Written when
+    /// the `if` is typed, just before the `if`, as an argument, reads it (`branch_lits` in
+    /// `walk.rs`), so an entry a repair's trial or an earlier check of the function wrote is
+    /// replaced before it is read again.
+    kept_ops: HashMap<Span, usize>,
     /// The errors that each operation of [`Ck::lit_ops`] at the top level wrote as it was
     /// walked, by its span, as a range of indices into the errors: a `/` of integer literals
     /// is rejected there, as `7 / 2`, since no arrow of `/` takes `int`, and so is a negative
@@ -1037,6 +1077,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             eq_sides: HashMap::new(),
             lit_ops: HashSet::new(),
             lit_open: HashSet::new(),
+            kept_ops: HashMap::new(),
             lit_written: HashMap::new(),
             lit_order: Vec::new(),
             lit_dropped: BTreeMap::new(),
@@ -4978,11 +5019,36 @@ fn adopted(a: &Arg, p: &Ty, rough: bool) -> Result<Option<(Ty, Adoptions)>, (Spa
     // `Ty::union_all`, O(n log n); joining them one at a time costs O(n^2), since each union
     // copies the type so far. The naive form, the type `2 | 1` tested against the parameter,
     // fixes no literal and rejects the call. Tests:
-    // `l01_26a_generic_literals::lit_branches::scaling`.
+    // `l01_26a_generic_literals::lit_branches::scaling`. A branch that is an operation on
+    // literals alone, `if c { 2 + 1 } else { 1 }`, takes the carrier as the operation alone
+    // would at the parameter ([`Ck::lit_args_take`]): each of its literals adopts it, which
+    // rejects one that is not exactly a value of it, and the operation, folded at it
+    // ([`folded`]), adopts its value whole, `3.0`. That walks each operation once, O(its
+    // size), and an operation is the branch of one `if`.
     if let Some(ls) = &a.branches {
         let mut ts = Vec::with_capacity(ls.len());
-        for l in ls.iter() {
-            ts.push(lit(l, &[p], &mut ads)?.unwrap_or_else(|| lit_ty(&l.value, l.neg())));
+        for b in ls.iter() {
+            let t = match b {
+                Branch::Lit(l) => {
+                    lit(l, &[p], &mut ads)?.unwrap_or_else(|| lit_ty(&l.value, l.neg()))
+                }
+                Branch::Op { e, value, lits, .. } => {
+                    let mut each = Adoptions::new();
+                    for l in lits.iter() {
+                        lit(l, &[p], &mut each)?;
+                    }
+                    let at = each.first().map(|(_, v)| lit_carrier(v));
+                    match at.and_then(|c| folded(e, c)) {
+                        Some(v) => {
+                            let t = Ty::lit(&v);
+                            ads.push((e.span, v));
+                            t
+                        }
+                        None => Ty::lit(value),
+                    }
+                }
+            };
+            ts.push(t);
         }
         return Ok((!ads.is_empty()).then(|| (Ty::union_all(&ts), ads)));
     }
