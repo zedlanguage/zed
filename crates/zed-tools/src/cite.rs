@@ -4,8 +4,9 @@
 //! DESIGN.md. A label is defined by a heading that begins with it in parentheses; a step, by a
 //! line of the plan (sec:steps). A step id is also accepted where a row of `docs/plan_dag.md`
 //! names it after "DESIGN step", since that plan item adds the step to DESIGN.md. Each
-//! citation of neither kind is reported with its file and line. CI does not run it, since CI
-//! never reads the spec.
+//! citation of neither kind is reported with its file and line. Test data is not read: the
+//! files of [`FIXTURES`] and the graphs dagview saved ([`saved_graph`]). CI does not run it,
+//! since CI never reads the spec.
 
 use std::collections::HashSet;
 use std::process::Command;
@@ -19,6 +20,16 @@ pub const FIXTURES: &[&str] = &[
     "tests/steps/l01_07_fences/keys.rs",
     "tests/steps/m0_03_grammar_tools/cite.rs",
 ];
+
+/// Whether `path` is a graph saved from dagview's hub, which dagview's tests read as test data:
+/// every `.json` file of `tools/dagview/`. Such a graph names each item by the id dagview showed
+/// on the day it was saved, so it holds plan rows whose steps DESIGN.md does not have yet and
+/// the old ids of steps renamed since. It cannot follow DESIGN.md without changing what
+/// dagview's tests measure, so it is not read. A rule rather than a list of paths, since each
+/// new saved graph has a new name.
+pub fn saved_graph(path: &str) -> bool {
+    path.starts_with("tools/dagview/") && path.ends_with(".json")
+}
 
 /// The plan DAG. Its rows and notes name steps that the plan items will add or that reviews
 /// proposed, so only its labels are checked.
@@ -86,7 +97,7 @@ pub fn check_citations(design: &str, files: &[(String, String)], out: &mut Strin
         }
     }
     for (path, text) in files {
-        if FIXTURES.contains(&path.as_str()) {
+        if FIXTURES.contains(&path.as_str()) || saved_graph(path) {
             continue;
         }
         for (n, line) in text.lines().enumerate() {

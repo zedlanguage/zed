@@ -49,8 +49,9 @@ fn a_division_of_literals_takes_the_carrier_it_meets() {
 
 #[test]
 fn a_power_of_literals_takes_the_carrier_it_meets() {
-    // DESIGN.md sec:operators, `^`: "`^` takes the integer or the floating-point power by the
-    // types of its operands". `2 ^ 3` meets `1.0f64`, so both its literals are `f64`.
+    // DESIGN.md sec:lexical, the operator table's row for `^`: "`^` takes the integer or the
+    // floating-point power by the types of its operands". `2 ^ 3` meets `1.0f64`, so both its
+    // literals are `f64`.
     assert_eq!(y("y = 1.0f64 + 2 ^ 3;\n"), "9.0");
     assert_eq!(y("y = 2 ^ 3 * 0.5f64;\n"), "4.0");
     // At `f64` a negative exponent is a power like any other.

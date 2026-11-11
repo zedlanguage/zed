@@ -1,6 +1,6 @@
 //! The `cite` tool on small specs and trees: a label or step id that DESIGN.md does not define
-//! is reported with its file and line, a fixture listed as exempt is not read, and the plan
-//! DAG's steps to come are accepted. This file is itself one of the exempt fixtures.
+//! is reported with its file and line, a fixture listed as exempt and a graph dagview saved are
+//! not read, and the plan DAG's steps to come are accepted. This file is itself one of the exempt fixtures.
 
 use zed_tests::scaling::check;
 use zed_tools::cite::{FIXTURES, PLAN, check_citations, run};
@@ -114,6 +114,26 @@ fn the_plan_s_labels_are_checked() {
     assert_eq!(
         out,
         "docs/plan_dag.md:1: sec:keys is no label of DESIGN.md\n"
+    );
+}
+
+#[test]
+fn a_graph_dagview_saved_is_not_read_but_dagview_s_source_is() {
+    // A saved graph names items by the ids dagview showed that day, renamed steps included.
+    let graph = r#"{"nodes":[{"id":"L14.1a"},{"id":"L1.9"}],"note":"sec:keys"}"#;
+    let source = "// The layout of step L1.9 (sec:keys).\n";
+    let (ok, out) = checked(
+        &design(""),
+        &[
+            ("tools/dagview/live-graph-2026-11-11.json", graph),
+            ("tools/dagview/layout.ts", source),
+        ],
+    );
+    assert!(!ok);
+    assert_eq!(
+        out,
+        "tools/dagview/layout.ts:1: sec:keys is no label of DESIGN.md\n\
+         tools/dagview/layout.ts:1: L1.9 is no step of DESIGN.md\n"
     );
 }
 
