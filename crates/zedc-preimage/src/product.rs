@@ -565,6 +565,10 @@ pub struct Scope {
     /// Whether a move of a hub leaves its stars' leaves to be settled when read
     /// ([`Scope::lazy`]).
     lazy: bool,
+    /// Whether this scope is a case of a test being narrowed ([`Scope::cases`]), which is
+    /// joined with the other cases and never shown: a constraint of the case that joins a
+    /// group of linked constraints makes no part due ([`Block::outer`]).
+    in_case: bool,
 }
 
 /// A name's `let` binding in a [`Scope`]; the order of its binding is in [`Scope::orders`].
@@ -1962,10 +1966,10 @@ impl Split {
 
     /// The part of `g`, a conjunct that is not a constraint: `g` with the constraints, keyed by
     /// `g`, projected with the equalities and the constraints on the terms `g` compares.
-    fn part(&self, g: &Arc<Formula>) -> (PartKey, PartWith, Formula) {
+    fn part(&self, g: &Arc<Formula>, groups: &Split) -> (PartKey, PartWith, Formula) {
         (
             (g.clone(), self.leaf.clone()),
-            self.with(g),
+            self.with(g, groups),
             self.formula(Some(&**g)),
         )
     }
@@ -1984,10 +1988,13 @@ impl Split {
     // hold two of `g`'s variables, found from the group of each, O(v log v) for v variables;
     // the constraints copied are at most those `g` is projected with anyway (`Split::formula`).
     // COMPLEXITY.md C52.
-    fn with(&self, g: &Formula) -> PartWith {
+    ///
+    /// The groups are read from `groups`, the context as it was outside the cases of a test
+    /// ([`Block::outer`]), which is `self` but within those cases.
+    fn with(&self, g: &Formula, groups: &Split) -> PartWith {
         let mut held: BTreeMap<usize, usize> = BTreeMap::new();
         for x in factors(g) {
-            if let Some(&i) = self.group.get(&x) {
+            if let Some(&i) = groups.group.get(&x) {
                 *held.entry(i).or_insert(0) += 1;
             }
         }
@@ -1998,7 +2005,7 @@ impl Split {
             .chain(
                 held.iter()
                     .filter(|&(_, &k)| k >= 2)
-                    .flat_map(|(&i, _)| &self.groups[i].1),
+                    .flat_map(|(&i, _)| &groups.groups[i].1),
             )
             .cloned()
             .collect();
@@ -2041,8 +2048,10 @@ fn split<'a>(
     let (cons, others): (Vec<&Arc<Formula>>, Vec<&Arc<Formula>>) =
         conjuncts.partition(|g| matches!(&***g, Formula::Con(_)));
     let context = Split::new(&cons, leaf);
-    let mut parts: Vec<(PartKey, PartWith, Formula)> =
-        others.into_iter().map(|g| context.part(g)).collect();
+    let mut parts: Vec<(PartKey, PartWith, Formula)> = others
+        .into_iter()
+        .map(|g| context.part(g, &context))
+        .collect();
     parts.extend(context.constraints());
     parts
 }
@@ -2089,6 +2098,12 @@ struct Block {
     /// The constraints among the conjuncts, and their context ([`Block::reframe`]).
     cons: imbl::OrdSet<Arc<Formula>>,
     split: Arc<Split>,
+    /// The constraints as they were outside the cases of a test ([`Scope::in_case`]), and
+    /// their context, from which the groups of each part's [`PartWith`] are read
+    /// ([`Split::with`]). Within the cases of a test a constraint that joins a group makes no
+    /// part due (`Block::reframe`); outside them these are `cons` and `split`.
+    outer_cons: imbl::OrdSet<Arc<Formula>>,
+    outer: Arc<Split>,
     /// The parts of the conjuncts that compare each term ([`unsigned`]), and the number of
     /// conjuncts with a part that mention each name. Each term is shared, so that a path copy
     /// of the map copies a reference count per key and not its terms (item
@@ -2161,7 +2176,7 @@ impl Block {
             .filter(|g| matches!(&***g, Formula::Con(_)))
             .cloned()
             .collect();
-        let split = Split::new(&cons.iter().collect::<Vec<_>>(), leaf.as_ref());
+        let split = Arc::new(Split::new(&cons.iter().collect::<Vec<_>>(), leaf.as_ref()));
         let mut out = Block {
             id: b,
             parts: imbl::OrdMap::new(),
@@ -2169,8 +2184,10 @@ impl Block {
             leaf,
             core: imbl::OrdMap::new(),
             unshaped: imbl::OrdSet::new(),
+            outer_cons: cons.clone(),
             cons,
-            split: Arc::new(split),
+            outer: split.clone(),
+            split,
             terms: imbl::OrdMap::new(),
             mentions: imbl::OrdMap::new(),
             vars: imbl::OrdMap::new(),
@@ -2232,7 +2249,7 @@ impl Block {
             self.cons.insert(g.clone());
             return None;
         }
-        let (key, with, formula) = self.split.part(g);
+        let (key, with, formula) = self.split.part(g, &self.outer);
         let at: PartAt = (false, g.clone());
         self.add_part(at.clone(), key, with, Some(g.clone()), &formula);
         Some(at)
@@ -2351,6 +2368,7 @@ impl Block {
         &mut self,
         changed: &BTreeSet<BTreeMap<Atom, Int>>,
         due: &mut BTreeSet<PartAt>,
+        groups: bool,
     ) -> bool {
         let cons: Vec<&Arc<Formula>> = self.cons.iter().collect();
         let split = Split::new(&cons, self.leaf.as_ref());
@@ -2373,23 +2391,33 @@ impl Block {
         if let Some((key, _, _)) = self.split.constraints() {
             self.remove_part(&(true, key.0));
         }
-        // The groups each changed constraint was in and is in ([`Split::with`]).
-        let mut groups: BTreeSet<(bool, usize)> = BTreeSet::new();
-        for t in changed {
-            let Some(x) = factors_of(t.keys()).into_iter().next() else {
-                continue;
-            };
-            groups.extend(self.split.group.get(&x).map(|&i| (false, i)));
-            groups.extend(split.group.get(&x).map(|&i| (true, i)));
+        let split = Arc::new(split);
+        // The groups each constraint added or gone since the groups were last read was in and
+        // is in ([`Split::with`]), when they are read now: outside the cases of a test. Within
+        // them, a case's constraint is gone again once the cases are joined, and the parts keep
+        // the groups of `outer` (COMPLEXITY.md C52).
+        let mut vars: BTreeSet<BTreeSet<Factor>> = BTreeSet::new();
+        if groups {
+            let mut groups: BTreeSet<(bool, usize)> = BTreeSet::new();
+            for d in self.outer_cons.diff(&self.cons) {
+                let (imbl::ordset::DiffItem::Add(g) | imbl::ordset::DiffItem::Remove(g)) = d;
+                let Some(x) = factors(g).into_iter().next() else {
+                    continue;
+                };
+                groups.extend(self.outer.group.get(&x).map(|&i| (false, i)));
+                groups.extend(split.group.get(&x).map(|&i| (true, i)));
+            }
+            vars = groups
+                .into_iter()
+                .map(|(now, i)| {
+                    let s = if now { &*split } else { &*self.outer };
+                    s.groups[i].0.clone()
+                })
+                .collect();
+            self.outer = split.clone();
+            self.outer_cons = self.cons.clone();
         }
-        let vars: BTreeSet<BTreeSet<Factor>> = groups
-            .into_iter()
-            .map(|(now, i)| {
-                let s = if now { &split } else { &*self.split };
-                s.groups[i].0.clone()
-            })
-            .collect();
-        self.split = Arc::new(split);
+        self.split = split;
         due.extend(self.add_constraints());
         let mut on: BTreeSet<PartAt> = changed
             .iter()
@@ -2425,17 +2453,21 @@ impl Block {
                 }
             }
         }
-        // Complexity tradeoff: naive version, main's rule, a part due only when the constraints
+        // Complexity tradeoff: naive versions: main's rule, a part due only when the constraints
         // on its own terms change, 7k + 1 projections for the star `a >= x + y` and k
         // disjunctions `x + j * y >= 1 || x - j * y >= 1`, but coarser ends at seeds 781, 1515
-        // and 1820. Used: each part whose group changed is due at once, (3k + 1)(k + 1)
-        // projections on that star (833, 3,201, 12,545 at k = 16, 32, 64), O(k^2): each arm of
-        // a disjunction adds a constraint to the group of `a >= x + y`, which all k parts hold
-        // two variables of, and the join of the arms then drops each part's record, since the
-        // two arms projected it with different constraints, so the reduce after the join
-        // projects all k again. Projecting such parts only when a hub is read (option C, built
-        // and measured, not kept) gives the same counts, since the join reads both arms' hubs.
-        // Open, needs cross-review; the existing star scaling test fails. COMPLEXITY.md C52.
+        // and 1820; or the groups read inside the cases of a test too, (3k + 1)(k + 1)
+        // projections on that star, O(k^2): each arm adds a constraint to the group of
+        // `a >= x + y`, which all k parts hold two variables of, and the join of the arms drops
+        // each part's record, since the arms projected it with different constraints. Used: the
+        // groups are read only outside the cases, against the constraints when they were last
+        // read (`outer_cons`), so a case's constraint, gone again at the join, wakes no part
+        // through a group: 7k + 1 projections on the star, as main, O(g log k) per test for the
+        // g parts of the changed groups. Lost against reading the groups in the cases: a
+        // narrowing a case's constraint reaches only through a group, never wider than main.
+        // Waking such parts in a case by a test on their names was measured and is quadratic
+        // where main is linear (by shared factor: on `x + j * a >= 1` arms; by pair of names:
+        // on staircase parts). COMPLEXITY.md C52.
         for at in on {
             let Some(part) = self.parts.get_mut(&at) else {
                 continue;
@@ -2443,7 +2475,7 @@ impl Block {
             let Some(g) = &part.of else {
                 continue;
             };
-            let with = self.split.with(g);
+            let with = self.split.with(g, &self.outer);
             if with != part.with {
                 Arc::make_mut(part).with = with;
                 due.insert(at);
@@ -2481,6 +2513,7 @@ impl Block {
         &self,
         relation: &Conjuncts,
         names: &imbl::OrdMap<Arc<str>, Product>,
+        groups: bool,
     ) -> Option<(Block, BTreeSet<PartAt>)> {
         let blocks = relation.blocks();
         if blocks.is_apart(self.id) != self.apart {
@@ -2568,7 +2601,10 @@ impl Block {
                 changed.insert(unsigned(c));
             }
         }
-        if !changed.is_empty() && !next.reframe(&changed, &mut due) {
+        // Outside the cases of a test, the groups are read again when they were last read within
+        // them ([`Block::outer`]), though no constraint changed since.
+        let stale = groups && next.outer_cons.diff(&next.cons).next().is_some();
+        if (!changed.is_empty() || stale) && !next.reframe(&changed, &mut due, groups) {
             return None;
         }
         let others = delta
@@ -2974,6 +3010,7 @@ impl Scope {
             seen: Seen::default(),
             potential: Potential::default(),
             lazy: false,
+            in_case: false,
         };
         s.reduce();
         s
@@ -3032,7 +3069,8 @@ impl Scope {
     /// new or not projected with their names' intervals and classes as they are now.
     fn block(&self, relation: &Conjuncts, b: BlockId) -> (Block, Vec<PartAt>) {
         let kept = self.seen.blocks.get(&b).filter(|k| k.id == b);
-        let (block, maybe) = match kept.and_then(|k| k.update(relation, &self.names)) {
+        let (block, maybe) = match kept.and_then(|k| k.update(relation, &self.names, !self.in_case))
+        {
             Some(found) => found,
             None => {
                 let block = Block::of(relation, b, &self.names);
@@ -4076,6 +4114,7 @@ impl Scope {
             // It goes with this side's last projection, as `seen` does.
             potential: self.potential.clone(),
             lazy: self.lazy || other.lazy,
+            in_case: self.in_case && other.in_case,
         }
     }
 
@@ -4257,7 +4296,10 @@ impl Scope {
                     body
                 };
                 match joined {
-                    Some(s) => *self = s,
+                    Some(mut s) => {
+                        s.in_case = self.in_case;
+                        *self = s;
+                    }
                     None => self.bottom = true,
                 }
                 body
@@ -4346,7 +4388,10 @@ impl Scope {
             }
             Kind::Nest(..) | Kind::If(_) => {
                 match self.cases(tree, n, value, prem, false, &mut Vec::new()) {
-                    Some(s) => *self = s,
+                    Some(mut s) => {
+                        s.in_case = self.in_case;
+                        *self = s;
+                    }
                     None => self.bottom = true,
                 }
             }
@@ -4384,7 +4429,9 @@ impl Scope {
         live.clear();
         let mut out = Vec::new();
         // Each case with the side of the root it comes from, when the root has sides.
-        let mut work = vec![(self.clone(), n, value, None)];
+        let mut start = self.clone();
+        start.in_case = true;
+        let mut work = vec![(start, n, value, None)];
         while let Some((mut s, n, v, top)) = work.pop() {
             if s.bottom {
                 continue;
@@ -6499,7 +6546,7 @@ impl Scope {
             core.iter().partition(|g| matches!(&***g, Formula::Con(_)));
         let context = Split::new(&cons, None);
         let mut out = IntervalSet::top();
-        let parts = others.into_iter().map(|g| context.part(g));
+        let parts = others.into_iter().map(|g| context.part(g, &context));
         for (_, _, part) in parts.chain(context.constraints()) {
             out = out.meet(&self.part_leaf_bound(&part)?);
         }
