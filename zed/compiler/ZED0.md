@@ -52,7 +52,7 @@ step that uses it.
 |---|---|---|---|
 | read the source units | the `Files` port, `fs[path]`; an import names its unit's path, so no directory listing is needed | L1 | DESIGN.md "Ports are the only outside world", the words table |
 | read the command line | the `CommandLine` input port: the arguments after `--`, keyed by position from 1 | L1 | step L1.19a |
-| write an executable | `zedc build file -o out`, a deterministic link with the retained runtime | L1 | step L1.36a |
+| write an executable | `zedc build file -o out`, a deterministic link with the runtime (`zed-rt`, and libzed after step S.7a) | L1 | step L1.36a |
 | lex by code point | the `String` functions, and `codePoint`, `scalar`, `utf8`, `fromUtf8` | L1 | step L1.39c |
 | identifier and normalization tables | XID_Start, XID_Continue, the scripts and the NFC data as sorted range tables, each lookup O(log n) by `upTo` | L5 | step S.1c, with step L5.8a |
 | content addresses (BLAKE3) | `bitAnd`, `bitOr`, `bitXor`, `shl` and the other bit words of step L1.39a, and `mod 2^32` | L1 | step L1.39a; the `&` row of the glyph table |
@@ -74,6 +74,23 @@ step that uses it.
 After row S, not in Zed₀: the breadth of the standard library beyond the seed (rows STD-seq,
 STD-text, STD-num, STD-blake3, then STD-full), other back ends (wasm, GPU, HDL, AArch64 and RV64),
 microcontrollers, the editor, the sketchbook, the libraries of L33 and OS portability.
+
+## After step S.8
+
+Zed₀ limits what the Rust-hosted compiler must run, and so what the Zed compiler's own source may
+use, only while the Rust-hosted compiler is the bootstrap root. By the answer to QUESTIONS Q52
+(author, 2026-11-11), the Rust-hosted compiler is retired at step S.8, the first tagged release
+becomes the root (step S.9), and the Rust compiler and `zed-rt` are kept in the `rust-bootstrap`
+branch (step S.10) and leave main (step S.11). Nothing stays in Rust: `zed-rt` is ported to libzed
+(step S.7a, plan row RT-port-libzed), whose OS layer holds the only foreign calls.
+
+From step S.8 on, the limit on the compiler's own source is the tagging rule of step S.10a, not this
+list: the compiler's source may use any feature the latest release compiles, and a commit that
+uses a feature it cannot compile is preceded by a new release, recorded in `BOOTSTRAP.md` in the
+`rust-bootstrap` branch. The audit above keeps its use until step S.8; after it, the branch's
+guide records which release can build which source. The runtime port of step S.7a needs forms
+this list does not cover (system calls through the OS layer, the heap's word layout of step
+L6.13f); step S.7a records any it finds missing here, under Gaps found, with the step that adds it.
 
 ## Gaps found
 

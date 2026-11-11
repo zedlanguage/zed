@@ -72,10 +72,15 @@ dialect (mlir.llvm.org/docs/Dialects/Func), the `scf` dialect
    compiles fast; it needs no C++ toolchain, so CI builds it from a clean checkout. So `zedc run`,
    the tests, the differential oracle and the JIT stay on it. The compiler written in Zed reaches
    LLVM through the MLIR text port of step S.1a, under the author's order of 2026-11-05 that ZIR →
-   MLIR → LLVM IR → x86-64 works before Zed₀. How run-time `compile` reaches a JIT from the Zed
-   compiler is an open question to the author; the plan's answer is a retained Cranelift JIT port.
-   What Cranelift lacks, loop optimization and vectorization, is what L28 adds, and the two back
-   ends check each other under the differential oracle.
+   MLIR → LLVM IR → x86-64 works before Zed₀. What Cranelift lacks, loop optimization and
+   vectorization, is what L28 adds, and the two back ends check each other under the differential
+   oracle until step S.8 retires the Rust-hosted compiler. Cranelift is a Rust crate, so it leaves
+   main with the Rust compiler at step S.11 and is kept in the `rust-bootstrap` branch (the answer
+   to QUESTIONS Q52, 2026-11-11: no Rust is left after bootstrapping). A retained Cranelift JIT
+   port is therefore ruled out. `zedc run` and run-time `compile` in the Zed compiler use a
+   generator that is not Rust, loaded through libzed's OS layer (DESIGN step S.7b, plan row
+   JIT-zed); which generator is QUESTIONS C7: this MLIR and LLVM path run at run time, or a code
+   generator written in Zed after step L29.1.
 
 ## Operations
 

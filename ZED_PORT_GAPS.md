@@ -92,20 +92,34 @@ each low-count construct was read at every site and each large one sampled.
 
 The classes: **missing**, Zed₀ has no form and DESIGN.md needs one. **Workaround**, a form exists
 but with a different shape, or its cost depends on a named step. **Mechanical**, a local rewrite.
-**Retained**, stays in Rust by DESIGN.md. "Zed₀" is the whole core, as step M0.8 and zed/compiler/ZED0.md define it since 2026-11-05: L1–L18 in full, the language parts of L19–L24 and the MLIR path of L28. Where an entry below was written when Zed₀ meant L1–L6 and says a form is above Zed₀, step S.1 rereads it.
+**Retained**, stayed in Rust by DESIGN.md until the answer to QUESTIONS Q52 (2026-11-11); since then nothing stays in Rust, and each Retained entry is ported to libzed (plan row RT-port-libzed, DESIGN step S.7a) or leaves main with the Rust compiler (step S.11). "Zed₀" is the whole core, as step M0.8 and zed/compiler/ZED0.md define it since 2026-11-05: L1–L18 in full, the language parts of L19–L24 and the MLIR path of L28. Where an entry below was written when Zed₀ meant L1–L6 and says a form is above Zed₀, step S.1 rereads it.
 
 ## What stays in Rust
 
-Confirmed from S.4 and sec:checking_in_zed (DESIGN.md line 1040): compiled programs keep the
-Rust runtime's scheduler and allocator, and primitive operations stay built in. So `zed-rt`
-(536 code lines) and the `extern "C"` hooks of `zed-native/src/hooks.rs` (27 `extern` matches:
-`rt_arg`, `rt_node`, `rt_inc` and others at `addresses`, line 110) stay. The single `unsafe`
-function `run` (`zed-native/src/lib.rs:70`, a `transmute` of JIT code) stays too. Its one
-`#[repr(C)]` (`Word`, `zed-rt/src/heap.rs:25`) stays.
+Nothing, once bootstrapping is complete (the answer to QUESTIONS Q52, 2026-11-11; the author, as
+relayed: "there will be no Rust left after the bootstrapping process is completed. Whatever was in
+zed-rt needs to be ported to libzed"). Until then, from S.4 and sec:checking_in_zed: compiled
+programs keep the Rust runtime's scheduler and allocator until step S.7a, and primitive operations
+are built into the compiler. The parts that were listed here as staying are ported or removed:
 
-`zed-native/src/codegen.rs` stays in Rust with the Rust-hosted compiler. It uses 28 distinct
-Cranelift instruction builders in 72 calls, plus 8 Cranelift type paths. The compiler written in
-Zed emits MLIR text through the port of step S.1a (see zed/compiler/MLIR.md, decision 9).
+- `zed-rt` (536 code lines) and the `extern "C"` hooks of `zed-native/src/hooks.rs` (27 `extern`
+  matches: `rt_arg`, `rt_node`, `rt_inc` and others at `addresses`, line 110) are rewritten in Zed
+  in libzed (plan row RT-port-libzed, step S.7a); the hooks become libzed functions the emitted
+  code calls by the same symbols. The one `#[repr(C)]` (`Word`, `zed-rt/src/heap.rs:25`) becomes
+  a libzed layout with the same fields.
+- The system calls the runtime makes (`mmap`, `munmap`, `mprotect`, `sysinfo`, reads and writes)
+  are the only foreign calls left, all in libzed's OS layer; the bootstrapped compiler calls no
+  other foreign code, and the release build settings make any other foreign call a compile error
+  (step S.8, condition f).
+- The single `unsafe` function `run` (`zed-native/src/lib.rs:70`, a `transmute` of JIT code) and
+  `zed-native/src/codegen.rs` (28 distinct Cranelift instruction builders in 72 calls, plus 8
+  Cranelift type paths) stay with the Rust-hosted compiler until step S.11 removes it from main;
+  they are kept in the `rust-bootstrap` branch (step S.10). The compiler written in Zed emits MLIR
+  text through the port of step S.1a (see zed/compiler/MLIR.md, decision 9), and its `zedc run`
+  and run-time `compile` use the generator of QUESTIONS C7 with a loader in libzed's OS layer
+  (plan row JIT-zed, step S.7b).
+- The tools and the test harness, `zed-alloc-count` and the `perf_event_open` counters included,
+  are rewritten in Zed (plan row TOOLS-port, step S.7c).
 
 External crates: `num-bigint` goes, since `int` is unbounded, and `num-integer` and `num-traits`
 (`gcd`, `num.rs:34`; `Euclid`, `eval.rs:20`; `ToPrimitive`, `value.rs:15`) go with it. `imbl` goes: `OrdMap` and `Vector`
@@ -381,7 +395,7 @@ chooses between these and tests the choice.
 `catch_unwind` and `resume_unwind` (`Evaluator::run`, `eval.rs:362`, and `on_stack`) only restore a flag, and
 `on_stack` (`eval.rs:290`) exists only to run with a 1 GiB stack (the marker `Stack`). Both vanish.
 Depth moves to the runtime: L6.7 tests a `fix` term over a 100,000-node chain, and compiled
-recursion on input-sized depth needs a growable stack in the retained runtime (inferred; not in
+recursion on input-sized depth needs a growable stack in the runtime, `zed-rt` and then libzed (inferred; not in
 L6.13). The preimage transfer (`store/preimage.rs`, PRE-stack-explicit) keeps its frames on the
 heap: each analysis is an `async fn` whose recursive calls the loop in `zed-kernel/src/frames.rs` runs from a
 `Vec` of suspended state machines; Zed has no `async` or state machines written by the compiler,
@@ -1405,8 +1419,8 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `libc::mmap` with `MAP_NORESERVE` and `mprotect` of a guard page, sized by `libc::sysinfo`; `munmap` in `Drop` | `Stack::new`, `Drop for Stack` | System calls, no destructors | Stays in the Rust runtime (L6.13); a Zed runtime needs a foreign call to map memory and a scope that unmaps it |
-| `psm::on_stack`, switching the machine stack for one call | `Stack::run` | Stack switching | Stays in the runtime; a Zed program has no access to the machine stack |
+| `libc::mmap` with `MAP_NORESERVE` and `mprotect` of a guard page, sized by `libc::sysinfo`; `munmap` in `Drop` | `Stack::new`, `Drop for Stack` | System calls, no destructors | Ported to libzed (RT-port-libzed): libzed's OS layer makes the `mmap`, `mprotect` and `munmap` system calls, and a scope unmaps it |
+| `psm::on_stack`, switching the machine stack for one call | `Stack::run` | Stack switching | Ported to libzed (RT-port-libzed): the stack switch is part of libzed's OS layer; a user's Zed program has no access to the machine stack |
 | `catch_unwind` on the new stack and `resume_unwind` on the old one | `Stack::run` | Early exit (gap 12) | Errors are values in Zed; the runtime returns the run's error across the switch |
 | A raw pointer `*mut c_void` to the mapping | `Stack::base` | Identity (gap 1) | An address held by the runtime, not by Zed code |
 | `std::process::Command` with `pre_exec` calling `libc::setrlimit(RLIMIT_AS, …)`, running the test binary again as a child (R10-stack-notes) | test `stack::tests::a_limited_address_space_refuses_the_reservation` | Missing (process limits) | A test-harness facility, not the language |
@@ -1844,10 +1858,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `#[unsafe(no_mangle)] pub extern "C" fn`, so a linked executable finds each hook and `zed_main` by its symbol | the 13 `rt_*` hooks, `exe::zed_main` | Foreign library | The runtime stays in Rust (What stays in Rust); the compiler in Zed names the same symbols in the code it emits |
-| C's `main(argc, argv)` read through raw pointers (`CStr::from_ptr`, `slice::from_raw_parts`) in an `unsafe` block, and standard output flushed by hand because Rust's `main` does not return | `exe::zed_main` | Foreign library | Inside the runtime, which stays in Rust |
+| `#[unsafe(no_mangle)] pub extern "C" fn`, so a linked executable finds each hook and `zed_main` by its symbol | the 13 `rt_*` hooks, `exe::zed_main` | Foreign library | The runtime is ported to libzed (What stays in Rust; RT-port-libzed), which defines the same symbols; the compiler in Zed names them in the code it emits |
+| C's `main(argc, argv)` read through raw pointers (`CStr::from_ptr`, `slice::from_raw_parts`) in an `unsafe` block, and standard output flushed by hand because Rust's `main` does not return | `exe::zed_main` | Foreign library | Inside the runtime, ported to libzed's OS layer (RT-port-libzed) |
 | A crate built as both `rlib` and `staticlib`, and a binary target whose source lives in another crate (`autobins = false`) | `crates/zed-native/Cargo.toml`, `crates/zedc/Cargo.toml` | none | Cargo only; the compiler in Zed is one package |
-| `std::process::Command` running the system linker and reading its status and standard error | `link::build` | Command line (gap 6) | A process port, which no step plans; until then the Rust driver links |
+| `std::process::Command` running the system linker and reading its status and standard error | `link::build` | Command line (gap 6) | A process port, which no step plans by that name; since the Rust driver leaves main at step S.11 (QUESTIONS Q52, 2026-11-11), the Zed compiler runs the linker as step S.4 runs `mlir-opt` and `llc`, through the back-end port of step S.1a, served by libzed's OS layer (RT-port-libzed) |
 | `OpenOptions::create_new` for the object file, removed after the link | `link::build` | Command line (gap 6): computed output paths | A `Files` write to a computed path (step L7.3f) |
 | `std::env::var_os` for `CC` and `ZED_RUNTIME`, `current_exe` for the default library | `link::Toolchain::from_env` | Command line (gap 6) | An environment input port, which no step plans |
 | A struct of options parsed once and shared by `zedc run` and an executable, its methods taking `&mut dyn Read`/`Write` | `run::Options`, `run::Ports::run`, `run::executable` | none | A record and functions over the `Lines` ports |
@@ -1899,7 +1913,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| The `object` crate reading an executable's symbol table and an archive's symbol index through `ReadCache` (reads of the file on demand), and Rust's mangled symbol names, whose hash tells two builds of a crate apart | `link::runtime_of`, `link::build_symbol`, `link::holds` | Foreign library; Bytes (gap 5) | The linking driver stays in Rust until a process port exists (as for `std::process::Command` above); a Zed version reads the two tables as bytes once Bytes words exist (step L7.3f) |
+| The `object` crate reading an executable's symbol table and an archive's symbol index through `ReadCache` (reads of the file on demand), and Rust's mangled symbol names, whose hash tells two builds of a crate apart | `link::runtime_of`, `link::build_symbol`, `link::holds` | Foreign library; Bytes (gap 5) | The linking driver stays in Rust only until step S.11 removes it (QUESTIONS Q52, 2026-11-11); the Zed version reads the two tables as bytes once Bytes words exist (step L7.3f), and runs the linker as `link::build` above does |
 
 ## Entries from NATIVE-build-id (`zed-native/src/link.rs`, `zed-native/build.rs`)
 
@@ -2070,7 +2084,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 ## Entries from TIME-report (`zedc-base/src/work.rs`, `main.rs`, `testing.rs`)
 | A `thread_local!` `RefCell` holding the recorder, which every stage mark reads and writes without the stages passing it | `work::RECORDER`, `with`, `stage`, `unit`, `cached` | Mutation, global state (gap 2) | A recorder threaded as a state receiver through the stages, or the runtime's own counters read by the compiler's driver at each stage |
 | A counter given as a boxed `FnMut` closure that reads a hardware counter and the global allocator | `work::Counter`, `main.rs` `counter` | Missing (no foreign counters, no allocator hook); mutation inside a closure | The runtime offers instructions and bytes as one foreign read; the port's driver passes it in, as the Rust driver does |
-| `perf_event_open` through `perf-event2`, and the global allocator of `zed-alloc-count` | `main.rs` `counter` | Missing (foreign calls) | Stays in Rust: the measurement belongs to the runtime the port runs on |
+| `perf_event_open` through `perf-event2`, and the global allocator of `zed-alloc-count` | `main.rs` `counter` | Missing (foreign calls) | Ported with the harness (TOOLS-port): the counters are read through libzed's OS layer, and the allocation counts come from libzed's allocator |
 | A flag set by the closure a query computes with, to tell a computed row from a cached one | `testing::counted_row` | Mutation of a captured variable | The query returns whether it computed, with its answer |
 ## Entries from NUM-subquad (`zed-kernel/src/num/fast.rs`, `num.rs`)
 | Number-theoretic transforms over `Vec<u64>` updated in place, with `u128` products, `wrapping_mul` and Shoup's precomputed quotients for the products modulo three 64-bit primes | `Field::convolve`, `forward`, `inverse`, `shoup` | Bit operations (gap 4), Machine integers, Mutation (gap 11) | These are the arithmetic of `int` itself, which belongs to the runtime (row "What stays in Rust"); a Zed port would write them on `int[0..<2^64]` words with gap 4's bit words and an array updated in place |
@@ -2232,7 +2246,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `blake3::Hasher` from `new_derive_key`, fed each part of a link's key after its length (`usize::to_le_bytes`), and one fed a whole file by `update_reader` | `link::Identity::key`, `Identity::of` | Library; Bytes (gap 5) | A hash word over a byte sequence from the stdlib catalog of step L2.11, over the bytes of a `Files` read |
-| `std::process::Command` running the C compiler driver with `--version` and `-Wl,--version` and keeping its standard output as bytes | `link::Identity::of` | Command line (gap 6) | The process port the linker needs too; until then the Rust driver links |
+| `std::process::Command` running the C compiler driver with `--version` and `-Wl,--version` and keeping its standard output as bytes | `link::Identity::of` | Command line (gap 6) | Run the same way as the linker in `link::build` above, through the back-end port of step S.1a; the Rust driver leaves main at step S.11 |
 | `object::File::parse` over a `ReadCache` of the output and `Object::build_id`, to read the key an executable records in its GNU build-ID note | `link::recorded` | Foreign library; Bytes (gap 5) | An ELF note read from the bytes of a `Files` read once Bytes works, or the record kept beside the executable |
 | An `Option` built with `?` from each fallible step, every failure meaning "no record" | `link::recorded` | None | An `else` chain ending in `#none` |
 
@@ -3273,8 +3287,8 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| An optional `&mut String` held in the code generator (`Gen::ir`) that each function's IR text is appended to before Cranelift compiles it | `Gen::ir`, `codegen::define`, `zed_native::ir` | Mutation (gap 11) | None needed: `codegen.rs` and the hooks stay in Rust (section "What stays in Rust"); a port would return the text with each function instead |
-| The hook `rt_pow`, an `extern "C"` function on the bits of two `f64` | `hooks.rs` | stays in Rust | None: hooks stay in Rust |
+| An optional `&mut String` held in the code generator (`Gen::ir`) that each function's IR text is appended to before Cranelift compiles it | `Gen::ir`, `codegen::define`, `zed_native::ir` | Mutation (gap 11) | None needed: `codegen.rs` leaves main with the Rust compiler (step S.11) and the hooks move to libzed (section "What stays in Rust"); a port would return the text with each function instead |
+| The hook `rt_pow`, an `extern "C"` function on the bits of two `f64` | `hooks.rs` | Foreign library | Ported to libzed (RT-port-libzed) as a Zed function on the bits of two `f64` |
 
 ## Entries from PRES-nest-empty (`crates/zedc-presburger/src/presburger.rs`)
 
