@@ -1321,10 +1321,16 @@ impl Conjuncts {
         let mut log = std::mem::take(&mut p.moves);
         for g in std::mem::take(&mut p.free) {
             let ns = names(&g);
+            // Complexity tradeoff: naive version, `users` was asked at each name of `g`
+            // whether it holds `g`, each lookup comparing `g` whole with the conjuncts at the
+            // name: O(s²) for a disjunction of s atoms that has just left the relation while
+            // its join, which begins with it, came in. Used: `users` holds at each name of a
+            // conjunct exactly the conjuncts of the set ([`Conjuncts::and_one`],
+            // [`Conjuncts::unindex`]), so one lookup in the set answers for every name, O(s)
+            // for the comparison; the same answers. COMPLEXITY.md C51.
+            let held = self.set.contains(&g);
             for h in &ns {
-                let want = self.users.has(h, &g)
-                    && !self.index.owned.has(h, &g)
-                    && !self.index.solo.has(h, &g);
+                let want = held && !self.index.owned.has(h, &g) && !self.index.solo.has(h, &g);
                 if want == self.index.free.has(h, &g) {
                     continue;
                 }
@@ -1594,11 +1600,11 @@ impl Conjuncts {
         self.unplace(&rest);
     }
 
-    /// The conjunction without the conjuncts `gone` and with `f`, in time near theirs: `f` is
-    /// added before `gone` leave the blocks, and a conjunct of `f` of the same atoms as one of
-    /// `gone` takes its place in its block ([`Blocks::replace`]). So the join of two cases that
-    /// differ in a conjunct of a chain replaces it, where removing it first would cut the chain
-    /// and build the blocks of the rest again.
+    /// The conjunction without the conjuncts `gone` and with `f`, in time near theirs: a
+    /// conjunct of `f` of the same atoms as one of `gone` takes its place in its block
+    /// ([`Blocks::replace`]), and the others of `gone` leave the blocks before the conjuncts of
+    /// `f` are placed. So the join of two cases that differ in a conjunct of a chain replaces
+    /// it, where removing it first would cut the chain and build the blocks of the rest again.
     pub fn swap(&mut self, gone: &[Arc<Formula>], f: Formula) {
         let mut held = Held::new();
         let mut p = Pending::default();
@@ -1608,9 +1614,18 @@ impl Conjuncts {
             }
         }
         self.and_held(f, &mut held, &mut p);
-        self.flush(p);
+        // Complexity tradeoff: naive version, the conjuncts of `f` were placed while those of
+        // `gone` that none replaces were still in the blocks, and these left afterward. A join
+        // gives one disjunction `D || D'` in place of `D` ([`Formula::either`]), whose parts
+        // begin with D's, so each of its s names put it beside D in the blocks' sets of
+        // conjuncts by name (`syms`, `at`), each insertion and the removal of D comparing the
+        // two through D's length: O(s²) a join, and quadratic in all for a nest of k excluded
+        // sides (s near k). Used: those of `gone` leave first, so D and its join are never in
+        // one set: O(s log s) a join. The blocks are those of the same conjuncts, a function of
+        // the set alone. COMPLEXITY.md C51.
         let rest: Vec<Arc<Formula>> = held.into_values().flatten().collect();
         self.unplace(&rest);
+        self.flush(p);
     }
 
     /// Adds the conjuncts of `f`, read on an explicit stack in order. A conjunction held in

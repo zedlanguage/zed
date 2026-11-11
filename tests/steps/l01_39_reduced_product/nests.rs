@@ -349,6 +349,54 @@ fn narrowing_by_a_nest_of_disjunctions_scales() {
     });
 }
 
+/// The nest of [`pairs`] at k = 400 and 3200: each case starts with the sides before it
+/// excluded, which change no name, and the cases are joined as a balanced tree, each join
+/// putting a disjunction of up to k differences in place of the half it begins with. A case
+/// costs the names its sides change and a join the size of what it adds, so the narrowing is
+/// O(k log² k) (COMPLEXITY.md C51). The work per side of [`pairs`] is uneven in k (each name
+/// `a` is paired with `7a + 1` modulo the `k/4 + 2` names, a graph whose shape changes with
+/// that number): measured, k = 400 and 1600 cost more per side than 200, 800 and 3200, so
+/// these two sizes favor the larger; the old method still took 18.2 times the work at them,
+/// against a limit of 11.9, and fails. The answer is that of the nest written in the reverse
+/// order: every name is still unbounded and the scope is not empty.
+#[test]
+fn excluded_sides_cost_the_names_they_change() {
+    let p = Premises::new();
+    let built: BTreeMap<usize, (Scope, Term, Vec<Arc<str>>)> = [400, scaling::FACTOR * 400]
+        .into_iter()
+        .map(|k| {
+            let (t, ns) = pairs(k);
+            (k, (ints(&ns), t, ns))
+        })
+        .collect();
+    let (s, t, ns) = &built[&400];
+    let q = s.assume(t, true, &p);
+    let sides = |mut t: &Term| -> Vec<Term> {
+        let mut out = Vec::new();
+        while let Term::Prim(Prim::Or, v) = t {
+            out.push(v[1].clone());
+            t = &v[0];
+        }
+        out.push(t.clone());
+        out
+    };
+    let reversed = sides(t).into_iter().reduce(or).expect("sides");
+    let r = s.assume(&reversed, true, &p);
+    assert!(!q.bottom && !r.bottom);
+    for n in ns {
+        assert_eq!(q.get(n), r.get(n), "{n}");
+        assert_eq!(
+            q.get(n),
+            s.get(n),
+            "{n} is narrowed by a disjunction of differences"
+        );
+    }
+    scaling::check_order("k differences over k/4 names", 400, 1, |k| {
+        let (s, t, _) = &built[&k];
+        s.assume(t, true, &p);
+    });
+}
+
 /// `x - y >= 1 || z - w >= 1` and `y - x >= 1 || w - z >= 1` in `-n..=n`, then `z == w`:
 /// the two parts pass a bound back and forth until the box is empty, in one projection of
 /// both.

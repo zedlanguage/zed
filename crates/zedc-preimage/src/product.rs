@@ -40,7 +40,7 @@
 use imbl::ordmap::DiffItem;
 use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
@@ -3879,10 +3879,24 @@ impl Scope {
     fn stated(&self, mine: &[Arc<Formula>], theirs: &[Arc<Formula>]) -> Formula {
         let mut out: Vec<Formula> = Vec::new();
         let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
+        // Complexity tradeoff: naive version, the atoms of each conjunct that mentions a name
+        // were collected again for each name, O(s² log s) for one conjunct of s atoms over s
+        // names, as the disjunction a nest of k excluded sides joins into (s near k). Used:
+        // the atoms of each conjunct, collected once per call and looked up by its address,
+        // O(s log s) in all; the conjuncts live in the relation for the whole call, and the
+        // map is only looked up, never walked, so no answer changes. One set of atoms per
+        // conjunct read. COMPLEXITY.md C51; test
+        // `l01_39_reduced_product::nests::excluded_sides_cost_the_names_they_change`.
+        let mut atoms_of: HashMap<*const Formula, BTreeSet<Atom>> = HashMap::new();
         for n in theirs.iter().flat_map(|g| syms(g)) {
             let x = Atom::Sym(n.clone());
             if !seen.insert(n.clone())
-                || self.relation.mentioning(&n).any(|g| g.atoms().contains(&x))
+                || self.relation.mentioning(&n).any(|g| {
+                    atoms_of
+                        .entry(Arc::as_ptr(g))
+                        .or_insert_with(|| g.atoms())
+                        .contains(&x)
+                })
             {
                 continue;
             }
@@ -4448,12 +4462,27 @@ impl Scope {
                     }
                 }
             };
+            // Complexity tradeoff: naive version, each name met in place (`get_mut`), which
+            // copies the map's path to it and the product's domains (`Arc::make_mut`) even
+            // when the meet changes nothing; the later reduction then finds the name by the
+            // maps' difference and compares the copied domains whole. A case of a nest
+            // starts with the sides before it excluded, so the i-th case re-met up to
+            // min(i, m) of the m names unchanged: O(k m) comparisons for k sides, quadratic
+            // for k differences over k/4 names. Used: the meet made on a copy of the product
+            // (one `Arc`) and put back only when it changed the interval (`Entry::meet`
+            // reports every change): the same names, O(log m) per name changed and nothing
+            // copied for one unchanged (COMPLEXITY.md C51). Test:
+            // `l01_39_reduced_product::nests::excluded_sides_cost_the_names_they_change`.
             for (n, d) in pre.domains.iter().chain(&through) {
-                if let Some(p) = self.names.get_mut(n) {
-                    if convex {
-                        p.meet_ints(d.hull(), prem);
+                if let Some(p) = self.names.get(n) {
+                    let mut p = p.clone();
+                    let met = if convex {
+                        p.meet_ints(d.hull(), prem)
                     } else {
-                        p.meet_ints(d.clone(), prem);
+                        p.meet_ints(d.clone(), prem)
+                    };
+                    if met {
+                        self.names.insert(n.clone(), p);
                     }
                 }
             }
