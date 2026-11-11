@@ -1366,9 +1366,10 @@ guarded_ranges!(
 ///
 /// Since PROJECT-abs-chain-quadratic, which removes at once the disjuncts the bounds of
 /// single atoms leave without a point, the transfer before, which shares the solver, gives 2
-/// more of the boxes counted as made exact exactly as the transfer does, one in each half (322
-/// and 326): case 1084, demand `[-23, -11] ∪ [3, 10]` on `if ((i mod 3) == 0) { min(…, -6) }
-/// else { min(…, -3) }`, whose box before narrows from `{9}`, inexact with a relation, to the
+/// more of the boxes counted as made exact exactly as the transfer does, one in each half
+/// (316 in the first and 324 in the second, with the seven of PERF-s22-const-chain): case 1084,
+/// demand `[-23, -11] ∪ [3, 10]` on `if ((i mod 3) == 0) { min(…, -6) } else { min(…, -3) }`,
+/// whose box before narrows from `{9}`, inexact with a relation, to the
 /// exact empty box, and case 2695, `if ((i mod 3) == 1) { min(…, 1) } else { (4 - …) }` with
 /// demand `(-inf, -9] ∪ [18, 33]`, from `[-4, 1]`, inexact, to the exact `[-4, -3]`. One more
 /// box before narrows and stays inexact, `i <= -20 || i >= 3` to `i <= -21 || i >= 3`
@@ -1399,7 +1400,7 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
         (
             0,
             0,
-            317,
+            316,
             81,
             vec![
                 "i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]",
