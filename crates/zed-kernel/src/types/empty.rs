@@ -938,6 +938,10 @@ struct Search {
     blame: Option<Vec<(usize, Refusal, usize)>>,
     /// Monotone step counter stamping entries in `reads` and `blame` for fork rollback.
     epoch: usize,
+    /// When `open_forks` is turned on inside a settled decision search, the table state to
+    /// roll back to and the types below `mark` that gained a reader at or above it.
+    open_forks_mark: Option<(usize, usize, usize, bool)>,
+    open_fork_readers: Vec<usize>,
     /// Whether this is the first walk over the types, in which what a type read is on record.
     walking: bool,
     /// Whether values are sought only among the tuple types as written.
@@ -1625,6 +1629,58 @@ impl Search {
         }
     }
 
+    fn add_reader(&mut self, u: usize, c: usize) -> bool {
+        if self.open_forks_mark.is_some_and(|(m, ..)| u < m && c >= m) {
+            self.open_fork_readers.push(u);
+        }
+        self.readers[u].insert(c)
+    }
+
+    fn push_open_forks(&mut self) -> Option<(usize, usize, usize, bool)> {
+        if self.deciding.is_empty() && self.open_forks_mark.is_none() {
+            let mark = (
+                self.types.len(),
+                self.blame.as_ref().map_or(0, Vec::len),
+                self.dead.len(),
+                self.settled,
+            );
+            self.open_forks_mark = Some(mark);
+            Some(mark)
+        } else {
+            None
+        }
+    }
+
+    /// Drops types numbered from `mark` on, added while `open_forks` was turned on inside a
+    /// decision search, so its table holds only answers decided under `refuse_forks`.
+    fn pop_open_forks(
+        &mut self,
+        (mark, blame_len, dead_len, settled): (usize, usize, usize, bool),
+    ) {
+        self.open_forks_mark = None;
+        let _ = self.again.split_off(&mark);
+        let _ = self.round.split_off(&mark);
+        let _ = self.witnessed.split_off(&mark);
+        let _ = self.value_reads.split_off(&mark);
+        let _ = self.dead.split_off(&mark);
+        if self.dead.len() == dead_len {
+            self.settled = settled;
+        }
+        let _ = self.deciding.split_off(&mark);
+        if let Some(blame) = &mut self.blame {
+            blame.truncate(blame_len);
+        }
+        for u in self.open_fork_readers.drain(..) {
+            let _ = self.readers[u].split_off(&mark);
+        }
+        for ty in self.types.drain(mark..) {
+            self.ids.remove(&ty);
+        }
+        self.answer.truncate(mark);
+        self.readers.truncate(mark);
+        self.reads.truncate(mark);
+    }
+
     /// For a search with `blame`, the cause each type's answer may rest on: a fork met in the
     /// decision of a type it read, directly or through others, else the first part counted as
     /// inhabited with nothing shown in such a decision. Each type is marked once, by walks over
@@ -1660,7 +1716,7 @@ impl Search {
     fn met(&mut self, t: &Type) -> ControlFlow<bool, usize> {
         if let Some(&i) = self.ids.get(t) {
             if let Some(c) = self.current
-                && self.readers[i].insert(c)
+                && self.add_reader(i, c)
             {
                 let ep = self.epoch;
                 self.reads[c].push((i, ep));
@@ -2132,7 +2188,7 @@ impl<'m> Searching<'m> {
             let s = &mut *guard;
             s.deciding.remove(&i);
             if let Some(c) = s.current {
-                s.readers[i].insert(c);
+                s.add_reader(i, c);
             }
             b
         })
@@ -2220,7 +2276,7 @@ impl<'m> Searching<'m> {
         let ep = s.epoch;
         if let Some(c) = s.current {
             for u in reads {
-                s.readers[u].insert(c);
+                s.add_reader(u, c);
                 s.reads[c].push((u, ep));
             }
         }
@@ -2726,6 +2782,10 @@ impl<'m> Searching<'m> {
             if self.s().blame.is_some() && empty_by_classes(g, &f, &open) {
                 return true;
             }
+            if let Some((j, classes)) = classes(g, &open) {
+                let mut each = Each::Decide { may_cover };
+                return self.split_classes(g, &f, j, &classes, &mut each).await;
+            }
             let forking = {
                 let s = self.s();
                 s.refuse_forks && !s.seeding
@@ -2755,10 +2815,6 @@ impl<'m> Searching<'m> {
             }
             if let Some(found) = self.two_sat(g, &f).await {
                 return found.is_none();
-            }
-            if let Some((j, classes)) = classes(g, &open) {
-                let mut each = Each::Decide { may_cover };
-                return self.split_classes(g, &f, j, &classes, &mut each).await;
             }
             let fewest = *open
                 .iter()
@@ -3329,7 +3385,7 @@ impl<'m> Searching<'m> {
         s.value_reads.insert(i);
         let dead = s.dead.contains(&i);
         if let Some(c) = outer {
-            s.readers[i].insert(c);
+            s.add_reader(i, c);
             if dead {
                 let ep = s.epoch;
                 s.reads[c].push((i, ep));
@@ -3590,11 +3646,13 @@ impl<'m> Searching<'m> {
             let saved = {
                 let mut s = self.s();
                 let past = s.past_fork;
-                let blame_search = s.blame.is_some().then(|| {
+                let blame_search = (s.blame.is_some() && !s.open_forks).then(|| {
+                    let types_mark = s.push_open_forks();
                     (
                         std::mem::replace(&mut s.refuse_forks, false),
                         std::mem::replace(&mut s.open_forks, true),
                         s.current.take(),
+                        types_mark,
                     )
                 });
                 (past, blame_search)
@@ -3603,7 +3661,10 @@ impl<'m> Searching<'m> {
             {
                 let mut s = self.s();
                 s.past_fork = saved.0;
-                if let Some((refuse_forks, open_forks, current)) = saved.1 {
+                if let Some((refuse_forks, open_forks, current, types_mark)) = saved.1 {
+                    if let Some(mark) = types_mark {
+                        s.pop_open_forks(mark);
+                    }
                     s.refuse_forks = refuse_forks;
                     s.open_forks = open_forks;
                     s.current = current;
@@ -3836,6 +3897,8 @@ impl<'m> Searching<'m> {
             // type, which is neither the type being built nor one its group decided.
             let (taken, refused) = p.morphisms.forced();
             let whole = refused.is_empty() && taken.len() == p.morphisms.distinct_atoms().len();
+            // The keys of the types taken that every row of a meet with a union shares.
+            let mut shared: Vec<Type> = Vec::new();
             let meets: Vec<(Morphism, Vec<Type>)> = match (whole, p.morphisms.union_rows()) {
                 (true, _) => vec![(
                     match taken.split_first() {
@@ -3870,10 +3933,37 @@ impl<'m> Searching<'m> {
                         (m, keys)
                     })
                     .collect(),
+                // A meet of the morphism types every value takes with a union of morphism types:
+                // a closure for each arm of the union, met with the types taken. The meet of the
+                // types taken and their keys are found once and shared by the arms, so the rows
+                // cost the part's size plus one meet per arm. Each atom is read as written, so two
+                // atoms that denote one type (a meet written in two orders) give two rows of one
+                // meaning, and either may be built.
+                // Complexity tradeoff: the arms are not compared with each other or with the types
+                // taken, so a meet that is empty only in combination with a later arm is found by
+                // the search below, not here; comparing arms pairwise would cost the square of
+                // their number.
+                (false, None) if refused.is_empty() && !taken.is_empty() => {
+                    let set: BTreeSet<&Morphism> = taken.iter().collect();
+                    let rest = p.morphisms.restrict(&|a| set.contains(a).then_some(true));
+                    let (a, more) = taken.split_first().expect("a type is taken");
+                    let met = more.iter().fold(a.clone(), |r, b| self.meet(&r, b));
+                    shared = taken.iter().map(|a| a.guarantee.clone()).collect();
+                    (rest.union_rows().unwrap_or_default().into_iter())
+                        .map(|a| (self.meet(&met, &a), vec![a.guarantee.clone()]))
+                        .collect()
+                }
                 (false, None) => Vec::new(),
             };
+            // Whether the shared keys are known empty, and whether they are proved empty, asked
+            // once for all rows. A key proved empty later in the search is then missed by the
+            // rows after the first ask, which leaves the closure unbuilt, never a wrong value.
+            // Complexity tradeoff: one ask for all rows instead of one per row keeps the rows
+            // linear in the number of arms, at the cost of the late proofs just named.
+            let shared_known = shared.iter().all(known_empty);
+            let mut shared_none: Option<bool> = shared_known.then_some(true);
             for (m, keys) in &meets {
-                if keys.iter().all(known_empty) {
+                if keys.iter().all(known_empty) && shared_known {
                     return Some(self.s().show(Rep::Closure(m.clone())));
                 }
                 let permitted = m.guarantee == m.permission
@@ -3881,7 +3971,13 @@ impl<'m> Searching<'m> {
                     || m.permission == Type::top();
                 if !permitted {
                     if self.no_keys(keys).await {
-                        return Some(self.s().show(Rep::Closure(m.clone())));
+                        let none = match shared_none {
+                            Some(b) => b,
+                            None => *shared_none.insert(self.no_keys(&shared).await),
+                        };
+                        if none {
+                            return Some(self.s().show(Rep::Closure(m.clone())));
+                        }
                     }
                     continue;
                 }
@@ -3917,7 +4013,13 @@ impl<'m> Searching<'m> {
                     }
                 }
                 if self.no_keys(keys).await {
-                    return Some(self.s().show(Rep::Closure(m.clone())));
+                    let none = match shared_none {
+                        Some(b) => b,
+                        None => *shared_none.insert(self.no_keys(&shared).await),
+                    };
+                    if none {
+                        return Some(self.s().show(Rep::Closure(m.clone())));
+                    }
                 }
             }
         }
@@ -4210,10 +4312,12 @@ impl<'m> Searching<'m> {
         // `l01_23_subtyping::refusals::refining_a_box_follows_no_fork_in_its_size`.
         // COMPLEXITY.md K35. A complete solution needs the subset construction over the
         // forked tuple types, exponential in them.
-        let (refuse_forks, open_forks) = {
+        let (refuse_forks, open_forks, types_mark) = {
             let mut s = self.s();
             let refuse = std::mem::replace(&mut s.refuse_forks, false);
-            (refuse, std::mem::replace(&mut s.open_forks, true))
+            let open = std::mem::replace(&mut s.open_forks, true);
+            let mark = if !open { s.push_open_forks() } else { None };
+            (refuse, open, mark)
         };
         let len = start.len();
         let mut g = self.region(start, f).await;
@@ -4240,6 +4344,9 @@ impl<'m> Searching<'m> {
         }
         {
             let mut s = self.s();
+            if let Some(mark) = types_mark {
+                s.pop_open_forks(mark);
+            }
             s.refuse_forks = refuse_forks;
             s.open_forks = open_forks;
         }
