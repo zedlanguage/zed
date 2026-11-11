@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs every test in pieces, one test binary, step folder, module or slow test each, each under a
 # 60 s limit, and prints a line per piece as it ends. Usage, from a checkout's root:
-#   tools/run_tests.sh [--full] [--only <ERE>] [--no-doc] [--list] [--reuse-table] [--logs <dir>] [jobs]
+#   tools/run_tests.sh [--full] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [jobs]
 # Without --full this is the local suite, which needs only the Rust toolchain and runs in CI.
 # --full adds tests/full/, the battery that needs emulators, containers, databases and other
 # outside tools. It stops before any test if a tool is missing; nothing is skipped.
@@ -11,8 +11,9 @@
 # whose source lies in a step folder under another name (deep_types in l01_22_type_representation)
 # has that folder as a second group, so a selection of the step runs it too. A pattern that
 # matches no piece stops the run with an error. The short-addresses build is made only when a
-# short- piece is selected. --no-doc skips the check that the documentation builds. --list
-# builds what the selection needs, prints the names of the selected pieces and runs nothing.
+# short- piece is selected. --doc adds the check that the documentation builds, which is off
+# by default; --no-doc is accepted and changes nothing. --list builds what the selection needs,
+# prints the names of the selected pieces and runs nothing.
 # A run without --only saves the table of all pieces in its log directory; --list --reuse-table
 # selects from that table without building or listing the binaries, for tests of the selection.
 # The table is as the run that wrote it left it: with --full or not, and stale once the test
@@ -25,7 +26,7 @@
 # Every piece runs in the systemd slice zedtests.slice, whose 112 GB limit holds across all
 # checkouts together. A load above the number of cores raises the limit of the pieces that start under it in proportion.
 args=$*
-features= full_suite= only= list= reuse= logs= doc=1 jobs=6
+features= full_suite= only= list= reuse= logs= doc= jobs=6
 while [ $# -gt 0 ]; do
   case $1 in
     --full) full_suite=1 ;;
@@ -37,7 +38,8 @@ while [ $# -gt 0 ]; do
       only=$2
       shift
       ;;
-    --no-doc) doc= ;;
+    --doc) doc=1 ;;
+    --no-doc) ;;
     --list) list=1 doc= ;;
     --reuse-table) reuse=1 ;;
     --logs)
@@ -50,7 +52,7 @@ while [ $# -gt 0 ]; do
       ;;
     [1-9]*) jobs=$1 ;;
     *)
-      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--only <ERE>] [--no-doc] [--list] [--reuse-table] [--logs <dir>] [jobs])"
+      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [jobs])"
       exit 2
       ;;
   esac
@@ -352,8 +354,10 @@ if [ -n "$list" ]; then
   cut -d ' ' -f 1 "$out/pieces"
   exit 0
 fi
-# The documentation of every crate, private items included, builds with no warning, so a link
-# in a doc comment that names no item, or a citation written as a link, fails the run.
+# With --doc only: the documentation of every crate, private items included, builds with no
+# warning, so a link in a doc comment that names no item, or a citation written as a link, fails
+# the run. It is off by default so that a run neither spends the time on it nor leaves the
+# generated pages in build/cargo/doc; use --doc after any change to a doc comment (/// or //!).
 if [ -n "$doc" ] &&
   ! RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items >"$out/doc.log" 2>&1; then
   tail -40 "$out/doc.log"
