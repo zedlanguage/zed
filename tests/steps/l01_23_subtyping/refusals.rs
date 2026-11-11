@@ -1197,13 +1197,27 @@ fn rfx_probe() {
             let t = rfx_case(&which, n, &tag);
             if std::env::var("RFX_SWEEP").is_ok() {
                 Type::forget_emptiness();
-                eprintln!("rfx sweep {which} n {n} {:?} chains {:?}", t.sweep_verdict(), { Type::forget_emptiness(); t.chain_verdict() });
+                eprintln!(
+                    "rfx sweep {which} n {n} {:?} chains {:?}",
+                    t.sweep_verdict(),
+                    {
+                        Type::forget_emptiness();
+                        t.chain_verdict()
+                    }
+                );
                 Type::forget_emptiness();
             }
             let mut m = scaling::Meter::new();
             let mut v = None;
             let w = m.work(|| v = Some(t.verdict()));
-            eprintln!("rfx {which} n {n} {:?} units {} bytes {}", v, w.units, w.bytes);
+            eprintln!(
+                "rfx {which} n {n} {:?} units {} bytes {}",
+                v, w.units, w.bytes
+            );
+            if which == "r6parity" || which.starts_with("r7") {
+                eprintln!("escape cells {which} n {n} {:?}", t.escape_cell_counts());
+                Type::forget_emptiness();
+            }
         }
     });
 }
@@ -1226,9 +1240,15 @@ fn rfx_family(
         def(&format!("L{tag}"), body)
     };
     let mut fdefs = vec![ldef()];
-    fdefs.push(def(&format!("F1{tag}"), cons(Expr::Type(one.clone()), r(0))));
+    fdefs.push(def(
+        &format!("F1{tag}"),
+        cons(Expr::Type(one.clone()), r(0)),
+    ));
     fdefs.extend((2..=n).map(|i| {
-        def(&format!("F{i}{tag}"), cons(Expr::Type(all.clone()), r(i - 1)))
+        def(
+            &format!("F{i}{tag}"),
+            cons(Expr::Type(all.clone()), r(i - 1)),
+        )
     }));
     let not_one = Expr::Type(all - one);
     let base = if split { 0 } else { n };
@@ -1262,7 +1282,12 @@ fn rfx_family(
 /// ([`by_one_place_from_the_front`]) and by the place from the end ([`by_place_from_the_end`]).
 fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
     let l = list_named(Type::int(), tag);
-    let (int, one, b, yes) = (Type::int(), lit(1), Type::bool(), Type::lit(&Value::Bool(true)));
+    let (int, one, b, yes) = (
+        Type::int(),
+        lit(1),
+        Type::bool(),
+        Type::lit(&Value::Bool(true)),
+    );
     let yes = yes.unwrap();
     let fam = |skip, m, all: &Type, one: &Type, split| {
         let (l, u) = rfx_family(n, skip, m, all, one, split, tag);
@@ -1279,8 +1304,10 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
         "mlong" => fam(None, n + 1, &int, &one, false),
         "split" => fam(None, n, &int, &one, true),
         "splitfar" => fam(Some(n), n, &int, &one, true),
-        "meet" => &fam(Some(n), n, &int, &one, false)
-            & &fam(Some(n - 1).filter(|&k| k > 0), n, &int, &one, false),
+        "meet" => {
+            &fam(Some(n), n, &int, &one, false)
+                & &fam(Some(n - 1).filter(|&k| k > 0), n, &int, &one, false)
+        }
         "pair" => Type::tuple(vec![
             fam(None, n, &int, &one, false),
             fam(Some(n), n, &int, &one, false),
@@ -1342,10 +1369,10 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
         "chainfar" => &l - &rfx_chain(n, true, tag),
         "boundaryinside" => &l - &r4_boundary(n, true, tag),
         "boundaryoutside" => &l - &r4_boundary(n, false, tag),
-        "cxprivateheads" => r4_private_heads(n,false,tag),
-        "cxprivateheadsfar" => r4_private_heads(n,true,tag),
-        "manyheadsv0" => rfx_manyheads_v0(n,false,tag),
-        "manyheadsfarv0" => rfx_manyheads_v0(n,true,tag),
+        "cxprivateheads" => r4_private_heads(n, false, tag),
+        "cxprivateheadsfar" => r4_private_heads(n, true, tag),
+        "manyheadsv0" => rfx_manyheads_v0(n, false, tag),
+        "manyheadsfarv0" => rfx_manyheads_v0(n, true, tag),
         "clstaggerholesin" => &l - &rfx_cl_stagger_boundary(n, false, tag),
         "clstaggerholesout" => &l - &rfx_cl_stagger_boundary(n, true, tag),
         "u4cofrontones" => u4_cofront_block(n, true, |i| i + 2, false, tag),
@@ -1372,18 +1399,43 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
         "r5slotsout" => r5_slots(n, true),
         "r5remin" => r5_remainder_boundary(n, false, tag),
         "r5remout" => r5_remainder_boundary(n, true, tag),
-        "r6two" => { let (k, c) = r6_two_clauses(n, 0); r5_sat_type(k, &c, tag) }
-        "r6twoun" => { let (k, c) = r6_two_clauses(n, 1); r5_sat_type(k, &c, tag) }
-        "r6twowide" => { let (k, c) = r6_two_clauses(n, 2); r5_sat_type(k, &c, tag) }
+        "r6two" => {
+            let (k, c) = r6_two_clauses(n, 0);
+            r5_sat_type(k, &c, tag)
+        }
+        "r6twoun" => {
+            let (k, c) = r6_two_clauses(n, 1);
+            r5_sat_type(k, &c, tag)
+        }
+        "r6twowide" => {
+            let (k, c) = r6_two_clauses(n, 2);
+            r5_sat_type(k, &c, tag)
+        }
         "r6three" => r5_sat_type(3, &vec![vec![(1, true), (2, true), (3, true)]; n], tag),
         "r6threeun" => {
             let mut c = vec![vec![(1, true), (2, true), (3, true)]; n];
             c.extend([vec![(1, false)], vec![(2, false)], vec![(3, false)]]);
             r5_sat_type(3, &c, tag)
         }
-        "r6wide" => r6_sat_type(2, &vec![vec![(1, true), (2, true)]; n], tag, &lit(0) | &lit(7), Type::int()),
-        "r6comb" => r6_sat_type(2, &vec![vec![(1, true)]; n], tag, lit(7), &(&lit(0) | &lit(1)) | &(&lit(2) | &lit(7))),
+        "r6wide" => r6_sat_type(
+            2,
+            &vec![vec![(1, true), (2, true)]; n],
+            tag,
+            &lit(0) | &lit(7),
+            Type::int(),
+        ),
+        "r6comb" => r6_sat_type(
+            2,
+            &vec![vec![(1, true)]; n],
+            tag,
+            lit(7),
+            &(&lit(0) | &lit(1)) | &(&lit(2) | &lit(7)),
+        ),
         "r6parity" => r6_parity(n, tag),
+        "r7congruencein" => r7_congruence(n, false, tag),
+        "r7congruenceout" => r7_congruence(n, true, tag),
+        "r7aperiodic" => r7_aperiodic(n, tag),
+        "r7bmmout" => r7_bmm_out(n, tag),
         "r6repeat3" => r5_sat_type(3, &vec![vec![(1, true), (2, true), (3, true)]; n], tag),
         "r6distinct2" => r6_distinct_atoms(n, false, tag),
         "r6distinct3" => r6_distinct_atoms(n, true, tag),
@@ -1399,32 +1451,63 @@ fn rfx_case(which: &str, n: usize, tag: &str) -> Type {
 fn rfx_multi(n: usize, m: usize, tag: &str) -> Type {
     let h = (n / 2).max(1);
     // 0: L; 1..=n: F; n+1..=n+h: G; n+h+1..=n+h+m: M
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
-    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i - 1)))));
+    defs.extend((2..=n).map(|i| {
+        def(
+            &format!("F{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(i - 1)),
+        )
+    }));
     defs.push(def(&format!("G1{tag}"), cons(Expr::Type(lit(2)), r(0))));
-    defs.extend((2..=h).map(|i| def(&format!("G{i}{tag}"), cons(Expr::Type(Type::int()), r(n + i - 1)))));
+    defs.extend((2..=h).map(|i| {
+        def(
+            &format!("G{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(n + i - 1)),
+        )
+    }));
     let neither = Expr::Type(&Type::int() - &(&lit(1) | &lit(2)));
     defs.extend((1..=m).map(|k| {
         let rest = if k == 1 { r(0) } else { r(n + h + k - 1) };
-        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(neither.clone(), rest)]))
+        def(
+            &format!("M{k}{tag}"),
+            Expr::Union(vec![nil(), cons(neither.clone(), rest)]),
+        )
     }));
     let ts = r3_instance(defs);
-    (1..=n + h).map(|i| &ts[i]).chain([&ts[n + h + m]]).fold(Type::empty(), |u, t| r3_union(&u, t))
+    (1..=n + h)
+        .map(|i| &ts[i])
+        .chain([&ts[n + h + m]])
+        .fold(Type::empty(), |u, t| r3_union(&u, t))
 }
 
 /// The front union written as one chain: `G1 = cons(1, L)`, `Gk = cons(1, L) | cons(int, G{k-1})`
 /// (the same set as `F1 | .. | Fk`), with `M{n}`; `far` uses `G{n-1}` (n >= 2).
 fn rfx_chain(n: usize, far: bool, tag: &str) -> Type {
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     defs.push(def(&format!("G1{tag}"), cons(Expr::Type(lit(1)), r(0))));
     defs.extend((2..=n).map(|i| {
-        def(&format!("G{i}{tag}"), Expr::Union(vec![cons(Expr::Type(lit(1)), r(0)), cons(Expr::Type(Type::int()), r(i - 1))]))
+        def(
+            &format!("G{i}{tag}"),
+            Expr::Union(vec![
+                cons(Expr::Type(lit(1)), r(0)),
+                cons(Expr::Type(Type::int()), r(i - 1)),
+            ]),
+        )
     }));
     let not_one = Expr::Type(&Type::int() - &lit(1));
     defs.extend((1..=n).map(|k| {
         let rest = if k == 1 { r(0) } else { r(n + k - 1) };
-        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+        def(
+            &format!("M{k}{tag}"),
+            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+        )
     }));
     let ts = r3_instance(defs);
     let g = if far { n - 1 } else { n };
@@ -1435,80 +1518,165 @@ fn rfx_chain(n: usize, far: bool, tag: &str) -> Type {
 /// of depth 3 whose second heads differ (each a 1 at place 3, so Empty; Inhabited with `far`).
 fn rfx_groups(n: usize, far: bool, tag: &str) -> Type {
     // 0: L; 1..=n: F; n+1..=2n: M; 2n+1..=3n: A; 3n+1..=4n: B
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
-    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i - 1)))));
+    defs.extend((2..=n).map(|i| {
+        def(
+            &format!("F{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(i - 1)),
+        )
+    }));
     let not_one = Expr::Type(&Type::int() - &lit(1));
     defs.extend((1..=n).map(|k| {
         let rest = if k == 1 { r(0) } else { r(n + k - 1) };
-        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+        def(
+            &format!("M{k}{tag}"),
+            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+        )
     }));
     defs.extend((1..=n).map(|k| {
         let h = &Type::int() | &Type::atom(&format!("a{k}"));
         def(&format!("A{k}{tag}"), cons(Expr::Type(h), r(1)))
     }));
-    defs.extend((1..=n).map(|k| def(&format!("B{k}{tag}"), cons(Expr::Type(Type::int()), r(2 * n + k)))));
+    defs.extend((1..=n).map(|k| {
+        def(
+            &format!("B{k}{tag}"),
+            cons(Expr::Type(Type::int()), r(2 * n + k)),
+        )
+    }));
     let ts = r3_instance(defs);
     let top = if far { n - 1 } else { n };
-    (1..=top).chain([2 * n]).chain(3 * n + 1..=4 * n).map(|i| &ts[i]).fold(Type::empty(), |u, t| r3_union(&u, t))
+    (1..=top)
+        .chain([2 * n])
+        .chain(3 * n + 1..=4 * n)
+        .map(|i| &ts[i])
+        .fold(Type::empty(), |u, t| r3_union(&u, t))
 }
 
 /// Stress X3: redundant finite chains with distinct overlapping scalar heads.
 fn rfx_groups_holes(n: usize, far: bool, tag: &str) -> Type {
     // 0: L; 1..=n: F; n+1..=2n: M; 2n+1..=3n: A; 3n+1..=4n: B
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
-    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i - 1)))));
+    defs.extend((2..=n).map(|i| {
+        def(
+            &format!("F{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(i - 1)),
+        )
+    }));
     let not_one = Expr::Type(&Type::int() - &lit(1));
     defs.extend((1..=n).map(|k| {
         let rest = if k == 1 { r(0) } else { r(n + k - 1) };
-        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+        def(
+            &format!("M{k}{tag}"),
+            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+        )
     }));
     defs.extend((1..=n).map(|k| {
         let h = &Type::int() - &lit(k as i64 + 2);
         def(&format!("A{k}{tag}"), cons(Expr::Type(h), r(1)))
     }));
-    defs.extend((1..=n).map(|k| def(&format!("B{k}{tag}"), cons(Expr::Type(Type::int()), r(2 * n + k)))));
+    defs.extend((1..=n).map(|k| {
+        def(
+            &format!("B{k}{tag}"),
+            cons(Expr::Type(Type::int()), r(2 * n + k)),
+        )
+    }));
     let ts = r3_instance(defs);
     let top = if far { n - 1 } else { n };
-    (1..=top).chain([2 * n]).chain(3 * n + 1..=4 * n).map(|i| &ts[i]).fold(Type::empty(), |u, t| r3_union(&u, t))
+    (1..=top)
+        .chain([2 * n])
+        .chain(3 * n + 1..=4 * n)
+        .map(|i| &ts[i])
+        .fold(Type::empty(), |u, t| r3_union(&u, t))
 }
 
 /// Stress X13: as `rfx_groups_holes` with singleton heads `{k + 2}`, so no union of them covers `int`.
 fn rfx_groups_singles(n: usize, far: bool, tag: &str) -> Type {
     // 0: L; 1..=n: F; n+1..=2n: M; 2n+1..=3n: A; 3n+1..=4n: B
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
-    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i - 1)))));
+    defs.extend((2..=n).map(|i| {
+        def(
+            &format!("F{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(i - 1)),
+        )
+    }));
     let not_one = Expr::Type(&Type::int() - &lit(1));
     defs.extend((1..=n).map(|k| {
         let rest = if k == 1 { r(0) } else { r(n + k - 1) };
-        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+        def(
+            &format!("M{k}{tag}"),
+            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+        )
     }));
     defs.extend((1..=n).map(|k| {
         let h = lit(k as i64 + 2);
         def(&format!("A{k}{tag}"), cons(Expr::Type(h), r(1)))
     }));
-    defs.extend((1..=n).map(|k| def(&format!("B{k}{tag}"), cons(Expr::Type(Type::int()), r(2 * n + k)))));
+    defs.extend((1..=n).map(|k| {
+        def(
+            &format!("B{k}{tag}"),
+            cons(Expr::Type(Type::int()), r(2 * n + k)),
+        )
+    }));
     let ts = r3_instance(defs);
     let top = if far { n - 1 } else { n };
-    (1..=top).chain([2 * n]).chain(3 * n + 1..=4 * n).map(|i| &ts[i]).fold(Type::empty(), |u, t| r3_union(&u, t))
+    (1..=top)
+        .chain([2 * n])
+        .chain(3 * n + 1..=4 * n)
+        .map(|i| &ts[i])
+        .fold(Type::empty(), |u, t| r3_union(&u, t))
 }
 
 /// Codex R3 families (copied from its probe, renamed rfx_cx_*).
 // n roots join a shared uniform chain at distinct depths. Supplementary rows
 // are subsets of existing F rows, so truth remains front/far for n >= 3.
 fn rfx_cx_stagger(n: usize, far: bool, tag: &str) -> Type {
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
-    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i-1)))));
-    defs.extend((1..=n).map(|i| def(&format!("M{i}{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(&Type::int()-&lit(1)), r(if i==1 {0} else {n+i-1}))]))));
-    for i in 1..n-1 {
-        defs.push(def(&format!("B{i}{tag}"), cons(Expr::Type(&Type::int()-&lit(i as i64+2)), r(i))));
+    defs.extend((2..=n).map(|i| {
+        def(
+            &format!("F{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(i - 1)),
+        )
+    }));
+    defs.extend((1..=n).map(|i| {
+        def(
+            &format!("M{i}{tag}"),
+            Expr::Union(vec![
+                nil(),
+                cons(
+                    Expr::Type(&Type::int() - &lit(1)),
+                    r(if i == 1 { 0 } else { n + i - 1 }),
+                ),
+            ]),
+        )
+    }));
+    for i in 1..n - 1 {
+        defs.push(def(
+            &format!("B{i}{tag}"),
+            cons(Expr::Type(&Type::int() - &lit(i as i64 + 2)), r(i)),
+        ));
     }
     let ts = r3_instance(defs);
-    let top = if far { n-1 } else { n };
-    let u = (1..=top).chain([2*n]).chain(2*n+1..ts.len()).fold(Type::empty(), |u,i| r3_union(&u, &ts[i]));
+    let top = if far { n - 1 } else { n };
+    let u = (1..=top)
+        .chain([2 * n])
+        .chain(2 * n + 1..ts.len())
+        .fold(Type::empty(), |u, i| r3_union(&u, &ts[i]));
     &ts[0] - &u
 }
 
@@ -1636,7 +1804,13 @@ fn rfx_cl_cofront_var(n: usize, ones: bool, excl: fn(usize) -> usize, tag: &str)
 
 /// [`rfx_cl_cofront_var`]; `block` also takes out `K = cons(int, cons(1, L))`, every list with
 /// a 1 second, so with `ones` (each such list has one) the difference is empty.
-fn rfx_cl_cofront_block(n: usize, ones: bool, excl: fn(usize) -> usize, block: bool, tag: &str) -> Type {
+fn rfx_cl_cofront_block(
+    n: usize,
+    ones: bool,
+    excl: fn(usize) -> usize,
+    block: bool,
+    tag: &str,
+) -> Type {
     let mut defs = vec![def(
         &format!("L{tag}"),
         Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
@@ -1649,7 +1823,10 @@ fn rfx_cl_cofront_block(n: usize, ones: bool, excl: fn(usize) -> usize, block: b
     let not_one = Expr::Type(&Type::int() - &lit(1));
     defs.extend((1..=n).map(|k| {
         let rest = if k == 1 { r(0) } else { r(n + k - 1) };
-        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+        def(
+            &format!("M{k}{tag}"),
+            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+        )
     }));
     // 2n+1: P; 2n+k: Q_k for k = 2..n
     let next = |k: usize| if k <= n { r(2 * n + k) } else { r(0) };
@@ -1660,44 +1837,91 @@ fn rfx_cl_cofront_block(n: usize, ones: bool, excl: fn(usize) -> usize, block: b
     defs.push(def(&format!("K{tag}"), cons(int(), r(3 * n + 1))));
     let ts = r3_instance(defs);
     let block = block.then_some(3 * n + 2);
-    let u = (1..=n).chain([2 * n]).chain(block).map(|i| &ts[i]).fold(Type::empty(), |u, t| r3_union(&u, t));
-    let pos = if ones { ts[2 * n + 1].clone() } else { ts[0].clone() };
+    let u = (1..=n)
+        .chain([2 * n])
+        .chain(block)
+        .map(|i| &ts[i])
+        .fold(Type::empty(), |u, t| r3_union(&u, t));
+    let pos = if ones {
+        ts[2 * n + 1].clone()
+    } else {
+        ts[0].clone()
+    };
     &pos - &u
 }
 
 fn rfx_cx_emitheads(n: usize, far: bool, tag: &str) -> Type {
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     for i in (1..=n).rev() {
-        let h = if !far && i==n { Type::int() } else { &Type::int()-&lit(i as i64) };
-        let mut branches = vec![cons(Expr::Type(h),r(0))];
-        if i < n { branches.push(cons(Expr::Type(Type::int()),r(defs.len()-1))); }
-        defs.push(def(&format!("G{i}{tag}"),Expr::Union(branches)));
+        let h = if !far && i == n {
+            Type::int()
+        } else {
+            &Type::int() - &lit(i as i64)
+        };
+        let mut branches = vec![cons(Expr::Type(h), r(0))];
+        if i < n {
+            branches.push(cons(Expr::Type(Type::int()), r(defs.len() - 1)));
+        }
+        defs.push(def(&format!("G{i}{tag}"), Expr::Union(branches)));
     }
     let mut p = 0;
     for i in (1..=n).rev() {
-        let idx=defs.len();
-        defs.push(def(&format!("Q{i}{tag}"),cons(Expr::Type(Type::int()),r(p))));
-        p=idx;
+        let idx = defs.len();
+        defs.push(def(
+            &format!("Q{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(p)),
+        ));
+        p = idx;
     }
-    let ts=r3_instance(defs);
-    &ts[p]-&ts[n]
+    let ts = r3_instance(defs);
+    &ts[p] - &ts[n]
 }
 
 // Shared staggered suffixes with heads containing the whole carrier.
 fn rfx_cx_stagger_wide(n: usize, far: bool, tag: &str) -> Type {
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
-    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(Expr::Type(Type::int()), r(i-1)))));
-    defs.extend((1..=n).map(|i| def(&format!("M{i}{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(&Type::int()-&lit(1)), r(if i==1 {0} else {n+i-1}))]))));
-    for i in 1..n-1 {
-        defs.push(def(&format!("B{i}{tag}"), cons(Expr::Type(&Type::int() | &Type::atom(&format!("wide{i}"))), r(i))));
+    defs.extend((2..=n).map(|i| {
+        def(
+            &format!("F{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(i - 1)),
+        )
+    }));
+    defs.extend((1..=n).map(|i| {
+        def(
+            &format!("M{i}{tag}"),
+            Expr::Union(vec![
+                nil(),
+                cons(
+                    Expr::Type(&Type::int() - &lit(1)),
+                    r(if i == 1 { 0 } else { n + i - 1 }),
+                ),
+            ]),
+        )
+    }));
+    for i in 1..n - 1 {
+        defs.push(def(
+            &format!("B{i}{tag}"),
+            cons(
+                Expr::Type(&Type::int() | &Type::atom(&format!("wide{i}"))),
+                r(i),
+            ),
+        ));
     }
     let ts = r3_instance(defs);
-    let top = if far { n-1 } else { n };
-    let u = (1..=top).chain([2*n]).chain(2*n+1..ts.len()).fold(Type::empty(), |u,i| r3_union(&u, &ts[i]));
+    let top = if far { n - 1 } else { n };
+    let u = (1..=top)
+        .chain([2 * n])
+        .chain(2 * n + 1..ts.len())
+        .fold(Type::empty(), |u, i| r3_union(&u, &ts[i]));
     &ts[0] - &u
 }
-
 
 /// Stress X10: Theta(n) distinct heads along a positive chain `P1..P{n-1}` and negative chains
 /// `C1..Cn` whose `far` witness `[n, n - 1, ..., 2, 1]` has Theta(n) distinct single-item runs.
@@ -1743,10 +1967,7 @@ fn rfx_many_heads(n: usize, far: bool, tag: &str) -> Type {
     let c_base = b_base + n;
     defs.extend((1..=n).map(|k| {
         let g = &(&lit(1) | &lit(v0)) | &lit((n + k) as i64 + 2);
-        def(
-            &format!("C{k}{tag}"),
-            cons(Expr::Type(g), r(b_base + k)),
-        )
+        def(&format!("C{k}{tag}"), cons(Expr::Type(g), r(b_base + k)))
     }));
     let ts = r3_instance(defs);
     let top = if far { n - 1 } else { n };
@@ -1790,16 +2011,11 @@ fn rfx_stagger(n: usize, far: bool, tag: &str) -> Type {
     }));
     defs.extend((1..=h).map(|k| {
         let hb = &Type::int() | &Type::atom(&format!("b{k}"));
-        def(
-            &format!("R{k}{tag}"),
-            cons(Expr::Type(hb), r(2 * n + k)),
-        )
+        def(&format!("R{k}{tag}"), cons(Expr::Type(hb), r(2 * n + k)))
     }));
     let ts = r3_instance(defs);
     let top = if far { n - 1 } else { n };
-    let r_indices = (1..=h)
-        .filter(|&k| d + k + 1 <= top)
-        .map(|k| 2 * n + h + k);
+    let r_indices = (1..=h).filter(|&k| d + k + 1 <= top).map(|k| 2 * n + h + k);
     (1..=top)
         .chain([2 * n])
         .chain(r_indices)
@@ -1879,22 +2095,18 @@ fn rewrite_expr_refs(e: &Expr, inv_perm: &[usize]) -> Expr {
     match e {
         Expr::Ref(i, args) => Expr::Ref(
             inv_perm[*i],
-            args.iter().map(|a| rewrite_expr_refs(a, inv_perm)).collect(),
+            args.iter()
+                .map(|a| rewrite_expr_refs(a, inv_perm))
+                .collect(),
         ),
-        Expr::Union(xs) => Expr::Union(
-            xs.iter().map(|x| rewrite_expr_refs(x, inv_perm)).collect(),
-        ),
-        Expr::And(xs) => Expr::And(
-            xs.iter().map(|x| rewrite_expr_refs(x, inv_perm)).collect(),
-        ),
+        Expr::Union(xs) => Expr::Union(xs.iter().map(|x| rewrite_expr_refs(x, inv_perm)).collect()),
+        Expr::And(xs) => Expr::And(xs.iter().map(|x| rewrite_expr_refs(x, inv_perm)).collect()),
         Expr::Diff(a, b) => Expr::Diff(
             Box::new(rewrite_expr_refs(a, inv_perm)),
             Box::new(rewrite_expr_refs(b, inv_perm)),
         ),
         Expr::Not(a) => Expr::Not(Box::new(rewrite_expr_refs(a, inv_perm))),
-        Expr::Tuple(xs) => Expr::Tuple(
-            xs.iter().map(|x| rewrite_expr_refs(x, inv_perm)).collect(),
-        ),
+        Expr::Tuple(xs) => Expr::Tuple(xs.iter().map(|x| rewrite_expr_refs(x, inv_perm)).collect()),
         Expr::Atom(name, xs) => Expr::Atom(
             name.clone(),
             xs.iter().map(|x| rewrite_expr_refs(x, inv_perm)).collect(),
@@ -2041,8 +2253,11 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
                     let l = list_named(Type::int(), &tag);
                     let tgh = &l - &rfx_groups_holes(n, far, &tag);
                     // X18: one value of every class: 1, each excluded `k + 2`, and 0 for the rest.
-                    let gh_samples: Vec<Value> =
-                        [0, 1].into_iter().chain(3..=n as i64 + 2).map(Value::Int).collect();
+                    let gh_samples: Vec<Value> = [0, 1]
+                        .into_iter()
+                        .chain(3..=n as i64 + 2)
+                        .map(Value::Int)
+                        .collect();
                     let want_gh = if list_oracle_inhabited(&tgh, &gh_samples, n + 1) {
                         Verdict::Inhabited
                     } else {
@@ -2249,10 +2464,7 @@ fn lists_by_the_place_from_the_front_verdicts_are_independent_of_order() {
                         0 => perm.reverse(),
                         1 => perm.rotate_left(k_len / 2),
                         2 => {
-                            perm = (0..k_len)
-                                .step_by(2)
-                                .chain((1..k_len).step_by(2))
-                                .collect();
+                            perm = (0..k_len).step_by(2).chain((1..k_len).step_by(2)).collect();
                         }
                         _ => {
                             perm[1..].reverse();
@@ -2298,99 +2510,204 @@ fn lists_by_the_place_from_the_front_verdicts_are_independent_of_order() {
 // equations; the positive carrier is implicit. This explores every class, not
 // the sweep's selected class, and never calls emptiness or type membership.
 #[derive(Clone)]
-struct R3Node { stop: bool, mask: u64, next: usize }
+struct R3Node {
+    stop: bool,
+    mask: u64,
+    next: usize,
+}
 
-fn r3_spec(n: usize, m: usize, skip: usize, holes: usize, stagger: bool) -> (Vec<R3Node>, Vec<usize>, u64) {
-    let all = (1u64 << (n+3))-1;
-    let mut ns = vec![R3Node { stop:true,mask:all,next:0 }];
-    for i in 1..=n { ns.push(R3Node {stop:false,mask:if i==1 {2} else {all},next:if i==1 {0} else {i-1}}); }
-    for i in 1..=m { ns.push(R3Node {stop:true,mask:all^2,next:if i==1 {0} else {n+i-1}}); }
-    let mut roots: Vec<_> = (1..=n).filter(|&i|i!=skip).chain([n+m]).collect();
+fn r3_spec(
+    n: usize,
+    m: usize,
+    skip: usize,
+    holes: usize,
+    stagger: bool,
+) -> (Vec<R3Node>, Vec<usize>, u64) {
+    let all = (1u64 << (n + 3)) - 1;
+    let mut ns = vec![R3Node {
+        stop: true,
+        mask: all,
+        next: 0,
+    }];
+    for i in 1..=n {
+        ns.push(R3Node {
+            stop: false,
+            mask: if i == 1 { 2 } else { all },
+            next: if i == 1 { 0 } else { i - 1 },
+        });
+    }
+    for i in 1..=m {
+        ns.push(R3Node {
+            stop: true,
+            mask: all ^ 2,
+            next: if i == 1 { 0 } else { n + i - 1 },
+        });
+    }
+    let mut roots: Vec<_> = (1..=n).filter(|&i| i != skip).chain([n + m]).collect();
     for k in 0..holes {
         if stagger {
-            let b=ns.len();
-            ns.push(R3Node {stop:false,mask:all^(1 << (k+2)),next:1+k%n});
+            let b = ns.len();
+            ns.push(R3Node {
+                stop: false,
+                mask: all ^ (1 << (k + 2)),
+                next: 1 + k % n,
+            });
             roots.push(b);
             continue;
         }
-        let a=ns.len();
-        ns.push(R3Node {stop:false,mask:all^(1 << (k+2)),next:1});
-        let b=ns.len();
-        ns.push(R3Node {stop:false,mask:all,next:a});
+        let a = ns.len();
+        ns.push(R3Node {
+            stop: false,
+            mask: all ^ (1 << (k + 2)),
+            next: 1,
+        });
+        let b = ns.len();
+        ns.push(R3Node {
+            stop: false,
+            mask: all,
+            next: a,
+        });
         roots.push(b);
     }
-    (ns,roots,all)
+    (ns, roots, all)
 }
 
-fn r3_oracle(ns: &[R3Node], roots: &[usize], all:u64) -> bool {
-    let mut root=roots.to_vec(); root.sort_unstable(); root.dedup();
-    let mut seen=BTreeSet::new(); let mut todo=vec![root];
-    while let Some(state)=todo.pop() {
-        if !seen.insert(state.clone()) {continue;}
-        if state.iter().all(|&i| !ns[i].stop) {return true;}
+fn r3_oracle(ns: &[R3Node], roots: &[usize], all: u64) -> bool {
+    let mut root = roots.to_vec();
+    root.sort_unstable();
+    root.dedup();
+    let mut seen = BTreeSet::new();
+    let mut todo = vec![root];
+    while let Some(state) = todo.pop() {
+        if !seen.insert(state.clone()) {
+            continue;
+        }
+        if state.iter().all(|&i| !ns[i].stop) {
+            return true;
+        }
         for bit in 0..64 {
-            if all & (1u64 << bit)==0 {continue;}
-            let mut next:Vec<_>=state.iter().filter(|&&i| ns[i].mask & (1u64<<bit)!=0).map(|&i|ns[i].next).collect();
-            next.sort_unstable(); next.dedup(); todo.push(next);
+            if all & (1u64 << bit) == 0 {
+                continue;
+            }
+            let mut next: Vec<_> = state
+                .iter()
+                .filter(|&&i| ns[i].mask & (1u64 << bit) != 0)
+                .map(|&i| ns[i].next)
+                .collect();
+            next.sort_unstable();
+            next.dedup();
+            todo.push(next);
         }
     }
     false
 }
 
-fn r3_build(ns:&[R3Node], roots:&[usize], all:u64, reverse:bool, tag:&str, mode:usize) -> Type {
-    let size=ns.len();
-    let index=|i|if reverse {size-1-i} else {i};
-    let mut defs=Vec::new();
-    for (i,nd) in ns.iter().enumerate() {
-        let mut h=if nd.mask&1!=0 {Type::int()} else {Type::empty()};
+fn r3_build(
+    ns: &[R3Node],
+    roots: &[usize],
+    all: u64,
+    reverse: bool,
+    tag: &str,
+    mode: usize,
+) -> Type {
+    let size = ns.len();
+    let index = |i| if reverse { size - 1 - i } else { i };
+    let mut defs = Vec::new();
+    for (i, nd) in ns.iter().enumerate() {
+        let mut h = if nd.mask & 1 != 0 {
+            Type::int()
+        } else {
+            Type::empty()
+        };
         for bit in 1..64 {
-            if all & (1u64<<bit)==0 {continue;}
-            let v=lit(bit as i64);
-            if nd.mask & (1u64<<bit)!=0 {h=&h|&v;} else {h=&h-&v;}
-        }
-        if mode==1 {h=Type::tuple(vec![h,Type::int()]);}
-        if mode==2 {
-            h=Type::empty();
-            for (bit,value) in [(0,false),(1,true)] {
-                if nd.mask & (1<<bit)!=0 {h=&h | &Type::lit(&Value::Bool(value)).unwrap();}
+            if all & (1u64 << bit) == 0 {
+                continue;
+            }
+            let v = lit(bit as i64);
+            if nd.mask & (1u64 << bit) != 0 {
+                h = &h | &v;
+            } else {
+                h = &h - &v;
             }
         }
-        let step=cons(Expr::Type(h),r(index(nd.next)));
-        let body=if nd.stop {
-            Expr::Union(if reverse {vec![step,nil()]} else {vec![nil(),step]})
-        } else {step};
-        defs.push(def(&format!("R3_{i}_{tag}"),body));
+        if mode == 1 {
+            h = Type::tuple(vec![h, Type::int()]);
+        }
+        if mode == 2 {
+            h = Type::empty();
+            for (bit, value) in [(0, false), (1, true)] {
+                if nd.mask & (1 << bit) != 0 {
+                    h = &h | &Type::lit(&Value::Bool(value)).unwrap();
+                }
+            }
+        }
+        let step = cons(Expr::Type(h), r(index(nd.next)));
+        let body = if nd.stop {
+            Expr::Union(if reverse {
+                vec![step, nil()]
+            } else {
+                vec![nil(), step]
+            })
+        } else {
+            step
+        };
+        defs.push(def(&format!("R3_{i}_{tag}"), body));
     }
-    if reverse {defs.reverse();}
-    let ts=Group::new(defs).unwrap().instance(vec![]);
-    let mut order=roots.to_vec(); if reverse {order.reverse();}
-    let u=order.iter().fold(Type::empty(),|u,&i|&u|&ts[index(i)]);
-    &ts[index(0)]-&u
+    if reverse {
+        defs.reverse();
+    }
+    let ts = Group::new(defs).unwrap().instance(vec![]);
+    let mut order = roots.to_vec();
+    if reverse {
+        order.reverse();
+    }
+    let u = order.iter().fold(Type::empty(), |u, &i| &u | &ts[index(i)]);
+    &ts[index(0)] - &u
 }
 
 #[test]
 fn r3_cofinite_redundant_oracle_and_order() {
     big(|| {
-        let mut cases=0;
+        let mut cases = 0;
         for n in 1..=6 {
-            for m in 1..=n+2 {
+            for m in 1..=n + 2 {
                 for skip in 0..=n {
-                    for (mode,holes,stagger) in [(0,0,false),(0,1,false),(0,n,false),(1,0,false),(1,1,false),(1,n,false),(2,0,false),(0,n,true),(1,n,true)] {
-                        let (ns,roots,mut all)=r3_spec(n,m,skip,holes,stagger);
-                        if mode==2 {all=3;}
-                        let expected=if r3_oracle(&ns,&roots,all) {Verdict::Inhabited} else {Verdict::Empty};
-                        let tag=format!("{n}_{m}_{skip}_{holes}_{stagger}");
-                        let a=r3_build(&ns,&roots,all,false,&tag,mode);
-                        let b=r3_build(&ns,&roots,all,true,&tag,mode);
+                    for (mode, holes, stagger) in [
+                        (0, 0, false),
+                        (0, 1, false),
+                        (0, n, false),
+                        (1, 0, false),
+                        (1, 1, false),
+                        (1, n, false),
+                        (2, 0, false),
+                        (0, n, true),
+                        (1, n, true),
+                    ] {
+                        let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
+                        if mode == 2 {
+                            all = 3;
+                        }
+                        let expected = if r3_oracle(&ns, &roots, all) {
+                            Verdict::Inhabited
+                        } else {
+                            Verdict::Empty
+                        };
+                        let tag = format!("{n}_{m}_{skip}_{holes}_{stagger}");
+                        let a = r3_build(&ns, &roots, all, false, &tag, mode);
+                        let b = r3_build(&ns, &roots, all, true, &tag, mode);
                         Type::forget_emptiness();
-                        let av=a.verdict(); let bv=b.verdict();
-                        assert_eq!(av,expected,"oracle n={n} m={m} skip={skip} holes={holes} mode={mode} stagger={stagger}");
-                        assert_eq!(bv,av,"definition/union order {tag}");
-                        assert_eq!(a.is_empty(),expected==Verdict::Empty,"is_empty {tag}");
+                        let av = a.verdict();
+                        let bv = b.verdict();
+                        assert_eq!(
+                            av, expected,
+                            "oracle n={n} m={m} skip={skip} holes={holes} mode={mode} stagger={stagger}"
+                        );
+                        assert_eq!(bv, av, "definition/union order {tag}");
+                        assert_eq!(a.is_empty(), expected == Verdict::Empty, "is_empty {tag}");
                         Type::forget_emptiness();
-                        assert_eq!(b.verdict(),bv,"b first {tag}");
-                        assert_eq!(a.verdict(),av,"a second {tag}");
-                        cases+=1;
+                        assert_eq!(b.verdict(), bv, "b first {tag}");
+                        assert_eq!(a.verdict(), av, "a second {tag}");
+                        cases += 1;
                     }
                 }
             }
@@ -2401,57 +2718,60 @@ fn r3_cofinite_redundant_oracle_and_order() {
 
 #[test]
 fn r3_stress_scale_prebuilt() {
-    for (case,want) in [
-        ("bool",Verdict::Empty),
-        ("boolfar",Verdict::Inhabited),
-        ("chain",Verdict::Empty),
-        ("chainfar",Verdict::Inhabited),
-        ("clmanyheads",Verdict::Empty),
-        ("clmanyheadsfar",Verdict::Inhabited),
-        ("clstagger",Verdict::Empty),
-        ("clstaggerfar",Verdict::Inhabited),
-        ("cxstagger",Verdict::Empty),
-        ("cxstaggerfar",Verdict::Inhabited),
-        ("cxstaggerwide",Verdict::Empty),
-        ("cxstaggerwidefar",Verdict::Inhabited),
-        ("emitheads",Verdict::Empty),
-        ("emitheadsfar",Verdict::Inhabited),
-        ("far",Verdict::Inhabited),
-        ("front",Verdict::Empty),
-        ("groups",Verdict::Empty),
-        ("groupsfar",Verdict::Inhabited),
-        ("groupsholes",Verdict::Empty),
-        ("groupsholesfar",Verdict::Inhabited),
-        ("groupssingles",Verdict::Empty),
-        ("groupssinglesfar",Verdict::Inhabited),
-        ("manyheads",Verdict::Empty),
-        ("manyheadsfar",Verdict::Inhabited),
-        ("meet",Verdict::Empty),
-        ("mlong",Verdict::Inhabited),
-        ("mshort",Verdict::Empty),
-        ("multi",Verdict::Empty),
-        ("multifar",Verdict::Inhabited),
-        ("one",Verdict::Empty),
-        ("onetwo",Verdict::Inhabited),
-        ("pair",Verdict::Empty),
-        ("pairfar",Verdict::Inhabited),
-        ("skip1",Verdict::Inhabited),
-        ("skipmid",Verdict::Inhabited),
-        ("split",Verdict::Empty),
-        ("splitfar",Verdict::Inhabited),
-        ("stagger",Verdict::Empty),
-        ("staggerfar",Verdict::Inhabited),
-        ("tuple",Verdict::Empty),
-        ("tuplefar",Verdict::Inhabited),
-        ("tupleflip",Verdict::Empty),
-        ("tupleflipfar",Verdict::Inhabited),
+    for (case, want) in [
+        ("bool", Verdict::Empty),
+        ("boolfar", Verdict::Inhabited),
+        ("chain", Verdict::Empty),
+        ("chainfar", Verdict::Inhabited),
+        ("clmanyheads", Verdict::Empty),
+        ("clmanyheadsfar", Verdict::Inhabited),
+        ("clstagger", Verdict::Empty),
+        ("clstaggerfar", Verdict::Inhabited),
+        ("cxstagger", Verdict::Empty),
+        ("cxstaggerfar", Verdict::Inhabited),
+        ("cxstaggerwide", Verdict::Empty),
+        ("cxstaggerwidefar", Verdict::Inhabited),
+        ("emitheads", Verdict::Empty),
+        ("emitheadsfar", Verdict::Inhabited),
+        ("far", Verdict::Inhabited),
+        ("front", Verdict::Empty),
+        ("groups", Verdict::Empty),
+        ("groupsfar", Verdict::Inhabited),
+        ("groupsholes", Verdict::Empty),
+        ("groupsholesfar", Verdict::Inhabited),
+        ("groupssingles", Verdict::Empty),
+        ("groupssinglesfar", Verdict::Inhabited),
+        ("manyheads", Verdict::Empty),
+        ("manyheadsfar", Verdict::Inhabited),
+        ("meet", Verdict::Empty),
+        ("mlong", Verdict::Inhabited),
+        ("mshort", Verdict::Empty),
+        ("multi", Verdict::Empty),
+        ("multifar", Verdict::Inhabited),
+        ("one", Verdict::Empty),
+        ("onetwo", Verdict::Inhabited),
+        ("pair", Verdict::Empty),
+        ("pairfar", Verdict::Inhabited),
+        ("skip1", Verdict::Inhabited),
+        ("skipmid", Verdict::Inhabited),
+        ("split", Verdict::Empty),
+        ("splitfar", Verdict::Inhabited),
+        ("stagger", Verdict::Empty),
+        ("staggerfar", Verdict::Inhabited),
+        ("tuple", Verdict::Empty),
+        ("tuplefar", Verdict::Inhabited),
+        ("tupleflip", Verdict::Empty),
+        ("tupleflipfar", Verdict::Inhabited),
     ] {
         big(move || {
-            let inputs:Vec<_>=[8,64].into_iter().map(|n| (n,rfx_case(case,n,&format!("_scale3_{case}_{n}")))).collect();
-            scaling::check(case,8,|n| {
+            let inputs: Vec<_> = [8, 64]
+                .into_iter()
+                .map(|n| (n, rfx_case(case, n, &format!("_scale3_{case}_{n}"))))
+                .collect();
+            scaling::check(case, 8, |n| {
                 Type::forget_emptiness();
-                let t=&inputs.iter().find(|(k,_)|*k==n).unwrap().1;
-                assert_eq!(t.verdict(),want,"{case} n={n}");
+                let t = &inputs.iter().find(|(k, _)| *k == n).unwrap().1;
+                assert_eq!(t.verdict(), want, "{case} n={n}");
             });
         });
     }
@@ -2461,67 +2781,166 @@ fn r3_stress_scale_prebuilt() {
 // vector's indexing so every caller denotes the same equations.
 thread_local! { static R3_REVERSE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 fn r3_instance(mut defs: Vec<Def>) -> Vec<Type> {
-    let reverse=R3_REVERSE.with(|x|x.get());
+    let reverse = R3_REVERSE.with(|x| x.get());
     if reverse {
-        let count=defs.len();
+        let count = defs.len();
         for d in &mut defs {
-            let mut todo=vec![&mut d.body];
-            while let Some(e)=todo.pop() {
+            let mut todo = vec![&mut d.body];
+            while let Some(e) = todo.pop() {
                 match e {
-                    Expr::Ref(i,args)=>{*i=count-1-*i;todo.extend(args.iter_mut());},
-                    Expr::Union(xs)=>{xs.reverse();todo.extend(xs.iter_mut());},
-                    Expr::And(xs)|Expr::Tuple(xs)|Expr::Atom(_,xs)=>todo.extend(xs.iter_mut()),
-                    Expr::Not(x)=>todo.push(x),
-                    Expr::Diff(a,b)=>{todo.push(a);todo.push(b);},
-                    Expr::Morphism(a,b,c)=>{todo.push(a);todo.push(b);todo.push(c);},
-                    Expr::Type(_)|Expr::Param(_)=>{},
+                    Expr::Ref(i, args) => {
+                        *i = count - 1 - *i;
+                        todo.extend(args.iter_mut());
+                    }
+                    Expr::Union(xs) => {
+                        xs.reverse();
+                        todo.extend(xs.iter_mut());
+                    }
+                    Expr::And(xs) | Expr::Tuple(xs) | Expr::Atom(_, xs) => {
+                        todo.extend(xs.iter_mut())
+                    }
+                    Expr::Not(x) => todo.push(x),
+                    Expr::Diff(a, b) => {
+                        todo.push(a);
+                        todo.push(b);
+                    }
+                    Expr::Morphism(a, b, c) => {
+                        todo.push(a);
+                        todo.push(b);
+                        todo.push(c);
+                    }
+                    Expr::Type(_) | Expr::Param(_) => {}
                 }
             }
         }
         defs.reverse();
     }
-    let mut ts=Group::new(defs).unwrap().instance(vec![]);
-    if reverse {ts.reverse();}
+    let mut ts = Group::new(defs).unwrap().instance(vec![]);
+    if reverse {
+        ts.reverse();
+    }
     ts
 }
-fn r3_union(a:&Type,b:&Type)->Type {
-    if R3_REVERSE.with(|x|x.get()) {b|a} else {a|b}
+fn r3_union(a: &Type, b: &Type) -> Type {
+    if R3_REVERSE.with(|x| x.get()) {
+        b | a
+    } else {
+        a | b
+    }
 }
 
 #[test]
 fn r3_all_probe_and_family_orders() {
     big(|| {
-        let cases=["front","far","skip1","skipmid","bool","boolfar","mshort","mlong","split","splitfar","meet","pair","pairfar","tuple","tuplefar","tupleflip","tupleflipfar","multi","multifar","groups","groupsfar","groupsholes","groupsholesfar","groupssingles","groupssinglesfar","cxstagger","cxstaggerfar","cxstaggerwide","cxstaggerwidefar","clmanyheads","clmanyheadsfar","clstagger","clstaggerfar","clstaggerholes","clcofront","clcofrontones","clcofrontsame","clcofrontsameones","clcofrontsameblock","clcofrontshared","emitheads","emitheadsfar","manyheads","manyheadsfar","stagger","staggerfar","chain","chainfar","one","onetwo","end","boundaryinside","boundaryoutside","cxprivateheads","cxprivateheadsfar","manyheadsv0","manyheadsfarv0"];
-        let mut count=0;
+        let cases = [
+            "front",
+            "far",
+            "skip1",
+            "skipmid",
+            "bool",
+            "boolfar",
+            "mshort",
+            "mlong",
+            "split",
+            "splitfar",
+            "meet",
+            "pair",
+            "pairfar",
+            "tuple",
+            "tuplefar",
+            "tupleflip",
+            "tupleflipfar",
+            "multi",
+            "multifar",
+            "groups",
+            "groupsfar",
+            "groupsholes",
+            "groupsholesfar",
+            "groupssingles",
+            "groupssinglesfar",
+            "cxstagger",
+            "cxstaggerfar",
+            "cxstaggerwide",
+            "cxstaggerwidefar",
+            "clmanyheads",
+            "clmanyheadsfar",
+            "clstagger",
+            "clstaggerfar",
+            "clstaggerholes",
+            "clcofront",
+            "clcofrontones",
+            "clcofrontsame",
+            "clcofrontsameones",
+            "clcofrontsameblock",
+            "clcofrontshared",
+            "emitheads",
+            "emitheadsfar",
+            "manyheads",
+            "manyheadsfar",
+            "stagger",
+            "staggerfar",
+            "chain",
+            "chainfar",
+            "one",
+            "onetwo",
+            "end",
+            "boundaryinside",
+            "boundaryoutside",
+            "cxprivateheads",
+            "cxprivateheadsfar",
+            "manyheadsv0",
+            "manyheadsfarv0",
+        ];
+        let mut count = 0;
         for case in cases {
             for n in 3..=6 {
-                let tag=format!("_order3_{case}_{n}");
-                R3_REVERSE.with(|x|x.set(false));
-                let a=rfx_case(case,n,&tag);
-                R3_REVERSE.with(|x|x.set(true));
-                let b=rfx_case(case,n,&tag);
-                R3_REVERSE.with(|x|x.set(false));
-                Type::forget_emptiness(); let av=a.verdict();let bv=b.verdict();
-                assert_eq!(av,bv,"probe definition/operand order {case} {n}");
-                Type::forget_emptiness(); assert_eq!(b.verdict(),bv);assert_eq!(a.verdict(),av);
-                count+=1;
+                let tag = format!("_order3_{case}_{n}");
+                R3_REVERSE.with(|x| x.set(false));
+                let a = rfx_case(case, n, &tag);
+                R3_REVERSE.with(|x| x.set(true));
+                let b = rfx_case(case, n, &tag);
+                R3_REVERSE.with(|x| x.set(false));
+                Type::forget_emptiness();
+                let av = a.verdict();
+                let bv = b.verdict();
+                assert_eq!(av, bv, "probe definition/operand order {case} {n}");
+                Type::forget_emptiness();
+                assert_eq!(b.verdict(), bv);
+                assert_eq!(a.verdict(), av);
+                count += 1;
             }
         }
-        for (all,one) in [(Type::int(),lit(1)),(Type::bool(),Type::lit(&Value::Bool(true)).unwrap()),(Type::tuple(vec![Type::int(),Type::int()]),Type::tuple(vec![lit(1),Type::int()]))] {
+        for (all, one) in [
+            (Type::int(), lit(1)),
+            (Type::bool(), Type::lit(&Value::Bool(true)).unwrap()),
+            (
+                Type::tuple(vec![Type::int(), Type::int()]),
+                Type::tuple(vec![lit(1), Type::int()]),
+            ),
+        ] {
             for n in 1..=6 {
                 for skip in std::iter::once(None).chain((1..=n).map(Some)) {
-                    for m in 1..=n+2 {
-                        for split in [false,true] {
-                            let tag=format!("_orderf3_{count}");
-                            R3_REVERSE.with(|x|x.set(false));
-                            let (l,u)=rfx_family(n,skip,m,&all,&one,split,&tag);let a=&l-&u;
-                            R3_REVERSE.with(|x|x.set(true));
-                            let (l,u)=rfx_family(n,skip,m,&all,&one,split,&tag);let b=&l-&u;
-                            R3_REVERSE.with(|x|x.set(false));
-                            Type::forget_emptiness();let av=a.verdict();let bv=b.verdict();
-                            assert_eq!(av,bv,"family definitions/operands n={n} skip={skip:?} m={m} split={split}");
-                            Type::forget_emptiness();assert_eq!(b.verdict(),bv);assert_eq!(a.verdict(),av);
-                            count+=1;
+                    for m in 1..=n + 2 {
+                        for split in [false, true] {
+                            let tag = format!("_orderf3_{count}");
+                            R3_REVERSE.with(|x| x.set(false));
+                            let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
+                            let a = &l - &u;
+                            R3_REVERSE.with(|x| x.set(true));
+                            let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
+                            let b = &l - &u;
+                            R3_REVERSE.with(|x| x.set(false));
+                            Type::forget_emptiness();
+                            let av = a.verdict();
+                            let bv = b.verdict();
+                            assert_eq!(
+                                av, bv,
+                                "family definitions/operands n={n} skip={skip:?} m={m} split={split}"
+                            );
+                            Type::forget_emptiness();
+                            assert_eq!(b.verdict(), bv);
+                            assert_eq!(a.verdict(), av);
+                            count += 1;
                         }
                     }
                 }
@@ -2537,21 +2956,41 @@ fn r3_cofinite_survey() {
     big(|| {
         let (mut bad, mut cases) = (0, 0);
         for n in 1..=6 {
-            for m in 1..=n+2 {
+            for m in 1..=n + 2 {
                 for skip in 0..=n {
-                    for (mode,holes,stagger) in [(0,0,false),(0,1,false),(0,n,false),(1,0,false),(1,1,false),(1,n,false),(2,0,false),(0,n,true),(1,n,true)] {
-                        let (ns,roots,mut all)=r3_spec(n,m,skip,holes,stagger);
-                        if mode==2 {all=3;}
-                        let expected=if r3_oracle(&ns,&roots,all) {Verdict::Inhabited} else {Verdict::Empty};
-                        let tag=format!("s{n}_{m}_{skip}_{holes}_{stagger}_{mode}");
-                        let a=r3_build(&ns,&roots,all,false,&tag,mode);
-                        let b=r3_build(&ns,&roots,all,true,&tag,mode);
+                    for (mode, holes, stagger) in [
+                        (0, 0, false),
+                        (0, 1, false),
+                        (0, n, false),
+                        (1, 0, false),
+                        (1, 1, false),
+                        (1, n, false),
+                        (2, 0, false),
+                        (0, n, true),
+                        (1, n, true),
+                    ] {
+                        let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
+                        if mode == 2 {
+                            all = 3;
+                        }
+                        let expected = if r3_oracle(&ns, &roots, all) {
+                            Verdict::Inhabited
+                        } else {
+                            Verdict::Empty
+                        };
+                        let tag = format!("s{n}_{m}_{skip}_{holes}_{stagger}_{mode}");
+                        let a = r3_build(&ns, &roots, all, false, &tag, mode);
+                        let b = r3_build(&ns, &roots, all, true, &tag, mode);
                         Type::forget_emptiness();
-                        let av=a.verdict(); Type::forget_emptiness(); let bv=b.verdict();
-                        cases+=1;
-                        if av!=expected || bv!=expected {
-                            bad+=1;
-                            eprintln!("MISMATCH n={n} m={m} skip={skip} mode={mode} holes={holes} stagger={stagger} want={expected:?} fwd={av:?} rev={bv:?}");
+                        let av = a.verdict();
+                        Type::forget_emptiness();
+                        let bv = b.verdict();
+                        cases += 1;
+                        if av != expected || bv != expected {
+                            bad += 1;
+                            eprintln!(
+                                "MISMATCH n={n} m={m} skip={skip} mode={mode} holes={holes} stagger={stagger} want={expected:?} fwd={av:?} rev={bv:?}"
+                            );
                         }
                     }
                 }
@@ -2791,11 +3230,17 @@ fn codex_r3_variants_agree_with_the_oracle() {
             let original = t.verdict();
             R3_REVERSE.with(|x| x.set(true));
             let rev = r3_instance(reverse_defs);
-            let ru = neg_roots.iter().fold(Type::empty(), |u, &i| r3_union(&u, &rev[i]));
+            let ru = neg_roots
+                .iter()
+                .fold(Type::empty(), |u, &i| r3_union(&u, &rev[i]));
             let rt = &rev[0] - &ru;
             R3_REVERSE.with(|x| x.set(false));
             Type::forget_emptiness();
-            assert_eq!(rt.verdict(), original, "random definition/union order {trial}");
+            assert_eq!(
+                rt.verdict(),
+                original,
+                "random definition/union order {trial}"
+            );
             assert_eq!(t.verdict(), original, "random query order {trial}");
         }
     });
@@ -2825,17 +3270,35 @@ fn oracle_inhabited(t: &Type, alphabet: &[Value], max_len: usize) -> bool {
 // Inside the short-escape class even with one excluded value repeated at many heads.
 // Outside removes the holes; it is exactly the ordinary Empty front family.
 fn r4_boundary(n: usize, holes: bool, tag: &str) -> Type {
-    let mut defs=vec![def(&format!("L{tag}"), Expr::Union(vec![nil(),cons(int(),r(0))]))];
-    defs.push(def(&format!("F1{tag}"),cons(Expr::Type(lit(1)),r(0))));
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
     for i in 2..=n {
-        let h=if holes {&Type::int()-&lit(4)} else {Type::int()};
-        defs.push(def(&format!("F{i}{tag}"),cons(Expr::Type(h),r(i-1))));
+        let h = if holes {
+            &Type::int() - &lit(4)
+        } else {
+            Type::int()
+        };
+        defs.push(def(&format!("F{i}{tag}"), cons(Expr::Type(h), r(i - 1))));
     }
     for i in 1..=n {
-        defs.push(def(&format!("M{i}{tag}"),Expr::Union(vec![nil(),cons(Expr::Type(&Type::int()-&lit(1)),r(if i==1 {0} else {n+i-1}))])));
+        defs.push(def(
+            &format!("M{i}{tag}"),
+            Expr::Union(vec![
+                nil(),
+                cons(
+                    Expr::Type(&Type::int() - &lit(1)),
+                    r(if i == 1 { 0 } else { n + i - 1 }),
+                ),
+            ]),
+        ));
     }
-    let ts=r3_instance(defs);
-    let u=(1..=n).chain([2*n]).fold(Type::empty(),|u,i|r3_union(&u,&ts[i]));
+    let ts = r3_instance(defs);
+    let u = (1..=n)
+        .chain([2 * n])
+        .fold(Type::empty(), |u, i| r3_union(&u, &ts[i]));
     u
 }
 
@@ -2843,22 +3306,32 @@ fn r4_boundary(n: usize, holes: bool, tag: &str) -> Type {
 #[ignore]
 fn r4_diagnostic_routes_and_head_width() {
     big(|| {
-        for case in ["front","emitheads","emitheadsfar","cxstagger","clcofront","clstaggerholes"] {
-            let t=rfx_case(case,8,&format!("route_{case}"));
-            eprintln!("route {case} {:?}",t.sweep_verdict());
+        for case in [
+            "front",
+            "emitheads",
+            "emitheadsfar",
+            "cxstagger",
+            "clcofront",
+            "clstaggerholes",
+        ] {
+            let t = rfx_case(case, 8, &format!("route_{case}"));
+            eprintln!("route {case} {:?}", t.sweep_verdict());
         }
-        for width in [4,8,12,16] {
-            let all=Type::tuple(vec![Type::bool();width]);
-            let mut coords=vec![Type::bool();width];
-            coords[0]=Type::lit(&Value::Bool(true)).unwrap();
-            let one=Type::tuple(coords);
-            let (l,u)=rfx_family(2,Some(2),2,&all,&one,false,&format!("width_{width}"));
-            let t=&l-&u;
+        for width in [4, 8, 12, 16] {
+            let all = Type::tuple(vec![Type::bool(); width]);
+            let mut coords = vec![Type::bool(); width];
+            coords[0] = Type::lit(&Value::Bool(true)).unwrap();
+            let one = Type::tuple(coords);
+            let (l, u) = rfx_family(2, Some(2), 2, &all, &one, false, &format!("width_{width}"));
+            let t = &l - &u;
             Type::forget_emptiness();
-            let mut got=None;
-            let w=scaling::Meter::new().work(||got=Some(t.verdict()));
-            eprintln!("headwidth {width} {:?} units {} bytes {}",got,w.units,w.bytes);
-            assert_eq!(got,Some(Verdict::Inhabited));
+            let mut got = None;
+            let w = scaling::Meter::new().work(|| got = Some(t.verdict()));
+            eprintln!(
+                "headwidth {width} {:?} units {} bytes {}",
+                got, w.units, w.bytes
+            );
+            assert_eq!(got, Some(Verdict::Inhabited));
         }
     });
 }
@@ -2866,42 +3339,63 @@ fn r4_diagnostic_routes_and_head_width() {
 #[test]
 fn r4_exact_classes_random_and_short_escape() {
     big(|| {
-        let mut seed=0x9183ab12u64;
-        let mut rng=|| {seed^=seed<<13;seed^=seed>>7;seed^=seed<<17;seed};
-        let mut cases=0;
+        let mut seed = 0x9183ab12u64;
+        let mut rng = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut cases = 0;
         for trial in 0..200 {
-            let n=2+(rng()%4) as usize;
-            let m=1+(rng()%(n+2) as u64) as usize;
-            let (mut ns,roots,all)=r3_spec(n,m,0,n,true);
+            let n = 2 + (rng() % 4) as usize;
+            let m = 1 + (rng() % (n + 2) as u64) as usize;
+            let (mut ns, roots, all) = r3_spec(n, m, 0, n, true);
             // Bit zero is a fresh integer; bits 1..=n+2 are all listed literals.
-            for nd in &mut ns[1..] { if rng()%3==0 {nd.mask=rng()&all;} }
-            let inhab=r3_oracle(&ns,&roots,all);
-            let a=r3_build(&ns,&roots,all,false,&format!("r4random{trial}"),0);
-            let b=r3_build(&ns,&roots,all,true,&format!("r4random{trial}"),0);
-            let av=a.sweep_verdict(); let bv=b.sweep_verdict();
-            assert_eq!(av,bv,"sweep definition order trial {trial}");
-            for t in [&a,&b] {
+            for nd in &mut ns[1..] {
+                if rng() % 3 == 0 {
+                    nd.mask = rng() & all;
+                }
+            }
+            let inhab = r3_oracle(&ns, &roots, all);
+            let a = r3_build(&ns, &roots, all, false, &format!("r4random{trial}"), 0);
+            let b = r3_build(&ns, &roots, all, true, &format!("r4random{trial}"), 0);
+            let av = a.sweep_verdict();
+            let bv = b.sweep_verdict();
+            assert_eq!(av, bv, "sweep definition order trial {trial}");
+            for t in [&a, &b] {
                 Type::forget_emptiness();
                 match t.verdict() {
-                    Verdict::Empty=>assert!(!inhab,"oracle has witness {trial}"),
-                    Verdict::Inhabited=>assert!(inhab,"oracle empty {trial}"),
-                    Verdict::Refused(_)=>{},
+                    Verdict::Empty => assert!(!inhab, "oracle has witness {trial}"),
+                    Verdict::Inhabited => assert!(inhab, "oracle empty {trial}"),
+                    Verdict::Refused(_) => {}
                 }
                 assert!(!t.is_empty() || !inhab);
             }
-            cases+=1;
+            cases += 1;
         }
         for n in 2..=6 {
-            for (case,want) in [("clcofront",Verdict::Inhabited),("clstaggerholes",Verdict::Inhabited),("boundaryinside",Verdict::Inhabited),("boundaryoutside",Verdict::Empty)] {
-                let tag=format!("r4boundary{n}{case}");
-                R3_REVERSE.with(|v|v.set(false)); let a=rfx_case(case,n,&tag);
-                R3_REVERSE.with(|v|v.set(true)); let b=rfx_case(case,n,&tag);
-                R3_REVERSE.with(|v|v.set(false));
-                assert_eq!(a.sweep_verdict(),Some(want),"{case} {n}");
-                assert_eq!(b.sweep_verdict(),Some(want),"reverse {case} {n}");
-                Type::forget_emptiness();assert_eq!(a.verdict(),want);assert_eq!(b.verdict(),want);
-                Type::forget_emptiness();assert_eq!(b.verdict(),want);assert_eq!(a.verdict(),want);
-                cases+=1;
+            for (case, want) in [
+                ("clcofront", Verdict::Inhabited),
+                ("clstaggerholes", Verdict::Inhabited),
+                ("boundaryinside", Verdict::Inhabited),
+                ("boundaryoutside", Verdict::Empty),
+            ] {
+                let tag = format!("r4boundary{n}{case}");
+                R3_REVERSE.with(|v| v.set(false));
+                let a = rfx_case(case, n, &tag);
+                R3_REVERSE.with(|v| v.set(true));
+                let b = rfx_case(case, n, &tag);
+                R3_REVERSE.with(|v| v.set(false));
+                assert_eq!(a.sweep_verdict(), Some(want), "{case} {n}");
+                assert_eq!(b.sweep_verdict(), Some(want), "reverse {case} {n}");
+                Type::forget_emptiness();
+                assert_eq!(a.verdict(), want);
+                assert_eq!(b.verdict(), want);
+                Type::forget_emptiness();
+                assert_eq!(b.verdict(), want);
+                assert_eq!(a.verdict(), want);
+                cases += 1;
             }
         }
         eprintln!("R4 exact-class random/boundary cases={cases}");
@@ -2909,15 +3403,25 @@ fn r4_exact_classes_random_and_short_escape() {
 }
 
 fn r4_private_heads(n: usize, far: bool, tag: &str) -> Type {
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     let mut roots = Vec::new();
     for i in 1..=n {
-        let h = if !far && i == n { Type::int() } else { &Type::int() - &lit(i as i64) };
+        let h = if !far && i == n {
+            Type::int()
+        } else {
+            &Type::int() - &lit(i as i64)
+        };
         let leaf = defs.len();
         defs.push(def(&format!("H{i}{tag}"), cons(Expr::Type(h), r(0))));
         for j in 1..i {
             let prev = defs.len() - 1;
-            defs.push(def(&format!("P{i}_{j}{tag}"), cons(Expr::Type(Type::int()), r(prev))));
+            defs.push(def(
+                &format!("P{i}_{j}{tag}"),
+                cons(Expr::Type(Type::int()), r(prev)),
+            ));
         }
         roots.push(leaf + i - 1);
     }
@@ -2925,24 +3429,39 @@ fn r4_private_heads(n: usize, far: bool, tag: &str) -> Type {
     let mut positive = 0;
     for i in (1..=n).rev() {
         let idx = defs.len();
-        defs.push(def(&format!("Q{i}{tag}"), cons(Expr::Type(Type::int()), r(positive))));
+        defs.push(def(
+            &format!("Q{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(positive)),
+        ));
         positive = idx;
     }
     let ts = r3_instance(defs);
-    let u = roots.iter().fold(Type::empty(), |u, &i| r3_union(&u, &ts[i]));
+    let u = roots
+        .iter()
+        .fold(Type::empty(), |u, &i| r3_union(&u, &ts[i]));
     &(&ts[0] & &ts[positive]) - &u
 }
 
 fn rfx_manyheads_v0(n: usize, far: bool, tag: &str) -> Type {
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     let mut roots = Vec::new();
     for i in 1..=n {
-        let h = if !far && i == n { Type::int() } else { &Type::int() - &lit(i as i64) };
+        let h = if !far && i == n {
+            Type::int()
+        } else {
+            &Type::int() - &lit(i as i64)
+        };
         let leaf = defs.len();
         defs.push(def(&format!("H{i}{tag}"), cons(Expr::Type(h), r(0))));
         for j in 1..i {
             let prev = defs.len() - 1;
-            defs.push(def(&format!("P{i}_{j}{tag}"), cons(Expr::Type(Type::int()), r(prev))));
+            defs.push(def(
+                &format!("P{i}_{j}{tag}"),
+                cons(Expr::Type(Type::int()), r(prev)),
+            ));
         }
         roots.push(leaf + i - 1);
     }
@@ -2950,14 +3469,18 @@ fn rfx_manyheads_v0(n: usize, far: bool, tag: &str) -> Type {
     let mut positive = 0;
     for i in (1..=n).rev() {
         let idx = defs.len();
-        defs.push(def(&format!("Q{i}{tag}"), cons(Expr::Type(Type::int()), r(positive))));
+        defs.push(def(
+            &format!("Q{i}{tag}"),
+            cons(Expr::Type(Type::int()), r(positive)),
+        ));
         positive = idx;
     }
     let ts = r3_instance(defs);
-    let u = roots.iter().fold(Type::empty(), |u, &i| r3_union(&u, &ts[i]));
+    let u = roots
+        .iter()
+        .fold(Type::empty(), |u, &i| r3_union(&u, &ts[i]));
     &ts[positive] - &u
 }
-
 
 // ---- Gemini R4 tests and helpers ----
 
@@ -3109,20 +3632,58 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                     for case in [
                         if far { "groupsfar" } else { "groups" },
                         if far { "groupsholesfar" } else { "groupsholes" },
-                        if far { "groupssinglesfar" } else { "groupssingles" },
+                        if far {
+                            "groupssinglesfar"
+                        } else {
+                            "groupssingles"
+                        },
                         if far { "manyheadsfar" } else { "manyheads" },
                         if far { "staggerfar" } else { "stagger" },
                         if far { "chainfar" } else { "chain" },
                         if far { "cxstaggerfar" } else { "cxstagger" },
-                        if far { "cxstaggerwidefar" } else { "cxstaggerwide" },
+                        if far {
+                            "cxstaggerwidefar"
+                        } else {
+                            "cxstaggerwide"
+                        },
                         if far { "emitheadsfar" } else { "emitheads" },
                         if far { "clmanyheadsfar" } else { "clmanyheads" },
                     ] {
-                        if n <= 3 || !matches!(case, "manyheads" | "manyheadsfar" | "groupsholes" | "groupsholesfar" | "groupssingles" | "groupssinglesfar" | "cxstagger" | "cxstaggerfar" | "emitheads" | "emitheadsfar" | "clmanyheads" | "clmanyheadsfar") {
+                        if n <= 3
+                            || !matches!(
+                                case,
+                                "manyheads"
+                                    | "manyheadsfar"
+                                    | "groupsholes"
+                                    | "groupsholesfar"
+                                    | "groupssingles"
+                                    | "groupssinglesfar"
+                                    | "cxstagger"
+                                    | "cxstaggerfar"
+                                    | "emitheads"
+                                    | "emitheadsfar"
+                                    | "clmanyheads"
+                                    | "clmanyheadsfar"
+                            )
+                        {
                             Type::forget_emptiness();
                             let tag = next_tag();
                             let t = rfx_case(case, n, &tag);
-                            let samples = if matches!(case, "manyheads" | "manyheadsfar" | "groupsholes" | "groupsholesfar" | "groupssingles" | "groupssinglesfar" | "cxstagger" | "cxstaggerfar" | "emitheads" | "emitheadsfar" | "clmanyheads" | "clmanyheadsfar") {
+                            let samples = if matches!(
+                                case,
+                                "manyheads"
+                                    | "manyheadsfar"
+                                    | "groupsholes"
+                                    | "groupsholesfar"
+                                    | "groupssingles"
+                                    | "groupssinglesfar"
+                                    | "cxstagger"
+                                    | "cxstaggerfar"
+                                    | "emitheads"
+                                    | "emitheadsfar"
+                                    | "clmanyheads"
+                                    | "clmanyheadsfar"
+                            ) {
                                 &mh_samples[..]
                             } else {
                                 &int_samples[..2]
@@ -3159,7 +3720,11 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                         } else {
                             &stag_samples[..]
                         };
-                        let max_l = if case == "clcofront" { n + 1 } else { 2 * n + 1 };
+                        let max_l = if case == "clcofront" {
+                            n + 1
+                        } else {
+                            2 * n + 1
+                        };
                         let want = if list_oracle_inhabited(&t, samples, max_l) {
                             Verdict::Inhabited
                         } else {
@@ -3301,7 +3866,10 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                 Verdict::Inhabited => assert!(inhab, "random chain seed={seed:#x}"),
                 Verdict::Refused(_) => {}
             }
-            assert!(!(t.is_empty() && inhab), "is_empty random chain seed={seed:#x}");
+            assert!(
+                !(t.is_empty() && inhab),
+                "is_empty random chain seed={seed:#x}"
+            );
         }
 
         // Random in-class prefix-chain families (uniform carrier prefix per chain, cofinite/finite
@@ -3357,10 +3925,18 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
             } else {
                 Verdict::Empty
             };
-            assert_eq!(t.sweep_verdict(), Some(want), "sweep uniform random seed={seed:#x}");
+            assert_eq!(
+                t.sweep_verdict(),
+                Some(want),
+                "sweep uniform random seed={seed:#x}"
+            );
             Type::forget_emptiness();
             assert_eq!(t.verdict(), want, "uniform random seed={seed:#x}");
-            assert_eq!(t.is_empty(), !inhab, "is_empty uniform random seed={seed:#x}");
+            assert_eq!(
+                t.is_empty(),
+                !inhab,
+                "is_empty uniform random seed={seed:#x}"
+            );
         }
     });
 }
@@ -3421,10 +3997,7 @@ fn lists_by_the_place_from_the_front_verdicts_are_independent_of_order_gemini() 
                         0 => perm.reverse(),
                         1 => perm.rotate_left(k_len / 2),
                         2 => {
-                            perm = (0..k_len)
-                                .step_by(2)
-                                .chain((1..k_len).step_by(2))
-                                .collect();
+                            perm = (0..k_len).step_by(2).chain((1..k_len).step_by(2)).collect();
                         }
                         _ => {
                             perm[1..].reverse();
@@ -3530,14 +4103,22 @@ fn a_union_of_lists_by_the_place_of_a_one_from_the_front_is_decided_in_its_size_
     });
 }
 
-
 // Round-4 union probe (orchestrator): the new families of all three reviewers under u4 names.
 fn u4_inst(defs: Vec<Def>) -> Vec<Type> {
     Group::new(defs).unwrap().instance(vec![])
 }
 
-fn u4_cofront_block(n: usize, ones: bool, excl: fn(usize) -> usize, block: bool, tag: &str) -> Type {
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+fn u4_cofront_block(
+    n: usize,
+    ones: bool,
+    excl: fn(usize) -> usize,
+    block: bool,
+    tag: &str,
+) -> Type {
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
     defs.extend((2..=n).map(|i| {
         let h = &Type::int() - &lit(excl(i) as i64);
@@ -3546,56 +4127,111 @@ fn u4_cofront_block(n: usize, ones: bool, excl: fn(usize) -> usize, block: bool,
     let not_one = Expr::Type(&Type::int() - &lit(1));
     defs.extend((1..=n).map(|k| {
         let rest = if k == 1 { r(0) } else { r(n + k - 1) };
-        def(&format!("M{k}{tag}"), Expr::Union(vec![nil(), cons(not_one.clone(), rest)]))
+        def(
+            &format!("M{k}{tag}"),
+            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+        )
     }));
     let next = |k: usize| if k <= n { r(2 * n + k) } else { r(0) };
-    defs.push(def(&format!("P{tag}"), cons(Expr::Type(Type::int()), next(2))));
+    defs.push(def(
+        &format!("P{tag}"),
+        cons(Expr::Type(Type::int()), next(2)),
+    ));
     defs.extend((2..=n).map(|k| def(&format!("Q{k}{tag}"), cons(Expr::Type(lit(1)), next(k + 1)))));
     defs.push(def(&format!("K1{tag}"), cons(Expr::Type(lit(1)), r(0))));
-    defs.push(def(&format!("K{tag}"), cons(Expr::Type(Type::int()), r(3 * n + 1))));
+    defs.push(def(
+        &format!("K{tag}"),
+        cons(Expr::Type(Type::int()), r(3 * n + 1)),
+    ));
     let ts = u4_inst(defs);
     let block = block.then_some(3 * n + 2);
-    let u = (1..=n).chain([2 * n]).chain(block).map(|i| &ts[i]).fold(Type::empty(), |u, t| &u | t);
-    let pos = if ones { ts[2 * n + 1].clone() } else { ts[0].clone() };
+    let u = (1..=n)
+        .chain([2 * n])
+        .chain(block)
+        .map(|i| &ts[i])
+        .fold(Type::empty(), |u, t| &u | t);
+    let pos = if ones {
+        ts[2 * n + 1].clone()
+    } else {
+        ts[0].clone()
+    };
     &pos - &u
 }
 
 fn u4_stagger_boundary(n: usize, overlap: bool, tag: &str) -> Type {
     let m = 2 * n;
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     defs.extend((1..=m).map(|i| {
         let h = if i == m {
-            if overlap { &Type::int() - &lit(3) } else { &(&Type::int() - &lit(m as i64 + 2)) - &lit(m as i64 + 3) }
+            if overlap {
+                &Type::int() - &lit(3)
+            } else {
+                &(&Type::int() - &lit(m as i64 + 2)) - &lit(m as i64 + 3)
+            }
         } else {
             &Type::int() - &lit(i as i64 + 2)
         };
         def(&format!("Y{i}{tag}"), cons(Expr::Type(h), r(i + 1)))
     }));
-    defs.push(def(&format!("Y{}{tag}", m + 1), cons(Expr::Type(lit(1)), r(0))));
+    defs.push(def(
+        &format!("Y{}{tag}", m + 1),
+        cons(Expr::Type(lit(1)), r(0)),
+    ));
     defs.extend((1..=m + 1).map(|j| {
-        let h = if j <= n + 1 { Type::int() } else { &Type::int() - &lit(1) };
+        let h = if j <= n + 1 {
+            Type::int()
+        } else {
+            &Type::int() - &lit(1)
+        };
         let next = if j == m + 1 { r(0) } else { r(m + 2 + j) };
-        def(&format!("N{j}{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(h), next)]))
+        def(
+            &format!("N{j}{tag}"),
+            Expr::Union(vec![nil(), cons(Expr::Type(h), next)]),
+        )
     }));
     let ts = u4_inst(defs);
     let l = ts[0].clone();
-    let u = (1..=n).map(|k| &ts[k]).chain([&ts[m + 2]]).fold(Type::empty(), |u, t| &u | t);
+    let u = (1..=n)
+        .map(|k| &ts[k])
+        .chain([&ts[m + 2]])
+        .fold(Type::empty(), |u, t| &u | t);
     &l - &u
 }
 
 fn u4_boundary(n: usize, holes: bool, tag: &str) -> Type {
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    )];
     defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
     for i in 2..=n {
-        let h = if holes { &Type::int() - &lit(4) } else { Type::int() };
+        let h = if holes {
+            &Type::int() - &lit(4)
+        } else {
+            Type::int()
+        };
         defs.push(def(&format!("F{i}{tag}"), cons(Expr::Type(h), r(i - 1))));
     }
     for i in 1..=n {
-        defs.push(def(&format!("M{i}{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(&Type::int() - &lit(1)), r(if i == 1 { 0 } else { n + i - 1 }))])));
+        defs.push(def(
+            &format!("M{i}{tag}"),
+            Expr::Union(vec![
+                nil(),
+                cons(
+                    Expr::Type(&Type::int() - &lit(1)),
+                    r(if i == 1 { 0 } else { n + i - 1 }),
+                ),
+            ]),
+        ));
     }
     let ts = u4_inst(defs);
     let l = ts[0].clone();
-    let u = (1..=n).chain([2 * n]).fold(Type::empty(), |u, i| &u | &ts[i]);
+    let u = (1..=n)
+        .chain([2 * n])
+        .fold(Type::empty(), |u, i| &u | &ts[i]);
     &l - &u
 }
 
@@ -3614,12 +4250,24 @@ fn r5_greedy(tag: &str) -> Type {
     let not = |i: i64| Expr::Type(&Type::int() - &lit(i));
     let one = || Expr::Type(lit(1));
     let defs = vec![
-        def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(int(), r(0))])),
+        def(
+            &format!("L{tag}"),
+            Expr::Union(vec![nil(), cons(int(), r(0))]),
+        ),
         def(&format!("U1{tag}"), cons(one(), r(0))),
         def(&format!("U2{tag}"), cons(not(2), r(1))),
         def(&format!("U3{tag}"), cons(not(3), r(2))),
         def(&format!("U4{tag}"), cons(not(4), r(3))),
-        def(&format!("P{tag}"), cons(int(), cons(Expr::Type(&lit(2) | &lit(5)), cons(one(), cons(one(), r(0)))))),
+        def(
+            &format!("P{tag}"),
+            cons(
+                int(),
+                cons(
+                    Expr::Type(&lit(2) | &lit(5)),
+                    cons(one(), cons(one(), r(0))),
+                ),
+            ),
+        ),
     ];
     let ts = u4_inst(defs);
     &ts[5] - &(&ts[3] | &ts[4])
@@ -3637,13 +4285,30 @@ fn r5_sat_type(k: usize, cls: &[Vec<(usize, bool)>], tag: &str) -> Type {
             h[rc(c + 1) - i + 1] = &Type::int() - &lit(if pos { 0 } else { 1 });
         }
     }
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(int(), r(0))]))];
-    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(h[1].clone()), r(0))));
-    defs.extend((2..=len).map(|d| def(&format!("F{d}{tag}"), cons(Expr::Type(h[d].clone()), r(d - 1)))));
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    defs.push(def(
+        &format!("F1{tag}"),
+        cons(Expr::Type(h[1].clone()), r(0)),
+    ));
+    defs.extend((2..=len).map(|d| {
+        def(
+            &format!("F{d}{tag}"),
+            cons(Expr::Type(h[d].clone()), r(d - 1)),
+        )
+    }));
     let clause_place = |p: usize| p > k && (p - k) % (k + 1) == 0;
     let mut e = nil();
     for p in (1..=len).rev() {
-        let head = if p <= k { &lit(0) | &lit(1) } else if clause_place(p) { lit(2) } else { lit(7) };
+        let head = if p <= k {
+            &lit(0) | &lit(1)
+        } else if clause_place(p) {
+            lit(2)
+        } else {
+            lit(7)
+        };
         e = cons(Expr::Type(head), e);
     }
     defs.push(def(&format!("P{tag}"), e));
@@ -3654,13 +4319,20 @@ fn r5_sat_type(k: usize, cls: &[Vec<(usize, bool)>], tag: &str) -> Type {
 
 fn r5_sat(k: usize, cls: &[Vec<(usize, bool)>]) -> bool {
     // Value 0 at place i makes a positive literal true; value 1 a negative one.
-    (0..1u32 << k).any(|a| cls.iter().all(|cl| cl.iter().any(|&(i, pos)| ((a >> (i - 1)) & 1 == 0) == pos)))
+    (0..1u32 << k).any(|a| {
+        cls.iter()
+            .all(|cl| cl.iter().any(|&(i, pos)| ((a >> (i - 1)) & 1 == 0) == pos))
+    })
 }
 
 #[test]
 #[ignore]
 fn r5_sat_check() {
-    let spec: Vec<usize> = std::env::var("R5SAT").unwrap_or("3,1,4,3,0,1".into()).split(',').map(|s| s.parse().unwrap()).collect();
+    let spec: Vec<usize> = std::env::var("R5SAT")
+        .unwrap_or("3,1,4,3,0,1".into())
+        .split(',')
+        .map(|s| s.parse().unwrap())
+        .collect();
     r5_sat_run(spec);
 }
 
@@ -3678,9 +4350,16 @@ fn r5_sat_run(spec: Vec<usize>) {
     let mut all: Vec<Vec<(usize, bool)>> = vec![];
     for vs in 1u32..1 << k {
         let vars: Vec<usize> = (1..=k).filter(|i| vs >> (i - 1) & 1 == 1).collect();
-        if vars.len() < wmin || vars.len() > 3 { continue; }
+        if vars.len() < wmin || vars.len() > 3 {
+            continue;
+        }
         for s in 0..1u32 << vars.len() {
-            all.push(vars.iter().enumerate().map(|(j, &i)| (i, s >> j & 1 == 0)).collect());
+            all.push(
+                vars.iter()
+                    .enumerate()
+                    .map(|(j, &i)| (i, s >> j & 1 == 0))
+                    .collect(),
+            );
         }
     }
     let mut seen = 0usize;
@@ -3690,11 +4369,24 @@ fn r5_sat_run(spec: Vec<usize>) {
         let n = all.len();
         let mut stack: Vec<Vec<usize>> = vec![vec![]];
         while let Some(set) = stack.pop() {
-            let mine = set.len() >= mlo && { seen += 1; seen % nsh == shard };
+            let mine = set.len() >= mlo && {
+                seen += 1;
+                seen % nsh == shard
+            };
             if mine {
                 let cls: Vec<_> = set.iter().map(|&i| all[i].clone()).collect();
                 Type::forget_emptiness();
-                let t = r5_sat_type(k, &cls, &format!("_sat{k}_{}", set.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("_")));
+                let t = r5_sat_type(
+                    k,
+                    &cls,
+                    &format!(
+                        "_sat{k}_{}",
+                        set.iter()
+                            .map(|i| i.to_string())
+                            .collect::<Vec<_>>()
+                            .join("_")
+                    ),
+                );
                 let sat = r5_sat(k, &cls);
                 let mut m = scaling::Meter::new();
                 let mut v = None;
@@ -3702,9 +4394,17 @@ fn r5_sat_run(spec: Vec<usize>) {
                 let v = v.unwrap();
                 units += w.units as u64;
                 most = most.max(w.units as u64);
-                let wrong = matches!((&v, sat), (Verdict::Empty, true) | (Verdict::Inhabited, false));
-                if wrong { bad += 1; eprintln!("r5sat WRONG k {k} {cls:?} sat {sat} {v:?}"); }
-                *counts.entry(format!("m{} sat {sat} {v:?}", set.len())).or_insert(0usize) += 1;
+                let wrong = matches!(
+                    (&v, sat),
+                    (Verdict::Empty, true) | (Verdict::Inhabited, false)
+                );
+                if wrong {
+                    bad += 1;
+                    eprintln!("r5sat WRONG k {k} {cls:?} sat {sat} {v:?}");
+                }
+                *counts
+                    .entry(format!("m{} sat {sat} {v:?}", set.len()))
+                    .or_insert(0usize) += 1;
                 // Which mechanism answers on its own: the front sweep, the prefix chains, or
                 // neither (the instance is in the remainder and goes to the search).
                 Type::forget_emptiness();
@@ -3716,23 +4416,44 @@ fn r5_sat_run(spec: Vec<usize>) {
                     (Some(_), Some(_)) => "chains",
                     (Some(_), None) => "front",
                 };
-                if matches!((&sw, sat), (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)) {
+                if matches!(
+                    (&sw, sat),
+                    (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)
+                ) {
                     bad += 1;
                     eprintln!("r5sat WRONG SWEEP k {k} {cls:?} sat {sat} {sw:?}");
                 }
-                if matches!((&ch, sat), (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)) {
+                if matches!(
+                    (&ch, sat),
+                    (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)
+                ) {
                     bad += 1;
                     eprintln!("r5sat WRONG CHAINS k {k} {cls:?} sat {sat} {ch:?}");
                 }
-                *counts.entry(format!("mech m{} {by} {sw:?} chains {ch:?}", set.len())).or_insert(0usize) += 1;
+                *counts
+                    .entry(format!("mech m{} {by} {sw:?} chains {ch:?}", set.len()))
+                    .or_insert(0usize) += 1;
             }
             if set.len() < mhi {
                 let from = set.last().map_or(0, |&l| l + 1);
-                for i in from..n { let mut s = set.clone(); s.push(i); stack.push(s); }
+                for i in from..n {
+                    let mut s = set.clone();
+                    s.push(i);
+                    stack.push(s);
+                }
             }
         }
-        for (key, c) in &counts { eprintln!("r5sat k {k} {key}: {c}"); }
-        eprintln!("r5sat k {k} m {mlo}..{mhi} w {wmin} shard {shard}/{nsh} cases {} wrong {bad} units {units} most {most}", counts.iter().filter(|(k, _)| !k.starts_with("mech")).map(|(_, c)| c).sum::<usize>());
+        for (key, c) in &counts {
+            eprintln!("r5sat k {k} {key}: {c}");
+        }
+        eprintln!(
+            "r5sat k {k} m {mlo}..{mhi} w {wmin} shard {shard}/{nsh} cases {} wrong {bad} units {units} most {most}",
+            counts
+                .iter()
+                .filter(|(k, _)| !k.starts_with("mech"))
+                .map(|(_, c)| c)
+                .sum::<usize>()
+        );
         assert_eq!(bad, 0);
     });
 }
@@ -3901,61 +4622,122 @@ fn the_reduction_without_literals_is_swept_and_with_literals_is_not() {
 
 // rfx port (verification only)
 fn r5_slots(n: usize, outside: bool) -> Type {
-    let mut ds = vec![def("R5L", Expr::Union(vec![nil(),cons(int(),r(0))]))];
-    ds.push(def("R5F1",cons(Expr::Type(lit(1)),r(0))));
-    for k in 2..=6 { ds.push(def(&format!("R5F{k}"),cons(Expr::Type(&Type::int()-&lit(k as i64)),r(k-1)))); }
-    let hs=[&lit(4)|&(&lit(5)|&lit(6)), if outside {&lit(4)|&lit(5)} else {Type::int()},if outside {lit(2)} else {Type::int()},lit(1),lit(1),lit(1)];
-    let mut p=r(0);
-    for _ in 0..n { p=cons(int(),p); }
-    for h in hs.iter().rev() {p=cons(Expr::Type(h.clone()),p);}
-    ds.push(def("R5P",p));
-    let g=r3_instance(ds);
-    &g[7]-&(&g[4]|&(&g[5]|&g[6]))
+    let mut ds = vec![def("R5L", Expr::Union(vec![nil(), cons(int(), r(0))]))];
+    ds.push(def("R5F1", cons(Expr::Type(lit(1)), r(0))));
+    for k in 2..=6 {
+        ds.push(def(
+            &format!("R5F{k}"),
+            cons(Expr::Type(&Type::int() - &lit(k as i64)), r(k - 1)),
+        ));
+    }
+    let hs = [
+        &lit(4) | &(&lit(5) | &lit(6)),
+        if outside {
+            &lit(4) | &lit(5)
+        } else {
+            Type::int()
+        },
+        if outside { lit(2) } else { Type::int() },
+        lit(1),
+        lit(1),
+        lit(1),
+    ];
+    let mut p = r(0);
+    for _ in 0..n {
+        p = cons(int(), p);
+    }
+    for h in hs.iter().rev() {
+        p = cons(Expr::Type(h.clone()), p);
+    }
+    ds.push(def("R5P", p));
+    let g = r3_instance(ds);
+    &g[7] - &(&g[4] | &(&g[5] | &g[6]))
 }
 fn r5_varying_width(w: usize) -> Type {
-    let all=Type::tuple(vec![Type::bool();w]);
-    let mut defs=vec![def("R5WidthL",Expr::Union(vec![nil(),cons(Expr::Type(all.clone()),r(0))]))];
+    let all = Type::tuple(vec![Type::bool(); w]);
+    let mut defs = vec![def(
+        "R5WidthL",
+        Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
+    )];
     for j in 0..w {
-        let mut cs=vec![Type::bool();w];cs[j]=Type::lit(&Value::Bool(true)).unwrap();
-        defs.push(def(&format!("R5WidthF{j}"),cons(Expr::Type(Type::tuple(cs)),r(0))));
+        let mut cs = vec![Type::bool(); w];
+        cs[j] = Type::lit(&Value::Bool(true)).unwrap();
+        defs.push(def(
+            &format!("R5WidthF{j}"),
+            cons(Expr::Type(Type::tuple(cs)), r(0)),
+        ));
     }
-    defs.push(def("R5WidthP",cons(Expr::Type(all),r(0))));
-    let g=Group::new(defs).unwrap().instance(vec![]);
-    let u=(1..=w).fold(Type::empty(),|u,j|&u|&g[j]);
-    &g[w+1]-&u
+    defs.push(def("R5WidthP", cons(Expr::Type(all), r(0))));
+    let g = Group::new(defs).unwrap().instance(vec![]);
+    let u = (1..=w).fold(Type::empty(), |u, j| &u | &g[j]);
+    &g[w + 1] - &u
 }
 #[test]
 fn rfxx_r5_matching_non_nested_slots() {
-    let mut ds = vec![def("R5L", Expr::Union(vec![nil(),cons(int(),r(0))]))];
-    ds.push(def("R5F1",cons(Expr::Type(lit(1)),r(0))));
-    for k in 2..=6 { ds.push(def(&format!("R5F{k}"),cons(Expr::Type(&Type::int()-&lit(k as i64)),r(k-1)))); }
-    let hs=[&lit(4)|&(&lit(5)|&lit(6)), &lit(4)|&lit(5),lit(2),lit(1),lit(1),lit(1)];
-    let mut p=r(0);
-    for h in hs.iter().rev() {p=cons(Expr::Type(h.clone()),p);}
-    ds.push(def("R5P",p));
-    let g=r3_instance(ds);
-    let t=&g[7]-&(&g[4]|&(&g[5]|&g[6]));
-    let witness=[5,5,2,1,1,1].iter().rev().fold(Value::atom("nil"),|tail,&x|Value::atom_with("cons",vec![Value::Int(x),tail]));
+    let mut ds = vec![def("R5L", Expr::Union(vec![nil(), cons(int(), r(0))]))];
+    ds.push(def("R5F1", cons(Expr::Type(lit(1)), r(0))));
+    for k in 2..=6 {
+        ds.push(def(
+            &format!("R5F{k}"),
+            cons(Expr::Type(&Type::int() - &lit(k as i64)), r(k - 1)),
+        ));
+    }
+    let hs = [
+        &lit(4) | &(&lit(5) | &lit(6)),
+        &lit(4) | &lit(5),
+        lit(2),
+        lit(1),
+        lit(1),
+        lit(1),
+    ];
+    let mut p = r(0);
+    for h in hs.iter().rev() {
+        p = cons(Expr::Type(h.clone()), p);
+    }
+    ds.push(def("R5P", p));
+    let g = r3_instance(ds);
+    let t = &g[7] - &(&g[4] | &(&g[5] | &g[6]));
+    let witness = [5, 5, 2, 1, 1, 1]
+        .iter()
+        .rev()
+        .fold(Value::atom("nil"), |tail, &x| {
+            Value::atom_with("cons", vec![Value::Int(x), tail])
+        });
     assert!(t.contains(&witness));
-    eprintln!("matching nonnested sweep={:?} verdict={:?} witness_checked=true",t.sweep_verdict(),t.verdict());
-    assert_ne!(t.verdict(),Verdict::Empty);
+    eprintln!(
+        "matching nonnested sweep={:?} verdict={:?} witness_checked=true",
+        t.sweep_verdict(),
+        t.verdict()
+    );
+    assert_ne!(t.verdict(), Verdict::Empty);
     assert!(!t.is_empty());
 }
 #[test]
 fn rfxx_r5_carrier_only_constrains_the_suffix() {
-    let ds=vec![
-        def("R5SuffixL",Expr::Union(vec![nil(),cons(int(),r(0))])),
-        def("R5SuffixR",cons(int(),r(0))),
-        def("R5SuffixQ",Expr::Union(vec![nil(),cons(Expr::Type(&Type::int()|&Type::atom("a")),r(1))])),
-        def("R5SuffixP",cons(Expr::Type(&Type::int()-&lit(1)),r(2))),
-        def("R5SuffixN",cons(Expr::Type(&Type::int()-&lit(1)),r(0))),
+    let ds = vec![
+        def("R5SuffixL", Expr::Union(vec![nil(), cons(int(), r(0))])),
+        def("R5SuffixR", cons(int(), r(0))),
+        def(
+            "R5SuffixQ",
+            Expr::Union(vec![
+                nil(),
+                cons(Expr::Type(&Type::int() | &Type::atom("a")), r(1)),
+            ]),
+        ),
+        def("R5SuffixP", cons(Expr::Type(&Type::int() - &lit(1)), r(2))),
+        def("R5SuffixN", cons(Expr::Type(&Type::int() - &lit(1)), r(0))),
     ];
-    let g=Group::new(ds).unwrap().instance(vec![]);
-    let t=&g[3]-&g[4];
-    let w=[Value::Int(0),Value::atom("a"),Value::Int(0)].into_iter().rev().fold(Value::atom("nil"),|tail,x|Value::atom_with("cons",vec![x,tail]));
+    let g = Group::new(ds).unwrap().instance(vec![]);
+    let t = &g[3] - &g[4];
+    let w = [Value::Int(0), Value::atom("a"), Value::Int(0)]
+        .into_iter()
+        .rev()
+        .fold(Value::atom("nil"), |tail, x| {
+            Value::atom_with("cons", vec![x, tail])
+        });
     assert!(t.contains(&w));
-    assert_ne!(t.sweep_verdict(),Some(Verdict::Empty));
-    assert_ne!(t.verdict(),Verdict::Empty);
+    assert_ne!(t.sweep_verdict(), Some(Verdict::Empty));
+    assert_ne!(t.verdict(), Verdict::Empty);
     assert!(!t.is_empty());
 }
 /// Q2 remainder boundary family:
@@ -4028,9 +4810,18 @@ fn r5_remainder_boundary(n: usize, in_remainder: bool, tag: &str) -> Type {
 /// (unsatisfiable, one root with three atoms, outside the 2-SAT `Empty`).
 fn r6_two_clauses(n: usize, kind: u8) -> (usize, Vec<Vec<(usize, bool)>>) {
     let k = (n as f64).sqrt() as usize + 2;
-    let mut cls: Vec<Vec<(usize, bool)>> = (1..=k).map(|i| vec![(i, true), (i % k + 1, false)]).collect();
+    let mut cls: Vec<Vec<(usize, bool)>> = (1..=k)
+        .map(|i| vec![(i, true), (i % k + 1, false)])
+        .collect();
     cls.push(vec![(1, true), (2, true)]);
-    let mut seen: BTreeSet<Vec<(usize, bool)>> = cls.iter().map(|c| { let mut c = c.clone(); c.sort(); c }).collect();
+    let mut seen: BTreeSet<Vec<(usize, bool)>> = cls
+        .iter()
+        .map(|c| {
+            let mut c = c.clone();
+            c.sort();
+            c
+        })
+        .collect();
     'fill: for a in 1..=k {
         for b in a + 1..=k {
             for (sa, sb) in [(true, true), (true, false), (false, true)] {
@@ -4065,13 +4856,30 @@ fn r6_sat_type(k: usize, cls: &[Vec<(usize, bool)>], tag: &str, filler: Type, ba
             h[rc(c + 1) - i + 1] = &base - &lit(if pos { 0 } else { 1 });
         }
     }
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(int(), r(0))]))];
-    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(h[1].clone()), r(0))));
-    defs.extend((2..=len).map(|d| def(&format!("F{d}{tag}"), cons(Expr::Type(h[d].clone()), r(d - 1)))));
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    defs.push(def(
+        &format!("F1{tag}"),
+        cons(Expr::Type(h[1].clone()), r(0)),
+    ));
+    defs.extend((2..=len).map(|d| {
+        def(
+            &format!("F{d}{tag}"),
+            cons(Expr::Type(h[d].clone()), r(d - 1)),
+        )
+    }));
     let clause_place = |p: usize| p > k && (p - k) % (k + 1) == 0;
     let mut e = nil();
     for p in (1..=len).rev() {
-        let head = if p <= k { &lit(0) | &lit(1) } else if clause_place(p) { lit(2) } else { filler.clone() };
+        let head = if p <= k {
+            &lit(0) | &lit(1)
+        } else if clause_place(p) {
+            lit(2)
+        } else {
+            filler.clone()
+        };
         e = cons(Expr::Type(head), e);
     }
     defs.push(def(&format!("P{tag}"), e));
@@ -4108,7 +4916,27 @@ fn r6_escape_families_are_decided_in_their_size() {
 /// `r6wide` n^1.82, `r6comb` n^1.62 at 1024), at sizes large enough for that to show.
 #[test]
 fn r6_wide_rows_are_retired_and_decided_in_their_size() {
-    cases_scale_from(&[("r6wide", Verdict::Inhabited), ("r6comb", Verdict::Inhabited)], 128);
+    cases_scale_from(
+        &[
+            ("r6wide", Verdict::Inhabited),
+            ("r6comb", Verdict::Inhabited),
+        ],
+        128,
+    );
+}
+
+/// R7: the round-6 probe cases no other scaling test reads. `r6twowide` and `r6threeun` are
+/// outside the chains' class and quadratic on the base search as well, so they are not here.
+#[test]
+fn r7_round6_probe_cases_are_decided_in_their_size() {
+    r5_cases_scale(&[
+        ("r6two", Verdict::Inhabited),
+        ("r6twoun", Verdict::Empty),
+        ("r6parity", Verdict::Inhabited),
+        ("r6repeat3", Verdict::Inhabited),
+        ("r6distinct2", Verdict::Inhabited),
+        ("r6distinct3", Verdict::Inhabited),
+    ]);
 }
 
 #[test]
@@ -4145,7 +4973,13 @@ fn r6_colour_type(nv: usize, edges: &[(usize, usize)], tag: &str) -> Type {
     let mut defs = vec![def(&format!("P{tag}"), chain(&|_| three.clone()))];
     for (i, &(u, v)) in edges.iter().enumerate() {
         for c in 1..=3 {
-            let e = chain(&|p| if p == u || p == v { lit(c) } else { Type::int() });
+            let e = chain(&|p| {
+                if p == u || p == v {
+                    lit(c)
+                } else {
+                    Type::int()
+                }
+            });
             defs.push(def(&format!("N{i}_{c}{tag}"), e));
         }
     }
@@ -4163,23 +4997,45 @@ fn r6_colour_type(nv: usize, edges: &[(usize, usize)], tag: &str) -> Type {
 /// length.
 fn r6_colour_comb(nv: usize, edges: &[(usize, usize)], tag: &str) -> (Type, usize) {
     let rc = |b: usize| nv + b * (nv + 1);
-    let blocks: Vec<(usize, usize, i64)> = edges.iter().flat_map(|&(u, v)| (1..=3).map(move |c| (u, v, c))).collect();
+    let blocks: Vec<(usize, usize, i64)> = edges
+        .iter()
+        .flat_map(|&(u, v)| (1..=3).map(move |c| (u, v, c)))
+        .collect();
     let len = rc(blocks.len());
     let three = &(&lit(1) | &lit(2)) | &lit(3);
     let mut h = vec![Type::int(); len + 1];
     h[1] = lit(0);
     for (b, &(u, v, c)) in blocks.iter().enumerate() {
-        let others = (1..=3).filter(|&x| x != c).fold(Type::empty(), |s, x| &s | &lit(x));
+        let others = (1..=3)
+            .filter(|&x| x != c)
+            .fold(Type::empty(), |s, x| &s | &lit(x));
         for p in [u, v] {
             h[rc(b + 1) - p + 1] = &Type::int() - &others;
         }
     }
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(int(), r(0))]))];
-    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(h[1].clone()), r(0))));
-    defs.extend((2..=len).map(|d| def(&format!("F{d}{tag}"), cons(Expr::Type(h[d].clone()), r(d - 1)))));
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    defs.push(def(
+        &format!("F1{tag}"),
+        cons(Expr::Type(h[1].clone()), r(0)),
+    ));
+    defs.extend((2..=len).map(|d| {
+        def(
+            &format!("F{d}{tag}"),
+            cons(Expr::Type(h[d].clone()), r(d - 1)),
+        )
+    }));
     let mut e = nil();
     for p in (1..=len).rev() {
-        let head = if p <= nv { three.clone() } else if (p - nv) % (nv + 1) == 0 { lit(0) } else { lit(7) };
+        let head = if p <= nv {
+            three.clone()
+        } else if (p - nv) % (nv + 1) == 0 {
+            lit(0)
+        } else {
+            lit(7)
+        };
         e = cons(Expr::Type(head), e);
     }
     defs.push(def(&format!("P{tag}"), e));
@@ -4189,7 +5045,9 @@ fn r6_colour_comb(nv: usize, edges: &[(usize, usize)], tag: &str) -> (Type, usiz
 }
 
 fn r6_colour_list(xs: &[i64]) -> Value {
-    xs.iter().rev().fold(Value::atom("nil"), |tl, &h| Value::atom_with("cons", vec![Value::Int(h), tl]))
+    xs.iter().rev().fold(Value::atom("nil"), |tl, &h| {
+        Value::atom_with("cons", vec![Value::Int(h), tl])
+    })
 }
 
 /// Every graph on `nv` vertices whose edge mask is `shard` mod `nsh`: the type is inhabited
@@ -4200,47 +5058,85 @@ fn r6_colouring_check(nv: usize, shard: u32, nsh: u32, comb: bool) {
     big(move || {
         let mut counts = std::collections::BTreeMap::new();
         {
-            let pairs: Vec<(usize, usize)> = (1..=nv).flat_map(|u| (u + 1..=nv).map(move |v| (u, v))).collect();
+            let pairs: Vec<(usize, usize)> = (1..=nv)
+                .flat_map(|u| (u + 1..=nv).map(move |v| (u, v)))
+                .collect();
             for mask in 0u32..1 << pairs.len() {
                 if mask % nsh != shard {
                     continue;
                 }
-                let edges: Vec<(usize, usize)> = pairs.iter().enumerate().filter(|(i, _)| mask >> i & 1 == 1).map(|(_, &e)| e).collect();
+                let edges: Vec<(usize, usize)> = pairs
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| mask >> i & 1 == 1)
+                    .map(|(_, &e)| e)
+                    .collect();
                 if edges.is_empty() {
                     continue;
                 }
                 let t = r6_colour_type(nv, &edges, &format!("_r6col{nv}_{mask}"));
                 let mut colourable = false;
                 for code in 0..3u32.pow(nv as u32) {
-                    let xs: Vec<i64> = (0..nv).map(|i| (code / 3u32.pow(i as u32) % 3) as i64 + 1).collect();
+                    let xs: Vec<i64> = (0..nv)
+                        .map(|i| (code / 3u32.pow(i as u32) % 3) as i64 + 1)
+                        .collect();
                     let proper = edges.iter().all(|&(u, v)| xs[u - 1] != xs[v - 1]);
-                    assert_eq!(t.contains(&r6_colour_list(&xs)), proper, "nv {nv} mask {mask} {xs:?}");
+                    assert_eq!(
+                        t.contains(&r6_colour_list(&xs)),
+                        proper,
+                        "nv {nv} mask {mask} {xs:?}"
+                    );
                     colourable |= proper;
                 }
                 Type::forget_emptiness();
                 let ch = t.chain_verdict();
                 Type::forget_emptiness();
                 let v = t.verdict();
-                let wrong = |x: &Verdict| matches!((x, colourable), (Verdict::Empty, true) | (Verdict::Inhabited, false));
-                assert!(!wrong(&v) && !ch.as_ref().is_some_and(wrong), "nv {nv} mask {mask} colourable {colourable} {v:?} {ch:?}");
-                *counts.entry(format!("nv {nv} colourable {colourable} {v:?} chains {ch:?}")).or_insert(0usize) += 1;
+                let wrong = |x: &Verdict| {
+                    matches!(
+                        (x, colourable),
+                        (Verdict::Empty, true) | (Verdict::Inhabited, false)
+                    )
+                };
+                assert!(
+                    !wrong(&v) && !ch.as_ref().is_some_and(wrong),
+                    "nv {nv} mask {mask} colourable {colourable} {v:?} {ch:?}"
+                );
+                *counts
+                    .entry(format!(
+                        "nv {nv} colourable {colourable} {v:?} chains {ch:?}"
+                    ))
+                    .or_insert(0usize) += 1;
                 if !comb {
                     continue;
                 }
                 // The comb form: the same colourings, padded with the block values.
                 let (t, len) = r6_colour_comb(nv, &edges, &format!("_r6cc{nv}_{mask}"));
                 for code in 0..3u32.pow(nv as u32) {
-                    let mut xs: Vec<i64> = (0..nv).map(|i| (code / 3u32.pow(i as u32) % 3) as i64 + 1).collect();
+                    let mut xs: Vec<i64> = (0..nv)
+                        .map(|i| (code / 3u32.pow(i as u32) % 3) as i64 + 1)
+                        .collect();
                     let proper = edges.iter().all(|&(u, v)| xs[u - 1] != xs[v - 1]);
                     xs.extend((nv + 1..=len).map(|p| if (p - nv) % (nv + 1) == 0 { 0 } else { 7 }));
-                    assert_eq!(t.contains(&r6_colour_list(&xs)), proper, "comb nv {nv} mask {mask} {xs:?}");
+                    assert_eq!(
+                        t.contains(&r6_colour_list(&xs)),
+                        proper,
+                        "comb nv {nv} mask {mask} {xs:?}"
+                    );
                 }
                 Type::forget_emptiness();
                 let ch = t.chain_verdict();
                 Type::forget_emptiness();
                 let v = t.verdict();
-                assert!(!wrong(&v) && !ch.as_ref().is_some_and(wrong), "comb nv {nv} mask {mask} colourable {colourable} {v:?} {ch:?}");
-                *counts.entry(format!("comb nv {nv} colourable {colourable} {v:?} chains {ch:?}")).or_insert(0usize) += 1;
+                assert!(
+                    !wrong(&v) && !ch.as_ref().is_some_and(wrong),
+                    "comb nv {nv} mask {mask} colourable {colourable} {v:?} {ch:?}"
+                );
+                *counts
+                    .entry(format!(
+                        "comb nv {nv} colourable {colourable} {v:?} chains {ch:?}"
+                    ))
+                    .or_insert(0usize) += 1;
             }
         }
         for (k, c) in &counts {
@@ -4274,10 +5170,16 @@ struct R6Head {
 
 impl R6Head {
     fn holds(self, x: u8) -> bool {
-        if x == 3 { self.cof } else { (self.mask >> x & 1 == 1) != self.cof }
+        if x == 3 {
+            self.cof
+        } else {
+            (self.mask >> x & 1 == 1) != self.cof
+        }
     }
     fn ty(self) -> Type {
-        let s = (0..3).filter(|&i| self.mask >> i & 1 == 1).fold(Type::empty(), |u, i| &u | &lit(i));
+        let s = (0..3)
+            .filter(|&i| self.mask >> i & 1 == 1)
+            .fold(Type::empty(), |u, i| &u | &lit(i));
         if self.cof { &Type::int() - &s } else { s }
     }
 }
@@ -4319,17 +5221,42 @@ fn r6_random_input(g: &mut R6Rng, np_max: u64, nr_max: u64, alt_rows: bool) -> R
         // Mostly one-value holes (`int \ {v}`) and small finite sets, sometimes all integers.
         match g.below(6) {
             0 => R6Head { cof: true, mask: 0 },
-            1 | 2 => R6Head { cof: true, mask: 1 << g.below(3) },
-            3 => R6Head { cof: true, mask: g.below(8) as u8 },
-            _ => R6Head { cof: false, mask: 1 + g.below(7) as u8 },
+            1 | 2 => R6Head {
+                cof: true,
+                mask: 1 << g.below(3),
+            },
+            3 => R6Head {
+                cof: true,
+                mask: g.below(8) as u8,
+            },
+            _ => R6Head {
+                cof: false,
+                mask: 1 + g.below(7) as u8,
+            },
         }
     };
-    let carrier = (g.below(4) != 0).then(|| if g.below(2) == 0 { R6Head { cof: true, mask: 0 } } else { head(g) });
-    let terminal = |g: &mut R6Rng| if carrier.is_some() && g.below(3) != 0 { R6Tail::Car } else { R6Tail::End };
+    let carrier = (g.below(4) != 0).then(|| {
+        if g.below(2) == 0 {
+            R6Head { cof: true, mask: 0 }
+        } else {
+            head(g)
+        }
+    });
+    let terminal = |g: &mut R6Rng| {
+        if carrier.is_some() && g.below(3) != 0 {
+            R6Tail::Car
+        } else {
+            R6Tail::End
+        }
+    };
     let np = 1 + g.below(np_max) as usize;
     let mut pool = Vec::new();
     for i in 0..np {
-        let next = if i > 0 && g.below(3) != 0 { R6Tail::Node(g.below(i as u64) as usize) } else { terminal(g) };
+        let next = if i > 0 && g.below(3) != 0 {
+            R6Tail::Node(g.below(i as u64) as usize)
+        } else {
+            terminal(g)
+        };
         let (stop, h) = (g.below(3) == 0, head(g));
         // Drawn only when asked, so that the inputs of the other seeds stay as they were.
         let alt = (alt_rows && carrier.is_some() && g.below(3) == 0).then(|| head(g));
@@ -4348,17 +5275,34 @@ fn r6_random_input(g: &mut R6Rng, np_max: u64, nr_max: u64, alt_rows: bool) -> R
         }
     }
     let np = pool.len();
-    let tail =|g: &mut R6Rng| if g.below(4) == 0 { terminal(g) } else { R6Tail::Node(g.below(np as u64) as usize) };
+    let tail = |g: &mut R6Rng| {
+        if g.below(4) == 0 {
+            terminal(g)
+        } else {
+            R6Tail::Node(g.below(np as u64) as usize)
+        }
+    };
     let mut taken = vec![(head(g), tail(g))];
     if g.below(2) == 0 {
         // A second taken row: on the carrier (inside the class), or another chain (outside).
-        let t = if carrier.is_some() && g.below(4) != 0 { R6Tail::Car } else { tail(g) };
+        let t = if carrier.is_some() && g.below(4) != 0 {
+            R6Tail::Car
+        } else {
+            tail(g)
+        };
         // With the carrier's own head this is a top carrier row, which bounds every item.
         let top = alt_rows && t == R6Tail::Car && g.below(2) == 0;
         taken.push((if top { carrier.unwrap() } else { head(g) }, t));
     }
-    let refused = (0..1 + g.below(nr_max)).map(|_| (head(g), tail(g))).collect();
-    R6Input { carrier, pool, taken, refused }
+    let refused = (0..1 + g.below(nr_max))
+        .map(|_| (head(g), tail(g)))
+        .collect();
+    R6Input {
+        carrier,
+        pool,
+        taken,
+        refused,
+    }
 }
 
 fn r6_input_type(x: &R6Input, tag: &str) -> Type {
@@ -4371,7 +5315,10 @@ fn r6_input_type(x: &R6Input, tag: &str) -> Type {
     };
     let mut defs = Vec::new();
     if let Some(h) = x.carrier {
-        defs.push(def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(Expr::Type(h.ty()), r(0))])));
+        defs.push(def(
+            &format!("L{tag}"),
+            Expr::Union(vec![nil(), cons(Expr::Type(h.ty()), r(0))]),
+        ));
     }
     for (i, &(stop, h, next, alt)) in x.pool.iter().enumerate() {
         let mut alts = vec![cons(Expr::Type(h.ty()), tail(next))];
@@ -4381,16 +5328,27 @@ fn r6_input_type(x: &R6Input, tag: &str) -> Type {
         if stop {
             alts.insert(0, nil());
         }
-        let body = if alts.len() == 1 { alts.pop().unwrap() } else { Expr::Union(alts) };
+        let body = if alts.len() == 1 {
+            alts.pop().unwrap()
+        } else {
+            Expr::Union(alts)
+        };
         defs.push(def(&format!("V{i}{tag}"), body));
     }
     for (i, &(h, t)) in x.taken.iter().chain(&x.refused).enumerate() {
-        defs.push(def(&format!("R{i}{tag}"), cons(Expr::Type(h.ty()), tail(t))));
+        defs.push(def(
+            &format!("R{i}{tag}"),
+            cons(Expr::Type(h.ty()), tail(t)),
+        ));
     }
     let ts = u4_inst(defs);
     let rows = &ts[base + x.pool.len()..];
-    let p = rows[1..x.taken.len()].iter().fold(rows[0].clone(), |u, t| &u & t);
-    let n = rows[x.taken.len()..].iter().fold(Type::empty(), |u, t| &u | t);
+    let p = rows[1..x.taken.len()]
+        .iter()
+        .fold(rows[0].clone(), |u, t| &u & t);
+    let n = rows[x.taken.len()..]
+        .iter()
+        .fold(Type::empty(), |u, t| &u | t);
     &p - &n
 }
 
@@ -4468,7 +5426,9 @@ fn r6_oracle(x: &R6Input) -> bool {
                     out
                 })
                 .collect();
-            if next[..nt].iter().all(|p| !p.is_empty()) && go(x, rows, nt, &next, len + 1, max_len, accepts) {
+            if next[..nt].iter().all(|p| !p.is_empty())
+                && go(x, rows, nt, &next, len + 1, max_len, accepts)
+            {
                 return true;
             }
         }
@@ -4494,10 +5454,20 @@ fn r6_oracle_run_with(seed: u64, count: usize, np_max: u64, nr_max: u64, alt_row
             let ch = t.chain_verdict();
             Type::forget_emptiness();
             let v = t.verdict();
-            let wrong = |y: &Verdict| matches!((y, truth), (Verdict::Empty, true) | (Verdict::Inhabited, false));
+            let wrong = |y: &Verdict| {
+                matches!(
+                    (y, truth),
+                    (Verdict::Empty, true) | (Verdict::Inhabited, false)
+                )
+            };
             assert!(!wrong(&v), "verdict {v:?} truth {truth} on {x:?}");
-            assert!(!ch.as_ref().is_some_and(wrong), "chains {ch:?} truth {truth} on {x:?}");
-            *counts.entry(format!("truth {truth} {v:?} chains {ch:?}")).or_insert(0usize) += 1;
+            assert!(
+                !ch.as_ref().is_some_and(wrong),
+                "chains {ch:?} truth {truth} on {x:?}"
+            );
+            *counts
+                .entry(format!("truth {truth} {v:?} chains {ch:?}"))
+                .or_insert(0usize) += 1;
         }
         for (k, c) in &counts {
             eprintln!("r6 oracle seed {seed} {k}: {c}");
@@ -4534,14 +5504,21 @@ fn r6_carrier_and_chains_against_brute_force_4() {
 /// reaches through it; `x_1 = 0` escapes every root (`Inhabited`).
 fn r6_parity(n: usize, tag: &str) -> Type {
     let n = n.max(2);
-    let mut defs = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(), cons(int(), r(0))]))];
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
     for e in 1..=n {
         let h = &Type::int() - &lit((e % 2) as i64);
         defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
     }
     let mut p = nil();
     for j in (1..=n).rev() {
-        let h = if j == 1 { &lit(0) | &lit(7) } else { &lit((j % 2) as i64) | &lit(7) };
+        let h = if j == 1 {
+            &lit(0) | &lit(7)
+        } else {
+            &lit((j % 2) as i64) | &lit(7)
+        };
         p = cons(Expr::Type(h), p);
     }
     defs.push(def(&format!("P{tag}"), p));
@@ -4622,32 +5599,418 @@ fn a_positive_row_into_the_carrier_below_the_top_is_not_dropped() {
 // an additional x_(i+1)=0 before the final x_(i+2)=1 in the three-atom arm).
 // All-zero words satisfy both arms.
 fn r6_distinct_atoms(n: usize, three: bool, tag: &str) -> Type {
-    let mut ds = vec![def(&format!("L{tag}"), Expr::Union(vec![nil(),cons(int(),r(0))]))];
-    ds.push(def(&format!("B1{tag}"), cons(Expr::Type(&Type::int()-&lit(1)), r(0))));
-    ds.push(def(&format!("B2{tag}"), cons(Expr::Type(&Type::int()-&lit(0)), r(1))));
+    let mut ds = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    ds.push(def(
+        &format!("B1{tag}"),
+        cons(Expr::Type(&Type::int() - &lit(1)), r(0)),
+    ));
+    ds.push(def(
+        &format!("B2{tag}"),
+        cons(Expr::Type(&Type::int() - &lit(0)), r(1)),
+    ));
     let base = if three {
-        ds.push(def(&format!("B3{tag}"), cons(Expr::Type(&Type::int()-&lit(0)), r(2))));
+        ds.push(def(
+            &format!("B3{tag}"),
+            cons(Expr::Type(&Type::int() - &lit(0)), r(2)),
+        ));
         3
-    } else { 2 };
-    for i in 1..n { ds.push(def(&format!("A{i}{tag}"), cons(int(),r(base+i-1)))); }
+    } else {
+        2
+    };
+    for i in 1..n {
+        ds.push(def(&format!("A{i}{tag}"), cons(int(), r(base + i - 1))));
+    }
     let mut p = r(0);
-    for _ in 0..n+base { p=cons(Expr::Type(&lit(0)|&lit(1)),p); }
-    ds.push(def(&format!("P{tag}"),p));
+    for _ in 0..n + base {
+        p = cons(Expr::Type(&lit(0) | &lit(1)), p);
+    }
+    ds.push(def(&format!("P{tag}"), p));
     let ts = r3_instance(ds);
-    let u=(base..base+n).fold(Type::empty(),|u,i| &u|&ts[i]);
-    &ts[base+n]-&u
+    let u = (base..base + n).fold(Type::empty(), |u, i| &u | &ts[i]);
+    &ts[base + n] - &u
 }
 
 #[test]
 fn r6_remout_short_witness_and_negative_controls() {
     big(|| {
-        let word = |x| [x,1,1].iter().rev().fold(Value::atom("nil"),
-            |tail,&v| Value::atom_with("cons",vec![Value::Int(v),tail]));
-        for n in [3,16,64,256,1024] {
-            let t=r5_remainder_boundary(n,true,&format!("_r6remwit{n}"));
-            assert!(t.contains(&word(5)),"short witness at {n}");
-            assert!(!t.contains(&word(1)),"F1 captures the first negative control");
-            assert!(!t.contains(&word(4)),"F3 captures the second negative control");
+        let word = |x| {
+            [x, 1, 1].iter().rev().fold(Value::atom("nil"), |tail, &v| {
+                Value::atom_with("cons", vec![Value::Int(v), tail])
+            })
+        };
+        for n in [3, 16, 64, 256, 1024] {
+            let t = r5_remainder_boundary(n, true, &format!("_r6remwit{n}"));
+            assert!(t.contains(&word(5)), "short witness at {n}");
+            assert!(
+                !t.contains(&word(1)),
+                "F1 captures the first negative control"
+            );
+            assert!(
+                !t.contains(&word(4)),
+                "F3 captures the second negative control"
+            );
         }
+    });
+}
+
+/// A period-three boundary for the height-congruence filter. All roots have heights
+/// congruent to 2 modulo 3. Its first-place {2} atom survives; later places never separate.
+/// Adding one root in a different residue makes the gcd 1 and invalidates that skip proof.
+fn r7_congruence(n: usize, outside: bool, tag: &str) -> Type {
+    let n = n.max(4);
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for e in 1..=n {
+        let h = &Type::int() - &lit((e % 3) as i64);
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if j == 1 {
+            &lit(2) | &lit(7)
+        } else {
+            &lit(((4 - j % 3) % 3) as i64) | &lit(7)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let mut u = (2..=n).step_by(3).fold(Type::empty(), |u, d| &u | &ts[d]);
+    if outside {
+        u = &u | &ts[3];
+    }
+    &ts[n + 1] - &u
+}
+
+#[test]
+fn r7_height_congruence_skips_only_empty_cells() {
+    big(|| {
+        for n in [16, 64, 256] {
+            let t = r6_parity(n, &format!("_r7p{n}"));
+            assert_eq!(t.escape_cell_counts().1, 0, "parity at {n}");
+            assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
+            for outside in [false, true] {
+                let t = r7_congruence(n, outside, &format!("_r7g{n}_{outside}"));
+                let word = |first| {
+                    (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+                        let h = if j == 1 {
+                            first
+                        } else {
+                            ((4 - j % 3) % 3) as i64
+                        };
+                        Value::atom_with("cons", vec![Value::Int(h), tail])
+                    })
+                };
+                assert!(t.contains(&word(2)));
+                assert!(!t.contains(&word(7)), "F2 must reject the bad witness");
+                Type::forget_emptiness();
+                assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
+                Type::forget_emptiness();
+                assert_eq!(t.verdict(), Verdict::Inhabited);
+            }
+        }
+    });
+}
+
+#[test]
+fn r7_congruence_scales() {
+    cases_scale_from(
+        &[
+            ("r6parity", Verdict::Inhabited),
+            ("r7congruencein", Verdict::Inhabited),
+            ("r7congruenceout", Verdict::Inhabited),
+            ("r7bmmout", Verdict::Inhabited),
+        ],
+        128,
+    );
+}
+
+#[test]
+fn r7_peer_escape_families_scale() {
+    cases_scale_from(
+        &[
+            ("r6repeat3", Verdict::Inhabited),
+            ("r6distinct2", Verdict::Inhabited),
+            ("r6distinct3", Verdict::Inhabited),
+        ],
+        128,
+    );
+}
+
+/// Two sound Empty inputs at the guards' boundary. The first has a partial jump remainder
+/// but an independent unconditional cover; the second has an optional spine choice followed
+/// by contradictory positive heads. Their negative controls have the displayed finite words.
+#[test]
+fn r7_guard_admissions_are_sound() {
+    big(|| {
+        let chain = |heads: &[Type]| {
+            heads
+                .iter()
+                .rev()
+                .fold(r(0), |tail, h| cons(Expr::Type(h.clone()), tail))
+        };
+        let ts = u4_inst(vec![
+            def("R7GuardCoverL", Expr::Union(vec![nil(), cons(int(), r(0))])),
+            def(
+                "R7GuardCoverP",
+                chain(&[Type::int(), Type::int(), Type::int(), lit(1)]),
+            ),
+            def("R7GuardCoverA", chain(&[Type::int(), lit(3), lit(2)])),
+            def(
+                "R7GuardCoverN",
+                chain(&[Type::int(), Type::int(), Type::int(), Type::int()]),
+            ),
+        ]);
+        let t = &ts[1] - &(&ts[2] | &ts[3]);
+        Type::forget_emptiness();
+        let direct = t.chain_verdict();
+        Type::forget_emptiness();
+        let ordinary = t.verdict();
+        eprintln!("r7 guard remainder cover direct {direct:?} full {ordinary:?}");
+        assert_ne!(direct, Some(Verdict::Inhabited));
+        assert_eq!(ordinary, Verdict::Empty); // P is a subset of N coordinate by coordinate.
+        let control = &ts[1] - &ts[2];
+        assert!(control.contains(&r6_colour_list(&[0, 0, 0, 1])));
+        Type::forget_emptiness();
+        assert_eq!(control.verdict(), Verdict::Inhabited);
+
+        let ts = u4_inst(vec![
+            def(
+                "R7GuardOptionalL",
+                Expr::Union(vec![nil(), cons(int(), r(0))]),
+            ),
+            def(
+                "R7GuardOptionalP",
+                chain(&[Type::int(), Type::int(), Type::int(), Type::int(), lit(1)]),
+            ),
+            def(
+                "R7GuardOptionalQ",
+                chain(&[Type::int(), Type::int(), Type::int(), Type::int(), lit(2)]),
+            ),
+            def("R7GuardOptionalF1", cons(Expr::Type(lit(1)), r(0))),
+            def(
+                "R7GuardOptionalF2",
+                cons(Expr::Type(&Type::int() - &lit(2)), r(3)),
+            ),
+        ]);
+        let t = &(&ts[1] & &ts[2]) - &ts[4];
+        Type::forget_emptiness();
+        let direct = t.chain_verdict();
+        Type::forget_emptiness();
+        let ordinary = t.verdict();
+        eprintln!("r7 guard optional contradiction direct {direct:?} full {ordinary:?}");
+        assert_ne!(direct, Some(Verdict::Inhabited));
+        assert_eq!(ordinary, Verdict::Empty); // The fifth item cannot be both 1 and 2.
+        let control = &ts[1] - &ts[4];
+        assert!(control.contains(&r6_colour_list(&[0, 0, 0, 0, 1])));
+        Type::forget_emptiness();
+        assert_eq!(control.verdict(), Verdict::Inhabited);
+    });
+}
+
+#[test]
+fn r7_named_payload_is_not_a_list_pair() {
+    big(|| {
+        let l = list_named(Type::int(), "_r7struct");
+        let n = cons_of(Type::int(), l.clone());
+        let p = cons_of(Type::int(), n.clone());
+        let named = Type::atom_with("cons", &Type::universe(zed_kernel::types::Universe::Struct));
+        let t = &(&p | &named) - &n;
+        let v = Value::atom_named("cons", vec![("field".into(), Value::Int(0))]).unwrap();
+        assert!(t.contains(&v));
+        Type::forget_emptiness();
+        let direct = t.chain_verdict();
+        Type::forget_emptiness();
+        let ordinary = t.verdict();
+        Type::forget_emptiness();
+        let empty = t.is_empty();
+        eprintln!("r7 named payload direct {direct:?} full {ordinary:?} is_empty {empty}");
+        assert_ne!(direct, Some(Verdict::Empty));
+        assert_eq!(ordinary, Verdict::Refused(Refusal::NoWitness));
+        assert!(!empty);
+    });
+}
+
+fn r7_reader_member(t: Type, v: Value, label: &str, expected: Verdict) {
+    assert!(t.contains(&v), "the concrete member: {label}");
+    Type::forget_emptiness();
+    let direct = t.chain_verdict();
+    Type::forget_emptiness();
+    let ordinary = t.verdict();
+    Type::forget_emptiness();
+    let empty = t.is_empty();
+    eprintln!("r7 reader {label} direct {direct:?} full {ordinary:?} is_empty {empty}");
+    assert_ne!(direct, Some(Verdict::Empty), "{label}");
+    assert_eq!(ordinary, expected, "{label}");
+    assert!(!empty, "{label}");
+}
+
+#[test]
+fn r7_named_payload_below_top_is_not_a_list_step() {
+    big(|| {
+        let l = list_named(Type::int(), "_r7structtail");
+        let one = cons_of(Type::int(), l);
+        let named = Type::atom_with("cons", &Type::universe(zed_kernel::types::Universe::Struct));
+        let p = cons_of(Type::int(), &one | &named);
+        let n = cons_of(Type::int(), one);
+        let tail = Value::atom_named("cons", vec![("field".into(), Value::Int(0))]).unwrap();
+        r7_reader_member(
+            &p - &n,
+            Value::atom_with("cons", vec![Value::Int(0), tail]),
+            "named tail",
+            Verdict::Refused(Refusal::NoWitness),
+        );
+    });
+}
+
+#[test]
+fn r7_two_stop_names_are_not_one_stop() {
+    big(|| {
+        let l = list_named(Type::int(), "_r7stops");
+        let p = cons_of(Type::int(), &l | &Type::atom("aaa_stop"));
+        let n = cons_of(Type::int(), l);
+        r7_reader_member(
+            &p - &n,
+            Value::atom_with("cons", vec![Value::Int(0), Value::atom("aaa_stop")]),
+            "two stops",
+            Verdict::Inhabited,
+        );
+    });
+}
+
+#[test]
+fn r7_two_link_names_are_not_one_link() {
+    big(|| {
+        let l = list_named(Type::int(), "_r7links");
+        let extra = Type::atom_with("aaa_link", &Type::tuple(vec![Type::int(), l.clone()]));
+        let p = cons_of(Type::int(), &l | &extra);
+        let n = cons_of(Type::int(), l);
+        let tail = Value::atom_with("aaa_link", vec![Value::Int(0), Value::atom("nil")]);
+        r7_reader_member(
+            &p - &n,
+            Value::atom_with("cons", vec![Value::Int(0), tail]),
+            "two links",
+            Verdict::Inhabited,
+        );
+    });
+}
+
+#[test]
+fn r7_cycle_meet_does_not_drop_another_link_name() {
+    big(|| {
+        let l = list_named(Type::int(), "_r7rootlinks");
+        let even = period_named(2, 0, "_r7rooteven");
+        let p = cons_of(Type::int(), even);
+        let n = cons_of(Type::int(), l.clone());
+        let extra = Type::atom_with("aaa_link", &Type::tuple(vec![Type::int(), l]));
+        r7_reader_member(
+            &(&p | &extra) - &n,
+            Value::atom_with("aaa_link", vec![Value::Int(0), Value::atom("nil")]),
+            "cycle root names",
+            Verdict::Inhabited,
+        );
+    });
+}
+
+/// R7 Q3 boundary (just inside `K <= 2`): Thue-Morse aperiodic comb over two bi-repeated channels
+/// `{0, 1}`. `F_e = cons(int \ {tm(e)}, F_{e-1})` for `e = 1..=q` (`q = n / 3`) and `cons(int, F_{e-1})`
+/// above `q`; `P` of length `n` has `{tm(j), 7}` on `j = 1..=q`, `{0, 7}` on `j = 2q + 1..=2q + 3`,
+/// and `{7}` elsewhere; roots are `F_d` for `d = 2q + 3..=n`. Because no three consecutive integers
+/// share `popcount` parity, every root has 1 or 2 separating cells (never 4, so never retired as
+/// `wide`), `x_{2q+1..=2q+3} = 0` escapes all roots (`Inhabited`), a naive or fixed-period scan
+/// visits `Theta(n^2)` empty `(root, place)` pairs, and the `K <= 2` NTT + Cauchy-Schwarz escape
+/// solver reads 0 empty cells in `O(n log n)`.
+fn r7_aperiodic(n: usize, tag: &str) -> Type {
+    let n = n.max(12);
+    let q = n / 3;
+    let tm = |m: usize| (m.count_ones() % 2) as i64;
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for e in 1..=n {
+        let h = if e <= q {
+            &Type::int() - &lit(tm(e))
+        } else {
+            Type::int()
+        };
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if j <= q {
+            &lit(tm(j)) | &lit(7)
+        } else if (2 * q + 1..=2 * q + 3).contains(&j) {
+            &lit(0) | &lit(7)
+        } else {
+            lit(7)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let u = (2 * q + 3..=n).fold(Type::empty(), |u, d| &u | &ts[d]);
+    &ts[n + 1] - &u
+}
+
+/// R7 Q3 boundary (just outside `K <= 2`, at `K = 3`): mod-3 comb over three bi-repeated channels
+/// `{0, 1, 2}` (`F_e = cons(int \ {e mod 3}, F_{e-1})`, `P` with `{0, 7}` at place 1 and
+/// `{(2j) mod 3, 7}` at `j >= 2`, roots `F_{3m}`). Recognized in `O(n log n)` as `K = 3 > 2` and
+/// declined by `escape::decide` to the general search without any empty-cell reads.
+fn r7_bmm_out(n: usize, tag: &str) -> Type {
+    let n = n.max(6);
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    for e in 1..=n {
+        let h = &Type::int() - &lit((e % 3) as i64);
+        defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+    }
+    let mut p = nil();
+    for j in (1..=n).rev() {
+        let h = if j == 1 {
+            &lit(0) | &lit(7)
+        } else {
+            &lit(((2 * j) % 3) as i64) | &lit(7)
+        };
+        p = cons(Expr::Type(h), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let u = (3..=n).step_by(3).fold(Type::empty(), |u, d| &u | &ts[d]);
+    &ts[n + 1] - &u
+}
+
+/// `r7aperiodic` is not inhabited at every size. A root `F_d` (d from 2q+3 to n) is escaped only
+/// by a 0 at a place i in 2q+1..=2q+3 with d-q+1 <= i <= d, where `F_d` excludes tm(d-i+1); so
+/// the set is inhabited exactly when each such root has one of those places with tm(d-i+1) = 0.
+/// At n 127 and 128 the root F_n has only places whose tm is 1, and the set is empty.
+#[test]
+fn r7_aperiodic_matches_its_closed_form() {
+    big(|| {
+        let tm = |m: usize| m.count_ones() % 2;
+        let mut empties = 0;
+        for n in 12..=160 {
+            let q = n / 3;
+            let inhabited = (2 * q + 3..=n).all(|d| {
+                (2 * q + 1..=2 * q + 3).any(|i| i + q > d && i <= d && tm(d - i + 1) == 0)
+            });
+            let want = if inhabited {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            empties += usize::from(!inhabited);
+            Type::forget_emptiness();
+            let t = rfx_case("r7aperiodic", n, &format!("_r7ac{n}"));
+            assert_eq!(t.verdict(), want, "r7aperiodic at {n}");
+        }
+        assert!(empties > 0, "the closed form must include empty sizes");
     });
 }

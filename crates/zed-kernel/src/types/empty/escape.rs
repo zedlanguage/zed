@@ -66,20 +66,18 @@
 //! values), each place then giving its rows at one height by binary search. The work is
 //! O((nodes + rows + cells + W) log) plus the 2-SAT, linear in the cells, where W is the sum
 //! over the nodes of the reads that find no cell, at most `min(rows below v, places that can
-//! separate at v)` for each `v`. W is linear on every probe family. It is quadratic when many
-//! nodes each have many places that can separate and many rows below, and the rows sit at the
-//! heights that miss those places: `r6parity` in the probe (`F_e = link(int \ {e mod 2},
-//! F_(e-1))`, roots `F_d` for even `d`, `p_j = {j mod 2, 7}`) reads `n^2 / 8` empty cells.
-//! Finding, for every node, the rows whose shifted height lands on a separating place is a
-//! match over all alignments (a Boolean convolution per value); an O(n log n) method for it is
-//! open here.
+//! separate at v)` for each `v`. The height-congruence filter below makes W zero on
+//! `r6parity`: its equal-parity tail heights reach only places whose positive values avoid the
+//! node's hole. The old enumerator read n^2 / 8 empty cells there. This is a sufficient
+//! skip test, not a bound on W for every input of this class; irregular root heights can
+//! still defeat it. A general O(n log n) bound on nonempty alignment discovery is open.
 // Complexity tradeoff: the search (`Searching::solve` with its tuple boxes) decides these types
 // by narrowing the tail of every refused row at every depth, `Θ(n^2)` or a refusal at a fork
 // (`r5sat1lit`, `r5sat2lit`, `r5satk1n`, `r5slotsout`, `r5remout`, rounds 5 and 6); used: one
 // length, the cells read from the nodes' side with each row retired after four cells, 2-SAT.
 // Given up: a row with three or more atoms is cut to two, so its `Empty` goes back to the
 // search (3-SAT, NP-hard), and non-laminar atoms go back whole (NP-hard as above); the reads
-// that find no cell are not bounded (quadratic on `r6parity`, open). Trigger:
+// that find no cell after the congruence filter are not bounded in general. Trigger:
 // `find_prefix_chains` returns `None` on a type of this class.
 
 use std::collections::{BTreeSet, HashMap};
@@ -144,7 +142,12 @@ impl Ints {
         match (self.cof, o.cof) {
             (false, _) => Ints {
                 cof: false,
-                vals: self.vals.iter().filter(|x| o.cof != o.vals.contains(x)).copied().collect(),
+                vals: self
+                    .vals
+                    .iter()
+                    .filter(|x| o.cof != o.vals.contains(x))
+                    .copied()
+                    .collect(),
             },
             (true, false) => o.meet(self),
             (true, true) => Ints {
@@ -159,7 +162,12 @@ impl Ints {
         match (self.cof, o.cof) {
             (false, _) => Ints {
                 cof: false,
-                vals: self.vals.iter().filter(|x| o.cof == o.vals.contains(x)).copied().collect(),
+                vals: self
+                    .vals
+                    .iter()
+                    .filter(|x| o.cof == o.vals.contains(x))
+                    .copied()
+                    .collect(),
             },
             (true, false) => Ints {
                 cof: true,
@@ -178,7 +186,9 @@ impl Ints {
         if !self.cof {
             return *self.vals.iter().next().expect("not empty");
         }
-        (0..).find(|x| !self.vals.contains(x)).expect("a cofinite set has a natural number")
+        (0..)
+            .find(|x| !self.vals.contains(x))
+            .expect("a cofinite set has a natural number")
     }
 }
 
@@ -192,7 +202,10 @@ fn only_ints(p: &Parts) -> bool {
         && p.morphisms.is_leaf() == Some(false)
         && p.tuples.is_default()
         && !p.atoms.cofinite
-        && p.atoms.names.values().all(|a| !a.bare && a.payload == Type::empty())
+        && p.atoms
+            .names
+            .values()
+            .all(|a| !a.bare && a.payload == Type::empty())
 }
 
 /// A node of the class: `next` is `None` at a terminal (the end, or the carrier).
@@ -402,6 +415,16 @@ struct Root {
 
 /// The decision of the class above, or `None` outside it or when only the search can answer.
 pub(super) fn decide(t: &Type) -> Option<ChainPlan> {
+    decide_counted(t, &mut (0, 0))
+}
+
+pub(super) fn cell_counts(t: &Type) -> (usize, usize) {
+    let mut counts = (0, 0);
+    let _ = decide_counted(t, &mut counts);
+    counts
+}
+
+fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
     let p = t.p();
     let lits_empty = [&p.ints, &p.rats, &p.floats, &p.strings]
         .iter()
@@ -559,12 +582,54 @@ pub(super) fn decide(t: &Type) -> Option<ChainPlan> {
         roots.push(r);
     }
 
+    // Complexity tradeoff: the naive cell enumerator reads every row/place alignment,
+    // including Theta(n^2) impossible alignments on r6parity. All live root heights are
+    // congruent modulo their difference gcd. At node height h, only positive places j
+    // congruent to base + 2 - h can occur. Index finite positive values by this residue;
+    // for a cofinite node head, absent excluded values prove every such cell empty.
+    // Building the sparse index costs O(positive value incidences log n), querying it
+    // O(node exclusion incidences log n), with linear storage. Cofinite positive places
+    // conservatively disable filtering for their residue. This removes no possible atom,
+    // and changes no accepted shape or verdict. The remaining enumerator still has W.
+    let base_height = roots
+        .iter()
+        .find(|r| r.kill.is_none())
+        .map(|r| nodes[r.s].ht)
+        .unwrap_or(0);
+    let mut period = 0usize;
+    for r in roots.iter().filter(|r| r.kill.is_none()) {
+        let mut b = nodes[r.s].ht.abs_diff(base_height);
+        while b != 0 {
+            (period, b) = (b, period % b);
+        }
+    }
+    // With a single distinct root height every reached place is exact; this modulus
+    // exceeds the entire height/place range and therefore introduces no wrap alias.
+    if period == 0 {
+        period = l0 + nodes.iter().map(|n| n.ht).max().unwrap_or(0) + 2;
+    }
+    let mut finite_residue = BTreeSet::new();
+    let mut cofinite_residue = BTreeSet::new();
+    for (j, x) in pl.iter().enumerate().skip(2) {
+        if x.cof {
+            cofinite_residue.insert(j % period);
+        } else {
+            for &value in &x.vals {
+                finite_residue.insert((j % period, value));
+            }
+        }
+    }
+
     // The rows still read. A row leaves once it is killed, once it has three atoms (its first
     // two by place make its clause, the third marks it wide), or once the nodes left are past
     // its length `l0`. The nodes are read from the highest down, so each row meets its places
     // in increasing order and takes at most four cells.
     let nr = roots.len();
-    let mut by_tin: Vec<(usize, usize)> = roots.iter().enumerate().map(|(i, r)| (anc.tin[r.s], i)).collect();
+    let mut by_tin: Vec<(usize, usize)> = roots
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (anc.tin[r.s], i))
+        .collect();
     by_tin.sort_unstable();
     let top = nodes.iter().map(|v| v.ht).max().unwrap_or(0);
     let mut roots_at: Vec<Vec<(usize, usize)>> = vec![Vec::new(); top + 1];
@@ -621,7 +686,9 @@ pub(super) fn decide(t: &Type) -> Option<ChainPlan> {
             *pm = Some(pm.map_or(m, |x| x.max(m)));
         }
     }
-    let mut cons: Vec<usize> = (0..nodes.len()).filter(|&v| nodes[v].next.is_some()).collect();
+    let mut cons: Vec<usize> = (0..nodes.len())
+        .filter(|&v| nodes[v].next.is_some())
+        .collect();
     cons.sort_unstable_by_key(|&v| (std::cmp::Reverse(nodes[v].ht), v));
     let mut past = top + 1;
     for v in cons {
@@ -639,6 +706,16 @@ pub(super) fn decide(t: &Type) -> Option<ChainPlan> {
         let hv = &nodes[v].head;
         // A head of all integers holds every `p_j`: no place separates at `v`.
         if hv.cof && hv.vals.is_empty() {
+            continue;
+        }
+        let residue = (base_height % period + period + 2 - h % period) % period;
+        if hv.cof
+            && !cofinite_residue.contains(&residue)
+            && hv
+                .vals
+                .iter()
+                .all(|&x| !finite_residue.contains(&(residue, x)))
+        {
             continue;
         }
         let (lo, hi) = (2, l0.min(m + 2 - h));
@@ -664,7 +741,11 @@ pub(super) fn decide(t: &Type) -> Option<ChainPlan> {
                 .sum::<usize>();
             (e + count(&cof_places, lo, hi), true)
         } else {
-            let inside = hv.vals.iter().filter(|x| fin_by_val.contains_key(x)).count();
+            let inside = hv
+                .vals
+                .iter()
+                .filter(|x| fin_by_val.contains_key(x))
+                .count();
             let outside = hv.vals.len() + vals.len() - inside;
             let all = count(&fin_places, lo, hi);
             (outside.min(all) + count(&cof_places, lo, hi), outside < all)
@@ -673,7 +754,7 @@ pub(super) fn decide(t: &Type) -> Option<ChainPlan> {
             let mut k = rows.g.find(glo);
             while k < ghi {
                 let i = by_tin[k].1;
-                if take(&mut roots[i], rows.rh[i] + 2 - h, &pl, hv) {
+                if take(&mut roots[i], rows.rh[i] + 2 - h, &pl, hv, counts) {
                     rows.retire(i);
                 }
                 k = rows.g.find(k + 1);
@@ -711,9 +792,13 @@ pub(super) fn decide(t: &Type) -> Option<ChainPlan> {
             let at = &roots_at[hh];
             let s1 = at.partition_point(|&(t, _)| t <= b);
             let mut k = rows.h[hh].find(at.partition_point(|&(t, _)| t < a));
+            if k >= s1 {
+                counts.0 += 1;
+                counts.1 += 1;
+            }
             while k < s1 {
                 let i = at[k].1;
-                if take(&mut roots[i], j, &pl, hv) {
+                if take(&mut roots[i], j, &pl, hv, counts) {
                     rows.retire(i);
                 }
                 k = rows.h[hh].find(k + 1);
@@ -826,7 +911,9 @@ pub(super) fn decide(t: &Type) -> Option<ChainPlan> {
     }
     let mut heads = Vec::with_capacity(l0);
     for (j, x) in pl.iter().enumerate().skip(1) {
-        let v = deepest.get(&j).map_or_else(|| x.pick(), |&(_, i)| atom[i].1.pick());
+        let v = deepest
+            .get(&j)
+            .map_or_else(|| x.pick(), |&(_, i)| atom[i].1.pick());
         heads.push(Type::lit(&Value::Int(v))?);
     }
     for (r, c) in live.into_iter().zip(&clause) {
@@ -888,8 +975,10 @@ fn forest(list: &[usize], atom: &[(usize, Ints)], parent: &mut [Option<usize>]) 
 
 /// Reads the cell of row `r` at place `j`, where the row's node has the head `hv`: a kill, an
 /// atom, or nothing. Whether the row is done (killed, or three atoms).
-fn take(r: &mut Root, j: usize, pl: &[Ints], hv: &Ints) -> bool {
+fn take(r: &mut Root, j: usize, pl: &[Ints], hv: &Ints, counts: &mut (usize, usize)) -> bool {
+    counts.0 += 1;
     if pl[j].subset(hv) {
+        counts.1 += 1;
         return false;
     }
     if pl[j].disjoint(hv) {

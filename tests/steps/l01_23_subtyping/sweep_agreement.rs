@@ -16,7 +16,7 @@ use std::collections::{BTreeSet, HashSet, VecDeque};
 
 use zed_kernel::Value;
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_kernel::types::{Type, Verdict};
+use zed_kernel::types::{Refusal, Type, Verdict};
 use zed_tests::instances::Rng;
 
 // The element classes: 0 is an integer other than 1 to 5, 1 and 2 the integers, 3 false,
@@ -228,7 +228,10 @@ impl Tally {
         Type::forget_emptiness();
         let v = t.verdict();
         if let Some(c) = c {
-            assert_eq!(c, v, "{what}: the prefix chains say {c:?}, the verdict is {v:?}");
+            assert_eq!(
+                c, v,
+                "{what}: the prefix chains say {c:?}, the verdict is {v:?}"
+            );
         }
         if let Some(s) = s {
             assert_eq!(s, v, "{what}: the sweep says {s:?}, the verdict is {v:?}");
@@ -873,7 +876,10 @@ fn the_sweep_agrees_on_random_positive_chains() {
             // of both, whichever comes first.
             if rng.below(3) == 0 {
                 let h = [HOLES[0], INT & !ONE, INT | ATOM][rng.below(3)];
-                ds.push(D { nil: true, rows: vec![(h, k + 1)] });
+                ds.push(D {
+                    nil: true,
+                    rows: vec![(h, k + 1)],
+                });
                 pos.push((0, k + 1));
             }
             let neg = (1..=k)
@@ -959,12 +965,25 @@ fn r6_random_carrier_chains_against_masks() {
     let tally = big(|| {
         let mut tally = Tally::default();
         let mut rng = Rng::new(0x6c0de2026);
-        let palette = [INT, ONE, TWO, ONE | TWO, HOLES[0], HOLES[1],
-            HOLES[0] & HOLES[1], INT & !(ONE | TWO),
-            ONE | (1 << 8), INT & !ONE, INT & !TWO];
+        let palette = [
+            INT,
+            ONE,
+            TWO,
+            ONE | TWO,
+            HOLES[0],
+            HOLES[1],
+            HOLES[0] & HOLES[1],
+            INT & !(ONE | TWO),
+            ONE | (1 << 8),
+            INT & !ONE,
+            INT & !TWO,
+        ];
         for id in 0..4000 {
             let n = 3 + rng.below(9);
-            let mut ds = vec![D { nil: true, rows: vec![(INT, 0)] }];
+            let mut ds = vec![D {
+                nil: true,
+                rows: vec![(INT, 0)],
+            }];
             for i in 1..=n {
                 ds.push(D {
                     nil: rng.below(4) == 0,
@@ -973,14 +992,25 @@ fn r6_random_carrier_chains_against_masks() {
             }
             let p = 1 + rng.below(n);
             let mut pos = vec![(0, p)];
-            if rng.below(2) == 0 { pos.push((0, 0)); }
-            if rng.below(3) == 0 { pos.push((0, 1 + rng.below(n))); }
-            let neg = (1..=n).filter(|&i| i != p && rng.below(3) != 0)
-                .map(|i| (0, i)).collect();
+            if rng.below(2) == 0 {
+                pos.push((0, 0));
+            }
+            if rng.below(3) == 0 {
+                pos.push((0, 1 + rng.below(n)));
+            }
+            let neg = (1..=n)
+                .filter(|&i| i != p && rng.below(3) != 0)
+                .map(|i| (0, i))
+                .collect();
             let term = Term { pos, neg };
             let spec = Spec { groups: vec![ds] };
-            both_orders(&mut tally, &spec, &term, &format!("_r6c{id}"),
-                &format!("R6 chain masks {id}"));
+            both_orders(
+                &mut tally,
+                &spec,
+                &term,
+                &format!("_r6c{id}"),
+                &format!("R6 chain masks {id}"),
+            );
         }
         tally
     });
@@ -998,36 +1028,67 @@ pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce() {
         for id in 0..384 {
             let k = 1 + rng.below(4);
             let m = 1 + rng.below(4);
-            let clauses: Vec<Vec<(usize,bool)>> = (0..m).map(|_| (0..3)
-                .map(|_| (rng.below(k),rng.below(2)==0)).collect()).collect();
-            let sat = (0..1usize<<k).any(|a| clauses.iter().all(|cl|
-                cl.iter().any(|&(i,b)| ((a>>i)&1 != 0)==b)));
-            let mut ds = vec![D { nil: true, rows: vec![(INT,0)] }];
+            let clauses: Vec<Vec<(usize, bool)>> = (0..m)
+                .map(|_| (0..3).map(|_| (rng.below(k), rng.below(2) == 0)).collect())
+                .collect();
+            let sat = (0..1usize << k).any(|a| {
+                clauses
+                    .iter()
+                    .all(|cl| cl.iter().any(|&(i, b)| ((a >> i) & 1 != 0) == b))
+            });
+            let mut ds = vec![D {
+                nil: true,
+                rows: vec![(INT, 0)],
+            }];
             let len = k + m;
             let mut positive = 0;
             for j in (0..len).rev() {
-                ds.push(D { nil:false, rows:vec![(if j<k {ONE|TWO} else {domain},positive)] });
-                positive=ds.len()-1;
+                ds.push(D {
+                    nil: false,
+                    rows: vec![(if j < k { ONE | TWO } else { domain }, positive)],
+                });
+                positive = ds.len() - 1;
             }
-            let mut neg=Vec::new();
-            for (c,cl) in clauses.iter().enumerate() {
-                for (j,&(i,b)) in cl.iter().enumerate() {
-                    let mut root=0;
+            let mut neg = Vec::new();
+            for (c, cl) in clauses.iter().enumerate() {
+                for (j, &(i, b)) in cl.iter().enumerate() {
+                    let mut root = 0;
                     for s in (0..len).rev() {
                         // Escape root iff selector != j OR the chosen literal is true.
-                        let hole = if s==k+c { domain & ![ONE,TWO,1<<8][j] }
-                            else if s==i { if b {TWO} else {ONE} } else {0};
-                        ds.push(D { nil:false, rows:vec![(INT & !hole,root)] });
-                        root=ds.len()-1;
+                        let hole = if s == k + c {
+                            domain & ![ONE, TWO, 1 << 8][j]
+                        } else if s == i {
+                            if b { TWO } else { ONE }
+                        } else {
+                            0
+                        };
+                        ds.push(D {
+                            nil: false,
+                            rows: vec![(INT & !hole, root)],
+                        });
+                        root = ds.len() - 1;
                     }
-                    neg.push((0,root));
+                    neg.push((0, root));
                 }
             }
-            let spec=Spec {groups:vec![ds]};
-            let term=Term {pos:vec![(0,positive)],neg};
-            assert_eq!(spec.inhabited(&term),sat,"selector reduction {id}: {clauses:?}");
-            let mut tally=Tally::default();
-            both_orders(&mut tally,&spec,&term,&format!("_r6sat{id}"),"two-predicate reduction");
+            let spec = Spec { groups: vec![ds] };
+            let term = Term {
+                pos: vec![(0, positive)],
+                neg,
+            };
+            assert_eq!(
+                spec.inhabited(&term),
+                sat,
+                "selector reduction {id}: {clauses:?}"
+            );
+            let mut tally = Tally::default();
+            both_orders(
+                &mut tally,
+                &spec,
+                &term,
+                &format!("_r6sat{id}"),
+                "two-predicate reduction",
+            );
         }
         eprintln!("R6 two-predicate selector reduction: 384 formulas checked");
     });
@@ -1040,47 +1101,1105 @@ fn r6_optional_spine_arrival_must_not_force_a_later_empty() {
     big(|| {
         // 0 L; 1 F1; 2 F2; 3 F3; 4 A4; 5 A3; 6 A2; 7 A1;
         // 8 P4; 9 P3; 10 P2; 11 P1.
-        let ds=vec![
-            D {nil:true, rows:vec![(INT,0)]},
-            D {nil:false, rows:vec![(ONE,0)]},
-            D {nil:false, rows:vec![(INT & !TWO,1)]},
-            D {nil:false, rows:vec![(HOLES[0],2)]},
-            D {nil:false, rows:vec![(INT,0)]},
-            D {nil:false, rows:vec![(INT & !ONE,4)]},
-            D {nil:false, rows:vec![(INT,5)]},
-            D {nil:false, rows:vec![(INT,6)]},
-            D {nil:false, rows:vec![(ONE,0)]},
-            D {nil:false, rows:vec![(INT,8)]},
-            D {nil:false, rows:vec![(INT,9)]},
-            D {nil:false, rows:vec![(INT,10)]},
+        let ds = vec![
+            D {
+                nil: true,
+                rows: vec![(INT, 0)],
+            },
+            D {
+                nil: false,
+                rows: vec![(ONE, 0)],
+            },
+            D {
+                nil: false,
+                rows: vec![(INT & !TWO, 1)],
+            },
+            D {
+                nil: false,
+                rows: vec![(HOLES[0], 2)],
+            },
+            D {
+                nil: false,
+                rows: vec![(INT, 0)],
+            },
+            D {
+                nil: false,
+                rows: vec![(INT & !ONE, 4)],
+            },
+            D {
+                nil: false,
+                rows: vec![(INT, 5)],
+            },
+            D {
+                nil: false,
+                rows: vec![(INT, 6)],
+            },
+            D {
+                nil: false,
+                rows: vec![(ONE, 0)],
+            },
+            D {
+                nil: false,
+                rows: vec![(INT, 8)],
+            },
+            D {
+                nil: false,
+                rows: vec![(INT, 9)],
+            },
+            D {
+                nil: false,
+                rows: vec![(INT, 10)],
+            },
         ];
-        let spec=Spec {groups:vec![ds]};
-        let term=Term {pos:vec![(0,11)],neg:vec![(0,3),(0,7)]};
+        let spec = Spec { groups: vec![ds] };
+        let term = Term {
+            pos: vec![(0, 11)],
+            neg: vec![(0, 3), (0, 7)],
+        };
         assert!(spec.inhabited(&term)); // [3,0,1,1]
-        let mut tally=Tally::default();
-        both_orders(&mut tally,&spec,&term,"_r6optional","optional spine arrival");
+        let mut tally = Tally::default();
+        both_orders(
+            &mut tally,
+            &spec,
+            &term,
+            "_r6optional",
+            "optional spine arrival",
+        );
     });
 }
 
 #[test]
 fn r6_greedy_guard_admits_a_partially_compatible_unused_slot() {
     big(|| {
-        let spec=Spec {groups:vec![vec![
-            D {nil:true, rows:vec![(INT,0)]},
-            D {nil:false, rows:vec![(ONE,0)]},
-            D {nil:false, rows:vec![(INT & !TWO,1)]},
-            D {nil:false, rows:vec![(HOLES[0],2)]},
-            D {nil:false, rows:vec![(HOLES[1],3)]},
-            D {nil:false, rows:vec![(ONE,0)]},
-            D {nil:false, rows:vec![(ONE,5)]},
-            D {nil:false, rows:vec![(ONE|TWO,6)]},
-            D {nil:false, rows:vec![(INT,7)]},
-        ]]};
-        let term=Term {pos:vec![(0,8)],neg:vec![(0,4)]};
-        let ts=spec.build("_r6guard");
-        let t=spec.ty(&ts,&term);
-        assert_eq!(t.chain_verdict(),Some(Verdict::Inhabited));
-        let mut tally=Tally::default();
-        both_orders(&mut tally,&spec,&term,"_r6guardorder","unused partial slot");
+        let spec = Spec {
+            groups: vec![vec![
+                D {
+                    nil: true,
+                    rows: vec![(INT, 0)],
+                },
+                D {
+                    nil: false,
+                    rows: vec![(ONE, 0)],
+                },
+                D {
+                    nil: false,
+                    rows: vec![(INT & !TWO, 1)],
+                },
+                D {
+                    nil: false,
+                    rows: vec![(HOLES[0], 2)],
+                },
+                D {
+                    nil: false,
+                    rows: vec![(HOLES[1], 3)],
+                },
+                D {
+                    nil: false,
+                    rows: vec![(ONE, 0)],
+                },
+                D {
+                    nil: false,
+                    rows: vec![(ONE, 5)],
+                },
+                D {
+                    nil: false,
+                    rows: vec![(ONE | TWO, 6)],
+                },
+                D {
+                    nil: false,
+                    rows: vec![(INT, 7)],
+                },
+            ]],
+        };
+        let term = Term {
+            pos: vec![(0, 8)],
+            neg: vec![(0, 4)],
+        };
+        let ts = spec.build("_r6guard");
+        let t = spec.ty(&ts, &term);
+        assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
+        let mut tally = Tally::default();
+        both_orders(
+            &mut tally,
+            &spec,
+            &term,
+            "_r6guardorder",
+            "unused partial slot",
+        );
+    });
+}
+
+/// R7: random cases of the X31 kind, against the masks. A positive straight chain of length 3
+/// to 6 with cofinite heads and three or four negative straight chains of length 2 up to the
+/// positive's, over the carrier `L`, so that a negative chain often reaches `L` (a spine
+/// arrival) at a depth where the positive can still follow it or leave it; now and then a node
+/// is also `nil` or a chain shares a suffix with an earlier one. Checked in both orders through
+/// the sweep, the prefix chains and the verdict ([`both_orders`]). Without the X31 guard
+/// (`optional_spine_choice`) the prefix chains say Empty on case 1479, which is Inhabited.
+#[test]
+fn r7_random_optional_spine_choices_against_masks() {
+    let tally = big(|| {
+        let mut tally = Tally::default();
+        let mut rng = Rng::new(0x7_0b7_1031);
+        // Cofinite heads for the positive chain, so that it can follow a negative chain past
+        // that chain's arrival at `L` or leave it; any head for the negatives.
+        let cofinite = [
+            INT,
+            INT,
+            INT,
+            HOLES[0],
+            HOLES[1],
+            INT & !ONE,
+            INT & !TWO,
+            ONE,
+        ];
+        let any = [
+            INT,
+            INT,
+            INT,
+            INT,
+            ONE,
+            TWO,
+            HOLES[0],
+            HOLES[1],
+            INT & !ONE,
+            INT & !TWO,
+        ];
+        for id in 0..3000 {
+            let mut ds = vec![D {
+                nil: true,
+                rows: vec![(INT, 0)],
+            }];
+            let chain = |ds: &mut Vec<D>, rng: &mut Rng, len: usize, heads: &[u16]| {
+                // The end: the carrier, or now and then an earlier chain's node (a shared
+                // suffix).
+                let mut at = if ds.len() > 1 && rng.below(8) == 0 {
+                    1 + rng.below(ds.len() - 1)
+                } else {
+                    0
+                };
+                for _ in 0..len {
+                    ds.push(D {
+                        nil: rng.below(16) == 0,
+                        rows: vec![(heads[rng.below(heads.len())], at)],
+                    });
+                    at = ds.len() - 1;
+                }
+                at
+            };
+            let plen = 3 + rng.below(4);
+            let p = chain(&mut ds, &mut rng, plen, &cofinite);
+            let negs = 3 + rng.below(2);
+            let neg = (0..negs)
+                .map(|_| {
+                    let len = 2 + rng.below(plen - 1);
+                    (0, chain(&mut ds, &mut rng, len, &any))
+                })
+                .collect();
+            let term = Term {
+                pos: vec![(0, p)],
+                neg,
+            };
+            let spec = Spec { groups: vec![ds] };
+            both_orders(
+                &mut tally,
+                &spec,
+                &term,
+                &format!("_r7o{id}"),
+                &format!("R7 optional spine choices {id}"),
+            );
+        }
+        tally
+    });
+    eprintln!("R7 optional spine choices: {tally:?}");
+    assert!(tally.swept > 0);
+}
+
+/// R7: two roots on one spine. `R1` reaches the leaf `S1` at step 2 and `R2` at step 3;
+/// avoiding `S1`'s head at step 2 (w2 != 1) takes away `R2`'s only usable hole (w2 = 1), and
+/// the first head meets no hole, so `greedy_unsafe` stays false. The one value is [a, 1, 1].
+/// Built to tell the X31 guard from Gemini R6's `can_prove_empty` (cleared only when a
+/// negative chain is active at the arrival); it does not: `R2` is an active group at step 2,
+/// so both decline Empty (R7, Q2).
+#[test]
+fn r7_optional_spine_arrival_with_no_active_negative() {
+    big(|| {
+        // 0 L; 1 S1; 2 S2; 3 R1; 4 R2; 5 P3; 6 P2; 7 P1.
+        let ds = vec![
+            D {
+                nil: true,
+                rows: vec![(INT, 0)],
+            },
+            D {
+                nil: false,
+                rows: vec![(ONE, 0)],
+            },
+            D {
+                nil: false,
+                rows: vec![(INT & !ONE, 1)],
+            },
+            D {
+                nil: false,
+                rows: vec![(HOLES[0], 1)],
+            },
+            D {
+                nil: false,
+                rows: vec![(HOLES[1], 2)],
+            },
+            D {
+                nil: false,
+                rows: vec![(ONE, 0)],
+            },
+            D {
+                nil: false,
+                rows: vec![(INT, 5)],
+            },
+            D {
+                nil: false,
+                rows: vec![(HOLES[1] & !ONE, 6)],
+            },
+        ];
+        let spec = Spec { groups: vec![ds] };
+        let term = Term {
+            pos: vec![(0, 7)],
+            neg: vec![(0, 3), (0, 4)],
+        };
+        assert!(spec.inhabited(&term)); // [a, 1, 1]
+        let mut tally = Tally::default();
+        both_orders(
+            &mut tally,
+            &spec,
+            &term,
+            "_r7noactive",
+            "optional arrival, no active negative",
+        );
+    });
+}
+
+/// R7 Q2(a): when `active_neg` is empty at an optional spine arrival (`r0 != r0_without_h1`),
+/// `can_prove_empty` remains `true` and soundly decides both Case A (`committed_count == 0`) and
+/// Case B (`committed_count > 0`) inputs where an unconditional `optional_spine_choice` flag
+/// declines.
+#[test]
+fn r7_can_prove_empty_admits_empty_active_neg_where_codex_flag_declines() {
+    big(|| {
+        // Case A separation: `(P1 & Q1) \ F2` where `F2 = cons(int \ {3}, cons(1, L))` has an
+        // optional spine arrival at step 2 with `active_neg` empty, and step 3 has `R_3 = {1} & {2} = empty`.
+        let spec_a = Spec {
+            groups: vec![vec![
+                D {
+                    nil: true,
+                    rows: vec![(INT, 0)],
+                }, // 0: L
+                D {
+                    nil: false,
+                    rows: vec![(ONE, 0)],
+                }, // 1: F1
+                D {
+                    nil: false,
+                    rows: vec![(HOLES[0], 1)],
+                }, // 2: F2 (hole {3})
+                D {
+                    nil: false,
+                    rows: vec![(ONE, 0)],
+                }, // 3: P3
+                D {
+                    nil: false,
+                    rows: vec![(ONE | TWO, 3)],
+                }, // 4: P2
+                D {
+                    nil: false,
+                    rows: vec![(ONE | (1 << 8), 4)],
+                }, // 5: P1 ({1, 3})
+                D {
+                    nil: false,
+                    rows: vec![(TWO, 0)],
+                }, // 6: Q3
+                D {
+                    nil: false,
+                    rows: vec![(ONE | TWO, 6)],
+                }, // 7: Q2
+                D {
+                    nil: false,
+                    rows: vec![(ONE | (1 << 8), 7)],
+                }, // 8: Q1 ({1, 3})
+            ]],
+        };
+        let term_a = Term {
+            pos: vec![(0, 5), (0, 8)],
+            neg: vec![(0, 2)],
+        };
+        assert!(!spec_a.inhabited(&term_a));
+        let ts_a = spec_a.build("_r7cpea");
+        let t_a = spec_a.ty(&ts_a, &term_a);
+        assert_eq!(t_a.chain_verdict(), Some(Verdict::Empty));
+        let mut tally = Tally::default();
+        both_orders(
+            &mut tally,
+            &spec_a,
+            &term_a,
+            "_r7cpea_ord",
+            "Case A empty active_neg",
+        );
+
+        // Case B separation: `P1 \ (F2 | F3 | F4)` where step 2 is an optional spine arrival with
+        // `active_neg` empty, step 3 commits step 1 to `{4}`, and step 4 proves `Empty` by Pigeonhole.
+        let spec_b = Spec {
+            groups: vec![vec![
+                D {
+                    nil: true,
+                    rows: vec![(INT, 0)],
+                }, // 0: L
+                D {
+                    nil: false,
+                    rows: vec![(ONE, 0)],
+                }, // 1: F1
+                D {
+                    nil: false,
+                    rows: vec![(HOLES[0], 1)],
+                }, // 2: F2 (hole {3})
+                D {
+                    nil: false,
+                    rows: vec![(HOLES[1], 2)],
+                }, // 3: F3 (hole {4})
+                D {
+                    nil: false,
+                    rows: vec![(HOLES[2], 3)],
+                }, // 4: F4 (hole {5})
+                D {
+                    nil: false,
+                    rows: vec![(ONE, 0)],
+                }, // 5: P4
+                D {
+                    nil: false,
+                    rows: vec![(ONE, 5)],
+                }, // 6: P3
+                D {
+                    nil: false,
+                    rows: vec![(ONE | TWO, 6)],
+                }, // 7: P2
+                D {
+                    nil: false,
+                    rows: vec![((1 << 8) | (1 << 9) | (1 << 10), 7)],
+                }, // 8: P1 ({3, 4, 5})
+            ]],
+        };
+        let term_b = Term {
+            pos: vec![(0, 8)],
+            neg: vec![(0, 2), (0, 3), (0, 4)],
+        };
+        assert!(!spec_b.inhabited(&term_b));
+        let ts_b = spec_b.build("_r7cpeb");
+        let t_b = spec_b.ty(&ts_b, &term_b);
+        assert_eq!(t_b.chain_verdict(), Some(Verdict::Empty));
+        both_orders(
+            &mut tally,
+            &spec_b,
+            &term_b,
+            "_r7cpeb_ord",
+            "Case B empty active_neg",
+        );
+    });
+}
+
+/// R7 Q2(b) / Q7(iii) Bug A: a struct payload inside `#cons` (`#cons(k: 99)` via
+/// `Universe::Struct`, so `q.structs == true`) must not be ignored by `find_prefix_chains` or
+/// `escape::decide`. On `cb709f13` both ignored `q.structs` and returned a wrong `Empty`.
+#[test]
+fn r7_bug_a_non_tuple_payload_in_cons_is_not_empty() {
+    big(|| {
+        use zed_kernel::types::Universe;
+        let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
+        let ts = Group::new(vec![
+            Def {
+                name: "L_bug_a".into(),
+                params: vec![],
+                body: Expr::Union(vec![
+                    Expr::Type(Type::atom("nil")),
+                    Expr::Atom(
+                        "cons".into(),
+                        vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])],
+                    ),
+                ]),
+            },
+            Def {
+                name: "F1_bug_a".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(lit(2)), Expr::Ref(0, vec![])],
+                ),
+            },
+            Def {
+                name: "F2_bug_a".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(&Type::int() - &lit(0)), Expr::Ref(1, vec![])],
+                ),
+            },
+            Def {
+                name: "F3_bug_a".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(&Type::int() - &lit(1)), Expr::Ref(1, vec![])],
+                ),
+            },
+            Def {
+                name: "P2_bug_a".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(lit(2)), Expr::Type(Type::atom("nil"))],
+                ),
+            },
+            Def {
+                name: "P1_bug_a".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(&lit(0) | &lit(1)), Expr::Ref(4, vec![])],
+                ),
+            },
+        ])
+        .unwrap()
+        .instance(vec![]);
+        let cons_struct = Type::atom_with("cons", &Type::universe(Universe::Struct));
+        let w = Value::atom_named("cons", vec![("k".into(), Value::Int(99))]).unwrap();
+
+        // 1. Triggers wrong `Empty` in `find_prefix_chains` on `cb709f13`.
+        let cons_pair = Type::atom_with("cons", &Type::tuple(vec![lit(0), Type::atom("nil")]));
+        let neg = Type::atom_with("cons", &Type::tuple(vec![Type::int(), ts[0].clone()]));
+        let t_chains = &(&cons_struct | &cons_pair) - &neg;
+        assert!(t_chains.contains(&w), "#cons(k: 99) is in t_chains");
+        Type::forget_emptiness();
+        assert_eq!(t_chains.chain_verdict(), None);
+        Type::forget_emptiness();
+        assert_eq!(t_chains.verdict(), Verdict::Refused(Refusal::NoWitness));
+        assert!(!t_chains.is_empty());
+
+        // 2. Triggers wrong `Empty` in `escape::decide` on `cb709f13` (unsat 2-SAT tuple rows
+        // `(x1 = 0 | x1 = 1)` at length 2, unioned with `#cons(struct)`).
+        let t_esc = &(&cons_struct | &ts[5]) - &(&(&ts[1] | &ts[2]) | &ts[3]);
+        assert!(t_esc.contains(&w), "#cons(k: 99) is in t_esc");
+        Type::forget_emptiness();
+        assert_eq!(t_esc.chain_verdict(), None);
+        Type::forget_emptiness();
+        assert_eq!(t_esc.verdict(), Verdict::Refused(Refusal::NoWitness));
+        assert!(!t_esc.is_empty());
+    });
+}
+
+/// R7 Q2(b) / Q7(iii) Bug B: a tail union with two bare atoms (`#nil_a | #nil_z | #cons(0, L)`)
+/// must not have `#nil_a` overwritten by `list_step`. On `cb709f13` both `find_prefix_chains` and
+/// `escape::decide` returned a wrong `Empty`, although `#cons((0, #nil_a))` is in `t`.
+#[test]
+fn r7_bug_b_multiple_bare_atoms_in_tail_union_is_not_empty() {
+    big(|| {
+        let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
+        let ts = Group::new(vec![
+            Def {
+                name: "L_bug_b".into(),
+                params: vec![],
+                body: Expr::Union(vec![
+                    Expr::Type(Type::atom("nil_z")),
+                    Expr::Atom(
+                        "cons".into(),
+                        vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])],
+                    ),
+                ]),
+            },
+            Def {
+                name: "S_bug_b".into(),
+                params: vec![],
+                body: Expr::Union(vec![
+                    Expr::Type(Type::atom("nil_a")),
+                    Expr::Type(Type::atom("nil_z")),
+                    Expr::Atom(
+                        "cons".into(),
+                        vec![Expr::Type(lit(0)), Expr::Ref(0, vec![])],
+                    ),
+                ]),
+            },
+            Def {
+                name: "P_bug_b".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(&lit(0) | &lit(1)), Expr::Ref(1, vec![])],
+                ),
+            },
+            Def {
+                name: "N0_bug_b".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(lit(0)), Expr::Ref(0, vec![])],
+                ),
+            },
+            Def {
+                name: "N1_bug_b".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(lit(1)), Expr::Ref(0, vec![])],
+                ),
+            },
+        ])
+        .unwrap()
+        .instance(vec![]);
+        let t = &ts[2] - &(&ts[3] | &ts[4]);
+        let w = Value::atom_with("cons", vec![Value::Int(0), Value::atom("nil_a")]);
+        assert!(t.contains(&w), "cons(0, nil_a) is in t");
+        Type::forget_emptiness();
+        assert_eq!(t.chain_verdict(), None);
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+        assert!(!t.is_empty());
+    });
+}
+
+/// R7 Q7(i): in Gemini R6, `step_exact[step]` was false when `non_disjoint_stop_heads` was
+/// non-empty while `can_prove_empty` stayed true, omitting step 2 from `active_spine_steps` and
+/// returning a wrong `Empty` on `[7, 3, 7, 1]`.
+#[test]
+fn r7_gemini_r6_non_disjoint_stop_clause_omission_is_inhabited() {
+    big(|| {
+        let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
+        let ts = Group::new(vec![
+            Def {
+                name: "L_gr6".into(),
+                params: vec![],
+                body: Expr::Union(vec![
+                    Expr::Type(Type::atom("nil")),
+                    Expr::Atom(
+                        "cons".into(),
+                        vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])],
+                    ),
+                ]),
+            },
+            Def {
+                name: "F1_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(lit(1)), Expr::Ref(0, vec![])],
+                ),
+            },
+            Def {
+                name: "F2_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(&Type::int() - &lit(2)), Expr::Ref(1, vec![])],
+                ),
+            },
+            Def {
+                name: "F3_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(&Type::int() - &lit(3)), Expr::Ref(2, vec![])],
+                ),
+            },
+            Def {
+                name: "F4_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(&Type::int() - &lit(9)), Expr::Ref(3, vec![])],
+                ),
+            },
+            Def {
+                name: "Z2_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(lit(2)), Expr::Type(Type::atom("nil"))],
+                ),
+            },
+            Def {
+                name: "N1_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(Type::int()), Expr::Ref(5, vec![])],
+                ),
+            },
+            Def {
+                name: "Z3_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(lit(3)), Expr::Type(Type::atom("nil"))],
+                ),
+            },
+            Def {
+                name: "N2_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(Type::int()), Expr::Ref(7, vec![])],
+                ),
+            },
+            Def {
+                name: "P4_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(lit(1)), Expr::Type(Type::atom("nil"))],
+                ),
+            },
+            Def {
+                name: "P3_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(lit(7)), Expr::Ref(9, vec![])],
+                ),
+            },
+            Def {
+                name: "P2_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(&lit(2) | &lit(3)), Expr::Ref(10, vec![])],
+                ),
+            },
+            Def {
+                name: "P1_gr6".into(),
+                params: vec![],
+                body: Expr::Atom(
+                    "cons".into(),
+                    vec![Expr::Type(lit(7)), Expr::Ref(11, vec![])],
+                ),
+            },
+        ])
+        .unwrap()
+        .instance(vec![]);
+        let t = &ts[12] - &(&(&ts[4] | &ts[6]) | &ts[8]);
+        let w = [7, 3, 7, 1]
+            .iter()
+            .rev()
+            .fold(Value::atom("nil"), |tl, &x| {
+                Value::atom_with("cons", vec![Value::Int(x), tl])
+            });
+        assert!(t.contains(&w), "[7, 3, 7, 1] is in t");
+        Type::forget_emptiness();
+        assert_ne!(t.chain_verdict(), Some(Verdict::Empty));
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+    });
+}
+
+/// R7 Q5(a): random carrier-plus-chains test (mixed finite/cofinite positive heads, 1-value and
+/// many-value holes, stops, roots of different lengths, and optional spine choices as in X31)
+/// checked against a pure brute-force word enumerator (calling neither emptiness nor membership)
+/// through `chain_verdict` alone and through `verdict` in both definition/operand and query orders.
+#[test]
+fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
+    #[derive(Clone, Copy, Debug)]
+    struct Pred {
+        cof: bool,
+        mask: u8, // bits 0..4 represent literals 0..4; symbol 4 stands for all other integers
+    }
+    impl Pred {
+        fn holds(self, sym: u8) -> bool {
+            if sym >= 4 {
+                self.cof
+            } else {
+                ((self.mask >> sym) & 1 != 0) != self.cof
+            }
+        }
+        fn ty(self) -> Type {
+            let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
+            let s = (0..4u8)
+                .filter(|&b| (self.mask >> b) & 1 != 0)
+                .fold(Type::empty(), |u, b| &u | &lit(b as i64));
+            if self.cof { &Type::int() - &s } else { s }
+        }
+    }
+    #[derive(Clone, Copy, Debug)]
+    enum TailRef {
+        Car,
+        End,
+        Node(usize),
+    }
+    #[derive(Clone, Debug)]
+    struct ChainCase {
+        car_head: Pred,
+        nodes: Vec<(bool, Pred, TailRef)>,
+        pos: Vec<(Pred, TailRef)>,
+        neg: Vec<(Pred, TailRef)>,
+    }
+    fn brute_force_inhabited(c: &ChainCase) -> Option<Vec<u8>> {
+        let mut depth = vec![0usize; c.nodes.len()];
+        for i in 0..c.nodes.len() {
+            depth[i] = 1 + match c.nodes[i].2 {
+                TailRef::Node(j) => depth[j],
+                _ => 0,
+            };
+        }
+        let max_len = depth.into_iter().max().unwrap_or(0) + 2;
+        fn tail_holds(c: &ChainCase, t: TailRef, rest: &[u8]) -> bool {
+            match rest.split_first() {
+                None => match t {
+                    TailRef::Car | TailRef::End => true,
+                    TailRef::Node(i) => c.nodes[i].0,
+                },
+                Some((&x, xs)) => match t {
+                    TailRef::End => false,
+                    TailRef::Car => c.car_head.holds(x) && tail_holds(c, TailRef::Car, xs),
+                    TailRef::Node(i) => c.nodes[i].1.holds(x) && tail_holds(c, c.nodes[i].2, xs),
+                },
+            }
+        }
+        fn row_holds(c: &ChainCase, row: (Pred, TailRef), word: &[u8]) -> bool {
+            let Some((&x, xs)) = word.split_first() else {
+                return false;
+            };
+            row.0.holds(x) && tail_holds(c, row.1, xs)
+        }
+        fn search_words(c: &ChainCase, cur: &mut Vec<u8>, target_len: usize) -> bool {
+            if cur.len() == target_len {
+                return c.pos.iter().all(|&r| row_holds(c, r, cur))
+                    && !c.neg.iter().any(|&r| row_holds(c, r, cur));
+            }
+            for sym in 0..5u8 {
+                cur.push(sym);
+                if search_words(c, cur, target_len) {
+                    return true;
+                }
+                cur.pop();
+            }
+            false
+        }
+        let mut buf = Vec::with_capacity(max_len);
+        for len in 1..=max_len {
+            buf.clear();
+            if search_words(c, &mut buf, len) {
+                return Some(buf);
+            }
+        }
+        None
+    }
+    fn build_case(c: &ChainCase, tag: &str, rev: bool) -> Type {
+        // Definitions: 0 is carrier L, 1..=nodes.len() are pool nodes, then pos rows, then neg rows.
+        let n_nodes = c.nodes.len();
+        let n_pos = c.pos.len();
+        let total = 1 + n_nodes + n_pos + c.neg.len();
+        let map_idx = |idx: usize| if rev { total - 1 - idx } else { idx };
+        let tail_expr = |t: TailRef| match t {
+            TailRef::Car => Expr::Ref(map_idx(0), vec![]),
+            TailRef::End => Expr::Type(Type::atom("nil")),
+            TailRef::Node(i) => Expr::Ref(map_idx(1 + i), vec![]),
+        };
+        let mut defs: Vec<(usize, Def)> = Vec::with_capacity(total);
+        let mut car_alts = vec![
+            Expr::Type(Type::atom("nil")),
+            Expr::Atom(
+                "cons".into(),
+                vec![Expr::Type(c.car_head.ty()), Expr::Ref(map_idx(0), vec![])],
+            ),
+        ];
+        if rev {
+            car_alts.reverse();
+        }
+        defs.push((
+            0,
+            Def {
+                name: format!("L{tag}"),
+                params: vec![],
+                body: Expr::Union(car_alts),
+            },
+        ));
+        for (i, &(has_stop, h, nx)) in c.nodes.iter().enumerate() {
+            let step = Expr::Atom("cons".into(), vec![Expr::Type(h.ty()), tail_expr(nx)]);
+            let body = if has_stop {
+                let mut alts = vec![Expr::Type(Type::atom("nil")), step];
+                if rev {
+                    alts.reverse();
+                }
+                Expr::Union(alts)
+            } else {
+                step
+            };
+            defs.push((
+                1 + i,
+                Def {
+                    name: format!("V{i}{tag}"),
+                    params: vec![],
+                    body,
+                },
+            ));
+        }
+        for (i, &(h, nx)) in c.pos.iter().chain(&c.neg).enumerate() {
+            defs.push((
+                1 + n_nodes + i,
+                Def {
+                    name: format!("R{i}{tag}"),
+                    params: vec![],
+                    body: Expr::Atom("cons".into(), vec![Expr::Type(h.ty()), tail_expr(nx)]),
+                },
+            ));
+        }
+        if rev {
+            defs.reverse();
+        }
+        let ts = Group::new(defs.into_iter().map(|(_, d)| d).collect())
+            .unwrap()
+            .instance(vec![]);
+        let mut pos_idxs: Vec<usize> = (0..n_pos).map(|i| map_idx(1 + n_nodes + i)).collect();
+        let mut neg_idxs: Vec<usize> = (0..c.neg.len())
+            .map(|i| map_idx(1 + n_nodes + n_pos + i))
+            .collect();
+        if rev {
+            pos_idxs.reverse();
+            neg_idxs.reverse();
+        }
+        let p = pos_idxs[1..]
+            .iter()
+            .fold(ts[pos_idxs[0]].clone(), |acc, &idx| &acc & &ts[idx]);
+        let n = neg_idxs
+            .iter()
+            .fold(Type::empty(), |acc, &idx| &acc | &ts[idx]);
+        &p - &n
+    }
+
+    big(|| {
+        let mut rng = Rng::new(0x77c0_ffee_2026);
+        let draw_pred = |rng: &mut Rng| -> Pred {
+            match rng.below(7) {
+                0 => Pred { cof: true, mask: 0 }, // int
+                1 | 2 => Pred {
+                    cof: true,
+                    mask: 1u8 << rng.below(4), // 1-value hole
+                },
+                3 | 4 => {
+                    // many-value hole (2 or 3 excluded values)
+                    let m = (1u8 << rng.below(4)) | (1u8 << rng.below(4)) | (1u8 << rng.below(4));
+                    Pred { cof: true, mask: m }
+                }
+                _ => {
+                    // non-empty finite set over {0, 1, 2, 3}
+                    Pred {
+                        cof: false,
+                        mask: 1 + rng.below(15) as u8,
+                    }
+                }
+            }
+        };
+
+        let mut chain_decided = 0usize;
+        let mut chain_empty = 0usize;
+        let mut chain_inhab = 0usize;
+        for id in 0..1200 {
+            let x31_mode = id % 2 == 1;
+            let car_head = if x31_mode || rng.below(3) != 0 {
+                Pred { cof: true, mask: 0 }
+            } else {
+                Pred {
+                    cof: true,
+                    mask: 1u8 << rng.below(4),
+                }
+            };
+            let mut nodes: Vec<(bool, Pred, TailRef)> = Vec::new();
+            let mut pos: Vec<(Pred, TailRef)> = Vec::new();
+            let mut neg: Vec<(Pred, TailRef)> = Vec::new();
+
+            if x31_mode {
+                // Spine F1..Fd with 1-value or many-value holes disjoint from F1's finite leaf head,
+                // roots of different lengths along the spine (including optional arrivals where F1 is
+                // not itself refused), auxiliary negative chains with holes/stops, and mixed positive
+                // chains (exercising X31 as well as Case A and Case B).
+                let leaf_bit = rng.below(2);
+                let leaf_mask = 1u8 << leaf_bit;
+                let leaf_h = Pred {
+                    cof: false,
+                    mask: leaf_mask,
+                };
+                let draw_spine_hole = |rng: &mut Rng| -> Pred {
+                    let mut m = 0u8;
+                    let k = if rng.below(2) == 0 { 1 } else { 2 };
+                    for _ in 0..k {
+                        let b = (leaf_bit + 1 + rng.below(3)) % 4;
+                        m |= 1u8 << b;
+                    }
+                    Pred { cof: true, mask: m }
+                };
+                let sp_len = 1 + rng.below(3); // 1..=3 internal spine nodes above F1
+                nodes.push((false, leaf_h, TailRef::Car)); // 0: F1 (depth 1)
+                for d in 1..=sp_len {
+                    nodes.push((false, draw_spine_hole(&mut rng), TailRef::Node(d - 1)));
+                }
+                // Spine roots of different lengths (when d > 0 is the lowest chosen root, arriving at
+                // F1 is an optional spine choice as in X31).
+                for d in 0..=sp_len {
+                    if (d > 0 && rng.below(2) == 0) || d == sp_len || rng.below(5) == 0 {
+                        let (_, h, nx) = nodes[d];
+                        neg.push((h, nx));
+                    }
+                }
+                // Auxiliary negative chain(s) with stops, `int`, `int \ leaf_h`, or general predicates.
+                let n_aux = 1 + rng.below(2);
+                for _ in 0..n_aux {
+                    let alen = 2 + rng.below(3); // 2..=4
+                    let mut cur = if rng.below(5) == 0 {
+                        TailRef::End
+                    } else {
+                        TailRef::Car
+                    };
+                    let mut chain_links: Vec<(bool, Pred)> = Vec::with_capacity(alen);
+                    for _ in 0..alen {
+                        let h = match rng.below(6) {
+                            0..=2 => Pred { cof: true, mask: 0 },
+                            3 | 4 => Pred {
+                                cof: true,
+                                mask: leaf_mask,
+                            },
+                            _ => draw_pred(&mut rng),
+                        };
+                        chain_links.push((rng.below(6) == 0, h));
+                    }
+                    for &(st, h) in &chain_links[..alen - 1] {
+                        let idx = nodes.len();
+                        nodes.push((st, h, cur));
+                        cur = TailRef::Node(idx);
+                    }
+                    neg.push((chain_links[alen - 1].1, cur));
+                }
+                // Positive chain(s) of length 2..=5 with mixed heads (`int`, `leaf_h`, finite/cofinite).
+                let n_pos_chains = if rng.below(3) == 0 { 2 } else { 1 };
+                for _ in 0..n_pos_chains {
+                    let plen = 2 + rng.below(4);
+                    let mut pcur = if rng.below(5) == 0 {
+                        TailRef::End
+                    } else {
+                        TailRef::Car
+                    };
+                    for step_rem in 0..plen - 1 {
+                        let idx = nodes.len();
+                        let ph = if step_rem == 0 && rng.below(2) == 0 {
+                            leaf_h
+                        } else if rng.below(2) == 0 {
+                            Pred { cof: true, mask: 0 }
+                        } else {
+                            draw_pred(&mut rng)
+                        };
+                        nodes.push((rng.below(6) == 0, ph, pcur));
+                        pcur = TailRef::Node(idx);
+                    }
+                    let top_ph = if rng.below(2) == 0 {
+                        Pred { cof: true, mask: 0 }
+                    } else {
+                        draw_pred(&mut rng)
+                    };
+                    pos.push((top_ph, pcur));
+                }
+                if rng.below(4) == 0 {
+                    pos.push((car_head, TailRef::Car));
+                }
+            } else {
+                let np = 1 + rng.below(4);
+                for i in 0..np {
+                    let nx = if i > 0 && rng.below(3) != 0 {
+                        TailRef::Node(rng.below(i))
+                    } else if rng.below(4) == 0 {
+                        TailRef::End
+                    } else {
+                        TailRef::Car
+                    };
+                    nodes.push((rng.below(3) == 0, draw_pred(&mut rng), nx));
+                }
+                let draw_tail = |rng: &mut Rng, np: usize| match rng.below(5) {
+                    0 => TailRef::Car,
+                    1 => TailRef::End,
+                    _ => TailRef::Node(rng.below(np)),
+                };
+                pos.push((draw_pred(&mut rng), draw_tail(&mut rng, np)));
+                if rng.below(2) == 0 {
+                    if rng.below(2) == 0 {
+                        pos.push((car_head, TailRef::Car));
+                    } else {
+                        pos.push((draw_pred(&mut rng), draw_tail(&mut rng, np)));
+                    }
+                }
+                let n_neg = 1 + rng.below(5);
+                for _ in 0..n_neg {
+                    neg.push((draw_pred(&mut rng), draw_tail(&mut rng, np)));
+                }
+            }
+
+            let case = ChainCase {
+                car_head,
+                nodes,
+                pos,
+                neg,
+            };
+            let witness = brute_force_inhabited(&case);
+            let inhab = witness.is_some();
+            let a = build_case(&case, &format!("_r7rc_{id}f"), false);
+            let b = build_case(&case, &format!("_r7rc_{id}r"), true);
+
+            Type::forget_emptiness();
+            let ca = a.chain_verdict();
+            Type::forget_emptiness();
+            let cb = b.chain_verdict();
+            assert_eq!(
+                ca, cb,
+                "case {id}: chain_verdict order mismatch on {case:?}"
+            );
+            if let Some(cv) = ca {
+                chain_decided += 1;
+                match cv {
+                    Verdict::Empty => {
+                        assert!(
+                            !inhab,
+                            "case {id}: chain_verdict Empty but brute force found {witness:?} on {case:?}"
+                        );
+                        chain_empty += 1;
+                    }
+                    Verdict::Inhabited => {
+                        assert!(
+                            inhab,
+                            "case {id}: chain_verdict Inhabited but brute force found none on {case:?}"
+                        );
+                        chain_inhab += 1;
+                    }
+                    Verdict::Refused(_) => {}
+                }
+            }
+
+            // Query order 1 (`a` then `b`) and query order 2 (`b` then `a`).
+            Type::forget_emptiness();
+            let va1 = a.verdict();
+            let vb1 = b.verdict();
+            Type::forget_emptiness();
+            let vb2 = b.verdict();
+            let va2 = a.verdict();
+            assert_eq!(va1, va2, "case {id}: query order changed `a` verdict");
+            assert_eq!(vb1, vb2, "case {id}: query order changed `b` verdict");
+            for (lbl, v) in [("a", va1), ("b", vb2)] {
+                match v {
+                    Verdict::Empty => assert!(
+                        !inhab,
+                        "case {id} ({lbl}): verdict Empty but brute force found {witness:?} on {case:?}"
+                    ),
+                    Verdict::Inhabited => assert!(
+                        inhab,
+                        "case {id} ({lbl}): verdict Inhabited but brute force found none on {case:?}"
+                    ),
+                    Verdict::Refused(_) => {}
+                }
+                if let Some(cv) = ca {
+                    assert_eq!(cv, v, "case {id} ({lbl}): chain_verdict != verdict");
+                }
+            }
+        }
+        eprintln!(
+            "R7 random carrier+chains: 1200 cases, chain_decided={chain_decided} (empty={chain_empty}, inhab={chain_inhab})"
+        );
+        assert!(chain_empty > 50 && chain_inhab > 50);
     });
 }

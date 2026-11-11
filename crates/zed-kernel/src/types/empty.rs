@@ -614,8 +614,13 @@ impl Type {
         sweep::front_sweep(self).or_else(|| self.chain_verdict())
     }
 
-    /// The prefix-chain sweep's verdict of `self` alone ([`Searching::sweep_verdict`]). For
-    /// tests that check which of the two sweeps decides an input.
+    /// Diagnostic counts of candidate and empty cell reads in the independent escape parse.
+    #[doc(hidden)]
+    pub fn escape_cell_counts(&self) -> (usize, usize) {
+        escape::cell_counts(self)
+    }
+
+    /// The prefix-chain sweep's verdict alone, for tests against an independent oracle.
     pub fn chain_verdict(&self) -> Option<Verdict> {
         let mut s = Search {
             strict: true,
@@ -623,6 +628,7 @@ impl Type {
             ..Search::default()
         };
         let t = self.clone();
+        s.roots.insert(t.clone(), ());
         s.run(|d| Box::pin(async move { d.sweep_verdict(&t).await }))
     }
 
@@ -991,6 +997,9 @@ struct Search {
     cycles: ByType<Option<Cycle>>,
     /// What is known of each list type met, by the sweep over prefix chains.
     chains: ByType<Option<ChainPlan>>,
+    /// The types the query asks about ([`Searching::solve`], [`Type::chain_verdict`]): the only
+    /// ones [`Searching::prefix_chains`] decides.
+    roots: ByType<()>,
     /// Nesting depth inside the general tuple/parts fallback for a list type outside
     /// [`Searching::prefix_chains`]; while non-zero, internal narrowed residual tail types go
     /// straight to the general decider without re-running `prefix_chains`.
@@ -2131,6 +2140,7 @@ impl<'m> Searching<'m> {
         // list to walk, and a row tested against every row would cost their square.
         let mut answers: Vec<Option<bool>> = vec![None; roots.len()];
         let mut seeded = false;
+        self.s().roots.extend(roots.iter().map(|r| (r.clone(), ())));
         for (a, root) in answers.iter_mut().zip(roots) {
             if root.p().atoms.names.is_empty() {
                 continue;
@@ -3609,15 +3619,16 @@ impl<'m> Searching<'m> {
         let (mut bare, mut link) = (None, None);
         for (name, a) in &p.atoms.names {
             match (a.bare, a.payload == Type::empty()) {
-                (true, true) => bare = Some(name.clone()),
+                (true, true) if bare.is_none() => bare = Some(name.clone()),
                 (false, true) => {}
-                (false, false) => link = Some((name.clone(), a.payload.clone())),
+                (false, false) if link.is_none() => link = Some((name.clone(), a.payload.clone())),
                 _ => return None,
             }
         }
         let (name, payload) = link?;
         let q = payload.p();
-        if q.tuples.rest || q.tuples.lens.len() != 1 || !q.tuples.lens.contains_key(&2) {
+        if q.structs || q.tuples.rest || q.tuples.lens.len() != 1 || !q.tuples.lens.contains_key(&2)
+        {
             return None;
         }
         let f = &q.tuples.lens[&2];
@@ -3737,17 +3748,27 @@ impl<'m> Searching<'m> {
         }
         match self.prefix_chains(t).await? {
             ChainPlan::Empty => Some(Verdict::Empty),
-            plan @ ChainPlan::Inhabited { .. } => self
-                .chain_rep(t, plan)
-                .await
-                .map(|_| Verdict::Inhabited),
+            plan @ ChainPlan::Inhabited { .. } => {
+                self.chain_rep(t, plan).await.map(|_| Verdict::Inhabited)
+            }
         }
     }
 
     /// Decides `t`, or builds a witness plan for it, when `t` is a list type made of a period-1
     /// carrier cycle and finite prefix chains ending at that carrier (`front` and `far`
-    /// families). Memoized per type in `Search::chains`.
+    /// families), and `t` is one of the query's own types (`Search::roots`). Memoized per type
+    /// in `Search::chains`.
     async fn prefix_chains(&'m self, t: &Type) -> Option<ChainPlan> {
+        // Complexity tradeoff: the chains and the escape solve run on the query's own types
+        // only. Why: run on every list type the search meets, they decided or found witnesses
+        // for parts the search would have decided its own way, and changed the search's
+        // course: 40-60% more work on `r6twowide` and `r6threeun`, which are outside their
+        // class, than base 4777a33e, which has neither (R7, Q4). Tradeoff: a list type in their
+        // class met only inside another type (a tuple's component, a group member) is left to
+        // the search; on the suite and the probe cases no verdict changed.
+        if !self.s().roots.contains_key(t) {
+            return None;
+        }
         if let Some(plan) = self.s().chains.get(t).cloned() {
             return plan;
         }
@@ -3811,7 +3832,10 @@ impl<'m> Searching<'m> {
         }
         let (link_name, payload) = link?;
         let q = payload.p();
-        if q.tuples.rest || q.tuples.lens.len() != 1 || !q.tuples.lens.contains_key(&2) {
+        // Named struct payloads are an alternative to positional list pairs, not a list
+        // constraint. Ignoring that alternative gives a wrong Empty (R7-C2).
+        if q.structs || q.tuples.rest || q.tuples.lens.len() != 1 || !q.tuples.lens.contains_key(&2)
+        {
             return None;
         }
         let f = &q.tuples.lens[&2];
@@ -3952,7 +3976,11 @@ impl<'m> Searching<'m> {
                 return has_stop.then(|| (true, Type::empty(), None, carriers[0].clone()));
             };
             let xq = l_payload.p();
-            if xq.tuples.rest || xq.tuples.lens.len() != 1 || !xq.tuples.lens.contains_key(&2) {
+            if xq.structs
+                || xq.tuples.rest
+                || xq.tuples.lens.len() != 1
+                || !xq.tuples.lens.contains_key(&2)
+            {
                 return None;
             }
             let rows = xq.tuples.lens[&2].union_rows()?;
@@ -4285,49 +4313,50 @@ impl<'m> Searching<'m> {
             }
         };
 
-        let activate_neg = |v: usize,
-                            target_step: usize,
-                            nodes: &[ChainNode],
-                            neg_seen_u: &mut [usize],
-                            neg_depth1: &mut [Vec<usize>],
-                            neg_group_of: &mut HashMap<(bool, Type, Option<Type>), usize, Digests>,
-                            neg_groups: &mut Vec<ChainGroup>,
-                            active_neg: &mut Vec<usize>,
-                            neg_jumps_at: &mut [Vec<(usize, usize)>]| {
-            if neg_seen_u[v] == target_step {
-                return;
-            }
-            neg_seen_u[v] = target_step;
-            if nodes[v].depth == 1 {
-                neg_depth1[target_step].push(v);
-            } else {
-                let key = (
-                    nodes[v].has_stop,
-                    nodes[v].head.clone(),
-                    nodes[v].emit.clone(),
-                );
-                let g_idx = *neg_group_of.entry(key).or_insert_with(|| {
-                    let id = neg_groups.len();
-                    neg_groups.push(ChainGroup {
-                        has_stop: nodes[v].has_stop,
-                        head: nodes[v].head.clone(),
-                        emit: nodes[v].emit.clone(),
-                        active: 0,
-                        jumping_next: 0,
-                        jumping_stop_next: false,
-                        jump_target: None,
-                        multi_target: false,
-                    });
-                    id
-                });
-                if neg_groups[g_idx].active == 0 {
-                    active_neg.push(g_idx);
+        let activate_neg =
+            |v: usize,
+             target_step: usize,
+             nodes: &[ChainNode],
+             neg_seen_u: &mut [usize],
+             neg_depth1: &mut [Vec<usize>],
+             neg_group_of: &mut HashMap<(bool, Type, Option<Type>), usize, Digests>,
+             neg_groups: &mut Vec<ChainGroup>,
+             active_neg: &mut Vec<usize>,
+             neg_jumps_at: &mut [Vec<(usize, usize)>]| {
+                if neg_seen_u[v] == target_step {
+                    return;
                 }
-                neg_groups[g_idx].active += 1;
-                neg_jumps_at[target_step + nodes[v].run]
-                    .push((g_idx, nodes[v].jump.expect("depth >= 2 has jump")));
-            }
-        };
+                neg_seen_u[v] = target_step;
+                if nodes[v].depth == 1 {
+                    neg_depth1[target_step].push(v);
+                } else {
+                    let key = (
+                        nodes[v].has_stop,
+                        nodes[v].head.clone(),
+                        nodes[v].emit.clone(),
+                    );
+                    let g_idx = *neg_group_of.entry(key).or_insert_with(|| {
+                        let id = neg_groups.len();
+                        neg_groups.push(ChainGroup {
+                            has_stop: nodes[v].has_stop,
+                            head: nodes[v].head.clone(),
+                            emit: nodes[v].emit.clone(),
+                            active: 0,
+                            jumping_next: 0,
+                            jumping_stop_next: false,
+                            jump_target: None,
+                            multi_target: false,
+                        });
+                        id
+                    });
+                    if neg_groups[g_idx].active == 0 {
+                        active_neg.push(g_idx);
+                    }
+                    neg_groups[g_idx].active += 1;
+                    neg_jumps_at[target_step + nodes[v].run]
+                        .push((g_idx, nodes[v].jump.expect("depth >= 2 has jump")));
+                }
+            };
 
         for (_, idx) in &pos_rows {
             if let Some(u) = *idx {
@@ -4478,9 +4507,7 @@ impl<'m> Searching<'m> {
                     }
                 }
             }
-            if spine_ok
-                && let Some(u1) = spine_node_at_depth[1]
-            {
+            if spine_ok && let Some(u1) = spine_node_at_depth[1] {
                 let mut holes_union = nodes[u1].head.clone();
                 for d in 2..=max_v_depth {
                     let w = spine_node_at_depth[d].expect("spine is contiguous");
@@ -4499,9 +4526,7 @@ impl<'m> Searching<'m> {
                 if spine_ok {
                     for &(v, ref rem) in &loose_targets1 {
                         let t_arr = nodes[v].depth + 1;
-                        let covered_by_spine_hole = if let Some(Some(sh)) =
-                            spine_holes.get(t_arr)
-                        {
+                        let covered_by_spine_hole = if let Some(Some(sh)) = spine_holes.get(t_arr) {
                             self.settles(rem, sh, false).await
                         } else {
                             false
@@ -4581,6 +4606,10 @@ impl<'m> Searching<'m> {
         // like this can break that (R5 `r5greedy`: [4, 2, 1, 1] escapes, yet the greedy gives
         // step 1 to the earlier root), so `Empty` is then left to the search.
         let mut greedy_unsafe = false;
+        // Complexity tradeoff: exploring both optional spine branches requires potentially
+        // exponential search. Keep the O(1) witness choice, but never use its exhaustion
+        // as an Empty proof for the original type (X31). One Boolean, no size cutoff.
+        let mut optional_spine_choice = false;
 
         for step in 2..=max_step + 1 {
             let pos_jumps = std::mem::take(&mut pos_jumps_at[step]);
@@ -4684,6 +4713,7 @@ impl<'m> Searching<'m> {
             }
             if self.empty(&r0).await {
                 return (!greedy_unsafe
+                    && !optional_spine_choice
                     && (committed_count == 0 || (spine_all_holes && !had_loose)))
                     .then_some(ChainPlan::Empty);
             }
@@ -4776,6 +4806,7 @@ impl<'m> Searching<'m> {
                     .await
                     {
                         return (!greedy_unsafe
+                            && !optional_spine_choice
                             && (committed_count == 0 || (spine_all_holes && !had_loose)))
                             .then_some(ChainPlan::Empty);
                     }
@@ -4839,6 +4870,13 @@ impl<'m> Searching<'m> {
                                 });
                             }
                         }
+                    }
+                    // With no active negative chain, the two passes below read nothing of `r0`, the
+                    // later reads of `r0` at this step only build a witness, and every later
+                    // hole is disjoint from `h1`; so no chain can tell the narrowing apart and
+                    // it stays an `Empty` proof (Gemini R7 Q2(a)).
+                    if !active_neg.is_empty() {
+                        optional_spine_choice = true;
                     }
                     r0 = r0_without_h1;
                 }
@@ -4908,9 +4946,7 @@ impl<'m> Searching<'m> {
                     if forbids_stop_next {
                         forced_stop_forbid = true;
                     }
-                    if !multi_target
-                        && let Some(w) = jump_target
-                    {
+                    if !multi_target && let Some(w) = jump_target {
                         target_rem.insert(w, None);
                     }
                 } else if self.settles(&r0, &ng.head, true).await {
@@ -4922,9 +4958,7 @@ impl<'m> Searching<'m> {
                     }
                     if staying > 0 || jumping_next == 0 {
                         step_loose = true;
-                    } else if !multi_target
-                        && let Some(w) = jump_target
-                    {
+                    } else if !multi_target && let Some(w) = jump_target {
                         let entry = target_rem.entry(w).or_insert_with(|| Some(r0.clone()));
                         if let Some(rem) = entry {
                             let next_rem = self.cut(rem, &ng.head, Cut::Minus);
@@ -5042,7 +5076,13 @@ impl<'m> Searching<'m> {
         if let Some(Some(r)) = self.s().reps.get(t).copied() {
             return Some(r);
         }
-        let ChainPlan::Inhabited { stop, link, heads, hints } = plan else {
+        let ChainPlan::Inhabited {
+            stop,
+            link,
+            heads,
+            hints,
+        } = plan
+        else {
             return None;
         };
         let (seeding, walking, current) = {
@@ -5070,7 +5110,9 @@ impl<'m> Searching<'m> {
                 items.push(r);
             }
         }
-        let verified = self.check_chain_witness(t, &link, &items, &stop, &hints).await;
+        let verified = self
+            .check_chain_witness(t, &link, &items, &stop, &hints)
+            .await;
         {
             let mut s = self.s();
             s.seeding = seeding;
@@ -5360,8 +5402,7 @@ impl<'m> Searching<'m> {
                 if let Some(&cyc_start) = seen_on_path.get(&cur) {
                     let cyc_len = path.len() - cyc_start;
                     let base_id = nodes.len();
-                    for (offset, (ty, has_stop, head, emit)) in
-                        path.drain(cyc_start..).enumerate()
+                    for (offset, (ty, has_stop, head, emit)) in path.drain(cyc_start..).enumerate()
                     {
                         let next_id = base_id + (offset + 1) % cyc_len;
                         let id = nodes.len();
@@ -5586,7 +5627,8 @@ impl<'m> Searching<'m> {
                         return None;
                     }
                     let w = lift(&nodes, u, k);
-                    let emits = nodes[u].emits - nodes[w].emits + usize::from(nodes[w].emit.is_some());
+                    let emits =
+                        nodes[u].emits - nodes[w].emits + usize::from(nodes[w].emit.is_some());
                     (emits == 0).then_some(w)
                 };
                 let outside = match hint {
@@ -9481,17 +9523,25 @@ fn list_step(t: &Type) -> Option<Step> {
     let (mut stop, mut link) = (None, None);
     for (name, a) in &p.atoms.names {
         match (a.bare, a.payload == Type::empty()) {
-            (true, true) => stop = Some(name.clone()),
+            (true, true) if stop.is_none() => stop = Some(name.clone()),
             (false, true) => {}
-            (false, false) => link = Some((name.clone(), a.payload.clone())),
+            (false, false) if link.is_none() => link = Some((name.clone(), a.payload.clone())),
             _ => return None,
         }
     }
     let (name, payload) = link?;
     let q = payload.p();
+    // Complexity tradeoff: the general payload search can require an exponential subset
+    // construction over recursive alternatives. A functional list step is read in
+    // O(atom names + pair BDD nodes), but only with at most one stop, one link and positional pairs
+    // alone. Mixed named/positional payloads or multiple names stay on the general path.
+    // Check the constant-time shape flags before walking the pair BDD (R7-C2/C3).
+    if q.structs || q.tuples.rest || q.tuples.lens.len() != 1 {
+        return None;
+    }
     let f = q.tuples.lens.get(&2)?;
     let atoms = f.distinct_atoms();
-    if q.tuples.rest || q.tuples.lens.len() != 1 || atoms.len() != 1 || !f.eval(&|_| true) {
+    if atoms.len() != 1 || !f.eval(&|_| true) {
         return None;
     }
     if f.eval(&|_| false) {

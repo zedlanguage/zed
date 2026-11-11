@@ -921,68 +921,130 @@ impl Sweep {
         let carrier_head = self.carrier.as_ref()?;
         // Exact carrier projection: coordinate zero varies over int; every other
         // coordinate is the same type in every row, so it can be filled once.
-        let fixed = if carrier_head == &Type::int() { None } else {
+        let fixed = if carrier_head == &Type::int() {
+            None
+        } else {
             let cs = product(&carrier_head.p())?;
-            if cs.first()? != &Type::int() { return None; }
+            if cs.first()? != &Type::int() {
+                return None;
+            }
             let mut values = vec![Value::Int(0)];
             for c in &cs[1..] {
-                let v = component_candidates(&[c.clone()]).into_iter().find(|v|c.contains(v))?;
+                let v = component_candidates(&[c.clone()])
+                    .into_iter()
+                    .find(|v| c.contains(v))?;
                 values.push(v);
             }
             Some((cs, values))
         };
         // (cofinite, literal); int itself is (true, None).
-        let kinds: Vec<Option<(bool, Option<i64>)>> = self.heads.iter().map(|whole| {
-            let projected;
-            let h = if let Some((cs,_)) = &fixed {
-                let p = whole.p();
-                if p.has_scalars() || !p.atoms.is_default() || p.structs
-                    || p.morphisms.is_leaf() != Some(false) || p.tuples.rest
-                    || p.tuples.lens.len() != 1 { return None; }
-                let (taken, refused) = p.tuples.lens.get(&cs.len())?.clause()?;
-                if taken.is_empty() || !taken.iter().chain(&refused)
-                    .all(|r| r.len() == cs.len() && r[1..] == cs[1..]) { return None; }
-                let mut var = Type::int();
-                for r in &taken { var = &var & &r[0]; }
-                for r in &refused { var = &var - &r[0]; }
-                projected = var;
-                &projected
-            } else { whole };
-            if h == &Type::int() { return Some((true, None)); }
-            let p = h.p();
-            let [Value::Int(v)] = &p.ints.values.iter().cloned().collect::<Vec<_>>()[..] else { return None; };
-            let one = Type::lit(&Value::Int(*v))?;
-            if h == &one { Some((false, Some(*v))) }
-            else if h == &(&Type::int() - &one) { Some((true, Some(*v))) }
-            else { None }
-        }).collect();
+        let kinds: Vec<Option<(bool, Option<i64>)>> = self
+            .heads
+            .iter()
+            .map(|whole| {
+                let projected;
+                let h = if let Some((cs, _)) = &fixed {
+                    let p = whole.p();
+                    if p.has_scalars()
+                        || !p.atoms.is_default()
+                        || p.structs
+                        || p.morphisms.is_leaf() != Some(false)
+                        || p.tuples.rest
+                        || p.tuples.lens.len() != 1
+                    {
+                        return None;
+                    }
+                    let (taken, refused) = p.tuples.lens.get(&cs.len())?.clause()?;
+                    if taken.is_empty()
+                        || !taken
+                            .iter()
+                            .chain(&refused)
+                            .all(|r| r.len() == cs.len() && r[1..] == cs[1..])
+                    {
+                        return None;
+                    }
+                    let mut var = Type::int();
+                    for r in &taken {
+                        var = &var & &r[0];
+                    }
+                    for r in &refused {
+                        var = &var - &r[0];
+                    }
+                    projected = var;
+                    &projected
+                } else {
+                    whole
+                };
+                if h == &Type::int() {
+                    return Some((true, None));
+                }
+                let p = h.p();
+                let [Value::Int(v)] = &p.ints.values.iter().cloned().collect::<Vec<_>>()[..] else {
+                    return None;
+                };
+                let one = Type::lit(&Value::Int(*v))?;
+                if h == &one {
+                    Some((false, Some(*v)))
+                } else if h == &(&Type::int() - &one) {
+                    Some((true, Some(*v)))
+                } else {
+                    None
+                }
+            })
+            .collect();
         let full = |h: usize| h != NONE && kinds[h] == Some((true, None));
-        let carriers: Vec<_> = self.links.iter().enumerate().filter(|(i,l)|
-            l.tail == *i && full(l.head) && l.sides == NONE && self.es[l.e].len() == 1
-        ).map(|(i,_)|i).collect();
-        let [carrier] = carriers[..] else { return None; };
+        let carriers: Vec<_> = self
+            .links
+            .iter()
+            .enumerate()
+            .filter(|(i, l)| {
+                l.tail == *i && full(l.head) && l.sides == NONE && self.es[l.e].len() == 1
+            })
+            .map(|(i, _)| i)
+            .collect();
+        let [carrier] = carriers[..] else {
+            return None;
+        };
         let ce = self.links[carrier].e;
-        if !roots.iter().filter(|r|r.1).all(|&(x,_)|
-            x == carrier || full(self.links[x].head) && self.links[x].tail == carrier
-                && self.links[x].sides == NONE) { return None; }
-        let negatives: Vec<_> = roots.iter().filter(|r|!r.1).map(|r|r.0).collect();
-        let guards: Vec<_> = negatives.iter().copied().filter(|&x| {
-            let l = &self.links[x];
-            l.tail != NONE && self.links[l.tail].e == ce && l.head != NONE
-                && kinds[l.head].is_some_and(|k|k.0)
-        }).collect();
-        let [guard] = guards[..] else { return None; };
+        if !roots.iter().filter(|r| r.1).all(|&(x, _)| {
+            x == carrier
+                || full(self.links[x].head)
+                    && self.links[x].tail == carrier
+                    && self.links[x].sides == NONE
+        }) {
+            return None;
+        }
+        let negatives: Vec<_> = roots.iter().filter(|r| !r.1).map(|r| r.0).collect();
+        let guards: Vec<_> = negatives
+            .iter()
+            .copied()
+            .filter(|&x| {
+                let l = &self.links[x];
+                l.tail != NONE
+                    && self.links[l.tail].e == ce
+                    && l.head != NONE
+                    && kinds[l.head].is_some_and(|k| k.0)
+            })
+            .collect();
+        let [guard] = guards[..] else {
+            return None;
+        };
         let (mut x, mut depth, mut first, mut excluded) = (guard, 0usize, None, None);
         let mut seen = BTreeSet::new();
         while x != carrier {
-            if !seen.insert(x) { return None; }
+            if !seen.insert(x) {
+                return None;
+            }
             let l = &self.links[x];
-            if l.head == NONE || l.sides != NONE || l.tail == NONE
-                || depth > 0 && l.e != ce { return None; }
+            if l.head == NONE || l.sides != NONE || l.tail == NONE || depth > 0 && l.e != ce {
+                return None;
+            }
             depth += 1;
             match kinds[l.head]? {
                 (true, Some(q)) => {
-                    if excluded.is_some_and(|v|v != q) { return None; }
+                    if excluded.is_some_and(|v| v != q) {
+                        return None;
+                    }
                     excluded = Some(q);
                     first.get_or_insert(depth);
                 }
@@ -996,25 +1058,29 @@ impl Sweep {
         let mut state = vec![0u8; self.links.len()];
         state[carrier] = 2;
         for &r in &negatives {
-            if r == guard { continue; }
+            if r == guard {
+                continue;
+            }
             let (mut x, mut path) = (r, Vec::new());
             while state[x] == 0 {
                 state[x] = 1;
                 path.push(x);
                 let l = &self.links[x];
-                if l.tail == NONE || l.head == NONE || l.sides != NONE
-                    || !self.es[l.e].is_empty() { break; }
+                if l.tail == NONE || l.head == NONE || l.sides != NONE || !self.es[l.e].is_empty() {
+                    break;
+                }
                 x = l.tail;
             }
             for &z in path.iter().rev() {
                 let l = &self.links[z];
-                if l.tail != NONE && l.head != NONE && l.sides == NONE
-                    && self.es[l.e].is_empty() {
+                if l.tail != NONE && l.head != NONE && l.sides == NONE && self.es[l.e].is_empty() {
                     lengths[z] = if l.tail == carrier && kinds[l.head] == Some((false, Some(q))) {
                         Some(1)
-                    } else if kinds[l.head].is_some_and(|k|k.0) {
-                        lengths[l.tail].map(|n|n+1)
-                    } else { None };
+                    } else if kinds[l.head].is_some_and(|k| k.0) {
+                        lengths[l.tail].map(|n| n + 1)
+                    } else {
+                        None
+                    };
                 }
                 state[z] = 2;
             }
@@ -1022,22 +1088,36 @@ impl Sweep {
         }
         let mut by_length: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for &r in &negatives {
-            if r != guard { by_length.entry(lengths[r]?).or_default().push(r); }
+            if r != guard {
+                by_length.entry(lengths[r]?).or_default().push(r);
+            }
         }
-        if first.max(2) > depth { return None; }
+        if first.max(2) > depth {
+            return None;
+        }
         for (&p, rs) in by_length.range(first.max(2)..=depth) {
-            let Some((true, Some(a))) = kinds[self.links[rs[0]].head] else { continue; };
-            if a == q || !rs.iter().all(|&r| kinds[self.links[r].head] == Some((true, Some(a)))) { continue; }
+            let Some((true, Some(a))) = kinds[self.links[rs[0]].head] else {
+                continue;
+            };
+            if a == q
+                || !rs
+                    .iter()
+                    .all(|&r| kinds[self.links[r].head] == Some((true, Some(a))))
+            {
+                continue;
+            }
             let f = if q == 0 { 1 } else { 0 };
             let lift = |i| match &fixed {
                 None => Value::Int(i),
                 Some((_, values)) => {
-                    let mut xs = values.clone(); xs[0] = Value::Int(i); Value::tuple(xs)
+                    let mut xs = values.clone();
+                    xs[0] = Value::Int(i);
+                    Value::tuple(xs)
                 }
             };
             let mut items = vec![lift(f); p];
             items[0] = lift(a);
-            items[p-1] = lift(q);
+            items[p - 1] = lift(q);
             return Some((items, self.es[ce].first()?.clone()));
         }
         None
@@ -1109,10 +1189,14 @@ impl Sweep {
     fn holds(&mut self, pl: &Plain, x: usize, items: &[Value], last: &Arc<str>) -> bool {
         let (mut x, mut d) = (x, 0usize);
         loop {
-            if pl.min_len[x] > items.len() - d { return false; }
+            if pl.min_len[x] > items.len() - d {
+                return false;
+            }
             let k = pl.min_len[x];
-            if k > 0 && pl.required[x] != NONE
-                && !self.heads[pl.required[x]].contains(&items[d + k - 1]) {
+            if k > 0
+                && pl.required[x] != NONE
+                && !self.heads[pl.required[x]].contains(&items[d + k - 1])
+            {
                 return false;
             }
             let ((e, head, sides), run, jump) = (pl.label[x], pl.run[x], pl.jump[x]);
@@ -1366,20 +1450,29 @@ impl Plain {
                     state[y] = 2;
                     break;
                 }
-                if links[y].head == NONE { state[y] = 2; break; }
+                if links[y].head == NONE {
+                    state[y] = 2;
+                    break;
+                }
                 path.push(y);
                 y = links[y].tail;
             }
             if state[y] == 1 {
                 // No bare atom on this cycle: all cycle states have infinite minimum.
                 let at = path.iter().position(|&z| z == y).expect("on walk");
-                for &z in &path[at..] { state[z] = 2; }
+                for &z in &path[at..] {
+                    state[z] = 2;
+                }
                 path.truncate(at);
             }
             for &z in path.iter().rev() {
                 let t = links[z].tail;
                 min_len[z] = min_len[t].saturating_add(1);
-                required[z] = if min_len[t] == 0 { links[z].head } else { required[t] };
+                required[z] = if min_len[t] == 0 {
+                    links[z].head
+                } else {
+                    required[t]
+                };
                 state[z] = 2;
             }
         }
@@ -1536,7 +1629,9 @@ pub(super) fn front_sweep(t: &Type) -> Option<Verdict> {
                     _ => all = false,
                 }
             }
-            if !all { return None; }
+            if !all {
+                return None;
+            }
             let value = Value::tuple(values);
             // Check the actual outer arity and each actual child against a fresh reader.
             // Complexity tradeoff: generic membership may unfold each excluded list
@@ -1592,9 +1687,7 @@ fn dominant(classes: &ClassSet, open: &[usize]) -> Option<usize> {
             }
             // a.delta ⊆ cof Δ b.delta: no cofinite head of a.delta in b.delta.
             (false, true) => out_ok && !b_cof.clone().any(|g| a_cof.contains(g)),
-            (false, false) => {
-                out_ok && b_cof.filter(|g| a_cof.contains(*g)).count() == a_cof.len()
-            }
+            (false, false) => out_ok && b_cof.filter(|g| a_cof.contains(*g)).count() == a_cof.len(),
         }
     };
     (open.iter())
@@ -1604,31 +1697,53 @@ fn dominant(classes: &ClassSet, open: &[usize]) -> Option<usize> {
 }
 
 fn check_actual(t: &Type, value: &Value) -> bool {
-    let Some(items) = product(&t.p()) else { return check_list_value(t, value); };
-    let Value::Tuple(xs) = value else { return false; };
-    xs.len() == items.len() && items.iter().zip(xs.iter()).all(|(t,v)| check_list_value(t,v))
+    let Some(items) = product(&t.p()) else {
+        return check_list_value(t, value);
+    };
+    let Value::Tuple(xs) = value else {
+        return false;
+    };
+    xs.len() == items.len()
+        && items
+            .iter()
+            .zip(xs.iter())
+            .all(|(t, v)| check_list_value(t, v))
 }
 
 fn check_list_value(t: &Type, value: &Value) -> bool {
     let mut sw = Sweep::default();
-    let Some((root_e, Some(((taken, refused), false)))) = shape(&t.p(), &mut sw.c) else { return false; };
+    let Some((root_e, Some(((taken, refused), false)))) = shape(&t.p(), &mut sw.c) else {
+        return false;
+    };
     let root_e = sw.e_id(root_e);
     let none = sw.e_id(BTreeSet::new());
     let mut roots = Vec::new();
     for (rs, e, sign) in [(&taken, root_e, true), (&refused, none, false)] {
         for r in rs {
-            let Some(x) = sw.row(r, e) else { return false; };
+            let Some(x) = sw.row(r, e) else {
+                return false;
+            };
             roots.push((x, sign));
         }
     }
-    let Some(c) = sw.c.clone() else { return false; };
+    let Some(c) = sw.c.clone() else {
+        return false;
+    };
     let mut items = Vec::new();
     let mut v = value;
     let last = loop {
-        let Value::Atom(a) = v else { return false; };
-        if !a.fields.is_empty() { return false; }
-        if a.args.is_empty() { break a.name.clone(); }
-        if a.name != c || a.args.len() != 2 { return false; }
+        let Value::Atom(a) = v else {
+            return false;
+        };
+        if !a.fields.is_empty() {
+            return false;
+        }
+        if a.args.is_empty() {
+            break a.name.clone();
+        }
+        if a.name != c || a.args.len() != 2 {
+            return false;
+        }
         items.push(a.args[0].clone());
         v = &a.args[1];
     };
@@ -1637,8 +1752,12 @@ fn check_list_value(t: &Type, value: &Value) -> bool {
 }
 
 fn build_list(c: &Arc<str>, items: Vec<Value>, last: &Arc<str>) -> Value {
-    items.into_iter().rev().fold(Value::atom(last), |tail, item|
-        Value::atom_with(c.clone(), vec![item, tail]))
+    items
+        .into_iter()
+        .rev()
+        .fold(Value::atom(last), |tail, item| {
+            Value::atom_with(c.clone(), vec![item, tail])
+        })
 }
 
 /// The components of `p` when it is one tuple type and nothing else.
@@ -1664,7 +1783,9 @@ fn product(p: &Parts) -> Option<Vec<Type>> {
 fn list_sweep(t: &Type) -> Option<Verdict> {
     let mut actual = None;
     let verdict = list_sweep_value(t, &mut actual)?;
-    if verdict == Verdict::Inhabited && !check_actual(t, &actual?) { return None; }
+    if verdict == Verdict::Inhabited && !check_actual(t, &actual?) {
+        return None;
+    }
     Some(verdict)
 }
 
@@ -1708,12 +1829,19 @@ fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
     let mut by_tail: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     let mut normalized = Vec::new();
     for &(x, taken) in &roots {
-        if taken { normalized.push((x, true)); }
-        else { by_tail.entry(sw.links[x].tail).or_default().push(x); }
+        if taken {
+            normalized.push((x, true));
+        } else {
+            by_tail.entry(sw.links[x].tail).or_default().push(x);
+        }
     }
     for xs in by_tail.values() {
         let hs: BTreeSet<_> = xs.iter().map(|&x| sw.links[x].head).collect();
-        let h = if hs.len() == 1 { *hs.first()? } else { sw.join(hs.into_iter().collect()) };
+        let h = if hs.len() == 1 {
+            *hs.first()?
+        } else {
+            sw.join(hs.into_iter().collect())
+        };
         let x = xs[0];
         sw.links[x].head = h;
         normalized.push((x, false));
@@ -1748,7 +1876,9 @@ fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
         }
     }
     let mut witness = |sw: &mut Sweep, items: Vec<Value>, last: Arc<str>| -> Option<Verdict> {
-        if !sw.check(&plain, &plain_roots, &items, &last) { return None; }
+        if !sw.check(&plain, &plain_roots, &items, &last) {
+            return None;
+        }
         *actual = Some(build_list(sw.c.as_ref()?, items, &last));
         Some(Verdict::Inhabited)
     };
@@ -1915,78 +2045,79 @@ fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
             _ => match dominant(&classes, &open) {
                 Some(ci) => ci,
                 None => {
-                // Two classes or more open: one whose next state has a bare atom that no
-                // negative thread on it has gives a list that ends there; else the search
-                // decides. Read at most once per sweep, which ends here either way.
-                // Complexity tradeoff: the naive version reads every thread for each open
-                // class, O(open · threads). Used: per negative head, the count of its threads
-                // having each atom of the taken threads' next bare atoms, so a class costs the
-                // atoms its `delta` touches; O(threads · |e| + Σ |delta|) log. Given up: nothing.
-                let mut e: Option<BTreeSet<Arc<str>>> = None;
-                for (_, set) in th.kinds.range((true, (0, 0, 0, 0))..) {
-                    for &i in set {
-                        let ne = &sw.es[sw.links[th.next(&sw, i, depth)].e];
-                        e = Some(match e {
-                            None => ne.clone(),
-                            Some(s) => s.intersection(ne).cloned().collect(),
-                        });
-                    }
-                }
-                let e = e.unwrap_or_default();
-                let mut by_head: BTreeMap<usize, BTreeMap<Arc<str>, usize>> = BTreeMap::new();
-                let kinds = (th.kinds.range(..(true, (0, 0, 0, 0))))
-                    .filter(|(k, _)| k.1.1 != NONE)
-                    .flat_map(|(k, set)| set.iter().map(move |&i| (k.1.1, i)));
-                let grouped = (groups.iter()).flat_map(|g| g.2.iter().map(move |&i| (g.0, i)));
-                for (h, i) in kinds.chain(grouped) {
-                    let ne = &sw.es[sw.links[th.next(&sw, i, depth)].e];
-                    for a in ne.intersection(&e) {
-                        *by_head.entry(h).or_default().entry(a.clone()).or_default() += 1;
-                    }
-                }
-                for &(h, z) in &side_units {
-                    for a in sw.es[sw.links[z].e].intersection(&e) {
-                        *by_head.entry(h).or_default().entry(a.clone()).or_default() += 1;
-                    }
-                }
-                let mut base: BTreeMap<Arc<str>, usize> = BTreeMap::new();
-                for g in &classes.cof {
-                    for (a, n) in by_head.get(g).into_iter().flatten() {
-                        *base.entry(a.clone()).or_default() += n;
-                    }
-                }
-                let free: Vec<&Arc<str>> = e.iter().filter(|a| !base.contains_key(*a)).collect();
-                for &ci in &open {
-                    let c = &classes.list[ci];
-                    let mut adj: BTreeMap<&Arc<str>, isize> = BTreeMap::new();
-                    for g in &c.delta {
-                        let s = if c.flip && classes.cof.contains(g) {
-                            -1
-                        } else {
-                            1
-                        };
-                        for (a, n) in by_head.get(g).into_iter().flatten() {
-                            *adj.entry(a).or_default() += s * *n as isize;
+                    // Two classes or more open: one whose next state has a bare atom that no
+                    // negative thread on it has gives a list that ends there; else the search
+                    // decides. Read at most once per sweep, which ends here either way.
+                    // Complexity tradeoff: the naive version reads every thread for each open
+                    // class, O(open · threads). Used: per negative head, the count of its threads
+                    // having each atom of the taken threads' next bare atoms, so a class costs the
+                    // atoms its `delta` touches; O(threads · |e| + Σ |delta|) log. Given up: nothing.
+                    let mut e: Option<BTreeSet<Arc<str>>> = None;
+                    for (_, set) in th.kinds.range((true, (0, 0, 0, 0))..) {
+                        for &i in set {
+                            let ne = &sw.es[sw.links[th.next(&sw, i, depth)].e];
+                            e = Some(match e {
+                                None => ne.clone(),
+                                Some(s) => s.intersection(ne).cloned().collect(),
+                            });
                         }
                     }
-                    let from_base = |a: &Arc<str>| match c.flip {
-                        true => base.get(a).copied().unwrap_or(0) as isize,
-                        false => 0,
-                    };
-                    let mut untouched: Box<dyn Iterator<Item = &Arc<str>>> = match c.flip {
-                        true => Box::new(free.iter().copied()),
-                        false => Box::new(e.iter()),
-                    };
-                    let a = (adj.iter())
-                        .find(|(a, n)| from_base(a) + **n == 0)
-                        .map(|(a, _)| (*a).clone())
-                        .or_else(|| untouched.find(|a| !adj.contains_key(a)).cloned());
-                    if let Some(a) = a {
-                        let v = c.v.clone();
-                        return witness(&mut sw, [prefix, vec![v]].concat(), a);
+                    let e = e.unwrap_or_default();
+                    let mut by_head: BTreeMap<usize, BTreeMap<Arc<str>, usize>> = BTreeMap::new();
+                    let kinds = (th.kinds.range(..(true, (0, 0, 0, 0))))
+                        .filter(|(k, _)| k.1.1 != NONE)
+                        .flat_map(|(k, set)| set.iter().map(move |&i| (k.1.1, i)));
+                    let grouped = (groups.iter()).flat_map(|g| g.2.iter().map(move |&i| (g.0, i)));
+                    for (h, i) in kinds.chain(grouped) {
+                        let ne = &sw.es[sw.links[th.next(&sw, i, depth)].e];
+                        for a in ne.intersection(&e) {
+                            *by_head.entry(h).or_default().entry(a.clone()).or_default() += 1;
+                        }
                     }
-                }
-                return None;
+                    for &(h, z) in &side_units {
+                        for a in sw.es[sw.links[z].e].intersection(&e) {
+                            *by_head.entry(h).or_default().entry(a.clone()).or_default() += 1;
+                        }
+                    }
+                    let mut base: BTreeMap<Arc<str>, usize> = BTreeMap::new();
+                    for g in &classes.cof {
+                        for (a, n) in by_head.get(g).into_iter().flatten() {
+                            *base.entry(a.clone()).or_default() += n;
+                        }
+                    }
+                    let free: Vec<&Arc<str>> =
+                        e.iter().filter(|a| !base.contains_key(*a)).collect();
+                    for &ci in &open {
+                        let c = &classes.list[ci];
+                        let mut adj: BTreeMap<&Arc<str>, isize> = BTreeMap::new();
+                        for g in &c.delta {
+                            let s = if c.flip && classes.cof.contains(g) {
+                                -1
+                            } else {
+                                1
+                            };
+                            for (a, n) in by_head.get(g).into_iter().flatten() {
+                                *adj.entry(a).or_default() += s * *n as isize;
+                            }
+                        }
+                        let from_base = |a: &Arc<str>| match c.flip {
+                            true => base.get(a).copied().unwrap_or(0) as isize,
+                            false => 0,
+                        };
+                        let mut untouched: Box<dyn Iterator<Item = &Arc<str>>> = match c.flip {
+                            true => Box::new(free.iter().copied()),
+                            false => Box::new(e.iter()),
+                        };
+                        let a = (adj.iter())
+                            .find(|(a, n)| from_base(a) + **n == 0)
+                            .map(|(a, _)| (*a).clone())
+                            .or_else(|| untouched.find(|a| !adj.contains_key(a)).cloned());
+                        if let Some(a) = a {
+                            let v = c.v.clone();
+                            return witness(&mut sw, [prefix, vec![v]].concat(), a);
+                        }
+                    }
+                    return None;
                 }
             },
         };
@@ -2018,16 +2149,28 @@ mod r4_checker_tests {
     use super::*;
     #[test]
     fn actual_products_and_lists_reject_bad_values() {
-        let one = Type::atom_with("cons", &Type::tuple(vec![Type::int(),Type::atom("nil")]));
-        let good = Value::atom_with("cons",vec![Value::Int(7),Value::atom("nil")]);
-        assert!(check_actual(&one,&good));
-        assert!(!check_actual(&one,&Value::atom("nil")));
-        assert!(!check_actual(&one,&Value::atom_with("cons",vec![Value::Bool(true),Value::atom("nil")])));
-        assert!(!check_actual(&one,&Value::atom_with("cons",vec![Value::Int(7)])));
-        let product=Type::tuple(vec![one.clone(),one]);
-        assert!(check_actual(&product,&Value::tuple(vec![good.clone(),good.clone()])));
-        assert!(!check_actual(&product,&good));
-        assert!(!check_actual(&product,&Value::tuple(vec![good.clone()])));
-        assert!(!check_actual(&product,&Value::tuple(vec![good,Value::atom("nil")])));
+        let one = Type::atom_with("cons", &Type::tuple(vec![Type::int(), Type::atom("nil")]));
+        let good = Value::atom_with("cons", vec![Value::Int(7), Value::atom("nil")]);
+        assert!(check_actual(&one, &good));
+        assert!(!check_actual(&one, &Value::atom("nil")));
+        assert!(!check_actual(
+            &one,
+            &Value::atom_with("cons", vec![Value::Bool(true), Value::atom("nil")])
+        ));
+        assert!(!check_actual(
+            &one,
+            &Value::atom_with("cons", vec![Value::Int(7)])
+        ));
+        let product = Type::tuple(vec![one.clone(), one]);
+        assert!(check_actual(
+            &product,
+            &Value::tuple(vec![good.clone(), good.clone()])
+        ));
+        assert!(!check_actual(&product, &good));
+        assert!(!check_actual(&product, &Value::tuple(vec![good.clone()])));
+        assert!(!check_actual(
+            &product,
+            &Value::tuple(vec![good, Value::atom("nil")])
+        ));
     }
 }
