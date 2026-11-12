@@ -1940,7 +1940,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| C2-pairs-exact | impl attempt 1 | 2026-11-12 05:01 | rule: singleton exact rule (plan row's), worklist with watch lists, no expansion; one-sign variant measured (same proofs on 18k random, refusals flip both ways: |
 | CHK-for-body-writers | impl attempt 1 | 2026-11-12 05:37 | started; worktree /home/luke/Work/wt/indexed-followups at 6381f7ad7; load 38.51 |
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
 | KERNEL-bezout-step-wide-test | impl attempt 1 | 2026-11-12 06:12 | started; worktree wt/cd-audit-cleanups from origin/main 466d09abb |
