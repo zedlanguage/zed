@@ -15150,7 +15150,7 @@ mod r6_numeric_tests {
     fn minimum_i128_divisor_keeps_the_full_remainder_interval() {
         let x = presburger::Atom::Sym("x".into());
         let mut tr = Tr::new(false);
-        let n = tr.pair_by_constant(&Lin::atom(x.clone()), i128::MIN);
+        let n = tr.pair_by_constant(&Lin::atom(x.clone()), &Int::from(i128::MIN));
         let def = tr.defs[n as usize].2.clone();
         let samples = [
             (0i128, 0i128, 0i128),
