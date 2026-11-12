@@ -2363,11 +2363,12 @@ fn inverse_mod_odd(a: &BigUint, b: &BigUint) -> Option<BigUint> {
 
 /// Extended binary half-GCD on nonnegative inputs. The half-GCD's matrix
 /// acts on the pair over a power of two. Only its coefficient of the second
-/// input is accumulated; one exact division recovers the other coefficient.
+/// input is accumulated; an exact division recovers the other coefficient.
 // Complexity tradeoff: extended Euclid uses O(n^2) bit operations, while
 // separately computing the gcd and an inverse repeats the half-GCD. This
-// computes both in one O(M(n) log n) pass. Failed arithmetic checks return
-// None. Tests: pncx_fast_bezout_matches_euclid, pncx_fibonacci_scale.
+// computes both in one O(M(n) log n) pass. An overflow of the halving count
+// returns None. Tests: pncx_fast_bezout_matches_euclid,
+// bezout_coefficients_with_unequal_widths, pncx_fibonacci_scale.
 pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigInt)> {
     let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
         return Some((
@@ -2409,8 +2410,9 @@ pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigIn
     }
     let g = x.magnitude();
     let modulus = div_rem(u, g).0;
-    let v_coefficient = if modulus.is_one() {
-        BigUint::zero()
+    let m = modulus.bits();
+    let (v_coefficient, inverse) = if modulus.is_one() {
+        (BigUint::zero(), BigUint::one())
     } else {
         let coefficient = if x.is_negative() { -bx } else { bx };
         let c = rem(coefficient.magnitude(), &modulus);
@@ -2427,8 +2429,7 @@ pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigIn
         // O(M(shift)) even for a small modulus; chunks of `m` bits reuse one inverse of `m`
         // bits and cost O((shift / m + 1) M(m)), no more. Test pncx_fast_bezout_matches_euclid.
         let mut shift = halvings.checked_mul(2)?;
-        let m = modulus.bits();
-        let inverse = inverse_mod_pow2(&modulus, m.min(shift).max(1));
+        let inverse = inverse_mod_pow2(&modulus, m);
         while shift > 0 {
             let s = shift.min(m);
             let mask = (BigUint::one() << s) - 1u32;
@@ -2445,15 +2446,28 @@ pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigIn
             c -= &modulus;
         }
         debug_assert!(c < modulus);
-        c
+        (c, inverse)
     };
+    // The other coefficient is (g - t v) / u = (1 - t V) / U for U = u / g and V = v / g,
+    // an exact quotient q of A = |1 - t V| by the odd U of `m` bits. Its low `m` bits are
+    // A U^-1 mod 2^m, from the inverse above; its high bits are floor((A >> m) / U), since
+    // A = U (q_high 2^m + q_low) with q_low U < 2^m U.
+    // Complexity tradeoff: dividing g - t v by u, about 2n bits by n, costs a general
+    // division, O(M(n)) with a large constant (about an eighth of the call at 356 words);
+    // the low bits cost one product of m bits, and the high part divides only the bits of A
+    // above m, under the width of V, so nothing for balanced inputs. Test
+    // bezout_coefficients_with_unequal_widths.
     let second = BigInt::from(v_coefficient);
-    let numerator = BigInt::from(g.clone()) - mul_int(&second, &BigInt::from(v.clone()));
-    let (quotient, remainder) = div_rem(numerator.magnitude(), u);
-    if !remainder.is_zero() {
-        return None;
-    }
-    let first = BigInt::from_biguint(numerator.sign(), quotient);
+    let reduced_v = match g.is_one() {
+        true => Cow::Borrowed(v),
+        false => Cow::Owned(div_rem(v, g).0),
+    };
+    let numerator = BigInt::one() - BigInt::from(mul(second.magnitude(), &reduced_v));
+    let a_mag = numerator.magnitude();
+    let mask = (BigUint::one() << m) - 1u32;
+    let low = mul(&(a_mag & &mask), &inverse) & mask;
+    let high = div_rem(&(a_mag >> m), &modulus).0;
+    let first = BigInt::from_biguint(numerator.sign(), (high << m) + low);
     let (s, t) = if swapped {
         (second, first)
     } else {
@@ -3247,6 +3261,44 @@ pub(super) fn built(pows: &[(u64, BigUint)]) -> BigInt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bezout_coefficients_with_unequal_widths() {
+        for (wa, wb) in [
+            (1, 45),
+            (45, 1),
+            (2, 356),
+            (356, 2),
+            (45, 356),
+            (356, 45),
+            (45, 45),
+        ] {
+            let a = random(wa as u64, wa) | BigUint::one();
+            let b = random(wb as u64 + 1, wb) | BigUint::one();
+            for factor in [BigUint::one(), random(93, 5) | BigUint::one()] {
+                for shift in [0, 1, 77] {
+                    let a = (&a * &factor) << shift;
+                    let b = &b * &factor;
+                    for (a, b) in [(&a, &b), (&b, &a)] {
+                        let (g, s, t) = bezout(a, b).expect("exact coefficient recovery");
+                        assert_eq!(g, a.gcd(b));
+                        assert_eq!(
+                            &s * BigInt::from(a.clone()) + &t * BigInt::from(b.clone()),
+                            BigInt::from(g.clone())
+                        );
+                        // The identity and the canonical coefficient uniquely determine the answer.
+                        let (odd, coefficient) = if a.trailing_zeros() <= b.trailing_zeros() {
+                            (a, &t)
+                        } else {
+                            (b, &s)
+                        };
+                        assert!(!coefficient.is_negative());
+                        assert!(coefficient.magnitude() < &(odd / &g));
+                    }
+                }
+            }
+        }
+    }
 
     /// splitmix64 words.
     fn random(seed: u64, words: usize) -> BigUint {
