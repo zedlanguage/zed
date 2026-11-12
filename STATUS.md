@@ -1930,7 +1930,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MINMAX-chain-rows | impl attempt 1 | 2026-11-11 01:43 | started; worktree on origin/main 40e73127e |
 | MSG-compare-components | impl attempt 1 | 2026-11-11 13:43 | fixed: pushed 25d87b8d3 + STATUS a71967299; follow-up MSG-derive-type-size queued; load 50.34 52.44 49.78 |
 | MSG-concise-style | impl attempt 1 | 2026-11-11 23:43 | Part 2 ordering message: depth test 200/1600 levels 40.4M/302.6M instr 7.5x (limit 12.25); repair-at-depth test 100/800 23.6M/289.1M 12.2x (limit 102.19, power  |
-| MUTABLE-to-initial-facet | impl attempt 1 | 2026-11-11 23:16 | started; making worktrees mutable-carry and mutable-carry-spec |
+| MUTABLE-to-initial-facet | impl attempt 1 | 2026-11-12 02:08 | done: spec af4dc8d, code b8e7bb281 2c09cbebe dec65ffeb, STATUS 639d30064; worktrees mutable-carry and mutable-carry-spec and both branches removed; load 39.89 42.13 48.24 |
 | PERF-negated-chain-unsolved | impl attempt 1 | 2026-11-11 17:41 | worktree wt/pncx-cd made to port CD candidate 45 (7-8% fewer instructions on 23..711 words, same growth) for the instruction-count comparison |
 | PRES-disj-regressions | running | 2026-11-11 23:37 |  |
 | PRINT-own-shape-1tuple | impl attempt 1 | 2026-11-09 10:56 | done; worktree and branch removed / load 33.55 27.72 27.93 |
