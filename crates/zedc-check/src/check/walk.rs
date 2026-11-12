@@ -2569,8 +2569,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`Ck::lit_wrote`], [`Ck::drop_met`]).
     ///
     /// An operation is left as it was where its value at the carrier is no value of it
-    /// ([`folded`]), as `1r + 1 / 0`, whose `/` always fails: its rejection stands. A `rat`
-    /// does not reach a `^`, which has no arrow at `rat`.
+    /// ([`folded`]), as `1r + 1 / 0`, whose `/` always fails: its rejection stands. An
+    /// operation holding a `^` does not take `rat`: `^` takes `rat` only with an `int` exponent,
+    /// and all the literals of an operation take one carrier.
     ///
     /// Complexity tradeoff: the naive test walks each operand to see whether it holds literals
     /// alone, which costs the depth of the operation at each operator, the square of the
@@ -2660,7 +2661,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `c`, each of its operations of type `c` where a derivation names it ([`Ck::seen`],
     /// [`Ck::lit_open`]), and the errors its operations wrote as they were walked dropped
     /// ([`Ck::lit_wrote`]); `false`, with nothing changed, where `e` holds a `^` and `c` is
-    /// `rat`, which no arrow of `^` takes, or where `e` holds a `/` or a `^` and its value at
+    /// `rat`, whose `^` takes an `int` exponent and not a `rat` one, or where `e` holds a `/` or a `^` and its value at
     /// `c` is no value of `c` ([`folded`]), as `1 / 0` at `rat`: the rejection of the
     /// operation stands. It costs the size of `e`, twice where it holds a `/` or a `^`; in a
     /// repair's trial ([`Self::tried`]), which changes nothing that lasts, what it finds is
@@ -3113,6 +3114,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let nonzero = divides
                     && !y.ty.contains(&Value::Int(0))
                     && !y.ty.contains(&Value::rat(Rat::int(0.into())));
+                // A `rat` power fails only for `0r` to a negative power.
+                let total_power = op == BinaryOp::Pow
+                    && (!x.ty.contains(&Value::rat(Rat::int(0.into())))
+                        || self.ints_here(b).0.is_subset(&at_least_zero()));
                 let carried = [&x.ty, &y.ty]
                     .iter()
                     .any(|t| t.atoms().contains(&Value::atom("divByZero")));
@@ -3146,7 +3151,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         *self.info.quotients.entry(span).or_insert(quotient) &= quotient;
                     }
                 }
-                match nonzero && !carried {
+                match (nonzero || total_power) && !carried {
                     true => r.0.diff(&Ty::set(KType::atom("divByZero"))),
                     false => r.0,
                 }
@@ -3342,13 +3347,36 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let values = self.operand_values(&x);
         let at = x.at.unwrap_or(span);
-        let r = self
+        let no_zero = w == "rat" && self.ints_without_zero(&x);
+        let mut r = self
             .apply(&format!("`{w}`"), &sig, vec![Some(x)], true, span)
             .0;
+        if no_zero && let Some(zero) = KType::lit(&Value::rat(Rat::int(0.into()))) {
+            r.set = &r.set - &zero;
+        }
         if let Some(values) = values {
             self.always_fails_word(w, values, &r, at, span);
         }
         r
+    }
+
+    /// Whether the operand `x` of `rat` holds ints alone, none of them 0, by its type, its
+    /// text and the tests the walk is in, as `x` with `x = 2`, or `n` under `if n > 0`. `rat`
+    /// of an int is exact, so it then gives no `0r`, and `1r / rat(x)` and `rat(x)^-1` cannot
+    /// fail (DESIGN.md step L1.17). A `rat`, `f64` or string operand may give `0r`. Cost: that
+    /// of [`Self::ints_of`], as for [`Self::exact_in_f64`].
+    fn ints_without_zero(&mut self, x: &Arg<'a>) -> bool {
+        let others = [KType::rat(), KType::f64(), KType::string()];
+        if x.ty.numeric_carrier() != Some(Carrier::Int)
+            || others.iter().any(|t| !(&x.ty.set & t).lists_nothing())
+        {
+            return false;
+        }
+        let Some(e) = x.expr else {
+            return false;
+        };
+        let ns = &x.ty.set & &KType::int();
+        !self.ints_of(&ns, e).0.contains(0)
     }
 
     /// Whether every int the operand `x` of `f64` may be lies within ±2^53, so that its cast is
@@ -6594,12 +6622,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The repairs of the int `x ^ n` at `span` whose exponent `n`, the expression `e`, is not
     /// shown to be at least 0, each the power rewritten in full in the program's code: on
     /// floats, which take a negative exponent, with an int literal base or exponent written as
-    /// a float literal, or with a base parameter declared a float; and, where the exponent may
-    /// be at least 0 (`negative` false) and is no class of literals, which a test does not
-    /// narrow, a test of it, of a name bound in the body or of a new name that holds it. No
-    /// repair casts an int to a float: `f64(k)` may fail, with `#inexact`, so a name or an
-    /// expression that is an int gets the test alone. Without the program's text, the test in
-    /// words.
+    /// a float literal, or with a base parameter declared a float; where the exponent may be
+    /// at least 0 (`negative` false) and is no class of literals, which a test does not narrow,
+    /// a test of it, of a name bound in the body or of a new name that holds it; and, last, on
+    /// a `rat`, exact for an exponent of either sign, with an int base written `2r` for the
+    /// literal `2` and `rat(x)` for anything else, a cast that cannot fail. No repair casts an
+    /// int to a float: `f64(k)` may fail, with `#inexact`. Without the program's text, the
+    /// test in words.
     fn power_repairs(
         &self,
         x: &Arg<'a>,
@@ -6687,6 +6716,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                         ));
                     }
                 }
+            }
+        }
+        // The exact power: a `rat` takes an int exponent of either sign, and an int widens to
+        // a `rat` with no failure, an int literal by its `r` suffix and anything else by `rat`.
+        // A base whose type holds a variable and that is no int literal is left: `rat` of it
+        // may be a float, which `rat` may refuse with `#invalid`.
+        if int_literal(bt) || x.ty.numeric_carrier() == Some(Carrier::Int) {
+            let base = match int_literal(bt) {
+                true => format!("{bt}r"),
+                false => format!("rat({})", unparen(bt)),
+            };
+            if let Some(p) = rewrite(&[(xs, &base)]) {
+                out.push((p, String::new()));
             }
         }
         out

@@ -722,6 +722,53 @@ impl Rat {
         })
     }
 
+    /// `a^e` for an integer `e` of either sign (DESIGN.md sec:lexical, `^` on a `rat`): a
+    /// negative `e` gives `1 / a^|e|`, and `Ok(None)` for `0^e` with `e` negative, which is
+    /// `#divByZero` as `1r / 0r` is. A base of `0`, `1` or `-1` is read from the exponent's
+    /// sign and parity, so `1r ^ 2 ^ 2 ^ 33` builds no exponent; any other base builds `e` and
+    /// is raised by [`Rat::pow`]. [`TooLarge`] when building `e` or the power is refused its
+    /// memory.
+    ///
+    /// Complexity tradeoff (COMPLEXITY.md K108): naive is `|e|` products of the base, O(e)
+    /// products. Used: a base of `0`, `1` or `-1` costs O(1) from `e`'s kept form; any other
+    /// base costs [`Rat::pow`], O(log e) products with its kept prime exponents multiplied by
+    /// `e`, plus O(bits of `e`) to build `e`; a negative `e` adds O(1) moves in [`Rat::recip`].
+    pub fn pow_int(&self, e: &Rat) -> Result<Option<Rat>, TooLarge> {
+        let one = || Rat::int(BigInt::one());
+        if e.is_zero() {
+            return Ok(Some(one()));
+        }
+        if self.is_zero() {
+            return Ok((!e.is_negative()).then(|| self.clone()));
+        }
+        if self.is_plain() && self.den.is_one() && self.num.magnitude().is_one() {
+            return Ok(Some(match self.is_negative() && !e.is_even() {
+                true => self.clone(),
+                false => one(),
+            }));
+        }
+        let k = e.to_integer()?;
+        let p = self.pow(k.magnitude())?;
+        Ok(Some(match k.is_negative() {
+            true => p.recip(),
+            false => p,
+        }))
+    }
+
+    /// `1 / a` of a nonzero `a`: the numerator and denominator swapped, the sign kept on the
+    /// numerator, and every exponent negated. It moves what it holds and builds nothing.
+    fn recip(self) -> Rat {
+        let Rat { num, den, mut pows } = self;
+        for (_, e) in pows.iter_mut() {
+            *e = -std::mem::take(e);
+        }
+        let (num, den) = match num.is_negative() {
+            true => (-den, -num),
+            false => (den, num),
+        };
+        Rat { num, den, pows }
+    }
+
     /// The Euclidean remainder of two integers, in `0 ..< |m|`; `m` is not zero. An exact
     /// division gives `0` and a dividend in `0 ..< |m|` gives itself, without building either;
     /// otherwise a power of a prime is reduced by modular exponentiation, so `10 ^ 10 ^ 9 mod

@@ -341,15 +341,15 @@ fn a_call_that_refuses_a_literal_and_another_argument_is_one_error() {
     }
 }
 
-/// A fix that leaves its own rejection fixes nothing: `int(n)` in `min(1.0f64, n)` and in
-/// `0.5 ^ n` leaves `1.0f64` or `0.5` rejected, so only `f64(n)` is offered.
+/// A fix that leaves its own rejection fixes nothing: `int(n)` in `min(1.0f64, n)` leaves
+/// `1.0f64` rejected, so only `f64(n)` is offered. `0.5 ^ n`, once a case of this, is
+/// accepted since `^` takes a `rat` base with an `int` exponent: `0.5` takes `rat` there
+/// (POW-rat, tests in l01_17_value_representation::powers).
 #[test]
 fn a_fix_that_leaves_its_own_rejection_is_dropped() {
-    for line in ["y = min(1.0f64, n);", "y = 0.5 ^ n;"] {
-        let got = offered(&format!("n = 1;\n{line}"));
-        assert!(got.contains("repair: write `f64(n)`"), "{got}");
-        assert!(!got.contains("int(n)"), "{got}");
-    }
+    let got = offered("n = 1;\ny = min(1.0f64, n);");
+    assert!(got.contains("repair: write `f64(n)`"), "{got}");
+    assert!(!got.contains("int(n)"), "{got}");
 }
 
 /// A fix inside a construct is checked by the construct around it: `min(1.0r, 0.5r)` is a

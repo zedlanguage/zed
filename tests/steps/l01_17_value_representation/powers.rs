@@ -408,3 +408,78 @@ fn a_kept_power_beside_its_built_successor_costs_n_log_n() {
         },
     );
 }
+
+/// `r ^ k`, a `rat` to an int power of either sign (POW-rat, DESIGN.md sec:lexical): exact, a
+/// negative `k` inverting, and `0r` to a negative power `None`, which `^` gives as
+/// `#divByZero`. Each power is compared with the one built by repeated products and
+/// quotients, so a sign kept on the denominator, or a kept exponent not negated, is caught.
+#[test]
+fn a_rat_takes_an_int_exponent_of_either_sign() {
+    let q = |a: i64, b: i64| int(a).div(&int(b)).unwrap().expect("b is not zero");
+    let p = |r: &Rat, k: i64| r.pow_int(&int(k)).unwrap();
+    assert_eq!(p(&q(2, 3), -2), Some(q(9, 4)));
+    assert_eq!(p(&q(2, 3), 3), Some(q(8, 27)));
+    assert_eq!(p(&q(-2, 3), -3), Some(q(-27, 8)));
+    assert_eq!(p(&int(-2), -3), Some(q(-1, 8)));
+    assert_eq!(p(&q(2, 3), 0), Some(int(1)));
+    assert_eq!(p(&int(0), 0), Some(int(1)));
+    assert_eq!(p(&int(0), 5), Some(int(0)));
+    assert_eq!(p(&int(0), -1), None);
+    assert_eq!(p(&int(-1), -3), Some(int(-1)));
+    assert_eq!(p(&int(-1), -4), Some(int(1)));
+    assert_eq!(p(&int(1), -7), Some(int(1)));
+    // A base with kept powers of primes: `2^-200` to the `-2` is `2^400`.
+    assert_eq!(p(&two_to(-200), -2), Some(two_to(400)));
+    let mut rng = Rng::new(17);
+    for _ in 0..300 {
+        let r = random(&mut rng);
+        let k = rng.int(-6, 6);
+        let mut want = int(1);
+        for _ in 0..k.unsigned_abs() {
+            want = match k < 0 {
+                true => want.div(&r).unwrap().expect("a random value is not zero"),
+                false => want.mul(&r).unwrap(),
+            };
+        }
+        let got = p(&r, k).expect("a random value is not zero");
+        assert_eq!(got, want, "{r:?} ^ {k}");
+        assert_eq!(built(&got), built(&want), "{r:?} ^ {k}");
+    }
+}
+
+/// `0r`, `1r` and `-1r` to an exponent kept as a power of a prime, `2^(2^40)` or `3^(2^40)`,
+/// are read from its sign and parity, with no exponent built: the exponent's width is
+/// `2^40` bits, which no memory holds.
+#[test]
+fn a_unit_or_zero_base_builds_no_exponent() {
+    let even = int(2).pow(&(1u64 << 40).into()).unwrap();
+    let odd = int(3).pow(&(1u64 << 40).into()).unwrap();
+    let p = |r: i64, e: &Rat| int(r).pow_int(e).unwrap();
+    assert_eq!(p(-1, &even), Some(int(1)));
+    assert_eq!(p(-1, &odd), Some(int(-1)));
+    assert_eq!(p(-1, &odd.neg()), Some(int(-1)));
+    assert_eq!(p(1, &odd.neg()), Some(int(1)));
+    assert_eq!(p(0, &even), Some(int(0)));
+    assert_eq!(p(0, &even.neg()), None);
+}
+
+/// A `rat` power costs the bits of its exponent, not the exponent: `(2r/3r)^-n` multiplies the
+/// kept exponents of 2 and 3 by `n`, and `(-1r)^(2^n)` reads the parity of `2^n` from its kept
+/// form (complexity tradeoff at `Rat::pow_int`, COMPLEXITY.md K30). Building `2^n`, or a
+/// product per unit of the exponent, grows with `n` and fails this check (negative controls
+/// run 2026-11-12, POW-rat).
+#[test]
+fn a_rat_power_costs_the_bits_of_its_exponent() {
+    let r = int(2).div(&int(3)).unwrap().expect("3 is not zero");
+    check_order("(2r/3r)^-n and (-1r)^(2^n)", 1 << 20, 0, |n| {
+        let p = r
+            .pow_int(&int(n as i64).neg())
+            .unwrap()
+            .expect("2/3 is not zero");
+        let back = r.pow(&(n as u64).into()).unwrap();
+        assert_eq!(p.mul(&back).unwrap(), int(1));
+        let e = int(2).pow(&(n as u64).into()).unwrap();
+        assert_eq!(int(-1).pow_int(&e.neg()).unwrap(), Some(int(1)));
+        assert_eq!(int(0).pow_int(&e.neg()).unwrap(), None);
+    });
+}

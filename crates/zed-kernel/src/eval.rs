@@ -2636,6 +2636,15 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             Value::rat(r.map_err(|e| too_large(p, e))?)
         }
         (Prim::Neg, [Value::Rat(a)]) => Value::rat(a.try_neg().map_err(|e| too_large(p, e))?),
+        // A `rat` to an integer power of either sign, exact; `0r` to a negative power is
+        // `#divByZero`, as `1r / 0r` is (DESIGN.md sec:lexical).
+        (Prim::Pow, [Value::Rat(a), b]) if b.number_kind() == Some(0) => {
+            let e = b.as_integer().expect("an integer");
+            match a.pow_int(&e).map_err(|e| too_large(p, e))? {
+                Some(r) => Value::rat(r),
+                None => return Ok(Value::atom("divByZero")),
+            }
+        }
         (Prim::Add, [Float(a), Float(b)]) => Value::float(a.get() + b.get()),
         (Prim::Sub, [Float(a), Float(b)]) => Value::float(a.get() - b.get()),
         (Prim::Mul, [Float(a), Float(b)]) => Value::float(a.get() * b.get()),

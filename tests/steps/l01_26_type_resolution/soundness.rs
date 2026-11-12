@@ -136,6 +136,9 @@ fn an_int_power_rejection_shows_the_negative_exponent() {
         assert!(out.contains(&format!("repair: `{fix}`")), "{out}");
         assert_eq!(runs("", &format!(r#""${{{fix}}}""#), ""), "0.5\n");
     }
+    // The exact `rat` power, last (POW-rat).
+    assert!(out.contains("repair: `2r^-1`"), "{out}");
+    assert_eq!(runs("", r#""${2r^-1}""#, ""), "1r/2r\n");
     // Every value of the exponent is below 0, so no test of it is offered.
     assert!(!out.contains("repair: `if"), "{out}");
 }
@@ -160,36 +163,58 @@ fn power_case(defs: &str, body: &str, fixed: &[(&str, &str, &str)]) -> String {
     out
 }
 
+/// An int power under a negative exponent through a name (POW-rat): `2.0f64^k` is no repair,
+/// as `k` is an int, and `f64(k)` or `f64(x)` may fail with `#inexact`, so the one repair is
+/// the exact `rat` power, `2r^k` for a literal base and `rat(x)^-1` for a name, each printed
+/// as the headline's `Try`, and each runs to `1r/2r` as printed. Before, neither had a repair.
 #[test]
 fn an_int_power_rejection_through_a_name_shows_its_value() {
-    let out = power_case("", "  k = -1;\n  m.stdout <- \"${2^k}\";", &[]);
-    assert!(
-        out.contains("Int power with a negative exponent: `2 : int ^ k : -1`.\n"),
-        "{out}"
+    let out = power_case(
+        "",
+        "  k = -1;\n  m.stdout <- \"${2^k}\";",
+        &[("  k = -1;\n  m.stdout <- \"${2r^k}\";", "", "1r/2r\n")],
     );
-    assert!(out.contains("`k` is -1 here"), "{out}");
-    assert!(
-        out.contains("`k` is defined as this expression, -1"),
-        "{out}"
+    assert_eq!(
+        out,
+        r#"4:18: Int power with a negative exponent: `2 : int ^ k : -1`. Try `2r^k` instead.
+  [1] 4:20: `k` is -1 here
+      4 |   m.stdout <- "${2^k}";
+        |                  ^^^ [5]
+        |                    ^ [1]
+  [2] 3:7: `k` is defined as this expression, -1
+      3 |   k = -1;
+        |       ^^ [2, 3]
+        |        ^ [4]
+  [3] 3:7: this `-` gives -1
+  [4] 3:8: this literal, 1, is 1
+  [5] 4:18: repair: `2r^k`"#
     );
-    // `2.0f64^k` is no repair, as `k` is an int, and `f64(k)` may fail: none is offered,
-    // and no test, which would leave nothing to raise.
-    assert!(!out.contains("repair:"), "{out}");
     // A name of the top level, the same.
     let top = rejected("k = -1;", r#""${2^k}""#);
-    assert!(top.contains("`2 : int ^ k : -1`"), "{top}");
-    assert!(!top.contains("repair:"), "{top}");
-    // An int base that is a name: its derivation, and no repair either.
-    let out = power_case("", "  x = 2;\n  m.stdout <- \"${x^-1}\";", &[]);
     assert!(
-        out.contains("Int power with a negative exponent: `x : 2 ^ -1 : int`.\n"),
-        "{out}"
+        top.contains("`2 : int ^ k : -1`. Try `2r^k` instead."),
+        "{top}"
     );
-    assert!(
-        out.contains("`x` is defined as this expression, 2"),
-        "{out}"
+    assert_eq!(runs("k = -1;", r#""${2r^k}""#, ""), "1r/2r\n");
+    // An int base that is a name: its derivation, and `rat(x)`, a cast that cannot fail.
+    let out = power_case(
+        "",
+        "  x = 2;\n  m.stdout <- \"${x^-1}\";",
+        &[("  x = 2;\n  m.stdout <- \"${rat(x)^-1}\";", "", "1r/2r\n")],
     );
-    assert!(!out.contains("repair:"), "{out}");
+    assert_eq!(
+        out,
+        r#"4:18: Int power with a negative exponent: `x : 2 ^ -1 : int`. Try `rat(x)^-1` instead.
+  [1] 4:18: `x` is 2 here
+      4 |   m.stdout <- "${x^-1}";
+        |                  ^ [1]
+        |                  ^^^^ [4]
+  [2] 3:7: `x` is defined as this expression, 2
+      3 |   x = 2;
+        |       ^
+  [3] 3:7: this expression is 2
+  [4] 4:18: repair: `rat(x)^-1`"#
+    );
 }
 
 #[test]
@@ -681,4 +706,94 @@ fn a_tuple_default_of_a_nested_function_used_as_a_number_is_rejected() {
     rejected(outer, r#"String(outer(1)) else "atom""#);
     let ok = "outer(positional x) = {\n  inner(positional y, w = y) = w + 1;\n  inner(x)\n};";
     assert_eq!(runs(ok, r#"String(outer(1)) else "atom""#, ""), "2\n");
+}
+
+/// Through `zedc run` (POW-rat): `k = -1; 2^k` and `x = 2; x^-1` are refused with the exact
+/// `rat` power as the repair, and each repair, applied as printed, runs. A `rat` power of a
+/// value with no `0r` is no `#divByZero`, so `rat(x)^-1` reaches the port as text; `rat(n)`
+/// under `n > 0` holds no `0r`, and under `n >= 0` it does, so that power is refused at the
+/// port; `r ^ k` of a `rat` parameter may be `#divByZero`, which `else` handles at run time.
+#[test]
+fn zedc_run_offers_and_runs_the_exact_rat_power() {
+    use zed_tests::step_helpers::l01_19_whole_file_ports::run as zedc_run;
+    let program = |body: &str| format!("main(m: MainArgs) {{\n{body}\n}}\n");
+    for (name, bad, fixed, message) in [
+        (
+            "pow_rat_k",
+            "  k = -1;\n  m.stdout <- \"${2^k}\";",
+            "  k = -1;\n  m.stdout <- \"${2r^k}\";",
+            "3:18: Int power with a negative exponent: `2 : int ^ k : -1`. Try `2r^k` instead.\n",
+        ),
+        (
+            "pow_rat_x",
+            "  x = 2;\n  m.stdout <- \"${x^-1}\";",
+            "  x = 2;\n  m.stdout <- \"${rat(x)^-1}\";",
+            "3:18: Int power with a negative exponent: `x : 2 ^ -1 : int`. Try `rat(x)^-1` instead.\n",
+        ),
+    ] {
+        let out = zedc_run(name, &program(bad), "", &[]);
+        assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{}", out.stderr);
+        assert!(out.stderr.contains(message), "{}", out.stderr);
+        let out = zedc_run(name, &program(fixed), "", &[]);
+        assert_eq!(
+            (out.status, out.stdout.as_str()),
+            (0, "1r/2r\n"),
+            "{}",
+            out.stderr
+        );
+    }
+    let src = "inv(positional r: rat, positional k: int) = r ^ k;\n\
+               main(m: MainArgs) {\n  n = int(m.stdin[0]) else 0;\n  \
+               m.stdout <- \"${inv(2r/3r, -2) else #divByZero -> 0r} \
+               ${inv(0r, -1) else #divByZero -> 7r} ${inv(-2r, n) else #divByZero -> 0r} \
+               ${if n > 0 { rat(n)^-1 } else { 0r }}\";\n}\n";
+    for (stdin, want) in [
+        ("-3", "9r/4r 7r -1r/8r 0r\n"),
+        ("4", "9r/4r 7r 16r 1r/4r\n"),
+        ("0", "9r/4r 7r 1r 0r\n"),
+    ] {
+        let out = zedc_run("pow_rat_inv", src, stdin, &[]);
+        assert_eq!(
+            (out.status, out.stdout.as_str()),
+            (0, want),
+            "{}",
+            out.stderr
+        );
+    }
+    let out = zedc_run(
+        "pow_rat_zero",
+        &program(
+            "  n = int(m.stdin[0]) else 0;\n  m.stdout <- \"${if n >= 0 { rat(n)^-1 } else { 0r }}\";",
+        ),
+        "1",
+        &[],
+    );
+    assert_eq!(out.status, 1, "{}", out.stderr);
+    assert!(
+        out.stderr.contains("not String | #divByZero"),
+        "{}",
+        out.stderr
+    );
+    // `rat` of an int with no 0 holds no `0r`, so a division by it cannot fail either; and a
+    // decimal under `^` with an int exponent takes `rat`, the one arrow that fits.
+    for (name, body, want) in [
+        (
+            "pow_rat_div",
+            "  x = 2;\n  m.stdout <- \"${1r / rat(x)}\";",
+            "1r/2r\n",
+        ),
+        (
+            "pow_rat_dec",
+            "  n = -2;\n  m.stdout <- \"${0.5 ^ n}\";",
+            "4r\n",
+        ),
+    ] {
+        let out = zedc_run(name, &program(body), "", &[]);
+        assert_eq!(
+            (out.status, out.stdout.as_str()),
+            (0, want),
+            "{}",
+            out.stderr
+        );
+    }
 }

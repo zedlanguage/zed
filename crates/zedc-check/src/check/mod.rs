@@ -7024,7 +7024,20 @@ fn op_sig(op: Operator) -> Sig {
             [arrows(&[F64], 2, same), arrows(&[Rat], 2, div0)].concat(),
         ),
         Operator::Binary(BinaryOp::IntDiv | BinaryOp::Mod) => (2, arrows(&[Int], 2, div0)),
-        Operator::Binary(BinaryOp::Pow) => (2, arrows(&[Int, F64], 2, same)),
+        // A `rat` takes an integer exponent of either sign, exactly; `0r` to a negative power
+        // is `#divByZero`, which the walk drops where the base holds no `0r` or the exponent
+        // is shown at least 0.
+        Operator::Binary(BinaryOp::Pow) => (
+            2,
+            [
+                arrows(&[Int, F64], 2, same),
+                vec![Arrow {
+                    params: vec![Ty::carrier(Rat), Ty::carrier(Int)],
+                    result: div0(Rat),
+                }],
+            ]
+            .concat(),
+        ),
         Operator::Binary(BinaryOp::Concat) => (2, arrows(&[Str], 2, same)),
         // The order of the carriers, and whether two values may be equal: the operator makes
         // no atom. `==` and `!=` are checked by [`Ck::equal`]; these arrows say only what they
