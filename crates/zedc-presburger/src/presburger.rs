@@ -11404,188 +11404,83 @@ fn no_points(syms: &[Atom]) -> Each {
 /// disjuncts' projections, met over the disjunctions. The settling of each disjunct is the
 /// cost added to that of the projection, one test of each disjunct below it for each round of
 /// the settling.
+///
+/// A disjunct asked for symbols is projected by the same steps a level down. The levels are
+/// kept on an explicit stack ([`Level`]), each waiting for the answer of the one above it, not
+/// in the thread's stack by recursion, so the depth of a nest takes no stack: a nest of 512
+/// levels took about 3.9 kB of stack for each level by recursion, and overflowed a thread's
+/// 2 MiB (`l01_38_presburger::nest_empty`, item MAIN-l01_38-failures).
 fn project_parts(
-    mut p: Parts,
+    p: Parts,
     syms: &[Atom],
     whole: Option<&Formula>,
     sets: bool,
     memo: &mut Below,
 ) -> Result<Each, Refusal> {
-    let none = || no_points(syms);
-    let mut skipped: Vec<Refusal> = Vec::new();
-    if REVERSED.with(Cell::get) {
-        p.ors.reverse();
-        p.ors.iter_mut().for_each(|ds| ds.reverse());
-    }
-    // Each disjunct whose own rows put a form outside the values that the base and the
-    // disjunctions leave it is removed first, with or without `sets`, on either path
-    // ([`values::drop_outside_values`]): `y == 1` of `y == 1 || z >= 0` where `y` is 0 or 2,
-    // which the rows the disjunctions imply keep (they allow `0 <= y <= 2`), so that `z` is
-    // projected with its lower bound (item PROJECT-hull-credit-lower). It asks the solver
-    // nothing, so it refuses nothing.
-    if !p.ors.is_empty() && !values::drop_outside_values(&p.cons, &mut p.ors, |d| d.cons.as_slice())
-    {
-        return Ok(none());
-    }
-    // With two disjunctions or more, each disjunct that has no point with the base and the
-    // rows the other disjunctions imply is removed first ([`drop_jointly_empty`]), before the
-    // greedy search ([`pick`]) reads the disjuncts in their order: a disjunct removed so can
-    // no longer be taken first and fail the search, which [`probe`] would then answer by a
-    // question per disjunct. So which disjunct of `x == 3 || x == 7` comes first, which the
-    // sign the equations are written with decides, no longer decides the cost (item
-    // PROJECT-each-canon). With `sets`, no other disjunct is removed here.
-    if !sets && p.ors.len() > 1 && !old_path() && drop_jointly_empty(&p.cons, &mut p.ors).is_none()
-    {
-        return Ok(none());
-    }
-    // Whether [`probe`] changed the parts after that removal. It runs whether or not a
-    // greedy search finds a point: when it ran only on a failed search, a disjunct with no
-    // point stayed whenever the search found a point first, and widened the hulls by an
-    // amount that the order of the parts decided (item PROJECT-canon-precision: the s22
-    // reverse-order tests counted 17 boxes of 4000 changing when the parts were reversed;
-    // now none change).
-    let mut probed = false;
-    let mut early = None;
-    if !sets && p.ors.len() > 1 {
-        let Some(r) = probe_unhandled(&mut p)? else {
-            return Ok(none());
+    let mut stack: Vec<Level> = Vec::new();
+    let mut opened = Level::open(p, syms.to_vec(), sets);
+    loop {
+        let mut answer = match opened {
+            Opened::Level(level) => {
+                stack.push(*level);
+                None
+            }
+            Opened::Answer(a) => Some(a),
         };
-        (early, probed) = r;
-    }
-    let Some(model) = solve(&p.cons, true)? else {
-        return Ok(none());
-    };
-    // The base's constraints in groups linked by shared atoms ([`Linked`]). The base has a
-    // point, so its groups are independent: a symbol's hull over the base is its hull over its
-    // own group, and a disjunct is projected with the groups its atoms touch, onto the symbols
-    // in them, the others keeping the base's hull. A projection then costs the groups each
-    // disjunct touches, not the whole base for each disjunct and each symbol.
-    // With two disjunctions or more, a hull with a finite end, the only end a tightening moves,
-    // is tightened: at the top over the whole formula, below it over [`summarize`].
-    let mut ors = std::mem::take(&mut p.ors);
-    let n_ors = ors.len();
-    let linked = Linked::of(std::mem::take(&mut p.cons));
-    // With two disjunctions or more, each disjunct that has no point with the base and the
-    // rows the other disjunctions imply is removed again ([`drop_jointly_empty`]), after the
-    // search, which [`probe`] may have changed the parts by, so that the implied rows read
-    // below for the hulls and for a point at each end are those of the disjuncts left. With
-    // `sets`, the parts are projected as they are. Without a probe, the parts are those the
-    // removal above left, which removes nothing more from them: its last pass asked every
-    // disjunct of these rows and removed none (`linked.cons` is `p.cons`, in its order), so
-    // it is not run again (item PRES-each-settle-share). A second run could differ only on a
-    // question the solver refused in that pass and answers in the other order (see
-    // [`drop_jointly_empty`]); run beside the first in every test of the solver and the
-    // preimage steps, it removed nothing.
-    if !sets
-        && probed
-        && n_ors > 1
-        && !old_path()
-        && drop_jointly_empty(&linked.cons, &mut ors).is_none()
-    {
-        return Ok(none());
-    }
-    let bases: HashMap<usize, Formula> = (0..linked.held.len())
-        .filter(|r| !linked.held[*r].is_empty())
-        .map(|r| {
-            let cs = linked.held[r]
-                .iter()
-                .map(|i| Formula::Con(linked.cons[*i].clone()));
-            (r, Formula::and(cs.collect()))
-        })
-        .collect();
-    // The group of an atom: a symbol no constraint mentions is a group of its own, numbered
-    // past the linked atoms.
-    let index: HashMap<&Atom, usize> = syms.iter().enumerate().map(|(k, s)| (s, k)).collect();
-    let group = |a: &Atom| match linked.ids.get(a) {
-        Some(i) => Some(linked.root(*i)),
-        None => index.get(a).map(|k| linked.parent.len() + k),
-    };
-    let mut syms_of: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (k, s) in syms.iter().enumerate() {
-        let g = group(s).expect("a symbol's group");
-        syms_of.entry(g).or_default().push(k);
-    }
-    // The symbols no base constraint mentions.
-    let free: Vec<&Atom> = index
-        .keys()
-        .copied()
-        .filter(|s| !linked.ids.contains_key(*s))
-        .collect();
-    let top = Formula::top();
-    let base_of = |r: usize| bases.get(&r).unwrap_or(&top);
-    // A group of difference constraints and bounds gives the hulls of all its atoms in one
-    // pass ([`difference_hulls`]), and so does one that becomes such a group once each atom
-    // not asked for that only rows of it alone bound on one side is set to that bound
-    // ([`substituted_difference_hulls`]), and so does a group of bounds and inequalities that
-    // form a forest ([`forest_row_hulls`]: `z0 + … + z(k-1) >= 0`); any other group, each hull
-    // by its own questions.
-    // Complexity tradeoff: the naive way, each hull by its own questions ([`hull_from`]), is
-    // O(log d) questions of the whole group of n rows for each side; the substitution and the
-    // shortest paths are O(n log n) for the group, once. On the three-atom chain of
-    // `l01_38_presburger::disj_groups` that was 77% of the work at 2048 stages; now 2.2 times
-    // less work in all, still of order n log n. Test:
-    // `disj_groups::the_middle_of_a_chain_of_three_atom_rows_is_found_without_asking_for_a_side`.
-    // COMPLEXITY.md row THREE-atom-exponent.
-    // For a forest of inequalities, the naive way is Θ(k·n) for k atoms and n terms, Θ(k²) for
-    // one inequality over k atoms; the two passes of [`forest_row_hulls`] are O(n log n).
-    // Test: `l01_39_reduced_product::scaling::a_sum_over_many_names_is_assumed_in_time_near_linear`.
-    // COMPLEXITY.md row F154.
-    let mut differences: HashMap<usize, Option<HashMap<Atom, IntervalSet>>> = HashMap::new();
-    let mut out: Vec<Result<IntervalSet, Refusal>> = Vec::with_capacity(syms.len());
-    for s in syms {
-        let g = group(s).expect("a symbol's group");
-        let found = match linked.held.get(g) {
-            Some(held) if !held.is_empty() => differences
-                .entry(g)
-                .or_insert_with(|| {
-                    let cs: Vec<&Con> = held.iter().map(|i| &linked.cons[*i]).collect();
-                    difference_hulls(&cs, &model)
-                        .or_else(|| {
-                            substituted_difference_hulls(&cs, &|a| index.contains_key(a), &model)
-                        })
-                        .or_else(|| forest_row_hulls(&cs))
-                        .or_else(|| {
-                            (cs.iter().any(|c| c.lin.terms.len() > 2))
-                                .then(|| slack::DisjointWide::of_refs(&cs))
-                                .flatten()
-                                .map(|dw| dw.all_hulls())
-                        })
-                })
-                .as_ref()
-                .and_then(|h| h.get(s).cloned()),
-            _ => None,
-        };
-        out.push(match found {
-            Some(h) => Ok(h),
-            None => hull_from(base_of(g), s, &model),
-        });
-    }
-    // Complexity tradeoff: the naive way, still taken below for every disjunction not handled
-    // here, asks each disjunction about every symbol of its group: `L(s) ∩ ⋂_j U_j(s)` costs
-    // Θ(n) disjunctions for each of `n` symbols, Θ(n²) on a chain of `n` holes. Here each
-    // component of difference rows, bounds and disjunctions over one or two tie classes that
-    // is a forest once its tie classes are contracted gets every atom's exact values by two
-    // passes of arc revision ([`forest_domains`]), O(n log n) plus the size of the answer,
-    // and its disjunctions are then asked about no symbol. The tradeoffs: the answer is exact
-    // where main's may be a hull, so it can be narrower (sound), and its size is that of the
-    // answer (`x[k+1] - x[k]` in {0, 10} gives `x[n]` n + 1 intervals); a component with a
-    // cycle, two disjunctions on one edge, a disjunction over three classes or more, or a
-    // row that is not a difference row keeps the naive way.
-    let (tree_doms, tree_handled, tree_empty) = tree_domains(early, probed, &linked, &ors, &model);
-    if tree_empty {
-        return Ok(none());
-    }
-    for (k, s) in syms.iter().enumerate() {
-        if let (Some(d), Ok(o)) = (tree_doms.get(s), &mut out[k]) {
-            *o = o.meet(d);
+        loop {
+            let Some(level) = stack.last_mut() else {
+                return answer.expect("the answer of the top level");
+            };
+            if let Some((q, sub)) = level.read(answer.take(), memo) {
+                opened = Level::open(q, sub, sets);
+                break;
+            }
+            let level = stack.pop().expect("the level just read");
+            answer = Some(level.close(if stack.is_empty() { whole } else { None }));
         }
     }
-    // For each disjunction, its disjuncts with a point and their projections, each sorted by
-    // symbol; read only to tighten a hull, so kept only with two disjunctions or more.
-    let mut seen: Vec<Option<Vec<Projected>>> = Vec::new();
-    // The groups a disjunct touches, found from its atoms or from the base's, whichever are
-    // fewer, so that a level does not read every atom below it.
-    let roots_of = |atoms: &OrdSet<Atom>| -> Vec<usize> {
+}
+
+/// A level of [`project_parts`] opened: the level, or its answer where no disjunct needs to be
+/// read.
+enum Opened {
+    Level(Box<Level>),
+    Answer(Result<Each, Refusal>),
+}
+
+/// The symbols of a level of [`project_parts`] and its base's constraints in groups linked by
+/// shared atoms ([`Linked`]), each group as a formula.
+struct BaseGroups {
+    syms: Vec<Atom>,
+    linked: Linked,
+    bases: HashMap<usize, Formula>,
+    /// Each symbol's index in `syms`.
+    index: HashMap<Atom, usize>,
+    /// The symbols in each group, by index.
+    syms_of: HashMap<usize, Vec<usize>>,
+    /// The symbols no base constraint mentions.
+    free: Vec<Atom>,
+    top: Formula,
+}
+
+impl BaseGroups {
+    /// The group of an atom: a symbol no constraint mentions is a group of its own, numbered
+    /// past the linked atoms.
+    fn group(&self, a: &Atom) -> Option<usize> {
+        match self.linked.ids.get(a) {
+            Some(i) => Some(self.linked.root(*i)),
+            None => self.index.get(a).map(|k| self.linked.parent.len() + k),
+        }
+    }
+
+    fn base_of(&self, r: usize) -> &Formula {
+        self.bases.get(&r).unwrap_or(&self.top)
+    }
+
+    /// The groups a disjunct touches, found from its atoms or from the base's, whichever are
+    /// fewer, so that a level does not read every atom below it.
+    fn roots_of(&self, atoms: &OrdSet<Atom>) -> Vec<usize> {
+        let linked = &self.linked;
         let mut roots: Vec<usize> = if atoms.len() <= linked.ids.len() {
             (atoms.iter())
                 .filter_map(|a| linked.ids.get(a).map(|i| linked.root(*i)))
@@ -11599,144 +11494,464 @@ fn project_parts(
         roots.sort_unstable();
         roots.dedup();
         roots
-    };
-    // The symbols a disjunct with `atoms` and base groups `roots` touches, in order.
-    let touched = |atoms: &OrdSet<Atom>, roots: &[usize]| -> Vec<usize> {
-        let named: Vec<&Atom> = if atoms.len() <= free.len() {
+    }
+
+    /// The symbols a disjunct with `atoms` and base groups `roots` touches, in order.
+    fn touched(&self, atoms: &OrdSet<Atom>, roots: &[usize]) -> Vec<usize> {
+        let named: Vec<&Atom> = if atoms.len() <= self.free.len() {
             (atoms.iter())
-                .filter(|a| index.contains_key(a) && !linked.ids.contains_key(*a))
+                .filter(|a| self.index.contains_key(*a) && !self.linked.ids.contains_key(*a))
                 .collect()
         } else {
-            free.iter()
-                .copied()
-                .filter(|s| atoms.contains(*s))
-                .collect()
+            (self.free.iter()).filter(|s| atoms.contains(*s)).collect()
         };
-        let groups = roots
-            .iter()
-            .copied()
-            .chain(named.into_iter().filter_map(group));
+        let groups = (roots.iter().copied()).chain(named.into_iter().filter_map(|a| self.group(a)));
         let mut ks: Vec<usize> = groups
-            .flat_map(|r| syms_of.get(&r).into_iter().flatten().copied())
+            .flat_map(|r| self.syms_of.get(&r).into_iter().flatten().copied())
             .collect();
         ks.sort_unstable();
         ks.dedup();
         ks
-    };
-    // The disjunct's parts with the base groups it touches, its constraints sorted as
-    // [`nnf`] sorts them and its disjunctions shared.
-    // The base is given as its groups `roots`, or as rows `kernel` with the same points on
-    // the disjunct's atoms and its symbols.
-    let parts_of = |d: &Parts, roots: &[usize], kernel: Option<&[Con]>| -> Parts {
+    }
+
+    /// The disjunct's parts with the base groups it touches, its constraints sorted as
+    /// [`nnf`] sorts them and its disjunctions shared.
+    /// The base is given as its groups `roots`, or as rows `kernel` with the same points on
+    /// the disjunct's atoms and its symbols.
+    fn parts_of(&self, d: &Parts, roots: &[usize], kernel: Option<&[Con]>) -> Parts {
         let mut fs: Vec<Formula> = match kernel {
             Some(k) => k.iter().cloned().map(Formula::Con).collect(),
-            None => roots.iter().map(|r| base_of(*r).clone()).collect(),
+            None => roots.iter().map(|r| self.base_of(*r).clone()).collect(),
         };
         fs.extend(d.cons.iter().cloned().map(Formula::Con));
         let mut q = Parts::of(Formula::and(fs));
         q.cons.sort();
         q.ors.extend(d.ors.iter().cloned());
         q
-    };
-    // For each disjunct, the base projected ([`by_halves`]) onto the atoms of the disjunct and
-    // of the nest below it that the base has, and onto the symbols in the groups it touches:
-    // the disjunct with it has the points on those that it has with the base, so each is
-    // projected with rows about its own size where the base is a chain or a tree, not with
-    // its groups whole. The base has a point.
-    let mut kernels: Vec<Vec<Option<Vec<Con>>>> =
-        ors.iter().map(|ds| vec![None; ds.len()]).collect();
-    {
-        let mut keep: Vec<BTreeSet<Atom>> = Vec::new();
-        let mut place: Vec<(usize, usize)> = Vec::new();
-        for (j, ds) in ors.iter().enumerate() {
-            for (t, d) in ds.iter().enumerate() {
-                let atoms = d.atoms();
-                let roots = roots_of(atoms);
-                let mut set: BTreeSet<Atom> = if atoms.len() <= linked.ids.len() {
-                    (atoms.iter())
-                        .filter(|a| linked.ids.contains_key(*a))
-                        .cloned()
-                        .collect()
-                } else {
-                    (linked.ids.keys())
-                        .filter(|a| atoms.contains(*a))
-                        .cloned()
-                        .collect()
-                };
-                if !tree_handled[j] {
-                    set.extend(touched(atoms, &roots).into_iter().map(|k| syms[k].clone()));
-                }
-                keep.push(set);
-                place.push((j, t));
+    }
+}
+
+/// A level of [`project_parts`] between its questions to the level below: its base groups,
+/// its disjunctions, the hulls found so far, and where it is in its disjunctions.
+struct Level {
+    g: BaseGroups,
+    sets: bool,
+    ors: Vec<Vec<Rc<Parts>>>,
+    out: Vec<Result<IntervalSet, Refusal>>,
+    skipped: Vec<Refusal>,
+    /// For each disjunction, whether [`tree_domains`] gave its symbols' values.
+    tree_handled: Vec<bool>,
+    /// For each disjunct, the base projected onto its atoms and symbols, until it is read.
+    kernels: Vec<Vec<Option<Vec<Con>>>>,
+    /// For each disjunction, its disjuncts with a point and their projections, each sorted by
+    /// symbol; read only to tighten a hull, so kept only with two disjunctions or more.
+    seen: Vec<Option<Vec<Projected>>>,
+    /// The index of the disjunction read, and how far it is read.
+    j: usize,
+    reading: Option<Disjunction>,
+    /// The disjunct whose question waits for the level below, with the question's key and
+    /// whether it was asked with the base's groups.
+    waiting: Option<(Disjunct, BelowKey, bool)>,
+    /// Whether a disjunction was found with no disjunct that has a point.
+    empty: bool,
+}
+
+/// A disjunction of a [`Level`] being read.
+struct Disjunction {
+    /// For each symbol, the join of its projections over the satisfiable disjuncts that touch
+    /// it (`None` once one is refused), and how many touch it; a satisfiable disjunct that does
+    /// not touch it gives the base's hull, which leaves it as it is.
+    acc: HashMap<usize, (Option<IntervalSet>, usize)>,
+    sat: usize,
+    refused: bool,
+    found_here: Vec<Projected>,
+    /// The disjuncts by index, in the order they are read, and how many are read.
+    order: Vec<usize>,
+    at: usize,
+    /// The symbols the next disjunct may be asked for (`None`: all it touches).
+    wanted: Option<Vec<usize>>,
+    /// With `sets`, each disjunct's settling, and whether it was of the base's groups.
+    pre: Vec<Option<Presettled>>,
+}
+
+/// A disjunct of a [`Disjunction`] being read: the base groups it touches, the symbols it is
+/// asked for, by index and as atoms, and its settling made before it was read, not yet used.
+struct Disjunct {
+    d: Rc<Parts>,
+    roots: Vec<usize>,
+    ks: Vec<usize>,
+    sub: Vec<Atom>,
+    pre: Option<Result<Option<Parts>, Refusal>>,
+}
+
+/// A question about a disjunct of [`project_parts`]: its answer and whether it has a point, or
+/// the disjunct settled, to be projected a level down.
+enum Asked {
+    Answer(Result<(Each, bool), Refusal>),
+    Below(Parts),
+}
+
+/// The question about the disjunct `settled` that asks it for the symbols `sub`.
+fn ask_disjunct(settled: Result<Option<Parts>, Refusal>, sub: &[Atom], sets: bool) -> Asked {
+    match settled {
+        Err(r) => Asked::Answer(Err(r)),
+        Ok(None) => Asked::Answer(Ok((no_points(sub), false))),
+        Ok(Some(q)) if sub.is_empty() => {
+            // A point of the disjunct with each disjunct below cut to its own constraints
+            // keeps it, as a level below the top is tightened ([`summarize`]); the search
+            // below it runs only when there is none. Only whether a point exists is asked, so
+            // the probe stops at its first point ([`probe_to`]); up to that point it is
+            // [`probe`], so a refusal stays a refusal (kept as a point, as before) and no point
+            // is `Ok(None)` exactly where [`probe`] gives it. Not [`has_point`]: its [`pick`]
+            // before and after the probe repeats the one above and decides nothing here
+            // (PRES-probe-first).
+            let point = sets
+                || q.ors.is_empty()
+                || pick(&q, false).is_ok()
+                || !matches!(probe_to(q, &mut Vec::new(), true), Ok(None));
+            Asked::Answer(Ok(((Vec::new(), Vec::new()), point)))
+        }
+        Ok(Some(q)) => Asked::Below(q),
+    }
+}
+
+impl Level {
+    /// The level of the parts `p` asked for `syms`, up to its first disjunct, or its answer
+    /// where that needs no disjunct read.
+    fn open(mut p: Parts, syms: Vec<Atom>, sets: bool) -> Opened {
+        let none = |syms: &[Atom]| Opened::Answer(Ok(no_points(syms)));
+        if REVERSED.with(Cell::get) {
+            p.ors.reverse();
+            p.ors.iter_mut().for_each(|ds| ds.reverse());
+        }
+        // Each disjunct whose own rows put a form outside the values that the base and the
+        // disjunctions leave it is removed first, with or without `sets`, on either path
+        // ([`values::drop_outside_values`]): `y == 1` of `y == 1 || z >= 0` where `y` is 0 or 2,
+        // which the rows the disjunctions imply keep (they allow `0 <= y <= 2`), so that `z` is
+        // projected with its lower bound (item PROJECT-hull-credit-lower). It asks the solver
+        // nothing, so it refuses nothing.
+        if !p.ors.is_empty()
+            && !values::drop_outside_values(&p.cons, &mut p.ors, |d| d.cons.as_slice())
+        {
+            return none(&syms);
+        }
+        // With two disjunctions or more, each disjunct that has no point with the base and the
+        // rows the other disjunctions imply is removed first ([`drop_jointly_empty`]), before the
+        // greedy search ([`pick`]) reads the disjuncts in their order: a disjunct removed so can
+        // no longer be taken first and fail the search, which [`probe`] would then answer by a
+        // question per disjunct. So which disjunct of `x == 3 || x == 7` comes first, which the
+        // sign the equations are written with decides, no longer decides the cost (item
+        // PROJECT-each-canon). With `sets`, no other disjunct is removed here.
+        if !sets
+            && p.ors.len() > 1
+            && !old_path()
+            && drop_jointly_empty(&p.cons, &mut p.ors).is_none()
+        {
+            return none(&syms);
+        }
+        // Whether [`probe`] changed the parts after that removal. It runs whether or not a
+        // greedy search finds a point: when it ran only on a failed search, a disjunct with no
+        // point stayed whenever the search found a point first, and widened the hulls by an
+        // amount that the order of the parts decided (item PROJECT-canon-precision: the s22
+        // reverse-order tests counted 17 boxes of 4000 changing when the parts were reversed;
+        // now none change).
+        let mut probed = false;
+        let mut early = None;
+        if !sets && p.ors.len() > 1 {
+            match probe_unhandled(&mut p) {
+                Err(r) => return Opened::Answer(Err(r)),
+                Ok(None) => return none(&syms),
+                Ok(Some(r)) => (early, probed) = r,
             }
         }
-        let rows = linked.cons.clone();
-        // The least and the first past the greatest product atom, to ask whether a disjunct
-        // has one in O(log n).
-        let products = (
-            Atom::product_of(Factor::Sym(Arc::from("")), Factor::Sym(Arc::from(""))),
-            Atom::Aux(0),
-        );
-        let filled: Result<(), ()> = by_halves(rows, &keep, |i, k| {
-            let (j, t) = place[i];
-            // The projection keeps an atom of neither the disjunct nor the symbols where it
-            // cannot eliminate it exactly (`2 h == x + 15`, `h` a witness of `x` odd); its
-            // constants then differ by the path the disjunct is read on, and are moved to one
-            // form ([`shift_free`]) so that the memo below knows the disjunct again.
-            let atoms = ors[j][t].atoms();
-            let plain = atoms
-                .range(products.0.clone()..products.1.clone())
-                .next()
-                .is_none();
-            kernels[j][t] = k.filter(|_| !old_path()).map(|k| {
-                if plain {
-                    shift_free(k, |a| !atoms.contains(a) && !index.contains_key(a))
-                } else {
-                    k
-                }
+        let model = match solve(&p.cons, true) {
+            Err(r) => return Opened::Answer(Err(r)),
+            Ok(None) => return none(&syms),
+            Ok(Some(model)) => model,
+        };
+        // The base's constraints in groups linked by shared atoms ([`Linked`]). The base has a
+        // point, so its groups are independent: a symbol's hull over the base is its hull over
+        // its own group, and a disjunct is projected with the groups its atoms touch, onto the
+        // symbols in them, the others keeping the base's hull. A projection then costs the
+        // groups each disjunct touches, not the whole base for each disjunct and each symbol.
+        // With two disjunctions or more, a hull with a finite end, the only end a tightening
+        // moves, is tightened: at the top over the whole formula, below it over [`summarize`].
+        let mut ors = std::mem::take(&mut p.ors);
+        let linked = Linked::of(std::mem::take(&mut p.cons));
+        // With two disjunctions or more, each disjunct that has no point with the base and the
+        // rows the other disjunctions imply is removed again ([`drop_jointly_empty`]), after the
+        // search, which [`probe`] may have changed the parts by, so that the implied rows read
+        // below for the hulls and for a point at each end are those of the disjuncts left. With
+        // `sets`, the parts are projected as they are. Without a probe, the parts are those the
+        // removal above left, which removes nothing more from them: its last pass asked every
+        // disjunct of these rows and removed none (`linked.cons` is `p.cons`, in its order), so
+        // it is not run again (item PRES-each-settle-share). A second run could differ only on a
+        // question the solver refused in that pass and answers in the other order (see
+        // [`drop_jointly_empty`]); run beside the first in every test of the solver and the
+        // preimage steps, it removed nothing.
+        if !sets
+            && probed
+            && ors.len() > 1
+            && !old_path()
+            && drop_jointly_empty(&linked.cons, &mut ors).is_none()
+        {
+            return none(&syms);
+        }
+        let bases: HashMap<usize, Formula> = (0..linked.held.len())
+            .filter(|r| !linked.held[*r].is_empty())
+            .map(|r| {
+                let cs = linked.held[r]
+                    .iter()
+                    .map(|i| Formula::Con(linked.cons[*i].clone()));
+                (r, Formula::and(cs.collect()))
+            })
+            .collect();
+        let index: HashMap<Atom, usize> = (syms.iter().enumerate())
+            .map(|(k, s)| (s.clone(), k))
+            .collect();
+        let free: Vec<Atom> = (index.keys())
+            .filter(|s| !linked.ids.contains_key(*s))
+            .cloned()
+            .collect();
+        let mut g = BaseGroups {
+            syms,
+            linked,
+            bases,
+            index,
+            syms_of: HashMap::new(),
+            free,
+            top: Formula::top(),
+        };
+        for (k, s) in g.syms.iter().enumerate() {
+            let r = g.group(s).expect("a symbol's group");
+            g.syms_of.entry(r).or_default().push(k);
+        }
+        // A group of difference constraints and bounds gives the hulls of all its atoms in one
+        // pass ([`difference_hulls`]), and so does one that becomes such a group once each atom
+        // not asked for that only rows of it alone bound on one side is set to that bound
+        // ([`substituted_difference_hulls`]), and so does a group of bounds and inequalities
+        // that form a forest ([`forest_row_hulls`]: `z0 + … + z(k-1) >= 0`); any other group,
+        // each hull by its own questions.
+        // Complexity tradeoff: the naive way, each hull by its own questions ([`hull_from`]), is
+        // O(log d) questions of the whole group of n rows for each side; the substitution and
+        // the shortest paths are O(n log n) for the group, once. On the three-atom chain of
+        // `l01_38_presburger::disj_groups` that was 77% of the work at 2048 stages; now 2.2 times
+        // less work in all, still of order n log n. Test:
+        // `disj_groups::the_middle_of_a_chain_of_three_atom_rows_is_found_without_asking_for_a_side`.
+        // COMPLEXITY.md row THREE-atom-exponent.
+        // For a forest of inequalities, the naive way is Θ(k·n) for k atoms and n terms, Θ(k²)
+        // for one inequality over k atoms; the two passes of [`forest_row_hulls`] are
+        // O(n log n). Test:
+        // `l01_39_reduced_product::scaling::a_sum_over_many_names_is_assumed_in_time_near_linear`.
+        // COMPLEXITY.md row F154.
+        let mut differences: HashMap<usize, Option<HashMap<Atom, IntervalSet>>> = HashMap::new();
+        let mut out: Vec<Result<IntervalSet, Refusal>> = Vec::with_capacity(g.syms.len());
+        for s in &g.syms {
+            let r = g.group(s).expect("a symbol's group");
+            let found = match g.linked.held.get(r) {
+                Some(held) if !held.is_empty() => differences
+                    .entry(r)
+                    .or_insert_with(|| {
+                        let cs: Vec<&Con> = held.iter().map(|i| &g.linked.cons[*i]).collect();
+                        difference_hulls(&cs, &model)
+                            .or_else(|| {
+                                substituted_difference_hulls(
+                                    &cs,
+                                    &|a| g.index.contains_key(a),
+                                    &model,
+                                )
+                            })
+                            .or_else(|| forest_row_hulls(&cs))
+                            .or_else(|| {
+                                (cs.iter().any(|c| c.lin.terms.len() > 2))
+                                    .then(|| slack::DisjointWide::of_refs(&cs))
+                                    .flatten()
+                                    .map(|dw| dw.all_hulls())
+                            })
+                    })
+                    .as_ref()
+                    .and_then(|h| h.get(s).cloned()),
+                _ => None,
+            };
+            out.push(match found {
+                Some(h) => Ok(h),
+                None => hull_from(g.base_of(r), s, &model),
             });
-            Ok(Vec::new())
-        });
-        filled.expect("no leaf fails");
+        }
+        // Complexity tradeoff: the naive way, still taken below for every disjunction not
+        // handled here, asks each disjunction about every symbol of its group:
+        // `L(s) ∩ ⋂_j U_j(s)` costs Θ(n) disjunctions for each of `n` symbols, Θ(n²) on a chain
+        // of `n` holes. Here each component of difference rows, bounds and disjunctions over
+        // one or two tie classes that is a forest once its tie classes are contracted gets every
+        // atom's exact values by two passes of arc revision ([`forest_domains`]), O(n log n)
+        // plus the size of the answer, and its disjunctions are then asked about no symbol. The
+        // tradeoffs: the answer is exact where main's may be a hull, so it can be narrower
+        // (sound), and its size is that of the answer (`x[k+1] - x[k]` in {0, 10} gives `x[n]`
+        // n + 1 intervals); a component with a cycle, two disjunctions on one edge, a
+        // disjunction over three classes or more, or a row that is not a difference row keeps
+        // the naive way.
+        let (tree_doms, tree_handled, tree_empty) =
+            tree_domains(early, probed, &g.linked, &ors, &model);
+        if tree_empty {
+            return none(&g.syms);
+        }
+        for (k, s) in g.syms.iter().enumerate() {
+            if let (Some(d), Ok(o)) = (tree_doms.get(s), &mut out[k]) {
+                *o = o.meet(d);
+            }
+        }
+        // For each disjunct, the base projected ([`by_halves`]) onto the atoms of the disjunct
+        // and of the nest below it that the base has, and onto the symbols in the groups it
+        // touches: the disjunct with it has the points on those that it has with the base, so
+        // each is projected with rows about its own size where the base is a chain or a tree,
+        // not with its groups whole. The base has a point.
+        let mut kernels: Vec<Vec<Option<Vec<Con>>>> =
+            ors.iter().map(|ds| vec![None; ds.len()]).collect();
+        {
+            let linked = &g.linked;
+            let mut keep: Vec<BTreeSet<Atom>> = Vec::new();
+            let mut place: Vec<(usize, usize)> = Vec::new();
+            for (j, ds) in ors.iter().enumerate() {
+                for (t, d) in ds.iter().enumerate() {
+                    let atoms = d.atoms();
+                    let roots = g.roots_of(atoms);
+                    let mut set: BTreeSet<Atom> = if atoms.len() <= linked.ids.len() {
+                        (atoms.iter())
+                            .filter(|a| linked.ids.contains_key(*a))
+                            .cloned()
+                            .collect()
+                    } else {
+                        (linked.ids.keys())
+                            .filter(|a| atoms.contains(*a))
+                            .cloned()
+                            .collect()
+                    };
+                    if !tree_handled[j] {
+                        set.extend(
+                            (g.touched(atoms, &roots).into_iter()).map(|k| g.syms[k].clone()),
+                        );
+                    }
+                    keep.push(set);
+                    place.push((j, t));
+                }
+            }
+            let rows = linked.cons.clone();
+            // The least and the first past the greatest product atom, to ask whether a disjunct
+            // has one in O(log n).
+            let products = (
+                Atom::product_of(Factor::Sym(Arc::from("")), Factor::Sym(Arc::from(""))),
+                Atom::Aux(0),
+            );
+            let filled: Result<(), ()> = by_halves(rows, &keep, |i, k| {
+                let (j, t) = place[i];
+                // The projection keeps an atom of neither the disjunct nor the symbols where it
+                // cannot eliminate it exactly (`2 h == x + 15`, `h` a witness of `x` odd); its
+                // constants then differ by the path the disjunct is read on, and are moved to
+                // one form ([`shift_free`]) so that the memo below knows the disjunct again.
+                let atoms = ors[j][t].atoms();
+                let plain = atoms
+                    .range(products.0.clone()..products.1.clone())
+                    .next()
+                    .is_none();
+                kernels[j][t] = k.filter(|_| !old_path()).map(|k| {
+                    if plain {
+                        shift_free(k, |a| !atoms.contains(a) && !g.index.contains_key(a))
+                    } else {
+                        k
+                    }
+                });
+                Ok(Vec::new())
+            });
+            filled.expect("no leaf fails");
+        }
+        Opened::Level(Box::new(Level {
+            g,
+            sets,
+            ors,
+            out,
+            skipped: Vec::new(),
+            tree_handled,
+            kernels,
+            seen: Vec::new(),
+            j: 0,
+            reading: None,
+            waiting: None,
+            empty: false,
+        }))
     }
-    for (j, ds) in ors.iter().enumerate() {
-        // For each symbol, the join of its projections over the satisfiable disjuncts that
-        // touch it (`None` once one is refused), and how many touch it; a satisfiable disjunct
-        // that does not touch it gives the base's hull, which leaves it as it is.
-        let mut acc: HashMap<usize, (Option<IntervalSet>, usize)> = HashMap::new();
-        let (mut sat, mut refused) = (0usize, false);
-        let mut found_here = Vec::new();
+
+    /// Reads the level's disjuncts, from the one that waits for `below`, the answer of the
+    /// level below, if any, up to the next disjunct to be projected a level down, which it
+    /// returns settled, with the symbols it is asked for; `None` once every disjunct is read.
+    fn read(
+        &mut self,
+        below: Option<Result<Each, Refusal>>,
+        memo: &mut Below,
+    ) -> Option<(Parts, Vec<Atom>)> {
+        if let Some((r, key, groups)) = self.waiting.take() {
+            let answer = below.expect("the answer of the level below").map(|e| {
+                let point = e.0.iter().any(|r| !matches!(r, Ok(s) if s.is_empty()));
+                (e, point)
+            });
+            memo.insert(key, answer.clone());
+            if let Some(q) = self.answered(r, answer, groups, memo) {
+                return Some(q);
+            }
+        }
+        while !self.empty && self.j < self.ors.len() {
+            if self.reading.is_none() {
+                self.reading = Some(self.open_disjunction());
+            }
+            let reading = self.reading.as_mut().expect("the disjunction just opened");
+            if reading.at == reading.order.len() {
+                self.close_disjunction();
+                continue;
+            }
+            let at = reading.at;
+            reading.at += 1;
+            if let Some(q) = self.start_disjunct(at, memo) {
+                return Some(q);
+            }
+        }
+        None
+    }
+
+    /// The disjunction `j` with its disjuncts in the order they are read.
+    fn open_disjunction(&mut self) -> Disjunction {
+        let j = self.j;
+        let ds = &self.ors[j];
         // A symbol changes only when every disjunct with a point touches it, so the disjuncts
         // are read smallest first, and each is asked only for the symbols that every disjunct
         // with a point before it touched (`None`: all of them). A deep disjunct beside a small
         // one is then asked for the few symbols the small one names, not for every symbol of
-        // the nest below it. With `sets`, each disjunct is settled first, and each
-        // that may have a point is asked for the symbols that all such disjuncts touch, which
-        // no order changes; the others are not asked.
-        let mut order: Vec<(usize, &Rc<Parts>)> = ds.iter().enumerate().collect();
-        order.sort_by_key(|(_, d)| d.atoms().len());
+        // the nest below it. With `sets`, each disjunct is settled first, and each that may
+        // have a point is asked for the symbols that all such disjuncts touch, which no order
+        // changes; the others are not asked.
+        let mut order: Vec<usize> = (0..ds.len()).collect();
+        order.sort_by_key(|&t| ds[t].atoms().len());
         let mut wanted: Option<Vec<usize>> = None;
-        // With `sets`, each disjunct's settling, and whether it was of the base's groups.
         let mut pre: Vec<Option<Presettled>> = Vec::new();
-        if sets {
-            for &(t, d) in &order {
-                let roots = roots_of(d.atoms());
+        if self.sets {
+            for &t in &order {
+                let d = &ds[t];
+                let roots = self.g.roots_of(d.atoms());
                 // A projection may keep a disjunct not shown to have a point; one refused with
                 // the projected base is asked again with the base's groups.
-                let kernel = kernels[j][t].as_deref();
-                let mut s = settle_as_sets(parts_of(d, &roots, kernel)).map(|s| s.map(|s| s.p));
+                let kernel = self.kernels[j][t].as_deref();
+                let mut s =
+                    settle_as_sets(self.g.parts_of(d, &roots, kernel)).map(|s| s.map(|s| s.p));
                 let groups = kernel.is_none() || s.is_err();
                 if s.is_err() && kernel.is_some() {
-                    s = settle_as_sets(parts_of(d, &roots, None)).map(|s| s.map(|s| s.p));
+                    s = settle_as_sets(self.g.parts_of(d, &roots, None)).map(|s| s.map(|s| s.p));
                 }
                 // Only a settling that leaves no point shows that a disjunct has none; a
                 // search for one would choose by name.
                 let maybe = !matches!(s, Ok(None));
                 if maybe {
-                    let ks = if tree_handled[j] {
+                    let ks = if self.tree_handled[j] {
                         Vec::new()
                     } else {
-                        touched(d.atoms(), &roots)
+                        self.g.touched(d.atoms(), &roots)
                     };
                     wanted = Some(match wanted {
                         None => ks,
@@ -11749,314 +11964,382 @@ fn project_parts(
                 pre.push(maybe.then_some((s, groups)));
             }
         }
-        for (at, (t, d)) in order.into_iter().enumerate() {
-            let pre_d = match pre.get_mut(at) {
-                Some(s) => match s.take() {
-                    Some(s) => Some(s),
-                    None => continue,
-                },
-                None => None,
-            };
-            let atoms = d.atoms();
-            let roots = roots_of(atoms);
-            let ks: Vec<usize> = match &wanted {
-                Some(ws) => ws
-                    .iter()
-                    .copied()
-                    .filter(|&k| match linked.ids.get(&syms[k]) {
-                        Some(i) => roots.binary_search(&linked.root(*i)).is_ok(),
-                        None => atoms.contains(&syms[k]),
-                    })
-                    .collect(),
-                None if tree_handled[j] => Vec::new(),
-                None => touched(atoms, &roots),
-            };
-            let sub: Vec<Atom> = ks.iter().map(|&k| syms[k].clone()).collect();
-            // A disjunct asked for no symbol is only asked whether it has a point, as
-            // [`decide`] asks it; with `sets` it was asked above.
-            // A disjunct met before, with the same base and asked for the same symbols, is
-            // read once: its answer depends on these alone. The base is the one projected for
-            // this disjunct, its free atoms moved to one form ([`shift_free`]), or, where there
-            // is none or the solver refuses the disjunct with it, the base's groups; each
-            // answer is kept under a key of its own, so that the answer read for a disjunct
-            // does not depend on which path to it was read first.
-            let kernel = kernels[j][t].take();
-            let (mut pre_d, pre_groups) = match pre_d {
-                Some((s, g)) => (Some(s), g),
-                None => (None, false),
-            };
-            let answer = |settled: Result<Option<Parts>, Refusal>, memo: &mut Below| {
-                settled.and_then(|q| match q {
-                    None => Ok((no_points(&sub), false)),
-                    Some(q) if ks.is_empty() => {
-                        // A point of the disjunct with each disjunct below cut to its own
-                        // constraints keeps it, as a level below the top is tightened
-                        // ([`summarize`]); the search below it runs only when there is none.
-                        // Only whether a point exists is asked, so the probe stops at its
-                        // first point ([`probe_to`]); up to that point it is [`probe`], so a
-                        // refusal stays a refusal (kept as a point, as before) and no point is
-                        // `Ok(None)` exactly where [`probe`] gives it. Not [`has_point`]: its
-                        // [`pick`] before and after the probe repeats the one above and decides
-                        // nothing here (PRES-probe-first).
-                        let point = sets
-                            || q.ors.is_empty()
-                            || pick(&q, false).is_ok()
-                            || !matches!(probe_to(q, &mut Vec::new(), true), Ok(None));
-                        Ok(((Vec::new(), Vec::new()), point))
-                    }
-                    Some(q) => project_parts(q, &sub, None, sets, memo).map(|e| {
-                        let point = e.0.iter().any(|r| !matches!(r, Ok(s) if s.is_empty()));
-                        (e, point)
-                    }),
+        Disjunction {
+            acc: HashMap::new(),
+            sat: 0,
+            refused: false,
+            found_here: Vec::new(),
+            order,
+            at: 0,
+            wanted,
+            pre,
+        }
+    }
+
+    /// Reads the disjunct `at` in the order of the disjunction read, up to its question to the
+    /// level below, if it has one.
+    fn start_disjunct(&mut self, at: usize, memo: &mut Below) -> Option<(Parts, Vec<Atom>)> {
+        let j = self.j;
+        let reading = self.reading.as_mut().expect("a disjunction read");
+        let t = reading.order[at];
+        let pre = match reading.pre.get_mut(at) {
+            Some(s) => Some(s.take()?),
+            None => None,
+        };
+        let d = Rc::clone(&self.ors[j][t]);
+        let atoms = d.atoms();
+        let roots = self.g.roots_of(atoms);
+        let ks: Vec<usize> = match &reading.wanted {
+            Some(ws) => ws
+                .iter()
+                .copied()
+                .filter(|&k| match self.g.linked.ids.get(&self.g.syms[k]) {
+                    Some(i) => roots.binary_search(&self.g.linked.root(*i)).is_ok(),
+                    None => atoms.contains(&self.g.syms[k]),
                 })
-            };
-            let mut found = None;
-            if let Some(k) = kernel
-                && !pre_groups
-            {
-                let key: BelowKey = (d.id(), false, k, sub.clone());
-                let r = if let Some(r) = memo.get(&key) {
-                    r.clone()
-                } else {
-                    let settled = match pre_d.take() {
-                        Some(s) => s,
-                        None => settle(parts_of(d, &roots, Some(&key.2)), false),
-                    };
-                    let r = answer(settled, memo);
-                    memo.insert(key, r.clone());
-                    r
-                };
-                // A settling with the projected base is no settling of the base's groups.
-                pre_d = None;
-                if r.is_ok() {
-                    found = Some(r);
-                }
-            }
-            let found_rs = match found {
-                Some(r) => r,
+                .collect(),
+            None if self.tree_handled[j] => Vec::new(),
+            None => self.g.touched(atoms, &roots),
+        };
+        let sub: Vec<Atom> = ks.iter().map(|&k| self.g.syms[k].clone()).collect();
+        // A disjunct asked for no symbol is only asked whether it has a point, as [`decide`]
+        // asks it; with `sets` it was asked above.
+        // A disjunct met before, with the same base and asked for the same symbols, is read
+        // once: its answer depends on these alone. The base is the one projected for this
+        // disjunct, its free atoms moved to one form ([`shift_free`]), or, where there is none
+        // or the solver refuses the disjunct with it, the base's groups; each answer is kept
+        // under a key of its own, so that the answer read for a disjunct does not depend on
+        // which path to it was read first.
+        let kernel = self.kernels[j][t].take();
+        let (pre, pre_groups) = match pre {
+            Some((s, g)) => (Some(s), g),
+            None => (None, false),
+        };
+        let mut r = Disjunct {
+            d,
+            roots,
+            ks,
+            sub,
+            pre,
+        };
+        if let Some(k) = kernel
+            && !pre_groups
+        {
+            let key: BelowKey = (r.d.id(), false, k, r.sub.clone());
+            let answer = match memo.get(&key) {
+                Some(a) => a.clone(),
                 None => {
-                    let rows = (roots.iter())
-                        .flat_map(|r| linked.held[*r].iter().map(|i| linked.cons[*i].clone()));
-                    let key: BelowKey = (d.id(), true, rows.collect(), sub.clone());
-                    if let Some(r) = memo.get(&key) {
-                        r.clone()
-                    } else {
-                        let settled = match pre_d {
-                            Some(s) => s,
-                            None if sets => {
-                                settle_as_sets(parts_of(d, &roots, None)).map(|s| s.map(|s| s.p))
-                            }
-                            None => settle(parts_of(d, &roots, None), false),
-                        };
-                        let r = answer(settled, memo);
-                        memo.insert(key, r.clone());
-                        r
+                    let settled = match r.pre.take() {
+                        Some(s) => s,
+                        None => settle(self.g.parts_of(&r.d, &r.roots, Some(&key.2)), false),
+                    };
+                    match ask_disjunct(settled, &r.sub, self.sets) {
+                        Asked::Answer(a) => {
+                            memo.insert(key, a.clone());
+                            a
+                        }
+                        Asked::Below(q) => {
+                            let sub = r.sub.clone();
+                            self.waiting = Some((r, key, false));
+                            return Some((q, sub));
+                        }
                     }
                 }
             };
-            let (rs, has_point) = match found_rs {
-                Ok(((rs, more), point)) => {
-                    skipped.extend(more);
-                    (rs, point)
-                }
-                Err(r) => {
-                    skipped.push(r);
-                    refused = true;
-                    // With `sets` every disjunct is asked, so the causes reported are those
-                    // of all of them, not of those before the first refused.
-                    if sets {
-                        continue;
+            return self.answered(r, answer, false, memo);
+        }
+        self.ask_groups(r, memo)
+    }
+
+    /// Takes the answer of the disjunct `r`, asked with the base's groups or with the base
+    /// projected for it; one refused with the projected base is asked again with the groups.
+    fn answered(
+        &mut self,
+        mut r: Disjunct,
+        answer: Result<(Each, bool), Refusal>,
+        groups: bool,
+        memo: &mut Below,
+    ) -> Option<(Parts, Vec<Atom>)> {
+        if !groups {
+            // A settling with the projected base is no settling of the base's groups.
+            r.pre = None;
+            if answer.is_err() {
+                return self.ask_groups(r, memo);
+            }
+        }
+        self.take(r, answer);
+        None
+    }
+
+    /// Asks the disjunct `r` with the base's groups it touches.
+    fn ask_groups(&mut self, mut r: Disjunct, memo: &mut Below) -> Option<(Parts, Vec<Atom>)> {
+        let linked = &self.g.linked;
+        let rows =
+            (r.roots.iter()).flat_map(|x| linked.held[*x].iter().map(|i| linked.cons[*i].clone()));
+        let key: BelowKey = (r.d.id(), true, rows.collect(), r.sub.clone());
+        let answer = match memo.get(&key) {
+            Some(a) => a.clone(),
+            None => {
+                let settled = match r.pre.take() {
+                    Some(s) => s,
+                    None if self.sets => settle_as_sets(self.g.parts_of(&r.d, &r.roots, None))
+                        .map(|s| s.map(|s| s.p)),
+                    None => settle(self.g.parts_of(&r.d, &r.roots, None), false),
+                };
+                match ask_disjunct(settled, &r.sub, self.sets) {
+                    Asked::Answer(a) => {
+                        memo.insert(key, a.clone());
+                        a
                     }
-                    break;
-                }
-            };
-            if !has_point {
-                continue;
-            }
-            sat += 1;
-            let mut kept = Vec::new();
-            for (j, &k) in ks.iter().enumerate() {
-                if let Err(r) = &rs[j] {
-                    skipped.push(r.clone());
-                }
-                let e = acc.entry(k).or_insert((Some(IntervalSet::empty()), 0));
-                e.0 =
-                    e.0.take()
-                        .and_then(|u| rs[j].as_ref().ok().map(|h| u.join(h)));
-                e.1 += 1;
-                if n_ors > 1
-                    && let Ok(h) = &rs[j]
-                {
-                    kept.push((k, h.clone()));
+                    Asked::Below(q) => {
+                        let sub = r.sub.clone();
+                        self.waiting = Some((r, key, true));
+                        return Some((q, sub));
+                    }
                 }
             }
-            if n_ors > 1 {
-                found_here.push((&**d, kept));
+        };
+        self.take(r, answer);
+        None
+    }
+
+    /// Adds the answer of the disjunct `r` to its disjunction's.
+    fn take(&mut self, r: Disjunct, answer: Result<(Each, bool), Refusal>) {
+        let reading = self.reading.as_mut().expect("a disjunction read");
+        let (rs, has_point) = match answer {
+            Ok(((rs, more), point)) => {
+                self.skipped.extend(more);
+                (rs, point)
             }
-            if !sets {
-                wanted = Some(ks);
+            Err(e) => {
+                self.skipped.push(e);
+                reading.refused = true;
+                // With `sets` every disjunct is asked, so the causes reported are those of all
+                // of them, not of those before the first refused.
+                if !self.sets {
+                    reading.at = reading.order.len();
+                }
+                return;
+            }
+        };
+        if !has_point {
+            return;
+        }
+        reading.sat += 1;
+        let many = self.ors.len() > 1;
+        let mut kept = Vec::new();
+        for (i, &k) in r.ks.iter().enumerate() {
+            if let Err(e) = &rs[i] {
+                self.skipped.push(e.clone());
+            }
+            let e = reading
+                .acc
+                .entry(k)
+                .or_insert((Some(IntervalSet::empty()), 0));
+            e.0 =
+                e.0.take()
+                    .and_then(|u| rs[i].as_ref().ok().map(|h| u.join(h)));
+            e.1 += 1;
+            if many && let Ok(h) = &rs[i] {
+                kept.push((k, h.clone()));
             }
         }
-        if n_ors > 1 {
-            seen.push((!refused).then_some(found_here));
+        if many {
+            reading.found_here.push((r.d, kept));
         }
-        if refused {
-            continue;
+        if !self.sets {
+            reading.wanted = Some(r.ks);
         }
-        if sat == 0 {
-            return Ok(none());
+    }
+
+    /// Meets the hulls with the disjunction read, its disjuncts all read.
+    fn close_disjunction(&mut self) {
+        let reading = self.reading.take().expect("a disjunction read");
+        self.j += 1;
+        if self.ors.len() > 1 {
+            (self.seen).push((!reading.refused).then_some(reading.found_here));
         }
-        for (k, (u, touched)) in acc {
-            if touched == sat
+        if reading.refused {
+            return;
+        }
+        if reading.sat == 0 {
+            self.empty = true;
+            return;
+        }
+        for (k, (u, touched)) in reading.acc {
+            if touched == reading.sat
                 && let Some(u) = u
-                && let Ok(o) = &mut out[k]
+                && let Ok(o) = &mut self.out[k]
             {
                 *o = o.meet(&u);
             }
         }
     }
-    // Complexity tradeoff: each bound is tightened by about `2 log2 w` questions of the formula
-    // (of the symbol's group alone, where its groups have points), `w` the hull's width, unless a
-    // point of the formula at the end shows it (see [`tighten_each`]). First each disjunct that
-    // the base and the rows the disjunctions imply show empty is removed ([`drop_jointly_empty`]), and the hull is met with the bounds that the
-    // base and the rows the disjunctions left imply ([`disjunction_hulls`]) give, below; where
-    // those rows are exact (each disjunction alone, or a few on one stage once their empty
-    // disjuncts are gone, decide what its forms may be) the point at each end is found and no
-    // question is asked, so a chain of `n` three-atom stages costs O(n log n)
-    // (`x[i + 1] - x[i] - y[i] >= 0`, `1 <= y[i] <= 2`, `x[i + 1] - x[i] + y[i] == 4 || == 5`:
-    // 0.16 s at 128 stages, where it was 41.6 s; with `x[i + 1] - x[i]` in {3, 7} and
-    // `x[i + 1] - x[i] + y[i]` in {6, 9}, which force 7 where the rows allow 4: 0.08, 0.16 and
-    // 2.0 s at 64, 128 and 1024 stages, where it was 7.7 s at 64, plan item DISJ-dpll). What is
-    // given up: no answer, only time, where disjunctions leave out the end of a hull only by
-    // case reasoning, a disjunct empty with each choice of disjuncts elsewhere but not with
-    // their hulls (`x` in {0, 2} with `y` in {0, 2} and `x + y` in {1, 3}): the bound of the
-    // rows has no point, the bisection asks empty questions, the solver may refuse each with
-    // the implied rows (its count of an elimination does not make [`shadow`]'s trial) and
-    // [`probe`] tests each disjunct by a propagation of the whole formula, O(n²) solves or more
-    // for each question. Why: finding a point of a conjunction of disjunctions of linear rows
-    // is NP-complete, and a search that backtracks over the disjuncts (DPLL(T)) is exponential
-    // in the worst case. Trigger: disjunctions that only by cases leave out the end of a hull
-    // that their rows allow. Tests: `l01_38_presburger::disj_groups` (the hulls of small chains
-    // against their points counted one by one, and the two chains above at `n` and `8n`);
-    // COMPLEXITY.md row DISJ-incremental.
-    // A hull with one finite end is tightened at that end too, searched toward the value of
-    // the symbol at a point of the formula (item PRES-pendants-wider: `z0 <= 25` of seed 14
-    // case 271 of `l01_39_reduced_product::pendants`, left at 27 before), and an infinite end
-    // that a disjunct's own projection bounds is tried at that bound ([`Hull::tighten`]).
-    let finite = |o: &Result<IntervalSet, Refusal>| matches!(o, Ok(s) if s.bounds().is_some_and(|(l, h)| matches!(l, End::Fin(_)) || matches!(h, End::Fin(_))));
-    // Before the questions, each hull to be tightened is met with the symbol's hull over the
-    // base and the rows the disjunctions imply ([`disjunction_hulls`]), all symbols at once by
-    // [`by_halves`]: the rows hold at every point of the parts, so the bounds are sound, and
-    // where the disjunctions act on the symbol only through the forms they bound (each
-    // disjunct one stage of a chain), they are its exact bounds, so no question of the
-    // bisection below is empty. An empty question costs the most: the solver may refuse the
-    // formula with the implied rows (rows of three atoms whose eliminations it counts as
-    // growing), and [`probe`] then tests each disjunct by a propagation of the whole formula.
-    // A bound is read from the rows of the projection with the symbol alone, so a projection
-    // that keeps other atoms (a core, see [`shadow`]) gives what it gives and the questions
-    // the rest. Rows with no point show the parts have none. A hull with an infinite end is met
-    // too: in `b + c >= z` with `b` in {0, 2} and `c` in {0, 2} (each a disjunction, as a box
-    // with a hole is, [`member`]), each disjunction's union, with the other's atom free, leaves
-    // `z` unbounded, and their meet does too, where the rows `0 <= b <= 2` and `0 <= c <= 2`
-    // the two imply give `z <= 4` (seed 17 case 121 of `l01_39_reduced_product::pendants`,
-    // item PRES-pendants-wider).
-    // The rows the disjuncts left imply, read below for the hulls and by [`tighten_each`] for a
-    // point at each end.
-    let implied = if !sets && n_ors > 1 && !old_path() && out.iter().any(Result::is_ok) {
-        disjunction_hulls(&ors, &mut DeepHulls::default())
-    } else {
-        Vec::new()
-    };
-    if !implied.is_empty() {
-        let ks: Vec<usize> = (0..syms.len()).filter(|&k| out[k].is_ok()).collect();
-        let keep: Vec<BTreeSet<Atom>> = (ks.iter())
-            .map(|&k| BTreeSet::from([syms[k].clone()]))
-            .collect();
-        let mut rows = linked.cons.clone();
-        rows.extend(implied.iter().cloned());
-        let mut empty = false;
-        let ran: Result<(), ()> = by_halves(rows, &keep, |i, k| {
-            match k {
-                None => empty = true,
-                Some(rows) => {
-                    if let Ok(o) = &mut out[ks[i]] {
-                        *o = o.meet(&bounds_alone(&syms[ks[i]], &rows));
+
+    /// The answer of the level, its disjuncts all read, its hulls tightened over `whole`, or,
+    /// below the top, over its summary ([`summarize`]).
+    fn close(self, whole: Option<&Formula>) -> Result<Each, Refusal> {
+        let Level {
+            g,
+            sets,
+            ors,
+            mut out,
+            mut skipped,
+            seen,
+            empty,
+            ..
+        } = self;
+        let syms = &g.syms;
+        if empty {
+            return Ok(no_points(syms));
+        }
+        let n_ors = ors.len();
+        // Complexity tradeoff: each bound is tightened by about `2 log2 w` questions of the formula
+        // (of the symbol's group alone, where its groups have points), `w` the hull's width, unless a
+        // point of the formula at the end shows it (see [`tighten_each`]). First each disjunct that
+        // the base and the rows the disjunctions imply show empty is removed ([`drop_jointly_empty`]), and the hull is met with the bounds that the
+        // base and the rows the disjunctions left imply ([`disjunction_hulls`]) give, below; where
+        // those rows are exact (each disjunction alone, or a few on one stage once their empty
+        // disjuncts are gone, decide what its forms may be) the point at each end is found and no
+        // question is asked, so a chain of `n` three-atom stages costs O(n log n)
+        // (`x[i + 1] - x[i] - y[i] >= 0`, `1 <= y[i] <= 2`, `x[i + 1] - x[i] + y[i] == 4 || == 5`:
+        // 0.16 s at 128 stages, where it was 41.6 s; with `x[i + 1] - x[i]` in {3, 7} and
+        // `x[i + 1] - x[i] + y[i]` in {6, 9}, which force 7 where the rows allow 4: 0.08, 0.16 and
+        // 2.0 s at 64, 128 and 1024 stages, where it was 7.7 s at 64, plan item DISJ-dpll). What is
+        // given up: no answer, only time, where disjunctions leave out the end of a hull only by
+        // case reasoning, a disjunct empty with each choice of disjuncts elsewhere but not with
+        // their hulls (`x` in {0, 2} with `y` in {0, 2} and `x + y` in {1, 3}): the bound of the
+        // rows has no point, the bisection asks empty questions, the solver may refuse each with
+        // the implied rows (its count of an elimination does not make [`shadow`]'s trial) and
+        // [`probe`] tests each disjunct by a propagation of the whole formula, O(n²) solves or more
+        // for each question. Why: finding a point of a conjunction of disjunctions of linear rows
+        // is NP-complete, and a search that backtracks over the disjuncts (DPLL(T)) is exponential
+        // in the worst case. Trigger: disjunctions that only by cases leave out the end of a hull
+        // that their rows allow. Tests: `l01_38_presburger::disj_groups` (the hulls of small chains
+        // against their points counted one by one, and the two chains above at `n` and `8n`);
+        // COMPLEXITY.md row DISJ-incremental.
+        // A hull with one finite end is tightened at that end too, searched toward the value of
+        // the symbol at a point of the formula (item PRES-pendants-wider: `z0 <= 25` of seed 14
+        // case 271 of `l01_39_reduced_product::pendants`, left at 27 before), and an infinite end
+        // that a disjunct's own projection bounds is tried at that bound ([`Hull::tighten`]).
+        let finite = |o: &Result<IntervalSet, Refusal>| matches!(o, Ok(s) if s.bounds().is_some_and(|(l, h)| matches!(l, End::Fin(_)) || matches!(h, End::Fin(_))));
+        // Before the questions, each hull to be tightened is met with the symbol's hull over the
+        // base and the rows the disjunctions imply ([`disjunction_hulls`]), all symbols at once by
+        // [`by_halves`]: the rows hold at every point of the parts, so the bounds are sound, and
+        // where the disjunctions act on the symbol only through the forms they bound (each
+        // disjunct one stage of a chain), they are its exact bounds, so no question of the
+        // bisection below is empty. An empty question costs the most: the solver may refuse the
+        // formula with the implied rows (rows of three atoms whose eliminations it counts as
+        // growing), and [`probe`] then tests each disjunct by a propagation of the whole formula.
+        // A bound is read from the rows of the projection with the symbol alone, so a projection
+        // that keeps other atoms (a core, see [`shadow`]) gives what it gives and the questions
+        // the rest. Rows with no point show the parts have none. A hull with an infinite end is met
+        // too: in `b + c >= z` with `b` in {0, 2} and `c` in {0, 2} (each a disjunction, as a box
+        // with a hole is, [`member`]), each disjunction's union, with the other's atom free, leaves
+        // `z` unbounded, and their meet does too, where the rows `0 <= b <= 2` and `0 <= c <= 2`
+        // the two imply give `z <= 4` (seed 17 case 121 of `l01_39_reduced_product::pendants`,
+        // item PRES-pendants-wider).
+        // The rows the disjuncts left imply, read below for the hulls and by [`tighten_each`] for a
+        // point at each end.
+        let implied = if !sets && n_ors > 1 && !old_path() && out.iter().any(Result::is_ok) {
+            disjunction_hulls(&ors, &mut DeepHulls::default())
+        } else {
+            Vec::new()
+        };
+        if !implied.is_empty() {
+            let ks: Vec<usize> = (0..syms.len()).filter(|&k| out[k].is_ok()).collect();
+            let keep: Vec<BTreeSet<Atom>> = (ks.iter())
+                .map(|&k| BTreeSet::from([syms[k].clone()]))
+                .collect();
+            let mut rows = g.linked.cons.clone();
+            rows.extend(implied.iter().cloned());
+            let mut empty = false;
+            let ran: Result<(), ()> = by_halves(rows, &keep, |i, k| {
+                match k {
+                    None => empty = true,
+                    Some(rows) => {
+                        if let Ok(o) = &mut out[ks[i]] {
+                            *o = o.meet(&bounds_alone(&syms[ks[i]], &rows));
+                        }
+                    }
+                }
+                Ok(Vec::new())
+            });
+            ran.expect("no leaf fails");
+            if empty {
+                return Ok(no_points(syms));
+            }
+        }
+        // For each symbol, the least finite lower end and the greatest finite upper end that a
+        // disjunct's own projection gives it, candidates for an end the hull leaves open
+        // ([`Hull::tighten`]), read in one pass over the projections kept.
+        let mut open: HashMap<usize, (Option<Int>, Option<Int>)> = HashMap::new();
+        for (_, kept) in seen.iter().flatten().flatten() {
+            for (k, h) in kept {
+                let Some((l, u)) = h.bounds() else { continue };
+                let e = open.entry(*k).or_default();
+                if let End::Fin(v) = l {
+                    let v = Int::from(v);
+                    if e.0.as_ref().is_none_or(|w| &v < w) {
+                        e.0 = Some(v);
+                    }
+                }
+                if let End::Fin(v) = u {
+                    let v = Int::from(v);
+                    if e.1.as_ref().is_none_or(|w| &v > w) {
+                        e.1 = Some(v);
                     }
                 }
             }
-            Ok(Vec::new())
-        });
-        ran.expect("no leaf fails");
-        if empty {
-            return Ok(none());
         }
-    }
-    // For each symbol, the least finite lower end and the greatest finite upper end that a
-    // disjunct's own projection gives it, candidates for an end the hull leaves open
-    // ([`Hull::tighten`]), read in one pass over the projections kept.
-    let mut open: HashMap<usize, (Option<Int>, Option<Int>)> = HashMap::new();
-    for (_, kept) in seen.iter().flatten().flatten() {
-        for (k, h) in kept {
-            let Some((l, u)) = h.bounds() else { continue };
-            let e = open.entry(*k).or_default();
-            if let End::Fin(v) = l {
-                let v = Int::from(v);
-                if e.0.as_ref().is_none_or(|w| &v < w) {
-                    e.0 = Some(v);
+        // The hulls to tighten: those with a finite end, and those an `open` candidate may give
+        // one.
+        let ks: Vec<usize> = (0..syms.len())
+            .filter(|&k| {
+                finite(&out[k])
+                    || (out[k].is_ok()
+                        && open.get(&k).is_some_and(|e| e.0.is_some() || e.1.is_some()))
+            })
+            .collect();
+        if n_ors > 1 && !ks.is_empty() {
+            let summary;
+            let f = match whole {
+                Some(f) => f,
+                None => {
+                    summary = summarize(&g.linked.cons, &seen, syms);
+                    &summary
                 }
-            }
-            if let End::Fin(v) = u {
-                let v = Int::from(v);
-                if e.1.as_ref().is_none_or(|w| &v > w) {
-                    e.1 = Some(v);
+            };
+            // Complexity tradeoff (PRES-disj-regressions): a question the solver refuses is not asked
+            // again. Naive version (I21 of PRES-disj-cost-xr): asked again without the removals by
+            // bounds ([`drop_by_bounds`]), which made the hulls of `random2` cases 98, 1063 and 2992
+            // exact at up to a second ask per refused question: 1.77 times main's instructions on
+            // `overlap_rows` projected at k = 16, and 2.78 G more over the 3,000 `random2` formulas.
+            // Without it, 98 and 2992 are exact now (other changes of PRES-disj-cost-xr answer them),
+            // and the hull of `y4` in 1063 holds 16 and 17 where its one point has 17, as on main.
+            // No test made before the second ask was found to tell when it answers: asking again only
+            // where a removal fixed an atom that another row names, with its value put in, cost 1.96
+            // times the instructions on that `overlap_rows` projection, and putting the values in on
+            // every ask left two other `random2` hulls coarser than main (cases 1018 and 2306). Test:
+            // `l01_38_presburger::disj_groups::a_hull_question_refused_after_the_removals_by_bounds_keeps_its_point`.
+            let ask: Ask = if sets {
+                |f, _, status| {
+                    let answer = decide(f);
+                    let immune = status
+                        && answer.is_err()
+                        && !HULL_BISECT.with(Cell::get)
+                        && hull_immunity(f);
+                    (answer, immune)
                 }
-            }
+            } else {
+                |f, kept, status| decide_kept_status(f, Some(kept), status)
+            };
+            tighten_each(f, syms, &ks, &open, &mut out, &implied, ask);
         }
+        skipped.sort_unstable();
+        skipped.dedup();
+        Ok((out, skipped))
     }
-    // The hulls to tighten: those with a finite end, and those an `open` candidate may give
-    // one.
-    let ks: Vec<usize> = (0..syms.len())
-        .filter(|&k| {
-            finite(&out[k])
-                || (out[k].is_ok() && open.get(&k).is_some_and(|e| e.0.is_some() || e.1.is_some()))
-        })
-        .collect();
-    if n_ors > 1 && !ks.is_empty() {
-        let summary;
-        let f = match whole {
-            Some(f) => f,
-            None => {
-                summary = summarize(&linked.cons, &seen, syms);
-                &summary
-            }
-        };
-        // Complexity tradeoff (PRES-disj-regressions): a question the solver refuses is not asked
-        // again. Naive version (I21 of PRES-disj-cost-xr): asked again without the removals by
-        // bounds ([`drop_by_bounds`]), which made the hulls of `random2` cases 98, 1063 and 2992
-        // exact at up to a second ask per refused question: 1.77 times main's instructions on
-        // `overlap_rows` projected at k = 16, and 2.78 G more over the 3,000 `random2` formulas.
-        // Without it, 98 and 2992 are exact now (other changes of PRES-disj-cost-xr answer them),
-        // and the hull of `y4` in 1063 holds 16 and 17 where its one point has 17, as on main.
-        // No test made before the second ask was found to tell when it answers: asking again only
-        // where a removal fixed an atom that another row names, with its value put in, cost 1.96
-        // times the instructions on that `overlap_rows` projection, and putting the values in on
-        // every ask left two other `random2` hulls coarser than main (cases 1018 and 2306). Test:
-        // `l01_38_presburger::disj_groups::a_hull_question_refused_after_the_removals_by_bounds_keeps_its_point`.
-        let ask: Ask = if sets {
-            |f, _, status| {
-                let answer = decide(f);
-                let immune =
-                    status && answer.is_err() && !HULL_BISECT.with(Cell::get) && hull_immunity(f);
-                (answer, immune)
-            }
-        } else {
-            |f, kept, status| decide_kept_status(f, Some(kept), status)
-        };
-        tighten_each(f, syms, &ks, &open, &mut out, &implied, ask);
-    }
-    skipped.sort_unstable();
-    skipped.dedup();
-    Ok((out, skipped))
 }
 
 /// A disjunct of [`project_parts`] below the top, by its id ([`Parts::id`]), with whether it is
@@ -12155,7 +12438,7 @@ fn shift_free(mut rows: Vec<Con>, free: impl Fn(&Atom) -> bool) -> Vec<Con> {
 }
 
 /// A disjunct with a point and its projections, each with the index of its symbol, sorted.
-type Projected<'a> = (&'a Parts, Vec<(usize, IntervalSet)>);
+type Projected = (Rc<Parts>, Vec<(usize, IntervalSet)>);
 
 /// A level of [`project_parts`] below the top, with more points than it has, for tightening
 /// its hulls: the base `cons` and, for each disjunction (`None` where a disjunct was refused),
