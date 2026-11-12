@@ -744,6 +744,70 @@ fn residue_map_images_agree_with_the_values_of_a_window_of_inputs() {
 }
 
 #[test]
+fn residue_map_images_with_mixed_multipliers_agree_with_the_image_of_every_residue() {
+    // LOAD-max-div-unsolved: chains h + w (h mod m) + c at moduli with two to four primes,
+    // whose default multipliers 1 + w are units, divisible by some primes of m, or by others
+    // at later steps, with exceptions placed half the time at a residue of the current image.
+    // Since every step commutes with h + m, the image is that of Z_m under the residue map,
+    // computed here residue by residue; every question must be answered, and equal it.
+    let mut rng = 0x10ad_u64;
+    let mut next = |lo: i64, hi: i64| {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        lo + (rng % (hi - lo + 1) as u64) as i64
+    };
+    let multipliers = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15];
+    for chain in 0..48 {
+        let m = [360, 1008, 5400, 7056][chain % 4];
+        let mut image: Vec<i64> = (0..m).collect();
+        let mut steps = Vec::new();
+        let mut images = Vec::new();
+        for _ in 0..24 {
+            let u = multipliers[next(0, multipliers.len() as i64 - 1) as usize];
+            let guards = (0..next(0, 2))
+                .map(|_| {
+                    let s = if next(0, 1) == 0 {
+                        image[next(0, image.len() as i64 - 1) as usize]
+                    } else {
+                        next(0, m - 1)
+                    };
+                    (s, 1, next(-3, 3), next(-2 * m, 2 * m))
+                })
+                .collect();
+            let step = MapStep {
+                guards,
+                default: (1, u - 1, next(-2 * m, 2 * m)),
+            };
+            let set: BTreeSet<i64> = image
+                .iter()
+                .map(|&r| step.value(r, m).rem_euclid(m))
+                .collect();
+            image = set.iter().copied().collect();
+            images.push(set);
+            steps.push(step);
+        }
+        let (defs, outputs) = map_chain(&steps, m);
+        let def = |n: u32| defs[n as usize].clone();
+        let mut answers = ScalarImages::default();
+        for (i, (set, out)) in images.iter().zip(&outputs).enumerate() {
+            let members: Vec<i64> = set.iter().copied().collect();
+            for k in 0..40 {
+                let c = if k % 2 == 0 {
+                    members[next(0, members.len() as i64 - 1) as usize] + m * next(-2, 2)
+                } else {
+                    next(-2 * m, 2 * m)
+                };
+                let q = Formula::Con(Con::eq(&Lin::atom(out.clone()), &Lin::constant(c)));
+                let got = answers.answer(&q, &def);
+                let expected = set.contains(&c.rem_euclid(m));
+                assert_eq!(got, Some(expected), "chain {chain} m={m} step {i} c={c}");
+            }
+        }
+    }
+}
+
+#[test]
 fn residue_map_images_at_a_large_modulus_agree_with_a_backward_search() {
     // I49 at m = 10^9 + 7: the image of k steps, from all integers, holds y iff some residue
     // reaches y in k steps backward; a backward step from y keeps u^-1 (y - c) unless it is

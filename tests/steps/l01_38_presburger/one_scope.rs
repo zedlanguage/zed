@@ -3261,6 +3261,41 @@ fn power_of_two_default_chain(n: usize) -> String {
     src
 }
 
+/// The residue r by M = 2^10 3^10 5^10 doubled 12 times and multiplied by 6 12 times, so
+/// the coset c + d Z has d = 2^10 3^10; then the default 2 r + 7, a unit on the coset but
+/// not mod M, with an exception at a point of the coset sent to H + b outside it.
+fn nonunit_persist_chain(n: usize) -> String {
+    let m: i128 = 590_490_000_000_000;
+    let (mut c, mut d, mut seed): (i128, i128, i128) = (0, 1, 12345);
+    let mut src = String::from("h0(x: int) = x;\n");
+    for i in 1..n {
+        let below = format!("h{}(x: x)", i - 1);
+        let (u, step) = if i <= 12 {
+            (2, format!("H mod {m} + H + 1"))
+        } else if i <= 24 {
+            (6, format!("5 * (H mod {m}) + H + 1"))
+        } else {
+            seed = (seed * 6364136223846793005 + 1442695040888963407).rem_euclid(1 << 61);
+            let s = c + d * (seed % (m / d));
+            let b = seed % m;
+            (
+                2,
+                format!("if H mod {m} == {s} {{ H + {b} }} else {{ H mod {m} + H + 7 }}"),
+            )
+        };
+        let image_c = u * c + if i <= 24 { 1 } else { 7 };
+        d *= num_gcd(u, m / d);
+        c = image_c.rem_euclid(d);
+        src += &format!("h{i}(x: int) = {};\n", step.replace('H', &below));
+        src += &format!("t{i}(x: int) = h{i}(x: x) == 9;\n");
+    }
+    src
+}
+
+fn num_gcd(a: i128, b: i128) -> i128 {
+    if b == 0 { a } else { num_gcd(b, a % b) }
+}
+
 #[test]
 fn the_questions_of_a_chain_of_residue_maps_scale() {
     // I49. Each link moves h by an amount set by h mod M, with two exceptional residues or an
@@ -3285,6 +3320,17 @@ fn the_questions_of_a_chain_of_residue_maps_scale() {
         "a chain of a default doubling the residue by 2^40",
         40,
         power_of_two_default_chain,
+    );
+    // The residues outside the coset are keyed by M split into coprime blocks; a step maps
+    // one by one only those not yet equal to the coset's point on a block where its
+    // multiplier is no unit, each at most log2 M times. Before (346407a9f), every residue
+    // outside the coset was mapped at every step whose multiplier is no unit mod M: 1.95e8
+    // and 2.55e9 instructions at 160 and 1280 links, 13.1 times. Now 1.94e8 and 1.72e9, 8.9
+    // times. 160 links, not 40, since the first 24 links build the coset.
+    questions_scale_unit(
+        "a chain of a default unit on the coset only, by 2^10 3^10 5^10",
+        160,
+        nonunit_persist_chain,
     );
 }
 
