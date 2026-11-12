@@ -3010,11 +3010,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // two operands hold whole are of one such carrier, both are read at it, as at
                 // an arithmetic operator ([`Self::fewest`]): `g(c, x) == g(d, x)` with `g` of
                 // type `(bool, f64) -> 1 | f64` compares two `f64`s.
-                let whole: BTreeSet<Carrier> = [&x, &y]
+                // The parts are found only where an operand is read, as in [`Self::fewest`].
+                let whole: BTreeSet<Carrier> = if [&x, &y]
                     .into_iter()
-                    .filter(|a| a.lit.is_none() && a.branches.is_none() && a.parts.is_none())
-                    .flat_map(|a| whole_carriers(&a.ty))
-                    .collect();
+                    .any(|a| self.readable(a) && lists_a_number(&a.ty))
+                {
+                    [&x, &y]
+                        .into_iter()
+                        .filter(|a| a.lit.is_none() && a.branches.is_none() && a.parts.is_none())
+                        .flat_map(|a| whole_carriers(&a.ty))
+                        .collect()
+                } else {
+                    BTreeSet::new()
+                };
                 let one = match whole.iter().collect::<Vec<_>>()[..] {
                     [&c @ (Carrier::F64 | Carrier::Rat)] => Some(Ty::carrier(c)),
                     _ => None,
@@ -12179,20 +12187,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         // checked as it would be alone, costs O(v₁ v₂) pairs and gives `int | f64` for
         // `g(b, x) + g(b, x)`, a carrier chosen at run time by two operands at once, which no
         // other application has.
-        let whole: BTreeSet<Carrier> = (args.iter().flatten())
-            .filter(|a| !generic(a))
-            .flat_map(|a| whole_carriers(&a.ty))
-            .collect();
-        let one = match whole.iter().collect::<Vec<_>>()[..] {
-            [&c @ (Carrier::F64 | Carrier::Rat)]
-                if args.iter().flatten().count() > 1
-                    && (args.iter().enumerate()).any(|(i, a)| {
-                        read[i] && a.as_ref().is_some_and(|a| lists_a_number(&a.ty))
-                    }) =>
-            {
-                Some(c)
+        // The parts are found only where some operand is read, so an application of no read
+        // operand lists no type's values here, as [`Self::read_arg`] asks [`Self::readable`]
+        // first (MINMAX-chain-bytes-main).
+        let one = if read.contains(&true) && args.iter().flatten().count() > 1 {
+            let whole: BTreeSet<Carrier> = (args.iter().flatten())
+                .filter(|a| !generic(a))
+                .flat_map(|a| whole_carriers(&a.ty))
+                .collect();
+            match whole.iter().collect::<Vec<_>>()[..] {
+                [&c @ (Carrier::F64 | Carrier::Rat)] => Some(c),
+                _ => None,
             }
-            _ => None,
+        } else {
+            None
         };
         let split: Vec<bool> = (args.iter().enumerate())
             .map(|(i, a)| {
