@@ -1227,12 +1227,13 @@ pub fn read_decimal(digits: &str) -> Result<Option<BigUint>, TooLarge> {
 /// The value of a nonempty text of ASCII decimal digits, with no check of its size.
 ///
 /// num-bigint reads a text one machine word of digits at a time into the whole number read so
-/// far, O(n^2) for `n` digits. This reads the text in two parts, the low part `LEAF_DIGITS *
-/// 2^i` digits long and the high part no longer, and joins them as `high * 10^(LEAF_DIGITS *
-/// 2^i) + low`, with the powers `10^(LEAF_DIGITS * 2^i)` built once by squaring. Each level
-/// of the recursion costs about one widest product, O(M(n)) = O(n log n) with `fast::mul`,
-/// and the recursion is `log2(n / LEAF_DIGITS)` deep, so the whole is O(n log^2 n). A text of
-/// at most `LEAF_DIGITS` digits is read whole, with no power of ten built.
+/// far, O(n^2) for `n` digits. This reads the text in groups of `LEAF_DIGITS` digits from the
+/// low end, then joins the groups in pairs, level by level, as `high * 10^(LEAF_DIGITS *
+/// 2^j) + low` at level `j`, the top group carried up alone when it has no pair, with each
+/// power `10^(LEAF_DIGITS * 2^j)` the square of the one below. Each level costs about one
+/// widest product, O(M(n)) = O(n log n) with `fast::mul` and `fast::Factor`, and there are
+/// `log2(n / LEAF_DIGITS)` levels, so the whole is O(n log^2 n). A text of at most
+/// `LEAF_DIGITS` digits is read whole, with no power of ten built.
 ///
 /// # Panics
 ///
@@ -1243,38 +1244,54 @@ pub fn read_digits(digits: &str) -> BigUint {
 
 /// [`read_digits`] with texts of at most `leaf` digits read whole; `leaf` is at least 1.
 fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
-    let Some(top) = split_depth(digits.len(), leaf) else {
-        return digits.parse().expect("ASCII decimal digits");
-    };
-    // Complexity tradeoff: reading by halves costs one widest product per level of a recursion
-    // `log2(n / leaf)` deep, O(M(n) log n) = O(n log^2 n), a log factor above a product,
-    // accepted because no faster radix conversion is known: the subquadratic method (Schönhage
-    // 1971; Bernstein, "Scaled remainder trees", 2004; Brent and Zimmermann, Modern Computer
+    // Complexity tradeoff: reading by halves costs one widest product per level, `log2(n /
+    // leaf)` levels, O(M(n) log n) = O(n log^2 n), a log factor above a product, accepted
+    // because no faster radix conversion is known: the subquadratic method (Schönhage 1971;
+    // Bernstein, "Scaled remainder trees", 2004; Brent and Zimmermann, Modern Computer
     // Arithmetic, 2010, section 1.7) takes O(M(n) log n) (author decision A47, 2026-11-09;
     // COMPLEXITY.md C31), against num-bigint's O(n^2). The scaling tests of reading hold it to
     // the limit of work of order n log^2 n.
-    let mut tens = vec![BigUint::from(10u32).pow(leaf as u32)];
-    while tens.len() <= top {
-        let last = tens.last().expect("the first power is built");
-        let next = fast::mul(last, last);
-        tens.push(next);
+    //
+    // The levels are joined one at a time from the leaves up, not by a recursion from the top,
+    // so that each level's power `10^(leaf 2^j)` multiplies every pair of the level by spectra
+    // transformed once (`fast::Factor`), two transforms a product in place of three, and the
+    // spectra of one level only are held at a time. A recursion from the top visits every
+    // level along each path, so it would hold all levels' spectra at once, about six words for
+    // each word of the powers, over the 48 bits a digit that `read_decimal` asks for. Measured
+    // on 2026-11-12 (RADIX-depth) on `int(s)` of 160,000 and 1,280,000 digits, the reading by
+    // a recursion with `fast::mul` took 121.4 and 1,827.9 million instructions, and level by
+    // level with `fast::Factor` 121.5 and 1,756.4 (the spectra are kept from 1701 words, only
+    // at the larger size). The number is the same: every split of the text gives its value.
+    let mut parts: Vec<BigUint> = (0..digits.len().div_ceil(leaf))
+        .map(|i| {
+            let end = digits.len() - i * leaf;
+            digits[end.saturating_sub(leaf)..end]
+                .parse()
+                .expect("ASCII decimal digits")
+        })
+        .collect();
+    // `parts[i]` is below `power`, `10^(leaf 2^j)` at level `j`, and is the `i`-th group of
+    // `leaf 2^j` digits from the low end; the top one may have fewer.
+    let mut power = BigUint::from(10u32).pow(leaf as u32);
+    while parts.len() > 1 {
+        // Each high part is below the power, so it has at most the power's words.
+        let other = power.iter_u64_digits().len();
+        let factor = fast::Factor::new(power, other, parts.len() / 2);
+        let mut joined = Vec::with_capacity(parts.len().div_ceil(2));
+        let mut each = parts.into_iter();
+        while let Some(low) = each.next() {
+            joined.push(match each.next() {
+                Some(high) => factor.mul(&high) + low,
+                None => low,
+            });
+        }
+        parts = joined;
+        power = match parts.len() > 1 {
+            true => fast::mul(factor.value(), factor.value()),
+            false => BigUint::zero(),
+        };
     }
-    read_parts(digits, &tens, leaf)
-}
-
-/// The `i` for which a text of `len` digits splits into a low part of `leaf * 2^i` digits and
-/// a high part of at least one and at most as many; `None` when it is read whole.
-fn split_depth(len: usize, leaf: usize) -> Option<usize> {
-    (len > leaf).then(|| ((len - 1) / leaf).ilog2() as usize)
-}
-
-/// [`read_decimal`] of checked digits, `tens[i]` being `10^(leaf * 2^i)`.
-fn read_parts(digits: &str, tens: &[BigUint], leaf: usize) -> BigUint {
-    let Some(i) = split_depth(digits.len(), leaf) else {
-        return digits.parse().expect("ASCII decimal digits");
-    };
-    let (high, low) = digits.split_at(digits.len() - (leaf << i));
-    fast::mul(&read_parts(high, tens, leaf), &tens[i]) + read_parts(low, tens, leaf)
+    parts.pop().expect("a nonempty text has a part")
 }
 
 /// The power of the prime `p` in `n`, and `n` without it ([`valuation_upto`] with no cap).
@@ -1883,7 +1900,16 @@ mod tests {
             let at = LEAF_DIGITS << i;
             [at - 1, at, at + 1]
         });
-        for (seed, len) in (1..=1200).chain(edges).chain([5000]).enumerate() {
+        // Leaf 1 reaches products by `fast::Factor`'s spectra from `10^1024`, 54 words, above
+        // the unit tests' `MUL_LEAF` of 48: these lengths join two or more pairs at that level
+        // and above, with the top group carried up alone or not.
+        let spectra = (12..=14).flat_map(|i| [(1 << i) - 1, 1 << i, (1 << i) + 1, 3 << (i - 1)]);
+        for (seed, len) in (1..=1200)
+            .chain(edges)
+            .chain([5000])
+            .chain(spectra)
+            .enumerate()
+        {
             let random = digits(seed as u64, len);
             let padded = format!("{}{}", "0".repeat(seed % 7), random);
             for text in [random, padded, "9".repeat(len), "0".repeat(len)] {

@@ -412,14 +412,28 @@ impl Field {
         debug_assert!(2 * tw.len() >= n, "a table of at least the points");
         while half < n {
             let stride = tw.len() / half;
+            // Complexity tradeoff: the entries `stride` to `(half - 1) stride` of the table,
+            // cut once a stage and walked from the top down by a plain step, so each butterfly
+            // reads its root as [`Field::forward`] does. Indexing the table by `(half - j)
+            // stride` cost a checked product and a bounds check per butterfly in the test
+            // build, and walking the pairs backward against the roots kept the iterators in
+            // memory: either made an inverse take about twice a forward's instructions (perf,
+            // 2026-11-12, RADIX-depth). Stepping a table backward with `rev` after `step_by`
+            // computes its length by a division, once a block. Same values, same order.
+            let roots = &tw[stride..=(half - 1) * stride];
             for block in a.chunks_exact_mut(2 * half) {
                 let (lo, hi) = block.split_at_mut(half);
-                let v = hi[0];
-                butterfly(&mut lo[0], &mut hi[0], v);
-                // Root `j` is entry `(half - j) stride` of the table, indexed directly: an
-                // iterator stepping backward computed its length by a division in every block.
-                for (j, (x, y)) in lo.iter_mut().zip(hi.iter_mut()).enumerate().skip(1) {
-                    let (w, s) = tw[(half - j) * stride];
+                let (lo0, lo) = lo.split_first_mut().expect("half is at least 2");
+                let (hi0, hi) = hi.split_first_mut().expect("half is at least 2");
+                let v = *hi0;
+                butterfly(lo0, hi0, v);
+                // Root `j` of the block, `0 < j < half`, is entry `(half - j) stride` of the
+                // table: the entries of `roots` from its top down, every `stride`-th.
+                for ((x, y), &(w, s)) in lo
+                    .iter_mut()
+                    .zip(hi.iter_mut())
+                    .zip(roots.iter().rev().step_by(stride))
+                {
                     let v = self.shoup(*y, (self.p - w, !s));
                     butterfly(x, y, v);
                 }
@@ -624,6 +638,96 @@ pub fn mul(a: &BigUint, b: &BigUint) -> BigUint {
         return sparse_mul(a, b);
     }
     pieces_mul(a, b, piece)
+}
+
+/// A factor `x` that multiplies many numbers of at most `other` words, with its spectra on
+/// the points of such a product (see [`Field::spectrum`]) when that costs less than [`mul`]:
+/// each product then transforms only the other factor and the result, two of the three
+/// transforms of [`transform_mul`].
+pub(crate) struct Factor {
+    x: BigUint,
+    other: usize,
+    spectra: Option<([Vec<u64>; 3], Roots)>,
+}
+
+impl Factor {
+    /// `x`, for `uses` products with numbers of at most `other` words.
+    pub(crate) fn new(x: BigUint, other: usize, uses: usize) -> Factor {
+        let points = (words(&x) + other - 1).next_power_of_two();
+        // Complexity tradeoff: the spectra cost a third of a product's transforms, once, and
+        // each product by them then costs `cached_cost` (two of its three transforms, measured
+        // as `CACHED_COST`), so they are kept when the computed costs, in the
+        // units of `TRANSFORM_COST`, say `uses` products by them cost less than by `mul`'s
+        // cheapest method for dense factors; else `mul` alone, with no memory held. Both give
+        // the same products. Kept, they hold three words a point, about six of `x`'s words for
+        // each, for as long as the factor lives (COMPLEXITY.md C31, RADIX-depth).
+        let spectra = (uses as f64 * (cached_cost(points) - dense_cost(words(&x), other))
+            + transform_cost(points) as f64 / 3.0
+            < 0.0)
+            .then(|| {
+                let tw = roots(points);
+                (spectra(&x.to_u64_digits(), points, &tw), tw)
+            });
+        Factor { x, other, spectra }
+    }
+
+    /// `y * x`, for `y` of at most `other` words, by the spectra when they are kept and cost
+    /// less than [`mul`] for `y`'s width; the product is the same.
+    pub(crate) fn mul(&self, y: &BigUint) -> BigUint {
+        let wy = words(y);
+        match &self.spectra {
+            Some((s, tw))
+                if wy <= self.other && cached_cost(s[0].len()) < dense_cost(wy, words(&self.x)) =>
+            {
+                // `y x` has at most `words(x) + other - 1` coefficients, within the points, so
+                // the cyclic product wraps nothing: it is the product, with the carry out of
+                // its top word as in `transform_mul`.
+                let (mut out, carry) = cyclic_product(&y.to_u64_digits(), s, tw);
+                out.extend([carry as u64, (carry >> 64) as u64]);
+                trim(&mut out);
+                from_words(out)
+            }
+            _ => mul(y, &self.x),
+        }
+    }
+
+    /// The factor itself.
+    pub(crate) fn value(&self) -> &BigUint {
+        &self.x
+    }
+}
+
+/// The cost of a product by a [`Factor`]'s spectra on `n` points, per `n log2(n)`, in the
+/// units of [`TRANSFORM_COST`]. Two of the three transforms of a product would make it two
+/// thirds of [`TRANSFORM_COST`], 8; measured on 2026-11-12 at load 50 (RADIX-depth, 20
+/// products, best of five, cycles), it is 11.2 and 10.6 at 2048 and 4096 points and 7.9 and
+/// 8.0 at 8192 and 16,384, against num-bigint's product at 4.9 cycles a unit (from
+/// [`TOOM_COST`]'s 51 cycles per `l s^0.465` at 851 and 1701 words). With 8, products of 851
+/// by 851 words took the spectra, 1.20 times num-bigint's cycles; with 11 they take
+/// num-bigint's, and those of 1701 words and up the spectra (0.86 of num-bigint's cycles at
+/// 1701, 0.58 at 3402). Only which of two equal products is computed depends on it. The unit
+/// tests use 8, so that two uses keep the spectra at small sizes.
+#[cfg(not(test))]
+const CACHED_COST: u128 = 11;
+#[cfg(test)]
+const CACHED_COST: u128 = 8;
+
+/// The cost of a product by a [`Factor`]'s spectra on `points` points, in the units of
+/// [`TRANSFORM_COST`]: [`CACHED_COST`] `n log2(n)` for `n` points.
+fn cached_cost(points: usize) -> f64 {
+    let n = points.next_power_of_two() as u128;
+    (CACHED_COST * n * u128::from(n.trailing_zeros().max(1))) as f64
+}
+
+/// The cost [`mul`] computes for its cheapest method on dense factors of `a` and `b` words,
+/// in the units of [`TRANSFORM_COST`]: zero at or below [`MUL_LEAF`], where num-bigint's
+/// product is taken with no cost computed, so that no other method is taken there.
+fn dense_cost(a: usize, b: usize) -> f64 {
+    let (short, long) = (a.min(b), a.max(b));
+    match short <= MUL_LEAF {
+        true => 0.0,
+        false => toom_cost(short, long).min(transform_plan(short, long).0 as f64),
+    }
 }
 
 /// num-bigint's cost of a product of `short <= long` words, `TOOM_COST long short^0.465`, in
@@ -2576,6 +2680,38 @@ mod tests {
             let r = f.pow(f.to_mont(f.root), (f.p - 1) / 2);
             assert_eq!(f.mul(r, 1), f.p - 1);
             assert!(f.p < 1 << 62);
+        }
+    }
+
+    /// A [`Factor`] keeps its spectra for two or more products above [`MUL_LEAF`] (here 48
+    /// words, with num-bigint's Toom-3 never chosen) and none for one, and its products equal
+    /// num-bigint's for every width of the other factor up to `other`, edge forms included,
+    /// whose all-ones words give the widest carry out of the top; at points just filled
+    /// (`words(x) + other - 1` a power of two) and just past one.
+    #[test]
+    fn factor_products_agree_with_num_bigint() {
+        for (wx, other) in [
+            (49, 49),
+            (64, 65),
+            (65, 64),
+            (100, 60),
+            (200, 57),
+            (300, 300),
+        ] {
+            for x in forms(wx, wx as u64) {
+                assert!(
+                    Factor::new(x.clone(), other, 1).spectra.is_none(),
+                    "{wx}, one use"
+                );
+                let factor = Factor::new(x.clone(), other, 2);
+                assert!(factor.spectra.is_some(), "{wx} by {other} words, two uses");
+                for wy in [1, 2, 48, 49, other - 1, other] {
+                    for y in forms(wy, 11 + wy as u64) {
+                        assert_eq!(factor.mul(&y), &x * &y, "{wx} by {wy} of {other} words");
+                    }
+                }
+                assert!(factor.mul(&BigUint::zero()).is_zero());
+            }
         }
     }
 

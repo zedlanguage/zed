@@ -134,7 +134,7 @@ fn dividing_a_wide_number_scales() {
 /// still fails, 16.4 times the work against 13.3 (2026-11-09): the half gcd recurses
 /// `log2(n / GCD_LEAF)` deep, 4 levels at 8,192 words and 7 at 65,536, not `log2 n`.
 #[test]
-#[ignore = "RADIX-depth: 16.4 times the work at 8,192 and 65,536 words, over the n log² n limit 13.3 since SCALE-ratio; open"]
+#[ignore = "RADIX-depth: 16.1 times the work at 8,192 and 65,536 words, over the n log² n limit 13.3 since SCALE-ratio (2026-11-12); open"]
 fn a_gcd_of_wide_numbers_scales() {
     let n = 1 << 13;
     let inputs = built(n, |m| {
