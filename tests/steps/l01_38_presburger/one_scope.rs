@@ -3570,10 +3570,9 @@ fn overlap19_chain(n: usize) -> String {
 #[test]
 fn the_questions_of_a_chain_of_residue_intervals_scale() {
     // LOAD-max-div-unsolved: steps that move h by a constant on each interval of h mod M. The
-    // image is a union of intervals of residues; once the steps repeat with period L, the
-    // image differs from the one L links back only by the parts the step moved into or out of
-    // it, and each link keeps its image in a persistent map, so a link costs the size of that
-    // difference and not of the image.
+    // image is a union of intervals of residues, kept in a persistent tree whose subtrees
+    // move by a constant in O(1), so a link costs its pieces' cuts and the runs its union
+    // merges, not the size of the image.
     questions_scale_unit("a chain of two intervals, by 10^18 + 9", 40, gap_chain);
     questions_scale_unit(
         "a chain of two wide intervals, by 2^31 - 1",
@@ -3610,6 +3609,80 @@ fn the_questions_of_a_chain_of_residue_intervals_scale() {
         "three steps of wide overlaps, by 10^18 + 9",
         40,
         overlap19_chain,
+    );
+}
+
+/// A chain whose link i, from 1, is `step(i)` on the link below.
+fn steps_chain(n: usize, mut step: impl FnMut(usize) -> String) -> String {
+    let mut src = String::from("h0(x: int) = x;\n");
+    for i in 1..n {
+        let below = format!("h{}(x: x)", i - 1);
+        src += &format!("h{i}(x: int) = {};\n", step(i).replace('H', &below));
+        src += &format!("t{i}(x: int) = h{i}(x: x) == 9;\n");
+    }
+    src
+}
+
+/// Two halves of the residues by 10^12 + 39, the upper moved one further than the lower.
+fn half_step(b: i64) -> String {
+    format!(
+        "if H mod 1000000000039 < 500000000019 {{ H + {b} }} else {{ H + {} }}",
+        b + 1
+    )
+}
+
+fn random_cuts_chain(n: usize) -> String {
+    let mut rng = zed_tests::instances::Rng::new(0x5ca1e);
+    steps_chain(n, |_| {
+        let (c, a, b) = (
+            rng.int(0, 2147483646),
+            rng.int(0, 2147483646),
+            rng.int(0, 2147483646),
+        );
+        format!("if H mod 2147483647 <= {c} {{ H + {a} }} else {{ H + {b} }}")
+    })
+}
+
+fn random_small_moves_chain(n: usize) -> String {
+    let mut rng = zed_tests::instances::Rng::new(0x5ca1e);
+    steps_chain(n, |_| {
+        let (c, a, b) = (rng.int(0, 2147483646), rng.int(0, 6), rng.int(0, 6));
+        format!("if H mod 2147483647 <= {c} {{ H + {a} }} else {{ H + {b} }}")
+    })
+}
+
+fn switching_chain(n: usize) -> String {
+    steps_chain(n, |i| {
+        half_step(if ((i - 1) / 5) % 2 == 0 { 3 } else { -7 })
+    })
+}
+
+fn first_step_apart_chain(n: usize) -> String {
+    steps_chain(n, |i| half_step(if i == 1 { -7 } else { 3 }))
+}
+
+#[test]
+fn the_questions_of_a_chain_of_residue_intervals_with_no_period_scale() {
+    // LOAD-max-div-unsolved: chains whose steps never repeat with a period, or repeat only
+    // after a different first step, or switch between two steps every five links. Main
+    // before the interval tree, which listed the whole image at each change of period, took
+    // 11.3 times the work at 100 and 800 links on the small moves and 14.1 times the bytes on
+    // the switching chain, over the limit of 12.77.
+    questions_scale_unit("random cuts and moves, by 2^31 - 1", 100, random_cuts_chain);
+    questions_scale_unit(
+        "random cuts and moves of 0 to 6, by 2^31 - 1",
+        100,
+        random_small_moves_chain,
+    );
+    questions_scale_unit(
+        "a step switching every five links, by 10^12 + 39",
+        100,
+        switching_chain,
+    );
+    questions_scale_unit(
+        "a first step apart from the rest, by 10^12 + 39",
+        100,
+        first_step_apart_chain,
     );
 }
 

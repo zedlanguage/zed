@@ -3,17 +3,15 @@
 //! (LOAD-max-div-unsolved, I49). Each such step commutes with h + m, so the image of a link
 //! is the integers whose residue mod m lies in a set of intervals of Z_m.
 
-use std::ops::Bound;
 use std::sync::Arc;
 
-use imbl::{OrdMap, Vector};
-
 use super::super::super::formula::{Atom, Formula, Lin, Rel};
+use super::intervals;
 use super::{Image, ScalarImages, choice, lone_atom};
 use zedc_int::int::Int;
 
-/// Disjoint intervals [lo, hi) of Z_m by lo, none touching another.
-pub(super) type Intervals = OrdMap<Int, Int>;
+/// Disjoint intervals [lo, hi) of Z_m, none touching another except at the wrap (m and 0).
+pub(super) type Intervals = intervals::Tree;
 
 /// A step on Z_m whose every branch is h + C: residue r in piece i, `[starts[i], starts[i + 1])`
 /// (the last up to m), goes to `r + offs[i]` mod m. Adjacent pieces have unequal offsets, so
@@ -85,280 +83,56 @@ impl Shift {
         }
     }
 
-    /// Pushes the image of [lo, hi), 0 <= lo < hi <= m, on `out`, unsorted.
-    fn map_interval(&self, lo: &Int, hi: &Int, out: &mut Vec<(Int, Int)>) {
-        let mut i = self.piece(lo);
-        while i < self.starts.len() && self.starts[i] < *hi {
-            let a = (&self.starts[i]).max(lo);
-            let b = self.end(i).min(hi);
-            moved(a, b, &self.offs[i], &self.m, out);
-            i += 1;
-        }
-    }
-
-    /// The image of sorted disjoint intervals, normalized: O(k log k + pieces touched).
-    fn map<'a>(&self, ivs: impl Iterator<Item = (&'a Int, &'a Int)>) -> Vec<(Int, Int)> {
-        let mut out = Vec::new();
-        for (lo, hi) in ivs {
-            self.map_interval(lo, hi, &mut out);
-        }
-        normalize(out)
-    }
-
-    /// The image of `set` inside the windows `w`, normalized. A point y of a window is in
-    /// it iff some piece holds y - off with y - off in `set`, so each window is read back
-    /// through each piece: O(|w| p (log |set| + k)) for p pieces and k intervals read.
-    fn image_in(&self, set: &Intervals, w: &[(Int, Int)]) -> Vec<(Int, Int)> {
+    /// The image of `set`: each piece cut out and moved by its offset, the part past m by
+    /// its offset less m, and the parts united.
+    // Complexity tradeoff: moving every interval is O(|set|) a step, quadratic on a chain
+    // whose image gains intervals at each step (main before LOAD-max-div-unsolved: 3.45e10
+    // instructions at 40 links, exponent 2.08). Here a part moves in O(1) by its subtree
+    // offset, so a step costs O(p log |set|) expected for its p pieces' cuts, plus
+    // O(log |set|) for each run of one part's intervals in the union's order and for each
+    // interval the union fuses (`intervals::union`). Summed over a chain of n steps, with the
+    // potential sum over gaps g between ends of log2 g plus 2 log2 m per end, the runs and
+    // fusions number O(n p log m), so the chain costs O(n p log m log n) expected, for any
+    // chain, periodic or not (Claude seat, LOAD-max-div-unsolved hybrid round 1; the merge
+    // inequality checked on 20000 random merges, not proved in Lean). Measured at n and 8n
+    // links (test `the_questions_of_a_chain_of_residue_intervals_scale`; aperiodic, switching
+    // and prefixed chains): 8.1 to 8.6 times the instructions. Open: a bound free of log m;
+    // a chain interleaving two halves at the finest scale needs about n log2(m / n) runs.
+    fn apply(&self, set: &Intervals) -> Intervals {
         let m = &*self.m;
-        let mut out = Vec::new();
-        let mut back = Vec::new();
-        for (wlo, whi) in w {
-            for (i, off) in self.offs.iter().enumerate() {
-                back.clear();
-                moved(wlo, whi, &(m - off), m, &mut back);
-                for (a, b) in &back {
-                    let a = a.max(&self.starts[i]);
-                    let b = b.min(self.end(i));
-                    for (x, y) in window(set, a, b) {
-                        moved(&x, &y, off, m, &mut out);
-                    }
-                }
-            }
+        let mut rest = set.clone();
+        let mut out = None;
+        for (i, off) in self.offs.iter().enumerate() {
+            let (part, after) = intervals::cut(&rest, self.end(i));
+            rest = after;
+            let (low, high) = intervals::cut(&part, &(m - off));
+            out = intervals::union(out, intervals::moved(&low, off));
+            out = intervals::union(out, intervals::moved(&high, &(off - m)));
         }
-        normalize(out)
+        out
     }
 }
 
-/// Pushes [lo + off, hi + off) mod m, 0 <= lo < hi <= m and 0 <= off < m, as one or two
-/// intervals.
-fn moved(lo: &Int, hi: &Int, off: &Int, m: &Int, out: &mut Vec<(Int, Int)>) {
-    if lo >= hi {
-        return;
-    }
-    let (a, b) = (lo + off, hi + off);
-    if b <= *m {
-        out.push((a, b));
-    } else if a >= *m {
-        out.push((&a - m, &b - m));
-    } else {
-        out.push((a, m.clone()));
-        out.push((Int::ZERO, &b - m));
-    }
-}
-
-/// Sorted, disjoint and untouching.
-fn normalize(mut ivs: Vec<(Int, Int)>) -> Vec<(Int, Int)> {
-    ivs.sort_unstable();
-    let mut out: Vec<(Int, Int)> = Vec::with_capacity(ivs.len());
-    for (lo, hi) in ivs {
-        match out.last_mut() {
-            Some(last) if lo <= last.1 => {
-                if hi > last.1 {
-                    last.1 = hi;
-                }
-            }
-            _ => out.push((lo, hi)),
-        }
-    }
-    out
-}
-
-/// The intervals of `set` meeting [a, b), clipped to it: O(log |set| + k).
-fn window<'a>(set: &'a Intervals, a: &'a Int, b: &'a Int) -> impl Iterator<Item = (Int, Int)> + 'a {
-    let first = set
-        .get_prev(a)
-        .filter(|(_, hi)| *hi > a)
-        .map(|(_, hi)| (a.clone(), hi.min(b).clone()));
-    let rest = set
-        .range::<_, Int>((Bound::Excluded(a), Bound::Unbounded))
-        .take_while(move |(lo, _)| *lo < b)
-        .map(move |(lo, hi)| (lo.clone(), hi.min(b).clone()));
-    first.into_iter().chain(rest).filter(|(x, y)| x < y)
-}
-
-/// a less b, both sorted and disjoint: O(|a| + |b|).
-fn minus<'a>(a: impl Iterator<Item = (&'a Int, &'a Int)>, b: &[(Int, Int)]) -> Vec<(Int, Int)> {
-    let mut out = Vec::new();
-    let mut j = 0;
-    for (lo, hi) in a {
-        let mut cur = lo.clone();
-        while j < b.len() && b[j].1 <= cur {
-            j += 1;
-        }
-        let mut k = j;
-        while k < b.len() && b[k].0 < *hi {
-            if b[k].0 > cur {
-                out.push((cur.clone(), b[k].0.clone()));
-            }
-            cur = cur.max(b[k].1.clone());
-            k += 1;
-        }
-        if cur < *hi {
-            out.push((cur, hi.clone()));
-        }
-    }
-    out
-}
-
-fn listed(set: &Intervals) -> Vec<(Int, Int)> {
-    set.iter().map(|(x, y)| (x.clone(), y.clone())).collect()
-}
-
-fn pairs(v: &[(Int, Int)]) -> impl Iterator<Item = (&Int, &Int)> {
-    v.iter().map(|(a, b)| (a, b))
-}
-
-/// Removes [lo, hi) from `set`: O(log |set|) per interval it meets.
-fn remove(set: &mut Intervals, lo: &Int, hi: &Int) {
-    let met: Vec<(Int, Int)> = set
-        .get_prev(lo)
-        .filter(|(_, y)| *y > lo)
-        .into_iter()
-        .chain(
-            set.range::<_, Int>((Bound::Excluded(lo), Bound::Unbounded))
-                .take_while(|(x, _)| *x < hi),
-        )
-        .map(|(x, y)| (x.clone(), y.clone()))
-        .collect();
-    for (x, y) in met {
-        set.remove(&x);
-        if x < *lo {
-            set.insert(x, lo.clone());
-        }
-        if y > *hi {
-            set.insert(hi.clone(), y);
-        }
-    }
-}
-
-/// Adds [lo, hi) to `set`, merging the intervals it meets or touches: O(log |set|) each.
-fn add(set: &mut Intervals, lo: &Int, hi: &Int) {
-    let (mut a, mut b) = (lo.clone(), hi.clone());
-    if let Some((x, y)) = set.get_prev(lo)
-        && *y >= *lo
-    {
-        a = x.clone();
-        b = b.max(y.clone());
-    }
-    let met: Vec<(Int, Int)> = set
-        .range::<_, Int>((Bound::Included(&a), Bound::Included(hi)))
-        .map(|(x, y)| (x.clone(), y.clone()))
-        .collect();
-    for (x, y) in met {
-        set.remove(&x);
-        b = b.max(y);
-    }
-    set.insert(a, b);
-}
-
-/// Intervals in order, shared.
-type Listed = Arc<[(Int, Int)]>;
-
-/// The image of a link of a chain of shifts, with what the difference rule needs: the steps
-/// of its segment (the links since the period last changed), their prefix function and the
-/// images of their inputs, and the difference from the image L links back.
+/// The image of a link of a chain of shifts.
 pub(super) struct Run {
     m: Arc<Int>,
     pub(super) image: Intervals,
-    steps: Vector<u32>,
-    prefix: Vector<usize>,
-    inputs: Vector<Intervals>,
-    /// (L, image less the image L links back, that image less this one).
-    diff: Option<(usize, Listed, Listed)>,
 }
 
 impl Run {
     fn whole(m: &Arc<Int>) -> Run {
         Run {
             m: Arc::clone(m),
-            image: OrdMap::unit(Int::ZERO, (**m).clone()),
-            steps: Vector::new(),
-            prefix: Vector::new(),
-            inputs: Vector::new(),
-            diff: None,
+            image: intervals::single(Int::ZERO, (**m).clone()),
         }
     }
 
-    // Complexity tradeoff: the graph path splits each link on its residues, exponent 2.1
-    // in the depth at M = 10^9 + 7 (I49); translating every interval of the image at every
-    // step is O(|I|) a step, quadratic when the image gains intervals at each step. Here,
-    // once the steps repeat with period L (found online by the prefix function of the
-    // segment's step identities, amortized O(1) a step), step j equals step j - L, so the
-    // image I_{j+1} differs from I_{j+1-L} only by
-    //   A_{j+1} = g(A_j) \ g(I_{j-L})  and  D_{j+1} = g(D_j) \ g(I_j),
-    // with A_j = I_j \ I_{j-L} and D_j = I_{j-L} \ I_j: a point of g(I_j) outside g(I_{j-L})
-    // comes from A_j, and a point of g(I_{j-L}) outside g(I_j) from D_j. Each is read only in
-    // the windows g(A_j) and g(D_j), and I_{j+1} is I_{j+1-L} edited there, the persistent
-    // map sharing all else: O(p (|A| + |D|) log |I|) a step for p pieces. Not proved: that
-    // |A| + |D| stays small; measured on the families of LOAD-max-div-unsolved (R <= 8.7 at
-    // 256 → 2048 links). Given up: a step that breaks the period starts a new segment, whose
-    // first L steps and steps of a chain with no period translate every interval (O(|I|)).
-    /// The run after one more step, `id` naming its map.
-    fn step(&self, id: u32, shift: &Shift) -> Run {
-        let j = self.steps.len();
-        let mut p = 0;
-        if j > 0 {
-            p = self.prefix[j - 1];
-            let period = j - p;
-            while p > 0 && self.steps[p] != id {
-                p = self.prefix[p - 1];
-            }
-            if self.steps[p] == id {
-                p += 1;
-            }
-            if self.prefix[j - 1] > 0 && j + 1 - p != period {
-                let fresh = Run {
-                    m: Arc::clone(&self.m),
-                    image: self.image.clone(),
-                    steps: Vector::new(),
-                    prefix: Vector::new(),
-                    inputs: Vector::new(),
-                    diff: None,
-                };
-                return fresh.step(id, shift);
-            }
-        }
-        let period = j + 1 - p;
-        let (image, diff) = if j >= period {
-            let old = &self.inputs[j - period];
-            let (a, d) = match &self.diff {
-                Some((l, a, d)) if *l == period => (Arc::clone(a), Arc::clone(d)),
-                _ => (
-                    minus(self.image.iter(), &listed(old)).into(),
-                    minus(old.iter(), &listed(&self.image)).into(),
-                ),
-            };
-            let ga = shift.map(pairs(&a));
-            let gd = shift.map(pairs(&d));
-            let a = minus(pairs(&ga), &shift.image_in(old, &ga));
-            let d = minus(pairs(&gd), &shift.image_in(&self.image, &gd));
-            let mut image = if period == 1 {
-                self.image.clone()
-            } else {
-                self.inputs[j + 1 - period].clone()
-            };
-            for (lo, hi) in &d {
-                remove(&mut image, lo, hi);
-            }
-            for (lo, hi) in &a {
-                add(&mut image, lo, hi);
-            }
-            (image, Some((period, a.into(), d.into())))
-        } else {
-            (shift.map(self.image.iter()).into_iter().collect(), None)
-        };
-        let mut next = Run {
+    /// The run after one more step.
+    fn step(&self, shift: &Shift) -> Run {
+        Run {
             m: Arc::clone(&self.m),
-            image,
-            steps: self.steps.clone(),
-            prefix: self.prefix.clone(),
-            inputs: self.inputs.clone(),
-            diff,
-        };
-        next.steps.push_back(id);
-        next.prefix.push_back(p);
-        next.inputs.push_back(self.image.clone());
-        next
+            image: shift.apply(&self.image),
+        }
     }
 }
 
@@ -407,7 +181,7 @@ impl ScalarImages {
         if a == h {
             return Some(Shift::constant(m, &e.constant));
         }
-        let (g, shift, _) = self.shifts.get(a)?;
+        let (g, shift) = self.shifts.get(a)?;
         (g == h && shift.m == *m).then(|| shift.then_add(&e.constant))
     }
 
@@ -436,10 +210,7 @@ impl ScalarImages {
         } else {
             no
         };
-        let next = self.shift_ids.len() as u32;
-        let shift = Arc::new(shift);
-        let id = *self.shift_ids.entry(Arc::clone(&shift)).or_insert(next);
-        self.shifts.insert(output.clone(), (h, shift, id));
+        self.shifts.insert(output.clone(), (h, Arc::new(shift)));
     }
 
     /// The image of a link of a chain of shifts that starts from all integers, computed on
@@ -454,7 +225,7 @@ impl ScalarImages {
                 break run.clone();
             }
             match self.shifts.get(&at) {
-                Some((h, _, _)) => {
+                Some((h, _)) => {
                     path.push(at.clone());
                     at = h.clone();
                 }
@@ -474,8 +245,8 @@ impl ScalarImages {
         let mut run = start;
         for link in path.into_iter().rev() {
             run = run.and_then(|r| {
-                let (_, shift, id) = &self.shifts[&link];
-                (*shift.m == *r.m).then(|| Arc::new(r.step(*id, shift)))
+                let (_, shift) = &self.shifts[&link];
+                (*shift.m == *r.m).then(|| Arc::new(r.step(shift)))
             });
             self.runs.insert(link, run.clone());
         }
@@ -486,5 +257,5 @@ impl ScalarImages {
 
 /// Whether residue r of 0..m is in `set`: O(log |set|).
 pub(super) fn holds(set: &Intervals, r: &Int) -> bool {
-    set.get_prev(r).is_some_and(|(_, hi)| hi > r)
+    intervals::holds(set, r)
 }

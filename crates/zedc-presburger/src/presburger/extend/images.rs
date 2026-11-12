@@ -567,10 +567,8 @@ pub(super) struct ScalarImages {
     excepted: HashMap<Atom, (Atom, Arc<Exception>, Int)>,
     /// Residue maps of single-output definitions from their input (I49).
     maps: HashMap<Atom, Arc<ResidueMap>>,
-    /// Shifts on residue intervals of single-output choices: their h, map and the map's
-    /// identity (`shifts`).
-    shifts: HashMap<Atom, (Atom, Arc<shifts::Shift>, u32)>,
-    shift_ids: HashMap<Arc<shifts::Shift>, u32>,
+    /// Shifts on residue intervals of single-output choices: their h and map (`shifts`).
+    shifts: HashMap<Atom, (Atom, Arc<shifts::Shift>)>,
     /// The images of links of chains of shifts, `None` where the chain does not start from
     /// all integers.
     runs: HashMap<Atom, Option<Arc<shifts::Run>>>,
@@ -1594,6 +1592,7 @@ fn zero_atom(e: &Lin) -> Option<&Atom> {
     (!k.is_zero()).then_some(a)
 }
 
+mod intervals;
 mod shifts;
 
 #[cfg(test)]

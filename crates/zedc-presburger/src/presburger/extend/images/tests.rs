@@ -971,10 +971,10 @@ fn shift_chain(steps: &[ShiftStep], m: i64) -> (Vec<Formula>, Vec<Atom>) {
 #[test]
 fn shift_chain_images_agree_with_the_image_of_every_residue() {
     // LOAD-max-div-unsolved: chains of nested guards on h mod m with every branch h + c, a
-    // pattern of one to four steps repeated, broken now and then by another step, so that the
-    // images are found by the difference rule as well as step by step. Each step commutes
-    // with h + m, so the image is that of Z_m, computed residue by residue; every question
-    // must be answered, and equal it.
+    // pattern of one to four steps repeated, broken now and then by another step, so that
+    // repeated steps, whose tree nodes share relative ends, meet steps that differ. Each step
+    // commutes with h + m, so the image is that of Z_m, computed residue by residue; every
+    // question must be answered, and equal it.
     let mut rng = 0x5_1f7_u64;
     let mut next = |lo: i64, hi: i64| {
         rng ^= rng << 13;
