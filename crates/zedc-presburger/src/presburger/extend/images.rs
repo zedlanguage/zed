@@ -26,9 +26,9 @@ enum Image {
     /// Exactly c + d Z with 0 <= c < d: an affine remainder step's image of such a coset
     /// whose d divides the step's modulus (I49).
     Coset(Arc<Int>, Int),
-    /// The integers whose residue by the frame's modulus is not missing: the image of a chain
-    /// of residue-map steps (I49).
-    Missing(Arc<Frame>),
+    /// The integers whose residue by the frame's modulus is in the frame's set: the image of
+    /// a chain of residue-map steps (I49).
+    Residues(Arc<Frame>),
 }
 
 /// A step's residue map on Z_m from its input h, for a value p h + w (h mod m) + C with
@@ -53,73 +53,210 @@ impl ResidueMap {
     }
 }
 
-/// The missing residues of an m-periodic image, stored in the frame of the composed default
-/// maps F(x) = U x + T (U a unit mod m): residue y is missing iff U^-1 (y - T) is in `d`.
+/// An m-periodic image, by its residues mod m: the coset K = c + d Z_m (d | m) less the
+/// missing points of K, together with the extra residues outside K (I49). The missing
+/// points are kept in the frame of the composed default maps on K: point c + d t, t in
+/// Z_n with n = m / d, is missing iff u_inv (t - t0) mod n is in `missing`, and frame
+/// value v is position u v + t0. The extra
+/// residues are kept in the frame r = p y + r0 (mod m), p a unit: residue r is extra iff
+/// p_inv (r - r0) mod m is in `extra`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Frame {
     m: Arc<Int>,
+    c: Int,
+    d: Int,
+    n: Int,
+    u: Int,
     u_inv: Int,
-    t: Int,
-    d: OrdSet<Int>,
+    t0: Int,
+    missing: OrdSet<Int>,
+    p: Int,
+    p_inv: Int,
+    r0: Int,
+    extra: OrdSet<Int>,
 }
 
 impl Frame {
-    fn identity(m: &Arc<Int>) -> Self {
+    /// The coset c + d Z, d | m, with no missing or extra residues.
+    fn coset(m: &Arc<Int>, d: Int, c: Int) -> Self {
         Frame {
+            n: m.div_floor(&d),
             m: Arc::clone(m),
+            c,
+            d,
+            u: Int::ONE,
             u_inv: Int::ONE,
-            t: Int::ZERO,
-            d: OrdSet::new(),
+            t0: Int::ZERO,
+            missing: OrdSet::new(),
+            p: Int::ONE,
+            p_inv: Int::ONE,
+            r0: Int::ZERO,
+            extra: OrdSet::new(),
         }
     }
 
-    /// The frame value of residue y.
-    fn back(&self, y: &Int) -> Int {
-        (&self.u_inv * &(y - &self.t)).mod_floor(&self.m)
+    /// The position t of residue y in K, or `None` when y is outside K.
+    fn position(&self, y: &Int) -> Option<Int> {
+        let off = y - &self.c;
+        off.mod_floor(&self.d)
+            .is_zero()
+            .then(|| off.div_floor(&self.d).mod_floor(&self.n))
     }
 
-    fn missing(&self, y: &Int) -> bool {
-        self.d.contains(&self.back(y))
+    /// The frame value of position t of K.
+    fn back(&self, t: &Int) -> Int {
+        (&self.u_inv * &(t - &self.t0)).mod_floor(&self.n)
+    }
+
+    /// The frame value of a residue outside K.
+    fn extra_key(&self, y: &Int) -> Int {
+        (&self.p_inv * &(y - &self.r0)).mod_floor(&self.m)
+    }
+
+    fn contains(&self, y: &Int) -> bool {
+        match self.position(y) {
+            Some(t) => !self.missing.contains(&self.back(&t)),
+            None => self.extra.contains(&self.extra_key(y)),
+        }
     }
 
     // Complexity tradeoff: the image of a step by explicit residue sets is O(m), and the
     // graph path splits on residues, quadratic or worse in the depth (I49). With f the
-    // default map r -> u r + c, u a unit, and E the exceptions s -> b_s, the step's
-    // missing set is f(D + E) less {b_s : s in E, s not in D}. In the moving frame f(D)
-    // costs nothing: the exceptions enter as frame values and the hits leave by the
-    // composed frame. O(|E| log |D|) set operations on a persistent ordered set, whose
-    // clone shares the input's tree, plus O(1) arithmetic on O(log m)-bit values per step,
-    // independent of m; `u_inv` is u's inverse, O(log m) by extended Euclid.
+    // default map r -> u r + c and E the exceptions s -> b_s, the step's image is
+    // f(image less E) plus {b_s : s in E in the image}. On K: with g = gcd(u, n) == 1, f is
+    // a bijection of K onto K' = f(c) + d Z, so the missing set only changes frame:
+    // O(|E| log |D|) set operations on a persistent ordered set, whose clone shares the
+    // input's tree. With g > 1, K' = f(c) + g d Z and a point of K' is missing iff all g of
+    // its preimages in K are: O(|D| log |D|), and it happens at most log2 m times on a chain,
+    // since n shrinks by g >= 2 each time. The extra residues share a frame while u is a
+    // unit mod m (f is then a bijection of Z_m, so it keeps them outside K'); otherwise they
+    // are mapped one by one, O(|A| log |A|), and those landing in K' join it. O(log m)
+    // arithmetic operations on O(log m)-bit values for the frames, independent of m.
+    // Open: a chain whose u is a unit on K but not mod m, with exceptions that keep adding
+    // extra residues which never reach K', pays O(|A|) at every step, quadratic in the
+    // depth (LOAD-max-div-unsolved, `nonunit_persist`).
     /// The frame of the step's image.
-    fn step(&self, map: &ResidueMap, u_inv: &Int) -> Frame {
+    fn step(&self, map: &ResidueMap) -> Option<Frame> {
         let m = &self.m;
-        let mut d = self.d.clone();
+        let u = &map.u;
+        let mut missing = self.missing.clone();
+        let mut extra = self.extra.clone();
+        // Exception values produced by residues of the image; positions of K they leave.
         let mut hits = Vec::new();
+        let mut gone = Vec::new();
         for (s, b) in &map.exceptions {
-            if d.insert(self.back(s)).is_none() {
-                hits.push(b);
+            match self.position(s) {
+                Some(t) => {
+                    if !missing.contains(&self.back(&t)) {
+                        hits.push(b);
+                        gone.push(t);
+                    }
+                }
+                None => {
+                    if extra.remove(&self.extra_key(s)).is_some() {
+                        hits.push(b);
+                    }
+                }
             }
         }
-        let mut next = Frame {
-            m: Arc::clone(m),
-            u_inv: (&self.u_inv * u_inv).mod_floor(m),
-            t: (&(&map.u * &self.t) + &map.c).mod_floor(m),
-            d,
+        let g = u.gcd(&self.n);
+        let image_c = &(u * &self.c) + &map.c;
+        let mut next = if g == Int::ONE {
+            for t in &gone {
+                missing.insert(self.back(t));
+            }
+            // c + d t -> u c + C + d u t: base c' = (u c + C) mod d, t' = u t + (u c + C) div d.
+            let (u_n_inv, _) = congruence(u, &Int::ONE, &self.n)?;
+            let c = image_c.mod_floor(&self.d);
+            let k = image_c.div_floor(&self.d);
+            Frame {
+                m: Arc::clone(m),
+                c,
+                d: self.d.clone(),
+                n: self.n.clone(),
+                u: (u * &self.u).mod_floor(&self.n),
+                u_inv: (&self.u_inv * &u_n_inv).mod_floor(&self.n),
+                t0: (&(u * &self.t0) + &k).mod_floor(&self.n),
+                missing,
+                p: self.p.clone(),
+                p_inv: self.p_inv.clone(),
+                r0: self.r0.clone(),
+                extra: OrdSet::new(),
+            }
+        } else {
+            let d = &self.d * &g;
+            let n = self.n.div_floor(&g);
+            let c = image_c.mod_floor(&d);
+            let mut count: BTreeMap<Int, usize> = BTreeMap::new();
+            let positions = missing
+                .iter()
+                .map(|v| (&(&self.u * v) + &self.t0).mod_floor(&self.n))
+                .chain(gone.iter().cloned());
+            for t in positions {
+                let r = (&image_c + &(&self.d * &(u * &t))).mod_floor(m);
+                let t2 = (&r - &c).div_floor(&d).mod_floor(&n);
+                *count.entry(t2).or_insert(0) += 1;
+            }
+            let mut next = Frame::coset(m, d, c);
+            next.missing = count
+                .into_iter()
+                .filter(|(_, k)| Int::from(*k) == g)
+                .map(|(t, _)| t)
+                .collect();
+            next
         };
-        for b in hits {
-            let x = next.back(b);
-            next.d.remove(&x);
+        if let Some((u_m_inv, _)) = congruence(u, &Int::ONE, m) {
+            next.p = (u * &self.p).mod_floor(m);
+            next.p_inv = (&self.p_inv * &u_m_inv).mod_floor(m);
+            next.r0 = (&(u * &self.r0) + &map.c).mod_floor(m);
+            next.extra = extra;
+        } else {
+            // Residues outside K map one by one; those landing in K' are in the image.
+            (next.p, next.p_inv, next.r0) = (Int::ONE, Int::ONE, Int::ZERO);
+            for y in &extra {
+                let r = (&(u * &(&(&self.p * y) + &self.r0)) + &map.c).mod_floor(m);
+                match next.position(&r) {
+                    Some(t) => {
+                        next.missing.remove(&next.back(&t));
+                    }
+                    None => {
+                        next.extra.insert(r);
+                    }
+                }
+            }
         }
-        next
+        for b in hits {
+            match next.position(b) {
+                Some(t) => {
+                    next.missing.remove(&next.back(&t));
+                }
+                None => {
+                    next.extra.insert(next.extra_key(b));
+                }
+            }
+        }
+        Some(next)
     }
 
     /// The frame of k h + C over this image, k = +-1: O(1) arithmetic operations.
     fn translate(&self, k: &Int, constant: &Int) -> Frame {
+        let m = &self.m;
+        let image_c = &(k * &self.c) + constant;
+        let c = image_c.mod_floor(&self.d);
+        let q = (&image_c - &c).div_floor(&self.d);
         Frame {
-            m: Arc::clone(&self.m),
-            u_inv: (k * &self.u_inv).mod_floor(&self.m),
-            t: (&(k * &self.t) + constant).mod_floor(&self.m),
+            m: Arc::clone(m),
+            c,
             d: self.d.clone(),
+            n: self.n.clone(),
+            u: (k * &self.u).mod_floor(&self.n),
+            u_inv: (k * &self.u_inv).mod_floor(&self.n),
+            t0: (&(k * &self.t0) + &q).mod_floor(&self.n),
+            missing: self.missing.clone(),
+            p: (k * &self.p).mod_floor(m),
+            p_inv: (k * &self.p_inv).mod_floor(m),
+            r0: (&(k * &self.r0) + constant).mod_floor(m),
+            extra: self.extra.clone(),
         }
     }
 }
@@ -342,7 +479,7 @@ impl Image {
             Self::Power(e) => c.is_zero() || twos(c).is_some_and(|z| z >= *e),
             Self::Clamp(b, k) => b.contains(c, *k),
             Self::Coset(d, r) => (c - r).mod_floor(d).is_zero(),
-            Self::Missing(f) => !f.missing(&c.mod_floor(&f.m)),
+            Self::Residues(f) => f.contains(&c.mod_floor(&f.m)),
             Self::Skipping(m, k) => {
                 let r = c.mod_floor(m);
                 r.is_odd()
@@ -614,7 +751,7 @@ impl ScalarImages {
                         let c = (&(*k * &c) + &e.constant).mod_floor(&d);
                         Image::Coset(Arc::new(d), c)
                     }
-                    Image::Missing(f) => Image::Missing(Arc::new(f.translate(k, &e.constant))),
+                    Image::Residues(f) => Image::Residues(Arc::new(f.translate(k, &e.constant))),
                     _ => return None,
                 };
                 return Some(Fact {
@@ -1324,17 +1461,20 @@ impl ScalarImages {
         Some(map)
     }
 
-    /// The image of a residue-map step whose default multiplier is a unit, from an input
-    /// image that is all integers or missing residues of the same modulus. Cost as
-    /// `Frame::step`.
+    /// The image of a residue-map step from an input image that is a coset c + d Z with
+    /// d | m, or residues of the same modulus. Cost as `Frame::step`.
     fn residue_image(&self, map: &ResidueMap, def: &dyn Fn(u32) -> Formula) -> Option<Image> {
-        let (u_inv, _) = congruence(&map.u, &Int::ONE, &map.m)?;
         let frame = match self.fact(&map.h, def)?.image? {
-            Image::Missing(f) if f.m == map.m => f,
-            i if coset_of(&i) == Some((Int::ONE, Int::ZERO)) => Arc::new(Frame::identity(&map.m)),
-            _ => return None,
+            Image::Residues(f) if f.m == map.m => f,
+            i => {
+                let (d, c) = coset_of(&i)?;
+                if !map.m.mod_floor(&d).is_zero() {
+                    return None;
+                }
+                Arc::new(Frame::coset(&map.m, d, c))
+            }
         };
-        Some(Image::Missing(Arc::new(frame.step(map, &u_inv))))
+        Some(Image::Residues(Arc::new(frame.step(map)?)))
     }
 
     fn choice_image(

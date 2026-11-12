@@ -674,8 +674,8 @@ fn residue_map_images_agree_with_the_values_of_a_window_of_inputs() {
     // I49: chains of nested choices on h mod m with branch values +-h + w (h mod m) + c.
     // Each answer the scalar images give equals the one read from the values of every input
     // in a window wide enough that no input outside it reaches the questions asked; where
-    // every default multiplier p + w is a unit mod m and no step is the skipping step, every
-    // question is answered.
+    // no step is the skipping step, every question is answered, whether or not the default
+    // multipliers p + w are units mod m.
     let mut rng = 0x5eed_u64;
     let mut next = |lo: i64, hi: i64| {
         rng ^= rng << 13;
@@ -685,7 +685,7 @@ fn residue_map_images_agree_with_the_values_of_a_window_of_inputs() {
     };
     let (mut answered, mut required, mut found, mut trials) = (0, 0, 0, 0);
     for _ in 0..1500 {
-        let m = next(1, 12);
+        let m = next(1, 36);
         let mut steps = Vec::new();
         for _ in 0..next(1, 6) {
             let branch = |next: &mut dyn FnMut(i64, i64) -> i64| {
@@ -713,14 +713,12 @@ fn residue_map_images_agree_with_the_values_of_a_window_of_inputs() {
         let reach = 7 * m * steps.len() as i64;
         let window = 3 * m + reach + 1;
         let mut values: Vec<i64> = (-window..=window).collect();
-        let mut all_unit = true;
+        let mut covered = true;
         for (i, (step, out)) in steps.iter().zip(&outputs).enumerate() {
             values = values.iter().map(|&h| step.value(h, m)).collect();
-            let (p, w, _) = step.default;
-            all_unit &= Int::from(p + w).gcd(&Int::from(m)) == Int::ONE;
             let skipping = step.guards.first().is_some_and(|g| *g == (0, 1, 0, 1))
                 && step.default == (1, 0, 2);
-            all_unit &= !skipping;
+            covered &= !skipping;
             let seen: BTreeSet<i64> = values.iter().copied().collect();
             for c in -3 * m..=3 * m {
                 let q = Formula::Con(Con::eq(&Lin::atom(out.clone()), &Lin::constant(c)));
@@ -732,9 +730,9 @@ fn residue_map_images_agree_with_the_values_of_a_window_of_inputs() {
                     answered += 1;
                     assert_eq!(got, expected, "m={m} step {i} c={c}");
                 } else {
-                    assert!(!all_unit, "m={m} step {i} c={c} unanswered");
+                    assert!(!covered, "m={m} step {i} c={c} unanswered");
                 }
-                required += usize::from(all_unit);
+                required += usize::from(covered);
             }
         }
     }

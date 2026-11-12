@@ -3232,6 +3232,35 @@ fn affine_default_chain(n: usize) -> String {
     )
 }
 
+/// The steps `if H mod 1000 == 0 { H + 1 } else { H + 3 }` and `H mod 1000 + H + 1`
+/// alternating: the second doubles the residue, a multiplier that is no unit mod 1000.
+fn doubling_chain(n: usize) -> String {
+    let mut src = String::from("h0(x: int) = x;\n");
+    for i in 1..n {
+        let below = format!("h{}(x: x)", i - 1);
+        let step = if i % 2 == 1 {
+            "if H mod 1000 == 0 { H + 1 } else { H + 3 }"
+        } else {
+            "H mod 1000 + H + 1"
+        };
+        src += &format!("h{i}(x: int) = {};\n", step.replace('H', &below));
+        src += &format!("t{i}(x: int) = h{i}(x: x) == 9;\n");
+    }
+    src
+}
+
+/// One exception and the default `2 r + 1` on the remainder r by 2^40, again no unit.
+fn power_of_two_default_chain(n: usize) -> String {
+    let mut src = String::from("h0(x: int) = x;\n");
+    for i in 1..n {
+        let below = format!("h{}(x: x)", i - 1);
+        let step = "if H mod 1099511627776 == 5 { H + 7 } else { H mod 1099511627776 + H + 1 }";
+        src += &format!("h{i}(x: int) = {};\n", step.replace('H', &below));
+        src += &format!("t{i}(x: int) = h{i}(x: x) == 9;\n");
+    }
+    src
+}
+
 #[test]
 fn the_questions_of_a_chain_of_residue_maps_scale() {
     // I49. Each link moves h by an amount set by h mod M, with two exceptional residues or an
@@ -3245,6 +3274,17 @@ fn the_questions_of_a_chain_of_residue_maps_scale() {
         "a chain of an affine default with an exception",
         40,
         affine_default_chain,
+    );
+    // LOAD-max-div-unsolved: a default multiplier that shares a factor with M. The residues
+    // are the coset c + d Z with the missing ones kept by position, and the residues outside
+    // it kept apart; each step whose multiplier is no unit on the coset shrinks it by that
+    // factor, at most log2 M times. Before, the graph path: 1.2e11 instructions at 80 links
+    // for the doubling chain.
+    questions_scale_unit("a chain doubling the residue by 1000", 40, doubling_chain);
+    questions_scale_unit(
+        "a chain of a default doubling the residue by 2^40",
+        40,
+        power_of_two_default_chain,
     );
 }
 
