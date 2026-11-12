@@ -1986,14 +1986,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | merged part A + scored C (difference rule) as ece80a15c; 4 groups 0 failed; round 2: lazy-offset treap for aperiodic chains |
 | MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | negative control on main: work-scaling tests fail, bytes n=40->320: doubling 33.5MB->1596MB (47.7x), compared 52.6MB->2815MB (53.5x), name chain 28.2MB->1227MB  |
 | MSG-split-imports | impl attempt 1 | 2026-11-11 01:43 | test the_split_repair_in_an_imported_unit_ignores_the_names_its_importers_define passes (checker 19 passed, 1 ignored); negative control (ok1, ok2 counted as ta |
-| NAME-ascii-library | running | 2026-11-12 13:53 |  |
-| NAME-nonprinting | impl attempt 1 | 2026-11-12 13:28 | NAME-ascii-library: l01_02 with ascii tests (load 71.52 57.51 51.99) |
-| SOUND-top-literals | running | 2026-11-12 13:51 |  |
+| SOUND-top-literals | impl attempt 1 | 2026-11-12 13:51 | started; worktree /home/luke/Work/wt/sound-top-literals at 83aade997 |
 | TESTS-scaling-gaps | impl attempt 1 | 2026-11-08 23:59 | self-test now cubic at 50/400 (502x instr, 179-239x time; small run 2x slower 253x/138-154x, limits 13.5/27; old quadratic 2x slower 32x/26-31x vs 11.4/22.9); c |
 | TESTS-split-l01_28-staging | impl attempt 1 | 2026-11-12 02:28 | started; worktree /home/luke/Work/wt/tests-split-l01-28 on origin/main 9b8b3906c |
 | TESTS-split-reversed-boxes | impl attempt 1 | 2026-11-12 02:58 | started; worktree /home/luke/Work/wt/tests-split-reversed-boxes on origin/main 9b8b3906c |
 | TRIVIAL-walk-branches | orchestrator attempt  | 2026-11-12 11:58 | R2 own attempt: memoized shared-split picks; K3 3.43x->1.28x main, J3 1.14x->0.68x, hashes equal main |
-| WARN-refused | impl attempt 1 | 2026-11-05 04:07 | negative controls: dropping the elab merge of the checker's refusals fails 5 of 7 refused_warning tests; dropping the placement in no_state_reaches fails the re |
+| WARN-refused-placements | running | 2026-11-12 14:51 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
