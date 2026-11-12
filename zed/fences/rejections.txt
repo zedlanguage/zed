@@ -61,6 +61,7 @@ Method declared on a value
 Prefix `-` on a numeric literal's postfix chain
 Display in body position
 Syntax error
+Reserved word written where a name stands
 Named argument before a positional one
 `positional` parameter after a named one
 Argument in the wrong form

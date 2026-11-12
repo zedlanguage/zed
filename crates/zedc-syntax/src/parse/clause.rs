@@ -1,5 +1,6 @@
 //! The messages for a parse that stops in a `with` clause that gives a sentinel value, and for
-//! the reserved word `initial` written as a name (DESIGN.md sec:generations, sec:diagnostics).
+//! a reserved word written where a name stands (DESIGN.md sec:generations, sec:lexical,
+//! sec:diagnostics).
 //!
 //! Since 2026-11-11 the sentinel value of a variable a loop updates is the statement `initial x
 //! = e;`, and a `with` clause stands only on an indexed definition, each item with its key,
@@ -11,6 +12,13 @@
 //! statement written beside the statement; on an indexed definition, an item of its own
 //! variable is given its key. Each repair is parsed once more, and offered only when that parse
 //! gets past it.
+//!
+//! A reserved word written where a name stands, as `without = 3;` or `f(law) = law + 1;`, is
+//! found by the parser itself: the parse is run once more with a name in the word's place, and
+//! the word is the cause when that parse gets past the token the first one stopped at and past
+//! the token after the word (row "Reserved word written where a name stands").
+
+use std::collections::HashSet;
 
 use zedc_base::rejection::Row;
 
@@ -260,11 +268,54 @@ impl Toks<'_, '_> {
         fixed.extend_from_slice(&self.toks[close + 1..]);
         reaches(self.g, self.ring, self.start, &fixed, edit)
     }
+
+    /// Whether the parse, with the name `name` in place of each token of `at`, gets past token
+    /// `past`.
+    fn renamed(&self, at: &[usize], name: &str, past: usize) -> bool {
+        let mut fixed = self.toks.to_vec();
+        for &i in at {
+            fixed[i] = (Kind::Ident, name);
+        }
+        reaches(self.g, self.ring, self.start, &fixed, past)
+    }
+
+    /// `like`, or `like2`, `like3` and so on, the first that is no word of the text.
+    fn unused(&self, like: &str) -> String {
+        let words: HashSet<&str> = self
+            .text
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .collect();
+        let mut name = like.to_string();
+        let mut n = 1;
+        while words.contains(name.as_str()) {
+            n += 1;
+            name = format!("{like}{n}");
+        }
+        name
+    }
+
+    /// The first and last tokens on the source line of token `i`.
+    fn line(&self, i: usize) -> (usize, usize) {
+        let span = self.span(i);
+        let lo = self.text[..span.start].rfind('\n').map_or(0, |k| k + 1);
+        let hi = self.text[span.end..]
+            .find('\n')
+            .map_or(self.text.len(), |k| span.end + k);
+        let (mut a, mut b) = (i, i);
+        while a > 0 && self.span(a - 1).start >= lo {
+            a -= 1;
+        }
+        while b + 1 < self.tokens.len() && self.span(b + 1).end <= hi {
+            b += 1;
+        }
+        (a, b)
+    }
 }
 
 /// The [`Clause`] for a parse that stopped at token `far` in a `with` clause that gives a
-/// sentinel value, or at the word `initial` written as a name. The scans run over the statement and its block, and the
-/// repair is parsed once: linear in the unit, on the error path only.
+/// sentinel value, or at or after a reserved word written where a name stands. The scans run
+/// over the statement, its block or its line, and each check of a word or a repair is one more
+/// parse: linear in the unit, on the error path only.
 pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     with_item(t, far).or_else(|| reserved(t, far))
 }
@@ -496,28 +547,249 @@ fn with_item(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     })
 }
 
-/// The [`Clause`] for the reserved word `initial` written where a name stands: `initial = 0;`,
-/// `initial[0] = 1;`, `initial _ = 0;` or `x = initial;`.
+/// Each reserved word, in the order of [`crate::lex::KEYWORDS`], with what it begins (the
+/// clause of its message after "so it cannot be a name: ") and a name of like meaning that the
+/// repair offers in its place.
+pub const RESERVED: [(&str, &str, &str); 38] = [
+    (
+        "struct",
+        "it begins a struct declaration, as `struct Point { x: f64, y: f64 }`",
+        "record",
+    ),
+    (
+        "type",
+        "it begins a type declaration, as `type Meters = f64;`",
+        "kind",
+    ),
+    (
+        "interface",
+        "it begins an interface declaration, as `interface Named { name: Utf8String }`",
+        "contract",
+    ),
+    (
+        "grammar",
+        "it begins the grammar of a string type, as `Utf8String matching grammar { digit digit* }`",
+        "syntax",
+    ),
+    (
+        "matching",
+        "it gives a string type its grammar, as `Utf8String matching grammar { digit digit* }`",
+        "matched",
+    ),
+    (
+        "import",
+        "it begins an import, as `import geometry;` or `import geometry as geo;`",
+        "imported",
+    ),
+    (
+        "asc",
+        "it marks an ascending sort key, as `xs.sort(asc x -> x.name)`",
+        "ascending",
+    ),
+    (
+        "as",
+        "it renames an import or reshapes a value, as `import geometry as geo;` or \
+         `src as (i -> w)`",
+        "alias",
+    ),
+    (
+        "into",
+        "it regroups a value by its keys, as `sales into (sku -> region -> quantity)`",
+        "target",
+    ),
+    (
+        "local",
+        "it marks a definition its unit does not export, as `local helper(x) = x + 1;`",
+        "inner",
+    ),
+    (
+        "for",
+        "it begins a comprehension, as `for x in xs { x * 2 }`",
+        "each",
+    ),
+    (
+        "initial",
+        "it begins the statement `initial x = e;`, which gives `x` its value before step 0 of a \
+         loop that updates `x`",
+        "start",
+    ),
+    (
+        "in",
+        "it tests membership or names a range, as `k in m::domain`",
+        "input",
+    ),
+    (
+        "not",
+        "it negates a test, as `x is not int` or `k not in s`",
+        "negated",
+    ),
+    (
+        "loop",
+        "it begins a loop, as `loop t { while t < n; x' = x + 1; }`",
+        "cycle",
+    ),
+    (
+        "until",
+        "it begins the statement `until c;`, which ends a loop once `c` holds",
+        "limit",
+    ),
+    (
+        "while",
+        "it begins the statement `while c;`, which runs a loop as long as `c` holds",
+        "during",
+    ),
+    (
+        "break",
+        "it ends a loop early with a value, as `break e`",
+        "stop",
+    ),
+    (
+        "match",
+        "it begins a match, as `match x { 0 -> \"zero\", _ -> \"other\" }`",
+        "found",
+    ),
+    (
+        "if",
+        "it begins a conditional, as `if x < 0 { -x } else { x }`",
+        "cond",
+    ),
+    (
+        "else",
+        "it gives the other branch or a fallback value, as `if x < 0 { -x } else { x }` or \
+         `xs[0] else 0`",
+        "other",
+    ),
+    (
+        "is",
+        "it tests a value against a type, as `x is int`",
+        "matches",
+    ),
+    (
+        "mutable",
+        "it marks a binding the program changes, as `mutable total = 0;`",
+        "changing",
+    ),
+    (
+        "positional",
+        "it marks a parameter given only by position, as `half(positional x: f64) = x / 2;`",
+        "ordinal",
+    ),
+    (
+        "without",
+        "it removes a facet from a value, as `n without units(\"km\")`",
+        "rest",
+    ),
+    (
+        "with",
+        "it adds a facet or changes fields of a value, as `5 with units(\"degC\")` or \
+         `p with { x = 0.0 }`",
+        "extra",
+    ),
+    (
+        "return",
+        "it begins the statement `return e;`, which gives a block its value",
+        "result",
+    ),
+    (
+        "test",
+        "it begins the test table of a definition, as `f(x) = x + 1 test { 1 -> 2 }`",
+        "check",
+    ),
+    (
+        "law",
+        "it begins a law, as in `struct Span { lo: int, hi: int, law ordered() = lo <= hi }`",
+        "rule",
+    ),
+    (
+        "proof",
+        "it begins the proof of a law, as `law nonneg(x: int) = x * x >= 0 proof { }`",
+        "evidence",
+    ),
+    (
+        "emit",
+        "it begins the statement `emit e;`, which gives one more entry of a body",
+        "output",
+    ),
+    (
+        "this",
+        "it names the value a method is called on, as `int(this)`",
+        "current",
+    ),
+    (
+        "desc",
+        "it marks a descending sort key, as `xs.sort(desc x -> x.score)`",
+        "descending",
+    ),
+    ("div", "it divides integers, as `a div b`", "quotient"),
+    (
+        "mod",
+        "it gives the remainder of integer division, as `a mod b`",
+        "remainder",
+    ),
+    ("true", "it is a boolean value", "yes"),
+    ("false", "it is a boolean value", "no"),
+    (
+        "unordered",
+        "it marks a fold whose order does not matter, as `xs >< (+) unordered`",
+        "anyOrder",
+    ),
+];
+
+/// The [`Clause`] for a reserved word written where a name stands: `without = 3;`,
+/// `f(law) = law + 1;`, `x = s.if;`, `struct S { for: int }`. The word is the token the parse
+/// stopped at, or the last or the first reserved word before it in its statement. It is the
+/// cause when the parse with a name in its place gets past the token the first parse stopped
+/// at and past the token after the word. So `x = a is ;`, where no name in place of `is`
+/// helps, and `y = not x;`, where a name in place of `not` stops at `x`, keep the parse's own
+/// message.
 fn reserved(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
-    let at = if t.t(far) == "initial" {
-        far
-    } else if far > 0 && t.t(far - 1) == "initial" && t.toks[far].0 != Kind::Ident {
-        far - 1
-    } else {
-        return None;
-    };
+    // Complexity tradeoff: the naive check tries a name in place of each reserved word of the
+    // statement, one parse each: O(k * n) for k words in a unit of n tokens. This tries at
+    // most three, the word the parse stopped at and the last and the first before it in the
+    // statement: O(n). A reserved word between those two keeps the parse's own message
+    // (COMPLEXITY.md, MSG-keyword-as-name).
+    let keyword = |i: usize| t.toks.get(i).is_some_and(|k| k.0 == Kind::Keyword);
+    let first = t.stmt_first(far);
+    let last = (first..far).rev().find(|&i| keyword(i));
+    let at = [
+        Some(far).filter(|&i| keyword(i)),
+        last,
+        (first..far).find(|&i| keyword(i)),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|&i| t.renamed(&[i], "x", far.max(i + 1)))?;
+    let word = t.t(at);
+    let (_, what, like) = RESERVED.iter().find(|r| r.0 == word)?;
+    let name = t.unused(like);
     let span = t.span(at);
+    // The repair: the word's line with the name in place of the word, everywhere on the line
+    // the word stands, or else only here; offered when the parse then gets past the line.
+    let (a, b) = t.line(at);
+    let everywhere: Vec<usize> = (a..=b).filter(|&i| keyword(i) && t.t(i) == word).collect();
+    let repair = [everywhere, vec![at]]
+        .into_iter()
+        .find(|s| t.renamed(s, &name, b))
+        .map(|s| {
+            let mut line = String::new();
+            let mut from = t.span(a).start;
+            for i in s {
+                line.push_str(&t.text[from..t.span(i).start]);
+                line.push_str(&name);
+                from = t.span(i).end;
+            }
+            line.push_str(&t.text[from..t.span(b).end]);
+            format!("repair: `{line}`, `{name}` in place of `{word}`")
+        })
+        .unwrap_or_else(|| format!("repair: another name in place of `{word}`, as `{name}`"));
     Some(Clause {
-        row: None,
-        message: "`initial` is a reserved word, so it names no variable: it begins the statement \
-                  `initial x = e;`, which gives `x` its value before step 0 of a loop that \
-                  updates `x`. Write another name in its place."
-            .into(),
+        row: Some(Row::ReservedWordAsName),
+        message: format!(
+            "`{word}` is a reserved word, so it cannot be a name: {what}. Write another name in \
+             its place, here and wherever the program uses it as a name."
+        ),
         span,
-        notes: vec![(
-            span,
-            "repair: another name in place of `initial`, as `start`".into(),
-        )],
+        notes: vec![(span, repair)],
     })
 }
 

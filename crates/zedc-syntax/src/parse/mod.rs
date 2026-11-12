@@ -23,8 +23,8 @@ use std::fmt;
 use std::mem;
 use std::sync::OnceLock;
 
-pub use clause::Clause;
 use clause::kind;
+pub use clause::{Clause, RESERVED};
 pub use engine::{Expected, Input, Node, Parser, literal_matches};
 pub use grammar::{Alt, Expr, Grammar, Kind, Line, Rule, is_space, marked_rule, split_line};
 
@@ -91,8 +91,8 @@ pub struct Error {
     /// A message that says more than the expected tokens: [`DOTS`] for a `..` in a list.
     pub message: Option<&'static str>,
     /// The row and message for a parse that stopped in a `with` clause that gives a sentinel
-    /// value, as `with initial x = 0` or `with x = 0`, or at the reserved word `initial`
-    /// written as a name; `span` is then the span of the item or the word.
+    /// value, as `with initial x = 0` or `with x = 0`, or at a reserved word written where a
+    /// name stands, as `without = 3;`; `span` is then the span of the item or the word.
     pub clause: Option<Box<Clause>>,
 }
 

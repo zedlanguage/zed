@@ -199,30 +199,40 @@ fn initial_may_stand_anywhere_in_the_body() {
 }
 
 /// `initial` is a reserved word: as a name it is a parse error that says so, wherever it
-/// stands.
+/// stands (row "Reserved word written where a name stands"). `initial _ = 0;` begins the
+/// statement as it should, and gets the parse's own message at `_`, which is no name.
 #[test]
 fn initial_is_a_reserved_word() {
-    const MESSAGE: &str = "`initial` is a reserved word, so it names no variable: it begins the \
+    const MESSAGE: &str = "`initial` is a reserved word, so it cannot be a name: it begins the \
                            statement `initial x = e;`, which gives `x` its value before step 0 \
-                           of a loop that updates `x`. Write another name in its place.";
-    for (src, at) in [
-        ("initial = 0;", 0),
-        ("initial[0] = 1;", 0),
-        ("initial _ = 0;", 0),
-        ("f(initial) = initial + 1;", 2),
+                           of a loop that updates `x`. Write another name in its place, here \
+                           and wherever the program uses it as a name.";
+    for (src, at, repair) in [
+        ("initial = 0;", 0, "start = 0;"),
+        ("initial[0] = 1;", 0, "start[0] = 1;"),
+        ("f(initial) = initial + 1;", 2, "f(start) = start + 1;"),
     ] {
         let tokens = lex(src).unwrap();
         let e = parse(src, &tokens, "Unit", TOP).expect_err(src);
         let e = Error::from(e);
-        assert_eq!(e.row, None, "{src}");
+        assert_eq!(e.row, Some(Row::ReservedWordAsName), "{src}");
         assert_eq!(e.message, MESSAGE, "{src}");
         assert_eq!(e.span.start, at, "{src}");
         assert_eq!(
             notes(src, &e),
-            ["repair: another name in place of `initial`, as `start` [initial]"],
+            [format!(
+                "repair: `{repair}`, `start` in place of `initial` [initial]"
+            )],
             "{src}"
         );
     }
+    let src = "initial _ = 0;";
+    let tokens = lex(src).unwrap();
+    let e = Error::from(parse(src, &tokens, "Unit", TOP).expect_err(src));
+    assert_eq!(
+        (e.row, e.message.as_str(), e.span.start),
+        (None, "expected a name", 8)
+    );
 }
 
 /// The forms `with initial` and a `with` clause on a statement of a loop are gone.

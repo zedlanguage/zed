@@ -10,5 +10,6 @@ mod grammar_shape;
 mod left_recursion;
 mod lr4_assoc;
 mod plain_names;
+mod reserved;
 mod rings;
 mod scaling;

@@ -238,6 +238,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         Some("`x = 0;`, a plain binding"),
     ),
     (
+        Row::ReservedWordAsName,
+        "",
+        "rest = 3;\n",
+        "without = 3;\n",
+        "1:1",
+        Some("`rest = 3;`, `rest` in place of `without`"),
+    ),
+    (
         Row::InitialNotUpdated,
         "r = loop t {\n  while t < 3;\n  initial y = 0;\n",
         "  y' = y + t;\n};\n",

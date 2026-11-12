@@ -117,6 +117,7 @@ rows! {
     DisplayInBody => "Display in body position",
     // No diagnostic uses this row yet: plan row L1.29d emits it.
     SyntaxError => "Syntax error",
+    ReservedWordAsName => "Reserved word written where a name stands",
     NamedBeforePositional => "Named argument before a positional one",
     PositionalAfterNamed => "`positional` parameter after a named one",
     WrongForm => "Argument in the wrong form",

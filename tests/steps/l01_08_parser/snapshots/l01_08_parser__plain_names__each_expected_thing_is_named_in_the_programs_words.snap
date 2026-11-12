@@ -19,6 +19,6 @@ expression: out
 "g = (a, b) -> ;"
   line 1, at ";": expected '!' or '(' or '-' or '?' or '[' or 'break' or 'false' or 'for' or 'if' or 'loop' or 'match' or 'this' or 'true' or '{' or a name or a number or a string or an atom such as `#name` or an annotation such as `@name`
 "match = 3;"
-  line 1, at "=": expected '!' or '(' or '-' or '?' or '[' or 'false' or 'for' or 'if' or 'loop' or 'match' or 'this' or 'true' or '{' or a name or a number or a string or an atom such as `#name` or an annotation such as `@name`
+  line 1, at "=": `match` is a reserved word, so it cannot be a name: it begins a match, as `match x { 0 -> "zero", _ -> "other" }`. Write another name in its place, here and wherever the program uses it as a name.
 "x = 1;\ns = \"v ${x x}\";"
   line 2, at "x": expected '!=' or '&&' or '(' or '*' or '*.' or '+' or '++' or '-' or '->' or '.' or '..' or '..<' or '..=' or '/' or '::' or '<' or '<=' or '==' or '>' or '><' or '>=' or '?.' or '[' or '^' or 'as' or 'div' or 'else' or 'in' or 'into' or 'is' or 'mod' or 'not' or 'with' or 'without' or '||' or '}'
