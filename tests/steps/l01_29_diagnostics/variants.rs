@@ -132,6 +132,36 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
                 zed_tests::not_yet!("the reduction `with units(\"m\")`")
             ),
         ),
+        // The assumed units and the argument conversion of sec:facets (plan rows
+        // UNITS-assumed-args and UNITS-text-lengths).
+        (
+            "argument-unit-not-convertible",
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+            ),
+        ),
+        (
+            "text-length-in-bytes",
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+            ),
+        ),
+        (
+            "byte-length-against-kilobytes",
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+            ),
+        ),
+        (
+            "key-in-bytes-for-codepoints",
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+            ),
+        ),
     ];
     let names: Vec<String> = std::fs::read_dir(DIR)
         .unwrap()

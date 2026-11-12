@@ -111,7 +111,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  13 | }
 == DESIGN.md [sec:codecs] 3 L7
   2 | main ( m : MainArgs ) {
-  3 | m . stdout <- str[${m . stdin :: bytes :: len} " bytes"] ;
+  3 | m . stdout <- str[${m . stdin :: bytes :: len}] ;
   4 | }
 == DESIGN.md [sec:codecs] 4 L20
   3 | «struct» Event { name : Utf8String , at : int }
@@ -255,8 +255,23 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  24 | celsius = UnitDef ( name : str["°C"] , ascii : str["degC"] , unit : str["K"] , offset : 27315r / 100r ) ;
  25 | ohm = UnitDef ( name : str["Ω"] , ascii : str["Ohm"] , unit : str["V/A"] , prefixes : [ str["μ"] , str["m"] , str["k"] , str["M"] , str["G"] ] ) ;
  26 | micron = UnitSpelling ( spelling : str["micron"] , means : str["μm"] ) ;
- 27 | px = UnitDef ( name : str["px"] , unit : #base ) ;
-== DESIGN.md [sec:facets] 3 L12
+ 27 | byte = UnitDef ( name : str["B"] , unit : #base , prefixes : [ str["k"] , str["M"] , str["G"] , str["T"] , str["P"] , str["E"] , str["Z"] , str["Y"] , str["Ki"] , str["Mi"] , str["Gi"] , str["Ti"] , str["Pi"] , str["Ei"] ] ) ;
+ 28 | bit = UnitDef ( name : str["bit"] , unit : str["B"] , factor : 1r / 8r , prefixes : [ str["k"] , str["M"] , str["G"] , str["T"] , str["Ki"] , str["Mi"] , str["Gi"] , str["Ti"] ] ) ;
+ 29 | px = UnitDef ( name : str["px"] , unit : #base ) ;
+== DESIGN.md [sec:facets] 3 L18
+  1 | @stack ( bytes : 1₍10₎ «with» units ( str["GiB"] ) ) deep ( n : int ) = n + 1₍10₎ ;
+  2 | @stack ( 1₍10₎ «with» units ( str["Gbit"] ) ) wide ( n : int ) = n + 1₍10₎ ;
+  3 | @stack ( bytes : 65536₍10₎ ) leaf ( n : int ) = n + 1₍10₎ ;
+  4 | heat ( t : f64 «with» units ( str["K"] ) ) = t ;
+  5 | warm = heat ( t : 20.0f «with» units ( str["degC"] ) ) ;
+  6 | take ( n : int «with» assumedUnits ( str["B"] ) ) = n ;
+  7 | a = take ( n : 3₍10₎ ) ;
+  8 | b = take ( n : 3₍10₎ «with» units ( str["bit"] ) ) ;
+  9 | s = str["naïve"] ;
+ 10 | long = s :: len > 3₍10₎ ;
+ 11 | bytesLong = s :: u8 :: len > 5₍10₎ ;
+ 12 | first = s :: u8 [ 0₍10₎ ] ;
+== DESIGN.md [sec:facets] 4 L12
   1 | force = 3.0f64 «with» units ( str["N"] ) ;
   2 | arm = 2.0f64 «with» units ( str["m"] ) ;
   3 | work = force * arm ;
@@ -265,7 +280,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   6 | doubled = 2.0f * source ;
   7 | share = 25r «with» units ( str["%"] ) ;
   8 | part = share . to ( str["1"] ) ;
-== DESIGN.md [sec:facets] 4 L12
+== DESIGN.md [sec:facets] 5 L12
   1 | noon = 20.0f64 «with» units ( str["°C"] ) ;
   2 | morning = 12.5f64 «with» units ( str["degC"] ) ;
   3 | rise = noon - morning ;
@@ -273,7 +288,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   5 | later = noon + ( 2.0f «with» units ( str["K"] ) ) ;
   6 | later2 = ( 25.0f64 «with» units ( str["degC"] ) ) + ( 5.0f «with» units ( str["K"] ) ) ;
   7 | warmer = noon > morning ;
-== DESIGN.md [sec:facets] 5 L12
+== DESIGN.md [sec:facets] 6 L12
   1 | len = 5.0f64 «with» units ( str["m"] ) ;
   2 | y = log ( len ) ;
   3 | sq = log ( len * len ) ;
@@ -284,7 +299,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   8 | nearKm = far . to ( str["log10(km)"] ) ;
   9 | inE = log ( 1.0f «with» units ( str["km"] ) ) . to ( str["log(m)"] ) ;
  10 | ratio = y - log ( 1.0f «with» units ( str["m"] ) ) ;
-== DESIGN.md [sec:facets] 6 L12
+== DESIGN.md [sec:facets] 7 L12
   1 | n = 1200₍10₎ «with» units ( str["m"] ) ;
   2 | x = f64 ( n ) «else» round ( n ) ;
   3 | label = str[${n}] ;

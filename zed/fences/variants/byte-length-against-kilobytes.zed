@@ -1,0 +1,17 @@
+// variant: // e = s::u8::len > (1 with units("kB"));              // ✗ Units that differ where an operation requires equal ones: s::u8::len : B > 1 : kB; write (1 with units("kB")).to("B")
+@stack(bytes: 1 with units("GiB")) deep(n: int) = n + 1;   // 1073741824 B
+@stack(1 with units("Gbit")) wide(n: int) = n + 1;     // 125000000 B: one parameter, so no label is needed
+@stack(bytes: 65536) leaf(n: int) = n + 1;             // a bare number, 65536 B
+heat(t: f64 with units("K")) = t;
+warm = heat(t: 20.0 with units("degC"));               // t is 293.15 K
+take(n: int with assumedUnits("B")) = n;
+a = take(n: 3);                                         // 3 with units("B")
+b = take(n: 3 with units("bit"));                       // 1 with units("B"), rounded up
+s = "naïve";
+long = s::len > 3;                                     // true: 5 codepoint > 3 codepoint
+bytesLong = s::u8::len > 5;                            // true: 6 B > 5 B
+first = s::u8[0];                                      // 110, the key 0 read in B
+// c = take(n: 3 with units("m"));                     // ✗ Argument whose unit does not convert to its parameter's: n is in B, and m does not convert to B
+// d = s::len > (3 with units("B"));                   // ✗ Units that differ where an operation requires equal ones: s::len : codepoint > 3 : B
+e = s::u8::len > (1 with units("kB"));              // ✗ Units that differ where an operation requires equal ones: s::u8::len : B > 1 : kB; write (1 with units("kB")).to("B")
+// f = s::codepoints[s::u8::len - 1];                  // ✗ Argument whose unit does not convert to its parameter's: s::codepoints is keyed in codepoint, and s::u8::len - 1 is in B

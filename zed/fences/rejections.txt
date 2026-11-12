@@ -102,6 +102,9 @@ Two different declarations of one unit name, or of one spelling
 `UnitDef` that is not a constant at a unit's top level
 Conversion whose factor the carrier cannot hold
 `.to` between units of different full expansions
+Argument whose unit does not convert to its parameter's
+Number with no unit for a parameter declared `units(u)`
+`assumedUnits` beside `units` on one declaration, or written where it does not attach
 No `+` of two point readings
 Point unit in a product, quotient or power
 Fact written on a value that carries a different one
