@@ -265,18 +265,18 @@ fn parse_one<'t>(
         let mut expected: Vec<String> = p.expected().iter().map(shown).collect();
         expected.sort();
         let dots = dots_in_list(&toks, p.far);
-        let found = clause::clause(
-            &clause::Toks {
-                g,
-                ring,
-                start,
-                text,
-                tokens,
-                toks: &toks,
-                end,
-            },
-            p.far,
-        );
+        let t = clause::Toks {
+            g,
+            ring,
+            start,
+            text,
+            tokens,
+            toks: &toks,
+            end,
+        };
+        // A boundary clause in a test case first: there the clause is refused whole, not item
+        // by item as on a statement.
+        let found = case::case_item(&t, p.far).or_else(|| clause::clause(&t, p.far));
         return Err(Error {
             span: span(dots.unwrap_or(p.far)),
             expected,

@@ -9,7 +9,7 @@ expression: out
 "x = 1;\ny = 2 3;"
   line 2, at "3": expected '!=' or '&&' or '(' or '*' or '*.' or '+' or '++' or '-' or '.' or '..' or '..<' or '..=' or '/' or '::' or ';' or '<' or '<=' or '==' or '>' or '><' or '>=' or '?.' or '[' or '^' or 'as' or 'div' or 'else' or 'in' or 'into' or 'is' or 'mod' or 'not' or 'with' or 'without' or '||'
 "x = 1;\n}\n"
-  line 2, at "}": expected '!' or '(' or '-' or '?' or '[' or 'break' or 'emit' or 'false' or 'for' or 'if' or 'import' or 'interface' or 'law' or 'local' or 'loop' or 'match' or 'mutable' or 'return' or 'struct' or 'this' or 'true' or 'type' or 'until' or 'while' or '{' or '_' or a name or a number or a string or an atom such as `#name` or an annotation such as `@name` or the end of the text
+  line 2, at "}": expected '!' or '(' or '-' or '?' or '[' or 'break' or 'emit' or 'false' or 'for' or 'if' or 'import' or 'initial' or 'interface' or 'law' or 'local' or 'loop' or 'match' or 'mutable' or 'return' or 'struct' or 'this' or 'true' or 'type' or 'until' or 'while' or '{' or '_' or a name or a number or a string or an atom such as `#name` or an annotation such as `@name` or the end of the text
 "@test(1 x = 1;"
   line 1, at "x": expected ')' or ','
 "xs = [1, 2, 3;"

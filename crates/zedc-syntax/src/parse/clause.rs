@@ -262,14 +262,11 @@ impl Toks<'_, '_> {
     }
 }
 
-/// The [`Clause`] for a parse that stopped at token `far` in a boundary clause written in a test
-/// case ([`super::case::case_item`]), in a `with` clause that gives a sentinel value, or at the
-/// word `initial` written as a name. The scans run over the statement and its block, and the
+/// The [`Clause`] for a parse that stopped at token `far` in a `with` clause that gives a
+/// sentinel value, or at the word `initial` written as a name. The scans run over the statement and its block, and the
 /// repair is parsed once: linear in the unit, on the error path only.
 pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
-    super::case::case_item(t, far)
-        .or_else(|| with_item(t, far))
-        .or_else(|| reserved(t, far))
+    with_item(t, far).or_else(|| reserved(t, far))
 }
 
 fn with_item(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
