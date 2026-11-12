@@ -80,7 +80,7 @@
 //! `product::Scope::warnings` reports as one warning each, with the constraint it was asked of.
 //! Every integer, written or derived, is unbounded.
 
-use std::cell::{Cell, OnceCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -3434,7 +3434,7 @@ fn take(cons: &[Con], acc: &mut Linked, near: &mut Near) {
 /// bounds. A repair then costs the constraints that link its atoms to others and two bounds
 /// for each atom, not every constraint an atom has had alone: on a chain of `k` guards
 /// `i >= j` on one input, listing them made the repair of each of the `k` levels cost `k`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Near {
     by_atom: BTreeMap<Atom, Vec<usize>>,
     /// The least and the greatest value of an atom; a least above the greatest leaves none.
@@ -4642,8 +4642,8 @@ fn probe_kept_status(
                             // `l01_25_preimage_catalog::s22::chains_on_two_inputs_keep_their_boxes`
                             // reaches it (cross at `k = 51`); `chain_cross_above_its_width_scales` (cross
                             // at 12 and 96, COMPLEXITY.md S22: 40.0 times the bytes with one propagation
-                            // per disjunct, 10.1 times now) and
-                            // `l01_38_presburger::probe::guards_beyond_the_inputs_scale` measure it. A
+                            // per disjunct, 10.1 times now) and `l01_38_presburger::probe::`
+                            // `projecting_guards_beyond_the_inputs_scales` measure it. A
                             // complete solution is a `settle` that returns, with each refutation, the
                             // constraints its proof used (a conflict explanation), so that one propagation
                             // removes every disjunct those constraints exclude. The linked test is that
@@ -5019,9 +5019,10 @@ impl<'a> Unit<'a> {
 /// bounds' magnitude, not with the parts. Trigger: a proof that needs a bound carried back
 /// along a chain after it was carried there. Tests:
 /// `l01_25_preimage_catalog::s22::chain_cross_above_its_width_scales` (cross at 12 and 96,
-/// COMPLEXITY.md S22) and `l01_38_presburger::probe::guards_beyond_the_inputs_scale` (guards
-/// on symbols whose names do not sort in the chain's order). A complete solution is the exact
-/// projection of the formula onto `x`, which with disjunctions is exponential in them.
+/// COMPLEXITY.md S22) and `l01_38_presburger::probe::projecting_guards_beyond_the_inputs_scales`
+/// (guards on symbols whose names do not sort in the chain's order). A complete solution is
+/// the exact projection of the formula onto `x`, which with disjunctions is exponential in
+/// them.
 fn bounds_refute(f: &Parts, x: &Atom, extra: &Con) -> bool {
     let units = Unit::all(f);
     let order = read_order(&units, Some(x));
@@ -5399,11 +5400,43 @@ fn search_by_halves(
 ) -> Vec<Vec<bool>> {
     // Whether a search has found a point, which with `stop` ends the searches.
     let hit = Cell::new(false);
-    let mut cons = p.cons.clone();
-    implied
-        .one
-        .keys()
-        .for_each(|a| implied.bounds(a, &mut cons));
+    // The constraints every search takes: the parts' own and the bounds of one atom that the
+    // formula implies, those found below by [`learn`] included.
+    let with_bounds = |implied: &Near| {
+        let mut cons = p.cons.clone();
+        (implied.one.keys()).for_each(|a| implied.bounds(a, &mut cons));
+        cons
+    };
+    let cons = RefCell::new(with_bounds(implied));
+    // Complexity tradeoff: halving down to one disjunct costs a search of the whole formula
+    // for each disjunct with no point, which [`probe_kept_status`] then removes anyway; when
+    // `f` of them have no point because the formula bounds one atom they all bound, as on a
+    // chain of `k` guards `i >= j` beyond the inputs (`f` near `k/4`), those `2f` searches cost
+    // `O(k^2)` while [`learn`] removes them all with `O(log k)` propagations (41.0 times the
+    // bytes at `8k` from 16, limit 15.4, ledger PROBE-guards). And a search that fails without
+    // the bound, which the search does not see, fails again for each other disjunct alone
+    // (`k/2` more there, each with a point). Used: a disjunct whose search alone fails is
+    // handed to [`learn`] at once, whose bounds every later search takes, and a disjunct they
+    // exclude is not searched but marked failed (47.3 M and 440.6 M bytes, 9.3 times). The
+    // bounds stay here: handed back to [`probe_kept_status`], they changed what its later
+    // searches found by the order of the disjuncts, and three boxes of the transfer before in
+    // `l01_25_preimage_catalog::s22::reversed_parts_give_the_same_boxes_*` differed in reverse;
+    // its own [`learn`] removes the disjuncts marked failed as before, the first by a `settle`
+    // and the rest by the bound it learns. Each such failure costs [`learn`]'s tests, at least
+    // one [`bounds_refute`] or [`settle`] of the whole formula for each bound of one atom it
+    // writes, a constant factor on the search that failed, and `O(log m)` of them when they
+    // find a bound. Tests: `l01_38_presburger::probe::projecting_guards_beyond_the_inputs_scales`
+    // and `guards_are_projected_onto_each_input`.
+    let found = RefCell::new(Near::clone(implied));
+    let learn_at = |i: usize, at: usize| {
+        let mut q = p.clone();
+        let rest = mem::take(&mut q.ors[i]);
+        // `rest` keeps the disjunct whose search failed: that failure proves nothing, so the
+        // formula [`learn`] asks is all of `p`.
+        learn(&q, rest, &p.ors[i][at], &mut found.borrow_mut());
+        *cons.borrow_mut() = with_bounds(&found.borrow());
+    };
+    let excluded = |i: usize, at: usize| found.borrow().refutes(&p.ors[i][at].cons);
     // Complexity tradeoff: a set of values of one atom that is kept untested ([`one_atom_set`]
     // in [`probe_unhandled`]), every disjunct of it held, was read by each search, so `r`
     // searches over a set of `h` pieces cost `O(r h)` more: on a chain of `k` cases of one
@@ -5425,13 +5458,13 @@ fn search_by_halves(
         .collect();
     // The constraints that every search takes, indexed for the repairs below.
     let mut base = Near::default();
-    cons.iter().for_each(|c| base.add(0, c));
+    cons.borrow().iter().for_each(|c| base.add(0, c));
     // One search with the disjuncts in `forced` (by disjunction) all taken, and without the
     // sets above when `bare`; a point, the disjuncts [`pick`] took, and, when `note`, the
     // constraints of those disjuncts indexed.
     let ask = |held: &[Vec<bool>], forced: &[Vec<usize>], bare: bool, note: bool| {
         let mut q = Parts {
-            cons: cons.clone(),
+            cons: cons.borrow().clone(),
             ors: Vec::new(),
             atoms: OnceCell::new(),
             hull: OnceCell::new(),
@@ -5520,7 +5553,7 @@ fn search_by_halves(
         // The disjuncts that wait, by disjunction.
         let mut waiting: Vec<Vec<usize>> = vec![Vec::new(); p.ors.len()];
         for (i, at) in left {
-            if held[i][at] {
+            if held[i][at] || excluded(i, at) {
                 continue;
             }
             let d = &p.ors[i][at];
@@ -5542,7 +5575,15 @@ fn search_by_halves(
             &mut waiting,
             split_halves,
             &mut search,
+            (&learn_at, &excluded),
         );
+    }
+    // A disjunct the bounds learned exclude has no point; it is marked failed, so that it is not
+    // searched forward again.
+    for (i, o) in p.ors.iter().enumerate() {
+        for at in 0..o.len() {
+            failed[i][at] |= !held[i][at] && excluded(i, at);
+        }
     }
     failed
 }
@@ -5605,11 +5646,17 @@ fn hold_waiting(
     }
 }
 
+/// What [`by_halves_of`] does with a disjunct whose search alone fails ([`learn`] at it), and
+/// whether the bounds learned exclude a disjunct.
+type Learning<'a> = (&'a dyn Fn(usize, usize), &'a dyn Fn(usize, usize) -> bool);
+
 /// [`search_by_halves`]'s searches of one round: all the disjuncts of `round` forced, and on
 /// a failure each half in turn, down to one, which is then marked in `failed`. `waiting` is
 /// handed to each search. Without `split_halves` (every disjunct no point holds was already
 /// probed by [`slack::find_probe_points`]), the halves are split two levels deep and no
 /// further, and nothing is marked in `failed`.
+/// A disjunct whose search alone fails is handed to `learning.0` ([`learn`]), and a disjunct
+/// that `learning.1` finds excluded by the bounds learned is dropped from the searches.
 // Complexity tradeoff: halving down to one disjunct costs up to `2s` searches of the whole
 // formula for a round of `s` disjuncts with no point together, which on the subset sums that
 // the slack probes have already read is quadratic or worse: `ss` decide 79M, 288M, 1,081M,
@@ -5627,12 +5674,15 @@ fn by_halves_of(
     waiting: &mut [Vec<usize>],
     split_halves: bool,
     search: &mut impl FnMut(&mut [Vec<bool>], &[Vec<usize>], &mut [Vec<usize>]) -> bool,
+    learning: Learning<'_>,
 ) {
     let width = failed.len();
     let deepest = if split_halves { usize::MAX } else { 2 };
     let mut stack = vec![(round, 0usize)];
     while let Some((s, depth)) = stack.pop() {
-        let s: Vec<(usize, usize)> = s.into_iter().filter(|&(i, at)| !held[i][at]).collect();
+        let s: Vec<(usize, usize)> = (s.into_iter())
+            .filter(|&(i, at)| !held[i][at] && !learning.1(i, at))
+            .collect();
         if s.is_empty() {
             continue;
         }
@@ -5646,6 +5696,7 @@ fn by_halves_of(
         }
         if let [(i, at)] = s[..] {
             failed[i][at] = true;
+            learning.0(i, at);
         } else {
             let mid = s.len() / 2;
             stack.push((s[mid..].to_vec(), depth + 1));

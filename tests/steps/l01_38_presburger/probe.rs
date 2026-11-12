@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet, Num};
-use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared, decide, project_each, satisfiable};
+use zedc::store::presburger::{
+    Atom, Con, Formula, Lin, Shared, decide, project_each, satisfiable, with_parts_reversed,
+};
 
 use super::repair::{answers, guards, guards_point};
 
@@ -64,11 +66,12 @@ fn guards_inside_the_inputs_are_answered() {
 /// formula implies `i > k/4`, and the `k/4` disjuncts `i <= j - 1` for `j` up to `k/4 + 1`
 /// have no point. Each was refuted by its own propagation of the whole chain, 17.1 M and
 /// 712.1 M bytes, 41.7 times (ledger LIN-probe-refute); one search over the bounds the
-/// disjuncts write refutes them all with `O(log k)` propagations, 11.0 times. The symbols
-/// `t10`, `t100` and `t2` do not sort in the chain's order, so the propagation of bounds must
-/// follow the chain's structure, not its names.
+/// disjuncts write refutes them all with `O(log k)` propagations, 11.0 times. Since
+/// PROJECT-abs-chain-quadratic the bounds of the parts, carried along the chain, answer the
+/// question with one propagation and no probe: 35.9 M and 345.3 M instructions, 9.6 times
+/// (ledger PROBE-guards). The symbols `t10`, `t100` and `t2` do not sort in the chain's
+/// order, so the propagation of bounds must follow the chain's structure, not its names.
 #[test]
-#[ignore = "PROBE-guards: 17.1 times the work at 16 and 128 guards, over the n log n limit 15.4 since SCALE-ratio; open"]
 fn guards_beyond_the_inputs_scale() {
     let make = |n: usize| guards(n, 3 * n as i64 / 4, false);
     let (small, large) = (make(16), make(16 * scaling::FACTOR));
@@ -77,6 +80,85 @@ fn guards_beyond_the_inputs_scale() {
         16,
         |n| {
             assert_eq!(decide(if n == 16 { &small } else { &large }), Ok(true));
+        },
+    );
+}
+
+/// The values of `i` (or of `m`, with `of_m`) at which some value of the other input in
+/// `[-w, w]` meets [`guards`]' demand, counted from every point.
+fn guards_values(k_: usize, w: i64, meet: bool, of_m: bool) -> Vec<i64> {
+    let meets = |i: i64, m: i64| {
+        let t = m + (1..=k_ as i64).filter(|&j| i < j).count() as i64;
+        (t >= 0) == meet
+    };
+    (-w..=w)
+        .filter(|&v| (-w..=w).any(|u| if of_m { meets(u, v) } else { meets(v, u) }))
+        .collect()
+}
+
+/// Projects [`guards`] onto `i` and `m` and checks each set against [`guards_values`] at every
+/// value from `-w - 2` to `w + 2`, with nothing left out, and that the sets are the same with
+/// the disjunctions and their disjuncts read in reverse ([`with_parts_reversed`]).
+fn projects_guards(k_: usize, w: i64, meet: bool) {
+    let f = guards(k_, w, meet);
+    let syms = [Atom::Sym(Arc::from("i")), Atom::Sym(Arc::from("m"))];
+    let (each, skipped) = project_each(&f, &syms).expect("projected");
+    assert!(skipped.is_empty(), "k {k_} w {w} meet {meet}: {skipped:?}");
+    let reversed = with_parts_reversed(|| project_each(&f, &syms)).expect("projected");
+    assert_eq!(
+        (&each, &skipped),
+        (&reversed.0, &reversed.1),
+        "k {k_} w {w} meet {meet}: reversed"
+    );
+    for (s, of_m) in each.into_iter().zip([false, true]) {
+        let s = s.expect("a set");
+        let values = guards_values(k_, w, meet, of_m);
+        for v in (-w - 2)..=(w + 2) {
+            let at = format!("k {k_} w {w} meet {meet} of_m {of_m}: {v}");
+            assert_eq!(s.contains(v), values.contains(&v), "{at}");
+        }
+    }
+}
+
+/// The projections onto each input of the chains of 1 to 16 guards on inputs from 0 to 8
+/// wide, the guards inside, at and beyond the inputs, both demands: the probe's searches take
+/// the bounds that the solver's `learn` finds when a search fails, and drop the
+/// disjuncts those bounds exclude, so a bound learned too strong would remove values here.
+#[test]
+fn guards_are_projected_onto_each_input() {
+    for w in 0..=8 {
+        for k_ in 1..=16 {
+            for meet in [true, false] {
+                projects_guards(k_, w, meet);
+            }
+        }
+    }
+}
+
+/// The projection onto `i` of the counter below zero with `k` guards on inputs `3k/4` wide,
+/// at `k = 16` and `128`: `i` from `k/4 + 1` to `3k/4`. The `k/4` disjuncts `i <= j - 1`, `j`
+/// up to `k/4 + 1`, have no point, and the others' searches failed alone without the bound
+/// `i >= k/4 + 1`: halving down to each disjunct cost a search of the whole formula each,
+/// 65.3 M and 2,679.6 M bytes, 41.0 times (limit 15.4, ledger PROBE-guards). Now the first
+/// search that fails alone hands its disjunct to `learn`, whose bound every later search of the
+/// round takes and which excludes the other dead disjuncts unsearched: 47.3 M and 440.6 M
+/// bytes, 9.3 times, and 9.3 times the instructions.
+#[test]
+fn projecting_guards_beyond_the_inputs_scales() {
+    let make = |n: usize| guards(n, 3 * n as i64 / 4, false);
+    let (small, large) = (make(16), make(16 * scaling::FACTOR));
+    let i = [Atom::Sym(Arc::from("i"))];
+    scaling::check(
+        "projection onto i of a chain of k guards beyond inputs 3k/4 wide",
+        16,
+        |n| {
+            let (each, skipped) =
+                project_each(if n == 16 { &small } else { &large }, &i).expect("projected");
+            assert!(skipped.is_empty(), "{n}: {skipped:?}");
+            let (lo, hi) = (n as i64 / 4 + 1, 3 * n as i64 / 4);
+            let at =
+                IntervalSet::from_pieces(vec![(End::Fin(Num::from(lo)), End::Fin(Num::from(hi)))]);
+            assert_eq!(each[0].clone().expect("a set"), at, "{n}");
         },
     );
 }
