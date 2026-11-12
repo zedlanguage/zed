@@ -159,13 +159,12 @@ struct Site<'s> {
     parts: Option<&'s [Expr]>,
 }
 
-/// What a walk of expressions finds: the names read, each with its span, in the order met; the
-/// names bound inside the walked code; and the receivers of `x*.m` calls.
+/// What a walk of expressions finds: the names read, each with its span, in the order met; and
+/// the names bound inside the walked code.
 #[derive(Default)]
 struct Found<'e> {
     reads: Vec<(&'e str, Span)>,
     bound: HashSet<&'e str>,
-    spread: Vec<&'e str>,
 }
 
 /// Walks `roots` and the statements `stmts`, without entering the body of a nested `loop`,
@@ -197,12 +196,7 @@ fn walk<'e>(roots: &[&'e Expr], stmts: &'e [Stmt]) -> Found<'e> {
                 StrPart::Hole(e) => Some(e),
                 StrPart::Text(_) => None,
             })),
-            ExprKind::Spread { of, .. } => {
-                if let ExprKind::Name(n) = &of.kind {
-                    found.spread.push(unprimed(n));
-                }
-                exprs.push(of);
-            }
+            ExprKind::Spread { of, .. } => exprs.push(of),
             ExprKind::Unary(_, a)
             | ExprKind::Is { of: a, .. }
             | ExprKind::Member { of: a, .. }
@@ -392,6 +386,7 @@ enum Construct {
     Or,
     For,
     Lambda,
+    Indexed,
 }
 
 impl Construct {
@@ -405,6 +400,7 @@ impl Construct {
             Construct::Or => "`||`",
             Construct::For => "`for`",
             Construct::Lambda => "lambda",
+            Construct::Indexed => "indexed definition",
         }
     }
 
@@ -418,6 +414,7 @@ impl Construct {
             Construct::Or => "the right side of the `||`",
             Construct::For => "the body of the `for`",
             Construct::Lambda => "the body of the lambda",
+            Construct::Indexed => "the value of the indexed definition",
         }
     }
 }
@@ -429,8 +426,9 @@ struct Branch {
     what: Construct,
 }
 
-/// A `*.` call that updates a variable: the variable, the call's span, and the innermost
-/// construct whose part holds it (none when it runs on every path of the step).
+/// An update of a variable: the variable; the span of the update, the statement for `x' = …`,
+/// `x' <- e` and `x'[k] = …`, and `x*.m` or `x[i]*.m` for a `*.` call; and the innermost construct whose part
+/// holds it (none when it runs on every path of the step).
 struct Update<'e> {
     name: &'e str,
     span: Span,
@@ -476,6 +474,20 @@ impl<'e> Must<'e> {
     }
 }
 
+/// The variable a `*.` call on `of` updates: the name of the receiver, `c` in `c*.m`, or of the
+/// variable whose entry it is, `grid` in `grid[i]*.m` and `grid[i][j]*.m`. Each step moves
+/// down one index of the receiver, a node no other call's receiver holds, so the calls of a
+/// step cost O(n) together.
+fn receiver(mut of: &Expr) -> Option<&str> {
+    loop {
+        match &of.kind {
+            ExprKind::Name(n) => return Some(unprimed(n)),
+            ExprKind::Index(a, _) => of = a,
+            _ => return None,
+        }
+    }
+}
+
 /// How a part of a node combines into the node's [`Must`]: run on every path through the node,
 /// one of several alternatives of which a path runs exactly one, or run on some paths only.
 #[derive(Clone, Copy)]
@@ -498,24 +510,33 @@ enum Task<'e> {
     },
 }
 
-/// The variables among `candidates` that every path of a step through `stmts`, the statements
-/// of a loop's body, updates by a `*.` call, and each `*.` call on a candidate with the branch
-/// it stands in (DESIGN.md sec:generations, *must-assign*). Top-level statements run on every
-/// path; a branch of an `if`, an arm of a `match`, the default of an `else`, the right side of
-/// `&&` and `||`, the body of a `for` and the body of a lambda run on some paths only; a path
-/// that ends in `break` needs no update. Nested loops, whose names are their own, are not
-/// entered, nor are the values of `initial` statements and indexed definitions, or the bodies
-/// of functions and methods.
+/// The variables that every path of a step through `stmts`, the statements of a loop's body,
+/// updates, and each update of a variable with the branch it stands in (DESIGN.md
+/// sec:generations, *must-assign*). An update is `x' = …`, `x' <- e`, `x'[k] = …` or a `*.`
+/// call on `x` or an entry of it ([`receiver`]), wherever it is written in the step, a nested
+/// block included: one in a nested block counts on the paths through that block. Top-level
+/// statements run on every path; a branch of an `if`, an arm of a `match`, the default of an
+/// `else`, the right side of `&&` and `||`, the body of a `for`, the body of a lambda and the
+/// value of an indexed definition (computed once for each key) run on some paths only, except
+/// that a value that is a `*.` call on an entry, `old[i in cells] = grid[i]*.relax()`, updates
+/// `grid` key by key, as `grid'[i in cells] = …` does, on every path through it; a path that ends in `break` needs no
+/// update, and `return`, a block's export, ends no path. Nested loops, whose names are their
+/// own, are not entered, nor are the values of `initial` statements, computed once before the
+/// first step, or the bodies of functions and methods, which are not part of a step.
 ///
 /// One visit of each node, by a work list with a stack of results, so the depth of the code
 /// costs no stack. A node's result is the union of its parts that always run with the meet of
 /// its alternatives.
 // Complexity tradeoff: the naive walk copies the sets of a node's parts into a new set at each
 // node, O(n^2) for n variables each updated on its own paths (31 times the bytes at 8n, row
-// MUTABLE-to-initial-facet); here a union adds the smaller set to the larger, so a name moves
-// O(log n) times, and a meet keeps the smaller set's members the larger holds, O(min): O(n log
-// n) expected for n nodes.
-fn every_path<'e>(stmts: &'e [Stmt], candidates: &HashSet<&'e str>) -> (Must<'e>, Vec<Update<'e>>) {
+// MUTABLE-to-initial-facet); here a union adds the smaller set to the larger, and a meet keeps
+// the smaller set's members the larger holds, so each costs at most the number of updates in
+// the part with fewer of them, and an update is in that part O(log n) times: O(n log n)
+// expected for a step of n nodes, O(n) when no node joins two parts that both hold updates. A
+// strictly linear method, a check per variable over the tree of its updates' common ancestors
+// with constant-time ancestor queries, was weighed and not used: it needs an ancestor index of
+// the step and a second pass, for at most a log factor (CHK-update-every-path-cases).
+fn every_path<'e>(stmts: &'e [Stmt]) -> (Must<'e>, Vec<Update<'e>>) {
     let mut updates = Vec::new();
     let mut results: Vec<(Role, Must<'e>)> = Vec::new();
     let mut tasks: Vec<Task<'e>> = vec![Task::Join {
@@ -550,35 +571,90 @@ fn every_path<'e>(stmts: &'e [Stmt], candidates: &HashSet<&'e str>) -> (Must<'e>
                 results.push((role, acc));
             }
             Task::Stmt(s, branch, role) => {
-                let kids: Vec<&Expr> = match &s.kind {
-                    StmtKind::Bind { value, .. }
-                    | StmtKind::Push { value, .. }
-                    | StmtKind::While(value)
-                    | StmtKind::Until(value)
-                    | StmtKind::Expr(value) => vec![value],
-                    StmtKind::Return(es) => es.iter().collect(),
+                // The variables the statement itself updates, and its parts.
+                let mut own: HashSet<&'e str> = HashSet::new();
+                let mut kids: Vec<Task<'e>> = Vec::new();
+                let mut always = |x: &'e Expr| kids.push(Task::Expr(x, branch, Role::Always));
+                match &s.kind {
+                    StmtKind::Bind { targets, value } => {
+                        for t in targets {
+                            if let Target::Name(n, _) = t
+                                && n.ends_with('\'')
+                            {
+                                own.insert(unprimed(n));
+                            }
+                        }
+                        always(value);
+                    }
+                    StmtKind::Push { port, value } => {
+                        if port.ends_with('\'') {
+                            own.insert(unprimed(port));
+                        }
+                        always(value);
+                    }
+                    StmtKind::While(value) | StmtKind::Until(value) | StmtKind::Expr(value) => {
+                        always(value)
+                    }
+                    StmtKind::Return(es) => es.iter().for_each(&mut always),
+                    // `d'[v in nodes] = …` updates `d` key by key, and so does `old[i in cells] =
+                    // grid[i]*.relax()`, which writes `grid'[i]` for each key. The domains and
+                    // the boundary entries are computed once on a step; the value once for each
+                    // key.
+                    StmtKind::IndexedDef(d) => {
+                        if d.name.ends_with('\'') {
+                            own.insert(unprimed(&d.name));
+                        }
+                        let call = match &d.value.kind {
+                            ExprKind::Call { callee, .. } => callee,
+                            _ => &d.value,
+                        };
+                        if let ExprKind::Spread { of, .. } = &call.kind
+                            && matches!(of.kind, ExprKind::Index(..))
+                            && let Some(n) = receiver(of)
+                        {
+                            own.insert(n);
+                        }
+                        for k in d.keys.iter().chain(d.boundary.iter().flat_map(|b| &b.keys)) {
+                            match k {
+                                IndexKey::In { set, .. } => always(set),
+                                IndexKey::At(e) => always(e),
+                            }
+                        }
+                        d.boundary.iter().for_each(|b| always(&b.value));
+                        let b = Some(Branch {
+                            span: s.span,
+                            what: Construct::Indexed,
+                        });
+                        kids.push(Task::Expr(&d.value, b, Role::Some));
+                    }
                     StmtKind::Local(d) | StmtKind::Annotated { decl: d, .. } => {
                         tasks.push(Task::Stmt(d, branch, role));
                         continue;
                     }
                     StmtKind::Initial(_)
-                    | StmtKind::IndexedDef(_)
                     | StmtKind::Function(_)
                     | StmtKind::Method(_)
                     | StmtKind::Struct(_)
                     | StmtKind::Type(_)
                     | StmtKind::Import(_)
-                    | StmtKind::UnitAnnot(_) => vec![],
-                };
-                tasks.push(Task::Join {
-                    kids: kids.len(),
-                    own: Must::none(),
-                    role,
-                });
-                tasks.extend(
-                    kids.into_iter()
-                        .map(|e| Task::Expr(e, branch, Role::Always)),
-                );
+                    | StmtKind::UnitAnnot(_) => {}
+                }
+                updates.extend(own.iter().map(|&name| Update {
+                    name,
+                    span: s.span,
+                    branch,
+                }));
+                let own = Must::Names(own);
+                if kids.is_empty() {
+                    results.push((role, own));
+                } else {
+                    tasks.push(Task::Join {
+                        kids: kids.len(),
+                        own,
+                        role,
+                    });
+                    tasks.append(&mut kids);
+                }
             }
             Task::Expr(e, branch, role) => {
                 let inside = |what| Some(Branch { span: e.span, what });
@@ -603,9 +679,7 @@ fn every_path<'e>(stmts: &'e [Stmt], candidates: &HashSet<&'e str>) -> (Must<'e>
                         }
                     }
                     ExprKind::Spread { of, .. } => {
-                        if let ExprKind::Name(n) = &of.kind
-                            && let Some(&n) = candidates.get(unprimed(n))
-                        {
+                        if let Some(n) = receiver(of) {
                             own = Must::Names(HashSet::from([n]));
                             updates.push(Update {
                                 name: n,
@@ -926,11 +1000,12 @@ impl Builder<'_, '_> {
     /// value no other statement gives, and has `with carryForward` only when it has no keys; an
     /// entry below generation 0 is not written as a bare statement; and every variable the loop
     /// updates is updated on every path of a step, unless it is carried (*must-assign*,
-    /// sec:generations). One walk of the body lists what it updates and defines, then one pass
-    /// over its statements checks the entries each site gives against those of the sites before
-    /// it by the values of their keys (`Sentinels`): O(n + k log k) for a body of n nodes and k
-    /// sites, where comparing each pair of sites would be O(k^2). The must-assign check is one
-    /// more walk, run only when some variable is updated by a `*.` call alone ([`every_path`]).
+    /// sec:generations). One pass over the body's statements lists what they define and carry,
+    /// one walk of the step lists what it updates and which updates every path makes
+    /// ([`every_path`]), then one pass over the statements checks the entries each site gives
+    /// against those of the sites before it by the values of their keys (`Sentinels`): O(n log n
+    /// plus k log k) for a body of n nodes and k sites, where comparing each pair of sites would
+    /// be O(k^2).
     pub(super) fn loop_initials(
         &self,
         label: Option<&str>,
@@ -940,9 +1015,7 @@ impl Builder<'_, '_> {
         let ExprKind::Block(stmts) = &body.kind else {
             return Ok(());
         };
-        // What the body's own statements update, on every path of a step, and define on each
-        // step; and the names carried forward.
-        let mut updated: HashSet<&str> = HashSet::new();
+        // What the body's own statements define on each step, and the names carried forward.
         let mut locals: HashSet<&str> = HashSet::new();
         let mut carried: HashSet<&str> = HashSet::new();
         let mut sites = false;
@@ -951,25 +1024,18 @@ impl Builder<'_, '_> {
             match &d.kind {
                 StmtKind::Bind { targets, .. } => {
                     for t in targets {
-                        let Target::Name(n, _) = t else { continue };
-                        if n.ends_with('\'') {
-                            updated.insert(unprimed(n));
-                        } else {
+                        if let Target::Name(n, _) = t
+                            && !n.ends_with('\'')
+                        {
                             locals.insert(n);
                         }
                     }
                 }
-                StmtKind::Push { port, .. } if port.ends_with('\'') => {
-                    updated.insert(unprimed(port));
-                }
-                // `d'[v in nodes] = …` updates `d` key by key.
-                StmtKind::IndexedDef(x) if x.name.ends_with('\'') => {
-                    sites = true;
-                    updated.insert(unprimed(&x.name));
-                }
                 StmtKind::IndexedDef(x) => {
                     sites = true;
-                    locals.insert(&x.name);
+                    if !x.name.ends_with('\'') {
+                        locals.insert(&x.name);
+                    }
                 }
                 StmtKind::Function(f) => {
                     locals.insert(&f.name);
@@ -983,27 +1049,18 @@ impl Builder<'_, '_> {
                 }
             }
         }
-        // The names a `*.` call updates; those the statements above do not update, and that are
-        // not carried, must be updated on every path.
-        let spread = walk(&[], stmts).spread;
-        let candidates: HashSet<&str> = spread
-            .iter()
-            .copied()
-            .filter(|n| !updated.contains(n) && !carried.contains(n))
-            .collect();
-        updated.extend(spread);
+        // What the step updates, on any path; a variable not carried must be updated on every
+        // path.
+        let (must, mut updates) = every_path(stmts);
+        let updated: HashSet<&str> = updates.iter().map(|u| u.name).collect();
         if sites {
             self.initial_sites(label, at, stmts, &updated, &locals)?;
         }
-        if candidates.is_empty() {
-            return Ok(());
-        }
-        let (must, mut updates) = every_path(stmts, &candidates);
         let Must::Names(must) = must else {
             return Ok(());
         };
         updates.sort_by_key(|u| u.span.start);
-        match updates.iter().find(|u| !must.contains(u.name)) {
+        match (updates.iter()).find(|u| !must.contains(u.name) && !carried.contains(u.name)) {
             Some(first) => {
                 let name = first.name;
                 let of_name: Vec<&Update> = updates.iter().filter(|u| u.name == name).collect();

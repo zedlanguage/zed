@@ -180,6 +180,11 @@ fn every_construct_with_paths_is_checked() {
             "x' = if t > 1 { y = c*.a(); y } else { 0 };",
             "a branch of the `if`",
         ),
+        // The value of an indexed definition is computed once for each key.
+        (
+            "d[i in 0..<2] = c*.a();",
+            "the value of the indexed definition",
+        ),
     ] {
         let src = t_loop(&["initial c = 0;", update]);
         let e = refusal(&src);
@@ -227,6 +232,220 @@ fn every_path_that_updates_or_breaks_is_accepted() {
         "y' = loop u { while u < t; initial d = 0; d' = d + 1; };",
     ]);
     assert_eq!(refusal(&src).row, Some(Row::NotEveryPath), "{src}");
+}
+
+/// An update written in a nested block counts on the paths through that block: a primed
+/// definition, a push, a primed indexed definition and a `*.` call alike (sec:generations).
+#[test]
+fn an_update_in_a_nested_block_counts() {
+    for body in [
+        &["initial c = 0;", "x' = { c' = c + 1; 0 };"][..],
+        &["initial c = 0;", "{ c' = c + 1; 0 };"],
+        &["initial c = 0;", "x' = { y = { c' = c + 1; 0 }; y };"],
+        &[
+            "initial c = 0;",
+            "x' = if t > 1 { c' = c + 1; 0 } else { c' = c; 1 };",
+        ],
+        &[
+            "initial c = 0;",
+            "x' = if t > 1 { c*.a() } else { c' = c + 1; 1 };",
+        ],
+        &[
+            "initial c = 0;",
+            "x' = if t > 1 { c' <- 1; 0 } else { c' <- 2; 1 };",
+        ],
+        &["initial c = 0;", "x' = { c'[v in 0..<2] = v; 0 };"],
+        &[
+            "initial c = 0;",
+            "x' = match t { 0 -> { c' = 1; 0 }, _ -> { c' = 2; 1 } };",
+        ],
+        &[
+            "initial c = 0;",
+            "x' = if t > 1 { c' = 1; 0 } else { break 0 };",
+        ],
+        // A domain of an indexed definition is computed once on a step.
+        &["initial c = 0;", "d[i in 0..<c*.a()] = i;"],
+    ] {
+        accepted(&t_loop(body));
+    }
+    // An update in one branch only: the update is named by its statement.
+    refused(
+        &t_loop(&[
+            "initial c = 0;",
+            "x' = if t > 1 { c' = c + 1; 0 } else { 1 };",
+        ]),
+        Row::NotEveryPath,
+        "c' = c + 1;",
+        Some(
+            "Not updated on every path of a step: `c' = c + 1;` updates `c` only in a branch of \
+             the `if`. Try `initial c = 0 with carryForward;` instead.",
+        ),
+        &[
+            LOOP_NOTE,
+            "`c' = c + 1;` updates `c` only on the paths through a branch of the `if` [c' = c + \
+             1;]",
+            "the `if` that `c' = c + 1;` stands in [if t > 1 { c' = c + 1; 0 } else { 1 }]",
+            "repair: `initial c = 0 with carryForward;` in place of `initial c = 0;`, so a step \
+             that does not update `c` keeps its value [initial c = 0;]",
+            "repair: update `c` on every path, with the update written where the branch is \
+             chosen and `c` itself on the paths that leave it as it is: `c' = if … { … } else { \
+             c };` [c' = c + 1;]",
+        ],
+        &[
+            &t_loop(&[
+                "initial c = 0 with carryForward;",
+                "x' = if t > 1 { c' = c + 1; 0 } else { 1 };",
+            ]),
+            &t_loop(&[
+                "initial c = 0;",
+                "c' = if t > 1 { c + 1 } else { c };",
+                "x' = if t > 1 { 0 } else { 1 };",
+            ]),
+        ],
+    );
+    // Each form, in one branch, with no `initial` statement for the variable.
+    for update in [
+        "x' = if t > 1 { c' = 1; 0 } else { 1 };",
+        "x' = if t > 1 { c' <- 1; 0 } else { 1 };",
+        "x' = if t > 1 { c'[v in 0..<2] = v; 0 } else { 1 };",
+        "x' = t > 1 && { c' = 1; true };",
+        "x' = for i in 0..<t { c' = i; i };",
+    ] {
+        let src = t_loop(&[update]);
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::NotEveryPath), "{src}: {e:?}");
+        assert!(
+            src[e.span.start..e.span.end].starts_with("c'"),
+            "{src}: {e:?}"
+        );
+        accepted(&t_loop(&["initial c = 0 with carryForward;", update]));
+    }
+}
+
+/// `return` exports a block's value and ends no path: the other statements of its block run on
+/// the same path, and a `return` in a branch updates nothing on the other branch
+/// (sec:values_morphisms, "Blocks bind; `return` exports").
+#[test]
+fn return_ends_no_path() {
+    for body in [
+        &["initial c = 0;", "c' = c + 1;", "return 0;"][..],
+        &["initial c = 0;", "return c*.a();"],
+        &["initial c = 0;", "x' = { return c*.a(); };"],
+        &[
+            "initial c = 0;",
+            "x' = if t > 1 { return 0; c' = c + 1; } else { c' = c; 1 };",
+        ],
+        &[
+            "initial c = 0;",
+            "x' = if t > 1 { return break 0; } else { c*.a() };",
+        ],
+    ] {
+        accepted(&t_loop(body));
+    }
+    for (update, at) in [
+        ("x' = if t > 1 { return 0; } else { c' = c; 1 };", "c' = c;"),
+        ("x' = if t > 1 { return c*.a(); } else { 1 };", "c*.a"),
+    ] {
+        let src = t_loop(&["initial c = 0;", update]);
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::NotEveryPath), "{src}: {e:?}");
+        assert_eq!(&src[e.span.start..e.span.end], at, "{src}");
+    }
+}
+
+/// The value of an `initial` statement and the bodies of the functions and methods the body
+/// declares are not part of a step: a `*.` call there updates no variable of the loop.
+#[test]
+fn updates_outside_the_step_do_not_count() {
+    for (body, site) in [
+        (
+            &["initial c = 0;", "f() = c*.a();", "x' = t;"][..],
+            "initial c = 0;",
+        ),
+        (
+            &["initial c = 0;", "Counter.f = c*.a();", "x' = t;"],
+            "initial c = 0;",
+        ),
+        (
+            &["initial c = 0;", "initial y = c*.a();", "y' = y + 1;"],
+            "initial c = 0;",
+        ),
+        (
+            &[
+                "initial c = 0 with carryForward;",
+                "f() = c*.a();",
+                "x' = t;",
+            ],
+            "initial c = 0 with carryForward;",
+        ),
+    ] {
+        let src = t_loop(body);
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::InitialNotUpdated), "{src}: {e:?}");
+        assert_eq!(&src[e.span.start..e.span.end], site, "{src}");
+    }
+    // A `*.` call in a function body beside one on some paths of the step: only the step's
+    // counts, so the variable is updated on some paths only.
+    let src = t_loop(&[
+        "initial c = 0;",
+        "f() = c*.a();",
+        "x' = if t > 1 { c*.b() } else { 0 };",
+    ]);
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::NotEveryPath), "{src}: {e:?}");
+    assert_eq!(&src[e.span.start..e.span.end], "c*.b", "{src}");
+    // A `*.` call in an `initial` value on a name defined before the loop does not make that
+    // name a variable of the loop, so the value reads no name of the loop here.
+    accepted(&format!(
+        "c = 0;\n{}",
+        t_loop(&["initial y = c*.a();", "y' = y + 1;"])
+    ));
+}
+
+/// A `*.` call on an entry, `grid[i]*.relax()`, writes `grid'[i]` and so updates `grid`
+/// (sec:generations, "the receiver … may be any keypath the one-writer rule accepts, entries
+/// included"). As the whole value of an indexed definition it writes `grid'[i]` for each key, as
+/// the indexed definition `grid'[i in cells] = relax(grid[i])` does, so it updates `grid` on
+/// every path through the statement.
+#[test]
+fn an_update_of_an_entry_counts() {
+    for body in [
+        &["initial grid = 0;", "old[i in 0..<4] = grid[i]*.relax();"][..],
+        &["initial grid = 0;", "grid[0]*.relax();"],
+        &["initial grid = 0;", "x' = grid[0][1]*.relax();"],
+        &["initial grid = 0;", "grid'[i in 0..<4] = grid[i] + 1;"],
+        &[
+            "initial grid = 0;",
+            "x' = if t > 1 { grid[0]*.relax() } else { grid[1]*.relax() };",
+        ],
+    ] {
+        accepted(&t_loop(body));
+    }
+    for (update, at, part) in [
+        (
+            "x' = if t > 1 { grid[0]*.relax() } else { 0 };",
+            "grid[0]*.relax",
+            "a branch of the `if`",
+        ),
+        // In a part of the value, the call runs on some keys' paths only.
+        (
+            "old[i in 0..<4] = if i > 1 { grid[i]*.relax() } else { 0 };",
+            "grid[i]*.relax",
+            "a branch of the `if`",
+        ),
+    ] {
+        let src = t_loop(&["initial grid = 0;", update]);
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::NotEveryPath), "{src}: {e:?}");
+        assert_eq!(&src[e.span.start..e.span.end], at, "{src}");
+        assert!(
+            e.notes.iter().any(
+                |n| n.text == format!("`{at}` updates `grid` only on the paths through {part}")
+            ),
+            "{src}: {e:?}"
+        );
+        accepted(&t_loop(&["initial grid = 0 with carryForward;", update]));
+    }
 }
 
 /// The rule notes of row "A `mutable` declaration", in a loop and outside one.
@@ -522,14 +741,37 @@ fn deep(n: usize, carried: bool) -> String {
     )
 }
 
+/// One `if` whose two branches each update the same `n` variables by primed definitions in
+/// nested blocks, then `tail`.
+fn nested_branches(n: usize, tail: &str) -> String {
+    let defs: String = (0..n).map(|i| format!("c{i}' = {i}; ")).collect();
+    format!(
+        "r = loop t {{ while t < 9; x' = if t > 1 {{ {{ {defs}0 }} }} else {{ {{ {defs}1 }} \
+         }}; {tail} }};\n"
+    )
+}
+
+/// An update of `c` in the innermost of `n` nested blocks, each bound to a name; with
+/// `branch`, the innermost update stands in one branch of an `if`.
+fn nested_blocks(n: usize, branch: bool) -> String {
+    let open: String = (0..n).map(|i| format!("{{ y{i} = ")).collect();
+    let close: String = (0..n).rev().map(|i| format!("; y{i} }}")).collect();
+    let inner = if branch {
+        "if t > 2 { c' = c + 1; 0 } else { 0 }"
+    } else {
+        "{ c' = c + 1; 0 }"
+    };
+    format!("r = loop t {{ while t < 9; initial c = 0; x' = {open}{inner}{close}; }};\n")
+}
+
 /// The must-assign check is one walk of the body with sets merged smaller into larger, so `n`
 /// variables updated each on its own paths, `n` variables updated on both branches of one `if`,
-/// and an update `n` constructs deep are each checked in time of order `n log n`, accepted or
-/// refused.
+/// directly or in nested blocks, and an update `n` constructs or blocks deep are each checked in
+/// time of order `n log n`, accepted or refused.
 #[test]
 fn the_must_assign_check_scales() {
     type Make = fn(usize) -> String;
-    let cases: [(&str, Make, Option<Row>); 5] = [
+    let cases: [(&str, Make, Option<Row>); 9] = [
         ("wide, accepted", |n| wide(n, ""), None),
         (
             "wide, refused at the end",
@@ -539,6 +781,22 @@ fn the_must_assign_check_scales() {
         ("branches, accepted", |n| branches(n, ""), None),
         ("deep, refused", |n| deep(n, false), Some(Row::NotEveryPath)),
         ("deep, carried", |n| deep(n, true), None),
+        (
+            "nested branches, accepted",
+            |n| nested_branches(n, ""),
+            None,
+        ),
+        (
+            "nested branches, refused at the end",
+            |n| nested_branches(n, "y' = t > 1 && { d' = 1; true };"),
+            Some(Row::NotEveryPath),
+        ),
+        ("nested blocks, accepted", |n| nested_blocks(n, false), None),
+        (
+            "nested blocks, refused",
+            |n| nested_blocks(n, true),
+            Some(Row::NotEveryPath),
+        ),
     ];
     for (what, make, row) in cases {
         let units = scaling::inputs(500, |n| {

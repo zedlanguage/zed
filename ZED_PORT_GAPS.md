@@ -3598,6 +3598,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | `HashSet<&str>` sets merged in place, the smaller added to the larger by `extend` and kept by `retain` | `Must::union`, `Must::meet` | Mutation (gap 11); borrowed `&str` keys | Persistent sets of names, the union inserting the smaller into the larger, the meet a filter of the smaller |
 | A closure `always` that pushes onto a `Vec` it borrows mutably, called through `for_each(&mut always)` | `every_path` | Mutation (gap 11) | The list of a node's parts built as a value, each part tagged with its role |
 
+## Entries from CHK-update-every-path-cases (`crates/zedc-syntax/src/ast/initial.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `loop` that reassigns the parameter `of` to the base of each index until it reaches a name | `receiver` | Mutation (gap 11) | Recursion on the base of the index: a name gives itself, an index gives the receiver of its base, anything else none |
+
 ## Entries from IMPORTS-untyped-join (`crates/zed-tools/src/imports.rs`)
 
 | Rust construct | Sites | Gap | At the port |
