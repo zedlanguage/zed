@@ -18,10 +18,36 @@ fn every_keyword_is_a_keyword_and_a_longer_word_is_a_name() {
             );
         }
     }
-    assert_eq!(KEYWORDS.len(), 37);
+    assert_eq!(KEYWORDS.len(), 38);
     assert_eq!(
         render(&lex("format iffy in_stock types notable asc ascending").unwrap()),
         "format iffy in_stock types notable «asc» ascending"
+    );
+}
+
+/// The lexer's keywords are the quoted words of the grammar's `KeywordWord` line, in its order,
+/// so a word the grammar reserves for a later step is reserved by the lexer from L1 on.
+#[test]
+fn the_keywords_are_the_words_of_the_grammar() {
+    let peg = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../zed/grammar/lexical.peg"),
+    )
+    .unwrap();
+    let line = peg
+        .lines()
+        .find(|l| l.starts_with("KeywordWord"))
+        .expect("the lexical grammar has a KeywordWord line");
+    let words: Vec<&str> = line.split('\'').skip(1).step_by(2).collect();
+    assert_eq!(words, KEYWORDS);
+}
+
+/// `without`, whose operator joins at L12.2i, is a keyword from L1 on: no binding is named
+/// `without`, and a longer word is a name.
+#[test]
+fn without_is_a_keyword() {
+    assert_eq!(
+        render(&lex("without = 3; withouts = 4; n without units(\"m\")").unwrap()),
+        "«without» = 3₍10₎ ; withouts = 4₍10₎ ; n «without» units ( str[\"m\"] )"
     );
 }
 

@@ -288,8 +288,8 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   1 | n = 1200₍10₎ «with» units ( str["m"] ) ;
   2 | x = f64 ( n ) «else» round ( n ) ;
   3 | label = str[${n}] ;
-  4 | column = str[${n without units ( str["m"] )}] ;
-  5 | count = ( n without units ( str["m"] ) ) «div» 100₍10₎ ;
+  4 | column = str[${n «without» units ( str["m"] )}] ;
+  5 | count = ( n «without» units ( str["m"] ) ) «div» 100₍10₎ ;
   6 | km = ( f64 ( n ) «else» round ( n ) ) . to ( str["km"] ) ;
 == DESIGN.md [sec:linalg] 1 L14
   1 | matmul ( «positional» v : ( c -> T ) , «positional» b : ( c -> k -> T ) ) = ( v , b ) «into» ( k -> c >< ( + ) -> v [ c ] * b [ c ] [ k ] ) ;
