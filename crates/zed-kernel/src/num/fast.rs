@@ -1232,6 +1232,26 @@ fn cmod(x: &BigInt, w: u64) -> BigInt {
     }
 }
 
+/// `x` modulo `2^128`, from the two's complement of a negative `x`.
+fn low128(x: &BigInt) -> u128 {
+    let mut d = x.iter_u64_digits();
+    let lo = u128::from(d.next().unwrap_or(0)) | (u128::from(d.next().unwrap_or(0)) << 64);
+    match x.is_negative() {
+        true => lo.wrapping_neg(),
+        false => lo,
+    }
+}
+
+/// `x^-1 mod 2^64` for an odd `x`: `3x XOR 2` is right in its low 5 bits, and each of four
+/// Newton steps `y (2 - x y)` doubles the right bits, to 80.
+fn inverse_mod_2_64(x: u64) -> u64 {
+    let mut y = x.wrapping_mul(3) ^ 2;
+    for _ in 0..4 {
+        y = y.wrapping_mul(2u64.wrapping_sub(x.wrapping_mul(y)));
+    }
+    y
+}
+
 /// The 2-adic valuation of `x`; `None` for 0.
 fn nu(x: &BigInt) -> Option<u64> {
     x.trailing_zeros()
@@ -1266,11 +1286,26 @@ fn inverse_mod_pow2(x: &BigUint, w: u64) -> BigUint {
 fn step(a: &BigInt, b: &BigInt, j: u64) -> (BigInt, BigInt, BigInt) {
     let b1 = b >> j;
     let w = j + 1;
-    // The residues modulo `2^w`, not negative (`&` reads a negative number in two's
-    // complement).
-    let mask = (BigInt::one() << w) - 1;
-    let inv = BigInt::from(inverse_mod_pow2((&b1 & &mask).magnitude(), w));
-    let q = cmod(&-mul_int(&(a & &mask), &inv), w);
+    let q = match w < 128 {
+        // In 128-bit registers: `b1^-1 mod 2^128` by one more Newton step from 64 bits.
+        true => {
+            let y = low128(&b1);
+            let inv = u128::from(inverse_mod_2_64(y as u64));
+            let inv = inv.wrapping_mul(2u128.wrapping_sub(y.wrapping_mul(inv)));
+            let t = low128(a).wrapping_neg().wrapping_mul(inv) & ((1u128 << w) - 1);
+            match t >> j {
+                0 => BigInt::from(t),
+                _ => -BigInt::from((1u128 << w) - t),
+            }
+        }
+        false => {
+            // The residues modulo `2^w`, not negative (`&` reads a negative number in two's
+            // complement).
+            let mask = (BigInt::one() << w) - 1;
+            let inv = BigInt::from(inverse_mod_pow2((&b1 & &mask).magnitude(), w));
+            cmod(&-mul_int(&(a & &mask), &inv), w)
+        }
+    };
     let r = (a + mul_int(&q, &b1)) >> j;
     (q, b1, r)
 }
@@ -1320,13 +1355,7 @@ fn half(a: &BigInt, b: &BigInt, k: u64) -> (u64, Mat) {
 fn half_leaf(a: &BigInt, b: &BigInt, k: u64) -> (u64, Mat) {
     let w = 2 * k + 1;
     let low = |x: &BigInt| -> i128 {
-        let mut d = x.iter_u64_digits();
-        let lo = u128::from(d.next().unwrap_or(0)) | (u128::from(d.next().unwrap_or(0)) << 64);
-        let v = match x.is_negative() {
-            true => lo.wrapping_neg(),
-            false => lo,
-        };
-        let r = v & ((1u128 << w) - 1);
+        let r = low128(x) & ((1u128 << w) - 1);
         match r >> (w - 1) {
             1 => r as i128 - (1i128 << w),
             _ => r as i128,
@@ -1341,11 +1370,8 @@ fn half_leaf(a: &BigInt, b: &BigInt, k: u64) -> (u64, Mat) {
             break;
         }
         let y1 = y >> v;
-        // `y1^-1 mod 2^64` by Newton, then `q = -x / y1 mod 2^(v+1)`, centered.
-        let mut inv = 1u64;
-        for _ in 0..6 {
-            inv = inv.wrapping_mul(2u64.wrapping_sub((y1 as u64).wrapping_mul(inv)));
-        }
+        // `q = -x / y1 mod 2^(v+1)`, centered.
+        let inv = inverse_mod_2_64(y1 as u64);
         let t = (x as u64).wrapping_neg().wrapping_mul(inv) & ((1u64 << (v + 1)) - 1);
         let q = match t > 1 << v {
             true => i128::from(t) - (1i128 << (v + 1)),
@@ -1747,32 +1773,38 @@ pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigIn
     } else {
         let coefficient = if x.is_negative() { -bx } else { bx };
         let c = rem(coefficient.magnitude(), &modulus);
-        let c = if coefficient.is_negative() && !c.is_zero() {
+        let mut c = if coefficient.is_negative() && !c.is_zero() {
             &modulus - c
         } else {
             c
         };
-        let shift = halvings.checked_mul(2)?;
-        if shift == 0 {
-            c
-        } else {
-            // Divide c by 2^shift modulo odd modulus without another gcd:
-            // c + k modulus is divisible by 2^shift, with 0 <= k < 2^shift.
-            let mask = (BigUint::one() << shift) - 1u32;
+        // Divide c by 2^shift modulo the odd modulus without another gcd, in chunks of at
+        // most `m` bits, `m` the modulus's width: c + k modulus is divisible by 2^s, with
+        // 0 < k < 2^s, k = -c modulus^-1 mod 2^s, when c is not 0 mod 2^s. Each chunk keeps
+        // c below 2 modulus, so one subtraction ends below the modulus.
+        // Complexity tradeoff: one chunk of all `shift` bits needs modulus^-1 to `shift` bits,
+        // O(M(shift)) even for a small modulus; chunks of `m` bits reuse one inverse of `m`
+        // bits and cost O((shift / m + 1) M(m)), no more. Test pncx_fast_bezout_matches_euclid.
+        let mut shift = halvings.checked_mul(2)?;
+        let m = modulus.bits();
+        let inverse = inverse_mod_pow2(&modulus, m.min(shift).max(1));
+        while shift > 0 {
+            let s = shift.min(m);
+            let mask = (BigUint::one() << s) - 1u32;
             let low = &c & &mask;
-            let negative = if low.is_zero() {
-                BigUint::zero()
+            if !low.is_zero() {
+                let k = (&mask + 1u32) - (mul(&low, &inverse) & &mask);
+                c = (c + mul(&k, &modulus)) >> s;
             } else {
-                (&mask + 1u32) - low
-            };
-            let inverse = inverse_mod_pow2(&modulus, shift);
-            let k = mul(&negative, &inverse) & &mask;
-            let value = (c + mul(&k, &modulus)) >> shift;
-            if value >= modulus {
-                return None;
+                c >>= s;
             }
-            value
+            shift -= s;
         }
+        if c >= modulus {
+            c -= &modulus;
+        }
+        debug_assert!(c < modulus);
+        c
     };
     let second = BigInt::from(v_coefficient);
     let numerator = BigInt::from(g.clone()) - mul_int(&second, &BigInt::from(v.clone()));
