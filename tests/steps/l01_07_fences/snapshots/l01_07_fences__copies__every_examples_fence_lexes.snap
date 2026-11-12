@@ -599,8 +599,8 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   3 | cell = grid [ x ] [ y ] ;
   4 | all = «for» x -> y -> _ «in» grid { grid [ x ] [ y ] } ;
 == EXAMPLES.md [22. Facets] 1 L13
-  2 | v = 3.0f «with» units ( str["m/s"] ) ;
-  3 | t = 2.0f «with» units ( str["s"] ) ;
+  2 | v = 3.0f64 «with» units ( str["m/s"] ) ;
+  3 | t = 2.0f64 «with» units ( str["s"] ) ;
   4 | d = v * t ;
   5 | bad = v + t ;
   6 | u = d :: units ;

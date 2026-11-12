@@ -257,24 +257,24 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  26 | micron = UnitSpelling ( spelling : str["micron"] , means : str["μm"] ) ;
  27 | px = UnitDef ( name : str["px"] , unit : #base ) ;
 == DESIGN.md [sec:facets] 3 L12
-  1 | force = 3.0f «with» units ( str["N"] ) ;
-  2 | arm = 2.0f «with» units ( str["m"] ) ;
+  1 | force = 3.0f64 «with» units ( str["N"] ) ;
+  2 | arm = 2.0f64 «with» units ( str["m"] ) ;
   3 | work = force * arm ;
   4 | moment = ( force * arm ) . to ( str["N m #torque"] ) ;
-  5 | source = 4.0e3f «with» units ( str["Bq"] ) ;
+  5 | source = 4.0e3f64 «with» units ( str["Bq"] ) ;
   6 | doubled = 2.0f * source ;
   7 | share = 25r «with» units ( str["%"] ) ;
   8 | part = share . to ( str["1"] ) ;
 == DESIGN.md [sec:facets] 4 L12
-  1 | noon = 20.0f «with» units ( str["°C"] ) ;
-  2 | morning = 12.5f «with» units ( str["degC"] ) ;
+  1 | noon = 20.0f64 «with» units ( str["°C"] ) ;
+  2 | morning = 12.5f64 «with» units ( str["degC"] ) ;
   3 | rise = noon - morning ;
   4 | absolute = noon . to ( str["K"] ) ;
   5 | later = noon + ( 2.0f «with» units ( str["K"] ) ) ;
-  6 | later2 = ( 25.0f «with» units ( str["degC"] ) ) + ( 5.0f «with» units ( str["K"] ) ) ;
+  6 | later2 = ( 25.0f64 «with» units ( str["degC"] ) ) + ( 5.0f «with» units ( str["K"] ) ) ;
   7 | warmer = noon > morning ;
 == DESIGN.md [sec:facets] 5 L12
-  1 | len = 5.0f «with» units ( str["m"] ) ;
+  1 | len = 5.0f64 «with» units ( str["m"] ) ;
   2 | y = log ( len ) ;
   3 | sq = log ( len * len ) ;
   4 | twice = 2.0f * y ;
@@ -667,8 +667,8 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  35 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
  36 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
  38 | n = orders [ id ] ?. note ;
- 43 | v = 3.0f «with» units ( str["m/s"] ) ;
- 44 | t = 2.0f «with» units ( str["s"] ) ;
+ 43 | v = 3.0f64 «with» units ( str["m/s"] ) ;
+ 44 | t = 2.0f64 «with» units ( str["s"] ) ;
  45 | d = v * t ;
  48 | exec : ( Db , Utf8String «with» taint ( #clean ) ) -> Rows | #sqlError
  50 | rows = exec ( db , sanitize ( userInput ) ) ;

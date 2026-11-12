@@ -1,5 +1,5 @@
 // variant: // big = y > 0.0;                            // ✗ Logarithmic unit in an operation that would change with the unit: y is in log(m) and 0.0 has no unit; compare with log(1.0 with units("m"))
-len = 5.0 with units("m");
+len = 5.0f64 with units("m");
 y = log(len);                                // 1.6094379124341003 with units("log(m)")
 sq = log(len * len);                         // 3.2188758248682006 with units("log(m^2)")
 twice = 2.0 * y;                             // 3.2188758248682006 with units("log(m^2)")

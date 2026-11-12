@@ -1,5 +1,5 @@
 // variant: // wrong = exp(far);                         // ✗ Exponential whose base differs from the logarithm's: far is in log10(m); write 10.0^far
-len = 5.0 with units("m");
+len = 5.0f64 with units("m");
 y = log(len);                                // 1.6094379124341003 with units("log(m)")
 sq = log(len * len);                         // 3.2188758248682006 with units("log(m^2)")
 twice = 2.0 * y;                             // 3.2188758248682006 with units("log(m^2)")

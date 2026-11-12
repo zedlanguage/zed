@@ -1,10 +1,10 @@
 // variant: // gradient = noon / (2.0 with units("m")); // ✗ Point unit in a product, quotient or power: noon is a reading in °C; write noon.to("K")
-noon = 20.0 with units("°C");
-morning = 12.5 with units("degC");
+noon = 20.0f64 with units("°C");
+morning = 12.5f64 with units("degC");
 rise = noon - morning;                       // 7.5 with units("K")
 absolute = noon.to("K");                     // 293.15 with units("K")
 later = noon + (2.0 with units("K"));        // 22.0 with units("°C")
-later2 = (25.0 with units("degC")) + (5.0 with units("K"));  // 30.0 with units("°C")
+later2 = (25.0f64 with units("degC")) + (5.0 with units("K"));  // 30.0 with units("°C")
 warmer = noon > morning;                     // true
 // both = morning + noon;                    // ✗ No `+` of two point readings: morning and noon are readings in °C; add a difference in K
 gradient = noon / (2.0 with units("m")); // ✗ Point unit in a product, quotient or power: noon is a reading in °C; write noon.to("K")

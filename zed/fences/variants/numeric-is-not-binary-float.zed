@@ -36,13 +36,13 @@ main(m: MainArgs) {
 orders: OrderId ->? { total: f64, note: Utf8String | #none }   // ✗ Stored collection whose type and schema disagree: NUMERIC is not a binary float
   with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
 
-n = orders[id]?.note;              // Utf8String | #dbError | #none | #notFound — NULL, no row, no db
+n = orders[id]?.note;              // Utf8String | #ioError(…) | #none | #notFound — no db, NULL, no row
 // note:  Utf8String                   // ✗ Stored collection whose type and schema disagree: the column is nullable, and #none is missing from the field type
 // total: f64                      // ✗ Stored collection whose type and schema disagree: NUMERIC is not a binary float
 
 // facets: units and taint are checked like types
-v = 3.0 with units("m/s");
-t = 2.0 with units("s");
+v = 3.0f64 with units("m/s");
+t = 2.0f64 with units("s");
 d = v * t;                         // d::units == "m"
 // e = v + t;                      // ✗ Units that differ where an operation requires equal ones: m/s + s
 
