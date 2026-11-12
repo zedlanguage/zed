@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use zed_kernel::digest::DigestMap;
 use zed_kernel::types::{Type, defs as printed};
 use zed_kernel::{
     Evaluator, Global, Globals, KernelError, Lookup, Pattern, Shared, Term, Value, World,
@@ -307,10 +308,12 @@ struct Reader {
     /// place must be read, since a `fix` at any one of them changes the answer. Measured
     /// (negative controls, a reader keyed by occurrence ids): ADDR-stage, 1.0, 6.8, 23.7, 63.6,
     /// 256 and 1235 ms at k = 10 to 20; TERM-id, see COMPLEXITY.md row K44.
-    ids: HashMap<u64, usize>,
+    ids: DigestMap<u64, usize>,
     /// For the test hook [`reading`] only: the numbers of the parts each part reads, by its
     /// number, in the order [`each_part`] gives them.
     reads: Option<Vec<Vec<usize>>>,
+    /// The number of each name, in the order read: keyed by the program's names, so it keeps
+    /// the seeded hasher ([`DigestMap`]).
     names: HashMap<Arc<str>, Name>,
     /// Each name, by its number.
     named: Vec<Arc<str>>,
@@ -600,9 +603,9 @@ struct Sets {
     nodes: Vec<SetNode>,
     /// The number of names in each set.
     sizes: Vec<u32>,
-    made: HashMap<SetNode, Set>,
+    made: DigestMap<SetNode, Set>,
     /// The union of each pair of sets joined, the smaller number first.
-    unions: HashMap<(Set, Set), Set>,
+    unions: DigestMap<(Set, Set), Set>,
 }
 
 impl Default for Sets {
@@ -610,8 +613,8 @@ impl Default for Sets {
         Sets {
             nodes: vec![SetNode::Empty],
             sizes: vec![0],
-            made: HashMap::from([(SetNode::Empty, EMPTY)]),
-            unions: HashMap::new(),
+            made: DigestMap::from_iter([(SetNode::Empty, EMPTY)]),
+            unions: DigestMap::default(),
         }
     }
 }

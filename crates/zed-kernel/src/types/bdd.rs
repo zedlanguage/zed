@@ -37,11 +37,12 @@
 
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicBool, Ordering as Atomic};
 use std::sync::{Arc, Mutex, Weak};
 
+use crate::digest::{DigestMap, DigestSet};
 use crate::frames::{Deep, Stack};
 
 use super::mix;
@@ -449,7 +450,7 @@ impl<A: Literal> Bdd<A> {
         }
         // Nodes in reverse postorder of a depth-first walk: each after those above it.
         let mut order: Vec<&Bdd<A>> = Vec::new();
-        let mut seen = HashSet::new();
+        let mut seen = DigestSet::default();
         let mut stack: Vec<(&Bdd<A>, bool)> = vec![(self, false)];
         while let Some((n, below)) = stack.pop() {
             if below {
@@ -470,8 +471,9 @@ impl<A: Literal> Bdd<A> {
             }
         }
         // Whether a chain of `lo` edges from each node reaches `true`, children first.
-        let mut lo_true: HashMap<u64, bool> = HashMap::with_capacity(order.len());
-        let chain = |b: &Bdd<A>, lo_true: &HashMap<u64, bool>| match b {
+        let mut lo_true: DigestMap<u64, bool> =
+            DigestMap::with_capacity_and_hasher(order.len(), Default::default());
+        let chain = |b: &Bdd<A>, lo_true: &DigestMap<u64, bool>| match b {
             Bdd::Leaf(v) => *v,
             Bdd::List(..) => *lo_true
                 .get(&b.id())
@@ -481,7 +483,7 @@ impl<A: Literal> Bdd<A> {
             let t = chain(node(n).3, &lo_true);
             lo_true.insert(n.id(), t);
         }
-        let mut state: HashMap<u64, S> = HashMap::from([(self.id(), start)]);
+        let mut state: DigestMap<u64, S> = DigestMap::from_iter([(self.id(), start)]);
         for n in order.into_iter().rev() {
             let (id, atom, hi, lo) = node(n);
             let here = state
@@ -1222,25 +1224,25 @@ impl<A: Literal> Part<A> {
     /// node and expression evaluated once. `Some(b)` is the part's value on every value of the
     /// set; `None` says nothing.
     pub(super) fn eval3(&self, holds: &impl Fn(&A) -> Option<bool>) -> Option<bool> {
-        self.eval3_pinned(holds, &HashMap::new())
+        self.eval3_pinned(holds, &DigestMap::default())
     }
 
     /// [`Part::eval3`], with each expression in `pins` taken to have the value beside it.
     fn eval3_pinned(
         &self,
         holds: &impl Fn(&A) -> Option<bool>,
-        pins: &HashMap<u64, bool>,
+        pins: &DigestMap<u64, bool>,
     ) -> Option<bool> {
         // Each list once.
         fn bdd<A: Literal>(
             b: &Bdd<A>,
             holds: &impl Fn(&A) -> Option<bool>,
-            memo: &mut HashMap<u64, Option<bool>>,
+            memo: &mut DigestMap<u64, Option<bool>>,
         ) -> Option<bool> {
             *memo.entry(b.id()).or_insert_with(|| b.eval3(holds))
         }
-        let mut nodes = HashMap::new();
-        let mut memo: HashMap<u64, Option<bool>> =
+        let mut nodes = DigestMap::default();
+        let mut memo: DigestMap<u64, Option<bool>> =
             pins.iter().map(|(e, v)| (*e, Some(*v))).collect();
         let mut stack = vec![self.clone()];
         // Each expression is evaluated after its operands, on a stack of parts still to do.
@@ -1257,8 +1259,8 @@ impl<A: Literal> Part<A> {
                 continue;
             }
             let value = |q: &Part<A>,
-                         nodes: &mut HashMap<u64, Option<bool>>,
-                         memo: &HashMap<u64, Option<bool>>| match q {
+                         nodes: &mut DigestMap<u64, Option<bool>>,
+                         memo: &DigestMap<u64, Option<bool>>| match q {
                 Part::Bdd(b) => Some(bdd(b, holds, nodes)),
                 Part::Expr(x) => memo.get(&x.id).copied(),
             };
@@ -1320,10 +1322,10 @@ impl<A: Literal> Part<A> {
     /// The pins of one round of [`Part::settle`]. Each trial value is carried up from the
     /// expression through the operators it changes, and stops at the first it leaves alone, so
     /// that a trial reads what it changes, not the whole part.
-    fn pins(&self) -> HashMap<u64, bool> {
+    fn pins(&self) -> DigestMap<u64, bool> {
         // The expressions; those shared, in the order the walk finds them shared, so that the
         // pins taken do not depend on the expressions' ids.
-        let mut ids: HashMap<u64, usize> = HashMap::new();
+        let mut ids: DigestMap<u64, usize> = DigestMap::default();
         let mut exprs: Vec<Arc<Expr<A>>> = Vec::new();
         let mut uses: Vec<usize> = Vec::new();
         let mut shared = Vec::new();
@@ -1350,7 +1352,7 @@ impl<A: Literal> Part<A> {
             }
         }
         let Part::Expr(root) = self else {
-            return HashMap::new();
+            return DigestMap::default();
         };
         let root = ids[&root.id];
         let id = |q: &Part<A>| match q {
@@ -1411,8 +1413,8 @@ impl<A: Literal> Part<A> {
                      v: bool,
                      known: &[Option<bool>],
                      fixed: &[bool]|
-         -> HashMap<usize, Option<bool>> {
-            let mut changed = HashMap::from([(i, Some(v))]);
+         -> DigestMap<usize, Option<bool>> {
+            let mut changed = DigestMap::from_iter([(i, Some(v))]);
             let mut work = vec![i];
             while let Some(n) = work.pop() {
                 for &q in &parents[n] {
@@ -1428,7 +1430,7 @@ impl<A: Literal> Part<A> {
             }
             changed
         };
-        let mut pins: HashMap<u64, bool> = HashMap::new();
+        let mut pins: DigestMap<u64, bool> = DigestMap::default();
         for i in shared {
             for v in [true, false] {
                 let trial = carry(i, !v, &known, &fixed);
@@ -1451,7 +1453,7 @@ impl<A: Literal> Part<A> {
         loop {
             // The shared subexpressions, in the order the walk finds them shared, so that the
             // pins taken do not depend on the expressions' ids.
-            let mut uses: HashMap<u64, usize> = HashMap::new();
+            let mut uses: DigestMap<u64, usize> = DigestMap::default();
             let mut shared = Vec::new();
             let mut stack = vec![p.clone()];
             while let Some(q) = stack.pop() {
@@ -1473,7 +1475,7 @@ impl<A: Literal> Part<A> {
                     }
                 }
             }
-            let mut pins: HashMap<u64, bool> = HashMap::new();
+            let mut pins: DigestMap<u64, bool> = DigestMap::default();
             for key in shared {
                 for v in [true, false] {
                     pins.insert(key, !v);
@@ -1492,7 +1494,7 @@ impl<A: Literal> Part<A> {
     }
 
     /// The part with each expression in `pins` replaced by its value, each rebuilt once.
-    fn substitute_all(&self, pins: &HashMap<u64, bool>) -> Part<A> {
+    fn substitute_all(&self, pins: &DigestMap<u64, bool>) -> Part<A> {
         self.rebuild(|p| match p {
             Part::Bdd(_) => Some(p.clone()),
             Part::Expr(e) => pins.get(&e.id).map(|v| Part::leaf(*v)),
@@ -1519,7 +1521,7 @@ impl<A: Literal> Part<A> {
         let Part::Expr(root) = self else {
             unreachable!("`base` decides every diagram")
         };
-        let mut memo: HashMap<u64, Part<A>> = HashMap::new();
+        let mut memo: DigestMap<u64, Part<A>> = DigestMap::default();
         let mut stack: Vec<(&Expr<A>, bool)> = vec![(root, false)];
         while let Some((e, ready)) = stack.pop() {
             if memo.contains_key(&e.id) {
@@ -1611,8 +1613,8 @@ impl<A: Literal> Part<A> {
             Part::Bdd(b) => return b.forced(),
             Part::Expr(e) => e,
         };
-        let mut exprs: HashMap<u64, (Set<A>, Set<A>)> = HashMap::new();
-        let mut nodes: HashMap<u64, (Set<A>, Set<A>)> = HashMap::new();
+        let mut exprs: DigestMap<u64, (Set<A>, Set<A>)> = DigestMap::default();
+        let mut nodes: DigestMap<u64, (Set<A>, Set<A>)> = DigestMap::default();
         let mut stack = vec![(root.clone(), false)];
         while let Some((e, expanded)) = stack.pop() {
             if exprs.contains_key(&e.id) {
@@ -1673,7 +1675,7 @@ impl<A: Literal> Part<A> {
     /// atom stands in two of them. Each operand is walked until an atom met in an earlier one,
     /// so the cost is the size of the part.
     pub(super) fn disjoint_disjuncts(&self) -> Option<Vec<Part<A>>> {
-        let (mut seen, mut out) = (HashSet::new(), Vec::new());
+        let (mut seen, mut out) = (DigestSet::default(), Vec::new());
         let mut stack = vec![self];
         while let Some(p) = stack.pop() {
             if let Part::Expr(e) = p
@@ -1704,7 +1706,7 @@ impl<A: Literal> Part<A> {
     /// an expression's first operand before its second. Diagram nodes and expressions share one
     /// set of ids seen, so a diagram under two expressions is visited once.
     pub(super) fn atoms<'a>(&'a self, f: &mut impl FnMut(&'a A) -> bool) -> bool {
-        let mut seen = HashSet::new();
+        let mut seen = DigestSet::default();
         self.walk_atoms(&mut seen, f, false)
     }
 
@@ -1712,7 +1714,7 @@ impl<A: Literal> Part<A> {
     /// whole traversal; a caller reusing `seen` must not resume after such an early end.
     pub(super) fn atoms_unseen<'a>(
         &'a self,
-        seen: &mut HashSet<u64>,
+        seen: &mut DigestSet<u64>,
         f: &mut impl FnMut(&'a A) -> bool,
     ) -> bool {
         self.walk_atoms(seen, f, true)
@@ -1720,7 +1722,7 @@ impl<A: Literal> Part<A> {
 
     fn walk_atoms<'a>(
         &'a self,
-        seen: &mut HashSet<u64>,
+        seen: &mut DigestSet<u64>,
         f: &mut impl FnMut(&'a A) -> bool,
         shared_sets: bool,
     ) -> bool {
@@ -1757,7 +1759,7 @@ impl<A: Literal> Part<A> {
     pub(super) fn taken_toward<'a>(
         &'a self,
         to: bool,
-        seen: &mut HashSet<(u64, bool)>,
+        seen: &mut DigestSet<(u64, bool)>,
         f: &mut impl FnMut(&'a A),
     ) {
         let mut stack = vec![(self, to)];
@@ -1795,7 +1797,7 @@ impl<A: Literal> Part<A> {
     /// The atoms, if the part is their union and nothing else.
     /// Each expression is visited once, from a stack, its first operand before its second.
     pub(super) fn union_rows(&self) -> Option<Vec<A>> {
-        let (mut seen, mut out) = (HashSet::new(), Vec::new());
+        let (mut seen, mut out) = (DigestSet::default(), Vec::new());
         let mut stack = vec![self];
         while let Some(p) = stack.pop() {
             match p {
@@ -1835,7 +1837,7 @@ impl<A: Literal> Part<A> {
     /// atoms. `None` for any other part, `false` included. Each expression is visited once,
     /// from a stack, so the cost is the size of the part.
     pub(super) fn clause(&self) -> Option<(Vec<A>, Vec<A>)> {
-        let (mut seen, mut taken, mut refused) = (HashSet::new(), Vec::new(), Vec::new());
+        let (mut seen, mut taken, mut refused) = (DigestSet::default(), Vec::new(), Vec::new());
         let mut stack = vec![self];
         while let Some(p) = stack.pop() {
             match p {
@@ -3053,7 +3055,7 @@ mod list {
         /// below it, all of which were walked then.
         pub(super) fn atoms_unseen<'a>(
             &'a self,
-            seen: &mut std::collections::HashSet<u64>,
+            seen: &mut crate::digest::DigestSet<u64>,
             f: &mut impl FnMut(&'a A) -> bool,
             shared_sets: bool,
         ) -> bool {
@@ -3105,7 +3107,7 @@ mod list {
         pub(super) fn taken_toward<'a>(
             &'a self,
             to: bool,
-            seen: &mut std::collections::HashSet<(u64, bool)>,
+            seen: &mut crate::digest::DigestSet<(u64, bool)>,
             f: &mut impl FnMut(&'a A),
         ) {
             let Bdd::List(root, first) = self else { return };

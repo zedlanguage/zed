@@ -83,6 +83,7 @@ use super::bes::{Answer, Bes, Decision, Kind, decide};
 use super::rec::unfold::eval;
 use super::rec::{self, Env, Judgment, Why};
 use super::{Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Type, Universes, Verdict};
+use crate::digest::{DigestMap, DigestSet};
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
 use shared::{ByType, ChainHint, ChainPlan, Digests, Literal2, TwoSat, list_step, only_atoms};
@@ -524,7 +525,7 @@ impl Type {
             // dependency is lost, since a node is skipped only when it was read before.
             // Tests: cycle_dup::shared_parts_are_read_once_when_deciding_their_groups and the
             // tests that a batch and a single query agree.
-            let (mut rows, mut morphisms) = (HashSet::new(), HashSet::new());
+            let (mut rows, mut morphisms) = (DigestSet::default(), DigestSet::default());
             let mut found = Vec::new();
             let mut stack: Vec<Type> = roots.to_vec();
             let visit = |t: &Type, seen: &mut HashSet<u64, Digests>, stack: &mut Vec<Type>| {
@@ -925,10 +926,10 @@ struct Search {
     shown: Vec<Rep>,
     /// The number here of each value of another search read ([`Rep::Of`]), by its list in
     /// `STORES` and its number there, so a value shared within that one is shared here too.
-    foreign: HashMap<(usize, usize), usize>,
+    foreign: DigestMap<(usize, usize), usize>,
     /// For each such value whose parts were read in ([`Search::local`]), the number of the value
     /// made of them.
-    expanded: HashMap<usize, usize>,
+    expanded: DigestMap<usize, usize>,
     members: HashMap<(usize, Type), Option<bool>, Digests>,
     /// Each type read as the value type of a morphism.
     value_reads: BTreeSet<usize>,
@@ -2152,7 +2153,7 @@ impl Search {
 /// literal union of tuple rows with no link of a list in it.
 fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
     let (mut seen, mut out, mut wraps, mut items) =
-        (HashSet::new(), Vec::new(), Vec::new(), Vec::new());
+        (DigestSet::default(), Vec::new(), Vec::new(), Vec::new());
     // A payload diagram's distinct components with their place: those with no atom name
     // (`plain`) and those with one (`named`), and in which contexts `plain` was queued.
     struct Rows {
@@ -2163,8 +2164,10 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
     // Payload diagrams read, by (length, diagram id), `None` when not a union of rows; tuple
     // and morphism diagrams of the types themselves walked, by (id, context); list tails
     // followed by the X44 walk, by (node id, link name).
-    let mut payloads: HashMap<(usize, u64), Option<Rows>> = HashMap::new();
-    let (mut own, mut maps, mut tails_seen) = (HashSet::new(), HashSet::new(), HashSet::new());
+    let mut payloads: DigestMap<(usize, u64), Option<Rows>> = DigestMap::default();
+    let (mut own, mut maps) = (DigestSet::default(), DigestSet::default());
+    // Keyed by the program's link names, so it keeps the seeded hasher (`DigestMap` says why).
+    let mut tails_seen = HashSet::new();
     let mut stack: Vec<(Type, bool)> = roots.iter().rev().map(|t| (t.clone(), false)).collect();
     while let Some((t, in_item)) = stack.pop() {
         if !seen.insert((t.node_id(), in_item)) {
@@ -2202,7 +2205,7 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
                         named: Vec::new(),
                         queued: [false; 2],
                     };
-                    let mut met = HashSet::new();
+                    let mut met = DigestSet::default();
                     for row in b.union_rows()? {
                         for (i, c) in row.iter().enumerate() {
                             if !met.insert((i, c.node_id())) {

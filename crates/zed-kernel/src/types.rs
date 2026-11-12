@@ -1540,7 +1540,7 @@ impl Type {
     // The complete solution meets the component types each path takes before walking them.
     pub fn function_part(&self) -> Option<Type> {
         let mut seen = HashSet::new();
-        let mut paths = HashSet::new();
+        let mut paths = crate::digest::DigestSet::default();
         let mut stack = vec![self.clone()];
         while let Some(t) = stack.pop() {
             if !seen.insert(t.node_id()) {

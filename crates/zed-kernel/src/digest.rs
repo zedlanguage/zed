@@ -4,7 +4,8 @@
 //! it without an import cycle (s_01f_import_graph). It replaces the byte-at-a-time hasher that
 //! `types` kept beside it (HASH-one-hasher).
 
-use std::hash::Hasher;
+use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
 
 /// splitmix64's finalizer on each `u64` in turn, from no seed, so a digest is the same on every
 /// run; bytes go in eight at a time, and an integer of any width as one word. SipHash, the
@@ -61,6 +62,16 @@ impl Hasher for Digest {
         self.0
     }
 }
+
+/// A map hashed by [`Digest`]. Its keys must be ids, numbers or digests the compiler drew, never
+/// a program's text: with no seed, a program could choose keys that collide and make each lookup
+/// read the whole table (hash flooding), so a map keyed by names keeps the standard map's seeded
+/// hasher. Making one costs nothing; the standard map reads a thread-local seed and SipHash-1-3
+/// hashes each key (KERNEL-randomstate-cost).
+pub type DigestMap<K, V> = HashMap<K, V, BuildHasherDefault<Digest>>;
+
+/// A set hashed by [`Digest`], with the keys of a [`DigestMap`].
+pub type DigestSet<K> = HashSet<K, BuildHasherDefault<Digest>>;
 
 /// The digest `h` with the word `x` added: splitmix64's finalizer of the two, the step of
 /// [`Digest`], and the combination of two digests that `value` and `types` build theirs with.
@@ -128,5 +139,19 @@ mod tests {
             assert!(by_args.insert(h.hash_one((a, args))), "{a}");
         }
         assert_eq!(h.hash_one(7u64), step(0, 7));
+    }
+
+    /// A [`DigestMap`] reads no seed: two maps given the same keys in the same order hold them in
+    /// one order, as on every run, where two standard maps each draw their own seed.
+    #[test]
+    fn digest_maps_given_the_same_keys_hold_them_in_one_order() {
+        let make = || -> DigestMap<u64, ()> { (0..1000).map(|k| (k * 7919, ())).collect() };
+        let order = |m: &DigestMap<u64, ()>| m.keys().copied().collect::<Vec<_>>();
+        assert_eq!(order(&make()), order(&make()));
+        let set = || -> DigestSet<u64> { (0..1000).map(|k| k * 7919).collect() };
+        assert_eq!(
+            set().into_iter().collect::<Vec<_>>(),
+            set().into_iter().collect::<Vec<_>>()
+        );
     }
 }
