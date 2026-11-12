@@ -1985,14 +1985,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| ATOM-empty-payload | running | 2026-11-12 14:11 |  |
 | BUILD-const | impl attempt 1 | 2026-11-05 04:07 | affected groups + --doc: 215 pieces, 0 failed, 2039 tests passed (l02_08d 14/14, l02_03 95/95); merging / load 47.11 58.54 56.33 |
-| FENCE-sync-stack | impl attempt 1 | 2026-11-12 14:53 | started; worktree /home/luke/Work/wt/fence-sync-stack on origin/main 4965e46ed |
+| FENCE-sync-stack | impl attempt 1 | 2026-11-12 14:53 | reproduced both failures (l01_07 copies out of date; after sync l01_21 rows lacks 2 rows); synced, 2 Row variants added; 36 pieces 0 failed (l01_06/07/08-14/21/ |
 | GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
 | LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | merged part A + scored C (difference rule) as ece80a15c; 4 groups 0 failed; round 2: lazy-offset treap for aperiodic chains |
 | MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | negative control on main: work-scaling tests fail, bytes n=40->320: doubling 33.5MB->1596MB (47.7x), compared 52.6MB->2815MB (53.5x), name chain 28.2MB->1227MB  |
-| SOUND-top-literals | impl attempt 1 | 2026-11-12 13:51 | started; worktree /home/luke/Work/wt/sound-top-literals at 83aade997 |
+| MSG-domain-repairs-v | running | 2026-11-12 00:53 |  |
+| SOUND-top-literals | impl attempt 1 | 2026-11-12 13:51 | fix in resolve_top_parts (Class::asked); 5 tests in l01_26a top_literals.rs, 16 of 18 cases red before, all green after |
 | TESTS-scaling-gaps | impl attempt 1 | 2026-11-08 23:59 | added l01_23 payload_scaling (cofinite #e((i,)) / (i,) pinwheels 32->256: 7.9-8.2x instr empty, 5.3-5.9x middle; control naive pairwise cell test 46.2x bytes fa |
-| TESTS-split-reversed-boxes | impl attempt 1 | 2026-11-12 02:58 | started; worktree /home/luke/Work/wt/tests-split-reversed-boxes on origin/main 9b8b3906c |
+| TESTS-split-reversed-boxes | impl attempt 1 | 2026-11-12 02:58 | old parts of 1000 cases alone 18.5-22.1 s, 83-104 G instr (load 42-48); split to 8 parts of 500 with a compared-count assert: 10.2-13.6 s alone, 38-53 G each, s |
 | WARN-refused-placements | impl attempt 1 | 2026-11-12 14:51 | started; worktree /home/luke/Work/wt/warn-refused-placements on origin/main 14bfdb594 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
