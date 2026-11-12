@@ -434,11 +434,13 @@ impl Lin {
                 .collect()
         }
         let (xs, ys) = (factors(other)?, factors(self)?);
+        // Each term is added in place, O(|self| × |other| × log) in all; adding each as a new
+        // `Lin` with `plus` copied the sum so far at every term, O((|self| × |other|)²).
         let mut out = self.times(other.constant.clone());
         for (x, c) in &xs {
-            out = out.plus(&Lin::atom(x.atom()).times(*c * &self.constant));
+            out.plus_assign(&Lin::atom(x.atom()).times(*c * &self.constant));
             for (y, d) in &ys {
-                out = out.plus(&Lin::atom(Atom::product_of(x.clone(), y.clone())).times(*c * *d));
+                out.plus_assign(&Lin::atom(Atom::product_of(x.clone(), y.clone())).times(*c * *d));
             }
         }
         Some(out)

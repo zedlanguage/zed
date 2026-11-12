@@ -1456,15 +1456,96 @@ fn one_sum_joins(k: usize) -> (Relation, Relation) {
     (rs.pop().expect("two relations"), g)
 }
 
+/// The premise and the goal of [`open_side_chain`] with the links `x{i} - b{i} - c{i} >= 4`,
+/// `c{i} >= 0` and `b{i} * c{i} >= -1000000`, all joined by the row
+/// `b0 + ... + b{k-1} >= -1000000 * k` written on the factors `b{i}` themselves: the k-term
+/// sum is one of the linear premises on every factor `b{i}`.
+fn one_sum_on_factors(k: usize) -> (Relation, Relation) {
+    let link =
+        |i: usize| format!("x{i} - b{i} - c{i} >= 4 && c{i} >= 0 && b{i} * c{i} >= -1000000");
+    let (premise, goal) = open_side_chain_source(k, link);
+    let bs: Vec<String> = (0..k).map(|i| format!("b{i}")).collect();
+    let premise = format!(
+        "{} && {} >= -{};",
+        premise.trim_end_matches(';'),
+        bs.join(" + "),
+        1000000 * k
+    );
+    let (ps, p) = function(&premise);
+    let (_, g) = function(&goal);
+    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
+    let g = rs.pop().expect("two relations");
+    (rs.pop().expect("two relations"), g)
+}
+
+#[test]
+fn products_whose_factors_one_sum_on_the_factors_joins_scale() {
+    // As `products_whose_factors_one_sum_joins_scale`, with the sum on the factors `b{i}`
+    // themselves (C2-pairs-long-row).
+    let n = 8;
+    let built = scaling::inputs(n, one_sum_on_factors);
+    let measure = move || {
+        scaling::check(
+            "a sum of products whose factors one sum on the factors joins",
+            n,
+            |k| {
+                let (p, g) = &built[&k];
+                let e = entails(p, g);
+                assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            },
+        );
+    };
+    scaling::on_a_thread(8 << 20, measure);
+}
+
+#[test]
+fn a_premise_with_a_factor_foreign_to_the_other_side_is_left_out_of_the_products() {
+    // A premise on `x` that mentions a factor foreign to `y` (no premise on `y` mentions it,
+    // and the formulas multiply it by nothing on `y`'s side) is left out of the products for
+    // `x * y` (C2-pairs-long-row). A factor with a partner on the other side is not foreign:
+    // `(x + z) * (y - w) + (x - z) * (y + w)` is `2 * x * y - 2 * z * w`.
+    assert_proved(
+        "ok(x: int, y: int, z: int, w: int) = x + z >= 0 && x - z >= 0 && y + w >= 0 && y - w >= 0;",
+        "ok(x: int, y: int, z: int, w: int) = x * y - z * w >= 0;",
+    );
+    // A factor in no product is not foreign when another premise on a partner of `y` holds it
+    // with the other sign: `(x - z) * y + (x + z - w) * y` is `2 * x * y - w * y`, with both
+    // premises on `x`, and `(x - z) * y + (w + z) * y` is `x * y + w * y`, with the second
+    // premise on `w`, the other factor multiplied by `y`.
+    assert_proved(
+        "ok(x: int, y: int, z: int, w: int) = x - z >= 0 && x + z - w >= 0 && y >= 0;",
+        "ok(x: int, y: int, z: int, w: int) = 2 * x * y >= w * y;",
+    );
+    assert_proved(
+        "ok(x: int, y: int, z: int, w: int) = x - z >= 0 && w + z >= 0 && y >= 0;",
+        "ok(x: int, y: int, z: int, w: int) = x * y + w * y >= 0;",
+    );
+}
+
+#[test]
+fn a_factor_in_no_product_never_leaves_a_premise_out_of_the_products() {
+    // A factor that no product of the formulas holds can cancel through the products of
+    // another pair, whatever its sign: here `d` cancels between `(b + d + 2 * a) * c` and
+    // `(e + d - b) * c`, which share its sign, and the rows on `c` give the opposite signs.
+    // Such a factor is never foreign, so no premise is left out for it (C2-pairs-long-row).
+    assert_proved(
+        "ok(a: int, b: int, c: int, d: int, e: int) = 1 - c >= 0 && 2 * c - 1 >= 0 && b + d + 2 * a >= 0 && 2 * e + 2 * d - 2 * b >= 0 && 2 * d >= 0;",
+        "ok(a: int, b: int, c: int, d: int, e: int) = 4 * b * c - 3 * b + 3 * d + 4 * a * c - 2 * a - 2 * c * e + 2 * e >= 0;",
+    );
+    assert_proved(
+        "ok(a: int, b: int, c: int, d: int, e: int, f: int) = 2 * b - 2 * d - 2 * c >= 0 && -2 * f - c >= 0 && a + 2 * e >= 0 && -a - 2 * e >= 0 && -b >= 0;",
+        "ok(a: int, b: int, c: int, d: int, e: int, f: int) = -4 * a * b - 8 * b * e - 6 * a - 12 * e + 2 * a * d + 4 * d * e - 4 * a * f - 8 * e * f >= 0;",
+    );
+}
+
 #[test]
 fn products_whose_factors_one_sum_joins_scale() {
     // One cluster holds all k links, so a solver search over the cluster for each open side
     // cost O(sides × cluster): 41 times the instructions at 8n with the sum on `b{i}` itself
     // (C2-local-tier). Through the cluster's block-cut tree each link is its own block, and the
     // sides are found in one pass over the blocks. The sum is on atoms tied to `b{i}`, not on
-    // `b{i}`: a sum on a factor is one of the factor's linear premises, and its product with
-    // each premise on `c{i}` has k terms, so the products alone hold O(k²) terms (row
-    // C2-pairs-long-row).
+    // `b{i}`: a sum on the factors themselves is
+    // `products_whose_factors_one_sum_on_the_factors_joins_scale` (C2-pairs-long-row).
     let n = 8;
     let built = scaling::inputs(n, one_sum_joins);
     let measure = move || {
