@@ -1926,7 +1926,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | C2-pairs-long-row | impl attempt 1 | 2026-11-12 02:51 | reproduced on 4bd0dd03c: brief family (sum on b{i}) 8->64 fails 35.9x bytes (28.2M->1012.8M, limit 17.6); w{i}==b{i} variant 9.7x instr passes; load 93 |
-| CHK-update-field-receiver | impl attempt 1 | 2026-11-12 02:53 | negative controls (not committed): fields not followed -> 3 tests fail; qualifiers ignored -> 2 fail; quadratic qualifier pass -> 41.6x bytes at 8n, scaling tes |
+| CHK-update-field-receiver | impl attempt 1 | 2026-11-12 02:53 | done: build namespace stopped; both worktrees and branches removed (impl tree needed chmod u+rwx on the overlay build/work/work dir, mode 000, before rm) |
 | DELETE-msg-cycle-push | running | 2026-11-11 13:43 |  |
 | DELETE-msg-cycle-unit-item | running | 2026-11-11 13:43 |  |
 | DELETE-msg-elab-operator | running | 2026-11-11 13:43 |  |
@@ -1934,33 +1934,35 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | DELETE-msg-port-origin | running | 2026-11-11 13:43 |  |
 | DELETE-msg-struct-field-twice | running | 2026-11-11 13:43 |  |
 | DELETE-msg-sum-accumulator | running | 2026-11-11 13:43 |  |
+| FENCE-dot-never-mutates-row | running | 2026-11-12 04:36 |  |
 | FIX-function-part-subtracted | impl attempt 1 | 2026-11-11 14:59 | fixed 06d354b20 (pushed, zed-impl main ff); groups l01_22 102, l01_23 90 pieces, l01_26 131 pieces, l01_29 287, l01_38 348 pieces, deep_types 24, zed-kernel lib |
 | FIX-sort-no-key | impl attempt 1 | 2026-11-11 16:34 | pushed 6f14f73c6, 69ca80c93 to zed-impl main; local main fast-forwarded; worktree and branch removed; load 41.00 |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
 | GSX-unsolved | impl attempt 1 | 2026-11-11 16:53 | CD round 1 launched (experiment 4374754456781193217, baseline 66010); port worktree gsx-cd has the I6.7 memo move and I6.8 control fix, building |
-| IMPORT-cycle-presburger | impl attempt 1 | 2026-11-12 02:07 | started; worktree made on 346407a9f |
+| IMPORT-cycle-presburger | impl attempt 1 | 2026-11-12 02:07 | cycle broken (imports: no cycle, 24 files 55 imports); tests: s_01f+zedc_presburger+zedc_preimage+l01_39 with --doc 359 pieces 0 failed (load 30.6-67.8), s_01f+ |
 | INITIAL-two-sentinels-overlap | impl attempt 1 | 2026-11-11 17:21 | worktrees initial-overlap and initial-overlap-spec and their branches removed; done |
-| KERNEL-randomstate-cost | impl attempt 1 | 2026-11-12 03:25 | started in wt/kernel-randomstate-cost from origin/main c2be8567f; load 35.53 48.30 55.57 |
+| KERNEL-randomstate-cost | impl attempt 1 | 2026-11-12 03:25 | tests: run_tests 346 pieces 0 failed (l01_17/20/22/23/24/27/28/39, deep_types, deep_search); zed_kernel lib 211 passed (scaling with GLIBC_TUNABLES as run_tests |
 | KEYWORD-without-37 | impl attempt 1 | 2026-11-11 16:59 | done: worktrees keyword-without and keyword-without-spec and both branches removed |
 | LAZY-hub-unsolved | running | 2026-11-11 16:53 |  |
-| LIT-print-order | impl attempt 1 | 2026-11-11 12:38 | scaling zed-kernel types::print::tests::a_union_of_many_numeric_literals_prints_ascending_in_m_log_m: n=1024/8192, 7.8x instructions, 8.0x bytes, limit 11.44; n |
+| LIT-print-order | impl attempt 1 | 2026-11-11 12:38 | fixed: pushed d18e52a0a + STATUS 63683193d (COMPLEXITY F177); groups 236 pieces 2000 passed 0 failed 32 ignored on the final tree; follow-ups MSG-union-order-re |
 | LIT-unfixed-decimal-binding | impl attempt 1 | 2026-11-11 14:59 | pushed db5cc1405 (tests only); l01_26a 148 passed 0 failed at load 43; follow-up LIT-cast-of-literal-union queued; removing worktree |
 | LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | worktree /home/luke/Work/wt/lmd-cd (wt/lmd-cd at 7d96d3826) made for the Rust port; CD round 1 best 58 = 28.71 |
 | MSG-compare-components | impl attempt 1 | 2026-11-11 13:43 | fixed: pushed 25d87b8d3 + STATUS a71967299; follow-up MSG-derive-type-size queued; load 50.34 52.44 49.78 |
-| MSG-concise-style | impl attempt 1 | 2026-11-11 23:43 | Part 3: affected battery 532 pieces 0 failed (logs9); clippy clean; scaling: never_equal component repairs 256/2048 17.1M/133.9M instr 7.8x (limit 12.10), wide- |
-| MSG-converted-claims-checked | impl attempt 1 | 2026-11-12 03:11 | started with MSG-suffix-menu-unchecked in /home/luke/Work/wt/msg-repairs-checked; load 55.07 |
-| MSG-derive-type-size | impl attempt 1 | 2026-11-12 04:26 | fixed: pushed afbdffe42, spec c99bb19; affected groups 285 pieces 0 failed (load 41.6 to 54.0), after the last rebase 253 pieces 0 failed; follow-ups MSG-derive-print-per-message, MSG-derive-same-chain |
-| MSG-dot-call-not-updated | impl attempt 1 | 2026-11-12 04:40 | fixed: pushed ba5392197, spec 04e977e; l06_01_parser 76, l01_29 319, l01_07 44, l01_21 60, l01_37a 20+20 passed; scaling n/8n passes, control (per-call scan) failed |
-| MSG-indexed-spread-one-writer | impl attempt 1 | 2026-11-12 02:53 | started; worktree /home/luke/Work/wt/msg-indexed-spread |
+| MSG-concise-style | impl attempt 1 | 2026-11-11 23:43 | Part 3 pushed d59b4756e (rebased over LIT-cast-of-literal-union, MSG-literal-type-article, LIT-print-order, MSG-derive-type-size, MSG-dot-call-not-updated): aff |
+| MSG-converted-claims-checked | impl attempt 1 | 2026-11-12 03:11 | grid of 1847 offered repairs over 16x16 operand pairs, 8 operators, min and 5 words: 0 fail (was 150 of 1933 at base 4bd0dd03c); apart casts and components, equ |
+| MSG-derive-type-size | impl attempt 1 | 2026-11-11 23:35 | done: both worktrees and branches removed; follow-ups fed to L2.14-diag / load 28.52 41.10 45.25 |
+| MSG-dot-call-drop-weak-repairs | running | 2026-11-12 04:36 |  |
+| MSG-dot-call-imported-methods | running | 2026-11-12 04:36 |  |
+| MSG-indexed-spread-one-writer | impl attempt 1 | 2026-11-12 02:53 | fix found by review: several() walked every domain of each passed definition and every definition for writes whose key holds a *. call (O(w(d+k))); now one-key  |
 | MSG-suffix-menu-unchecked | running | 2026-11-12 03:11 |  |
-| MSG-union-order-consistent | impl attempt 1 | 2026-11-11 13:26 | scaling zed-kernel types::print::tests::a_union_of_many_numeric_literals_prints_ascending_in_m_log_m: n=1024/8192, 7.8x instructions, 8.0x bytes, limit 11.44; n |
+| MSG-union-order-consistent | impl attempt 1 | 2026-11-11 13:26 | fixed: pushed d18e52a0a + STATUS 63683193d (COMPLEXITY F177); groups 236 pieces 2000 passed 0 failed 32 ignored on the final tree; follow-ups MSG-union-order-re |
 | PERF-negated-chain-unsolved | impl attempt 1 | 2026-11-11 17:41 | worktree wt/pncx-cd made to port CD candidate 45 (7-8% fewer instructions on 23..711 words, same growth) for the instruction-count comparison |
 | PRES-disj-regressions | impl attempt 1 | 2026-11-11 23:37 | pushed 6d5a815dd + 6391887d9 to main after rebase on d0ddd9956; build, fmt, clippy -D warnings clean; run_tests.sh --doc --only l01_38/l01_25/zedc_presburger: 5 |
 | PRINT-own-shape-1tuple | impl attempt 1 | 2026-11-09 10:56 | done; worktree and branch removed / load 33.55 27.72 27.93 |
 | PRODUCT-superlinear-main | impl attempt 1 | 2026-11-12 00:05 | blocked, no commit (load1 56.17): shared cause = case split re-projects every earlier part on a moved hub, Theta(k) projections per test, 90-98% no-ops; persist |
 | RADIX-depth | xr attempt 1 | 2026-11-11 01:43 | seats in progress: Opus read 12.11, gcd 12.35, wide 14.04 (own numbers, unverified); codex valuation 11.72-12.32 / load 53.88 56.03 58.57 |
 | REFUSAL-front-unsolved | running | 2026-11-11 17:03 |  |
-| STAGE-joined-eq-build | impl attempt 1 | 2026-11-12 02:24 | XR round 1 launched (Opus, gpt-6.1-sol, CD exp 2483242613285584897); prototype passes exhaustive/random/2^40 Zimin at K=17 / load 64.53 64.05 61.51 |
+| STAGE-joined-eq-build | impl attempt 1 | 2026-11-12 02:24 | CD seat stopped at 44 candidates (best 0.335 M calls, one-round rule, unbounded blocks, not adopted); new test keying_a_call_at_a_join_and_a_tuple_of_n_parts_sc |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
