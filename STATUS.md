@@ -1926,6 +1926,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | C2-pairs-long-row | impl attempt 1 | 2026-11-12 02:51 | reproduced on 4bd0dd03c: brief family (sum on b{i}) 8->64 fails 35.9x bytes (28.2M->1012.8M, limit 17.6); w{i}==b{i} variant 9.7x instr passes; load 93 |
+| CHK-f64-bounded-int-menus | running | 2026-11-12 01:41 |  |
 | CHK-update-field-receiver | impl attempt 1 | 2026-11-12 02:53 | done: build namespace stopped; both worktrees and branches removed (impl tree needed chmod u+rwx on the overlay build/work/work dir, mode 000, before rm) |
 | DELETE-msg-cycle-push | running | 2026-11-11 13:43 |  |
 | DELETE-msg-cycle-unit-item | running | 2026-11-11 13:43 |  |
@@ -1941,18 +1942,21 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | GSX-unsolved | impl attempt 1 | 2026-11-11 16:53 | CD round 1 launched (experiment 4374754456781193217, baseline 66010); port worktree gsx-cd has the I6.7 memo move and I6.8 control fix, building |
 | IMPORT-cycle-presburger | impl attempt 1 | 2026-11-12 02:07 | cycle broken (imports: no cycle, 24 files 55 imports); tests: s_01f+zedc_presburger+zedc_preimage+l01_39 with --doc 359 pieces 0 failed (load 30.6-67.8), s_01f+ |
 | INITIAL-two-sentinels-overlap | impl attempt 1 | 2026-11-11 17:21 | worktrees initial-overlap and initial-overlap-spec and their branches removed; done |
-| KERNEL-randomstate-cost | impl attempt 1 | 2026-11-12 03:25 | tests: run_tests 346 pieces 0 failed (l01_17/20/22/23/24/27/28/39, deep_types, deep_search); zed_kernel lib 211 passed (scaling with GLIBC_TUNABLES as run_tests |
+| KERNEL-randomstate-cost | impl attempt 1 | 2026-11-12 03:25 | merged and pushed zed-impl e76d89933; worktree, branch and perf files removed |
 | KEYWORD-without-37 | impl attempt 1 | 2026-11-11 16:59 | done: worktrees keyword-without and keyword-without-spec and both branches removed |
 | LAZY-hub-unsolved | running | 2026-11-11 16:53 |  |
+| LEX-decimal-format-suffix | running | 2026-11-12 04:41 |  |
 | LIT-print-order | impl attempt 1 | 2026-11-11 12:38 | fixed: pushed d18e52a0a + STATUS 63683193d (COMPLEXITY F177); groups 236 pieces 2000 passed 0 failed 32 ignored on the final tree; follow-ups MSG-union-order-re |
 | LIT-unfixed-decimal-binding | impl attempt 1 | 2026-11-11 14:59 | pushed db5cc1405 (tests only); l01_26a 148 passed 0 failed at load 43; follow-up LIT-cast-of-literal-union queued; removing worktree |
 | LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | worktree /home/luke/Work/wt/lmd-cd (wt/lmd-cd at 7d96d3826) made for the Rust port; CD round 1 best 58 = 28.71 |
 | MSG-compare-components | impl attempt 1 | 2026-11-11 13:43 | fixed: pushed 25d87b8d3 + STATUS a71967299; follow-up MSG-derive-type-size queued; load 50.34 52.44 49.78 |
+| MSG-concise-rest | impl attempt 1 | 2026-11-12 04:41 | start: MSG-concise-rest, MSG-forced-literal-menu, CHK-f64-bounded-int-menus, LEX-decimal-format-suffix in wt/msg-concise-rest (+ -spec) / load 41.42 35.32 38.13 |
 | MSG-concise-style | impl attempt 1 | 2026-11-11 23:43 | Part 3 pushed d59b4756e (rebased over LIT-cast-of-literal-union, MSG-literal-type-article, LIT-print-order, MSG-derive-type-size, MSG-dot-call-not-updated): aff |
 | MSG-converted-claims-checked | impl attempt 1 | 2026-11-12 03:11 | grid of 1847 offered repairs over 16x16 operand pairs, 8 operators, min and 5 words: 0 fail (was 150 of 1933 at base 4bd0dd03c); apart casts and components, equ |
 | MSG-derive-type-size | impl attempt 1 | 2026-11-11 23:35 | done: both worktrees and branches removed; follow-ups fed to L2.14-diag / load 28.52 41.10 45.25 |
 | MSG-dot-call-drop-weak-repairs | running | 2026-11-12 04:36 |  |
 | MSG-dot-call-imported-methods | running | 2026-11-12 04:36 |  |
+| MSG-forced-literal-menu | running | 2026-11-12 04:41 |  |
 | MSG-indexed-spread-one-writer | impl attempt 1 | 2026-11-12 02:53 | fix found by review: several() walked every domain of each passed definition and every definition for writes whose key holds a *. call (O(w(d+k))); now one-key  |
 | MSG-suffix-menu-unchecked | running | 2026-11-12 03:11 |  |
 | MSG-union-order-consistent | impl attempt 1 | 2026-11-11 13:26 | fixed: pushed d18e52a0a + STATUS 63683193d (COMPLEXITY F177); groups 236 pieces 2000 passed 0 failed 32 ignored on the final tree; follow-ups MSG-union-order-re |
