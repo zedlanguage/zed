@@ -24,7 +24,20 @@ defaultTarget = Target(
 // `retained`: the bytes of the region's results that stay live for later regions
 // on its device, read as at most `footprint` (step M0.6a).
 struct Region { device: int, work: int, depth: int, footprint: int, retained: int }
-struct Plan { address: Any, regions: [Region], cutEdges: [int] }
+
+// When a region of a static schedule runs: from `start` until `start + length`;
+// a region of length 0 runs at the instant `start`.
+struct Span { start: int, length: int }
+
+// `schedule`, when the regions run (step M0.6a): `#timed(spans)`, one Span per
+// region in plan order, or `#nested(steps)`, a series-parallel nesting written in
+// postfix, each step `#region(i)` (the region of index i), `#seq(k)` (the k
+// entries on top run one after another, the deepest first) or `#par(k)` (they
+// may run at once).
+struct Plan { address: Any, regions: [Region], cutEdges: [int], schedule: Any }
+
+// r regions run one after another in plan order.
+inSequence(positional r) = #nested((0..<r).map(i -> #region(i)) ++ [#seq(r)]);
 
 size(positional t, positional bound) = if bound == #unbounded { t.nominalSize } else { bound };
 
@@ -39,40 +52,108 @@ brent(positional work, positional depth, positional cores) = {
   (work - d + max(cores, 1) - 1) div max(cores, 1) + d
 };
 
-// The peak, over regions run one after another in plan order, of each region's
-// footprint plus the bytes the regions before it retain (step M0.6a). Retained
-// bytes count until the schedule ends, an upper bound on the live set: freeing
-// them at their last reader needs that reader, which Region does not carry
-// (the complexity tradeoff at crates/zedc-base/src/cost.rs per_device).
-peak(positional rs) =
-  rs.fold([0, 0], (pk, r) -> [max(pk[0], pk[1] + r.footprint), pk[1] + min(r.retained, r.footprint)])[0];
+kept(positional r) = min(r.retained, r.footprint);
 
-// The work and depth each device holds, summed, and its peak footprint, in
-// device order.
-perDevice(positional p, positional n) = (0..<n).map(d -> {
+// The footprint of device d under a static schedule, exact: the most bytes held
+// at once, a running region holding its footprint and a finished one its
+// retained bytes. The starts and ends are swept in time order; at one instant
+// the ends come first, then the starts, then the ends of regions of length 0, so
+// those count beside every region running at their instant. Retained bytes count
+// until the schedule ends, an upper bound on the live set: freeing them at their
+// last reader needs that reader, which Region does not carry (the complexity
+// tradeoff at crates/zedc-base/src/cost.rs footprints).
+timedPeak(positional rs, positional spans, positional d) =
+  rs.zip(spans).filter(x -> x[0].device == d).flatMap(x -> {
+    end = x[1].start + x[1].length;
+    [[x[1].start, 1, x[0]], [end, if end > x[1].start { 0 } else { 2 }, x[0]]]
+  }).sort(by: (a, b) -> a[0] < b[0] || (a[0] == b[0] && a[1] <= b[1]))
+    .fold([0, 0, 0], (acc, e) -> if e[1] == 1 {
+      [max(acc[0], acc[1] + acc[2] + e[2].footprint), acc[1] + e[2].footprint, acc[2]]
+    } else {
+      [acc[0], acc[1] - e[2].footprint, acc[2] + kept(e[2])]
+    })[0];
+
+// What a part of a plan holds on one device, [peak, kept]: in series, the later
+// part runs on what the earlier keeps; beside, on a device of several cores, both
+// may be at their peaks; interleaved, on a device of one core, one region runs at
+// a time in either order. [0, 0] is the identity of each.
+inSeries(positional a, positional b) = [max(a[0], a[1] + b[0]), a[1] + b[1]];
+beside(positional a, positional b) = [a[0] + b[0], a[1] + b[1]];
+interleaved(positional a, positional b) = [max(a[0] + b[1], b[0] + a[1]), a[1] + b[1]];
+
+compose(positional par, positional oneCore, positional a, positional b) =
+  if !par { inSeries(a, b) } else if oneCore { interleaved(a, b) } else { beside(a, b) };
+
+// The stack of a nesting is a chain of pairs, [top, rest], #empty at the bottom.
+// Pops k entries, composing them from the deepest, and pushes the result.
+popCompose(positional st, positional k, positional acc, positional par, positional oneCore) =
+  if k == 0 { [acc, st] } else { popCompose(st[1], k - 1, compose(par, oneCore, st[0], acc), par, oneCore) };
+
+// The footprint of device d under work stealing, an upper bound: a parallel
+// composition counts its parts at their peaks at once, and where the regions'
+// dependences are not series-parallel the nesting holds every pair that may run
+// at once (the complexity tradeoff at crates/zedc-base/src/cost.rs nested).
+// Requires nestedValid.
+nestedPeak(positional rs, positional steps, positional d, positional oneCore) = {
+  st = steps.fold(#empty, (st, s) -> match s {
+    #region(i) -> [if rs[i].device == d { [rs[i].footprint, kept(rs[i])] } else { [0, 0] }, st],
+    #seq(k) -> popCompose(st, k, [0, 0], false, oneCore),
+    #par(k) -> popCompose(st, k, [0, 0], true, oneCore),
+  });
+  if st == #empty { 0 } else { st[0][0] }
+};
+
+// Each region named exactly once, no composition of more entries than the stack
+// holds, and at most one entry left.
+nestedValid(positional r, positional steps) = {
+  named = steps.flatMap(s -> match s { #region(i) -> [i], _ -> [] });
+  height = steps.fold(0, (h, s) -> if h < 0 { h } else {
+    match s { #region(i) -> h + 1, #seq(k) -> if k > h { -1 } else { h - k + 1 }, #par(k) -> if k > h { -1 } else { h - k + 1 } }
+  });
+  named::len == r && named.sort(asc i -> i).zip(0..<r).all(x -> x[0] == x[1]) && 0 <= height && height <= 1
+};
+
+// The footprint of each device in device order; #none when a region names a
+// device the target lacks or the schedule does not name each region once.
+footprints(positional p, positional t) = {
+  n = t.devices::len;
+  r = p.regions::len;
+  if !p.regions.all(x -> 0 <= x.device && x.device < n) { #none } else {
+    match p.schedule {
+      #timed(spans) -> if spans::len != r { #none } else { (0..<n).map(d -> timedPeak(p.regions, spans, d)) },
+      #nested(steps) ->
+        if !nestedValid(r, steps) { #none } else { (0..<n).map(d -> nestedPeak(p.regions, steps, d, t.devices[d].cores <= 1)) },
+    }
+  }
+};
+
+// The work and depth each device holds, summed, in device order.
+workAndDepth(positional p, positional n) = (0..<n).map(d -> {
   rs = p.regions.filter(r -> r.device == d);
-  [rs.map(r -> r.work).sum, rs.map(r -> r.depth).sum, peak(rs)]
+  [rs.map(r -> r.work).sum, rs.map(r -> r.depth).sum]
 });
 
-feasible(positional p, positional t) =
-  p.regions.all(r -> r.device < t.devices::len)
-  && perDevice(p, t.devices::len).zip(t.devices).all(wd -> wd[0][2] <= wd[1].capacity);
+feasible(positional p, positional t) = {
+  f = footprints(p, t);
+  if f == #none { false } else { f.zip(t.devices).all(x -> x[0] <= x[1].capacity) }
+};
 
 // Devices summed as if run one after another: an upper bound on the running
 // time, monotone in every component of costVector.
 scalarize(positional p, positional t) =
-  perDevice(p, t.devices::len).zip(t.devices).map(wd -> brent(wd[0][0], wd[0][1], wd[1].cores) * wd[1].opTime).sum
+  workAndDepth(p, t.devices::len).zip(t.devices).map(wd -> brent(wd[0][0], wd[0][1], wd[1].cores) * wd[1].opTime).sum
   + p.cutEdges.map(b -> transfer(t, b)).sum;
 
-costVector(positional p, positional n) =
-  perDevice(p, n).flatMap(w -> w) ++ [p.cutEdges::len, p.cutEdges.map(blocks).sum];
+// Read for feasible plans only, whose footprints are known.
+costVector(positional p, positional t) =
+  workAndDepth(p, t.devices::len).zip(footprints(p, t)).flatMap(x -> [x[0][0], x[0][1], x[1]])
+  ++ [p.cutEdges::len, p.cutEdges.map(blocks).sum];
 
 dominates(positional a, positional b) = a.zip(b).all(xy -> xy[0] <= xy[1]) && a != b;
 
 frontier(positional plans, positional t) = {
   live = plans.filter(p -> feasible(p, t));
-  n = t.devices::len;
-  live.filter(p -> !live.any(q -> dominates(costVector(q, n), costVector(p, n)))).sort(by: (a, b) -> a.address <= b.address)
+  live.filter(p -> !live.any(q -> dominates(costVector(q, t), costVector(p, t)))).sort(by: (a, b) -> a.address <= b.address)
 };
 
 // The least scalar on the frontier, then the least content address; #none when

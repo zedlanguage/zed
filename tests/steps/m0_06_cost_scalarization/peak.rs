@@ -22,9 +22,15 @@ fn job(device: usize, footprint: u64, retained: u64) -> Region {
     }
 }
 
-/// The footprint the cost vector holds for `device` of `devices`.
+/// The footprint the cost vector holds for `device` of `devices`: on the default profile for one
+/// device, on the workstation for two.
 fn footprint(p: &Plan, devices: usize, device: usize) -> u64 {
-    vector(p, devices)[3 * device + 2]
+    let t = if devices == 1 {
+        Target::default_profile()
+    } else {
+        workstation()
+    };
+    vector(p, &t)[3 * device + 2]
 }
 
 #[test]
@@ -218,7 +224,7 @@ fn the_peak_is_monotone_so_pruning_to_the_frontier_keeps_the_pick() {
         infeasible_seen += plans.len() - ok.len();
         for a in &plans {
             for b in &ok {
-                if dominates(&vector(a, 2), &vector(b, 2)) {
+                if dominates(&vector(a, &t), &vector(b, &t)) {
                     assert!(feasible(a, &t), "{a:?} dominates {b:?}");
                 }
             }
@@ -249,6 +255,6 @@ fn the_peak_takes_time_linear_in_the_regions() {
     let t = workstation();
     check_order("the peak footprint of a plan's regions", n, 1, |r| {
         let p = if r == n { &small } else { &large };
-        std::hint::black_box((feasible(p, &t), vector(p, 2)));
+        std::hint::black_box((feasible(p, &t), vector(p, &t)));
     });
 }

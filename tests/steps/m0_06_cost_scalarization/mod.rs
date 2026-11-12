@@ -2,12 +2,14 @@
 //! pipeline (parse each line, keep the errors, count them by service) placed on a CPU alone or
 //! split with a GPU, compared by the scalar cost and by content address.
 
+mod overlap;
 mod peak;
 
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::address::ContentAddress;
 use zedc::cost::{
-    Device, Plan, Region, Target, brent, dominates, feasible, frontier, pick, scalarize, vector,
+    Device, Plan, Region, Schedule, Target, brent, dominates, feasible, frontier, pick, scalarize,
+    vector,
 };
 
 /// The address whose last byte is `n` and whose other bytes are zero.
@@ -65,9 +67,11 @@ fn count(device: usize) -> Region {
     }
 }
 
+/// A plan whose regions run one after another in the order given.
 fn plan(address: u8, regions: Vec<Region>, cut_edges: Vec<u64>) -> Plan {
     Plan {
         address: addr(address),
+        schedule: Schedule::sequence(regions.len()),
         regions,
         cut_edges,
     }
@@ -290,8 +294,11 @@ fn the_pick_is_the_same_in_every_arrival_order_and_minimal_over_every_feasible_p
                 for q in &feasible_plans {
                     assert!(scalarize(q, &t) >= scalarize(&p, &t));
                     if !kept.contains(q) {
-                        assert!(kept.iter().any(|k| dominates(&vector(k, 2), &vector(q, 2))
-                            && scalarize(k, &t) <= scalarize(q, &t)));
+                        assert!(
+                            kept.iter()
+                                .any(|k| dominates(&vector(k, &t), &vector(q, &t))
+                                    && scalarize(k, &t) <= scalarize(q, &t))
+                        );
                     }
                 }
             }

@@ -1103,6 +1103,7 @@ name = "zedc-base"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "rustc-hash",
  "unicode-normalization",
  "zed-kernel",
 ]
