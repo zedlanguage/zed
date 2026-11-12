@@ -1915,7 +1915,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| C2-local-tier | impl attempt 1 | 2026-11-11 01:43 | l01_38_presburger + zedc_presburger run: 353 pieces, 0 failed (load 44 to 82), but the output file was mixed with an older run's lines, so rerunning '^l01_38_pr |
+| CHK-update-field-receiver | impl attempt 1 | 2026-11-12 02:53 | started; worktree wt/chk-update-field-receiver on origin/main |
 | DELETE-msg-cycle-push | running | 2026-11-11 13:43 |  |
 | DELETE-msg-cycle-unit-item | running | 2026-11-11 13:43 |  |
 | DELETE-msg-elab-operator | running | 2026-11-11 13:43 |  |
@@ -1927,25 +1927,28 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FIX-sort-no-key | impl attempt 1 | 2026-11-11 16:34 | pushed 6f14f73c6, 69ca80c93 to zed-impl main; local main fast-forwarded; worktree and branch removed; load 41.00 |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
 | GSX-unsolved | impl attempt 1 | 2026-11-11 16:53 | CD round 1 launched (experiment 4374754456781193217, baseline 66010); port worktree gsx-cd has the I6.7 memo move and I6.8 control fix, building |
+| IMPORT-cycle-presburger | impl attempt 1 | 2026-11-12 02:07 | started; worktree made on 346407a9f |
 | INITIAL-two-sentinels-overlap | impl attempt 1 | 2026-11-11 17:21 | worktrees initial-overlap and initial-overlap-spec and their branches removed; done |
+| KERNEL-tls-inline | impl attempt 1 | 2026-11-12 02:28 | focused tests (zed_kernel, l01_17, l01_20, l01_22, l01_23, l01_24, l01_39, m0_09, --doc): 372 pieces, 0 failed; load 45.66 to 80.91; committing |
 | KEYWORD-without-37 | impl attempt 1 | 2026-11-11 16:59 | done: worktrees keyword-without and keyword-without-spec and both branches removed |
 | LAZY-hub-unsolved | running | 2026-11-11 16:53 |  |
 | LIT-cast-of-literal-union | impl attempt 1 | 2026-11-11 22:33 | started, worktree lit-cast-union |
 | LIT-print-order | impl attempt 1 | 2026-11-11 12:38 | scaling zed-kernel types::print::tests::a_union_of_many_numeric_literals_prints_ascending_in_m_log_m: n=1024/8192, 7.8x instructions, 8.0x bytes, limit 11.44; n |
 | LIT-unfixed-decimal-binding | impl attempt 1 | 2026-11-11 14:59 | pushed db5cc1405 (tests only); l01_26a 148 passed 0 failed at load 43; follow-up LIT-cast-of-literal-union queued; removing worktree |
-| MINMAX-chain-rows | impl attempt 1 | 2026-11-11 01:43 | two quadratic parts found: Lits::within finite-vs-cofinite walk (20.2x->13.9x alone) and min_max_tuples seen-set equality of equal unshared component types (15. |
+| LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | worktree /home/luke/Work/wt/lmd-cd (wt/lmd-cd at 7d96d3826) made for the Rust port; CD round 1 best 58 = 28.71 |
+| MINMAX-chain-rows | impl attempt 1 | 2026-11-11 01:43 | tests: 737 pieces 0 failed (l01_16-18, l01_22-29, l01_26a, l01_39*, zed_kernel, zedc_check, m0_05, l22_08, l25_08), clippy+fmt clean; probes (not committed): ch |
 | MSG-compare-components | impl attempt 1 | 2026-11-11 13:43 | fixed: pushed 25d87b8d3 + STATUS a71967299; follow-up MSG-derive-type-size queued; load 50.34 52.44 49.78 |
 | MSG-concise-style | impl attempt 1 | 2026-11-11 23:43 | correction: the part 2 push landed as 6802bd683 after a rebase over two STATUS commits; load 55.04 52.95 50.05 |
 | MSG-derive-type-size | impl attempt 1 | 2026-11-11 23:35 | started; worktree /home/luke/Work/wt/msg-derive-type-size on origin/main 6874a6ea0 |
-| MSG-literal-type-article | impl attempt 1 | 2026-11-11 23:37 | negative control: without the fix the new and updated tests fail (ordered_tuples 3, literals 1); fix reapplied |
+| MSG-old-carry-word | impl attempt 1 | 2026-11-12 02:08 | started; load 73.40 64.60 61.76 |
 | MSG-union-order-consistent | impl attempt 1 | 2026-11-11 13:26 | scaling zed-kernel types::print::tests::a_union_of_many_numeric_literals_prints_ascending_in_m_log_m: n=1024/8192, 7.8x instructions, 8.0x bytes, limit 11.44; n |
 | PERF-negated-chain-unsolved | impl attempt 1 | 2026-11-11 17:41 | worktree wt/pncx-cd made to port CD candidate 45 (7-8% fewer instructions on 23..711 words, same growth) for the instruction-count comparison |
 | PRES-disj-regressions | running | 2026-11-11 23:37 |  |
 | PRINT-own-shape-1tuple | impl attempt 1 | 2026-11-09 10:56 | done; worktree and branch removed / load 33.55 27.72 27.93 |
-| PROBE-guards | impl attempt 1 | 2026-11-11 01:43 | suite run 1 found 3 order failures (reversed_parts_give_the_same_boxes_1, _3; 3250 count) from learned bounds handed back to probe_kept_status; bounds now kept  |
 | PRODUCT-superlinear-main | impl attempt 1 | 2026-11-12 00:05 | blocked, no commit (load1 56.17): shared cause = case split re-projects every earlier part on a moved hub, Theta(k) projections per test, 90-98% no-ops; persist |
-| RADIX-depth | xr attempt 1 | 2026-11-11 01:43 | CD test run metric 14.245 (as calibrated); launched RUN_TYPE_SHORT / load 75.64 65.55 57.30 |
+| RADIX-depth | xr attempt 1 | 2026-11-11 01:43 | seats in progress: Opus read 12.11, gcd 12.35, wide 14.04 (own numbers, unverified); codex valuation 11.72-12.32 / load 53.88 56.03 58.57 |
 | REFUSAL-front-unsolved | running | 2026-11-11 17:03 |  |
+| STAGE-joined-eq-build | impl attempt 1 | 2026-11-12 02:24 | started; load 61.50 66.30 62.59 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
