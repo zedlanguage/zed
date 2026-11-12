@@ -117,22 +117,22 @@ fn reading_a_long_decimal_end_scales() {
     });
 }
 
-/// An end of 20,000 and of 160,000 digits written in decimal, the value built before timing.
-/// num-bigint writes a number of 32 words or more by halves, dividing by the square powers of
-/// its base, and divides by Burnikel and Ziegler's recursion above 64 words: O(M(n) log n),
-/// with num-bigint's product M (Toom-3 at these sizes, about n^1.46). Measured, it grows about
-/// 2.85 times per doubling at every size from 10,000 to 1,280,000 digits, 23.6 times here, close
-/// to the limit; built without num-bigint as one codegen unit it took 24.8 times. Both sizes are
-/// below the 60,000 words where `Num` turns to the kernel's printer, which is slower there; the
-/// printer is held to n log^2 n by `writing_a_wide_end_scales` (COMPLEXITY.md K81).
+/// An end of 20,000 and of 160,000 digits written in decimal, the value built before timing,
+/// held to n log^2 n, the order of radix conversion (author decision A47, COMPLEXITY.md C31),
+/// as `writing_a_wide_end_scales` is. Both sizes are split by the kernel's printer
+/// (PRINT-below-whole); before, they were below the 60,000 words where it took over from
+/// num-bigint's printing, which grows about 2.85 times per doubling (23.6 times the bytes
+/// here). The split still takes 22.9 times the work and 13.6 times the bytes here (2026-11-12),
+/// growing 3.14, 2.92 and 2.49 times per doubling from 20,000 to 160,000 digits, faster than
+/// n log^2 n (RADIX-depth).
 #[test]
-#[ignore = "PRINT-below-whole: 23.6 times the bytes at 20,000 and 160,000 digits, over the n log n limit 10.6 since SCALE-ratio; open"]
+#[ignore = "RADIX-depth: 22.9 times the work and 13.6 times the bytes at 20,000 and 160,000 digits through the kernel's printer, over the n log² n limit 12.9; open"]
 fn writing_a_long_decimal_end_scales() {
     let ends = scaling::inputs(20_000, |n| {
         let text = digits(&mut Rng::new(n as u64), n);
         text.parse::<Num>().expect("digits")
     });
-    scaling::check("writing a decimal end of n digits", 20_000, |n| {
+    scaling::check_log_squared("writing a decimal end of n digits", 20_000, |n| {
         assert!(!ends[&n].to_string().is_empty());
     });
 }
@@ -192,6 +192,37 @@ fn a_written_end_is_num_bigints_text() {
     ] {
         let text = BigInt::from(base).pow(k).to_string();
         assert_eq!(Num::from(base).pow(k).to_string(), text, "{base}^{k}");
+    }
+}
+
+/// Item PRINT-below-whole: an end's text is num-bigint's, both signs, at the edges where the
+/// kernel's printer could change how it works: zero and every one-digit number; `10^k`, `10^k -
+/// 1` and `10^k + 1` for `k` up to 40; either side of the most bits it prints as one leaf
+/// without building powers (63,424) and of the first power it splits by, `10^19104` (992
+/// words); and random numbers of 59,999, 60,000 and 60,001 words, either side of the 60,000
+/// words below which num-bigint printed the whole number before this item.
+#[test]
+fn a_written_end_is_num_bigints_text_at_the_edges() {
+    let mut rng = Rng::new(2026);
+    let ten = BigInt::from(10);
+    let two = BigInt::from(2);
+    let mut values: Vec<BigInt> = (0..10).map(BigInt::from).collect();
+    for k in 1..=40u32 {
+        let p = ten.pow(k);
+        values.extend([&p - 1, &p + 1, p]);
+    }
+    for bits in [63_423u32, 63_424, 63_425] {
+        let p = two.pow(bits);
+        values.extend([&p - 1, p]);
+    }
+    let first = ten.pow(19_104);
+    values.extend([&first - 1, &first + 1, first]);
+    values.extend([59_999, 60_000, 60_001].map(|w| wide(&mut rng, w)));
+    for x in &values {
+        for x in [x.clone(), -x] {
+            let text = x.to_string();
+            assert_eq!(Num::from(&x).to_string(), text, "{} digits", text.len());
+        }
     }
 }
 

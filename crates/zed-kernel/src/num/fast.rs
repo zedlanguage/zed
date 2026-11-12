@@ -79,8 +79,8 @@
 //! divisions. A division at a level takes one product for the quotient and one cyclic product
 //! of half its length for the remainder, which lies in `[0, 4d)` and so is found modulo
 //! `2^(64 m) - 1`. Each level divides numbers of `n` bits in total, O(M(n)), over
-//! `log2(n / L)` levels: O(M(n) log n). Parts below powers of [`PRINT_HANDOFF`] words, and
-//! numbers of fewer than [`PRINT_WHOLE`] words, are printed by num-bigint.
+//! `log2(n / L)` levels: O(M(n) log n), at every size (PRINT-below-whole). Parts below powers of
+//! [`PRINT_HANDOFF`] words are printed by num-bigint.
 //!
 //! **Where the constants lose** (measured 2026-11-06 and, for products, 2026-11-07;
 //! COMPLEXITY.md section "Crossovers"). A transform product costs three convolutions and the
@@ -90,18 +90,19 @@
 //! 4.1 squarings of `w` words from 16,384 to 131,072 words (KERNEL-div-newton, 2026-11-09; it
 //! was 7.4 to 12.4 before), and takes 1.3 to 2.5 times num-bigint's Burnikel and Ziegler
 //! division's time from 96 to 4096 words, the same at 8192 and 0.76, 0.59 and 0.46 times at
-//! 16,384, 32,768 and 65,536 (load 15 to 17); printing, by the levels above, is slower than
+//! 16,384, 32,768 and 65,536 (load 15 to 17); printing, by the levels above, was slower than
 //! num-bigint's up to about 60,000 words (2026-11-08), where its fixed costs (the powers, one
-//! Newton reciprocal) outweigh num-bigint's `n^1.5`.
+//! Newton reciprocal) outweigh num-bigint's `n^1.5`, and is used there all the same, so that
+//! its cost grows as n log^2 n at every size (PRINT-below-whole, COMPLEXITY.md K81).
 //! The gcd gains from about 300 words, since num-bigint's is quadratic. Open for the port:
 //! [`DIV_LEAF`] against the crossover near 8192 words measured above, by a computed cost as
-//! [`TOOM_COST`] is for products; and [`PRINT_WHOLE`], set when [`reciprocal`] cost about
-//! three products and is now [`approx_reciprocal`] and one cyclic product, not measured again.
+//! [`TOOM_COST`] is for products; and a cheaper first reciprocal or cached powers,
+//! which would lower the split's fixed costs below 60,000 words.
 //!
 //! **At the port to Zed.** The results must stay those of num-bigint's operations, which the
 //! unit tests compare at every leaf setting. What depends on measurement and is to be measured
 //! again on the Zed code: the leaves [`MUL_LEAF`], [`DIV_LEAF`], [`RECIP_LEAF`], [`GCD_LEAF`],
-//! [`PRINT_HANDOFF`], [`PRINT_WHOLE`] and the cost constants [`TOOM_COST`],
+//! [`PRINT_HANDOFF`] and the cost constants [`TOOM_COST`],
 //! [`TRANSFORM_COST`], [`SPARSE_WORD`], [`SPARSE_STEP`]. [`HALF_LEAF`] and [`PRINT_LEAF`] are
 //! derived, not measured. The Rust constructs that need a Zed form are listed in
 //! ZED_PORT_GAPS.md, sections "Entries from NUM-subquad", "Entries from BIGINT-fast-mul" and
@@ -216,18 +217,21 @@ const PRINT_HANDOFF: usize = 496;
 #[cfg(test)]
 const PRINT_HANDOFF: usize = 1;
 
-/// The fewest words of a number that [`to_decimal`] splits itself; a narrower one is printed
-/// whole by num-bigint. Measured on 2026-11-08 (load 6 to 5, five runs each), num-bigint
-/// against [`to_decimal`] above this takes 211 against 239 ms at 49,829 words (1.13), 236
-/// against 251 at 53,982 (1.07), 262 against 264 at 58,134 (1.01), 292 against 273 at 62,287
-/// (0.93), 353 against 337 at 66,439 (0.96), 396 against 374 at 74,744 (0.94), 664 against
-/// 575 at 107,963 (0.87) and 1304 against 961 at 166,097 (0.74). The digits do not depend on
-/// it.
-#[cfg(not(test))]
-const PRINT_WHOLE: usize = 60_000;
-/// One in the unit tests, so that every number of at least `3 L` bits is split.
-#[cfg(test)]
-const PRINT_WHOLE: usize = 1;
+/// The most bits of a number that [`to_decimal`] writes as one leaf without building the
+/// powers: `floor(3.32 L) 2^i`, for `i` the least with `31 * 2^i > PRINT_HANDOFF` (63,424 bits,
+/// 991 words, with [`PRINT_HANDOFF`] at 496; 1982 bits in the unit tests). [`to_decimal`]
+/// splits a number only by a power `10^(L 2^j)` of more than [`PRINT_HANDOFF`] words, and that
+/// power has at most `31 * 2^j` words (see [`PRINT_LEAF`]), so `j >= i`; a number of at most
+/// these bits is below `2^(3.32 L 2^i) < 10^(L 2^i)`, as `log2(10) > 3.32`, and is not split.
+/// Derived from [`PRINT_HANDOFF`], not measured, so the same leaves are printed with or without
+/// it: it only spares a leaf the powers, built and then not divided by.
+const PRINT_LEAF_BITS: u64 = {
+    let mut i = 0;
+    while 31 << i <= PRINT_HANDOFF {
+        i += 1;
+    }
+    (PRINT_LEAF as u64 * 332 / 100) << i
+};
 
 /// The cost of a transform product on `n` points, per `n log2(n)`, in units of one word
 /// product of [`sparse_mul`]. Only which of two equal results is computed depends on it. It was
@@ -2773,16 +2777,23 @@ fn remainder(x: &[u64], d: &[u64], dc: &[Vec<u64>; 3], q: &[u64], tw: &Roots) ->
 /// divides once, is divided by a reciprocal of only the precision that division and the level
 /// below need; each power below it has its reciprocal derived from the one above by one
 /// product and one cyclic product, transformed once and reused by every division at its level.
-/// O(M(n) log n), the recursion `log2(n / L)` deep. Numbers of fewer than 60,000 words are
-/// written by num-bigint, which is faster there; the text is the same.
+/// O(M(n) log n), the recursion `log2(n / L)` deep, at every size; only the leaves, below
+/// powers of at most `PRINT_HANDOFF` words, are written by num-bigint. The text is
+/// num-bigint's.
 pub fn to_decimal(x: &BigUint) -> String {
-    // Complexity tradeoff: a number of fewer than `PRINT_WHOLE` words is printed whole by
-    // num-bigint, whose printing is faster there: it costs about 2.85 times as much per
-    // doubling of the words, against about 2.3 for the split below, whose fixed costs (the
-    // powers and one reciprocal) make it slower up to about 60,000 words. The two print the
-    // same digits. The crossover is measured (see `PRINT_WHOLE`) and measured again at the
-    // port to Zed (COMPLEXITY.md K81). `x < 2^(3 L) < 10^L` is a single leaf.
-    if words(x) < PRINT_WHOLE || x.bits() < 3 * PRINT_LEAF as u64 {
+    // Complexity tradeoff: the naive method, num-bigint's printing of the whole number, costs
+    // O(n^1.5) (Toom-3 products under Burnikel and Ziegler's division, about 2.85 times per
+    // doubling of the words, measured from 519 to 66,439 words); the split below costs
+    // O(M(n) log n) = O(n log^2 n). Before PRINT-below-whole a number of fewer than 60,000
+    // words went to num-bigint whole, where its constant factor was lower (1.13 times the
+    // split's time at 49,829 words, 0.93 at 62,287), and its n^1.5 showed in the scaling of
+    // every print up to there; now every number is split, so only leaves of a bounded width
+    // reach num-bigint and their cost is linear in `n` in total. Given up: the split takes 1.4
+    // to 1.8 times num-bigint's instructions from about 1,000 to 33,000 words (1.64 at 1,040,
+    // 1.58 at 8,300, 1.09 at 33,200, 0.86 at 66,400; 2026-11-12), where the powers, the levels'
+    // transforms and the one Newton reciprocal are not yet repaid (COMPLEXITY.md K81). A number of at most
+    // `PRINT_LEAF_BITS` bits is a single leaf and builds no power.
+    if x.bits() <= PRINT_LEAF_BITS {
         return x.to_string();
     }
     let mut powers = vec![BigUint::from(10u32).pow(PRINT_LEAF as u32)];
