@@ -72,6 +72,7 @@ rows! {
     NotEveryPath => "A loop variable not updated on every path of a step",
     CarryOnKeyedEntry => "`with carryForward` on a keyed boundary entry",
     MutableDeclaration => "A `mutable` declaration",
+    CarryWord => "A word other than `carryForward` after `with` at the end of an `initial` statement",
     OverlappingArrows => "Cross-unit overlapping incomparable arrows",
     AmbiguousImport => "Ambiguous imported name",
     NameAboveDefinition => "Name used above its definition",

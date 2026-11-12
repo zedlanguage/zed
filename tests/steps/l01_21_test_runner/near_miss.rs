@@ -305,6 +305,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         ),
     ),
     (
+        Row::CarryWord,
+        "r = loop t {\n  while t < 3;\n",
+        "  initial x = 0 with carryForward;\n  x' = x + 1;\n};\n",
+        "  initial x = 0 with carry;\n  x' = x + 1;\n};\n",
+        "3:3",
+        Some("`initial x = 0 with carryForward;`, `carryForward` in place of `carry`"),
+    ),
+    (
         Row::NameAboveDefinition,
         "f(n) {\n",
         "  b = n * 2;\n  a = b + 1;\n  a\n}\n",
@@ -342,6 +350,7 @@ const LATER: &[Row] = &[
     Row::NotEveryPath,
     Row::CarryOnKeyedEntry,
     Row::MutableDeclaration,
+    Row::CarryWord,
 ];
 
 /// The `.rs` files under `dir`, in no order.

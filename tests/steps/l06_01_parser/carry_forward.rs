@@ -2,11 +2,12 @@
 //! 2026-11-12): a variable a loop updates is a recurrence, defined on every frame, so each step
 //! updates it on every path; `initial x = e with carryForward;` instead keeps its value on a step
 //! that does not update it. `mutable` is gone and is an ordinary name; the old declaration
-//! `mutable x = e;` is refused with the repair `initial x = e with carryForward;`. Each row the
+//! `mutable x = e;` is refused with the repair `initial x = e with carryForward;`, and so is any
+//! other word after `with` there, as `initial x = e with carry;`. Each row the
 //! form adds to sec:diagnostics is produced here with its message and notes in full, and each
 //! repair it offers, applied, is accepted.
 
-use super::initial::{accepted, refusal, refused};
+use super::initial::{accepted, notes, refusal, refused};
 use super::{check, fmt};
 use zed_tests::scaling;
 use zedc::ast::unit;
@@ -518,6 +519,139 @@ fn a_mutable_declaration_is_refused() {
         ],
         &["f(x) = {\n  a, b = (x, 1);\n  a + b\n};\n"],
     );
+}
+
+/// The note of row "A word other than `carryForward` after `with` at the end of an `initial`
+/// statement": it keeps `named`, `them` being the pronoun for them, shows the facet form `with
+/// word(…)`, and points at the text `at`.
+fn carry_note(named: &str, them: &str, word: &str, at: &str) -> String {
+    format!(
+        "`carryForward` is the one word that stands alone after `with` at the end of an \
+         `initial` statement, and keeps {named} on a step that does not update {them}; a facet \
+         after `with` takes its arguments in parentheses, as `with {word}(…)` [{at}]"
+    )
+}
+
+/// Row "A word other than `carryForward` after `with` at the end of an `initial` statement":
+/// any word there, close to `carryForward` in spelling or not, and several words, are refused
+/// with the statement rewritten with `carryForward` as the repair; the word there is read as a
+/// facet missing its parentheses, so the plain parser message was "expected '('".
+#[test]
+fn a_word_other_than_carry_forward_is_refused() {
+    let carried = t_loop(&["initial c = 0 with carryForward;", "c' = c + 1;"]);
+    for word in ["carry", "carryforward", "carry_forward", "keep", "mutable"] {
+        let stmt = format!("initial c = 0 with {word};");
+        refused(
+            &t_loop(&[&stmt, "c' = c + 1;"]),
+            Row::CarryWord,
+            &stmt,
+            Some(&format!(
+                "Expected `carryForward` after `with`: `{stmt}`. Try `initial c = 0 with \
+                 carryForward;` instead."
+            )),
+            &[
+                &carry_note("the value of `c`", "it", word, word),
+                &format!(
+                    "repair: `initial c = 0 with carryForward;`, `carryForward` in place of \
+                     `{word}` [{stmt}]"
+                ),
+            ],
+            &[&carried],
+        );
+    }
+    // Several words, and several names.
+    refused(
+        &t_loop(&[
+            "initial a, b = (0, 1) with carry forward;",
+            "a', b' = (b, a + b);",
+        ]),
+        Row::CarryWord,
+        "initial a, b = (0, 1) with carry forward;",
+        Some(
+            "Expected `carryForward` after `with`: `initial a, b = (0, 1) with carry \
+             forward;`. Try `initial a, b = (0, 1) with carryForward;` instead.",
+        ),
+        &[
+            &carry_note(
+                "the values of `a` and `b`",
+                "them",
+                "carry",
+                "carry forward",
+            ),
+            "repair: `initial a, b = (0, 1) with carryForward;`, `carryForward` in \
+             place of `carry forward` [initial a, b = (0, 1) with carry forward;]",
+        ],
+        &[&t_loop(&[
+            "initial a, b = (0, 1) with carryForward;",
+            "a', b' = (b, a + b);",
+        ])],
+    );
+    // A declared type is kept in the repair, and the note names the one variable.
+    let src = t_loop(&["initial c: int = 0 with carry;", "c' = c + 1;"]);
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::CarryWord), "{e:?}");
+    assert_eq!(
+        e.message,
+        "Expected `carryForward` after `with`: `initial c: int = 0 with carry;`. Try `initial c: \
+         int = 0 with carryForward;` instead."
+    );
+    assert_eq!(
+        notes(&src, &e)[0],
+        carry_note("the value of `c`", "it", "carry", "carry")
+    );
+    // The name of a facet, written without its arguments, gets the same message: the note
+    // shows the facet's form with them.
+    let e = refusal(&t_loop(&["initial c = 0 with units;", "c' = c + 1;"]));
+    assert_eq!(e.row, Some(Row::CarryWord), "{e:?}");
+    assert_eq!(
+        e.message,
+        "Expected `carryForward` after `with`: `initial c = 0 with units;`. Try `initial c = 0 \
+         with carryForward;` instead."
+    );
+}
+
+/// The contrast cases of row "A word other than `carryForward` after `with` at the end of an
+/// `initial` statement": `carryForward` itself is accepted, and a word after `with` that is not
+/// at the end of an `initial` statement keeps the parser's own message.
+#[test]
+fn a_word_after_with_elsewhere_keeps_the_parser_message() {
+    accepted(&t_loop(&[
+        "initial c = 0 with carryForward;",
+        "c' = c + 1;",
+    ]));
+    for text in [
+        // On a binding, not an `initial` statement.
+        "c = 0 with carry;\n",
+        &t_loop(&["c' = c + 1 with carry;"]),
+        // Inside the value, not at the end of the statement.
+        &t_loop(&["initial c = f(0 with carry);", "c' = c + 1;"]),
+        // `carryForward` written twice: the second `with` is no word.
+        &t_loop(&[
+            "initial c = 0 with carryForward with carryForward;",
+            "c' = c + 1;",
+        ]),
+    ] {
+        let e = refusal(text);
+        assert_eq!(e.row, None, "{text}: {e:?}");
+        assert!(e.message.starts_with("expected "), "{text}: {e:?}");
+    }
+}
+
+/// The message for a word after `with` scans the statement and parses the repair once, so a
+/// loop of `n` statements whose `initial` value has `n` terms is refused in time of order `n`.
+#[test]
+fn the_carry_word_message_scales() {
+    let units = scaling::inputs(500, |n| {
+        let terms: String = (0..n).map(|i| format!(" + {i}")).collect();
+        let stmts: String = (0..n).map(|i| format!("x{i}' = {i}; ")).collect();
+        format!(
+            "r = loop t {{ while t < 9; {stmts}initial c = 0{terms} with carry; c' = c + 1; }};\n"
+        )
+    });
+    scaling::check("a word after `with`", 500, |n| {
+        let e = refusal(&units[&n]);
+        assert_eq!(e.row, Some(Row::CarryWord), "{e:?}");
+    });
 }
 
 /// Row "`with carryForward` on a keyed boundary entry", with each repair it offers. Decision:

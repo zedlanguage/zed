@@ -31,6 +31,7 @@ Two sentinel values for one variable
 A loop variable not updated on every path of a step
 `with carryForward` on a keyed boundary entry
 A `mutable` declaration
+A word other than `carryForward` after `with` at the end of an `initial` statement
 Cross-unit overlapping incomparable arrows
 Ambiguous imported name
 Name used above its definition

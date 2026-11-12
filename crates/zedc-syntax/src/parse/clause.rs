@@ -1,5 +1,6 @@
 //! The messages for a parse that stops in a `with` clause that gives a sentinel value, and for
-//! a reserved word written where a name stands, and for the removed declaration `mutable x = e;`
+//! a reserved word written where a name stands, for the removed declaration `mutable x = e;`,
+//! and for a word other than `carryForward` after `with` at the end of an `initial` statement
 //! (DESIGN.md sec:generations, sec:lexical, sec:diagnostics).
 //!
 //! Since 2026-11-11 the sentinel value of a variable a loop updates is the statement `initial x
@@ -312,13 +313,15 @@ impl Toks<'_, '_> {
 }
 
 /// The [`Clause`] for a parse that stopped at token `far` in a `with` clause that gives a
-/// sentinel value, at or after a reserved word written where a name stands, or at the removed
-/// declaration `mutable x = e;`. The scans run over the statement, its block or its line, and
+/// sentinel value, at or after a reserved word written where a name stands, at the removed
+/// declaration `mutable x = e;`, or at a word other than `carryForward` after `with` at the end
+/// of an `initial` statement. The scans run over the statement, its block or its line, and
 /// each check of a word or a repair is one more parse: linear in the unit, on the error path only.
 pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     with_item(t, far)
         .or_else(|| reserved(t, far))
         .or_else(|| mutable_decl(t, far))
+        .or_else(|| carry_word(t, far))
 }
 
 fn with_item(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
@@ -884,6 +887,88 @@ fn mutable_decl(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     };
     Some(Clause {
         row: Some(Row::MutableDeclaration),
+        message,
+        span,
+        notes,
+    })
+}
+
+/// The [`Clause`] for a word other than `carryForward` after `with` at the end of an `initial`
+/// statement, as `initial x = 0 with carry;` (row "A word other than `carryForward` after `with`
+/// at the end of an `initial` statement", DESIGN.md sec:generations): the parse reads `with
+/// carry` as a facet and stops where its `(` should be. Every word there is offered
+/// `carryForward`, not only a word close to it in spelling: the grammar admits exactly one word
+/// with no parentheses in that place, so it is the only repair, and a far word such as `keep`
+/// or `sticky` means it as surely as `carry` does. The scans run over the statement, and the
+/// repair is parsed once: linear in the statement, on the error path only.
+fn carry_word(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    // The words between `with` and `;`: back from `far` over names to the `with`, then on to the
+    // `;`. The parse stops at the `;` after one word, or at the second of several words.
+    let mut w = far;
+    while w > 0 && t.toks[w - 1].0 == Kind::Ident {
+        w -= 1;
+    }
+    let w = w.checked_sub(1)?;
+    let mut close = far;
+    while t.toks.get(close)?.0 == Kind::Ident {
+        close += 1;
+    }
+    if t.t(w) != "with" || close == w + 1 || t.t(close) != ";" {
+        return None;
+    }
+    // The `with` ends an `initial` statement, at its own depth.
+    let first = t.stmt_first(w);
+    let k = t.decl_first(first);
+    if t.t(k) != "initial" || (first..w).map(|i| depth(t.t(i))).sum::<i32>() != 0 {
+        return None;
+    }
+    let carry = crate::ast::CARRY_FORWARD;
+    let words = t.between(w + 1, close - 1);
+    let written = t.between(first, close);
+    let repair = format!("{} with {carry};", t.between(first, w - 1));
+    let span = Span {
+        start: t.span(first).start,
+        end: t.span(close).end,
+    };
+    let at_words = Span {
+        start: t.span(w + 1).start,
+        end: t.span(close - 1).end,
+    };
+    // The names the statement gives a value, for the note: `c`, or `a` and `b`.
+    let mut names: Vec<String> = (k + 1..w)
+        .take_while(|&i| !matches!(t.t(i), "=" | ":" | "["))
+        .filter(|&i| t.toks[i].0 == Kind::Ident)
+        .map(|i| format!("`{}`", t.t(i)))
+        .collect();
+    let last = names.pop()?;
+    let (named, them) = if names.is_empty() {
+        (format!("the value of {last}"), "it")
+    } else {
+        (
+            format!("the values of {} and {last}", names.join(", ")),
+            "them",
+        )
+    };
+    let mut notes = vec![(
+        at_words,
+        format!(
+            "`{carry}` is the one word that stands alone after `with` at the end of an `initial` \
+             statement, and keeps {named} on a step that does not update {them}; a facet after \
+             `with` takes its arguments in parentheses, as `with {}(…)`",
+            t.t(w + 1)
+        ),
+    )];
+    let message = if t.parses(first, close, &repair) {
+        notes.push((
+            span,
+            format!("repair: `{repair}`, `{carry}` in place of `{words}`"),
+        ));
+        format!("Expected `{carry}` after `with`: `{written}`. Try `{repair}` instead.")
+    } else {
+        format!("Expected `{carry}` after `with`: `{written}`.")
+    };
+    Some(Clause {
+        row: Some(Row::CarryWord),
         message,
         span,
         notes,
