@@ -2002,18 +2002,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ATOM-empty-payload | impl attempt 1 | 2026-11-12 14:11 | affected step groups pass; native red check (hooks fix reverted) fails both new native tests, restored |
 | GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
-| MSG-article-atom-value | running | 2026-11-12 03:01 |  |
+| MSG-article-atom-value | impl attempt 1 | 2026-11-12 03:01 | started; worktree msg-article-atom-value seeded |
 | MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | l01_29 354 pass; kernel 268, zedc-types 16, zedc-check 11 unit pass; rustdoc -D warnings clean after one fix; COMPLEXITY row + K108 MAKER-file-chain, plan_dag D |
 | MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | running affected groups; load 44.01 39.14 34.67 |
 | NAME-ascii-only | impl attempt 1 | 2026-11-12 16:11 | start: worktrees name-ascii-only (zed-impl) and name-ascii-only-spec (zed) |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
-| POLY-nf-sparse-product | impl attempt 1 | 2026-11-12 14:17 | red test confirmed (bytes 140.4x vs 96.8x); writing the support product in poly.rs |
-| POW-rat | impl attempt 1 | 2026-11-12 00:53 | started; worktree /home/luke/Work/wt/pow-rat on origin/main |
-| T11-preimage-rest | impl attempt 1 | 2026-11-05 04:07 | correctness controls: memo key without local gives 12 (want 8), unrenamed parameters capture w; both caught |
-| T6-pinwheel-split-guard | impl attempt 1 | 2026-11-12 15:53 | finding confirmed: union-of-pinwheels input is decided by K80 disjoint disjuncts, 8.0x/7.1x with classes() off; new input squares less all boxes (one meet): wit |
-| TRIVIAL-walk-picks | impl attempt 1 | 2026-11-12 14:54 | batch v2 (records built only when the batch runs); verdict tests pass; committed tests the_picks_scale and the_picks_agree_with_brute_force written; load 65.04  |
+| POLY-nf-sparse-product | impl attempt 1 | 2026-11-12 14:17 | traces removed, unit test fixed at k=256 wide coefficients; poly:: 18/18 pass |
+| POW-rat | impl attempt 1 | 2026-11-12 00:53 | rebased on origin/main; spec pushed zed 7fe78b3 (DESIGN ^ row + L1.17, DOCS-TODO 137); impl tests green before last rebase; rebuilding after UNITS-info touched  |
+| T11-preimage-rest | impl attempt 1 | 2026-11-05 04:07 | groups: s22 random_terms_2 differed (unread x kept as class hull vs points before); s22 exact comparison now accepts same class members; docs S21/STATUS/plan wr |
+| T6-pinwheel-split-guard | impl attempt 1 | 2026-11-12 15:53 | processor_time test now cubic at 100/800: margin 1.85x -> 8.5x (fail side), linear 3.4x under; docs updated; listing tests |
+| TRIVIAL-walk-picks | impl attempt 1 | 2026-11-12 14:54 | l22_08_vacuity 27/27 pass, clippy clean; mutation tests of the four lookups each caught; negative control red on steps; load 46.37 42.60 40.37 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
