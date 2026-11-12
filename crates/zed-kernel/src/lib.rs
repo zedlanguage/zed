@@ -18,6 +18,7 @@ pub mod frames;
 mod local;
 pub mod num;
 pub mod paths;
+pub mod poly;
 pub mod print;
 pub mod provenance;
 pub mod refine;
