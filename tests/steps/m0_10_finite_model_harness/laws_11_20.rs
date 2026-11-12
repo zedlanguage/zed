@@ -580,8 +580,8 @@ fn refuted_on_div_zero(narrowing: &Term) {
         report.downcast_ref::<String>().map(String::as_str),
         Some(
             "the law fails on Lit(Int(0)):\n  \
-             left  Ok(Atom(Atom { name: \"divByZero\", fields: [], args: [] }))\n  \
-             right Ok(Atom(Atom { name: \"invalid\", fields: [], args: [] }))"
+             left  Ok(Atom(Atom { name: \"divByZero\", fields: [], payload: None }))\n  \
+             right Ok(Atom(Atom { name: \"invalid\", fields: [], payload: None }))"
         )
     );
 }

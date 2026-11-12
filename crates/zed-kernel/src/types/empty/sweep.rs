@@ -1767,14 +1767,14 @@ fn check_list_value(t: &Type, value: &Value) -> bool {
         if !a.fields.is_empty() {
             return false;
         }
-        if a.args.is_empty() {
+        let Some(args) = &a.payload else {
             break a.name.clone();
-        }
-        if a.name != c || a.args.len() != 2 {
+        };
+        if a.name != c || args.len() != 2 {
             return false;
         }
-        items.push(a.args[0].clone());
-        v = &a.args[1];
+        items.push(args[0].clone());
+        v = &args[1];
     };
     let plain = Plain::new(&sw.links, &sw.es);
     sw.check(&plain, &roots, &items, &last)

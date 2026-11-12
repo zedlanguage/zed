@@ -1280,10 +1280,10 @@ impl<'g> Machine<'g, '_> {
                     _ => &[],
                 };
                 match &v {
-                    Value::Atom(a) if !a.args.is_empty() && a.args.len() + 2 == ins.len() => {
+                    Value::Atom(a) if !a.args().is_empty() && a.args().len() + 2 == ins.len() => {
                         let at: BTreeMap<&Value, usize> =
                             names.iter().enumerate().map(|(i, n)| (n, i)).collect();
-                        let kids = (0..a.args.len())
+                        let kids = (0..a.args().len())
                             .map(|i| {
                                 let from = match names.is_empty() {
                                     true => i,
@@ -1819,15 +1819,15 @@ impl<'g> Machine<'g, '_> {
                 }
                 Value::Bool(_) | Value::Int(_) | Value::Float(_) => None,
                 Value::Tuple(xs) if xs.is_empty() => None,
-                Value::Atom(a) if a.args.is_empty() => None,
+                Value::Atom(a) if a.args().is_empty() => None,
                 Value::Tuple(xs) => {
                     stack.push((xs, shared, Vec::with_capacity(xs.len())));
                     next = &xs[0];
                     continue;
                 }
                 Value::Atom(a) => {
-                    stack.push((&a.args, shared, Vec::with_capacity(a.args.len())));
-                    next = &a.args[0];
+                    stack.push((a.args(), shared, Vec::with_capacity(a.args().len())));
+                    next = &a.args()[0];
                     continue;
                 }
                 Value::Str(_)
@@ -2065,13 +2065,13 @@ fn binder_paths(p: &Pattern, v: &Value, paths: &mut Paths, out: &mut Vec<usize>)
                 stack.extend(parts.map(|(i, (q, x))| (enter(at, i), q, x)));
             }
             (Pattern::Atom(_, ps), Value::Atom(a)) => {
-                let parts = ps.iter().zip(a.args.iter()).enumerate();
+                let parts = ps.iter().zip(a.args().iter()).enumerate();
                 stack.extend(parts.map(|(i, (q, x))| (enter(at, i), q, x)));
             }
             (Pattern::Fields(_, fs), Value::Atom(a)) => {
                 stack.extend(fs.iter().filter_map(|(f, q)| {
                     let i = a.fields.binary_search(f).ok()?;
-                    Some((enter(at, i), q, &a.args[i]))
+                    Some((enter(at, i), q, &a.args()[i]))
                 }));
             }
             _ => {}

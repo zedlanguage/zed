@@ -338,7 +338,7 @@ fn holds(v: &Value, m: &Value) -> bool {
             return true;
         }
         match v {
-            Value::Atom(a) => todo.extend(&a.args),
+            Value::Atom(a) => todo.extend(a.args()),
             Value::Tuple(xs) | Value::Path(xs) => todo.extend(xs.iter()),
             Value::Family(f) => todo.extend(f.iter().map(|(_, x)| x)),
             _ => {}

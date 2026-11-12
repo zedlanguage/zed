@@ -216,17 +216,23 @@ impl Out<'_> {
                 self.word(s.len() as u64);
                 s.chunks().for_each(|c| self.put(c.as_bytes()));
             }
+            // `#e()`, apart from the bare `#e` (tag 4, no parts): a tag of its own keeps every
+            // address of a program without it.
+            Value::Atom(a) if !a.is_bare() && a.args().is_empty() => {
+                self.tag(11);
+                self.str(&a.name);
+            }
             Value::Atom(a) if a.fields.is_empty() => {
                 self.tag(4);
                 self.str(&a.name);
-                self.seq(&a.args, Job::Value, todo);
+                self.seq(a.args(), Job::Value, todo);
             }
             Value::Atom(a) => {
                 self.tag(10);
                 self.str(&a.name);
                 self.word(a.fields.len() as u64);
                 a.fields.iter().for_each(|f| self.str(f));
-                self.seq(&a.args, Job::Value, todo);
+                self.seq(a.args(), Job::Value, todo);
             }
             Value::Big(n) => {
                 self.tag(8);

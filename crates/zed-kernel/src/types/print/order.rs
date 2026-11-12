@@ -160,7 +160,7 @@ pub fn of_value(v: &Value) -> Member<'_> {
         Value::Str(s) => Member::Str(s),
         Value::Atom(a) => Member::Atom {
             name: &a.name,
-            payload: !a.args.is_empty(),
+            payload: !a.is_bare(),
         },
         Value::Tuple(_) | Value::Path(_) => Member::Tuple,
         Value::Family(_) => Member::Function,

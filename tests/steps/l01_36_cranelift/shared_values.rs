@@ -131,7 +131,7 @@ fn a_tuple_and_atoms_over_one_sequence_are_each_their_own_cell() {
         Value::Atom(Atom {
             name: name.into(),
             fields: Default::default(),
-            args: xs.clone(),
+            payload: Some(xs.clone()),
         })
     };
     let pair = atom("pair");

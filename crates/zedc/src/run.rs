@@ -888,7 +888,7 @@ impl Record {
                     Value::Atom(a) if a.name.as_ref() == "notFound" => entry("missing", &[p, k]),
                     Value::Atom(a) if a.name.as_ref() == "ioError" => {
                         let field = |f: &str| match a.fields.binary_search_by(|x| (**x).cmp(f)) {
-                            Ok(i) => match &a.args[i] {
+                            Ok(i) => match &a.args()[i] {
                                 Value::Str(s) => Some(s.flat()),
                                 _ => None,
                             },

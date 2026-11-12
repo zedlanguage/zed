@@ -85,10 +85,13 @@ fn a_positional_atom_keeps_its_order() {
 }
 
 #[test]
-fn a_bare_atom_is_made_without_the_kernel() {
+fn an_atom_with_an_empty_payload_is_made_without_the_kernel() {
+    // `#a()`, the atom of no payload arguments, is its own value, not the bare `#a` (a
+    // literal, never built by this node), and it is made as an uncounted entry with no
+    // kernel call.
     assert_eq!(
         agreed(&named(&[], Vec::new()), World::new()),
-        ("#a".into(), 0)
+        ("#a()".into(), 0)
     );
 }
 

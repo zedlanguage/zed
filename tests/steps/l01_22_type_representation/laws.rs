@@ -52,11 +52,11 @@ fn holds(e: &E, p: Probe) -> bool {
                 | ("String", Value::Str(_))
         ),
         E::Lit(l) => l == v,
-        E::Atom(n) => matches!(v, Value::Atom(a) if &*a.name == *n && a.args.is_empty()),
+        E::Atom(n) => matches!(v, Value::Atom(a) if &*a.name == *n && a.is_bare()),
         E::AtomWith(n, pay) => match v {
-            Value::Atom(a) if &*a.name == *n && !a.args.is_empty() => {
+            Value::Atom(a) if &*a.name == *n && !a.is_bare() => {
                 if a.fields.is_empty() {
-                    holds(pay, Probe::Value(&Value::Tuple(a.args.clone())))
+                    holds(pay, Probe::Value(&Value::Tuple(a.args().clone())))
                 } else {
                     holds(pay, Probe::Struct)
                 }
@@ -110,8 +110,9 @@ fn small() -> Vec<Value> {
     ]
 }
 
-/// Values of every universe: scalars of each base type, bare atoms and atoms with tuple and
-/// struct payloads, tuples of length 0 to 2, a keypath and a family.
+/// Values of every universe: scalars of each base type, bare atoms, atoms with an empty
+/// payload `#a()`, atoms with tuple and struct payloads, tuples of length 0 to 2, a keypath and
+/// a family.
 fn values() -> Vec<Value> {
     let mut vs = vec![
         int(2),
@@ -125,6 +126,8 @@ fn values() -> Vec<Value> {
         Value::str("b"),
         Value::atom("b"),
         Value::atom("c"),
+        Value::atom_with("a", vec![]),
+        Value::atom_with("b", vec![]),
         Value::atom_with("a", vec![int(1)]),
         Value::atom_with("a", vec![int(1), Value::str("a")]),
         Value::atom_with("b", vec![int(0)]),

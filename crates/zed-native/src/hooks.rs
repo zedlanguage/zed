@@ -443,7 +443,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
                 None => slow(t, s, ni, ins),
                 Some(sh) if ins.len() == 2 => {
                     consume(s, ni, ins)?;
-                    s.heap.fresh(&Value::atom(&sh.name))
+                    s.heap.fresh(&Value::atom_with(sh.name, Vec::new()))
                 }
                 Some(sh) => Ok(s.heap.alloc(Obj::Atom {
                     args: sh.order.iter().map(|&i| ins[2 + i]).collect(),

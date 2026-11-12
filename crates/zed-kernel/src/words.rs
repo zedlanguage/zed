@@ -401,14 +401,15 @@ fn room_to_print(v: &Value) -> Result<Room, TooLarge> {
             Value::Path(items) => (2 + 4 * (items.len() as u128).saturating_sub(1), Some(items)),
             Value::Atom(a) => {
                 let mut own = 1 + a.name.len() as u128;
-                if !a.args.is_empty() {
-                    let fields = &a.fields[..a.fields.len().min(a.args.len())];
+                let args = a.args();
+                if !a.is_bare() {
+                    let fields = &a.fields[..a.fields.len().min(args.len())];
                     let named = *names
                         .entry((a.fields.id(), fields.len()))
                         .or_insert_with(|| fields.iter().map(|k| k.len() as u128 + 2).sum());
-                    own += 2 + 2 * (a.args.len() as u128 - 1) + named;
+                    own += 2 + 2 * (args.len() as u128).saturating_sub(1) + named;
                 }
-                (own, Some(&a.args))
+                (own, Some(args))
             }
         };
         add(&mut open, Some(own));

@@ -986,7 +986,7 @@ impl<'a> Held<'a> {
     /// Plans the sets of the parts of `v` not yet entered.
     fn enter(&mut self, v: &'a Value, todo: &mut Vec<Task<'a>>) {
         match v {
-            Value::Atom(a) => self.enter_items(&a.args, todo),
+            Value::Atom(a) => self.enter_items(a.args(), todo),
             Value::Tuple(xs) | Value::Path(xs) => self.enter_items(xs, todo),
             Value::Family(f) if !f.is_empty() && self.seen.insert(Part::Family(f.id())) => {
                 let base = self.base(f);
@@ -1158,7 +1158,7 @@ impl<'a> Held<'a> {
             false => self.sets[&Part::Items(xs.id())].clone(),
         };
         let s = match v {
-            Value::Atom(a) => items(&a.args),
+            Value::Atom(a) => items(a.args()),
             Value::Tuple(xs) | Value::Path(xs) => items(xs),
             Value::Family(f) if !f.is_empty() => self.sets[&Part::Family(f.id())].clone(),
             _ => Set::default(),

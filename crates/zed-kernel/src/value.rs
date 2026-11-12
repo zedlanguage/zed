@@ -37,8 +37,8 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 use std::ops::Deref;
 use std::slice;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Arc, LazyLock};
 
 use crate::btree::{self, Hole};
 use num_bigint::{BigInt, BigUint};
@@ -122,8 +122,26 @@ pub struct Atom {
     /// The field names of a struct payload, sorted; empty for a tuple payload. Shared, so a
     /// copy of the atom is O(1).
     pub fields: Fields,
-    /// The payload's values, one per field of a struct payload; empty for a bare atom.
-    pub args: Items,
+    /// The payload: none for a bare atom such as `#e`, and the values otherwise, one per
+    /// field of a struct payload. `#e()` has an empty payload and is a value apart from `#e`
+    /// (sec:lexical: `#a` and `#a()` are different types). `None` sits in a niche of
+    /// [`Items`], so a bare atom is no larger than before and allocates nothing.
+    pub payload: Option<Items>,
+}
+
+/// The values of a bare atom's absent payload, for walks that read every atom's values alike.
+static NO_ARGS: LazyLock<Items> = LazyLock::new(Items::default);
+
+impl Atom {
+    /// The payload's values; empty for a bare atom and for `#e()`.
+    pub fn args(&self) -> &Items {
+        self.payload.as_ref().unwrap_or(&NO_ARGS)
+    }
+
+    /// Whether the atom has no payload, as `#e` has none and `#e()` has an empty one.
+    pub fn is_bare(&self) -> bool {
+        self.payload.is_none()
+    }
 }
 
 /// The field names of a struct payload, shared, with the [`Id`] of the list as it was built, so
@@ -365,8 +383,8 @@ impl Value {
     pub fn shared_parts(&self) -> Option<SharedParts<'_>> {
         match self {
             Value::Tuple(xs) if xs.is_shared() && !xs.is_empty() => Some((xs.id(), None)),
-            Value::Atom(a) if a.args.is_shared() && !a.args.is_empty() => {
-                Some((a.args.id(), Some((&a.name, a.fields.id()))))
+            Value::Atom(a) if a.args().is_shared() && !a.args().is_empty() => {
+                Some((a.args().id(), Some((&a.name, a.fields.id()))))
             }
             _ => None,
         }
@@ -397,7 +415,7 @@ impl Value {
         Value::Atom(Atom {
             name: name.into(),
             fields: Fields::default(),
-            args: Items::default(),
+            payload: None,
         })
     }
 
@@ -407,7 +425,7 @@ impl Value {
         Value::Atom(Atom {
             name: name.into(),
             fields: Fields::default(),
-            args: args.into(),
+            payload: Some(args.into()),
         })
     }
 
@@ -418,7 +436,7 @@ impl Value {
         Value::Atom(Atom {
             name: "ioError".into(),
             fields: vec![Arc::from("op"), "path".into(), "why".into()].into(),
-            args: vec![Value::str(op), Value::str(path), Value::str(why)].into(),
+            payload: Some(vec![Value::str(op), Value::str(path), Value::str(why)].into()),
         })
     }
 
@@ -434,7 +452,7 @@ impl Value {
         Some(Value::Atom(Atom {
             name: name.into(),
             fields: fields.into(),
-            args: args.into(),
+            payload: Some(args.into()),
         }))
     }
 
@@ -472,7 +490,7 @@ impl Value {
     pub fn errs(&self) -> Option<&Family> {
         match self {
             Value::Atom(a) if &*a.name == "errs" && a.fields.is_empty() => {
-                match a.args.as_slice() {
+                match a.args().as_slice() {
                     [Value::Family(f)] => Some(f),
                     _ => None,
                 }
@@ -642,7 +660,7 @@ impl Value {
             Value::Rat(_) => "rat".into(),
             Value::Float(_) => "f64".into(),
             Value::Str(_) => "String".into(),
-            Value::Atom(a) if a.args.is_empty() => format!("#{}", a.name),
+            Value::Atom(a) if a.is_bare() => format!("#{}", a.name),
             Value::Atom(a) => format!("#{}(..)", a.name),
             Value::Tuple(_) | Value::Path(_) => "(..)".into(),
             Value::Family(_) => "_ ->? _".into(),
@@ -788,7 +806,8 @@ fn leaf_digest(v: &Value) -> u64 {
 }
 
 /// The digest of all but the sequence of a tuple, keypath or atom, and the sequence; none for
-/// any other value. An atom's is its name and field names.
+/// any other value. An atom's is its name and field names, and for `#e()` a mark that tells it from
+/// the bare `#e`; the digest of every other atom is as it was before `#e()` was a value.
 fn with_sequence(v: &Value) -> Option<(u64, &Items)> {
     let mut h = Digest::default();
     let items = match v {
@@ -802,7 +821,10 @@ fn with_sequence(v: &Value) -> Option<(u64, &Items)> {
         }
         Value::Atom(a) => {
             (9, &a.name, &*a.fields).hash(&mut h);
-            &a.args
+            if !a.is_bare() && a.args().is_empty() {
+                h.write_u64(1);
+            }
+            a.args()
         }
         _ => return None,
     };
@@ -1741,7 +1763,12 @@ fn items<'a>(a: &'a Items, b: &'a Items, r: Relation) -> Step<'a> {
 
 fn atoms<'a>(a: &'a Atom, b: &'a Atom, r: Relation) -> Step<'a> {
     match a.name.cmp(&b.name).then_with(|| a.fields.cmp(&b.fields)) {
-        Ordering::Equal => items(&a.args, &b.args, r),
+        Ordering::Equal => match (&a.payload, &b.payload) {
+            (Some(xs), Some(ys)) => items(xs, ys, r),
+            (None, None) => Step::Same,
+            // A bare atom orders before the same atom with a payload, as a name orders.
+            (x, y) => Step::Ends(Some(x.is_some().cmp(&y.is_some()))),
+        },
         o => Step::Ends(Some(o)),
     }
 }
@@ -2070,7 +2097,7 @@ impl Shape<'_> {
             Shape::Atom(a) => Value::Atom(Atom {
                 name: a.name.clone(),
                 fields: a.fields.clone(),
-                args: items,
+                payload: a.payload.as_ref().map(|_| items),
             }),
         }
     }
@@ -2114,7 +2141,7 @@ pub(crate) fn copy(from: &[Value], leaf: fn(&Value) -> Value) -> Vec<Value> {
         let (xs, shape) = match level.left.next() {
             Some(Value::Tuple(xs)) => (xs, Shape::Tuple),
             Some(Value::Path(xs)) => (xs, Shape::Path),
-            Some(Value::Atom(a)) => (&a.args, Shape::Atom(a)),
+            Some(Value::Atom(a)) => (a.args(), Shape::Atom(a)),
             Some(v) => {
                 level.done.push(leaf(v));
                 continue;
@@ -2150,7 +2177,7 @@ pub(crate) fn all_leaves(from: &[Value], test: fn(&Value) -> bool) -> bool {
     loop {
         let inner = match level.next() {
             Some(Value::Tuple(xs) | Value::Path(xs)) => xs,
-            Some(v @ Value::Atom(a)) if test(v) => &a.args,
+            Some(v @ Value::Atom(a)) if test(v) => a.args(),
             Some(v) if test(v) => continue,
             Some(_) => return false,
             None => match above.pop() {
@@ -2194,11 +2221,11 @@ fn push_list<'a>(
 }
 
 fn show_atom<'a>(a: &'a Atom, todo: &mut Vec<Task<'a>>) {
-    if a.args.is_empty() {
+    let Some(args) = &a.payload else {
         return;
-    }
+    };
     todo.push(Task::Text(")"));
-    for (i, v) in a.args.iter().enumerate().rev() {
+    for (i, v) in args.iter().enumerate().rev() {
         todo.push(Task::Show(v));
         if let Some(k) = a.fields.get(i) {
             todo.extend([Task::Text(": "), Task::Text(k)]);
@@ -2307,8 +2334,13 @@ fn debug<'a>(v: &'a Value, f: &mut fmt::Formatter<'_>, todo: &mut Vec<Task<'a>>)
 
 /// An atom's fields as tasks, without the closing `}`, which [`debug`] pushes.
 fn debug_atom<'a>(a: &'a Atom, todo: &mut Vec<Task<'a>>) {
-    debug_list(todo, &a.args, "]");
-    todo.push(Task::Text("], args: ["));
+    match &a.payload {
+        Some(args) => {
+            debug_list(todo, args, "])");
+            todo.push(Task::Text("], payload: Some(["));
+        }
+        None => todo.push(Task::Text("], payload: None")),
+    }
     for (i, name) in a.fields.iter().enumerate().rev() {
         todo.push(Task::Quoted(name));
         if i > 0 {
@@ -2690,6 +2722,42 @@ mod tests {
         assert_eq!(t.to_string(), "(1, true, -0.0)");
         let p = Value::path(vec![Value::str("ann"), Value::Int(2)]);
         assert_eq!(p.to_string(), r#"["ann" -> 2]"#);
+    }
+
+    /// `#e()` is a value apart from `#e` (sec:lexical): unequal, ordered after it and before
+    /// `#e(1)`, digested apart, printed with its parentheses, and with no allocation for either.
+    #[test]
+    fn an_atom_with_an_empty_payload_is_its_own_value() {
+        let bare = Value::atom("e");
+        let empty = Value::atom_with("e", vec![]);
+        let one = Value::atom_with("e", vec![Value::Int(1)]);
+        assert_ne!(bare, empty);
+        assert!(bare < empty && empty < one);
+        assert_ne!(digest(&bare), digest(&empty));
+        assert_eq!(empty, Value::atom_named("e", vec![]).expect("no fields"));
+        assert_eq!(
+            (bare.to_string(), empty.to_string()),
+            ("#e".into(), "#e()".into())
+        );
+        assert_eq!(
+            (bare.kind_type(), empty.kind_type()),
+            ("#e".into(), "#e(..)".into())
+        );
+        let debug = |v: &Value| format!("{v:?}");
+        assert_eq!(
+            debug(&empty),
+            "Atom(Atom { name: \"e\", fields: [], payload: Some([]) })"
+        );
+        assert_eq!(
+            debug(&bare),
+            "Atom(Atom { name: \"e\", fields: [], payload: None })"
+        );
+        let (Value::Atom(b), Value::Atom(e)) = (&bare, &empty) else {
+            unreachable!("two atoms")
+        };
+        assert!(b.is_bare() && !e.is_bare());
+        assert!(b.args().is_empty() && e.args().is_empty());
+        assert!(empty.shared_parts().is_none());
     }
 
     #[test]

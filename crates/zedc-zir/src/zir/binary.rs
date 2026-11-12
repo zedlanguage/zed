@@ -258,12 +258,17 @@ impl W {
                 self.n(s.len() as u64);
                 s.chunks().for_each(|c| self.put(c.as_bytes()));
             }
+            // `#e()`, apart from the bare `#e` (tag 6 with no parts).
+            Value::Atom(a) if !a.is_bare() && a.args().is_empty() => {
+                self.tag(10);
+                self.s(&a.name);
+            }
             Value::Atom(a) => {
                 self.tag(6);
                 self.s(&a.name);
                 self.many(&a.fields, |w, f| w.s(f));
-                self.n(a.args.len() as u64);
-                jobs.extend(a.args.iter().rev());
+                self.n(a.args().len() as u64);
+                jobs.extend(a.args().iter().rev());
             }
             Value::Tuple(vs) => {
                 self.tag(7);
@@ -652,7 +657,7 @@ impl<'a> R<'a> {
     /// A value with no parts, or a value whose parts are still to read.
     fn value_head(&mut self) -> Result<Result<Value, OpenValue>, String> {
         let at = self.i;
-        let t = self.tag(9, "a value")?;
+        let t = self.tag(10, "a value")?;
         Ok(Ok(match t {
             0 => Value::Bool(self.tag(1, "a boolean")? == 1),
             1 => Value::Int(self.n()? as i64),
@@ -678,6 +683,7 @@ impl<'a> R<'a> {
                     left,
                 }));
             }
+            10 => Value::atom_with(self.name()?, Vec::new()),
             7 | 8 => {
                 let path = t == 8;
                 let left = self.len()?;
@@ -724,7 +730,7 @@ impl<'a> R<'a> {
                 Value::Atom(Atom {
                     name: name.into(),
                     fields: fields.into_iter().map(Into::into).collect(),
-                    args: args.into(),
+                    payload: (!args.is_empty()).then(|| args.into()),
                 })
             }
             OpenValue::Items(false, vs, _) => Value::tuple(vs),

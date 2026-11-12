@@ -400,3 +400,21 @@ fn a_function_part_is_found_in_a_recursive_type_once_per_node() {
     let wide = list("FunctionPartWide", &a | &tuples);
     assert_eq!(wide.function_part(), Some(tuples));
 }
+
+#[test]
+fn an_empty_payload_is_a_member_apart_from_the_bare_atom() {
+    // `#e` holds the bare atom only, `#e(())` the empty payload only, and `#e(..)` every
+    // payload; a member test that read `#e()` as `#e` would answer each of the first two
+    // wrong, and `lit`, which types scalars and bare atoms only, must not read `#e()` as `#e`.
+    let (bare, empty) = (Value::atom("e"), Value::atom_with("e", Vec::new()));
+    let bare_ty = Type::atom("e");
+    let empty_ty = Type::atom_with("e", &Type::tuple(Vec::new()));
+    let any = Type::atom_with("e", &Type::universe(Universe::Tuple));
+    assert!(bare_ty.contains(&bare) && !bare_ty.contains(&empty));
+    assert!(empty_ty.contains(&empty) && !empty_ty.contains(&bare));
+    assert!(any.contains(&empty) && !any.contains(&bare));
+    assert!(!any.contains(&Value::atom_with("f", Vec::new())));
+    assert_eq!(Type::lit(&bare), Some(bare_ty.clone()));
+    assert_eq!(Type::lit(&empty), None);
+    assert!((&bare_ty & &empty_ty).is_empty());
+}

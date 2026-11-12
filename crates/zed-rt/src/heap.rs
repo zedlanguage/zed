@@ -158,7 +158,8 @@ pub enum Obj {
     Str(Text),
     /// A non-empty tuple.
     Tuple(Parts),
-    /// An atom with a payload, its parts in the order of [`Atom::args`].
+    /// An atom with a non-empty payload, its parts in the order of [`Atom::args`]; a bare
+    /// atom and one with an empty payload, `#e()`, are entries of the table.
     Atom {
         /// The atom's name.
         name: Arc<str>,
@@ -307,7 +308,7 @@ impl Cell {
             Obj::Atom { name, fields, .. } => Value::Atom(Atom {
                 name: name.clone(),
                 fields: fields.clone(),
-                args: items.clone(),
+                payload: Some(items.clone()),
             }),
             _ => Value::Tuple(items.clone()),
         })
@@ -318,7 +319,7 @@ impl Cell {
 fn items_of(v: &Value) -> Option<&Items> {
     match v {
         Value::Tuple(xs) => Some(xs),
-        Value::Atom(a) => Some(&a.args),
+        Value::Atom(a) => a.payload.as_ref(),
         _ => None,
     }
 }
@@ -389,6 +390,8 @@ enum Holder {
 /// tuple; its number of parts; and where they are.
 struct Shape<'h> {
     atom: Option<(&'h str, &'h [Arc<str>])>,
+    /// Whether an atom has no payload, as `#e` has none and `#e()` has an empty one.
+    bare: bool,
     len: usize,
     holder: Holder,
 }
@@ -522,15 +525,15 @@ impl Heap {
             .collect()
     }
 
-    /// The word of `v`, uncounted: a scalar, or an entry of the table. The empty tuple and a
-    /// bare atom made again are the entry they had.
+    /// The word of `v`, uncounted: a scalar, or an entry of the table. The empty tuple, a bare
+    /// atom and an atom with an empty payload made again are the entry they had.
     pub fn uncounted(&mut self, v: Value) -> Word {
         if let Some(w) = Word::scalar(&v) {
             return w;
         }
         let bare = match &v {
             Value::Tuple(xs) => xs.is_empty(),
-            Value::Atom(a) => a.args.is_empty(),
+            Value::Atom(a) => a.args().is_empty(),
             _ => false,
         };
         if bare {
@@ -564,7 +567,7 @@ impl Heap {
         // The table shares the parts with the entry, a count each.
         let items = match &self.vals[i].value {
             Value::Tuple(xs) => xs.clone(),
-            Value::Atom(a) => a.args.clone(),
+            Value::Atom(a) => a.args().clone(),
             _ => Items::default(),
         };
         let start = self.vals.len();
@@ -647,7 +650,7 @@ impl Heap {
         loop {
             let (atom, items): (_, &[Value]) = match next {
                 Value::Tuple(xs) => (None, xs),
-                Value::Atom(a) => (Some(a), &a.args),
+                Value::Atom(a) => (Some(a), a.args()),
                 _ => (None, &[]),
             };
             let shared = next.shared_parts();
@@ -750,7 +753,7 @@ impl Heap {
                         Some(Obj::Atom { name, fields, .. }) => Value::Atom(Atom {
                             name: name.clone(),
                             fields: fields.clone(),
-                            args: items.clone(),
+                            payload: Some(items.clone()),
                         }),
                         _ => Value::Tuple(items.clone()),
                     };
@@ -965,13 +968,13 @@ impl Heap {
     /// The tuple or atom data word `w` is, for a structural pattern; `None` for any other word.
     /// The parts of an entry of the table are entered the first time.
     fn shape(&mut self, w: Word) -> Result<Option<Shape<'_>>, String> {
-        let (atom, len, holder) = match w.tag {
+        let (atom, bare, len, holder) = match w.tag {
             Word::CELL => {
                 let holder = Holder::Cell(w.index());
                 match obj_in(&self.cells, w)? {
-                    Some(Obj::Tuple(xs)) => (None, xs.len(), holder),
+                    Some(Obj::Tuple(xs)) => (None, false, xs.len(), holder),
                     Some(Obj::Atom { name, fields, args }) => {
-                        (Some((&**name, &**fields)), args.len(), holder)
+                        (Some((&**name, &**fields)), false, args.len(), holder)
                     }
                     _ => return Ok(None),
                 }
@@ -984,14 +987,22 @@ impl Heap {
                 let start = self.table_parts(entry);
                 let holder = Holder::Table { entry, start };
                 match &self.vals[entry].value {
-                    Value::Tuple(xs) => (None, xs.len(), holder),
-                    Value::Atom(a) => (Some((&*a.name, &*a.fields)), a.args.len(), holder),
+                    Value::Tuple(xs) => (None, false, xs.len(), holder),
+                    Value::Atom(a) => {
+                        let atom = Some((&*a.name, &*a.fields));
+                        (atom, a.is_bare(), a.args().len(), holder)
+                    }
                     _ => unreachable!("checked a tuple or an atom"),
                 }
             }
             _ => return Ok(None),
         };
-        Ok(Some(Shape { atom, len, holder }))
+        Ok(Some(Shape {
+            atom,
+            bare,
+            len,
+            holder,
+        }))
     }
 
     /// Part `i` of the tuple or atom in `h`.
@@ -1046,9 +1057,9 @@ impl Heap {
                         Value::Atom(a)
                             if a.name == *name
                                 && a.fields == *fields
-                                && a.args.len() == args.len() =>
+                                && a.args().len() == args.len() =>
                         {
-                            todo.extend(args.iter().copied().zip(a.args.iter()));
+                            todo.extend(args.iter().copied().zip(a.args().iter()));
                             true
                         }
                         _ => false,
@@ -1200,11 +1211,17 @@ impl Heap {
             Pattern::AnyAtom => yes(matches!(self.shape(w)?, Some(Shape { atom: Some(_), .. }))),
             Pattern::Is(t) => yes(self.is_in(w, t)?),
             Pattern::Atom(name, ps) => match self.shape(w)? {
+                // `#e` matches the bare atom only: a pattern has no `#e()` (sec:grammar).
                 Some(Shape {
                     atom: Some((n, fields)),
+                    bare,
                     len,
                     holder,
-                }) if n == &**name && fields.is_empty() && len == ps.len() => {
+                }) if n == &**name
+                    && fields.is_empty()
+                    && len == ps.len()
+                    && bare == ps.is_empty() =>
+                {
                     below(Subs::Items(ps), holder)
                 }
                 _ => Shallow::No,
@@ -1222,6 +1239,7 @@ impl Heap {
                     atom: None,
                     len,
                     holder,
+                    ..
                 }) if len == ps.len() => below(Subs::Items(ps), holder),
                 _ => Shallow::No,
             },
@@ -1394,6 +1412,38 @@ mod tests {
                 "a word tagged 0 has no parts"
             )
         );
+    }
+
+    /// `#e()` is an entry of the table apart from `#e`, made again as the entry it had, like the
+    /// bare atom; the pattern `#e` matches the bare atom only, `#e(_)` neither, and `==` and
+    /// `is` tell the two apart. No cell is allocated for either.
+    #[test]
+    fn an_empty_payload_is_an_entry_apart_from_the_bare_atom() {
+        let mut h = Heap::new();
+        let (bare, empty) = (Value::atom("e"), Value::atom_with("e", vec![]));
+        let b = h.fresh(&bare).unwrap();
+        let e = h.fresh(&empty).unwrap();
+        assert_ne!(b, e);
+        assert_eq!(h.uncounted(empty.clone()), e);
+        assert_eq!(h.uncounted(bare.clone()), b);
+        assert_eq!(
+            (h.value(b).unwrap(), h.value(e).unwrap()),
+            (bare.clone(), empty.clone())
+        );
+        let mut matched = |p: &Pattern, w: Word| {
+            h.matches(p, w, &mut Paths::default(), &mut Vec::new())
+                .unwrap()
+        };
+        let p = Pattern::Atom("e".into(), vec![]);
+        assert!(matched(&p, b) && !matched(&p, e));
+        let q = Pattern::Atom("e".into(), vec![Pattern::Wild]);
+        assert!(!matched(&q, b) && !matched(&q, e));
+        let unit = Type::atom_with("e", &Type::tuple(vec![]));
+        assert!(matched(&Pattern::Is(unit.clone()), e) && !matched(&Pattern::Is(unit), b));
+        let just = Type::atom("e");
+        assert!(matched(&Pattern::Is(just.clone()), b) && !matched(&Pattern::Is(just), e));
+        assert!(!h.equals(e, &bare).unwrap() && h.equals(e, &empty).unwrap());
+        assert_eq!(h.stats.allocations, 0);
     }
 
     #[test]

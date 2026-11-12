@@ -135,6 +135,31 @@ fn values_reach_the_address() {
 }
 
 #[test]
+fn an_empty_payload_reaches_the_address_and_the_bytes() {
+    // `#e()` is a value apart from `#e` and from `#e(())`: each has its own address, and each
+    // reads back from the binary form as itself.
+    let src = |c: &str| format!("zir 1\nr region function ()\nr results ({c})\n");
+    let forms = ["#e", "#e()", "#e(())", "#e(1)"];
+    let addresses: Vec<ContentAddress> = forms.iter().map(|c| address(&graph(&src(c)))).collect();
+    for (i, a) in addresses.iter().enumerate() {
+        for b in &addresses[i + 1..] {
+            assert_ne!(a, b, "{forms:?}");
+        }
+    }
+    for c in forms {
+        let g = graph(&src(c));
+        let back =
+            binary::decode(&binary::encode(&g).expect("memory for the bytes")).expect("a graph");
+        assert_eq!(back, g, "{c}");
+        assert_eq!(
+            zedc::zir::text::print(&back),
+            zedc::zir::text::print(&g),
+            "{c}"
+        );
+    }
+}
+
+#[test]
 fn the_normal_form() {
     let g = graph(DISCOUNT);
     let n = canonicalize(&g);

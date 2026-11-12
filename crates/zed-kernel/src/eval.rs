@@ -1884,7 +1884,7 @@ impl<'t> Machine<'_, 't> {
                 leaf => top.out.push((vec![k], leaf)),
             },
             Value::Bool(false) => {}
-            Value::Atom(a) if &*a.name == "boundary" && a.args.is_empty() => {
+            Value::Atom(a) if &*a.name == "boundary" && a.is_bare() => {
                 top.out.push((vec![k.clone()], k))
             }
             other => {
@@ -2326,7 +2326,7 @@ fn placed(key: Value) -> Option<Keypath> {
     let unbound = keys.iter().position(|k| {
         !all_leaves(
             std::slice::from_ref(k),
-            |v| !matches!(v, Value::Atom(a) if &*a.name == UNBOUND && a.args.is_empty()),
+            |v| !matches!(v, Value::Atom(a) if &*a.name == UNBOUND && a.is_bare()),
         )
     });
     match unbound {
@@ -2441,9 +2441,16 @@ fn matches<'t>(pat: &'t Pattern, v: &Value, env: &mut Env<'t>, fact: Option<usiz
             (Pattern::AnyAtom, Value::Atom(_)) => true,
             (Pattern::Is(t), v) => t.contains(v),
             (Pattern::Atom(name, ps), Value::Atom(a)) => {
-                let hit = a.name == *name && a.fields.is_empty() && ps.len() == a.args.len();
+                // `#e` matches the bare atom only: a pattern has no `#e()` (sec:grammar,
+                // AtomPattern), so an empty pattern list is never an empty payload.
+                let hit = a.name == *name
+                    && a.fields.is_empty()
+                    && match &a.payload {
+                        None => ps.is_empty(),
+                        Some(xs) => !ps.is_empty() && ps.len() == xs.len(),
+                    };
                 if hit {
-                    left.extend(ps.iter().zip(&a.args).rev());
+                    left.extend(ps.iter().zip(a.args()).rev());
                 }
                 hit
             }
@@ -2455,7 +2462,7 @@ fn matches<'t>(pat: &'t Pattern, v: &Value, env: &mut Env<'t>, fact: Option<usiz
                         .rev()
                         .all(|(f, p)| match a.fields.binary_search(f) {
                             Ok(i) => {
-                                left.push((p, &a.args[i]));
+                                left.push((p, &a.args()[i]));
                                 true
                             }
                             Err(_) => false,

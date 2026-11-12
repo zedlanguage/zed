@@ -110,7 +110,7 @@ fn printing_a_shallow_value_is_as_it_was() {
     assert_eq!(
         format!("{v:?}"),
         "Tuple([Int(1), Path([Str(\"a\"), Bool(true)]), \
-         Atom(Atom { name: \"cons\", fields: [], args: [Int(2)] })])"
+         Atom(Atom { name: \"cons\", fields: [], payload: Some([Int(2)]) })])"
     );
     assert_eq!(format!("{:?}", Value::tuple(vec![])), "Tuple([])");
 }

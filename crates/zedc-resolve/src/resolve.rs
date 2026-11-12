@@ -2173,19 +2173,8 @@ impl Resolver<'_> {
                 callee,
                 positional,
                 named,
-                curry,
+                ..
             } => {
-                // `#e()` and `#e` are different types (DESIGN L1.40d), but the kernel builds an
-                // atom with no arguments as the bare atom, so `#e()` would run as `#e` and
-                // `x is #e` would be true where the checker typed it false. Refused until the
-                // kernel gives the empty payload a value of its own (ATOM-empty-payload).
-                if let ExprKind::Atom(n) = &callee.kind
-                    && positional.is_empty()
-                    && named.is_empty()
-                    && !curry
-                {
-                    self.later(e.span, &format!("an atom with an empty payload, `#{n}()`,"));
-                }
                 todo.extend(named.iter().rev().map(|(_, a)| Task::Expr(a)));
                 todo.extend(positional.iter().rev().map(Task::Expr));
                 todo.push(Task::Expr(callee));

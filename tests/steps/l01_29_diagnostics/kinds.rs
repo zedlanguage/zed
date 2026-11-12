@@ -96,25 +96,36 @@ fn an_empty_tuple_is_not_written_as_parentheses() {
     assert!(out.contains("Syntax error at `is`"), "{out}");
 }
 
+/// A program whose `f(1)` is `#e()` and `f(0)` is the bare `#e`, printing which branch of
+/// `x is #e` each takes; the checker types `#e()` apart from `#e`, so it is not the bare one.
+const EMPTY_PAYLOAD: &str = "\
+f(positional n: int) {
+  x = if n > 0 { #e() } else { #e };
+  return if x is #e { \"bare\" } else { \"not bare\" };
+}
+main(m: MainArgs) {
+  m.stdout <- \"${f(1)} ${f(0)} ${#e() is #e} ${#e() == #e} ${#e() == #e()} ${#e is #e} \
+     ${(#e(), #e, #e(1))}\";
+}
+";
+
+/// What `EMPTY_PAYLOAD` prints, under `zedc run` and built.
+const EMPTY_PAYLOAD_OUT: &str = "not bare bare false false true true (#e(), #e, #e(1))\n";
+
 #[test]
-fn an_atom_with_an_empty_payload_is_refused_for_now() {
-    // `#e()` and `#e` are different types, but zedc would run `#e()` as `#e`: here the
-    // checker types the "bare" branch dead and the run took it. Refused, the program cannot
-    // run with a wrong answer.
-    let src = "f(positional n: int) {\n  x = if n > 0 { #e() } else { 7 };\n  \
-               return if x is #e { \"bare\" } else { x };\n}\n";
-    let out = rejected(&format!("{src}{MAIN}"));
-    assert!(
-        out.contains(
-            "an atom with an empty payload, `#e()`, is part of the Zed language, and this \
-             version of zedc does not compile it yet"
-        ),
-        "{out}"
+fn an_atom_with_an_empty_payload_is_a_value_of_its_own() {
+    // `#e()` is not `#e`: a run that built `#e()` as `#e` took the "bare" branch and found the
+    // two equal, and a printer that dropped the parentheses printed `(#e, #e, #e(1))`.
+    let out = run("empty-payload", EMPTY_PAYLOAD, &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str(), out.stderr.as_str()),
+        (0, EMPTY_PAYLOAD_OUT, ""),
+        "{EMPTY_PAYLOAD}"
     );
-    // The refusal is the empty payload only: the bare atom, a payload by position or by
-    // name, and `...` keep their own answers.
+    // The bare atom, a payload by position or by name, and `...` keep their own answers.
     for ok in [
         "f(positional n: int) = #e;\n",
+        "f(positional n: int) = #e();\n",
         "f(positional n: int) = #e(n);\n",
         "f(positional n: int) = #e(k: n);\n",
     ] {
@@ -123,14 +134,27 @@ fn an_atom_with_an_empty_payload_is_refused_for_now() {
     }
     let curried = rejected(&format!("f(positional n: int) = #e(...);\n{MAIN}"));
     assert!(!curried.contains("empty payload"), "{curried}");
-    // zedc run refuses it too, before running anything.
-    let src = "main(m: MainArgs) {\n  m.stdout <- \"${#e() is #e}\";\n}\n";
-    let out = run("empty-payload", src, &[]);
+}
+
+#[test]
+fn zedc_test_tells_an_empty_payload_from_the_bare_atom() {
+    // The passing rows catch a run that cannot build `#e()`; the failing rows catch one that
+    // builds it as `#e`, and their messages print each as itself.
+    let src = "g(positional n: int) = if n > 0 { #e() } else { #e }\n\
+               test {\n  1 -> #e(),\n  0 -> #e,\n  1 -> #e,\n  0 -> #e(),\n}\n";
+    let failures: Vec<Option<String>> = zedc::testing::test(src)
+        .into_iter()
+        .map(|o| o.failure)
+        .collect();
+    assert_eq!(failures.len(), 4, "{src}");
+    assert_eq!(failures[..2], [None, None], "{src}");
+    let (third, fourth) = (failures[2].as_deref(), failures[3].as_deref());
     assert!(
-        out.status != 0 && out.stdout.is_empty() && out.stderr.contains("`#e()`"),
-        "{} {} {}",
-        out.status,
-        out.stdout,
-        out.stderr
+        third.is_some_and(|f| f.contains("the result is #e()")),
+        "{third:?}"
+    );
+    assert!(
+        fourth.is_some_and(|f| f.contains("the result is #e") && !f.contains("the result is #e()")),
+        "{fourth:?}"
     );
 }

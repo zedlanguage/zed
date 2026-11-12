@@ -1448,7 +1448,7 @@ impl Type {
             Value::Rat(_) => Type::with(|p| one(&mut p.rats)),
             Value::Float(_) => Type::with(|p| one(&mut p.floats)),
             Value::Str(_) => Type::with(|p| one(&mut p.strings)),
-            Value::Atom(a) if a.args.is_empty() => Type::atom(&a.name),
+            Value::Atom(a) if a.is_bare() => Type::atom(&a.name),
             _ => return None,
         })
     }
@@ -1920,9 +1920,9 @@ impl Type {
             Value::Str(_) => p.strings.contains(v),
             Value::Atom(a) => match p.atoms.names.get(&a.name) {
                 None => p.atoms.cofinite,
-                Some(part) if a.args.is_empty() => part.bare,
+                Some(part) if a.is_bare() => part.bare,
                 Some(part) if a.fields.is_empty() => {
-                    return Member::Tuple(part.payload.clone(), &a.args);
+                    return Member::Tuple(part.payload.clone(), a.args());
                 }
                 Some(part) => part.payload.p().structs,
             },
@@ -3901,7 +3901,7 @@ fn erasable(x: &Value) -> Option<Kind> {
         Value::Rat(_) => Some(Kind::Rat),
         Value::Float(_) => Some(Kind::Float),
         Value::Str(_) => Some(Kind::Str),
-        Value::Atom(a) if a.args.as_slice().is_empty() => Some(Kind::Atom),
+        Value::Atom(a) if a.is_bare() => Some(Kind::Atom),
         _ => None,
     }
 }
