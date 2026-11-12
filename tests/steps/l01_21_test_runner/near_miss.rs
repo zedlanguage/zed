@@ -283,6 +283,17 @@ const NEAR_MISSES: &[NearMiss] = &[
         ),
     ),
     (
+        Row::Collision,
+        "r = loop t {\n  while t < 3;\n  initial c = 0 with carryForward;\n",
+        "  d[i in 0..<1] = c*.bump(1);\n};\n",
+        "  d[i in 0..<2] = c*.bump(1);\n};\n",
+        "4:19",
+        Some(
+            "`r = c*.bump(1);` before the definition writes `c'` once on a step, and each key \
+             reads the result",
+        ),
+    ),
+    (
         Row::CarryOnKeyedEntry,
         "r = loop t {\n  while t < 3;\n  p' = p + 1;\n",
         "  initial p[-1] = -1;\n};\n",
@@ -348,6 +359,7 @@ const LATER: &[Row] = &[
     Row::InitialReadsLoop,
     Row::TwoSentinels,
     Row::NotEveryPath,
+    Row::Collision,
     Row::CarryOnKeyedEntry,
     Row::MutableDeclaration,
     Row::CarryWord,
