@@ -1976,7 +1976,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | DIAG-control | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree |
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
 | LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | round 1 launched: Codex gpt-6.1-sol + Opus medium on own difference-rule attempt (all A/C k<=1.04 in Python); Gemini 429; CD 7779475775073288193 continues (best |
-| MAIN-l01_38-failures | impl attempt 1 | 2026-11-12 12:00 | committed 2bd40ad3a, rebased as 39fc294b5 on 7940088be; building workspace all-targets / load 49.97 |
 | NAME-nonprinting | orchestrator attempt  | 2026-11-12 13:28 | A97 answered; row added, queued for the next free slot |
 | POLY-nf-power | impl attempt 1 | 2026-11-12 13:01 | rule A (terms bound per node) and gcd step for the dense product written; building |
 | SOUND-random | impl attempt 1 | 2026-11-05 04:07 | random generator found a checker stack overflow (sum/^ on a class resolved to its own variable, walk.rs sum/power_vars/no_int_vars); fixed with Ck::class_root;  |
