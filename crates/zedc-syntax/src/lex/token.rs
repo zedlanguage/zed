@@ -5,6 +5,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use unicode_script::{Script, UnicodeScript};
 use unicode_width::UnicodeWidthChar;
 use zed_kernel::num::{TooLarge, bytes_of};
 use zedc_base::terminal;
@@ -153,13 +154,11 @@ fn unexpected(c: char) -> String {
             .into(),
         _ => {
             let code = c as u32;
-            // A character that may not show on screen ([`terminal::hidden`]: a control or format
-            // character, a space other than U+0020), and a combining mark, which at the start of
-            // a token has no letter under it, is named by its code point and written in its
-            // escape form, never as itself: printed as itself it shows as nothing, and a
-            // bidirectional control such as U+202E reorders the rest of the reader's terminal line
-            // (DESIGN.md sec:lexical, sec:diagnostics).
-            if terminal::hidden(c) || c.width() == Some(0) {
+            // A character that may not show on screen ([`may_not_show`]) is named by its code
+            // point and written in its escape form, never as itself: printed as itself it shows
+            // as nothing or as blank space, and a bidirectional control such as U+202E reorders
+            // the rest of the reader's terminal line (DESIGN.md sec:lexical, sec:diagnostics).
+            if may_not_show(c) {
                 return format!(
                     "the character U+{code:04X}, which may not show on screen, starts no name, \
                      number, operator or other part of a Zed program. Remove it, or, if it is \
@@ -182,6 +181,58 @@ fn unexpected(c: char) -> String {
             )
         }
     }
+}
+
+/// The characters of the general category Cf (format): DerivedGeneralCategory.txt of Unicode
+/// 18.0, the version of unicode-ident's tables, as sorted, disjoint, inclusive ranges. The test
+/// `the_format_table_is_the_general_category_cf` compares it with that file for every code point.
+const FORMAT: [(char, char); 21] = [
+    ('\u{AD}', '\u{AD}'),
+    ('\u{600}', '\u{605}'),
+    ('\u{61C}', '\u{61C}'),
+    ('\u{6DD}', '\u{6DD}'),
+    ('\u{70F}', '\u{70F}'),
+    ('\u{890}', '\u{891}'),
+    ('\u{8E2}', '\u{8E2}'),
+    ('\u{180E}', '\u{180E}'),
+    ('\u{200B}', '\u{200F}'),
+    ('\u{202A}', '\u{202E}'),
+    ('\u{2060}', '\u{2064}'),
+    ('\u{2066}', '\u{206F}'),
+    ('\u{FEFF}', '\u{FEFF}'),
+    ('\u{FFF9}', '\u{FFFB}'),
+    ('\u{110BD}', '\u{110BD}'),
+    ('\u{110CD}', '\u{110CD}'),
+    ('\u{13430}', '\u{1343F}'),
+    ('\u{1BCA0}', '\u{1BCA3}'),
+    ('\u{1D173}', '\u{1D17A}'),
+    ('\u{E0001}', '\u{E0001}'),
+    ('\u{E0020}', '\u{E007F}'),
+];
+
+/// Whether `c` is of the general category Cf (format).
+pub fn is_format(c: char) -> bool {
+    // Complexity tradeoff: the naive form scans the r = 21 ranges, O(r); this is a binary
+    // search, O(log r), with one comparison for a character below U+00AD.
+    c >= '\u{AD}' && name::in_ranges(&FORMAT, c)
+}
+
+/// Whether `c` may not show on screen, so that a message names it by its code point and never
+/// prints it: a character a diagnostic prints in its escape form ([`terminal::hidden`]: a
+/// control, a space other than U+0020, a format character of no width), a combining mark, which
+/// at the start of a token has no letter under it, a character of the general categories Cf,
+/// Co, Cs or Cn, or one a name may not hold ([`name::is_excluded_from_names`]), such as a Hangul
+/// filler, which shows as blank space one or two columns wide. With U+0020, which `Space` takes
+/// before any token, these are the general categories Cc, Cf, Zs, Zl, Zp, Co, Cs and Cn, the
+/// White_Space characters and those of no width. Co, Cs and Cn are the characters of the script
+/// Unknown (UAX #24; in Unicode 18.0 the two sets are equal), so a character assigned after the
+/// version of unicode-script's tables is named by its code point too, which loses nothing.
+pub fn may_not_show(c: char) -> bool {
+    terminal::hidden(c)
+        || c.width() == Some(0)
+        || is_format(c)
+        || c.script() == Script::Unknown
+        || name::is_excluded_from_names(c)
 }
 
 /// The message for a numeric literal whose digits the system refused the memory to read. It

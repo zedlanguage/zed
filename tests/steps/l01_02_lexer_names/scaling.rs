@@ -1,5 +1,6 @@
-//! Lexing names is of order n log n in the length of the text: many names, one long name, and a
-//! long name that mixes scripts only at its end (DESIGN.md Part G).
+//! Lexing names is of order n log n in the length of the text: many names, one long name, one long
+//! name of letters past the ASCII range, and a long name that mixes scripts only at its end
+//! (DESIGN.md Part G).
 
 use zed_tests::scaling::{check, inputs};
 use zedc::lex::lex;
@@ -32,5 +33,15 @@ fn one_long_name_that_mixes_scripts_at_its_end_scales() {
     });
     check("lexing a name of 5n letters mixing scripts", 20_000, |n| {
         assert!(lex(&texts[&n]).is_err());
+    });
+}
+
+#[test]
+fn one_long_name_of_letters_past_the_ascii_range_scales() {
+    // Hangul `한글` n times: every letter is looked up in the table of excluded characters
+    // (crates/zedc-syntax/src/lex/name.rs, `is_default_ignorable`), which ASCII skips.
+    let texts = inputs(20_000, |n| "\u{d55c}\u{ae00}".repeat(n));
+    check("lexing a Hangul name of 2n letters", 20_000, |n| {
+        assert_eq!(lex(&texts[&n]).unwrap().len(), 1);
     });
 }

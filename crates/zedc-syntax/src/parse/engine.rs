@@ -659,10 +659,10 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                     }
                     Expr::Any => break self.char_class(pos, "ANY", |_| true),
                     Expr::XidStart => {
-                        break self.char_class(pos, "XID_START", unicode_ident::is_xid_start);
+                        break self.char_class(pos, "XID_START", crate::lex::is_name_start);
                     }
                     Expr::XidContinue => {
-                        break self.char_class(pos, "XID_CONTINUE", unicode_ident::is_xid_continue);
+                        break self.char_class(pos, "XID_CONTINUE", crate::lex::is_name_continue);
                     }
                     Expr::Undefined(name) => break self.fail(pos, Expected::Name(name)),
                 }

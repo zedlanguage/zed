@@ -16,7 +16,6 @@ crate-type = ["rlib", "dylib"]
 blake3.workspace = true
 imbl.workspace = true
 num-bigint.workspace = true
-unicode-ident.workspace = true
 zed-kernel.workspace = true
 zedc-base.workspace = true
 zedc-int.workspace = true

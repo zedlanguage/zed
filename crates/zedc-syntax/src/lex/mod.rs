@@ -11,11 +11,15 @@ mod punct;
 mod string;
 mod token;
 
-pub use name::is_single_script;
 pub use name::name as name_end;
+pub use name::{
+    is_default_ignorable, is_excluded_from_names, is_name_continue, is_name_start, is_single_script,
+};
 pub use punct::{KEYWORDS, OPERATORS};
 use string::{Holes, Reading, Stop};
-pub use token::{Digits, Doc, Error, ErrorKind, Part, Span, Tok, Token, unread_literal};
+pub use token::{
+    Digits, Doc, Error, ErrorKind, Part, Span, Tok, Token, is_format, may_not_show, unread_literal,
+};
 
 /// The tokens of `text`, a loaded source text.
 pub fn lex(text: &str) -> Result<Vec<Token>, Error> {

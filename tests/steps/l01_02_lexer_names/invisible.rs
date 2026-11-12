@@ -1,9 +1,10 @@
 //! Invisible and look-alike characters (DESIGN.md sec:lexical, sec:grammar `Space`,
 //! `Comment`, `Char`, `Name`). A character that is neither a space nor an identifier character
-//! starts no token: U+FEFF after the start of the file, NUL, a zero-width joiner before a name,
-//! and every `Bidi_Control` character are lexical errors in code, the code of a hole included,
-//! and are taken by `ANY` in a comment and in the text of a string literal. A message names an
-//! invisible character by its code point and writes it in its escape form, never as itself.
+//! starts no token: U+FEFF after the start of the file, NUL, a zero-width joiner anywhere in a
+//! name, and every `Bidi_Control` character are lexical errors in code, the code of a hole
+//! included, and are taken by `ANY` in a comment and in the text of a string literal. A message
+//! names an invisible character by its code point and writes it in its escape form, never as
+//! itself. The module `ignorable` tests every Default_Ignorable_Code_Point character.
 
 use zedc::lex::{ErrorKind, Tok, lex};
 
@@ -20,7 +21,7 @@ fn error(text: &str) -> (ErrorKind, (usize, usize), String) {
 }
 
 /// The message for the invisible character with code point `hex`, as written in its escape.
-fn invisible(hex: &str) -> String {
+pub(super) fn invisible(hex: &str) -> String {
     let padded = format!("{hex:0>4}");
     format!(
         "the character U+{padded}, which may not show on screen, starts no name, number, \
@@ -75,17 +76,23 @@ fn a_zero_width_joiner_starts_no_name() {
 }
 
 #[test]
-fn a_zero_width_joiner_or_non_joiner_inside_a_name_is_part_of_it() {
-    // UAX #31 puts U+200C and U+200D in XID_Continue (Unicode 15.1), and DESIGN.md's `Name`
-    // rule takes XID_CONTINUE, so `a\u{200d}b` is one name, distinct from `ab` though it looks
-    // the same. Whether a joiner should be allowed only where it changes how a word is written
-    // (UAX #31 section 2.3) is an open question in QUESTIONS.md ("A zero-width joiner inside a
-    // name"); this test pins what DESIGN.md states now.
-    for name in ["a\u{200d}b", "a\u{200c}b"] {
-        let toks = lex(name).unwrap_or_else(|e| panic!("{name:?}: {e}"));
-        assert_eq!(toks.len(), 1, "{name:?}");
-        assert_eq!(toks[0].tok, Tok::Name(name.into()));
+fn a_zero_width_joiner_or_non_joiner_inside_a_name_is_an_error() {
+    // UAX #31 puts U+200C and U+200D in XID_Continue (Unicode 15.1), but DESIGN.md's
+    // `XID_CONTINUE` leaves out every Default_Ignorable_Code_Point character (QUESTIONS A97,
+    // 2026-11-12), so `a\u{200d}b` would otherwise be a name other than `ab` that looks the
+    // same. The name `a` ends before the joiner, which starts no token.
+    for (c, hex) in [('\u{200d}', "200D"), ('\u{200c}', "200C")] {
+        let text = format!("a{c}b = 1;");
+        let (kind, span, message) = error(&text);
+        assert_eq!(
+            (kind, span, &message),
+            (ErrorKind::Unexpected(c), (1, 4), &invisible(hex)),
+            "{text:?}"
+        );
+        assert!(!message.contains(c), "{text:?}");
     }
+    // The name before the joiner is still read as a name: `ab` alone is one.
+    assert_eq!(lex("ab").unwrap()[0].tok, Tok::Name("ab".into()));
 }
 
 #[test]
@@ -178,5 +185,31 @@ fn a_quoted_line_with_characters_of_no_width_does_not_stop_the_compiler() {
     ] {
         let result = std::panic::catch_unwind(|| zedc::run::load(text.as_bytes()));
         assert!(matches!(result, Ok(Err(_))), "{text:?}");
+    }
+}
+
+#[test]
+fn a_space_or_format_character_other_than_a_plain_space_between_two_tokens_is_an_error() {
+    // `Space` takes only U+0020, tab and the line breaks: a no-break space, an ideographic
+    // space, a byte order mark after the start, a word joiner and a soft hyphen are errors.
+    for (c, hex) in [
+        ('\u{a0}', "A0"),
+        ('\u{3000}', "3000"),
+        ('\u{feff}', "FEFF"),
+        ('\u{2060}', "2060"),
+        ('\u{ad}', "AD"),
+    ] {
+        let text = format!("a ={c}1;");
+        let (kind, span, message) = error(&text);
+        assert_eq!(
+            (kind, span, &message),
+            (
+                ErrorKind::Unexpected(c),
+                (3, 3 + c.len_utf8()),
+                &invisible(hex)
+            ),
+            "{text:?}"
+        );
+        assert!(!message.contains(c), "{text:?}");
     }
 }

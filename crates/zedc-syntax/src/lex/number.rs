@@ -26,9 +26,9 @@
 use std::sync::Arc;
 
 use num_bigint::BigUint;
-use unicode_ident::is_xid_continue;
 use zed_kernel::num::TooLarge;
 
+use super::name::is_name_continue;
 use super::token::{Error, ErrorKind, Span, Tok};
 
 /// The end and token of the number starting at byte `pos` of `text`, if one starts there.
@@ -63,7 +63,7 @@ pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Erro
         (_, true) => end + 3,
         _ => end,
     };
-    if text[after..].chars().next().is_some_and(is_xid_continue) {
+    if text[after..].chars().next().is_some_and(is_name_continue) {
         return Some(Err(run_on(text, pos, after, radix)));
     }
     let digits = match without_separators(&text[start..end]) {
@@ -119,7 +119,7 @@ fn digits(b: &[u8], pos: usize, radix: u32) -> usize {
 fn run_on(text: &str, pos: usize, end: usize, radix: u32) -> Error {
     let run = text[end..]
         .char_indices()
-        .find(|&(_, c)| !is_xid_continue(c))
+        .find(|&(_, c)| !is_name_continue(c))
         .map_or(text.len(), |(i, _)| end + i);
     let next = text[end..].chars().next().expect("a character follows");
     let d = &text[pos..end];

@@ -31,7 +31,6 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use unicode_ident::{is_xid_continue, is_xid_start};
 use zed_kernel::num::{Rat, TooLarge, bytes_of, read_f64_ieee};
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Prim, Witness};
 use zed_kernel::types::{Type, Universe};
@@ -629,16 +628,16 @@ struct P<'a> {
     i: usize,
 }
 
-/// The length in bytes of the word at the start of `s`: its `XID_Continue` characters and one
-/// prime after them, so that every name the lexer accepts (lex/name.rs) reads back.
+/// The length in bytes of the word at the start of `s`: its characters that continue a name
+/// and one prime after them, so that every name the lexer accepts (lex/name.rs) reads back.
 fn word_len(s: &str) -> usize {
-    let n = s.find(|c| !is_xid_continue(c)).unwrap_or(s.len());
+    let n = s.find(|c| !lex::is_name_continue(c)).unwrap_or(s.len());
     n + usize::from(n > 0 && s[n..].starts_with('\''))
 }
 
-/// Why `w` is not a name by the lexer's rule ([`lex::name_end`]: an `XID_Start` character, or
-/// `_` before an `XID_Continue` character, then `XID_Continue` characters and one prime at
-/// most), or `None` when it is one. The rule is the lexer's own function; the first character
+/// Why `w` is not a name by the lexer's rule ([`lex::name_end`]: a character that starts a
+/// name, or `_` before one that continues a name, then characters that continue a name and one
+/// prime at most), or `None` when it is one. The rule is the lexer's own function; the first character
 /// is looked at again here only to say which part of the rule `w` breaks. The binary form
 /// ([`super::binary`]) checks its names with this function too.
 pub(super) fn not_a_name(w: &str) -> Option<String> {
@@ -647,10 +646,10 @@ pub(super) fn not_a_name(w: &str) -> Option<String> {
     }
     let mut cs = w.chars();
     let why = match cs.next() {
-        Some('_') if !cs.next().is_some_and(is_xid_continue) => {
+        Some('_') if !cs.next().is_some_and(lex::is_name_continue) => {
             ": a name that starts with `_` has a letter, a digit or `_` next"
         }
-        Some(c) if c != '_' && !is_xid_start(c) => ": a name starts with a letter or `_`",
+        Some(c) if c != '_' && !lex::is_name_start(c) => ": a name starts with a letter or `_`",
         _ => "",
     };
     Some(format!("`{w}` is not a name{why}"))
@@ -717,7 +716,8 @@ impl<'a> P<'a> {
     fn eat_word(&mut self, w: &str) -> bool {
         self.ws();
         let r = self.rest();
-        if r.starts_with(w) && !r[w.len()..].starts_with(|c: char| is_xid_continue(c) || c == '\'')
+        if r.starts_with(w)
+            && !r[w.len()..].starts_with(|c: char| lex::is_name_continue(c) || c == '\'')
         {
             self.i += w.len();
             true
@@ -741,8 +741,8 @@ impl<'a> P<'a> {
         }
     }
 
-    /// A word: a run of `XID_Continue` characters, then at most one prime. A keyword is read
-    /// so; a name is read by [`P::name`], which also checks how it starts.
+    /// A word: a run of characters that continue a name, then at most one prime. A keyword is
+    /// read so; a name is read by [`P::name`], which also checks how it starts.
     fn word(&mut self) -> Result<&'a str, String> {
         self.ws();
         let n = word_len(self.rest());
@@ -1417,7 +1417,7 @@ impl<'a> P<'a> {
             .find(|c: char| !c.is_ascii_digit())
             .unwrap_or(digits.len());
         let (k, after) = digits.split_at(n);
-        let joined = after.starts_with(|c: char| is_xid_continue(c) || c == '\'');
+        let joined = after.starts_with(|c: char| lex::is_name_continue(c) || c == '\'');
         let x: Arc<str> = match canonical {
             true => format!("\0{k}"),
             false => format!("${k}"),

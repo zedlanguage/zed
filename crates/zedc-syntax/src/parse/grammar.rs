@@ -79,9 +79,11 @@ pub enum Expr {
     Class(Vec<(char, char)>),
     /// `ANY`: any character. Only [`Grammar::read_open`] reads this.
     Any,
-    /// `XID_START`. Only [`Grammar::read_open`] reads this.
+    /// `XID_START`: XID_Start less the characters a name may not hold
+    /// ([`crate::lex::is_name_start`]). Only [`Grammar::read_open`] reads this.
     XidStart,
-    /// `XID_CONTINUE`. Only [`Grammar::read_open`] reads this.
+    /// `XID_CONTINUE`: XID_Continue less the characters a name may not hold
+    /// ([`crate::lex::is_name_continue`]). Only [`Grammar::read_open`] reads this.
     XidContinue,
     /// A name that is no rule and nothing built in, which never matches. Only
     /// [`Grammar::read_open`] reads this, so that the grammar checker can report every one.
