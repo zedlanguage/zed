@@ -1993,10 +1993,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | tests: comparison work tests at n=40/320 (7.8x after, 52-55x cache off), 4 wrong-fix catchers (spelling x2, group order, union in tuple); + repair path O(n^2) i |
 | MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | started; worktree /home/luke/Work/wt/msg-domain-repairs-v on origin/main 8ddd28861, seeded |
 | POW-rat | impl attempt 1 | 2026-11-12 00:53 | started; worktree /home/luke/Work/wt/pow-rat on origin/main |
-| SOUND-top-literals | impl attempt 1 | 2026-11-12 13:51 | random.rs: pair-component helper form + value-in-type check; red in 4/4 seed pieces without the fix, green with it |
-| TESTS-scaling-gaps | done | 2026-11-12 15:10 | merged: self-test cubic at 50/400 (2x slower small run 138-154x by time, limit 27; old quadratic 26-31x vs 22.9); new: NARROW-if `||` hub 100/800 8.5x instr (limit 12.8; control 34.9x bytes), T6-payload pinwheels 32/256 7.9-8.2x empty, 5.3-5.9x middle (control 46.2x bytes), UTVPI-GOR 300,000 graphs vs Bellman-Ford-Moore 11 s, CONST-wide-addr 2^30 bits 4.2 s 0.8 GB (control > 40 s); ST-formula-share and LIT-adopt already covered. Findings: `a >= n || a >= 5` then `n >= 0` leaves `a: int` (other order accepted; Scope::join does not re-project through the disjunct, inferred); l01_23 pinwheel test no longer guards the class split its comment names |
+| SOUND-top-literals | impl attempt 1 | 2026-11-12 13:51 | code commit 9741c7312 rebased on origin/main; DESIGN L1.26a + DOCS-TODO 134 written in sound-top-literals-spec; plan row Done, follow-ups SOUND-call-pair and CH |
 | TESTS-split-reversed-boxes | impl attempt 1 | 2026-11-12 02:58 | old parts of 1000 cases alone 18.5-22.1 s, 83-104 G instr (load 42-48); split to 8 parts of 500 with a compared-count assert: 10.2-13.6 s alone, 38-53 G each, s |
-| UNITS-info | running | 2026-11-12 15:31 |  |
+| UNITS-info | impl attempt 1 | 2026-11-12 15:31 | started; spec worktree wt/units-info-spec at d32b595 / load 36.70 26.03 29.96 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
