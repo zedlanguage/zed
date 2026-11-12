@@ -15,8 +15,8 @@ use zedc_int::int::Int;
 /// Disjoint intervals [lo, hi) of Z_m by lo, none touching another.
 pub(super) type Intervals = OrdMap<Int, Int>;
 
-/// A step on Z_m whose every branch is h + C: residue r in piece i, [starts[i], starts[i + 1])
-/// (the last up to m), goes to r + offs[i] mod m. Adjacent pieces have unequal offsets, so
+/// A step on Z_m whose every branch is h + C: residue r in piece i, `[starts[i], starts[i + 1])`
+/// (the last up to m), goes to `r + offs[i]` mod m. Adjacent pieces have unequal offsets, so
 /// two equal maps have one form.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct Shift {
