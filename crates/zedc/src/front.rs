@@ -17,8 +17,9 @@ use crate::lex::{self, Span};
 use crate::parse::{TOP, parse};
 use crate::resolve::{self, Alone};
 use crate::suppress::{self, Severity};
+use crate::terminal::Escaped;
 use crate::work::{self, Stage};
-use crate::{docs, interp, source};
+use crate::{docs, interp, source, terminal};
 
 /// The front end's result: the statements, elaboration and placed warnings, or the first
 /// rejecting phase's diagnostics. The elaboration is shared, so a program made from it
@@ -133,7 +134,7 @@ impl Diagnostic {
     /// given by its range, and the line is not shown again: in its place, after the first step
     /// on it, a note says it is shown above.
     fn write(&self, f: &mut std::fmt::Formatter<'_>, above: &HashSet<usize>) -> std::fmt::Result {
-        write!(f, "{}:{}: {}", self.line, self.col, self.message)?;
+        write!(f, "{}:{}: {}", self.line, self.col, Escaped(&self.message))?;
         let gutter = self
             .steps
             .iter()
@@ -172,7 +173,7 @@ impl Diagnostic {
             if ranged[i] {
                 write!(f, " to {}:{}", s.line, s.col + s.width.max(1) - 1)?;
             }
-            write!(f, ": {}", s.text)?;
+            write!(f, ": {}", Escaped(&s.text))?;
             if let Some(here) = on.get(&s.line)
                 && here[0] == i + 1
             {
@@ -184,14 +185,16 @@ impl Diagnostic {
                 }
             }
         }
-        f.write_str(&self.menu)
+        write!(f, "{}", Escaped(&self.menu))
     }
 }
 
 /// The line `source` as a diagnostic quotes it, each tab shown as four spaces so that every
-/// character has a known column, and the column, counted from 0, at which each character
-/// starts, then the column after the line. A character takes as many columns as it does on a
-/// terminal: none for a combining mark, two for a wide character. O(L) for L characters.
+/// character has a known column, each other character a terminal would not show as itself
+/// ([`terminal::hidden`]: an ESC, a NUL, a lone CR, U+202E) in its escape form `\u{1B}`, and the
+/// column, counted from 0, at which each character starts, then the column after the line. A
+/// character takes as many columns as it does on a terminal: none for a combining mark, two for a
+/// wide character, and an escaped one the columns of its escape. O(L) for L characters.
 fn shown(source: &str) -> (String, Vec<usize>) {
     use unicode_width::UnicodeWidthChar;
     let mut text = String::with_capacity(source.len());
@@ -202,6 +205,9 @@ fn shown(source: &str) -> (String, Vec<usize>) {
         if c == '\t' {
             text.push_str("    ");
             column += 4;
+        } else if terminal::hidden(c) {
+            terminal::escape(c, &mut text).expect("writing to a String cannot fail");
+            column += terminal::escape_width(c);
         } else {
             text.push(c);
             column += c.width().unwrap_or(0);
@@ -585,7 +591,7 @@ impl Unloaded {
     ) -> String {
         let place = file.map_or_else(String::new, |f| format!("{f}:"));
         match self {
-            Unloaded::Refused(why) => format!("{place}{why}"),
+            Unloaded::Refused(why) => format!("{place}{}", Escaped(why)),
             Unloaded::Rejected(ds) => {
                 let mut quoted = Quoted::default();
                 let lines: Vec<String> = ds

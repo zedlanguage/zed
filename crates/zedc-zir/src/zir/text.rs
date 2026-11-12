@@ -1300,7 +1300,7 @@ impl<'a> P<'a> {
                         'r' => '\r',
                         't' => '\t',
                         '0' => '\0',
-                        '\\' | '"' | '\'' => e,
+                        '\\' | '"' | '\'' | '$' => e,
                         'u' => {
                             let mut hex = String::new();
                             if chars.next().map(|c| c.1) != Some('{') {

@@ -389,7 +389,7 @@ impl Package {
                     let parts = addresses("", &[], Severity::Rejection, &errors);
                     for ((i, e), part) in at.into_iter().zip(errors).zip(parts) {
                         out[i] = Some(Reported {
-                            text: format!("{place}: {}", e.message),
+                            text: format!("{place}: {}", crate::terminal::Escaped(&e.message)),
                             place: place.clone(),
                             part,
                         });

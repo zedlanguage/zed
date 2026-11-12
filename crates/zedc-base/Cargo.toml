@@ -17,6 +17,9 @@ zed-kernel.workspace = true
 blake3.workspace = true
 rustc-hash.workspace = true
 unicode-normalization.workspace = true
+# The columns a character takes on a terminal, so a diagnostic escapes characters that take none
+# (terminal::hidden).
+unicode-width.workspace = true
 
 [lints]
 workspace = true

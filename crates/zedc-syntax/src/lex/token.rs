@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use unicode_width::UnicodeWidthChar;
 use zed_kernel::num::{TooLarge, bytes_of};
+use zedc_base::terminal;
 
 use super::name;
 
@@ -152,12 +153,13 @@ fn unexpected(c: char) -> String {
             .into(),
         _ => {
             let code = c as u32;
-            // A character that may not show on screen (a control or format character, a space
-            // other than U+0020, a mark with no letter under it) is named by its code point and
-            // written in its escape form, never as itself: printed as itself it shows as
-            // nothing, and a bidirectional control such as U+202E reorders the rest of the
-            // reader's terminal line (DESIGN.md sec:lexical, sec:diagnostics).
-            if c.is_control() || c.is_whitespace() || c.width() == Some(0) {
+            // A character that may not show on screen ([`terminal::hidden`]: a control or format
+            // character, a space other than U+0020), and a combining mark, which at the start of
+            // a token has no letter under it, is named by its code point and written in its
+            // escape form, never as itself: printed as itself it shows as nothing, and a
+            // bidirectional control such as U+202E reorders the rest of the reader's terminal line
+            // (DESIGN.md sec:lexical, sec:diagnostics).
+            if terminal::hidden(c) || c.width() == Some(0) {
                 return format!(
                     "the character U+{code:04X}, which may not show on screen, starts no name, \
                      number, operator or other part of a Zed program. Remove it, or, if it is \

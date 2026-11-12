@@ -13,6 +13,9 @@ path = "src/lib.rs"
 # that binary alone.
 # BEGIN step targets: written by `cargo run -p zed-tools --bin step_targets`; do not edit by hand.
 [[test]]
+name = "diag_control"
+path = "steps/diag_control/mod.rs"
+[[test]]
 name = "l00_poly_nf"
 path = "steps/l00_poly_nf/mod.rs"
 [[test]]

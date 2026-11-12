@@ -693,6 +693,48 @@ impl fmt::Display for Text {
     }
 }
 
+/// A text written as a Zed string literal that reads back as the same text ([`Text::literal`]).
+pub struct Literal<'a>(&'a Text);
+
+impl Text {
+    /// The text as a Zed string literal, as a value is printed (DESIGN.md sec:diagnostics,
+    /// "Characters a terminal does not show are printed escaped"): in `"`, with `\\`, `\"`, `\n`,
+    /// `\r`, `\t` and `\0`, `\$` for a `$` before `{`, which would start a hole, and `\u{X}`
+    /// (upper-case hex) for every other character that has no visible form of its own: a control
+    /// character, a format character such as U+200B, a separator other than the space, a
+    /// combining mark, and a code point private, unassigned or a noncharacter. Every other
+    /// character is written as itself. `O(len)`, one pass over the blocks, nothing written out
+    /// first.
+    pub fn literal(&self) -> Literal<'_> {
+        Literal(self)
+    }
+}
+
+impl fmt::Display for Literal<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_char('"')?;
+        let mut chars = self.0.chunks().flat_map(str::chars).peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => f.write_str("\\\\")?,
+                '"' => f.write_str("\\\"")?,
+                '\n' => f.write_str("\\n")?,
+                '\r' => f.write_str("\\r")?,
+                '\t' => f.write_str("\\t")?,
+                '\0' => f.write_str("\\0")?,
+                '$' if chars.peek() == Some(&'{') => f.write_str("\\$")?,
+                // `escape_debug` escapes exactly the characters with no visible form of their
+                // own, as Rust's `{:?}` of a string does; `'` it escapes only for a `char`.
+                '\'' => f.write_char(c)?,
+                c if c.is_control() || c.escape_debug().len() > 1 => {
+                    write!(f, "\\u{{{:X}}}", c as u32)?
+                }
+                c => f.write_char(c)?,
+            }
+        }
+        f.write_char('"')
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

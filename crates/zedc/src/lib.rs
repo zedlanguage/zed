@@ -31,6 +31,7 @@ pub use zedc_resolve::resolve;
 mod rows;
 pub mod run;
 pub use zedc_base::source;
+pub use zedc_base::terminal;
 pub use zedc_stage::stage;
 pub mod store;
 pub mod suppress;

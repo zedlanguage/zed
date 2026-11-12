@@ -2235,7 +2235,7 @@ fn show<'a>(v: &'a Value, f: &mut fmt::Formatter<'_>, todo: &mut Vec<Task<'a>>) 
         Value::Big(n) => write!(f, "{}", n.numer_text()),
         Value::Rat(r) => write!(f, "{r}"),
         Value::Float(x) => write!(f, "{}", crate::num::show_f64(x.get())),
-        Value::Str(s) => write!(f, "{s:?}"),
+        Value::Str(s) => write!(f, "{}", s.literal()),
         Value::Atom(a) => {
             show_atom(a, todo);
             todo.push(Task::Text(&a.name));

@@ -8,10 +8,10 @@
 //!
 //! A reference is `\u{FDD5}k\u{FDD6}`, `k` the definition's place in the table: Unicode
 //! noncharacters, which no user text in a message holds. The lexer refuses them outside a
-//! string, a string value is written with them escaped (`\u{fdd5}`, the `{:?}` form of
-//! `Value::Str`), and the source lines quoted under a message are drawn after [`lift`]; test
-//! l01_29 `markers`. A text with no part used twice holds none, and is the text it was before
-//! the step.
+//! string, a string value is written with them escaped (`\u{FDD5}`, as
+//! [`crate::text::Text::literal`] writes it), and the source lines quoted under a message are
+//! drawn after [`lift`]; test l01_29 `markers`. A text with no part used twice holds none, and is
+//! the text it was before the step.
 //!
 //! A tuple that one type writes once may be written again by another type of the message, or
 //! inside another tuple there: a chain `a1 = (a0, 1); a2 = (a1, 2); …` whose steps each print

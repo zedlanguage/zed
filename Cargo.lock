@@ -1105,6 +1105,7 @@ dependencies = [
  "blake3",
  "rustc-hash",
  "unicode-normalization",
+ "unicode-width",
  "zed-kernel",
 ]
 

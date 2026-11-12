@@ -10,4 +10,5 @@ pub mod fence;
 pub mod interp;
 pub mod rejection;
 pub mod source;
+pub mod terminal;
 pub mod work;

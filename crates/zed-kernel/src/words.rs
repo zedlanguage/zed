@@ -378,7 +378,7 @@ fn room_to_print(v: &Value) -> Result<Room, TooLarge> {
             Value::Bool(b) => (written(format_args!("{b}")), None),
             Value::Int(n) => (written(format_args!("{n}")), None),
             Value::Float(f) => (show_f64(f.get()).len() as u128, None),
-            Value::Str(s) => (written(format_args!("{s:?}")), None),
+            Value::Str(s) => (written(format_args!("{}", s.literal())), None),
             Value::Family(f) => {
                 let key = Shared::Family(f.id());
                 if let Some(&n) = known.get(&key) {

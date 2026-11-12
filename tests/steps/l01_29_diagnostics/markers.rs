@@ -15,13 +15,13 @@ fn passing(arg: &str) -> String {
 fn a_string_with_the_marks_is_written_escaped_beside_the_definitions() {
     for code in 0xFDD4..=0xFDDEu32 {
         let c = char::from_u32(code).unwrap();
-        let esc = format!("\\u{{{code:x}}}");
+        let esc = format!("\\u{{{code:X}}}");
         // The character itself, a reference's whole form around it, and its escape in the source.
         for (arg, shown) in [
             (format!("\"a{c}b\""), format!("\"a{esc}b\"")),
             (
                 format!("\"{c}0\u{FDD6}{c}\""),
-                format!("\"{esc}0\\u{{fdd6}}{esc}\""),
+                format!("\"{esc}0\\u{{FDD6}}{esc}\""),
             ),
             (format!("\"a\\u{{{code:X}}}b\""), format!("\"a{esc}b\"")),
         ] {
