@@ -1992,7 +1992,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | merged part A + scored C (difference rule) as ece80a15c; 4 groups 0 failed; round 2: lazy-offset treap for aperiodic chains |
 | MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | negative control on main: work-scaling tests fail, bytes n=40->320: doubling 33.5MB->1596MB (47.7x), compared 52.6MB->2815MB (53.5x), name chain 28.2MB->1227MB  |
 | MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | started; worktree /home/luke/Work/wt/msg-domain-repairs-v on origin/main 8ddd28861, seeded |
-| SOUND-top-literals | impl attempt 1 | 2026-11-12 13:51 | fix in resolve_top_parts (Class::asked); 5 tests in l01_26a top_literals.rs, 16 of 18 cases red before, all green after |
+| POW-rat | running | 2026-11-12 00:53 |  |
+| SOUND-top-literals | impl attempt 1 | 2026-11-12 13:51 | random.rs: pair-component helper form + value-in-type check; red in 4/4 seed pieces without the fix, green with it |
 | TESTS-scaling-gaps | impl attempt 1 | 2026-11-08 23:59 | added l01_23 payload_scaling (cofinite #e((i,)) / (i,) pinwheels 32->256: 7.9-8.2x instr empty, 5.3-5.9x middle; control naive pairwise cell test 46.2x bytes fa |
 | TESTS-split-reversed-boxes | impl attempt 1 | 2026-11-12 02:58 | old parts of 1000 cases alone 18.5-22.1 s, 83-104 G instr (load 42-48); split to 8 parts of 500 with a compared-count assert: 10.2-13.6 s alone, 38-53 G each, s |
 | WARN-refused-placements | impl attempt 1 | 2026-11-12 14:51 | tests written; red-before shown for both arms; negative control run (detected, 18.6x bytes vs limit 13.76) |
