@@ -10,6 +10,10 @@ hold, and it is exact. It is not built in this item: it is a hard algorithm of s
 correctness rests on locality constants that are easy to get wrong, and the standing rule sends
 such an algorithm to cross-review before it is built. Follow-up item: STAGE-joined-eq-build.
 
+**Built** (STAGE-joined-eq-build, 2026-11-12): method B, after one cross-review round, in
+`crates/zed-kernel/src/text/names.rs`, with the constants of section 6. Section 6 also corrects
+the constants of section 3, which were inferred from memory.
+
 Confirmed below means read in this repository at the place named; inferred means derived from
 the cited papers as remembered, not rechecked against their text in this item.
 
@@ -152,4 +156,32 @@ parent of its node has been named.
 - Y. Lifshits. "Processing compressed texts: a tractability border." CPM 2007.
 
 These are cited from memory and were not reread for this study; the constants in section 3 are
-inferred from them and are question 2 for the cross-review.
+inferred from them and are question 2 for the cross-review. Nishimoto et al. and Alstrup et al.
+were then read for STAGE-joined-eq-build (section 6); Mehlhorn et al. was not retrieved.
+
+## 6. Outcome of the build (STAGE-joined-eq-build, 2026-11-12)
+
+Cross-review round 1: Opus 5.5 medium, gpt-6.1-sol medium, and a CD experiment in the third seat.
+Every claim below was checked by a test or a measurement in this repository.
+
+- Q1: method B is built, not C; C's time bound holds only in expectation.
+- Q2, the constants, for names of 64 bits (not 32 as section 3 says): 4 coin-tossing rounds
+  bring the labels to 0..5, and recolor passes for 5, 4 and 3 bring them to 0..2. A block start
+  at i reads the entries i-8 to i+4 (CL = 8, CR = 4); i-7 would suffice (shown by both seats,
+  one by proof, one by a solver), 8 is kept. CR = 3 is wrong: a witness with wide ids is the test
+  `a_block_start_reads_8_symbols_left_and_4_right`. A block holds 2 to 4 entries inside a
+  string, and up to 5 at its true end, not 4 (witness: `a_block_at_the_true_end_may_hold_5_symbols`);
+  `MAX_BLOCK` is 6. A summary keeps K = 17 entries at each end of a long middle; K = 16 fails
+  with CL = 8. For comparison, Nishimoto et al. and Alstrup et al. give Δ_L = log* N + 6 to the
+  left and Δ_R = 4 to the right.
+- Q3: keying the stage's maps by names changed no result: the staging groups pass unchanged,
+  and nothing in the code read depends on their order (inferred from reading it, not proved). One more
+  map compared strings by bytes, the kernel's `World::reads` memo of port answers, and it hung
+  the staging tests once joins were keyed by answers; the stage's port now keeps its own answers
+  (`Lookup::keeps_answers`). Tuples in keys are interned by their parts' forms, each shared tuple
+  read once, so a tuple doubled 40 times is read in 41 steps.
+- The CD seat's best candidate used one coin-tossing round (CL = 2, CR = 1) and 64% fewer
+  dictionary calls on its benchmark, but its blocks are not bounded by a constant (63 entries
+  for increasing 64-bit ids, measured) and its K = 14 is too small for such blocks; not adopted.
+- Still ordered by bytes (follow-up STAGE-byte-keys): the Trick's `passed` set, the
+  Specializer's `calls` and `cases` sets, and `World::reads` for ports other than the stage's.

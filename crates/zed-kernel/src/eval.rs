@@ -316,6 +316,16 @@ pub trait Lookup: std::fmt::Debug + Send + Sync {
         let _ = body;
         None
     }
+
+    /// Whether the port keeps its own answers, each key answered once, so the world does not
+    /// keep them in [`World::reads`]. A port whose keys may hold values it compares more
+    /// cheaply than by their bytes, such as joined strings named by
+    /// [`crate::text::Names`], keeps its answers itself: a map of the world compares keys by
+    /// [`Value`]'s order, which reads a long join byte by byte. By default the world keeps
+    /// them.
+    fn keeps_answers(&self) -> bool {
+        false
+    }
 }
 
 /// The ports a program runs against: one wave of inputs, and the outputs it writes
@@ -1596,8 +1606,15 @@ impl<'t> Machine<'_, 't> {
     /// answer is kept.
     fn ask_port(&mut self, port: &str, k: Cow<'_, Value>) -> R<Step<'t>> {
         let world = &mut self.ev.world;
-        if let Some(why) = world.sources[port].refuses(&k) {
+        let source = &world.sources[port];
+        if let Some(why) = source.refuses(&k) {
             return Err(KernelError::Port(port.to_string(), why).into());
+        }
+        if source.keeps_answers() {
+            let v = source
+                .get(&k)
+                .map_err(|why| KernelError::Port(port.to_string(), why))?;
+            return give(v);
         }
         if let Some(v) = world.reads.get(port).and_then(|r| r.get(&*k)) {
             return give(v.clone());

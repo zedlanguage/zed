@@ -592,41 +592,21 @@ fn a_call_at_minus_zero_is_answered_apart_from_zero() {
     assert!(report.left.is_empty(), "{report:?}");
 }
 
-/// A call at a string held in more than one block is not answered by the function's stub:
-/// `"a"` doubled 62 times is 56 nodes and `2^62` bytes long, and comparing it with a key asked
-/// before would read every byte. The part is evaluated as written.
+/// A call at a string of `2^62` bytes that joins made is answered by each function's stub:
+/// `"a"` doubled 62 times is 56 nodes, and the stub's table keys the string by its name
+/// (`text::Names`, the signature encoding of docs/joined-strings-study.md), which costs
+/// `O(log N)` dictionary steps per node, not a read of every byte. Two functions that both
+/// answer 1 there share the part, as at a literal of 200 bytes.
 #[test]
-fn a_call_at_a_long_join_is_mixed_as_written() {
+fn a_call_at_a_long_join_is_mixed_once() {
     let twice = lam(&["s"], prim(Prim::Concat, vec![var("s"), var("s")]));
     let long = (0..62).fold(lit("a"), |s, _| {
         Term::App(Shared::new(var("twice")), vec![s])
     });
-    let call = Term::App(Shared::new(var("f")), vec![long]);
-    let part = Shared::new(Term::Let(
-        "twice".into(),
-        Shared::new(twice),
-        Shared::new(call),
-    ));
-    let body = Term::If(Shared::new(var("c")), part.clone(), part);
-    let main = Term::Let(
-        "f".into(),
-        Shared::new(lam(&["s"], lit(1i64))),
-        Shared::new(body),
-    );
-    let unit = Unit {
-        defs: vec![def("main", Term::Lam(vec!["c".into()], Shared::new(main)))],
-        tests: Arc::from([]),
-        warnings: Vec::new(),
-        int_params: Default::default(),
-    };
-    let (mixed, report) = stage::mix(&unit, &["main"]);
-    assert!(
-        mixed.defs[0]
-            .term
-            .to_string()
-            .contains("if c { 1 } else { 1 }")
-    );
-    assert!(report.left.is_empty(), "{report:?}");
+    let long = Term::Let("twice".into(), Shared::new(twice), Shared::new(long));
+    let at_long = mixed_nodes_at(long, lit(""));
+    let at_literal = mixed_nodes_at(lit(""), lit("a".repeat(200).as_str()));
+    assert_eq!(at_long, at_literal);
 }
 
 /// `main = (c, n) -> if c { let f = (s) -> 1; p } else { let f = (s) -> 1 + 0; p }` with the
@@ -635,7 +615,12 @@ fn a_call_at_a_long_join_is_mixed_as_written() {
 /// give alike, and is mixed once, so the two arms share it; when the call is run as written,
 /// `p` is keyed by what each `f` is and is mixed once under each.
 fn mixed_nodes_at(x: Term, y: Term) -> usize {
-    let call = Term::App(Shared::new(var("f")), vec![prim(Prim::Concat, vec![x, y])]);
+    mixed_nodes_of(prim(Prim::Concat, vec![x, y]))
+}
+
+/// [`mixed_nodes_at`] with the call at `arg`: `p = n + f(arg)`.
+fn mixed_nodes_of(arg: Term) -> usize {
+    let call = Term::App(Shared::new(var("f")), vec![arg]);
     let part = Shared::new(prim(Prim::Add, vec![var("n"), call]));
     let arm = |f: Term| Shared::new(Term::Let("f".into(), Shared::new(f), part.clone()));
     let one = lam(&["s"], lit(1i64));
@@ -653,25 +638,69 @@ fn mixed_nodes_at(x: Term, y: Term) -> usize {
     distinct(&mixed.defs[0].term)
 }
 
-/// A call at a joined string is run as written whatever its length (QUESTIONS A7, item
-/// STAGE-joined-eq): a part calling two functions at a join of 100 bytes and one calling them
-/// at a join of 200 bytes stage alike, each mixed once under each function. Before, a join of
-/// at most 128 bytes was held as one block and answered by the functions' stubs, so the part
-/// at 100 bytes was mixed once and shared, and the one at 200 bytes twice. A call at a string
-/// of 200 bytes that is no join (the empty string joined to a literal gives the literal) is
-/// still answered: what decides is the join, not the length.
+/// A call at a string is answered by the functions' stubs whatever its length and however it
+/// was made (QUESTIONS A7, items STAGE-joined-eq and STAGE-joined-eq-build): a part calling two
+/// functions that answer alike, at a join of 100 bytes, at a join of 200 bytes, and at a
+/// literal of 200 bytes (the empty string joined to a literal gives the literal), is mixed
+/// once and shared by both arms each time. The stub's table keys a string by its name
+/// (`text::Names`), so two strings are one key exactly when their bytes are equal. Before
+/// STAGE-joined-eq-build a join of any length was run as written and mixed once under each
+/// function, and before STAGE-joined-eq a join longer than 128 bytes was.
 #[test]
 fn calls_at_joins_of_100_and_200_bytes_stage_alike() {
     let half = |n: usize| lit("a".repeat(n).as_str());
     let short = mixed_nodes_at(half(50), half(50));
     let long = mixed_nodes_at(half(100), half(100));
-    let answered = mixed_nodes_at(lit(""), half(200));
+    let literal = mixed_nodes_at(lit(""), half(200));
     assert_eq!(short, long);
-    assert!(
-        answered < long,
-        "{answered} nodes answered, {long} as written"
-    );
+    assert_eq!(long, literal);
 }
+
+/// A call at a tuple holding itself doubled 40 times, `2^40` places in 41 nodes, is answered
+/// by the functions' stubs, the tuple read once per node: the part is mixed once and shared by
+/// both arms, as at a literal (item STAGE-joined-eq-build; the visited-set rule). A key read on
+/// every path would read `2^40` places.
+#[test]
+fn calls_at_a_doubled_tuple_stage_alike() {
+    let twice = lam(&["t"], prim(Prim::Tuple, vec![var("t"), var("t")]));
+    let doubled = (0..40).fold(lit(1i64), |t, _| {
+        Term::App(Shared::new(var("twice")), vec![t])
+    });
+    let doubled = Term::Let("twice".into(), Shared::new(twice), Shared::new(doubled));
+    let at_doubled = mixed_nodes_of(doubled);
+    let at_literal = mixed_nodes_of(lit(1i64));
+    assert_eq!(at_doubled, at_literal);
+}
+
+/// A call at `("s0" ++ ("s1" ++ … "s(n-1)"), (0, (1, … (n-1, 0))))`, n distinct strings joined and
+/// n nested pairs, is keyed by its answer at n and 8n: naming the join and the tuples costs
+/// O(n log N) dictionary steps, and the part is still shared by both arms (item
+/// STAGE-joined-eq-build).
+#[test]
+fn keying_a_call_at_a_join_and_a_tuple_of_n_parts_scales() {
+    deep(|| {
+        let n = 1000;
+        let arg = |d: usize| {
+            let join = (0..d).rev().fold(lit(""), |s, i| {
+                prim(Prim::Concat, vec![lit(format!("s{i}").as_str()), s])
+            });
+            let pairs = (0..d as i64)
+                .rev()
+                .fold(lit(0i64), |t, i| prim(Prim::Tuple, vec![lit(i), t]));
+            prim(Prim::Tuple, vec![join, pairs])
+        };
+        let args: BTreeMap<usize, Term> =
+            [n, FACTOR * n].into_iter().map(|d| (d, arg(d))).collect();
+        let at_literal = mixed_nodes_of(lit(1i64));
+        scaling::check_order(
+            "stage::mix of a call at a join and a tuple of n parts",
+            n,
+            1,
+            |d| assert_eq!(mixed_nodes_of(args[&d].clone()), at_literal),
+        );
+    });
+}
+
 /// `main = (n) -> n + td` with `t0 = w(w)`, `w = (f) -> f(f)`, and `tj = if j >= 1 { t(j-1) }
 /// else { t(j-1) }`, the two arms one node: a build-stage term whose form does not show that
 /// it ends, so mixing leaves it to run and records it in the report. The report holds the term

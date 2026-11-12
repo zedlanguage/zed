@@ -38,6 +38,10 @@ use num_bigint::BigUint;
 
 use crate::num::{TooLarge, room};
 
+mod names;
+
+pub use names::{Name, Names};
+
 /// A string's text, shared.
 #[derive(Clone)]
 pub struct Text(Arc<Tree>);
@@ -86,15 +90,8 @@ type Digit = [Option<Text>; 4];
 enum Tree {
     /// The empty text, and the middle of a deep tree that has nothing between its ends.
     Empty,
-    /// A block of text, not empty, and its number of characters: a part of height 0. `joined`
-    /// says that a join wrote it, from two texts that fit in one block ([`Text::is_joined`]).
-    /// The flag costs no memory: a block is far smaller than a deep tree, which sets the
-    /// size of every `Tree`.
-    Block {
-        block: Arc<str>,
-        chars: usize,
-        joined: bool,
-    },
+    /// A block of text, not empty, and its number of characters: a part of height 0.
+    Block { block: Arc<str>, chars: usize },
     /// Two or three parts of one height `h`, in order, the third `None` when there are two: a
     /// part of height `h + 1`.
     Node {
@@ -123,10 +120,9 @@ enum Tree {
 // leaves of height 11 against 200,000 of height 18, `==` of two such texts 0.2 ms against 34
 // to 40 ms, a hash 0.3 to 3.6 ms against 22 to 24 ms, printing 0.3 to 1.3 ms against 18 to 23
 // ms; 8-byte pieces, `==` 2 to 5 ms against 11 to 39 ms; 128-byte pieces, which never merge,
-// the same. A join of at most `LEAF` bytes is one block ([`Text::is_flat`]) but is still marked
-// as a join ([`Text::is_joined`]), so staging, which runs a call at any join as written
-// (`zedc::stage::compared`), does not switch at `LEAF` (item STAGE-joined-eq; before, a call
-// at a join of at most `LEAF` bytes was keyed by its answers). Trigger: a join whose parts'
+// the same. Staging keys a call at a string by the string's name ([`Names`]), which does not
+// depend on how the text is held, so it does not switch at `LEAF` (items STAGE-joined-eq and
+// STAGE-joined-eq-build). Trigger: a join whose parts'
 // adjacent blocks are short. Test:
 // `text::tests::a_string_built_a_character_at_a_time_is_held_in_blocks`; COMPLEXITY.md C29. A
 // solution with no constant would need blocks whose size follows the text's own pieces with
@@ -163,12 +159,12 @@ impl Text {
                 right: b.len(),
             });
         }
-        if let Tree::Block { block, chars, .. } = &*b.0
+        if let Tree::Block { block, chars } = &*b.0
             && let Some(t) = a.with_last(block, *chars)
         {
             return Ok(t);
         }
-        if let Tree::Block { block, chars, .. } = &*a.0
+        if let Tree::Block { block, chars } = &*a.0
             && let Some(t) = b.with_first(block, *chars)
         {
             return Ok(t);
@@ -195,21 +191,6 @@ impl Text {
     /// walks no tree: a join, of any length, is held in parts and never written out.
     pub fn is_flat(&self) -> bool {
         matches!(*self.0, Tree::Empty | Tree::Block { .. })
-    }
-
-    /// Whether a join of two nonempty texts made the text, whatever its length: a tree, or a
-    /// block a join wrote from two texts that fit in one. A text no join made (a literal, a
-    /// block another operation wrote) is not one, nor is a join with the empty text, which
-    /// gives the other text itself. Staging runs a call at a joined string as written
-    /// (`zedc::stage::compared`, QUESTIONS A7), so how it stages does not change with the
-    /// length. The answer reads no text and is not part of the text's identity: equal texts
-    /// compare, order and hash alike either way.
-    pub fn is_joined(&self) -> bool {
-        match &*self.0 {
-            Tree::Empty => false,
-            Tree::Block { joined, .. } => *joined,
-            Tree::Node { .. } | Tree::Deep { .. } => true,
-        }
     }
 
     /// The blocks of the text from left to right, none empty. A text held as one block is read
@@ -286,7 +267,7 @@ impl Text {
     fn size(&self) -> Size {
         match &*self.0 {
             Tree::Empty => Size::default(),
-            Tree::Block { block, chars, .. } => Size {
+            Tree::Block { block, chars } => Size {
                 len: block.len(),
                 chars: *chars,
             },
@@ -307,10 +288,8 @@ impl Text {
     /// the two fit in one block: `O(LEAF)`, the deep tree at the top rebuilt.
     fn with_last(&self, s: &str, chars: usize) -> Option<Text> {
         match &*self.0 {
-            Tree::Block {
-                block, chars: c, ..
-            } => (block.len() + s.len() <= LEAF)
-                .then(|| joined_block([&**block, s].concat().into(), c + chars)),
+            Tree::Block { block, chars: c } => (block.len() + s.len() <= LEAF)
+                .then(|| block_of([&**block, s].concat().into(), c + chars)),
             Tree::Deep {
                 front,
                 middle,
@@ -341,10 +320,8 @@ impl Text {
     /// the two fit in one block.
     fn with_first(&self, s: &str, chars: usize) -> Option<Text> {
         match &*self.0 {
-            Tree::Block {
-                block, chars: c, ..
-            } => (s.len() + block.len() <= LEAF)
-                .then(|| joined_block([s, &**block].concat().into(), chars + c)),
+            Tree::Block { block, chars: c } => (s.len() + block.len() <= LEAF)
+                .then(|| block_of([s, &**block].concat().into(), chars + c)),
             Tree::Deep {
                 front,
                 middle,
@@ -370,22 +347,9 @@ impl Text {
     }
 }
 
-/// A block holding `s`, not empty, of `chars` characters, no join's.
+/// A block holding `s`, not empty, of `chars` characters.
 fn block_of(block: Arc<str>, chars: usize) -> Text {
-    Text(Arc::new(Tree::Block {
-        block,
-        chars,
-        joined: false,
-    }))
-}
-
-/// A block holding `s`, not empty, of `chars` characters, written by a join.
-fn joined_block(block: Arc<str>, chars: usize) -> Text {
-    Text(Arc::new(Tree::Block {
-        block,
-        chars,
-        joined: true,
-    }))
+    Text(Arc::new(Tree::Block { block, chars }))
 }
 
 fn empty() -> Text {
@@ -814,7 +778,7 @@ mod tests {
         while let Some((t, h, tree)) = todo.pop() {
             match &*t.0 {
                 Tree::Empty => assert!(tree, "an empty part"),
-                Tree::Block { block, chars, .. } => {
+                Tree::Block { block, chars } => {
                     assert_eq!(h, 0, "a block among parts of height {h}");
                     assert!(!block.is_empty(), "an empty block");
                     assert_eq!(*chars, block.chars().count());
@@ -914,37 +878,6 @@ mod tests {
         let ab = join(&long('a'), &long('b'));
         assert!(!ab.is_flat());
         assert_eq!(ab.char_count(), 2 * PIECE);
-    }
-
-    #[test]
-    fn a_join_is_marked_at_every_length() {
-        // A join of two short texts is one block, and still a join; so is a longer one, at
-        // either end and in the middle of a tree.
-        let x = Text::from("x");
-        let short = join(&x, &Text::from("y"));
-        assert!(short.is_flat() && short.is_joined());
-        let ab = join(&long('a'), &long('b'));
-        assert!(!ab.is_flat() && ab.is_joined());
-        assert!(join(&ab, &x).is_joined() && join(&x, &ab).is_joined());
-        assert!(join(&ab, &ab).is_joined());
-        // A text no join made is not one, at any length, nor is a join with the empty text,
-        // which gives the other text itself.
-        assert!(!x.is_joined() && !long('a').is_joined());
-        assert!(!Text::from("").is_joined());
-        let none = Text::from("");
-        assert!(!join(&none, &long('a')).is_joined() && !join(&x, &none).is_joined());
-        // The mark is not part of the text: a join equals, orders and hashes as the same
-        // text written as one block.
-        let written = Text::from("xy");
-        assert!(!written.is_joined());
-        assert_eq!(short, written);
-        assert_eq!(short.cmp(&written), Ordering::Equal);
-        let hash = |t: &Text| {
-            let mut h = std::hash::DefaultHasher::new();
-            t.hash(&mut h);
-            h.finish()
-        };
-        assert_eq!(hash(&short), hash(&written));
     }
 
     #[test]

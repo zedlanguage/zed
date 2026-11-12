@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use zed_kernel::digest::DigestMap;
+use zed_kernel::text;
 use zed_kernel::types::{Type, defs as printed};
 use zed_kernel::{
     Evaluator, Global, Globals, KernelError, Lookup, Pattern, Shared, Term, Value, World,
@@ -1885,39 +1886,173 @@ fn error_as_written(e: KernelError, calls: &Run) -> Option<String> {
     }
 }
 
-/// Whether the value `v` is compared in time linear in the memory it holds: each leaf is a
-/// boolean, a number or a string no join made, in tuples and keypaths. Floats compare by
-/// their bits, so `-0.0` and `0.0` are told apart. A join of strings may be exponentially
-/// longer than its nodes, and comparing it reads every byte, so a string a join made is not
-/// compared at any length (QUESTIONS A7): a short join, which the text holds as one block, is
-/// refused as a long one is (`Text::is_joined`), and how a call stages does not switch at a
-/// length. A family's or an atom's parts are not walked.
-// Complexity tradeoff: a call at a joined string is run as written, so a part calling two
-// functions that answer alike at a join is mixed once under each rather than once; the value is
-// the same. What is given up is that sharing, for every join, short or long. Why: comparing a
-// join reads every byte, exponential in its nodes for a string doubled again and again, and an
-// exact comparison of two joins in time near their nodes (equality of compressed strings) is
-// the open study of item STAGE-joined-eq (docs/joined-strings-study.md). Before, a join of
-// at most 128 bytes, held as one block, was compared, so the plan switched at that length.
-// Trigger: a string built by `++`. Tests
-// `l01_28_staging::dag::calls_at_joins_of_100_and_200_bytes_stage_alike` and
-// `l01_28_staging::dag::a_call_at_a_long_join_is_mixed_as_written`; COMPLEXITY.md row
-// STAGE-joined-eq.
+/// Whether the value `v` is compared in time near the memory it holds: each leaf is a boolean,
+/// a number or a string, in tuples and keypaths. Floats compare by their bits, so `-0.0` and
+/// `0.0` are told apart. A string is compared by its canonical name ([`Key`]), which a join of
+/// any length gets in time near its nodes, not its bytes, so how a call stages does not switch
+/// at a length or at a join (QUESTIONS A7). A family's or an atom's parts are not walked.
+// Complexity tradeoff: a walk of every path reads a tuple holding itself doubled k times
+// 2^k times. Used: a set of the ids of the shared tuples met (`Value::shared_parts`), so each
+// is read once, O(s) for `s` distinct parts. Test
+// `l01_28_staging::dag::calls_at_a_doubled_tuple_stage_alike`.
 fn compared(v: &Value) -> bool {
+    let mut met = HashSet::new();
     let mut todo = vec![v];
     while let Some(v) = todo.pop() {
         match v {
-            Value::Bool(_) | Value::Int(_) | Value::Big(_) | Value::Rat(_) | Value::Float(_) => {}
-            Value::Str(s) => {
-                if s.is_joined() {
-                    return false;
+            Value::Bool(_)
+            | Value::Int(_)
+            | Value::Big(_)
+            | Value::Rat(_)
+            | Value::Float(_)
+            | Value::Str(_) => {}
+            Value::Tuple(items) | Value::Path(items) => {
+                if v.shared_parts().is_none_or(|(id, _)| met.insert(id)) {
+                    todo.extend(items.iter());
                 }
             }
-            Value::Tuple(items) | Value::Path(items) => todo.extend(items.iter()),
             Value::Atom(_) | Value::Family(_) => return false,
         }
     }
     true
+}
+
+/// A value as a key of the stage's maps: the value, and its canonical form, by which keys are
+/// equal and ordered. The canonical form names each string by its bytes ([`text::Names`]) and
+/// each tuple or keypath by its kind and the forms of its parts ([`Namer`]), so two keys are
+/// equal exactly when their values are. The order is that of names, not of bytes, and no
+/// result reads it: each map is only looked up, and the run log is read in the order of the
+/// run (item STAGE-joined-eq-build).
+// Complexity tradeoff: a key holding a string compared by its bytes reads every byte at each
+// comparison, and a join doubled k times is 2^k bytes in O(k) nodes, so staging gave up
+// keying calls at joins (item STAGE-joined-eq). Here a key's strings are named once, when the
+// key is made, in O(n log N) dictionary steps for n nodes not named before and N bytes
+// ([`text::Names`]); each tuple is named by the forms of its parts in O(p log T) for p parts
+// and T tuples named, a shared tuple once by its id; and a comparison reads no byte and no
+// part. Tradeoff: each
+// node and tuple named is kept, with its summary, while the mix lives. Nothing is refused.
+// Tests `l01_28_staging::dag::calls_at_joins_of_100_and_200_bytes_stage_alike`,
+// `l01_28_staging::dag::a_call_at_a_long_join_is_mixed_once` and
+// `l01_28_staging::dag::calls_at_a_doubled_tuple_stage_alike`; COMPLEXITY.md row
+// STAGE-joined-eq-build.
+#[derive(Clone, Debug)]
+struct Key {
+    canon: Canon,
+    value: Value,
+}
+
+/// A value's canonical form.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Canon {
+    /// A number, boolean, atom or family, compared as before.
+    Other(Value),
+    Str(text::Name),
+    /// A tuple or keypath, by its number in [`Namer::seqs`].
+    Seq(u64),
+}
+
+/// The names of the strings and the numbers of the tuples and keypaths of the keys of one mix.
+#[derive(Debug, Default)]
+struct Namer {
+    text: text::Names,
+    /// The number of each tuple (`false`) or keypath (`true`), by the forms of its parts.
+    seqs: BTreeMap<(bool, Vec<Canon>), u64>,
+    /// The number of each shared tuple met, by its id ([`Value::shared_parts`]). A sequence is
+    /// never changed in place and its id is never drawn again, so an id names one sequence.
+    seen: HashMap<u64, u64>,
+}
+
+impl Namer {
+    /// The canonical form of `v`, read on the heap, so a tuple of any depth is read, and each
+    /// shared tuple once.
+    fn canon(&mut self, v: &Value) -> Canon {
+        // The tuples and keypaths being read: each, its parts not yet read, and the forms of
+        // those read.
+        let mut open: Vec<(&Value, std::slice::Iter<'_, Value>, Vec<Canon>)> = Vec::new();
+        let mut next = Some(v);
+        loop {
+            let c = match next {
+                Some(v) => match self.known(v) {
+                    Some(c) => c,
+                    None => {
+                        let (Value::Tuple(items) | Value::Path(items)) = v else {
+                            unreachable!("only a sequence is not known at once")
+                        };
+                        let mut rest = items.as_slice().iter();
+                        next = rest.next();
+                        open.push((v, rest, Vec::with_capacity(items.len())));
+                        continue;
+                    }
+                },
+                None => {
+                    let (v, _, parts) = open.pop().expect("a sequence being read");
+                    let fresh = self.seqs.len() as u64;
+                    let n = *self
+                        .seqs
+                        .entry((matches!(v, Value::Path(_)), parts))
+                        .or_insert(fresh);
+                    if let Some((id, _)) = v.shared_parts() {
+                        self.seen.insert(id, n);
+                    }
+                    Canon::Seq(n)
+                }
+            };
+            let Some((_, rest, parts)) = open.last_mut() else {
+                return c;
+            };
+            parts.push(c);
+            next = rest.next();
+        }
+    }
+
+    /// The form of `v` when it is known without reading parts: none for a tuple or keypath
+    /// not met before.
+    fn known(&mut self, v: &Value) -> Option<Canon> {
+        Some(match v {
+            Value::Str(s) => Canon::Str(self.text.name(s)),
+            Value::Tuple(_) | Value::Path(_) => {
+                let (id, _) = v.shared_parts()?;
+                Canon::Seq(*self.seen.get(&id)?)
+            }
+            Value::Bool(_)
+            | Value::Int(_)
+            | Value::Big(_)
+            | Value::Rat(_)
+            | Value::Float(_)
+            | Value::Atom(_)
+            | Value::Family(_) => Canon::Other(v.clone()),
+        })
+    }
+}
+
+impl Key {
+    /// `v` as a key, named in `namer`.
+    fn new(namer: &Mutex<Namer>, v: &Value) -> Key {
+        Key {
+            canon: namer.lock().expect("one thread").canon(v),
+            value: v.clone(),
+        }
+    }
+}
+
+impl PartialEq for Key {
+    fn eq(&self, other: &Key) -> bool {
+        self.canon == other.canon
+    }
+}
+
+impl Eq for Key {}
+
+impl PartialOrd for Key {
+    fn partial_cmp(&self, other: &Key) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Key {
+    fn cmp(&self, other: &Key) -> std::cmp::Ordering {
+        self.canon.cmp(&other.canon)
+    }
 }
 
 /// A function bound outside a part being mixed, as a part calls it: a lambda that reads its
@@ -1939,15 +2074,18 @@ struct Stub {
     /// The stubs of the functions among them.
     reads: Vec<Arc<Stub>>,
     /// The answer at each argument tuple asked so far.
-    table: Mutex<BTreeMap<Value, Said>>,
+    table: Mutex<BTreeMap<Key, Said>>,
+    /// The names of the strings and tuples of keys ([`Namer`]), shared by every stub and the
+    /// mixer of one mix.
+    names: Arc<Mutex<Namer>>,
 }
 
 impl Stub {
     /// The call of the function at the arguments `key`, under the bindings it reads; each
     /// argument that is the token of a stub of `with` is that stub's lambda, bound to the
     /// token's name.
-    fn term_at(&self, key: &Value, with: &[Arc<Stub>]) -> Term {
-        let Value::Tuple(args) = key else {
+    fn term_at(&self, key: &Key, with: &[Arc<Stub>]) -> Term {
+        let Value::Tuple(args) = &key.value else {
             unreachable!("a stub is asked with the tuple of its arguments")
         };
         let arg = |v: &Value| match token(v) {
@@ -1965,7 +2103,7 @@ impl Stub {
         })
     }
 
-    fn answer(&self, key: &Value) -> Option<Said> {
+    fn answer(&self, key: &Key) -> Option<Said> {
         self.table.lock().expect("one thread").get(key).cloned()
     }
 }
@@ -1974,7 +2112,7 @@ impl Stub {
 /// Each run calls the functions it reads through stubs that do not answer a key not yet in
 /// their tables; such a run stops, the missing answer is found first, and the run starts
 /// again, so the runs do not nest. `with` are the stubs whose tokens `key` holds.
-fn fill(stub: &Arc<Stub>, key: &Value, with: Vec<Arc<Stub>>) {
+fn fill(stub: &Arc<Stub>, key: &Key, with: Vec<Arc<Stub>>) {
     let mut todo = vec![(stub.clone(), key.clone(), with)];
     while let Some((s, k, with)) = todo.last().cloned() {
         if s.answer(&k).is_some() {
@@ -2000,7 +2138,7 @@ fn fill(stub: &Arc<Stub>, key: &Value, with: Vec<Arc<Stub>>) {
 
 /// An answer a run needed: the stub, the key it was asked at, and the stubs whose tokens the
 /// key holds ([`Port::with`]).
-type Need = (Arc<Stub>, Value, Vec<Arc<Stub>>);
+type Need = (Arc<Stub>, Key, Vec<Arc<Stub>>);
 
 /// One run with stubs: the first answer it needed that no table held, with the stubs whose
 /// tokens its key holds, when it stops at such an answer (`stop`), and otherwise each call it
@@ -2064,6 +2202,12 @@ impl Lookup for Port {
         true
     }
 
+    /// The stub's table, keyed by [`Key`], keeps each answer: a key holding a long join is
+    /// compared there by its name, where the world's map would compare it byte by byte.
+    fn keeps_answers(&self) -> bool {
+        true
+    }
+
     /// The token of the stub whose lambda has the body `body`: `port(#0, .., #n)`. A lambda
     /// written in place and a primitive have none, and a call at one stops the run.
     ///
@@ -2084,9 +2228,10 @@ impl Lookup for Port {
         self.ports.contains_key(port).then(|| Value::atom(port))
     }
 
-    fn get(&self, key: &Value) -> Result<Value, String> {
-        let with = self.with(key).expect("a key the port takes");
-        let answer = match self.stub.answer(key) {
+    fn get(&self, value: &Value) -> Result<Value, String> {
+        let with = self.with(value).expect("a key the port takes");
+        let key = Key::new(&self.stub.names, value);
+        let answer = match self.stub.answer(&key) {
             Some(a) => a,
             None if self.run.stop => {
                 let need = (self.stub.clone(), key.clone(), with);
@@ -2094,8 +2239,8 @@ impl Lookup for Port {
                 return Err("an answer not yet known".into());
             }
             None => {
-                fill(&self.stub, key, with.clone());
-                self.stub.answer(key).expect("filled")
+                fill(&self.stub, &key, with.clone());
+                self.stub.answer(&key).expect("filled")
             }
         };
         // An answer that cannot be compared is not recorded, and the run fails.
@@ -2106,8 +2251,13 @@ impl Lookup for Port {
             self.run.function.store(true, Ordering::Relaxed);
         } else if !self.run.stop {
             let log = (
-                Probe::Call(self.stub.name.clone(), key.clone()),
-                Answer::Gives(answer.as_ref().ok().cloned()),
+                Probe::Call(self.stub.name.clone(), key),
+                Answer::Gives(
+                    answer
+                        .as_ref()
+                        .ok()
+                        .map(|v| Key::new(&self.stub.names, v).canon),
+                ),
             );
             self.run.log.lock().expect("one thread").push(log);
         }
@@ -2122,7 +2272,7 @@ impl Lookup for Port {
 /// tuple of arguments, or what a binding is, exactly.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Probe {
-    Call(Arc<str>, Value),
+    Call(Arc<str>, Key),
     Same(Arc<str>),
 }
 
@@ -2135,11 +2285,11 @@ impl Probe {
     }
 }
 
-/// The answer to a [`Probe`]: the call's value, `None` when it fails; or the binding's exact
-/// number.
+/// The answer to a [`Probe`]: the canonical form of the call's value ([`Key`]), `None` when it
+/// fails; or the binding's exact number.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Answer {
-    Gives(Option<Value>),
+    Gives(Option<Canon>),
     Is(Binding),
 }
 
@@ -2211,7 +2361,9 @@ struct Mixer {
     /// The last number given to a build-stage binding ([`Mixer::number`]).
     given: Binding,
     /// The number of each build-stage binding to a literal, by its value.
-    literals: BTreeMap<Value, Binding>,
+    literals: BTreeMap<Key, Binding>,
+    /// The names of the strings and tuples of keys ([`Key`]), shared with each stub.
+    names: Arc<Mutex<Namer>>,
     /// The exact number of each other build-stage binding, by the id of its term and the exact
     /// numbers of the bindings that term reads where it is bound, in the order of their names.
     fines: HashMap<(u64, Vec<Binding>), Binding>,
@@ -2326,7 +2478,10 @@ impl Mixer {
             && compared(v)
         {
             let next = self.given + 1;
-            let b = *self.literals.entry(v.clone()).or_insert(next);
+            let b = *self
+                .literals
+                .entry(Key::new(&self.names, v))
+                .or_insert(next);
             self.given = self.given.max(b);
             e.fine = b;
             return b;
@@ -2451,6 +2606,7 @@ impl Mixer {
             lets,
             reads,
             table: Mutex::default(),
+            names: self.names.clone(),
         }))
     }
 
@@ -2576,8 +2732,9 @@ impl Mixer {
     // function's calls are shown to end (each function it calls through a name has a stub,
     // and the other bindings it reads are literals, primitives or names), when the calls are
     // made outside a family operation or a `fix` (a pure region, which reads no port), and
-    // when each run succeeds with arguments that hold no family, no atom and no string a join
-    // made, of any length ([`compared`]) and with answers of those kinds; otherwise the
+    // when each run succeeds with arguments that hold no family and no atom ([`compared`]) and
+    // with answers of those kinds (a string of any length, a join or not, is keyed by its name,
+    // item STAGE-joined-eq-build); otherwise the
     // part is keyed by what the function is, its term and the bindings it reads, and is mixed
     // once under each such function, as before. A float is keyed by its bits, so `-0.0` and
     // `0.0` are two answers, and an argument that is a function bound to a stub by that stub's
@@ -2585,16 +2742,16 @@ impl Mixer {
     // is keyed by what each function is, since the memo asks again only calls at data. What
     // is still run as written, in time linear in what the run reaches ([`Mixer::run_under`]):
     // a call inside a pure region, a call whose answer cannot be compared (a family, an atom,
-    // a join, or a function), a call at such an argument or at a function no stub stands for
+    // or a function), a call at such an argument or at a function no stub stands for
     // (a lambda written in place, a primitive), and a call of a function with no stub. A call
     // whose answer is not yet known runs the function's term with its own reads called
     // through their stubs; a run that meets an answer not yet known stops, that answer is
     // found first, and the run starts again, so a function whose term asks m new answers runs
     // m + 1 times. Why: whether two functions compute the same values is undecidable in
     // general, so a part is keyed by the answers it took, which mixing can compare; a pure
-    // region reads no port, a family's entries are keys, and comparing a join of strings
-    // reads every byte, which may take time exponential in its nodes; a join of any length is
-    // so run as written, so how a call stages never switches at a length (QUESTIONS A7). The
+    // region reads no port, and a family's entries are keys; a string is compared by its name
+    // ([`Key`]), not its bytes, which for a join may be exponential in its nodes, so how a
+    // call stages never switches at a length or at a join (QUESTIONS A7). The
     // runs start again rather than nest, so the thread's stack does not grow with the depth of
     // the functions.
     // Trigger: a part shared below `let`s of functions that differ on each path and are
@@ -2620,7 +2777,7 @@ impl Mixer {
     // `l01_28_staging::cone::calls_at_float_zeros_and_at_functions_give_what_they_give_as_written`
     // and `l01_28_staging::mix::an_evaluation_error_is_left_to_run`. COMPLEXITY.md row F83. A
     // complete solution would read a part's calls inside a pure region through a pure lookup,
-    // and key a call at an argument holding a family or a join by a hash-consed form of it.
+    // and key a call at an argument holding a family by a hash-consed form of it.
     // Naive version: a part keyed by what each function is, mixed once per distinct
     // function it reads, O(part × functions) (inferred); used: keyed by the answers taken, mixed
     // once per distinct answers, a function asking m new answers run m + 1 times.
@@ -2834,14 +2991,15 @@ impl Mixer {
     fn ask(&mut self, p: &Probe) -> Answer {
         match p {
             Probe::Call(x, k) => {
-                let Value::Tuple(args) = k else {
+                let Value::Tuple(args) = &k.value else {
                     unreachable!("a call is asked with the tuple of its arguments")
                 };
                 let f = Shared::new(Term::Var(x.clone()));
                 let call = Term::App(f, args.iter().cloned().map(Term::Lit).collect());
                 let x = self.frees.name(x);
                 let free = self.frees.sets.one(x);
-                Answer::Gives(self.eval(&call, free).ok())
+                let v = self.eval(&call, free).ok();
+                Answer::Gives(v.map(|v| Key::new(&self.names, &v).canon))
             }
             Probe::Same(x) => {
                 let top = self.scope.len();
