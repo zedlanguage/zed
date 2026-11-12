@@ -140,6 +140,9 @@ rows! {
     GenericInstance => "Instance of a generic definition that fails to type",
     UnboundedHistory => "Demanded history of a loop whose step count has no proven bound",
     HistoryBoundForm => "Bound on a history keyed by step number, or an overflow policy on a history bound",
+    // No diagnostic uses the next two rows yet: plan row L18.2c emits them.
+    StackOverBound => "Stack depth over `@stack(bytes: b)`",
+    StackOverflow => "Stack overflow in a run",
     UnboundedSize => "Size with no proven bound under `@preallocated` or the `preallocated` mode",
     CellReadsItself => "Cell read on a path back to its own cell",
     MeaningCase => "Meaning function with a case `@decides` cannot reify",

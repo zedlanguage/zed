@@ -126,8 +126,10 @@ pub fn sync_readme(spec: &Spec, root: &str, check: bool, out: &mut String) -> Ou
 }
 
 /// The rows of the rejection table of DESIGN sec:diagnostics (step L1.29), one per line: each
-/// row's first column up to any parenthesis, which is what a `// ✗ Row: …` comment names. A
-/// document with no table gives no rows.
+/// row's first column up to its first parenthesis outside a code span, which is what a
+/// `// ✗ Row: …` comment names: the gloss in parentheses after a name is dropped, and a call
+/// in code, as in ``Stack depth over `@stack(bytes: b)` ``, is kept whole. A document with no
+/// table gives no rows.
 fn rejections(design: &str) -> String {
     let mut out = String::new();
     let rows = design
@@ -137,7 +139,12 @@ fn rejections(design: &str) -> String {
         .take_while(|l| l.starts_with("| "));
     for row in rows {
         let first = row[2..].split(" | ").next().unwrap_or_default();
-        let name = first.split('(').next().unwrap_or_default().trim();
+        let mut code = false;
+        let end = first.find(|c| {
+            code ^= c == '`';
+            c == '(' && !code
+        });
+        let name = first[..end.unwrap_or(first.len())].trim();
         // A table cell writes `|` as `\|`; the row's name is the text a reader sees.
         out.push_str(&name.replace("\\|", "|"));
         out.push('\n');

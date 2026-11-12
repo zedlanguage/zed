@@ -221,7 +221,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | «import» geometry . shapes . { area , Rect } ;
 == DESIGN.md [sec:facets] 1 L20
   1 | «type» Nonzero = Utf8String «matching» «grammar» { str["0"] * ( str["1"] | str["2"] | str["3"] | str["4"] | str["5"] | str["6"] | str["7"] | str["8"] | str["9"] ) digit * } ;
-  2 | «type» UnitName = Utf8String «matching» «grammar» { alpha ( alpha | str["_"] ) * | str["°"] alpha * | str["%"] | str["′"] | str["″"] } ;
+  2 | «type» UnitName = Utf8String «matching» «grammar» { alpha ( alpha | str["_"] ) * | str["°"] alpha * | str["%"] | str["′"] | str["″"] | str["'"] | str["\""] } ;
   3 | «type» UnitKind = Utf8String «matching» «grammar» { str["#"] alpha ( alpha | digit | str["_"] ) * } ;
   4 | «type» UnitPower = Utf8String «matching» «grammar» { str["-"] ? digit + | str["("] str["-"] ? digit + str["/"] Nonzero str[")"] } ;
   5 | «type» UnitFactor = Utf8String «matching» «grammar» { UnitName ( str["^"] UnitPower ) ? } ;

@@ -728,6 +728,36 @@ fn sync_writes_the_copies_and_check_finds_a_stale_one() {
     assert_eq!(run(true).0, Ok(false));
 }
 
+/// The rows `sync` copies from the rejection table: each row's name ends at its first
+/// parenthesis outside a code span, so a gloss `(sec:memory)` is dropped and a call in code,
+/// `` `@stack(bytes: b)` ``, is kept whole; a cell's `\|` is the `|` a reader sees.
+#[test]
+fn sync_names_each_rejection_row_up_to_a_parenthesis_outside_code() {
+    let table = "| Rejection | Required witnesses | Menu |\n|---|---|---|\n\
+                 | Collision (two keys meet) | a | b |\n\
+                 | Stack depth over `@stack(bytes: b)` (sec:memory) | a | b |\n\
+                 | Call `f(x)` and `g(y)` in a row (sec:units; `h(z)`) | a | b |\n\
+                 | Pipe `a \\| b` written | a | b |\n\
+                 | Missing argument | a | b |\n";
+    let dir = spec_dir("sync_rows", &design(table), "");
+    let spec = Spec::open(&dir.root()).expect("the spec reads");
+    let zed = Dir::new("sync_rows_zed");
+    for sub in ["fences", "grammar"] {
+        fs::create_dir(zed.at(sub)).expect("a copy directory");
+    }
+    let mut out = String::new();
+    assert_eq!(
+        sync::sync_into(&spec, &zed.root(), false, &mut out),
+        Ok(true),
+        "{out}"
+    );
+    assert_eq!(
+        fs::read_to_string(zed.at("fences/rejections.txt")).unwrap(),
+        "Collision\nStack depth over `@stack(bytes: b)`\nCall `f(x)` and `g(y)` in a row\n\
+         Pipe `a | b` written\nMissing argument\n"
+    );
+}
+
 /// A plan of three steps, one with a title of its own sentence.
 const PLAN: &str = "# Part\n\n## (sec:steps) The steps, layer by layer\n\n### M0: scaffolding\n\n\
                     **M0.1.** The repository. More text.\n**M0.2.** Desugaring — test: it reads.\n\n\
