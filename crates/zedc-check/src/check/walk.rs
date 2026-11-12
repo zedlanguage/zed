@@ -8747,16 +8747,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                             .0;
                         (at, acc) = (at.min(i), Arg::of(ty));
                     }
-                    let acc = acc.ty;
-                    if let Some(c) = acc.pieces().iter().find(|p| {
-                        !matches!(p, Piece::Var(_))
-                            && !p.is_atoms()
-                            && !p.carrier().is_some_and(Carrier::numeric)
-                    }) {
-                        let shown = self.text(&c.ty());
-                        self.sum_refused(&shown, span);
-                    }
-                    out = out.union(&acc);
+                    // The sum is a number: each `+` gives a number, a class or the atoms that
+                    // pass, and a `+` that fails reports its own error and gives only the atoms.
+                    out = out.union(&acc.ty);
                 }
                 Piece::Dyn => self.any("`sum`", span),
                 // A class takes the use as a need, checked on each value that flows into it
