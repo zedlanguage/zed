@@ -3570,3 +3570,13 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | An index `Vec<[Two; BITS]>` and `HashMap<&str, [Two; BITS]>` filled in place, each `Two` a fixed array of two `Option<u32>` updated by `add` | `Index::new`, `Two::add` | Mutation (gap 11); borrowed `&str` keys | a fold over the overloads into persistent maps keyed by place and carrier, each entry a tuple of at most two overloads |
 | Closures that capture `&mut HashMap` and `&mut Vec` while the collecting walk runs, and a `HashSet<Span>` of callees already met | `Tables::collect_functions` | Mutation (gap 11) | the walk returns the calls and parameter types as part of its fold state |
 | A `HashMap<(usize, usize), usize>` from statement and list to the index of its edge in a `Vec`, the edge updated through `&mut es[k]` | `Tables::cycle_reports` | Mutation (gap 11) | a persistent map from (statement, list) to the edge, replaced when a later use is the first read |
+
+## Entries from ZPARSE-par (`crates/zed-tools/src/split.rs`, `llp.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A helper nonterminal remembered per grammar expression by its address, `(e as *const Expr as usize, head)` as a `HashMap` key | `Conv::helper` (llp.rs) | Identity (gap 1) | key the helper by the expression's position in the rule (rule number and path of child indexes), which the walk already knows |
+| Bit sets of terminals as `Vec<u64>` words with `\|=`, `&` and shifts, and an iterator over the set bits | `Bits` (split.rs, used by llp.rs) | Bit operations (gap 4, built) | the L1 bit words |
+| Work lists and depth-first searches on an explicit `Vec` stack popped by `while let`, filling `HashMap` and `Vec` tables in place (`index`, `low`, the visited cores, the interned stacks) | `Splitter::new`, `Sets::of`, `Cfg::prune`, `Cfg::unleft`, `components` (Tarjan), `check` | Mutation (gap 11) | recursion that threads the tables as a state receiver; `components` as the recursive Tarjan with the index map threaded through |
+| `&mut` out-parameters as optional sinks, `Option<&mut Vec<Bits>>` and `Option<&mut BTreeSet<String>>`, so one walk fills the pairs and the problems only when asked | `Out` in split.rs (`Reading::walk`, `seq`, `choice`, `repeat`) | Mutation (gap 11) | the walk returns the pairs and problems with its summary, and the caller drops what it did not ask for |
+| `let … else { return … }` | `Conv::seq`, `Llp::steps` | Early exit (gap 12) | a `match` with the early result as one arm |
