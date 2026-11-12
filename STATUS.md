@@ -1946,17 +1946,22 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CHK-for-body-writers | impl attempt 1 | 2026-11-12 05:37 | started; worktree /home/luke/Work/wt/indexed-followups at 6381f7ad7; load 38.51 |
+| CHK-for-body-writers | impl attempt 1 | 2026-11-12 05:37 | negative control: fresh() trying suffixes from 1 each time, 'binders that hide a key' 500/4000: 18.2 times the bytes, refused (limit 11.7); with the per-base co |
+| CORPUS-read-radix | impl attempt 1 | 2026-11-09 03:55 | started; worktrees wt/pdep-bytes and wt/corpus-read-radix on origin/main 1057f2eb9 |
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
-| KERNEL-bezout-step-wide-test | impl attempt 1 | 2026-11-12 06:12 | started; worktree wt/cd-audit-cleanups from origin/main 466d09abb |
+| LAZY-hub-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 1 merged 83079757e (finite ends fire the in-case direction index): 8 of 11 targets; audit 85:8, 108:3, 115:3 open |
 | LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | worktree /home/luke/Work/wt/lmd-cd (wt/lmd-cd at 7d96d3826) made for the Rust port; CD round 1 best 58 = 28.71 |
-| MSG-call-union-headline | running | 2026-11-12 05:51 |  |
+| MSG-concise-no-common-carrier | impl attempt 1 | 2026-11-12 07:01 | started, worktree wt/msg-carrier |
 | MSG-dot-repair-in-indexed | impl attempt 1 | 2026-11-12 05:37 | started; worktree /home/luke/Work/wt/indexed-followups at 6381f7ad7; load 38.51 |
+| MSG-forwarded-repair | impl attempt 1 | 2026-11-11 13:43 | started, worktree wt/msg-carrier |
 | MSG-hoist-name-outer | impl attempt 1 | 2026-11-12 05:37 | started; worktree /home/luke/Work/wt/indexed-followups at 6381f7ad7; load 38.51 |
-| MSG-many-arguments-output | impl attempt 1 | 2026-11-12 05:51 | started with MSG-call-union-headline in /home/luke/Work/wt/msg-many-args |
+| MSG-many-args-decimal | running | 2026-11-12 07:32 |  |
+| MSG-many-args-one-error | running | 2026-11-12 07:32 |  |
+| MSG-many-args-repair-loop | impl attempt 1 | 2026-11-12 07:32 | started with MSG-many-args-decimal and MSG-many-args-one-error; worktree /home/luke/Work/wt/msg-many-args2, spec /home/luke/Work/wt/msg-many-args2-spec; load 36 |
 | PERF-negated-chain-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:41 | started; CD r1 completed best 17.276 (cand 250, ratio lowered by raising bytes at n, no real gain), r2 running 188 cands best = seed 17.216 |
-| PRES-disj-dead-switches | impl attempt 1 | 2026-11-12 06:12 | started; worktree wt/cd-audit-cleanups from origin/main 466d09abb |
+| PRODUCT-lin-rows | impl attempt 1 | 2026-11-11 01:43 | probe at k=100..1600 (instructions, profiling build, load 34): chain 0.67/1.61/4.32/13.4/46.2 G, skip 0.45/1.04/2.63/7.68/25.3 G, hole 0.50/1.27/3.65/12.2/44.8  |
 | REFUSAL-front-unsolved | running | 2026-11-11 17:03 |  |
+| TRIVIAL-shared-atom | impl attempt 1 | 2026-11-11 01:43 | started; worktree wt/trivial-shared-atom from origin/main |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
